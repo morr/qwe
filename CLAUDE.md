@@ -12,6 +12,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QWE is a 2D app built with **Bevy 0.19** (Rust, edition 2024), using Bevy's ECS with a plugin-based modular design.
 
+## Reference Project
+
+`~/develop/bevy/zxc` is a mature Bevy 0.19 project by the same author — use it as a
+reference point before inventing a pattern here. Worth reading there:
+
+- `main.rs` — plugin registration order, `DefaultPlugins` / window / log setup
+- `src/*/` — module layout (`mod.rs` plugin, `components.rs`, `systems.rs`), state-tag
+  state machines, observer usage
+- `Cargo.toml` — the working set of Bevy 0.19 feature flags and companion crate versions
+- `CLAUDE.md` — the conventions this file is derived from
+
+Two rules:
+
+- **Read-only.** Do not edit anything under `zxc/` while working on this project. The one
+  exception is `.claude/skills/` — those are symlinked here, so a skill edit is shared by
+  design and lands in zxc's git history; commit it there separately.
+- **Copy patterns, not scale.** ZXC carries a lot of machinery (RON config, async
+  pathfinding, task queue, egui debug UI) this project does not have. Take the idiom, not
+  the whole subsystem.
+
 ## Build & Development Commands
 
 ```bash
