@@ -12,10 +12,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QWE is a 2D app built with **Bevy 0.19** (Rust, edition 2024), using Bevy's ECS with a plugin-based modular design.
 
-## Reference Project
+## Reference Points
 
-`~/develop/bevy/zxc` is a mature Bevy 0.19 project by the same author — use it as a
-reference point before inventing a pattern here. Worth reading there:
+Two local checkouts to consult before inventing a pattern or guessing at an API.
+
+### Upstream Bevy examples — `~/develop/bevy/bevy/examples`
+
+A checkout of the Bevy repo at **release 0.19.0**, matching the version this project
+builds against. Official, compiling, first-party examples — the authoritative answer for
+"how is this API actually used in 0.19". Prefer them over recalled pre-0.19 syntax, which
+is frequently wrong.
+
+Relevant subdirectories: `2d/`, `ui/`, `ecs/`, `state/`, `app/`, `input/`, `camera/`,
+`picking/`, `remote/` (BRP, incl. `integration_test.rs`), `dev_tools/`, `window/`,
+`asset/`, `time/`. Grep them for a type name to find every real usage:
+
+```bash
+grep -rn 'OrthographicProjection' ~/develop/bevy/bevy/examples/
+```
+
+The full source is next to it — `~/develop/bevy/bevy/crates/` — when an example is not
+enough and the implementation has to be read.
+
+### Sibling project — `~/develop/bevy/zxc`
+
+A mature Bevy 0.19 project by the same author. Use it for project-level shape (how things
+are organised here), and the upstream examples for engine API questions. Worth reading:
 
 - `main.rs` — plugin registration order, `DefaultPlugins` / window / log setup
 - `src/*/` — module layout (`mod.rs` plugin, `components.rs`, `systems.rs`), state-tag
