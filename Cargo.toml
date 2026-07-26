@@ -1,0 +1,26 @@
+[package]
+name = "qwe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.19", default-features = false, features = [
+    # instead of default ["2d", "3d", "ui", "audio"]: no 3d stack, no audio
+    "2d",
+    "ui",
+    "dynamic_linking",
+    "bevy_dev_tools",
+    "bevy_remote",
+] }
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
+[lints.clippy]
+type_complexity = "allow"
+wildcard_imports = "warn"
