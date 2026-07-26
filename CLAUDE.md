@@ -4,9 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Skills
 
-- **MANDATORY — load the `git` skill BEFORE any git operation** — staging, committing, branching, rebasing, history inspection, conflict resolution. This is a blocking prerequisite: do NOT run git commands until the skill is loaded. It contains hard rules (no Claude co-author trailer; never chain `git add` and `git commit` with `&&`; no `--no-verify`) and this repo's commit message conventions.
-- **Load the `live-app` skill BEFORE running the app** — `cargo run`, smoke-testing a change in the real app, or querying the running world over the Bevy Remote Protocol on port 15702. It covers background launch, log-based verification, and shutdown.
-- **Load the `bevy` skill when writing Bevy code** — ECS/component design, system ordering, UI patterns, common pitfalls.
+Skills hold the detail; this file holds the map. Load them — don't reconstruct their content from here.
+
+- **`git` — MANDATORY before any git operation** (staging, committing, branching, rebasing, history inspection, conflict resolution). Blocking prerequisite: do NOT run git commands until it is loaded.
+- **`live-app` — before running the app** (`cargo run`, smoke-testing in the real app, querying the live world over BRP on port 15702).
+- **`bevy` — when writing or debugging Bevy code.** Bevy 0.19 API facts that pre-0.19 training data gets wrong.
+
+All three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
+
+**Caveat on the `bevy` skill:** it was written for zxc. Its "0.19 facts that get written wrong" section and `references/api_0_19.md` are engine-level and apply here verbatim. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
 
 ## Project Overview
 
@@ -68,6 +74,8 @@ Run a single test:
 cargo test test_name --verbose
 ```
 
+`dynamic_linking` is already enabled in `Cargo.toml` — never pass `--features bevy/dynamic_linking`.
+
 ## Verification After Each Task
 
 After completing any task, run these in parallel:
@@ -93,6 +101,11 @@ needs them means editing `Cargo.toml` deliberately, not by accident.
 - Event/observer handlers use `on_*` prefix
 - Clippy `type_complexity` is allowed globally; `wildcard_imports` warns
 - Formatting: block indent style, reorder imports (`.rustfmt.toml`)
+- Keyboard/mouse gates belong in the schedule as run conditions (`run_if(input_just_pressed(..))`), not as an early `return` inside the system
+
+## Third-party Crates
+
+There are none yet, and 0.19 absorbed a lot of what used to need them. Check `~/develop/bevy/bevy/crates/` for a first-party option before adding a dependency — notably `bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin}` (pan/zoom, `min_zoom`/`max_zoom`) covers what `bevy_pancam` is used for in zxc. Don't copy zxc's dependency set wholesale; it predates those additions.
 
 ## Bevy Time Types
 
@@ -105,15 +118,3 @@ needs them means editing `Cargo.toml` deliberately, not by accident.
 Use `Res<Time<Virtual>>` when you need **`elapsed_secs()`** — the current total virtual time.
 
 Use `Res<Time<Real>>` only for things that must ignore pause and time_scale.
-
-## Code Intelligence
-
-An MCP language server (rust-analyzer) is available. Prefer it over grepping or reading files for:
-
-- **Type information** — use `hover` on any symbol before assuming its type
-- **Finding definitions** — use `definition` instead of searching for declarations
-- **Finding usages** — use `references` instead of grep
-- **Diagnostics** — check `diagnostics` after making changes
-- **Renames** — use the LSP `rename` tool rather than find-and-replace
-
-Fall back to reading files only for context LSP doesn't provide (comments, logic flow).
