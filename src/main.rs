@@ -1,4 +1,5 @@
 use bevy::app::AppExit;
+use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
@@ -26,7 +27,13 @@ fn main() {
         )
         .add_plugins((RemotePlugin::default(), RemoteHttpPlugin::default()))
         .add_systems(Startup, (spawn_camera, spawn_sprite))
-        .add_systems(Update, (rotate_sprite, close_on_esc))
+        .add_systems(
+            Update,
+            (
+                rotate_sprite,
+                close_on_esc.run_if(input_just_pressed(KeyCode::Escape)),
+            ),
+        )
         .run();
 }
 
@@ -65,15 +72,9 @@ fn rotate_sprite(time: Res<Time>, mut query: Query<&mut Transform, With<Spinner>
     }
 }
 
-fn close_on_esc(
-    focused_windows: Query<&Window>,
-    input: Res<ButtonInput<KeyCode>>,
-    mut event_writer: MessageWriter<AppExit>,
-) {
-    if !input.just_pressed(KeyCode::Escape) {
-        return;
-    }
-
+/// Gated by `input_just_pressed(Escape)` in the schedule — the window-focus
+/// check stays here so Esc in another app's window doesn't quit this one.
+fn close_on_esc(focused_windows: Query<&Window>, mut event_writer: MessageWriter<AppExit>) {
     if focused_windows.iter().any(|window| window.focused) {
         event_writer.write(AppExit::Success);
     }
