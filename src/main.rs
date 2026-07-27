@@ -3,11 +3,7 @@ use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
-mod camera;
-mod dev;
-mod grid;
-mod map;
-mod settings;
+use qwe::{camera, dev, map, movement, navigation};
 
 fn main() {
     App::new()
@@ -33,7 +29,13 @@ fn main() {
                 }),
         )
         .add_plugins((RemotePlugin::default(), RemoteHttpPlugin::default()))
-        .add_plugins((camera::CameraPlugin, map::MapPlugin, dev::DevPlugin))
+        .add_plugins((
+            camera::CameraPlugin,
+            map::MapPlugin,
+            navigation::NavigationPlugin,
+            movement::MovementPlugin,
+            dev::DevPlugin,
+        ))
         .add_systems(
             Update,
             close_on_esc.run_if(input_just_pressed(KeyCode::Escape)),
