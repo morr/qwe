@@ -2,6 +2,7 @@ pub mod camera;
 pub mod demon;
 pub mod dev;
 pub mod grid;
+pub mod human;
 pub mod map;
 pub mod movement;
 pub mod navigation;

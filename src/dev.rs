@@ -1,6 +1,7 @@
 //! Инструменты для отладочных сессий (skill `live-app`): скриншот в файл по
 //! клавише F12 или BRP-событию `TakeScreenshotEvent`.
 
+use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
@@ -32,7 +33,11 @@ pub struct DevPlugin;
 
 impl Plugin for DevPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<TakeScreenshotEvent>()
+        app.add_plugins((
+            FrameTimeDiagnosticsPlugin::default(),
+            LogDiagnosticsPlugin::default(),
+        ))
+            .register_type::<TakeScreenshotEvent>()
             .register_type::<SpawnTestWalkerEvent>()
             .register_type::<TestWalker>()
             .add_observer(on_take_screenshot)
