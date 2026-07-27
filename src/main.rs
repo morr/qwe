@@ -3,7 +3,7 @@ use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
-use qwe::{camera, dev, map, movement, navigation};
+use qwe::{camera, demon, dev, map, movement, navigation, portal};
 
 fn main() {
     App::new()
@@ -34,6 +34,8 @@ fn main() {
             map::MapPlugin,
             navigation::NavigationPlugin,
             movement::MovementPlugin,
+            portal::PortalPlugin,
+            demon::DemonPlugin,
             dev::DevPlugin,
         ))
         .add_systems(
