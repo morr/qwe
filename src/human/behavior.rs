@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use rand::Rng;
 
-use crate::demon::Demon;
+use crate::demon::{ChaseTarget, Demon};
 use crate::grid::world_to_tile;
 use crate::human::components::{FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
 use crate::movement::{Movable, MovableState, SimPosition};
@@ -19,6 +19,16 @@ use crate::telemetry::Telemetry;
 const FLEE_STEP: (f32, f32) = (40.0, 60.0);
 /// Зона у границы карты, попадание в которую при бегстве — «спасся», м.
 const ESCAPE_MARGIN: f32 = 2.0;
+/// Веер разбегания: максимальное отклонение от вектора «прочь от демона»,
+/// радианы (±≈34°). Толпа без него выстраивается в колонну.
+const FLEE_SPREAD: f32 = 0.6;
+
+/// Персональный угол веера: детерминирован по сущности, чтобы человек между
+/// перепрокладками держал свою сторону, а не зигзагами метался.
+fn personal_spread(entity: Entity) -> f32 {
+    let hash = entity.index().index().wrapping_mul(2654435761);
+    ((hash >> 8) as f32 / (u32::MAX >> 8) as f32 * 2.0 - 1.0) * FLEE_SPREAD
+}
 
 /// Wander → Flee: демон в радиусе паники.
 pub fn panic(
@@ -58,6 +68,7 @@ pub fn flee(
     time: Res<Time>,
     arc_navmesh: Res<ArcNavmesh>,
     demons: Res<SpatialGrid<Demon>>,
+    chasing: Query<&ChaseTarget, With<Demon>>,
     mut query: Query<
         (
             Entity,
@@ -71,6 +82,9 @@ pub fn flee(
 ) {
     let navmesh = arc_navmesh.read();
     let mut rng = rand::rng();
+    // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
+    let chased: bevy::platform::collections::HashSet<Entity> =
+        chasing.iter().map(|chase_target| chase_target.0).collect();
 
     for (entity, sim_position, mut repath, mut pause, mut movable) in &mut query {
         let Some((_, demon_position)) =
@@ -99,7 +113,11 @@ pub fn flee(
             continue;
         }
 
-        let away = (sim_position.0 - demon_position).normalize_or(Vec2::X);
+        let mut away = (sim_position.0 - demon_position).normalize_or(Vec2::X);
+        // не преследуемые разбегаются веером — каждый под своим углом
+        if !chased.contains(&entity) {
+            away = Vec2::from_angle(personal_spread(entity)).rotate(away);
+        }
         let step = rng.random_range(FLEE_STEP.0..FLEE_STEP.1);
         // не клампим к «безопасной» зоне: цель у самой границы — путь к спасению
         let target = (sim_position.0 + away * step).clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);
