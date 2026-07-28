@@ -47,7 +47,7 @@ impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ArcNavmesh>().add_systems(
             OnEnter(AppState::Playing),
-            (fill_navmesh, snap_portal)
+            (fill_navmesh, snap_portal, prune_unreachable)
                 .chain()
                 .in_set(WorldInitSet::Navmesh),
         );
@@ -60,6 +60,18 @@ fn fill_navmesh(map: Res<MapData>, arc_navmesh: Res<ArcNavmesh>) {
     let mut navmesh = arc_navmesh.write();
     navmesh.fill_from_mapdata(&map);
     info!("navmesh filled in {:?}", started.elapsed());
+}
+
+/// Карманы, недостижимые от портала, выключаются из navmesh — там никто
+/// не спавнится и туда не прокладываются пути.
+fn prune_unreachable(arc_navmesh: Res<ArcNavmesh>, portal: Res<PortalPos>) {
+    let started = std::time::Instant::now();
+    let mut navmesh = arc_navmesh.write();
+    let pruned = navmesh.prune_unreachable(world_to_tile(portal.0));
+    info!(
+        "navmesh: pruned {pruned} unreachable tiles in {:?}",
+        started.elapsed()
+    );
 }
 
 /// Радиус, в котором вокруг кандидата на портал всё должно быть проходимо

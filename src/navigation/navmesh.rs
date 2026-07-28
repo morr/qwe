@@ -109,6 +109,45 @@ impl Navmesh {
         }
     }
 
+    /// Тайлы, недостижимые из `start`, становятся непроходимыми: замкнутые
+    /// дворы и острова иначе порождают заведомо безуспешные A*-поиски,
+    /// обходящие всю карту (десятки мс каждый). 4-связность совпадает с
+    /// достижимостью A*: диагональ требует обоих смежных прямых тайлов.
+    pub fn prune_unreachable(&mut self, start: IVec2) -> usize {
+        let Some(start_index) = Self::index(start.x, start.y) else {
+            return 0;
+        };
+        if !self.passable[start_index] {
+            return 0;
+        }
+
+        let mut reachable = vec![false; self.passable.len()];
+        let mut queue = std::collections::VecDeque::new();
+        reachable[start_index] = true;
+        queue.push_back(start);
+        while let Some(tile) = queue.pop_front() {
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let (nx, ny) = (tile.x + dx, tile.y + dy);
+                if let Some(index) = Self::index(nx, ny)
+                    && self.passable[index]
+                    && !reachable[index]
+                {
+                    reachable[index] = true;
+                    queue.push_back(IVec2::new(nx, ny));
+                }
+            }
+        }
+
+        let mut pruned = 0;
+        for (index, is_reachable) in reachable.iter().enumerate() {
+            if self.passable[index] && !is_reachable {
+                self.passable[index] = false;
+                pruned += 1;
+            }
+        }
+        pruned
+    }
+
     /// Тайлы в пределах полуширины от осевой полилинии.
     fn set_polyline(&mut self, points: &[Vec2], width: f32, value: bool) {
         for segment in points.windows(2) {

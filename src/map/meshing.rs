@@ -31,9 +31,8 @@ impl MeshBuilder {
             return;
         }
 
-        let mut coordinates: Vec<f64> = Vec::with_capacity(
-            (outer.len() + holes.iter().map(Vec::len).sum::<usize>()) * 2,
-        );
+        let mut coordinates: Vec<f64> =
+            Vec::with_capacity((outer.len() + holes.iter().map(Vec::len).sum::<usize>()) * 2);
         let mut hole_starts = Vec::with_capacity(holes.len());
         for point in outer {
             coordinates.push(point.x as f64);
@@ -82,6 +81,19 @@ impl MeshBuilder {
                 color,
             );
         }
+    }
+
+    /// Прямоугольник по AABB (для тайловых оверлеев).
+    pub fn push_rect(&mut self, min: Vec2, max: Vec2, color: LinearRgba) {
+        self.push_quad(
+            [
+                Vec2::new(min.x, min.y),
+                Vec2::new(max.x, min.y),
+                Vec2::new(max.x, max.y),
+                Vec2::new(min.x, max.y),
+            ],
+            color,
+        );
     }
 
     fn push_quad(&mut self, corners: [Vec2; 4], color: LinearRgba) {
@@ -139,11 +151,7 @@ mod tests {
     #[test]
     fn degenerate_polygon_is_skipped() {
         let mut builder = MeshBuilder::default();
-        builder.push_polygon(
-            &[Vec2::ZERO, Vec2::new(1.0, 1.0)],
-            &[],
-            LinearRgba::WHITE,
-        );
+        builder.push_polygon(&[Vec2::ZERO, Vec2::new(1.0, 1.0)], &[], LinearRgba::WHITE);
         assert!(builder.is_empty());
         assert_eq!(builder.skipped_polygons(), 1);
     }

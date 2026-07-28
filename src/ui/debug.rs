@@ -203,7 +203,8 @@ fn render_grid(mut gizmos: Gizmos) {
 }
 
 /// Спавн/despawn заливки непроходимых тайлов при переключении тумблера.
-/// Проходимые тайлы не рисуются — их подавляющее большинство.
+/// Один слитый меш на все тайлы: на OSM-карте их сотни тысяч, отдельные
+/// entity на каждый укладывали кадр.
 fn sync_navmesh_overlay(
     mut commands: Commands,
     navmesh_enabled: Res<DebugNavmesh>,
@@ -219,23 +220,34 @@ fn sync_navmesh_overlay(
         return;
     }
 
-    let mesh = meshes.add(Rectangle::new(NAVTILE_SIZE, NAVTILE_SIZE));
-    let material = materials.add(Color::srgba(0.9, 0.15, 0.15, 0.35));
+    let color = Color::srgba(0.9, 0.15, 0.15, 0.35).to_linear();
+    let mut builder = crate::map::MeshBuilder::default();
     let navmesh = arc_navmesh.read();
-
     for x in 0..GRID_SIZE.x {
         for y in 0..GRID_SIZE.y {
             if navmesh.is_passable(x, y) {
                 continue;
             }
-            commands.spawn((
-                NavmeshOverlayMarker,
-                Mesh2d(mesh.clone()),
-                MeshMaterial2d(material.clone()),
-                Transform::from_translation(
-                    tile_center(IVec2::new(x, y)).extend(NAVMESH_OVERLAY_Z),
-                ),
-            ));
+            let center = tile_center(IVec2::new(x, y));
+            builder.push_rect(
+                center - NAVTILE_SIZE / 2.0,
+                center + NAVTILE_SIZE / 2.0,
+                color,
+            );
         }
     }
+    if builder.is_empty() {
+        return;
+    }
+
+    commands.spawn((
+        NavmeshOverlayMarker,
+        Mesh2d(meshes.add(builder.build())),
+        MeshMaterial2d(materials.add(ColorMaterial {
+            alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, 0.0, NAVMESH_OVERLAY_Z),
+        Name::new("navmesh_overlay"),
+    ));
 }

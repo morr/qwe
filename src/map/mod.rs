@@ -2,6 +2,8 @@ mod meshing;
 pub mod osm;
 mod spawn;
 
+pub use self::meshing::MeshBuilder;
+
 use bevy::prelude::*;
 
 use crate::loading::{AppState, WorldInitSet};
