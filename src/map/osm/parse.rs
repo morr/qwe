@@ -240,6 +240,10 @@ fn assemble_rings(
 /// Зазор дерева до зданий и кромок дорог, м.
 const TREE_CLEARANCE: f32 = 1.5;
 
+/// Минимум между центрами деревьев, м: кроны (радиус до 4) могут чуть
+/// касаться, но не сливаться в кляксу.
+const TREE_MIN_SPACING: f32 = 6.0;
+
 /// Деревья: детерминированный LCG по геометрии парка, плотность ∝ площади,
 /// rejection-sampling внутри полигона, только в границах карты и не на
 /// зданиях/дорогах (парковые аллеи — тоже дороги).
@@ -317,6 +321,13 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
                 continue;
             }
             if blocked(pos) {
+                continue;
+            }
+            let spacing_sq = TREE_MIN_SPACING * TREE_MIN_SPACING;
+            if trees
+                .iter()
+                .any(|&(other, _)| pos.distance_squared(other) < spacing_sq)
+            {
                 continue;
             }
             let radius = 2.5 + next() * 1.5;
@@ -421,6 +432,14 @@ mod tests {
         for &(pos, radius) in &first.trees {
             assert!(point_in_area(pos, &first.parks[0]), "{pos:?}");
             assert!((2.5..=4.0).contains(&radius));
+        }
+        for (index, &(pos, _)) in first.trees.iter().enumerate() {
+            for &(other, _) in &first.trees[index + 1..] {
+                assert!(
+                    pos.distance(other) >= TREE_MIN_SPACING,
+                    "trees too close: {pos:?} vs {other:?}"
+                );
+            }
         }
     }
 
