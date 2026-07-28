@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
-pub use self::northstar::{NorthstarGrid, find_path_northstar};
+pub use self::northstar::{NorthstarGrid, build_from_navmesh, find_path_northstar};
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::osm::MapData;
@@ -114,7 +114,21 @@ const PORTAL_SEARCH_TILES: i32 = 200;
 /// тайлу, вокруг которого достаточно свободного места.
 fn snap_portal(arc_navmesh: Res<ArcNavmesh>, mut portal: ResMut<PortalPos>) {
     let navmesh = arc_navmesh.read();
-    let start = world_to_tile(portal.0);
+    let Some(position) = snap_portal_position(&navmesh, portal.0) else {
+        warn!("no clear spot for portal near {:?}", portal.0);
+        return;
+    };
+    if position != portal.0 {
+        info!("portal snapped {:?} => {position:?}", portal.0);
+        portal.0 = position;
+    }
+}
+
+/// Ближайший к `position` центр тайла, вокруг которого хватает свободного
+/// места для портала. Отдельная функция — тем же снапом пользуется офлайн-бенч
+/// (`examples/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
+pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
+    let start = world_to_tile(position);
 
     let is_clear = |tile: IVec2| {
         (-PORTAL_CLEARANCE_TILES..=PORTAL_CLEARANCE_TILES).all(|dx| {
@@ -131,15 +145,10 @@ fn snap_portal(arc_navmesh: Res<ArcNavmesh>, mut portal: ResMut<PortalPos>) {
                 }
                 let tile = start + IVec2::new(dx, dy);
                 if is_clear(tile) {
-                    let position = tile_center(tile);
-                    if position != portal.0 {
-                        info!("portal snapped {:?} => {position:?}", portal.0);
-                        portal.0 = position;
-                    }
-                    return;
+                    return Some(tile_center(tile));
                 }
             }
         }
     }
-    warn!("no clear spot for portal near {:?}", portal.0);
+    None
 }
