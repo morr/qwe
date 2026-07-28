@@ -1,11 +1,118 @@
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
+use bevy::window::PrimaryWindow;
 
 use crate::grid::{tile_center, world_to_tile};
 use crate::movement::components::{
-    Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition, SimPosition,
+    Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
+    PreviousSimPosition, SimPosition,
+};
+use crate::navigation::{
+    Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
 };
 use crate::settings::unit_z;
+
+/// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
+/// и запускаются диспетчером по приоритету близости к камере.
+const MAX_PATHFINDING_IN_FLIGHT: usize = 512;
+/// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
+/// «замирали» при лёгком движении камеры.
+const VIEW_MARGIN: f32 = 1.2;
+
+/// Запуск тасков поиска пути из очереди запросов. МИРНО гуляющие люди вне
+/// экрана путь НЕ получают вовсе — их заявки ждут, пока камера не приедет;
+/// демоны и убегающие люди обсчитываются всегда (иначе инвазия и паника за
+/// кадром встанут). Внутри кадра — по удалённости от его центра.
+pub fn dispatch_pathfinding_requests(
+    mut commands: Commands,
+    pathfinder: Pathfinder,
+    camera: Single<&Transform, With<Camera2d>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    requests: Query<(
+        Entity,
+        &SimPosition,
+        &PathfindingRequest,
+        Has<crate::human::Human>,
+        Has<crate::human::HumanFleeTag>,
+    )>,
+    tasks: Query<(), With<PathfindingTask>>,
+) {
+    let budget = MAX_PATHFINDING_IN_FLIGHT.saturating_sub(tasks.iter().count());
+    if budget == 0 || requests.is_empty() {
+        return;
+    }
+
+    let camera_position = camera.translation.truncate();
+    // масштаб камеры = мировых метров на логический пиксель
+    let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * VIEW_MARGIN;
+
+    let mut queue: Vec<(u8, f32, Entity, IVec2, IVec2)> = requests
+        .iter()
+        .filter_map(|(entity, sim_position, request, is_human, is_fleeing)| {
+            let offset = (sim_position.0 - camera_position).abs();
+            let on_screen = offset.x <= half_view.x && offset.y <= half_view.y;
+            if is_human && !is_fleeing && !on_screen {
+                return None;
+            }
+            (
+                u8::from(!on_screen),
+                offset.length_squared(),
+                entity,
+                request.start_tile,
+                request.end_tile,
+            )
+                .into()
+        })
+        .collect();
+
+    if queue.len() > budget {
+        queue.sort_unstable_by(|a, b| {
+            (a.0, a.1)
+                .partial_cmp(&(b.0, b.1))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        queue.truncate(budget);
+    }
+
+    let algorithm = *pathfinder.algorithm;
+    for (_, _, entity, start_tile, end_tile) in queue {
+        let navmesh = pathfinder.navmesh.0.clone();
+        let northstar = pathfinder.northstar.0.clone();
+        let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+            let started_at;
+            let path = match algorithm {
+                // иерархические алгоритмы идут через сетку northstar
+                PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar => {
+                    started_at = std::time::Instant::now();
+                    northstar.as_deref().and_then(|grid| {
+                        find_path_northstar(
+                            grid,
+                            start_tile,
+                            end_tile,
+                            algorithm == PathfindingAlgorithm::ThetaStar,
+                        )
+                    })
+                }
+                _ => {
+                    let navmesh = navmesh.read().unwrap();
+                    // после захвата лока: метрика — сам поиск, без RwLock
+                    started_at = std::time::Instant::now();
+                    find_path(&navmesh, start_tile, end_tile, algorithm)
+                }
+            };
+            PathfindingResult {
+                start_tile,
+                end_tile,
+                path,
+                duration: started_at.elapsed(),
+            }
+        });
+        commands
+            .entity(entity)
+            .remove::<PathfindingRequest>()
+            .insert(PathfindingTask(task));
+    }
+}
 
 /// Снимок позиции на начало фиксированного шага — второй конец интерполяции.
 /// Для всех сущностей, не только движущихся: иначе у остановившейся сущности

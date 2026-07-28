@@ -7,7 +7,7 @@ use crate::demon::{ChaseTarget, Demon};
 use crate::grid::world_to_tile;
 use crate::human::components::{FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
+use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
@@ -66,8 +66,7 @@ pub fn panic(
 pub fn flee(
     mut commands: Commands,
     time: Res<Time>,
-    arc_navmesh: Res<ArcNavmesh>,
-    algorithm: Res<PathfindingAlgorithm>,
+    pathfinder: Pathfinder,
     demons: Res<SpatialGrid<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     mut query: Query<
@@ -81,7 +80,7 @@ pub fn flee(
         (With<Human>, With<HumanFleeTag>),
     >,
 ) {
-    let navmesh = arc_navmesh.read();
+    let navmesh = pathfinder.navmesh.read();
     let mut rng = rand::rng();
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
     let chased: bevy::platform::collections::HashSet<Entity> =
@@ -130,8 +129,6 @@ pub fn flee(
             entity,
             world_to_tile(sim_position.0),
             target_tile,
-            &arc_navmesh,
-            *algorithm,
             &mut commands,
         );
     }

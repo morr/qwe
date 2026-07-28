@@ -6,14 +6,14 @@ use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 
 pub use self::components::{
-    Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, PathfindingTask,
-    PreviousSimPosition, SimPosition,
+    Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
+    PathfindingRequest, PathfindingTask, PreviousSimPosition, SimPosition,
 };
 pub use self::systems::DrawMovePaths;
 use self::systems::{
-    draw_move_paths, interpolate_movable_transforms, listen_for_pathfinding_tasks,
-    move_moving_entities, on_movable_added_init_sim_position, snapshot_previous_sim_positions,
-    toggle_draw_move_paths,
+    dispatch_pathfinding_requests, draw_move_paths, interpolate_movable_transforms,
+    listen_for_pathfinding_tasks, move_moving_entities, on_movable_added_init_sim_position,
+    snapshot_previous_sim_positions, toggle_draw_move_paths,
 };
 
 pub struct MovementPlugin;
@@ -26,8 +26,12 @@ impl Plugin for MovementPlugin {
             .register_type::<PreviousSimPosition>()
             .init_resource::<DrawMovePaths>();
 
+        app.register_type::<PathfindingRequest>();
         app.add_observer(on_movable_added_init_sim_position)
-            .add_systems(Update, listen_for_pathfinding_tasks)
+            .add_systems(
+                Update,
+                (dispatch_pathfinding_requests, listen_for_pathfinding_tasks).chain(),
+            )
             .add_systems(
                 Update,
                 (

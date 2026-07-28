@@ -7,7 +7,6 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use crate::grid::world_to_tile;
 use crate::movement::Movable;
-use crate::navigation::ArcNavmesh;
 use crate::settings::unit_z;
 
 const SCREENSHOT_PATH: &str = "screenshot.png";
@@ -51,12 +50,7 @@ impl Plugin for DevPlugin {
     }
 }
 
-fn on_spawn_test_walker(
-    event: On<SpawnTestWalkerEvent>,
-    mut commands: Commands,
-    arc_navmesh: Res<ArcNavmesh>,
-    algorithm: Res<crate::navigation::PathfindingAlgorithm>,
-) {
+fn on_spawn_test_walker(event: On<SpawnTestWalkerEvent>, mut commands: Commands) {
     let mut movable = Movable::new(4.0);
     let entity = commands
         .spawn((
@@ -74,8 +68,6 @@ fn on_spawn_test_walker(
         entity,
         world_to_tile(event.from),
         world_to_tile(event.to),
-        &arc_navmesh,
-        *algorithm,
         &mut commands,
     );
     commands.entity(entity).insert(movable);

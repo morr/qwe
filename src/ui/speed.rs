@@ -6,7 +6,7 @@
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin};
 use bevy::prelude::*;
 
-use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT};
+use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED};
 use crate::ui::{UiOpacity, ui_color};
 
 #[derive(Component, Default)]
@@ -82,6 +82,10 @@ fn update_pathfinding_text(
         .get(&PATHFINDING_IN_FLIGHT)
         .and_then(|diagnostic| diagnostic.value())
         .unwrap_or_default();
+    let queued = diagnostics
+        .get(&PATHFINDING_QUEUED)
+        .and_then(|diagnostic| diagnostic.value())
+        .unwrap_or_default();
     let duration_ms = diagnostics
         .get(&PATHFINDING_DURATION_MS)
         .and_then(|diagnostic| diagnostic.average())
@@ -93,7 +97,7 @@ fn update_pathfinding_text(
 
     // выравнивание цифр по правому краю, чтобы строка не «плясала»
     text.into_inner().set_if_neq(Text(format!(
-        "pathfinding: {in_flight:>4.0} in flight, {duration_ms:>5.2} ms avg\nentities: {entities:>6.0}"
+        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nentities: {entities:>6.0}"
     )));
 }
 

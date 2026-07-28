@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::demon::components::{Demon, DemonSpawner, DemonWanderTag};
 use crate::grid::world_to_tile;
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
+use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::portal::PortalPos;
 use crate::settings::{
     DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, unit_z,
@@ -80,13 +80,12 @@ fn spawn_demon(commands: &mut Commands, portal_pos: Vec2, angle: f32, index: usi
 /// внутрь из-за клампа цели в границы.
 pub fn pick_wander_targets(
     mut commands: Commands,
-    arc_navmesh: Res<ArcNavmesh>,
-    algorithm: Res<PathfindingAlgorithm>,
+    pathfinder: Pathfinder,
     portal_pos: Res<PortalPos>,
     mut query: Query<(Entity, &SimPosition, &mut Movable), (With<Demon>, With<DemonWanderTag>)>,
 ) {
     let mut rng = rand::rng();
-    let navmesh = arc_navmesh.read();
+    let navmesh = pathfinder.navmesh.read();
 
     for (entity, sim_position, mut movable) in &mut query {
         if !matches!(
@@ -113,8 +112,6 @@ pub fn pick_wander_targets(
             entity,
             world_to_tile(sim_position.0),
             target_tile,
-            &arc_navmesh,
-            *algorithm,
             &mut commands,
         );
     }

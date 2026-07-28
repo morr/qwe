@@ -31,6 +31,9 @@ impl Plugin for HumanPlugin {
                 FixedUpdate,
                 (panic, flee, escape).chain().in_set(SimSet::HumanBehavior),
             )
-            .add_systems(Update, pick_wander_targets);
+            .add_systems(
+                Update,
+                pick_wander_targets.run_if(in_state(AppState::Playing)),
+            );
     }
 }

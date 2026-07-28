@@ -10,9 +10,10 @@ use crate::demon::components::{
 use crate::grid::world_to_tile;
 use crate::human::{CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
 use crate::movement::{
-    Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition, SimPosition,
+    Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
+    PreviousSimPosition, SimPosition,
 };
-use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
+use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::settings::{
     DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_SPEED, KILL_DISTANCE, RADIUS_HYSTERESIS, Z_CORPSE,
 };
@@ -73,8 +74,7 @@ pub fn acquire_targets(
 pub fn chase(
     mut commands: Commands,
     time: Res<Time>,
-    arc_navmesh: Res<ArcNavmesh>,
-    algorithm: Res<PathfindingAlgorithm>,
+    pathfinder: Pathfinder,
     humans: Res<SpatialGrid<Human>>,
     mut query: Query<
         (
@@ -88,7 +88,7 @@ pub fn chase(
     >,
     targets: Query<&SimPosition, With<Human>>,
 ) {
-    let navmesh = arc_navmesh.read();
+    let navmesh = pathfinder.navmesh.read();
     // один труп — одно убийство: дедупликация внутри тика, пока команды
     // (снятие `Human`) ещё не применились
     let mut killed_this_tick: bevy::platform::collections::HashSet<Entity> =
@@ -179,8 +179,6 @@ pub fn chase(
             entity,
             world_to_tile(sim_position.0),
             goal_tile,
-            &arc_navmesh,
-            *algorithm,
             &mut commands,
         );
     }
@@ -223,6 +221,7 @@ pub fn on_demon_caught_human(
             Movable,
             MovableStateMovingTag,
             PathfindingTask,
+            PathfindingRequest,
             SimPosition,
             PreviousSimPosition,
         )>()
@@ -241,7 +240,13 @@ pub fn on_demon_caught_human(
     let pause = rand::rng().random_range(DEMON_DEVOUR_PAUSE.0..DEMON_DEVOUR_PAUSE.1);
     commands
         .entity(demon)
-        .remove::<(DemonChaseTag, ChaseTarget, ChaseRepath, PathfindingTask)>()
+        .remove::<(
+            DemonChaseTag,
+            ChaseTarget,
+            ChaseRepath,
+            PathfindingTask,
+            PathfindingRequest,
+        )>()
         .insert((
             DemonDevourTag,
             DevourUntil(Timer::from_seconds(pause, TimerMode::Once)),

@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use bevy::prelude::*;
 use bevy::tasks::Task;
 
-use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, PathfindingResult, find_path};
+use crate::navigation::PathfindingResult;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Reflect)]
 pub enum MovableState {
@@ -47,6 +47,15 @@ pub struct Movable {
 /// вытесняет старый, а дроп `Task` его отменяет.
 #[derive(Component, Debug)]
 pub struct PathfindingTask(pub Task<PathfindingResult>);
+
+/// Запрос поиска пути, ждущий своей очереди: таски запускает
+/// `dispatch_pathfinding_requests` по приоритету близости к камере.
+#[derive(Component, Debug, Reflect)]
+#[reflect(Component)]
+pub struct PathfindingRequest {
+    pub start_tile: IVec2,
+    pub end_tile: IVec2,
+}
 
 #[derive(EntityEvent, Debug, Clone)]
 pub struct MovableReachedDestinationEvent {
@@ -97,28 +106,20 @@ impl Movable {
         entity: Entity,
         start_tile: IVec2,
         end_tile: IVec2,
-        arc_navmesh: &ArcNavmesh,
-        algorithm: PathfindingAlgorithm,
         commands: &mut Commands,
     ) {
         self.stop_moving(entity, commands);
         self.state = MovableState::Pathfinding(end_tile);
 
-        let navmesh = arc_navmesh.0.clone();
-        let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
-            let navmesh = navmesh.read().unwrap();
-            // после захвата лока: метрика — сам поиск, без ожидания RwLock
-            let started_at = std::time::Instant::now();
-            PathfindingResult {
+        // в очередь; старый таск отменяется (дроп `Task`), старый запрос
+        // вытесняется вставкой
+        commands
+            .entity(entity)
+            .remove::<PathfindingTask>()
+            .insert(PathfindingRequest {
                 start_tile,
                 end_tile,
-                path: find_path(&navmesh, start_tile, end_tile, algorithm),
-                duration: started_at.elapsed(),
-            }
-        });
-
-        // Вставка вытесняет прошлый таск этой сущности.
-        commands.entity(entity).insert(PathfindingTask(task));
+            });
     }
 
     pub fn to_pathfinding_error(

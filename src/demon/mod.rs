@@ -38,6 +38,9 @@ impl Plugin for DemonPlugin {
                     .chain()
                     .in_set(SimSet::DemonBehavior),
             )
-            .add_systems(Update, (pick_wander_targets, pulse_devouring));
+            .add_systems(
+                Update,
+                (pick_wander_targets, pulse_devouring).run_if(in_state(AppState::Playing)),
+            );
     }
 }
