@@ -33,7 +33,9 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>) {
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             row_gap: px(3.),
-            min_width: px(270.),
+            // фиксированная ширина: количество цифр в счётчиках меняется
+            // каждый кадр, и авто-ширина заставляла панель дёргаться
+            width: px(300.),
             padding: UiRect {
                 top: px(10.),
                 right: px(16.),
@@ -89,8 +91,9 @@ fn update_pathfinding_text(
         .and_then(|diagnostic| diagnostic.value())
         .unwrap_or_default();
 
+    // выравнивание цифр по правому краю, чтобы строка не «плясала»
     text.into_inner().set_if_neq(Text(format!(
-        "pathfinding: {in_flight:.0} in flight, {duration_ms:.2} ms avg\nentities: {entities:.0}"
+        "pathfinding: {in_flight:>4.0} in flight, {duration_ms:>5.2} ms avg\nentities: {entities:>6.0}"
     )));
 }
 
