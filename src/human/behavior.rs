@@ -41,7 +41,9 @@ pub fn panic(
         let mut repath = FleeRepath::default();
         // первый путь — сразу, дальше по таймеру со случайным периодом
         let period = rand::rng().random_range(0.7..1.2);
-        repath.0.set_duration(std::time::Duration::from_secs_f32(period));
+        repath
+            .0
+            .set_duration(std::time::Duration::from_secs_f32(period));
         commands
             .entity(entity)
             .remove::<HumanWanderTag>()
@@ -71,8 +73,8 @@ pub fn flee(
     let mut rng = rand::rng();
 
     for (entity, sim_position, mut repath, mut pause, mut movable) in &mut query {
-        let Some((_, demon_position)) = demons
-            .nearest_in_range(sim_position.0, HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS)
+        let Some((_, demon_position)) =
+            demons.nearest_in_range(sim_position.0, HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS)
         else {
             // демоны далеко — мирный режим, отдышаться перед новой прогулкой
             movable.speed = HUMAN_WALK_SPEED;
@@ -100,8 +102,7 @@ pub fn flee(
         let away = (sim_position.0 - demon_position).normalize_or(Vec2::X);
         let step = rng.random_range(FLEE_STEP.0..FLEE_STEP.1);
         // не клампим к «безопасной» зоне: цель у самой границы — путь к спасению
-        let target = (sim_position.0 + away * step)
-            .clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);
+        let target = (sim_position.0 + away * step).clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);
 
         let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
             continue;

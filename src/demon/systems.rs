@@ -17,6 +17,8 @@ const WANDER_SPREAD: f32 = 1.3;
 /// Отступ целей блуждания от края карты, м.
 const MAP_MARGIN: f32 = 4.0;
 
+/// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены
+/// сброшенный спавнер выпускает залп заново без отдельного кода.
 pub fn spawn_initial_burst(mut commands: Commands, mut spawner: ResMut<DemonSpawner>) {
     if spawner.initial_burst_done {
         return;

@@ -66,7 +66,11 @@ impl Navmesh {
             }
             result.push((
                 IVec2::new(nx, ny),
-                if is_diagonal { COST_DIAGONAL } else { COST_STRAIGHT },
+                if is_diagonal {
+                    COST_DIAGONAL
+                } else {
+                    COST_STRAIGHT
+                },
             ));
         }
         result

@@ -37,17 +37,17 @@ impl Plugin for DevPlugin {
             FrameTimeDiagnosticsPlugin::default(),
             LogDiagnosticsPlugin::default(),
         ))
-            .register_type::<TakeScreenshotEvent>()
-            .register_type::<SpawnTestWalkerEvent>()
-            .register_type::<TestWalker>()
-            .add_observer(on_take_screenshot)
-            .add_observer(on_spawn_test_walker)
-            .add_systems(
-                Update,
-                trigger_screenshot.run_if(bevy::input::common_conditions::input_just_pressed(
-                    KeyCode::F12,
-                )),
-            );
+        .register_type::<TakeScreenshotEvent>()
+        .register_type::<SpawnTestWalkerEvent>()
+        .register_type::<TestWalker>()
+        .add_observer(on_take_screenshot)
+        .add_observer(on_spawn_test_walker)
+        .add_systems(
+            Update,
+            trigger_screenshot.run_if(bevy::input::common_conditions::input_just_pressed(
+                KeyCode::F12,
+            )),
+        );
     }
 }
 

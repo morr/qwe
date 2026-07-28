@@ -7,6 +7,7 @@ pub mod map;
 pub mod movement;
 pub mod navigation;
 pub mod portal;
+pub mod restart;
 pub mod settings;
 pub mod spatial;
 pub mod telemetry;

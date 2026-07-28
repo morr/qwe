@@ -3,8 +3,7 @@ use bevy::tasks::futures::check_ready;
 
 use crate::grid::{tile_center, world_to_tile};
 use crate::movement::components::{
-    Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition,
-    SimPosition,
+    Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition, SimPosition,
 };
 use crate::settings::unit_z;
 
@@ -119,20 +118,20 @@ pub fn listen_for_pathfinding_tasks(
         if path.len() == 1 {
             movable.to_idle(entity, &mut commands, true);
         } else {
-            movable.to_moving(end_tile, path.into_iter().skip(1).collect(), entity, &mut commands);
+            movable.to_moving(
+                end_tile,
+                path.into_iter().skip(1).collect(),
+                entity,
+                &mut commands,
+            );
         }
     }
 }
 
-/// Отрисовка путей движущихся сущностей; переключается клавишей P.
-#[derive(Resource)]
+/// Отрисовка путей движущихся сущностей; в финальной сцене выключена,
+/// переключается клавишей P.
+#[derive(Resource, Default)]
 pub struct DrawMovePaths(pub bool);
-
-impl Default for DrawMovePaths {
-    fn default() -> Self {
-        Self(true)
-    }
-}
 
 pub fn toggle_draw_move_paths(mut draw: ResMut<DrawMovePaths>) {
     draw.0 = !draw.0;

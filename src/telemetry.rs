@@ -15,6 +15,7 @@ pub struct TelemetryPlugin;
 
 impl Plugin for TelemetryPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Telemetry>().init_resource::<Telemetry>();
+        app.register_type::<Telemetry>()
+            .init_resource::<Telemetry>();
     }
 }

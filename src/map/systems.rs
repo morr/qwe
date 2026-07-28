@@ -4,9 +4,7 @@ use crate::map::data::{
     self, Building, BuildingKind, PARK_PLAZA, PARK_PLAZA_RADIUS, POND_CENTER, POND_RADII, Road,
     RoadKind,
 };
-use crate::settings::{
-    MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD, Z_TREE,
-};
+use crate::settings::{MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD, Z_TREE};
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
@@ -22,7 +20,14 @@ pub fn spawn_map(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    spawn_rect(&mut commands, Vec2::ZERO, MAP_SIZE, GROUND_COLOR, Z_GROUND, "ground");
+    spawn_rect(
+        &mut commands,
+        Vec2::ZERO,
+        MAP_SIZE,
+        GROUND_COLOR,
+        Z_GROUND,
+        "ground",
+    );
 
     for (min, size) in data::PARK_RECTS {
         spawn_rect(&mut commands, *min, *size, PARK_COLOR, Z_PARK, "park");

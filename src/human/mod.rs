@@ -4,10 +4,11 @@ mod systems;
 
 use bevy::prelude::*;
 
+use self::behavior::{escape, flee, panic};
 pub use self::components::{
     CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause,
 };
-use self::behavior::{escape, flee, panic};
+pub use self::systems::spawn_population;
 use self::systems::{pick_wander_targets, spawn_humans};
 use crate::spatial::SimSet;
 

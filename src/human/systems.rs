@@ -14,8 +14,12 @@ use crate::settings::{
 const MAP_MARGIN: f32 = 4.0;
 
 pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>) {
+    spawn_population(&mut commands, &arc_navmesh.read());
+}
+
+/// Спавн населения; вызывается на старте и при рестарте сцены.
+pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Navmesh) {
     let mut rng = rand::rng();
-    let navmesh = arc_navmesh.read();
 
     for _ in 0..HUMAN_COUNT {
         let tile = loop {
@@ -36,10 +40,8 @@ pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>) {
             rng.random_range(0.35..0.65),
         );
         // рассинхронизация первых прогулок, чтобы не было залпа запросов пути
-        let pause = Timer::from_seconds(
-            rng.random_range(0.0..HUMAN_WANDER_PAUSE.1),
-            TimerMode::Once,
-        );
+        let pause =
+            Timer::from_seconds(rng.random_range(0.0..HUMAN_WANDER_PAUSE.1), TimerMode::Once);
 
         commands.spawn((
             Sprite {
@@ -103,7 +105,9 @@ pub fn pick_wander_targets(
 
         // следующая пауза — уже после прибытия
         let next_pause = rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1);
-        pause.0.set_duration(std::time::Duration::from_secs_f32(next_pause));
+        pause
+            .0
+            .set_duration(std::time::Duration::from_secs_f32(next_pause));
         pause.0.reset();
     }
 }

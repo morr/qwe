@@ -4,11 +4,11 @@ mod systems;
 
 use bevy::prelude::*;
 
+use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human};
 pub use self::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonSpawner, DemonWanderTag, DevourUntil,
 };
-use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human};
 use self::systems::{pick_wander_targets, spawn_initial_burst, tick_spawner};
 use crate::spatial::SimSet;
 
@@ -25,8 +25,7 @@ impl Plugin for DemonPlugin {
             .register_type::<DevourUntil>()
             .init_resource::<DemonSpawner>()
             .add_observer(on_demon_caught_human)
-            .add_systems(Startup, spawn_initial_burst)
-            .add_systems(FixedUpdate, tick_spawner)
+            .add_systems(FixedUpdate, (spawn_initial_burst, tick_spawner).chain())
             .add_systems(
                 FixedUpdate,
                 (acquire_targets, chase, devour)

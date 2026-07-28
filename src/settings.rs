@@ -20,8 +20,8 @@ pub const PORTAL_POS: Vec2 = Vec2::new(620.0, 380.0);
 pub const PORTAL_DIAMETER: f32 = 9.0;
 
 // --- Люди ---
-/// Цель — 5000 [Q5]; старт с 1000, поднимается на этапе 6 после замеров.
-pub const HUMAN_COUNT: usize = 1000;
+/// Цель — 5000 при 60 fps [Q5].
+pub const HUMAN_COUNT: usize = 5000;
 pub const HUMAN_SIZE: f32 = 0.5;
 pub const HUMAN_WALK_SPEED: f32 = 1.4;
 pub const HUMAN_FLEE_SPEED: f32 = 4.0;

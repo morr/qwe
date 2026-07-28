@@ -10,8 +10,7 @@ use crate::demon::components::{
 use crate::grid::world_to_tile;
 use crate::human::{CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
 use crate::movement::{
-    Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition,
-    SimPosition,
+    Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition, SimPosition,
 };
 use crate::navigation::{ArcNavmesh, find_passable_tile_near};
 use crate::settings::{
@@ -36,10 +35,11 @@ pub fn acquire_targets(
         if let Ok(mut movable) = movables.get_mut(entity) {
             movable.speed = DEMON_CHASE_SPEED;
         }
-        commands
-            .entity(entity)
-            .remove::<DemonWanderTag>()
-            .insert((DemonChaseTag, ChaseTarget(human), ChaseRepath::default()));
+        commands.entity(entity).remove::<DemonWanderTag>().insert((
+            DemonChaseTag,
+            ChaseTarget(human),
+            ChaseRepath::default(),
+        ));
         debug!("demon {entity} Wander => Chase {human}");
     }
 }
@@ -188,7 +188,10 @@ pub fn on_demon_caught_human(
             DemonDevourTag,
             DevourUntil(Timer::from_seconds(pause, TimerMode::Once)),
         ));
-    debug!("demon {demon} Chase => Devour (killed {human}, total {})", telemetry.killed);
+    debug!(
+        "demon {demon} Chase => Devour (killed {human}, total {})",
+        telemetry.killed
+    );
 }
 
 /// Devour → Wander по истечении паузы.

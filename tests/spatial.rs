@@ -44,15 +44,15 @@ fn nearest_across_cell_boundary() {
 fn nothing_outside_radius() {
     let mut grid = SpatialGrid::<Demon>::default();
     grid.rebuild([(entity(1), Vec2::new(100.0, 100.0))].into_iter());
-    assert!(grid.nearest_in_range(Vec2::new(300.0, 100.0), 60.0).is_none());
+    assert!(
+        grid.nearest_in_range(Vec2::new(300.0, 100.0), 60.0)
+            .is_none()
+    );
 }
 
 #[test]
 fn positions_outside_map_are_clamped() {
     let mut grid = SpatialGrid::<Demon>::default();
     grid.rebuild([(entity(1), Vec2::new(-5.0, 950.0))].into_iter());
-    assert!(
-        grid.nearest_in_range(Vec2::new(0.0, 899.0), 60.0)
-            .is_some()
-    );
+    assert!(grid.nearest_in_range(Vec2::new(0.0, 899.0), 60.0).is_some());
 }
