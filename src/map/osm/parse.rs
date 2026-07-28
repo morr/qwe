@@ -4,8 +4,8 @@
 use bevy::math::Vec2;
 
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine, point_in_area, point_in_polygon,
-    ring_area, ring_bounds,
+    AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine, distance_to_segment, point_in_area,
+    point_in_polygon, ring_area, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::settings::MAP_SIZE;
@@ -39,7 +39,7 @@ pub fn parse(json: &str) -> Result<MapData, String> {
         eprintln!("osm parse: {skipped_open_rings} unclosed relation rings skipped");
     }
 
-    plant_trees(&mut map);
+    map.trees = plant_trees(&map);
     Ok(map)
 }
 
@@ -237,9 +237,54 @@ fn assemble_rings(
     rings
 }
 
+/// Зазор дерева до зданий и кромок дорог, м.
+const TREE_CLEARANCE: f32 = 1.5;
+
 /// Деревья: детерминированный LCG по геометрии парка, плотность ∝ площади,
-/// rejection-sampling внутри полигона, только в границах карты.
-fn plant_trees(map: &mut MapData) {
+/// rejection-sampling внутри полигона, только в границах карты и не на
+/// зданиях/дорогах (парковые аллеи — тоже дороги).
+fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
+    // AABB-прекомпьют, чтобы не гонять point-in-polygon по всем 3к зданий
+    let building_bounds: Vec<(Vec2, Vec2)> = map
+        .buildings
+        .iter()
+        .map(|building| {
+            let (min, max) = ring_bounds(&building.outer);
+            (min - TREE_CLEARANCE, max + TREE_CLEARANCE)
+        })
+        .collect();
+    let road_bounds: Vec<(Vec2, Vec2)> = map
+        .roads
+        .iter()
+        .map(|road| {
+            let (min, max) = ring_bounds(&road.points);
+            let pad = road.width / 2.0 + TREE_CLEARANCE;
+            (min - pad, max + pad)
+        })
+        .collect();
+
+    let in_bbox = |pos: Vec2, min: Vec2, max: Vec2| {
+        pos.x >= min.x && pos.x <= max.x && pos.y >= min.y && pos.y <= max.y
+    };
+    let blocked = |pos: Vec2| {
+        map.buildings
+            .iter()
+            .zip(&building_bounds)
+            .any(|(building, &(min, max))| in_bbox(pos, min, max) && point_in_area(pos, building))
+            || map
+                .roads
+                .iter()
+                .zip(&road_bounds)
+                .any(|(road, &(min, max))| {
+                    in_bbox(pos, min, max)
+                        && road.points.windows(2).any(|segment| {
+                            distance_to_segment(pos, segment[0], segment[1])
+                                <= road.width / 2.0 + TREE_CLEARANCE
+                        })
+                })
+    };
+
+    let mut trees = Vec::new();
     for park in &map.parks {
         let area = ring_area(&park.outer);
         let count = ((area / TREE_AREA_PER_TREE) as usize).max(3);
@@ -260,7 +305,7 @@ fn plant_trees(map: &mut MapData) {
         };
 
         let mut planted = 0;
-        // лимит попыток — страховка от вырожденных полигонов
+        // лимит попыток — страховка от вырожденных/застроенных полигонов
         let mut attempts = count * 30;
         while planted < count && attempts > 0 {
             attempts -= 1;
@@ -271,11 +316,15 @@ fn plant_trees(map: &mut MapData) {
             if pos.x < 0.0 || pos.y < 0.0 || pos.x > MAP_SIZE.x || pos.y > MAP_SIZE.y {
                 continue;
             }
+            if blocked(pos) {
+                continue;
+            }
             let radius = 2.5 + next() * 1.5;
-            map.trees.push((pos, radius));
+            trees.push((pos, radius));
             planted += 1;
         }
     }
+    trees
 }
 
 #[cfg(test)]
