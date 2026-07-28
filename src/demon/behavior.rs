@@ -171,7 +171,7 @@ pub fn on_demon_caught_human(
         .insert(CorpseTag);
     if let Ok((mut sprite, mut transform)) = sprites.get_mut(human) {
         sprite.color = Color::srgb(0.35, 0.16, 0.14);
-        sprite.custom_size = Some(Vec2::new(0.8, 0.4));
+        sprite.custom_size = Some(Vec2::new(1.6, 0.8));
         transform.translation.z = Z_CORPSE;
     }
     telemetry.killed += 1;

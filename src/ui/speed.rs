@@ -35,7 +35,7 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>) {
             row_gap: px(3.),
             // фиксированная ширина: количество цифр в счётчиках меняется
             // каждый кадр, и авто-ширина заставляла панель дёргаться
-            width: px(300.),
+            width: px(340.),
             padding: UiRect {
                 top: px(10.),
                 right: px(16.),

@@ -24,9 +24,11 @@ pub const PORTAL_DIAMETER: f32 = 9.0;
 // --- Люди ---
 /// 20000 на карте центра Тулы (изначальная цель MVP была 5000 [Q5]).
 pub const HUMAN_COUNT: usize = 20000;
-pub const HUMAN_SIZE: f32 = 0.5;
-pub const HUMAN_WALK_SPEED: f32 = 1.4;
-pub const HUMAN_FLEE_SPEED: f32 = 4.0;
+/// Визуальный габарит ×2 против реального (0.5 м) — иначе слишком мелко.
+pub const HUMAN_SIZE: f32 = 1.0;
+/// Скорости ×2 против реализма — так живее.
+pub const HUMAN_WALK_SPEED: f32 = 2.8;
+pub const HUMAN_FLEE_SPEED: f32 = 8.0;
 /// Радиус, в котором человек замечает демона и паникует.
 pub const HUMAN_PANIC_RADIUS: f32 = 60.0;
 /// Блуждание: случайная точка в 20–40 м, затем пауза 2–10 сек.
@@ -34,9 +36,11 @@ pub const HUMAN_WANDER_RANGE: (f32, f32) = (20.0, 40.0);
 pub const HUMAN_WANDER_PAUSE: (f32, f32) = (2.0, 10.0);
 
 // --- Демоны ---
-pub const DEMON_SIZE: f32 = 1.0;
-pub const DEMON_WANDER_SPEED: f32 = 2.0;
-pub const DEMON_CHASE_SPEED: f32 = 4.8;
+/// Визуальный габарит ×2 против фигуры-заглушки 1 × 1 м.
+pub const DEMON_SIZE: f32 = 2.0;
+pub const DEMON_WANDER_SPEED: f32 = 4.0;
+/// Погоня: +35% к скорости убегающего человека.
+pub const DEMON_CHASE_SPEED: f32 = HUMAN_FLEE_SPEED * 1.35;
 /// Радиус агро демона.
 pub const DEMON_AGGRO_RADIUS: f32 = 45.0;
 /// Пауза «пожирания» после убийства, сек.
