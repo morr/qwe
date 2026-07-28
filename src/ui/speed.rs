@@ -7,6 +7,7 @@ use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin};
 use bevy::prelude::*;
 
 use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED};
+use crate::sim_time::SimSpeed;
 use crate::ui::{UiOpacity, ui_color};
 
 #[derive(Component, Default)]
@@ -24,7 +25,7 @@ impl Plugin for UiSpeedPlugin {
     }
 }
 
-fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>) {
+fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>, speed: Res<SimSpeed>) {
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -48,7 +49,7 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>) {
         Name::new("speed_ui"),
         children![
             (
-                Text(format_speed_text(&time)),
+                Text(format_speed_text(&time, &speed)),
                 TextFont {
                     font_size: FontSize::Px(20.),
                     ..default()
@@ -69,8 +70,13 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>) {
     ));
 }
 
-fn update_speed_text(text: Single<&mut Text, With<SpeedTextMarker>>, time: Res<Time<Virtual>>) {
-    text.into_inner().set_if_neq(Text(format_speed_text(&time)));
+fn update_speed_text(
+    text: Single<&mut Text, With<SpeedTextMarker>>,
+    time: Res<Time<Virtual>>,
+    speed: Res<SimSpeed>,
+) {
+    text.into_inner()
+        .set_if_neq(Text(format_speed_text(&time, &speed)));
 }
 
 /// Строка pathfinding-диагностики: в полёте, среднее время поиска, сущности.
@@ -101,10 +107,16 @@ fn update_pathfinding_text(
     )));
 }
 
-fn format_speed_text(time: &Time<Virtual>) -> String {
+/// «Speed: 15x» — идём как просили; «Speed: 15x → 9.8x» — машина не тянет,
+/// время замедлено автоматически (см. `sim_time::throttle_speed_to_fps`).
+fn format_speed_text(time: &Time<Virtual>, speed: &SimSpeed) -> String {
+    let requested = format!("{}x", speed.requested);
     if time.is_paused() {
-        format!("Paused ({}x)", time.relative_speed())
+        return format!("Paused ({requested})");
+    }
+    if speed.is_throttled() {
+        format!("Speed: {requested} → {:.1}x", speed.effective)
     } else {
-        format!("Speed: {}x", time.relative_speed())
+        format!("Speed: {requested}")
     }
 }

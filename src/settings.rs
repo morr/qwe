@@ -66,6 +66,15 @@ pub const DEMON_CAP: usize = 100;
 /// Гистерезис выхода из погони/паники: множитель радиуса.
 pub const RADIUS_HYSTERESIS: f32 = 1.5;
 
+// --- Скорость симуляции ---
+/// Сколько виртуального времени отдаётся `FixedUpdate` за один кадр
+/// (`Time<Virtual>::max_delta`, дефолт Bevy). Из него выведен потолок скорости:
+/// `S ≤ fps × MAX_FRAME_DELTA`, при 60 fps — 15x.
+pub const MAX_FRAME_DELTA: f32 = 0.25;
+/// Доля разрыва до целевой скорости, закрываемая за кадр (экспоненциальное
+/// сглаживание регулятора).
+pub const SPEED_SETTLE_RATE: f32 = 0.05;
+
 // --- Z-слои (см. y-сортировку юнитов) ---
 pub const Z_GROUND: f32 = 0.0;
 pub const Z_PARK: f32 = 0.5;

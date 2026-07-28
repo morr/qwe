@@ -181,8 +181,23 @@ in `main.rs`.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / movepath buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities.
-- **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder. Speeds above ~10×
-  saturate the CPU with FixedUpdate ticks; fast-forward at 5–10×.
+- **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder.
+  - **SimSpeed** — `{requested, effective}`. `requested` is what the ladder says;
+    `effective` is what actually reaches `Time<Virtual>` after **fps throttling**.
+  - **Speed ceiling** — Bevy hands `FixedUpdate` at most `Time<Virtual>::max_delta`
+    (`MAX_FRAME_DELTA` = 0.25 s, pinned explicitly at startup) of virtual time per frame,
+    so a speed of S is only real if `S ≤ fps × MAX_FRAME_DELTA` — 15 at 60 fps, 10 at
+    40 fps. Above the ceiling the ticks pile into frames, `Update` (path dispatcher,
+    input, UI) starves, and humans that finish a route just stand there.
+    `throttle_speed_to_fps` closes the loop on measured fps and eases `effective` toward
+    the ceiling (`SPEED_SETTLE_RATE`); it never throttles below 1×. The panel shows
+    `Speed: 15x → 8.6x` when limited.
+  - Set the requested speed over BRP with `res set SimSpeed .requested N` — `brp speed`
+    writes `Time<Virtual>` directly and the throttle overwrites it on the next frame.
+  - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): `panic`
+    ~1.8 ms ≫ `spatial` ~0.7 ms > `move` ~0.16 ms ≈ `flee` ~0.14 ms ≫ `chase` ~0.01 ms.
+    `panic` scans every wandering human against the demon grid every tick — that single
+    system is what sets the speed ceiling.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
@@ -211,5 +226,6 @@ in `main.rs`.
   `src/movement/`.
 - State machines: `src/demon/behavior.rs`, `src/human/behavior.rs`.
 - Tests: `tests/navigation.rs` (synthetic navmesh + hand-built `MapData`),
-  `tests/spatial.rs`, unit tests inside `map/osm/*` and `map/meshing.rs` (projection,
-  ring assembly, tree determinism, earcut).
+  `tests/spatial.rs`, `tests/movement.rs` (fixed-step walk over several waypoints,
+  step length independent of `time_scale`, `Transform` interpolation), unit tests inside
+  `map/osm/*` and `map/meshing.rs` (projection, ring assembly, tree determinism, earcut).
