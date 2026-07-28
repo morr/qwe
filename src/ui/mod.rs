@@ -1,0 +1,34 @@
+//! Игровой UI (порт идиом из `zxc/src/ui`): панель скорости симуляции и
+//! дебаг-тумблеры. Обычные `bevy_ui`-ноды + первопартийный
+//! `bevy_ui_widgets::Button`.
+
+mod debug;
+mod speed;
+
+use bevy::prelude::*;
+
+pub use self::debug::{DebugGrid, DebugNavmesh};
+
+pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
+
+const UI_COLOR: Color = Color::srgb(0.094, 0.102, 0.11);
+
+pub enum UiOpacity {
+    Light,
+    Heavy,
+}
+
+pub fn ui_color(opacity: UiOpacity) -> Color {
+    UI_COLOR.with_alpha(match opacity {
+        UiOpacity::Light => 0.25,
+        UiOpacity::Heavy => 0.85,
+    })
+}
+
+pub struct UiPlugin;
+
+impl Plugin for UiPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((speed::UiSpeedPlugin, debug::UiDebugTogglesPlugin));
+    }
+}

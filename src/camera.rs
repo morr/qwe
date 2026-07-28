@@ -34,6 +34,9 @@ fn spawn_camera(mut commands: Commands) {
             min_zoom: MIN_ZOOM,
             max_zoom: MAX_ZOOM,
             zoom_speed: 0.05,
+            // `=`/`-` отданы скорости симуляции (sim_time); зум — колесом
+            key_zoom_in: None,
+            key_zoom_out: None,
             pan_speed: 600.0,
             // без поворота камеры
             rotation_speed: 0.0,

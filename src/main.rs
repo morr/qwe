@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, demon, dev, human, map, movement, navigation, portal, restart, spatial, telemetry,
+    camera, demon, dev, human, map, movement, navigation, portal, restart, sim_time, spatial,
+    telemetry, ui,
 };
 
 fn main() {
@@ -42,6 +43,8 @@ fn main() {
             demon::DemonPlugin,
             human::HumanPlugin,
             restart::RestartPlugin,
+            sim_time::SimTimePlugin,
+            ui::UiPlugin,
             dev::DevPlugin,
         ))
         .add_systems(

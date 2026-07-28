@@ -9,5 +9,7 @@ pub mod navigation;
 pub mod portal;
 pub mod restart;
 pub mod settings;
+pub mod sim_time;
 pub mod spatial;
 pub mod telemetry;
+pub mod ui;
