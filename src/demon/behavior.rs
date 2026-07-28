@@ -13,9 +13,10 @@ use crate::movement::{
     Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
     PreviousSimPosition, SimPosition,
 };
-use crate::navigation::{Pathfinder, find_passable_tile_near};
+use crate::navigation::{Pathfinder, find_passable_tile_near, line_of_sight};
 use crate::settings::{
-    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_SPEED, KILL_DISTANCE, RADIUS_HYSTERESIS, Z_CORPSE,
+    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_RANGE, DEMON_SPEED, KILL_DISTANCE,
+    RADIUS_HYSTERESIS, Z_CORPSE,
 };
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
@@ -70,7 +71,11 @@ pub fn acquire_targets(
 /// Chase: догоняем цель; цель умерла/сбежала/далеко — обратно в Wander;
 /// догнали — `DemonCaughtHumanEvent`. Если цель делим с другим демоном, в
 /// такт перепрокладки пробуем переключиться на никем не занятого человека
-/// не дальше ×1.5 текущей дистанции.
+/// не дальше ×1.5 текущей дистанции. Вблизи — бросок напрямую (см.
+/// `DEMON_LUNGE_RANGE`).
+///
+/// `Without<Human>` в фильтре обязателен: обе выборки трогают `SimPosition`,
+/// и без него планировщик видит конфликт доступа.
 pub fn chase(
     mut commands: Commands,
     time: Res<Time>,
@@ -79,12 +84,12 @@ pub fn chase(
     mut query: Query<
         (
             Entity,
-            &SimPosition,
+            &mut SimPosition,
             &mut ChaseTarget,
             &mut ChaseRepath,
             &mut Movable,
         ),
-        (With<Demon>, With<DemonChaseTag>),
+        (With<Demon>, With<DemonChaseTag>, Without<Human>),
     >,
     targets: Query<&SimPosition, With<Human>>,
 ) {
@@ -99,7 +104,7 @@ pub fn chase(
         *chasers.entry(chase_target.0).or_insert(0) += 1;
     }
 
-    for (entity, sim_position, mut chase_target, mut repath, mut movable) in &mut query {
+    for (entity, mut sim_position, mut chase_target, mut repath, mut movable) in &mut query {
         // цель умерла (труп/despawn) — снова блуждание
         let Ok(target_position) = targets.get(chase_target.0) else {
             back_to_wander(&mut commands, entity, &mut movable);
@@ -126,6 +131,24 @@ pub fn chase(
                 demon: entity,
                 human: chase_target.0,
             });
+            continue;
+        }
+
+        // Финальный бросок. Тайловый путь ведёт к ЦЕНТРУ тайла жертвы, а та
+        // внутри тайла продолжает двигаться: остаток до полутора метров
+        // тайловой навигацией не покрывается, и демон бесконечно «почти
+        // догоняет». Вблизи идём прямо на текущую позицию цели — но только
+        // при прямой видимости: жертва, скрывшаяся за углом здания, снова
+        // догоняется обычным путём, сквозь стены бросок не проходит.
+        if distance <= DEMON_LUNGE_RANGE && line_of_sight(&navmesh, sim_position.0, target_pos) {
+            // путь больше не нужен: дальше демона ведёт бросок, а не
+            // `move_moving_entities`
+            if !matches!(movable.state, MovableState::Idle) {
+                movable.to_idle(entity, &mut commands, false);
+            }
+            let step = (movable.speed * time.delta_secs()).min(distance);
+            let lunge = (target_pos - sim_position.0).normalize_or_zero() * step;
+            sim_position.0 += lunge;
             continue;
         }
 

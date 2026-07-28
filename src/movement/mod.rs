@@ -10,6 +10,8 @@ pub use self::components::{
     PathfindingRequest, PathfindingTask, PreviousSimPosition, SimPosition,
 };
 pub use self::systems::DrawMovePaths;
+use crate::spatial::SimSet;
+
 use self::systems::{
     dispatch_pathfinding_requests, draw_move_paths, interpolate_movable_transforms,
     listen_for_pathfinding_tasks, move_moving_entities, on_movable_added_init_sim_position,
@@ -42,9 +44,15 @@ impl Plugin for MovementPlugin {
             // Симуляция движения — фиксированным шагом, визуальный `Transform` —
             // интерполяцией после цикла фиксированных шагов (идиома из
             // `examples/movement/physics_in_fixed_timestep.rs`).
+            // Порядок внутри шага явный: снимок «прошлой» позиции — до того,
+            // как её тронет поведение (демон в броске двигает `SimPosition`
+            // сам), а шаг по пути — после всего поведения.
             .add_systems(
                 FixedUpdate,
-                (snapshot_previous_sim_positions, move_moving_entities).chain(),
+                (
+                    snapshot_previous_sim_positions.before(SimSet::SpatialRebuild),
+                    move_moving_entities.after(SimSet::HumanBehavior),
+                ),
             )
             .add_systems(
                 RunFixedMainLoop,

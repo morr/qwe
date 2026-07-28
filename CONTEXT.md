@@ -131,7 +131,11 @@ in `main.rs`.
   lands before `escape` — a human is never counted both killed and escaped in one tick.
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems mutate
-  `SimPosition`, never `Transform.translation.xy` directly.
+  `SimPosition`, never `Transform.translation.xy` directly. Fixed-step order is explicit:
+  `snapshot_previous_sim_positions` **before** `SimSet::SpatialRebuild`,
+  `move_moving_entities` **after** `SimSet::HumanBehavior` — behavior may move
+  `SimPosition` itself (demon lunge), and a snapshot taken after that would flatten one
+  tick of interpolation.
 - **Movable** — `{speed, path: VecDeque<IVec2>, state}`;
   `MovableState: Idle | Pathfinding(goal) | Moving(goal) | PathfindingError`.
   `to_pathfinding` spawns the async A* task.
@@ -153,6 +157,12 @@ in `main.rs`.
   **Chase** → **Devour** → Wander. Chase claims: **max 2 chasers per target**
   (`ChaserCounts`); a demon sharing a target opportunistically **switches** to an
   unclaimed human no farther than ×1.5 its current distance. Repath throttle 0.4 s.
+  **Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with `line_of_sight` to the victim,
+  the demon drops its path and steps `SimPosition` straight at the target. Without it a
+  chase never converts: a tile path aims at the *center* of the victim's tile while the
+  victim keeps moving inside it, so the last ~1.4 m — more than `KILL_DISTANCE` — is
+  never closed and the demon "almost catches" forever. The line-of-sight check is what
+  keeps the lunge from cutting through a building when the victim rounds a corner.
   Kill at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); `killed_this_tick`
   HashSet dedupes double kills within one command flush. **Devour** — pause 1.5–2 s with
   a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on exit.
