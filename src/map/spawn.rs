@@ -1,0 +1,144 @@
+//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, вода,
+//! аллеи, улицы, фасады, крыши, стены) + деревья отдельными сущностями.
+
+use bevy::prelude::*;
+
+use crate::map::meshing::MeshBuilder;
+use crate::map::osm::{AreaKind, MapData, RoadClass};
+use crate::settings::{MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD, Z_TREE};
+
+const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
+const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
+const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
+const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
+const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
+
+const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
+const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
+const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
+const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
+const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
+
+/// Высота тёмной полосы фасада — «псевдо-3D» низ здания.
+const FACADE_HEIGHT: f32 = 3.0;
+/// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу.
+const Z_FACADE: f32 = Z_BUILDING - 0.1;
+/// Стены Кремля поверх зданий.
+const Z_WALL: f32 = Z_BUILDING + 0.1;
+
+pub fn spawn_map(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    map: Res<MapData>,
+) {
+    commands.spawn((
+        Sprite {
+            color: GROUND_COLOR,
+            custom_size: Some(MAP_SIZE),
+            ..default()
+        },
+        Transform::from_translation((MAP_SIZE / 2.0).extend(Z_GROUND)),
+        Name::new("ground"),
+    ));
+
+    // вершинные цвета — материал один, белый
+    let material = materials.add(Color::WHITE);
+
+    let mut parks = MeshBuilder::default();
+    for park in &map.parks {
+        parks.push_polygon(&park.outer, &park.holes, PARK_COLOR.to_linear());
+    }
+
+    let mut water = MeshBuilder::default();
+    for area in &map.water {
+        water.push_polygon(&area.outer, &area.holes, WATER_COLOR.to_linear());
+    }
+
+    let mut alleys = MeshBuilder::default();
+    let mut roads = MeshBuilder::default();
+    for road in &map.roads {
+        let (builder, color) = match road.class {
+            RoadClass::Street => (&mut roads, ROAD_COLOR),
+            RoadClass::Alley => (&mut alleys, ALLEY_COLOR),
+        };
+        builder.push_polyline(&road.points, road.width, color.to_linear());
+    }
+
+    let mut facades = MeshBuilder::default();
+    let mut roofs = MeshBuilder::default();
+    for (index, building) in map.buildings.iter().enumerate() {
+        let (roof_base, facade_color) = match building.kind {
+            AreaKind::Kremlin => (KREMLIN_ROOF_COLOR, KREMLIN_FACADE_COLOR),
+            _ => (ROOF_COLOR, FACADE_COLOR),
+        };
+        // лёгкая вариация тона крыш, чтобы кварталы не сливались
+        let tint = 1.0 - (index % 3) as f32 * 0.025;
+        let roof_color = LinearRgba::from(roof_base.to_srgba() * tint);
+
+        // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
+        // только вдоль южных граней любого полигона
+        let offset = Vec2::new(0.0, -FACADE_HEIGHT);
+        let facade_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + offset).collect();
+        let facade_holes: Vec<Vec<Vec2>> = building
+            .holes
+            .iter()
+            .map(|hole| hole.iter().map(|p| *p + offset).collect())
+            .collect();
+        facades.push_polygon(&facade_outer, &facade_holes, facade_color.to_linear());
+        roofs.push_polygon(&building.outer, &building.holes, roof_color);
+    }
+
+    let mut walls = MeshBuilder::default();
+    for wall in &map.walls {
+        walls.push_polyline(&wall.points, wall.width, WALL_COLOR.to_linear());
+    }
+
+    let skipped: usize = [&parks, &water, &facades, &roofs]
+        .iter()
+        .map(|builder| builder.skipped_polygons())
+        .sum();
+    if skipped > 0 {
+        warn!("map meshing: {skipped} degenerate polygons skipped");
+    }
+
+    for (builder, z, name) in [
+        (parks, Z_PARK, "parks"),
+        (water, Z_POND, "water"),
+        (alleys, Z_ALLEY, "alleys"),
+        (roads, Z_ROAD, "roads"),
+        (facades, Z_FACADE, "building_facades"),
+        (roofs, Z_BUILDING, "building_roofs"),
+        (walls, Z_WALL, "walls"),
+    ] {
+        if builder.is_empty() {
+            continue;
+        }
+        commands.spawn((
+            Mesh2d(meshes.add(builder.build())),
+            MeshMaterial2d(material.clone()),
+            Transform::from_xyz(0.0, 0.0, z),
+            Name::new(name),
+        ));
+    }
+
+    // Деревья: несколько общих мешей/материалов на все кроны
+    let tree_mesh = meshes.add(Circle::new(1.0));
+    let tree_materials: Vec<Handle<ColorMaterial>> = [
+        Color::srgb(0.435, 0.682, 0.333),
+        Color::srgb(0.478, 0.722, 0.369),
+        Color::srgb(0.392, 0.633, 0.302),
+    ]
+    .into_iter()
+    .map(|color| materials.add(color))
+    .collect();
+
+    for (index, &(position, radius)) in map.trees.iter().enumerate() {
+        commands.spawn((
+            Mesh2d(tree_mesh.clone()),
+            MeshMaterial2d(tree_materials[index % tree_materials.len()].clone()),
+            Transform::from_translation(position.extend(Z_TREE)).with_scale(Vec3::splat(radius)),
+            Name::new("tree"),
+        ));
+    }
+}

@@ -1,6 +1,6 @@
-pub mod data;
+mod meshing;
 pub mod osm;
-mod systems;
+mod spawn;
 
 use bevy::prelude::*;
 
@@ -12,7 +12,7 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             OnEnter(AppState::Playing),
-            systems::spawn_map.in_set(WorldInitSet::Spawn),
+            spawn::spawn_map.in_set(WorldInitSet::Spawn),
         );
     }
 }
