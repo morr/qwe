@@ -1,4 +1,4 @@
-use bevy::app::AppExit;
+use bevy::app::{AppExit, TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
@@ -13,6 +13,20 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.72, 0.71, 0.68)))
         .add_plugins(
             DefaultPlugins
+                // A*-таскам по умолчанию достаётся 25% ядер (максимум 4) —
+                // на высоких скоростях симуляции этого мало
+                .set(TaskPoolPlugin {
+                    task_pool_options: TaskPoolOptions {
+                        async_compute: TaskPoolThreadAssignmentPolicy {
+                            min_threads: 2,
+                            max_threads: 8,
+                            percent: 0.5,
+                            on_thread_spawn: None,
+                            on_thread_destroy: None,
+                        },
+                        ..default()
+                    },
+                })
                 .set(ImagePlugin::default_nearest())
                 .set(WindowPlugin {
                     primary_window: Some(Window {
