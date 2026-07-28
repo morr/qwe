@@ -4,7 +4,7 @@ mod systems;
 
 use bevy::prelude::*;
 
-use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human};
+use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
 pub use self::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonSpawner, DemonWanderTag, DevourUntil,
@@ -32,6 +32,6 @@ impl Plugin for DemonPlugin {
                     .chain()
                     .in_set(SimSet::DemonBehavior),
             )
-            .add_systems(Update, pick_wander_targets);
+            .add_systems(Update, (pick_wander_targets, pulse_devouring));
     }
 }

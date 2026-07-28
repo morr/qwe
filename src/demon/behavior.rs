@@ -255,18 +255,40 @@ pub fn on_demon_caught_human(
 pub fn devour(
     mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut DevourUntil, &mut Movable), (With<Demon>, With<DemonDevourTag>)>,
+    mut query: Query<
+        (Entity, &mut DevourUntil, &mut Movable, &mut Transform),
+        (With<Demon>, With<DemonDevourTag>),
+    >,
 ) {
-    for (entity, mut devour_until, mut movable) in &mut query {
+    for (entity, mut devour_until, mut movable, mut transform) in &mut query {
         devour_until.0.tick(time.delta());
         if !devour_until.0.is_finished() {
             continue;
         }
+        transform.scale = Vec3::ONE;
         movable.speed = DEMON_WANDER_SPEED;
         commands
             .entity(entity)
             .remove::<(DemonDevourTag, DevourUntil)>()
             .insert(DemonWanderTag);
         debug!("demon {entity} Devour => Wander");
+    }
+}
+
+/// Период пульсации пожирающего демона, сек.
+const DEVOUR_PULSE_PERIOD: f32 = 0.5;
+/// Амплитуда пульсации: от ×1 до ×1.5 размера.
+const DEVOUR_PULSE_MAX_SCALE: f32 = 1.5;
+
+/// Пожирающий демон пульсирует: размер ходит по синусоиде ×1 → ×1.5 → ×1.
+pub fn pulse_devouring(
+    mut query: Query<(&DevourUntil, &mut Transform), (With<Demon>, With<DemonDevourTag>)>,
+) {
+    use std::f32::consts::TAU;
+
+    for (devour_until, mut transform) in &mut query {
+        let phase = devour_until.0.elapsed_secs() / DEVOUR_PULSE_PERIOD * TAU;
+        let scale = 1.0 + (DEVOUR_PULSE_MAX_SCALE - 1.0) * 0.5 * (1.0 - phase.cos());
+        transform.scale = Vec3::splat(scale);
     }
 }
