@@ -22,3 +22,6 @@ target
 
 # dev screenshot helper output (src/dev.rs)
 screenshot.png
+
+# cached OpenStreetMap extract, downloaded at first app start
+assets/osm/
