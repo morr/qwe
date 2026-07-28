@@ -21,6 +21,25 @@ pub const PATHFINDING_QUEUED: DiagnosticPath = DiagnosticPath::const_new("pathfi
 pub const PATHFINDING_DURATION_MS: DiagnosticPath =
     DiagnosticPath::const_new("pathfinding/duration_ms");
 
+/// Длительность систем симуляции, мс на один тик `FixedUpdate`. На высоких
+/// скоростях тиков в секунду становится в разы больше (64 × time_scale), и
+/// главный поток упирается именно в эту сумму — без разреза по системам
+/// «тормозит на 15x» не диагностируется.
+pub const SIM_SPATIAL_MS: DiagnosticPath = DiagnosticPath::const_new("sim/spatial_ms");
+pub const SIM_PANIC_MS: DiagnosticPath = DiagnosticPath::const_new("sim/panic_ms");
+pub const SIM_FLEE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/flee_ms");
+pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms");
+pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms");
+
+/// Записать длительность системы, начавшейся в `started`.
+pub fn measure_ms(
+    diagnostics: &mut Diagnostics,
+    path: &DiagnosticPath,
+    started: std::time::Instant,
+) {
+    diagnostics.add_measurement(path, || started.elapsed().as_secs_f64() * 1000.0);
+}
+
 pub struct GameDiagnosticsPlugin;
 
 impl Plugin for GameDiagnosticsPlugin {
@@ -36,6 +55,11 @@ impl Plugin for GameDiagnosticsPlugin {
                 .with_max_history_length(1),
         )
         .register_diagnostic(Diagnostic::new(PATHFINDING_DURATION_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_SPATIAL_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_PANIC_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_FLEE_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
         .add_plugins(EntityCountDiagnosticsPlugin::default())
         .add_systems(Update, measure_pathfinding_in_flight);
     }

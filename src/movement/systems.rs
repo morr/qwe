@@ -126,9 +126,11 @@ pub fn snapshot_previous_sim_positions(mut query: Query<(&mut PreviousSimPositio
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.
 pub fn move_moving_entities(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     mut query: Query<(Entity, &mut Movable, &mut SimPosition), With<MovableStateMovingTag>>,
     time: Res<Time>,
 ) {
+    let started = std::time::Instant::now();
     for (entity, mut movable, mut sim_position) in &mut query {
         if !matches!(movable.state, MovableState::Moving(_)) {
             continue;
@@ -164,6 +166,7 @@ pub fn move_moving_entities(
             }
         }
     }
+    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
 }
 
 /// Визуальная позиция: лерп между прошлым и текущим фиксированным шагом,

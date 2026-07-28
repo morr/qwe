@@ -33,10 +33,12 @@ fn personal_spread(entity: Entity) -> f32 {
 /// Wander → Flee: демон в радиусе паники.
 pub fn panic(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     demons: Res<SpatialGrid<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Human>, With<HumanWanderTag>)>,
     mut movables: Query<&mut Movable>,
 ) {
+    let started = std::time::Instant::now();
     for (entity, sim_position) in &query {
         if demons
             .nearest_in_range(sim_position.0, HUMAN_PANIC_RADIUS)
@@ -59,12 +61,14 @@ pub fn panic(
             .remove::<HumanWanderTag>()
             .insert((HumanFleeTag, repath));
     }
+    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_PANIC_MS, started);
 }
 
 /// Flee: бег от ближайшего демона с троттлингом перепрокладки;
 /// демоны отстали (×1.5 радиуса) — успокаивается.
 pub fn flee(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
     pathfinder: Pathfinder,
     demons: Res<SpatialGrid<Demon>>,
@@ -80,6 +84,7 @@ pub fn flee(
         (With<Human>, With<HumanFleeTag>),
     >,
 ) {
+    let started = std::time::Instant::now();
     let navmesh = pathfinder.navmesh.read();
     let mut rng = rand::rng();
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
@@ -132,6 +137,7 @@ pub fn flee(
             &mut commands,
         );
     }
+    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_FLEE_MS, started);
 }
 
 /// Паникующий пересёк границу карты — «спасся», despawn [Q12].

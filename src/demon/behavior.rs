@@ -78,6 +78,7 @@ pub fn acquire_targets(
 /// и без него планировщик видит конфликт доступа.
 pub fn chase(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
     pathfinder: Pathfinder,
     humans: Res<SpatialGrid<Human>>,
@@ -93,6 +94,7 @@ pub fn chase(
     >,
     targets: Query<&SimPosition, With<Human>>,
 ) {
+    let started = std::time::Instant::now();
     let navmesh = pathfinder.navmesh.read();
     // один труп — одно убийство: дедупликация внутри тика, пока команды
     // (снятие `Human`) ещё не применились
@@ -205,6 +207,7 @@ pub fn chase(
             &mut commands,
         );
     }
+    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_CHASE_MS, started);
 }
 
 fn back_to_wander(commands: &mut Commands, entity: Entity, movable: &mut Movable) {

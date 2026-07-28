@@ -26,7 +26,10 @@ impl Plugin for MovementPlugin {
             .register_type::<MovableStateMovingTag>()
             .register_type::<SimPosition>()
             .register_type::<PreviousSimPosition>()
-            .init_resource::<DrawMovePaths>();
+            .init_resource::<DrawMovePaths>()
+            // системы плагина пишут диагностику; без стора их параметры
+            // не валидируются и шаг движения молча не выполняется
+            .init_resource::<bevy::diagnostic::DiagnosticsStore>();
 
         app.register_type::<PathfindingRequest>();
         app.add_observer(on_movable_added_init_sim_position)
@@ -49,10 +52,14 @@ impl Plugin for MovementPlugin {
             // сам), а шаг по пути — после всего поведения.
             .add_systems(
                 FixedUpdate,
+                // `.chain()` обязателен и сам по себе: привязки к `SimSet`
+                // ничего не упорядочивают, когда эти множества пусты (плагин
+                // движения используется отдельно в тестах)
                 (
                     snapshot_previous_sim_positions.before(SimSet::SpatialRebuild),
                     move_moving_entities.after(SimSet::HumanBehavior),
-                ),
+                )
+                    .chain(),
             )
             .add_systems(
                 RunFixedMainLoop,

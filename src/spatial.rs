@@ -130,8 +130,15 @@ fn rebuild_demon_grid(
 /// Сетка людей: только живые (у трупов поведенческие компоненты сняты,
 /// `SimPosition` остаётся — фильтруем по `Human`, который снимается со смертью).
 fn rebuild_human_grid(
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     mut grid: ResMut<SpatialGrid<Human>>,
     query: Query<(Entity, &SimPosition), With<Human>>,
 ) {
+    let started = std::time::Instant::now();
     grid.rebuild(query.iter().map(|(entity, pos)| (entity, pos.0)));
+    crate::diagnostics::measure_ms(
+        &mut diagnostics,
+        &crate::diagnostics::SIM_SPATIAL_MS,
+        started,
+    );
 }
