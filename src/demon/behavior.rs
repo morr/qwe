@@ -14,8 +14,7 @@ use crate::movement::{
 };
 use crate::navigation::{ArcNavmesh, find_passable_tile_near};
 use crate::settings::{
-    DEMON_AGGRO_RADIUS, DEMON_CHASE_SPEED, DEMON_DEVOUR_PAUSE, DEMON_WANDER_SPEED, KILL_DISTANCE,
-    RADIUS_HYSTERESIS, Z_CORPSE,
+    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_SPEED, KILL_DISTANCE, RADIUS_HYSTERESIS, Z_CORPSE,
 };
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
@@ -56,7 +55,7 @@ pub fn acquire_targets(
         *chasers.entry(human).or_insert(0) += 1;
 
         if let Ok(mut movable) = movables.get_mut(entity) {
-            movable.speed = DEMON_CHASE_SPEED;
+            movable.speed = DEMON_SPEED;
         }
         commands.entity(entity).remove::<DemonWanderTag>().insert((
             DemonChaseTag,
@@ -186,7 +185,7 @@ pub fn chase(
 }
 
 fn back_to_wander(commands: &mut Commands, entity: Entity, movable: &mut Movable) {
-    movable.speed = DEMON_WANDER_SPEED;
+    movable.speed = DEMON_SPEED;
     commands
         .entity(entity)
         .remove::<(DemonChaseTag, ChaseTarget, ChaseRepath)>()
@@ -266,7 +265,7 @@ pub fn devour(
             continue;
         }
         transform.scale = Vec3::ONE;
-        movable.speed = DEMON_WANDER_SPEED;
+        movable.speed = DEMON_SPEED;
         commands
             .entity(entity)
             .remove::<(DemonDevourTag, DevourUntil)>()

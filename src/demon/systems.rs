@@ -6,8 +6,8 @@ use crate::grid::world_to_tile;
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, find_passable_tile_near};
 use crate::settings::{
-    DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_WANDER_SPEED, MAP_SIZE, PORTAL_DIAMETER,
-    PORTAL_POS, unit_z,
+    DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, PORTAL_POS,
+    unit_z,
 };
 
 /// Блуждание: дистанция до следующей случайной точки, м.
@@ -61,7 +61,7 @@ fn spawn_demon(commands: &mut Commands, angle: f32, index: usize) {
         Transform::from_translation(position.extend(unit_z(position.y))),
         Demon,
         DemonWanderTag,
-        Movable::new(DEMON_WANDER_SPEED),
+        Movable::new(DEMON_SPEED),
         Name::new("demon"),
     ));
 }

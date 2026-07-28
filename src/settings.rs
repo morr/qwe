@@ -38,9 +38,9 @@ pub const HUMAN_WANDER_PAUSE: (f32, f32) = (2.0, 10.0);
 // --- Демоны ---
 /// Визуальный габарит ×2 против фигуры-заглушки 1 × 1 м.
 pub const DEMON_SIZE: f32 = 2.0;
-pub const DEMON_WANDER_SPEED: f32 = 4.0;
-/// Погоня: +35% к скорости убегающего человека.
-pub const DEMON_CHASE_SPEED: f32 = HUMAN_FLEE_SPEED * 1.35;
+/// Единая скорость демона: всегда +35% к скорости убегающего человека,
+/// и в блуждании, и в погоне.
+pub const DEMON_SPEED: f32 = HUMAN_FLEE_SPEED * 1.35;
 /// Радиус агро демона.
 pub const DEMON_AGGRO_RADIUS: f32 = 45.0;
 /// Пауза «пожирания» после убийства, сек.
