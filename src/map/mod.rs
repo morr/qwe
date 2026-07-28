@@ -1,4 +1,5 @@
 pub mod data;
+pub mod osm;
 mod systems;
 
 use bevy::prelude::*;
