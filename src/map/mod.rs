@@ -1,6 +1,7 @@
 mod meshing;
 pub mod osm;
 mod spawn;
+mod trees;
 
 pub use self::meshing::MeshBuilder;
 

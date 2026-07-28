@@ -90,6 +90,16 @@ pub const Z_BUILDING: f32 = 5.0;
 pub const Z_UNIT_BASE: f32 = 10.0;
 pub const Y_SORT_FACTOR: f32 = 0.002;
 pub const Z_TREE: f32 = 20.0;
+/// Тени крон — под самими кронами, но выше юнитов (юнит в тени затемняется).
+pub const Z_TREE_SHADOW: f32 = 19.0;
+
+// --- Деревья (кроны в стиле Watabou, см. TREE_ALGO.md) ---
+/// Сколько уникальных геометрий крон переиспользуется на все деревья.
+pub const TREE_VARIANTS: usize = 12;
+/// Толщина чернильного контура кроны, доля радиуса (у watabou ~1/6 радиуса).
+pub const TREE_OUTLINE_STROKE: f32 = 0.16;
+/// Толщина внутренних пунктирных дуг, доля радиуса.
+pub const TREE_DETAIL_STROKE: f32 = 0.08;
 
 /// Z юнита по его мировой y-координате.
 pub fn unit_z(y: f32) -> f32 {

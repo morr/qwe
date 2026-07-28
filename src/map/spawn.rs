@@ -5,7 +5,8 @@ use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, RoadClass};
-use crate::settings::{MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD, Z_TREE};
+use crate::map::trees;
+use crate::settings::{MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD};
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
@@ -122,23 +123,5 @@ pub fn spawn_map(
         ));
     }
 
-    // Деревья: несколько общих мешей/материалов на все кроны
-    let tree_mesh = meshes.add(Circle::new(1.0));
-    let tree_materials: Vec<Handle<ColorMaterial>> = [
-        Color::srgb(0.435, 0.682, 0.333),
-        Color::srgb(0.478, 0.722, 0.369),
-        Color::srgb(0.392, 0.633, 0.302),
-    ]
-    .into_iter()
-    .map(|color| materials.add(color))
-    .collect();
-
-    for (index, &(position, radius)) in map.trees.iter().enumerate() {
-        commands.spawn((
-            Mesh2d(tree_mesh.clone()),
-            MeshMaterial2d(tree_materials[index % tree_materials.len()].clone()),
-            Transform::from_translation(position.extend(Z_TREE)).with_scale(Vec3::splat(radius)),
-            Name::new("tree"),
-        ));
-    }
+    trees::spawn_trees(&mut commands, &mut meshes, &mut materials, &map.trees);
 }

@@ -74,7 +74,15 @@ in `main.rs`.
   emits per-vertex colors over a single white `ColorMaterial`. ~2800 buildings cost ~7
   entities. **Facade** — pseudo-3D: the footprint polygon shifted (0, −3) in a darker
   color at z just below the roof, visible only along south edges. Trees stay individual
-  entities (shared circle mesh, 3 materials).
+  entities (see tree crowns below).
+- **Tree crowns** (`map/trees.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
+  procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
+  outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the
+  light, and a **long shadow** — the crown silhouette stretched ×1.4 along the 30°
+  shadow axis on `Z_TREE_SHADOW`. `TREE_VARIANTS` unit-radius mesh pairs (crown+shadow)
+  are reused across all trees; per tree — variant, quantized brightness tint (material
+  multiplies vertex colors, so ink stays ink) and radius as `Transform::scale`.
+  Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
 
 ## Navigation
 
