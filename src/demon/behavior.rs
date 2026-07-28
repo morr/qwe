@@ -12,7 +12,7 @@ use crate::human::{CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, W
 use crate::movement::{
     Movable, MovableState, MovableStateMovingTag, PathfindingTask, PreviousSimPosition, SimPosition,
 };
-use crate::navigation::{ArcNavmesh, find_passable_tile_near};
+use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
 use crate::settings::{
     DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_SPEED, KILL_DISTANCE, RADIUS_HYSTERESIS, Z_CORPSE,
 };
@@ -74,6 +74,7 @@ pub fn chase(
     mut commands: Commands,
     time: Res<Time>,
     arc_navmesh: Res<ArcNavmesh>,
+    algorithm: Res<PathfindingAlgorithm>,
     humans: Res<SpatialGrid<Human>>,
     mut query: Query<
         (
@@ -179,6 +180,7 @@ pub fn chase(
             world_to_tile(sim_position.0),
             goal_tile,
             &arc_navmesh,
+            *algorithm,
             &mut commands,
         );
     }

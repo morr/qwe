@@ -55,6 +55,7 @@ fn on_spawn_test_walker(
     event: On<SpawnTestWalkerEvent>,
     mut commands: Commands,
     arc_navmesh: Res<ArcNavmesh>,
+    algorithm: Res<crate::navigation::PathfindingAlgorithm>,
 ) {
     let mut movable = Movable::new(4.0);
     let entity = commands
@@ -74,6 +75,7 @@ fn on_spawn_test_walker(
         world_to_tile(event.from),
         world_to_tile(event.to),
         &arc_navmesh,
+        *algorithm,
         &mut commands,
     );
     commands.entity(entity).insert(movable);

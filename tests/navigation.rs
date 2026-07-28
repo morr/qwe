@@ -5,7 +5,11 @@ use bevy::math::{IVec2, Vec2};
 
 use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use qwe::navigation::{Navmesh, astar_pathfinding};
+use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path};
+
+fn astar_pathfinding(navmesh: &Navmesh, start: IVec2, end: IVec2) -> Option<Vec<IVec2>> {
+    find_path(navmesh, start, end, PathfindingAlgorithm::Astar)
+}
 use qwe::settings::GRID_SIZE;
 
 /// Navmesh с одним прямоугольным препятствием (в тайлах, включительно).
@@ -76,6 +80,41 @@ fn astar_does_not_cut_corners() {
                 "diagonal step cuts corner at {:?} -> {:?}",
                 pair[0],
                 pair[1]
+            );
+        }
+    }
+}
+
+/// Каждый алгоритм обходит препятствие валидным путём с теми же концами.
+#[test]
+fn every_algorithm_finds_valid_path_around_building() {
+    let navmesh = navmesh_with_block(IVec2::new(100, 100), IVec2::new(110, 110));
+    let start = IVec2::new(105, 95);
+    let end = IVec2::new(105, 115);
+
+    for algorithm in [
+        PathfindingAlgorithm::Astar,
+        PathfindingAlgorithm::Dijkstra,
+        PathfindingAlgorithm::Fringe,
+        PathfindingAlgorithm::Bfs,
+    ] {
+        let path = find_path(&navmesh, start, end, algorithm)
+            .unwrap_or_else(|| panic!("{algorithm:?} should find a path"));
+        assert_eq!(*path.first().unwrap(), start, "{algorithm:?}");
+        assert_eq!(*path.last().unwrap(), end, "{algorithm:?}");
+        for pair in path.windows(2) {
+            let step = (pair[1] - pair[0]).abs();
+            assert!(
+                step.max_element() <= 1,
+                "{algorithm:?} makes a non-adjacent step {:?} -> {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        for tile in &path {
+            assert!(
+                navmesh.is_passable(tile.x, tile.y),
+                "{algorithm:?} path goes through impassable tile {tile:?}"
             );
         }
     }

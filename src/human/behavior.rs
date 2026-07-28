@@ -7,7 +7,7 @@ use crate::demon::{ChaseTarget, Demon};
 use crate::grid::world_to_tile;
 use crate::human::components::{FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, find_passable_tile_near};
+use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
@@ -67,6 +67,7 @@ pub fn flee(
     mut commands: Commands,
     time: Res<Time>,
     arc_navmesh: Res<ArcNavmesh>,
+    algorithm: Res<PathfindingAlgorithm>,
     demons: Res<SpatialGrid<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     mut query: Query<
@@ -130,6 +131,7 @@ pub fn flee(
             world_to_tile(sim_position.0),
             target_tile,
             &arc_navmesh,
+            *algorithm,
             &mut commands,
         );
     }

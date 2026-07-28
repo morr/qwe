@@ -15,7 +15,7 @@ use bevy::prelude::*;
 
 use crate::grid::tile_center;
 use crate::movement::DrawMovePaths;
-use crate::navigation::ArcNavmesh;
+use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
 use crate::ui::{UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
 
@@ -35,6 +35,10 @@ enum DebugToggleButton {
 
 #[derive(Component)]
 struct NavmeshOverlayMarker;
+
+/// Подпись на кнопке-переключателе алгоритма поиска пути.
+#[derive(Component)]
+struct PathfindingMethodLabel;
 
 const TOGGLE_ACTIVE_COLOR: Color = Color::srgba(0.16, 0.5, 0.2, 0.9);
 /// Насколько светлее становится кнопка под курсором и при нажатии.
@@ -57,6 +61,7 @@ impl Plugin for UiDebugTogglesPlugin {
                     update_toggle_buttons,
                     render_grid.run_if(|grid: Res<DebugGrid>| grid.0),
                     sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
+                    sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                 ),
             );
     }
@@ -107,6 +112,50 @@ fn render_debug_toggles(mut commands: Commands) {
             movepaths.0 = !movepaths.0;
         },
     );
+
+    // переключатель алгоритма поиска пути — клик листает по циклу
+    let method_button = commands
+        .spawn((
+            Button,
+            Pickable::default(),
+            Hovered::default(),
+            Node {
+                padding: UiRect {
+                    top: px(4.),
+                    right: px(8.),
+                    bottom: px(4.),
+                    left: px(8.),
+                },
+                ..default()
+            },
+            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            children![(
+                PathfindingMethodLabel,
+                Text::new(PathfindingAlgorithm::default().label()),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            )],
+        ))
+        .observe(
+            |_activate: On<Activate>, mut algorithm: ResMut<PathfindingAlgorithm>| {
+                *algorithm = algorithm.next();
+            },
+        )
+        .id();
+    commands.entity(row).add_child(method_button);
+}
+
+/// Актуализация подписи при смене алгоритма (кнопкой или через BRP).
+fn sync_pathfinding_method_label(
+    algorithm: Res<PathfindingAlgorithm>,
+    mut labels: Query<&mut Text, With<PathfindingMethodLabel>>,
+) {
+    for mut text in &mut labels {
+        text.0 = algorithm.label().to_string();
+    }
 }
 
 fn spawn_toggle<M>(

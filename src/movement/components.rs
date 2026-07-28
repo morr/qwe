@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use bevy::prelude::*;
 use bevy::tasks::Task;
 
-use crate::navigation::{ArcNavmesh, PathfindingResult, astar_pathfinding};
+use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, PathfindingResult, find_path};
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Reflect)]
 pub enum MovableState {
@@ -98,6 +98,7 @@ impl Movable {
         start_tile: IVec2,
         end_tile: IVec2,
         arc_navmesh: &ArcNavmesh,
+        algorithm: PathfindingAlgorithm,
         commands: &mut Commands,
     ) {
         self.stop_moving(entity, commands);
@@ -111,7 +112,7 @@ impl Movable {
             PathfindingResult {
                 start_tile,
                 end_tile,
-                path: astar_pathfinding(&navmesh, start_tile, end_tile),
+                path: find_path(&navmesh, start_tile, end_tile, algorithm),
                 duration: started_at.elapsed(),
             }
         });

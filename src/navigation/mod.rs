@@ -3,7 +3,7 @@ mod navmesh;
 
 use bevy::prelude::*;
 
-pub use self::astar::astar_pathfinding;
+pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, WorldInitSet};
@@ -45,12 +45,15 @@ pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ArcNavmesh>().add_systems(
-            OnEnter(AppState::Playing),
-            (fill_navmesh, snap_portal, prune_unreachable)
-                .chain()
-                .in_set(WorldInitSet::Navmesh),
-        );
+        app.init_resource::<ArcNavmesh>()
+            .register_type::<PathfindingAlgorithm>()
+            .init_resource::<PathfindingAlgorithm>()
+            .add_systems(
+                OnEnter(AppState::Playing),
+                (fill_navmesh, snap_portal, prune_unreachable)
+                    .chain()
+                    .in_set(WorldInitSet::Navmesh),
+            );
     }
 }
 

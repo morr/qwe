@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::grid::{tile_center, world_to_tile};
 use crate::human::components::{Human, HumanWanderTag, WanderPause};
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, find_passable_tile_near};
+use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
 use crate::settings::{
     GRID_SIZE, HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_RANGE,
     MAP_SIZE, unit_z,
@@ -65,6 +65,7 @@ pub fn pick_wander_targets(
     mut commands: Commands,
     time: Res<Time>,
     arc_navmesh: Res<ArcNavmesh>,
+    algorithm: Res<PathfindingAlgorithm>,
     mut query: Query<
         (Entity, &SimPosition, &mut Movable, &mut WanderPause),
         (With<Human>, With<HumanWanderTag>),
@@ -100,6 +101,7 @@ pub fn pick_wander_targets(
             world_to_tile(sim_position.0),
             target_tile,
             &arc_navmesh,
+            *algorithm,
             &mut commands,
         );
 

@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::demon::components::{Demon, DemonSpawner, DemonWanderTag};
 use crate::grid::world_to_tile;
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, find_passable_tile_near};
+use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
 use crate::portal::PortalPos;
 use crate::settings::{
     DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, unit_z,
@@ -81,6 +81,7 @@ fn spawn_demon(commands: &mut Commands, portal_pos: Vec2, angle: f32, index: usi
 pub fn pick_wander_targets(
     mut commands: Commands,
     arc_navmesh: Res<ArcNavmesh>,
+    algorithm: Res<PathfindingAlgorithm>,
     portal_pos: Res<PortalPos>,
     mut query: Query<(Entity, &SimPosition, &mut Movable), (With<Demon>, With<DemonWanderTag>)>,
 ) {
@@ -113,6 +114,7 @@ pub fn pick_wander_targets(
             world_to_tile(sim_position.0),
             target_tile,
             &arc_navmesh,
+            *algorithm,
             &mut commands,
         );
     }
