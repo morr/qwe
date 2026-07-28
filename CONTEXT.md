@@ -109,6 +109,13 @@ in `main.rs`.
   (512). The speed panel shows in-flight / queued / avg ms.
 - **find_passable_tile_near** — the target tile or its 8 neighbors only; callers must
   tolerate `None`.
+- **pathfinding_bench** (`examples/pathfinding_bench.rs`) — offline comparison of all six
+  algorithms without booting Bevy: reads the OSM cache, rebuilds the navmesh exactly as
+  `WorldInitSet::Navmesh` does (fill → `snap_portal_position` → prune), generates one
+  seeded task list mirroring human wander (80% random building, 20% short stroll) and
+  replays that *same* list per algorithm across a shared atomic work cursor. Reports
+  wall / cpu / avg / p50 / p95 / max and mean path length. Run it after touching
+  `successors`, costs, or the navmesh fill.
 - **PortalPos** (resource) — actual portal position. `PORTAL_POS` in settings is only a
   **hint**; `snap_portal` spirals out to the nearest tile with clearance derived from
   `PORTAL_DIAMETER`. Runs before `prune_unreachable` (the flood starts from the snapped
