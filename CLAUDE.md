@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Required Reading
+
+**`CONTEXT.md` — load it before touching any domain or simulation code.** It is the
+domain glossary: what a navtile, flee fan, chase claim, bridge corridor, or prune pass
+*is*, which invariants hold (fill order, z-ranges, SimSet ordering, telemetry math), and
+where each concept lives. Use its terms verbatim in code, commits, and test names.
+When a change introduces or retires a domain concept, update `CONTEXT.md` in the same
+change — a stale glossary is worse than none.
+
+This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
+
 ## Skills
 
 Skills hold the detail; this file holds the map. Load them — don't reconstruct their content from here.
@@ -16,7 +27,11 @@ All three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's co
 
 ## Project Overview
 
-QWE is a 2D app built with **Bevy 0.19** (Rust, edition 2024), using Bevy's ECS with a plugin-based modular design.
+QWE is a 2D demon-invasion simulation prototype built with **Bevy 0.19** (Rust, edition
+2024): the Tula city center generated from OpenStreetMap data, 20 000 wandering humans,
+demons spawning from a portal. ECS with a plugin-based modular design; the simulation
+runs in `FixedUpdate`, the world spawns in `OnEnter(AppState::Playing)` after the OSM
+map loads. Full domain picture — `CONTEXT.md`.
 
 ## Reference Points
 
@@ -76,6 +91,9 @@ cargo test test_name --verbose
 
 `dynamic_linking` is already enabled in `Cargo.toml` — never pass `--features bevy/dynamic_linking`.
 
+First `cargo run` downloads the OSM extract from Overpass into `assets/osm/` (gitignored
+cache); subsequent runs are offline. Deleting the cache file forces a re-download.
+
 ## Verification After Each Task
 
 After completing any task, run these in parallel:
@@ -88,24 +106,47 @@ cargo clippy -- -D warnings
 RUSTFMT=~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustfmt cargo fmt -- src/changed_file.rs
 ```
 
-## Cargo Features
+For changes that only manifest at runtime (behavior, rendering, UI), verify in the live
+app too — the `live-app` skill (BRP counts, telemetry, `TakeScreenshotEvent`) is the
+tool for that, not guessing from code.
+
+## Cargo Features & Dependencies
 
 `bevy` is pulled in with `default-features = false` — only `2d`, `ui`, `dynamic_linking`,
-`bevy_dev_tools`, `bevy_remote`. There is no 3d stack and no audio; adding a feature that
-needs them means editing `Cargo.toml` deliberately, not by accident.
+`bevy_dev_tools`, `bevy_remote`, `bevy_camera_controller`, `pan_camera`, `default_font`.
+There is no 3d stack and no audio; adding a feature that needs them means editing
+`Cargo.toml` deliberately, not by accident.
+
+Current third-party crates and why they exist:
+
+- `pathfinding` — A* over the navmesh grid
+- `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)
+- `serde` / `serde_json` — Overpass JSON parsing
+- `ureq` 3 — blocking HTTPS download of the OSM extract (rustls + gzip by default)
+- `earcutr` — polygon triangulation (with holes) for merged map meshes
+
+Before adding anything else, check `~/develop/bevy/bevy/crates/` for a first-party
+option — 0.19 absorbed a lot of what used to need crates (e.g. first-party `PanCamera`
+covers what `bevy_pancam` did in zxc). Don't copy zxc's dependency set; it predates
+those additions.
 
 ## Code Conventions
 
-- Each feature is a Bevy plugin registered in `main.rs`; typical module layout is `mod.rs` (plugin), `components.rs`, `systems.rs`
-- State tags use `*Tag` suffix; plugins use `*Plugin` suffix
-- Event/observer handlers use `on_*` prefix
+- Each feature is a Bevy plugin registered in `main.rs`; typical module layout is
+  `mod.rs` (plugin), `components.rs`, `systems.rs`, plus `behavior.rs` for a species'
+  state machine (demon, human)
+- State tags use `*Tag` suffix; plugins use `*Plugin` suffix; event/observer handlers
+  use `on_*` prefix
+- World spawning goes in `OnEnter(AppState::Playing)` under `WorldInitSet`
+  (`Navmesh → Spawn`), never in `Startup`; per-tick simulation goes in `FixedUpdate`
+  inside a `SimSet` and is gated on `Playing`
+- Tuning constants (sizes, speeds, radii, z-layers) live in `src/settings.rs`, not
+  inline in systems
 - Clippy `type_complexity` is allowed globally; `wildcard_imports` warns
-- Formatting: block indent style, reorder imports (`.rustfmt.toml`)
-- Keyboard/mouse gates belong in the schedule as run conditions (`run_if(input_just_pressed(..))`), not as an early `return` inside the system
-
-## Third-party Crates
-
-There are none yet, and 0.19 absorbed a lot of what used to need them. Check `~/develop/bevy/bevy/crates/` for a first-party option before adding a dependency — notably `bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin}` (pan/zoom, `min_zoom`/`max_zoom`) covers what `bevy_pancam` is used for in zxc. Don't copy zxc's dependency set wholesale; it predates those additions.
+- Formatting: block indent style, reorder imports (`.rustfmt.toml`); fmt needs the
+  nightly rustfmt (see Verification)
+- Keyboard/mouse gates belong in the schedule as run conditions
+  (`run_if(input_just_pressed(..))`), not as an early `return` inside the system
 
 ## Bevy Time Types
 
