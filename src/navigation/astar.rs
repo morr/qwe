@@ -7,8 +7,10 @@ use pathfinding::directed::{astar::astar, bfs::bfs, dijkstra::dijkstra, fringe::
 
 use crate::navigation::navmesh::{COST_MULTIPLIER, Navmesh};
 
-/// Активный алгоритм поиска пути. IDA*/IDDFS из крейта не включены:
-/// на открытых сетках такого размера они практически не завершаются.
+/// Активный алгоритм поиска пути: четыре из крейта `pathfinding` плюс
+/// иерархические HPA*/Theta* из `bevy_northstar` (см. `northstar.rs`).
+/// IDA*/IDDFS не включены: на открытых сетках такого размера они
+/// практически не завершаются.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[reflect(Resource)]
 pub enum PathfindingAlgorithm {
@@ -17,6 +19,8 @@ pub enum PathfindingAlgorithm {
     Dijkstra,
     Fringe,
     Bfs,
+    Hpa,
+    ThetaStar,
 }
 
 impl PathfindingAlgorithm {
@@ -26,7 +30,9 @@ impl PathfindingAlgorithm {
             Self::Astar => Self::Dijkstra,
             Self::Dijkstra => Self::Fringe,
             Self::Fringe => Self::Bfs,
-            Self::Bfs => Self::Astar,
+            Self::Bfs => Self::Hpa,
+            Self::Hpa => Self::ThetaStar,
+            Self::ThetaStar => Self::Astar,
         }
     }
 
@@ -36,6 +42,8 @@ impl PathfindingAlgorithm {
             Self::Dijkstra => "Dijkstra",
             Self::Fringe => "Fringe",
             Self::Bfs => "BFS",
+            Self::Hpa => "HPA*",
+            Self::ThetaStar => "Theta*",
         }
     }
 }
@@ -83,5 +91,8 @@ pub fn find_path(
             },
             success,
         ),
+        // иерархические алгоритмы идут не через navmesh, а через
+        // `NorthstarGrid` — маршрутизация в `Movable::to_pathfinding`
+        PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar => None,
     }
 }

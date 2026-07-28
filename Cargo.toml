@@ -15,6 +15,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "pan_camera",
     "default_font",
 ] }
+bevy_northstar = "0.7"
 earcutr = "0.5"
 pathfinding = "4"
 rand = "0.9"

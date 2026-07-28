@@ -1,10 +1,12 @@
 mod astar;
 mod navmesh;
+mod northstar;
 
 use bevy::prelude::*;
 
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
+pub use self::northstar::{NorthstarGrid, find_path_northstar};
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::osm::MapData;
@@ -41,6 +43,15 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
     .find(|candidate| navmesh.is_passable(candidate.x, candidate.y))
 }
 
+/// Всё нужное для запуска поиска пути одним system-параметром:
+/// navmesh, иерархическая сетка и выбранный алгоритм.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Pathfinder<'w> {
+    pub navmesh: Res<'w, ArcNavmesh>,
+    pub northstar: Res<'w, NorthstarGrid>,
+    pub algorithm: Res<'w, PathfindingAlgorithm>,
+}
+
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
@@ -48,9 +59,15 @@ impl Plugin for NavigationPlugin {
         app.init_resource::<ArcNavmesh>()
             .register_type::<PathfindingAlgorithm>()
             .init_resource::<PathfindingAlgorithm>()
+            .init_resource::<NorthstarGrid>()
             .add_systems(
                 OnEnter(AppState::Playing),
-                (fill_navmesh, snap_portal, prune_unreachable)
+                (
+                    fill_navmesh,
+                    snap_portal,
+                    prune_unreachable,
+                    build_northstar_grid,
+                )
                     .chain()
                     .in_set(WorldInitSet::Navmesh),
             );
@@ -75,6 +92,15 @@ fn prune_unreachable(arc_navmesh: Res<ArcNavmesh>, portal: Res<PortalPos>) {
         "navmesh: pruned {pruned} unreachable tiles in {:?}",
         started.elapsed()
     );
+}
+
+/// Иерархическая сетка northstar строится по финальному navmesh (после
+/// прунинга), чтобы обе структуры описывали одну и ту же проходимость.
+fn build_northstar_grid(arc_navmesh: Res<ArcNavmesh>, mut grid: ResMut<NorthstarGrid>) {
+    let started = std::time::Instant::now();
+    let built = northstar::build_from_navmesh(&arc_navmesh.read());
+    grid.0 = Some(std::sync::Arc::new(built));
+    info!("northstar grid built in {:?}", started.elapsed());
 }
 
 /// Радиус, в котором вокруг кандидата на портал всё должно быть проходимо
