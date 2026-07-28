@@ -119,7 +119,9 @@ There is no 3d stack and no audio; adding a feature that needs them means editin
 
 Current third-party crates and why they exist:
 
-- `pathfinding` — A* over the navmesh grid
+- `pathfinding` — A*/Dijkstra/Fringe/BFS over the navmesh grid
+- `bevy_northstar` — hierarchical HPA*/Theta* (its `Grid` is used directly, without the
+  crate's plugin)
 - `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)
 - `serde` / `serde_json` — Overpass JSON parsing
 - `ureq` 3 — blocking HTTPS download of the OSM extract (rustls + gzip by default)
