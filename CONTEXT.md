@@ -91,9 +91,22 @@ in `main.rs`.
   A* reachability because of the no-corner-cutting rule.
 - **ArcNavmesh** — `Arc<RwLock<Navmesh>>` resource; async A* tasks read it off-thread.
   Starts empty (all passable), filled by `fill_navmesh` in `WorldInitSet::Navmesh`.
-- **A*** (`navigation/astar.rs`, `pathfinding` crate) runs on `AsyncComputeTaskPool`;
-  `PathfindingTask` components are polled with `bevy::tasks::futures::check_ready`.
-  Healthy load: tens in flight, ~0.03 ms avg (the speed panel shows both).
+- **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable resource, cycled
+  by the bottom-left button: A* / Dijkstra / Fringe / BFS (all from the `pathfinding`
+  crate over the navmesh) plus **HPA*** and **Theta*** (hierarchical, from
+  `bevy_northstar`). IDA*/IDDFS are deliberately excluded (never finish on open grids).
+- **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid` built
+  once from the final navmesh (after pruning; chunk 25, ~1.5 s build), wrapped in `Arc`,
+  called directly from async tasks — the crate's plugin is not used. Long paths cost
+  ~0.5 ms vs ~40 ms for flat A*.
+- **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
+  `Movable::to_pathfinding` only queues a `PathfindingRequest`;
+  `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
+  (polled with `check_ready`). **Visibility gating**: peacefully wandering humans
+  OUTSIDE the camera view (×1.2 margin) are never dispatched — their requests wait
+  until the camera arrives; demons and fleeing humans are always dispatched. In-frame
+  requests go nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
+  (512). The speed panel shows in-flight / queued / avg ms.
 - **find_passable_tile_near** — the target tile or its 8 neighbors only; callers must
   tolerate `None`.
 - **PortalPos** (resource) — actual portal position. `PORTAL_POS` in settings is only a
@@ -115,9 +128,10 @@ in `main.rs`.
 - **SpatialGrid<T>** — uniform grid of `(Entity, Vec2)` per marker type (`Demon`,
   `Human`), 60 m cells (≥ the largest search radius), fully rebuilt every tick.
   `nearest_in_range_where` — nearest entity passing a filter.
-- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s, then a
-  passable target 20–40 m away) ⇄ **Flee** (demon within `HUMAN_PANIC_RADIUS` 60 m;
-  repath every 0.7–1.2 s, step 40–60 m away from the nearest demon). **Flee fan** — a
+- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s; then 80%
+  head to a random building anywhere in the city — long routes, the real pathfinding
+  load — and 20% stroll 20–40 m nearby) ⇄ **Flee** (demon within `HUMAN_PANIC_RADIUS`
+  60 m; repath every 0.7–1.2 s, step 40–60 m away from the nearest demon). **Flee fan** — a
   non-chased fleeing human rotates its away-vector by a deterministic per-entity angle
   (±0.6 rad) so crowds spread instead of forming a column; actively chased humans flee
   straight. Calm-down at ×1.5 radius hysteresis. **Escape** — a fleeing human within
