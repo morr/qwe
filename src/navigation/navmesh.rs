@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use bevy::prelude::*;
 
 use crate::grid::world_to_tile;
-use crate::map::data;
+use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, point_in_area, ring_bounds};
 use crate::settings::{GRID_SIZE, NAVTILE_SIZE};
 
 /// Стоимость шага между тайлами (для A*): прямой и диагональный.
@@ -76,38 +76,50 @@ impl Navmesh {
         result
     }
 
-    /// Заполнение из данных карты: здания и пруд → непроходимые тайлы.
-    pub fn fill_from_map(&mut self) {
-        for building in data::buildings() {
-            let min_tile = world_to_tile(building.min);
-            let max_tile = world_to_tile(building.max());
-            for x in min_tile.x..=max_tile.x {
-                for y in min_tile.y..=max_tile.y {
-                    self.set_passable(x, y, false);
-                }
-            }
+    /// Заполнение из OSM-карты. Порядок важен: мосты прорезают проходимые
+    /// коридоры поверх воды (иначе Упа разрезает карту надвое), а здания и
+    /// стены блокируют уже после.
+    pub fn fill_from_mapdata(&mut self, map: &MapData) {
+        for area in &map.water {
+            self.set_area(area, false);
         }
+        for road in map.roads.iter().filter(|road| road.bridge) {
+            self.set_polyline(&road.points, road.width, true);
+        }
+        for area in &map.buildings {
+            self.set_area(area, false);
+        }
+        for wall in &map.walls {
+            self.set_polyline(&wall.points, wall.width, false);
+        }
+    }
 
-        let pond_min = world_to_tile(data::POND_CENTER - data::POND_RADII);
-        let pond_max = world_to_tile(data::POND_CENTER + data::POND_RADII);
-        for x in pond_min.x..=pond_max.x {
-            for y in pond_min.y..=pond_max.y {
+    /// Тайлы, чей центр внутри полигона (с учётом дырок).
+    fn set_area(&mut self, area: &PolyArea, value: bool) {
+        let (min, max) = ring_bounds(&area.outer);
+        let min_tile = world_to_tile(min);
+        let max_tile = world_to_tile(max);
+        for x in min_tile.x.max(0)..=max_tile.x.min(GRID_SIZE.x - 1) {
+            for y in min_tile.y.max(0)..=max_tile.y.min(GRID_SIZE.y - 1) {
                 let center = (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE;
-                if data::is_in_pond(center) {
-                    self.set_passable(x, y, false);
+                if point_in_area(center, area) {
+                    self.set_passable(x, y, value);
                 }
             }
         }
+    }
 
-        // Река: тайлы в пределах полуширины от осевой линии
-        for &(from, to, width) in data::RIVERS {
-            let bounds_min = world_to_tile(from.min(to) - width);
-            let bounds_max = world_to_tile(from.max(to) + width);
-            for x in bounds_min.x..=bounds_max.x {
-                for y in bounds_min.y..=bounds_max.y {
+    /// Тайлы в пределах полуширины от осевой полилинии.
+    fn set_polyline(&mut self, points: &[Vec2], width: f32, value: bool) {
+        for segment in points.windows(2) {
+            let (from, to) = (segment[0], segment[1]);
+            let min_tile = world_to_tile(from.min(to) - width);
+            let max_tile = world_to_tile(from.max(to) + width);
+            for x in min_tile.x.max(0)..=max_tile.x.min(GRID_SIZE.x - 1) {
+                for y in min_tile.y.max(0)..=max_tile.y.min(GRID_SIZE.y - 1) {
                     let center = (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE;
-                    if data::distance_to_segment(center, from, to) <= width / 2.0 {
-                        self.set_passable(x, y, false);
+                    if distance_to_segment(center, from, to) <= width / 2.0 {
+                        self.set_passable(x, y, value);
                     }
                 }
             }
@@ -121,9 +133,9 @@ pub struct ArcNavmesh(pub Arc<RwLock<Navmesh>>);
 
 impl Default for ArcNavmesh {
     fn default() -> Self {
-        let mut navmesh = Navmesh::default();
-        navmesh.fill_from_map();
-        Self(Arc::new(RwLock::new(navmesh)))
+        // пустой (всё проходимо); заполняется системой `fill_navmesh`,
+        // когда `MapData` загружена
+        Self(Arc::new(RwLock::new(Navmesh::default())))
     }
 }
 

@@ -1,47 +1,31 @@
-//! Юнит-тесты навигации: заполнение navmesh из данных карты и A*.
+//! Юнит-тесты навигации: A* по синтетическому navmesh и заполнение
+//! navmesh из рукотворной `MapData` (без сети).
 
-use bevy::math::IVec2;
+use bevy::math::{IVec2, Vec2};
 
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::data;
+use qwe::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use qwe::navigation::{Navmesh, astar_pathfinding};
-use qwe::settings::{GRID_SIZE, PORTAL_POS};
+use qwe::settings::GRID_SIZE;
 
-fn filled_navmesh() -> Navmesh {
+/// Navmesh с одним прямоугольным препятствием (в тайлах, включительно).
+fn navmesh_with_block(min: IVec2, max: IVec2) -> Navmesh {
     let mut navmesh = Navmesh::default();
-    navmesh.fill_from_map();
+    for x in min.x..=max.x {
+        for y in min.y..=max.y {
+            navmesh.set_passable(x, y, false);
+        }
+    }
     navmesh
 }
 
-#[test]
-fn buildings_are_impassable() {
-    let navmesh = filled_navmesh();
-    for building in data::buildings() {
-        let center_tile = world_to_tile(building.center());
-        assert!(
-            !navmesh.is_passable(center_tile.x, center_tile.y),
-            "center of building at {:?} should be impassable",
-            building.min
-        );
-    }
-}
-
-#[test]
-fn pond_is_impassable_and_park_is_passable() {
-    let navmesh = filled_navmesh();
-    let pond_tile = world_to_tile(data::POND_CENTER);
-    assert!(!navmesh.is_passable(pond_tile.x, pond_tile.y));
-
-    let plaza_tile = world_to_tile(data::PARK_PLAZA);
-    assert!(navmesh.is_passable(plaza_tile.x, plaza_tile.y));
-
-    let portal_tile = world_to_tile(PORTAL_POS);
-    assert!(navmesh.is_passable(portal_tile.x, portal_tile.y));
+fn rect_ring(min: Vec2, max: Vec2) -> Vec<Vec2> {
+    vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
 }
 
 #[test]
 fn out_of_bounds_is_impassable() {
-    let navmesh = filled_navmesh();
+    let navmesh = Navmesh::default();
     assert!(!navmesh.is_passable(-1, 0));
     assert!(!navmesh.is_passable(0, -1));
     assert!(!navmesh.is_passable(GRID_SIZE.x, 0));
@@ -50,14 +34,16 @@ fn out_of_bounds_is_impassable() {
 
 #[test]
 fn astar_finds_path_around_building() {
-    let navmesh = filled_navmesh();
-    // Первая многоэтажка: путь с юга на север здания должен его обойти
-    let building = data::SLABS[0];
-    let start = world_to_tile(building.center() - bevy::math::Vec2::new(0.0, building.size.y));
-    let end = world_to_tile(building.center() + bevy::math::Vec2::new(0.0, building.size.y));
+    let navmesh = navmesh_with_block(IVec2::new(100, 100), IVec2::new(110, 110));
+    let start = IVec2::new(105, 95);
+    let end = IVec2::new(105, 115);
 
     let path = astar_pathfinding(&navmesh, start, end).expect("path should exist");
-    assert!(path.len() > 2);
+    assert!(
+        path.len() > 20,
+        "path must detour, got {} tiles",
+        path.len()
+    );
     assert_eq!(*path.first().unwrap(), start);
     assert_eq!(*path.last().unwrap(), end);
     for tile in &path {
@@ -70,10 +56,8 @@ fn astar_finds_path_around_building() {
 
 #[test]
 fn astar_to_impassable_target_returns_none() {
-    let navmesh = filled_navmesh();
-    let target = world_to_tile(data::SLABS[0].center());
-    let start = world_to_tile(PORTAL_POS);
-    assert!(astar_pathfinding(&navmesh, start, target).is_none());
+    let navmesh = navmesh_with_block(IVec2::new(100, 100), IVec2::new(110, 110));
+    assert!(astar_pathfinding(&navmesh, IVec2::new(90, 90), IVec2::new(105, 105)).is_none());
 }
 
 #[test]
@@ -101,4 +85,63 @@ fn astar_does_not_cut_corners() {
 fn grid_roundtrip() {
     let tile = IVec2::new(123, 45);
     assert_eq!(world_to_tile(tile_center(tile)), tile);
+}
+
+/// Рукотворная карта: здание с двором-дыркой, вода с мостом, стена.
+#[test]
+fn fill_from_mapdata_blocks_and_carves() {
+    let map = MapData {
+        buildings: vec![PolyArea {
+            outer: rect_ring(Vec2::new(100.0, 100.0), Vec2::new(160.0, 160.0)),
+            holes: vec![rect_ring(Vec2::new(120.0, 120.0), Vec2::new(140.0, 140.0))],
+            kind: AreaKind::Building,
+        }],
+        water: vec![PolyArea {
+            outer: rect_ring(Vec2::new(300.0, 0.0), Vec2::new(340.0, 400.0)),
+            holes: Vec::new(),
+            kind: AreaKind::Water,
+        }],
+        parks: Vec::new(),
+        roads: vec![RoadLine {
+            points: vec![Vec2::new(280.0, 200.0), Vec2::new(360.0, 200.0)],
+            width: 8.0,
+            class: RoadClass::Street,
+            bridge: true,
+        }],
+        walls: vec![WallLine {
+            points: vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],
+            width: 3.0,
+        }],
+        trees: Vec::new(),
+    };
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    // здание непроходимо, двор-дырка — проходим
+    let building_tile = world_to_tile(Vec2::new(110.0, 110.0));
+    assert!(!navmesh.is_passable(building_tile.x, building_tile.y));
+    let courtyard_tile = world_to_tile(Vec2::new(130.0, 130.0));
+    assert!(navmesh.is_passable(courtyard_tile.x, courtyard_tile.y));
+
+    // вода непроходима, мост через неё — проходим
+    let water_tile = world_to_tile(Vec2::new(320.0, 100.0));
+    assert!(!navmesh.is_passable(water_tile.x, water_tile.y));
+    let bridge_tile = world_to_tile(Vec2::new(320.0, 200.0));
+    assert!(navmesh.is_passable(bridge_tile.x, bridge_tile.y));
+
+    // стена непроходима
+    let wall_tile = world_to_tile(Vec2::new(500.0, 150.0));
+    assert!(!navmesh.is_passable(wall_tile.x, wall_tile.y));
+
+    // и путь через реку существует и идёт по мосту
+    let path = astar_pathfinding(
+        &navmesh,
+        world_to_tile(Vec2::new(280.0, 200.0)),
+        world_to_tile(Vec2::new(360.0, 200.0)),
+    )
+    .expect("path across the bridge should exist");
+    for tile in &path {
+        assert!(navmesh.is_passable(tile.x, tile.y));
+    }
 }
