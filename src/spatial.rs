@@ -66,6 +66,17 @@ impl<T: Send + Sync + 'static> SpatialGrid<T> {
 
     /// Ближайшая сущность не дальше `radius` от `pos`.
     pub fn nearest_in_range(&self, pos: Vec2, radius: f32) -> Option<(Entity, Vec2)> {
+        self.nearest_in_range_where(pos, radius, |_| true)
+    }
+
+    /// Ближайшая сущность не дальше `radius`, проходящая фильтр
+    /// (например, «её ещё никто не преследует»).
+    pub fn nearest_in_range_where(
+        &self,
+        pos: Vec2,
+        radius: f32,
+        mut filter: impl FnMut(Entity) -> bool,
+    ) -> Option<(Entity, Vec2)> {
         let (cx, cy) = self.cell_coords(pos);
         let cell_span = (radius / CELL_SIZE).ceil() as i32;
         let mut best: Option<(Entity, Vec2)> = None;
@@ -75,7 +86,7 @@ impl<T: Send + Sync + 'static> SpatialGrid<T> {
             for y in (cy - cell_span).max(0)..=(cy + cell_span).min(self.height - 1) {
                 for &(entity, entry_pos) in &self.cells[(x * self.height + y) as usize] {
                     let distance_squared = pos.distance_squared(entry_pos);
-                    if distance_squared <= best_distance_squared {
+                    if distance_squared <= best_distance_squared && filter(entity) {
                         best_distance_squared = distance_squared;
                         best = Some((entity, entry_pos));
                     }

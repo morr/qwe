@@ -20,17 +20,40 @@ use crate::settings::{
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
-/// Wander → Chase: человек в радиусе агро.
+type ChaserCounts = bevy::platform::collections::HashMap<Entity, usize>;
+
+/// Лимит демонов на одну цель — «клещи» из двух допустимы, толпа — нет.
+const MAX_CHASERS_PER_TARGET: usize = 2;
+/// Переключение на свободного человека, если он не дальше ×1.5 текущей цели.
+const SWITCH_DISTANCE_FACTOR: f32 = 1.5;
+
+fn chasers_of(target: Entity, chasers: &ChaserCounts) -> usize {
+    chasers.get(&target).copied().unwrap_or(0)
+}
+
+/// Wander → Chase: ближайший человек в радиусе агро, у которого ещё нет
+/// `MAX_CHASERS_PER_TARGET` преследователей.
 pub fn acquire_targets(
     mut commands: Commands,
     humans: Res<SpatialGrid<Human>>,
+    chasing: Query<&ChaseTarget, With<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
     mut movables: Query<&mut Movable>,
 ) {
+    let mut chasers: ChaserCounts = ChaserCounts::default();
+    for chase_target in &chasing {
+        *chasers.entry(chase_target.0).or_insert(0) += 1;
+    }
+
     for (entity, sim_position) in &query {
-        let Some((human, _)) = humans.nearest_in_range(sim_position.0, DEMON_AGGRO_RADIUS) else {
+        let Some((human, _)) =
+            humans.nearest_in_range_where(sim_position.0, DEMON_AGGRO_RADIUS, |candidate| {
+                chasers_of(candidate, &chasers) < MAX_CHASERS_PER_TARGET
+            })
+        else {
             continue;
         };
+        *chasers.entry(human).or_insert(0) += 1;
 
         if let Ok(mut movable) = movables.get_mut(entity) {
             movable.speed = DEMON_CHASE_SPEED;
@@ -45,16 +68,19 @@ pub fn acquire_targets(
 }
 
 /// Chase: догоняем цель; цель умерла/сбежала/далеко — обратно в Wander;
-/// догнали — `DemonCaughtHumanEvent`.
+/// догнали — `DemonCaughtHumanEvent`. Если цель делим с другим демоном, в
+/// такт перепрокладки пробуем переключиться на никем не занятого человека
+/// не дальше ×1.5 текущей дистанции.
 pub fn chase(
     mut commands: Commands,
     time: Res<Time>,
     arc_navmesh: Res<ArcNavmesh>,
+    humans: Res<SpatialGrid<Human>>,
     mut query: Query<
         (
             Entity,
             &SimPosition,
-            &ChaseTarget,
+            &mut ChaseTarget,
             &mut ChaseRepath,
             &mut Movable,
         ),
@@ -68,7 +94,12 @@ pub fn chase(
     let mut killed_this_tick: bevy::platform::collections::HashSet<Entity> =
         bevy::platform::collections::HashSet::default();
 
-    for (entity, sim_position, chase_target, mut repath, mut movable) in &mut query {
+    let mut chasers: ChaserCounts = ChaserCounts::default();
+    for (_, _, chase_target, _, _) in &query {
+        *chasers.entry(chase_target.0).or_insert(0) += 1;
+    }
+
+    for (entity, sim_position, mut chase_target, mut repath, mut movable) in &mut query {
         // цель умерла (труп/despawn) — снова блуждание
         let Ok(target_position) = targets.get(chase_target.0) else {
             back_to_wander(&mut commands, entity, &mut movable);
@@ -79,10 +110,12 @@ pub fn chase(
             continue;
         }
 
-        let distance = sim_position.0.distance(target_position.0);
+        let mut target_pos = target_position.0;
+        let distance = sim_position.0.distance(target_pos);
 
         // гистерезис выхода из погони
         if distance > DEMON_AGGRO_RADIUS * RADIUS_HYSTERESIS {
+            *chasers.entry(chase_target.0).or_insert(1) -= 1;
             back_to_wander(&mut commands, entity, &mut movable);
             continue;
         }
@@ -106,7 +139,31 @@ pub fn chase(
             continue;
         }
 
-        let target_tile = world_to_tile(target_position.0);
+        // цель делится с другим демоном — предпочесть свободного человека,
+        // если тот не дальше ×1.5 текущей дистанции
+        if chasers_of(chase_target.0, &chasers) >= MAX_CHASERS_PER_TARGET {
+            let switch = humans.nearest_in_range_where(
+                sim_position.0,
+                distance * SWITCH_DISTANCE_FACTOR,
+                |candidate| {
+                    candidate != chase_target.0
+                        && !killed_this_tick.contains(&candidate)
+                        && chasers_of(candidate, &chasers) == 0
+                },
+            );
+            if let Some((new_target, new_pos)) = switch {
+                *chasers.entry(chase_target.0).or_insert(1) -= 1;
+                *chasers.entry(new_target).or_insert(0) += 1;
+                debug!(
+                    "demon {entity} switches chase {} => {new_target}",
+                    chase_target.0
+                );
+                chase_target.0 = new_target;
+                target_pos = new_pos;
+            }
+        }
+
+        let target_tile = world_to_tile(target_pos);
         let current_goal = match movable.state {
             MovableState::Moving(goal) | MovableState::Pathfinding(goal) => Some(goal),
             _ => None,
