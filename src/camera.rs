@@ -9,7 +9,7 @@ use crate::settings::PORTAL_POS;
 /// 0.0625 (= 1/16) — «крупный план», нативный пиксель ассетов (16 px = 1 м);
 /// ~1.0 — вся карта (1200 м) в кадре при окне 1280.
 const MIN_ZOOM: f32 = 0.05;
-const MAX_ZOOM: f32 = 1.1;
+const MAX_ZOOM: f32 = 2.1;
 const START_ZOOM: f32 = 0.4;
 /// Множитель зума на один щелчок колеса.
 const ZOOM_STEP: f32 = 1.12;
@@ -86,7 +86,8 @@ fn zoom_to_cursor(
     };
 
     let old_zoom = controller.zoom_factor;
-    let new_zoom = (old_zoom * ZOOM_STEP.powf(-lines)).clamp(controller.min_zoom, controller.max_zoom);
+    let new_zoom =
+        (old_zoom * ZOOM_STEP.powf(-lines)).clamp(controller.min_zoom, controller.max_zoom);
     if new_zoom == old_zoom {
         return;
     }

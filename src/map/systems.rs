@@ -53,6 +53,21 @@ pub fn spawn_map(
         spawn_road(&mut commands, road);
     }
 
+    // Река Упа — полосы воды поверх земли, под дорогами
+    for &(from, to, width) in data::RIVERS {
+        let delta = to - from;
+        commands.spawn((
+            Sprite {
+                color: POND_COLOR,
+                custom_size: Some(Vec2::new(delta.length() + width, width)),
+                ..default()
+            },
+            Transform::from_translation(((from + to) / 2.0).extend(Z_POND))
+                .with_rotation(Quat::from_rotation_z(delta.to_angle())),
+            Name::new("river"),
+        ));
+    }
+
     for (index, building) in data::buildings().iter().enumerate() {
         spawn_building(&mut commands, building, index);
     }
@@ -120,6 +135,10 @@ fn spawn_building(commands: &mut Commands, building: &Building, index: usize) {
         BuildingKind::House => (
             Color::srgb(0.894, 0.839, 0.722),
             Color::srgb(0.612, 0.557, 0.463),
+        ),
+        BuildingKind::Kremlin => (
+            Color::srgb(0.639, 0.286, 0.235),
+            Color::srgb(0.42, 0.18, 0.15),
         ),
     };
     // лёгкая вариация тона крыш, чтобы кварталы не сливались

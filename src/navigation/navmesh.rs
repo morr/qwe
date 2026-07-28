@@ -98,6 +98,20 @@ impl Navmesh {
                 }
             }
         }
+
+        // Река: тайлы в пределах полуширины от осевой линии
+        for &(from, to, width) in data::RIVERS {
+            let bounds_min = world_to_tile(from.min(to) - width);
+            let bounds_max = world_to_tile(from.max(to) + width);
+            for x in bounds_min.x..=bounds_max.x {
+                for y in bounds_min.y..=bounds_max.y {
+                    let center = (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE;
+                    if data::distance_to_segment(center, from, to) <= width / 2.0 {
+                        self.set_passable(x, y, false);
+                    }
+                }
+            }
+        }
     }
 }
 

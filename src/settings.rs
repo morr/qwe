@@ -6,14 +6,16 @@ use bevy::prelude::*;
 /// Пиксельная плотность ассетов: 16 px = 1 м.
 pub const PIXELS_PER_METER: f32 = 16.0;
 
-/// Карта: охват map.png, начало координат — юго-западный угол.
-pub const MAP_SIZE: Vec2 = Vec2::new(1200.0, 900.0);
+/// Карта: центр Тулы по мотивам OSM/2GIS (парк и Первомайская — юго-западный
+/// квадрант, Советский район — север, Кремль и Упа — северо-восток).
+/// Начало координат — юго-западный угол.
+pub const MAP_SIZE: Vec2 = Vec2::new(2400.0, 1800.0);
 
 /// Ячейка навигации, м.
 pub const NAVTILE_SIZE: f32 = 2.0;
 
 /// Размер навигационной сетки в тайлах: `MAP_SIZE / NAVTILE_SIZE`.
-pub const GRID_SIZE: IVec2 = IVec2::new(600, 450);
+pub const GRID_SIZE: IVec2 = IVec2::new(1200, 900);
 
 /// Центр портала: опушка парка у Первомайской.
 pub const PORTAL_POS: Vec2 = Vec2::new(620.0, 380.0);

@@ -45,10 +45,7 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>) {
     ));
 }
 
-fn update_speed_text(
-    text: Single<&mut Text, With<SpeedTextMarker>>,
-    time: Res<Time<Virtual>>,
-) {
+fn update_speed_text(text: Single<&mut Text, With<SpeedTextMarker>>, time: Res<Time<Virtual>>) {
     text.into_inner().set_if_neq(Text(format_speed_text(&time)));
 }
 
