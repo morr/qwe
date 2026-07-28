@@ -3,8 +3,9 @@ use rand::Rng;
 
 use crate::grid::{tile_center, world_to_tile};
 use crate::human::components::{Human, HumanWanderTag, WanderPause};
+use crate::map::osm::MapData;
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, PathfindingAlgorithm, find_passable_tile_near};
+use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
 use crate::settings::{
     GRID_SIZE, HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_RANGE,
     MAP_SIZE, unit_z,
@@ -12,6 +13,9 @@ use crate::settings::{
 
 /// Отступ целей блуждания от края карты, м.
 const MAP_MARGIN: f32 = 4.0;
+/// Доля пеших целей «к случайному зданию» (длинные маршруты через город);
+/// остальные гуляют поблизости.
+const WANDER_TO_BUILDING_SHARE: f32 = 0.8;
 
 pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>) {
     spawn_population(&mut commands, &arc_navmesh.read());
@@ -39,7 +43,8 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             rng.random_range(0.35..0.75),
             rng.random_range(0.35..0.65),
         );
-        // рассинхронизация первых прогулок, чтобы не было залпа запросов пути
+        // лёгкая рассинхронизация первых прогулок; залп длинных маршрутов
+        // разруливает приоритетная очередь диспетчера
         let pause =
             Timer::from_seconds(rng.random_range(0.0..HUMAN_WANDER_PAUSE.1), TimerMode::Once);
 
@@ -59,20 +64,21 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
     }
 }
 
-/// Мирное блуждание: пауза 2–10 с → случайная проходимая точка в 20–40 м →
-/// путь → по прибытии снова пауза.
+/// Мирное блуждание: пауза 2–10 с, затем цель — 80% идут «по делам» к
+/// случайному зданию города (длинные маршруты, настоящая нагрузка на
+/// pathfinding), 20% гуляют в 20–40 м от себя.
 pub fn pick_wander_targets(
     mut commands: Commands,
     time: Res<Time>,
-    arc_navmesh: Res<ArcNavmesh>,
-    algorithm: Res<PathfindingAlgorithm>,
+    pathfinder: Pathfinder,
+    map: Res<MapData>,
     mut query: Query<
         (Entity, &SimPosition, &mut Movable, &mut WanderPause),
         (With<Human>, With<HumanWanderTag>),
     >,
 ) {
     let mut rng = rand::rng();
-    let navmesh = arc_navmesh.read();
+    let navmesh = pathfinder.navmesh.read();
 
     for (entity, sim_position, mut movable, mut pause) in &mut query {
         if !matches!(
@@ -87,10 +93,19 @@ pub fn pick_wander_targets(
             continue;
         }
 
-        let direction = Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU));
-        let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
-        let target = (sim_position.0 + direction * distance)
-            .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN);
+        let to_building =
+            rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE && !map.buildings.is_empty();
+        let target = if to_building {
+            // «по делам»: случайная вершина контура случайного здания
+            let building = &map.buildings[rng.random_range(0..map.buildings.len())];
+            building.outer[rng.random_range(0..building.outer.len())]
+        } else {
+            // прогулка поблизости
+            let direction = Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU));
+            let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
+            (sim_position.0 + direction * distance)
+                .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN)
+        };
 
         let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
             continue;
@@ -100,8 +115,6 @@ pub fn pick_wander_targets(
             entity,
             world_to_tile(sim_position.0),
             target_tile,
-            &arc_navmesh,
-            *algorithm,
             &mut commands,
         );
 
