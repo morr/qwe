@@ -71,8 +71,10 @@ pub const Z_CORPSE: f32 = 3.0;
 pub const Z_PORTAL: f32 = 4.0;
 pub const Z_BUILDING: f32 = 5.0;
 /// Юниты: z = `Z_UNIT_BASE - y * Y_SORT_FACTOR` (кто ниже — тот ближе).
+/// Диапазон обязан оставаться над зданиями (5) при любом y ≤ MAP_SIZE.y,
+/// иначе северные юниты ныряют под дороги и мосты.
 pub const Z_UNIT_BASE: f32 = 10.0;
-pub const Y_SORT_FACTOR: f32 = 0.005;
+pub const Y_SORT_FACTOR: f32 = 0.002;
 pub const Z_TREE: f32 = 20.0;
 
 /// Z юнита по его мировой y-координате.
