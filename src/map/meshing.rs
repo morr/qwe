@@ -6,6 +6,11 @@ use bevy::mesh::Indices;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 
+/// Максимальное удлинение стыка ленты относительно полуширины. Контур кроны
+/// полон почти встречных рёбер (впадины между фестонами), и там miter уходит
+/// в длинный шип — при 1.5 стык вырождается в срез, шипов не видно.
+const MITER_LIMIT: f32 = 1.5;
+
 #[derive(Default)]
 pub struct MeshBuilder {
     positions: Vec<[f32; 3]>,
@@ -83,6 +88,75 @@ impl MeshBuilder {
         }
     }
 
+    /// Лента постоянной ширины вдоль ломаной: стыки сведены по биссектрисе
+    /// (miter с ограничением `MITER_LIMIT`), торцы **не** продлеваются.
+    /// Для тонких контуров `push_polyline` не годится — там каждый сегмент
+    /// продлён на полширины, и на ломаной с сегментами короче ширины штриха
+    /// (контур кроны) продления соседних квадов торчат наружу шипами.
+    /// Точки ближе `width / 4` к предыдущей отбрасываются: на такой дистанции
+    /// они не видны, но вырождают нормаль стыка.
+    pub fn push_stroke(&mut self, points: &[Vec2], closed: bool, width: f32, color: LinearRgba) {
+        let merge_distance_sq = (width / 4.0).powi(2);
+        let mut path: Vec<Vec2> = Vec::with_capacity(points.len());
+        for &point in points {
+            if path
+                .last()
+                .is_none_or(|last| last.distance_squared(point) > merge_distance_sq)
+            {
+                path.push(point);
+            }
+        }
+        if closed {
+            while path.len() > 1
+                && path[0].distance_squared(path[path.len() - 1]) <= merge_distance_sq
+            {
+                path.pop();
+            }
+        }
+        if path.len() < 2 {
+            return;
+        }
+
+        let half_width = width / 2.0;
+        let count = path.len();
+        let offsets: Vec<Vec2> = (0..count)
+            .map(|index| {
+                let incoming = (index > 0 || closed).then(|| {
+                    let previous = path[(index + count - 1) % count];
+                    (path[index] - previous).normalize_or(Vec2::X).perp()
+                });
+                let outgoing = (index + 1 < count || closed).then(|| {
+                    let next = path[(index + 1) % count];
+                    (next - path[index]).normalize_or(Vec2::X).perp()
+                });
+                match (incoming, outgoing) {
+                    (Some(before), Some(after)) => {
+                        let bisector = (before + after).normalize_or(before);
+                        // на острых стыках длина miter уходит в бесконечность — режем
+                        let cosine = bisector.dot(before).max(1.0 / MITER_LIMIT);
+                        bisector * (half_width / cosine)
+                    }
+                    (Some(normal), None) | (None, Some(normal)) => normal * half_width,
+                    (None, None) => Vec2::ZERO,
+                }
+            })
+            .collect();
+
+        let segments = if closed { count } else { count - 1 };
+        for index in 0..segments {
+            let next = (index + 1) % count;
+            self.push_quad(
+                [
+                    path[index] + offsets[index],
+                    path[index] - offsets[index],
+                    path[next] - offsets[next],
+                    path[next] + offsets[next],
+                ],
+                color,
+            );
+        }
+    }
+
     /// Прямоугольник по AABB (для тайловых оверлеев).
     pub fn push_rect(&mut self, min: Vec2, max: Vec2, color: LinearRgba) {
         self.push_quad(
@@ -154,6 +228,65 @@ mod tests {
         builder.push_polygon(&[Vec2::ZERO, Vec2::new(1.0, 1.0)], &[], LinearRgba::WHITE);
         assert!(builder.is_empty());
         assert_eq!(builder.skipped_polygons(), 1);
+    }
+
+    #[test]
+    fn closed_stroke_wraps_around_and_keeps_width() {
+        let square = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(0.0, 10.0),
+        ];
+        let mut builder = MeshBuilder::default();
+        builder.push_stroke(&square, true, 2.0, LinearRgba::WHITE);
+        // замкнутая лента: по кваду на ребро, включая ребро назад в начало
+        assert_eq!(builder.positions.len(), 16);
+        assert_eq!(builder.indices.len(), 24);
+        // прямой угол: miter ставит вершины ровно на ±полширины от контура,
+        // ничего не торчит дальше (у push_polyline торцы уходили за угол)
+        for position in &builder.positions {
+            let corner = Vec2::new(position[0], position[1]);
+            let offset_by_half = |value: f32| {
+                [-1.0, 1.0, 9.0, 11.0]
+                    .iter()
+                    .any(|expected: &f32| (value - expected).abs() < 1e-4)
+            };
+            assert!(
+                offset_by_half(corner.x) && offset_by_half(corner.y),
+                "stroke vertex off the band: {corner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_stroke_does_not_extend_past_its_ends() {
+        let mut builder = MeshBuilder::default();
+        builder.push_stroke(
+            &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+            false,
+            2.0,
+            LinearRgba::WHITE,
+        );
+        assert_eq!(builder.indices.len(), 6);
+        let max_x = builder
+            .positions
+            .iter()
+            .map(|position| position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        // push_polyline продлил бы торец до 11.0 — здесь ровно конец пути
+        assert_eq!(max_x, 10.0);
+    }
+
+    #[test]
+    fn stroke_merges_points_closer_than_quarter_width() {
+        let mut builder = MeshBuilder::default();
+        let dense: Vec<Vec2> = (0..5)
+            .map(|step| Vec2::new(step as f32 * 0.01, 0.0))
+            .collect();
+        builder.push_stroke(&dense, false, 2.0, LinearRgba::WHITE);
+        // все точки в пределах 0.5 — путь схлопывается и рисовать нечего
+        assert!(builder.is_empty());
     }
 
     #[test]

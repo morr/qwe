@@ -28,6 +28,8 @@ const CROWN_POINTS: usize = 12;
 const CROWN_BANDS: [(f32, f32); 2] = [(0.8, 1.92), (0.5, 0.75)];
 /// Сдвиг колец к свету за номер кольца, доля радиуса.
 const BAND_LIFT: f32 = 0.15;
+/// Минимальная длина дуги-штриха, доля радиуса.
+const MIN_ARC_LENGTH: f32 = 0.15;
 
 /// Направление тени: 30° вниз-вправо (y-вверх), нормировано.
 const SHADOW_DIR: Vec2 = Vec2::new(0.866_025_4, -0.5);
@@ -133,24 +135,56 @@ fn crown_mesh(geometry: &CrownGeometry, rng: &mut Lcg) -> Mesh {
     let mut builder = MeshBuilder::default();
     builder.push_polygon(&geometry.outer, &[], CROWN_COLOR.to_linear());
 
-    let mut outline = geometry.outer.clone();
-    outline.push(geometry.outer[0]);
-    builder.push_polyline(&outline, TREE_OUTLINE_STROKE, INK_COLOR.to_linear());
+    builder.push_stroke(
+        &geometry.outer,
+        true,
+        TREE_OUTLINE_STROKE,
+        INK_COLOR.to_linear(),
+    );
 
     for (ring, weight) in &geometry.bands {
-        for index in 0..ring.len() {
-            let from = ring[index];
-            let to = ring[(index + 1) % ring.len()];
-            let Some(direction) = (to - from).try_normalize() else {
-                continue;
-            };
-            let probability = weight * (0.5 + 0.5 * SHADE_DIR.dot(direction));
-            if rng.next_f32() < probability {
-                builder.push_polyline(&[from, to], TREE_DETAIL_STROKE, INK_COLOR.to_linear());
-            }
+        // рёбра отбираются по watabou (`drawShaded1`), но соседние выбранные
+        // склеиваются в одну дугу — иначе каждое ребро рисуется своим штрихом
+        // с собственными торцами, и кольцо распадается на зубцы
+        for arc in shaded_arcs(ring, *weight, rng) {
+            builder.push_stroke(&arc, false, TREE_DETAIL_STROKE, INK_COLOR.to_linear());
         }
     }
     builder.build()
+}
+
+/// `drawShaded1`: вероятность нарисовать ребро тем выше, чем ближе его
+/// направление к `SHADE_DIR` — штрихи скапливаются на теневой стороне кольца.
+/// Возвращает связные цепочки выбранных рёбер длиннее `MIN_ARC_LENGTH` —
+/// более короткие при зуме читаются как мусорные квадратики, а не как штрих.
+fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+    let mut arcs: Vec<Vec<Vec2>> = Vec::new();
+    let mut current: Vec<Vec2> = Vec::new();
+    for index in 0..ring.len() {
+        let from = ring[index];
+        let to = ring[(index + 1) % ring.len()];
+        let drawn = (to - from).try_normalize().is_some_and(|direction| {
+            rng.next_f32() < weight * (0.5 + 0.5 * SHADE_DIR.dot(direction))
+        });
+        if drawn {
+            if current.is_empty() {
+                current.push(from);
+            }
+            current.push(to);
+        } else if !current.is_empty() {
+            arcs.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        arcs.push(current);
+    }
+    arcs.retain(|arc| {
+        arc.windows(2)
+            .map(|pair| pair[0].distance(pair[1]))
+            .sum::<f32>()
+            >= MIN_ARC_LENGTH
+    });
+    arcs
 }
 
 fn shadow_mesh(geometry: &CrownGeometry) -> Mesh {
