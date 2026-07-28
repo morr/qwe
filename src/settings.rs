@@ -25,7 +25,7 @@ pub const GRID_SIZE: IVec2 = IVec2::new(1500, 1125);
 
 /// Центр портала — хинт; при старте снапится к ближайшему проходимому тайлу.
 pub const PORTAL_POS: Vec2 = Vec2::new(620.0, 380.0);
-pub const PORTAL_DIAMETER: f32 = 9.0;
+pub const PORTAL_DIAMETER: f32 = 36.0;
 
 // --- Люди ---
 /// 20000 на карте центра Тулы (изначальная цель MVP была 5000 [Q5]).

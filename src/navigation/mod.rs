@@ -75,8 +75,9 @@ fn prune_unreachable(arc_navmesh: Res<ArcNavmesh>, portal: Res<PortalPos>) {
 }
 
 /// Радиус, в котором вокруг кандидата на портал всё должно быть проходимо
-/// (портал 9 м + спавн демонов по кромке), тайлы.
-const PORTAL_CLEARANCE_TILES: i32 = 4;
+/// (диаметр портала + спавн демонов по кромке), тайлы.
+const PORTAL_CLEARANCE_TILES: i32 =
+    (crate::settings::PORTAL_DIAMETER / 2.0 / crate::settings::NAVTILE_SIZE) as i32 + 1;
 /// Предел спирального поиска места для портала, тайлы.
 const PORTAL_SEARCH_TILES: i32 = 200;
 
