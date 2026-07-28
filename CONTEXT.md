@@ -95,6 +95,9 @@ in `main.rs`.
   by the bottom-left button: A* / Dijkstra / Fringe / BFS (all from the `pathfinding`
   crate over the navmesh) plus **HPA*** and **Theta*** (hierarchical, from
   `bevy_northstar`). IDA*/IDDFS are deliberately excluded (never finish on open grids).
+  **Default is HPA\*** — 28× cheaper than flat A* per `examples/pathfinding_bench.rs`
+  (1.3 ms vs 36.4 ms mean, 15 ms vs 450 ms worst case) at ~10% longer paths. The other
+  five stay switchable for comparison.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid` built
   once from the final navmesh (after pruning; chunk 25, ~1.5 s build), wrapped in `Arc`,
   called directly from async tasks — the crate's plugin is not used. Long paths cost

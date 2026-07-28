@@ -11,14 +11,19 @@ use crate::navigation::navmesh::{COST_MULTIPLIER, Navmesh};
 /// иерархические HPA*/Theta* из `bevy_northstar` (см. `northstar.rs`).
 /// IDA*/IDDFS не включены: на открытых сетках такого размера они
 /// практически не завершаются.
+///
+/// По умолчанию HPA*: на замере `examples/pathfinding_bench.rs` (1000
+/// одинаковых задач) он в 28 раз дешевле плоского A* по CPU (1.3 мс против
+/// 36.4) и держит худший случай в 15 мс против 450 — ценой пути длиннее на
+/// ~10%.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[reflect(Resource)]
 pub enum PathfindingAlgorithm {
-    #[default]
     Astar,
     Dijkstra,
     Fringe,
     Bfs,
+    #[default]
     Hpa,
     ThetaStar,
 }
