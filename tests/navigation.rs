@@ -5,7 +5,7 @@ use bevy::math::{IVec2, Vec2};
 
 use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path};
+use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path, line_of_sight};
 
 fn astar_pathfinding(navmesh: &Navmesh, start: IVec2, end: IVec2) -> Option<Vec<IVec2>> {
     find_path(navmesh, start, end, PathfindingAlgorithm::Astar)
@@ -34,6 +34,24 @@ fn out_of_bounds_is_impassable() {
     assert!(!navmesh.is_passable(0, -1));
     assert!(!navmesh.is_passable(GRID_SIZE.x, 0));
     assert!(!navmesh.is_passable(0, GRID_SIZE.y));
+}
+
+#[test]
+fn line_of_sight_is_blocked_by_a_building() {
+    let navmesh = navmesh_with_block(IVec2::new(100, 100), IVec2::new(110, 110));
+    let west = tile_center(IVec2::new(95, 105));
+    let east = tile_center(IVec2::new(115, 105));
+    let north = tile_center(IVec2::new(105, 115));
+
+    // сквозь здание — нет; вдоль его южной стороны и по вертикали — да
+    assert!(!line_of_sight(&navmesh, west, east));
+    assert!(!line_of_sight(&navmesh, west, north));
+    assert!(line_of_sight(
+        &navmesh,
+        tile_center(IVec2::new(95, 99)),
+        tile_center(IVec2::new(115, 99))
+    ));
+    assert!(line_of_sight(&navmesh, west, west));
 }
 
 #[test]

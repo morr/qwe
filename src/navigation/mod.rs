@@ -11,6 +11,7 @@ use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::osm::MapData;
 use crate::portal::PortalPos;
+use crate::settings::NAVTILE_SIZE;
 
 /// Ответ асинхронного поиска пути (снимается в
 /// `movement::listen_for_pathfinding_tasks`).
@@ -41,6 +42,24 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
     .iter()
     .map(|&offset| tile + offset)
     .find(|candidate| navmesh.is_passable(candidate.x, candidate.y))
+}
+
+/// Шаг сэмплирования луча видимости — четверть тайла. Полностью «супернакрытие»
+/// не считаем: пропустить можно только срез угла короче полуметра, а стоит это
+/// вчетверо дешевле.
+const LINE_OF_SIGHT_STEP: f32 = NAVTILE_SIZE / 4.0;
+
+/// Есть ли прямая проходимая линия между двумя мировыми точками. Нужна там,
+/// где сущность идёт напрямую, минуя тайловый путь (бросок демона), — иначе
+/// «напрямик» означало бы сквозь здание.
+pub fn line_of_sight(navmesh: &Navmesh, from: Vec2, to: Vec2) -> bool {
+    let delta = to - from;
+    let steps = (delta.length() / LINE_OF_SIGHT_STEP).ceil() as i32;
+    (0..=steps).all(|step| {
+        let point = from + delta * (step as f32 / steps.max(1) as f32);
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    })
 }
 
 /// Всё нужное для запуска поиска пути одним system-параметром:
