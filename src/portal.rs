@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 
+use crate::loading::{AppState, WorldInitSet};
 use crate::settings::{PORTAL_DIAMETER, PORTAL_POS, Z_PORTAL};
 
 /// Кадры спрайтшита: 3 × 3 сетка по 160 px.
@@ -18,12 +19,29 @@ pub struct Portal;
 #[derive(Component)]
 pub struct PortalAnimation(Timer);
 
+/// Фактическая позиция портала. Стартует с хинта `PORTAL_POS`; после
+/// заполнения navmesh снапится к ближайшему проходимому тайлу.
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
+pub struct PortalPos(pub Vec2);
+
+impl Default for PortalPos {
+    fn default() -> Self {
+        Self(PORTAL_POS)
+    }
+}
+
 pub struct PortalPlugin;
 
 impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Portal>()
-            .add_systems(Startup, spawn_portal)
+            .register_type::<PortalPos>()
+            .init_resource::<PortalPos>()
+            .add_systems(
+                OnEnter(AppState::Playing),
+                spawn_portal.in_set(WorldInitSet::Spawn),
+            )
             .add_systems(Update, animate_portal);
     }
 }
@@ -31,6 +49,7 @@ impl Plugin for PortalPlugin {
 fn spawn_portal(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    portal_pos: Res<PortalPos>,
     mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
     let layout = layouts.add(TextureAtlasLayout::from_grid(
@@ -49,7 +68,7 @@ fn spawn_portal(
 
     commands.spawn((
         sprite,
-        Transform::from_translation(PORTAL_POS.extend(Z_PORTAL)),
+        Transform::from_translation(portal_pos.0.extend(Z_PORTAL)),
         Portal,
         PortalAnimation(Timer::from_seconds(FRAME_SECS, TimerMode::Repeating)),
         Name::new("portal"),

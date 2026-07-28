@@ -10,6 +10,7 @@ pub use self::components::{
     DemonSpawner, DemonWanderTag, DevourUntil,
 };
 use self::systems::{pick_wander_targets, spawn_initial_burst, tick_spawner};
+use crate::loading::AppState;
 use crate::spatial::SimSet;
 
 pub struct DemonPlugin;
@@ -25,7 +26,12 @@ impl Plugin for DemonPlugin {
             .register_type::<DevourUntil>()
             .init_resource::<DemonSpawner>()
             .add_observer(on_demon_caught_human)
-            .add_systems(FixedUpdate, (spawn_initial_burst, tick_spawner).chain())
+            .add_systems(
+                FixedUpdate,
+                (spawn_initial_burst, tick_spawner)
+                    .chain()
+                    .run_if(in_state(AppState::Playing)),
+            )
             .add_systems(
                 FixedUpdate,
                 (acquire_targets, chase, devour)

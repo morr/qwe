@@ -110,7 +110,8 @@ impl Plugin for SpatialPlugin {
                     SimSet::DemonBehavior,
                     SimSet::HumanBehavior,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(in_state(crate::loading::AppState::Playing)),
             )
             .add_systems(
                 FixedUpdate,

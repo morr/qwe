@@ -5,9 +5,9 @@ use crate::demon::components::{Demon, DemonSpawner, DemonWanderTag};
 use crate::grid::world_to_tile;
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, find_passable_tile_near};
+use crate::portal::PortalPos;
 use crate::settings::{
-    DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, PORTAL_POS,
-    unit_z,
+    DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, unit_z,
 };
 
 /// Блуждание: дистанция до следующей случайной точки, м.
@@ -19,7 +19,11 @@ const MAP_MARGIN: f32 = 4.0;
 
 /// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены
 /// сброшенный спавнер выпускает залп заново без отдельного кода.
-pub fn spawn_initial_burst(mut commands: Commands, mut spawner: ResMut<DemonSpawner>) {
+pub fn spawn_initial_burst(
+    mut commands: Commands,
+    mut spawner: ResMut<DemonSpawner>,
+    portal_pos: Res<PortalPos>,
+) {
     if spawner.initial_burst_done {
         return;
     }
@@ -27,12 +31,17 @@ pub fn spawn_initial_burst(mut commands: Commands, mut spawner: ResMut<DemonSpaw
 
     for index in 0..DEMON_INITIAL_BURST {
         let angle = index as f32 / DEMON_INITIAL_BURST as f32 * std::f32::consts::TAU;
-        spawn_demon(&mut commands, angle, spawner.spawned);
+        spawn_demon(&mut commands, portal_pos.0, angle, spawner.spawned);
         spawner.spawned += 1;
     }
 }
 
-pub fn tick_spawner(time: Res<Time>, mut commands: Commands, mut spawner: ResMut<DemonSpawner>) {
+pub fn tick_spawner(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut spawner: ResMut<DemonSpawner>,
+    portal_pos: Res<PortalPos>,
+) {
     if spawner.spawned >= DEMON_CAP {
         return;
     }
@@ -42,13 +51,13 @@ pub fn tick_spawner(time: Res<Time>, mut commands: Commands, mut spawner: ResMut
     }
 
     let angle = rand::rng().random_range(0.0..std::f32::consts::TAU);
-    spawn_demon(&mut commands, angle, spawner.spawned);
+    spawn_demon(&mut commands, portal_pos.0, angle, spawner.spawned);
     spawner.spawned += 1;
 }
 
 /// Демон появляется у кромки портала под заданным углом.
-fn spawn_demon(commands: &mut Commands, angle: f32, index: usize) {
-    let position = PORTAL_POS + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
+fn spawn_demon(commands: &mut Commands, portal_pos: Vec2, angle: f32, index: usize) {
+    let position = portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
 
     // оттенки красного, чтобы демоны не сливались друг с другом
     let tint = 0.45 + (index % 5) as f32 * 0.08;
@@ -72,6 +81,7 @@ fn spawn_demon(commands: &mut Commands, angle: f32, index: usize) {
 pub fn pick_wander_targets(
     mut commands: Commands,
     arc_navmesh: Res<ArcNavmesh>,
+    portal_pos: Res<PortalPos>,
     mut query: Query<(Entity, &SimPosition, &mut Movable), (With<Demon>, With<DemonWanderTag>)>,
 ) {
     let mut rng = rand::rng();
@@ -85,7 +95,7 @@ pub fn pick_wander_targets(
             continue;
         }
 
-        let away = (sim_position.0 - PORTAL_POS).normalize_or(Vec2::from_angle(
+        let away = (sim_position.0 - portal_pos.0).normalize_or(Vec2::from_angle(
             rng.random_range(0.0..std::f32::consts::TAU),
         ));
         let direction =

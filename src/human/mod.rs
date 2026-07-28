@@ -10,6 +10,7 @@ pub use self::components::{
 };
 pub use self::systems::spawn_population;
 use self::systems::{pick_wander_targets, spawn_humans};
+use crate::loading::{AppState, WorldInitSet};
 use crate::spatial::SimSet;
 
 pub struct HumanPlugin;
@@ -22,7 +23,10 @@ impl Plugin for HumanPlugin {
             .register_type::<CorpseTag>()
             .register_type::<FleeRepath>()
             .register_type::<WanderPause>()
-            .add_systems(Startup, spawn_humans)
+            .add_systems(
+                OnEnter(AppState::Playing),
+                spawn_humans.in_set(WorldInitSet::Spawn),
+            )
             .add_systems(
                 FixedUpdate,
                 (panic, flee, escape).chain().in_set(SimSet::HumanBehavior),

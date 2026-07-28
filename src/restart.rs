@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use crate::demon::{Demon, DemonSpawner};
 use crate::dev::TestWalker;
 use crate::human::{CorpseTag, Human, spawn_population};
+use crate::loading::AppState;
 use crate::navigation::ArcNavmesh;
 use crate::telemetry::Telemetry;
 
@@ -22,7 +23,9 @@ impl Plugin for RestartPlugin {
             .add_observer(on_restart)
             .add_systems(
                 Update,
-                trigger_restart.run_if(input_just_pressed(KeyCode::KeyR)),
+                trigger_restart.run_if(
+                    input_just_pressed(KeyCode::KeyR).and_then(in_state(AppState::Playing)),
+                ),
             );
     }
 }

@@ -4,6 +4,7 @@ pub mod dev;
 pub mod diagnostics;
 pub mod grid;
 pub mod human;
+pub mod loading;
 pub mod map;
 pub mod movement;
 pub mod navigation;
