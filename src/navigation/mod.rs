@@ -13,6 +13,8 @@ pub struct PathfindingResult {
     pub path: Option<Vec<IVec2>>,
     pub start_tile: IVec2,
     pub end_tile: IVec2,
+    /// Длительность самого поиска (без ожидания RwLock) — для диагностики.
+    pub duration: std::time::Duration,
 }
 
 /// Проходимый тайл в точке или среди 8 соседей — иначе `None`.

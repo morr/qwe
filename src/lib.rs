@@ -1,6 +1,7 @@
 pub mod camera;
 pub mod demon;
 pub mod dev;
+pub mod diagnostics;
 pub mod grid;
 pub mod human;
 pub mod map;

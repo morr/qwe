@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, demon, dev, human, map, movement, navigation, portal, restart, sim_time, spatial,
-    telemetry, ui,
+    camera, demon, dev, diagnostics, human, map, movement, navigation, portal, restart, sim_time,
+    spatial, telemetry, ui,
 };
 
 fn main() {
@@ -44,6 +44,7 @@ fn main() {
             human::HumanPlugin,
             restart::RestartPlugin,
             sim_time::SimTimePlugin,
+            diagnostics::GameDiagnosticsPlugin,
             ui::UiPlugin,
             dev::DevPlugin,
         ))

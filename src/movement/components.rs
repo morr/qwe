@@ -106,10 +106,13 @@ impl Movable {
         let navmesh = arc_navmesh.0.clone();
         let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
             let navmesh = navmesh.read().unwrap();
+            // после захвата лока: метрика — сам поиск, без ожидания RwLock
+            let started_at = std::time::Instant::now();
             PathfindingResult {
                 start_tile,
                 end_tile,
                 path: astar_pathfinding(&navmesh, start_tile, end_tile),
+                duration: started_at.elapsed(),
             }
         });
 

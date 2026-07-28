@@ -93,6 +93,7 @@ pub fn on_movable_added_init_sim_position(
 /// Снимает готовые асинхронные ответы поиска пути.
 pub fn listen_for_pathfinding_tasks(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     mut tasks: Query<(Entity, &mut Movable, &mut PathfindingTask)>,
 ) {
     for (entity, mut movable, mut task) in &mut tasks {
@@ -100,6 +101,9 @@ pub fn listen_for_pathfinding_tasks(
             continue;
         };
         commands.entity(entity).remove::<PathfindingTask>();
+        diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
+            result.duration.as_secs_f64() * 1000.0
+        });
 
         let MovableState::Pathfinding(end_tile) = movable.state else {
             continue;
