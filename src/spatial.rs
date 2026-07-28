@@ -13,11 +13,14 @@ use crate::settings::MAP_SIZE;
 
 pub const CELL_SIZE: f32 = 60.0;
 
-/// Порядок симуляции в `FixedUpdate`: сетки пересобираются до поведения.
+/// Порядок симуляции в `FixedUpdate`: сетки → демоны → люди. Демоны раньше
+/// людей, чтобы убийства применились до `escape` и человек не был засчитан
+/// и убитым, и спасшимся в один тик.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimSet {
     SpatialRebuild,
-    Behavior,
+    DemonBehavior,
+    HumanBehavior,
 }
 
 /// Равномерная Vec-сетка позиций сущностей типа-маркера `T`.
@@ -91,7 +94,12 @@ impl Plugin for SpatialPlugin {
             .init_resource::<SpatialGrid<Human>>()
             .configure_sets(
                 FixedUpdate,
-                (SimSet::SpatialRebuild, SimSet::Behavior).chain(),
+                (
+                    SimSet::SpatialRebuild,
+                    SimSet::DemonBehavior,
+                    SimSet::HumanBehavior,
+                )
+                    .chain(),
             )
             .add_systems(
                 FixedUpdate,

@@ -9,3 +9,4 @@ pub mod navigation;
 pub mod portal;
 pub mod settings;
 pub mod spatial;
+pub mod telemetry;

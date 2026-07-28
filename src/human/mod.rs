@@ -1,10 +1,15 @@
+mod behavior;
 mod components;
 mod systems;
 
 use bevy::prelude::*;
 
-pub use self::components::{Human, HumanFleeTag, HumanWanderTag, WanderPause};
+pub use self::components::{
+    CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause,
+};
+use self::behavior::{escape, flee, panic};
 use self::systems::{pick_wander_targets, spawn_humans};
+use crate::spatial::SimSet;
 
 pub struct HumanPlugin;
 
@@ -13,8 +18,14 @@ impl Plugin for HumanPlugin {
         app.register_type::<Human>()
             .register_type::<HumanWanderTag>()
             .register_type::<HumanFleeTag>()
+            .register_type::<CorpseTag>()
+            .register_type::<FleeRepath>()
             .register_type::<WanderPause>()
             .add_systems(Startup, spawn_humans)
+            .add_systems(
+                FixedUpdate,
+                (panic, flee, escape).chain().in_set(SimSet::HumanBehavior),
+            )
             .add_systems(Update, pick_wander_targets);
     }
 }

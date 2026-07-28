@@ -19,6 +19,46 @@ pub struct DemonChaseTag;
 #[reflect(Component)]
 pub struct DemonDevourTag;
 
+/// Цель погони.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct ChaseTarget(pub Entity);
+
+impl Default for ChaseTarget {
+    fn default() -> Self {
+        Self(Entity::PLACEHOLDER)
+    }
+}
+
+/// Троттлинг перепрокладки пути во время погони.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct ChaseRepath(pub Timer);
+
+impl Default for ChaseRepath {
+    fn default() -> Self {
+        Self(Timer::from_seconds(0.4, TimerMode::Repeating))
+    }
+}
+
+/// Пауза «пожирания» над трупом.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct DevourUntil(pub Timer);
+
+impl Default for DevourUntil {
+    fn default() -> Self {
+        Self(Timer::from_seconds(1.5, TimerMode::Once))
+    }
+}
+
+/// Демон догнал человека: жертва умирает, демон переходит в Devour.
+#[derive(Event, Debug)]
+pub struct DemonCaughtHumanEvent {
+    pub demon: Entity,
+    pub human: Entity,
+}
+
 /// Спавнер демонов: стартовый залп, затем по таймеру до капа.
 #[derive(Resource)]
 pub struct DemonSpawner {

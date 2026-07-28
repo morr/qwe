@@ -23,3 +23,19 @@ impl Default for WanderPause {
         Self(Timer::from_seconds(1.0, TimerMode::Once))
     }
 }
+
+/// Труп: остаётся навсегда, в поведении и сетках не участвует.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct CorpseTag;
+
+/// Троттлинг перепрокладки пути при бегстве.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct FleeRepath(pub Timer);
+
+impl Default for FleeRepath {
+    fn default() -> Self {
+        Self(Timer::from_seconds(1.0, TimerMode::Repeating))
+    }
+}
