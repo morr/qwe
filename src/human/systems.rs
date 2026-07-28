@@ -43,10 +43,11 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             rng.random_range(0.35..0.75),
             rng.random_range(0.35..0.65),
         );
-        // лёгкая рассинхронизация первых прогулок; залп длинных маршрутов
-        // разруливает приоритетная очередь диспетчера
-        let pause =
-            Timer::from_seconds(rng.random_range(0.0..HUMAN_WANDER_PAUSE.1), TimerMode::Once);
+        // без стартовой паузы: все идут с первого кадра. Залп из 20 000 целей
+        // разруливают гейт видимости диспетчера (мирные вне экрана путь не
+        // получают) и дешёвый HPA* — рассинхронизация тут только заставляла
+        // пешек в кадре стоять первые секунды
+        let pause = Timer::from_seconds(0.0, TimerMode::Once);
 
         commands.spawn((
             Sprite {

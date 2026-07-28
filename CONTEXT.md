@@ -138,7 +138,8 @@ in `main.rs`.
 - **SpatialGrid<T>** — uniform grid of `(Entity, Vec2)` per marker type (`Demon`,
   `Human`), 60 m cells (≥ the largest search radius), fully rebuilt every tick.
   `nearest_in_range_where` — nearest entity passing a filter.
-- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s; then 80%
+- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
+  walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding
   load — and 20% stroll 20–40 m nearby) ⇄ **Flee** (demon within `HUMAN_PANIC_RADIUS`
   60 m; repath every 0.7–1.2 s, step 40–60 m away from the nearest demon). **Flee fan** — a
