@@ -5,6 +5,7 @@ pub mod entrances;
 pub mod model;
 pub mod overpass;
 pub mod parse;
+mod planting;
 
 pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
