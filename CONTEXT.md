@@ -91,9 +91,11 @@ in `main.rs`.
   `landuse=recreation_ground|forest` + `natural=wood`, `landuse=grass|meadow` /
   `natural=grassland|meadow`, `natural=sand|beach`, `barrier=city_wall`. The bbox is
   `MAP_SIZE` around the selected `City`'s geo center.
-- **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`overpass-api.de` →
-  `kumi.systems` → `private.coffee`). On dense cities the main instance answers 504
-  "server too busy", or worse, a **200 with an HTML error page** — hence the
+- **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
+  `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
+  full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
+  against ~2.5 min and two 504s through the European ones. On dense cities those answer
+  504 "server too busy", or worse, a **200 with an HTML error page** — hence the
   "response must start with `{`" check before a mirror is considered successful.
 - **Cache** — `assets/osm/tula_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored).
   Parameters live in the file name, so changing settings invalidates it; **bump

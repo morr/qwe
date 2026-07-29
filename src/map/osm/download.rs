@@ -19,8 +19,12 @@ use crate::navigation::{Navmesh, snap_portal_position};
 /// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
 /// (Нью-Йорк, Лондон) регулярно отвечает 504 «server too busy» — или, того
 /// хуже, HTML-страницей с runtime error под кодом 200; тогда идём к
-/// следующему. Все три отдают один и тот же API и данные.
-const OVERPASS_URLS: [&str; 3] = [
+/// следующему. Все четыре отдают один и тот же API и данные.
+///
+/// Первое — российское зеркало VK/Mail.ru: полная планета, свежий срез, и
+/// ближайший канал отсюда, пока европейские инстансы залипают в 504.
+const OVERPASS_URLS: [&str; 4] = [
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
