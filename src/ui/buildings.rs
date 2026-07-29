@@ -10,7 +10,7 @@ use bevy::ui_widgets::{Activate, Button};
 use bevy::prelude::*;
 
 use crate::map::BuildingHeightMode;
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
+use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 
 /// Строки — как у панели деревьев: плотный фон поверх полупрозрачной панели.
 const ROW_LIGHTEN: f32 = 0.0;
@@ -73,6 +73,7 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
                     ..default()
                 },
                 TextColor(Color::WHITE),
+                UI_TEXT_SHADOW,
             )],
         ))
         .id();
