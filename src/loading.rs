@@ -8,7 +8,7 @@ use bevy::ui_widgets::{Activate, Button};
 use bevy::window::PrimaryWindow;
 
 use crate::city::City;
-use crate::map::osm::{JobState, MapLoadJob, start_load_thread};
+use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 use crate::movement::{PathfindingRequest, PathfindingTask, SimPosition};
 use crate::navigation::ArcNavmesh;
 use crate::portal::PortalPos;
@@ -112,7 +112,7 @@ fn spawn_loader_ui(mut commands: Commands) {
             Name::new("loader"),
             children![(
                 LoaderText,
-                Text::new("Connecting to Overpass..."),
+                Text::new("Waiting for Overpass..."),
                 TextFont {
                     font_size: FontSize::Px(22.),
                     ..default()
@@ -161,33 +161,86 @@ fn on_retry(
     city: Res<City>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
-    *job.0.lock().unwrap() = JobState::Connecting;
+    *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
     start_load_thread(job.clone(), navmesh.0.clone(), *city);
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
     }
 }
 
+/// Хвост строки загрузки со скоростью. Пусто, пока не набралось первое окно
+/// замера (`SPEED_WINDOW`) — иначе первые кадры показывали бы «0.0 MB/s».
+/// Делитель тот же, что и у счётчика мегабайт, — мебибайт под подписью «MB».
+fn format_speed(bytes_per_sec: f64) -> String {
+    if bytes_per_sec <= 0.0 {
+        return String::new();
+    }
+    if bytes_per_sec >= 1_048_576.0 {
+        format!(" · {:.1} MB/s", bytes_per_sec / 1_048_576.0)
+    } else {
+        format!(" · {:.0} KB/s", bytes_per_sec / 1024.0)
+    }
+}
+
 fn poll_job(
     mut commands: Commands,
     job: Res<MapLoadJob>,
+    time: Res<Time<Real>>,
+    mut connecting_since: Local<Option<(usize, f32)>>,
     mut next: ResMut<NextState<AppState>>,
     mut texts: Query<(&mut Text, &mut TextColor), With<LoaderText>>,
     mut retry_buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     let mut state = job.0.lock().unwrap();
 
+    // счётчик ожидания живёт только внутри `Connecting`, иначе следующий
+    // город (или Retry) унаследовал бы отсчёт от предыдущей загрузки
+    if !matches!(*state, JobState::Connecting { .. }) {
+        *connecting_since = None;
+    }
+
     let (message, failed) = match &mut *state {
-        JobState::Connecting => ("Connecting to Overpass...".to_string(), false),
-        JobState::Downloading { bytes, total } => {
+        JobState::Connecting { attempt } => {
+            let attempt = *attempt;
+            // `Time<Real>`: во время загрузки виртуальное время на паузе
+            let now = time.elapsed_secs();
+            let started = match *connecting_since {
+                Some((seen, started)) if seen == attempt => started,
+                // новое зеркало — счёт с нуля, а не с начала всей загрузки
+                _ => {
+                    *connecting_since = Some((attempt, now));
+                    now
+                }
+            };
+            let mirror = if attempt > 1 {
+                format!(" (mirror {attempt}/{OVERPASS_MIRRORS})")
+            } else {
+                String::new()
+            };
+            // не «Connecting»: TCP+TLS занимают ~0.2 с, всё остальное время
+            // Overpass считает запрос и не отдаёт ни байта
+            (
+                format!(
+                    "Waiting for Overpass... {:.0}s{mirror}",
+                    (now - started).max(0.0)
+                ),
+                false,
+            )
+        }
+        JobState::Downloading {
+            bytes,
+            total,
+            bytes_per_sec,
+        } => {
             let (bytes, total) = (*bytes, *total);
             let megabytes = bytes as f32 / 1_048_576.0;
             let percent = total
                 .filter(|&total| bytes <= total && total > 0)
                 .map(|total| format!(" ({:.0}%)", bytes as f32 / total as f32 * 100.0))
                 .unwrap_or_default();
+            let speed = format_speed(*bytes_per_sec);
             (
-                format!("Downloading map... {megabytes:.1} MB{percent}"),
+                format!("Downloading map... {megabytes:.1} MB{percent}{speed}"),
                 false,
             )
         }
@@ -212,6 +265,7 @@ fn poll_job(
             );
             commands.insert_resource(map);
             commands.insert_resource(PortalPos(world.portal));
+            *connecting_since = None;
             next.set(AppState::Playing);
             return;
         }

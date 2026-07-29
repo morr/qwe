@@ -45,9 +45,21 @@ in `main.rs`.
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. Navmesh must
   be filled before population spawns, or humans land in the river.
 - **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` that
-  prepares everything not needing ECS: `Connecting → Downloading{bytes,total} → Parsing
-  → BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal}) | Failed(msg)`, polled via
-  `Arc<Mutex<_>>` by `poll_job`, every state a line on the loader screen. It writes the
+  prepares everything not needing ECS: `Connecting{attempt} →
+  Downloading{bytes,total,bytes_per_sec} → Parsing → BuildingNavmesh → Pruning →
+  Done(LoadedWorld{map, portal}) | Failed(msg)`, polled via
+  `Arc<Mutex<_>>` by `poll_job`, every state a line on the loader screen. `total` is
+  `None` in practice — Overpass answers chunked and ureq strips `content-length` when it
+  decompresses gzip — so the screen shows downloaded MB plus a rate (smoothed over
+  `SPEED_WINDOW`, 250 ms) instead of a percentage. `bytes` counts *decompressed* JSON, so
+  it matches the cache file size, not the wire. `Connecting` is mostly **Overpass
+  computing the query**, not TCP — measured on Paris: 0.05 s connect, 0.23 s TLS, then
+  62 s of server-side compute before the first byte — so the screen says "Waiting for
+  Overpass", not "Connecting", and `poll_job` ticks seconds next to it off `Time<Real>`,
+  keyed on `attempt` (the 1-based mirror index) so the count restarts on failover instead
+  of looking frozen. The thread cannot tick it itself: it is blocked inside `send()` until
+  the first byte. Minutes here are normal, not a hang; a mirror that is actually broken
+  ends the wait with a 502/504 and the loop moves on. It writes the
   navmesh through the `ArcNavmesh` handle it is given and returns the snapped portal
   position. **Rule: heavy init belongs in this thread, not in `OnEnter(Playing)`** — no
   frame is drawn inside a schedule, so work there freezes the loader on its last message.

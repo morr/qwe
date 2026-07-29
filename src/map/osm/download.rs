@@ -5,6 +5,7 @@
 
 use std::io::Read;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
@@ -24,7 +25,12 @@ const OVERPASS_URLS: [&str; 3] = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ];
+/// Сколько зеркал в обходе — для подписи «mirror 2/3» на экране загрузки.
+pub const OVERPASS_MIRRORS: usize = OVERPASS_URLS.len();
 const CHUNK_SIZE: usize = 64 * 1024;
+/// Окно замера скорости: и шаг сглаживания, и частота обновления цифры на
+/// экране загрузки. По чанку в 64 КБ мерить бессмысленно — цифра прыгает.
+const SPEED_WINDOW: Duration = Duration::from_millis(250);
 
 /// Готовый к спавну мир: разобранная карта и позиция портала (снап нужен
 /// уже заполненному navmesh, а прунинг — уже снапнутому порталу).
@@ -34,10 +40,19 @@ pub struct LoadedWorld {
 }
 
 pub enum JobState {
-    Connecting,
+    /// Ждём первый байт ответа: TCP/TLS плюс — почти всё время — счёт запроса
+    /// на стороне Overpass. На плотном городе это минуты, поэтому экран
+    /// загрузки тикает секундами (`poll_job`): поток здесь заблокирован внутри
+    /// `send()` и сам о себе сообщить не может. `attempt` — номер зеркала,
+    /// 1-based; по его смене UI перезапускает счётчик.
+    Connecting {
+        attempt: usize,
+    },
     Downloading {
         bytes: u64,
         total: Option<u64>,
+        /// Сглаженная скорость, байт/с. 0 — первое окно ещё не набралось.
+        bytes_per_sec: f64,
     },
     Parsing,
     /// Растеризация карты в navmesh.
@@ -54,7 +69,7 @@ pub struct MapLoadJob(pub Arc<Mutex<JobState>>);
 
 impl Default for MapLoadJob {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(JobState::Connecting)))
+        Self(Arc::new(Mutex::new(JobState::Connecting { attempt: 1 })))
     }
 }
 
@@ -153,8 +168,8 @@ fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
 fn download(job: &MapLoadJob, city: City) -> Result<String, String> {
     let query = overpass_query(city);
     let mut last_error = String::from("no overpass endpoints configured");
-    for url in OVERPASS_URLS {
-        match download_from(job, url, &query) {
+    for (index, url) in OVERPASS_URLS.iter().enumerate() {
+        match download_from(job, url, &query, index + 1) {
             Ok(json) => return Ok(json),
             Err(error) => {
                 warn!("osm: {url} failed ({error})");
@@ -165,8 +180,13 @@ fn download(job: &MapLoadJob, city: City) -> Result<String, String> {
     Err(last_error)
 }
 
-fn download_from(job: &MapLoadJob, url: &str, query: &str) -> Result<String, String> {
-    job.set(JobState::Connecting);
+fn download_from(
+    job: &MapLoadJob,
+    url: &str,
+    query: &str,
+    attempt: usize,
+) -> Result<String, String> {
+    job.set(JobState::Connecting { attempt });
     info!("osm: downloading {url}");
 
     let mut response = ureq::post(url)
@@ -178,6 +198,11 @@ fn download_from(job: &MapLoadJob, url: &str, query: &str) -> Result<String, Str
     let mut reader = response.body_mut().as_reader();
     let mut data = Vec::new();
     let mut chunk = vec![0u8; CHUNK_SIZE];
+    // локальны для попытки: смена зеркала начинает замер с нуля, а не тащит
+    // за собой скорость отвалившегося
+    let mut window_started = Instant::now();
+    let mut window_bytes = 0u64;
+    let mut speed = 0.0f64;
     loop {
         let read = reader
             .read(&mut chunk)
@@ -186,9 +211,24 @@ fn download_from(job: &MapLoadJob, url: &str, query: &str) -> Result<String, Str
             break;
         }
         data.extend_from_slice(&chunk[..read]);
+
+        window_bytes += read as u64;
+        let elapsed = window_started.elapsed();
+        if elapsed >= SPEED_WINDOW {
+            let instant = window_bytes as f64 / elapsed.as_secs_f64();
+            speed = if speed == 0.0 {
+                instant
+            } else {
+                speed * 0.7 + instant * 0.3
+            };
+            window_started = Instant::now();
+            window_bytes = 0;
+        }
+
         job.set(JobState::Downloading {
             bytes: data.len() as u64,
             total,
+            bytes_per_sec: speed,
         });
     }
 
