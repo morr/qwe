@@ -1,11 +1,15 @@
 //! Панель скорости симуляции (порт `zxc/src/ui/simulation_state.rs`, без
 //! игровой даты): текст в правом верхнем углу, обновляется из `Time<Virtual>`.
 //! Вторая строка — диагностика pathfinding (порт заголовка
-//! `zxc/src/ui/debug/info.rs`).
+//! `zxc/src/ui/debug/info.rs`), третья — зум и позиция камеры плюс точка под
+//! курсором.
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
+use crate::camera::cursor_offset;
 use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED};
 use crate::sim_time::SimSpeed;
 use crate::ui::{GameUiRoot, UI_TEXT_SHADOW, UiOpacity, ui_color};
@@ -16,12 +20,21 @@ struct SpeedTextMarker;
 #[derive(Component, Default)]
 struct PathfindingTextMarker;
 
+#[derive(Component, Default)]
+struct CameraTextMarker;
+
 pub struct UiSpeedPlugin;
 
 impl Plugin for UiSpeedPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_speed_ui)
-            .add_systems(Update, (update_speed_text, update_pathfinding_text));
+        app.add_systems(Startup, render_speed_ui).add_systems(
+            Update,
+            (
+                update_speed_text,
+                update_pathfinding_text,
+                update_camera_text,
+            ),
+        );
     }
 }
 
@@ -72,6 +85,16 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>, speed: Res<
                 UI_TEXT_SHADOW,
                 PathfindingTextMarker,
             ),
+            (
+                Text::default(),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                UI_TEXT_SHADOW,
+                CameraTextMarker,
+            ),
         ],
     ));
 }
@@ -110,6 +133,45 @@ fn update_pathfinding_text(
     // выравнивание цифр по правому краю, чтобы строка не «плясала»
     text.into_inner().set_if_neq(Text(format!(
         "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nentities: {entities:>6.0}"
+    )));
+}
+
+/// Где стоит камера и насколько приближена. Строка нужна не игроку, а чтению
+/// скриншота со стороны: по ней видно, какой кусок карты в кадре, без запроса
+/// к живому миру по BRP.
+///
+/// Формат `0.41/2374/2703 2510/2880` — сначала камера как `zoom/x/y` (порядок
+/// пермалинка slippy-карт), через пробел — точка под курсором как `x/y`.
+///
+/// Координаты — мировые метры от юго-западного угла карты, та же система, в
+/// которой лежат `SimPosition` и `Transform` юнитов; камерные — центр экрана.
+/// Зум — метры на экранный пиксель, как их держит `PanCamera::zoom_factor`:
+/// меньше — ближе.
+///
+/// Курсор вне окна координат не даёт — вместо чисел прочерки, чтобы строка не
+/// теряла хвост и не выглядела обрезанной.
+fn update_camera_text(
+    text: Single<&mut Text, With<CameraTextMarker>>,
+    camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+) {
+    let (transform, controller) = *camera;
+    let center = transform.translation.truncate();
+    let zoom = controller.zoom_factor;
+
+    let cursor = match window.cursor_position() {
+        Some(cursor) => {
+            let world = center + cursor_offset(&window, cursor) * zoom;
+            format!("{:.0}/{:.0}", world.x, world.y)
+        }
+        None => "-/-".to_string(),
+    };
+
+    // строка последняя в панели, поэтому ширины полей не выравниваем: сдвигать
+    // её «пляской» цифр нечему
+    text.into_inner().set_if_neq(Text(format!(
+        "{zoom:.2}/{:.0}/{:.0} {cursor}",
+        center.x, center.y
     )));
 }
 

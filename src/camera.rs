@@ -87,7 +87,7 @@ fn reset_camera_to_portal(
 }
 
 /// Смещение курсора от центра окна в мировых осях (экранный y — вниз).
-fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
+pub fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
     (cursor - window.size() / 2.0) * Vec2::new(1.0, -1.0)
 }
 
