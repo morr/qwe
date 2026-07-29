@@ -8,6 +8,7 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
+use crate::loading::PlayPhase;
 use crate::settings::{
     ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MIN_SIM_SPEED, SPEED_DROP_RATE, SPEED_SETTLE_RATE,
 };
@@ -52,6 +53,10 @@ impl Plugin for SimTimePlugin {
         app.register_type::<SimSpeed>()
             .init_resource::<SimSpeed>()
             .add_systems(Startup, pin_max_delta)
+            // прогрев идёт на паузе: мир уже собран, но за экраном загрузки
+            // ему двигаться незачем — пусть пешки сначала получат пути
+            .add_systems(OnEnter(PlayPhase::Warmup), pause_simulation)
+            .add_systems(OnEnter(PlayPhase::Live), resume_simulation)
             .add_systems(
                 Update,
                 (modify_time, throttle_speed_to_fps, measure_actual_speed).chain(),
@@ -65,6 +70,16 @@ impl Plugin for SimTimePlugin {
 /// бы расчёт.
 fn pin_max_delta(mut time: ResMut<Time<Virtual>>) {
     time.set_max_delta(std::time::Duration::from_secs_f32(MAX_FRAME_DELTA));
+}
+
+/// Пауза на время прогрева. Заявки на путь при этом идут: их подача и
+/// диспетчеризация живут в `Update`, а стоит только `FixedUpdate`.
+fn pause_simulation(mut time: ResMut<Time<Virtual>>) {
+    time.pause();
+}
+
+fn resume_simulation(mut time: ResMut<Time<Virtual>>) {
+    time.unpause();
 }
 
 fn modify_time(

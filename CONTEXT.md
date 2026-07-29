@@ -34,6 +34,14 @@ in `main.rs`.
 - **AppState** (`loading.rs`) — `Loading → Playing`. `Loading` shows the loader screen
   (progress text, red error + **Retry** button on failure). All world spawning happens in
   `OnEnter(Playing)`.
+- **PlayPhase** (sub-state of `Playing`) — `Warmup → Live`. During **Warmup** the world
+  exists but `Time<Virtual>` is **paused** and the loader screen stays up reading
+  "Routing pawns... N left"; `poll_warmup` counts pawns *inside the camera view* that
+  still hold a `PathfindingRequest`/`PathfindingTask` and flips to `Live` when none are
+  left (or after `WARMUP_TIMEOUT` = 10 s, logged as a warning). Reason: all 20 000 humans
+  queue a path in the same frame, and without the hold the visible ones stood still for
+  the first seconds. Typical warmup ~3.5 s (flat A*, the northstar grid is not up yet).
+  `Live` is what despawns the loader and reveals the game UI (`GameUiRoot`).
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. Navmesh must
   be filled before population spawns, or humans land in the river.
 - **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` that
