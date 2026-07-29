@@ -1,0 +1,11 @@
+{
+  "process": "target/debug/qwe",
+  "shot": {
+    "event": "TakeScreenshotEvent",
+    "path": "screenshot.png"
+  },
+  "speed": {
+    "resource": "SimSpeed",
+    "path": ".requested"
+  }
+}

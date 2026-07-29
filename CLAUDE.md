@@ -18,7 +18,7 @@ This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 Skills hold the detail; this file holds the map. Load them — don't reconstruct their content from here.
 
 - **`git` — MANDATORY before any git operation** (staging, committing, branching, rebasing, history inspection, conflict resolution). Blocking prerequisite: do NOT run git commands until it is loaded.
-- **`live-app` — before running the app** (`cargo run`, smoke-testing in the real app, querying the live world over BRP on port 15702).
+- **`live-app` — before running the app** (`cargo run`, smoke-testing in the real app, querying the live world over BRP on port 15702). The skill is engine-level and shared with zxc; **this project's inventory lives in `.claude/live-app-project.md`** (ready markers, `SimSpeed` vs `Time<Virtual>`, screenshots, camera, registered types, toggles) and `.claude/live-app.json` configures the `brp` CLI for it. Read the appendix together with the skill.
 - **`bevy` — when writing or debugging Bevy code.** Bevy 0.19 API facts that pre-0.19 training data gets wrong.
 
 All three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
