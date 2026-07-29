@@ -2,6 +2,7 @@
 //! дебаг-тумблеры. Обычные `bevy_ui`-ноды + первопартийный
 //! `bevy_ui_widgets::Button`.
 
+mod buildings;
 mod city;
 mod debug;
 mod speed;
@@ -52,6 +53,7 @@ impl Plugin for UiPlugin {
             speed::UiSpeedPlugin,
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
+            buildings::UiBuildingStylePlugin,
             city::UiCityPlugin,
         ))
         .add_systems(OnEnter(PlayPhase::Live), show_game_ui)
