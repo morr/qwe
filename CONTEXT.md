@@ -143,8 +143,72 @@ in `main.rs`.
   65% of Paris's. The rest are orphans (porch nodes, buildings outside the bbox) and are
   dropped with a count on stderr. Overpass emits nodes before ways, so entrances are
   buffered through the element loop and attached after it. Coverage is thin everywhere
-  (Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — **every consumer must
-  work without them**.
+  (Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — hence the generator
+  below. Real OSM doors always win: generation only runs on buildings that got none.
+- **Generated entrances** (`map/osm/entrances.rs`) — synthetic doors for the ~98% of
+  buildings OSM leaves without one, with every parameter measured off the buildings that
+  *do* have them (5 cities, 14 941 attached doors; Tokyo's mirror 502'd and it carries
+  ~310 doors city-wide, so it is absent from the sample). Two measurements drive the
+  whole algorithm:
+  - **A door faces the street.** Median angle between the outline edge's outward normal
+    and the bearing to the nearest road: **0.0–0.9°** per city; 95.6% of real doors are
+    within 45°, 98% within 90°. Distance from door to nearest road: median **0.7 m**,
+    p90 5.8 m. So each outline edge is scored `road_distance + angle × 20 m/rad`
+    (`ENTRANCE_FACING_PENALTY`), best-first, and doors go on the winning edges. A
+    building with no road in reach still gets a door — it would otherwise vanish as a
+    wander target.
+  - **Door count follows length, not area.** Doors per 100 m of perimeter run 4.4 (shed)
+    down to 0.65 (station), so a linear density is wrong. And **length beats area as the
+    axis**: across 10 358 mapped buildings the mean runs 1.22 → 1.26 → 1.53 → 2.04 →
+    2.96 over the length bands, and length keeps separating *inside* a single area band
+    (at 800–2500 m²: 1.90 at 40–70 m against **3.11** at ≥ 120 m). By residual variance,
+    length alone (1.073) is no worse than area alone (1.078), and length + area + height
+    is the best combination tried (1.036 against an ungrouped 1.229).
+  - **Building length** (`equivalent_length`) — the long side of the rectangle with the
+    same area *and* perimeter: `L = (P + √(P² − 16A)) / 4`. Derived from those two rather
+    than from an AABB, which doubles the reading for a diagonally-oriented slab, and
+    which measures size rather than elongation. A shape more compact than any rectangle
+    (`P² < 16A`) has no elongation and falls back to `P / 4`.
+  - **Entrance cohorts** — length × height, with area as a demotion guard. Height only
+    separates the long bands (at 70–120 m: 1.86 low vs 2.23 tall; at ≥ 120 m: 2.64 vs
+    3.07); on short buildings it is noise (1.27 vs 1.22). `p10 = 1` in every cohort, so
+    the floor is always 1 door; `max` is the measured p90.
+
+    | cohort | length | height | what it is | measured mean | max |
+    |---|---|---|---|---|---|
+    | hut | < 20 m | any | garage, kiosk, small detached house | **1.2** | 2 |
+    | house | 20–40 m | any | terrace section, small block, shop | **1.27** | 2 |
+    | row | 40–70 m | any | long shop, school wing | **1.55** | 3 |
+    | block | 70–120 m | < 12 m | wide low corpus | **1.85** | 4 |
+    | block, tall | 70–120 m | ≥ 12 m | apartment/office corpus | **2.25** | 4 |
+    | slab | ≥ 120 m | < 12 m | long low corpus | **2.65** | 5 |
+    | slab, tall | ≥ 120 m | ≥ 12 m | the *dom-korabl* — doors by the dozen | **3.05** | 7 |
+
+    A building with **no** height lands in the low branch (measured "unknown" tracks the
+    low rows). **Area guard:** below `COHORT_SMALL_AREA` (800 m²) a long building is
+    demoted to `row` — a 100 × 4 m garage row is long but has no podyezdy, and the
+    measured 120–800 m² × 70–120 m cell is 1.46, not the long cohort's 1.86–2.23.
+  - **Spacing** — `ENTRANCE_SPACING` 25 m is the measured median gap between adjacent
+    doors (26.7 m pooled; 22.6 m in Tula, where *podyezdy* are the best-enumerated doors
+    anywhere in the sample). `ENTRANCE_MIN_SPACING` 12 m is the hard floor — the measured
+    p10 is 4.5 m, but a navtile is 2 m, so doors closer than ~10 m resolve to the same
+    tile and are not distinct targets. `facade_capacity` caps how many doors one edge
+    absorbs so a long facade cannot hoard them.
+  - **Determinism** — the count is the only random draw (`floor(mean)` plus one more with
+    probability `frac(mean)`, which reproduces the cohort mean exactly), and its LCG is
+    seeded from the building's own first vertex — same family as tree planting. A given
+    building therefore gets the same doors on every launch, independent of extract order
+    or of which buildings were parsed before it.
+
+  - **Seeing them** — the `doors` toggle in the debug row (bottom-left, `DebugDoors`,
+    remembered by `prefs`) draws a gizmo circle on every entrance, real and generated
+    alike. Same shape as `movepath`: per-frame gizmos culled to `DOORS_VIEW_SCREENS`
+    around the camera, because ten thousand ungated gizmos cost a frame.
+
+  **Measurement bias, on the record:** the means come only from buildings that have at
+  least one door mapped, and a mapper who tags one door often stops there. So these are
+  lower bounds, most trustworthy for `hut`/`house` (a house really does have one door)
+  and least for `complex`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
@@ -155,17 +219,39 @@ in `main.rs`.
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
   (a lawn is a lawn; overhang from a neighbouring tree is fine).
-- **Rendering** (`map/meshing.rs` + `map/spawn.rs`) — **one merged `Mesh2d` per layer**
-  (parks, water, alleys, roads, facades, roofs, walls): `MeshBuilder` triangulates
-  polygons via `earcutr` (holes supported, degenerate contours skipped + counted) and
-  emits per-vertex colors over a single white `ColorMaterial`. ~2800 buildings cost ~7
-  entities. **Facade** — pseudo-3D: the footprint polygon shifted straight down in a
-  darker color at z just below the roof, visible only along south edges. The shift is
-  the building's OSM height × `FACADE_SCALE` (0.2), clamped to 1.5–12 m, so a five-storey
-  block keeps the historical 3 m band and a tower reads as a tower; a building with no
-  height falls back to `DEFAULT_FACADE_HEIGHT` (3 m). Facades sit *under* every roof on
-  purpose — that is what stops a tower's wide band from painting over its low neighbour.
-  Trees stay individual entities (see tree crowns below).
+- **Rendering** (`map/meshing.rs` + `map/spawn.rs`, building layers in
+  `map/buildings.rs`) — **one merged `Mesh2d` per layer** (parks, water, alleys, roads,
+  building layers, walls): `MeshBuilder` triangulates polygons via `earcutr` (holes
+  supported, degenerate contours skipped + counted) and emits per-vertex colors over a
+  single white `ColorMaterial`. ~7000 buildings cost a handful of entities. Trees stay
+  individual entities (see tree crowns below).
+- **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
+  height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
+  layers, respawn from the unchanged `MapData::buildings`). The panel lives in
+  `ui/buildings.rs`, bottom-right above the Trees panel, one cycling button. A building
+  with no height uses `DEFAULT_BUILDING_HEIGHT` (15 m) everywhere. Modes:
+  - **Facade** (default, the historical look) — pseudo-3D: the footprint polygon shifted
+    straight down in a darker color at z just below the roof (`Z_FACADE` 4.9), visible
+    only along south edges. Shift = height × `FACADE_SCALE` (0.2) clamped to 1.5–12 m, so
+    a five-storey block keeps the historical 3 m band. Facades sit *under* every roof on
+    purpose — that is what stops a tower's wide band from painting over its low neighbour.
+  - **Shadows** — facade band plus a long shadow: one translucent merged mesh at
+    `Z_BUILDING_SHADOW` (4.5, above the portal and corpses — they are outdoors and in
+    shadow by meaning), quads swept from the silhouette edges of the footprint (edges
+    whose outward normal faces the shadow direction — same 30° light as tree shadows)
+    by height × `SHADOW_LENGTH_SCALE` (0.6) clamped to 3–45 m. The under-roof part of
+    the shadow is never drawn, so a convex building never double-darkens itself;
+    neighbouring buildings' shadows do overlap-darken, same as tree shadows.
+  - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
+    the roof toward a darker muted tone (max 0.7); no-height buildings and the Kremlin
+    keep their base color.
+  - **2.5D (Extrusion)** — watabou-style: roof lifted up by height × `EXTRUDE_SCALE`
+    (0.35) clamped to 2.5–30 m, south-facing wall quads (vertical gradient) fill the
+    gap; courtyard north walls included. No facade band, no shadows. Depth is painter's
+    algorithm *inside one mesh*: buildings sorted north-first (index-buffer order is
+    raster order), so a southern building correctly overlays its northern neighbour.
+    Known limits: units y-sort against flat z=5 and can draw over a tall roof they are
+    "behind"; kremlin wall polylines (z 5.1) draw over nearby lifted roofs.
 - **Tree crowns** (`map/trees.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the

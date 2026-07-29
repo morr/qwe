@@ -1,8 +1,9 @@
 //! Дебаг-тумблеры (порт `zxc/src/ui/debug/toggles.rs` на ресурсах вместо
-//! стейтов): кнопки grid / navmesh / movepath в левом нижнем углу.
+//! стейтов): кнопки grid / navmesh / doors / movepath в левом нижнем углу.
 //!
 //! - grid — сетка navtiles гизмо-линиями;
 //! - navmesh — заливка непроходимых тайлов (Mesh2d, спавнится по включению);
+//! - doors — входы в здания, свои и досочинённые (`map/osm/entrances.rs`);
 //! - movepath — существующий `DrawMovePaths` (он же на клавише P).
 
 use bevy::color::Mix;
@@ -11,11 +12,13 @@ use bevy::picking::hover::Hovered;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button};
+use bevy::window::PrimaryWindow;
 
 use bevy::prelude::*;
 
 use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
+use crate::map::osm::MapData;
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
@@ -35,11 +38,17 @@ pub struct DebugGrid(pub bool);
 #[settings_group(group = "debug", key = "navmesh")]
 pub struct DebugNavmesh(pub bool);
 
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "doors")]
+pub struct DebugDoors(pub bool);
+
 /// Какой слой переключает кнопка; определяет подсветку «активна».
 #[derive(Component, Clone, Copy)]
 enum DebugToggleButton {
     Grid,
     Navmesh,
+    Doors,
     Movepath,
 }
 
@@ -53,14 +62,24 @@ struct PathfindingMethodLabel;
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
 const NAVMESH_OVERLAY_Z: f32 = 5.2;
 
+/// Метка двери, м: с высоты, на которой видно квартал, кружок меньше метра
+/// уже не читается.
+const DOOR_MARKER_RADIUS: f32 = 1.5;
+const DOOR_COLOR: Color = Color::srgba(0.15, 0.85, 1.0, 0.9);
+/// Сколько экранов вокруг камеры рисовать двери. Как и у movepath: на всю
+/// карту это десять тысяч гизмо за кадр, а за соседним экраном их не видно.
+const DOORS_VIEW_SCREENS: f32 = 1.5;
+
 pub struct UiDebugTogglesPlugin;
 
 impl Plugin for UiDebugTogglesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
+            .init_resource::<DebugDoors>()
             .register_type::<DebugGrid>()
             .register_type::<DebugNavmesh>()
+            .register_type::<DebugDoors>()
             .add_systems(Startup, render_debug_toggles)
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен, — красим заливку ещё раз по спавну мира
@@ -73,6 +92,10 @@ impl Plugin for UiDebugTogglesPlugin {
                 (
                     update_toggle_buttons,
                     render_grid.run_if(|grid: Res<DebugGrid>| grid.0),
+                    // MapData появляется только под Playing
+                    render_doors
+                        .run_if(|doors: Res<DebugDoors>| doors.0)
+                        .run_if(in_state(AppState::Playing)),
                     sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                 ),
@@ -116,6 +139,15 @@ fn render_debug_toggles(mut commands: Commands) {
         DebugToggleButton::Navmesh,
         |_activate: On<Activate>, mut navmesh: ResMut<DebugNavmesh>| {
             navmesh.0 = !navmesh.0;
+        },
+    );
+    spawn_toggle(
+        &mut commands,
+        row,
+        "doors",
+        DebugToggleButton::Doors,
+        |_activate: On<Activate>, mut doors: ResMut<DebugDoors>| {
+            doors.0 = !doors.0;
         },
     );
     spawn_toggle(
@@ -215,6 +247,7 @@ fn spawn_toggle<M>(
 fn update_toggle_buttons(
     grid: Res<DebugGrid>,
     navmesh: Res<DebugNavmesh>,
+    doors: Res<DebugDoors>,
     movepaths: Res<DrawMovePaths>,
     mut buttons: Query<(
         &DebugToggleButton,
@@ -227,6 +260,7 @@ fn update_toggle_buttons(
         let is_active = match toggle {
             DebugToggleButton::Grid => grid.0,
             DebugToggleButton::Navmesh => navmesh.0,
+            DebugToggleButton::Doors => doors.0,
             DebugToggleButton::Movepath => movepaths.0,
         };
         let base = if is_active {
@@ -263,6 +297,30 @@ fn render_grid(mut gizmos: Gizmos) {
             Vec2::new(MAP_SIZE.x, world_y),
             color,
         );
+    }
+}
+
+/// Входы в здания — кружок на каждую дверь. Как и у movepath, рисуется
+/// гизмо каждый кадр и отсекается по вьюпорту: дверей на карте под десять
+/// тысяч, и гизмо на всю карту разом кладёт кадр.
+fn render_doors(
+    map: Res<MapData>,
+    camera: Single<&Transform, With<Camera2d>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut gizmos: Gizmos,
+) {
+    let camera_position = camera.translation.truncate();
+    let half_view =
+        Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * DOORS_VIEW_SCREENS;
+
+    for building in &map.buildings {
+        for &door in &building.entrances {
+            let offset = (door - camera_position).abs();
+            if offset.x > half_view.x || offset.y > half_view.y {
+                continue;
+            }
+            gizmos.circle_2d(door, DOOR_MARKER_RADIUS, DOOR_COLOR);
+        }
     }
 }
 

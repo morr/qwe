@@ -1,6 +1,7 @@
 //! Карта из OpenStreetMap: модель, Overpass-выгрузка, парсинг в `MapData`.
 
 pub mod download;
+pub mod entrances;
 pub mod model;
 pub mod overpass;
 pub mod parse;

@@ -25,7 +25,7 @@ use crate::city::City;
 use crate::map::TreeStyle;
 use crate::movement::DrawMovePaths;
 use crate::navigation::PathfindingAlgorithm;
-use crate::ui::{DebugGrid, DebugNavmesh};
+use crate::ui::{DebugDoors, DebugGrid, DebugNavmesh};
 
 /// Обратное доменное имя из URL репозитория — как просит документация
 /// `SettingsPlugin`. Определяет папку: на macOS
@@ -42,6 +42,7 @@ impl Plugin for PrefsPlugin {
                 resource_changed::<City>
                     .or_else(resource_changed::<DebugGrid>)
                     .or_else(resource_changed::<DebugNavmesh>)
+                    .or_else(resource_changed::<DebugDoors>)
                     .or_else(resource_changed::<DrawMovePaths>)
                     .or_else(resource_changed::<PathfindingAlgorithm>)
                     .or_else(resource_changed::<TreeStyle>),

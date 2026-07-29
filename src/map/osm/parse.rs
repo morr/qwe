@@ -7,6 +7,7 @@ use std::ops::RangeInclusive;
 use bevy::math::Vec2;
 
 use crate::city::City;
+use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine, distance_to_segment, point_in_area,
     point_in_polygon, ring_area, ring_bounds,
@@ -84,6 +85,13 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
             entrances.len()
         );
     }
+    // размеченных дверей в OSM единицы процентов — остальным дом получает свои
+    // по замеру когорт, см. `entrances.rs`
+    let generated = generate_entrances(&mut map);
+    eprintln!(
+        "osm parse: {} entrances attached, {generated} generated",
+        entrances.len() - orphaned
+    );
 
     map.trees = plant_trees(&map);
     Ok(map)
@@ -986,13 +994,28 @@ mod tests {
         }
     }
 
-    /// Здание без размеченных входов остаётся с пустым списком — потребитель
-    /// обязан работать и так (Токио: входов почти нет).
+    /// Здание без размеченных в OSM входов не остаётся без двери: их
+    /// досочиняет генератор (`entrances.rs`), иначе в Токио, где размечено
+    /// 0.9% домов, целей у населения почти не было бы.
     #[test]
-    fn a_building_without_entrances_keeps_an_empty_list() {
+    fn a_building_without_osm_entrances_gets_generated_ones() {
         let map = parse(&fixture(), CITY).unwrap();
         assert_eq!(map.buildings.len(), 1);
-        assert!(map.buildings[0].entrances.is_empty());
+        let building = &map.buildings[0];
+        assert!(!building.entrances.is_empty());
+        for entrance in &building.entrances {
+            let on_outline = (0..building.outer.len()).any(|index| {
+                distance_to_segment(
+                    *entrance,
+                    building.outer[index],
+                    building.outer[(index + 1) % building.outer.len()],
+                ) < 0.01
+            });
+            assert!(
+                on_outline,
+                "generated entrance off the outline: {entrance:?}"
+            );
+        }
     }
 
     #[test]

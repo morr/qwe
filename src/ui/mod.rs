@@ -9,7 +9,7 @@ mod trees;
 
 use bevy::prelude::*;
 
-pub use self::debug::{DebugGrid, DebugNavmesh};
+pub use self::debug::{DebugDoors, DebugGrid, DebugNavmesh};
 use crate::loading::{AppState, PlayPhase};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
