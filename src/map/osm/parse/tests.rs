@@ -505,7 +505,7 @@ fn entrances_at_the_same_point_collapse_into_one() {
 }
 
 /// Здание без размеченных в OSM входов не остаётся без двери: их
-/// досочиняет генератор (`entrances.rs`), иначе в Токио, где размечено
+/// досочиняет генератор (`entrances/`), иначе в Токио, где размечено
 /// 0.9% домов, целей у населения почти не было бы.
 #[test]
 fn a_building_without_osm_entrances_gets_generated_ones() {

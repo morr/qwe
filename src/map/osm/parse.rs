@@ -89,7 +89,7 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         );
     }
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
-    // по замеру когорт, см. `entrances.rs`
+    // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
     let generated = generate_entrances(&mut map);
     eprintln!(

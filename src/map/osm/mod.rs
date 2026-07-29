@@ -1,4 +1,5 @@
-//! Карта из OpenStreetMap: модель, Overpass-выгрузка, парсинг в `MapData`.
+//! Карта из OpenStreetMap: модель, Overpass-выгрузка, парсинг в `MapData`,
+//! досочинение входов и посадка деревьев по разобранной карте.
 
 pub mod download;
 pub mod entrances;

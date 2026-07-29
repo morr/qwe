@@ -3,7 +3,7 @@
 //!
 //! - grid — сетка navtiles гизмо-линиями;
 //! - navmesh — заливка непроходимых тайлов (Mesh2d, спавнится по включению);
-//! - doors — входы в здания, свои и досочинённые (`map/osm/entrances.rs`);
+//! - doors — входы в здания, свои и досочинённые (`map/osm/entrances/`);
 //! - movepath — существующий `DrawMovePaths` (он же на клавише M).
 //!
 //! Хоткеи: N — navmesh, M — movepath (в `movement`), G — «гизмо» одной
