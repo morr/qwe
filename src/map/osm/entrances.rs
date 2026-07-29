@@ -19,6 +19,10 @@
 //!   приходится 4.4 входа у сарая и 0.65 у вокзала — линейная плотность не
 //!   годится, нужны когорты.
 //!
+//! Плюс одно требование, которое замером не выводится, а следует из здравого
+//! смысла и из того, что в OSM дома сплошь и рядом стоят вплотную: **дверь не
+//! ставится в стену, к которой прижат сосед** — см. [`FootprintIndex`].
+//!
 //! Генерация детерминирована: LCG засеян геометрией самого здания, поэтому
 //! дверь одного и того же дома оказывается на одном и том же месте при каждом
 //! запуске и не зависит ни от порядка зданий в выгрузке, ни от того, какие
@@ -26,7 +30,10 @@
 
 use bevy::math::Vec2;
 
-use crate::map::osm::model::{AreaKind, MapData, PolyArea, RoadLine, distance_to_segment};
+use crate::map::osm::model::{
+    AreaKind, MapData, PolyArea, RoadLine, distance_to_segment, point_in_area, ring_bounds,
+};
+use crate::settings::NAVTILE_SIZE;
 
 /// Границы длины здания, м — главная ось когорт. Именно длина, а не площадь,
 /// отвечает на вопрос «сколько подъездов»: внутри одной полосы площади длина
@@ -131,8 +138,18 @@ const ENTRANCE_MIN_SPACING: f32 = 12.0;
 /// обязана проигрывать вдвое более далёкой, но обращённой к улице (на 90°
 /// штраф даёт 31 м).
 const ENTRANCE_FACING_PENALTY: f32 = 20.0;
+/// Насколько далеко от стены проверяется, свободно ли перед дверью, м. Ровно
+/// навтайл: дверь имеет смысл только там, где перед ней есть куда встать, а
+/// меньше тайла свободного места навмеш всё равно не разрешит. Заодно этот же
+/// зазор съедает разнобой в координатах общей стены — соседние дома в OSM
+/// обводят по одному и тому же ряду точек редко.
+const ENTRANCE_CLEARANCE: f32 = NAVTILE_SIZE;
 /// Сторона ячейки индекса дорог, м.
 const ROAD_CELL: f32 = 60.0;
+/// Сторона ячейки индекса контуров, м. Мельче дорожной: здание — пятно в
+/// десятки метров, и в ячейку должно попадать несколько кандидатов, а не
+/// полквартала.
+const FOOTPRINT_CELL: f32 = 30.0;
 /// Насколько колец ячеек вокруг точки просматривает индекс, прежде чем
 /// сдаться. 4 кольца — 240 м; дальше от любой дороги в городе не бывает, а
 /// здание в глубине квартала всё равно получит дверь по лучшей из граней.
@@ -155,8 +172,8 @@ impl RoadIndex {
                 let min = from.min(to);
                 let max = from.max(to);
                 // отрезок кладётся во все ячейки, которые пересекает его AABB
-                for x in cell(min.x)..=cell(max.x) {
-                    for y in cell(min.y)..=cell(max.y) {
+                for x in cell(min.x, ROAD_CELL)..=cell(max.x, ROAD_CELL) {
+                    for y in cell(min.y, ROAD_CELL)..=cell(max.y, ROAD_CELL) {
                         cells.entry((x, y)).or_default().push((from, to));
                     }
                 }
@@ -170,7 +187,7 @@ impl RoadIndex {
     /// найденное расстояние заведомо меньше, чем всё, что может лежать в
     /// следующем кольце.
     fn nearest(&self, point: Vec2) -> Option<(Vec2, f32)> {
-        let (cx, cy) = (cell(point.x), cell(point.y));
+        let (cx, cy) = (cell(point.x, ROAD_CELL), cell(point.y, ROAD_CELL));
         let mut best: Option<(Vec2, f32)> = None;
 
         for ring in 0..=ROAD_SEARCH_RINGS {
@@ -197,8 +214,48 @@ impl RoadIndex {
     }
 }
 
-fn cell(value: f32) -> i32 {
-    (value / ROAD_CELL).floor() as i32
+fn cell(value: f32, size: f32) -> i32 {
+    (value / size).floor() as i32
+}
+
+/// Равномерная сетка контуров зданий. Нужна, чтобы ответить на вопрос «есть ли
+/// перед этой стеной свободное место»: в плотной застройке дома в OSM стоят
+/// вплотную и даже перекрываются, и дверь, поставленная на общую стену,
+/// оказывается внутри соседа — снаружи её не видно, а изнутри к ней не пройти.
+struct FootprintIndex<'a> {
+    cells: std::collections::HashMap<(i32, i32), Vec<usize>>,
+    buildings: &'a [PolyArea],
+}
+
+impl<'a> FootprintIndex<'a> {
+    fn build(buildings: &'a [PolyArea]) -> Self {
+        let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> =
+            std::collections::HashMap::new();
+        for (index, building) in buildings.iter().enumerate() {
+            // загораживает дверь только дом; вода и парк — не преграда
+            if building.kind != AreaKind::Building || building.outer.len() < 3 {
+                continue;
+            }
+            let (min, max) = ring_bounds(&building.outer);
+            for x in cell(min.x, FOOTPRINT_CELL)..=cell(max.x, FOOTPRINT_CELL) {
+                for y in cell(min.y, FOOTPRINT_CELL)..=cell(max.y, FOOTPRINT_CELL) {
+                    cells.entry((x, y)).or_default().push(index);
+                }
+            }
+        }
+        Self { cells, buildings }
+    }
+
+    /// Точка занята чужим домом? Свой дом (`owner`) не в счёт — дверь стоит на
+    /// его собственной стене.
+    fn is_covered(&self, point: Vec2, owner: usize) -> bool {
+        let key = (cell(point.x, FOOTPRINT_CELL), cell(point.y, FOOTPRINT_CELL));
+        self.cells
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .any(|&index| index != owner && point_in_area(point, &self.buildings[index]))
+    }
 }
 
 /// Ближайшая точка отрезка — как `distance_to_segment`, но нужна сама точка.
@@ -229,6 +286,8 @@ fn ring_is_ccw(ring: &[Vec2]) -> bool {
 struct Facade {
     from: Vec2,
     to: Vec2,
+    /// Внешняя нормаль — по ней проверяется, свободно ли перед стеной.
+    outward: Vec2,
     length: f32,
     /// Меньше — лучше: расстояние до дороги плюс штраф за отворот от неё.
     score: f32,
@@ -238,23 +297,54 @@ struct Facade {
 /// сгенерированных входов.
 pub fn generate_entrances(map: &mut MapData) -> usize {
     let roads = RoadIndex::build(&map.roads);
-    let mut generated = 0;
+    let footprints = FootprintIndex::build(&map.buildings);
 
-    for building in &mut map.buildings {
+    // двери сначала считаются по неизменной карте — каждому зданию нужны
+    // контуры соседей, — и только потом раскладываются по зданиям
+    let mut filled: Vec<(usize, Vec<Vec2>)> = Vec::new();
+    let mut walled_in = 0;
+    for (index, building) in map.buildings.iter().enumerate() {
         // реальные двери всегда важнее придуманных; стены и башни кремля
         // дверей не несут
         if !building.entrances.is_empty() || building.kind != AreaKind::Building {
             continue;
         }
-        generated += fill_building(building, &roads);
+        let Some(doors) = fill_building(index, building, &roads, &footprints) else {
+            continue;
+        };
+        walled_in += usize::from(doors.forced);
+        filled.push((index, doors.entrances));
+    }
+
+    if walled_in > 0 {
+        // дом целиком накрыт соседями (в OSM это чаще всего корпус, обведённый
+        // ещё раз общим контуром квартала) — дверь ему всё равно нужна
+        eprintln!("osm parse: {walled_in} buildings have no free wall for a door");
+    }
+
+    let mut generated = 0;
+    for (index, entrances) in filled {
+        generated += entrances.len();
+        map.buildings[index].entrances = entrances;
     }
     generated
 }
 
-fn fill_building(building: &mut PolyArea, roads: &RoadIndex) -> usize {
+/// Двери одного здания и признак того, что свободной стены у него не нашлось.
+struct FilledBuilding {
+    entrances: Vec<Vec2>,
+    forced: bool,
+}
+
+fn fill_building(
+    index: usize,
+    building: &PolyArea,
+    roads: &RoadIndex,
+    footprints: &FootprintIndex,
+) -> Option<FilledBuilding> {
     let ring = &building.outer;
     if ring.len() < 3 {
-        return 0;
+        return None;
     }
 
     let area = crate::map::osm::model::ring_area(ring);
@@ -271,9 +361,19 @@ fn fill_building(building: &mut PolyArea, roads: &RoadIndex) -> usize {
     // всегда конечны
     facades.sort_by(|a, b| a.score.total_cmp(&b.score));
 
-    let placed = place_along(&facades, wanted);
-    building.entrances = placed;
-    building.entrances.len()
+    let free = place_along(&facades, wanted, Some((index, footprints)));
+    if !free.is_empty() {
+        return Some(FilledBuilding {
+            entrances: free,
+            forced: false,
+        });
+    }
+    // ни одной свободной стены: дом без двери выпал бы из целей блуждания, так
+    // что ставим её на лучшую грань как раньше
+    Some(FilledBuilding {
+        entrances: place_along(&facades, 1, None),
+        forced: true,
+    })
 }
 
 /// Число входов: **закон шага** — дверь на каждые [`ENTRANCE_SPACING`] длины,
@@ -344,6 +444,7 @@ fn score_facades(ring: &[Vec2], roads: &RoadIndex) -> Vec<Facade> {
         facades.push(Facade {
             from,
             to,
+            outward,
             length: edge.length(),
             score,
         });
@@ -368,7 +469,18 @@ fn facade_capacity(length: f32) -> usize {
 /// вмещает ([`facade_capacity`]), и раскладывает их по себе равномерно. Вторая
 /// дверь уходит на боковой фасад только тогда, когда на уличном ей уже не
 /// хватило места.
-fn place_along(facades: &[Facade], wanted: usize) -> Vec<Vec2> {
+///
+/// `neighbours` — свой номер и индекс контуров; каждая точка проверяется на
+/// [`ENTRANCE_CLEARANCE`] наружу, и место, накрытое чужим домом, пропускается:
+/// стена, к которой сосед стоит вплотную, — глухая, дверь на ней смотрит в
+/// чужой фасад. Занятая грань просто не отдаёт дверей, и они достаются
+/// следующей по оценке. `None` — расставлять, не глядя на соседей (запасной
+/// проход для дома, у которого свободной стены не нашлось вовсе).
+fn place_along(
+    facades: &[Facade],
+    wanted: usize,
+    neighbours: Option<(usize, &FootprintIndex)>,
+) -> Vec<Vec2> {
     let mut placed: Vec<Vec2> = Vec::with_capacity(wanted);
     let minimum_squared = ENTRANCE_MIN_SPACING * ENTRANCE_MIN_SPACING;
 
@@ -389,6 +501,11 @@ fn place_along(facades: &[Facade], wanted: usize) -> Vec<Vec2> {
                 .iter()
                 .any(|other| other.distance_squared(point) < minimum_squared)
             {
+                continue;
+            }
+            if neighbours.is_some_and(|(owner, footprints)| {
+                footprints.is_covered(point + facade.outward * ENTRANCE_CLEARANCE, owner)
+            }) {
                 continue;
             }
             placed.push(point);
@@ -503,9 +620,9 @@ mod tests {
         }
     }
 
-    /// Позиция двери зависит только от собственной геометрии дома: тот же дом
-    /// в выгрузке, где соседей разобрали в другом порядке, получает ту же
-    /// дверь.
+    /// Позиция двери не зависит от порядка разбора: тот же дом в выгрузке, где
+    /// соседей перечислили иначе, получает ту же дверь. Соседи здесь стоят
+    /// далеко и стен не загораживают.
     #[test]
     fn a_building_keeps_its_entrances_regardless_of_its_neighbours() {
         let alone = building(
@@ -716,6 +833,55 @@ mod tests {
         // квадрат 53 × 53 той же площади — длина стороны, а не диагональ
         let square = equivalent_length(2809.0, 4.0 * 53.0);
         assert!((square - 53.0).abs() < 0.5, "{square}");
+    }
+
+    /// Регресс на реальный дефект: два дома стоят вплотную, и у правого дверь
+    /// оказывалась на общей стене — то есть внутри левого дома. Стена, за
+    /// которой сразу сосед, глухая, дверь обязана уйти на свободную грань.
+    #[test]
+    fn a_door_never_lands_on_a_wall_a_neighbour_stands_against() {
+        // улица идёт с запада, так что для правого дома лучшей по оценке
+        // грань оказывается западная — она же общая с левым домом
+        let mut map = MapData {
+            buildings: vec![
+                building(rect(Vec2::new(100.0, 100.0), Vec2::new(140.0, 130.0)), None),
+                building(rect(Vec2::new(140.0, 100.0), Vec2::new(180.0, 130.0)), None),
+            ],
+            roads: vec![road(vec![Vec2::new(95.0, 0.0), Vec2::new(95.0, 400.0)])],
+            ..Default::default()
+        };
+
+        generate_entrances(&mut map);
+        let right = &map.buildings[1].entrances;
+        assert!(!right.is_empty(), "the right building got no door at all");
+        for door in right {
+            assert!(
+                (door.x - 140.0).abs() > 0.01,
+                "door on the wall shared with the neighbour: {door:?}"
+            );
+        }
+        // левому дому общая стена мешает ровно так же
+        for door in &map.buildings[0].entrances {
+            assert!((door.x - 140.0).abs() > 0.01, "{door:?}");
+        }
+    }
+
+    /// Дом, накрытый чужим контуром целиком (в OSM так обводят квартал поверх
+    /// корпусов), дверь всё равно получает — без неё он выпал бы из целей
+    /// блуждания.
+    #[test]
+    fn a_building_walled_in_on_every_side_still_gets_a_door() {
+        let mut map = MapData {
+            buildings: vec![
+                building(rect(Vec2::new(0.0, 0.0), Vec2::new(300.0, 300.0)), None),
+                building(rect(Vec2::new(100.0, 100.0), Vec2::new(130.0, 130.0)), None),
+            ],
+            roads: vec![road(vec![Vec2::new(0.0, 350.0), Vec2::new(400.0, 350.0)])],
+            ..Default::default()
+        };
+
+        generate_entrances(&mut map);
+        assert!(!map.buildings[1].entrances.is_empty());
     }
 
     /// Дом в глубине квартала, вокруг ни одной дороги, всё равно получает

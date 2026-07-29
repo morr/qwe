@@ -87,10 +87,12 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     }
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances.rs`
+    let started = std::time::Instant::now();
     let generated = generate_entrances(&mut map);
     eprintln!(
-        "osm parse: {} entrances attached, {generated} generated",
-        entrances.len() - orphaned
+        "osm parse: {} entrances attached, {generated} generated in {:?}",
+        entrances.len() - orphaned,
+        started.elapsed()
     );
 
     map.trees = plant_trees(&map);

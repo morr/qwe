@@ -220,11 +220,25 @@ in `main.rs`.
     p10 is 4.5 m, but a navtile is 2 m, so doors closer than ~10 m resolve to the same
     tile and are not distinct targets. `facade_capacity` caps how many doors one edge
     absorbs so a long facade cannot hoard them.
+  - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
+    door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
+    a door placed there sits *inside* the neighbour: invisible from the street and
+    unreachable. Every candidate point is probed `ENTRANCE_CLEARANCE` (= `NAVTILE_SIZE`,
+    2 m) along the edge's outward normal, and a probe that lands inside another
+    `AreaKind::Building` kills that slot; the facade simply yields fewer doors and the
+    next one by score picks them up. The probe distance is also the smallest gap worth
+    a door — less than a navtile of free space in front and nobody can stand there.
+    Lookups go through a 30 m uniform grid over the building outlines, built once per
+    map. A building **walled in on every side** (usually a corpus that a mapper also
+    traced over as a block-wide outline) still gets one door on its best facade — it
+    would otherwise vanish as a wander target — and the count of those is logged
+    (`N buildings have no free wall for a door`).
   - **Determinism** — the count is the only random draw (`floor(mean)` plus one more with
     probability `frac(mean)`, which reproduces the cohort mean exactly), and its LCG is
     seeded from the building's own first vertex — same family as tree planting. A given
     building therefore gets the same doors on every launch, independent of extract order
-    or of which buildings were parsed before it.
+    or of which buildings were parsed before it. Neighbours matter only through their
+    geometry (the blocked-wall test above), never through parse order.
 
   - **Seeing them** — the `doors` toggle in the debug row (bottom-left, `DebugDoors`,
     remembered by `prefs`) draws a gizmo circle on every entrance, real and generated
