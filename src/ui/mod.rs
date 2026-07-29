@@ -9,7 +9,7 @@ mod trees;
 use bevy::prelude::*;
 
 pub use self::debug::{DebugGrid, DebugNavmesh};
-use crate::loading::AppState;
+use crate::loading::PlayPhase;
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
@@ -31,8 +31,8 @@ pub fn ui_color(opacity: UiOpacity) -> Color {
     })
 }
 
-/// Корень игровой панели. Панели спавнятся в `Startup`, но во время
-/// `Loading` поверх экрана загрузки им делать нечего — до `Playing` они
+/// Корень игровой панели. Панели спавнятся в `Startup`, но поверх экрана
+/// загрузки им делать нечего — до конца прогрева (`PlayPhase::Live`) они
 /// скрыты (спавнятся с `Visibility::Hidden`).
 #[derive(Component)]
 pub struct GameUiRoot;
@@ -46,7 +46,7 @@ impl Plugin for UiPlugin {
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
         ))
-        .add_systems(OnEnter(AppState::Playing), show_game_ui);
+        .add_systems(OnEnter(PlayPhase::Live), show_game_ui);
     }
 }
 

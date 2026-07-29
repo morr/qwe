@@ -5,8 +5,10 @@
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
+use bevy::window::PrimaryWindow;
 
 use crate::map::osm::{JobState, MapLoadJob, start_load_thread};
+use crate::movement::{PathfindingRequest, PathfindingTask, SimPosition};
 use crate::navigation::ArcNavmesh;
 use crate::portal::PortalPos;
 use crate::ui::{UiOpacity, ui_color};
@@ -17,6 +19,21 @@ pub enum AppState {
     Loading,
     Playing,
 }
+
+/// Подсостояние `Playing`: `Warmup` — мир уже живёт, но экран загрузки ещё
+/// висит, пока пешкам в кадре не просчитаны пути. Иначе первую секунду сцена
+/// стоит колом: 20 000 заявок на поиск пути подаются в один кадр.
+#[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[source(AppState = AppState::Playing)]
+pub enum PlayPhase {
+    #[default]
+    Warmup,
+    Live,
+}
+
+/// Потолок ожидания прогрева, сек: экран загрузки не должен зависнуть
+/// навсегда, если пути почему-то не сходятся.
+const WARMUP_TIMEOUT: f32 = 10.0;
 
 /// Порядок инициализации мира в `OnEnter(Playing)`: navmesh заполняется
 /// раньше спавнов — иначе население высадится в реку и стены.
@@ -40,6 +57,7 @@ pub struct LoadingPlugin;
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
+            .add_sub_state::<PlayPhase>()
             .configure_sets(
                 OnEnter(AppState::Playing),
                 (WorldInitSet::Navmesh, WorldInitSet::Spawn).chain(),
@@ -50,9 +68,12 @@ impl Plugin for LoadingPlugin {
                 (
                     bevy::dev_tools::states::log_transitions::<AppState>,
                     poll_job.run_if(in_state(AppState::Loading)),
+                    poll_warmup.run_if(in_state(PlayPhase::Warmup)),
                 ),
             )
-            .add_systems(OnExit(AppState::Loading), despawn_loader_ui);
+            // экран загрузки живёт до конца прогрева, а не до выхода из
+            // `Loading`: мир строится раньше, чем по нему можно ходить
+            .add_systems(OnEnter(PlayPhase::Live), despawn_loader_ui);
     }
 }
 
@@ -206,6 +227,62 @@ fn poll_job(
             *visibility = target;
         }
     }
+}
+
+/// Прогрев: держим экран загрузки, пока у пешек в кадре есть незакрытые
+/// заявки на поиск пути. Ждать заявок вне кадра бессмысленно — диспетчер их
+/// и не запускает, пока камера не приедет.
+///
+/// `seen_requests` нужен, потому что в первый кадр после спавна заявки ещё
+/// не вставлены (команды `pick_wander_targets` применяются в конце кадра),
+/// и без него прогрев закончился бы, не начавшись.
+fn poll_warmup(
+    time: Res<Time<Real>>,
+    mut progress: Local<WarmupProgress>,
+    camera: Single<&Transform, With<Camera2d>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    pending: Query<&SimPosition, Or<(With<PathfindingRequest>, With<PathfindingTask>)>>,
+    mut texts: Query<&mut Text, With<LoaderText>>,
+    mut next: ResMut<NextState<PlayPhase>>,
+) {
+    let WarmupProgress {
+        elapsed,
+        seen_requests,
+    } = &mut *progress;
+    *elapsed += time.delta_secs();
+
+    let camera_position = camera.translation.truncate();
+    let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x;
+    let waiting = pending
+        .iter()
+        .filter(|sim_position| {
+            let offset = (sim_position.0 - camera_position).abs();
+            offset.x <= half_view.x && offset.y <= half_view.y
+        })
+        .count();
+    *seen_requests |= waiting > 0;
+
+    if (*seen_requests && waiting == 0) || *elapsed > WARMUP_TIMEOUT {
+        if waiting > 0 {
+            warn!("warmup timed out with {waiting} pawns still routing");
+        } else {
+            info!("warmup: pawns on screen routed in {:.2}s", *elapsed);
+        }
+        next.set(PlayPhase::Live);
+        return;
+    }
+
+    for mut text in &mut texts {
+        text.set_if_neq(Text(format!("Routing pawns... {waiting} left")));
+    }
+}
+
+/// Состояние прогрева между кадрами: сколько он идёт и видели ли мы хоть
+/// одну заявку на путь.
+#[derive(Default)]
+struct WarmupProgress {
+    elapsed: f32,
+    seen_requests: bool,
 }
 
 fn despawn_loader_ui(mut commands: Commands, roots: Query<Entity, With<LoaderUiRoot>>) {
