@@ -130,6 +130,7 @@ pub fn spawn_map(
         &mut materials,
         *height_mode,
         &map.buildings,
+        &map.roads,
     );
 
     trees::spawn_trees(

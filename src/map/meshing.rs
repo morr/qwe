@@ -28,6 +28,19 @@ impl MeshBuilder {
         self.skipped_polygons
     }
 
+    /// Сколько вершин уже накоплено — тестам, чтобы сравнивать объём
+    /// геометрии, не разбирая готовый меш.
+    pub fn vertex_count(&self) -> usize {
+        self.positions.len()
+    }
+
+    /// Накопленные вершины — только для тестов, которым надо проверить, куда
+    /// именно легла геометрия (высота проёма арки, например).
+    #[cfg(test)]
+    pub fn positions_for_test(&self) -> &[[f32; 3]] {
+        &self.positions
+    }
+
     /// Полигон с дырками через earcut. Вырожденный/кривой — пропуск со
     /// счётчиком, один плохой контур OSM не должен ронять всю карту.
     pub fn push_polygon(&mut self, outer: &[Vec2], holes: &[Vec<Vec2>], color: LinearRgba) {

@@ -5,6 +5,7 @@
 //! `BuildingHeightMode` пересобирает только зданиевые слои
 //! (`rebuild_buildings`).
 
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 use bevy::color::Mix;
@@ -13,9 +14,9 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::ring_bounds;
-use crate::map::osm::{AreaKind, MapData, PolyArea};
-use crate::settings::Z_BUILDING;
+use crate::map::osm::model::{point_in_area, ring_bounds};
+use crate::map::osm::{AreaKind, MapData, PolyArea, RoadLine};
+use crate::settings::{ARCH_HEIGHT, Z_BUILDING};
 
 const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
 const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
@@ -69,6 +70,17 @@ const EXTRUDE_SCALE: f32 = 0.35;
 const EXTRUDE_RANGE: RangeInclusive<f32> = 2.5..=30.0;
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
+
+/// Цвет проёма арки — та же подложка, что у земли в `spawn.rs`: сквозь арку
+/// видно двор, а не стену.
+const ARCH_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
+/// Дальше скольких метров конец прохода не считается выходом на стену:
+/// конец в OSM — общая вершина контура, так что реально там ноль; запас
+/// покрывает шум проекции и слегка неровную разметку.
+const ARCH_WALL_REACH: f32 = 6.0;
+/// Насколько дальше ближайшей грани всё ещё «та же» стена, м: у общей вершины
+/// двух граней обе на нулевом расстоянии, и проём обязан кроиться по обеим.
+const ARCH_WALL_TIE: f32 = 0.5;
 
 /// Режим отображения высоты зданий; переключается панелью Buildings и BRP,
 /// сохраняется в настройках между запусками.
@@ -132,6 +144,7 @@ pub fn spawn_buildings(
     materials: &mut Assets<ColorMaterial>,
     mode: BuildingHeightMode,
     buildings: &[PolyArea],
+    passages: &[RoadLine],
 ) {
     // вершинные цвета — материал один, белый; тени — свой blend-материал
     let opaque = materials.add(Color::WHITE);
@@ -158,7 +171,7 @@ pub fn spawn_buildings(
             spawn_layer(
                 commands,
                 meshes,
-                extrusion_builder(buildings, tinted),
+                extrusion_builder(buildings, passages, tinted),
                 Z_BUILDING,
                 "building_extruded",
             );
@@ -167,7 +180,7 @@ pub fn spawn_buildings(
         | BuildingHeightMode::Shadows
         | BuildingHeightMode::ShadowsTint => {
             let tinted = mode == BuildingHeightMode::ShadowsTint;
-            let (facades, roofs) = facade_and_roof_builders(buildings, tinted);
+            let (facades, roofs) = facade_and_roof_builders(buildings, passages, tinted);
             spawn_layer(commands, meshes, facades, Z_FACADE, "building_facades");
             spawn_layer(commands, meshes, roofs, Z_BUILDING, "building_roofs");
         }
@@ -179,7 +192,11 @@ pub fn spawn_buildings(
             | BuildingHeightMode::ShadowsTint
             | BuildingHeightMode::ExtrusionShadowsTint
     ) {
-        let shadows = shadow_builder(buildings);
+        let shadows = shadow_builder(
+            buildings,
+            passages,
+            mode == BuildingHeightMode::ExtrusionShadowsTint,
+        );
         if !shadows.is_empty() {
             commands.spawn((
                 BuildingLayerTag,
@@ -198,6 +215,258 @@ pub fn spawn_buildings(
     if skipped > 0 {
         warn!("building meshing: {skipped} degenerate polygons skipped");
     }
+}
+
+/// Арки: `tunnel=building_passage` — это дорога, проложенная сквозь дом, и в
+/// navmesh она уже прорезана коридором. Здание же рисуется сплошным, и пешки
+/// идут сквозь нарисованную стену — карта врёт.
+///
+/// Проём лежит **в плоскости стены** и выровнен по грани контура. Ширина —
+/// ширина самой дороги, спроецированная углом входа (|sin| между дорогой и
+/// гранью: перпендикулярный вход — полная ширина, скользящий — почти ничего)
+/// и подрезанная концами грани, чтобы у арки возле угла дома квад не повисал
+/// в воздухе. Высота — [`ARCH_HEIGHT`] настоящих метров долей высоты
+/// **этого** дома: `band × 6 / height`. Не через `EXTRUDE_SCALE` — подъём
+/// обрезан `EXTRUDE_RANGE`, и у сарая или башни нарисованный метр стоит не
+/// тех же 0.35 настоящих.
+///
+/// Стена ищется не пересечением дороги с контуром, а от **концов** прохода: в
+/// OSM арку сплошь и рядом размечают отрезком от вершины контура до вершины
+/// контура (арка 485488257 в Туле — ровно такая), то есть дорога лежит внутри
+/// дома и стен касается только концами. Пересечения там нет вовсе, зато
+/// каждый конец — и есть выход арки наружу.
+struct ArchOpening {
+    /// Грань, в которой прорезан проём.
+    a: Vec2,
+    b: Vec2,
+    /// Интервал проёма вдоль грани, м от `a`.
+    low: f32,
+    high: f32,
+    /// Вертикальный габарит проёма — доля полосы/подъёма режима.
+    sill: Vec2,
+}
+
+fn arch_openings(building: &PolyArea, passages: &[&RoadLine], band: Vec2) -> Vec<ArchOpening> {
+    if passages.is_empty() || band == Vec2::ZERO {
+        return Vec::new();
+    }
+    // доля стены, которую занимает проём; у совсем низкого дома арка не
+    // может быть выше него самого
+    let sill = band * (ARCH_HEIGHT / height_or_default(building)).min(1.0);
+
+    // видимые стены — те же грани, что рисует `extrusion_builder`
+    let walls: Vec<(Vec2, Vec2)> = silhouette_edges(&building.outer, Vec2::NEG_Y)
+        .into_iter()
+        .chain(
+            building
+                .holes
+                .iter()
+                .flat_map(|hole| silhouette_edges(hole, Vec2::Y)),
+        )
+        .collect();
+
+    let mut openings = Vec::new();
+    for passage in passages {
+        // конец прохода и направление, которым дорога входит в дом
+        let ends = [
+            passage.points.first().zip(passage.points.get(1)),
+            passage
+                .points
+                .last()
+                .zip(passage.points.iter().rev().nth(1)),
+        ];
+        for &(&point, &neighbour) in ends.iter().flatten() {
+            let Some(direction) = (neighbour - point).try_normalize() else {
+                continue;
+            };
+            // конец прохода в OSM — общая вершина контура, то есть точка
+            // стыка ДВУХ граней: проём, зажатый в одну из них, обрезался бы
+            // до половины ширины дороги. Кроим по всем граням в пределах
+            // допуска от ближайшей — на стыке куски продолжают друг друга.
+            let nearest = walls
+                .iter()
+                .map(|&(a, b)| point.distance(closest_on_segment(point, a, b)))
+                .fold(f32::MAX, f32::min);
+            if nearest > ARCH_WALL_REACH {
+                continue;
+            }
+            for &(a, b) in &walls {
+                let at = closest_on_segment(point, a, b);
+                if point.distance(at) > nearest + ARCH_WALL_TIE {
+                    continue;
+                }
+                let Some(along) = (b - a).try_normalize() else {
+                    continue;
+                };
+                // дорога под углом к стене дырявит её уже собственной ширины
+                let half = passage.width / 2.0 * direction.perp_dot(along).abs();
+
+                let length = (b - a).length();
+                let base = (at - a).dot(along);
+                let (low, high) = ((base - half).max(0.0), (base + half).min(length));
+                if high - low < 0.05 {
+                    continue;
+                }
+                openings.push(ArchOpening {
+                    a,
+                    b,
+                    low,
+                    high,
+                    sill,
+                });
+            }
+        }
+    }
+    openings
+}
+
+/// Стена с проёмами: боковые куски во всю высоту и перемычка над каждой
+/// аркой. Это **настоящий вырез** — в дыру просвечивают нижние слои (дорога,
+/// проложенная сквозь дом, тень), а не закраска цветом земли.
+fn push_wall_with_openings(
+    builder: &mut MeshBuilder,
+    a: Vec2,
+    b: Vec2,
+    lift: Vec2,
+    openings: &[ArchOpening],
+    bottom: LinearRgba,
+    top: LinearRgba,
+) {
+    let mut cuts: Vec<&ArchOpening> = openings
+        .iter()
+        .filter(|opening| opening.a == a && opening.b == b)
+        .collect();
+    if cuts.is_empty() {
+        builder.push_quad_gradient([a, b, b + lift, a + lift], [bottom, bottom, top, top]);
+        return;
+    }
+    cuts.sort_by(|first, second| first.low.total_cmp(&second.low));
+
+    let Some(along) = (b - a).try_normalize() else {
+        return;
+    };
+    let length = (b - a).length();
+    let piece = |builder: &mut MeshBuilder, from: f32, to: f32| {
+        if to - from < 0.01 {
+            return;
+        }
+        let (p0, p1) = (a + along * from, a + along * to);
+        builder.push_quad_gradient([p0, p1, p1 + lift, p0 + lift], [bottom, bottom, top, top]);
+    };
+
+    let mut cursor = 0.0;
+    for cut in cuts {
+        piece(builder, cursor, cut.low);
+        // перемычка над проёмом; цвет её низа — градиент стены на этой высоте
+        let fraction = if lift.length_squared() > 0.0 {
+            (cut.sill.length() / lift.length()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let sill_color = bottom.mix(&top, fraction);
+        let (p0, p1) = (a + along * cut.low, a + along * cut.high);
+        builder.push_quad_gradient(
+            [p0 + cut.sill, p1 + cut.sill, p1 + lift, p0 + lift],
+            [sill_color, sill_color, top, top],
+        );
+        cursor = cut.high.max(cursor);
+    }
+    piece(builder, cursor, length);
+}
+
+/// Фасадные режимы: полоса фасада — один earcut-полигон на всё здание, и
+/// честный паз в нём потребовал бы булевой операции над полигонами. Здесь
+/// проём **закрашивается** цветом подложки — компромисс; настоящий вырез
+/// живёт в 2.5D (`push_wall_with_openings`).
+fn push_arches(builder: &mut MeshBuilder, building: &PolyArea, passages: &[&RoadLine], band: Vec2) {
+    // проём затенён перемычкой над ним — подложка мешается с тоном тени
+    let color = ARCH_COLOR
+        .mix(&Color::srgb(0.22, 0.24, 0.33), SHADOW_COLOR.alpha())
+        .to_linear();
+    for opening in arch_openings(building, passages, band) {
+        let Some(along) = (opening.b - opening.a).try_normalize() else {
+            continue;
+        };
+        push_swept_quad(
+            builder,
+            [
+                opening.a + along * opening.low,
+                opening.a + along * opening.high,
+            ],
+            opening.sill,
+            color,
+        );
+    }
+}
+
+/// Ближайшая точка отрезка — как `distance_to_segment`, но нужна сама точка.
+fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
+    let segment = to - from;
+    let length_squared = segment.length_squared();
+    if length_squared == 0.0 {
+        return from;
+    }
+    let t = ((point - from).dot(segment) / length_squared).clamp(0.0, 1.0);
+    from + segment * t
+}
+
+/// Проходы, разложенные по домам, которые они прорезают: `building_passage`
+/// размечают ровно тем куском дороги, что лежит под домом, поэтому дом
+/// ищется по середине прохода.
+fn arches_by_building<'a>(
+    buildings: &[PolyArea],
+    passages: &'a [RoadLine],
+) -> HashMap<usize, Vec<&'a RoadLine>> {
+    let mut by_building: HashMap<usize, Vec<&RoadLine>> = HashMap::new();
+    for passage in passages.iter().filter(|road| road.passage) {
+        let Some(middle) = passage_middle(passage) else {
+            continue;
+        };
+        let pierced = buildings.iter().position(|building| {
+            let (min, max) = ring_bounds(&building.outer);
+            middle.x >= min.x
+                && middle.x <= max.x
+                && middle.y >= min.y
+                && middle.y <= max.y
+                && point_in_area(middle, building)
+        });
+        if let Some(index) = pierced {
+            by_building.entry(index).or_default().push(passage);
+        }
+    }
+    by_building
+}
+
+/// Середина ломаной по длине — устойчивее к неравномерным сегментам, чем
+/// средняя точка списка.
+fn passage_middle(passage: &RoadLine) -> Option<Vec2> {
+    let total: f32 = passage
+        .points
+        .windows(2)
+        .map(|segment| segment[0].distance(segment[1]))
+        .sum();
+    if total <= 0.0 {
+        return passage.points.first().copied();
+    }
+    let mut walked = 0.0;
+    for segment in passage.points.windows(2) {
+        let length = segment[0].distance(segment[1]);
+        if walked + length >= total / 2.0 {
+            let t = (total / 2.0 - walked) / length;
+            return Some(segment[0].lerp(segment[1], t));
+        }
+        walked += length;
+    }
+    passage.points.last().copied()
+}
+
+/// Отрезок, протянутый вектором `sweep`, — прямоугольник проёма в стене.
+fn push_swept_quad(builder: &mut MeshBuilder, edge: [Vec2; 2], sweep: Vec2, color: LinearRgba) {
+    builder.push_polygon(
+        &[edge[0], edge[1], edge[1] + sweep, edge[0] + sweep],
+        &[],
+        color,
+    );
 }
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:
@@ -219,6 +488,7 @@ pub fn rebuild_buildings(
         &mut materials,
         *mode,
         &map.buildings,
+        &map.roads,
     );
 }
 
@@ -270,7 +540,12 @@ fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> LinearRgba {
 }
 
 /// Фасадная полоса + крыши (режимы Facade / Shadows / ShadowsTint).
-fn facade_and_roof_builders(buildings: &[PolyArea], tinted: bool) -> (MeshBuilder, MeshBuilder) {
+fn facade_and_roof_builders(
+    buildings: &[PolyArea],
+    passages: &[RoadLine],
+    tinted: bool,
+) -> (MeshBuilder, MeshBuilder) {
+    let arches = arches_by_building(buildings, passages);
     let mut facades = MeshBuilder::default();
     let mut roofs = MeshBuilder::default();
     for (index, building) in buildings.iter().enumerate() {
@@ -289,6 +564,11 @@ fn facade_and_roof_builders(buildings: &[PolyArea], tinted: bool) -> (MeshBuilde
             .map(|hole| hole.iter().map(|p| *p + offset).collect())
             .collect();
         facades.push_polygon(&facade_outer, &facade_holes, facade_color.to_linear());
+        // крыши — отдельный слой поверх фасадов, так что вырезать проём из
+        // полосы достаточно: над аркой крыша останется целой сама собой
+        if let Some(passages) = arches.get(&index) {
+            push_arches(&mut facades, building, passages, offset);
+        }
         roofs.push_polygon(
             &building.outer,
             &building.holes,
@@ -312,7 +592,11 @@ fn facade_and_roof_builders(buildings: &[PolyArea], tinted: bool) -> (MeshBuilde
 /// слоя читается как пятно двойной темноты. После union альфа везде ровно
 /// одна. Часть тени под зданиями закрывают их непрозрачные слои. Дыры (дворы)
 /// пропускаются: их тень падает внутрь футпринта.
-fn shadow_builder(buildings: &[PolyArea]) -> MeshBuilder {
+/// `extruded` — арки в 2.5D прорезаны по-настоящему, и сквозь дыру видна
+/// голая дорога: без заплатки тени проём светится, хотя физически он затенён
+/// перемычкой. Заплатка кладётся сюда, в теневой слой: он ниже зданий и
+/// просвечивает ровно сквозь вырез.
+fn shadow_builder(buildings: &[PolyArea], passages: &[RoadLine], extruded: bool) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
 
@@ -347,6 +631,23 @@ fn shadow_builder(buildings: &[PolyArea]) -> MeshBuilder {
         };
         let holes: Vec<Vec<Vec2>> = rings.collect();
         builder.push_polygon(&outer, &holes, color);
+    }
+
+    if extruded {
+        for (index, passages) in arches_by_building(buildings, passages) {
+            let building = &buildings[index];
+            let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+            for opening in arch_openings(building, &passages, lift) {
+                let Some(along) = (opening.b - opening.a).try_normalize() else {
+                    continue;
+                };
+                let (p0, p1) = (
+                    opening.a + along * opening.low,
+                    opening.a + along * opening.high,
+                );
+                builder.push_quad([p0, p1, p1 + opening.sill, p0 + opening.sill], color);
+            }
+        }
     }
     builder
 }
@@ -395,7 +696,8 @@ fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>> {
 /// юг (южное поверх), на здание сначала стены, потом крыша. Фасадной полосы
 /// в этом режиме нет — её заменяют настоящие стены; `tinted` включает рампу
 /// тона крыш, как в `ShadowsTint`.
-fn extrusion_builder(buildings: &[PolyArea], tinted: bool) -> MeshBuilder {
+fn extrusion_builder(buildings: &[PolyArea], passages: &[RoadLine], tinted: bool) -> MeshBuilder {
+    let arches = arches_by_building(buildings, passages);
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
         let center_y = |building: &PolyArea| {
@@ -416,21 +718,21 @@ fn extrusion_builder(buildings: &[PolyArea], tinted: bool) -> MeshBuilder {
         let wall_top = facade_color
             .mix(&Color::WHITE, WALL_TOP_LIGHTEN)
             .to_linear();
+        // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
+        // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
+        let openings = arches
+            .get(&index)
+            .map(|passages| arch_openings(building, passages, lift))
+            .unwrap_or_default();
         // при сдвиге крыши строго вверх видимы только стены южных рёбер
         for (a, b) in silhouette_edges(&building.outer, Vec2::NEG_Y) {
-            builder.push_quad_gradient(
-                [a, b, b + lift, a + lift],
-                [wall_bottom, wall_bottom, wall_top, wall_top],
-            );
+            push_wall_with_openings(&mut builder, a, b, lift, &openings, wall_bottom, wall_top);
         }
         // двор: видима внутренняя стена его северной стороны — та, чья
         // наружная (для кольца дыры) нормаль смотрит вверх
         for hole in &building.holes {
             for (a, b) in silhouette_edges(hole, Vec2::Y) {
-                builder.push_quad_gradient(
-                    [a, b, b + lift, a + lift],
-                    [wall_bottom, wall_bottom, wall_top, wall_top],
-                );
+                push_wall_with_openings(&mut builder, a, b, lift, &openings, wall_bottom, wall_top);
             }
         }
 
@@ -486,6 +788,7 @@ fn silhouette_edges(ring: &[Vec2], direction: Vec2) -> Vec<(Vec2, Vec2)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::osm::RoadClass;
 
     fn square() -> Vec<Vec2> {
         vec![
@@ -560,7 +863,7 @@ mod tests {
         );
         let south = building(square(), Some(3.0), AreaKind::Building);
         let positions = |list: &[PolyArea]| {
-            extrusion_builder(list, false)
+            extrusion_builder(list, &[], false)
                 .build()
                 .attribute(Mesh::ATTRIBUTE_POSITION)
                 .unwrap()
@@ -584,7 +887,7 @@ mod tests {
         let low = building(square(), Some(6.0), AreaKind::Building);
         let high = building(square(), Some(60.0), AreaKind::Building);
         let reach = |list: &[PolyArea]| {
-            let mesh = shadow_builder(list).build();
+            let mesh = shadow_builder(list, &[], false).build();
             let positions = mesh
                 .attribute(Mesh::ATTRIBUTE_POSITION)
                 .unwrap()
@@ -614,19 +917,19 @@ mod tests {
             building(square(), Some(12.0), AreaKind::Kremlin),
         ];
 
-        let (facades, roofs) = facade_and_roof_builders(&list, true);
+        let (facades, roofs) = facade_and_roof_builders(&list, &[], true);
         assert!(!facades.is_empty());
         assert!(!roofs.is_empty());
         assert_eq!(facades.skipped_polygons(), 0);
 
-        let shadows = shadow_builder(&list);
+        let shadows = shadow_builder(&list, &[], false);
         assert!(!shadows.is_empty());
 
-        let extruded = extrusion_builder(&list, false);
+        let extruded = extrusion_builder(&list, &[], false);
         assert!(!extruded.is_empty());
         assert_eq!(extruded.skipped_polygons(), 0);
         // комбинированный режим: рампа меняет цвета, но не геометрию
-        let tinted = extrusion_builder(&list, true);
+        let tinted = extrusion_builder(&list, &[], true);
         assert!(!tinted.is_empty());
         assert_eq!(tinted.skipped_polygons(), 0);
     }
@@ -657,7 +960,7 @@ mod tests {
     #[test]
     fn square_shadow_is_one_swept_polygon() {
         let list = [building(square(), Some(15.0), AreaKind::Building)];
-        let mesh = shadow_builder(&list).build();
+        let mesh = shadow_builder(&list, &[], false).build();
         // одна цепочка низ+право: свип из 6 вершин, без квадов на ребро
         assert_eq!(mesh.count_vertices(), 6);
     }
@@ -682,7 +985,7 @@ mod tests {
         assert_eq!(chains[0].len(), 7);
 
         let list = [building(staircase, Some(20.0), AreaKind::Building)];
-        let mesh = shadow_builder(&list).build();
+        let mesh = shadow_builder(&list, &[], false).build();
         let offset_length = 20.0 * SHADOW_LENGTH_SCALE;
         let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
         assert!((mesh_area(&mesh) - offset_length * perp_span).abs() < 0.5);
@@ -699,9 +1002,10 @@ mod tests {
             Some(15.0),
             AreaKind::Building,
         );
-        let alone = |b: &PolyArea| mesh_area(&shadow_builder(std::slice::from_ref(b)).build());
+        let alone =
+            |b: &PolyArea| mesh_area(&shadow_builder(std::slice::from_ref(b), &[], false).build());
         let separate = alone(&left) + alone(&right);
-        let together = mesh_area(&shadow_builder(&[left, right]).build());
+        let together = mesh_area(&shadow_builder(&[left, right], &[], false).build());
         assert!(
             together < separate - 1.0,
             "union must remove the overlap: {together} vs {separate}"
@@ -718,5 +1022,248 @@ mod tests {
         let kremlin_flat = roof_color(&building(square(), Some(60.0), AreaKind::Kremlin), 0, true);
         let kremlin_base = roof_color(&building(square(), None, AreaKind::Kremlin), 0, false);
         assert_eq!(kremlin_flat, kremlin_base);
+    }
+
+    fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {
+        RoadLine {
+            points,
+            width: 5.0,
+            class: RoadClass::Street,
+            bridge: false,
+            passage,
+        }
+    }
+
+    /// Проём режется только под дорогой с флагом `passage`, и только если
+    /// она действительно идёт сквозь дом.
+    #[test]
+    fn only_a_building_passage_cuts_an_arch() {
+        let house = vec![building(square(), Some(15.0), AreaKind::Building)];
+        let through = vec![passage(
+            vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)],
+            true,
+        )];
+        let alongside = vec![passage(
+            vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)],
+            false,
+        )];
+        let elsewhere = vec![passage(
+            vec![Vec2::new(50.0, 0.0), Vec2::new(50.0, 10.0)],
+            true,
+        )];
+
+        let solid = extrusion_builder(&house, &[], false).vertex_count();
+        assert!(extrusion_builder(&house, &through, false).vertex_count() > solid);
+        assert_eq!(
+            extrusion_builder(&house, &alongside, false).vertex_count(),
+            solid
+        );
+        assert_eq!(
+            extrusion_builder(&house, &elsewhere, false).vertex_count(),
+            solid
+        );
+    }
+
+    /// Высота проёма задана в настоящих метрах, а рисуется проекция:
+    /// трёхметровая арка обязана занять ту же долю нарисованной стены, какую
+    /// три метра занимают в настоящей высоте дома.
+    #[test]
+    fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
+        // 40 м высоты, подъём 14 м: арка обязана занять 14 × 3/40 = 1.05 м
+        let tall = building(square(), Some(40.0), AreaKind::Building);
+        let lift = extrusion_lift(&tall, BuildingHeightMode::Extrusion);
+        let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
+
+        let mut builder = MeshBuilder::default();
+        push_arches(&mut builder, &tall, &[&road], lift);
+
+        let span = |pick: fn(&[f32; 3]) -> f32| {
+            let values: Vec<f32> = builder.positions_for_test().iter().map(pick).collect();
+            let low = values.iter().copied().fold(f32::INFINITY, f32::min);
+            let high = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            high - low
+        };
+
+        let expected = lift.y * ARCH_HEIGHT / 40.0;
+        assert!(
+            (span(|p| p[1]) - expected).abs() < 0.01,
+            "opening is {} m tall, expected {expected} m of a {} m wall",
+            span(|p| p[1]),
+            lift.y
+        );
+    }
+
+    /// У низкого дома нарисованный метр стоит других настоящих метров:
+    /// подъём обрезан `EXTRUDE_RANGE`, и пересчёт через `EXTRUDE_SCALE` дал бы
+    /// не ту долю. Проверяем, что доля считается от высоты самого дома.
+    #[test]
+    fn a_clamped_wall_still_gets_a_proportional_opening() {
+        // 4 м высоты: подъём 4 × 0.35 = 1.4 обрезается снизу до 2.5 м
+        let low = building(square(), Some(4.0), AreaKind::Building);
+        let lift = extrusion_lift(&low, BuildingHeightMode::Extrusion);
+        assert_eq!(lift.y, *EXTRUDE_RANGE.start());
+
+        let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
+        let mut builder = MeshBuilder::default();
+        push_arches(&mut builder, &low, &[&road], lift);
+
+        let heights: Vec<f32> = builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[1])
+            .collect();
+        let opening = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+            - heights.iter().copied().fold(f32::INFINITY, f32::min);
+        // арка выше самого дома (6 > 4) — проём режется по стене целиком
+        assert!(
+            (opening - lift.y).abs() < 0.01,
+            "opening {opening} m, expected the whole {} m wall",
+            lift.y
+        );
+    }
+
+    /// Проём лежит в плоскости стены и шириной с проход, а не растянут вдоль
+    /// дороги: у дороги, подходящей к южной грани под углом, вырез всё равно
+    /// ровно по грани.
+    #[test]
+    fn an_arch_is_cut_along_the_wall_not_along_the_road() {
+        let house = building(square(), Some(15.0), AreaKind::Building);
+        let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+        // дорога идёт наискось и коротка: до стены дотягивается один конец
+        let slanted = passage(vec![Vec2::new(4.0, -2.0), Vec2::new(9.0, 20.0)], true);
+
+        let mut builder = MeshBuilder::default();
+        push_arches(&mut builder, &house, &[&slanted], lift);
+
+        let span = |pick: fn(&[f32; 3]) -> f32| {
+            let values: Vec<f32> = builder.positions_for_test().iter().map(pick).collect();
+            values.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+                - values.iter().copied().fold(f32::INFINITY, f32::min)
+        };
+        // ширина дороги, спроецированная углом входа: наклонная дорога
+        // дырявит стену уже собственной ширины
+        let entry = (Vec2::new(9.0, 20.0) - Vec2::new(4.0, -2.0)).normalize();
+        let expected = slanted.width * entry.perp_dot(Vec2::X).abs();
+        assert!(
+            (span(|p| p[0]) - expected).abs() < 0.01,
+            "opening is {} m wide, expected {expected} m",
+            span(|p| p[0])
+        );
+    }
+
+    /// Регресс: конец прохода — общая вершина двух граней (как у любой
+    /// OSM-арки). Зажатый в одну грань проём выходил вдвое уже дороги;
+    /// теперь куски на обеих гранях продолжают друг друга.
+    #[test]
+    fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
+        // южная сторона из двух граней со стыком в (5, 0)
+        let house = building(
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(5.0, 0.0),
+                Vec2::new(10.0, 0.0),
+                Vec2::new(10.0, 10.0),
+                Vec2::new(0.0, 10.0),
+            ],
+            Some(15.0),
+            AreaKind::Building,
+        );
+        let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+        let road = passage(vec![Vec2::new(5.0, 0.0), Vec2::new(5.0, 12.0)], true);
+
+        let mut builder = MeshBuilder::default();
+        push_arches(&mut builder, &house, &[&road], lift);
+
+        let xs: Vec<f32> = builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[0])
+            .collect();
+        let width = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+            - xs.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!(
+            width >= road.width * 0.9,
+            "opening is {width} m wide against a {} m road",
+            road.width
+        );
+    }
+
+    /// Арка у самого угла дома: проём подрезается по концу грани, а не
+    /// повисает половиной квада в воздухе за углом.
+    #[test]
+    fn an_arch_near_a_corner_is_trimmed_to_the_wall() {
+        let house = building(square(), Some(15.0), AreaKind::Building);
+        let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+        // дорога упирается в южную грань в метре от юго-западного угла
+        let road = passage(vec![Vec2::new(1.0, 0.0), Vec2::new(1.0, 12.0)], true);
+
+        let mut builder = MeshBuilder::default();
+        push_arches(&mut builder, &house, &[&road], lift);
+        assert!(!builder.is_empty());
+
+        let xs: Vec<f32> = builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[0])
+            .collect();
+        let west = xs.iter().copied().fold(f32::INFINITY, f32::min);
+        let east = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(west >= -0.01, "opening hangs past the corner: {west}");
+        // а восточный край — там, куда дотянулась полуширина
+        assert!((east - 3.5).abs() < 0.01, "{east}");
+    }
+
+    /// Регресс на реальную арку 485488257 (Тула): проход размечен отрезком
+    /// **между двумя вершинами контура**, лежит внутри дома и стен касается
+    /// только концами. Поиск пересечения дороги с контуром здесь не находит
+    /// ничего — вырез обязан появиться от концов.
+    #[test]
+    fn an_arch_lying_inside_the_outline_still_cuts_an_opening() {
+        // упрощённая геометрия того дома: южная грань y = 0, арка — отрезок
+        // от вершины (5, 0) вглубь до вершины (5.2, 14) северной грани
+        let house = building(
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(5.0, 0.0),
+                Vec2::new(10.0, 0.0),
+                Vec2::new(10.0, 14.0),
+                Vec2::new(5.2, 14.0),
+                Vec2::new(0.0, 14.0),
+            ],
+            Some(42.0),
+            AreaKind::Building,
+        );
+        let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+        let inner = passage(vec![Vec2::new(5.0, 0.0), Vec2::new(5.2, 14.0)], true);
+
+        let mut builder = MeshBuilder::default();
+        push_arches(&mut builder, &house, &[&inner], lift);
+        assert!(
+            !builder.is_empty(),
+            "an outline-to-outline passage cut nothing"
+        );
+        // и проём сидит на южной грани — начинается на y = 0
+        let bottom = builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[1])
+            .fold(f32::INFINITY, f32::min);
+        assert!(bottom.abs() < 0.01, "opening floats at y = {bottom}");
+    }
+
+    /// Середина прохода берётся по длине, а не по числу точек: у ломаной с
+    /// одним длинным и одним коротким сегментом это разные точки.
+    #[test]
+    fn the_passage_middle_is_measured_along_its_length() {
+        let road = passage(
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(90.0, 0.0),
+                Vec2::new(100.0, 0.0),
+            ],
+            true,
+        );
+        let middle = passage_middle(&road).unwrap();
+        assert!((middle.x - 50.0).abs() < 0.01, "{middle:?}");
     }
 }

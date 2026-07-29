@@ -321,7 +321,21 @@ in `main.rs`.
   `service` (5 m) but the arch itself is narrower, and an uncapped corridor would eat a
   tile of facade on each side. Tula has ~70 of them, London ~1700; without the carve,
   courtyards reachable only through an arch get sealed off by `prune_unreachable`.
-  Nothing about the *rendering* changes — the building mesh still covers the arch.
+- **Arch rendering** (`buildings.rs::arch_openings` + `push_wall_with_openings`) — the
+  passage is also cut out of the *drawn* building. The opening is a rectangle **in the
+  wall plane**, found from the passage's **endpoints**, not by segment intersection: an
+  OSM arch is typically mapped outline-vertex to outline-vertex (Tula way 485488257), so
+  the road lies inside the building and only its ends touch walls. At such a shared
+  vertex the opening is laid across **every** wall within `ARCH_WALL_TIE` (0.5 m) of the
+  nearest one — clamped to a single edge it came out half a road wide. Width = the road's
+  own width × |sin| of the entry angle, trimmed to the edge; height = `ARCH_HEIGHT`
+  (6 real metres — 3 is physical but read as 2 px on a tall slab) as a fraction of *that
+  building's* height, `band × 6/height`, never taller than the wall. In 2.5D the wall is
+  **really cut** (side pieces + a lintel above, `push_wall_with_openings`) so the layers
+  beneath — the road running through, the ground — show through the hole, and
+  `shadow_builder` patches the opening with `SHADOW_COLOR` (the lintel shades it; without
+  the patch the hole glows). In facade modes the facade band is one earcut polygon, so
+  the opening is *painted* in shaded ground colour instead — a stated compromise.
 - **Row-span rasterization** (`row_spans`): an area is filled row by row — one pass over
   the ring per tile row yields the x-crossings, and the tiles between crossing pairs are
   set. Holes are subtracted as intervals, *not* merged into one even-odd list, so a hole
