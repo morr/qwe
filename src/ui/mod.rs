@@ -6,6 +6,7 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
+mod roads;
 mod speed;
 mod trees;
 
@@ -20,11 +21,13 @@ use crate::loading::{AppState, PlayPhase};
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
 /// Правая колонка панелей стоит одна на другой: Trees (у края экрана) →
-/// Buildings → справка по хоткеям. `bevy_ui` их не стыкует — каждая панель
-/// абсолютная, — поэтому высоты держатся здесь, общими для всех трёх: строка,
-/// добавленная в Trees, иначе уезжает под Buildings.
+/// Buildings → Roads → справка по хоткеям. `bevy_ui` их не стыкует — каждая
+/// панель абсолютная, — поэтому высоты держатся здесь, общими для всех:
+/// строка, добавленная в Trees, иначе уезжает под Buildings.
 pub const UI_TREES_PANEL_PX: f32 = 206.0;
 pub const UI_BUILDINGS_PANEL_PX: f32 = 72.0;
+/// Заголовок + три строки (стык, сглаживание, кант).
+pub const UI_ROADS_PANEL_PX: f32 = 118.0;
 
 /// Подсветка «кнопка активна» и осветление под курсором / при нажатии —
 /// общие для тумблеров и панели городов.
@@ -117,6 +120,7 @@ impl Plugin for UiPlugin {
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
             buildings::UiBuildingStylePlugin,
+            roads::UiRoadStylePlugin,
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
         ))

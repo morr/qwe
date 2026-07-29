@@ -14,14 +14,14 @@
 use bevy::prelude::*;
 
 use crate::ui::{
-    GameUiRoot, UI_BUILDINGS_PANEL_PX, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW,
+    GameUiRoot, UI_BUILDINGS_PANEL_PX, UI_ROADS_PANEL_PX, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW,
     UI_TREES_PANEL_PX, UiOpacity, ui_color,
 };
 
-/// Отступ снизу: блок стоит над панелью Buildings в правой колонке панелей
-/// (Trees → Buildings → справка).
+/// Отступ снизу: блок стоит над панелью Roads, последним в правой колонке
+/// панелей (Trees → Buildings → Roads → справка).
 const PANEL_BOTTOM_PX: f32 =
-    UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX + UI_BUILDINGS_PANEL_PX;
+    UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX + UI_BUILDINGS_PANEL_PX + UI_ROADS_PANEL_PX;
 
 /// Мелкий шрифт: справку читают один раз, места она занимать не должна.
 const FONT_PX: f32 = 11.0;
