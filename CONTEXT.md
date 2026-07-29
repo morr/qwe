@@ -236,13 +236,17 @@ in `main.rs`.
     a five-storey block keeps the historical 3 m band. Facades sit *under* every roof on
     purpose — that is what stops a tower's wide band from painting over its low neighbour.
   - **Shadows** — facade band plus a long shadow: one translucent merged mesh at
-    `Z_BUILDING_SHADOW` (18.9 — like tree shadows, *above* units and roofs, below the
-    crowns, so a pawn, a street or a neighbour's roof in the shadow darkens exactly as
-    under a tree), quads swept from the silhouette edges of the footprint (edges
-    whose outward normal faces the shadow direction — same 30° light as tree shadows)
-    by height × `SHADOW_LENGTH_SCALE` (0.6) clamped to 3–45 m. The under-roof part of
-    the shadow is never drawn, so a convex building never double-darkens itself;
-    neighbouring buildings' shadows do overlap-darken, same as tree shadows.
+    `Z_BUILDING_SHADOW` (4.5 — *below* every building layer, so a neighbour's roof or
+    wall masks the shadow and a shadow never lands on a same-height roof: the cheap
+    stand-in for real height-aware casting; still above the portal and corpses, which
+    are outdoors and in shadow by meaning). Per contiguous **silhouette chain** of the
+    footprint (edges whose outward normal faces the 30° tree-shadow light) one swept
+    polygon `[chain, chain + offset reversed]`, offset = height × `SHADOW_LENGTH_SCALE`
+    (0.6) clamped to 3–45 m. Not per-edge quads — on staircase facades those overlapped
+    along the shadow axis and the translucency stacked into stripes; a chain sweep
+    cannot self-intersect (a silhouette edge's perp-step equals `outward·d > 0`, so the
+    chain is monotone along the shadow perpendicular). Neighbouring buildings' shadows
+    still overlap-darken on the ground, same as tree shadows.
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward a darker muted tone (max 0.7); no-height buildings and the Kremlin
     keep their base color.

@@ -15,7 +15,7 @@ use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::ring_bounds;
 use crate::map::osm::{AreaKind, MapData, PolyArea};
-use crate::settings::{Z_BUILDING, Z_TREE_SHADOW};
+use crate::settings::Z_BUILDING;
 
 const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
 const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
@@ -47,9 +47,11 @@ const SHADOW_LENGTH_SCALE: f32 = 0.6;
 /// Границы длины тени, м: у сарая тень обязана остаться заметной, у башни —
 /// не накрыть полкарты.
 const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
-/// Тени зданий — как тени крон: над юнитами и крышами, под самими кронами.
-/// Юнит, улица и крыша соседа в тени затемняются, как под деревом.
-const Z_BUILDING_SHADOW: f32 = Z_TREE_SHADOW - 0.1;
+/// Тени зданий — под всеми зданиевыми слоями (фасады 4.9, крыши и экструзия
+/// 5.0): крыша или стена соседа сама маскирует тень, и тень никогда не
+/// ложится на крышу дома той же высоты — дешёвая замена честному учёту
+/// высот. Выше портала (4) и трупов (3): они на улице и в тени по смыслу.
+const Z_BUILDING_SHADOW: f32 = Z_BUILDING - 0.5;
 
 /// Высота, на которой рампа тона крыш выходит в максимум: Тула почти вся
 /// ниже 75 м, и sqrt в формуле отдаёт разрешение диапазону 5–30 м.
@@ -296,12 +298,14 @@ fn facade_and_roof_builders(buildings: &[PolyArea], tinted: bool) -> (MeshBuilde
     (facades, roofs)
 }
 
-/// Тени зданий: на каждое ребро-силуэт внешнего кольца — квад, вытянутый по
-/// `SHADOW_DIR` на длину, пропорциональную высоте. Часть тени под самим
-/// зданием не рисуется — её всё равно закрывает непрозрачная крыша, а у
-/// выпуклых контуров квады силуэта не перекрываются, так что полупрозрачная
-/// тень не двоится внутри одного здания. Дыры (дворы) пропускаются: их тень
-/// падает внутрь футпринта, под крышу.
+/// Тени зданий: на каждую непрерывную цепочку рёбер-силуэта внешнего кольца —
+/// **один** свип-полигон `[цепочка, цепочка + сдвиг в обратном порядке]`.
+/// Не квады на ребро: у ступенчатого фасада квады соседних ступеней
+/// перекрываются вдоль тени, и полупрозрачность складывалась в полосы двойной
+/// темноты. Свип цепочки самопересечься не может: перп-шаг ребра силуэта
+/// равен `outward·SHADOW_DIR > 0`, то есть цепочка монотонна вдоль
+/// перпендикуляра тени. Часть тени под зданиями закрывают их непрозрачные
+/// слои. Дыры (дворы) пропускаются: их тень падает внутрь футпринта.
 fn shadow_builder(buildings: &[PolyArea]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
@@ -309,11 +313,52 @@ fn shadow_builder(buildings: &[PolyArea]) -> MeshBuilder {
         let length = (height_or_default(building) * SHADOW_LENGTH_SCALE)
             .clamp(*SHADOW_LENGTH_RANGE.start(), *SHADOW_LENGTH_RANGE.end());
         let offset = SHADOW_DIR * length;
-        for (a, b) in silhouette_edges(&building.outer, SHADOW_DIR) {
-            builder.push_quad([a, b, b + offset, a + offset], color);
+        for chain in silhouette_chains(&building.outer, SHADOW_DIR) {
+            let mut sweep: Vec<Vec2> = chain.clone();
+            sweep.extend(chain.iter().rev().map(|&point| point + offset));
+            builder.push_polygon(&sweep, &[], color);
         }
     }
     builder
+}
+
+/// Непрерывные (циклически) цепочки рёбер-силуэта кольца — рёбер, чья
+/// наружная нормаль смотрит по `direction`. Обход начинается после
+/// освещённого ребра, чтобы цепочка не рвалась на шве кольца.
+fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>> {
+    if ring.len() < 3 {
+        return Vec::new();
+    }
+    let orientation = signed_area(ring).signum();
+    let count = ring.len();
+    let is_silhouette = |index: usize| {
+        let edge = ring[(index + 1) % count] - ring[index];
+        let outward = Vec2::new(edge.y, -edge.x) * orientation;
+        outward.dot(direction) > 0.0
+    };
+    let Some(lit) = (0..count).find(|&index| !is_silhouette(index)) else {
+        // у простого кольца все рёбра силуэтными быть не могут — кривой
+        // контур OSM остаётся без тени, а не роняет карту
+        return Vec::new();
+    };
+
+    let mut chains: Vec<Vec<Vec2>> = Vec::new();
+    let mut current: Vec<Vec2> = Vec::new();
+    for step in 1..=count {
+        let index = (lit + step) % count;
+        if is_silhouette(index) {
+            if current.is_empty() {
+                current.push(ring[index]);
+            }
+            current.push(ring[(index + 1) % count]);
+        } else if !current.is_empty() {
+            chains.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        chains.push(current);
+    }
+    chains
 }
 
 /// 2.5D-экструзия: painter's algorithm внутри одного меша — треугольники
@@ -555,6 +600,63 @@ mod tests {
         let tinted = extrusion_builder(&list, true);
         assert!(!tinted.is_empty());
         assert_eq!(tinted.skipped_polygons(), 0);
+    }
+
+    /// Сумма площадей треугольников меша — двойное наложение внутри тени
+    /// давало бы сумму больше площади самой фигуры.
+    fn mesh_area(mesh: &Mesh) -> f32 {
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap()
+            .to_vec();
+        let indices: Vec<usize> = match mesh.indices().unwrap() {
+            bevy::mesh::Indices::U32(list) => list.iter().map(|&i| i as usize).collect(),
+            bevy::mesh::Indices::U16(list) => list.iter().map(|&i| i as usize).collect(),
+        };
+        indices
+            .chunks_exact(3)
+            .map(|triangle| {
+                let point =
+                    |i: usize| Vec2::new(positions[triangle[i]][0], positions[triangle[i]][1]);
+                (point(1) - point(0)).perp_dot(point(2) - point(0)).abs() / 2.0
+            })
+            .sum()
+    }
+
+    #[test]
+    fn square_shadow_is_one_swept_polygon() {
+        let list = [building(square(), Some(15.0), AreaKind::Building)];
+        let mesh = shadow_builder(&list).build();
+        // одна цепочка низ+право: свип из 6 вершин, без квадов на ребро
+        assert_eq!(mesh.count_vertices(), 6);
+    }
+
+    #[test]
+    fn staircase_shadow_has_no_double_darkening() {
+        // ступенчатый юго-восточный фасад: раньше квады ступеней перекрывались
+        // вдоль тени и полупрозрачность складывалась в полосы. Свип монотонной
+        // цепочки покрывает ровно |сдвиг| × перп-протяжённость — без нахлёстов
+        let staircase = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(6.0, 0.0),
+            Vec2::new(6.0, 3.0),
+            Vec2::new(9.0, 3.0),
+            Vec2::new(9.0, 6.0),
+            Vec2::new(12.0, 6.0),
+            Vec2::new(12.0, 9.0),
+            Vec2::new(0.0, 9.0),
+        ];
+        let chains = silhouette_chains(&staircase, SHADOW_DIR);
+        assert_eq!(chains.len(), 1, "лестница — одна непрерывная цепочка");
+        assert_eq!(chains[0].len(), 7);
+
+        let list = [building(staircase, Some(20.0), AreaKind::Building)];
+        let mesh = shadow_builder(&list).build();
+        let offset_length = 20.0 * SHADOW_LENGTH_SCALE;
+        let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
+        assert!((mesh_area(&mesh) - offset_length * perp_span).abs() < 0.5);
     }
 
     #[test]
