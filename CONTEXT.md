@@ -268,7 +268,7 @@ in `main.rs`.
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
   (a lawn is a lawn; overhang from a neighbouring tree is fine).
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`, building layers in
-  `map/buildings.rs`) — **one merged `Mesh2d` per layer** (parks, water, alleys, roads,
+  `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water, alleys, roads,
   building layers, walls): `MeshBuilder` triangulates polygons via `earcutr` (holes
   supported, degenerate contours skipped + counted) and emits per-vertex colors over a
   single white `ColorMaterial`. ~7000 buildings cost a handful of entities. Trees stay
@@ -343,7 +343,7 @@ in `main.rs`.
   `service` (5 m) but the arch itself is narrower, and an uncapped corridor would eat a
   tile of facade on each side. Tula has ~70 of them, London ~1700; without the carve,
   courtyards reachable only through an arch get sealed off by `prune_unreachable`.
-- **Arch rendering** (`buildings.rs::arch_openings` + `push_wall_with_openings`) — the
+- **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) — the
   passage is also cut out of the *drawn* building. The opening is a rectangle **in the
   wall plane**, found from the passage's **endpoints**, not by segment intersection: an
   OSM arch is typically mapped outline-vertex to outline-vertex (Tula way 485488257), so
