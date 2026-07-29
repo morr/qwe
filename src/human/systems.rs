@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::grid::{tile_center, world_to_tile};
-use crate::human::components::{Human, HumanWanderTag, WanderPause};
+use crate::human::components::{Human, HumanFirstWanderTag, HumanWanderTag, WanderPause};
 use crate::map::osm::MapData;
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
@@ -58,6 +58,7 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             Transform::from_translation(position.extend(unit_z(position.y))),
             Human,
             HumanWanderTag,
+            HumanFirstWanderTag,
             Movable::new(HUMAN_WALK_SPEED),
             WanderPause(pause),
             Name::new("human"),
@@ -67,21 +68,28 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
 
 /// Мирное блуждание: пауза 2–10 с, затем цель — 80% идут «по делам» к
 /// случайному зданию города (длинные маршруты, настоящая нагрузка на
-/// pathfinding), 20% гуляют в 20–40 м от себя.
+/// pathfinding), 20% гуляют в 20–40 м от себя. Первая цель после спавна —
+/// всегда прогулка поблизости (`HumanFirstWanderTag`).
 pub fn pick_wander_targets(
     mut commands: Commands,
     time: Res<Time>,
     pathfinder: Pathfinder,
     map: Res<MapData>,
     mut query: Query<
-        (Entity, &SimPosition, &mut Movable, &mut WanderPause),
+        (
+            Entity,
+            &SimPosition,
+            &mut Movable,
+            &mut WanderPause,
+            Has<HumanFirstWanderTag>,
+        ),
         (With<Human>, With<HumanWanderTag>),
     >,
 ) {
     let mut rng = rand::rng();
     let navmesh = pathfinder.navmesh.read();
 
-    for (entity, sim_position, mut movable, mut pause) in &mut query {
+    for (entity, sim_position, mut movable, mut pause, is_first_wander) in &mut query {
         if !matches!(
             movable.state,
             MovableState::Idle | MovableState::PathfindingError(_)
@@ -94,8 +102,9 @@ pub fn pick_wander_targets(
             continue;
         }
 
-        let to_building =
-            rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE && !map.buildings.is_empty();
+        let to_building = !is_first_wander
+            && rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE
+            && !map.buildings.is_empty();
         let target = if to_building {
             // «по делам»: случайная вершина контура случайного здания
             let building = &map.buildings[rng.random_range(0..map.buildings.len())];
@@ -118,6 +127,9 @@ pub fn pick_wander_targets(
             target_tile,
             &mut commands,
         );
+        if is_first_wander {
+            commands.entity(entity).remove::<HumanFirstWanderTag>();
+        }
 
         // следующая пауза — уже после прибытия
         let next_pause = rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1);

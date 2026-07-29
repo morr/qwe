@@ -13,6 +13,15 @@ pub struct HumanWanderTag;
 #[reflect(Component)]
 pub struct HumanFleeTag;
 
+/// Первая прогулка после спавна — всегда короткая, «по делам» человек идёт
+/// только со второй. Иначе 20 000 маршрутов через весь город подаются в один
+/// кадр: такой A* стоит сотни мс на запрос, и пешки в кадре разъезжаются
+/// секундами (см. фазу прогрева в `loading.rs`). Тег снимается при выборе
+/// первой цели.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct HumanFirstWanderTag;
+
 /// Пауза между прогулками; тикает, пока человек стоит.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
