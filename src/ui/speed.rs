@@ -110,14 +110,22 @@ fn update_pathfinding_text(
 }
 
 /// «Speed: 15x» — идём как просили; «Speed: 15x → 9.8x» — машина не тянет,
-/// время замедлено автоматически (см. `sim_time::throttle_speed_to_fps`).
+/// время замедлено (см. `sim_time`). После стрелки — замеренная фактическая
+/// скорость, поэтому она бывает и меньше 1x: на просадке (например, пока
+/// фоново строится сетка northstar) симуляция отстаёт от реального времени.
 fn format_speed_text(time: &Time<Virtual>, speed: &SimSpeed) -> String {
     let requested = format!("{}x", speed.requested);
     if time.is_paused() {
         return format!("Paused ({requested})");
     }
     if speed.is_throttled() {
-        format!("Speed: {requested} → {:.1}x", speed.effective)
+        // ниже 1x одного знака мало: 0.3x и 0.06x — разные истории
+        let actual = if speed.actual < 1.0 {
+            format!("{:.2}", speed.actual)
+        } else {
+            format!("{:.1}", speed.actual)
+        };
+        format!("Speed: {requested} → {actual}x")
     } else {
         format!("Speed: {requested}")
     }

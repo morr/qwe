@@ -222,16 +222,24 @@ in `main.rs`.
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities.
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder.
-  - **SimSpeed** — `{requested, effective}`. `requested` is what the ladder says;
-    `effective` is what actually reaches `Time<Virtual>` after **fps throttling**.
+  - **SimSpeed** — `{requested, effective, actual}`. `requested` is what the ladder says;
+    `effective` is the regulator's command, what reaches `Time<Virtual>` after **fps
+    throttling**; `actual` is measured — virtual seconds per real second, averaged over
+    `ACTUAL_SPEED_WINDOW` (0.5 s of *real* time, so long frames weigh what they cost).
+    `actual` is the only honest one: Bevy clips a frame's virtual delta at `max_delta`, so
+    a stall eats simulated time behind the regulator's back. The panel and `is_throttled`
+    read `actual`.
   - **Speed ceiling** — Bevy hands `FixedUpdate` at most `Time<Virtual>::max_delta`
     (`MAX_FRAME_DELTA` = 0.25 s, pinned explicitly at startup) of virtual time per frame,
     so a speed of S is only real if `S ≤ fps × MAX_FRAME_DELTA` — 15 at 60 fps, 10 at
     40 fps. Above the ceiling the ticks pile into frames, `Update` (path dispatcher,
     input, UI) starves, and humans that finish a route just stand there.
     `throttle_speed_to_fps` closes the loop on measured fps and eases `effective` toward
-    the ceiling (`SPEED_SETTLE_RATE`); it never throttles below 1×. The panel shows
-    `Speed: 15x → 8.6x` when limited.
+    the ceiling (`SPEED_SETTLE_RATE` up, the faster `SPEED_DROP_RATE` down). It throttles
+    **below 1× too** — under 4 fps even real time is unaffordable — down to
+    `MIN_SIM_SPEED` (0.1). The panel shows `Speed: 15x → 8.6x` when limited, and
+    `Speed: 1x → 0.42x` while something (the async northstar build, say) is starving the
+    frame.
   - Set the requested speed over BRP with `res set SimSpeed .requested N` — `brp speed`
     writes `Time<Virtual>` directly and the throttle overwrites it on the next frame.
   - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): `panic`

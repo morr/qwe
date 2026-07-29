@@ -8,15 +8,24 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
-use crate::settings::{MAX_FRAME_DELTA, SPEED_SETTLE_RATE};
+use crate::settings::{
+    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MIN_SIM_SPEED, SPEED_DROP_RATE, SPEED_SETTLE_RATE,
+};
 
 /// Скорость симуляции: `requested` крутит пользователь лесенкой, `effective`
-/// выставляется в `Time<Virtual>` после ограничения по fps.
+/// выставляется в `Time<Virtual>` после ограничения по fps, `actual` — то, что
+/// в итоге получилось (замер виртуального времени против реального).
+///
+/// Расходятся все три: `effective` — команда регулятора, а не факт. Bevy
+/// режет виртуальную дельту кадра по `max_delta`, поэтому фриз или затык
+/// (например, пока фоново строится сетка northstar) отнимает у симуляции
+/// время помимо регулятора — видно это только в `actual`.
 #[derive(Resource, Reflect, Debug)]
 #[reflect(Resource)]
 pub struct SimSpeed {
     pub requested: f32,
     pub effective: f32,
+    pub actual: f32,
 }
 
 impl Default for SimSpeed {
@@ -24,15 +33,15 @@ impl Default for SimSpeed {
         Self {
             requested: 1.0,
             effective: 1.0,
+            actual: 1.0,
         }
     }
 }
 
 impl SimSpeed {
-    /// Замедлено ли время против запрошенного (с запасом на дребезг
-    /// регулятора).
+    /// Замедлено ли время против запрошенного (с запасом на дребезг замера).
     pub fn is_throttled(&self) -> bool {
-        self.effective < self.requested * 0.98
+        self.actual < self.requested * 0.95
     }
 }
 
@@ -43,7 +52,10 @@ impl Plugin for SimTimePlugin {
         app.register_type::<SimSpeed>()
             .init_resource::<SimSpeed>()
             .add_systems(Startup, pin_max_delta)
-            .add_systems(Update, (modify_time, throttle_speed_to_fps).chain());
+            .add_systems(
+                Update,
+                (modify_time, throttle_speed_to_fps, measure_actual_speed).chain(),
+            );
     }
 }
 
@@ -82,8 +94,15 @@ fn modify_time(
 /// ожидании следующего кадра. Так что скорость лучше честно снизить, чем
 /// делать вид, что идёт 15x.
 ///
+/// Потолок не ограничен снизу единицей: на 4 fps посильна ровно 1x, а ниже
+/// симуляция не тянет и реальное время. Делать вид, что идёт 1x, там нельзя —
+/// Bevy всё равно обрежет кадровую дельту по `max_delta`, только молча; лучше
+/// честно снизить команду (до `MIN_SIM_SPEED`), тогда кадр считает меньше
+/// тиков и fps получает шанс подняться.
+///
 /// Регулятор замкнут по измеренному fps, поэтому идёт к цели плавно
 /// (`SPEED_SETTLE_RATE`): резкий скачок раскачал бы петлю fps → потолок → fps.
+/// Вниз — быстрее (`SPEED_DROP_RATE`), см. константу.
 fn throttle_speed_to_fps(
     mut time: ResMut<Time<Virtual>>,
     mut speed: ResMut<SimSpeed>,
@@ -97,20 +116,73 @@ fn throttle_speed_to_fps(
         return;
     }
 
-    // ниже 1x не замедляемся никогда: реальное время — нижняя граница
-    let affordable = (fps * MAX_FRAME_DELTA).max(1.0);
-    let target = speed.requested.min(affordable);
-
-    speed.effective += (target - speed.effective) * SPEED_SETTLE_RATE;
-    // у цели — садимся точно, иначе экспонента вечно недотягивает и UI
-    // показывает «15x → 14.97x»
-    if (target - speed.effective).abs() < 0.05 {
-        speed.effective = target;
-    }
+    let target = speed.requested.min(affordable_speed(fps));
+    speed.effective = approach(speed.effective, target);
 
     if time.relative_speed() != speed.effective {
         time.set_relative_speed(speed.effective);
     }
+}
+
+/// Скорость, посильная при таком fps: `S ≤ fps × MAX_FRAME_DELTA`, но не ниже
+/// `MIN_SIM_SPEED` — на нуле симуляция стоит, а не идёт медленно.
+fn affordable_speed(fps: f32) -> f32 {
+    (fps * MAX_FRAME_DELTA).max(MIN_SIM_SPEED)
+}
+
+/// Шаг регулятора к целевой скорости.
+fn approach(current: f32, target: f32) -> f32 {
+    let rate = if target < current {
+        SPEED_DROP_RATE
+    } else {
+        SPEED_SETTLE_RATE
+    };
+    let stepped = current + (target - current) * rate;
+    // у цели — садимся точно, иначе экспонента вечно недотягивает и UI
+    // показывает «15x → 14.97x». Порог относительный: на 0.5x абсолютные 0.05
+    // были бы десятой частью скорости.
+    if (target - stepped).abs() < target * 0.01 {
+        target
+    } else {
+        stepped
+    }
+}
+
+/// Замер фактической скорости: сколько виртуального времени набежало на
+/// секунду реального.
+///
+/// Считается по окну реального времени (`ACTUAL_SPEED_WINDOW`), а не по
+/// кадрам: просадка — это как раз несколько длинных кадров, и в среднем
+/// по кадрам они весят столько же, сколько быстрые, то есть теряются.
+/// Окно ловит и то, чего не знает регулятор, — обрезку дельты по `max_delta`.
+fn measure_actual_speed(
+    virtual_time: Res<Time<Virtual>>,
+    real_time: Res<Time<Real>>,
+    mut speed: ResMut<SimSpeed>,
+    mut window: Local<SpeedWindow>,
+) {
+    // на паузе мерить нечего, и накопленное окно к моменту снятия паузы
+    // протухнет — сбрасываем
+    if virtual_time.is_paused() {
+        *window = SpeedWindow::default();
+        return;
+    }
+
+    window.real += real_time.delta_secs();
+    window.virtual_elapsed += virtual_time.delta_secs();
+    if window.real < ACTUAL_SPEED_WINDOW {
+        return;
+    }
+
+    speed.actual = window.virtual_elapsed / window.real;
+    *window = SpeedWindow::default();
+}
+
+/// Накопитель окна замера фактической скорости.
+#[derive(Default)]
+struct SpeedWindow {
+    real: f32,
+    virtual_elapsed: f32,
 }
 
 pub fn toggle_pause(time: &mut Time<Virtual>) {
@@ -167,4 +239,35 @@ pub fn previous_time_scale(speed: f32) -> f32 {
         } else {
             1000.
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn affordable_speed_falls_below_real_time() {
+        // 60 fps тянут 15x, 4 fps — ровно реальное время
+        assert_eq!(affordable_speed(60.0), 15.0);
+        assert_eq!(affordable_speed(4.0), 1.0);
+        // ниже 4 fps не тянется и 1x — замедляемся честно
+        assert_eq!(affordable_speed(2.0), 0.5);
+        assert_eq!(affordable_speed(0.4), MIN_SIM_SPEED);
+    }
+
+    #[test]
+    fn regulator_reaches_target_below_one() {
+        let mut speed = 1.0;
+        for _ in 0..100 {
+            speed = approach(speed, 0.5);
+        }
+        assert_eq!(speed, 0.5);
+    }
+
+    #[test]
+    fn regulator_drops_faster_than_it_climbs() {
+        let down = 1.0 - approach(1.0, 0.0);
+        let up = approach(1.0, 2.0) - 1.0;
+        assert!(down > up, "down {down} should outpace up {up}");
+    }
 }
