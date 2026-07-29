@@ -5,6 +5,7 @@
 mod buildings;
 mod city;
 mod debug;
+mod hotkeys;
 mod speed;
 mod trees;
 
@@ -22,6 +23,14 @@ pub const TOGGLE_HOVER_LIGHTEN: f32 = 0.12;
 pub const TOGGLE_PRESSED_LIGHTEN: f32 = 0.24;
 
 const UI_COLOR: Color = Color::srgb(0.094, 0.102, 0.11);
+
+/// Тень под белым текстом панелей: фон у них полупрозрачный, и поверх светлой
+/// карты буквы без тени сливаются с ней. Смещение в пиксель — дефолтные четыре
+/// на 11–20 px шрифте читаются как вторая строка текста.
+pub const UI_TEXT_SHADOW: TextShadow = TextShadow {
+    offset: Vec2::splat(1.0),
+    color: Color::srgba(0.0, 0.0, 0.0, 0.85),
+};
 
 pub enum UiOpacity {
     Light,
@@ -55,6 +64,7 @@ impl Plugin for UiPlugin {
             trees::UiTreeStylePlugin,
             buildings::UiBuildingStylePlugin,
             city::UiCityPlugin,
+            hotkeys::UiHotkeysPlugin,
         ))
         .add_systems(OnEnter(PlayPhase::Live), show_game_ui)
         // смена города возвращает приложение на экран загрузки — панели
