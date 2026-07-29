@@ -46,20 +46,48 @@ impl SimSpeed {
     }
 }
 
+/// Часы симуляции: сколько виртуального времени прожил текущий мир.
+///
+/// Отсчёт идёт от входа в `PlayPhase::Live`, а не от старта приложения:
+/// загрузка карты и прогрев проходят в реальном времени и к моменту симуляции
+/// отношения не имеют. Смена города перезапускает мир, значит и часы.
+///
+/// Время виртуальное — стоит на паузе и бежит быстрее на ускорении. Это
+/// «сколько прожил мир», а не сколько просидел за ним игрок.
+#[derive(Resource, Reflect, Debug, Default)]
+#[reflect(Resource)]
+pub struct SimClock {
+    /// `Time<Virtual>::elapsed` на момент входа в `Live`.
+    started_at: f64,
+    /// Прошедшее время симуляции, сек.
+    pub elapsed: f64,
+}
+
 pub struct SimTimePlugin;
 
 impl Plugin for SimTimePlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<SimSpeed>()
+            .register_type::<SimClock>()
             .init_resource::<SimSpeed>()
+            .init_resource::<SimClock>()
             .add_systems(Startup, pin_max_delta)
             // прогрев идёт на паузе: мир уже собран, но за экраном загрузки
             // ему двигаться незачем — пусть пешки сначала получат пути
             .add_systems(OnEnter(PlayPhase::Warmup), pause_simulation)
-            .add_systems(OnEnter(PlayPhase::Live), resume_simulation)
+            .add_systems(
+                OnEnter(PlayPhase::Live),
+                (resume_simulation, start_sim_clock),
+            )
             .add_systems(
                 Update,
-                (modify_time, throttle_speed_to_fps, measure_actual_speed).chain(),
+                (
+                    modify_time,
+                    throttle_speed_to_fps,
+                    measure_actual_speed,
+                    tick_sim_clock.run_if(in_state(PlayPhase::Live)),
+                )
+                    .chain(),
             );
     }
 }
@@ -80,6 +108,19 @@ fn pause_simulation(mut time: ResMut<Time<Virtual>>) {
 
 fn resume_simulation(mut time: ResMut<Time<Virtual>>) {
     time.unpause();
+}
+
+/// Часы нового мира с нуля: за точку отсчёта берём текущее виртуальное время,
+/// а не обнуляем `Time<Virtual>` — тот общий, и его сброс сдвинул бы всем
+/// таймерам их дедлайны.
+fn start_sim_clock(mut clock: ResMut<SimClock>, time: Res<Time<Virtual>>) {
+    clock.started_at = time.elapsed_secs_f64();
+    clock.elapsed = 0.0;
+}
+
+/// На паузе виртуальная дельта нулевая, поэтому часы сами стоят.
+fn tick_sim_clock(mut clock: ResMut<SimClock>, time: Res<Time<Virtual>>) {
+    clock.elapsed = time.elapsed_secs_f64() - clock.started_at;
 }
 
 fn modify_time(

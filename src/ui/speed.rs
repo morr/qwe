@@ -1,5 +1,6 @@
 //! Панель скорости симуляции (порт `zxc/src/ui/simulation_state.rs`, без
 //! игровой даты): текст в правом верхнем углу, обновляется из `Time<Virtual>`.
+//! Там же часы симуляции (`SimClock`) — сколько мир уже прожил.
 //! Вторая строка — диагностика pathfinding (порт заголовка
 //! `zxc/src/ui/debug/info.rs`), третья — зум и позиция камеры плюс точка под
 //! курсором.
@@ -11,7 +12,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::cursor_offset;
 use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED};
-use crate::sim_time::SimSpeed;
+use crate::sim_time::{SimClock, SimSpeed};
 use crate::ui::{GameUiRoot, UI_TEXT_SHADOW, UiOpacity, ui_color};
 
 #[derive(Component, Default)]
@@ -38,7 +39,12 @@ impl Plugin for UiSpeedPlugin {
     }
 }
 
-fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>, speed: Res<SimSpeed>) {
+fn render_speed_ui(
+    mut commands: Commands,
+    time: Res<Time<Virtual>>,
+    speed: Res<SimSpeed>,
+    clock: Res<SimClock>,
+) {
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -66,7 +72,7 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>, speed: Res<
         Name::new("speed_ui"),
         children![
             (
-                Text(format_speed_text(&time, &speed)),
+                Text(format_speed_text(&time, &speed, &clock)),
                 TextFont {
                     font_size: FontSize::Px(20.),
                     ..default()
@@ -103,9 +109,10 @@ fn update_speed_text(
     text: Single<&mut Text, With<SpeedTextMarker>>,
     time: Res<Time<Virtual>>,
     speed: Res<SimSpeed>,
+    clock: Res<SimClock>,
 ) {
     text.into_inner()
-        .set_if_neq(Text(format_speed_text(&time, &speed)));
+        .set_if_neq(Text(format_speed_text(&time, &speed, &clock)));
 }
 
 /// Строка pathfinding-диагностики: в полёте, среднее время поиска, сущности.
@@ -179,10 +186,18 @@ fn update_camera_text(
 /// время замедлено (см. `sim_time`). После стрелки — замеренная фактическая
 /// скорость, поэтому она бывает и меньше 1x: на просадке (например, пока
 /// фоново строится сетка northstar) симуляция отстаёт от реального времени.
-fn format_speed_text(time: &Time<Virtual>, speed: &SimSpeed) -> String {
+///
+/// Хвостом — часы симуляции (`SimClock`): в какой момент своей жизни мир
+/// сейчас находится. На 15x они бегут в пятнадцать раз быстрее настенных, и
+/// смотреть на «сколько идёт прогон» нужно именно по ним.
+///
+/// Разделителем два пробела: часы стоят на той же строке, что и скорость, и
+/// одним пробелом слипались бы с `15x` в одно число.
+fn format_speed_text(time: &Time<Virtual>, speed: &SimSpeed, clock: &SimClock) -> String {
+    let clock = format_sim_clock(clock.elapsed);
     let requested = format!("{}x", speed.requested);
     if time.is_paused() {
-        return format!("Paused ({requested})");
+        return format!("Paused ({requested})  {clock}");
     }
     if speed.is_throttled() {
         // ниже 1x одного знака мало: 0.3x и 0.06x — разные истории
@@ -191,8 +206,25 @@ fn format_speed_text(time: &Time<Virtual>, speed: &SimSpeed) -> String {
         } else {
             format!("{:.1}", speed.actual)
         };
-        format!("Speed: {requested} → {actual}x")
+        format!("Speed: {requested} → {actual}x  {clock}")
     } else {
-        format!("Speed: {requested}")
+        format!("Speed: {requested}  {clock}")
+    }
+}
+
+/// Часы симуляции как `T+8130` — секунды и всё: разбивка на часы и сутки пока
+/// не нужна, а секунды напрямую сопоставимы с периодами в `settings.rs`.
+fn format_sim_clock(elapsed: f64) -> String {
+    format!("T+{}", elapsed.max(0.0) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sim_clock_counts_whole_seconds() {
+        assert_eq!(format_sim_clock(0.0), "T+0");
+        assert_eq!(format_sim_clock(8130.4), "T+8130");
     }
 }

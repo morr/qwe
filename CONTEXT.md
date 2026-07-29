@@ -484,6 +484,11 @@ in `main.rs`.
     frame.
   - Set the requested speed over BRP with `res set SimSpeed .requested N` — `brp speed`
     writes `Time<Virtual>` directly and the throttle overwrites it on the next frame.
+  - **SimClock** — `elapsed`, virtual seconds the *current world* has lived, zeroed on
+    entering `PlayPhase::Live` (so map load and warmup don't count, and a city switch
+    restarts it). Not wall-clock: it stops on pause and runs `actual`× faster on speedup.
+    The panel shows it next to the speed as plain seconds (`T+8130`), and it is readable
+    over BRP as `SimClock`.
   - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): `panic`
     ~1.8 ms ≫ `spatial` ~0.7 ms > `move` ~0.16 ms ≈ `flee` ~0.14 ms ≫ `chase` ~0.01 ms.
     `panic` scans every wandering human against the demon grid every tick — that single
