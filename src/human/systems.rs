@@ -188,13 +188,7 @@ pub fn pick_wander_targets(
             &mut commands,
         );
         if is_first_wander {
-            // `queue_silenced` — как и в `Movable`: рестарт деспавнит сцену
-            // посреди `Update`, буфер этой системы применяется уже после
-            commands
-                .entity(entity)
-                .queue_silenced(|mut entity: EntityWorldMut| {
-                    entity.remove::<HumanFirstWanderTag>();
-                });
+            commands.entity(entity).remove::<HumanFirstWanderTag>();
         }
 
         // следующая пауза — уже после прибытия

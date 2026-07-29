@@ -63,12 +63,6 @@ pub struct MovableReachedDestinationEvent {
     pub grid_tile: IVec2,
 }
 
-/// Все команды перехода состояний ставятся через `queue_silenced`: сущность
-/// может исчезнуть между сбором команды и её применением — рестарт по R
-/// деспавнит сцену из обсервера прямо посреди `Update`, и буфер системы,
-/// успевшей в этом же кадре запросить путь, применяется уже к мёртвой сущности.
-/// Обычная `EntityCommands::insert`/`remove` в этом случае роняет приложение
-/// («Entity despawned» → паника при применении буфера).
 impl Movable {
     pub fn new(speed: f32) -> Self {
         Self {
@@ -102,11 +96,7 @@ impl Movable {
     ) {
         self.state = MovableState::Moving(end_tile);
         self.path = path;
-        commands
-            .entity(entity)
-            .queue_silenced(|mut entity: EntityWorldMut| {
-                entity.insert(MovableStateMovingTag);
-            });
+        commands.entity(entity).insert(MovableStateMovingTag);
     }
 
     /// Запустить асинхронный поиск пути; ответ снимает
@@ -131,12 +121,10 @@ impl Movable {
         // вытесняется вставкой
         commands
             .entity(entity)
-            .queue_silenced(move |mut entity: EntityWorldMut| {
-                entity.remove::<PathfindingTask>();
-                entity.insert(PathfindingRequest {
-                    start_tile,
-                    end_tile,
-                });
+            .remove::<PathfindingTask>()
+            .insert(PathfindingRequest {
+                start_tile,
+                end_tile,
             });
     }
 
@@ -148,10 +136,6 @@ impl Movable {
 
     fn stop_moving(&mut self, entity: Entity, commands: &mut Commands) {
         self.path = [].into();
-        commands
-            .entity(entity)
-            .queue_silenced(|mut entity: EntityWorldMut| {
-                entity.remove::<MovableStateMovingTag>();
-            });
+        commands.entity(entity).remove::<MovableStateMovingTag>();
     }
 }
