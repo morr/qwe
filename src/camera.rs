@@ -15,6 +15,11 @@ const MAX_ZOOM: f32 = 4.5;
 const START_ZOOM: f32 = 0.4;
 /// Множитель зума на один щелчок колеса.
 const ZOOM_STEP: f32 = 1.12;
+/// Скорость WASD-пана в *экранных* логических пикселях в секунду — как у
+/// `drag_pan`, поэтому на любом масштабе карта уезжает одинаково быстро.
+/// (`pan_speed` у PanCamera задаётся в мировых метрах и на крупном плане
+/// швыряет камеру, а на общем — еле тащит.)
+const PAN_SPEED: f32 = 1125.0;
 
 pub struct CameraPlugin;
 
@@ -28,9 +33,9 @@ impl Plugin for CameraPlugin {
                 OnEnter(AppState::Playing),
                 reset_camera_to_portal.in_set(WorldInitSet::Spawn),
             )
-            // Мышь ведём сами (см. ниже); у PanCamera остаются WASD-пан и
+            // Мышь и WASD ведём сами (см. ниже); у PanCamera остаётся только
             // применение zoom_factor к масштабу трансформа.
-            .add_systems(Update, (zoom_to_cursor, drag_pan));
+            .add_systems(Update, (zoom_to_cursor, drag_pan, key_pan));
     }
 }
 
@@ -53,7 +58,13 @@ fn spawn_camera(mut commands: Commands, city: Res<City>) {
             // `=`/`-` отданы скорости симуляции (sim_time)
             key_zoom_in: None,
             key_zoom_out: None,
-            pan_speed: 600.0,
+            // WASD ведёт `key_pan`: шаг PanCamera задан в мировых метрах и
+            // потому зависит от масштаба
+            pan_speed: 0.0,
+            key_up: None,
+            key_down: None,
+            key_left: None,
+            key_right: None,
             // без поворота камеры
             rotation_speed: 0.0,
             key_rotate_ccw: None,
@@ -124,6 +135,40 @@ fn zoom_to_cursor(
     }
     controller.zoom_factor = new_zoom;
     transform.scale = Vec3::splat(new_zoom);
+}
+
+/// Пан на WASD в экранной скорости: шаг умножается на `zoom_factor`, поэтому
+/// на крупном плане камера проходит меньше метров, а на общем — больше, и на
+/// экране карта в обоих случаях едет с одной скоростью.
+///
+/// Время реальное: пан не должен замирать вместе с паузой симуляции.
+fn key_pan(
+    time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut query: Query<(&mut Transform, &PanCamera), With<Camera>>,
+) {
+    let mut dir = Vec2::ZERO;
+    if keys.pressed(KeyCode::KeyA) {
+        dir.x -= 1.0;
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        dir.x += 1.0;
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        dir.y -= 1.0;
+    }
+    if keys.pressed(KeyCode::KeyW) {
+        dir.y += 1.0;
+    }
+    let Some(dir) = dir.try_normalize() else {
+        return;
+    };
+    let Ok((mut transform, controller)) = query.single_mut() else {
+        return;
+    };
+
+    let delta = dir * PAN_SPEED * controller.zoom_factor * time.delta_secs();
+    transform.translation += delta.extend(0.0);
 }
 
 /// Пан зажатой левой кнопкой: точка мира «схвачена» курсором и движется с
