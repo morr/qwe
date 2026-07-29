@@ -255,6 +255,9 @@ pub fn listen_for_pathfinding_tasks(
 
 /// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.
 const MOVEPATH_COLOR: Color = Color::srgba(0.9, 0.2, 0.9, 0.7);
+/// Длина «крыльев» стрелки на конце пути; на коротком последнем сегменте
+/// ужимается до половины его длины, иначе наконечник перекрывает сам путь.
+const MOVEPATH_ARROW_TIP: f32 = 4.0;
 /// Пути рисуются на текущем экране и на соседних: 3 × 3 экрана вокруг камеры,
 /// то есть полуразмер кадра ×3 по каждой оси.
 const MOVEPATH_VIEW_SCREENS: f32 = 3.0;
@@ -293,8 +296,20 @@ pub fn draw_move_paths(
         if offset.x > half_view.x || offset.y > half_view.y {
             continue;
         }
-        let mut points = vec![sim_position.0];
-        points.extend(movable.path.iter().map(|&tile| tile_center(tile)));
-        gizmos.linestrip_2d(points, MOVEPATH_COLOR);
+        // как в zxc: промежуточные сегменты — линии, последний — стрелка
+        // в сторону цели
+        let last = movable.path.len().saturating_sub(1);
+        let mut prev = sim_position.0;
+        for (index, &tile) in movable.path.iter().enumerate() {
+            let next = tile_center(tile);
+            if index < last {
+                gizmos.line_2d(prev, next, MOVEPATH_COLOR);
+            } else {
+                gizmos
+                    .arrow_2d(prev, next, MOVEPATH_COLOR)
+                    .with_tip_length(MOVEPATH_ARROW_TIP.min(prev.distance(next) * 0.5));
+            }
+            prev = next;
+        }
     }
 }
