@@ -257,9 +257,14 @@ fn poll_job(
                 .iter()
                 .filter(|building| building.height.is_some())
                 .count();
+            let entrances: usize = map
+                .buildings
+                .iter()
+                .map(|building| building.entrances.len())
+                .sum();
             info!(
-                "osm map: {} buildings ({with_height} with height), {} water, {} parks, \
-                 {} woods, {} grass, {} sand, {} roads, {} walls, {} trees",
+                "osm map: {} buildings ({with_height} with height, {entrances} entrances), \
+                 {} water, {} parks, {} woods, {} grass, {} sand, {} roads, {} walls, {} trees",
                 map.buildings.len(),
                 map.water.len(),
                 map.parks.len(),

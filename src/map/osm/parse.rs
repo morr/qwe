@@ -34,6 +34,18 @@ const METERS_PER_LEVEL: f32 = 3.0;
 /// потребителя, чем километровый сарай.
 const BUILDING_HEIGHT_RANGE: RangeInclusive<f32> = 2.0..=600.0;
 
+/// Значения `entrance`, через которые человек не ходит: `no` — «это не вход»
+/// (в Париже таких 604), `garage` — ворота для машины, `emergency` — запертая
+/// пожарная дверь. Всё остальное (`yes`, `main`, `staircase`, `home`, `shop`,
+/// `service`, `exit`) — дверь как дверь.
+const NON_WALKABLE_ENTRANCES: [&str; 3] = ["no", "garage", "emergency"];
+
+/// Шаг квантования координат при привязке входа к зданию, 1/м. Вход в OSM —
+/// как правило общий узел контура здания (Тула 82%, Берлин 79%, Париж 65%),
+/// так что после одной и той же проекции координаты совпадают точно;
+/// сантиметровая сетка — страховка от шума f32, а не поиск ближайшего.
+const ENTRANCE_SNAP_SCALE: f32 = 100.0;
+
 pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
@@ -41,9 +53,17 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
 
     let mut map = MapData::default();
     let mut skipped_open_rings = 0usize;
+    // Overpass отдаёт ноды раньше way, так что здания на этот момент ещё не
+    // разобраны: копим входы и раскладываем по домам после цикла
+    let mut entrances = Vec::new();
 
     for element in &response.elements {
         match element.kind.as_str() {
+            "node" => {
+                if let Some(position) = parse_entrance(element, &bounds) {
+                    entrances.push(position);
+                }
+            }
             "way" => parse_way(element, &bounds, &mut map),
             "relation" => parse_relation(element, &bounds, &mut map, &mut skipped_open_rings),
             _ => {}
@@ -55,8 +75,58 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         eprintln!("osm parse: {skipped_open_rings} unclosed relation rings skipped");
     }
 
+    let orphaned = attach_entrances(&mut map, &entrances);
+    if orphaned > 0 {
+        // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом контура,
+        // либо принадлежит зданию, которое не попало в bbox
+        eprintln!(
+            "osm parse: {orphaned} of {} entrances match no building",
+            entrances.len()
+        );
+    }
+
     map.trees = plant_trees(&map);
     Ok(map)
+}
+
+/// Нода `entrance=*` → позиция на карте. Не вход или значение из
+/// [`NON_WALKABLE_ENTRANCES`] — `None`.
+fn parse_entrance(element: &Element, bounds: &GeoBounds) -> Option<Vec2> {
+    let entrance = element.tags.get("entrance")?.as_str();
+    if NON_WALKABLE_ENTRANCES.contains(&entrance) {
+        return None;
+    }
+    Some(bounds.project(element.lat?, element.lon?))
+}
+
+/// Раскладка входов по зданиям: вход ищется среди вершин контуров, потому что
+/// в OSM он и есть узел контура. Возвращает число входов, не нашедших дом.
+///
+/// Общий узел двух домов (сплошная застройка) попадает в таблицу один раз —
+/// вход достанется одному из них, и это не важно: дверь всё равно там же.
+fn attach_entrances(map: &mut MapData, entrances: &[Vec2]) -> usize {
+    let key = |point: Vec2| {
+        (
+            (point.x * ENTRANCE_SNAP_SCALE).round() as i32,
+            (point.y * ENTRANCE_SNAP_SCALE).round() as i32,
+        )
+    };
+
+    let mut by_vertex: HashMap<(i32, i32), usize> = HashMap::new();
+    for (index, building) in map.buildings.iter().enumerate() {
+        for &vertex in &building.outer {
+            by_vertex.insert(key(vertex), index);
+        }
+    }
+
+    let mut orphaned = 0;
+    for &entrance in entrances {
+        match by_vertex.get(&key(entrance)) {
+            Some(&index) => map.buildings[index].entrances.push(entrance),
+            None => orphaned += 1,
+        }
+    }
+    orphaned
 }
 
 /// Классификация элемента по тегам → вид площадного объекта.
@@ -238,6 +308,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             holes: Vec::new(),
             kind,
             height: area_height(kind, &element.tags),
+            entrances: Vec::new(),
         },
     );
 }
@@ -280,6 +351,7 @@ fn parse_relation(
                 holes,
                 kind,
                 height,
+                entrances: Vec::new(),
             },
         );
     }
@@ -789,6 +861,57 @@ mod tests {
         assert_eq!(map.water[0].height, None);
     }
 
+    /// Вход-узел контура достаётся своему зданию; `entrance=no` и ворота
+    /// гаража отбрасываются, а вход в стороне от домов остаётся сиротой.
+    #[test]
+    fn entrances_attach_to_the_building_whose_outline_they_sit_on() {
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+        let d = 0.0005;
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "node", "id": 100, "lat": {a}, "lon": {b}, "tags": {{"entrance": "main"}}}},
+  {{"type": "node", "id": 101, "lat": {a}, "lon": {c}, "tags": {{"entrance": "staircase"}}}},
+  {{"type": "node", "id": 102, "lat": {e}, "lon": {c}, "tags": {{"entrance": "no"}}}},
+  {{"type": "node", "id": 103, "lat": {e}, "lon": {b}, "tags": {{"entrance": "garage"}}}},
+  {{"type": "node", "id": 104, "lat": {lat}, "lon": {lon}, "tags": {{"entrance": "yes"}}}},
+  {{"type": "way", "id": 1, "tags": {{"building": "yes"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+        );
+
+        let map = parse(&json, CITY).unwrap();
+        assert_eq!(map.buildings.len(), 1);
+        // main и staircase — на контуре; no и garage отброшены как значения,
+        // а «yes» в центре квартала ни одной вершине не соответствует
+        let entrances = &map.buildings[0].entrances;
+        assert_eq!(entrances.len(), 2, "{entrances:?}");
+        for entrance in entrances {
+            assert!(
+                map.buildings[0]
+                    .outer
+                    .iter()
+                    .any(|vertex| vertex.distance(*entrance) < 0.01),
+                "entrance off the outline: {entrance:?}"
+            );
+        }
+    }
+
+    /// Здание без размеченных входов остаётся с пустым списком — потребитель
+    /// обязан работать и так (Токио: входов почти нет).
+    #[test]
+    fn a_building_without_entrances_keeps_an_empty_list() {
+        let map = parse(&fixture(), CITY).unwrap();
+        assert_eq!(map.buildings.len(), 1);
+        assert!(map.buildings[0].entrances.is_empty());
+    }
+
     #[test]
     fn kremlin_buildings_classified_by_historic_tag() {
         let element = Element {
@@ -800,6 +923,8 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            lat: None,
+            lon: None,
             geometry: None,
             members: None,
         };

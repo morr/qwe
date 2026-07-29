@@ -6,7 +6,7 @@ use crate::human::components::{
     Human, HumanFirstWanderTag, HumanWanderTag, WanderHeading, WanderPause,
 };
 use crate::loading::AppState;
-use crate::map::osm::MapData;
+use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
 use crate::settings::{
@@ -80,6 +80,20 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
     }
 }
 
+/// Точка, к которой идут «в этот дом»: вход из OSM, если он у дома размечен,
+/// иначе случайная вершина контура. Выбор идёт от здания, а не от общего
+/// списка входов, именно поэтому: входов на город сотни (Тула — 431 на 6946
+/// домов), и адресуйся пешки прямо к ним, двадцать тысяч человек ходили бы по
+/// одним и тем же дверям.
+fn building_target(building: &PolyArea, rng: &mut impl Rng) -> Vec2 {
+    let points = if building.entrances.is_empty() {
+        &building.outer
+    } else {
+        &building.entrances
+    };
+    points[rng.random_range(0..points.len())]
+}
+
 /// Здание «по курсу»: из `WANDER_BUILDING_TRIES` случайных зданий
 /// берётся первое, попавшее в конус вокруг `heading`; если ни одно не попало —
 /// лучшее по направлению из выборки. Полный перебор 7500 зданий тут не нужен:
@@ -90,7 +104,7 @@ fn pick_building_ahead(map: &MapData, rng: &mut impl Rng, position: Vec2, headin
 
     for _ in 0..WANDER_BUILDING_TRIES {
         let building = &map.buildings[rng.random_range(0..map.buildings.len())];
-        let point = building.outer[rng.random_range(0..building.outer.len())];
+        let point = building_target(building, rng);
         let Some(direction) = (point - position).try_normalize() else {
             continue;
         };

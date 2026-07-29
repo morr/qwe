@@ -29,6 +29,10 @@ pub struct PolyArea {
     /// Покрытие сильно зависит от города (Берлин 80%, Токио 5%), поэтому
     /// потребитель обязан иметь свой дефолт, а не считать `None` ошибкой.
     pub height: Option<f32>,
+    /// Входы (`entrance=*`) на контуре этого здания. Пусто у подавляющего
+    /// большинства домов и у всего, что не здание — потребитель обязан уметь
+    /// работать без них. См. `parse::attach_entrances`.
+    pub entrances: Vec<Vec2>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +164,7 @@ mod tests {
             ]],
             kind: AreaKind::Building,
             height: None,
+            entrances: Vec::new(),
         };
         assert!(point_in_area(Vec2::new(2.0, 2.0), &area));
         assert!(!point_in_area(Vec2::new(5.0, 5.0), &area));

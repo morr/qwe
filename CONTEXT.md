@@ -119,7 +119,8 @@ in `main.rs`.
     but Wood stays open ground — that is what makes the open half of a park read as a
     field, the way it does on OSM.
     `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
-    tag is there). See **Building height** below.
+    tag is there). See **Building height** below. `entrances: Vec<Vec2>` — the OSM
+    doors on this building's outline, empty for most buildings; see **Entrances**.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
     z). `bridge` flag — see navmesh.
@@ -134,6 +135,16 @@ in `main.rs`.
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
   order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
   default. Coverage is logged per city on load (`N buildings (M with height)`).
+- **Entrances** (`parse.rs::parse_entrance` + `attach_entrances`) — `entrance=*` **nodes**
+  (the only nodes the Overpass query asks for), minus `NON_WALKABLE_ENTRANCES`
+  (`no` = not a door at all, `garage`, `emergency`). An entrance in OSM is normally a
+  *shared node of the building outline*, so attachment is an exact vertex lookup on a
+  1 cm grid, not a nearest-neighbour search — it lands 82% of Tula's, 79% of Berlin's,
+  65% of Paris's. The rest are orphans (porch nodes, buildings outside the bbox) and are
+  dropped with a count on stderr. Overpass emits nodes before ways, so entrances are
+  buffered through the element loop and attached after it. Coverage is thin everywhere
+  (Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — **every consumer must
+  work without them**.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
