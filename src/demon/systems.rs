@@ -1,10 +1,12 @@
 use bevy::prelude::*;
 use rand::Rng;
 
-use crate::demon::components::{Demon, DemonSpawner, DemonWanderTag};
+use crate::demon::components::{ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonWanderTag};
 use crate::grid::world_to_tile;
 use crate::loading::AppState;
-use crate::movement::{Movable, MovableState, SimPosition};
+use crate::movement::{
+    DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, MovableState, SimPosition,
+};
 use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::portal::PortalPos;
 use crate::settings::{
@@ -116,5 +118,31 @@ pub fn pick_wander_targets(
             target_tile,
             &mut commands,
         );
+    }
+}
+
+/// Movepath броска: в финальной фазе тайловый путь снят (демона ведёт
+/// `chase`, а не `move_moving_entities`), и обычная отрисовка путей такого
+/// демона не видит. Рисуем стрелку напрямую в текущую позицию жертвы.
+pub fn draw_lunge_paths(
+    draw: Res<DrawMovePaths>,
+    mut gizmos: Gizmos,
+    lunging: Query<(&SimPosition, &ChaseTarget), (With<Demon>, With<DemonLungeTag>)>,
+    targets: Query<&SimPosition>,
+) {
+    if !draw.0 {
+        return;
+    }
+
+    // отсечения по экрану, как у `draw_move_paths`, здесь нет: бросок — это
+    // единицы демонов на всю карту, не десятки тысяч линий
+    for (sim_position, chase_target) in &lunging {
+        let Ok(target_position) = targets.get(chase_target.0) else {
+            continue;
+        };
+        let distance = sim_position.0.distance(target_position.0);
+        gizmos
+            .arrow_2d(sim_position.0, target_position.0, MOVEPATH_COLOR)
+            .with_tip_length(MOVEPATH_ARROW_TIP.min(distance * 0.5));
     }
 }

@@ -7,9 +7,9 @@ use bevy::prelude::*;
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
 pub use self::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonSpawner, DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonSpawner, DemonWanderTag, DevourUntil,
 };
-use self::systems::{pick_wander_targets, spawn_initial_burst, tick_spawner};
+use self::systems::{draw_lunge_paths, pick_wander_targets, spawn_initial_burst, tick_spawner};
 use crate::loading::AppState;
 use crate::spatial::SimSet;
 
@@ -21,6 +21,7 @@ impl Plugin for DemonPlugin {
             .register_type::<DemonWanderTag>()
             .register_type::<DemonChaseTag>()
             .register_type::<DemonDevourTag>()
+            .register_type::<DemonLungeTag>()
             .register_type::<ChaseTarget>()
             .register_type::<ChaseRepath>()
             .register_type::<DevourUntil>()
@@ -40,7 +41,8 @@ impl Plugin for DemonPlugin {
             )
             .add_systems(
                 Update,
-                (pick_wander_targets, pulse_devouring).run_if(in_state(AppState::Playing)),
+                (pick_wander_targets, pulse_devouring, draw_lunge_paths)
+                    .run_if(in_state(AppState::Playing)),
             );
     }
 }

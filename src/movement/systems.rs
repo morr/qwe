@@ -254,10 +254,10 @@ pub fn listen_for_pathfinding_tasks(
 }
 
 /// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.
-const MOVEPATH_COLOR: Color = Color::srgba(0.9, 0.2, 0.9, 0.7);
+pub const MOVEPATH_COLOR: Color = Color::srgba(0.9, 0.2, 0.9, 0.7);
 /// Длина «крыльев» стрелки на конце пути; на коротком последнем сегменте
 /// ужимается до половины его длины, иначе наконечник перекрывает сам путь.
-const MOVEPATH_ARROW_TIP: f32 = 4.0;
+pub const MOVEPATH_ARROW_TIP: f32 = 4.0;
 /// Пути рисуются на текущем экране и на соседних: 3 × 3 экрана вокруг камеры,
 /// то есть полуразмер кадра ×3 по каждой оси.
 const MOVEPATH_VIEW_SCREENS: f32 = 3.0;

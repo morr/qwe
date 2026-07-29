@@ -424,6 +424,9 @@ in `main.rs`.
   victim keeps moving inside it, so the last ~1.4 m — more than `KILL_DISTANCE` — is
   never closed and the demon "almost catches" forever. The line-of-sight check is what
   keeps the lunge from cutting through a building when the victim rounds a corner.
+  A lunging demon carries **`DemonLungeTag`** (set/cleared in `chase`) — it has no tile
+  path left, so the movepath gizmo would show nothing; `draw_lunge_paths` draws its arrow
+  straight at the victim's live `SimPosition` instead.
   Kill at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); `killed_this_tick`
   HashSet dedupes double kills within one command flush. **Devour** — pause 1.5–2 s with
   a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on exit.

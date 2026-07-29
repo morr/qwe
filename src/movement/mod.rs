@@ -9,7 +9,7 @@ pub use self::components::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
     PathfindingRequest, PathfindingTask, PreviousSimPosition, SimPosition,
 };
-pub use self::systems::DrawMovePaths;
+pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 use crate::spatial::SimSet;
 
 use self::systems::{

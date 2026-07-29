@@ -30,6 +30,13 @@ impl Default for ChaseTarget {
     }
 }
 
+/// Финальный бросок: демон идёт напрямую на текущую позицию жертвы, минуя
+/// тайловый путь. Ставится и снимается в `chase`; movepath-гизмо по нему
+/// рисует стрелку прямо в цель, а не по остаткам старого пути.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct DemonLungeTag;
+
 /// Троттлинг перепрокладки пути во время погони.
 #[derive(Component, Reflect)]
 #[reflect(Component)]

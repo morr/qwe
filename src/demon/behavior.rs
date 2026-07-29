@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::demon::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonWanderTag, DevourUntil,
 };
 use crate::grid::world_to_tile;
 use crate::human::{CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
@@ -89,6 +89,7 @@ pub fn chase(
             &mut ChaseTarget,
             &mut ChaseRepath,
             &mut Movable,
+            Has<DemonLungeTag>,
         ),
         (With<Demon>, With<DemonChaseTag>, Without<Human>),
     >,
@@ -102,11 +103,12 @@ pub fn chase(
         bevy::platform::collections::HashSet::default();
 
     let mut chasers: ChaserCounts = ChaserCounts::default();
-    for (_, _, chase_target, _, _) in &query {
+    for (_, _, chase_target, _, _, _) in &query {
         *chasers.entry(chase_target.0).or_insert(0) += 1;
     }
 
-    for (entity, mut sim_position, mut chase_target, mut repath, mut movable) in &mut query {
+    for (entity, mut sim_position, mut chase_target, mut repath, mut movable, lunging) in &mut query
+    {
         // цель умерла (труп/despawn) — снова блуждание
         let Ok(target_position) = targets.get(chase_target.0) else {
             back_to_wander(&mut commands, entity, &mut movable);
@@ -148,10 +150,18 @@ pub fn chase(
             if !matches!(movable.state, MovableState::Idle) {
                 movable.to_idle(entity, &mut commands, false);
             }
+            if !lunging {
+                commands.entity(entity).insert(DemonLungeTag);
+            }
             let step = (movable.speed * time.delta_secs()).min(distance);
             let lunge = (target_pos - sim_position.0).normalize_or_zero() * step;
             sim_position.0 += lunge;
             continue;
+        }
+
+        // цель разорвала дистанцию или ушла за угол — бросок отменён
+        if lunging {
+            commands.entity(entity).remove::<DemonLungeTag>();
         }
 
         // перепрокладка пути к цели — по таймеру, не каждый тик
@@ -214,7 +224,7 @@ fn back_to_wander(commands: &mut Commands, entity: Entity, movable: &mut Movable
     movable.speed = DEMON_SPEED;
     commands
         .entity(entity)
-        .remove::<(DemonChaseTag, ChaseTarget, ChaseRepath)>()
+        .remove::<(DemonChaseTag, ChaseTarget, ChaseRepath, DemonLungeTag)>()
         .insert(DemonWanderTag);
     debug!("demon {entity} Chase => Wander");
 }
@@ -270,6 +280,7 @@ pub fn on_demon_caught_human(
             DemonChaseTag,
             ChaseTarget,
             ChaseRepath,
+            DemonLungeTag,
             PathfindingTask,
             PathfindingRequest,
         )>()
