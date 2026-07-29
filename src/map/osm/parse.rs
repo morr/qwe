@@ -240,13 +240,28 @@ fn assemble_rings(
 /// Зазор дерева до зданий и кромок дорог, м.
 const TREE_CLEARANCE: f32 = 1.5;
 
+/// Зазор до берега, м: больше обычного, чтобы крона (радиус до 4) не свисала
+/// над прудом — дерево впритык к воде читается как растущее из воды.
+const TREE_SHORE_CLEARANCE: f32 = 3.0;
+
 /// Минимум между центрами деревьев, м: кроны (радиус до 4) могут чуть
 /// касаться, но не сливаться в кляксу.
 const TREE_MIN_SPACING: f32 = 6.0;
 
+/// Точка ближе `clearance` к любому ребру полигона — внешнему кольцу или
+/// кольцу дырки (кольца замкнуты неявно, последнее ребро — от конца к началу).
+fn near_area_edge(point: Vec2, area: &PolyArea, clearance: f32) -> bool {
+    std::iter::once(&area.outer).chain(&area.holes).any(|ring| {
+        (0..ring.len()).any(|index| {
+            distance_to_segment(point, ring[index], ring[(index + 1) % ring.len()]) <= clearance
+        })
+    })
+}
+
 /// Деревья: детерминированный LCG по геометрии парка, плотность ∝ площади,
 /// rejection-sampling внутри полигона, только в границах карты и не на
-/// зданиях/дорогах (парковые аллеи — тоже дороги).
+/// зданиях/дорогах (парковые аллеи — тоже дороги) и не в воде — пруд внутри
+/// парка лежит поверх парковой заливки, дерево на нём растёт из воды.
 fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
     // AABB-прекомпьют, чтобы не гонять point-in-polygon по всем 3к зданий
     let building_bounds: Vec<(Vec2, Vec2)> = map
@@ -264,6 +279,15 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
             let (min, max) = ring_bounds(&road.points);
             let pad = road.width / 2.0 + TREE_CLEARANCE;
             (min - pad, max + pad)
+        })
+        .collect();
+
+    let water_bounds: Vec<(Vec2, Vec2)> = map
+        .water
+        .iter()
+        .map(|area| {
+            let (min, max) = ring_bounds(&area.outer);
+            (min - TREE_SHORE_CLEARANCE, max + TREE_SHORE_CLEARANCE)
         })
         .collect();
 
@@ -285,6 +309,15 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
                             distance_to_segment(pos, segment[0], segment[1])
                                 <= road.width / 2.0 + TREE_CLEARANCE
                         })
+                })
+            || map
+                .water
+                .iter()
+                .zip(&water_bounds)
+                .any(|(area, &(min, max))| {
+                    in_bbox(pos, min, max)
+                        && (point_in_area(pos, area)
+                            || near_area_edge(pos, area, TREE_SHORE_CLEARANCE))
                 })
     };
 
@@ -440,6 +473,43 @@ mod tests {
                     "trees too close: {pos:?} vs {other:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn trees_avoid_a_pond_inside_the_park() {
+        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let d = 0.001;
+        // пруд занимает северо-восточную четверть парка
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 10, "tags": {{"leisure": "park"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}},
+  {{"type": "way", "id": 11, "tags": {{"natural": "water"}},
+    "geometry": [
+      {{"lat": {lat}, "lon": {lon}}}, {{"lat": {lat}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {lon}}},
+      {{"lat": {lat}, "lon": {lon}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+        );
+
+        let map = parse(&json).unwrap();
+        assert_eq!(map.water.len(), 1);
+        assert!(!map.trees.is_empty());
+        let pond = &map.water[0];
+        for &(pos, _) in &map.trees {
+            assert!(!point_in_area(pos, pond), "tree in the pond at {pos:?}");
+            assert!(
+                !near_area_edge(pos, pond, TREE_SHORE_CLEARANCE),
+                "tree on the shoreline at {pos:?}"
+            );
         }
     }
 
