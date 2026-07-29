@@ -125,6 +125,36 @@ For changes that only manifest at runtime (behavior, rendering, UI), verify in t
 app too — the `live-app` skill (BRP counts, telemetry, `TakeScreenshotEvent`) is the
 tool for that, not guessing from code.
 
+### Performance check
+
+**Every task ends with a judgement call on performance, stated out loud.** First reason
+about it empirically — could this change have made anything slower? Look for the usual
+suspects:
+
+- new work per frame or per fixed step, especially anything iterating entities, tiles or
+  map features;
+- new work per map element at load (parse, navmesh fill, meshing) — the map carries tens
+  of thousands of buildings and roads, so an innocent nested loop is quadratic;
+- more geometry in a merged mesh, more entities, more gizmos;
+- a new allocation, lock, or index rebuilt on every call instead of once.
+
+If the answer is a confident **no**, say so in one line and move on — do not measure for
+the sake of measuring.
+
+If the answer is **yes or maybe**, measure before and after and report the numbers.
+What to measure, by kind of change:
+
+- load-time work — the timings already logged (`navmesh filled in …`, `pruned … in …`),
+  or wrap the new step in `Instant::now()` the same way;
+- per-frame work — `fps` / frame time from the diagnostics overlay in the live app, on
+  the same city and the same camera position, and the `sim/*_ms` diagnostics for
+  simulation systems;
+- memory or entity count — `brp count`, the `entities:` line in the overlay.
+
+Then **give a verdict**: the cost is negligible and stays; the cost is real and here is
+the optimisation; or the cost is real, here is what it buys, and it is the user's call.
+Never report "probably fine" without either the reasoning or the numbers behind it.
+
 ## Cargo Features & Dependencies
 
 `bevy` is pulled in with `default-features = false` — only `2d`, `ui`, `dynamic_linking`,
