@@ -34,7 +34,7 @@ fn main() {
                         position: WindowPosition::Automatic,
                         mode: bevy::window::WindowMode::Windowed,
                         present_mode: bevy::window::PresentMode::AutoVsync,
-                        resolution: (1280, 720).into(),
+                        resolution: (1920, 1080).into(),
                         ..default()
                     }),
                     ..default()
