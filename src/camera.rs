@@ -26,7 +26,7 @@ impl Plugin for CameraPlugin {
             // переезжает — камеру возвращаем к нему на каждой загрузке
             .add_systems(
                 OnEnter(AppState::Playing),
-                center_camera_on_portal.in_set(WorldInitSet::Spawn),
+                reset_camera_to_portal.in_set(WorldInitSet::Spawn),
             )
             // Мышь ведём сами (см. ниже); у PanCamera остаются WASD-пан и
             // применение zoom_factor к масштабу трансформа.
@@ -70,13 +70,20 @@ fn spawn_camera(mut commands: Commands, city: Res<City>) {
     ));
 }
 
-/// Камера на портал: позиция снапится по navmesh уже загруженного города,
-/// так что она известна только к входу в `Playing`.
-fn center_camera_on_portal(
+/// Камера на портал в стартовом зуме: позиция портала снапится по navmesh
+/// уже загруженного города, так что известна только к входу в `Playing`.
+///
+/// Зум сбрасывается вместе с позицией: разглядывать новый город с того
+/// приближения, на котором бросили предыдущий, незачем — да и на общем плане
+/// (4.5) отъезд после смены города читается как «карта не загрузилась».
+fn reset_camera_to_portal(
     portal: Res<PortalPos>,
-    mut camera: Single<&mut Transform, With<Camera2d>>,
+    mut camera: Single<(&mut Transform, &mut PanCamera), With<Camera2d>>,
 ) {
-    camera.translation = portal.0.extend(camera.translation.z);
+    let (transform, controller) = &mut *camera;
+    transform.translation = portal.0.extend(transform.translation.z);
+    // масштаб трансформа PanCamera держит сам, по zoom_factor
+    controller.zoom_factor = START_ZOOM;
 }
 
 /// Смещение курсора от центра окна в мировых осях (экранный y — вниз).

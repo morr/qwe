@@ -67,15 +67,16 @@ in `main.rs`.
   resets `DemonSpawner` + `Telemetry`, respawns population. The navmesh persists — it is
   filled once per city.
 - **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built
-  from: `Tula | NewYork | Paris | Berlin | London`. Each carries its **geo center** (bbox
+  from: `Tula | NewYork | Paris | Berlin | London | Tokyo`. Each carries its **geo center** (bbox
   center of the Overpass extract), its **portal hint** and its **cache slug**; `MAP_SIZE`
   and therefore `GRID_SIZE` are shared, so switching city never resizes the navmesh.
   Panel — bottom centre (`ui/city.rs`), the current city's button is highlighted.
 - **City switch = full world reload.** Writing `City` (button or BRP) sends the app back
   to `AppState::Loading`: leaving `Playing` despawns the scene, the load thread downloads
   / re-parses the new extract, refills the same navmesh (`fill_from_mapdata` resets it
-  first), re-snaps the portal, and `OnEnter(Playing)` rebuilds map, population and
-  camera position. `DemonSpawner`, `Telemetry`, `NorthstarGrid` and `WarmupProgress` are
+  first), re-snaps the portal, and `OnEnter(Playing)` rebuilds map and population and
+  resets the camera (`camera.rs::reset_camera_to_portal` — onto the new portal, back to
+  `START_ZOOM`). `DemonSpawner`, `Telemetry`, `NorthstarGrid` and `WarmupProgress` are
   reset on the way. The switch is gated on `in_state(Playing)` — restarting a load on top
   of a running one would put two threads into one navmesh.
 - **`DespawnOnExit(AppState::Playing)`** — the *only* thing that clears the old city.
