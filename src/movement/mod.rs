@@ -41,7 +41,7 @@ impl Plugin for MovementPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_draw_move_paths.run_if(input_just_pressed(KeyCode::KeyP)),
+                    toggle_draw_move_paths.run_if(input_just_pressed(KeyCode::KeyM)),
                     draw_move_paths,
                 ),
             )

@@ -263,7 +263,7 @@ pub const MOVEPATH_ARROW_TIP: f32 = 4.0;
 const MOVEPATH_VIEW_SCREENS: f32 = 3.0;
 
 /// Отрисовка путей движущихся сущностей; в финальной сцене выключена,
-/// переключается клавишей P.
+/// переключается клавишей M (и вместе с doors — клавишей G).
 #[derive(Resource, Reflect, SettingsGroup, Default)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "movepath")]

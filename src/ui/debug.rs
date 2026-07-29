@@ -4,10 +4,15 @@
 //! - grid — сетка navtiles гизмо-линиями;
 //! - navmesh — заливка непроходимых тайлов (Mesh2d, спавнится по включению);
 //! - doors — входы в здания, свои и досочинённые (`map/osm/entrances.rs`);
-//! - movepath — существующий `DrawMovePaths` (он же на клавише P).
+//! - movepath — существующий `DrawMovePaths` (он же на клавише M).
+//!
+//! Хоткеи: N — navmesh, M — movepath (в `movement`), G — «гизмо» одной
+//! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
+//! редко и только вблизи, кнопки в панели достаточно.
 
 use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
+use bevy::input::common_conditions::input_just_pressed;
 use bevy::picking::hover::Hovered;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::Pressed;
@@ -99,6 +104,8 @@ impl Plugin for UiDebugTogglesPlugin {
                         .run_if(in_state(AppState::Playing)),
                     sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
+                    toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
+                    toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
                 ),
             );
     }
@@ -194,6 +201,19 @@ fn render_debug_toggles(mut commands: Commands) {
         )
         .id();
     commands.entity(row).add_child(method_button);
+}
+
+fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>) {
+    navmesh.0 = !navmesh.0;
+}
+
+/// G — общий тумблер «гизмо»: doors и movepath разом. Гасит всё, если горит
+/// хоть один слой, иначе зажигает оба, — чтобы одно нажатие всегда очищало
+/// экран, в каком бы состоянии слои ни разошлись поодиночке.
+fn toggle_gizmos(mut doors: ResMut<DebugDoors>, mut movepaths: ResMut<DrawMovePaths>) {
+    let on = !(doors.0 || movepaths.0);
+    doors.0 = on;
+    movepaths.0 = on;
 }
 
 /// Актуализация подписи при смене алгоритма (кнопкой или через BRP).
