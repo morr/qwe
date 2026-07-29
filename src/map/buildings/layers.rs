@@ -8,12 +8,11 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
-use super::{
-    BuildingHeightMode, SHADOW_COLOR, SHADOW_DIR, base_colors, extrusion_lift, height_or_default,
-};
+use super::{BuildingHeightMode, base_colors, extrusion_lift, height_or_default};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
+use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
 /// значит закрасить полквартала: карта сверху, а не изометрия. При 0.2

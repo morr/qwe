@@ -1,6 +1,7 @@
 use super::arches::*;
 use super::layers::*;
 use super::*;
+use crate::map::SHADOW_DIR;
 use crate::map::osm::RoadClass;
 use crate::settings::ARCH_HEIGHT;
 

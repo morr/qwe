@@ -290,7 +290,8 @@ in `main.rs`.
     wall masks the shadow and a shadow never lands on a same-height roof: the cheap
     stand-in for real height-aware casting; still above the portal and corpses, which
     are outdoors and in shadow by meaning). Per contiguous **silhouette chain** of the
-    footprint (edges whose outward normal faces the 30° tree-shadow light) one swept
+    footprint (edges whose outward normal faces the 30° light — `map/mod.rs::SHADOW_DIR`,
+    one source for building and tree shadows alike) one swept
     polygon `[chain, chain + offset reversed]`, offset = height × `SHADOW_LENGTH_SCALE`
     (0.6) clamped to 3–45 m. Not per-edge quads — on staircase facades those overlapped
     along the shadow axis and the translucency stacked into stripes; a chain sweep

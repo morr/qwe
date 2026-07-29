@@ -22,8 +22,9 @@ use std::collections::HashMap;
 use bevy::color::Mix;
 use bevy::prelude::*;
 
+use super::height_or_default;
 use super::layers::silhouette_edges;
-use super::{SHADOW_COLOR, height_or_default};
+use crate::map::SHADOW_COLOR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{closest_on_segment, point_in_area, ring_bounds};
 use crate::map::osm::{PolyArea, RoadLine};

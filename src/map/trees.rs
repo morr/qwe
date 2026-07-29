@@ -11,6 +11,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
+use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
     TREE_DETAIL_STROKE, TREE_MIXED_CONIFER_EVERY, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
     Z_TREE_SHADOW,
@@ -20,9 +21,6 @@ use crate::settings::{
 const INK_COLOR: Color = Color::srgb(0.004, 0.008, 0.024);
 /// Базовая зелень кроны; пер-дерево умножается на яркость из `TINT_FACTORS`.
 const CROWN_COLOR: Color = Color::srgb(0.42, 0.60, 0.33);
-/// Тень: watabou рисует #9699AE в multiply; здесь — альфа-эквивалент.
-const SHADOW_COLOR: Color = Color::srgba(0.22, 0.24, 0.33, 0.42);
-
 /// Внутренние кольца штриховки облачной кроны — `BALL_BANDS2`.
 const BALL_BANDS: [f32; 2] = [0.8, 0.5];
 /// Кольца конической кроны — `CONE_BANDS3`.
@@ -34,8 +32,6 @@ const BAND_LIFT: [f32; 3] = [0.15, 0.12, 0.1];
 /// Минимальная длина дуги-штриха, доля радиуса.
 const MIN_ARC_LENGTH: f32 = 0.15;
 
-/// Направление тени: 30° вниз-вправо (y-вверх), нормировано.
-const SHADOW_DIR: Vec2 = Vec2::new(0.866_025_4, -0.5);
 /// Вектор штриховки: рёбра CCW-колец вдоль него рисуются чаще (теневая сторона).
 const SHADE_DIR: Vec2 = Vec2::new(0.5, 0.866_025_4);
 /// Растяжение силуэта тени вдоль её оси (`1 + 0.5·shadowLength·0.8`).

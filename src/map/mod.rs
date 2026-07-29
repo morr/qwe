@@ -12,6 +12,14 @@ use bevy::prelude::*;
 
 use crate::loading::{AppState, WorldInitSet};
 
+/// Направление тени на всей карте: 30° вниз-вправо, нормировано. Один
+/// источник света и на дома, и на кроны — держится здесь, у общего родителя
+/// обоих, потому что разъехавшиеся тени видны на карте сразу.
+const SHADOW_DIR: Vec2 = Vec2::new(0.866_025_4, -0.5);
+/// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий по
+/// той же причине, что и [`SHADOW_DIR`].
+const SHADOW_COLOR: Color = Color::srgba(0.22, 0.24, 0.33, 0.42);
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
