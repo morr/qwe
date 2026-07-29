@@ -24,7 +24,6 @@ use bevy::prelude::*;
 use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::osm::MapData;
-use crate::map::{BuildingHeightMode, extrusion_lift};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
@@ -326,7 +325,6 @@ fn render_grid(mut gizmos: Gizmos) {
 /// тысяч, и гизмо на всю карту разом кладёт кадр.
 fn render_doors(
     map: Res<MapData>,
-    mode: Res<BuildingHeightMode>,
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut gizmos: Gizmos,
@@ -336,16 +334,12 @@ fn render_doors(
         Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * DOORS_VIEW_SCREENS;
 
     for building in &map.buildings {
-        // дверь живёт на настоящем контуре, но в 2.5D он уходит под
-        // нарисованный дом: без того же подъёма метка на северной грани
-        // читается как «дверь посреди здания»
-        let lift = extrusion_lift(building, *mode);
         for &door in &building.entrances {
             let offset = (door - camera_position).abs();
             if offset.x > half_view.x || offset.y > half_view.y {
                 continue;
             }
-            gizmos.circle_2d(door + lift, DOOR_MARKER_RADIUS, DOOR_COLOR);
+            gizmos.circle_2d(door, DOOR_MARKER_RADIUS, DOOR_COLOR);
         }
     }
 }
