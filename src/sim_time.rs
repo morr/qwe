@@ -10,7 +10,8 @@ use bevy::prelude::*;
 
 use crate::loading::PlayPhase;
 use crate::settings::{
-    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MIN_SIM_SPEED, SPEED_DROP_RATE, SPEED_SETTLE_RATE,
+    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MIN_SIM_SPEED, SPEED_CYCLE_MAX, SPEED_DROP_RATE,
+    SPEED_SETTLE_RATE,
 };
 
 /// Скорость симуляции: `requested` крутит пользователь лесенкой, `effective`
@@ -249,6 +250,14 @@ pub fn toggle_pause(time: &mut Time<Virtual>) {
     }
 }
 
+/// Ступень для кнопки Speed: та же лесенка, но по кругу — за `SPEED_CYCLE_MAX`
+/// возвращаемся к 1x. Кнопка одна, и без замыкания с верхней ступени было бы
+/// не выбраться иначе как хоткеем.
+pub fn cycle_time_scale(speed: f32) -> f32 {
+    let next = next_time_scale(speed);
+    if next > SPEED_CYCLE_MAX { 1.0 } else { next }
+}
+
 /// Следующая ступень лесенки скоростей.
 pub fn next_time_scale(speed: f32) -> f32 {
     speed
@@ -309,6 +318,14 @@ mod tests {
         // ниже 4 fps не тянется и 1x — замедляемся честно
         assert_eq!(affordable_speed(2.0), 0.5);
         assert_eq!(affordable_speed(0.4), MIN_SIM_SPEED);
+    }
+
+    #[test]
+    fn cycle_wraps_at_the_top() {
+        assert_eq!(cycle_time_scale(1.0), 3.0);
+        assert_eq!(cycle_time_scale(10.0), SPEED_CYCLE_MAX);
+        // выше потолка кнопки — назад к реальному времени
+        assert_eq!(cycle_time_scale(SPEED_CYCLE_MAX), 1.0);
     }
 
     #[test]

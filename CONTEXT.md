@@ -467,8 +467,13 @@ in `main.rs`.
 
 ## UI & debug
 
-- **Speed panel** (`ui/speed.rs`) — top-right: speed multiplier, pathfinding in-flight /
-  avg ms, entity count. Fixed width + right-padded digits (no jitter).
+- **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
+  avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
+- **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button in
+  the Buildings-panel style. Left click walks the ladder up and wraps to 1x past
+  `SPEED_CYCLE_MAX` (15x — the 60 fps ceiling), right click steps down; green while
+  paused. It reads `Pointer<Click>` itself instead of `Activate`, which fires for *any*
+  mouse button and would make one right click move both ways.
 - **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
   color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
   text input, so hex fields became cycles). Writes `TreeStyle`; `map::trees::rebuild_trees`
@@ -476,7 +481,8 @@ in `main.rs`.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / movepath buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities.
-- **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder.
+- **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (unbounded, unlike the
+  button's `cycle_time_scale`).
   - **SimSpeed** — `{requested, effective, actual}`. `requested` is what the ladder says;
     `effective` is the regulator's command, what reaches `Time<Virtual>` after **fps
     throttling**; `actual` is measured — virtual seconds per real second, averaged over
@@ -492,15 +498,15 @@ in `main.rs`.
     `throttle_speed_to_fps` closes the loop on measured fps and eases `effective` toward
     the ceiling (`SPEED_SETTLE_RATE` up, the faster `SPEED_DROP_RATE` down). It throttles
     **below 1× too** — under 4 fps even real time is unaffordable — down to
-    `MIN_SIM_SPEED` (0.1). The panel shows `Speed: 15x → 8.6x` when limited, and
-    `Speed: 1x → 0.42x` while something (the async northstar build, say) is starving the
+    `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited, and
+    `1x → 0.42x` while something (the async northstar build, say) is starving the
     frame.
   - Set the requested speed over BRP with `res set SimSpeed .requested N` — `brp speed`
     writes `Time<Virtual>` directly and the throttle overwrites it on the next frame.
   - **SimClock** — `elapsed`, virtual seconds the *current world* has lived, zeroed on
     entering `PlayPhase::Live` (so map load and warmup don't count, and a city switch
     restarts it). Not wall-clock: it stops on pause and runs `actual`× faster on speedup.
-    The panel shows it next to the speed as plain seconds (`T+8130`), and it is readable
+    The panel's first line shows it as plain seconds (`T+8130`), and it is readable
     over BRP as `SimClock`.
   - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): `panic`
     ~1.8 ms ≫ `spatial` ~0.7 ms > `move` ~0.16 ms ≈ `flee` ~0.14 ms ≫ `chase` ~0.01 ms.
