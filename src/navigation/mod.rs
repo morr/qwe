@@ -11,7 +11,7 @@ pub use self::northstar::{
     start_northstar_build,
 };
 use crate::grid::{tile_center, world_to_tile};
-use crate::loading::{AppState, WorldInitSet};
+use crate::loading::PlayPhase;
 use crate::settings::NAVTILE_SIZE;
 
 /// Ответ асинхронного поиска пути (снимается в
@@ -83,10 +83,10 @@ impl Plugin for NavigationPlugin {
             // navmesh заполняется и прореживается фоновым потоком загрузки
             // (`map/osm/download.rs`) — здесь остаётся только иерархия,
             // которая строится по уже финальной проходимости
-            .add_systems(
-                OnEnter(AppState::Playing),
-                start_northstar_build.in_set(WorldInitSet::Navmesh),
-            )
+            // не раньше конца прогрева: постройка занимает rayon'ом все ядра,
+            // и A*, который в это время развозит пешек в кадре, замедляется
+            // вдвое (85 мс на поиск против 36 мс в бенче)
+            .add_systems(OnEnter(PlayPhase::Live), start_northstar_build)
             .add_systems(Update, poll_northstar_build);
     }
 }
