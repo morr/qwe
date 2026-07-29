@@ -12,7 +12,8 @@ use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
 use crate::settings::{
-    TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
+    TREE_DETAIL_STROKE, TREE_MIXED_CONIFER_EVERY, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
+    Z_TREE_SHADOW,
 };
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -77,16 +78,50 @@ pub enum TreeShape {
     Conifer,
     /// `zb.palm`: изогнутые листья (`Spiker::bent`), кольца `PALM_BANDS2`.
     Palm,
+    /// Смешанный лес: каждое `TREE_MIXED_CONIFER_EVERY`-е дерево хвойное,
+    /// остальные — облачные. Собственной геометрии не имеет: форма
+    /// разрешается по индексу дерева в `resolve`.
+    Mixed,
 }
 
 impl TreeShape {
-    pub const ALL: [Self; 3] = [Self::Cotton, Self::Conifer, Self::Palm];
+    pub const ALL: [Self; 4] = [Self::Cotton, Self::Conifer, Self::Palm, Self::Mixed];
+    /// Формы с собственной геометрией кроны — всё, кроме `Mixed`.
+    const CONCRETE: [Self; 3] = [Self::Cotton, Self::Conifer, Self::Palm];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Cotton => "Cotton",
             Self::Conifer => "Conifer",
             Self::Palm => "Palm",
+            Self::Mixed => "Mixed",
+        }
+    }
+
+    /// Формы, для которых надо собрать меши под этот стиль.
+    fn crown_shapes(self) -> &'static [Self] {
+        match self {
+            Self::Cotton => &[Self::Cotton],
+            Self::Conifer => &[Self::Conifer],
+            Self::Palm => &[Self::Palm],
+            Self::Mixed => &[Self::Cotton, Self::Conifer],
+        }
+    }
+
+    /// Конкретная форма кроны дерева с этим индексом: `Mixed` отдаёт хвою
+    /// каждому десятому по хешу индекса (не по остатку — иначе выбор хвои
+    /// попал бы в резонанс с выбором варианта `index % TREE_VARIANTS`).
+    fn resolve(self, index: usize) -> Self {
+        match self {
+            Self::Mixed => {
+                let hash = (index as u32).wrapping_mul(2_654_435_761) >> 8;
+                if hash as usize % TREE_MIXED_CONIFER_EVERY == 0 {
+                    Self::Conifer
+                } else {
+                    Self::Cotton
+                }
+            }
+            other => other,
         }
     }
 
@@ -109,7 +144,7 @@ impl TreeShape {
     /// Масштабы внутренних колец и вес вероятности штриха для каждого.
     fn bands(self) -> Vec<(f32, f32)> {
         match self {
-            Self::Cotton => BALL_BANDS.iter().map(|&s| (s, 3.0 * s * s)).collect(),
+            Self::Cotton | Self::Mixed => BALL_BANDS.iter().map(|&s| (s, 3.0 * s * s)).collect(),
             Self::Conifer => CONE_BANDS.iter().map(|&s| (s, 0.5 + s)).collect(),
             Self::Palm => PALM_BANDS.iter().map(|&s| (s, 3.0 * s)).collect(),
         }
@@ -118,7 +153,7 @@ impl TreeShape {
     /// Контур из базового многоугольника: `Bloater::bloat` или `Spiker`.
     fn outline(self, ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
         match self {
-            Self::Cotton => bloat(ring, lobe),
+            Self::Cotton | Self::Mixed => bloat(ring, lobe),
             Self::Conifer => spike_simple(ring, lobe),
             Self::Palm => spike_bent(ring, lobe),
         }
@@ -128,7 +163,7 @@ impl TreeShape {
     /// крупнее самого кольца (`k/scale`), у шипастых форм — как у контура.
     fn band_lobe(self, lobe: f32, scale: f32) -> f32 {
         match self {
-            Self::Cotton => lobe / scale,
+            Self::Cotton | Self::Mixed => lobe / scale,
             _ => lobe,
         }
     }
@@ -354,14 +389,23 @@ pub fn spawn_trees(
     style: &TreeStyle,
     trees: &[(Vec2, f32)],
 ) {
-    let variants: Vec<(Handle<Mesh>, Handle<Mesh>)> = (0..TREE_VARIANTS)
-        .map(|variant| {
-            let mut rng = Lcg::new(0x051E_D2E5 + variant as u32 * 7919);
-            let geometry = crown_geometry(style.shape, &mut rng);
-            (
-                meshes.add(crown_mesh(&geometry, style, &mut rng)),
-                meshes.add(shadow_mesh(&geometry)),
-            )
+    // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
+    let pools: Vec<(TreeShape, Vec<(Handle<Mesh>, Handle<Mesh>)>)> = style
+        .shape
+        .crown_shapes()
+        .iter()
+        .map(|&shape| {
+            let variants = (0..TREE_VARIANTS)
+                .map(|variant| {
+                    let mut rng = Lcg::new(0x051E_D2E5 + variant as u32 * 7919);
+                    let geometry = crown_geometry(shape, &mut rng);
+                    (
+                        meshes.add(crown_mesh(&geometry, style, &mut rng)),
+                        meshes.add(shadow_mesh(&geometry)),
+                    )
+                })
+                .collect();
+            (shape, variants)
         })
         .collect();
     let tints: Vec<Handle<ColorMaterial>> = style
@@ -372,6 +416,12 @@ pub fn spawn_trees(
     let shadow_material = materials.add(SHADOW_COLOR);
 
     for (index, &(position, radius)) in trees.iter().enumerate() {
+        let shape = style.shape.resolve(index);
+        let variants = &pools
+            .iter()
+            .find(|(pooled, _)| *pooled == shape)
+            .expect("crown_shapes covers every shape resolve can return")
+            .1;
         let (crown, shadow) = &variants[index % variants.len()];
         // микрошаг по z: пересекающиеся кроны рисуются в стабильном порядке
         let z = Z_TREE + (index % 512) as f32 * 1e-3;
@@ -431,12 +481,40 @@ mod tests {
 
     #[test]
     fn crown_geometry_is_deterministic() {
-        for shape in TreeShape::ALL {
+        for shape in TreeShape::CONCRETE {
             let first = crown_geometry(shape, &mut Lcg::new(42));
             let second = crown_geometry(shape, &mut Lcg::new(42));
             assert_eq!(first.outer, second.outer, "{shape:?}");
             assert_eq!(first.bands.len(), second.bands.len(), "{shape:?}");
         }
+    }
+
+    #[test]
+    fn mixed_shape_is_one_tenth_conifer() {
+        let conifers = (0..10_000)
+            .filter(|&index| TreeShape::Mixed.resolve(index) == TreeShape::Conifer)
+            .count();
+        assert!(
+            (900..=1100).contains(&conifers),
+            "{conifers} conifers per 10000 trees"
+        );
+        // остальные — облачные, и конкретные формы разрешаются в самих себя
+        assert_eq!(TreeShape::Mixed.resolve(1), TreeShape::Cotton);
+        for shape in TreeShape::CONCRETE {
+            assert_eq!(shape.resolve(3), shape);
+        }
+    }
+
+    /// Хвоя в `Mixed` не должна попадать всегда в одни и те же варианты меша.
+    #[test]
+    fn mixed_conifers_spread_over_every_variant() {
+        let mut hit = [false; TREE_VARIANTS];
+        for index in 0..10_000 {
+            if TreeShape::Mixed.resolve(index) == TreeShape::Conifer {
+                hit[index % TREE_VARIANTS] = true;
+            }
+        }
+        assert!(hit.iter().all(|&seen| seen), "{hit:?}");
     }
 
     #[test]
@@ -514,7 +592,7 @@ mod tests {
     fn crown_mesh_builds_non_empty() {
         let mut rng = Lcg::new(11);
         let style = TreeStyle::default();
-        for shape in TreeShape::ALL {
+        for shape in TreeShape::CONCRETE {
             let geometry = crown_geometry(shape, &mut rng);
             let mesh = crown_mesh(&geometry, &style, &mut rng);
             assert!(mesh.count_vertices() > 0, "{shape:?}");
