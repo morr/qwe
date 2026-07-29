@@ -23,8 +23,11 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → water 1 → alleys 1.5
-  → roads 2 → corpses 3 → portal 4 → buildings 5 → units → trees 20. Units are y-sorted:
+- **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → woods 0.55 → grass
+  0.6 → sand 0.7 → water 1 → alley casings 1.4 → alleys 1.5 → road casings 1.9 → roads 2
+  → corpses 3 → portal 4 → buildings 5 → units → tree shadows 19 → trees 20. Three more
+  live in their own modules: `Z_BUILDING_SHADOW` 4.5 and `Z_FACADE` 4.9
+  (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
   northern units under roads.
@@ -277,12 +280,50 @@ in `main.rs`.
   rather than replanting. Replanting would reshuffle every position on each step of the
   slider, making the whole forest jump; thinning keeps the standing trees in place and
   costs nothing per step.
-- **Rendering** (`map/meshing.rs` + `map/spawn.rs`, building layers in
-  `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water, alleys, roads,
-  building layers, walls): `MeshBuilder` triangulates polygons via `earcutr` (holes
-  supported, degenerate contours skipped + counted) and emits per-vertex colors over a
-  single white `ColorMaterial`. ~7000 buildings cost a handful of entities. Trees stay
-  individual entities (see tree crowns below).
+- **Rendering** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
+  building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
+  alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
+  `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
+  colors over a single white `ColorMaterial`. ~7000 buildings cost a handful of entities.
+  Trees stay individual entities (see tree crowns below).
+- **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
+  every road, alley and kremlin wall is drawn. Two knobs, both named after their SVG /
+  Mapnik counterparts: **join** (`Miter` — bisector offsets capped by `MITER_LIMIT`;
+  `Round` — an arc of radius half-width on the **outer** side of the bend, the side where
+  butt-ended segment quads leave a gap) and **cap** (`Butt` — cut at the last point;
+  `Round` — a half-disc half-a-width past it). Arc tessellation is driven by
+  `ARC_TOLERANCE` (5 cm of chord sagitta), so a 16 m primary gets more chords than a
+  3.5 m footway; the **same tolerance decides whether a join fan is emitted at all** —
+  a bend is skipped only when `half_width · turn` is under it. An angle threshold was
+  tried first and was wrong: 5° on an alley still leaves a 15 cm slit, plainly visible
+  as a pale cut across the road when zoomed in.
+- **Junctions are not computed.** Overpass returns `out geom`, so shared node identity
+  between ways is never available; roads are independent polylines drawn overlapping in
+  one opaque single-colored layer. `Round` caps are what makes a junction *look* joined —
+  the caps of the ways meeting at a node overlap into a rounded blob, exactly how
+  osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
+  round`). This is why the road layer must stay opaque and flat-colored: transparency or
+  a per-way tint would expose every crossing.
+- **RoadStyle** (resource, BRP-writable, persisted; panel `ui/roads.rs` above Buildings)
+  — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
+  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Three independent knobs:
+  - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
+    with *both ends* extended by half a width; no joins at all, which is what produced
+    the notches on bends and the wedges at junctions), `Miter`, `Round` (default).
+  - **smoothing** — Chaikin corner-cutting on the centerline, `Off` (default) / 1 / 2
+    iterations. Only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the cut length is
+    clamped to the road width, so the drawn line never leaves the OSM data by more than
+    a road width. `passage` roads are never smoothed — their endpoints are pinned to
+    building outline vertices that `arch_openings` looks the arch up by. Off by default
+    because OSM itself keeps its corners sharp.
+  - **casing** — a darker outline, its own merged layer at `Z_ALLEY_CASING` (1.4) /
+    `Z_ROAD_CASING` (1.9), width `+2·casing_width` (8% of the road, 0.3–1 m). Both fills
+    (1.5 / 2.0) sit above both casings on purpose: otherwise a casing would cut every
+    crossing in half. Off by default.
+
+  Smoothing works on a **copy** — `RoadLine::points` and `width` are load-bearing for the
+  navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
+  and none of them may shift because the drawing changed.
 - **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The panel lives in
@@ -352,6 +393,14 @@ in `main.rs`.
   passable strips back** (`bridge=yes` roads) → buildings block → walls block →
   **building passages carve back through them**. Without bridges the Упа river bisects
   the map and no cross-river path exists.
+- **Ordinary roads do not touch the navmesh.** The grid starts all-passable and
+  `fill_from_mapdata` only ever *subtracts* (water, buildings, walls); roads enter it
+  solely through the `bridge` and `passage` carves above. Pawns walk on grass and asphalt
+  alike. Consequently road **rendering** (`map/roads.rs`, `MeshBuilder::push_ribbon`) and
+  road **rasterization** (`Navmesh::set_polyline`, a capsule sweep by
+  `distance_to_segment` — round joints by construction) are two independent code paths
+  over the same `RoadLine`, and changing how a road is drawn cannot change where anything
+  walks. Changing `RoadLine::points` or `width` would change both at once.
 - **Building passage** (арка) — a road that runs *through* a building: OSM
   `tunnel=building_passage`, or `covered=building_passage|yes` (both tag styles occur;
   `tunnel=yes` is an underground tunnel and is **not** one). `parse::is_building_passage`
