@@ -116,7 +116,7 @@ impl TreeShape {
         match self {
             Self::Mixed => {
                 let hash = (index as u32).wrapping_mul(2_654_435_761) >> 8;
-                if hash as usize % TREE_MIXED_CONIFER_EVERY == 0 {
+                if (hash as usize).is_multiple_of(TREE_MIXED_CONIFER_EVERY) {
                     Self::Conifer
                 } else {
                     Self::Cotton
