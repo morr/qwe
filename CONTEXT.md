@@ -189,6 +189,12 @@ in `main.rs`.
 - **Fill order matters** (`fill_from_mapdata`): water blocks → **bridge corridors carve
   passable strips back** (`bridge=yes` roads) → buildings block → walls block. Without
   bridges the Упа river bisects the map and no cross-river path exists.
+- **Row-span rasterization** (`row_spans`): an area is filled row by row — one pass over
+  the ring per tile row yields the x-crossings, and the tiles between crossing pairs are
+  set. Holes are subtracted as intervals, *not* merged into one even-odd list, so a hole
+  poking outside its outer ring still subtracts instead of filling. Replaced a
+  point-in-polygon test per tile of the AABB, which on London's Thames (huge bbox × long
+  ring) cost 6.3 s of a 6.5 s fill; now 30 ms.
 - **prune_unreachable** — BFS flood from the portal tile; passable-but-unreachable
   pockets (enclosed courtyards, islands) become impassable. Reason: an A* request to an
   unreachable target floods the whole reachable region (tens of ms each); before pruning
