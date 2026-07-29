@@ -16,12 +16,16 @@ const UI_COLOR: Color = Color::srgb(0.094, 0.102, 0.11);
 
 pub enum UiOpacity {
     Light,
+    /// Фон панелей: сквозь `Light` просвечивали пешки и кроны, `Heavy` глушит
+    /// карту под панелью.
+    Medium,
     Heavy,
 }
 
 pub fn ui_color(opacity: UiOpacity) -> Color {
     UI_COLOR.with_alpha(match opacity {
         UiOpacity::Light => 0.25,
+        UiOpacity::Medium => 0.55,
         UiOpacity::Heavy => 0.85,
     })
 }

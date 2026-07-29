@@ -80,7 +80,7 @@ fn render_debug_toggles(mut commands: Commands) {
                 padding: UiRect::all(px(10.)),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Light)),
+            BackgroundColor(ui_color(UiOpacity::Medium)),
             Name::new("debug_toggles"),
         ))
         .id();

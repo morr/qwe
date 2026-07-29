@@ -34,8 +34,14 @@ const DETAILS_PALETTE: [Color; 4] = [
 /// Ступени разброса яркости (`treeVariance`).
 const VARIANCE_STEPS: [f32; 5] = [0.0, 0.1, 0.2, 0.35, 0.5];
 
+/// Строки — как у дебаг-тумблеров: плотный фон поверх полупрозрачной панели.
+const ROW_LIGHTEN: f32 = 0.0;
 const HOVER_LIGHTEN: f32 = 0.12;
 const PRESSED_LIGHTEN: f32 = 0.24;
+
+fn row_color(lighten: f32) -> Color {
+    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
+}
 
 /// Какое поле стиля листает кнопка — она же адресует подпись и свотч.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -83,7 +89,7 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
                 width: px(210.),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Light)),
+            BackgroundColor(ui_color(UiOpacity::Medium)),
             Name::new("tree_style_panel"),
             children![(
                 Text::new("Trees"),
@@ -163,7 +169,14 @@ fn spawn_row<M>(
     style: &TreeStyle,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
-    let swatch_color = swatch_color(row, style).unwrap_or(Color::NONE);
+    // у нецветовых строк место под свотч остаётся (колонки не разъезжаются),
+    // но и заливка, и рамка прозрачны — пустая рамка читалась как недоделка
+    let swatch = swatch_color(row, style);
+    let swatch_border = if swatch.is_some() {
+        Color::srgba(1., 1., 1., 0.35)
+    } else {
+        Color::NONE
+    };
     let button = commands
         .spawn((
             Button,
@@ -184,7 +197,7 @@ fn spawn_row<M>(
                 },
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            BackgroundColor(row_color(ROW_LIGHTEN)),
             children![
                 (
                     Text::new(label),
@@ -215,8 +228,8 @@ fn spawn_row<M>(
                         border: UiRect::all(px(1.)),
                         ..default()
                     },
-                    BorderColor::all(Color::srgba(1., 1., 1., 0.35)),
-                    BackgroundColor(swatch_color),
+                    BorderColor::all(swatch_border),
+                    BackgroundColor(swatch.unwrap_or(Color::NONE)),
                 ),
             ],
         ))
@@ -265,9 +278,9 @@ fn highlight_rows(
         } else if hovered.get() {
             HOVER_LIGHTEN
         } else {
-            0.0
+            ROW_LIGHTEN
         };
-        background.0 = ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten);
+        background.0 = row_color(lighten);
     }
 }
 
