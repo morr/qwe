@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use crate::city::City;
 use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
-use crate::map::osm::overpass::{cache_path, overpass_query};
+use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::parse;
 use crate::navigation::{Navmesh, snap_portal_position};
 
@@ -136,6 +136,9 @@ fn build_navmesh(
 
 fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
     let path = cache_path(city);
+    // до чтения, а не после записи: устаревшие файлы надо подмести и на
+    // попадании в кеш, иначе они переживут все следующие запуски
+    prune_stale_caches();
 
     if path.exists() {
         info!("osm: cache hit at {}", path.display());

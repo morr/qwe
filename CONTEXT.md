@@ -103,6 +103,12 @@ in `main.rs`.
   cache keeps serving an extract that lacks them. Written **only after successful
   parse**; a broken cache self-heals (deleted, re-downloaded). Second launch never
   touches the network.
+- **One file per city** — every load first runs `prune_stale_caches()`: anything under a
+  known city slug that is not that city's current `cache_path` is deleted. That is what
+  retires extracts left by an old geo center, `MAP_SIZE` or `QUERY_VERSION` — tens of MB
+  each. It sweeps **all** cities, not just the one being loaded, so junk under a city
+  nobody visits still goes; the current file of each city survives, so a tour of the six
+  is not six downloads per lap.
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes; rings are open (no repeated last point).
     `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand`. **Park** is the

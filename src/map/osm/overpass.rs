@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use bevy::log::{info, warn};
 use bevy::math::{DVec2, Vec2};
 use serde::Deserialize;
 
@@ -99,6 +100,47 @@ pub fn cache_path(city: City) -> PathBuf {
         MAP_SIZE.x,
         MAP_SIZE.y
     ))
+}
+
+/// Один файл на город. Файл под тем же слагом, но с другими параметрами в
+/// имени, — выгрузка под прежний гео-центр, размер карты или версию запроса;
+/// прочитать её уже некому, а весит она десятки мегабайт.
+///
+/// Чистим сразу по всем городам, а не только по загружаемому: иначе мусор
+/// под неактивным городом ждёт визита в этот город, то есть возможно, что
+/// никогда. Актуальный файл каждого города при этом сохраняется — тур по
+/// шести городам не должен превращаться в шесть выгрузок на круг.
+///
+/// Трогаем только имена с известным слагом: что ещё лежит в `assets/osm/` —
+/// не наше дело.
+pub fn prune_stale_caches() {
+    let keep: Vec<PathBuf> = City::ALL.iter().map(|city| cache_path(*city)).collect();
+    let Some(dir) = keep.first().and_then(|path| path.parent()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if keep.contains(&path) {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let ours = City::ALL
+            .iter()
+            .any(|city| name.starts_with(&format!("{}_", city.slug())));
+        if !ours || !name.ends_with(".json") {
+            continue;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => info!("osm: dropped stale cache {name}"),
+            Err(error) => warn!("osm: cannot drop stale cache {name}: {error}"),
+        }
+    }
 }
 
 #[derive(Deserialize)]
