@@ -153,7 +153,7 @@ in `main.rs`.
   buffered through the element loop and attached after it. Coverage is thin everywhere
   (Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — hence the generator
   below. Real OSM doors always win: generation only runs on buildings that got none.
-- **Generated entrances** (`map/osm/entrances.rs`) — synthetic doors for the ~98% of
+- **Generated entrances** (`map/osm/entrances/`) — synthetic doors for the ~98% of
   buildings OSM leaves without one, with every parameter measured off the buildings that
   *do* have them (5 cities, 14 941 attached doors; Tokyo's mirror 502'd and it carries
   ~310 doors city-wide, so it is absent from the sample). Two measurements drive the
@@ -189,7 +189,8 @@ in `main.rs`.
     and mapping is complete anyway. For reference the ≥ 3-door selection (mapping
     unambiguously enumerated) reads 4.40 / 5.48 / 5.67, so the values below are the
     conservative end of the plausible range, not the middle.
-  - **Entrance cohorts** — length × height, with area as a demotion guard. Height only
+  - **Entrance cohorts** (`entrances/cohorts.rs`) — length × height, with area as a
+    demotion guard. Height only
     separates the long bands (at 70–120 m: 1.86 low vs 2.23 tall; at ≥ 120 m: 2.64 vs
     3.07 — about ±10% either side of the band); on short buildings it is noise (1.27 vs
     1.22). `p10 = 1` in every cohort, so the floor is always 1 door; `max` is the p90 of

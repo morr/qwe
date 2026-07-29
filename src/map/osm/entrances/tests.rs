@@ -1,5 +1,6 @@
+use super::cohorts::COHORT_ROW_MEAN;
 use super::*;
-use crate::map::osm::model::RoadClass;
+use crate::map::osm::model::{RoadClass, RoadLine};
 
 fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
     vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
