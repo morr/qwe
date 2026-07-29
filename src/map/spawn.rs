@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, RoadClass};
-use crate::map::trees;
+use crate::map::trees::{self, TreeStyle};
 use crate::settings::{MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD};
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
@@ -32,6 +32,7 @@ pub fn spawn_map(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     map: Res<MapData>,
+    style: Res<TreeStyle>,
 ) {
     commands.spawn((
         Sprite {
@@ -123,5 +124,11 @@ pub fn spawn_map(
         ));
     }
 
-    trees::spawn_trees(&mut commands, &mut meshes, &mut materials, &map.trees);
+    trees::spawn_trees(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &style,
+        &map.trees,
+    );
 }

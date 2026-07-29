@@ -8,6 +8,7 @@ use std::f32::consts::{PI, TAU};
 use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
+use crate::map::osm::MapData;
 use crate::settings::{
     TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
 };
@@ -19,15 +20,14 @@ const CROWN_COLOR: Color = Color::srgb(0.42, 0.60, 0.33);
 /// Тень: watabou рисует #9699AE в multiply; здесь — альфа-эквивалент.
 const SHADOW_COLOR: Color = Color::srgba(0.22, 0.24, 0.33, 0.42);
 
-/// Квантованные множители яркости кроны: `2^(0.2·bell)`, bell ∈ (−1, 1).
-const TINT_FACTORS: [f32; 5] = [0.87, 0.94, 1.0, 1.07, 1.15];
-
-/// Вершины базового многоугольника кроны.
-const CROWN_POINTS: usize = 12;
-/// Внутренние кольца штриховки: (масштаб, вес вероятности) — `BALL_BANDS2`.
-const CROWN_BANDS: [(f32, f32); 2] = [(0.8, 1.92), (0.5, 0.75)];
-/// Сдвиг колец к свету за номер кольца, доля радиуса.
-const BAND_LIFT: f32 = 0.15;
+/// Внутренние кольца штриховки облачной кроны — `BALL_BANDS2`.
+const BALL_BANDS: [f32; 2] = [0.8, 0.5];
+/// Кольца конической кроны — `CONE_BANDS3`.
+const CONE_BANDS: [f32; 3] = [0.7, 0.4, 0.1];
+/// Кольца пальмовой кроны — `PALM_BANDS2`.
+const PALM_BANDS: [f32; 2] = [0.7, 0.3];
+/// Сдвиг колец к свету за номер кольца, доля радиуса (`0.15/0.12/0.1`).
+const BAND_LIFT: [f32; 3] = [0.15, 0.12, 0.1];
 /// Минимальная длина дуги-штриха, доля радиуса.
 const MIN_ARC_LENGTH: f32 = 0.15;
 
@@ -64,33 +64,151 @@ impl Lcg {
     }
 }
 
-/// Геометрия кроны единичного радиуса: облачный контур и кольца штриховки.
+/// Форма кроны — `w.TREE_SHAPE` у watabou.
+#[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Resource)]
+pub enum TreeShape {
+    /// `zb.cloud`: облачный контур (`Bloater`), кольца `BALL_BANDS2`.
+    #[default]
+    Cotton,
+    /// `zb.pine`: колючий контур (`Spiker::simple`), кольца `CONE_BANDS3`.
+    Conifer,
+    /// `zb.palm`: изогнутые листья (`Spiker::bent`), кольца `PALM_BANDS2`.
+    Palm,
+}
+
+impl TreeShape {
+    pub const ALL: [Self; 3] = [Self::Cotton, Self::Conifer, Self::Palm];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cotton => "Cotton",
+            Self::Conifer => "Conifer",
+            Self::Palm => "Palm",
+        }
+    }
+
+    /// Вершин в базовом многоугольнике: у хвойной кроны их 16, у прочих 12.
+    fn base_points(self) -> usize {
+        match self {
+            Self::Conifer => 16,
+            _ => 12,
+        }
+    }
+
+    /// Доля радиуса, на которую джиттер утапливает вершину внутрь.
+    fn radius_jitter(self) -> f32 {
+        match self {
+            Self::Conifer => 0.25,
+            _ => 4.0 / 12.0,
+        }
+    }
+
+    /// Масштабы внутренних колец и вес вероятности штриха для каждого.
+    fn bands(self) -> Vec<(f32, f32)> {
+        match self {
+            Self::Cotton => BALL_BANDS.iter().map(|&s| (s, 3.0 * s * s)).collect(),
+            Self::Conifer => CONE_BANDS.iter().map(|&s| (s, 0.5 + s)).collect(),
+            Self::Palm => PALM_BANDS.iter().map(|&s| (s, 3.0 * s)).collect(),
+        }
+    }
+
+    /// Контур из базового многоугольника: `Bloater::bloat` или `Spiker`.
+    fn outline(self, ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
+        match self {
+            Self::Cotton => bloat(ring, lobe),
+            Self::Conifer => spike_simple(ring, lobe),
+            Self::Palm => spike_bent(ring, lobe),
+        }
+    }
+
+    /// Множитель `lobe` для внутренних колец: у облака фестоны кольца
+    /// крупнее самого кольца (`k/scale`), у шипастых форм — как у контура.
+    fn band_lobe(self, lobe: f32, scale: f32) -> f32 {
+        match self {
+            Self::Cotton => lobe / scale,
+            _ => lobe,
+        }
+    }
+}
+
+/// Геометрия кроны единичного радиуса: контур и кольца штриховки.
 struct CrownGeometry {
     outer: Vec<Vec2>,
     /// (кольцо, вес вероятности штриха).
     bands: Vec<(Vec<Vec2>, f32)>,
 }
 
-/// `getCloudCrown`: 12 вершин с джиттером угла и радиуса, раздутые в облако.
-fn cloud_crown(rng: &mut Lcg) -> CrownGeometry {
-    let mut base = Vec::with_capacity(CROWN_POINTS);
-    for index in 0..CROWN_POINTS {
-        let angle = TAU * (index as f32 + rng.gauss3()) / CROWN_POINTS as f32;
-        let radius = 1.0 - (4.0 / CROWN_POINTS as f32) * rng.bell4().abs();
+/// `getCloudCrown` / `getPineCrown` / `getPalmCrown`: базовый многоугольник с
+/// джиттером угла и радиуса, затем контур и уменьшенные кольца деталей.
+fn crown_geometry(shape: TreeShape, rng: &mut Lcg) -> CrownGeometry {
+    let points = shape.base_points();
+    let mut base = Vec::with_capacity(points);
+    for index in 0..points {
+        let angle = TAU * (index as f32 + rng.gauss3()) / points as f32;
+        let radius = 1.0 - shape.radius_jitter() * rng.bell4().abs();
         base.push(Vec2::from_angle(angle) * radius);
     }
-    let lobe = (3.0 * PI / CROWN_POINTS as f32).sin();
-    let outer = bloat(&base, lobe);
-    let bands = CROWN_BANDS
-        .iter()
+    let lobe = (3.0 * PI / points as f32).sin();
+    let outer = shape.outline(&base, lobe);
+    let bands = shape
+        .bands()
+        .into_iter()
         .enumerate()
-        .map(|(number, &(scale, weight))| {
-            let lift = Vec2::new(0.0, (number as f32 + 1.0) * BAND_LIFT);
+        .map(|(number, (scale, weight))| {
+            let lift = Vec2::new(0.0, (number as f32 + 1.0) * BAND_LIFT[number.min(2)]);
             let ring: Vec<Vec2> = base.iter().map(|&point| point * scale + lift).collect();
-            (bloat(&ring, lobe / scale), weight)
+            (shape.outline(&ring, shape.band_lobe(lobe, scale)), weight)
         })
         .collect();
     CrownGeometry { outer, bands }
+}
+
+/// `Spiker::simple`: между соседними вершинами вставлен один шип наружу
+/// длиной `sqrt(len/lobe)·len` — хвойная «ёлочная» кромка.
+fn spike_simple(ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
+    let mut out = Vec::with_capacity(ring.len() * 2);
+    let mut previous = ring[ring.len() - 1];
+    for &point in ring {
+        out.push(previous);
+        out.push(previous.midpoint(point) + spike_vector(previous, point, lobe));
+        previous = point;
+    }
+    out
+}
+
+/// `Spiker::bent`: шип как у `simple`, но с двумя опорными точками — лист
+/// изгибается и приподнят к свету, а не торчит прямой иглой.
+fn spike_bent(ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
+    let mut out = Vec::with_capacity(ring.len() * 4);
+    let mut previous = ring[ring.len() - 1];
+    for &point in ring {
+        let spike = spike_vector(previous, point, lobe);
+        let tip = previous.midpoint(point) + spike;
+        // watabou смещает опорные точки на 0.1·|шип| «вверх по экрану»;
+        // здесь y растёт вверх, поэтому знак положительный
+        let lift = 0.1 * spike.length();
+        out.push(previous);
+        out.push(bend_control(previous, tip, lift));
+        out.push(tip);
+        out.push(bend_control(tip, point, lift));
+        previous = point;
+    }
+    out
+}
+
+/// Вектор шипа над ребром: наружная нормаль, удлинённая как корень из
+/// отношения длины ребра к `lobe`.
+fn spike_vector(from: Vec2, to: Vec2, lobe: f32) -> Vec2 {
+    let edge = to - from;
+    let scaled = edge * (edge.length() / lobe).sqrt();
+    Vec2::new(scaled.y, -scaled.x)
+}
+
+/// Опорная точка изгиба листа: середина отрезка, сдвинутая по нормали и вверх.
+fn bend_control(from: Vec2, to: Vec2, lift: f32) -> Vec2 {
+    let normal = Vec2::new(from.y - to.y, to.x - from.x);
+    from.midpoint(to) - normal * 0.1 + Vec2::new(0.0, lift)
 }
 
 /// `Bloater.bloat`: каждое ребро кольца — в цепочку наружных горбов.
@@ -131,23 +249,18 @@ fn shadow_ring(outer: &[Vec2]) -> Vec<Vec2> {
 /// Меш кроны: заливка + чернильный контур + пунктирные кольца (`drawShaded1`).
 /// Вершинные цвета настоящие; материал дерева умножает их на серый множитель,
 /// так зелень варьируется, а чернила остаются чернилами.
-fn crown_mesh(geometry: &CrownGeometry, rng: &mut Lcg) -> Mesh {
+fn crown_mesh(geometry: &CrownGeometry, style: &TreeStyle, rng: &mut Lcg) -> Mesh {
     let mut builder = MeshBuilder::default();
-    builder.push_polygon(&geometry.outer, &[], CROWN_COLOR.to_linear());
-
-    builder.push_stroke(
-        &geometry.outer,
-        true,
-        TREE_OUTLINE_STROKE,
-        INK_COLOR.to_linear(),
-    );
+    let ink = style.details.to_linear();
+    builder.push_polygon(&geometry.outer, &[], style.foliage.to_linear());
+    builder.push_stroke(&geometry.outer, true, TREE_OUTLINE_STROKE, ink);
 
     for (ring, weight) in &geometry.bands {
         // рёбра отбираются по watabou (`drawShaded1`), но соседние выбранные
         // склеиваются в одну дугу — иначе каждое ребро рисуется своим штрихом
         // с собственными торцами, и кольцо распадается на зубцы
         for arc in shaded_arcs(ring, *weight, rng) {
-            builder.push_stroke(&arc, false, TREE_DETAIL_STROKE, INK_COLOR.to_linear());
+            builder.push_stroke(&arc, false, TREE_DETAIL_STROKE, ink);
         }
     }
     builder.build()
@@ -193,25 +306,63 @@ fn shadow_mesh(geometry: &CrownGeometry) -> Mesh {
     builder.build()
 }
 
+/// Стиль деревьев — вкладка Trees из «Style settings» watabou. Меняется на
+/// лету из UI-панели; каждое изменение пересобирает кроны (`rebuild_trees`).
+#[derive(Resource, Reflect, Clone, Debug)]
+#[reflect(Resource)]
+pub struct TreeStyle {
+    /// Цвет листвы (`colorTree` / «Foliage»).
+    pub foliage: Color,
+    /// Цвет контура и штрихов (`colorTreeDetails` / «Crown details»).
+    pub details: Color,
+    /// Разброс яркости листвы (`treeVariance`): множитель `2^(variance·bell)`.
+    pub variance: f32,
+    pub shape: TreeShape,
+}
+
+impl Default for TreeStyle {
+    fn default() -> Self {
+        Self {
+            foliage: CROWN_COLOR,
+            details: INK_COLOR,
+            variance: 0.2,
+            shape: TreeShape::default(),
+        }
+    }
+}
+
+impl TreeStyle {
+    /// Квантованные множители яркости: `2^(variance·bell)` для bell от −1 до 1.
+    fn tint_factors(&self) -> [f32; 5] {
+        [-1.0, -0.5, 0.0, 0.5, 1.0].map(|bell: f32| 2.0_f32.powf(self.variance * bell))
+    }
+}
+
+/// Крона или её тень — чтобы пересборка стиля знала, что деспавнить.
+#[derive(Component)]
+pub struct TreeTag;
+
 /// Спавн деревьев: `TREE_VARIANTS` пар мешей (крона+тень) единичного радиуса,
 /// каждому дереву — вариант, оттенок и масштаб детерминированно по индексу.
 pub fn spawn_trees(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
+    style: &TreeStyle,
     trees: &[(Vec2, f32)],
 ) {
     let variants: Vec<(Handle<Mesh>, Handle<Mesh>)> = (0..TREE_VARIANTS)
         .map(|variant| {
             let mut rng = Lcg::new(0x051E_D2E5 + variant as u32 * 7919);
-            let geometry = cloud_crown(&mut rng);
+            let geometry = crown_geometry(style.shape, &mut rng);
             (
-                meshes.add(crown_mesh(&geometry, &mut rng)),
+                meshes.add(crown_mesh(&geometry, style, &mut rng)),
                 meshes.add(shadow_mesh(&geometry)),
             )
         })
         .collect();
-    let tints: Vec<Handle<ColorMaterial>> = TINT_FACTORS
+    let tints: Vec<Handle<ColorMaterial>> = style
+        .tint_factors()
         .iter()
         .map(|&factor| materials.add(Color::srgb(factor, factor, factor)))
         .collect();
@@ -222,12 +373,14 @@ pub fn spawn_trees(
         // микрошаг по z: пересекающиеся кроны рисуются в стабильном порядке
         let z = Z_TREE + (index % 512) as f32 * 1e-3;
         commands.spawn((
+            TreeTag,
             Mesh2d(crown.clone()),
             MeshMaterial2d(tints[(index * 7) % tints.len()].clone()),
             Transform::from_translation(position.extend(z)).with_scale(Vec3::splat(radius)),
             Name::new("tree"),
         ));
         commands.spawn((
+            TreeTag,
             Mesh2d(shadow.clone()),
             MeshMaterial2d(shadow_material.clone()),
             Transform::from_translation(position.extend(Z_TREE_SHADOW))
@@ -235,6 +388,28 @@ pub fn spawn_trees(
             Name::new("tree_shadow"),
         ));
     }
+}
+
+/// Пересборка крон после правки стиля из UI: деспавн старых сущностей и
+/// повторный спавн из тех же позиций (`MapData::trees` не трогается).
+pub fn rebuild_trees(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    style: Res<TreeStyle>,
+    map: Res<MapData>,
+    existing: Query<Entity, With<TreeTag>>,
+) {
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
+    spawn_trees(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &style,
+        &map.trees,
+    );
 }
 
 #[cfg(test)]
@@ -250,18 +425,20 @@ mod tests {
     }
 
     #[test]
-    fn cloud_crown_is_deterministic() {
-        let first = cloud_crown(&mut Lcg::new(42));
-        let second = cloud_crown(&mut Lcg::new(42));
-        assert_eq!(first.outer, second.outer);
-        assert_eq!(first.bands.len(), second.bands.len());
+    fn crown_geometry_is_deterministic() {
+        for shape in TreeShape::ALL {
+            let first = crown_geometry(shape, &mut Lcg::new(42));
+            let second = crown_geometry(shape, &mut Lcg::new(42));
+            assert_eq!(first.outer, second.outer, "{shape:?}");
+            assert_eq!(first.bands.len(), second.bands.len(), "{shape:?}");
+        }
     }
 
     #[test]
     fn cloud_crown_stays_near_unit_radius() {
-        let crown = cloud_crown(&mut Lcg::new(7));
+        let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(7));
         // bloat выдавливает наружу: контур длиннее базового 12-угольника
-        assert!(crown.outer.len() > CROWN_POINTS * 4);
+        assert!(crown.outer.len() > 12 * 4);
         for point in &crown.outer {
             let distance = point.length();
             assert!(
@@ -271,6 +448,27 @@ mod tests {
         }
         // CCW-обход: bloat наружу требует положительной площади
         assert!(ring_area(&crown.outer) > 0.0);
+    }
+
+    #[test]
+    fn every_shape_has_its_own_outline_and_bands() {
+        let cotton = crown_geometry(TreeShape::Cotton, &mut Lcg::new(5));
+        let conifer = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5));
+        let palm = crown_geometry(TreeShape::Palm, &mut Lcg::new(5));
+        assert_eq!(conifer.bands.len(), CONE_BANDS.len());
+        assert_eq!(palm.bands.len(), PALM_BANDS.len());
+        assert_ne!(cotton.outer, conifer.outer);
+        assert_ne!(conifer.outer, palm.outer);
+        // шипы у хвои торчат заметно дальше базового радиуса, у пальмы тоже
+        for (shape, crown) in [(TreeShape::Conifer, &conifer), (TreeShape::Palm, &palm)] {
+            let reach = crown
+                .outer
+                .iter()
+                .map(|point| point.length())
+                .fold(0.0_f32, f32::max);
+            assert!(reach > 1.1, "{shape:?} spikes barely reach {reach}");
+            assert!(ring_area(&crown.outer) > 0.0, "{shape:?} winding flipped");
+        }
     }
 
     #[test]
@@ -292,7 +490,7 @@ mod tests {
 
     #[test]
     fn shadow_ring_stretches_along_shadow_dir() {
-        let crown = cloud_crown(&mut Lcg::new(3));
+        let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(3));
         let shadow = shadow_ring(&crown.outer);
         let extent = |ring: &[Vec2]| {
             let projected: Vec<f32> = ring.iter().map(|point| point.dot(SHADOW_DIR)).collect();
@@ -310,9 +508,12 @@ mod tests {
     #[test]
     fn crown_mesh_builds_non_empty() {
         let mut rng = Lcg::new(11);
-        let geometry = cloud_crown(&mut rng);
-        let mesh = crown_mesh(&geometry, &mut rng);
-        assert!(mesh.count_vertices() > 0);
-        assert!(shadow_mesh(&geometry).count_vertices() > 0);
+        let style = TreeStyle::default();
+        for shape in TreeShape::ALL {
+            let geometry = crown_geometry(shape, &mut rng);
+            let mesh = crown_mesh(&geometry, &style, &mut rng);
+            assert!(mesh.count_vertices() > 0, "{shape:?}");
+            assert!(shadow_mesh(&geometry).count_vertices() > 0, "{shape:?}");
+        }
     }
 }
