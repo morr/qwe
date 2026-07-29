@@ -3,6 +3,7 @@
 //! после заливки и дёргается напрямую из async-тасков (`Grid: Send + Sync`).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
@@ -24,7 +25,11 @@ const CHUNK_SIZE: u32 = 25;
 #[derive(Resource, Default)]
 pub struct NorthstarGrid {
     grid: Option<Arc<OrdinalGrid>>,
-    task: Option<Task<OrdinalGrid>>,
+    task: Option<Task<Option<OrdinalGrid>>>,
+    /// Флаг отмены текущей постройки. Роняя `Task`, отменить уже запущенную
+    /// постройку нельзя: её тело синхронно и await-точек, на которых пул мог
+    /// бы её выбросить, в нём нет.
+    cancelled: Option<Arc<AtomicBool>>,
 }
 
 impl NorthstarGrid {
@@ -34,21 +39,34 @@ impl NorthstarGrid {
     }
 
     /// Сброс перед сменой карты: сетка старого города описывает уже не ту
-    /// проходимость, а таск постройки — тем более.
+    /// проходимость, а таск постройки — тем более. Постройка старого города
+    /// доедает все ядра ещё десяток секунд, поэтому её просят выйти по флагу,
+    /// а не просто отпускают.
     pub fn clear(&mut self) {
         self.grid = None;
         self.task = None;
+        if let Some(cancelled) = self.cancelled.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
     }
 }
 
 /// Постройка стартует по входу в `Playing` — navmesh к этому моменту
 /// заполнен и прорежен фоновым потоком загрузки.
 pub fn start_northstar_build(arc_navmesh: Res<ArcNavmesh>, mut grid: ResMut<NorthstarGrid>) {
-    let navmesh = arc_navmesh.0.clone();
+    // снапшот, а не `Arc` под read-локом: постройка идёт ~10 с, и всё это
+    // время лок держал бы поток загрузки следующего города на
+    // `navmesh.write()`. Копия сетки — один memcpy на несколько мегабайт.
     let started = std::time::Instant::now();
+    let snapshot = arc_navmesh.read().clone();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    grid.cancelled = Some(cancelled.clone());
     grid.task = Some(AsyncComputeTaskPool::get().spawn(async move {
-        let built = build_from_navmesh(&navmesh.read().unwrap());
-        info!("northstar grid built in {:?}", started.elapsed());
+        let built = build_checked(&snapshot, Some(&cancelled));
+        match &built {
+            Some(_) => info!("northstar grid built in {:?}", started.elapsed()),
+            None => info!("northstar build cancelled after {:?}", started.elapsed()),
+        }
         built
     }));
 }
@@ -61,18 +79,33 @@ pub fn poll_northstar_build(mut grid: ResMut<NorthstarGrid>) {
     let Some(built) = grid.task.as_mut().and_then(check_ready) else {
         return;
     };
-    grid.grid = Some(Arc::new(built));
     grid.task = None;
+    grid.cancelled = None;
+    // `None` — постройку отменили; сетки у нас нет, и это не ошибка
+    if let Some(built) = built {
+        grid.grid = Some(Arc::new(built));
+    }
 }
 
 /// Постройка сетки northstar из заполненного navmesh (входы чанков,
 /// кеши внутренних путей — считается параллельно внутри крейта).
 pub fn build_from_navmesh(navmesh: &Navmesh) -> OrdinalGrid {
+    build_checked(navmesh, None).expect("build without a cancel flag cannot be cancelled")
+}
+
+/// То же с проверкой отмены между строками сетки и перед `build()` — на них
+/// приходится вся длительность постройки, а внутрь крейта не заглянуть.
+fn build_checked(navmesh: &Navmesh, cancelled: Option<&AtomicBool>) -> Option<OrdinalGrid> {
+    let is_cancelled = || cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed));
+
     let settings = GridSettingsBuilder::new_2d(GRID_SIZE.x as u32, GRID_SIZE.y as u32)
         .chunk_size(CHUNK_SIZE)
         .build();
     let mut grid = OrdinalGrid::new(&settings);
     for x in 0..GRID_SIZE.x {
+        if is_cancelled() {
+            return None;
+        }
         for y in 0..GRID_SIZE.y {
             let nav = if navmesh.is_passable(x, y) {
                 Nav::Passable(1)
@@ -82,8 +115,11 @@ pub fn build_from_navmesh(navmesh: &Navmesh) -> OrdinalGrid {
             grid.set_nav(UVec3::new(x as u32, y as u32, 0), nav);
         }
     }
+    if is_cancelled() {
+        return None;
+    }
     grid.build();
-    grid
+    Some(grid)
 }
 
 /// Путь через иерархию: `refined` (HPA* с трассировкой) либо Theta*

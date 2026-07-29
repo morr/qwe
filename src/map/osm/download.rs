@@ -104,10 +104,19 @@ fn build_navmesh(
     city: City,
 ) -> LoadedWorld {
     job.set(JobState::BuildingNavmesh);
-    let started = std::time::Instant::now();
+    // ожидание write-лока меряется отдельно от растеризации: пока они шли
+    // одной цифрой, чужой read-лок на десяток секунд читался как «медленная
+    // заливка карты»
+    let lock_since = std::time::Instant::now();
     let mut navmesh = arc_navmesh.write().unwrap();
+    let waited = lock_since.elapsed();
+    let started = std::time::Instant::now();
     navmesh.fill_from_mapdata(&map);
-    info!("navmesh filled in {:?}", started.elapsed());
+    info!(
+        "navmesh filled in {:?} (write lock waited {:?})",
+        started.elapsed(),
+        waited
+    );
 
     let hint = city.portal_hint();
     let portal = match snap_portal_position(&navmesh, hint) {

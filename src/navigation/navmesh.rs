@@ -14,6 +14,11 @@ pub const COST_MULTIPLIER: f32 = 100.0;
 
 /// Тайловая сетка проходимости. Индексация — `x * GRID_SIZE.y + y`,
 /// тайлы за границей карты непроходимы.
+///
+/// `Clone` — для снапшота под постройку иерархии northstar: копия сетки
+/// стоит один memcpy, а чтение оригинала под локом заняло бы все ~10 с
+/// постройки (см. `northstar::start_northstar_build`).
+#[derive(Clone)]
 pub struct Navmesh {
     passable: Vec<bool>,
 }
