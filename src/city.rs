@@ -16,7 +16,7 @@ use crate::loading::AppState;
 use crate::navigation::NorthstarGrid;
 use crate::settings::{
     BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
-    PARIS_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
+    PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
 };
 use crate::telemetry::Telemetry;
 
@@ -31,15 +31,17 @@ pub enum City {
     Paris,
     Berlin,
     London,
+    Tokyo,
 }
 
 impl City {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Tula,
         Self::NewYork,
         Self::Paris,
         Self::Berlin,
         Self::London,
+        Self::Tokyo,
     ];
 
     /// Подпись на кнопке.
@@ -50,6 +52,7 @@ impl City {
             Self::Paris => "Paris",
             Self::Berlin => "Berlin",
             Self::London => "London",
+            Self::Tokyo => "Tokyo",
         }
     }
 
@@ -61,6 +64,7 @@ impl City {
             Self::Paris => "paris",
             Self::Berlin => "berlin",
             Self::London => "london",
+            Self::Tokyo => "tokyo",
         }
     }
 
@@ -72,6 +76,7 @@ impl City {
             Self::Paris => PARIS_GEO_CENTER,
             Self::Berlin => BERLIN_GEO_CENTER,
             Self::London => LONDON_GEO_CENTER,
+            Self::Tokyo => TOKYO_GEO_CENTER,
         }
     }
 

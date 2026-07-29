@@ -25,6 +25,9 @@ pub const PARIS_GEO_CENTER: DVec2 = DVec2::new(48.85565, 2.34612);
 pub const BERLIN_GEO_CENTER: DVec2 = DVec2::new(52.51900, 13.40133);
 /// Лондон: Ковент-Гарден, Темза в южной части кадра.
 pub const LONDON_GEO_CENTER: DVec2 = DVec2::new(51.51190, -0.12240);
+/// Токио: Ёцуя между Синдзюку и Императорским дворцом — сплошная застройка,
+/// Токийский залив за восточным краем bbox.
+pub const TOKYO_GEO_CENTER: DVec2 = DVec2::new(35.68950, 139.72900);
 /// Метров в градусе широты (и долготы на экваторе).
 pub const METERS_PER_DEG_LAT: f64 = 111_320.0;
 
