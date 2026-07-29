@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use self::behavior::{escape, flee, panic};
 pub use self::components::{
-    CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanWanderTag,
+    CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanWanderTag, WanderHeading,
     WanderPause,
 };
 pub use self::systems::spawn_population;
@@ -25,6 +25,7 @@ impl Plugin for HumanPlugin {
             .register_type::<CorpseTag>()
             .register_type::<FleeRepath>()
             .register_type::<WanderPause>()
+            .register_type::<WanderHeading>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),

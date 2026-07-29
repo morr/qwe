@@ -2,7 +2,9 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::grid::{tile_center, world_to_tile};
-use crate::human::components::{Human, HumanFirstWanderTag, HumanWanderTag, WanderPause};
+use crate::human::components::{
+    Human, HumanFirstWanderTag, HumanWanderTag, WanderHeading, WanderPause,
+};
 use crate::map::osm::MapData;
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
@@ -16,6 +18,13 @@ const MAP_MARGIN: f32 = 4.0;
 /// Доля пеших целей «к случайному зданию» (длинные маршруты через город);
 /// остальные гуляют поблизости.
 const WANDER_TO_BUILDING_SHARE: f32 = 0.8;
+/// Полураствор конуса вокруг текущего курса, в котором выбирается следующая
+/// цель прогулки, рад (60°). Без него пешка на каждом шаге разворачивалась в
+/// случайную сторону и топталась на месте.
+const WANDER_CONE: f32 = std::f32::consts::FRAC_PI_3;
+/// Сколько зданий перебирается в поисках цели «по делам» в конусе курса;
+/// если ни одно не попало — берётся ближайшее по направлению из выборки.
+const WANDER_BUILDING_TRIES: usize = 8;
 
 pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>) {
     spawn_population(&mut commands, &arc_navmesh.read());
@@ -61,9 +70,38 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             HumanFirstWanderTag,
             Movable::new(HUMAN_WALK_SPEED),
             WanderPause(pause),
+            WanderHeading(Vec2::from_angle(
+                rng.random_range(0.0..std::f32::consts::TAU),
+            )),
             Name::new("human"),
         ));
     }
+}
+
+/// Здание «по курсу»: из `WANDER_BUILDING_TRIES` случайных зданий
+/// берётся первое, попавшее в конус вокруг `heading`; если ни одно не попало —
+/// лучшее по направлению из выборки. Полный перебор 7500 зданий тут не нужен:
+/// цель и так случайная, важно лишь не отправить пешку назад.
+fn pick_building_ahead(map: &MapData, rng: &mut impl Rng, position: Vec2, heading: Vec2) -> Vec2 {
+    let cone_cos = WANDER_CONE.cos();
+    let mut best: Option<(f32, Vec2)> = None;
+
+    for _ in 0..WANDER_BUILDING_TRIES {
+        let building = &map.buildings[rng.random_range(0..map.buildings.len())];
+        let point = building.outer[rng.random_range(0..building.outer.len())];
+        let Some(direction) = (point - position).try_normalize() else {
+            continue;
+        };
+        let alignment = direction.dot(heading);
+        if alignment >= cone_cos {
+            return point;
+        }
+        if best.is_none_or(|(best_alignment, _)| alignment > best_alignment) {
+            best = Some((alignment, point));
+        }
+    }
+
+    best.map(|(_, point)| point).unwrap_or(position)
 }
 
 /// Мирное блуждание: пауза 2–10 с, затем цель — 80% идут «по делам» к
@@ -81,6 +119,7 @@ pub fn pick_wander_targets(
             &SimPosition,
             &mut Movable,
             &mut WanderPause,
+            &mut WanderHeading,
             Has<HumanFirstWanderTag>,
         ),
         (With<Human>, With<HumanWanderTag>),
@@ -89,7 +128,7 @@ pub fn pick_wander_targets(
     let mut rng = rand::rng();
     let navmesh = pathfinder.navmesh.read();
 
-    for (entity, sim_position, mut movable, mut pause, is_first_wander) in &mut query {
+    for (entity, sim_position, mut movable, mut pause, mut heading, is_first_wander) in &mut query {
         if !matches!(
             movable.state,
             MovableState::Idle | MovableState::PathfindingError(_)
@@ -106,12 +145,13 @@ pub fn pick_wander_targets(
             && rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE
             && !map.buildings.is_empty();
         let target = if to_building {
-            // «по делам»: случайная вершина контура случайного здания
-            let building = &map.buildings[rng.random_range(0..map.buildings.len())];
-            building.outer[rng.random_range(0..building.outer.len())]
+            // «по делам»: вершина контура здания, лежащего по курсу — иначе
+            // маршрут через весь город разворачивает пешку назад
+            pick_building_ahead(&map, &mut rng, sim_position.0, heading.0)
         } else {
-            // прогулка поблизости
-            let direction = Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU));
+            // прогулка поблизости — в конусе вокруг курса
+            let turn = rng.random_range(-WANDER_CONE..WANDER_CONE);
+            let direction = Vec2::from_angle(turn).rotate(heading.0);
             let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
             (sim_position.0 + direction * distance)
                 .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN)
@@ -120,6 +160,10 @@ pub fn pick_wander_targets(
         let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
             continue;
         };
+        // курс — по фактически выбранной цели, следующая пойдёт от него
+        if let Some(direction) = (tile_center(target_tile) - sim_position.0).try_normalize() {
+            heading.0 = direction;
+        }
 
         movable.to_pathfinding(
             entity,

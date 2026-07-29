@@ -22,6 +22,20 @@ pub struct HumanFleeTag;
 #[reflect(Component)]
 pub struct HumanFirstWanderTag;
 
+/// Курс прогулки — единичный вектор последнего направления движения.
+/// Следующая цель, и короткая и дальняя, выбирается в конусе вокруг него
+/// (`HUMAN_WANDER_CONE`): без памяти направления пешка на каждом шаге
+/// разворачивалась случайно и топталась на месте.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct WanderHeading(pub Vec2);
+
+impl Default for WanderHeading {
+    fn default() -> Self {
+        Self(Vec2::X)
+    }
+}
+
 /// Пауза между прогулками; тикает, пока человек стоит.
 #[derive(Component, Reflect)]
 #[reflect(Component)]

@@ -40,7 +40,7 @@ in `main.rs`.
   still hold a `PathfindingRequest`/`PathfindingTask` and flips to `Live` when none are
   left (or after `WARMUP_TIMEOUT` = 10 s, logged as a warning). Reason: all 20 000 humans
   queue a path in the same frame, and without the hold the visible ones stood still for
-  the first seconds. Typical warmup ~3.5 s (flat A*, the northstar grid is not up yet).
+  the first seconds. Typical warmup **~0.15 s** — see `HumanFirstWanderTag`.
   `Live` is what despawns the loader and reveals the game UI (`GameUiRoot`).
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. Navmesh must
   be filled before population spawns, or humans land in the river.
@@ -141,10 +141,11 @@ in `main.rs`.
   once from the final navmesh (after pruning; chunk 25), wrapped in `Arc`, called directly
   from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
   flat A*. The build takes **~12 s** on the 5600 × 3700 map, so it runs as an
-  `AsyncComputeTaskPool` task started in `OnEnter(Playing)` and picked up by
+  `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` and picked up by
   `poll_northstar_build`; until it lands, `NorthstarGrid::get()` is `None` and the
   dispatcher **falls back to flat A\*** for HPA*/Theta* requests. Doing it inline cost
-  11 s of frozen loader screen.
+  11 s of frozen loader screen; starting it before the warmup ends made it fight the
+  warmup's A* for cores through rayon (85 ms per search instead of 36 ms).
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
@@ -195,6 +196,16 @@ in `main.rs`.
   (±0.6 rad) so crowds spread instead of forming a column; actively chased humans flee
   straight. Calm-down at ×1.5 radius hysteresis. **Escape** — a fleeing human within
   `ESCAPE_MARGIN` of the map border despawns, `telemetry.escaped += 1`.
+- **WanderHeading** — the direction a human is walking, kept between walks. Every next
+  target, near stroll or cross-city errand, is picked inside a `WANDER_CONE` (60°)
+  cone around it — a building errand samples `WANDER_BUILDING_TRIES` (8) random
+  buildings and takes the first one inside the cone. Without the heading each pick was
+  uniformly random and pawns wobbled in place instead of walking somewhere.
+- **HumanFirstWanderTag** — the very first target after spawn is always the *near*
+  stroll, never a building errand; the tag is dropped when that target is picked. All
+  20 000 humans queue their first path in the same frame, and cross-city A* costs
+  hundreds of ms per request: with errands first the on-screen pawns took 3.9 s to route
+  (the whole `PlayPhase::Warmup`), with strolls first — 0.15 s.
 - **CorpseTag** — a killed human: behavior/movement components removed, dark lying
   sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`).
 - **Demon** states (`demon/behavior.rs`): **Wander** (target biased away from portal) →
