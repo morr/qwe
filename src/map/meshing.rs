@@ -1,6 +1,8 @@
 //! Сборка слитых 2D-мешей слоёв карты: тысячи полигонов OSM в один
 //! `Mesh2d` с вершинными цветами (стоковый `ColorMaterial` их умножает).
 
+use std::f32::consts::PI;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;
 use bevy::prelude::*;
@@ -10,6 +12,38 @@ use bevy::render::render_resource::PrimitiveTopology;
 /// полон почти встречных рёбер (впадины между фестонами), и там miter уходит
 /// в длинный шип — при 1.5 стык вырождается в срез, шипов не видно.
 const MITER_LIMIT: f32 = 1.5;
+
+/// Допуск на стрелку хорды дуги, м. Шаг тесселяции считается от радиуса, а не
+/// берётся константой: у аллеи (полуширина 1.75 м) выходит ~28° на хорду, у
+/// магистрали (8 м) ~13°, и обе дуги одинаково гладкие на глаз.
+///
+/// Тем же допуском отсекаются веера на почти прямых изломах — см.
+/// [`MeshBuilder::push_join_fan`].
+const ARC_TOLERANCE: f32 = 0.05;
+
+/// Потолок числа хорд в дуге — страховка от вырожденного радиуса.
+const MAX_ARC_STEPS: usize = 12;
+
+/// Стык сегментов ленты на изломе.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RibbonJoin {
+    /// Сведение по биссектрисе с ограничением [`MITER_LIMIT`].
+    Miter,
+    /// Дуга радиуса в полуширину на внешней стороне поворота — то же, что
+    /// `stroke-linejoin: round` у Mapnik, которым нарисован osm-carto.
+    Round,
+}
+
+/// Торец разомкнутой ленты.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RibbonCap {
+    /// Срез ровно по последней точке пути.
+    Butt,
+    /// Полудиск радиуса в полуширину за последней точкой. Торцы двух дорог в
+    /// общем узле перекрываются и сливаются в скруглённый стык — так узлы
+    /// выглядят в OSM, где это `stroke-linecap: round`.
+    Round,
+}
 
 #[derive(Default)]
 pub struct MeshBuilder {
@@ -119,72 +153,187 @@ impl MeshBuilder {
         }
     }
 
-    /// Лента постоянной ширины вдоль ломаной: стыки сведены по биссектрисе
-    /// (miter с ограничением `MITER_LIMIT`), торцы **не** продлеваются.
+    /// Лента постоянной ширины вдоль ломаной со стыками по биссектрисе
+    /// (miter с ограничением `MITER_LIMIT`) и торцами по последней точке.
     /// Для тонких контуров `push_polyline` не годится — там каждый сегмент
     /// продлён на полширины, и на ломаной с сегментами короче ширины штриха
     /// (контур кроны) продления соседних квадов торчат наружу шипами.
+    pub fn push_stroke(&mut self, points: &[Vec2], closed: bool, width: f32, color: LinearRgba) {
+        self.push_ribbon(
+            points,
+            closed,
+            width,
+            color,
+            RibbonJoin::Miter,
+            RibbonCap::Butt,
+        );
+    }
+
+    /// Лента постоянной ширины вдоль ломаной: `join` — чем закрыт излом,
+    /// `cap` — чем закрыты торцы разомкнутой ленты.
+    ///
     /// Точки ближе `width / 4` к предыдущей отбрасываются: на такой дистанции
     /// они не видны, но вырождают нормаль стыка.
-    pub fn push_stroke(&mut self, points: &[Vec2], closed: bool, width: f32, color: LinearRgba) {
-        let merge_distance_sq = (width / 4.0).powi(2);
-        let mut path: Vec<Vec2> = Vec::with_capacity(points.len());
-        for &point in points {
-            if path
-                .last()
-                .is_none_or(|last| last.distance_squared(point) > merge_distance_sq)
-            {
-                path.push(point);
-            }
-        }
-        if closed {
-            while path.len() > 1
-                && path[0].distance_squared(path[path.len() - 1]) <= merge_distance_sq
-            {
-                path.pop();
-            }
-        }
+    pub fn push_ribbon(
+        &mut self,
+        points: &[Vec2],
+        closed: bool,
+        width: f32,
+        color: LinearRgba,
+        join: RibbonJoin,
+        cap: RibbonCap,
+    ) {
+        let path = merge_close_points(points, closed, width / 4.0);
         if path.len() < 2 {
             return;
         }
 
         let half_width = width / 2.0;
         let count = path.len();
-        let offsets: Vec<Vec2> = (0..count)
-            .map(|index| {
-                let incoming = (index > 0 || closed).then(|| {
-                    let previous = path[(index + count - 1) % count];
-                    (path[index] - previous).normalize_or(Vec2::X).perp()
-                });
-                let outgoing = (index + 1 < count || closed).then(|| {
-                    let next = path[(index + 1) % count];
-                    (next - path[index]).normalize_or(Vec2::X).perp()
-                });
-                match (incoming, outgoing) {
-                    (Some(before), Some(after)) => {
-                        let bisector = (before + after).normalize_or(before);
-                        // на острых стыках длина miter уходит в бесконечность — режем
-                        let cosine = bisector.dot(before).max(1.0 / MITER_LIMIT);
-                        bisector * (half_width / cosine)
-                    }
-                    (Some(normal), None) | (None, Some(normal)) => normal * half_width,
-                    (None, None) => Vec2::ZERO,
-                }
-            })
-            .collect();
-
         let segments = if closed { count } else { count - 1 };
-        for index in 0..segments {
-            let next = (index + 1) % count;
-            self.push_quad(
-                [
-                    path[index] + offsets[index],
-                    path[index] - offsets[index],
-                    path[next] - offsets[next],
-                    path[next] + offsets[next],
-                ],
-                color,
-            );
+
+        match join {
+            RibbonJoin::Miter => {
+                let offsets: Vec<Vec2> = (0..count)
+                    .map(|index| {
+                        let incoming = (index > 0 || closed).then(|| {
+                            let previous = path[(index + count - 1) % count];
+                            (path[index] - previous).normalize_or(Vec2::X).perp()
+                        });
+                        let outgoing = (index + 1 < count || closed).then(|| {
+                            let next = path[(index + 1) % count];
+                            (next - path[index]).normalize_or(Vec2::X).perp()
+                        });
+                        match (incoming, outgoing) {
+                            (Some(before), Some(after)) => {
+                                let bisector = (before + after).normalize_or(before);
+                                // на острых стыках длина miter уходит в бесконечность — режем
+                                let cosine = bisector.dot(before).max(1.0 / MITER_LIMIT);
+                                bisector * (half_width / cosine)
+                            }
+                            (Some(normal), None) | (None, Some(normal)) => normal * half_width,
+                            (None, None) => Vec2::ZERO,
+                        }
+                    })
+                    .collect();
+
+                for index in 0..segments {
+                    let next = (index + 1) % count;
+                    self.push_quad(
+                        [
+                            path[index] + offsets[index],
+                            path[index] - offsets[index],
+                            path[next] - offsets[next],
+                            path[next] + offsets[next],
+                        ],
+                        color,
+                    );
+                }
+            }
+            RibbonJoin::Round => {
+                // сегменты — квады без продлений; на внутренней стороне
+                // излома они перекрываются сами, снаружи щель закрывает веер
+                for index in 0..segments {
+                    let next = (index + 1) % count;
+                    let Some(direction) = (path[next] - path[index]).try_normalize() else {
+                        continue;
+                    };
+                    let normal = direction.perp() * half_width;
+                    self.push_quad(
+                        [
+                            path[index] + normal,
+                            path[index] - normal,
+                            path[next] - normal,
+                            path[next] + normal,
+                        ],
+                        color,
+                    );
+                }
+                for index in 0..count {
+                    if !closed && (index == 0 || index + 1 == count) {
+                        continue;
+                    }
+                    let previous = path[(index + count - 1) % count];
+                    let next = path[(index + 1) % count];
+                    let (Some(incoming), Some(outgoing)) = (
+                        (path[index] - previous).try_normalize(),
+                        (next - path[index]).try_normalize(),
+                    ) else {
+                        continue;
+                    };
+                    self.push_join_fan(path[index], half_width, incoming, outgoing, color);
+                }
+            }
+        }
+
+        if !closed && cap == RibbonCap::Round {
+            // полудиск за начальной точкой: от нормали через −direction,
+            // то есть назад по ходу пути
+            if let Some(direction) = (path[1] - path[0]).try_normalize() {
+                self.push_arc_fan(path[0], half_width, direction.perp().to_angle(), PI, color);
+            }
+            if let Some(direction) = (path[count - 1] - path[count - 2]).try_normalize() {
+                self.push_arc_fan(
+                    path[count - 1],
+                    half_width,
+                    (-direction.perp()).to_angle(),
+                    PI,
+                    color,
+                );
+            }
+        }
+    }
+
+    /// Веер, закрывающий щель butt-квадов на **внешней** стороне излома.
+    /// При левом повороте (`angle_to > 0`) щель справа по ходу, и наоборот.
+    ///
+    /// Порог пропуска — по **ширине щели** (`радиус · излом`), а не по углу:
+    /// один и тот же излом в 5° у аллеи оставляет 15 см, и на приближении это
+    /// хорошо видимая светлая прорезь поперёк дороги. Тот же допуск, что и на
+    /// стрелку хорды дуги, — то, чего не видно, одинаково не видно и там, и
+    /// тут; изломы медианной для Тулы крутизны (3.4°) веер всё равно получают.
+    fn push_join_fan(
+        &mut self,
+        center: Vec2,
+        radius: f32,
+        incoming: Vec2,
+        outgoing: Vec2,
+        color: LinearRgba,
+    ) {
+        let turn = incoming.angle_to(outgoing);
+        if radius * turn.abs() < ARC_TOLERANCE {
+            return;
+        }
+        let side = -turn.signum();
+        // угол нормали растёт вместе с углом направления, поэтому от нормали
+        // входящего сегмента до нормали исходящего ровно `turn` радиан
+        let start = (incoming.perp() * side).to_angle();
+        self.push_arc_fan(center, radius, start, turn, color);
+    }
+
+    /// Веер треугольников по дуге: `sweep` радиан от `start` вокруг `center`.
+    fn push_arc_fan(
+        &mut self,
+        center: Vec2,
+        radius: f32,
+        start: f32,
+        sweep: f32,
+        color: LinearRgba,
+    ) {
+        let steps = arc_steps(radius, sweep.abs());
+        let base = self.positions.len() as u32;
+        let rgba = color.to_f32_array();
+        self.positions.push([center.x, center.y, 0.0]);
+        self.colors.push(rgba);
+        for step in 0..=steps {
+            let angle = start + sweep * step as f32 / steps as f32;
+            let point = center + Vec2::from_angle(angle) * radius;
+            self.positions.push([point.x, point.y, 0.0]);
+            self.colors.push(rgba);
+        }
+        for step in 0..steps as u32 {
+            self.indices
+                .extend([base, base + 1 + step, base + 2 + step]);
         }
     }
 
@@ -227,6 +376,40 @@ impl MeshBuilder {
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
     }
+}
+
+/// Ломаная без точек ближе `merge_distance` к предыдущей: на такой дистанции
+/// они не видны, но вырождают нормаль стыка. У замкнутой ленты так же
+/// подрезается хвост, сошедшийся с началом.
+fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<Vec2> {
+    let merge_distance_sq = merge_distance.powi(2);
+    let mut path: Vec<Vec2> = Vec::with_capacity(points.len());
+    for &point in points {
+        if path
+            .last()
+            .is_none_or(|last| last.distance_squared(point) > merge_distance_sq)
+        {
+            path.push(point);
+        }
+    }
+    if closed {
+        while path.len() > 1 && path[0].distance_squared(path[path.len() - 1]) <= merge_distance_sq
+        {
+            path.pop();
+        }
+    }
+    path
+}
+
+/// Сколько хорд нужно дуге радиуса `radius` на `sweep` радиан, чтобы стрелка
+/// хорды осталась в пределах [`ARC_TOLERANCE`].
+fn arc_steps(radius: f32, sweep: f32) -> usize {
+    let max_step = if radius > ARC_TOLERANCE {
+        2.0 * (1.0 - ARC_TOLERANCE / radius).acos()
+    } else {
+        PI
+    };
+    ((sweep / max_step).ceil() as usize).clamp(1, MAX_ARC_STEPS)
 }
 
 #[cfg(test)]
