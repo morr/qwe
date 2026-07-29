@@ -83,6 +83,12 @@ in `main.rs`.
   are reused across all trees; per tree — variant, quantized brightness tint (material
   multiplies vertex colors, so ink stays ink) and radius as `Transform::scale`.
   Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
+- **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
+  `foliage`, `details` (ink), `variance` (brightness spread), `shape`. **TreeShape** is
+  `Cotton | Conifer | Palm` — cloud outline (`bloat`), spiky cone (`Spiker::simple`),
+  bent fronds (`Spiker::bent`). Any change reruns `rebuild_trees` (despawn `TreeTag`,
+  respawn from the unchanged `MapData::trees` positions); the panel lives in
+  `ui/trees.rs`, bottom-right, one cycling button per field.
 
 ## Navigation
 
@@ -186,6 +192,10 @@ in `main.rs`.
 
 - **Speed panel** (`ui/speed.rs`) — top-right: speed multiplier, pathfinding in-flight /
   avg ms, entity count. Fixed width + right-padded digits (no jitter).
+- **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
+  color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
+  text input, so hex fields became cycles). Writes `TreeStyle`; `map::trees::rebuild_trees`
+  picks the change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / movepath buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities.

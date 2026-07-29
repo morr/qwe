@@ -4,6 +4,7 @@
 
 mod debug;
 mod speed;
+mod trees;
 
 use bevy::prelude::*;
 
@@ -29,6 +30,10 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((speed::UiSpeedPlugin, debug::UiDebugTogglesPlugin));
+        app.add_plugins((
+            speed::UiSpeedPlugin,
+            debug::UiDebugTogglesPlugin,
+            trees::UiTreeStylePlugin,
+        ));
     }
 }
