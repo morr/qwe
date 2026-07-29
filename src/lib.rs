@@ -9,6 +9,7 @@ pub mod map;
 pub mod movement;
 pub mod navigation;
 pub mod portal;
+pub mod prefs;
 pub mod restart;
 pub mod settings;
 pub mod sim_time;

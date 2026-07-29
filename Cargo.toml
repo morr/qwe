@@ -14,6 +14,8 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_camera_controller",
     "pan_camera",
     "default_font",
+    # выбранные в UI опции переживают перезапуск (src/prefs.rs)
+    "bevy_settings",
 ] }
 bevy_northstar = "0.7"
 earcutr = "0.5"

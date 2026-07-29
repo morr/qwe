@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::tasks::futures::check_ready;
 use bevy::window::PrimaryWindow;
 
@@ -250,7 +251,9 @@ const MOVEPATH_VIEW_SCREENS: f32 = 3.0;
 
 /// Отрисовка путей движущихся сущностей; в финальной сцене выключена,
 /// переключается клавишей P.
-#[derive(Resource, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "movepath")]
 pub struct DrawMovePaths(pub bool);
 
 pub fn toggle_draw_move_paths(mut draw: ResMut<DrawMovePaths>) {

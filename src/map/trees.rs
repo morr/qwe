@@ -6,6 +6,7 @@
 use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
@@ -308,8 +309,9 @@ fn shadow_mesh(geometry: &CrownGeometry) -> Mesh {
 
 /// Стиль деревьев — вкладка Trees из «Style settings» watabou. Меняется на
 /// лету из UI-панели; каждое изменение пересобирает кроны (`rebuild_trees`).
-#[derive(Resource, Reflect, Clone, Debug)]
-#[reflect(Resource)]
+#[derive(Resource, Reflect, SettingsGroup, Clone, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "trees")]
 pub struct TreeStyle {
     /// Цвет листвы (`colorTree` / «Foliage»).
     pub foliage: Color,

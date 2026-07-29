@@ -3,6 +3,7 @@
 
 use bevy::math::{IVec2, Vec2};
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use pathfinding::directed::{astar::astar, bfs::bfs, dijkstra::dijkstra, fringe::fringe};
 
 use crate::navigation::navmesh::{COST_MULTIPLIER, Navmesh};
@@ -17,8 +18,9 @@ use crate::navigation::navmesh::{COST_MULTIPLIER, Navmesh};
 /// 10 потоков, dev-профиль; путь — средняя длина найденного маршрута.
 /// Пересняты 2026-07-28, воспроизводятся командой
 /// `cargo run --example pathfinding_bench -- 1000`.
-#[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
-#[reflect(Resource)]
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "navigation", key = "algorithm")]
 pub enum PathfindingAlgorithm {
     /// avg 36.4 мс, p50 20.9, p95 128.6, max 450, путь 1260 м.
     /// Базовая линия: лучший из плоских, эвристика режет фронт вчетверо

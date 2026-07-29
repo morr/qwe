@@ -8,21 +8,28 @@
 use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
 use bevy::picking::hover::Hovered;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button};
 
 use bevy::prelude::*;
 
 use crate::grid::tile_center;
+use crate::loading::{AppState, WorldInitSet};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
 
-#[derive(Resource, Default)]
+// оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "grid")]
 pub struct DebugGrid(pub bool);
 
-#[derive(Resource, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "navmesh")]
 pub struct DebugNavmesh(pub bool);
 
 /// Какой слой переключает кнопка; определяет подсветку «активна».
@@ -54,7 +61,15 @@ impl Plugin for UiDebugTogglesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
+            .register_type::<DebugGrid>()
+            .register_type::<DebugNavmesh>()
             .add_systems(Startup, render_debug_toggles)
+            // тумблер, восстановленный из настроек, менялся до того, как
+            // navmesh был заполнен, — красим заливку ещё раз по спавну мира
+            .add_systems(
+                OnEnter(AppState::Playing),
+                sync_navmesh_overlay.in_set(WorldInitSet::Spawn),
+            )
             .add_systems(
                 Update,
                 (

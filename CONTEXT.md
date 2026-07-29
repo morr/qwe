@@ -228,6 +228,14 @@ in `main.rs`.
     ~1.8 ms ≫ `spatial` ~0.7 ms > `move` ~0.16 ms ≈ `flee` ~0.14 ms ≫ `chase` ~0.01 ms.
     `panic` scans every wandering human against the demon grid every tick — that single
     system is what sets the speed ceiling.
+- **Remembered UI options** (`prefs.rs`) — every UI-settable resource (`DebugGrid`,
+  `DebugNavmesh`, `DrawMovePaths`, `PathfindingAlgorithm`, `TreeStyle`) is a
+  `bevy::settings::SettingsGroup`, so a click survives a restart. `SettingsPlugin` reads
+  `settings.toml` from the OS settings dir (macOS:
+  `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being
+  built, before any schedule; `PrefsPlugin` is registered **last** because that scan needs
+  the other plugins' `register_type` calls to have run. Any change to those resources —
+  click, key P, BRP — triggers `SaveSettingsSync::IfChanged`. Delete the file to reset.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`

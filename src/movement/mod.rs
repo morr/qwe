@@ -27,6 +27,7 @@ impl Plugin for MovementPlugin {
             .register_type::<SimPosition>()
             .register_type::<PreviousSimPosition>()
             .init_resource::<DrawMovePaths>()
+            .register_type::<DrawMovePaths>()
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется
             .init_resource::<bevy::diagnostic::DiagnosticsStore>();

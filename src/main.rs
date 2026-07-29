@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, demon, dev, diagnostics, human, loading, map, movement, navigation, portal, restart,
-    sim_time, spatial, telemetry, ui,
+    camera, demon, dev, diagnostics, human, loading, map, movement, navigation, portal, prefs,
+    restart, sim_time, spatial, telemetry, ui,
 };
 
 fn main() {
@@ -63,6 +63,9 @@ fn main() {
             ui::UiPlugin,
             dev::DevPlugin,
         ))
+        // последним: на своей сборке читает реестр типов, а типы групп
+        // настроек регистрируют плагины выше (см. src/prefs.rs)
+        .add_plugins(prefs::PrefsPlugin)
         .add_systems(
             Update,
             close_on_esc.run_if(input_just_pressed(KeyCode::Escape)),
