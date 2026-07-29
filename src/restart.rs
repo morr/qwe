@@ -21,9 +21,17 @@ impl Plugin for RestartPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<RestartEvent>()
             .add_observer(on_restart)
+            // `PreUpdate`, а не `Update`: рестарт сносит сцену прямо в
+            // обсервере, и из середины `Update` он убивал сущности, на которые
+            // уже собраны, но ещё не применены команды соседних систем того же
+            // расписания (`pick_wander_targets`, диспетчер и приёмник поиска
+            // пути) — их буфер применялся к мёртвой сущности и ронял
+            // приложение. В `PreUpdate` после `InputSystems` несделанных
+            // буферов нет вовсе, а спавн всё ещё успевает к распространению
+            // трансформов в `PostUpdate` того же кадра.
             .add_systems(
-                Update,
-                trigger_restart.run_if(
+                PreUpdate,
+                trigger_restart.after(bevy::input::InputSystems).run_if(
                     input_just_pressed(KeyCode::KeyR).and_then(in_state(AppState::Playing)),
                 ),
             );

@@ -232,6 +232,20 @@ entry into `Loading` it warns about anything that still has a `Transform` and is
 camera nor a UI node. A `world reload: N scene entities survived Playing` line in the log
 means a spawn site is missing the component — fix the site, don't silence the warning.
 
+### Where a mass despawn may happen
+
+**Never despawn world entities from the middle of `Update`.** Every `Update` system that
+touches pawns — `human::pick_wander_targets`, `dispatch_pathfinding_requests`,
+`listen_for_pathfinding_tasks` — hands the schedule a command buffer that is applied at
+the end of the run. A despawn from a system or observer in the same schedule kills the
+entities those buffers name, and the buffer then panics with `Entity despawned`.
+
+The two existing mass despawns are both outside `Update` by design: the city switch runs
+in `StateTransition` (`DespawnOnExit`), and restart on R triggers from `PreUpdate` after
+`InputSystems` (`restart.rs`). `escape` despawns a single human inside `FixedUpdate`,
+where the chained `SimSet`s give it a sync point. A new despawn site belongs in one of
+those slots — silencing the command errors instead only hides the ordering mistake.
+
 ## Bevy Time Types
 
 `Res<Time>` is a context-sensitive alias — use it for **delta accumulation and timers** in any schedule:
