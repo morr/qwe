@@ -200,6 +200,25 @@ those additions.
 - Keyboard/mouse gates belong in the schedule as run conditions
   (`run_if(input_just_pressed(..))`), not as an early `return` inside the system
 
+## UI input must not reach the game world
+
+**A mouse event that lands on a UI panel belongs to the UI and to nothing else.** A click
+on a button, a drag of a slider, a scroll over a panel must never also pan or zoom the
+camera, select or command anything in the world, or trigger a world-space gizmo — the
+panels sit *over* the map, so every one of those reads as the map reacting to a click the
+user aimed at a widget.
+
+Anything reading raw mouse state (`ButtonInput<MouseButton>`, `CursorMoved`,
+`AccumulatedMouseScroll`) to act on the world therefore has to check first. The idiom is
+`bevy::picking::hover::HoverMap` — if any hovered entity has a `Node`, the pointer is over
+the UI (`camera.rs::pointer_over_ui`, ported from `zxc/src/input.rs`). Systems driven by
+`Pointer<…>` observers on world entities need no gate: UI picking already consumes those.
+
+For a **drag**, decide once, in the frame of the press, and hold that decision until the
+button is released (`camera.rs::DragPan`). A per-frame "is the cursor over UI" test breaks
+the moment a drag leaves the panel — pulling a slider to its end hands the rest of the
+gesture to the camera.
+
 ## World entities — the `DespawnOnExit` rule
 
 Switching the city (`City` resource, panel at the bottom centre) reloads the world by

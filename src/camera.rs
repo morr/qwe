@@ -1,5 +1,6 @@
 use bevy::camera_controller::pan_camera::{MousePanSettings, PanCamera, PanCameraPlugin};
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -171,29 +172,63 @@ fn key_pan(
     transform.translation += delta.extend(0.0);
 }
 
+/// Состояние протяжки левой кнопкой. Решение «камера или UI» принимается один
+/// раз, в кадре нажатия, и держится до отпускания: протяжка ползунка плотности
+/// уводит курсор с панели, и покадровая проверка «курсор над UI» отдала бы
+/// остаток протяжки камере.
+#[derive(Default, Clone, Copy)]
+enum DragPan {
+    #[default]
+    Idle,
+    /// Зажатие началось над панелью — камера в нём не участвует.
+    OverUi,
+    /// Зажатие началось над картой; хранится позиция курсора в прошлом кадре.
+    Dragging(Vec2),
+}
+
+/// Курсор над каким-нибудь узлом `bevy_ui` (идиома из `zxc/src/input.rs`):
+/// `HoverMap` собирает UI-пикинг, мировой ввод под панелью обрабатывать нельзя.
+fn pointer_over_ui(hover_map: &HoverMap, ui_nodes: &Query<(), With<Node>>) -> bool {
+    hover_map
+        .values()
+        .flat_map(|pointer| pointer.keys())
+        .any(|entity| ui_nodes.contains(*entity))
+}
+
 /// Пан зажатой левой кнопкой: точка мира «схвачена» курсором и движется с
 /// ним один в один (по логическим px, поэтому ретина-масштаб не удваивает
 /// скорость, как это делал экранный `delta` у PanCamera).
 fn drag_pan(
     window: Single<&Window, With<PrimaryWindow>>,
     buttons: Res<ButtonInput<MouseButton>>,
-    mut last_cursor: Local<Option<Vec2>>,
+    hover_map: Res<HoverMap>,
+    ui_nodes: Query<(), With<Node>>,
+    mut drag: Local<DragPan>,
     mut query: Query<(&mut Transform, &PanCamera), With<Camera>>,
 ) {
     if !buttons.pressed(MouseButton::Left) {
-        *last_cursor = None;
+        *drag = DragPan::Idle;
         return;
     }
     let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    if matches!(*drag, DragPan::Idle) {
+        *drag = if pointer_over_ui(&hover_map, &ui_nodes) {
+            DragPan::OverUi
+        } else {
+            DragPan::Dragging(cursor)
+        };
+        return;
+    }
+    let DragPan::Dragging(last) = *drag else {
         return;
     };
     let Ok((mut transform, controller)) = query.single_mut() else {
         return;
     };
 
-    if let Some(last) = *last_cursor {
-        let delta = (cursor - last) * Vec2::new(1.0, -1.0) * controller.zoom_factor;
-        transform.translation -= delta.extend(0.0);
-    }
-    *last_cursor = Some(cursor);
+    let delta = (cursor - last) * Vec2::new(1.0, -1.0) * controller.zoom_factor;
+    transform.translation -= delta.extend(0.0);
+    *drag = DragPan::Dragging(cursor);
 }

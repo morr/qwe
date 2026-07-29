@@ -507,6 +507,12 @@ in `main.rs`.
 
 ## UI & debug
 
+- **UI input never reaches the world** — the panels sit over the map, so a click, drag or
+  scroll that lands on one must not also drive the camera or anything in the world.
+  `camera.rs::drag_pan` decides *in the press frame* whether the gesture belongs to the UI
+  (`pointer_over_ui` over `HoverMap`, the idiom from `zxc/src/input.rs`) and holds that
+  verdict until the button is released — a per-frame test would hand the camera the tail
+  of every slider drag that runs off the panel. See CLAUDE.md for the rule.
 - **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
   avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button in
