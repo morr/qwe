@@ -242,6 +242,12 @@ pub fn listen_for_pathfinding_tasks(
     }
 }
 
+/// Цвет пути — жёлтый полупрозрачный, как в zxc.
+const MOVEPATH_COLOR: Color = Color::srgba(1.0, 1.0, 0.25, 0.25);
+/// Пути рисуются на текущем экране и на соседних: 3 × 3 экрана вокруг камеры,
+/// то есть полуразмер кадра ×3 по каждой оси.
+const MOVEPATH_VIEW_SCREENS: f32 = 3.0;
+
 /// Отрисовка путей движущихся сущностей; в финальной сцене выключена,
 /// переключается клавишей P.
 #[derive(Resource, Default)]
@@ -254,6 +260,8 @@ pub fn toggle_draw_move_paths(mut draw: ResMut<DrawMovePaths>) {
 
 pub fn draw_move_paths(
     draw: Res<DrawMovePaths>,
+    camera: Single<&Transform, With<Camera2d>>,
+    window: Single<&Window, With<PrimaryWindow>>,
     mut gizmos: Gizmos,
     query: Query<(&SimPosition, &Movable), With<MovableStateMovingTag>>,
 ) {
@@ -261,9 +269,19 @@ pub fn draw_move_paths(
         return;
     }
 
+    let camera_position = camera.translation.truncate();
+    let half_view =
+        Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * MOVEPATH_VIEW_SCREENS;
+
     for (sim_position, movable) in &query {
+        // на всю карту это десятки тысяч линий за кадр; за соседним экраном
+        // путь всё равно не увидеть
+        let offset = (sim_position.0 - camera_position).abs();
+        if offset.x > half_view.x || offset.y > half_view.y {
+            continue;
+        }
         let mut points = vec![sim_position.0];
         points.extend(movable.path.iter().map(|&tile| tile_center(tile)));
-        gizmos.linestrip_2d(points, Color::srgba(0.9, 0.2, 0.9, 0.7));
+        gizmos.linestrip_2d(points, MOVEPATH_COLOR);
     }
 }
