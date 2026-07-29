@@ -74,7 +74,7 @@ in `main.rs`.
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
 - **Trees** — planted **only inside Wood polygons**, never across a whole park:
-  deterministic LCG seeded per wood polygon, density ~1 / 1600 m², rejection sampling
+  deterministic LCG seeded per wood polygon, density ~1 / 1230 m², rejection sampling
   inside the polygon, never on buildings or within `TREE_CLEARANCE` (1.5 m) of a road
   edge (park alleys count as roads). Also rejected inside water or within
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
