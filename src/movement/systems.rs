@@ -253,8 +253,8 @@ pub fn listen_for_pathfinding_tasks(
     }
 }
 
-/// Цвет пути — жёлтый полупрозрачный, как в zxc.
-const MOVEPATH_COLOR: Color = Color::srgba(1.0, 1.0, 0.25, 0.25);
+/// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.
+const MOVEPATH_COLOR: Color = Color::srgba(0.9, 0.2, 0.9, 0.7);
 /// Пути рисуются на текущем экране и на соседних: 3 × 3 экрана вокруг камеры,
 /// то есть полуразмер кадра ×3 по каждой оси.
 const MOVEPATH_VIEW_SCREENS: f32 = 3.0;
