@@ -334,10 +334,12 @@ fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
     arcs
 }
 
-fn shadow_mesh(geometry: &CrownGeometry) -> Mesh {
+/// Силуэт тени единичного радиуса — шаблон, который `spawn_trees` кладёт в
+/// общий меш теней под каждое дерево этого варианта.
+fn shadow_template(geometry: &CrownGeometry) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     builder.push_polygon(&shadow_ring(&geometry.outer), &[], LinearRgba::WHITE);
-    builder.build()
+    builder
 }
 
 /// Стиль деревьев — вкладка Trees из «Style settings» watabou. Меняется на
@@ -377,8 +379,13 @@ impl TreeStyle {
 #[derive(Component)]
 pub struct TreeTag;
 
-/// Спавн деревьев: `TREE_VARIANTS` пар мешей (крона+тень) единичного радиуса,
-/// каждому дереву — вариант, оттенок и масштаб детерминированно по индексу.
+/// Спавн деревьев: `TREE_VARIANTS` крон единичного радиуса, каждому дереву —
+/// вариант, оттенок и масштаб детерминированно по индексу. Кроны — сущность на
+/// дерево (свой оттенок и свой z), тени — **один слитый меш на все деревья**:
+/// полупрозрачная сущность попадает в сортируемую фазу `Transparent2d`, а
+/// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов пешеходов
+/// теряется по одной-две на кадр (тень мигает). Слой из одного меша — как
+/// `building_shadows` — этой фазе не по зубам и рисуется одним вызовом.
 pub fn spawn_trees(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -387,7 +394,7 @@ pub fn spawn_trees(
     trees: &[(Vec2, f32)],
 ) {
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
-    let pools: Vec<(TreeShape, Vec<(Handle<Mesh>, Handle<Mesh>)>)> = style
+    let pools: Vec<(TreeShape, Vec<(Handle<Mesh>, MeshBuilder)>)> = style
         .shape
         .crown_shapes()
         .iter()
@@ -398,7 +405,7 @@ pub fn spawn_trees(
                     let geometry = crown_geometry(shape, &mut rng);
                     (
                         meshes.add(crown_mesh(&geometry, style, &mut rng)),
-                        meshes.add(shadow_mesh(&geometry)),
+                        shadow_template(&geometry),
                     )
                 })
                 .collect();
@@ -410,8 +417,8 @@ pub fn spawn_trees(
         .iter()
         .map(|&factor| materials.add(Color::srgb(factor, factor, factor)))
         .collect();
-    let shadow_material = materials.add(SHADOW_COLOR);
 
+    let mut shadows = MeshBuilder::default();
     for (index, &(position, radius)) in trees.iter().enumerate() {
         let shape = style.shape.resolve(index);
         let variants = &pools
@@ -430,14 +437,17 @@ pub fn spawn_trees(
             DespawnOnExit(AppState::Playing),
             Name::new("tree"),
         ));
+        shadows.push_template(shadow, position, radius);
+    }
+
+    if !shadows.is_empty() {
         commands.spawn((
             TreeTag,
-            Mesh2d(shadow.clone()),
-            MeshMaterial2d(shadow_material.clone()),
-            Transform::from_translation(position.extend(Z_TREE_SHADOW))
-                .with_scale(Vec3::splat(radius)),
+            Mesh2d(meshes.add(shadows.build())),
+            MeshMaterial2d(materials.add(SHADOW_COLOR)),
+            Transform::from_xyz(0.0, 0.0, Z_TREE_SHADOW),
             DespawnOnExit(AppState::Playing),
-            Name::new("tree_shadow"),
+            Name::new("tree_shadows"),
         ));
     }
 }

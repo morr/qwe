@@ -317,10 +317,16 @@ in `main.rs`.
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the
   light, and a **long shadow** — the crown silhouette stretched ×1.4 along the 30°
-  shadow axis on `Z_TREE_SHADOW`. `TREE_VARIANTS` unit-radius mesh pairs (crown+shadow)
-  are reused across all trees; per tree — variant, quantized brightness tint (material
-  multiplies vertex colors, so ink stays ink) and radius as `Transform::scale`.
+  shadow axis on `Z_TREE_SHADOW`. `TREE_VARIANTS` unit-radius crown meshes are reused
+  across all trees; per tree — variant, quantized brightness tint (material multiplies
+  vertex colors, so ink stays ink) and radius as `Transform::scale`.
   Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
+  **Shadows are one merged mesh** (`tree_shadows`, like `building_shadows`), not an
+  entity per tree: the silhouette template of each variant is baked into it with the
+  tree's offset and radius. A blended `Mesh2d` lands in the sorted `Transparent2d`
+  phase, and a thousand of them sharing one z alongside the pawn sprites lose a
+  random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
+  item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
   `foliage`, `details` (ink), `variance` (brightness spread), `shape`. **TreeShape** is
   `Cotton | Conifer | Palm` — cloud outline (`bloat`), spiky cone (`Spiker::simple`),

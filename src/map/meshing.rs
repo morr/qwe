@@ -83,6 +83,24 @@ impl MeshBuilder {
             .extend(triangles.into_iter().map(|index| base + index as u32));
     }
 
+    /// Уже собранная геометрия, приложенная со сдвигом и масштабом. Силуэт
+    /// тени кроны один на вариант и повторяется под тысячами деревьев —
+    /// триангулировать его каждый раз заново незачем.
+    pub fn push_template(&mut self, template: &MeshBuilder, offset: Vec2, scale: f32) {
+        let base = self.positions.len() as u32;
+        self.positions
+            .extend(template.positions.iter().map(|point| {
+                [
+                    point[0] * scale + offset.x,
+                    point[1] * scale + offset.y,
+                    point[2],
+                ]
+            }));
+        self.colors.extend_from_slice(&template.colors);
+        self.indices
+            .extend(template.indices.iter().map(|index| base + index));
+    }
+
     /// Полилиния как цепочка квадов; каждый конец сегмента продлён на
     /// полширины, чтобы стыки перекрывались (как у старых дорог-спрайтов).
     pub fn push_polyline(&mut self, points: &[Vec2], width: f32, color: LinearRgba) {

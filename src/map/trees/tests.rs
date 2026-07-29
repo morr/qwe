@@ -125,6 +125,6 @@ fn crown_mesh_builds_non_empty() {
         let geometry = crown_geometry(shape, &mut rng);
         let mesh = crown_mesh(&geometry, &style, &mut rng);
         assert!(mesh.count_vertices() > 0, "{shape:?}");
-        assert!(shadow_mesh(&geometry).count_vertices() > 0, "{shape:?}");
+        assert!(shadow_template(&geometry).vertex_count() > 0, "{shape:?}");
     }
 }
