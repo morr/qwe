@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use super::layers::silhouette_edges;
 use super::{SHADOW_COLOR, height_or_default};
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::{point_in_area, ring_bounds};
+use crate::map::osm::model::{closest_on_segment, point_in_area, ring_bounds};
 use crate::map::osm::{PolyArea, RoadLine};
 use crate::settings::ARCH_HEIGHT;
 
@@ -212,17 +212,6 @@ pub(super) fn push_arches(
             color,
         );
     }
-}
-
-/// Ближайшая точка отрезка — как `distance_to_segment`, но нужна сама точка.
-fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
-    let segment = to - from;
-    let length_squared = segment.length_squared();
-    if length_squared == 0.0 {
-        return from;
-    }
-    let t = ((point - from).dot(segment) / length_squared).clamp(0.0, 1.0);
-    from + segment * t
 }
 
 /// Проходы, разложенные по домам, которые они прорезают: `building_passage`

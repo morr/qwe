@@ -102,26 +102,41 @@ pub fn point_in_area(point: Vec2, area: &PolyArea) -> bool {
         && !area.holes.iter().any(|hole| point_in_polygon(point, hole))
 }
 
-/// Расстояние от точки до отрезка.
-pub fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
+/// Ближайшая точка отрезка. Проекция, зажатая концами: за пределами отрезка
+/// ближайшая точка — его конец, а не точка на прямой.
+pub fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
     let segment = to - from;
     let length_squared = segment.length_squared();
     if length_squared == 0.0 {
-        return point.distance(from);
+        return from;
     }
     let t = ((point - from).dot(segment) / length_squared).clamp(0.0, 1.0);
-    point.distance(from + segment * t)
+    from + segment * t
 }
 
-/// Площадь кольца по формуле шнурования, абсолютная.
-pub fn ring_area(ring: &[Vec2]) -> f32 {
+/// Расстояние от точки до отрезка.
+pub fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
+    point.distance(closest_on_segment(point, from, to))
+}
+
+/// Знаковая площадь кольца по формуле шнурования: положительная — обход
+/// против часовой стрелки. Знак нужен тени (свипы силуэта обязаны быть
+/// одинаково закручены) и генератору входов (от обхода зависит, куда смотрит
+/// внешняя нормаль грани), поэтому базовая формула — знаковая, а абсолютная
+/// [`ring_area`] получается из неё.
+pub fn signed_ring_area(ring: &[Vec2]) -> f32 {
     let mut doubled = 0.0;
     let mut j = ring.len() - 1;
     for i in 0..ring.len() {
-        doubled += (ring[j].x - ring[i].x) * (ring[j].y + ring[i].y);
+        doubled += ring[j].perp_dot(ring[i]);
         j = i;
     }
-    (doubled / 2.0).abs()
+    doubled / 2.0
+}
+
+/// Площадь кольца, абсолютная.
+pub fn ring_area(ring: &[Vec2]) -> f32 {
+    signed_ring_area(ring).abs()
 }
 
 /// AABB кольца: (min, max).

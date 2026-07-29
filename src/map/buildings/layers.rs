@@ -12,7 +12,7 @@ use super::{
     BuildingHeightMode, SHADOW_COLOR, SHADOW_DIR, base_colors, extrusion_lift, height_or_default,
 };
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::ring_bounds;
+use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
@@ -133,7 +133,7 @@ pub(super) fn shadow_builder(
             sweep.extend(chain.iter().rev().map(|&point| point + offset));
             // NonZero гасит контуры противоположного обхода — свипы обязаны
             // быть одинаково закручены, а обход source-колец OSM произволен
-            if signed_area(&sweep) < 0.0 {
+            if signed_ring_area(&sweep) < 0.0 {
                 sweep.reverse();
             }
             sweeps.push(sweep.into_iter().map(|point| [point.x, point.y]).collect());
@@ -182,7 +182,7 @@ pub(super) fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>
     if ring.len() < 3 {
         return Vec::new();
     }
-    let orientation = signed_area(ring).signum();
+    let orientation = signed_ring_area(ring).signum();
     let count = ring.len();
     let is_silhouette = |index: usize| {
         let edge = ring[(index + 1) % count] - ring[index];
@@ -278,18 +278,6 @@ pub(super) fn extrusion_builder(
     builder
 }
 
-/// Знаковая площадь кольца (shoelace): положительная — обход CCW.
-/// `model::ring_area` абсолютная, для определения обхода не годится.
-fn signed_area(ring: &[Vec2]) -> f32 {
-    let mut doubled = 0.0;
-    let mut j = ring.len() - 1;
-    for i in 0..ring.len() {
-        doubled += ring[j].perp_dot(ring[i]);
-        j = i;
-    }
-    doubled / 2.0
-}
-
 /// Рёбра кольца, чья наружная нормаль смотрит по `direction` — силуэт с
 /// подветренной стороны. Обход кольца (CW/CCW) учитывается по знаковой
 /// площади, так что результат от него не зависит.
@@ -297,7 +285,7 @@ pub(super) fn silhouette_edges(ring: &[Vec2], direction: Vec2) -> Vec<(Vec2, Vec
     if ring.len() < 3 {
         return Vec::new();
     }
-    let orientation = signed_area(ring).signum();
+    let orientation = signed_ring_area(ring).signum();
     let mut edges = Vec::new();
     for i in 0..ring.len() {
         let a = ring[i];

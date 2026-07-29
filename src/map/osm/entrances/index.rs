@@ -5,7 +5,8 @@
 use bevy::math::Vec2;
 
 use crate::map::osm::model::{
-    AreaKind, PolyArea, RoadLine, distance_to_segment, point_in_area, ring_bounds,
+    AreaKind, PolyArea, RoadLine, closest_on_segment, distance_to_segment, point_in_area,
+    ring_bounds, signed_ring_area,
 };
 
 /// Сторона ячейки индекса дорог, м.
@@ -122,26 +123,8 @@ impl<'a> FootprintIndex<'a> {
     }
 }
 
-/// Ближайшая точка отрезка — как `distance_to_segment`, но нужна сама точка.
-fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
-    let segment = to - from;
-    let length_squared = segment.length_squared();
-    if length_squared == 0.0 {
-        return from;
-    }
-    let t = ((point - from).dot(segment) / length_squared).clamp(0.0, 1.0);
-    from + segment * t
-}
-
 /// Обход контура против часовой стрелки? От этого зависит, в какую сторону
-/// смотрит внешняя нормаль грани. Формула та же, что в `ring_area`, но со
-/// знаком.
+/// смотрит внешняя нормаль грани.
 pub(super) fn ring_is_ccw(ring: &[Vec2]) -> bool {
-    let mut doubled = 0.0;
-    let mut j = ring.len() - 1;
-    for i in 0..ring.len() {
-        doubled += (ring[j].x - ring[i].x) * (ring[j].y + ring[i].y);
-        j = i;
-    }
-    doubled > 0.0
+    signed_ring_area(ring) > 0.0
 }
