@@ -136,7 +136,13 @@ pub const Z_WOOD: f32 = 0.55;
 pub const Z_GRASS: f32 = 0.6;
 pub const Z_SAND: f32 = 0.7;
 pub const Z_POND: f32 = 1.0;
+/// Кант аллеи/улицы — прямо под своей заливкой. Порядок получается верным сам
+/// собой: кант улицы (1.9) кроет заливку аллеи (1.5), потому что улица старше
+/// аллеи, а заливки (1.5 и 2.0) кроют оба канта — иначе кант резал бы каждый
+/// перекрёсток пополам.
+pub const Z_ALLEY_CASING: f32 = 1.4;
 pub const Z_ALLEY: f32 = 1.5;
+pub const Z_ROAD_CASING: f32 = 1.9;
 pub const Z_ROAD: f32 = 2.0;
 pub const Z_CORPSE: f32 = 3.0;
 pub const Z_PORTAL: f32 = 4.0;

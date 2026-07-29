@@ -1,17 +1,17 @@
 //! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, луга, песок,
-//! вода, аллеи, улицы, стены) + здания (`map/buildings/`, режим отображения
-//! высоты переключается панелью Buildings) + деревья отдельными сущностями.
+//! вода) + дороги, аллеи и стены (`map/roads.rs`, стиль ленты переключается
+//! панелью Roads) + здания (`map/buildings/`, режим отображения высоты
+//! переключается панелью Buildings) + деревья отдельными сущностями.
 
 use bevy::prelude::*;
 
 use crate::loading::AppState;
 use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{MapData, RoadClass};
+use crate::map::osm::MapData;
+use crate::map::roads::{self, RoadStyle};
 use crate::map::trees::{self, TreeStyle};
-use crate::settings::{
-    MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_ROAD, Z_SAND, Z_WOOD,
-};
+use crate::settings::{MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_WOOD};
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
@@ -24,13 +24,6 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
-const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
-const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
-
-const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
-
-/// Стены Кремля поверх зданий.
-const Z_WALL: f32 = Z_BUILDING + 0.1;
 
 pub fn spawn_map(
     mut commands: Commands,
@@ -39,6 +32,7 @@ pub fn spawn_map(
     map: Res<MapData>,
     style: Res<TreeStyle>,
     height_mode: Res<BuildingHeightMode>,
+    road_style: Res<RoadStyle>,
 ) {
     commands.spawn((
         Sprite {
@@ -79,21 +73,6 @@ pub fn spawn_map(
         water.push_polygon(&area.outer, &area.holes, WATER_COLOR.to_linear());
     }
 
-    let mut alleys = MeshBuilder::default();
-    let mut roads = MeshBuilder::default();
-    for road in &map.roads {
-        let (builder, color) = match road.class {
-            RoadClass::Street => (&mut roads, ROAD_COLOR),
-            RoadClass::Alley => (&mut alleys, ALLEY_COLOR),
-        };
-        builder.push_polyline(&road.points, road.width, color.to_linear());
-    }
-
-    let mut walls = MeshBuilder::default();
-    for wall in &map.walls {
-        walls.push_polyline(&wall.points, wall.width, WALL_COLOR.to_linear());
-    }
-
     let skipped: usize = [&parks, &woods, &grass, &sand, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
@@ -108,9 +87,6 @@ pub fn spawn_map(
         (grass, Z_GRASS, "grass"),
         (sand, Z_SAND, "sand"),
         (water, Z_POND, "water"),
-        (alleys, Z_ALLEY, "alleys"),
-        (roads, Z_ROAD, "roads"),
-        (walls, Z_WALL, "walls"),
     ] {
         if builder.is_empty() {
             continue;
@@ -123,6 +99,15 @@ pub fn spawn_map(
             Name::new(name),
         ));
     }
+
+    roads::spawn_roads(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        *road_style,
+        &map.roads,
+        &map.walls,
+    );
 
     buildings::spawn_buildings(
         &mut commands,

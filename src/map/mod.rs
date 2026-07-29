@@ -1,11 +1,13 @@
 mod buildings;
 mod meshing;
 pub mod osm;
+mod roads;
 mod spawn;
 pub mod trees;
 
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
+pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::trees::{TreeShape, TreeStyle};
 
 use bevy::prelude::*;
@@ -26,9 +28,11 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeStyle>()
             .init_resource::<BuildingHeightMode>()
+            .init_resource::<RoadStyle>()
             .register_type::<TreeStyle>()
             .register_type::<TreeShape>()
             .register_type::<BuildingHeightMode>()
+            .register_type::<RoadStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn::spawn_map.in_set(WorldInitSet::Spawn),
@@ -46,6 +50,10 @@ impl Plugin for MapPlugin {
                         .run_if(in_state(AppState::Playing))
                         .run_if(resource_changed::<BuildingHeightMode>)
                         .run_if(not(resource_added::<BuildingHeightMode>)),
+                    roads::rebuild_roads
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(resource_changed::<RoadStyle>)
+                        .run_if(not(resource_added::<RoadStyle>)),
                 ),
             );
     }
