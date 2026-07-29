@@ -134,8 +134,10 @@ pub fn dispatch_pathfinding_requests(
         });
         commands
             .entity(entity)
-            .remove::<PathfindingRequest>()
-            .insert(PathfindingTask(task));
+            .queue_silenced(move |mut entity: EntityWorldMut| {
+                entity.remove::<PathfindingRequest>();
+                entity.insert(PathfindingTask(task));
+            });
     }
 }
 
@@ -173,7 +175,11 @@ pub fn move_moving_entities(
                     // тег движения, но состояние не трогаем — ответ придёт и
                     // снова поставит путь
                     _ => {
-                        commands.entity(entity).remove::<MovableStateMovingTag>();
+                        commands
+                            .entity(entity)
+                            .queue_silenced(|mut entity: EntityWorldMut| {
+                                entity.remove::<MovableStateMovingTag>();
+                            });
                     }
                 }
                 break;
@@ -247,7 +253,11 @@ pub fn listen_for_pathfinding_tasks(
         let Some(result) = check_ready(&mut task.0) else {
             continue;
         };
-        commands.entity(entity).remove::<PathfindingTask>();
+        commands
+            .entity(entity)
+            .queue_silenced(|mut entity: EntityWorldMut| {
+                entity.remove::<PathfindingTask>();
+            });
         diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
             result.duration.as_secs_f64() * 1000.0
         });
