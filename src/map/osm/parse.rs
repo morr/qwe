@@ -1,6 +1,9 @@
 //! Парсинг ответа Overpass в [`MapData`]: проекция, классификация по тегам,
 //! сборка колец мультиполигонов, детерминированные деревья в парках.
 
+use std::collections::HashMap;
+use std::ops::RangeInclusive;
+
 use bevy::math::Vec2;
 
 use crate::city::City;
@@ -19,6 +22,17 @@ const TREE_AREA_PER_TREE: f32 = 1230.0;
 /// Совпадение концов way при сборке колец, м (общие OSM-узлы дают
 /// идентичные координаты; эпсилон страхует от шума проекции).
 const RING_JOIN_EPSILON: f32 = 0.01;
+
+/// Метров на этаж, когда в OSM есть только `building:levels`. Без этого
+/// перевода высота была бы почти только у Нью-Йорка: `height` там проставлен у
+/// 97% зданий (LiDAR-импорт), а в Европе его нет и у 2% — там маппят этажи
+/// (Париж 64%, Берлин 59%, Лондон 50%, Тула 31%).
+const METERS_PER_LEVEL: f32 = 3.0;
+
+/// Границы правдоподобия высоты, м. В OSM попадаются и `height=0`, и опечатки
+/// на порядок; всё за пределами трактуем как отсутствие тега — лучше дефолт
+/// потребителя, чем километровый сарай.
+const BUILDING_HEIGHT_RANGE: RangeInclusive<f32> = 2.0..=600.0;
 
 pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
@@ -81,6 +95,59 @@ fn area_kind(element: &Element) -> Option<AreaKind> {
         return Some(AreaKind::Park);
     }
     None
+}
+
+/// Число из значения тега OSM. Единица измерения по умолчанию — метр, но
+/// маппят и с суффиксом (`12 m`, `12.5 metres`), и с запятой (`12,5`), и через
+/// точку с запятой, когда значений несколько (`3;4` — берём первое), и в футах
+/// с дюймами (`40'`, `40'6"`). Не разобралось — `None`.
+fn parse_measure(value: &str) -> Option<f32> {
+    let value = value.split(';').next()?.trim();
+
+    if let Some((feet, inches)) = value.split_once('\'') {
+        let feet: f32 = feet.trim().parse().ok()?;
+        let inches: f32 = inches
+            .trim()
+            .trim_end_matches('"')
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        return Some(feet * 0.3048 + inches * 0.0254);
+    }
+
+    // числовой префикс: всё, начиная с первого нецифрового символа, — единица
+    let cleaned = value.replace(',', ".");
+    let end = cleaned
+        .find(|character: char| {
+            !(character.is_ascii_digit() || character == '.' || character == '-')
+        })
+        .unwrap_or(cleaned.len());
+    cleaned[..end].parse().ok()
+}
+
+/// Высота здания в метрах: `height` как есть, иначе этажи
+/// (`building:levels` + `roof:levels`, второй по схеме S3DB в первый не входит)
+/// по [`METERS_PER_LEVEL`]. Оба тега разом почти не встречаются, так что это не
+/// «уточнение», а две независимые ветки данных.
+fn building_height(tags: &HashMap<String, String>) -> Option<f32> {
+    let plausible = |meters: f32| BUILDING_HEIGHT_RANGE.contains(&meters).then_some(meters);
+
+    if let Some(meters) = tags
+        .get("height")
+        .and_then(|value| parse_measure(value))
+        .and_then(plausible)
+    {
+        return Some(meters);
+    }
+
+    let levels = tags
+        .get("building:levels")
+        .and_then(|value| parse_measure(value))?;
+    let roof_levels = tags
+        .get("roof:levels")
+        .and_then(|value| parse_measure(value))
+        .unwrap_or(0.0);
+    plausible((levels + roof_levels) * METERS_PER_LEVEL)
 }
 
 /// Ширина и класс по значению highway; `None` — дорогу не рисуем.
@@ -170,8 +237,17 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             outer,
             holes: Vec::new(),
             kind,
+            height: area_height(kind, &element.tags),
         },
     );
+}
+
+/// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при
+/// случайно проставленном теге.
+fn area_height(kind: AreaKind, tags: &HashMap<String, String>) -> Option<f32> {
+    matches!(kind, AreaKind::Building | AreaKind::Kremlin)
+        .then(|| building_height(tags))
+        .flatten()
 }
 
 fn parse_relation(
@@ -189,6 +265,7 @@ fn parse_relation(
 
     let outers = assemble_rings(members, "outer", bounds, skipped_open_rings);
     let inners = assemble_rings(members, "inner", bounds, skipped_open_rings);
+    let height = area_height(kind, &element.tags);
 
     for outer in outers {
         let holes = inners
@@ -196,7 +273,15 @@ fn parse_relation(
             .filter(|inner| point_in_polygon(inner[0], &outer))
             .cloned()
             .collect();
-        push_area(map, PolyArea { outer, holes, kind });
+        push_area(
+            map,
+            PolyArea {
+                outer,
+                holes,
+                kind,
+                height,
+            },
+        );
     }
 }
 
@@ -602,6 +687,106 @@ mod tests {
         assert_eq!(map.parks.len(), 1);
         assert!(map.woods.is_empty());
         assert!(map.trees.is_empty());
+    }
+
+    #[test]
+    fn measures_parse_with_units_commas_and_feet() {
+        assert_eq!(parse_measure("12"), Some(12.0));
+        assert_eq!(parse_measure("12.5"), Some(12.5));
+        assert_eq!(parse_measure("12,5"), Some(12.5));
+        assert_eq!(parse_measure("12 m"), Some(12.0));
+        assert_eq!(parse_measure("12.5 metres"), Some(12.5));
+        // несколько значений — берём первое
+        assert_eq!(parse_measure("3;4"), Some(3.0));
+        assert_eq!(parse_measure("40'"), Some(12.192));
+        let inches = parse_measure("40'6\"").unwrap();
+        assert!((inches - 12.3444).abs() < 1e-3, "{inches}");
+        assert_eq!(parse_measure("tall"), None);
+        assert_eq!(parse_measure(""), None);
+    }
+
+    fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn height_prefers_the_metric_tag_then_falls_back_to_levels() {
+        // ветка Нью-Йорка: метры из LiDAR-импорта
+        assert_eq!(building_height(&tags(&[("height", "31.4")])), Some(31.4));
+        // ветка Европы: этажи
+        assert_eq!(
+            building_height(&tags(&[("building:levels", "5")])),
+            Some(15.0)
+        );
+        // roof:levels по схеме S3DB в building:levels не входит
+        assert_eq!(
+            building_height(&tags(&[("building:levels", "5"), ("roof:levels", "1")])),
+            Some(18.0)
+        );
+        // проставлены оба — верим метрам, а не пересчёту
+        assert_eq!(
+            building_height(&tags(&[("height", "20"), ("building:levels", "5")])),
+            Some(20.0)
+        );
+        assert_eq!(building_height(&tags(&[("building", "yes")])), None);
+    }
+
+    #[test]
+    fn implausible_heights_are_treated_as_missing() {
+        assert_eq!(building_height(&tags(&[("height", "0")])), None);
+        assert_eq!(building_height(&tags(&[("height", "12000")])), None);
+        assert_eq!(building_height(&tags(&[("building:levels", "0")])), None);
+        assert_eq!(building_height(&tags(&[("building:levels", "-1")])), None);
+        // мусор в метрах не должен глушить этажи
+        assert_eq!(
+            building_height(&tags(&[("height", "9999"), ("building:levels", "4")])),
+            Some(12.0)
+        );
+    }
+
+    /// Высота доезжает до `MapData` и из way, и из relation, а на воде её нет.
+    #[test]
+    fn parsed_areas_carry_building_height_only() {
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+        let d = 0.0005;
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 1, "tags": {{"building": "yes", "building:levels": "9"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}},
+  {{"type": "relation", "id": 2, "tags": {{"building": "yes", "height": "42 m"}},
+    "members": [
+      {{"type": "way", "role": "outer", "geometry": [
+        {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+        {{"lat": {e}, "lon": {c}}}, {{"lat": {a}, "lon": {b}}}]}}]}},
+  {{"type": "way", "id": 3, "tags": {{"natural": "water", "height": "5"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+        );
+
+        let map = parse(&json, CITY).unwrap();
+        assert_eq!(map.buildings.len(), 2);
+        let heights: Vec<Option<f32>> = map
+            .buildings
+            .iter()
+            .map(|building| building.height)
+            .collect();
+        assert!(heights.contains(&Some(27.0)), "{heights:?}");
+        assert!(heights.contains(&Some(42.0)), "{heights:?}");
+        assert_eq!(map.water.len(), 1);
+        assert_eq!(map.water[0].height, None);
     }
 
     #[test]

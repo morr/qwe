@@ -24,6 +24,11 @@ pub struct PolyArea {
     pub outer: Vec<Vec2>,
     pub holes: Vec<Vec<Vec2>>,
     pub kind: AreaKind,
+    /// Высота здания в метрах из OSM (`parse::building_height`). `None` —
+    /// тегов нет либо это не здание: у воды, парков и лугов высоты не бывает.
+    /// Покрытие сильно зависит от города (Берлин 80%, Токио 5%), поэтому
+    /// потребитель обязан иметь свой дефолт, а не считать `None` ошибкой.
+    pub height: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +159,7 @@ mod tests {
                 Vec2::new(4.0, 6.0),
             ]],
             kind: AreaKind::Building,
+            height: None,
         };
         assert!(point_in_area(Vec2::new(2.0, 2.0), &area));
         assert!(!point_in_area(Vec2::new(5.0, 5.0), &area));

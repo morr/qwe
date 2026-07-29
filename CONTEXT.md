@@ -118,12 +118,22 @@ in `main.rs`.
     **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
     but Wood stays open ground — that is what makes the open half of a park read as a
     field, the way it does on OSM.
+    `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
+    tag is there). See **Building height** below.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
     z). `bridge` flag — see navmesh.
   - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
     impassable.
   - **trees** — `(pos, radius)` pairs, precomputed at parse.
+- **Building height** (`parse.rs::building_height`) — metres, from two *independent*
+  branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
+  LiDAR import) or else `building:levels` + `roof:levels` × `METERS_PER_LEVEL` (3 m)
+  (Paris 64%, Berlin 59%, London 50%, Tula 31%, **Tokyo 5%**). `parse_measure` handles
+  the tag-value zoo — `12`, `12.5`, `12,5`, `12 m`, `3;4`, `40'6"`. Anything outside
+  `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
+  order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
+  default. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
@@ -138,9 +148,13 @@ in `main.rs`.
   (parks, water, alleys, roads, facades, roofs, walls): `MeshBuilder` triangulates
   polygons via `earcutr` (holes supported, degenerate contours skipped + counted) and
   emits per-vertex colors over a single white `ColorMaterial`. ~2800 buildings cost ~7
-  entities. **Facade** — pseudo-3D: the footprint polygon shifted (0, −3) in a darker
-  color at z just below the roof, visible only along south edges. Trees stay individual
-  entities (see tree crowns below).
+  entities. **Facade** — pseudo-3D: the footprint polygon shifted straight down in a
+  darker color at z just below the roof, visible only along south edges. The shift is
+  the building's OSM height × `FACADE_SCALE` (0.2), clamped to 1.5–12 m, so a five-storey
+  block keeps the historical 3 m band and a tower reads as a tower; a building with no
+  height falls back to `DEFAULT_FACADE_HEIGHT` (3 m). Facades sit *under* every roof on
+  purpose — that is what stops a tower's wide band from painting over its low neighbour.
+  Trees stay individual entities (see tree crowns below).
 - **Tree crowns** (`map/trees.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the

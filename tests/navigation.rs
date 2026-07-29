@@ -152,11 +152,13 @@ fn fill_from_mapdata_blocks_and_carves() {
             outer: rect_ring(Vec2::new(100.0, 100.0), Vec2::new(160.0, 160.0)),
             holes: vec![rect_ring(Vec2::new(120.0, 120.0), Vec2::new(140.0, 140.0))],
             kind: AreaKind::Building,
+            height: Some(15.0),
         }],
         water: vec![PolyArea {
             outer: rect_ring(Vec2::new(300.0, 0.0), Vec2::new(340.0, 400.0)),
             holes: Vec::new(),
             kind: AreaKind::Water,
+            height: None,
         }],
         parks: Vec::new(),
         woods: Vec::new(),

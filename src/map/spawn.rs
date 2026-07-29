@@ -1,6 +1,8 @@
 //! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, луга, песок,
 //! вода, аллеи, улицы, фасады, крыши, стены) + деревья отдельными сущностями.
 
+use std::ops::RangeInclusive;
+
 use bevy::prelude::*;
 
 use crate::loading::AppState;
@@ -31,9 +33,18 @@ const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
-/// Высота тёмной полосы фасада — «псевдо-3D» низ здания.
-const FACADE_HEIGHT: f32 = 3.0;
-/// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу.
+/// Высота тёмной полосы фасада у здания, для которого OSM высоты не дал.
+/// Ровно то, что полоса имела до появления высот, — пятиэтажка.
+const DEFAULT_FACADE_HEIGHT: f32 = 3.0;
+/// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
+/// значит закрасить полквартала: карта сверху, а не изометрия. При 0.2
+/// пятиэтажка (15 м) даёт прежние 3 м, и разница этажности всё равно читается.
+const FACADE_SCALE: f32 = 0.2;
+/// Границы полосы, м: сарай не должен потерять кромку, небоскрёб — накрыть
+/// соседний квартал.
+const FACADE_HEIGHT_RANGE: RangeInclusive<f32> = 1.5..=12.0;
+/// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
+/// широкая полоса высотки залезала бы на низкого соседа.
 const Z_FACADE: f32 = Z_BUILDING - 0.1;
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
@@ -106,8 +117,12 @@ pub fn spawn_map(
         let roof_color = LinearRgba::from(roof_base.to_srgba() * tint);
 
         // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
-        // только вдоль южных граней любого полигона
-        let offset = Vec2::new(0.0, -FACADE_HEIGHT);
+        // только вдоль южных граней любого полигона. Сдвиг — по высоте из
+        // OSM, так что этажность города видна прямо на карте
+        let facade_height = building.height.map_or(DEFAULT_FACADE_HEIGHT, |meters| {
+            (meters * FACADE_SCALE).clamp(*FACADE_HEIGHT_RANGE.start(), *FACADE_HEIGHT_RANGE.end())
+        });
+        let offset = Vec2::new(0.0, -facade_height);
         let facade_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + offset).collect();
         let facade_holes: Vec<Vec<Vec2>> = building
             .holes

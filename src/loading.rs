@@ -250,9 +250,16 @@ fn poll_job(
         JobState::Done(world) => {
             let world = *world.take().expect("world already taken");
             let map = world.map;
+            // высота в OSM опциональна и покрыта очень неровно (Берлин 80%,
+            // Токио 5%) — процент в логе объясняет плоскую карту без гаданий
+            let with_height = map
+                .buildings
+                .iter()
+                .filter(|building| building.height.is_some())
+                .count();
             info!(
-                "osm map: {} buildings, {} water, {} parks, {} woods, {} grass, {} sand, \
-                 {} roads, {} walls, {} trees",
+                "osm map: {} buildings ({with_height} with height), {} water, {} parks, \
+                 {} woods, {} grass, {} sand, {} roads, {} walls, {} trees",
                 map.buildings.len(),
                 map.water.len(),
                 map.parks.len(),
