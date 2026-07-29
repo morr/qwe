@@ -87,6 +87,7 @@ pub enum TreeShape {
 impl TreeShape {
     pub const ALL: [Self; 4] = [Self::Cotton, Self::Conifer, Self::Palm, Self::Mixed];
     /// Формы с собственной геометрией кроны — всё, кроме `Mixed`.
+    #[cfg(test)]
     const CONCRETE: [Self; 3] = [Self::Cotton, Self::Conifer, Self::Palm];
 
     pub fn label(self) -> &'static str {
