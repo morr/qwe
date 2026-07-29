@@ -7,6 +7,8 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 
 use crate::map::osm::{JobState, MapLoadJob, start_load_thread};
+use crate::navigation::ArcNavmesh;
+use crate::portal::PortalPos;
 use crate::ui::{UiOpacity, ui_color};
 
 #[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -54,9 +56,9 @@ impl Plugin for LoadingPlugin {
     }
 }
 
-fn start_job(mut commands: Commands) {
+fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>) {
     let job = MapLoadJob::default();
-    start_load_thread(job.clone());
+    start_load_thread(job.clone(), navmesh.0.clone());
     commands.insert_resource(job);
 }
 
@@ -124,10 +126,11 @@ fn spawn_loader_ui(mut commands: Commands) {
 fn on_retry(
     _activate: On<Activate>,
     job: Res<MapLoadJob>,
+    navmesh: Res<ArcNavmesh>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting;
-    start_load_thread(job.clone());
+    start_load_thread(job.clone(), navmesh.0.clone());
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
     }
@@ -157,8 +160,11 @@ fn poll_job(
             )
         }
         JobState::Parsing => ("Parsing map...".to_string(), false),
-        JobState::Done(map) => {
-            let map = map.take().expect("map already taken");
+        JobState::BuildingNavmesh => ("Building navmesh...".to_string(), false),
+        JobState::Pruning => ("Pruning unreachable areas...".to_string(), false),
+        JobState::Done(world) => {
+            let world = *world.take().expect("world already taken");
+            let map = world.map;
             info!(
                 "osm map: {} buildings, {} water, {} parks, {} woods, {} grass, {} sand, \
                  {} roads, {} walls, {} trees",
@@ -172,7 +178,8 @@ fn poll_job(
                 map.walls.len(),
                 map.trees.len(),
             );
-            commands.insert_resource(*map);
+            commands.insert_resource(map);
+            commands.insert_resource(PortalPos(world.portal));
             next.set(AppState::Playing);
             return;
         }

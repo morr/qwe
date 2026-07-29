@@ -36,9 +36,13 @@ in `main.rs`.
   `OnEnter(Playing)`.
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. Navmesh must
   be filled before population spawns, or humans land in the river.
-- **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` download:
-  `Connecting → Downloading{bytes,total} → Parsing → Done(MapData) | Failed(msg)`,
-  polled via `Arc<Mutex<_>>` by `poll_job`.
+- **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` that
+  prepares everything not needing ECS: `Connecting → Downloading{bytes,total} → Parsing
+  → BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal}) | Failed(msg)`, polled via
+  `Arc<Mutex<_>>` by `poll_job`, every state a line on the loader screen. It writes the
+  navmesh through the `ArcNavmesh` handle it is given and returns the snapped portal
+  position. **Rule: heavy init belongs in this thread, not in `OnEnter(Playing)`** — no
+  frame is drawn inside a schedule, so work there freezes the loader on its last message.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans/corpses/demons/walkers,
   resets `DemonSpawner` + `Telemetry`, respawns population. The navmesh persists — it is
   filled once per app run.
@@ -116,7 +120,8 @@ in `main.rs`.
   this once piled up a 12 000-request backlog and humans "froze". 4-connectivity matches
   A* reachability because of the no-corner-cutting rule.
 - **ArcNavmesh** — `Arc<RwLock<Navmesh>>` resource; async A* tasks read it off-thread.
-  Starts empty (all passable), filled by `fill_navmesh` in `WorldInitSet::Navmesh`.
+  Starts empty (all passable), filled and pruned by the map-load thread while the loader
+  screen is still up (`JobState::BuildingNavmesh` / `Pruning`).
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable resource, cycled
   by the bottom-left button: A* / Dijkstra / Fringe / BFS (all from the `pathfinding`
   crate over the navmesh) plus **HPA*** and **Theta*** (hierarchical, from
@@ -125,9 +130,13 @@ in `main.rs`.
   (1.3 ms vs 36.4 ms mean, 15 ms vs 450 ms worst case) at ~10% longer paths. The other
   five stay switchable for comparison.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid` built
-  once from the final navmesh (after pruning; chunk 25, ~1.5 s build), wrapped in `Arc`,
-  called directly from async tasks — the crate's plugin is not used. Long paths cost
-  ~0.5 ms vs ~40 ms for flat A*.
+  once from the final navmesh (after pruning; chunk 25), wrapped in `Arc`, called directly
+  from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
+  flat A*. The build takes **~12 s** on the 5600 × 3700 map, so it runs as an
+  `AsyncComputeTaskPool` task started in `OnEnter(Playing)` and picked up by
+  `poll_northstar_build`; until it lands, `NorthstarGrid::get()` is `None` and the
+  dispatcher **falls back to flat A\*** for HPA*/Theta* requests. Doing it inline cost
+  11 s of frozen loader screen.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
@@ -140,15 +149,16 @@ in `main.rs`.
   tolerate `None`.
 - **pathfinding_bench** (`examples/pathfinding_bench.rs`) — offline comparison of all six
   algorithms without booting Bevy: reads the OSM cache, rebuilds the navmesh exactly as
-  `WorldInitSet::Navmesh` does (fill → `snap_portal_position` → prune), generates one
+  the map-load thread does (fill → `snap_portal_position` → prune), generates one
   seeded task list mirroring human wander (80% random building, 20% short stroll) and
   replays that *same* list per algorithm across a shared atomic work cursor. Reports
   wall / cpu / avg / p50 / p95 / max and mean path length. Run it after touching
   `successors`, costs, or the navmesh fill.
 - **PortalPos** (resource) — actual portal position. `PORTAL_POS` in settings is only a
-  **hint**; `snap_portal` spirals out to the nearest tile with clearance derived from
-  `PORTAL_DIAMETER`. Runs before `prune_unreachable` (the flood starts from the snapped
-  position).
+  **hint**; `snap_portal_position` spirals out to the nearest tile with clearance derived
+  from `PORTAL_DIAMETER`. The map-load thread snaps it between fill and prune (the flood
+  starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
+  the resource before switching to `Playing`.
 
 ## Simulation
 

@@ -1,17 +1,29 @@
-//! Фоновая загрузка выгрузки Overpass: кеш-файл → сеть (с прогрессом).
-//! Работает на выделенном потоке; прогресс — через `Arc<Mutex<JobState>>`.
+//! Фоновая подготовка мира: кеш-файл → сеть (с прогрессом) → парсинг →
+//! растеризация navmesh → прунинг. Работает на выделенном потоке; прогресс —
+//! через `Arc<Mutex<JobState>>`. Всё, что не требует ECS, живёт здесь, а не в
+//! `OnEnter(Playing)`: там кадр не рисуется, и экран загрузки замирает.
 
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use bevy::prelude::*;
 
+use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query};
 use crate::map::osm::parse::parse;
+use crate::navigation::{Navmesh, snap_portal_position};
+use crate::settings::PORTAL_POS;
 
 const OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
 const CHUNK_SIZE: usize = 64 * 1024;
+
+/// Готовый к спавну мир: разобранная карта и позиция портала (снап нужен
+/// уже заполненному navmesh, а прунинг — уже снапнутому порталу).
+pub struct LoadedWorld {
+    pub map: MapData,
+    pub portal: Vec2,
+}
 
 pub enum JobState {
     Connecting,
@@ -20,8 +32,12 @@ pub enum JobState {
         total: Option<u64>,
     },
     Parsing,
+    /// Растеризация карты в navmesh.
+    BuildingNavmesh,
+    /// Отсечение карманов, недостижимых от портала.
+    Pruning,
     /// `Option`, чтобы poll-система могла забрать данные через `take()`.
-    Done(Option<Box<MapData>>),
+    Done(Option<Box<LoadedWorld>>),
     Failed(String),
 }
 
@@ -42,14 +58,47 @@ impl MapLoadJob {
 
 /// Выделенный поток, а не пул задач: многосекундное блокирующее чтение
 /// сети не должно занимать воркер `AsyncComputeTaskPool`.
-pub fn start_load_thread(job: MapLoadJob) {
+pub fn start_load_thread(job: MapLoadJob, navmesh: Arc<RwLock<Navmesh>>) {
     std::thread::spawn(move || {
-        let result = run(&job);
+        let result = run(&job).map(|map| build_navmesh(&job, map, &navmesh));
         job.set(match result {
-            Ok(map) => JobState::Done(Some(Box::new(map))),
+            Ok(world) => JobState::Done(Some(Box::new(world))),
             Err(message) => JobState::Failed(message),
         });
     });
+}
+
+/// Растеризация карты и прунинг — по шагу на состояние, чтобы экран
+/// загрузки показывал, чем поток занят.
+fn build_navmesh(job: &MapLoadJob, map: MapData, arc_navmesh: &RwLock<Navmesh>) -> LoadedWorld {
+    job.set(JobState::BuildingNavmesh);
+    let started = std::time::Instant::now();
+    let mut navmesh = arc_navmesh.write().unwrap();
+    navmesh.fill_from_mapdata(&map);
+    info!("navmesh filled in {:?}", started.elapsed());
+
+    let portal = match snap_portal_position(&navmesh, PORTAL_POS) {
+        Some(position) => {
+            if position != PORTAL_POS {
+                info!("portal snapped {PORTAL_POS:?} => {position:?}");
+            }
+            position
+        }
+        None => {
+            warn!("no clear spot for portal near {PORTAL_POS:?}");
+            PORTAL_POS
+        }
+    };
+
+    job.set(JobState::Pruning);
+    let started = std::time::Instant::now();
+    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    info!(
+        "navmesh: pruned {pruned} unreachable tiles in {:?}",
+        started.elapsed()
+    );
+
+    LoadedWorld { map, portal }
 }
 
 fn run(job: &MapLoadJob) -> Result<MapData, String> {
