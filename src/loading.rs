@@ -171,14 +171,15 @@ fn on_retry(
 /// Хвост строки загрузки со скоростью. Пусто, пока не набралось первое окно
 /// замера (`SPEED_WINDOW`) — иначе первые кадры показывали бы «0.0 MB/s».
 /// Делитель тот же, что и у счётчика мегабайт, — мебибайт под подписью «MB».
+/// Разделитель — ASCII: в `default_font` нет `·`, он рисовался квадратом.
 fn format_speed(bytes_per_sec: f64) -> String {
     if bytes_per_sec <= 0.0 {
         return String::new();
     }
     if bytes_per_sec >= 1_048_576.0 {
-        format!(" · {:.1} MB/s", bytes_per_sec / 1_048_576.0)
+        format!(" - {:.1} MB/s", bytes_per_sec / 1_048_576.0)
     } else {
-        format!(" · {:.0} KB/s", bytes_per_sec / 1024.0)
+        format!(" - {:.0} KB/s", bytes_per_sec / 1024.0)
     }
 }
 
