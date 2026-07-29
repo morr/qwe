@@ -29,7 +29,7 @@ use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color,
+    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, spawn_panel_button, ui_color,
 };
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
@@ -232,36 +232,7 @@ fn spawn_toggle<M>(
     kind: DebugToggleButton,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
-    let button = commands
-        .spawn((
-            Button,
-            kind,
-            Pickable::default(),
-            // `Hovered` обновляет UI-picking-бэкенд; `Pressed` вставляет
-            // `bevy_ui_widgets::Button` — оба нужны для подсветки.
-            Hovered::default(),
-            Node {
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
-            children![(
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            )],
-        ))
-        .observe(on_activate)
-        .id();
-    commands.entity(row).add_child(button);
+    spawn_panel_button(commands, row, kind, label, on_activate);
 }
 
 fn update_toggle_buttons(

@@ -6,12 +6,12 @@ use bevy::color::Mix;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button};
+use bevy::ui_widgets::Activate;
 
 use crate::city::City;
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color,
+    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, spawn_panel_button, ui_color,
 };
 
 /// Какой город выбирает кнопка.
@@ -51,38 +51,17 @@ fn render_city_panel(mut commands: Commands) {
         .id();
 
     for city in City::ALL {
-        let button = commands
-            .spawn((
-                Button,
-                CityButton(city),
-                Pickable::default(),
-                Hovered::default(),
-                Node {
-                    padding: UiRect {
-                        top: px(4.),
-                        right: px(8.),
-                        bottom: px(4.),
-                        left: px(8.),
-                    },
-                    ..default()
-                },
-                BackgroundColor(ui_color(UiOpacity::Heavy)),
-                children![(
-                    Text::new(city.label()),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                )],
-            ))
-            .observe(move |_activate: On<Activate>, mut current: ResMut<City>| {
+        spawn_panel_button(
+            &mut commands,
+            row,
+            CityButton(city),
+            city.label(),
+            move |_activate: On<Activate>, mut current: ResMut<City>| {
                 // set_if_neq: повторный клик по текущему городу не должен
                 // перезагружать мир
                 current.set_if_neq(city);
-            })
-            .id();
-        commands.entity(row).add_child(button);
+            },
+        );
     }
 }
 

@@ -9,7 +9,10 @@ mod hotkeys;
 mod speed;
 mod trees;
 
+use bevy::ecs::system::IntoObserverSystem;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::ui_widgets::{Activate, Button};
 
 pub use self::debug::{DebugDoors, DebugGrid, DebugNavmesh};
 use crate::loading::{AppState, PlayPhase};
@@ -46,6 +49,50 @@ pub fn ui_color(opacity: UiOpacity) -> Color {
         UiOpacity::Medium => 0.55,
         UiOpacity::Heavy => 0.85,
     })
+}
+
+/// Кнопка панели: тёмный прямоугольник с подписью 12 px, подсвечиваемый по
+/// наведению и нажатию. `marker` — компонент, по которому система подсветки
+/// находит эту кнопку среди прочих (`DebugToggleButton`, `CityButton`, …).
+///
+/// `Hovered` кормит UI-picking-бэкенд, `Pressed` вставляет
+/// `bevy_ui_widgets::Button` — для подсветки нужны оба.
+pub fn spawn_panel_button<M>(
+    commands: &mut Commands,
+    parent: Entity,
+    marker: impl Bundle,
+    label: &str,
+    on_activate: impl IntoObserverSystem<Activate, (), M>,
+) -> Entity {
+    let button = commands
+        .spawn((
+            Button,
+            marker,
+            Pickable::default(),
+            Hovered::default(),
+            Node {
+                padding: UiRect {
+                    top: px(4.),
+                    right: px(8.),
+                    bottom: px(4.),
+                    left: px(8.),
+                },
+                ..default()
+            },
+            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            children![(
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            )],
+        ))
+        .observe(on_activate)
+        .id();
+    commands.entity(parent).add_child(button);
+    button
 }
 
 /// Корень игровой панели. Панели спавнятся в `Startup`, но поверх экрана
