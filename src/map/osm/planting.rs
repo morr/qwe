@@ -2,16 +2,19 @@
 //! этот модуль, а рисует её `map::trees`. Отделено от парсинга — с тегами
 //! Overpass посадка не связана ничем, кроме того, что работает по его выходу.
 
-use bevy::math::Vec2;
+use std::collections::HashMap;
+
+use bevy::math::{IVec2, Vec2};
 
 use crate::map::osm::model::{
     MapData, PolyArea, distance_to_segment, point_in_area, ring_area, ring_bounds,
 };
-use crate::settings::MAP_SIZE;
+use crate::settings::{MAP_SIZE, TREE_DENSITY_MAX};
 
-/// Плотность деревьев: одно на столько м² леса (1600 / 1.3 / 1.5 — плотность
-/// поднята на 30%, затем ещё на 50% против первоначальной).
-const TREE_AREA_PER_TREE: f32 = 820.0;
+/// Плотность деревьев при `TreeStyle::density == 1`: одно дерево на столько м²
+/// леса (1600 / 1.3 / 1.5 / 2 — плотность поднималась на 30%, затем ещё на 50%,
+/// затем удвоена).
+const TREE_AREA_PER_TREE: f32 = 410.0;
 
 /// Разброс радиуса кроны, м.
 const TREE_MIN_RADIUS: f32 = 2.5;
@@ -55,6 +58,11 @@ pub(super) fn near_area_edge(point: Vec2, area: &PolyArea, clearance: f32) -> bo
 /// только в границах карты и не на зданиях/дорогах (парковые аллеи — тоже
 /// дороги), не в воде и не на лугах и песке. Зазоры до стен и кромок дорог
 /// считаются от края кроны, поэтому радиус разыгрывается до проверок.
+///
+/// Сажается сразу **самый густой** лес — по `TREE_DENSITY_MAX`; ползунок
+/// плотности прореживает этот набор при спавне (`map::trees::keeps`), а не
+/// пересаживает его. Так ползунок отвечает мгновенно и уже стоящие деревья не
+/// прыгают с места на место при каждом его шаге.
 pub(super) fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
     // AABB-прекомпьют, чтобы не гонять point-in-polygon по всем 3к зданий;
     // паддинг берётся по максимальной кроне — на конкретный радиус проверка
@@ -133,9 +141,17 @@ pub(super) fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
     };
 
     let mut trees = Vec::new();
+    // сетка занятых мест со стороной ячейки `TREE_MIN_SPACING`: проверка
+    // разреженности — единственная работа, растущая с числом посаженных
+    // деревьев, и линейным перебором она делала посадку квадратичной (при
+    // потолке плотности деревьев уже десятки тысяч). Результат не
+    // приблизительный: в стороне `TREE_MIN_SPACING` любое дерево ближе
+    // минимума лежит в одной из девяти соседних ячеек.
+    let mut occupied: HashMap<IVec2, Vec<Vec2>> = HashMap::new();
+    let cell_of = |pos: Vec2| (pos / TREE_MIN_SPACING).floor().as_ivec2();
     for wood in &map.woods {
         let area = ring_area(&wood.outer);
-        let count = ((area / TREE_AREA_PER_TREE) as usize).max(3);
+        let count = ((area * TREE_DENSITY_MAX / TREE_AREA_PER_TREE) as usize).max(3);
         let (min, max) = ring_bounds(&wood.outer);
         let size = max - min;
         if size.x <= 0.0 || size.y <= 0.0 {
@@ -169,13 +185,23 @@ pub(super) fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
                 continue;
             }
             let spacing_sq = TREE_MIN_SPACING * TREE_MIN_SPACING;
-            if trees
-                .iter()
-                .any(|&(other, _)| pos.distance_squared(other) < spacing_sq)
-            {
+            let cell = cell_of(pos);
+            let crowded = (-1..=1).any(|dx| {
+                (-1..=1).any(|dy| {
+                    occupied
+                        .get(&(cell + IVec2::new(dx, dy)))
+                        .is_some_and(|others| {
+                            others
+                                .iter()
+                                .any(|&other| pos.distance_squared(other) < spacing_sq)
+                        })
+                })
+            });
+            if crowded {
                 continue;
             }
             trees.push((pos, radius));
+            occupied.entry(cell).or_default().push(pos);
             planted += 1;
         }
     }

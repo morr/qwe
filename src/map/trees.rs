@@ -13,8 +13,8 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
-    TREE_DETAIL_STROKE, TREE_MIXED_CONIFER_EVERY, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
-    Z_TREE_SHADOW,
+    TREE_DENSITY_MAX, TREE_DETAIL_STROKE, TREE_MIXED_CONIFER_EVERY, TREE_OUTLINE_STROKE,
+    TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
 };
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -355,6 +355,12 @@ pub struct TreeStyle {
     /// Разброс яркости листвы (`treeVariance`): множитель `2^(variance·bell)`.
     pub variance: f32,
     pub shape: TreeShape,
+    /// Плотность посадки, множитель к базовой (`TREE_DENSITY_MIN..MAX`).
+    /// `map::osm::planting` засаживает лес по `TREE_DENSITY_MAX`, а спавн
+    /// оставляет из этого набора долю `density / TREE_DENSITY_MAX` (см.
+    /// [`keeps`]) — деревья при движении ползунка не пересаживаются, а
+    /// прореживаются.
+    pub density: f32,
 }
 
 impl Default for TreeStyle {
@@ -364,6 +370,7 @@ impl Default for TreeStyle {
             details: INK_COLOR,
             variance: 0.2,
             shape: TreeShape::default(),
+            density: 1.0,
         }
     }
 }
@@ -375,12 +382,29 @@ impl TreeStyle {
     }
 }
 
+/// Растёт ли дерево с этим индексом при такой плотности. Доля отбирается по
+/// хешу индекса, а не по остатку и не по срезу начала списка: деревья посажены
+/// лес за лесом, и любой префикс выкосил бы целые массивы, а остаток
+/// срезонировал бы с выбором варианта кроны (`index % TREE_VARIANTS`).
+/// Множитель хеша — свой, не тот, которым `TreeShape::resolve` выбирает хвою,
+/// иначе прореживание било бы по одним и тем же деревьям.
+fn keeps(density: f32, index: usize) -> bool {
+    let share = (density / TREE_DENSITY_MAX).clamp(0.0, 1.0);
+    let hash = (index as u32).wrapping_mul(0x85EB_CA6B) >> 8;
+    hash % DENSITY_BUCKETS < (share * DENSITY_BUCKETS as f32) as u32
+}
+
+/// На сколько долей делится диапазон плотности в [`keeps`]: шаг ползунка —
+/// 1/8 диапазона, так что разрешения хватает с большим запасом.
+const DENSITY_BUCKETS: u32 = 1024;
+
 /// Крона или её тень — чтобы пересборка стиля знала, что деспавнить.
 #[derive(Component)]
 pub struct TreeTag;
 
 /// Спавн деревьев: `TREE_VARIANTS` крон единичного радиуса, каждому дереву —
-/// вариант, оттенок и масштаб детерминированно по индексу. Кроны — сущность на
+/// вариант, оттенок и масштаб детерминированно по индексу; из посаженного
+/// набора берётся доля по [`keeps`] (ползунок плотности). Кроны — сущность на
 /// дерево (свой оттенок и свой z), тени — **один слитый меш на все деревья**:
 /// полупрозрачная сущность попадает в сортируемую фазу `Transparent2d`, а
 /// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов пешеходов
@@ -420,6 +444,9 @@ pub fn spawn_trees(
 
     let mut shadows = MeshBuilder::default();
     for (index, &(position, radius)) in trees.iter().enumerate() {
+        if !keeps(style.density, index) {
+            continue;
+        }
         let shape = style.shape.resolve(index);
         let variants = &pools
             .iter()

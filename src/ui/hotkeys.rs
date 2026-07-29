@@ -13,11 +13,15 @@
 
 use bevy::prelude::*;
 
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
+use crate::ui::{
+    GameUiRoot, UI_BUILDINGS_PANEL_PX, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW,
+    UI_TREES_PANEL_PX, UiOpacity, ui_color,
+};
 
-/// Отступ снизу: блок стоит над панелью Buildings (та ~64 px высотой) в той же
-/// правой колонке, что Trees и Buildings.
-const PANEL_BOTTOM_PX: f32 = UI_SCREEN_EDGE_PX_OFFSET + 158.0 + 72.0;
+/// Отступ снизу: блок стоит над панелью Buildings в правой колонке панелей
+/// (Trees → Buildings → справка).
+const PANEL_BOTTOM_PX: f32 =
+    UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX + UI_BUILDINGS_PANEL_PX;
 
 /// Мелкий шрифт: справку читают один раз, места она занимать не должна.
 const FONT_PX: f32 = 11.0;

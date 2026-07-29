@@ -19,6 +19,13 @@ use crate::loading::{AppState, PlayPhase};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
+/// Правая колонка панелей стоит одна на другой: Trees (у края экрана) →
+/// Buildings → справка по хоткеям. `bevy_ui` их не стыкует — каждая панель
+/// абсолютная, — поэтому высоты держатся здесь, общими для всех трёх: строка,
+/// добавленная в Trees, иначе уезжает под Buildings.
+pub const UI_TREES_PANEL_PX: f32 = 206.0;
+pub const UI_BUILDINGS_PANEL_PX: f32 = 72.0;
+
 /// Подсветка «кнопка активна» и осветление под курсором / при нажатии —
 /// общие для тумблеров и панели городов.
 pub const TOGGLE_ACTIVE_COLOR: Color = Color::srgba(0.16, 0.5, 0.2, 0.9);

@@ -160,6 +160,14 @@ pub const TREE_OUTLINE_STROKE: f32 = 0.12;
 /// Толщина внутренних пунктирных дуг, доля радиуса — вдвое тоньше контура.
 pub const TREE_DETAIL_STROKE: f32 = 0.06;
 
+/// Границы и шаг ползунка плотности (`TreeStyle::density`) — множитель к
+/// базовой плотности посадки (`TREE_AREA_PER_TREE`). Лес засаживается сразу по
+/// `TREE_DENSITY_MAX`, а ползунок прореживает готовый набор, поэтому потолок
+/// стоит держать умеренным: он оплачивается временем посадки на загрузке.
+pub const TREE_DENSITY_MIN: f32 = 0.25;
+pub const TREE_DENSITY_MAX: f32 = 4.0;
+pub const TREE_DENSITY_STEP: f32 = 0.25;
+
 /// Z юнита по его мировой y-координате.
 pub fn unit_z(y: f32) -> f32 {
     Z_UNIT_BASE - y * Y_SORT_FACTOR

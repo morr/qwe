@@ -98,7 +98,13 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         started.elapsed()
     );
 
+    let started = std::time::Instant::now();
     map.trees = plant_trees(&map);
+    eprintln!(
+        "osm parse: {} trees planted in {:?}",
+        map.trees.len(),
+        started.elapsed()
+    );
     Ok(map)
 }
 

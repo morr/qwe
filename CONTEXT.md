@@ -263,12 +263,20 @@ in `main.rs`.
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
 - **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons**, never across
   a whole park:
-  deterministic LCG seeded per wood polygon, density ~1 / 1230 m², rejection sampling
+  deterministic LCG seeded per wood polygon, rejection sampling
   inside the polygon, never on buildings or within `TREE_CLEARANCE` (1.5 m) of a road
   edge (park alleys count as roads). Also rejected inside water or within
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
   (a lawn is a lawn; overhang from a neighbouring tree is fine).
+- **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m²) at
+  `TreeStyle::density == 1`, and the slider multiplies it (`TREE_DENSITY_MIN` 0.25 …
+  `TREE_DENSITY_MAX` 4, step 0.25). Planting always runs at `TREE_DENSITY_MAX`, so
+  `MapData::trees` holds the densest forest; the slider **thins that fixed set** at spawn
+  (`map::trees::keeps` — an index hash keeps the `density / TREE_DENSITY_MAX` share)
+  rather than replanting. Replanting would reshuffle every position on each step of the
+  slider, making the whole forest jump; thinning keeps the standing trees in place and
+  costs nothing per step.
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water, alleys, roads,
   building layers, walls): `MeshBuilder` triangulates polygons via `earcutr` (holes
@@ -328,7 +336,8 @@ in `main.rs`.
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
   item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
-  `foliage`, `details` (ink), `variance` (brightness spread), `shape`. **TreeShape** is
+  `foliage`, `details` (ink), `variance` (brightness spread), `shape`, plus `density`
+  (planting multiplier, see Tree density above). **TreeShape** is
   `Cotton | Conifer | Palm` — cloud outline (`bloat`), spiky cone (`Spiker::simple`),
   bent fronds (`Spiker::bent`). Any change reruns `rebuild_trees` (despawn `TreeTag`,
   respawn from the unchanged `MapData::trees` positions); the panel lives in
@@ -507,7 +516,11 @@ in `main.rs`.
   mouse button and would make one right click move both ways.
 - **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
   color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
-  text input, so hex fields became cycles). Writes `TreeStyle`; `map::trees::rebuild_trees`
+  text input, so hex fields became cycles), plus a **density row** — a
+  `bevy_ui_widgets::Slider` over `TREE_DENSITY_MIN..MAX`. Its `ValueChange` observer
+  quantizes to `TREE_DENSITY_STEP` and writes `TreeStyle` only when the step actually
+  changes, so one drag rebuilds the crowns at most eight times, not once per pixel.
+  Writes `TreeStyle`; `map::trees::rebuild_trees`
   picks the change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / movepath buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The

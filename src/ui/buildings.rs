@@ -10,15 +10,17 @@ use bevy::ui_widgets::{Activate, Button};
 use bevy::prelude::*;
 
 use crate::map::BuildingHeightMode;
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
+use crate::ui::{
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UI_TREES_PANEL_PX, UiOpacity, ui_color,
+};
 
 /// Строки — как у панели деревьев: плотный фон поверх полупрозрачной панели.
 const ROW_LIGHTEN: f32 = 0.0;
 const HOVER_LIGHTEN: f32 = 0.12;
 const PRESSED_LIGHTEN: f32 = 0.24;
 
-/// Отступ снизу: панель стоит над панелью Trees (та ~150 px высотой).
-const PANEL_BOTTOM_PX: f32 = UI_SCREEN_EDGE_PX_OFFSET + 158.0;
+/// Отступ снизу: панель стоит над панелью Trees.
+const PANEL_BOTTOM_PX: f32 = UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX;
 
 fn row_color(lighten: f32) -> Color {
     ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
