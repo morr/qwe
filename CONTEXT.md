@@ -135,6 +135,14 @@ in `main.rs`.
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
   order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
   default. Coverage is logged per city on load (`N buildings (M with height)`).
+- **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
+  lies **entirely** inside a water polygon is dropped right after the element loop, before
+  doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS
+  Belfast`, `Café Barge`) and Tula carries a lone shed in the middle of Верхний пруд; the
+  navmesh floods water impassable, so their doors are unreachable anyway and the box
+  standing on the pond reads as a render bug. One vertex on land is enough to survive —
+  piers and embankment houses stay. Counts: Tula 1, Berlin 6, NY 17, London 28, Paris 28,
+  Tokyo 0; logged on stderr when non-zero.
 - **Entrances** (`parse.rs::parse_entrance` + `attach_entrances`) — `entrance=*` **nodes**
   (the only nodes the Overpass query asks for), minus `NON_WALKABLE_ENTRANCES`
   (`no` = not a door at all, `garage`, `emergency`). An entrance in OSM is normally a

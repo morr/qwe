@@ -76,6 +76,11 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         eprintln!("osm parse: {skipped_open_rings} unclosed relation rings skipped");
     }
 
+    let drowned = drop_buildings_in_water(&mut map);
+    if drowned > 0 {
+        eprintln!("osm parse: {drowned} buildings dropped as standing entirely in water");
+    }
+
     let orphaned = attach_entrances(&mut map, &entrances);
     if orphaned > 0 {
         // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом контура,
@@ -97,6 +102,45 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
 
     map.trees = plant_trees(&map);
     Ok(map)
+}
+
+/// Дома, целиком стоящие в воде, выбрасываются. В OSM это плавучие рестораны и
+/// дебаркадеры (`HMS Belfast` в Лондоне, `Café Barge` в Париже), а в Туле —
+/// одинокий сарай посреди Верхнего пруда. Навмеш заливает воду непроходимой,
+/// так что до дверей такого дома пешка всё равно не дойдёт, а коробка посреди
+/// пруда читается как баг рендера.
+///
+/// Критерий — **все** вершины контура в воде: дом, зацепившийся за берег
+/// (пирс, набережная, дом на сваях у кромки), остаётся. Выброшенных единицы:
+/// Тула 1, Берлин 6, Нью-Йорк 17, Лондон и Париж по 28, Токио 0.
+///
+/// Порядок важен: до раскладки входов и посадки деревьев — иначе дом получит
+/// двери, а деревья обойдут стороной пустое место.
+fn drop_buildings_in_water(map: &mut MapData) -> usize {
+    // AABB-прекомпьют: воды десятки полигонов, зданий десятки тысяч, и почти
+    // каждое отсеивается на первой же вершине, не доходя до point-in-polygon
+    let bounds: Vec<(Vec2, Vec2)> = map
+        .water
+        .iter()
+        .map(|area| ring_bounds(&area.outer))
+        .collect();
+
+    let MapData {
+        buildings, water, ..
+    } = map;
+    let before = buildings.len();
+    buildings.retain(|building| {
+        !building.outer.iter().all(|point| {
+            water.iter().zip(&bounds).any(|(area, &(min, max))| {
+                point.x >= min.x
+                    && point.x <= max.x
+                    && point.y >= min.y
+                    && point.y <= max.y
+                    && point_in_area(*point, area)
+            })
+        })
+    });
+    before - buildings.len()
 }
 
 /// Нода `entrance=*` → позиция на карте. Не вход или значение из
@@ -747,6 +791,54 @@ mod tests {
                 "tree on the shoreline at {pos:?}"
             );
         }
+    }
+
+    /// Дом целиком в пруду выбрасывается, дом на берегу с одним углом в воде —
+    /// остаётся (пирс, набережная).
+    #[test]
+    fn buildings_standing_in_water_are_dropped() {
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+        let d = 0.001;
+        // пруд — квадрат вокруг центра; первый дом внутри него, второй сидит на
+        // южном берегу и заходит в воду только верхней парой углов
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 10, "tags": {{"natural": "water"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}},
+  {{"type": "way", "id": 11, "tags": {{"building": "yes"}},
+    "geometry": [
+      {{"lat": {lat}, "lon": {lon}}}, {{"lat": {lat}, "lon": {h}}},
+      {{"lat": {g}, "lon": {h}}}, {{"lat": {g}, "lon": {lon}}},
+      {{"lat": {lat}, "lon": {lon}}}]}},
+  {{"type": "way", "id": 12, "tags": {{"building": "yes"}},
+    "geometry": [
+      {{"lat": {f}, "lon": {lon}}}, {{"lat": {f}, "lon": {h}}},
+      {{"lat": {g}, "lon": {h}}}, {{"lat": {g}, "lon": {lon}}},
+      {{"lat": {f}, "lon": {lon}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+            f = lat - d * 2.0,
+            g = lat - d * 0.5,
+            h = lon + d * 0.5,
+        );
+
+        let map = parse(&json, CITY).unwrap();
+        assert_eq!(map.water.len(), 1);
+        assert_eq!(map.buildings.len(), 1, "only the shore building survives");
+        // у выжившего есть угол вне воды
+        let survivor = &map.buildings[0];
+        assert!(
+            survivor
+                .outer
+                .iter()
+                .any(|&point| !point_in_area(point, &map.water[0]))
+        );
     }
 
     #[test]
