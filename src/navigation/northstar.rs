@@ -5,18 +5,58 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_northstar::prelude::{GridSettingsBuilder, Nav, OrdinalGrid, PathfindArgs};
 
-use crate::navigation::Navmesh;
+use crate::navigation::{ArcNavmesh, Navmesh};
 use crate::settings::GRID_SIZE;
 
 /// Размер чанка иерархии; делит GRID_SIZE нацело (1500 и 1125 кратны 25),
 /// иначе northstar округляет с warning'ом.
 const CHUNK_SIZE: u32 = 25;
 
-/// Иерархическая сетка northstar; `None`, пока карта не загружена.
+/// Иерархическая сетка northstar; `None`, пока она не построена.
+///
+/// Постройка на карте 5600 × 3700 занимает ~11 с, и в главном потоке это
+/// ровно столько замершего экрана загрузки — поэтому она уходит в
+/// `AsyncComputeTaskPool`, а пути до её готовности ищет A*.
 #[derive(Resource, Default)]
-pub struct NorthstarGrid(pub Option<Arc<OrdinalGrid>>);
+pub struct NorthstarGrid {
+    grid: Option<Arc<OrdinalGrid>>,
+    task: Option<Task<OrdinalGrid>>,
+}
+
+impl NorthstarGrid {
+    /// Готовая сетка либо `None`, если постройка ещё идёт.
+    pub fn get(&self) -> Option<Arc<OrdinalGrid>> {
+        self.grid.clone()
+    }
+}
+
+/// Постройка стартует по входу в `Playing` — navmesh к этому моменту
+/// заполнен и прорежен фоновым потоком загрузки.
+pub fn start_northstar_build(arc_navmesh: Res<ArcNavmesh>, mut grid: ResMut<NorthstarGrid>) {
+    let navmesh = arc_navmesh.0.clone();
+    let started = std::time::Instant::now();
+    grid.task = Some(AsyncComputeTaskPool::get().spawn(async move {
+        let built = build_from_navmesh(&navmesh.read().unwrap());
+        info!("northstar grid built in {:?}", started.elapsed());
+        built
+    }));
+}
+
+/// Снятие готовой сетки с таска; до этого HPA*/Theta* работают как A*.
+pub fn poll_northstar_build(mut grid: ResMut<NorthstarGrid>) {
+    if grid.task.is_none() {
+        return;
+    }
+    let Some(built) = grid.task.as_mut().and_then(check_ready) else {
+        return;
+    };
+    grid.grid = Some(Arc::new(built));
+    grid.task = None;
+}
 
 /// Постройка сетки northstar из заполненного navmesh (входы чанков,
 /// кеши внутренних путей — считается параллельно внутри крейта).

@@ -6,11 +6,12 @@ use bevy::prelude::*;
 
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
-pub use self::northstar::{NorthstarGrid, build_from_navmesh, find_path_northstar};
+pub use self::northstar::{
+    NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
+    start_northstar_build,
+};
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, WorldInitSet};
-use crate::map::osm::MapData;
-use crate::portal::PortalPos;
 use crate::settings::NAVTILE_SIZE;
 
 /// Ответ асинхронного поиска пути (снимается в
@@ -79,47 +80,15 @@ impl Plugin for NavigationPlugin {
             .register_type::<PathfindingAlgorithm>()
             .init_resource::<PathfindingAlgorithm>()
             .init_resource::<NorthstarGrid>()
+            // navmesh заполняется и прореживается фоновым потоком загрузки
+            // (`map/osm/download.rs`) — здесь остаётся только иерархия,
+            // которая строится по уже финальной проходимости
             .add_systems(
                 OnEnter(AppState::Playing),
-                (
-                    fill_navmesh,
-                    snap_portal,
-                    prune_unreachable,
-                    build_northstar_grid,
-                )
-                    .chain()
-                    .in_set(WorldInitSet::Navmesh),
-            );
+                start_northstar_build.in_set(WorldInitSet::Navmesh),
+            )
+            .add_systems(Update, poll_northstar_build);
     }
-}
-
-/// Растеризация загруженной OSM-карты в navmesh.
-fn fill_navmesh(map: Res<MapData>, arc_navmesh: Res<ArcNavmesh>) {
-    let started = std::time::Instant::now();
-    let mut navmesh = arc_navmesh.write();
-    navmesh.fill_from_mapdata(&map);
-    info!("navmesh filled in {:?}", started.elapsed());
-}
-
-/// Карманы, недостижимые от портала, выключаются из navmesh — там никто
-/// не спавнится и туда не прокладываются пути.
-fn prune_unreachable(arc_navmesh: Res<ArcNavmesh>, portal: Res<PortalPos>) {
-    let started = std::time::Instant::now();
-    let mut navmesh = arc_navmesh.write();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal.0));
-    info!(
-        "navmesh: pruned {pruned} unreachable tiles in {:?}",
-        started.elapsed()
-    );
-}
-
-/// Иерархическая сетка northstar строится по финальному navmesh (после
-/// прунинга), чтобы обе структуры описывали одну и ту же проходимость.
-fn build_northstar_grid(arc_navmesh: Res<ArcNavmesh>, mut grid: ResMut<NorthstarGrid>) {
-    let started = std::time::Instant::now();
-    let built = northstar::build_from_navmesh(&arc_navmesh.read());
-    grid.0 = Some(std::sync::Arc::new(built));
-    info!("northstar grid built in {:?}", started.elapsed());
 }
 
 /// Радиус, в котором вокруг кандидата на портал всё должно быть проходимо
@@ -129,22 +98,10 @@ const PORTAL_CLEARANCE_TILES: i32 =
 /// Предел спирального поиска места для портала, тайлы.
 const PORTAL_SEARCH_TILES: i32 = 200;
 
-/// Хинт `PORTAL_POS` мог попасть в здание OSM-карты: снап к ближайшему
-/// тайлу, вокруг которого достаточно свободного места.
-fn snap_portal(arc_navmesh: Res<ArcNavmesh>, mut portal: ResMut<PortalPos>) {
-    let navmesh = arc_navmesh.read();
-    let Some(position) = snap_portal_position(&navmesh, portal.0) else {
-        warn!("no clear spot for portal near {:?}", portal.0);
-        return;
-    };
-    if position != portal.0 {
-        info!("portal snapped {:?} => {position:?}", portal.0);
-        portal.0 = position;
-    }
-}
-
 /// Ближайший к `position` центр тайла, вокруг которого хватает свободного
-/// места для портала. Отдельная функция — тем же снапом пользуется офлайн-бенч
+/// места для портала. Хинт `PORTAL_POS` мог попасть в здание OSM-карты;
+/// снап делает поток загрузки (`map/osm/download.rs`) сразу после заливки
+/// navmesh, той же функцией пользуется офлайн-бенч
 /// (`examples/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
 pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
     let start = world_to_tile(position);

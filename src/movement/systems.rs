@@ -78,12 +78,14 @@ pub fn dispatch_pathfinding_requests(
     let algorithm = *pathfinder.algorithm;
     for (_, _, entity, start_tile, end_tile) in queue {
         let navmesh = pathfinder.navmesh.0.clone();
-        let northstar = pathfinder.northstar.0.clone();
+        let northstar = pathfinder.northstar.get();
         let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
             let started_at;
             let path = match algorithm {
                 // иерархические алгоритмы идут через сетку northstar
-                PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar => {
+                PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar
+                    if northstar.is_some() =>
+                {
                     started_at = std::time::Instant::now();
                     northstar.as_deref().and_then(|grid| {
                         find_path_northstar(
@@ -95,6 +97,14 @@ pub fn dispatch_pathfinding_requests(
                     })
                 }
                 _ => {
+                    // сетка northstar ещё строится — до её готовности
+                    // иерархические алгоритмы обслуживает A*
+                    let algorithm = match algorithm {
+                        PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar => {
+                            PathfindingAlgorithm::Astar
+                        }
+                        other => other,
+                    };
                     let navmesh = navmesh.read().unwrap();
                     // после захвата лока: метрика — сам поиск, без RwLock
                     started_at = std::time::Instant::now();
