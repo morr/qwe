@@ -409,8 +409,22 @@ fn assemble_rings(
     rings
 }
 
-/// Зазор дерева до зданий и кромок дорог, м.
-const TREE_CLEARANCE: f32 = 1.5;
+/// Разброс радиуса кроны, м.
+const TREE_MIN_RADIUS: f32 = 2.5;
+const TREE_MAX_RADIUS: f32 = 4.0;
+
+/// Во сколько раз контур кроны выступает за номинальный радиус: фестоны
+/// `bloat` и шипы хвои уходят за единичную окружность (см. `map::trees`).
+const TREE_CROWN_REACH: f32 = 1.5;
+
+/// Зазор **кроны** (не ствола) до стены здания, м: крона, наползающая на дом,
+/// читается как растущая из крыши, поэтому зазор меряется от края кроны и от
+/// рёбер контура, а не только от точки внутри полигона.
+const TREE_WALL_CLEARANCE: f32 = 1.5;
+
+/// Зазор кроны до кромки дороги, м: заметно меньше стенного — крона, свисающая
+/// над тротуаром, выглядит естественно, крона поверх стены — нет.
+const TREE_KERB_CLEARANCE: f32 = 0.5;
 
 /// Зазор до берега, м: больше обычного, чтобы крона (радиус до 4) не свисала
 /// над прудом — дерево впритык к воде читается как растущее из воды.
@@ -435,15 +449,19 @@ fn near_area_edge(point: Vec2, area: &PolyArea, clearance: f32) -> bool {
 /// открытая часть парка обязана остаться полем. Детерминированный LCG по
 /// геометрии массива, плотность ∝ площади, rejection-sampling внутри полигона,
 /// только в границах карты и не на зданиях/дорогах (парковые аллеи — тоже
-/// дороги), не в воде и не на лугах и песке.
+/// дороги), не в воде и не на лугах и песке. Зазоры до стен и кромок дорог
+/// считаются от края кроны, поэтому радиус разыгрывается до проверок.
 fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
-    // AABB-прекомпьют, чтобы не гонять point-in-polygon по всем 3к зданий
+    // AABB-прекомпьют, чтобы не гонять point-in-polygon по всем 3к зданий;
+    // паддинг берётся по максимальной кроне — на конкретный радиус проверка
+    // ужимается уже внутри `blocked`
     let building_bounds: Vec<(Vec2, Vec2)> = map
         .buildings
         .iter()
         .map(|building| {
             let (min, max) = ring_bounds(&building.outer);
-            (min - TREE_CLEARANCE, max + TREE_CLEARANCE)
+            let pad = TREE_MAX_RADIUS * TREE_CROWN_REACH + TREE_WALL_CLEARANCE;
+            (min - pad, max + pad)
         })
         .collect();
     let road_bounds: Vec<(Vec2, Vec2)> = map
@@ -451,7 +469,7 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
         .iter()
         .map(|road| {
             let (min, max) = ring_bounds(&road.points);
-            let pad = road.width / 2.0 + TREE_CLEARANCE;
+            let pad = road.width / 2.0 + TREE_MAX_RADIUS + TREE_KERB_CLEARANCE;
             (min - pad, max + pad)
         })
         .collect();
@@ -472,11 +490,18 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
     let in_bbox = |pos: Vec2, min: Vec2, max: Vec2| {
         pos.x >= min.x && pos.x <= max.x && pos.y >= min.y && pos.y <= max.y
     };
-    let blocked = |pos: Vec2| {
+    let blocked = |pos: Vec2, radius: f32| {
+        // до стены — весь вылет кроны, до кромки дороги — только ствол с
+        // запасом: свисающая над дорожкой ветка выглядит естественно
+        let wall_gap = radius * TREE_CROWN_REACH + TREE_WALL_CLEARANCE;
+        let kerb_gap = radius + TREE_KERB_CLEARANCE;
         map.buildings
             .iter()
             .zip(&building_bounds)
-            .any(|(building, &(min, max))| in_bbox(pos, min, max) && point_in_area(pos, building))
+            .any(|(building, &(min, max))| {
+                in_bbox(pos, min, max)
+                    && (point_in_area(pos, building) || near_area_edge(pos, building, wall_gap))
+            })
             || map
                 .roads
                 .iter()
@@ -485,7 +510,7 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
                     in_bbox(pos, min, max)
                         && road.points.windows(2).any(|segment| {
                             distance_to_segment(pos, segment[0], segment[1])
-                                <= road.width / 2.0 + TREE_CLEARANCE
+                                <= road.width / 2.0 + kerb_gap
                         })
                 })
             || map
@@ -535,7 +560,8 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
             if pos.x < 0.0 || pos.y < 0.0 || pos.x > MAP_SIZE.x || pos.y > MAP_SIZE.y {
                 continue;
             }
-            if blocked(pos) {
+            let radius = TREE_MIN_RADIUS + next() * (TREE_MAX_RADIUS - TREE_MIN_RADIUS);
+            if blocked(pos, radius) {
                 continue;
             }
             let spacing_sq = TREE_MIN_SPACING * TREE_MIN_SPACING;
@@ -545,7 +571,6 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
             {
                 continue;
             }
-            let radius = 2.5 + next() * 1.5;
             trees.push((pos, radius));
             planted += 1;
         }
@@ -732,6 +757,64 @@ mod tests {
                 "tree on grass at {pos:?}"
             );
             assert!(!point_in_area(pos, &map.sand[0]), "tree on sand at {pos:?}");
+        }
+    }
+
+    /// Дом посреди массива: крона не должна наползать на стену — раньше
+    /// проверка была только «центр внутри полигона», и дерево вырастало
+    /// впритык к фасаду (Тула, павильон в парке).
+    #[test]
+    fn trees_keep_the_crown_off_walls_and_kerbs() {
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+        let d = 0.001;
+        // дом — центральная четверть массива, дорожка режет массив по диагонали
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}},
+  {{"type": "way", "id": 11, "tags": {{"building": "yes"}},
+    "geometry": [
+      {{"lat": {h1}, "lon": {k1}}}, {{"lat": {h1}, "lon": {k2}}},
+      {{"lat": {h2}, "lon": {k2}}}, {{"lat": {h2}, "lon": {k1}}},
+      {{"lat": {h1}, "lon": {k1}}}]}},
+  {{"type": "way", "id": 12, "tags": {{"highway": "footway"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+            h1 = lat - d / 4.0,
+            h2 = lat + d / 4.0,
+            k1 = lon - d / 4.0,
+            k2 = lon + d / 4.0,
+        );
+
+        let map = parse(&json, CITY).unwrap();
+        assert_eq!(map.buildings.len(), 1);
+        assert_eq!(map.roads.len(), 1);
+        assert!(!map.trees.is_empty());
+        let house = &map.buildings[0];
+        let path = &map.roads[0];
+        for &(pos, radius) in &map.trees {
+            assert!(
+                !point_in_area(pos, house),
+                "tree inside the house at {pos:?}"
+            );
+            assert!(
+                !near_area_edge(pos, house, radius * TREE_CROWN_REACH + TREE_WALL_CLEARANCE),
+                "crown on the wall at {pos:?}"
+            );
+            let kerb = path
+                .points
+                .windows(2)
+                .map(|segment| distance_to_segment(pos, segment[0], segment[1]))
+                .fold(f32::INFINITY, f32::min)
+                - path.width / 2.0;
+            assert!(kerb > radius, "tree on the kerb at {pos:?}, gap {kerb}");
         }
     }
 
