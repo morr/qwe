@@ -271,8 +271,11 @@ in `main.rs`.
     (0.6) clamped to 3–45 m. Not per-edge quads — on staircase facades those overlapped
     along the shadow axis and the translucency stacked into stripes; a chain sweep
     cannot self-intersect (a silhouette edge's perp-step equals `outward·d > 0`, so the
-    chain is monotone along the shadow perpendicular). Neighbouring buildings' shadows
-    still overlap-darken on the ground, same as tree shadows.
+    chain is monotone along the shadow perpendicular). All sweeps of the map are then
+    merged by a boolean union (`i_overlay`, NonZero — sweeps are winding-normalized
+    first) into disjoint shapes-with-holes, so the translucent layer never overlaps
+    itself anywhere: no double-darkening between wings of one block or neighbouring
+    buildings (unlike tree shadows, which still stack).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward a darker muted tone (max 0.7); no-height buildings and the Kremlin
     keep their base color.

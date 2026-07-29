@@ -141,6 +141,8 @@ Current third-party crates and why they exist:
 - `serde` / `serde_json` — Overpass JSON parsing
 - `ureq` 3 — blocking HTTPS download of the OSM extract (rustls + gzip by default)
 - `earcutr` — polygon triangulation (with holes) for merged map meshes
+- `i_overlay` — boolean union of building shadow sweeps, so the translucent shadow
+  layer never overlaps itself
 
 Before adding anything else, check `~/develop/bevy/bevy/crates/` for a first-party
 option — 0.19 absorbed a lot of what used to need crates (e.g. first-party `PanCamera`

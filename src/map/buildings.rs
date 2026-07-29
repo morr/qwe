@@ -304,11 +304,19 @@ fn facade_and_roof_builders(buildings: &[PolyArea], tinted: bool) -> (MeshBuilde
 /// перекрываются вдоль тени, и полупрозрачность складывалась в полосы двойной
 /// темноты. Свип цепочки самопересечься не может: перп-шаг ребра силуэта
 /// равен `outward·SHADOW_DIR > 0`, то есть цепочка монотонна вдоль
-/// перпендикуляра тени. Часть тени под зданиями закрывают их непрозрачные
-/// слои. Дыры (дворы) пропускаются: их тень падает внутрь футпринта.
+/// перпендикуляра тени.
+///
+/// Затем **все** свипы карты объединяются булевым union (`i_overlay`) в набор
+/// непересекающихся фигур с дырками: тени смежных корпусов и соседних зданий
+/// перекрываются на земле, а любое наложение внутри одного полупрозрачного
+/// слоя читается как пятно двойной темноты. После union альфа везде ровно
+/// одна. Часть тени под зданиями закрывают их непрозрачные слои. Дыры (дворы)
+/// пропускаются: их тень падает внутрь футпринта.
 fn shadow_builder(buildings: &[PolyArea]) -> MeshBuilder {
-    let mut builder = MeshBuilder::default();
-    let color = SHADOW_COLOR.to_linear();
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::float::simplify::SimplifyShape;
+
+    let mut sweeps: Vec<Vec<[f32; 2]>> = Vec::new();
     for building in buildings {
         let length = (height_or_default(building) * SHADOW_LENGTH_SCALE)
             .clamp(*SHADOW_LENGTH_RANGE.start(), *SHADOW_LENGTH_RANGE.end());
@@ -316,8 +324,29 @@ fn shadow_builder(buildings: &[PolyArea]) -> MeshBuilder {
         for chain in silhouette_chains(&building.outer, SHADOW_DIR) {
             let mut sweep: Vec<Vec2> = chain.clone();
             sweep.extend(chain.iter().rev().map(|&point| point + offset));
-            builder.push_polygon(&sweep, &[], color);
+            // NonZero гасит контуры противоположного обхода — свипы обязаны
+            // быть одинаково закручены, а обход source-колец OSM произволен
+            if signed_area(&sweep) < 0.0 {
+                sweep.reverse();
+            }
+            sweeps.push(sweep.into_iter().map(|point| [point.x, point.y]).collect());
         }
+    }
+
+    let mut builder = MeshBuilder::default();
+    let color = SHADOW_COLOR.to_linear();
+    for shape in sweeps.simplify_shape(FillRule::NonZero) {
+        let mut rings = shape.into_iter().map(|contour| {
+            contour
+                .into_iter()
+                .map(Vec2::from_array)
+                .collect::<Vec<Vec2>>()
+        });
+        let Some(outer) = rings.next() else {
+            continue;
+        };
+        let holes: Vec<Vec<Vec2>> = rings.collect();
+        builder.push_polygon(&outer, &holes, color);
     }
     builder
 }
@@ -657,6 +686,26 @@ mod tests {
         let offset_length = 20.0 * SHADOW_LENGTH_SCALE;
         let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
         assert!((mesh_area(&mesh) - offset_length * perp_span).abs() < 0.5);
+    }
+
+    #[test]
+    fn neighbour_shadows_union_without_double_darkening() {
+        // два корпуса в ряд: тень левого дотягивается до правого, и без
+        // union суммарная площадь меша была бы суммой двух свипов — с
+        // перекрытием, читающимся как пятно двойной темноты
+        let left = building(square(), Some(15.0), AreaKind::Building);
+        let right = building(
+            square().iter().map(|p| *p + Vec2::new(12.0, 0.0)).collect(),
+            Some(15.0),
+            AreaKind::Building,
+        );
+        let alone = |b: &PolyArea| mesh_area(&shadow_builder(std::slice::from_ref(b)).build());
+        let separate = alone(&left) + alone(&right);
+        let together = mesh_area(&shadow_builder(&[left, right]).build());
+        assert!(
+            together < separate - 1.0,
+            "union must remove the overlap: {together} vs {separate}"
+        );
     }
 
     #[test]
