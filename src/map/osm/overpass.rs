@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use bevy::math::{DVec2, Vec2};
 use serde::Deserialize;
 
-use crate::settings::{GEO_CENTER_LAT, GEO_CENTER_LON, MAP_SIZE, METERS_PER_DEG_LAT};
+use crate::city::City;
+use crate::settings::{MAP_SIZE, METERS_PER_DEG_LAT};
 
 /// Гео-границы карты и локальная равнопромежуточная проекция:
 /// метры от юго-западного угла bbox, y — на север.
@@ -21,17 +22,18 @@ pub struct GeoBounds {
 }
 
 impl GeoBounds {
-    pub fn from_settings() -> Self {
-        let lon_scale = METERS_PER_DEG_LAT * GEO_CENTER_LAT.to_radians().cos();
+    pub fn for_city(city: City) -> Self {
+        let center = city.geo_center();
+        let lon_scale = METERS_PER_DEG_LAT * center.x.to_radians().cos();
         let half = DVec2::new(
             MAP_SIZE.x as f64 / 2.0 / lon_scale,
             MAP_SIZE.y as f64 / 2.0 / METERS_PER_DEG_LAT,
         );
         Self {
-            south: GEO_CENTER_LAT - half.y,
-            west: GEO_CENTER_LON - half.x,
-            north: GEO_CENTER_LAT + half.y,
-            east: GEO_CENTER_LON + half.x,
+            south: center.x - half.y,
+            west: center.y - half.x,
+            north: center.x + half.y,
+            east: center.y + half.x,
             lon_scale,
         }
     }
@@ -49,14 +51,14 @@ impl GeoBounds {
 const QUERY_VERSION: u32 = 2;
 
 /// QL-запрос: здания, дороги, вода, парки/зелень, луга, песок, стены Кремля.
-pub fn overpass_query() -> String {
+pub fn overpass_query(city: City) -> String {
     let GeoBounds {
         south,
         west,
         north,
         east,
         ..
-    } = GeoBounds::from_settings();
+    } = GeoBounds::for_city(city);
     let bbox = format!("{south},{west},{north},{east}");
     format!(
         r#"[out:json][timeout:120];
@@ -84,11 +86,18 @@ out geom;
     )
 }
 
-/// Файл кеша выгрузки: параметры в имени — смена настроек инвалидирует кеш.
-pub fn cache_path() -> PathBuf {
+/// Файл кеша выгрузки: параметры в имени — смена настроек инвалидирует кеш,
+/// а у каждого города свой файл, так что переключение туда-обратно не качает
+/// заново.
+pub fn cache_path(city: City) -> PathBuf {
+    let center = city.geo_center();
     PathBuf::from(format!(
-        "assets/osm/tula_{GEO_CENTER_LAT}_{GEO_CENTER_LON}_{}x{}_v{QUERY_VERSION}.json",
-        MAP_SIZE.x, MAP_SIZE.y
+        "assets/osm/{}_{}_{}_{}x{}_v{QUERY_VERSION}.json",
+        city.slug(),
+        center.x,
+        center.y,
+        MAP_SIZE.x,
+        MAP_SIZE.y
     ))
 }
 
@@ -135,17 +144,25 @@ mod tests {
 
     #[test]
     fn center_projects_to_map_center() {
-        let bounds = GeoBounds::from_settings();
-        let center = bounds.project(GEO_CENTER_LAT, GEO_CENTER_LON);
-        assert!((center - MAP_SIZE / 2.0).length() < 1.0, "{center:?}");
+        for city in City::ALL {
+            let bounds = GeoBounds::for_city(city);
+            let geo = city.geo_center();
+            let center = bounds.project(geo.x, geo.y);
+            assert!(
+                (center - MAP_SIZE / 2.0).length() < 1.0,
+                "{city:?} {center:?}"
+            );
+        }
     }
 
     #[test]
     fn corners_project_to_map_corners() {
-        let bounds = GeoBounds::from_settings();
-        let sw = bounds.project(bounds.south, bounds.west);
-        let ne = bounds.project(bounds.north, bounds.east);
-        assert!(sw.length() < 1.0, "{sw:?}");
-        assert!((ne - MAP_SIZE).length() < 1.0, "{ne:?}");
+        for city in City::ALL {
+            let bounds = GeoBounds::for_city(city);
+            let sw = bounds.project(bounds.south, bounds.west);
+            let ne = bounds.project(bounds.north, bounds.east);
+            assert!(sw.length() < 1.0, "{city:?} {sw:?}");
+            assert!((ne - MAP_SIZE).length() < 1.0, "{city:?} {ne:?}");
+        }
     }
 }

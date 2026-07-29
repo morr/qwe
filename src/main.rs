@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, demon, dev, diagnostics, human, loading, map, movement, navigation, portal, prefs,
-    restart, sim_time, spatial, telemetry, ui,
+    camera, city, demon, dev, diagnostics, human, loading, map, movement, navigation, portal,
+    prefs, restart, sim_time, spatial, telemetry, ui,
 };
 
 fn main() {
@@ -46,6 +46,7 @@ fn main() {
                 }),
         )
         .add_plugins((RemotePlugin::default(), RemoteHttpPlugin::default()))
+        .add_plugins(city::CityPlugin)
         .add_plugins((
             loading::LoadingPlugin,
             camera::CameraPlugin,

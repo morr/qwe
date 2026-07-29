@@ -2,8 +2,9 @@
 
 use bevy::prelude::*;
 
+use crate::city::City;
 use crate::loading::{AppState, WorldInitSet};
-use crate::settings::{PORTAL_DIAMETER, PORTAL_POS, Z_PORTAL};
+use crate::settings::{PORTAL_DIAMETER, Z_PORTAL};
 
 /// Кадры спрайтшита: 3 × 3 сетка по 160 px.
 const FRAME_SIZE: u32 = 160;
@@ -19,15 +20,15 @@ pub struct Portal;
 #[derive(Component)]
 pub struct PortalAnimation(Timer);
 
-/// Фактическая позиция портала. Стартует с хинта `PORTAL_POS`; после
-/// заполнения navmesh снапится к ближайшему проходимому тайлу.
+/// Фактическая позиция портала. Стартует с хинта города (`City::portal_hint`);
+/// после заполнения navmesh снапится к ближайшему проходимому тайлу.
 #[derive(Resource, Reflect)]
 #[reflect(Resource)]
 pub struct PortalPos(pub Vec2);
 
 impl Default for PortalPos {
     fn default() -> Self {
-        Self(PORTAL_POS)
+        Self(City::default().portal_hint())
     }
 }
 
@@ -69,6 +70,7 @@ fn spawn_portal(
     commands.spawn((
         sprite,
         Transform::from_translation(portal_pos.0.extend(Z_PORTAL)),
+        DespawnOnExit(AppState::Playing),
         Portal,
         PortalAnimation(Timer::from_seconds(FRAME_SECS, TimerMode::Repeating)),
         Name::new("portal"),

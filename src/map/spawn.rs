@@ -3,6 +3,7 @@
 
 use bevy::prelude::*;
 
+use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, RoadClass};
 use crate::map::trees::{self, TreeStyle};
@@ -51,6 +52,7 @@ pub fn spawn_map(
             ..default()
         },
         Transform::from_translation((MAP_SIZE / 2.0).extend(Z_GROUND)),
+        DespawnOnExit(AppState::Playing),
         Name::new("ground"),
     ));
 
@@ -148,6 +150,7 @@ pub fn spawn_map(
             Mesh2d(meshes.add(builder.build())),
             MeshMaterial2d(material.clone()),
             Transform::from_xyz(0.0, 0.0, z),
+            DespawnOnExit(AppState::Playing),
             Name::new(name),
         ));
     }

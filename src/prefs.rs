@@ -1,5 +1,6 @@
-//! Запоминание выбранных в UI опций между запусками: дебаг-тумблеры
-//! (grid / navmesh / movepath), алгоритм поиска пути и панель стиля деревьев.
+//! Запоминание выбранных в UI опций между запусками: выбранный город,
+//! дебаг-тумблеры (grid / navmesh / movepath), алгоритм поиска пути и панель
+//! стиля деревьев.
 //!
 //! Поверх первопартийного `bevy::settings` (см. upstream-пример
 //! `window/persisting_window_settings.rs`): сами ресурсы помечены
@@ -20,6 +21,7 @@
 use bevy::prelude::*;
 use bevy::settings::{SaveSettingsSync, SettingsPlugin};
 
+use crate::city::City;
 use crate::map::TreeStyle;
 use crate::movement::DrawMovePaths;
 use crate::navigation::PathfindingAlgorithm;
@@ -27,7 +29,7 @@ use crate::ui::{DebugGrid, DebugNavmesh};
 
 /// Обратное доменное имя из URL репозитория — как просит документация
 /// `SettingsPlugin`. Определяет папку: на macOS
-/// `~/Library/Application Support/com.github.morr.qwe/settings.toml`.
+/// `~/Library/Preferences/com.github.morr.qwe/settings.toml`.
 const APP_NAME: &str = "com.github.morr.qwe";
 
 pub struct PrefsPlugin;
@@ -37,7 +39,8 @@ impl Plugin for PrefsPlugin {
         app.add_plugins(SettingsPlugin::new(APP_NAME)).add_systems(
             Update,
             save_prefs.run_if(
-                resource_changed::<DebugGrid>
+                resource_changed::<City>
+                    .or_else(resource_changed::<DebugGrid>)
                     .or_else(resource_changed::<DebugNavmesh>)
                     .or_else(resource_changed::<DrawMovePaths>)
                     .or_else(resource_changed::<PathfindingAlgorithm>)

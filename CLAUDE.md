@@ -89,6 +89,21 @@ Run a single test:
 cargo test test_name --verbose
 ```
 
+### Running cargo so progress stays visible
+
+A cold `cargo build` here takes minutes. Two hard rules:
+
+- **Always run `cargo build` / `run` / `test` / `clippy` with `run_in_background: true`.**
+  Output streams to a background task the user can watch live; the model is notified on
+  exit. A foreground cargo command blocks the session with nothing on screen.
+- **Never pipe cargo through `tail` / `head` / `grep`.** The pipe buffers everything until
+  the process ends, so no progress is visible, and cargo drops its progress bar when
+  stderr is not a tty. Use `--message-format=short` when the output needs to be smaller;
+  read the tail of the finished background output instead of pre-trimming it.
+
+Bash timeouts are raised to 10 min in `.claude/settings.json` (`BASH_DEFAULT_TIMEOUT_MS`)
+for the cases that do run in the foreground.
+
 `dynamic_linking` is already enabled in `Cargo.toml` — never pass `--features bevy/dynamic_linking`.
 
 First `cargo run` downloads the OSM extract from Overpass into `assets/osm/` (gitignored
@@ -142,6 +157,9 @@ those additions.
 - World spawning goes in `OnEnter(AppState::Playing)` under `WorldInitSet`
   (`Navmesh → Spawn`), never in `Startup`; per-tick simulation goes in `FixedUpdate`
   inside a `SimSet` and is gated on `Playing`
+- **Every entity of the game world carries `DespawnOnExit(AppState::Playing)`** — see
+  "World entities" below. Adding a spawn site without it leaks the entity into the next
+  city.
 - Tuning constants (sizes, speeds, radii, z-layers) live in `src/settings.rs`, not
   inline in systems
 - Clippy `type_complexity` is allowed globally; `wildcard_imports` warns
@@ -149,6 +167,37 @@ those additions.
   nightly rustfmt (see Verification)
 - Keyboard/mouse gates belong in the schedule as run conditions
   (`run_if(input_just_pressed(..))`), not as an early `return` inside the system
+
+## World entities — the `DespawnOnExit` rule
+
+Switching the city (`City` resource, panel at the bottom centre) reloads the world by
+sending the app back to `AppState::Loading`. Nothing despawns the previous city by hand:
+the scene is cleared **only** by `DespawnOnExit(AppState::Playing)` on each entity.
+
+So: **anything spawned while `Playing` that belongs to the world — a unit, a corpse, a
+map mesh, a tree, an overlay, a marker, a projectile — must be spawned with
+`DespawnOnExit(AppState::Playing)`.** No exceptions, including entities spawned from
+observers, `FixedUpdate` systems, or dev tools. Current spawn sites (keep this list in
+step when adding one):
+
+| entity | file |
+|---|---|
+| ground sprite, merged layer meshes | `map/spawn.rs` |
+| tree crowns + shadows | `map/trees.rs::spawn_trees` |
+| portal | `portal.rs` |
+| humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
+| demons | `demon/systems.rs::spawn_demon` |
+| navmesh overlay | `ui/debug.rs::sync_navmesh_overlay` |
+| test walker | `dev.rs::on_spawn_test_walker` |
+
+Not world entities, and deliberately without the component: the camera (`camera.rs`), the
+UI panels (`ui/*`, hidden/shown via `GameUiRoot`), the loader screen (`loading.rs`, has
+its own despawn on `PlayPhase::Live`).
+
+The rule is backed at runtime by `loading.rs::warn_leftover_world_entities`: on every
+entry into `Loading` it warns about anything that still has a `Transform` and is neither a
+camera nor a UI node. A `world reload: N scene entities survived Playing` line in the log
+means a spawn site is missing the component — fix the site, don't silence the warning.
 
 ## Bevy Time Types
 

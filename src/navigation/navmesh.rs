@@ -80,6 +80,9 @@ impl Navmesh {
     /// коридоры поверх воды (иначе Упа разрезает карту надвое), а здания и
     /// стены блокируют уже после.
     pub fn fill_from_mapdata(&mut self, map: &MapData) {
+        // сетка переживает смену города: без сброса на новой карте остались
+        // бы дома и прунинг старой
+        self.passable.fill(true);
         for area in &map.water {
             self.set_area(area, false);
         }

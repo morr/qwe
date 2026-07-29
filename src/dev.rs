@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use crate::grid::world_to_tile;
+use crate::loading::AppState;
 use crate::movement::Movable;
 use crate::settings::unit_z;
 
@@ -61,6 +62,7 @@ fn on_spawn_test_walker(event: On<SpawnTestWalkerEvent>, mut commands: Commands)
             },
             Transform::from_translation(event.from.extend(unit_z(event.from.y))),
             TestWalker,
+            DespawnOnExit(AppState::Playing),
             Name::new("test_walker"),
         ))
         .id();

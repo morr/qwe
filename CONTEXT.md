@@ -53,7 +53,23 @@ in `main.rs`.
   frame is drawn inside a schedule, so work there freezes the loader on its last message.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans/corpses/demons/walkers,
   resets `DemonSpawner` + `Telemetry`, respawns population. The navmesh persists — it is
-  filled once per app run.
+  filled once per city.
+- **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built
+  from: `Tula | NewYork | Paris | Berlin | London`. Each carries its **geo center** (bbox
+  center of the Overpass extract), its **portal hint** and its **cache slug**; `MAP_SIZE`
+  and therefore `GRID_SIZE` are shared, so switching city never resizes the navmesh.
+  Panel — bottom centre (`ui/city.rs`), the current city's button is highlighted.
+- **City switch = full world reload.** Writing `City` (button or BRP) sends the app back
+  to `AppState::Loading`: leaving `Playing` despawns the scene, the load thread downloads
+  / re-parses the new extract, refills the same navmesh (`fill_from_mapdata` resets it
+  first), re-snaps the portal, and `OnEnter(Playing)` rebuilds map, population and
+  camera position. `DemonSpawner`, `Telemetry`, `NorthstarGrid` and `WarmupProgress` are
+  reset on the way. The switch is gated on `in_state(Playing)` — restarting a load on top
+  of a running one would put two threads into one navmesh.
+- **`DespawnOnExit(AppState::Playing)`** — the *only* thing that clears the old city.
+  Every world entity must carry it; the list of spawn sites and the rule live in
+  `CLAUDE.md` ("World entities"), and `loading.rs::warn_leftover_world_entities` warns on
+  every entry into `Loading` if something survived.
 
 ## OSM map pipeline
 
@@ -61,7 +77,12 @@ in `main.rs`.
   `out geom` (inline geometry, no node lookup). Query covers: `building` (way+rel),
   `highway` (way), `natural=water` / `waterway=riverbank` (way+rel), `leisure=park|garden`,
   `landuse=recreation_ground|forest` + `natural=wood`, `landuse=grass|meadow` /
-  `natural=grassland|meadow`, `natural=sand|beach`, `barrier=city_wall`.
+  `natural=grassland|meadow`, `natural=sand|beach`, `barrier=city_wall`. The bbox is
+  `MAP_SIZE` around the selected `City`'s geo center.
+- **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`overpass-api.de` →
+  `kumi.systems` → `private.coffee`). On dense cities the main instance answers 504
+  "server too busy", or worse, a **200 with an HTML error page** — hence the
+  "response must start with `{`" check before a mirror is considered successful.
 - **Cache** — `assets/osm/tula_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored).
   Parameters live in the file name, so changing settings invalidates it; **bump
   `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**, or every existing

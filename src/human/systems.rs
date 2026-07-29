@@ -5,6 +5,7 @@ use crate::grid::{tile_center, world_to_tile};
 use crate::human::components::{
     Human, HumanFirstWanderTag, HumanWanderTag, WanderHeading, WanderPause,
 };
+use crate::loading::AppState;
 use crate::map::osm::MapData;
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
@@ -73,6 +74,7 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             WanderHeading(Vec2::from_angle(
                 rng.random_range(0.0..std::f32::consts::TAU),
             )),
+            DespawnOnExit(AppState::Playing),
             Name::new("human"),
         ));
     }

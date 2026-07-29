@@ -19,7 +19,10 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
+use crate::ui::{
+    GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
+    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color,
+};
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
 #[derive(Resource, Reflect, SettingsGroup, Default)]
@@ -46,11 +49,6 @@ struct NavmeshOverlayMarker;
 /// Подпись на кнопке-переключателе алгоритма поиска пути.
 #[derive(Component)]
 struct PathfindingMethodLabel;
-
-const TOGGLE_ACTIVE_COLOR: Color = Color::srgba(0.16, 0.5, 0.2, 0.9);
-/// Насколько светлее становится кнопка под курсором и при нажатии.
-const TOGGLE_HOVER_LIGHTEN: f32 = 0.12;
-const TOGGLE_PRESSED_LIGHTEN: f32 = 0.24;
 
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
 const NAVMESH_OVERLAY_Z: f32 = 5.2;
@@ -314,6 +312,7 @@ fn sync_navmesh_overlay(
             ..default()
         })),
         Transform::from_xyz(0.0, 0.0, NAVMESH_OVERLAY_Z),
+        DespawnOnExit(AppState::Playing),
         Name::new("navmesh_overlay"),
     ));
 }

@@ -3,6 +3,7 @@ use rand::Rng;
 
 use crate::demon::components::{Demon, DemonSpawner, DemonWanderTag};
 use crate::grid::world_to_tile;
+use crate::loading::AppState;
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::portal::PortalPos;
@@ -71,6 +72,7 @@ fn spawn_demon(commands: &mut Commands, portal_pos: Vec2, angle: f32, index: usi
         Demon,
         DemonWanderTag,
         Movable::new(DEMON_SPEED),
+        DespawnOnExit(AppState::Playing),
         Name::new("demon"),
     ));
 }

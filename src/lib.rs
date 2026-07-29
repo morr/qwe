@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod city;
 pub mod demon;
 pub mod dev;
 pub mod diagnostics;

@@ -2,6 +2,7 @@
 //! дебаг-тумблеры. Обычные `bevy_ui`-ноды + первопартийный
 //! `bevy_ui_widgets::Button`.
 
+mod city;
 mod debug;
 mod speed;
 mod trees;
@@ -9,9 +10,15 @@ mod trees;
 use bevy::prelude::*;
 
 pub use self::debug::{DebugGrid, DebugNavmesh};
-use crate::loading::PlayPhase;
+use crate::loading::{AppState, PlayPhase};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
+
+/// Подсветка «кнопка активна» и осветление под курсором / при нажатии —
+/// общие для тумблеров и панели городов.
+pub const TOGGLE_ACTIVE_COLOR: Color = Color::srgba(0.16, 0.5, 0.2, 0.9);
+pub const TOGGLE_HOVER_LIGHTEN: f32 = 0.12;
+pub const TOGGLE_PRESSED_LIGHTEN: f32 = 0.24;
 
 const UI_COLOR: Color = Color::srgb(0.094, 0.102, 0.11);
 
@@ -45,13 +52,23 @@ impl Plugin for UiPlugin {
             speed::UiSpeedPlugin,
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
+            city::UiCityPlugin,
         ))
-        .add_systems(OnEnter(PlayPhase::Live), show_game_ui);
+        .add_systems(OnEnter(PlayPhase::Live), show_game_ui)
+        // смена города возвращает приложение на экран загрузки — панели
+        // прячутся до конца следующего прогрева
+        .add_systems(OnExit(AppState::Playing), hide_game_ui);
     }
 }
 
 fn show_game_ui(mut roots: Query<&mut Visibility, With<GameUiRoot>>) {
     for mut visibility in &mut roots {
         *visibility = Visibility::Inherited;
+    }
+}
+
+fn hide_game_ui(mut roots: Query<&mut Visibility, With<GameUiRoot>>) {
+    for mut visibility in &mut roots {
+        *visibility = Visibility::Hidden;
     }
 }

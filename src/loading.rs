@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 use bevy::window::PrimaryWindow;
 
+use crate::city::City;
 use crate::map::osm::{JobState, MapLoadJob, start_load_thread};
 use crate::movement::{PathfindingRequest, PathfindingTask, SimPosition};
 use crate::navigation::ArcNavmesh;
@@ -58,11 +59,20 @@ impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
             .add_sub_state::<PlayPhase>()
+            .init_resource::<WarmupProgress>()
             .configure_sets(
                 OnEnter(AppState::Playing),
                 (WorldInitSet::Navmesh, WorldInitSet::Spawn).chain(),
             )
-            .add_systems(OnEnter(AppState::Loading), (spawn_loader_ui, start_job))
+            .add_systems(
+                OnEnter(AppState::Loading),
+                (
+                    spawn_loader_ui,
+                    start_job,
+                    reset_warmup,
+                    warn_leftover_world_entities,
+                ),
+            )
             .add_systems(
                 Update,
                 (
@@ -77,9 +87,9 @@ impl Plugin for LoadingPlugin {
     }
 }
 
-fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>) {
+fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>, city: Res<City>) {
     let job = MapLoadJob::default();
-    start_load_thread(job.clone(), navmesh.0.clone());
+    start_load_thread(job.clone(), navmesh.0.clone(), *city);
     commands.insert_resource(job);
 }
 
@@ -148,10 +158,11 @@ fn on_retry(
     _activate: On<Activate>,
     job: Res<MapLoadJob>,
     navmesh: Res<ArcNavmesh>,
+    city: Res<City>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting;
-    start_load_thread(job.clone(), navmesh.0.clone());
+    start_load_thread(job.clone(), navmesh.0.clone(), *city);
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
     }
@@ -238,7 +249,7 @@ fn poll_job(
 /// и без него прогрев закончился бы, не начавшись.
 fn poll_warmup(
     time: Res<Time<Real>>,
-    mut progress: Local<WarmupProgress>,
+    mut progress: ResMut<WarmupProgress>,
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     pending: Query<&SimPosition, Or<(With<PathfindingRequest>, With<PathfindingTask>)>>,
@@ -278,11 +289,41 @@ fn poll_warmup(
 }
 
 /// Состояние прогрева между кадрами: сколько он идёт и видели ли мы хоть
-/// одну заявку на путь.
-#[derive(Default)]
+/// одну заявку на путь. Ресурс, а не `Local`: при смене города прогрев
+/// начинается заново, а `Local` унёс бы в него истёкший таймаут прошлого.
+#[derive(Resource, Default)]
 struct WarmupProgress {
     elapsed: f32,
     seen_requests: bool,
+}
+
+fn reset_warmup(mut progress: ResMut<WarmupProgress>) {
+    *progress = WarmupProgress::default();
+}
+
+/// Страховка от забытого `DespawnOnExit(AppState::Playing)`: к моменту, когда
+/// мы снова в `Loading`, от старого города не должно остаться ни одной
+/// сущности сцены. Всё, что имеет `Transform` и не является камерой или
+/// UI-нодой, — это мир; если он пережил выход из `Playing`, при смене города
+/// он останется поверх новой карты (или, хуже, будет ходить по ней).
+fn warn_leftover_world_entities(
+    leftovers: Query<(Entity, Option<&Name>), (With<Transform>, Without<Camera>, Without<Node>)>,
+) {
+    let total = leftovers.iter().count();
+    if total == 0 {
+        return;
+    }
+    let sample: Vec<String> = leftovers
+        .iter()
+        .take(5)
+        .map(|(entity, name)| match name {
+            Some(name) => name.to_string(),
+            None => format!("{entity}"),
+        })
+        .collect();
+    warn!(
+        "world reload: {total} scene entities survived Playing (missing DespawnOnExit): {sample:?}"
+    );
 }
 
 fn despawn_loader_ui(mut commands: Commands, roots: Query<Entity, With<LoaderUiRoot>>) {

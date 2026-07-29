@@ -8,6 +8,7 @@ use std::f32::consts::{PI, TAU};
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
 use crate::settings::{
@@ -379,6 +380,7 @@ pub fn spawn_trees(
             Mesh2d(crown.clone()),
             MeshMaterial2d(tints[(index * 7) % tints.len()].clone()),
             Transform::from_translation(position.extend(z)).with_scale(Vec3::splat(radius)),
+            DespawnOnExit(AppState::Playing),
             Name::new("tree"),
         ));
         commands.spawn((
@@ -387,6 +389,7 @@ pub fn spawn_trees(
             MeshMaterial2d(shadow_material.clone()),
             Transform::from_translation(position.extend(Z_TREE_SHADOW))
                 .with_scale(Vec3::splat(radius)),
+            DespawnOnExit(AppState::Playing),
             Name::new("tree_shadow"),
         ));
     }

@@ -32,6 +32,13 @@ impl NorthstarGrid {
     pub fn get(&self) -> Option<Arc<OrdinalGrid>> {
         self.grid.clone()
     }
+
+    /// Сброс перед сменой карты: сетка старого города описывает уже не ту
+    /// проходимость, а таск постройки — тем более.
+    pub fn clear(&mut self) {
+        self.grid = None;
+        self.task = None;
+    }
 }
 
 /// Постройка стартует по входу в `Playing` — navmesh к этому моменту

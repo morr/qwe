@@ -8,14 +8,22 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use bevy::prelude::*;
 
+use crate::city::City;
 use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query};
 use crate::map::osm::parse::parse;
 use crate::navigation::{Navmesh, snap_portal_position};
-use crate::settings::PORTAL_POS;
 
-const OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
+/// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
+/// (Нью-Йорк, Лондон) регулярно отвечает 504 «server too busy» — или, того
+/// хуже, HTML-страницей с runtime error под кодом 200; тогда идём к
+/// следующему. Все три отдают один и тот же API и данные.
+const OVERPASS_URLS: [&str; 3] = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+];
 const CHUNK_SIZE: usize = 64 * 1024;
 
 /// Готовый к спавну мир: разобранная карта и позиция портала (снап нужен
@@ -58,9 +66,9 @@ impl MapLoadJob {
 
 /// Выделенный поток, а не пул задач: многосекундное блокирующее чтение
 /// сети не должно занимать воркер `AsyncComputeTaskPool`.
-pub fn start_load_thread(job: MapLoadJob, navmesh: Arc<RwLock<Navmesh>>) {
+pub fn start_load_thread(job: MapLoadJob, navmesh: Arc<RwLock<Navmesh>>, city: City) {
     std::thread::spawn(move || {
-        let result = run(&job).map(|map| build_navmesh(&job, map, &navmesh));
+        let result = run(&job, city).map(|map| build_navmesh(&job, map, &navmesh, city));
         job.set(match result {
             Ok(world) => JobState::Done(Some(Box::new(world))),
             Err(message) => JobState::Failed(message),
@@ -70,23 +78,29 @@ pub fn start_load_thread(job: MapLoadJob, navmesh: Arc<RwLock<Navmesh>>) {
 
 /// Растеризация карты и прунинг — по шагу на состояние, чтобы экран
 /// загрузки показывал, чем поток занят.
-fn build_navmesh(job: &MapLoadJob, map: MapData, arc_navmesh: &RwLock<Navmesh>) -> LoadedWorld {
+fn build_navmesh(
+    job: &MapLoadJob,
+    map: MapData,
+    arc_navmesh: &RwLock<Navmesh>,
+    city: City,
+) -> LoadedWorld {
     job.set(JobState::BuildingNavmesh);
     let started = std::time::Instant::now();
     let mut navmesh = arc_navmesh.write().unwrap();
     navmesh.fill_from_mapdata(&map);
     info!("navmesh filled in {:?}", started.elapsed());
 
-    let portal = match snap_portal_position(&navmesh, PORTAL_POS) {
+    let hint = city.portal_hint();
+    let portal = match snap_portal_position(&navmesh, hint) {
         Some(position) => {
-            if position != PORTAL_POS {
-                info!("portal snapped {PORTAL_POS:?} => {position:?}");
+            if position != hint {
+                info!("portal snapped {hint:?} => {position:?}");
             }
             position
         }
         None => {
-            warn!("no clear spot for portal near {PORTAL_POS:?}");
-            PORTAL_POS
+            warn!("no clear spot for portal near {hint:?}");
+            hint
         }
     };
 
@@ -101,15 +115,15 @@ fn build_navmesh(job: &MapLoadJob, map: MapData, arc_navmesh: &RwLock<Navmesh>) 
     LoadedWorld { map, portal }
 }
 
-fn run(job: &MapLoadJob) -> Result<MapData, String> {
-    let path = cache_path();
+fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
+    let path = cache_path(city);
 
     if path.exists() {
         info!("osm: cache hit at {}", path.display());
         let json =
             std::fs::read_to_string(&path).map_err(|error| format!("cache read: {error}"))?;
         job.set(JobState::Parsing);
-        match parse(&json) {
+        match parse(&json, city) {
             Ok(map) => return Ok(map),
             Err(error) => {
                 // битый кеш самоизлечивается: удаляем и качаем заново
@@ -119,9 +133,9 @@ fn run(job: &MapLoadJob) -> Result<MapData, String> {
         }
     }
 
-    let json = download(job)?;
+    let json = download(job, city)?;
     job.set(JobState::Parsing);
-    let map = parse(&json)?;
+    let map = parse(&json, city)?;
 
     // кеш пишется только после успешного парсинга
     if let Some(parent) = path.parent() {
@@ -134,12 +148,29 @@ fn run(job: &MapLoadJob) -> Result<MapData, String> {
     Ok(map)
 }
 
-fn download(job: &MapLoadJob) -> Result<String, String> {
-    job.set(JobState::Connecting);
-    info!("osm: downloading {OVERPASS_URL}");
+/// Обход зеркал: первое, ответившее JSON'ом, выигрывает; иначе — ошибка
+/// последнего.
+fn download(job: &MapLoadJob, city: City) -> Result<String, String> {
+    let query = overpass_query(city);
+    let mut last_error = String::from("no overpass endpoints configured");
+    for url in OVERPASS_URLS {
+        match download_from(job, url, &query) {
+            Ok(json) => return Ok(json),
+            Err(error) => {
+                warn!("osm: {url} failed ({error})");
+                last_error = error;
+            }
+        }
+    }
+    Err(last_error)
+}
 
-    let mut response = ureq::post(OVERPASS_URL)
-        .send(overpass_query().as_str())
+fn download_from(job: &MapLoadJob, url: &str, query: &str) -> Result<String, String> {
+    job.set(JobState::Connecting);
+    info!("osm: downloading {url}");
+
+    let mut response = ureq::post(url)
+        .send(query)
         .map_err(|error| format!("overpass request: {error}"))?;
 
     // с gzip длина обычно неизвестна (chunked) — тогда прогресс в байтах
@@ -161,5 +192,11 @@ fn download(job: &MapLoadJob) -> Result<String, String> {
         });
     }
 
-    String::from_utf8(data).map_err(|error| format!("overpass utf8: {error}"))
+    let json = String::from_utf8(data).map_err(|error| format!("overpass utf8: {error}"))?;
+    // перегруженный инстанс отдаёт HTML-страницу с runtime error и статусом
+    // 200 — для нас это отказ, а не карта
+    if !json.trim_start().starts_with('{') {
+        return Err("overpass returned a non-json body (server busy?)".to_string());
+    }
+    Ok(json)
 }

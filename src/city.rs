@@ -1,0 +1,120 @@
+//! Выбранный город: гео-центр выгрузки OSM, хинт портала и имя кеша. Смена
+//! города — полная перезагрузка мира: сущности сцены живут под
+//! `DespawnOnExit(AppState::Playing)`, поэтому достаточно вернуть приложение
+//! в `Loading` — оно само despawn'ит мир, качает новую выгрузку, заново
+//! заливает navmesh и спавнит население.
+//!
+//! Панель выбора — `ui/city.rs`; выбор запоминается между запусками
+//! (`prefs.rs`).
+
+use bevy::math::DVec2;
+use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
+
+use crate::demon::DemonSpawner;
+use crate::loading::AppState;
+use crate::navigation::NorthstarGrid;
+use crate::settings::{
+    BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
+    PARIS_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
+};
+use crate::telemetry::Telemetry;
+
+/// Город, по которому строится карта.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "world", key = "city")]
+pub enum City {
+    #[default]
+    Tula,
+    NewYork,
+    Paris,
+    Berlin,
+    London,
+}
+
+impl City {
+    pub const ALL: [Self; 5] = [
+        Self::Tula,
+        Self::NewYork,
+        Self::Paris,
+        Self::Berlin,
+        Self::London,
+    ];
+
+    /// Подпись на кнопке.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tula => "Tula",
+            Self::NewYork => "NY",
+            Self::Paris => "Paris",
+            Self::Berlin => "Berlin",
+            Self::London => "London",
+        }
+    }
+
+    /// Префикс файла кеша выгрузки.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Tula => "tula",
+            Self::NewYork => "ny",
+            Self::Paris => "paris",
+            Self::Berlin => "berlin",
+            Self::London => "london",
+        }
+    }
+
+    /// Центр bbox выгрузки — `(широта, долгота)`.
+    pub fn geo_center(self) -> DVec2 {
+        match self {
+            Self::Tula => TULA_GEO_CENTER,
+            Self::NewYork => NY_GEO_CENTER,
+            Self::Paris => PARIS_GEO_CENTER,
+            Self::Berlin => BERLIN_GEO_CENTER,
+            Self::London => LONDON_GEO_CENTER,
+        }
+    }
+
+    /// Хинт позиции портала в метрах карты (снапится к проходимому тайлу).
+    pub fn portal_hint(self) -> Vec2 {
+        match self {
+            Self::Tula => TULA_PORTAL_POS,
+            Self::NewYork => NY_PORTAL_POS,
+            _ => MAP_CENTER_PORTAL_POS,
+        }
+    }
+}
+
+pub struct CityPlugin;
+
+impl Plugin for CityPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<City>()
+            .register_type::<City>()
+            .add_systems(
+                Update,
+                reload_world_on_city_change
+                    .run_if(in_state(AppState::Playing))
+                    // ресурс «изменён» и в кадре, где его вставили настройки
+                    .run_if(resource_changed::<City>.and_then(not(resource_added::<City>))),
+            );
+    }
+}
+
+/// Возврат в `Loading` под новый город. Гейт `in_state(Playing)` тут не
+/// только про UI: перезапускать загрузку поверх уже идущей — значит пустить
+/// два потока в один и тот же navmesh.
+fn reload_world_on_city_change(
+    city: Res<City>,
+    mut next: ResMut<NextState<AppState>>,
+    mut spawner: ResMut<DemonSpawner>,
+    mut telemetry: ResMut<Telemetry>,
+    mut northstar: ResMut<NorthstarGrid>,
+) {
+    info!("city: reloading world as {:?}", *city);
+    *spawner = DemonSpawner::default();
+    *telemetry = Telemetry::default();
+    // иначе прогрев новой карты пойдёт по иерархии старой — пути сквозь дома
+    northstar.clear();
+    next.set(AppState::Loading);
+}

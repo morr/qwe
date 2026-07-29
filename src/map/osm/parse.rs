@@ -3,6 +3,7 @@
 
 use bevy::math::Vec2;
 
+use crate::city::City;
 use crate::map::osm::model::{
     AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine, distance_to_segment, point_in_area,
     point_in_polygon, ring_area, ring_bounds,
@@ -19,10 +20,10 @@ const TREE_AREA_PER_TREE: f32 = 1230.0;
 /// идентичные координаты; эпсилон страхует от шума проекции).
 const RING_JOIN_EPSILON: f32 = 0.01;
 
-pub fn parse(json: &str) -> Result<MapData, String> {
+pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
-    let bounds = GeoBounds::from_settings();
+    let bounds = GeoBounds::for_city(city);
 
     let mut map = MapData::default();
     let mut skipped_open_rings = 0usize;
@@ -398,14 +399,13 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{GEO_CENTER_LAT, GEO_CENTER_LON};
+    /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
+    const CITY: City = City::Tula;
 
     /// Мини-ответ Overpass: way-здание, дорога-мост, relation-вода из двух
     /// половинок с дыркой-островом.
     fn fixture() -> String {
-        let bounds = GeoBounds::from_settings();
-        let _ = &bounds;
-        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
         let d = 0.0005; // ~55 м по широте
         format!(
             r#"{{"elements": [
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn parses_building_road_and_multipolygon() {
-        let map = parse(&fixture()).unwrap();
+        let map = parse(&fixture(), CITY).unwrap();
 
         assert_eq!(map.buildings.len(), 1);
         assert_eq!(map.buildings[0].outer.len(), 4);
@@ -464,9 +464,7 @@ mod tests {
 
     #[test]
     fn trees_are_deterministic_and_inside_the_wood() {
-        let bounds = GeoBounds::from_settings();
-        let _ = &bounds;
-        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
         let d = 0.001;
         let json = format!(
             r#"{{"elements": [
@@ -482,8 +480,8 @@ mod tests {
             c = lon + d,
         );
 
-        let first = parse(&json).unwrap();
-        let second = parse(&json).unwrap();
+        let first = parse(&json, CITY).unwrap();
+        let second = parse(&json, CITY).unwrap();
         assert!(!first.trees.is_empty());
         assert_eq!(first.trees, second.trees);
         for &(pos, radius) in &first.trees {
@@ -502,7 +500,7 @@ mod tests {
 
     #[test]
     fn trees_avoid_a_pond_inside_the_wood() {
-        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
         let d = 0.001;
         // пруд занимает северо-восточную четверть массива
         let json = format!(
@@ -524,7 +522,7 @@ mod tests {
             c = lon + d,
         );
 
-        let map = parse(&json).unwrap();
+        let map = parse(&json, CITY).unwrap();
         assert_eq!(map.water.len(), 1);
         assert!(!map.trees.is_empty());
         let pond = &map.water[0];
@@ -539,7 +537,7 @@ mod tests {
 
     #[test]
     fn trees_avoid_grass_and_sand_inside_the_wood() {
-        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
         let d = 0.001;
         // луг — восточная половина массива, песок — северо-западная четверть
         let json = format!(
@@ -566,7 +564,7 @@ mod tests {
             c = lon + d,
         );
 
-        let map = parse(&json).unwrap();
+        let map = parse(&json, CITY).unwrap();
         assert_eq!(map.woods.len(), 1);
         assert_eq!(map.grass.len(), 1);
         assert_eq!(map.sand.len(), 1);
@@ -584,7 +582,7 @@ mod tests {
     /// парк без `natural=wood` остаётся пустым.
     #[test]
     fn a_park_without_wood_grows_no_trees() {
-        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
         let d = 0.001;
         let json = format!(
             r#"{{"elements": [
@@ -600,7 +598,7 @@ mod tests {
             c = lon + d,
         );
 
-        let map = parse(&json).unwrap();
+        let map = parse(&json, CITY).unwrap();
         assert_eq!(map.parks.len(), 1);
         assert!(map.woods.is_empty());
         assert!(map.trees.is_empty());

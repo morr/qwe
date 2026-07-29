@@ -22,15 +22,18 @@ use bevy_northstar::prelude::OrdinalGrid;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+use qwe::city::City;
 use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::{
     Navmesh, PathfindingAlgorithm, build_from_navmesh, find_passable_tile_near, find_path,
     find_path_northstar, snap_portal_position,
 };
-use qwe::settings::{
-    GRID_SIZE, HUMAN_COUNT, HUMAN_WANDER_RANGE, MAP_SIZE, NAVTILE_SIZE, PORTAL_POS,
-};
+use qwe::settings::{GRID_SIZE, HUMAN_COUNT, HUMAN_WANDER_RANGE, MAP_SIZE, NAVTILE_SIZE};
+
+/// Бенч гоняется по карте города по умолчанию — той же, что видит игра при
+/// первом запуске.
+const CITY: City = City::Tula;
 
 /// Сид генератора задач: один и тот же набор при каждом запуске.
 const SEED: u64 = 0xC0FFEE;
@@ -152,14 +155,14 @@ fn is_hierarchical(algorithm: PathfindingAlgorithm) -> bool {
 
 /// Карта — только из кеша: бенч не ходит в сеть, кеш наполняет обычный запуск.
 fn load_map() -> MapData {
-    let path = overpass::cache_path();
+    let path = overpass::cache_path(CITY);
     let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "no OSM cache at {}: {error}. run the app once to download it",
             path.display()
         )
     });
-    parse::parse(&json).expect("failed to parse cached OSM json")
+    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
 }
 
 /// Та же последовательность, что и в `NavigationPlugin`: заливка, снап портала,
@@ -171,7 +174,8 @@ fn build_navmesh(map: &MapData) -> Navmesh {
     navmesh.fill_from_mapdata(map);
     println!("navmesh filled in {:?}", started.elapsed());
 
-    let portal = snap_portal_position(&navmesh, PORTAL_POS).expect("no clear spot for portal");
+    let portal =
+        snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
     let started = Instant::now();
     let pruned = navmesh.prune_unreachable(world_to_tile(portal));
     println!(
