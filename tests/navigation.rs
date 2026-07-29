@@ -159,6 +159,9 @@ fn fill_from_mapdata_blocks_and_carves() {
             kind: AreaKind::Water,
         }],
         parks: Vec::new(),
+        woods: Vec::new(),
+        grass: Vec::new(),
+        sand: Vec::new(),
         roads: vec![RoadLine {
             points: vec![Vec2::new(280.0, 200.0), Vec2::new(360.0, 200.0)],
             width: 8.0,

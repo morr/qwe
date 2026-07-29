@@ -48,14 +48,22 @@ in `main.rs`.
 - **Overpass** — the Overpass API (`overpass-api.de`), queried once with `[out:json]` +
   `out geom` (inline geometry, no node lookup). Query covers: `building` (way+rel),
   `highway` (way), `natural=water` / `waterway=riverbank` (way+rel), `leisure=park|garden`,
-  `landuse=grass|recreation_ground|forest`, `barrier=city_wall`.
-- **Cache** — `assets/osm/tula_{lat}_{lon}_{w}x{h}.json` (gitignored). Parameters live in
-  the file name, so changing settings invalidates it. Written **only after successful
+  `landuse=recreation_ground|forest` + `natural=wood`, `landuse=grass|meadow` /
+  `natural=grassland|meadow`, `natural=sand|beach`, `barrier=city_wall`.
+- **Cache** — `assets/osm/tula_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored).
+  Parameters live in the file name, so changing settings invalidates it; **bump
+  `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**, or every existing
+  cache keeps serving an extract that lacks them. Written **only after successful
   parse**; a broken cache self-heals (deleted, re-downloaded). Second launch never
   touches the network.
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes; rings are open (no repeated last point).
-    `AreaKind: Building | Kremlin | Water | Park`.
+    `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand`. **Park** is the
+    light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
+    *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
+    **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
+    but Wood stays open ground — that is what makes the open half of a park read as a
+    field, the way it does on OSM.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
     z). `bridge` flag — see navmesh.
@@ -65,9 +73,13 @@ in `main.rs`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
-- **Trees** — deterministic LCG seeded per park polygon, density ~1 / 1600 m², rejection
-  sampling inside the polygon, never on buildings or within `TREE_CLEARANCE` of a road
-  edge (park alleys count as roads).
+- **Trees** — planted **only inside Wood polygons**, never across a whole park:
+  deterministic LCG seeded per wood polygon, density ~1 / 1600 m², rejection sampling
+  inside the polygon, never on buildings or within `TREE_CLEARANCE` (1.5 m) of a road
+  edge (park alleys count as roads). Also rejected inside water or within
+  `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
+  an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
+  (a lawn is a lawn; overhang from a neighbouring tree is fine).
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`) — **one merged `Mesh2d` per layer**
   (parks, water, alleys, roads, facades, roofs, walls): `MeshBuilder` triangulates
   polygons via `earcutr` (holes supported, degenerate contours skipped + counted) and

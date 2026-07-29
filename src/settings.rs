@@ -8,12 +8,13 @@ pub const PIXELS_PER_METER: f32 = 16.0;
 
 /// Карта: центр Тулы, реальные данные OpenStreetMap вокруг гео-центра ниже.
 /// Начало координат — юго-западный угол bbox.
-pub const MAP_SIZE: Vec2 = Vec2::new(3000.0, 2250.0);
+pub const MAP_SIZE: Vec2 = Vec2::new(5600.0, 3700.0);
 
-/// Гео-центр карты (Тула, Кремль у центра кадра). Проекция —
-/// локальная равнопромежуточная: метры от юго-западного угла bbox.
-pub const GEO_CENTER_LAT: f64 = 54.19021;
-pub const GEO_CENTER_LON: f64 = 37.61485;
+/// Гео-центр карты (Тула: от Мясново на западе до Пролетарского моста на
+/// востоке, Кремль — в правой части кадра). Проекция — локальная
+/// равнопромежуточная: метры от юго-западного угла bbox.
+pub const GEO_CENTER_LAT: f64 = 54.18969;
+pub const GEO_CENTER_LON: f64 = 37.59148;
 /// Метров в градусе широты (и долготы на экваторе).
 pub const METERS_PER_DEG_LAT: f64 = 111_320.0;
 
@@ -21,10 +22,11 @@ pub const METERS_PER_DEG_LAT: f64 = 111_320.0;
 pub const NAVTILE_SIZE: f32 = 2.0;
 
 /// Размер навигационной сетки в тайлах: `MAP_SIZE / NAVTILE_SIZE`.
-pub const GRID_SIZE: IVec2 = IVec2::new(1500, 1125);
+pub const GRID_SIZE: IVec2 = IVec2::new(2800, 1850);
 
 /// Центр портала — хинт; при старте снапится к ближайшему проходимому тайлу.
-pub const PORTAL_POS: Vec2 = Vec2::new(620.0, 380.0);
+/// Гео-точка (54.1908, 37.5836) — перекрёсток к северу от Центрального парка.
+pub const PORTAL_POS: Vec2 = Vec2::new(2284.0, 1969.0);
 pub const PORTAL_DIAMETER: f32 = 36.0;
 
 // --- Люди ---
@@ -78,6 +80,10 @@ pub const SPEED_SETTLE_RATE: f32 = 0.05;
 // --- Z-слои (см. y-сортировку юнитов) ---
 pub const Z_GROUND: f32 = 0.0;
 pub const Z_PARK: f32 = 0.5;
+/// Лес, луга и песок лежат внутри парковых полигонов — поверх заливки парка.
+pub const Z_WOOD: f32 = 0.55;
+pub const Z_GRASS: f32 = 0.6;
+pub const Z_SAND: f32 = 0.7;
 pub const Z_POND: f32 = 1.0;
 pub const Z_ALLEY: f32 = 1.5;
 pub const Z_ROAD: f32 = 2.0;

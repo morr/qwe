@@ -160,10 +160,14 @@ fn poll_job(
         JobState::Done(map) => {
             let map = map.take().expect("map already taken");
             info!(
-                "osm map: {} buildings, {} water, {} parks, {} roads, {} walls, {} trees",
+                "osm map: {} buildings, {} water, {} parks, {} woods, {} grass, {} sand, \
+                 {} roads, {} walls, {} trees",
                 map.buildings.len(),
                 map.water.len(),
                 map.parks.len(),
+                map.woods.len(),
+                map.grass.len(),
+                map.sand.len(),
                 map.roads.len(),
                 map.walls.len(),
                 map.trees.len(),

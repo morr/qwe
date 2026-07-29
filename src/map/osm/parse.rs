@@ -54,18 +54,28 @@ fn area_kind(element: &Element) -> Option<AreaKind> {
             _ => AreaKind::Building,
         });
     }
-    if tags.get("natural").map(String::as_str) == Some("water")
-        || tags.get("waterway").map(String::as_str) == Some("riverbank")
-    {
+    let natural = tags.get("natural").map(String::as_str);
+    let landuse = tags.get("landuse").map(String::as_str);
+    if natural == Some("water") || tags.get("waterway").map(String::as_str) == Some("riverbank") {
         return Some(AreaKind::Water);
+    }
+    if matches!(natural, Some("sand" | "beach")) {
+        return Some(AreaKind::Sand);
+    }
+    // луг проверяется до парка: газон внутри парка — отдельный светлый слой
+    if matches!(landuse, Some("grass" | "meadow"))
+        || matches!(natural, Some("grassland" | "meadow"))
+    {
+        return Some(AreaKind::Grass);
+    }
+    if natural == Some("wood") || landuse == Some("forest") {
+        return Some(AreaKind::Wood);
     }
     if matches!(
         tags.get("leisure").map(String::as_str),
         Some("park" | "garden")
-    ) || matches!(
-        tags.get("landuse").map(String::as_str),
-        Some("grass" | "recreation_ground" | "forest")
-    ) {
+    ) || landuse == Some("recreation_ground")
+    {
         return Some(AreaKind::Park);
     }
     None
@@ -106,6 +116,9 @@ fn push_area(map: &mut MapData, area: PolyArea) {
         AreaKind::Building | AreaKind::Kremlin => map.buildings.push(area),
         AreaKind::Water => map.water.push(area),
         AreaKind::Park => map.parks.push(area),
+        AreaKind::Wood => map.woods.push(area),
+        AreaKind::Grass => map.grass.push(area),
+        AreaKind::Sand => map.sand.push(area),
     }
 }
 
@@ -258,10 +271,12 @@ fn near_area_edge(point: Vec2, area: &PolyArea, clearance: f32) -> bool {
     })
 }
 
-/// Деревья: детерминированный LCG по геометрии парка, плотность ∝ площади,
-/// rejection-sampling внутри полигона, только в границах карты и не на
-/// зданиях/дорогах (парковые аллеи — тоже дороги) и не в воде — пруд внутри
-/// парка лежит поверх парковой заливки, дерево на нём растёт из воды.
+/// Деревья: сажаются **только в лесных полигонах** (`natural=wood` /
+/// `landuse=forest`) — в OSM именно они, а не парк целиком, несут деревья;
+/// открытая часть парка обязана остаться полем. Детерминированный LCG по
+/// геометрии массива, плотность ∝ площади, rejection-sampling внутри полигона,
+/// только в границах карты и не на зданиях/дорогах (парковые аллеи — тоже
+/// дороги), не в воде и не на лугах и песке.
 fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
     // AABB-прекомпьют, чтобы не гонять point-in-polygon по всем 3к зданий
     let building_bounds: Vec<(Vec2, Vec2)> = map
@@ -291,6 +306,10 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
         })
         .collect();
 
+    // луг и пляж деревьев не несут, но кроне свисать на них не запрещено
+    let bare: Vec<&PolyArea> = map.grass.iter().chain(&map.sand).collect();
+    let bare_bounds: Vec<(Vec2, Vec2)> = bare.iter().map(|area| ring_bounds(&area.outer)).collect();
+
     let in_bbox = |pos: Vec2, min: Vec2, max: Vec2| {
         pos.x >= min.x && pos.x <= max.x && pos.y >= min.y && pos.y <= max.y
     };
@@ -319,19 +338,23 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
                         && (point_in_area(pos, area)
                             || near_area_edge(pos, area, TREE_SHORE_CLEARANCE))
                 })
+            || bare
+                .iter()
+                .zip(&bare_bounds)
+                .any(|(area, &(min, max))| in_bbox(pos, min, max) && point_in_area(pos, area))
     };
 
     let mut trees = Vec::new();
-    for park in &map.parks {
-        let area = ring_area(&park.outer);
+    for wood in &map.woods {
+        let area = ring_area(&wood.outer);
         let count = ((area / TREE_AREA_PER_TREE) as usize).max(3);
-        let (min, max) = ring_bounds(&park.outer);
+        let (min, max) = ring_bounds(&wood.outer);
         let size = max - min;
         if size.x <= 0.0 || size.y <= 0.0 {
             continue;
         }
 
-        let first = park.outer[0];
+        let first = wood.outer[0];
         let mut state: u64 =
             0x9E37_79B9_7F4A_7C15 ^ (first.x.to_bits() as u64) ^ ((first.y.to_bits() as u64) << 32);
         let mut next = move || {
@@ -347,7 +370,7 @@ fn plant_trees(map: &MapData) -> Vec<(Vec2, f32)> {
         while planted < count && attempts > 0 {
             attempts -= 1;
             let pos = min + Vec2::new(next() * size.x, next() * size.y);
-            if !point_in_area(pos, park) {
+            if !point_in_area(pos, wood) {
                 continue;
             }
             if pos.x < 0.0 || pos.y < 0.0 || pos.x > MAP_SIZE.x || pos.y > MAP_SIZE.y {
@@ -439,14 +462,14 @@ mod tests {
     }
 
     #[test]
-    fn trees_are_deterministic_and_inside_park() {
+    fn trees_are_deterministic_and_inside_the_wood() {
         let bounds = GeoBounds::from_settings();
         let _ = &bounds;
         let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
         let d = 0.001;
         let json = format!(
             r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"leisure": "park"}},
+  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
     "geometry": [
       {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
       {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
@@ -463,7 +486,7 @@ mod tests {
         assert!(!first.trees.is_empty());
         assert_eq!(first.trees, second.trees);
         for &(pos, radius) in &first.trees {
-            assert!(point_in_area(pos, &first.parks[0]), "{pos:?}");
+            assert!(point_in_area(pos, &first.woods[0]), "{pos:?}");
             assert!((2.5..=4.0).contains(&radius));
         }
         for (index, &(pos, _)) in first.trees.iter().enumerate() {
@@ -477,13 +500,13 @@ mod tests {
     }
 
     #[test]
-    fn trees_avoid_a_pond_inside_the_park() {
+    fn trees_avoid_a_pond_inside_the_wood() {
         let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
         let d = 0.001;
-        // пруд занимает северо-восточную четверть парка
+        // пруд занимает северо-восточную четверть массива
         let json = format!(
             r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"leisure": "park"}},
+  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
     "geometry": [
       {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
       {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
@@ -511,6 +534,75 @@ mod tests {
                 "tree on the shoreline at {pos:?}"
             );
         }
+    }
+
+    #[test]
+    fn trees_avoid_grass_and_sand_inside_the_wood() {
+        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let d = 0.001;
+        // луг — восточная половина массива, песок — северо-западная четверть
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}},
+  {{"type": "way", "id": 11, "tags": {{"landuse": "meadow"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {lon}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {lon}}},
+      {{"lat": {a}, "lon": {lon}}}]}},
+  {{"type": "way", "id": 12, "tags": {{"natural": "beach"}},
+    "geometry": [
+      {{"lat": {lat}, "lon": {b}}}, {{"lat": {lat}, "lon": {lon}}},
+      {{"lat": {e}, "lon": {lon}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {lat}, "lon": {b}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+        );
+
+        let map = parse(&json).unwrap();
+        assert_eq!(map.woods.len(), 1);
+        assert_eq!(map.grass.len(), 1);
+        assert_eq!(map.sand.len(), 1);
+        assert!(!map.trees.is_empty());
+        for &(pos, _) in &map.trees {
+            assert!(
+                !point_in_area(pos, &map.grass[0]),
+                "tree on grass at {pos:?}"
+            );
+            assert!(!point_in_area(pos, &map.sand[0]), "tree on sand at {pos:?}");
+        }
+    }
+
+    /// Открытая часть парка — поле: деревья растут только в лесных полигонах,
+    /// парк без `natural=wood` остаётся пустым.
+    #[test]
+    fn a_park_without_wood_grows_no_trees() {
+        let (lat, lon) = (GEO_CENTER_LAT, GEO_CENTER_LON);
+        let d = 0.001;
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 10, "tags": {{"leisure": "park"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+        );
+
+        let map = parse(&json).unwrap();
+        assert_eq!(map.parks.len(), 1);
+        assert!(map.woods.is_empty());
+        assert!(map.trees.is_empty());
     }
 
     #[test]

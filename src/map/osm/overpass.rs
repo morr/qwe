@@ -44,7 +44,11 @@ impl GeoBounds {
     }
 }
 
-/// QL-запрос: здания, дороги, вода, парки/зелень, стены Кремля.
+/// Версия запроса в имени кеша: расширили набор тегов — старая выгрузка
+/// новых зон не содержит, и без этого её никто бы не перекачал.
+const QUERY_VERSION: u32 = 2;
+
+/// QL-запрос: здания, дороги, вода, парки/зелень, луга, песок, стены Кремля.
 pub fn overpass_query() -> String {
     let GeoBounds {
         south,
@@ -65,7 +69,14 @@ pub fn overpass_query() -> String {
   way["waterway"="riverbank"]({bbox});
   way["leisure"~"^(park|garden)$"]({bbox});
   relation["leisure"~"^(park|garden)$"]({bbox});
-  way["landuse"~"^(grass|recreation_ground|forest)$"]({bbox});
+  way["landuse"~"^(recreation_ground|forest)$"]({bbox});
+  relation["landuse"~"^(recreation_ground|forest)$"]({bbox});
+  way["natural"="wood"]({bbox});
+  way["landuse"~"^(grass|meadow)$"]({bbox});
+  relation["landuse"~"^(grass|meadow)$"]({bbox});
+  way["natural"~"^(grassland|meadow)$"]({bbox});
+  way["natural"~"^(sand|beach)$"]({bbox});
+  relation["natural"~"^(sand|beach)$"]({bbox});
   way["barrier"="city_wall"]({bbox});
 );
 out geom;
@@ -76,7 +87,7 @@ out geom;
 /// Файл кеша выгрузки: параметры в имени — смена настроек инвалидирует кеш.
 pub fn cache_path() -> PathBuf {
     PathBuf::from(format!(
-        "assets/osm/tula_{GEO_CENTER_LAT}_{GEO_CENTER_LON}_{}x{}.json",
+        "assets/osm/tula_{GEO_CENTER_LAT}_{GEO_CENTER_LON}_{}x{}_v{QUERY_VERSION}.json",
         MAP_SIZE.x, MAP_SIZE.y
     ))
 }

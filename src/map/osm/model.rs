@@ -7,7 +7,15 @@ pub enum AreaKind {
     Building,
     Kremlin,
     Water,
+    /// Парк — светлая подложка без деревьев (`leisure=park|garden`).
     Park,
+    /// Лес внутри парка (`natural=wood` / `landuse=forest`) — единственное, что
+    /// засаживается деревьями; рисуется темнее парка.
+    Wood,
+    /// Луг/газон: светлее парка и без деревьев (`landuse=grass|meadow`).
+    Grass,
+    /// Пляж или песчаная отмель (`natural=sand|beach`), тоже без деревьев.
+    Sand,
 }
 
 /// Полигон с дырками. Кольца открытые: последняя точка не повторяет первую.
@@ -47,6 +55,12 @@ pub struct MapData {
     pub buildings: Vec<PolyArea>,
     pub water: Vec<PolyArea>,
     pub parks: Vec<PolyArea>,
+    /// Лесные массивы — обычно внутри парков; только здесь растут деревья.
+    pub woods: Vec<PolyArea>,
+    /// Луга/газоны — лежат поверх парков и не засаживаются деревьями.
+    pub grass: Vec<PolyArea>,
+    /// Песчаные пляжи — тоже поверх парков и без деревьев.
+    pub sand: Vec<PolyArea>,
     pub roads: Vec<RoadLine>,
     pub walls: Vec<WallLine>,
     /// Деревья в парках: (центр, радиус). Детерминированы данными карты.

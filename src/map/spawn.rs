@@ -1,15 +1,25 @@
-//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, вода,
-//! аллеи, улицы, фасады, крыши, стены) + деревья отдельными сущностями.
+//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, луга, песок,
+//! вода, аллеи, улицы, фасады, крыши, стены) + деревья отдельными сущностями.
 
 use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, RoadClass};
 use crate::map::trees::{self, TreeStyle};
-use crate::settings::{MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GROUND, Z_PARK, Z_POND, Z_ROAD};
+use crate::settings::{
+    MAP_SIZE, Z_ALLEY, Z_BUILDING, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_ROAD, Z_SAND, Z_WOOD,
+};
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
+/// Лес внутри парка — темнее парковой подложки (osm-carto `#ADD19E`), под ним
+/// и растут кроны; открытая часть парка так читается как поле.
+const WOOD_COLOR: Color = Color::srgb(0.678, 0.820, 0.620);
+/// Луг — заметно светлее парка (`#DDEFBE`): поле без деревьев обязано читаться
+/// поверх парковой заливки, иначе газон сливается с лесом.
+const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
+/// Песок/пляж (osm-carto `#F5E9C6`).
+const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
 const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
@@ -50,6 +60,21 @@ pub fn spawn_map(
     let mut parks = MeshBuilder::default();
     for park in &map.parks {
         parks.push_polygon(&park.outer, &park.holes, PARK_COLOR.to_linear());
+    }
+
+    let mut woods = MeshBuilder::default();
+    for area in &map.woods {
+        woods.push_polygon(&area.outer, &area.holes, WOOD_COLOR.to_linear());
+    }
+
+    let mut grass = MeshBuilder::default();
+    for area in &map.grass {
+        grass.push_polygon(&area.outer, &area.holes, GRASS_COLOR.to_linear());
+    }
+
+    let mut sand = MeshBuilder::default();
+    for area in &map.sand {
+        sand.push_polygon(&area.outer, &area.holes, SAND_COLOR.to_linear());
     }
 
     let mut water = MeshBuilder::default();
@@ -96,7 +121,7 @@ pub fn spawn_map(
         walls.push_polyline(&wall.points, wall.width, WALL_COLOR.to_linear());
     }
 
-    let skipped: usize = [&parks, &water, &facades, &roofs]
+    let skipped: usize = [&parks, &woods, &grass, &sand, &water, &facades, &roofs]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();
@@ -106,6 +131,9 @@ pub fn spawn_map(
 
     for (builder, z, name) in [
         (parks, Z_PARK, "parks"),
+        (woods, Z_WOOD, "woods"),
+        (grass, Z_GRASS, "grass"),
+        (sand, Z_SAND, "sand"),
         (water, Z_POND, "water"),
         (alleys, Z_ALLEY, "alleys"),
         (roads, Z_ROAD, "roads"),
