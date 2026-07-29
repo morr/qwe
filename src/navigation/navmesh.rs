@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::grid::world_to_tile;
 use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, ring_bounds};
-use crate::settings::{GRID_SIZE, NAVTILE_SIZE};
+use crate::settings::{GRID_SIZE, NAVTILE_SIZE, PASSAGE_MAX_WIDTH};
 
 /// Стоимость шага между тайлами (для A*): прямой и диагональный.
 pub const COST_STRAIGHT: i32 = 100;
@@ -82,8 +82,9 @@ impl Navmesh {
     }
 
     /// Заполнение из OSM-карты. Порядок важен: мосты прорезают проходимые
-    /// коридоры поверх воды (иначе Упа разрезает карту надвое), а здания и
-    /// стены блокируют уже после.
+    /// коридоры поверх воды (иначе Упа разрезает карту надвое), здания и стены
+    /// блокируют уже после, а арки прорезаются последними — их смысл именно в
+    /// том, чтобы пробить только что заблокированный дом.
     pub fn fill_from_mapdata(&mut self, map: &MapData) {
         // сетка переживает смену города: без сброса на новой карте остались
         // бы дома и прунинг старой
@@ -99,6 +100,9 @@ impl Navmesh {
         }
         for wall in &map.walls {
             self.set_polyline(&wall.points, wall.width, false);
+        }
+        for road in map.roads.iter().filter(|road| road.passage) {
+            self.set_polyline(&road.points, road.width.min(PASSAGE_MAX_WIDTH), true);
         }
     }
 
@@ -297,7 +301,7 @@ impl ArcNavmesh {
 
 #[cfg(test)]
 mod tests {
-    use crate::map::osm::model::point_in_polygon;
+    use crate::map::osm::model::{AreaKind, RoadClass, RoadLine, point_in_polygon};
 
     use super::*;
 
@@ -383,5 +387,78 @@ mod tests {
             Vec2::new(5.2, 20.8),
         ];
         assert_same_fill(&outer, &[], 20, 22);
+    }
+
+    /// Арка режется последней: дом уже залит непроходимым, и проём должен
+    /// пробить его насквозь, не открыв при этом остального дома.
+    #[test]
+    fn a_building_passage_carves_a_corridor_through_the_building() {
+        let mut map = MapData::default();
+        map.buildings.push(PolyArea {
+            outer: rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0)),
+            holes: Vec::new(),
+            kind: AreaKind::Building,
+            height: None,
+            entrances: Vec::new(),
+        });
+        map.roads.push(RoadLine {
+            points: vec![Vec2::new(131.0, 90.0), Vec2::new(131.0, 140.0)],
+            width: 5.0,
+            class: RoadClass::Street,
+            bridge: false,
+            passage: true,
+        });
+
+        let mut navmesh = Navmesh::default();
+        navmesh.fill_from_mapdata(&map);
+
+        let passable_at = |point: Vec2| {
+            let tile = world_to_tile(point);
+            navmesh.is_passable(tile.x, tile.y)
+        };
+        for y in [101.0, 115.0, 129.0] {
+            assert!(passable_at(Vec2::new(131.0, y)), "проём на y={y}");
+        }
+        assert!(!passable_at(Vec2::new(110.0, 115.0)), "стена западнее арки");
+        assert!(
+            !passable_at(Vec2::new(150.0, 115.0)),
+            "стена восточнее арки"
+        );
+    }
+
+    /// Ширина арки ограничена: `service` шириной 5 м не должен вырезать по
+    /// тайлу фасада с каждой стороны проёма.
+    #[test]
+    fn a_passage_is_no_wider_than_the_cap() {
+        let mut map = MapData::default();
+        map.buildings.push(PolyArea {
+            outer: rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0)),
+            holes: Vec::new(),
+            kind: AreaKind::Building,
+            height: None,
+            entrances: Vec::new(),
+        });
+        map.roads.push(RoadLine {
+            points: vec![Vec2::new(131.0, 90.0), Vec2::new(131.0, 140.0)],
+            width: 12.0,
+            class: RoadClass::Street,
+            bridge: false,
+            passage: true,
+        });
+
+        let mut navmesh = Navmesh::default();
+        navmesh.fill_from_mapdata(&map);
+
+        let row = world_to_tile(Vec2::new(131.0, 115.0)).y;
+        let open = (0..GRID_SIZE.x)
+            .filter(|&x| {
+                let center = (x as f32 + 0.5) * NAVTILE_SIZE;
+                (100.0..160.0).contains(&center) && navmesh.is_passable(x, row)
+            })
+            .count();
+        assert!(
+            open as f32 <= PASSAGE_MAX_WIDTH / NAVTILE_SIZE + 1.0,
+            "проём в {open} тайлов шире потолка"
+        );
     }
 }

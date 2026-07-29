@@ -243,6 +243,18 @@ fn road_class(highway: &str) -> Option<(f32, RoadClass)> {
     })
 }
 
+/// Арка — дорога, проложенная сквозь здание. В Туле это `tunnel=building_passage`
+/// (основной тег) и `covered` — часть таких проездов размечена только им.
+/// `tunnel=yes` сюда не входит: это подземный туннель, поверху он ничего не
+/// открывает.
+fn is_building_passage(tags: &HashMap<String, String>) -> bool {
+    tags.get("tunnel").map(String::as_str) == Some("building_passage")
+        || matches!(
+            tags.get("covered").map(String::as_str),
+            Some("yes" | "building_passage")
+        )
+}
+
 fn project_points(points: &[LatLon], bounds: &GeoBounds) -> Vec<Vec2> {
     points
         .iter()
@@ -291,6 +303,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             width,
             class,
             bridge,
+            passage: is_building_passage(&element.tags),
         });
         return;
     }
@@ -873,6 +886,24 @@ mod tests {
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
+    }
+
+    /// Арки в Туле размечены двумя разными тегами, а подземный туннель —
+    /// третьим, и он аркой быть не должен.
+    #[test]
+    fn arches_are_recognised_by_tunnel_and_covered_but_not_by_a_real_tunnel() {
+        assert!(is_building_passage(&tags(&[(
+            "tunnel",
+            "building_passage"
+        )])));
+        assert!(is_building_passage(&tags(&[(
+            "covered",
+            "building_passage"
+        )])));
+        assert!(is_building_passage(&tags(&[("covered", "yes")])));
+        assert!(!is_building_passage(&tags(&[("tunnel", "yes")])));
+        assert!(!is_building_passage(&tags(&[("bridge", "yes")])));
+        assert!(!is_building_passage(&tags(&[])));
     }
 
     #[test]

@@ -123,7 +123,7 @@ in `main.rs`.
     doors on this building's outline, empty for most buildings; see **Entrances**.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
-    z). `bridge` flag — see navmesh.
+    z). `bridge` and `passage` flags — see navmesh.
   - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
     impassable.
   - **trees** — `(pos, radius)` pairs, precomputed at parse.
@@ -273,8 +273,19 @@ in `main.rs`.
   `x * GRID_SIZE.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water blocks → **bridge corridors carve
-  passable strips back** (`bridge=yes` roads) → buildings block → walls block. Without
-  bridges the Упа river bisects the map and no cross-river path exists.
+  passable strips back** (`bridge=yes` roads) → buildings block → walls block →
+  **building passages carve back through them**. Without bridges the Упа river bisects
+  the map and no cross-river path exists.
+- **Building passage** (арка) — a road that runs *through* a building: OSM
+  `tunnel=building_passage`, or `covered=building_passage|yes` (both tag styles occur;
+  `tunnel=yes` is an underground tunnel and is **not** one). `parse::is_building_passage`
+  sets `RoadLine::passage`; the navmesh carves those centerlines passable **last**, after
+  buildings and walls, since the whole point is to punch through a block that was just
+  filled. Carve width is `min(road width, PASSAGE_MAX_WIDTH)` — the way is usually tagged
+  `service` (5 m) but the arch itself is narrower, and an uncapped corridor would eat a
+  tile of facade on each side. Tula has ~70 of them, London ~1700; without the carve,
+  courtyards reachable only through an arch get sealed off by `prune_unreachable`.
+  Nothing about the *rendering* changes — the building mesh still covers the arch.
 - **Row-span rasterization** (`row_spans`): an area is filled row by row — one pass over
   the ring per tile row yields the x-crossings, and the tiles between crossing pairs are
   set. Holes are subtracted as intervals, *not* merged into one even-odd list, so a hole

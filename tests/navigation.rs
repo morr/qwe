@@ -171,6 +171,7 @@ fn fill_from_mapdata_blocks_and_carves() {
             width: 8.0,
             class: RoadClass::Street,
             bridge: true,
+            passage: false,
         }],
         walls: vec![WallLine {
             points: vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],

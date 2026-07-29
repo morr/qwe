@@ -49,6 +49,10 @@ pub struct RoadLine {
     pub class: RoadClass,
     /// `bridge=yes` — по такой дороге прорезается проходимый коридор через воду.
     pub bridge: bool,
+    /// Арка: проезд/проход сквозь здание (`tunnel=building_passage`,
+    /// `covered=building_passage|yes`). По такой дороге прорезается проходимый
+    /// коридор сквозь уже заблокированное здание.
+    pub passage: bool,
 }
 
 /// Стена (Кремль): полилиния фиксированной ширины, непроходима.
