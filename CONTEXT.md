@@ -169,25 +169,51 @@ in `main.rs`.
     than from an AABB, which doubles the reading for a diagonally-oriented slab, and
     which measures size rather than elongation. A shape more compact than any rectangle
     (`P² < 16A`) has no elongation and falls back to `P / 4`.
+  - **Abandoned mapping, and why the naive mean is unusable.** Averaging over *every*
+    building with ≥ 1 mapped door gives 2.73 doors at 120–200 m and 3.70 at ≥ 200 m —
+    that is **one door per 94 m and per 133 m of building**. No such building exists.
+    The cause is mappers who tag one door and stop; those buildings drag the mean down,
+    and the longer the building the worse the damage. Restricting to buildings with
+    **≥ 2** mapped doors removes exactly that failure and gives 3.35 / 4.18 / 4.42 for
+    the 70–120 / 120–200 / ≥ 200 m bands. That is the estimator the cohorts use above
+    40 m. It is not unbiased either — selecting on ≥ 2 cannot produce a 1-door result —
+    so below 40 m the full-sample means are kept, where "one door" is the true answer
+    and mapping is complete anyway. For reference the ≥ 3-door selection (mapping
+    unambiguously enumerated) reads 4.40 / 5.48 / 5.67, so the values below are the
+    conservative end of the plausible range, not the middle.
   - **Entrance cohorts** — length × height, with area as a demotion guard. Height only
     separates the long bands (at 70–120 m: 1.86 low vs 2.23 tall; at ≥ 120 m: 2.64 vs
-    3.07); on short buildings it is noise (1.27 vs 1.22). `p10 = 1` in every cohort, so
-    the floor is always 1 door; `max` is the measured p90.
+    3.07 — about ±10% either side of the band); on short buildings it is noise (1.27 vs
+    1.22). `p10 = 1` in every cohort, so the floor is always 1 door; `max` is the p90 of
+    the same selection the mean comes from.
 
-    | cohort | length | height | what it is | measured mean | max |
+    | cohort | length | height | what it is | mean | max |
     |---|---|---|---|---|---|
     | hut | < 20 m | any | garage, kiosk, small detached house | **1.2** | 2 |
-    | house | 20–40 m | any | terrace section, small block, shop | **1.27** | 2 |
-    | row | 40–70 m | any | long shop, school wing | **1.55** | 3 |
-    | block | 70–120 m | < 12 m | wide low corpus | **1.85** | 4 |
-    | block, tall | 70–120 m | ≥ 12 m | apartment/office corpus | **2.25** | 4 |
-    | slab | ≥ 120 m | < 12 m | long low corpus | **2.65** | 5 |
-    | slab, tall | ≥ 120 m | ≥ 12 m | the *dom-korabl* — doors by the dozen | **3.05** | 7 |
+    | house | 20–40 m | any | terrace section, small block, shop | **1.35** | 3 |
+    | row | 40–70 m | any | long shop, school wing | **2.0** | 4 |
+    | block | 70–120 m | < 12 m | wide low corpus | **3.0** | 6 |
+    | block, tall | 70–120 m | ≥ 12 m | apartment/office corpus | **3.7** | 6 |
+    | slab | 120–200 m | < 12 m | long low corpus | **3.8** | 8 |
+    | slab, tall | 120–200 m | ≥ 12 m | the *dom-korabl* | **4.6** | 8 |
+    | quarter | ≥ 200 m | < 12 m | a whole block under one outline | **4.0** | 8 |
+    | quarter, tall | ≥ 200 m | ≥ 12 m | — | **4.9** | 8 |
 
     A building with **no** height lands in the low branch (measured "unknown" tracks the
     low rows). **Area guard:** below `COHORT_SMALL_AREA` (800 m²) a long building is
     demoted to `row` — a 100 × 4 m garage row is long but has no podyezdy, and the
-    measured 120–800 m² × 70–120 m cell is 1.46, not the long cohort's 1.86–2.23.
+    measured 120–800 m² × 70–120 m cell is 1.46, not the long cohort's 3+.
+  - **The pitch law beats the cohort mean, and drives the count.** The two measurements
+    contradicted each other and the cohort table lost. Independent evidence for a fixed
+    pitch: (a) the median gap between adjacent real doors is 26.7 m pooled, 22.6 m in
+    Tula; (b) in the only exhaustively-enumerated sample anywhere — Tula's
+    `entrance=staircase` *podyezdy*, which mappers list by convention — metres of length
+    per door holds at **21.8–27.4 m in every length band**, from a 40 m house to a 200 m
+    slab (1.43 → 3.26 → 3.58 → 5.75 doors). A cohort mean of 4 doors on a 200 m building
+    means one door per 60 m and is incompatible with both. So `entrance_count` takes
+    `length / ENTRANCE_SPACING`, and the cohort supplies only the **ceiling** (a 200 m
+    factory is not a dom-korabl) and the small-building case where the pitch law yields
+    zero.
   - **Spacing** — `ENTRANCE_SPACING` 25 m is the measured median gap between adjacent
     doors (26.7 m pooled; 22.6 m in Tula, where *podyezdy* are the best-enumerated doors
     anywhere in the sample). `ENTRANCE_MIN_SPACING` 12 m is the hard floor — the measured

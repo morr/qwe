@@ -4,7 +4,7 @@ pub mod osm;
 mod spawn;
 pub mod trees;
 
-pub use self::buildings::BuildingHeightMode;
+pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
 pub use self::trees::{TreeShape, TreeStyle};
 

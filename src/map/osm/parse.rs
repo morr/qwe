@@ -1,7 +1,7 @@
 //! Парсинг ответа Overpass в [`MapData`]: проекция, классификация по тегам,
 //! сборка колец мультиполигонов, детерминированные деревья в парках.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
 
 use bevy::math::Vec2;
@@ -112,6 +112,10 @@ fn parse_entrance(element: &Element, bounds: &GeoBounds) -> Option<Vec2> {
 ///
 /// Общий узел двух домов (сплошная застройка) попадает в таблицу один раз —
 /// вход достанется одному из них, и это не важно: дверь всё равно там же.
+///
+/// Совпадающие входы схлопываются: в Париже встречаются две ноды `entrance` в
+/// одной точке (замер по выгрузке — минимальный зазор 0.00 м), а две двери на
+/// одном месте — это две одинаковых цели для пешек и лишний кружок в оверлее.
 fn attach_entrances(map: &mut MapData, entrances: &[Vec2]) -> usize {
     let key = |point: Vec2| {
         (
@@ -128,10 +132,15 @@ fn attach_entrances(map: &mut MapData, entrances: &[Vec2]) -> usize {
     }
 
     let mut orphaned = 0;
+    let mut taken: HashSet<(i32, i32)> = HashSet::new();
     for &entrance in entrances {
-        match by_vertex.get(&key(entrance)) {
-            Some(&index) => map.buildings[index].entrances.push(entrance),
-            None => orphaned += 1,
+        let Some(&index) = by_vertex.get(&key(entrance)) else {
+            orphaned += 1;
+            continue;
+        };
+        // дубль считаем привязанным, а не сиротой: дом он нашёл
+        if taken.insert(key(entrance)) {
+            map.buildings[index].entrances.push(entrance);
         }
     }
     orphaned
@@ -1023,6 +1032,32 @@ mod tests {
                 "entrance off the outline: {entrance:?}"
             );
         }
+    }
+
+    /// Две ноды `entrance` в одной точке — обычное дело в Париже; на карте
+    /// они обязаны стать одной дверью, а не двумя одинаковыми целями.
+    #[test]
+    fn entrances_at_the_same_point_collapse_into_one() {
+        let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+        let d = 0.0005;
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "node", "id": 100, "lat": {a}, "lon": {b}, "tags": {{"entrance": "main"}}}},
+  {{"type": "node", "id": 101, "lat": {a}, "lon": {b}, "tags": {{"entrance": "yes"}}}},
+  {{"type": "way", "id": 1, "tags": {{"building": "yes"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}}
+]}}"#,
+            a = lat - d,
+            e = lat + d,
+            b = lon - d,
+            c = lon + d,
+        );
+
+        let map = parse(&json, CITY).unwrap();
+        assert_eq!(map.buildings[0].entrances.len(), 1);
     }
 
     /// Здание без размеченных в OSM входов не остаётся без двери: их

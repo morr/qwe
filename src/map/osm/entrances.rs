@@ -29,17 +29,17 @@ use bevy::math::Vec2;
 use crate::map::osm::model::{AreaKind, MapData, PolyArea, RoadLine, distance_to_segment};
 
 /// Границы длины здания, м — главная ось когорт. Именно длина, а не площадь,
-/// отвечает на вопрос «сколько подъездов»: у 10 358 размеченных зданий среднее
-/// растёт 1.22 → 1.26 → 1.53 → 2.04 → 2.96 по этим полосам, и **внутри одной
-/// полосы площади длина продолжает разделять** (при 800–2500 м²: 1.90 на
-/// 40–70 м против 3.11 на 120 м и длиннее). По остаточному разбросу длина
-/// одна не хуже площади одной (1.073 против 1.078), а вместе с площадью и
-/// высотой дают лучший результат из проверенных — 1.036.
-const COHORT_LENGTH_BANDS: [f32; 4] = [20.0, 40.0, 70.0, 120.0];
+/// отвечает на вопрос «сколько подъездов»: внутри одной полосы площади длина
+/// продолжает разделять (при 800–2500 м²: 1.90 входа на 40–70 м против 3.11 на
+/// 120 м и длиннее). По остаточному разбросу длина одна не хуже площади одной
+/// (1.073 против 1.078), а вместе с площадью и высотой дают лучший результат
+/// из проверенных — 1.036.
+const COHORT_LENGTH_BANDS: [f32; 5] = [20.0, 40.0, 70.0, 120.0, 200.0];
 /// Высота, с которой здание считается многоэтажным, м. Значима только на
 /// длинных: при 70–120 м замер расходится 1.86 (ниже) против 2.23 (выше), при
-/// 120 м и длиннее — 2.64 против 3.07. На коротких разницы нет (1.27 против
-/// 1.22 — шум). Здание без высоты идёт по низкой ветке.
+/// 120 м и длиннее — 2.64 против 3.07, то есть примерно ±10% от полосы. На
+/// коротких разницы нет (1.27 против 1.22 — шум). Здание без высоты идёт по
+/// низкой ветке.
 const COHORT_TALL_HEIGHT: f32 = 12.0;
 /// Площадь, ниже которой длинное здание всё равно остаётся мелким, м². Ряд
 /// гаражей 100 × 4 м длинный, но подъездов у него нет: замер для полосы
@@ -68,29 +68,52 @@ fn equivalent_length(area: f32, perimeter: f32) -> f32 {
     (perimeter + discriminant.sqrt()) / 4.0
 }
 
+/// Верхняя граница «ряда» — когорты, в которую понижается длинный, но мелкий
+/// дом. Держится отдельной константой, потому что на неё ссылается и таблица
+/// когорт, и ограничитель по площади.
+const COHORT_ROW_MEAN: f32 = 2.0;
+
 /// Когорта здания по длине, высоте и площади — таблица в `CONTEXT.md`.
+///
+/// Средние взяты по домам, где в OSM размечено **не меньше двух** дверей.
+/// Считать по всем домам с хотя бы одной нельзя: маппер сплошь и рядом ставит
+/// одну дверь и бросает, и такие дома роняют среднее до абсурда — по всей
+/// выборке выходило 94 м длины на дверь при 120–200 м и 133 м при 200 м и
+/// длиннее, то есть дверь раз в сотню метров. Порог в две двери убирает именно
+/// брошенную разметку; он завышает средние коротких когорт (там дверь
+/// действительно одна), поэтому до 40 м оставлены значения по полной выборке —
+/// у сарая и дома разметка и так полная.
 fn cohort_of(area: f32, length: f32, height: Option<f32>) -> EntranceCohort {
     let tall = height.is_some_and(|meters| meters >= COHORT_TALL_HEIGHT);
-    let [hut, house, row, block] = COHORT_LENGTH_BANDS;
+    let [hut, house, row, block, slab] = COHORT_LENGTH_BANDS;
 
     let cohort = match length {
-        // сарай, гараж, киоск
+        // сарай, гараж, киоск — дверь одна, и это не артефакт разметки
         _ if length < hut => EntranceCohort { mean: 1.2, max: 2 },
         // дом, секция таунхауса, магазин
-        _ if length < house => EntranceCohort { mean: 1.27, max: 2 },
-        // ряд: длинный магазин, школьное крыло
-        _ if length < row => EntranceCohort { mean: 1.55, max: 3 },
-        // корпус
-        _ if length < block && !tall => EntranceCohort { mean: 1.85, max: 4 },
-        _ if length < block => EntranceCohort { mean: 2.25, max: 4 },
-        // «дом-корабль»: длиннее 120 м, и вот тут подъезды считают десятками
-        _ if !tall => EntranceCohort { mean: 2.65, max: 5 },
-        _ => EntranceCohort { mean: 3.05, max: 7 },
+        _ if length < house => EntranceCohort { mean: 1.35, max: 3 },
+        // ряд: длинный магазин, школьное крыло (замер 2.70)
+        _ if length < row => EntranceCohort {
+            mean: COHORT_ROW_MEAN,
+            max: 4,
+        },
+        // корпус (замер 3.35, высота даёт ±10%)
+        _ if length < block && !tall => EntranceCohort { mean: 3.0, max: 6 },
+        _ if length < block => EntranceCohort { mean: 3.7, max: 6 },
+        // «дом-корабль» (замер 4.18)
+        _ if length < slab && !tall => EntranceCohort { mean: 3.8, max: 8 },
+        _ if length < slab => EntranceCohort { mean: 4.6, max: 8 },
+        // квартал целиком: длиннее 200 м (замер 4.42)
+        _ if !tall => EntranceCohort { mean: 4.0, max: 8 },
+        _ => EntranceCohort { mean: 4.9, max: 8 },
     };
 
     // длинный, но мелкий — это ряд гаражей, а не жилой корпус
-    if area < COHORT_SMALL_AREA && cohort.mean > 1.55 {
-        return EntranceCohort { mean: 1.55, max: 3 };
+    if area < COHORT_SMALL_AREA && cohort.mean > COHORT_ROW_MEAN {
+        return EntranceCohort {
+            mean: COHORT_ROW_MEAN,
+            max: 4,
+        };
     }
     cohort
 }
@@ -238,9 +261,10 @@ fn fill_building(building: &mut PolyArea, roads: &RoadIndex) -> usize {
     let perimeter: f32 = (0..ring.len())
         .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
         .sum();
-    let cohort = cohort_of(area, equivalent_length(area, perimeter), building.height);
+    let length = equivalent_length(area, perimeter);
+    let cohort = cohort_of(area, length, building.height);
     let mut random = lcg_seeded_by(ring[0]);
-    let wanted = entrance_count(&cohort, &mut random);
+    let wanted = entrance_count(&cohort, length, &mut random);
 
     let mut facades = score_facades(ring, roads);
     // лучшая грань — первой; NaN сюда попасть не может, длина и расстояние
@@ -252,13 +276,32 @@ fn fill_building(building: &mut PolyArea, roads: &RoadIndex) -> usize {
     building.entrances.len()
 }
 
-/// Число входов: целая часть среднего плюс единица с вероятностью дробной
-/// части. Это единственный источник случайности здесь, и он воспроизводит
-/// замеренное среднее когорты ровно, а не «примерно как повезёт с округлением».
-fn entrance_count(cohort: &EntranceCohort, random: &mut impl FnMut() -> f32) -> usize {
+/// Число входов: **закон шага** — дверь на каждые [`ENTRANCE_SPACING`] длины,
+/// но не выше потолка когорты; на коротких домах, где закон шага даёт ноль,
+/// работает среднее когорты.
+///
+/// Закон шага главнее таблицы средних, потому что подтверждён двумя
+/// независимыми замерами, а таблица средних им противоречила. Первый: медиана
+/// зазора между соседними дверями — 26.7 м по пяти городам, 22.6 м в Туле.
+/// Второй: у тульских домов с размеченными подъездами (`entrance=staircase` —
+/// единственная выборка, где двери перечисляют исчерпывающе по соглашению)
+/// метров длины на подъезд держится 21.8–27.4 **во всех полосах длины**, от
+/// сорокаметрового дома до двухсотметрового. Это и есть закон: подъезд каждые
+/// 25 м. Средние же когорт давали для 200-метрового дома 4 двери, то есть
+/// дверь раз в 60 м, — с обоими замерами это несовместимо.
+///
+/// Потолок когорты оставлен: двухсотметровый завод — не жилой корабль, и
+/// восемь дверей ему ни к чему.
+fn entrance_count(cohort: &EntranceCohort, length: f32, random: &mut impl FnMut() -> f32) -> usize {
+    let by_pitch = (length / ENTRANCE_SPACING).floor() as usize;
+
+    // дробная часть среднего разыгрывается — так когорта воспроизводит замер
+    // ровно, а не «как повезёт с округлением»
     let whole = cohort.mean.floor();
     let extra = if random() < cohort.mean - whole { 1 } else { 0 };
-    (whole as usize + extra).clamp(1, cohort.max)
+    let by_cohort = whole as usize + extra;
+
+    by_pitch.max(by_cohort).clamp(1, cohort.max)
 }
 
 /// Оценка каждой грани контура: чем ближе к дороге и чем прямее смотрит на
@@ -394,6 +437,7 @@ mod tests {
             width: 8.0,
             class: RoadClass::Street,
             bridge: false,
+            passage: false,
         }
     }
 
@@ -591,6 +635,66 @@ mod tests {
         }
     }
 
+    /// Регресс на реальный дефект: 250-метровый корпус получал 3 двери, то
+    /// есть дверь раз в 80 м. Такого дома не бывает — замер по домам с
+    /// доведённой разметкой даёт при 200 м и длиннее 4.42 двери.
+    #[test]
+    fn a_giant_slab_does_not_get_a_door_once_per_hundred_metres() {
+        // 250 × 16 = 4000 м², 9 этажей
+        let mut map = MapData {
+            buildings: vec![building(
+                rect(Vec2::new(100.0, 100.0), Vec2::new(350.0, 116.0)),
+                Some(27.0),
+            )],
+            roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
+            ..Default::default()
+        };
+
+        generate_entrances(&mut map);
+        let doors = &map.buildings[0].entrances;
+        assert!(
+            doors.len() >= 6,
+            "250 m slab got only {} doors",
+            doors.len()
+        );
+
+        // и шаг между ними — человеческий, а не «раз в сотню метров»
+        let mut sorted: Vec<f32> = doors.iter().map(|door| door.x).collect();
+        sorted.sort_by(f32::total_cmp);
+        for pair in sorted.windows(2) {
+            let gap = pair[1] - pair[0];
+            assert!(
+                (ENTRANCE_MIN_SPACING..=45.0).contains(&gap),
+                "gap between doors is {gap} m: {doors:?}"
+            );
+        }
+    }
+
+    /// Закон шага: метров длины на дверь держится около `ENTRANCE_SPACING` на
+    /// всём диапазоне размеров — как у тульских подъездов, где замер даёт
+    /// 21.8–27.4 м во всех полосах длины. Ломалось именно это: на длинных
+    /// домах шаг уезжал в сотню метров.
+    #[test]
+    fn the_pitch_between_doors_holds_across_building_sizes() {
+        for length in [60.0f32, 100.0, 160.0, 240.0] {
+            let mut map = MapData {
+                buildings: vec![building(
+                    rect(Vec2::new(100.0, 100.0), Vec2::new(100.0 + length, 116.0)),
+                    Some(27.0),
+                )],
+                roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
+                ..Default::default()
+            };
+            generate_entrances(&mut map);
+            let doors = map.buildings[0].entrances.len();
+            let pitch = length / doors as f32;
+            assert!(
+                (15.0..=45.0).contains(&pitch),
+                "{length} m building got {doors} doors — {pitch:.0} m per door"
+            );
+        }
+    }
+
     /// Длинный, но мелкий — это ряд гаражей, а не жилой корпус: площадь
     /// возвращает его в скромную когорту.
     #[test]
@@ -599,7 +703,7 @@ mod tests {
         let long_and_thin = cohort_of(400.0, 100.0, Some(4.0));
         let proper_block = cohort_of(2000.0, 100.0, Some(4.0));
         assert!(long_and_thin.mean < proper_block.mean);
-        assert_eq!(long_and_thin.max, 3);
+        assert_eq!(long_and_thin.mean, COHORT_ROW_MEAN);
     }
 
     /// «Длина» не зависит от поворота дома: у AABB диагональный корпус вдвое
