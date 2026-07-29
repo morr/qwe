@@ -62,6 +62,7 @@ fn on_restart(
 
     *spawner = DemonSpawner::default();
     *telemetry = Telemetry::default();
+    // часы симуляции сбрасывает свой обсервер в `sim_time`
 
     spawn_population(&mut commands, &arc_navmesh.read());
 }

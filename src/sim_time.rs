@@ -9,6 +9,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
 use crate::loading::PlayPhase;
+use crate::restart::RestartEvent;
 use crate::settings::{
     ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MIN_SIM_SPEED, SPEED_CYCLE_MAX, SPEED_DROP_RATE,
     SPEED_SETTLE_RATE,
@@ -64,6 +65,16 @@ pub struct SimClock {
     pub elapsed: f64,
 }
 
+impl SimClock {
+    /// Часы нового мира с нуля: за точку отсчёта берём текущее виртуальное
+    /// время, а не обнуляем `Time<Virtual>` — тот общий, и его сброс сдвинул бы
+    /// всем таймерам их дедлайны.
+    pub fn restart(&mut self, now: f64) {
+        self.started_at = now;
+        self.elapsed = 0.0;
+    }
+}
+
 pub struct SimTimePlugin;
 
 impl Plugin for SimTimePlugin {
@@ -73,6 +84,8 @@ impl Plugin for SimTimePlugin {
             .init_resource::<SimSpeed>()
             .init_resource::<SimClock>()
             .add_systems(Startup, pin_max_delta)
+            // рестарт по R отстраивает мир заново — часам тоже начинать с нуля
+            .add_observer(restart_sim_clock)
             // прогрев идёт на паузе: мир уже собран, но за экраном загрузки
             // ему двигаться незачем — пусть пешки сначала получат пути
             .add_systems(OnEnter(PlayPhase::Warmup), pause_simulation)
@@ -111,12 +124,16 @@ fn resume_simulation(mut time: ResMut<Time<Virtual>>) {
     time.unpause();
 }
 
-/// Часы нового мира с нуля: за точку отсчёта берём текущее виртуальное время,
-/// а не обнуляем `Time<Virtual>` — тот общий, и его сброс сдвинул бы всем
-/// таймерам их дедлайны.
 fn start_sim_clock(mut clock: ResMut<SimClock>, time: Res<Time<Virtual>>) {
-    clock.started_at = time.elapsed_secs_f64();
-    clock.elapsed = 0.0;
+    clock.restart(time.elapsed_secs_f64());
+}
+
+fn restart_sim_clock(
+    _event: On<RestartEvent>,
+    mut clock: ResMut<SimClock>,
+    time: Res<Time<Virtual>>,
+) {
+    clock.restart(time.elapsed_secs_f64());
 }
 
 /// На паузе виртуальная дельта нулевая, поэтому часы сами стоят.
