@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
@@ -239,6 +240,48 @@ fn transform_interpolates_between_fixed_steps() {
         transform.translation.truncate().distance(expected) < 1e-3,
         "ожидалась середина шага {expected}, а не {}",
         transform.translation.truncate()
+    );
+}
+
+/// Перепрокладка на ходу: заявка на новый путь не останавливает сущность — она
+/// продолжает идти по старому, пока ответ не пришёл. Регрессия на «убегающие
+/// стоят, пока считается pathfind»: между заявкой и ответом проходит минимум
+/// кадр, и на ускоренном времени эта пауза съедала четверть времени бегства.
+#[test]
+fn repathing_keeps_walking_the_old_path() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    let (entity, _) = spawn_walker(&mut app, IVec2::new(10, 10), 16, ONE_TILE_PER_STEP);
+
+    app.update();
+    let before_repath = sim_position(&app, entity);
+
+    // поведение просит путь к новой цели, как это делает `flee`
+    let new_target = IVec2::new(10, 30);
+    app.world_mut()
+        .run_system_once(
+            move |mut commands: Commands, query: Single<(Entity, &SimPosition, &mut Movable)>| {
+                let (entity, position, mut movable) = query.into_inner();
+                movable.to_pathfinding(
+                    entity,
+                    world_to_tile(position.0),
+                    new_target,
+                    &mut commands,
+                );
+            },
+        )
+        .expect("run to_pathfinding once");
+
+    app.update();
+
+    let movable = app.world().get::<Movable>(entity).expect("movable");
+    assert_eq!(movable.state, MovableState::Pathfinding(new_target));
+    assert!(
+        app.world().get::<MovableStateMovingTag>(entity).is_some(),
+        "тег движения снят — сущность встала на время расчёта"
+    );
+    assert!(
+        sim_position(&app, entity).x > before_repath.x,
+        "сущность не сдвинулась, пока считается новый путь"
     );
 }
 

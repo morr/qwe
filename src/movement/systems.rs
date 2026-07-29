@@ -20,10 +20,21 @@ const MAX_PATHFINDING_IN_FLIGHT: usize = 512;
 /// «замирали» при лёгком движении камеры.
 const VIEW_MARGIN: f32 = 1.2;
 
+/// Приоритет заявки в очереди диспетчера, по возрастанию: чем меньше, тем
+/// раньше считается путь.
+mod priority {
+    /// Демоны и паникующие люди: без пути они стоят на месте, и стоят рядом
+    /// с демоном. Считаются вперёд всех мирных, в кадре или нет.
+    pub const URGENT: u8 = 0;
+    /// Мирно гуляющие в кадре — их видно, но ждать они могут.
+    pub const WANDER_ON_SCREEN: u8 = 1;
+}
+
 /// Запуск тасков поиска пути из очереди запросов. МИРНО гуляющие люди вне
 /// экрана путь НЕ получают вовсе — их заявки ждут, пока камера не приедет;
 /// демоны и убегающие люди обсчитываются всегда (иначе инвазия и паника за
-/// кадром встанут). Внутри кадра — по удалённости от его центра.
+/// кадром встанут) и первыми. Внутри приоритета — по удалённости от центра
+/// кадра.
 pub fn dispatch_pathfinding_requests(
     mut commands: Commands,
     pathfinder: Pathfinder,
@@ -52,11 +63,14 @@ pub fn dispatch_pathfinding_requests(
         .filter_map(|(entity, sim_position, request, is_human, is_fleeing)| {
             let offset = (sim_position.0 - camera_position).abs();
             let on_screen = offset.x <= half_view.x && offset.y <= half_view.y;
-            if is_human && !is_fleeing && !on_screen {
-                return None;
-            }
+            let priority = match (is_human && !is_fleeing, on_screen) {
+                (false, _) => priority::URGENT,
+                (true, true) => priority::WANDER_ON_SCREEN,
+                // мирный за кадром — заявка ждёт камеру
+                (true, false) => return None,
+            };
             (
-                u8::from(!on_screen),
+                priority,
                 offset.length_squared(),
                 entity,
                 request.start_tile,
@@ -135,6 +149,10 @@ pub fn snapshot_previous_sim_positions(mut query: Query<(&mut PreviousSimPositio
 }
 
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.
+///
+/// `MovableStateMovingTag` означает «есть путь, по которому идём», а не
+/// «состояние `Moving`»: при перепрокладке на ходу состояние уже
+/// `Pathfinding`, а идти по старому пути надо до прихода нового.
 pub fn move_moving_entities(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
@@ -143,18 +161,21 @@ pub fn move_moving_entities(
 ) {
     let started = std::time::Instant::now();
     for (entity, mut movable, mut sim_position) in &mut query {
-        if !matches!(movable.state, MovableState::Moving(_)) {
-            continue;
-        }
-
         let mut remaining_time = time.delta_secs();
         loop {
             if movable.path.is_empty() {
-                let destination_reached = matches!(
-                    movable.state,
-                    MovableState::Moving(target) if world_to_tile(sim_position.0) == target
-                );
-                movable.to_idle(entity, &mut commands, destination_reached);
+                match movable.state {
+                    MovableState::Moving(target) => {
+                        let destination_reached = world_to_tile(sim_position.0) == target;
+                        movable.to_idle(entity, &mut commands, destination_reached);
+                    }
+                    // старый путь пройден раньше, чем посчитан новый: снимаем
+                    // тег движения, но состояние не трогаем — ответ придёт и
+                    // снова поставит путь
+                    _ => {
+                        commands.entity(entity).remove::<MovableStateMovingTag>();
+                    }
+                }
                 break;
             }
 
@@ -211,13 +232,18 @@ pub fn on_movable_added_init_sim_position(
     previous.0 = sim_position.0;
 }
 
+/// Сколько ведущих waypoint'ов нового пути можно срезать. Пока путь считался,
+/// сущность шла по старому и ушла со стартового тайла заявки на тайл-другой;
+/// срезать больше — риск спрямить угол сквозь стену.
+const REPATH_TRIM_LIMIT: usize = 2;
+
 /// Снимает готовые асинхронные ответы поиска пути.
 pub fn listen_for_pathfinding_tasks(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    mut tasks: Query<(Entity, &mut Movable, &mut PathfindingTask)>,
+    mut tasks: Query<(Entity, &mut Movable, &SimPosition, &mut PathfindingTask)>,
 ) {
-    for (entity, mut movable, mut task) in &mut tasks {
+    for (entity, mut movable, sim_position, mut task) in &mut tasks {
         let Some(result) = check_ready(&mut task.0) else {
             continue;
         };
@@ -235,21 +261,31 @@ pub fn listen_for_pathfinding_tasks(
         }
 
         let Some(path) = result.path else {
-            movable.to_pathfinding_error(entity, end_tile, &mut commands);
+            movable.to_pathfinding_error(end_tile);
             continue;
         };
 
         // путь всегда включает стартовый тайл; один элемент — мы уже на месте
         if path.len() == 1 {
             movable.to_idle(entity, &mut commands, true);
-        } else {
-            movable.to_moving(
-                end_tile,
-                path.into_iter().skip(1).collect(),
-                entity,
-                &mut commands,
-            );
+            continue;
         }
+
+        // перепрокладка шла на ходу, и сущность уже не на стартовом тайле:
+        // срезаем начало пути, пока следующий waypoint не дальше текущего —
+        // иначе первый шаг был бы назад
+        let mut path: std::collections::VecDeque<IVec2> = path.into_iter().skip(1).collect();
+        let position = sim_position.0;
+        let mut trimmed = 0;
+        while trimmed < REPATH_TRIM_LIMIT
+            && path.len() >= 2
+            && position.distance_squared(tile_center(path[1]))
+                <= position.distance_squared(tile_center(path[0]))
+        {
+            path.pop_front();
+            trimmed += 1;
+        }
+        movable.to_moving(end_tile, path, entity, &mut commands);
     }
 }
 

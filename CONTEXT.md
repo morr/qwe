@@ -371,9 +371,21 @@ in `main.rs`.
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
   (polled with `check_ready`). **Visibility gating**: peacefully wandering humans
   OUTSIDE the camera view (×1.2 margin) are never dispatched — their requests wait
-  until the camera arrives; demons and fleeing humans are always dispatched. In-frame
-  requests go nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
-  (512). The speed panel shows in-flight / queued / avg ms.
+  until the camera arrives; demons and fleeing humans are always dispatched.
+  **Priority** (`priority::` in `movement/systems.rs`): demons and fleeing humans
+  (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
+  priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
+  (512). The order only bites when the cap binds — in normal play in-flight sits
+  around 100 of 512. The speed panel shows in-flight / queued / avg ms.
+- **Repath on the move** — `to_pathfinding` keeps the current path and the
+  `MovableStateMovingTag`, so an entity walks its old path while the new one is
+  computed; `MovableStateMovingTag` therefore means "has a path", *not* "state is
+  `Moving`". Dispatch and pickup both live in `Update`, so a reply costs at least a
+  frame, and a fleeing human repaths every ~1 s: stopping for that frame left a
+  quarter of all panicking humans standing at any instant at 10× (measured). When the
+  reply lands, up to `REPATH_TRIM_LIMIT` (2) leading waypoints are dropped while the
+  next one is no further than the first — the entity has moved off the tile the
+  search started from, and without the trim its first step would be backwards.
 - **find_passable_tile_near** — the target tile or its 8 neighbors only; callers must
   tolerate `None`.
 - **pathfinding_bench** (`examples/pathfinding_bench.rs`) — offline comparison of all six
@@ -403,7 +415,8 @@ in `main.rs`.
   tick of interpolation.
 - **Movable** — `{speed, path: VecDeque<IVec2>, state}`;
   `MovableState: Idle | Pathfinding(goal) | Moving(goal) | PathfindingError`.
-  `to_pathfinding` spawns the async A* task.
+  `to_pathfinding` queues the search and keeps the current path (see *Repath on the
+  move*); `to_idle` is the only transition that stops movement.
 - **SpatialGrid<T>** — uniform grid of `(Entity, Vec2)` per marker type (`Demon`,
   `Human`), 60 m cells (≥ the largest search radius), fully rebuilt every tick.
   `nearest_in_range_where` — nearest entity passing a filter.

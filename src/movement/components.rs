@@ -101,6 +101,13 @@ impl Movable {
 
     /// Запустить асинхронный поиск пути; ответ снимает
     /// `listen_for_pathfinding_tasks`.
+    ///
+    /// Текущий путь при этом НЕ сбрасывается — перепрокладка идёт на ходу.
+    /// Между заявкой и ответом проходит минимум кадр (диспетчер и приёмник
+    /// живут в `Update`), а убегающий перекладывается раз в ~1 с; на ускоренном
+    /// времени этот кадр стоит заметную долю виртуальной секунды, и остановка
+    /// на каждой перепрокладке держала четверть паникующих стоящими в любой
+    /// момент времени.
     pub fn to_pathfinding(
         &mut self,
         entity: Entity,
@@ -108,7 +115,6 @@ impl Movable {
         end_tile: IVec2,
         commands: &mut Commands,
     ) {
-        self.stop_moving(entity, commands);
         self.state = MovableState::Pathfinding(end_tile);
 
         // в очередь; старый таск отменяется (дроп `Task`), старый запрос
@@ -122,13 +128,9 @@ impl Movable {
             });
     }
 
-    pub fn to_pathfinding_error(
-        &mut self,
-        entity: Entity,
-        end_tile: IVec2,
-        commands: &mut Commands,
-    ) {
-        self.stop_moving(entity, commands);
+    /// Поиск пути не удался. Путь, если он ещё не пройден, остаётся: пока
+    /// поведение выбирает новую цель, идти по старому лучше, чем стоять.
+    pub fn to_pathfinding_error(&mut self, end_tile: IVec2) {
         self.state = MovableState::PathfindingError(end_tile);
     }
 
