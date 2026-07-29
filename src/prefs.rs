@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use bevy::settings::{SaveSettingsSync, SettingsPlugin};
 
 use crate::city::City;
-use crate::map::TreeStyle;
+use crate::map::{BuildingHeightMode, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PathfindingAlgorithm;
 use crate::ui::{DebugDoors, DebugGrid, DebugNavmesh};
@@ -45,7 +45,8 @@ impl Plugin for PrefsPlugin {
                     .or_else(resource_changed::<DebugDoors>)
                     .or_else(resource_changed::<DrawMovePaths>)
                     .or_else(resource_changed::<PathfindingAlgorithm>)
-                    .or_else(resource_changed::<TreeStyle>),
+                    .or_else(resource_changed::<TreeStyle>)
+                    .or_else(resource_changed::<BuildingHeightMode>),
             ),
         );
     }

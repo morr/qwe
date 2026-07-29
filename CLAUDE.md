@@ -183,6 +183,7 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground sprite, merged layer meshes | `map/spawn.rs` |
+| building layers (facades/roofs/shadows/extrusion) | `map/buildings.rs::spawn_buildings` |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` |
 | portal | `portal.rs` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |

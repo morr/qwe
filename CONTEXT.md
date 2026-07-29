@@ -236,8 +236,9 @@ in `main.rs`.
     a five-storey block keeps the historical 3 m band. Facades sit *under* every roof on
     purpose — that is what stops a tower's wide band from painting over its low neighbour.
   - **Shadows** — facade band plus a long shadow: one translucent merged mesh at
-    `Z_BUILDING_SHADOW` (4.5, above the portal and corpses — they are outdoors and in
-    shadow by meaning), quads swept from the silhouette edges of the footprint (edges
+    `Z_BUILDING_SHADOW` (18.9 — like tree shadows, *above* units and roofs, below the
+    crowns, so a pawn, a street or a neighbour's roof in the shadow darkens exactly as
+    under a tree), quads swept from the silhouette edges of the footprint (edges
     whose outward normal faces the shadow direction — same 30° light as tree shadows)
     by height × `SHADOW_LENGTH_SCALE` (0.6) clamped to 3–45 m. The under-roof part of
     the shadow is never drawn, so a convex building never double-darkens itself;
@@ -252,6 +253,8 @@ in `main.rs`.
     raster order), so a southern building correctly overlays its northern neighbour.
     Known limits: units y-sort against flat z=5 and can draw over a tall roof they are
     "behind"; kremlin wall polylines (z 5.1) draw over nearby lifted roofs.
+  - **2.5D+shadows+tint (ExtrusionShadowsTint)** — everything at once: the extruded
+    geometry with the tint ramp on lifted roofs plus the long-shadow layer.
 - **Tree crowns** (`map/trees.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the

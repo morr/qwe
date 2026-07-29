@@ -170,12 +170,17 @@ impl MeshBuilder {
         );
     }
 
-    fn push_quad(&mut self, corners: [Vec2; 4], color: LinearRgba) {
+    pub(crate) fn push_quad(&mut self, corners: [Vec2; 4], color: LinearRgba) {
+        self.push_quad_gradient(corners, [color; 4]);
+    }
+
+    /// Квад с цветом на каждую вершину — для вертикального градиента стен
+    /// экструдированных зданий.
+    pub(crate) fn push_quad_gradient(&mut self, corners: [Vec2; 4], colors: [LinearRgba; 4]) {
         let base = self.positions.len() as u32;
-        let rgba = color.to_f32_array();
-        for corner in corners {
+        for (corner, color) in corners.into_iter().zip(colors) {
             self.positions.push([corner.x, corner.y, 0.0]);
-            self.colors.push(rgba);
+            self.colors.push(color.to_f32_array());
         }
         self.indices
             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
