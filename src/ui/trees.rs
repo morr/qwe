@@ -12,7 +12,7 @@ use bevy::ui_widgets::{Activate, Button};
 use bevy::prelude::*;
 
 use crate::map::{TreeShape, TreeStyle};
-use crate::ui::{UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
+use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
 
 /// Палитра листвы: зелень watabou плюс осенние и хвойные оттенки.
 const FOLIAGE_PALETTE: [Color; 5] = [
@@ -90,6 +90,8 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
+            GameUiRoot,
+            Visibility::Hidden,
             Name::new("tree_style_panel"),
             children![(
                 Text::new("Trees"),

@@ -17,7 +17,7 @@ use crate::grid::tile_center;
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
-use crate::ui::{UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
+use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, ui_color};
 
 #[derive(Resource, Default)]
 pub struct DebugGrid(pub bool);
@@ -81,6 +81,8 @@ fn render_debug_toggles(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
+            GameUiRoot,
+            Visibility::Hidden,
             Name::new("debug_toggles"),
         ))
         .id();

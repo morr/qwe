@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED};
 use crate::sim_time::SimSpeed;
-use crate::ui::{UiOpacity, ui_color};
+use crate::ui::{GameUiRoot, UiOpacity, ui_color};
 
 #[derive(Component, Default)]
 struct SpeedTextMarker;
@@ -46,6 +46,8 @@ fn render_speed_ui(mut commands: Commands, time: Res<Time<Virtual>>, speed: Res<
             ..default()
         },
         BackgroundColor(ui_color(UiOpacity::Light)),
+        GameUiRoot,
+        Visibility::Hidden,
         Name::new("speed_ui"),
         children![
             (
