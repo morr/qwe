@@ -570,25 +570,30 @@ in `main.rs`.
   `MovableState: Idle | Pathfinding(goal) | Moving(goal) | PathfindingError`.
   `to_pathfinding` queues the search and keeps the current path (see *Repath on the
   move*); `to_idle` is the only transition that stops movement.
-- **SpatialGrid<T>** — uniform grid of `(Entity, Vec2)` per marker type (`Demon`,
-  `Human`), 60 m cells (≥ the largest search radius), fully rebuilt every tick.
-  `nearest_in_range_where` — nearest entity passing a filter.
-- **DemonDangerMap** (`spatial.rs`) — coarse prefilter for `panic`: a `Vec<bool>` over
-  the same 60 m cells, marking the 3×3 neighborhood of every demon's cell. Cell ≥ panic
-  radius (compile-time assert), so an unmarked cell *guarantees* no demon within
-  `HUMAN_PANIC_RADIUS` — a wandering human then skips the 3×3 `SpatialGrid<Demon>` scan
-  on a single read. A marked cell only means "maybe"; the exact distance still comes from
-  `nearest_in_range`, so behavior is unchanged. Rebuilt from scratch each tick in
-  `rebuild_demon_grid` (~100 demons × 9 cells — microseconds); deliberately *not*
-  maintained incrementally on cell crossings — that saves nothing here and adds lifecycle
-  invariants (spawn, restart, city switch, lunge moving `SimPosition` outside the mover).
-  Before it, `panic` scanned the demon grid per wandering human and alone set the speed
-  ceiling (~0.8 ms/tick of a ~1.0 ms tick).
+- **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells
+  (≥ the largest search radius, so a radius query is a 3×3 cell walk). Cells hold
+  **entities only** — a candidate's position is read live from `SimPosition` through the
+  `pos_of` closure every query takes. Storing `Vec2` in the cell would require a
+  full rebuild every tick, or positions go stale by up to a cell size and chase/panic
+  silently miss. `nearest_in_range_where` — nearest entity passing a filter;
+  `for_each_in_cells_around` — raw candidate walk, caller does the exact distance.
+- **The human grid is incremental, the demon grid is rebuilt.** Humans (~20 000):
+  `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and death/despawn
+  (`On<Remove>` fires on despawn too — escape, restart, city switch all funnel through
+  it), and `move_moving_entities` moves an entity between cells when a step crosses a
+  60 m boundary — an arithmetic compare per mover, hash work only on the rare crossing
+  (a wanderer crosses a cell every ~21 virtual seconds), so the cost scales with
+  crossings, not with population or how many pawns the camera lets move. Demons (~100):
+  full rebuild per tick in `rebuild_demon_grid` is cheaper than bookkeeping, and the
+  lunge moves demon `SimPosition` outside the mover system anyway.
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
   walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding
   load — and 20% stroll 20–40 m nearby) ⇄ **Flee** (demon within `HUMAN_PANIC_RADIUS`
-  60 m; repath every 0.7–1.2 s, step 40–60 m away from the nearest demon). **Flee fan** — a
+  60 m; repath every 0.7–1.2 s, step 40–60 m away from the nearest demon). The
+  Wander → Flee check (`panic`) is **inverted**: each demon collects neighbors from the
+  human grid instead of every wanderer polling the demon grid, so its cost tracks the
+  crowd near demons, not the city population. **Flee fan** — a
   non-chased fleeing human rotates its away-vector by a deterministic per-entity angle
   (±0.6 rad) so crowds spread instead of forming a column; actively chased humans flee
   straight. Calm-down at ×1.5 radius hysteresis. **Escape** — a fleeing human within
@@ -693,9 +698,12 @@ in `main.rs`.
     The panel's first line shows it as plain seconds (`T+8130`), and it is readable
     over BRP as `SimClock`.
   - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): with the
-    `DemonDangerMap` prefilter `panic` dropped from ~0.8 ms (the old ceiling-setter) to
-    the same order as `spatial` ~0.1 ms > `flee` ~0.05 ms > `move` ~0.01 ms ≈ `chase`.
-    The ceiling is now the sum of many small systems, not one dominant scan.
+    entity-only incremental grid and the inverted `panic` the tick sums to ~0.1 ms —
+    `flee` ~0.06 > `panic` ~0.02 > `move` ~0.01 > `spatial` (demon rebuild) ~0.004.
+    History: `panic` once scanned the demon grid per wandering human (~0.8 ms/tick, the
+    speed ceiling); a `DemonDangerMap` boolean prefilter cut it to ~0.15, and the
+    inversion replaced the map entirely. At full zoom-out (every pawn moving) the sim
+    stays ~0.2 ms/tick — the limiter there is rendering 20k sprites, not the sim.
 - **Remembered UI options** (`prefs.rs`) — every UI-settable resource (`DebugGrid`,
   `DebugNavmesh`, `DrawMovePaths`, `PathfindingAlgorithm`, `TreeStyle`) is a
   `bevy::settings::SettingsGroup`, so a click survives a restart. `SettingsPlugin` reads

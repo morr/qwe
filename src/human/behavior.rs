@@ -12,7 +12,7 @@ use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
 };
-use crate::spatial::{DemonDangerMap, SpatialGrid};
+use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
 /// Шаг бегства: насколько далеко от себя прокладывается точка «от демона», м.
@@ -31,34 +31,48 @@ fn personal_spread(entity: Entity) -> f32 {
 }
 
 /// Wander → Flee: демон в радиусе паники.
+///
+/// Цикл инвертирован: не «каждый из ~20 000 гуляющих опрашивает сетку
+/// демонов», а «каждый из ~100 демонов собирает соседей по сетке людей».
+/// Стоимость пропорциональна толпе возле демонов, а не населению карты —
+/// и не меняется, сколько бы людей мирно ни гуляло на другом краю города.
 pub fn panic(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    demons: Res<SpatialGrid<Demon>>,
-    danger: Res<DemonDangerMap>,
-    query: Query<(Entity, &SimPosition), (With<Human>, With<HumanWanderTag>)>,
+    humans: Res<SpatialGrid<Human>>,
+    demons: Query<&SimPosition, With<Demon>>,
+    wanderers: Query<&SimPosition, (With<Human>, With<HumanWanderTag>)>,
     mut movables: Query<&mut Movable>,
 ) {
     let started = std::time::Instant::now();
-    for (entity, sim_position) in &query {
-        // грубый префильтр по danger-карте: подавляющее большинство гуляющих
-        // далеко от демонов, и им хватает одного чтения вместо обхода 3×3
-        if danger.is_safe(sim_position.0) {
-            continue;
-        }
-        if demons
-            .nearest_in_range(sim_position.0, HUMAN_PANIC_RADIUS)
-            .is_none()
-        {
-            continue;
-        }
+    // дедуп между демонами: человека в двух радиусах паникуем один раз
+    let mut panicked: bevy::platform::collections::HashSet<Entity> =
+        bevy::platform::collections::HashSet::default();
+    for demon_position in &demons {
+        humans.for_each_in_cells_around(demon_position.0, HUMAN_PANIC_RADIUS, |human| {
+            if panicked.contains(&human) {
+                return;
+            }
+            // уже бегущие и только что убитые отсеиваются самим запросом
+            let Ok(human_position) = wanderers.get(human) else {
+                return;
+            };
+            if human_position.0.distance_squared(demon_position.0)
+                <= HUMAN_PANIC_RADIUS * HUMAN_PANIC_RADIUS
+            {
+                panicked.insert(human);
+            }
+        });
+    }
 
+    let mut rng = rand::rng();
+    for &entity in &panicked {
         if let Ok(mut movable) = movables.get_mut(entity) {
             movable.speed = HUMAN_FLEE_SPEED;
         }
         let mut repath = FleeRepath::default();
         // первый путь — сразу, дальше по таймеру со случайным периодом
-        let period = rand::rng().random_range(0.7..1.2);
+        let period = rng.random_range(0.7..1.2);
         repath
             .0
             .set_duration(std::time::Duration::from_secs_f32(period));
@@ -72,12 +86,14 @@ pub fn panic(
 
 /// Flee: бег от ближайшего демона с троттлингом перепрокладки;
 /// демоны отстали (×1.5 радиуса) — успокаивается.
+#[allow(clippy::too_many_arguments)]
 pub fn flee(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
     pathfinder: Pathfinder,
     demons: Res<SpatialGrid<Demon>>,
+    demon_positions: Query<&SimPosition, With<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     mut query: Query<
         (
@@ -98,9 +114,11 @@ pub fn flee(
         chasing.iter().map(|chase_target| chase_target.0).collect();
 
     for (entity, sim_position, mut repath, mut pause, mut movable) in &mut query {
-        let Some((_, demon_position)) =
-            demons.nearest_in_range(sim_position.0, HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS)
-        else {
+        let Some((_, demon_position)) = demons.nearest_in_range(
+            sim_position.0,
+            HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS,
+            |d| demon_positions.get(d).ok().map(|p| p.0),
+        ) else {
             // демоны далеко — мирный режим, отдышаться перед новой прогулкой
             movable.speed = HUMAN_WALK_SPEED;
             movable.to_idle(entity, &mut commands, false);

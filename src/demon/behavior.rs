@@ -37,6 +37,7 @@ fn chasers_of(target: Entity, chasers: &ChaserCounts) -> usize {
 pub fn acquire_targets(
     mut commands: Commands,
     humans: Res<SpatialGrid<Human>>,
+    positions: Query<&SimPosition, With<Human>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
     mut movables: Query<&mut Movable>,
@@ -47,11 +48,12 @@ pub fn acquire_targets(
     }
 
     for (entity, sim_position) in &query {
-        let Some((human, _)) =
-            humans.nearest_in_range_where(sim_position.0, DEMON_AGGRO_RADIUS, |candidate| {
-                chasers_of(candidate, &chasers) < MAX_CHASERS_PER_TARGET
-            })
-        else {
+        let Some((human, _)) = humans.nearest_in_range_where(
+            sim_position.0,
+            DEMON_AGGRO_RADIUS,
+            |candidate| positions.get(candidate).ok().map(|p| p.0),
+            |candidate| chasers_of(candidate, &chasers) < MAX_CHASERS_PER_TARGET,
+        ) else {
             continue;
         };
         *chasers.entry(human).or_insert(0) += 1;
@@ -180,6 +182,7 @@ pub fn chase(
             let switch = humans.nearest_in_range_where(
                 sim_position.0,
                 distance * SWITCH_DISTANCE_FACTOR,
+                |candidate| targets.get(candidate).ok().map(|p| p.0),
                 |candidate| {
                     candidate != chase_target.0
                         && !killed_this_tick.contains(&candidate)

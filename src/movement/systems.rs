@@ -160,14 +160,30 @@ pub fn snapshot_previous_sim_positions(
 /// `MovableStateMovingTag` означает «есть путь, по которому идём», а не
 /// «состояние `Moving`»: при перепрокладке на ходу состояние уже
 /// `Pathfinding`, а идти по старому пути надо до прихода нового.
+///
+/// Заодно ведёт сетку людей: пересёк границу 60-метровой ячейки — переезд.
+/// Сравнение ячеек — арифметика без hash, само событие редкое (гуляющий
+/// пересекает ячейку раз в ~21 виртуальную секунду), так что стоимость не
+/// растёт ни от зум-аута, ни от населения. `Option` — плагин движения
+/// используется в тестах без `SpatialPlugin`.
 pub fn move_moving_entities(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    mut query: Query<(Entity, &mut Movable, &mut SimPosition), With<MovableStateMovingTag>>,
+    mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut query: Query<
+        (
+            Entity,
+            &mut Movable,
+            &mut SimPosition,
+            Has<crate::human::Human>,
+        ),
+        With<MovableStateMovingTag>,
+    >,
     time: Res<Time>,
 ) {
     let started = std::time::Instant::now();
-    for (entity, mut movable, mut sim_position) in &mut query {
+    for (entity, mut movable, mut sim_position, is_human) in &mut query {
+        let cell_before = crate::spatial::cell_of(sim_position.0);
         let mut remaining_time = time.delta_secs();
         loop {
             if movable.path.is_empty() {
@@ -203,6 +219,13 @@ pub fn move_moving_entities(
             if remaining_time <= 0.0 {
                 break;
             }
+        }
+
+        if is_human
+            && crate::spatial::cell_of(sim_position.0) != cell_before
+            && let Some(grid) = human_grid.as_mut()
+        {
+            grid.insert(entity, sim_position.0);
         }
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
