@@ -160,6 +160,12 @@ pub const Z_ALLEY_CASING: f32 = 1.4;
 pub const Z_ALLEY: f32 = 1.5;
 pub const Z_ROAD_CASING: f32 = 1.9;
 pub const Z_ROAD: f32 = 2.0;
+/// Ж/д путь поверх дорог: трамвайные пути в OSM висят на тех же ways, что и
+/// улица, и обязаны лежать на ней, а не под ней. Штриховка — отдельным слоем
+/// над всеми лентами, иначе компланарная геометрия в одном меше z-файтит и
+/// штрих одного пути тонет под лентой соседнего.
+pub const Z_RAIL: f32 = 2.4;
+pub const Z_RAIL_DASH: f32 = 2.5;
 pub const Z_CORPSE: f32 = 3.0;
 pub const Z_PORTAL: f32 = 4.0;
 pub const Z_BUILDING: f32 = 5.0;

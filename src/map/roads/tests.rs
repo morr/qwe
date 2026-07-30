@@ -83,6 +83,58 @@ fn smoothing_off_borrows_the_osm_centerline() {
 }
 
 #[test]
+fn rails_are_smoothed_like_roads_but_never_pinned() {
+    // у рельса нет `passage`, поэтому сглаживание к нему применяется всегда
+    let points = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
+    assert!(smooth_path(&points, 5.0, RoadSmoothing::Strong).len() > 3);
+    assert!(matches!(
+        smooth_path(&points, 5.0, RoadSmoothing::Off),
+        Cow::Borrowed(_)
+    ));
+}
+
+#[test]
+fn rail_dashes_are_narrower_than_the_bed_and_leave_gaps() {
+    let points = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let width = 5.0;
+
+    let mut bed = MeshBuilder::default();
+    push_ribbon(&mut bed, &points, width, LinearRgba::WHITE, RoadJoin::Round);
+    let mut dashes = MeshBuilder::default();
+    dashes.push_dashes(
+        &points,
+        width * RAIL_DASH_SCALE,
+        RAIL_DASH_LEN,
+        RAIL_DASH_GAP,
+        LinearRgba::WHITE,
+        dash_join(RoadJoin::Round),
+    );
+
+    let extent = |builder: &MeshBuilder| {
+        builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[1])
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    // штриховка обязана лежать внутри ленты, иначе она читается как вторая линия
+    assert!(!dashes.is_empty());
+    assert!(extent(&dashes) < extent(&bed));
+
+    // и обязана быть прерывистой: сплошная лента на том же пути — один кусок
+    let mut solid = MeshBuilder::default();
+    solid.push_dashes(
+        &points,
+        width * RAIL_DASH_SCALE,
+        1000.0,
+        1000.0,
+        LinearRgba::WHITE,
+        dash_join(RoadJoin::Round),
+    );
+    assert!(dashes.vertex_count() > solid.vertex_count());
+}
+
+#[test]
 fn casing_is_wider_than_the_fill() {
     // кант обязан торчать из-под заливки на всех классах дорог
     for width in [3.5_f32, 5.0, 8.0, 16.0] {

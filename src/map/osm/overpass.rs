@@ -49,11 +49,11 @@ impl GeoBounds {
 
 /// Версия запроса в имени кеша: расширили набор тегов — старая выгрузка
 /// новых зон не содержит, и без этого её никто бы не перекачал.
-/// v3 — ноды `entrance`.
-const QUERY_VERSION: u32 = 3;
+/// v3 — ноды `entrance`. v4 — ways `railway`.
+const QUERY_VERSION: u32 = 4;
 
-/// QL-запрос: здания, дороги, вода, парки/зелень, луга, песок, стены Кремля,
-/// входы в здания.
+/// QL-запрос: здания, дороги, ж/д пути, вода, парки/зелень, луга, песок,
+/// стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
         south,
@@ -69,6 +69,7 @@ pub fn overpass_query(city: City) -> String {
   way["building"]({bbox});
   relation["building"]({bbox});
   way["highway"]({bbox});
+  way["railway"]({bbox});
   way["natural"="water"]({bbox});
   relation["natural"="water"]({bbox});
   way["waterway"="riverbank"]({bbox});

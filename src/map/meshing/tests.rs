@@ -104,6 +104,77 @@ fn polyline_makes_quad_per_segment() {
     assert_eq!(builder.indices.len(), 12);
 }
 
+/// Прямой штрих — лента из двух точек, четыре вершины на квад.
+const VERTS_PER_STRAIGHT_DASH: usize = 4;
+
+#[test]
+fn dashes_cover_the_path_at_the_given_period() {
+    let mut builder = MeshBuilder::default();
+    builder.push_dashes(
+        &[Vec2::ZERO, Vec2::new(100.0, 0.0)],
+        2.0,
+        6.0,
+        6.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+    );
+    // период 12 м на 100 м: штрихи с 0, 12, … 96 — восемь целых и хвост
+    assert_eq!(builder.positions.len(), 9 * VERTS_PER_STRAIGHT_DASH);
+}
+
+#[test]
+fn a_path_shorter_than_one_dash_still_gets_a_dash() {
+    // в ж/д развязке коротких ways большинство, и голая лента без штриховки
+    // читалась бы как дорога
+    let mut builder = MeshBuilder::default();
+    builder.push_dashes(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        2.0,
+        30.0,
+        30.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+    );
+    assert_eq!(builder.positions.len(), VERTS_PER_STRAIGHT_DASH);
+}
+
+#[test]
+fn dashes_follow_the_bends_of_the_path() {
+    let path = [Vec2::ZERO, Vec2::new(30.0, 0.0), Vec2::new(30.0, 30.0)];
+    let width = 2.0;
+    let mut builder = MeshBuilder::default();
+    builder.push_dashes(&path, width, 6.0, 6.0, LinearRgba::WHITE, RibbonJoin::Miter);
+    assert!(!builder.is_empty());
+    // штрих, накрывший излом, обязан повернуть вместе с путём, а не срезать угол
+    for position in &builder.positions {
+        let point = Vec2::new(position[0], position[1]);
+        let distance = distance_to_path(point, &path);
+        assert!(distance <= width / 2.0 + 1e-3, "dash drifted {distance} m");
+    }
+}
+
+#[test]
+fn a_degenerate_path_makes_no_dashes() {
+    let mut builder = MeshBuilder::default();
+    builder.push_dashes(
+        &[Vec2::ZERO],
+        2.0,
+        6.0,
+        6.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+    );
+    builder.push_dashes(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        2.0,
+        0.0,
+        6.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+    );
+    assert!(builder.is_empty());
+}
+
 /// Расстояние от точки до ломаной — ни одна вершина скруглённой ленты не
 /// имеет права уйти дальше полуширины, торцы включительно.
 fn distance_to_path(point: Vec2, path: &[Vec2]) -> f32 {

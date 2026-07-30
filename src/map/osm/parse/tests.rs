@@ -71,6 +71,46 @@ fn parses_building_road_and_multipolygon() {
 }
 
 #[test]
+fn parses_rails_and_drops_station_furniture() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    // путь, платформа (отбрасывается), заброшенная ветка и трамвай на улице
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "way", "id": 20, "tags": {{"railway": "rail"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 21, "tags": {{"railway": "platform"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 22, "tags": {{"railway": "abandoned"}},
+    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}},
+  {{"type": "way", "id": 23, "tags": {{"railway": "tram", "highway": "residential"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
+]}}"#,
+        a = lat - d,
+        e = lat + d,
+        b = lon - d,
+        c = lon + d,
+    );
+
+    let map = parse(&json, CITY).unwrap();
+
+    assert_eq!(map.rails.len(), 3, "platform must not become a rail");
+    assert_eq!(map.rails[0].width, 5.0);
+    assert_eq!(map.rails[0].kind, RailKind::Active);
+    assert_eq!(map.rails[1].kind, RailKind::Disused);
+
+    // трамвайный путь на улице — это и улица, и путь: way попадает в оба списка
+    assert_eq!(map.rails[2].kind, RailKind::Active);
+    assert_eq!(map.roads.len(), 1);
+    assert_eq!(map.roads[0].width, 8.0);
+    assert_eq!(map.roads[0].points, map.rails[2].points);
+
+    // рельсы существуют только для картинки — навмеша они не касаются
+    assert!(map.walls.is_empty());
+    assert!(map.buildings.is_empty());
+}
+
+#[test]
 fn trees_are_deterministic_and_inside_the_wood() {
     let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
     let d = 0.001;

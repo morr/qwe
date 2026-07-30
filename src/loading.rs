@@ -265,7 +265,8 @@ fn poll_job(
                 .sum();
             info!(
                 "osm map: {} buildings ({with_height} with height, {entrances} entrances), \
-                 {} water, {} parks, {} woods, {} grass, {} sand, {} roads, {} walls, {} trees",
+                 {} water, {} parks, {} woods, {} grass, {} sand, {} roads, {} rails, \
+                 {} walls, {} trees",
                 map.buildings.len(),
                 map.water.len(),
                 map.parks.len(),
@@ -273,6 +274,7 @@ fn poll_job(
                 map.grass.len(),
                 map.sand.len(),
                 map.roads.len(),
+                map.rails.len(),
                 map.walls.len(),
                 map.trees.len(),
             );

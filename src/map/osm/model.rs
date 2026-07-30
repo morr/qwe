@@ -55,6 +55,25 @@ pub struct RoadLine {
     pub passage: bool,
 }
 
+/// Состояние ж/д пути: действующий или заброшенный (рисуется тусклее).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailKind {
+    Active,
+    Disused,
+}
+
+/// Ж/д путь: осевая полилиния и ширина по значению `railway`.
+///
+/// Навмеша не касается — слой чисто визуальный, люди ходят через пути как по
+/// земле. Непрерывная линия, режущая город пополам, иначе отрезала бы половину
+/// карты, и `prune_unreachable` её бы ампутировал.
+#[derive(Debug, Clone)]
+pub struct RailLine {
+    pub points: Vec<Vec2>,
+    pub width: f32,
+    pub kind: RailKind,
+}
+
 /// Стена (Кремль): полилиния фиксированной ширины, непроходима.
 #[derive(Debug, Clone)]
 pub struct WallLine {
@@ -75,6 +94,8 @@ pub struct MapData {
     /// Песчаные пляжи — тоже поверх парков и без деревьев.
     pub sand: Vec<PolyArea>,
     pub roads: Vec<RoadLine>,
+    /// Ж/д пути — только для отрисовки, в навмеш не попадают.
+    pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
     /// Деревья в парках: (центр, радиус). Детерминированы данными карты.
     /// Отсортированы по [`MapData::tree_appears_at`] — по возрастанию плотности,

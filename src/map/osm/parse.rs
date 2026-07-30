@@ -11,8 +11,8 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine, point_in_area, point_in_polygon,
-    ring_bounds,
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, point_in_area,
+    point_in_polygon, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -306,6 +306,22 @@ fn road_class(highway: &str) -> Option<(f32, RoadClass)> {
     })
 }
 
+/// Ширина и состояние по значению `railway`; `None` — путь не рисуем.
+///
+/// Белый список, а не чёрный: под `railway=*` в OSM сидит весь словарь
+/// станционного хозяйства (`platform`, `station`, `halt`, `switch`, `signal`,
+/// `buffer_stop`, `turntable`, `construction`, `proposed`), и перечислять то,
+/// что рисуем, короче и безопаснее, чем то, что выбрасываем.
+fn rail_class(railway: &str) -> Option<(f32, RailKind)> {
+    Some(match railway {
+        "rail" => (5.0, RailKind::Active),
+        "light_rail" | "narrow_gauge" | "subway" => (4.0, RailKind::Active),
+        "tram" => (3.5, RailKind::Active),
+        "abandoned" | "disused" | "razed" | "dismantled" => (3.5, RailKind::Disused),
+        _ => return None,
+    })
+}
+
 /// Арка — дорога, проложенная сквозь здание. В Туле это `tunnel=building_passage`
 /// (основной тег) и `covered` — часть таких проездов размечена только им.
 /// `tunnel=yes` сюда не входит: это подземный туннель, поверху он ничего не
@@ -351,6 +367,19 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     let points = project_points(geometry, bounds);
     if points.len() < 2 {
         return;
+    }
+
+    // Рельсы проверяются до дорог и **не** прерывают разбор: трамвайный путь в
+    // OSM сплошь и рядом висит на том же way, что и `highway=*`, и такой way
+    // обязан стать и улицей, и путём.
+    if let Some(railway) = element.tags.get("railway")
+        && let Some((width, kind)) = rail_class(railway)
+    {
+        map.rails.push(RailLine {
+            points: points.clone(),
+            width,
+            kind,
+        });
     }
 
     if let Some(highway) = element.tags.get("highway") {

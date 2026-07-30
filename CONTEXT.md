@@ -25,7 +25,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → woods 0.55 → grass
   0.6 → sand 0.7 → water 1 → alley casings 1.4 → alleys 1.5 → road casings 1.9 → roads 2
-  → corpses 3 → portal 4 → buildings 5 → units → tree shadows 19 → trees 20. Three more
+  → rails 2.4 → rail dashes 2.5 → corpses 3 → portal 4 → buildings 5 → units → tree
+  shadows 19 → trees 20. Three more
   live in their own modules: `Z_BUILDING_SHADOW` 4.5 and `Z_FACADE` 4.9
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
@@ -127,6 +128,14 @@ in `main.rs`.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
     z). `bridge` and `passage` flags — see navmesh.
+  - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
+    `narrow_gauge` / `subway` 4 → `tram` 3.5). `RailKind: Active | Disused` — `abandoned`
+    / `disused` / `razed` / `dismantled` draw washed out. `parse::rail_class` is a
+    **whitelist**, so the station vocabulary (`platform`, `station`, `switch`, `signal`,
+    `construction`, …) never becomes a line. The rail branch in `parse_way` runs *before*
+    the highway branch and deliberately **falls through**: an OSM way is routinely tagged
+    both `railway=tram` and `highway=*`, and such a way is both a street and a track.
+    **Rails never touch the navmesh** — see below.
   - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
     impassable.
   - **trees** — `(pos, radius)` pairs, precomputed at parse.
@@ -348,7 +357,18 @@ in `main.rs`.
 
   Smoothing works on a **copy** — `RoadLine::points` and `width` are load-bearing for the
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
-  and none of them may shift because the drawing changed.
+  and none of them may shift because the drawing changed. `smooth_path` is shared with
+  the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
+- **Rail layers** (`map/roads.rs`, same file and the same `RoadLayerTag`, so a style
+  change rebuilds them with the roads) — osm-carto's dashed railway, two merged meshes:
+  a dark bed at `Z_RAIL` (2.4) and a white dash pattern at `Z_RAIL_DASH` (2.5), 6 m on /
+  6 m off, dash width 60% of the bed. Two layers rather than one mesh, for the casing
+  reason inverted: coplanar geometry z-fights, and the dashes must sit above *every*
+  bed. Both above `Z_ROAD` (2) so a tram track lies on its street, not under it.
+  `MeshBuilder::push_dashes` is the primitive — a single arclength pass emitting
+  `Butt`-capped ribbon chunks, keeping the OSM vertices inside a dash so the pattern
+  turns with the track. A way shorter than one dash still gets one, since most ways in a
+  junction are short and a bare bed reads as a road.
 - **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The panel lives in
@@ -465,6 +485,11 @@ in `main.rs`.
   `distance_to_segment` — round joints by construction) are two independent code paths
   over the same `RoadLine`, and changing how a road is drawn cannot change where anything
   walks. Changing `RoadLine::points` or `width` would change both at once.
+- **Rails do not touch the navmesh either, and deliberately so.** `MapData::rails` is
+  absent from `fill_from_mapdata` by design, not by omission (`tests/navigation.rs`
+  pins it): a rail line runs unbroken across the whole city, so blocking it would slice
+  the map in two and `prune_unreachable` would amputate whichever half does not hold the
+  portal. Pawns cross the tracks as if they were ground.
 - **Building passage** (арка) — a road that runs *through* a building: OSM
   `tunnel=building_passage`, or `covered=building_passage|yes` (both tag styles occur;
   `tunnel=yes` is an underground tunnel and is **not** one). `parse::is_building_passage`

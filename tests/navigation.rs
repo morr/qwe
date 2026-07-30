@@ -4,7 +4,9 @@
 use bevy::math::{IVec2, Vec2};
 
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
+use qwe::map::osm::{
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine,
+};
 use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path, line_of_sight};
 
 fn astar_pathfinding(navmesh: &Navmesh, start: IVec2, end: IVec2) -> Option<Vec<IVec2>> {
@@ -173,6 +175,11 @@ fn fill_from_mapdata_blocks_and_carves() {
             bridge: true,
             passage: false,
         }],
+        rails: vec![RailLine {
+            points: vec![Vec2::new(600.0, 100.0), Vec2::new(600.0, 200.0)],
+            width: 5.0,
+            kind: RailKind::Active,
+        }],
         walls: vec![WallLine {
             points: vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],
             width: 3.0,
@@ -199,6 +206,10 @@ fn fill_from_mapdata_blocks_and_carves() {
     // стена непроходима
     let wall_tile = world_to_tile(Vec2::new(500.0, 150.0));
     assert!(!navmesh.is_passable(wall_tile.x, wall_tile.y));
+
+    // а рельсы — слой чисто визуальный: через путь ходят как по земле
+    let rail_tile = world_to_tile(Vec2::new(600.0, 150.0));
+    assert!(navmesh.is_passable(rail_tile.x, rail_tile.y));
 
     // и путь через реку существует и идёт по мосту
     let path = astar_pathfinding(

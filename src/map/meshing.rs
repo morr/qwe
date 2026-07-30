@@ -169,6 +169,68 @@ impl MeshBuilder {
         );
     }
 
+    /// Пунктир вдоль ломаной: лента ширины `width` кусками по `dash` метров
+    /// через `gap`. Так Mapnik рисует ж/д путь в osm-carto — белая штриховка
+    /// поверх тёмной ленты.
+    ///
+    /// Один проход по сегментам с курсором по длине дуги: точки текущего штриха
+    /// копятся на ходу (концы интерполируются, вершины OSM между ними
+    /// сохраняются) и сбрасываются в ленту по завершении штриха. Торцы — `Butt`:
+    /// штрих это метка, а не конец дороги.
+    ///
+    /// Путь короче одного штриха всё равно даёт один штрих: иначе короткие ways
+    /// (а их в ж/д развязке большинство) остались бы голой тёмной лентой.
+    pub fn push_dashes(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        dash: f32,
+        gap: f32,
+        color: LinearRgba,
+        join: RibbonJoin,
+    ) {
+        if dash <= 0.0 || gap <= 0.0 || points.len() < 2 {
+            return;
+        }
+
+        // остаток текущего интервала и что это за интервал
+        let mut left = dash;
+        let mut drawing = true;
+        let mut current = vec![points[0]];
+
+        for segment in points.windows(2) {
+            let (from, to) = (segment[0], segment[1]);
+            let Some(direction) = (to - from).try_normalize() else {
+                continue;
+            };
+            let mut remaining = from.distance(to);
+            let mut cursor = from;
+
+            while remaining > left {
+                cursor += direction * left;
+                remaining -= left;
+                if drawing {
+                    current.push(cursor);
+                    self.push_ribbon(&current, false, width, color, join, RibbonCap::Butt);
+                }
+                current = vec![cursor];
+                drawing = !drawing;
+                left = if drawing { dash } else { gap };
+            }
+
+            left -= remaining;
+            // в пропуске копить нечего: следующий штрих начнётся с точки,
+            // которую поставит переключение внутри цикла выше
+            if drawing {
+                current.push(to);
+            }
+        }
+
+        if drawing && current.len() > 1 {
+            self.push_ribbon(&current, false, width, color, join, RibbonCap::Butt);
+        }
+    }
+
     /// Лента постоянной ширины вдоль ломаной: `join` — чем закрыт излом,
     /// `cap` — чем закрыты торцы разомкнутой ленты.
     ///

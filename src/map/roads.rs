@@ -1,7 +1,11 @@
-//! Слой дорог, аллей и стен Кремля: по ленте на `RoadLine`/`WallLine`, слитой
-//! в merged-меш на класс. Стиль ленты — ресурс [`RoadStyle`], переключаемый на
-//! лету панелью Roads (`ui/roads.rs`); правка пересобирает только эти слои
-//! ([`rebuild_roads`]).
+//! Слой дорог, аллей, ж/д путей и стен Кремля: по ленте на
+//! `RoadLine`/`RailLine`/`WallLine`, слитой в merged-меш на класс. Стиль ленты —
+//! ресурс [`RoadStyle`], переключаемый на лету панелью Roads (`ui/roads.rs`);
+//! правка пересобирает только эти слои ([`rebuild_roads`]).
+//!
+//! Путь рисуется как в osm-carto: тёмная лента и белая штриховка поверх неё
+//! отдельным слоем. Навмеша путь не касается — люди ходят через рельсы как по
+//! земле.
 //!
 //! Раньше дороги рисовал `MeshBuilder::push_polyline` — свой квад на
 //! сегмент, продлённый с обоих концов на полуширины. Стыков у него нет вообще:
@@ -25,8 +29,10 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, RoadClass, RoadLine, WallLine};
-use crate::settings::{Z_ALLEY, Z_ALLEY_CASING, Z_BUILDING, Z_ROAD, Z_ROAD_CASING};
+use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine, WallLine};
+use crate::settings::{
+    Z_ALLEY, Z_ALLEY_CASING, Z_BUILDING, Z_RAIL, Z_RAIL_DASH, Z_ROAD, Z_ROAD_CASING,
+};
 
 const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
@@ -37,6 +43,19 @@ const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 /// дорог, поэтому кант никогда не режет перекрёсток пополам.
 const ROAD_CASING_COLOR: Color = Color::srgb(0.702, 0.702, 0.702);
 const ALLEY_CASING_COLOR: Color = Color::srgb(0.729, 0.678, 0.549);
+
+/// Ж/д путь как в osm-carto: тёмная лента и белая штриховка поверх неё.
+/// Заброшенный путь — та же пара, но выцветшая: линия читается как след, а не
+/// как действующая ветка.
+const RAIL_COLOR: Color = Color::srgb(0.353, 0.353, 0.353);
+const RAIL_DASH_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
+const RAIL_DISUSED_COLOR: Color = Color::srgb(0.6, 0.6, 0.6);
+const RAIL_DISUSED_DASH_COLOR: Color = Color::srgb(0.867, 0.867, 0.867);
+
+/// Шаг штриховки, м, и ширина штриха как доля ленты.
+const RAIL_DASH_LEN: f32 = 6.0;
+const RAIL_DASH_GAP: f32 = 6.0;
+const RAIL_DASH_SCALE: f32 = 0.6;
 
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
@@ -132,6 +151,7 @@ pub fn spawn_roads(
     materials: &mut Assets<ColorMaterial>,
     style: RoadStyle,
     roads: &[RoadLine],
+    rails: &[RailLine],
     walls: &[WallLine],
 ) {
     let started = std::time::Instant::now();
@@ -142,6 +162,8 @@ pub fn spawn_roads(
     let mut alleys = MeshBuilder::default();
     let mut street_casings = MeshBuilder::default();
     let mut streets = MeshBuilder::default();
+    let mut rail_beds = MeshBuilder::default();
+    let mut rail_dashes = MeshBuilder::default();
     let mut wall_ribbons = MeshBuilder::default();
 
     for road in roads {
@@ -167,6 +189,29 @@ pub fn spawn_roads(
         push_ribbon(fill, &points, road.width, color.to_linear(), style.join);
     }
 
+    for rail in rails {
+        let (color, dash_color) = match rail.kind {
+            RailKind::Active => (RAIL_COLOR, RAIL_DASH_COLOR),
+            RailKind::Disused => (RAIL_DISUSED_COLOR, RAIL_DISUSED_DASH_COLOR),
+        };
+        let points = smooth_path(&rail.points, rail.width, style.smoothing);
+        push_ribbon(
+            &mut rail_beds,
+            &points,
+            rail.width,
+            color.to_linear(),
+            style.join,
+        );
+        rail_dashes.push_dashes(
+            &points,
+            rail.width * RAIL_DASH_SCALE,
+            RAIL_DASH_LEN,
+            RAIL_DASH_GAP,
+            dash_color.to_linear(),
+            dash_join(style.join),
+        );
+    }
+
     for wall in walls {
         push_ribbon(
             &mut wall_ribbons,
@@ -182,6 +227,8 @@ pub fn spawn_roads(
         &alleys,
         &street_casings,
         &streets,
+        &rail_beds,
+        &rail_dashes,
         &wall_ribbons,
     ]
     .iter()
@@ -193,6 +240,8 @@ pub fn spawn_roads(
         (alleys, Z_ALLEY, "alleys"),
         (street_casings, Z_ROAD_CASING, "road_casings"),
         (streets, Z_ROAD, "roads"),
+        (rail_beds, Z_RAIL, "rails"),
+        (rail_dashes, Z_RAIL_DASH, "rail_dashes"),
         (wall_ribbons, Z_WALL, "walls"),
     ] {
         if builder.is_empty() {
@@ -236,6 +285,7 @@ pub fn rebuild_roads(
         &mut materials,
         *style,
         &map.roads,
+        &map.rails,
         &map.walls,
     );
 }
@@ -274,17 +324,35 @@ fn push_ribbon(
     }
 }
 
+/// Штрих — метка, а не дорога: круглый торец на каждом штрихе стоил бы полудиска
+/// на каждый конец и всё равно был бы не виден на шести метрах.
+fn dash_join(join: RoadJoin) -> RibbonJoin {
+    match join {
+        RoadJoin::Square | RoadJoin::Miter => RibbonJoin::Miter,
+        RoadJoin::Round => RibbonJoin::Round,
+    }
+}
+
 /// Осевая, по которой строится лента. Без сглаживания — прямо точки OSM, без
 /// копирования. Арки (`passage`) не сглаживаются никогда: их концы приколоты к
 /// вершинам контура здания, по ним `arches::arch_openings` ищет проём в стене.
 fn centerline(road: &RoadLine, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
-    let iterations = smoothing.iterations();
-    if iterations == 0 || road.passage || road.points.len() < 3 {
+    if road.passage {
         return Cow::Borrowed(&road.points);
     }
-    let mut path = road.points.clone();
+    smooth_path(&road.points, road.width, smoothing)
+}
+
+/// Сглаживание осевой на копии — общее для дорог и рельсов. Длина среза зажата
+/// шириной ленты, поэтому ширина здесь параметр, а не константа.
+fn smooth_path(points: &[Vec2], width: f32, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
+    let iterations = smoothing.iterations();
+    if iterations == 0 || points.len() < 3 {
+        return Cow::Borrowed(points);
+    }
+    let mut path = points.to_vec();
     for _ in 0..iterations {
-        path = chaikin(&path, road.width);
+        path = chaikin(&path, width);
     }
     Cow::Owned(path)
 }
