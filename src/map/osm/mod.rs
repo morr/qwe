@@ -10,3 +10,6 @@ mod planting;
 
 pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
+// потолок плотности считается от минимального зазора посадки, поэтому живёт
+// рядом с ним, а не в `settings.rs`
+pub use self::planting::TREE_DENSITY_MAX;

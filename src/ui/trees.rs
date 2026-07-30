@@ -15,10 +15,10 @@ use bevy::ui_widgets::{
 
 use bevy::prelude::*;
 
-use crate::map::{TreeShape, TreeStyle};
+use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::settings::{
-    TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MAX,
-    TREE_DENSITY_MIN, TREE_DENSITY_STEP,
+    TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
+    TREE_DENSITY_STEP,
 };
 use crate::ui::{
     GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiRightColumnSlot, ui_color,

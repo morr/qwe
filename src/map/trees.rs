@@ -16,8 +16,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
-    TREE_DENSITY_MAX, TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
-    Z_TREE_SHADOW,
+    TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
 };
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -356,11 +355,11 @@ pub struct TreeStyle {
     /// квантиль его значений в деревьях (см. [`ConiferField::set_share`]).
     /// На прочих формах не используется.
     pub conifer_share: f32,
-    /// Плотность посадки, множитель к базовой (`TREE_DENSITY_MIN..MAX`).
-    /// `map::osm::planting` засаживает лес по `TREE_DENSITY_MAX`, а спавн
-    /// оставляет из этого набора долю `density / TREE_DENSITY_MAX` (см.
-    /// [`keeps`]) — деревья при движении ползунка не пересаживаются, а
-    /// прореживаются.
+    /// Плотность посадки, множитель к базовой (`TREE_DENSITY_MIN..MAX`):
+    /// `1` — одно дерево на `TREE_AREA_PER_TREE` (410 м²) леса.
+    /// `map::osm::planting` засаживает лес сразу по `TREE_DENSITY_MAX`, а спавн
+    /// показывает префикс набора (см. [`visible_count`]) — деревья при движении
+    /// ползунка не пересаживаются, а появляются и исчезают.
     pub density: f32,
 }
 
@@ -384,30 +383,26 @@ impl TreeStyle {
     }
 }
 
-/// Растёт ли дерево с этим индексом при такой плотности. Доля отбирается по
-/// хешу индекса, а не по остатку и не по срезу начала списка: деревья посажены
-/// лес за лесом, и любой префикс выкосил бы целые массивы, а остаток
-/// срезонировал бы с выбором варианта кроны (`index % TREE_VARIANTS`).
+/// Сколько деревьев показать при такой плотности: `MapData::trees`
+/// отсортированы по плотности появления, так что нужен префикс, а не фильтр.
+/// Доля каждого леса при этом точна — порог посчитан от его площади, — и
+/// прореживание монотонно: шаг ползунка вверх только добавляет деревья, уже
+/// стоящие не переезжают.
+///
 /// Породе прореживание ортогонально: её решает поле хвои по координатам, так
 /// что доля хвои в прореженном наборе та же, а дерево при движении ползунка
 /// плотности породу не меняет.
-fn keeps(density: f32, index: usize) -> bool {
-    let share = (density / TREE_DENSITY_MAX).clamp(0.0, 1.0);
-    let hash = (index as u32).wrapping_mul(0x85EB_CA6B) >> 8;
-    hash % DENSITY_BUCKETS < (share * DENSITY_BUCKETS as f32) as u32
+fn visible_count(appears_at: &[f32], density: f32) -> usize {
+    appears_at.partition_point(|&at| at <= density)
 }
-
-/// На сколько долей делится диапазон плотности в [`keeps`]: шаг ползунка —
-/// 1/8 диапазона, так что разрешения хватает с большим запасом.
-const DENSITY_BUCKETS: u32 = 1024;
 
 /// Крона или её тень — чтобы пересборка стиля знала, что деспавнить.
 #[derive(Component)]
 pub struct TreeTag;
 
 /// Спавн деревьев: `TREE_VARIANTS` крон единичного радиуса, каждому дереву —
-/// вариант, оттенок и масштаб детерминированно по индексу; из посаженного
-/// набора берётся доля по [`keeps`] (ползунок плотности). Кроны — сущность на
+/// вариант, оттенок и масштаб детерминированно по индексу; ползунок плотности
+/// отдаёт префикс набора (см. [`visible_count`]). Кроны — сущность на
 /// дерево (свой оттенок и свой z), тени — **один слитый меш на все деревья**:
 /// полупрозрачная сущность попадает в сортируемую фазу `Transparent2d`, а
 /// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов пешеходов
@@ -419,6 +414,7 @@ pub fn spawn_trees(
     materials: &mut Assets<ColorMaterial>,
     style: &TreeStyle,
     trees: &[(Vec2, f32)],
+    appears_at: &[f32],
     field: &ConiferField,
 ) {
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
@@ -447,10 +443,8 @@ pub fn spawn_trees(
         .collect();
 
     let mut shadows = MeshBuilder::default();
-    for (index, &(position, radius)) in trees.iter().enumerate() {
-        if !keeps(style.density, index) {
-            continue;
-        }
+    let visible = visible_count(appears_at, style.density);
+    for (index, &(position, radius)) in trees.iter().take(visible).enumerate() {
         let shape = style.shape.resolve(field.is_conifer(index));
         let variants = &pools
             .iter()
@@ -524,6 +518,7 @@ pub fn rebuild_trees(
         &mut materials,
         &style,
         &map.trees,
+        &map.tree_appears_at,
         &field,
     );
 }

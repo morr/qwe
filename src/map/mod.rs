@@ -7,6 +7,7 @@ pub mod trees;
 
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
+pub use self::osm::TREE_DENSITY_MAX;
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::trees::{ConiferField, TreeShape, TreeStyle};
 

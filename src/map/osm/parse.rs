@@ -99,12 +99,16 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     );
 
     let started = std::time::Instant::now();
-    map.trees = plant_trees(&map);
+    let (trees, appears_at, asked) = plant_trees(&map);
+    // «посажено меньше, чем запрошено» — лес уперся в насыщение, потолок
+    // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`)
     eprintln!(
-        "osm parse: {} trees planted in {:?}",
-        map.trees.len(),
+        "osm parse: {} trees planted of {asked} asked in {:?}",
+        trees.len(),
         started.elapsed()
     );
+    map.trees = trees;
+    map.tree_appears_at = appears_at;
     Ok(map)
 }
 

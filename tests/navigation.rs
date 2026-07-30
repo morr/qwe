@@ -178,6 +178,7 @@ fn fill_from_mapdata_blocks_and_carves() {
             width: 3.0,
         }],
         trees: Vec::new(),
+        tree_appears_at: Vec::new(),
     };
 
     let mut navmesh = Navmesh::default();

@@ -272,14 +272,39 @@ in `main.rs`.
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
   (a lawn is a lawn; overhang from a neighbouring tree is fine).
-- **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m²) at
-  `TreeStyle::density == 1`, and the slider multiplies it (`TREE_DENSITY_MIN` 0.25 …
-  `TREE_DENSITY_MAX` 4, step 0.25). Planting always runs at `TREE_DENSITY_MAX`, so
-  `MapData::trees` holds the densest forest; the slider **thins that fixed set** at spawn
-  (`map::trees::keeps` — an index hash keeps the `density / TREE_DENSITY_MAX` share)
-  rather than replanting. Replanting would reshuffle every position on each step of the
-  slider, making the whole forest jump; thinning keeps the standing trees in place and
-  costs nothing per step.
+- **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m² of wood outline) at
+  `TreeStyle::density == 1`; the slider multiplies it, `TREE_DENSITY_MIN` (0.25, in
+  `settings.rs`) … `TREE_DENSITY_MAX`, step 0.25. Planting runs once at the ceiling, so
+  `MapData::trees` holds the densest forest and the slider only **shows a prefix** of it —
+  never a replant, which would reshuffle every position and make the whole forest jump on
+  each step.
+- **The density ceiling is derived, not chosen** (`planting.rs`) — `TREE_MIN_SPACING` (6 m)
+  caps how dense a forest can *physically* get: random placement with a hard-core exclusion
+  saturates near `RSA_JAMMING_FRACTION / (π·(d/2)²)` trees per m² — one per ~52 m² at
+  d = 6, i.e. ~7.9× the base. `TREE_PLANTING_DENSITY` is that number times
+  `TREE_DENSITY_HEADROOM` (0.8, because the approach to saturation is asymptotic), and
+  `TREE_DENSITY_MAX` is it rounded up to a slider step — **6.5×** today. It is computed so
+  that editing the spacing can't silently strand the top of the slider. Raising the ceiling
+  beyond this does nothing; the lever for a denser forest is `TREE_MIN_SPACING`.
+- **`MapData::tree_appears_at`** — the density at which each tree appears, same length and
+  order as `MapData::trees` (sorted ascending). Threshold is
+  `(rank within its wood + 1) · TREE_AREA_PER_TREE / wood area`, so every wood contributes
+  exactly its own share at any density, *including* woods that hit saturation and never
+  filled their ask. `map::trees::visible_count` is then a `partition_point` — thinning is
+  monotone (a step up only adds trees) and exact, where the earlier hash-share thinning
+  drifted ~20% sparse at 1× because it divided by the nominal ceiling the map never reached.
+- **Asked vs planted** — the log line `osm parse: N trees planted of M asked in T` is the
+  health check: Tula plants 15 356 of 21 155 (73%). The shortfall is real and expected —
+  a wood outline contains alleys, lawns and ponds where nothing can stand, and the last
+  few percent of saturation costs unbounded attempts. `ATTEMPTS_PER_TREE` (60) is the knob:
+  doubling it from 30 bought +740 trees for +67 ms of load.
+- **Planting is indexed, not scanned** — `blocked()` (is this spot taken by a building,
+  road, pond, lawn?) runs once per rejection-sampling attempt, tens of thousands of times,
+  and a linear pass over 7 475 buildings and every road was almost the whole planting cost
+  (615 ms on Tula). Candidates now come from uniform cell grids over the same padded AABBs
+  (`NearbyAreas`, and `NearbyRoadSegments` — roads indexed **per segment**, because a river's
+  AABB spans the map). Same idiom as `entrances/index.rs`; the precise tests behind the
+  lookup are unchanged, so the planted set is identical.
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
   alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
@@ -400,9 +425,9 @@ in `main.rs`.
   - Values are sampled once per city in `build_conifer_field` (`WorldInitSet::Spawn`,
     before `spawn_map`); only the threshold moves when the share slider does.
   - Species is **orthogonal to density thinning**: the quantile runs over all planted
-    trees while `keeps` spawns a hash-selected subset of them, and the two selections are
-    independent, so the share among spawned trees holds and a tree does not change species
-    as the density slider is dragged.
+    trees while the density slider spawns a prefix of them (`visible_count`), and that
+    prefix is a spatially uniform subsample, so the share among spawned trees holds and a
+    tree does not change species as the slider is dragged.
   - The **noise** debug toggle (`ui/debug.rs::sync_conifer_noise_overlay`) shows the
     field as one CPU-built 512² texture sprite over the whole map on
     `Z_CONIFER_NOISE_OVERLAY`: grey ramp = field value, green = at or above the current
