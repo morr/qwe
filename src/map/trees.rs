@@ -411,7 +411,20 @@ fn chevron_arcs(ring: &[Vec2], weight: f32) -> Vec<Vec<Vec2>> {
                 .is_some_and(|direction| weight * (0.5 + 0.5 * SHADE_DIR.dot(direction)) > 0.5)
         })
         .collect();
-    chain_arcs(ring, 2, &drawn)
+    chain_arcs(ring, 2, &close_single_gaps(&drawn))
+}
+
+/// Дырка ровно в один шеврон посреди прогона: джиттер угла качнул одну хорду
+/// за порог, и «этаж» распадается надвое. У watabou она так и остаётся, но у
+/// него дерево — сорок пикселей, а здесь на зуме это читается ровно как тот
+/// разрыв, ради которого всё и затевалось. Оба соседа нарисованы — рисуем и её.
+fn close_single_gaps(drawn: &[bool]) -> Vec<bool> {
+    let count = drawn.len();
+    (0..count)
+        .map(|index| {
+            drawn[index] || (drawn[(index + count - 1) % count] && drawn[(index + 1) % count])
+        })
+        .collect()
 }
 
 /// `drawShaded4` — штриховка пальмы. Кольцо после [`spike_bent`] тратит по

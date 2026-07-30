@@ -305,6 +305,24 @@ fn conifer_has_a_tip() {
     }
 }
 
+/// Каждый «этаж» хвойной кроны — **одна** ломаная, на любом варианте. Джиттер
+/// угла иногда качает одну хорду за порог, и без [`close_single_gaps`] кольцо
+/// распадалось надвое (на 12 вариантах таких колец было пять).
+#[test]
+fn every_conifer_band_is_a_single_arc() {
+    for variant in 0..crate::settings::TREE_VARIANTS as u32 {
+        let mut rng = Lcg::new(0x051E_D2E5 + variant * 7919);
+        let geometry = crown_geometry(TreeShape::Conifer, &mut rng);
+        for (number, (ring, weight)) in geometry.bands.iter().enumerate() {
+            assert_eq!(
+                chevron_arcs(ring, *weight).len(),
+                1,
+                "вариант {variant}, кольцо {number}: «этаж» разорван"
+            );
+        }
+    }
+}
+
 /// Дуга — связный кусок кольца: её точки идут подряд по `ring`, без дырок
 /// внутри. Так «этаж» кроны рисуется одной ломаной, а не россыпью штрихов.
 #[test]
