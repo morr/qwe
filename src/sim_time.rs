@@ -12,8 +12,8 @@ use bevy::prelude::*;
 use crate::loading::PlayPhase;
 use crate::restart::RestartEvent;
 use crate::settings::{
-    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MAX_SIM_SPEED, MIN_SIM_SPEED, SPEED_CYCLE_MAX,
-    SPEED_DROP_RATE, SPEED_SETTLE_RATE,
+    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MAX_SIM_SPEED, MIN_SIM_SPEED, SPEED_DROP_RATE,
+    SPEED_LADDER, SPEED_SETTLE_RATE,
 };
 
 /// Скорость симуляции: `requested` крутит пользователь лесенкой, `effective`
@@ -275,45 +275,35 @@ pub fn toggle_pause(time: &mut Time<Virtual>) {
     }
 }
 
-/// Ступень для кнопки Speed: та же лесенка, но по кругу — за `SPEED_CYCLE_MAX`
-/// возвращаемся к 1x. Кнопка одна, и без замыкания с верхней ступени было бы
-/// не выбраться иначе как хоткеем.
+/// Ступень для кнопки Speed: та же лесенка, но по кругу — с верхней ступени
+/// возвращаемся к 1x. Кнопка одна, и без замыкания сверху было бы не
+/// выбраться иначе как хоткеем.
 pub fn cycle_time_scale(speed: f32) -> f32 {
-    let next = next_time_scale(speed);
-    if next > SPEED_CYCLE_MAX { 1.0 } else { next }
-}
-
-/// Следующая ступень лесенки скоростей, но не выше `MAX_SIM_SPEED`.
-pub fn next_time_scale(speed: f32) -> f32 {
-    let step = speed
-        + if speed < 5. {
-            2.
-        } else if speed < 15. {
-            5.
-        } else if speed < 20. {
-            10.
-        } else {
-            25.
-        };
-    step.min(MAX_SIM_SPEED)
-}
-
-/// Предыдущая ступень лесенки скоростей.
-pub fn previous_time_scale(speed: f32) -> f32 {
-    if speed == 1.0 {
-        return speed;
+    if speed >= MAX_SIM_SPEED {
+        1.0
+    } else {
+        next_time_scale(speed)
     }
+}
 
-    speed
-        - if speed <= 5. {
-            2.
-        } else if speed <= 15. {
-            5.
-        } else if speed <= 25. {
-            10.
-        } else {
-            25.
-        }
+/// Следующая ступень лесенки: первая строго выше текущей скорости, с верхней
+/// ступени — остаёмся на ней. Произвольное значение (по BRP `requested` пишут
+/// любым) прижимается к ближайшей ступени сверху.
+pub fn next_time_scale(speed: f32) -> f32 {
+    SPEED_LADDER
+        .into_iter()
+        .find(|&step| step > speed)
+        .unwrap_or(MAX_SIM_SPEED)
+}
+
+/// Предыдущая ступень лесенки: последняя строго ниже текущей скорости,
+/// с нижней ступени — остаёмся на ней.
+pub fn previous_time_scale(speed: f32) -> f32 {
+    SPEED_LADDER
+        .into_iter()
+        .rev()
+        .find(|&step| step < speed)
+        .unwrap_or(SPEED_LADDER[0])
 }
 
 #[cfg(test)]
@@ -332,18 +322,26 @@ mod tests {
 
     #[test]
     fn ladder_stops_at_the_cap() {
-        assert_eq!(next_time_scale(25.0), MAX_SIM_SPEED);
+        assert_eq!(next_time_scale(20.0), MAX_SIM_SPEED);
         assert_eq!(next_time_scale(MAX_SIM_SPEED), MAX_SIM_SPEED);
         // сверху лесенка спускается обычными ступенями
-        assert_eq!(previous_time_scale(MAX_SIM_SPEED), 25.0);
+        assert_eq!(previous_time_scale(MAX_SIM_SPEED), 20.0);
+        assert_eq!(previous_time_scale(1.0), 1.0);
+    }
+
+    #[test]
+    fn ladder_snaps_arbitrary_values_to_steps() {
+        // по BRP `requested` пишут любым — лесенка прижимает к ступеням
+        assert_eq!(next_time_scale(7.0), 10.0);
+        assert_eq!(previous_time_scale(7.0), 5.0);
     }
 
     #[test]
     fn cycle_wraps_at_the_top() {
-        assert_eq!(cycle_time_scale(1.0), 3.0);
-        assert_eq!(cycle_time_scale(10.0), SPEED_CYCLE_MAX);
-        // выше потолка кнопки — назад к реальному времени
-        assert_eq!(cycle_time_scale(SPEED_CYCLE_MAX), 1.0);
+        assert_eq!(cycle_time_scale(1.0), 2.0);
+        assert_eq!(cycle_time_scale(20.0), MAX_SIM_SPEED);
+        // с верхней ступени — назад к реальному времени
+        assert_eq!(cycle_time_scale(MAX_SIM_SPEED), 1.0);
     }
 
     #[test]
