@@ -13,8 +13,7 @@ use bevy::prelude::*;
 
 use crate::map::{RoadJoin, RoadSmoothing, RoadStyle};
 use crate::ui::{
-    GameUiRoot, UI_BUILDINGS_PANEL_PX, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UI_TREES_PANEL_PX,
-    UiOpacity, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiRightColumnSlot, ui_color,
 };
 
 /// Строки — как у панелей деревьев и зданий: плотный фон поверх полупрозрачной
@@ -22,9 +21,6 @@ use crate::ui::{
 const ROW_LIGHTEN: f32 = 0.0;
 const HOVER_LIGHTEN: f32 = 0.12;
 const PRESSED_LIGHTEN: f32 = 0.24;
-
-/// Отступ снизу: панель стоит над Buildings, та — над Trees.
-const PANEL_BOTTOM_PX: f32 = UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX + UI_BUILDINGS_PANEL_PX;
 
 fn row_color(lighten: f32) -> Color {
     ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
@@ -63,7 +59,9 @@ fn render_road_style_panel(mut commands: Commands, style: Res<RoadStyle>) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: px(PANEL_BOTTOM_PX),
+                // `bottom` доедет от stack_right_column: под панелью стоят
+                // Buildings и Trees, а Trees меняет высоту на ходу
+                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 right: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
@@ -73,6 +71,7 @@ fn render_road_style_panel(mut commands: Commands, style: Res<RoadStyle>) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
+            UiRightColumnSlot(2),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("road_style_panel"),

@@ -20,6 +20,8 @@ bevy = { version = "0.19", default-features = false, features = [
 bevy_northstar = "0.7"
 earcutr = "0.5"
 i_overlay = "7"
+# симплекс-шум под поле хвойных массивов (src/map/trees/conifer.rs)
+noise = "0.9"
 pathfinding = "4"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }

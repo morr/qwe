@@ -10,7 +10,6 @@ use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
 use crate::map::roads::{self, RoadStyle};
-use crate::map::trees::{self, TreeStyle};
 use crate::settings::{MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_WOOD};
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
@@ -30,7 +29,6 @@ pub fn spawn_map(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     map: Res<MapData>,
-    style: Res<TreeStyle>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
 ) {
@@ -116,13 +114,5 @@ pub fn spawn_map(
         *height_mode,
         &map.buildings,
         &map.roads,
-    );
-
-    trees::spawn_trees(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &style,
-        &map.trees,
     );
 }

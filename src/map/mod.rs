@@ -8,7 +8,7 @@ pub mod trees;
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
-pub use self::trees::{TreeShape, TreeStyle};
+pub use self::trees::{ConiferField, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
 
@@ -27,6 +27,7 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeStyle>()
+            .init_resource::<ConiferField>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
             .register_type::<TreeStyle>()
@@ -35,7 +36,17 @@ impl Plugin for MapPlugin {
             .register_type::<RoadStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
-                spawn::spawn_map.in_set(WorldInitSet::Spawn),
+                // поле хвои решает форму кроны, поэтому считается до крон.
+                // Сами кроны спавнит `rebuild_trees` — в свежем мире деспавнить
+                // ему нечего, а спавн из одного места избавляет `spawn_map` от
+                // стиля деревьев и поля хвои разом
+                (
+                    trees::build_conifer_field,
+                    spawn::spawn_map,
+                    trees::rebuild_trees,
+                )
+                    .chain()
+                    .in_set(WorldInitSet::Spawn),
             )
             .add_systems(
                 Update,
@@ -43,8 +54,8 @@ impl Plugin for MapPlugin {
                     trees::rebuild_trees
                         .run_if(in_state(AppState::Playing))
                         .run_if(resource_changed::<TreeStyle>)
-                        // ресурс «изменён» и в кадре инициализации — там деревья
-                        // уже спавнит spawn_map, пересобирать их незачем
+                        // ресурс «изменён» и в кадре, где он появился, — там
+                        // кроны ещё не спавнены и пересобирать нечего
                         .run_if(not(resource_added::<TreeStyle>)),
                     buildings::rebuild_buildings
                         .run_if(in_state(AppState::Playing))

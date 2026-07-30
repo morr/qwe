@@ -377,12 +377,37 @@ in `main.rs`.
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
   item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
-  `foliage`, `details` (ink), `variance` (brightness spread), `shape`, plus `density`
-  (planting multiplier, see Tree density above). **TreeShape** is
-  `Cotton | Conifer | Palm` — cloud outline (`bloat`), spiky cone (`Spiker::simple`),
-  bent fronds (`Spiker::bent`). Any change reruns `rebuild_trees` (despawn `TreeTag`,
-  respawn from the unchanged `MapData::trees` positions); the panel lives in
-  `ui/trees.rs`, bottom-right, one cycling button per field.
+  `foliage`, `details` (ink), `variance` (brightness spread), `shape`, `conifer_share`
+  (see Conifer stands below), plus `density` (planting multiplier, see Tree density
+  above). **TreeShape** is `Cotton | Conifer | Palm | Mixed` — cloud outline (`bloat`),
+  spiky cone (`Spiker::simple`), bent fronds (`Spiker::bent`), and conifer stands among
+  cloud crowns. Any change reruns `rebuild_trees` (despawn `TreeTag`, respawn from the
+  unchanged `MapData::trees` positions); the panel lives in `ui/trees.rs`, bottom-right,
+  one cycling button per field.
+- **Conifer stands / conifer field** (`map/trees/conifer.rs`, `ConiferField` resource) —
+  which trees of a `Mixed` forest are spruce. Conifers grow in **stands**: a patch of
+  forest is conifer almost entirely, and between patches there is almost none. So the
+  species is **not** a function of the tree's index in `MapData::trees` (that carries no
+  geography and would scatter single conifers among the cloud crowns) but of an
+  **fbm-simplex field of the trunk's world position** — neighbouring trees read nearly
+  the same value and turn conifer together. `CONIFER_NOISE_FREQUENCY` 1/120 m sets the
+  stand size (~120–250 m across); the seed is fixed, so a city looks the same every run.
+  - The cut is an **empirical quantile** of the field's values at the trees, not a fixed
+    noise level: fbm is bell-distributed, so «everything above 0.9» would give a share
+    unrelated to the one asked for. The quantile makes `TreeStyle::conifer_share` an
+    exact share at any noise parameters, and clustering is unaffected — the trees kept
+    are still the ones on the peaks. 0 % / 100 % are special-cased to «nobody» / «all».
+  - Values are sampled once per city in `build_conifer_field` (`WorldInitSet::Spawn`,
+    before `spawn_map`); only the threshold moves when the share slider does.
+  - Species is **orthogonal to density thinning**: the quantile runs over all planted
+    trees while `keeps` spawns a hash-selected subset of them, and the two selections are
+    independent, so the share among spawned trees holds and a tree does not change species
+    as the density slider is dragged.
+  - The **noise** debug toggle (`ui/debug.rs::sync_conifer_noise_overlay`) shows the
+    field as one CPU-built 512² texture sprite over the whole map on
+    `Z_CONIFER_NOISE_OVERLAY`: grey ramp = field value, green = at or above the current
+    threshold, i.e. the stands the current share will produce. Green also covers built-up
+    areas — the field is defined everywhere, trees only grow in Wood polygons.
 
 ## Navigation
 
@@ -571,15 +596,24 @@ in `main.rs`.
   mouse button and would make one right click move both ways.
 - **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
   color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
-  text input, so hex fields became cycles), plus a **density row** — a
-  `bevy_ui_widgets::Slider` over `TREE_DENSITY_MIN..MAX`. Its `ValueChange` observer
-  quantizes to `TREE_DENSITY_STEP` and writes `TreeStyle` only when the step actually
-  changes, so one drag rebuilds the crowns at most eight times, not once per pixel.
-  Writes `TreeStyle`; `map::trees::rebuild_trees`
-  picks the change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
-- **Debug toggles** (`ui/debug.rs`) — grid / navmesh / movepath buttons
+  text input, so hex fields became cycles), plus two **slider rows** built by one shared
+  `spawn_slider_row` — **density** over `TREE_DENSITY_MIN..MAX` and **conifer share** over
+  `TREE_CONIFER_SHARE_MIN..MAX`. Each `ValueChange` observer quantizes to its step and
+  writes `TreeStyle` only when the step actually changes, so one drag rebuilds the crowns
+  a handful of times, not once per pixel. The conifer-share row is `Display::None`ed
+  outside `TreeShape::Mixed` (`sync_conifer_row_visibility`) — the share means nothing for
+  the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the change up.
+  Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
+- **Right UI column** (`ui/mod.rs::stack_right_column`, `UiRightColumnSlot`) — Trees →
+  Buildings → Roads → hotkey help, bottom-up. The panels are absolute (`bevy_ui` does not
+  stack them), and the Trees panel changes height at runtime, so each panel's `bottom` is
+  the summed **measured** height of those below it instead of a hardcoded constant.
+  `ComputedNode::size` is in *physical* pixels — multiply by `inverse_scale_factor` or
+  every offset doubles on a retina screen.
+- **Debug toggles** (`ui/debug.rs`) — grid / navmesh / doors / movepath / noise buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
-  navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities.
+  navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the
+  noise overlay is one sprite with a CPU-built texture (see Conifer stands).
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (unbounded, unlike the
   button's `cycle_time_scale`).
   - **SimSpeed** — `{requested, effective, actual}`. `requested` is what the ladder says;

@@ -16,8 +16,13 @@ use bevy::ui_widgets::{
 use bevy::prelude::*;
 
 use crate::map::{TreeShape, TreeStyle};
-use crate::settings::{TREE_DENSITY_MAX, TREE_DENSITY_MIN, TREE_DENSITY_STEP};
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
+use crate::settings::{
+    TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MAX,
+    TREE_DENSITY_MIN, TREE_DENSITY_STEP,
+};
+use crate::ui::{
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiRightColumnSlot, ui_color,
+};
 
 /// Палитра листвы: зелень watabou плюс осенние и хвойные оттенки.
 const FOLIAGE_PALETTE: [Color; 5] = [
@@ -56,14 +61,15 @@ const SLIDER_THUMB_COLOR: Color = Color::srgba(1., 1., 1., 0.75);
 const SLIDER_THUMB_HOVER_COLOR: Color = Color::WHITE;
 
 /// Какое поле стиля показывает строка — она же адресует подпись и свотч.
-/// `Density` — не кнопка, а ползунок, но подпись значения у неё общая с
-/// остальными строками.
+/// `ConiferShare` и `Density` — не кнопки, а ползунки, но подпись значения у
+/// них общая с остальными строками.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum TreeStyleRow {
     Shape,
     Foliage,
     Details,
     Variance,
+    ConiferShare,
     Density,
 }
 
@@ -75,12 +81,18 @@ struct TreeStyleValueLabel(TreeStyleRow);
 #[derive(Component)]
 struct TreeStyleSwatch(TreeStyleRow);
 
-/// Ползунок плотности и его бегунок.
+/// Ползунок строки и его бегунок.
 #[derive(Component)]
-struct TreeDensitySlider;
+struct TreeStyleSlider(TreeStyleRow);
 
 #[derive(Component)]
-struct TreeDensityThumb;
+struct TreeStyleThumb;
+
+/// Блок строки доли хвои: доля есть только у формы `Mixed`, и вне неё строка
+/// убирается из раскладки целиком (`Display::None`), а не гасится, — иначе в
+/// панели остаётся необъяснимая дыра.
+#[derive(Component)]
+struct ConiferShareRow;
 
 pub struct UiTreeStylePlugin;
 
@@ -92,7 +104,10 @@ impl Plugin for UiTreeStylePlugin {
                 (
                     highlight_rows,
                     sync_row_values.run_if(resource_changed::<TreeStyle>),
-                    sync_density_thumb,
+                    // без run_if: строка одна, а зависеть от того, попал ли
+                    // первый кадр в окно `resource_changed`, тут ни к чему
+                    sync_conifer_row_visibility,
+                    sync_slider_thumbs,
                 ),
             );
     }
@@ -113,6 +128,7 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
+            UiRightColumnSlot(0),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("tree_style_panel"),
@@ -142,6 +158,21 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
             style.shape = TreeShape::ALL[next];
         },
     );
+    // сразу под формой: доля уточняет именно её и только при `Mixed` видна
+    let conifer_row = spawn_slider_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::ConiferShare,
+        "Conifer share",
+        &style,
+        (
+            TREE_CONIFER_SHARE_MIN,
+            TREE_CONIFER_SHARE_MAX,
+            TREE_CONIFER_SHARE_STEP,
+        ),
+        on_conifer_share_change,
+    );
+    commands.entity(conifer_row).insert(ConiferShareRow);
     spawn_row(
         &mut commands,
         panel,
@@ -176,13 +207,29 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
             style.variance = VARIANCE_STEPS[current];
         },
     );
-    spawn_density_row(&mut commands, panel, &style);
+    spawn_slider_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::Density,
+        "Density",
+        &style,
+        (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
+        on_density_change,
+    );
 }
 
-/// Строка плотности: подпись со значением и под ней ползунок. Пересадки нет —
-/// шаг ползунка прореживает уже посаженный лес (`map::trees::keeps`).
-fn spawn_density_row(commands: &mut Commands, panel: Entity, style: &TreeStyle) {
-    let row = TreeStyleRow::Density;
+/// Строка-ползунок: подпись со значением и под ней сам ползунок. Возвращает
+/// блок строки — на него навешивается маркер, если строку кто-то адресует
+/// (`ConiferShareRow` управляет её видимостью).
+fn spawn_slider_row<M>(
+    commands: &mut Commands,
+    panel: Entity,
+    row: TreeStyleRow,
+    label: &str,
+    style: &TreeStyle,
+    (min, max, step): (f32, f32, f32),
+    on_change: impl IntoObserverSystem<ValueChange<f32>, (), M>,
+) -> Entity {
     let block = commands
         .spawn((
             Node {
@@ -208,7 +255,7 @@ fn spawn_density_row(commands: &mut Commands, panel: Entity, style: &TreeStyle) 
                 },
                 children![
                     (
-                        Text::new("Density"),
+                        Text::new(label),
                         TextFont {
                             font_size: FontSize::Px(12.),
                             ..default()
@@ -235,15 +282,15 @@ fn spawn_density_row(commands: &mut Commands, panel: Entity, style: &TreeStyle) 
 
     let slider = commands
         .spawn((
-            TreeDensitySlider,
+            TreeStyleSlider(row),
             Slider {
                 // клик по дорожке ставит бегунок туда, куда ткнули
                 track_click: TrackClick::Snap,
                 ..default()
             },
-            SliderValue(style.density),
-            SliderRange::new(TREE_DENSITY_MIN, TREE_DENSITY_MAX),
-            SliderStep(TREE_DENSITY_STEP),
+            SliderValue(slider_value(row, style).expect("slider row has a value")),
+            SliderRange::new(min, max),
+            SliderStep(step),
             Pickable::default(),
             Hovered::default(),
             Node {
@@ -275,7 +322,7 @@ fn spawn_density_row(commands: &mut Commands, panel: Entity, style: &TreeStyle) 
                         ..default()
                     },
                     children![(
-                        TreeDensityThumb,
+                        TreeStyleThumb,
                         SliderThumb,
                         Node {
                             position_type: PositionType::Absolute,
@@ -289,10 +336,11 @@ fn spawn_density_row(commands: &mut Commands, panel: Entity, style: &TreeStyle) 
                 ),
             ],
         ))
-        .observe(on_density_change)
+        .observe(on_change)
         .id();
     commands.entity(block).add_child(slider);
     commands.entity(panel).add_child(block);
+    block
 }
 
 /// Ползунок ведёт себя дискретно: значение с драга округляется до шага, и
@@ -303,29 +351,52 @@ fn on_density_change(
     mut commands: Commands,
     mut style: ResMut<TreeStyle>,
 ) {
-    let stepped = quantize_density(change.value);
+    let stepped = quantize(
+        change.value,
+        TREE_DENSITY_MIN,
+        TREE_DENSITY_MAX,
+        TREE_DENSITY_STEP,
+    );
     commands.entity(change.source).insert(SliderValue(stepped));
     if (style.density - stepped).abs() > f32::EPSILON {
         style.density = stepped;
     }
 }
 
-fn quantize_density(value: f32) -> f32 {
-    ((value / TREE_DENSITY_STEP).round() * TREE_DENSITY_STEP)
-        .clamp(TREE_DENSITY_MIN, TREE_DENSITY_MAX)
+/// То же для доли хвои: шаг ползунка меняет породу у целых массивов, так что
+/// пересборка на каждый пиксель протяжки тем более не нужна.
+fn on_conifer_share_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut style: ResMut<TreeStyle>,
+) {
+    let stepped = quantize(
+        change.value,
+        TREE_CONIFER_SHARE_MIN,
+        TREE_CONIFER_SHARE_MAX,
+        TREE_CONIFER_SHARE_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (style.conifer_share - stepped).abs() > f32::EPSILON {
+        style.conifer_share = stepped;
+    }
+}
+
+fn quantize(value: f32, min: f32, max: f32, step: f32) -> f32 {
+    ((value / step).round() * step).clamp(min, max)
 }
 
 /// Позиция бегунка по значению плюс подсветка под курсором и при протяжке.
-fn sync_density_thumb(
+fn sync_slider_thumbs(
     sliders: Query<
         (Entity, &SliderValue, &SliderRange, &Hovered),
         (
-            With<TreeDensitySlider>,
+            With<TreeStyleSlider>,
             Or<(Changed<SliderValue>, Changed<Hovered>)>,
         ),
     >,
     children: Query<&Children>,
-    mut thumbs: Query<(&mut Node, &mut BackgroundColor), With<TreeDensityThumb>>,
+    mut thumbs: Query<(&mut Node, &mut BackgroundColor), With<TreeStyleThumb>>,
 ) {
     for (slider, value, range, hovered) in &sliders {
         for child in children.iter_descendants(slider) {
@@ -435,7 +506,21 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
         TreeStyleRow::Foliage => hex(style.foliage),
         TreeStyleRow::Details => hex(style.details),
         TreeStyleRow::Variance => format!("{:.2}", style.variance),
+        TreeStyleRow::ConiferShare => format!("{:.0}%", style.conifer_share * 100.),
         TreeStyleRow::Density => format!("{:.2}x", style.density),
+    }
+}
+
+/// Значение ползунка строки — только у строк-ползунков; у строк-кнопок
+/// ползунка нет, и `None` рвёт их синхронизацию по значению.
+fn slider_value(row: TreeStyleRow, style: &TreeStyle) -> Option<f32> {
+    match row {
+        TreeStyleRow::ConiferShare => Some(style.conifer_share),
+        TreeStyleRow::Density => Some(style.density),
+        TreeStyleRow::Shape
+        | TreeStyleRow::Foliage
+        | TreeStyleRow::Details
+        | TreeStyleRow::Variance => None,
     }
 }
 
@@ -480,7 +565,7 @@ fn sync_row_values(
     style: Res<TreeStyle>,
     mut labels: Query<(&TreeStyleValueLabel, &mut Text)>,
     mut swatches: Query<(&TreeStyleSwatch, &mut BackgroundColor)>,
-    sliders: Query<(Entity, &SliderValue), With<TreeDensitySlider>>,
+    sliders: Query<(Entity, &TreeStyleSlider, &SliderValue)>,
     mut commands: Commands,
 ) {
     for (label, mut text) in &mut labels {
@@ -489,12 +574,34 @@ fn sync_row_values(
     for (swatch, mut background) in &mut swatches {
         background.0 = swatch_color(swatch.0, &style).unwrap_or(Color::NONE);
     }
-    // плотность правится и мимо ползунка (по BRP, из сохранённых настроек) —
+    // стиль правится и мимо ползунков (по BRP, из сохранённых настроек) —
     // бегунок обязан переехать; при протяжке значения уже совпадают.
     // `SliderValue` — immutable-компонент, меняется только вставкой
-    for (slider, value) in &sliders {
-        if (value.0 - style.density).abs() > f32::EPSILON {
-            commands.entity(slider).insert(SliderValue(style.density));
+    for (slider, row, value) in &sliders {
+        let Some(target) = slider_value(row.0, &style) else {
+            continue;
+        };
+        if (value.0 - target).abs() > f32::EPSILON {
+            commands.entity(slider).insert(SliderValue(target));
+        }
+    }
+}
+
+/// Доля хвои есть только у смешанного леса — на прочих формах строка уходит из
+/// раскладки, и панель становится ниже (её место в правой колонке пересчитает
+/// `ui::stack_right_column`).
+fn sync_conifer_row_visibility(
+    style: Res<TreeStyle>,
+    mut rows: Query<&mut Node, With<ConiferShareRow>>,
+) {
+    let display = if style.shape == TreeShape::Mixed {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut rows {
+        if node.display != display {
+            node.display = display;
         }
     }
 }

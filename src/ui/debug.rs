@@ -4,16 +4,21 @@
 //! - grid — сетка navtiles гизмо-линиями;
 //! - navmesh — заливка непроходимых тайлов (Mesh2d, спавнится по включению);
 //! - doors — входы в здания, свои и досочинённые (`map/osm/entrances/`);
-//! - movepath — существующий `DrawMovePaths` (он же на клавише M).
+//! - movepath — существующий `DrawMovePaths` (он же на клавише M);
+//! - noise — поле хвои (`map/trees/conifer.rs`) текстурой на всю карту:
+//!   серым — значение поля, зелёным — будущие хвойные массивы.
 //!
 //! Хоткеи: N — navmesh, M — movepath (в `movement`), G — «гизмо» одной
 //! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
 //! редко и только вблизи, кнопки в панели достаточно.
 
+use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
+use bevy::image::{Image, ImageSampler};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::picking::hover::Hovered;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button};
@@ -23,10 +28,12 @@ use bevy::prelude::*;
 
 use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
+use crate::map::ConiferField;
 use crate::map::osm::MapData;
+use crate::map::trees::TreeStyle;
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
-use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE};
+use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE, Z_CONIFER_NOISE_OVERLAY};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
     UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, spawn_panel_button, ui_color,
@@ -48,6 +55,11 @@ pub struct DebugNavmesh(pub bool);
 #[settings_group(group = "debug", key = "doors")]
 pub struct DebugDoors(pub bool);
 
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "conifer_noise")]
+pub struct DebugConiferNoise(pub bool);
+
 /// Какой слой переключает кнопка; определяет подсветку «активна».
 #[derive(Component, Clone, Copy)]
 enum DebugToggleButton {
@@ -55,10 +67,17 @@ enum DebugToggleButton {
     Navmesh,
     Doors,
     Movepath,
+    ConiferNoise,
 }
 
 #[derive(Component)]
 struct NavmeshOverlayMarker;
+
+/// Слой поля хвои и порог, под который он нарисован: пересобирать текстуру,
+/// пока порог тот же, незачем — правка любого другого поля `TreeStyle` (тот же
+/// ползунок плотности) иначе перерисовывала бы её на каждом шаге.
+#[derive(Component)]
+struct ConiferNoiseOverlayMarker(f32);
 
 /// Подпись на кнопке-переключателе алгоритма поиска пути.
 #[derive(Component)]
@@ -66,6 +85,17 @@ struct PathfindingMethodLabel;
 
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
 const NAVMESH_OVERLAY_Z: f32 = 5.2;
+
+/// Сторона текстуры поля хвои, тексели: 512 на 5.6 км карты — тексель ~11 м,
+/// вдвое мельче кроны, то есть контур массива читается точно, а пересборка
+/// слоя остаётся четвертью миллиона выборок, а не миллионами.
+const CONIFER_NOISE_OVERLAY_PX: u32 = 512;
+/// Прозрачность поля: под порогом слой только подсвечивает рельеф шума и не
+/// должен скрывать лес, над порогом — показывает будущий массив, и его видно.
+const CONIFER_NOISE_ALPHA: f32 = 0.30;
+const CONIFER_STAND_ALPHA: f32 = 0.55;
+/// Цвет хвойной области — холодная зелень ели, а не листвы.
+const CONIFER_STAND_COLOR: Vec3 = Vec3::new(0.15, 0.90, 0.35);
 
 /// Метка двери, м: с высоты, на которой видно квартал, кружок меньше метра
 /// уже не читается.
@@ -82,15 +112,23 @@ impl Plugin for UiDebugTogglesPlugin {
         app.init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
             .init_resource::<DebugDoors>()
+            .init_resource::<DebugConiferNoise>()
             .register_type::<DebugGrid>()
             .register_type::<DebugNavmesh>()
             .register_type::<DebugDoors>()
+            .register_type::<DebugConiferNoise>()
             .add_systems(Startup, render_debug_toggles)
             // тумблер, восстановленный из настроек, менялся до того, как
-            // navmesh был заполнен, — красим заливку ещё раз по спавну мира
+            // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
+            // раз по спавну мира
             .add_systems(
                 OnEnter(AppState::Playing),
-                sync_navmesh_overlay.in_set(WorldInitSet::Spawn),
+                (
+                    sync_navmesh_overlay,
+                    // порог красит хвойную область, а считает его посадка
+                    sync_conifer_noise_overlay.after(crate::map::trees::build_conifer_field),
+                )
+                    .in_set(WorldInitSet::Spawn),
             )
             .add_systems(
                 Update,
@@ -102,6 +140,13 @@ impl Plugin for UiDebugTogglesPlugin {
                         .run_if(|doors: Res<DebugDoors>| doors.0)
                         .run_if(in_state(AppState::Playing)),
                     sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
+                    // подсвеченная область следует за ползунком доли хвои
+                    sync_conifer_noise_overlay
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(
+                            resource_changed::<DebugConiferNoise>
+                                .or_else(resource_changed::<TreeStyle>),
+                        ),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
                     toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
@@ -164,6 +209,15 @@ fn render_debug_toggles(mut commands: Commands) {
         DebugToggleButton::Movepath,
         |_activate: On<Activate>, mut movepaths: ResMut<DrawMovePaths>| {
             movepaths.0 = !movepaths.0;
+        },
+    );
+    spawn_toggle(
+        &mut commands,
+        row,
+        "noise",
+        DebugToggleButton::ConiferNoise,
+        |_activate: On<Activate>, mut noise: ResMut<DebugConiferNoise>| {
+            noise.0 = !noise.0;
         },
     );
 
@@ -240,6 +294,7 @@ fn update_toggle_buttons(
     navmesh: Res<DebugNavmesh>,
     doors: Res<DebugDoors>,
     movepaths: Res<DrawMovePaths>,
+    conifer_noise: Res<DebugConiferNoise>,
     mut buttons: Query<(
         &DebugToggleButton,
         &Hovered,
@@ -253,6 +308,7 @@ fn update_toggle_buttons(
             DebugToggleButton::Navmesh => navmesh.0,
             DebugToggleButton::Doors => doors.0,
             DebugToggleButton::Movepath => movepaths.0,
+            DebugToggleButton::ConiferNoise => conifer_noise.0,
         };
         let base = if is_active {
             TOGGLE_ACTIVE_COLOR
@@ -363,5 +419,84 @@ fn sync_navmesh_overlay(
         Transform::from_xyz(0.0, 0.0, NAVMESH_OVERLAY_Z),
         DespawnOnExit(AppState::Playing),
         Name::new("navmesh_overlay"),
+    ));
+}
+
+/// Спавн/despawn слоя поля хвои. Слой — один спрайт на всю карту с текстурой,
+/// посчитанной на CPU: заливать поле мешем в четверть миллиона квадов незачем,
+/// оно и так гладкое.
+///
+/// Серая рампа — само значение поля, зелёным залито всё, что не ниже текущего
+/// порога, то есть **будущий хвойный массив**: так видно и рельеф шума, и что
+/// из него отберёт ползунок доли. Зелень покрывает и застройку — поле
+/// определено на всей карте, а деревья стоят только в лесах.
+fn sync_conifer_noise_overlay(
+    mut commands: Commands,
+    enabled: Res<DebugConiferNoise>,
+    field: Res<ConiferField>,
+    mut images: ResMut<Assets<Image>>,
+    overlay: Query<(Entity, &ConiferNoiseOverlayMarker)>,
+) {
+    let threshold = field.threshold();
+    if enabled.0
+        && overlay
+            .iter()
+            .any(|(_, drawn)| drawn.0.to_bits() == threshold.to_bits())
+    {
+        return;
+    }
+    for (entity, _) in &overlay {
+        commands.entity(entity).despawn();
+    }
+    if !enabled.0 {
+        return;
+    }
+
+    let side = CONIFER_NOISE_OVERLAY_PX;
+    let mut data = Vec::with_capacity((side * side * 4) as usize);
+    for row in 0..side {
+        for column in 0..side {
+            // строка 0 текстуры — верх спрайта, то есть максимальный мировой y
+            let position = Vec2::new(
+                (column as f32 + 0.5) / side as f32 * MAP_SIZE.x,
+                (side - 1 - row) as f32 / side as f32 * MAP_SIZE.y,
+            );
+            let value = field.sample(position);
+            let (color, alpha) = if value >= threshold {
+                (CONIFER_STAND_COLOR * value, CONIFER_STAND_ALPHA)
+            } else {
+                (Vec3::splat(value), CONIFER_NOISE_ALPHA)
+            };
+            let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0) as u8;
+            data.extend_from_slice(&[byte(color.x), byte(color.y), byte(color.z), byte(alpha)]);
+        }
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    // приложение целиком на `ImagePlugin::default_nearest()` (пиксель-арт
+    // спрайтов), но поле гладкое: с ближайшим соседом тексель в 11 м вылезал
+    // на карту квадратом в пол-кроны, и слой читался как сетка, а не как шум
+    image.sampler = ImageSampler::linear();
+
+    commands.spawn((
+        ConiferNoiseOverlayMarker(threshold),
+        Sprite {
+            image: images.add(image),
+            custom_size: Some(MAP_SIZE),
+            ..default()
+        },
+        Transform::from_translation((MAP_SIZE / 2.0).extend(Z_CONIFER_NOISE_OVERLAY)),
+        DespawnOnExit(AppState::Playing),
+        Name::new("conifer_noise_overlay"),
     ));
 }

@@ -15,19 +15,19 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 
-pub use self::debug::{DebugDoors, DebugGrid, DebugNavmesh};
+pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 use crate::loading::{AppState, PlayPhase};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
-/// Правая колонка панелей стоит одна на другой: Trees (у края экрана) →
-/// Buildings → Roads → справка по хоткеям. `bevy_ui` их не стыкует — каждая
-/// панель абсолютная, — поэтому высоты держатся здесь, общими для всех:
-/// строка, добавленная в Trees, иначе уезжает под Buildings.
-pub const UI_TREES_PANEL_PX: f32 = 206.0;
-pub const UI_BUILDINGS_PANEL_PX: f32 = 72.0;
-/// Заголовок + три строки (стык, сглаживание, кант).
-pub const UI_ROADS_PANEL_PX: f32 = 118.0;
+/// Место панели в правой колонке, снизу вверх: 0 — Trees у края экрана, дальше
+/// Buildings, Roads, справка по хоткеям. Панели абсолютные, `bevy_ui` их не
+/// стыкует, поэтому `bottom` каждой считает [`stack_right_column`] по
+/// **замеренным** высотам тех, что под ней: высота панели Trees меняется на
+/// ходу (строка доли хвои появляется только у формы `Mixed`), и прошитые
+/// константы высот такую панель уронили бы под соседнюю.
+#[derive(Component)]
+pub struct UiRightColumnSlot(pub u8);
 
 /// Подсветка «кнопка активна» и осветление под курсором / при нажатии —
 /// общие для тумблеров и панели городов.
@@ -124,10 +124,44 @@ impl Plugin for UiPlugin {
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
         ))
+        .add_systems(Update, stack_right_column)
         .add_systems(OnEnter(PlayPhase::Live), show_game_ui)
         // смена города возвращает приложение на экран загрузки — панели
         // прячутся до конца следующего прогрева
         .add_systems(OnExit(AppState::Playing), hide_game_ui);
+    }
+}
+
+/// Отступ снизу у каждой панели правой колонки — сумма высот панелей под ней
+/// (см. [`UiRightColumnSlot`]). Панели стоят вплотную, без зазора.
+///
+/// `ComputedNode::size` — **физические** пиксели, а `Node::bottom` — логические:
+/// без `inverse_scale_factor` на retina-экране каждая высота удваивалась и между
+/// панелями зияла дыра в их собственный размер.
+///
+/// `bottom` пишется только когда он реально поехал: `Node` — не
+/// `set_if_neq`-компонент, и безусловная запись метила бы его изменённым каждый
+/// кадр, заставляя `bevy_ui` пересчитывать раскладку на пустом месте. Высота
+/// читается из `ComputedNode`, то есть с прошлого кадра: панель, у которой
+/// появилась строка, доезжает на кадр позже — заметить это можно только на
+/// смене формы кроны.
+fn stack_right_column(mut panels: Query<(&UiRightColumnSlot, &ComputedNode, &mut Node)>) {
+    let mut heights: Vec<(u8, f32)> = panels
+        .iter()
+        .map(|(slot, computed, _)| (slot.0, computed.size.y * computed.inverse_scale_factor))
+        .collect();
+    heights.sort_unstable_by_key(|&(slot, _)| slot);
+
+    for (slot, _, mut node) in &mut panels {
+        let below: f32 = heights
+            .iter()
+            .filter(|&&(other, _)| other < slot.0)
+            .map(|&(_, height)| height)
+            .sum();
+        let bottom = px(UI_SCREEN_EDGE_PX_OFFSET + below);
+        if node.bottom != bottom {
+            node.bottom = bottom;
+        }
     }
 }
 

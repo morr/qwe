@@ -241,6 +241,7 @@ step when adding one):
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | demons | `demon/systems.rs::spawn_demon` |
 | navmesh overlay | `ui/debug.rs::sync_navmesh_overlay` |
+| conifer noise overlay | `ui/debug.rs::sync_conifer_noise_overlay` |
 | test walker | `dev.rs::on_spawn_test_walker` |
 
 Not world entities, and deliberately without the component: the camera (`camera.rs`), the

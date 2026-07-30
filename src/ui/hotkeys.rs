@@ -14,14 +14,8 @@
 use bevy::prelude::*;
 
 use crate::ui::{
-    GameUiRoot, UI_BUILDINGS_PANEL_PX, UI_ROADS_PANEL_PX, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW,
-    UI_TREES_PANEL_PX, UiOpacity, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiRightColumnSlot, ui_color,
 };
-
-/// Отступ снизу: блок стоит над панелью Roads, последним в правой колонке
-/// панелей (Trees → Buildings → Roads → справка).
-const PANEL_BOTTOM_PX: f32 =
-    UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX + UI_BUILDINGS_PANEL_PX + UI_ROADS_PANEL_PX;
 
 /// Мелкий шрифт: справку читают один раз, места она занимать не должна.
 const FONT_PX: f32 = 11.0;
@@ -52,7 +46,9 @@ fn render_hotkeys_panel(mut commands: Commands) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: px(PANEL_BOTTOM_PX),
+                // последний в правой колонке: `bottom` доедет от
+                // stack_right_column по высотам Trees + Buildings + Roads
+                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 right: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
@@ -63,6 +59,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
             BackgroundColor(ui_color(UiOpacity::Light)),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
+            UiRightColumnSlot(3),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("hotkeys_panel"),

@@ -3,18 +3,21 @@
 //! мятый 12-угольник → «bloat» (рекурсивное выдавливание середин рёбер) →
 //! облачный контур; внутренние кольца-штрихи; тень — растянутый силуэт.
 
+mod conifer;
+
 use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+pub use self::conifer::ConiferField;
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
-    TREE_DENSITY_MAX, TREE_DETAIL_STROKE, TREE_MIXED_CONIFER_EVERY, TREE_OUTLINE_STROKE,
-    TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
+    TREE_DENSITY_MAX, TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
+    Z_TREE_SHADOW,
 };
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -74,9 +77,9 @@ pub enum TreeShape {
     Conifer,
     /// `zb.palm`: изогнутые листья (`Spiker::bent`), кольца `PALM_BANDS2`.
     Palm,
-    /// Смешанный лес: каждое `TREE_MIXED_CONIFER_EVERY`-е дерево хвойное,
-    /// остальные — облачные. Собственной геометрии не имеет: форма
-    /// разрешается по индексу дерева в `resolve`.
+    /// Смешанный лес: хвойные массивы среди облачных крон. Собственной
+    /// геометрии не имеет — форму каждого дерева разрешает `resolve` по полю
+    /// хвои (`conifer::ConiferField`).
     Mixed,
 }
 
@@ -105,19 +108,13 @@ impl TreeShape {
         }
     }
 
-    /// Конкретная форма кроны дерева с этим индексом: `Mixed` отдаёт хвою
-    /// каждому десятому по хешу индекса (не по остатку — иначе выбор хвои
-    /// попал бы в резонанс с выбором варианта `index % TREE_VARIANTS`).
-    fn resolve(self, index: usize) -> Self {
+    /// Конкретная форма кроны: у `Mixed` её решает поле хвои
+    /// (`ConiferField::is_conifer` по мировым координатам ствола), остальные
+    /// формы разрешаются в себя.
+    fn resolve(self, conifer: bool) -> Self {
         match self {
-            Self::Mixed => {
-                let hash = (index as u32).wrapping_mul(2_654_435_761) >> 8;
-                if (hash as usize).is_multiple_of(TREE_MIXED_CONIFER_EVERY) {
-                    Self::Conifer
-                } else {
-                    Self::Cotton
-                }
-            }
+            Self::Mixed if conifer => Self::Conifer,
+            Self::Mixed => Self::Cotton,
             other => other,
         }
     }
@@ -355,6 +352,10 @@ pub struct TreeStyle {
     /// Разброс яркости листвы (`treeVariance`): множитель `2^(variance·bell)`.
     pub variance: f32,
     pub shape: TreeShape,
+    /// Доля хвои при форме `Mixed`, 0..1. Доля точная: порог поля хвои —
+    /// квантиль его значений в деревьях (см. [`ConiferField::set_share`]).
+    /// На прочих формах не используется.
+    pub conifer_share: f32,
     /// Плотность посадки, множитель к базовой (`TREE_DENSITY_MIN..MAX`).
     /// `map::osm::planting` засаживает лес по `TREE_DENSITY_MAX`, а спавн
     /// оставляет из этого набора долю `density / TREE_DENSITY_MAX` (см.
@@ -370,6 +371,7 @@ impl Default for TreeStyle {
             details: INK_COLOR,
             variance: 0.2,
             shape: TreeShape::default(),
+            conifer_share: 0.1,
             density: 1.0,
         }
     }
@@ -386,8 +388,9 @@ impl TreeStyle {
 /// хешу индекса, а не по остатку и не по срезу начала списка: деревья посажены
 /// лес за лесом, и любой префикс выкосил бы целые массивы, а остаток
 /// срезонировал бы с выбором варианта кроны (`index % TREE_VARIANTS`).
-/// Множитель хеша — свой, не тот, которым `TreeShape::resolve` выбирает хвою,
-/// иначе прореживание било бы по одним и тем же деревьям.
+/// Породе прореживание ортогонально: её решает поле хвои по координатам, так
+/// что доля хвои в прореженном наборе та же, а дерево при движении ползунка
+/// плотности породу не меняет.
 fn keeps(density: f32, index: usize) -> bool {
     let share = (density / TREE_DENSITY_MAX).clamp(0.0, 1.0);
     let hash = (index as u32).wrapping_mul(0x85EB_CA6B) >> 8;
@@ -416,6 +419,7 @@ pub fn spawn_trees(
     materials: &mut Assets<ColorMaterial>,
     style: &TreeStyle,
     trees: &[(Vec2, f32)],
+    field: &ConiferField,
 ) {
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
     let pools: Vec<(TreeShape, Vec<(Handle<Mesh>, MeshBuilder)>)> = style
@@ -447,7 +451,7 @@ pub fn spawn_trees(
         if !keeps(style.density, index) {
             continue;
         }
-        let shape = style.shape.resolve(index);
+        let shape = style.shape.resolve(field.is_conifer(index));
         let variants = &pools
             .iter()
             .find(|(pooled, _)| *pooled == shape)
@@ -479,6 +483,24 @@ pub fn spawn_trees(
     }
 }
 
+/// Значение поля хвои в каждом посаженном дереве — до спавна крон, потому что
+/// именно по нему `resolve` выбирает форму. Считается один раз на город: у
+/// нового города свой набор деревьев, а старые значения к нему не относятся.
+pub fn build_conifer_field(
+    mut field: ResMut<ConiferField>,
+    map: Res<MapData>,
+    style: Res<TreeStyle>,
+) {
+    let started = std::time::Instant::now();
+    field.resample(&map.trees);
+    field.set_share(style.conifer_share);
+    debug!(
+        "conifer field: {} trees sampled in {:.1?}",
+        map.trees.len(),
+        started.elapsed()
+    );
+}
+
 /// Пересборка крон после правки стиля из UI: деспавн старых сущностей и
 /// повторный спавн из тех же позиций (`MapData::trees` не трогается).
 pub fn rebuild_trees(
@@ -487,8 +509,12 @@ pub fn rebuild_trees(
     mut materials: ResMut<Assets<ColorMaterial>>,
     style: Res<TreeStyle>,
     map: Res<MapData>,
+    mut field: ResMut<ConiferField>,
     existing: Query<Entity, With<TreeTag>>,
 ) {
+    // порог поля пересчитывается только если поехала сама доля — правка цвета
+    // листвы не должна платить за сортировку значений
+    field.set_share(style.conifer_share);
     for entity in &existing {
         commands.entity(entity).despawn();
     }
@@ -498,6 +524,7 @@ pub fn rebuild_trees(
         &mut materials,
         &style,
         &map.trees,
+        &field,
     );
 }
 

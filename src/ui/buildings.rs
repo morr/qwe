@@ -11,16 +11,13 @@ use bevy::prelude::*;
 
 use crate::map::BuildingHeightMode;
 use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UI_TREES_PANEL_PX, UiOpacity, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiRightColumnSlot, ui_color,
 };
 
 /// Строки — как у панели деревьев: плотный фон поверх полупрозрачной панели.
 const ROW_LIGHTEN: f32 = 0.0;
 const HOVER_LIGHTEN: f32 = 0.12;
 const PRESSED_LIGHTEN: f32 = 0.24;
-
-/// Отступ снизу: панель стоит над панелью Trees.
-const PANEL_BOTTOM_PX: f32 = UI_SCREEN_EDGE_PX_OFFSET + UI_TREES_PANEL_PX;
 
 fn row_color(lighten: f32) -> Color {
     ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
@@ -55,7 +52,8 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: px(PANEL_BOTTOM_PX),
+                // `bottom` доедет от stack_right_column по высоте панели Trees
+                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 right: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
@@ -65,6 +63,7 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
+            UiRightColumnSlot(1),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("building_style_panel"),
