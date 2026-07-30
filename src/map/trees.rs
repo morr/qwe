@@ -636,6 +636,13 @@ pub fn spawn_trees(
     }
 
     if !shadows.is_empty() {
+        // слой теней — один меш на весь лес, и веер хвои весит вчетверо против
+        // одиночного силуэта: при разборе просадок смотреть в первую очередь сюда
+        debug!(
+            "tree shadows: {} vertices for {visible} trees ({:?})",
+            shadows.vertex_count(),
+            style.shape
+        );
         commands.spawn((
             TreeTag,
             Mesh2d(meshes.add(shadows.build())),
