@@ -396,7 +396,11 @@ in `main.rs`.
   with no RNG at all** (`drawShaded2` — base→spike→base in one deterministic stroke, so
   a tier is one unbroken zigzag on the shadow side and the lit side stays clean; the
   innermost band, lifted to the top, reads as the fir's tip), palm by whole leaves
-  (`drawShaded4`). A tree's «height» `h` (`0.4 + 0.8·gauss3`, per crown variant) picks
+  (`drawShaded4`). The conifer outline is built by `pruned_cone_outline`: a **pinched
+  notch** — one whose mouth is narrower than two outline strokes — is swallowed whole by
+  the ink and reads as a black needle inside the crown, so the two spikes crowding it
+  collapse into one, by dropping the base-polygon vertex and re-spiking (dropping the
+  spike itself would leave its neighbour a blunt tip). A tree's «height» `h` (`0.4 + 0.8·gauss3`, per crown variant) picks
   its shadow: long, or plain offset, or — for a conifer — the **cone fan** of shrinking
   silhouettes along the shadow (`drawConiferShadow`), unioned with `i_overlay` so the
   translucent copies never stack into double darkness. `TREE_VARIANTS` unit-radius crown meshes are reused

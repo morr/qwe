@@ -204,6 +204,81 @@ fn every_shape_has_its_own_outline_and_bands() {
     }
 }
 
+/// Метрики вырезов, которые обводка залила бы целиком: устье уже
+/// `NOTCH_MOUTH_MIN` при глубине от `NOTCH_DEPTH_MIN`.
+fn pinched_metrics(ring: &[Vec2]) -> Vec<(f32, f32)> {
+    (0..ring.len())
+        .filter_map(|index| {
+            let previous = ring[(index + ring.len() - 1) % ring.len()];
+            let next = ring[(index + 1) % ring.len()];
+            notch_metrics(previous, ring[index], next)
+        })
+        .filter(|&(mouth, depth)| mouth < NOTCH_MOUTH_MIN && depth >= NOTCH_DEPTH_MIN)
+        .collect()
+}
+
+#[test]
+fn conifer_outline_has_no_pinched_notches() {
+    for variant in 0..TREE_VARIANTS {
+        let crown = crown_geometry(TreeShape::Conifer, &mut variant_rng(variant));
+        let pinched = pinched_metrics(&crown.outer);
+        assert!(
+            pinched.is_empty(),
+            "variant {variant}: {} залипших вырезов, худший {:?}",
+            pinched.len(),
+            pinched[0]
+        );
+    }
+}
+
+#[test]
+fn nudging_notches_keeps_every_spike() {
+    // вырез раскрывается сдвигом вершины базы, а не снятием шипа: 16-угольник с
+    // шипом на каждом ребре остаётся 32-точечным, вылет держится в тех же
+    // границах (снятие шипа увело бы его к 1.9), а остриё — острым (снятие шипа
+    // с готового контура дотягивало до 107°)
+    for variant in 0..TREE_VARIANTS {
+        let crown = crown_geometry(TreeShape::Conifer, &mut variant_rng(variant));
+        assert_eq!(crown.outer.len(), 32, "variant {variant}");
+        assert!(ring_area(&crown.outer) > 0.0, "variant {variant}");
+        let reach = crown
+            .outer
+            .iter()
+            .map(|point| point.length())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            (1.1..1.6).contains(&reach),
+            "variant {variant}: шипы дотягивают до {reach}"
+        );
+        for index in 0..crown.outer.len() {
+            let previous = crown.outer[(index + crown.outer.len() - 1) % crown.outer.len()];
+            let next = crown.outer[(index + 1) % crown.outer.len()];
+            let vertex = crown.outer[index];
+            if notch_metrics(previous, vertex, next).is_some() {
+                continue; // впадина, а не остриё
+            }
+            let angle = (previous - vertex)
+                .angle_to(next - vertex)
+                .abs()
+                .to_degrees();
+            assert!(angle < 90.0, "variant {variant}: остриё в {angle}°");
+        }
+    }
+}
+
+#[test]
+fn cotton_outline_needs_no_pinched_pass() {
+    // облачный контур мимо правки идёт не «на всякий случай»: его вырезы
+    // мельче `NOTCH_DEPTH_MIN`, так что раскрывать там нечего
+    for variant in 0..TREE_VARIANTS {
+        let crown = crown_geometry(TreeShape::Cotton, &mut variant_rng(variant));
+        assert!(
+            pinched_metrics(&crown.outer).is_empty(),
+            "variant {variant}"
+        );
+    }
+}
+
 #[test]
 fn bloat_pushes_midpoints_outward() {
     let square = [
