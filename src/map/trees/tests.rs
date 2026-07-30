@@ -246,6 +246,170 @@ fn crown_mesh_builds_non_empty() {
         let geometry = crown_geometry(shape, &mut rng);
         let mesh = crown_mesh(&geometry, &style, &mut rng);
         assert!(mesh.count_vertices() > 0, "{shape:?}");
-        assert!(shadow_template(&geometry).vertex_count() > 0, "{shape:?}");
+        assert!(
+            shadow_template(&geometry, &mut rng).vertex_count() > 0,
+            "{shape:?}"
+        );
     }
+}
+
+/// Кольцо кроны единичного радиуса — как его строит `crown_geometry`.
+fn band_centre(ring: &[Vec2]) -> Vec2 {
+    ring.iter().copied().sum::<Vec2>() / ring.len() as f32
+}
+
+/// Штрихи ели скапливаются на теневой стороне: центр тяжести чернил каждого
+/// кольца смещён по `SHADOW_DIR`, а самая освещённая вершина кольца в дуги не
+/// попадает — светлая сторона у `drawShaded2` чистая, без случайных штрихов.
+#[test]
+fn conifer_shading_leans_into_the_shadow() {
+    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5));
+    for (ring, weight) in &geometry.bands {
+        let arcs = chevron_arcs(ring, *weight);
+        assert!(!arcs.is_empty(), "кольцо без штрихов вовсе");
+        let points: Vec<Vec2> = arcs.iter().flatten().copied().collect();
+        let ink = points.iter().copied().sum::<Vec2>() / points.len() as f32;
+        assert!(
+            (ink - band_centre(ring)).dot(SHADOW_DIR) > 0.0,
+            "чернила кольца не на теневой стороне"
+        );
+        let lit = ring
+            .iter()
+            .copied()
+            .reduce(|a, b| {
+                if b.dot(SHADOW_DIR) < a.dot(SHADOW_DIR) {
+                    b
+                } else {
+                    a
+                }
+            })
+            .expect("кольцо непусто");
+        assert!(
+            !points.contains(&lit),
+            "штрих дотянулся до самой освещённой вершины"
+        );
+    }
+}
+
+/// Верхушка ели — внутреннее кольцо `0.1`, поднятое к макушке: у него должны
+/// быть штрихи, и лежать они обязаны выше центра кроны. Именно её раньше
+/// съедали лотерея `drawShaded1` и фильтр коротких дуг.
+#[test]
+fn conifer_has_a_tip() {
+    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5));
+    let (ring, weight) = geometry.bands.last().expect("три кольца у хвои");
+    let arcs = chevron_arcs(ring, *weight);
+    assert!(!arcs.is_empty(), "у ели нет верхушки");
+    for point in arcs.iter().flatten() {
+        assert!(point.y > 0.0, "верхушка ниже центра кроны: {point}");
+    }
+}
+
+/// Дуга — связный кусок кольца: её точки идут подряд по `ring`, без дырок
+/// внутри. Так «этаж» кроны рисуется одной ломаной, а не россыпью штрихов.
+#[test]
+fn shaded_arcs_run_along_the_ring() {
+    let mut rng = Lcg::new(5);
+    for shape in TreeShape::CONCRETE {
+        let geometry = crown_geometry(shape, &mut rng);
+        for (ring, weight) in &geometry.bands {
+            for arc in shape.shade(ring, *weight, &mut rng) {
+                let start = ring
+                    .iter()
+                    .position(|point| *point == arc[0])
+                    .expect("дуга начинается вершиной кольца");
+                for (step, point) in arc.iter().enumerate() {
+                    assert_eq!(
+                        *point,
+                        ring[(start + step) % ring.len()],
+                        "{shape:?}: дуга рвётся на шаге {step}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Пальма рисуется листьями целиком (`drawShaded4`): 5 точек на лист, а у
+/// склеенных соседних листьев — 9, 13, … Всегда `4·n + 1`.
+#[test]
+fn palm_arcs_cover_whole_leaves() {
+    let mut rng = Lcg::new(5);
+    let geometry = crown_geometry(TreeShape::Palm, &mut rng);
+    for (ring, weight) in &geometry.bands {
+        for arc in leaf_arcs(ring, *weight, &mut rng) {
+            assert_eq!(arc.len() % 4, 1, "лист нарисован кусками: {}", arc.len());
+        }
+    }
+}
+
+/// Облачная крона: у кольца `0.8` остаётся длинная дуга по теневой стороне
+/// **и** россыпь коротких штрихов. Раньше порог в 2.5 толщины штриха съедал
+/// больше половины дуг, и кольцо читалось как рваное.
+#[test]
+fn cotton_keeps_its_dashes() {
+    let mut rng = Lcg::new(0x051E_D2E5);
+    let geometry = crown_geometry(TreeShape::Cotton, &mut rng);
+    let (ring, weight) = &geometry.bands[0];
+    let arcs = shaded_arcs(ring, *weight, &mut rng);
+    let length = |arc: &Vec<Vec2>| {
+        arc.windows(2)
+            .map(|pair| pair[0].distance(pair[1]))
+            .sum::<f32>()
+    };
+    let longest = arcs.iter().map(length).fold(0.0_f32, f32::max);
+    assert!(longest > 1.0, "нет длинной дуги по теневой стороне");
+    assert!(
+        arcs.len() >= 5,
+        "коротких штрихов не осталось: {}",
+        arcs.len()
+    );
+}
+
+/// Тень ели — конус: длиннее кроны вдоль `SHADOW_DIR` и сужается к дальнему
+/// концу, а не растянутая клякса.
+#[test]
+fn conifer_shadow_tapers_into_a_cone() {
+    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(9));
+    let points: Vec<Vec2> = conifer_shadow(&geometry.outer, 0.8)
+        .into_iter()
+        .flat_map(|(outer, _)| outer)
+        .collect();
+    let along = |point: &Vec2| point.dot(SHADOW_DIR);
+    let reach = points.iter().map(along).fold(f32::MIN, f32::max);
+    assert!(reach > 2.0, "веер не дотянулся до 3h: {reach}");
+    let width = |range: std::ops::Range<f32>| {
+        let across: Vec<f32> = points
+            .iter()
+            .filter(|point| range.contains(&along(point)))
+            .map(|point| point.perp_dot(SHADOW_DIR))
+            .collect();
+        across.iter().copied().fold(f32::MIN, f32::max)
+            - across.iter().copied().fold(f32::MAX, f32::min)
+    };
+    assert!(
+        width(1.6..2.4) < width(0.0..0.8),
+        "дальний конец тени не уже ближнего"
+    );
+}
+
+/// «Высота» дерева разыгрывается на вариант, поэтому у соседних деревьев тени
+/// разной длины — у watabou это `h` из `drawTree`.
+#[test]
+fn shadow_length_varies_between_variants() {
+    let reach = |variant: u32| {
+        let mut rng = Lcg::new(0x051E_D2E5 + variant * 7919);
+        let geometry = crown_geometry(TreeShape::Conifer, &mut rng);
+        shadow_template(&geometry, &mut rng)
+            .positions_for_test()
+            .iter()
+            .map(|point| Vec2::new(point[0], point[1]).dot(SHADOW_DIR))
+            .fold(f32::MIN, f32::max)
+    };
+    let reaches: Vec<f32> = (0..crate::settings::TREE_VARIANTS as u32)
+        .map(reach)
+        .collect();
+    let spread = reaches.iter().copied().fold(f32::MIN, f32::max)
+        - reaches.iter().copied().fold(f32::MAX, f32::min);
+    assert!(spread > 0.5, "тени всех вариантов одной длины: {spread}");
 }

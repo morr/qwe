@@ -14,6 +14,7 @@ pub use self::conifer::ConiferField;
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::MapData;
+use crate::map::osm::model::signed_ring_area;
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
     TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
@@ -29,10 +30,6 @@ const BALL_BANDS: [f32; 2] = [0.8, 0.5];
 const CONE_BANDS: [f32; 3] = [0.7, 0.4, 0.1];
 /// Кольца пальмовой кроны — `PALM_BANDS2`.
 const PALM_BANDS: [f32; 2] = [0.7, 0.3];
-/// Сдвиг колец к свету за номер кольца, доля радиуса (`0.15/0.12/0.1`).
-const BAND_LIFT: [f32; 3] = [0.15, 0.12, 0.1];
-/// Минимальная длина дуги-штриха, доля радиуса.
-const MIN_ARC_LENGTH: f32 = 0.15;
 
 /// Вектор штриховки: рёбра CCW-колец вдоль него рисуются чаще (теневая сторона).
 const SHADE_DIR: Vec2 = Vec2::new(0.5, 0.866_025_4);
@@ -40,6 +37,14 @@ const SHADE_DIR: Vec2 = Vec2::new(0.5, 0.866_025_4);
 const SHADOW_STRETCH: f32 = 1.4;
 /// Обратный сдвиг силуэта тени (`−R·(1 − shadowLength/4)`).
 const SHADOW_BACKSHIFT: f32 = -0.75;
+/// «Высота» дерева `h` из `drawTree`: `0.4 + 0.8·gauss3` — она решает, длинная
+/// тень или короткая, и на сколько радиусов вытянут веер у хвои. У watabou
+/// значение на дерево, здесь — на вариант кроны (геометрия кэшируется по ним).
+const SHADOW_HEIGHT_BASE: f32 = 0.4;
+const SHADOW_HEIGHT_SPREAD: f32 = 0.8;
+/// Порог `h`, выше которого крона отбрасывает длинную тень (`drawTree`:
+/// `h·shadowLength > 0.5` при `shadowLength = 1`).
+const LONG_SHADOW_HEIGHT: f32 = 0.5;
 
 /// ГПСЧ Лемера (Park–Miller), как в Village.js: `seed = 48271·seed mod 2³¹−1`.
 struct Lcg(u32);
@@ -64,6 +69,11 @@ impl Lcg {
         (self.next_f32() + self.next_f32() + self.next_f32() + self.next_f32()) / 2.0 - 1.0
     }
 }
+
+/// Геометрия строится только по конкретной форме: `Mixed` разрешается в
+/// `Cotton`/`Conifer` ещё до неё — пул крон собирается по
+/// [`TreeShape::crown_shapes`], форму дерева выдаёт [`TreeShape::resolve`].
+const MIXED_HAS_NO_GEOMETRY: &str = "Mixed разрешается в конкретную форму до сборки кроны";
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -122,7 +132,8 @@ impl TreeShape {
     fn base_points(self) -> usize {
         match self {
             Self::Conifer => 16,
-            _ => 12,
+            Self::Cotton | Self::Palm => 12,
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
     }
 
@@ -130,25 +141,40 @@ impl TreeShape {
     fn radius_jitter(self) -> f32 {
         match self {
             Self::Conifer => 0.25,
-            _ => 4.0 / 12.0,
+            Self::Cotton | Self::Palm => 4.0 / 12.0,
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
+        }
+    }
+
+    /// Сдвиг колец к свету за номер кольца, доля радиуса. Константа **формы**,
+    /// а не номера кольца: `-(n+1)·R·0.15` у облака, `·0.12` у хвои, `·0.1` у
+    /// пальмы.
+    fn band_lift(self) -> f32 {
+        match self {
+            Self::Cotton => 0.15,
+            Self::Conifer => 0.12,
+            Self::Palm => 0.1,
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
     }
 
     /// Масштабы внутренних колец и вес вероятности штриха для каждого.
     fn bands(self) -> Vec<(f32, f32)> {
         match self {
-            Self::Cotton | Self::Mixed => BALL_BANDS.iter().map(|&s| (s, 3.0 * s * s)).collect(),
+            Self::Cotton => BALL_BANDS.iter().map(|&s| (s, 3.0 * s * s)).collect(),
             Self::Conifer => CONE_BANDS.iter().map(|&s| (s, 0.5 + s)).collect(),
             Self::Palm => PALM_BANDS.iter().map(|&s| (s, 3.0 * s)).collect(),
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
     }
 
     /// Контур из базового многоугольника: `Bloater::bloat` или `Spiker`.
     fn outline(self, ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
         match self {
-            Self::Cotton | Self::Mixed => bloat(ring, lobe),
+            Self::Cotton => bloat(ring, lobe),
             Self::Conifer => spike_simple(ring, lobe),
             Self::Palm => spike_bent(ring, lobe),
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
     }
 
@@ -156,14 +182,27 @@ impl TreeShape {
     /// крупнее самого кольца (`k/scale`), у шипастых форм — как у контура.
     fn band_lobe(self, lobe: f32, scale: f32) -> f32 {
         match self {
-            Self::Cotton | Self::Mixed => lobe / scale,
-            _ => lobe,
+            Self::Cotton => lobe / scale,
+            Self::Conifer | Self::Palm => lobe,
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
+        }
+    }
+
+    /// Штриховка кольца — у каждой формы своя процедура (`drawShaded1/2/4`).
+    fn shade(self, ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+        match self {
+            Self::Cotton => shaded_arcs(ring, weight, rng),
+            Self::Conifer => chevron_arcs(ring, weight),
+            Self::Palm => leaf_arcs(ring, weight, rng),
+            Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
     }
 }
 
 /// Геометрия кроны единичного радиуса: контур и кольца штриховки.
 struct CrownGeometry {
+    /// Форма, которой кольца штрихуются и по которой ложится тень.
+    shape: TreeShape,
     outer: Vec<Vec2>,
     /// (кольцо, вес вероятности штриха).
     bands: Vec<(Vec<Vec2>, f32)>,
@@ -186,12 +225,16 @@ fn crown_geometry(shape: TreeShape, rng: &mut Lcg) -> CrownGeometry {
         .into_iter()
         .enumerate()
         .map(|(number, (scale, weight))| {
-            let lift = Vec2::new(0.0, (number as f32 + 1.0) * BAND_LIFT[number.min(2)]);
+            let lift = Vec2::new(0.0, (number as f32 + 1.0) * shape.band_lift());
             let ring: Vec<Vec2> = base.iter().map(|&point| point * scale + lift).collect();
             (shape.outline(&ring, shape.band_lobe(lobe, scale)), weight)
         })
         .collect();
-    CrownGeometry { outer, bands }
+    CrownGeometry {
+        shape,
+        outer,
+        bands,
+    }
 }
 
 /// `Spiker::simple`: между соседними вершинами вставлен один шип наружу
@@ -276,7 +319,8 @@ fn shadow_ring(outer: &[Vec2]) -> Vec<Vec2> {
         .collect()
 }
 
-/// Меш кроны: заливка + чернильный контур + пунктирные кольца (`drawShaded1`).
+/// Меш кроны: заливка + чернильный контур + штрихованные кольца (процедура
+/// штриховки своя у каждой формы, см. [`TreeShape::shade`]).
 /// Вершинные цвета настоящие; материал дерева умножает их на серый множитель,
 /// так зелень варьируется, а чернила остаются чернилами.
 fn crown_mesh(geometry: &CrownGeometry, style: &TreeStyle, rng: &mut Lcg) -> Mesh {
@@ -286,34 +330,35 @@ fn crown_mesh(geometry: &CrownGeometry, style: &TreeStyle, rng: &mut Lcg) -> Mes
     builder.push_stroke(&geometry.outer, true, TREE_OUTLINE_STROKE, ink);
 
     for (ring, weight) in &geometry.bands {
-        // рёбра отбираются по watabou (`drawShaded1`), но соседние выбранные
-        // склеиваются в одну дугу — иначе каждое ребро рисуется своим штрихом
-        // с собственными торцами, и кольцо распадается на зубцы
-        for arc in shaded_arcs(ring, *weight, rng) {
+        for arc in geometry.shape.shade(ring, *weight, rng) {
             builder.push_stroke(&arc, false, TREE_DETAIL_STROKE, ink);
         }
     }
     builder.build()
 }
 
-/// `drawShaded1`: вероятность нарисовать ребро тем выше, чем ближе его
-/// направление к `SHADE_DIR` — штрихи скапливаются на теневой стороне кольца.
-/// Возвращает связные цепочки выбранных рёбер длиннее `MIN_ARC_LENGTH` —
-/// более короткие при зуме читаются как мусорные квадратики, а не как штрих.
-fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+/// Сборка дуг из отбора: `drawn[i]` — рисуется ли кусок кольца из `step`
+/// рёбер, начинающийся в `ring[i·step]`. Подряд идущие куски склеиваются в
+/// одну ломаную (соседние делят вершину) — иначе каждый рисуется своим
+/// штрихом с собственными торцами, и кольцо распадается на зубцы. Обход
+/// стартует с пропущенного куска, поэтому дуга, пересекающая начало кольца,
+/// остаётся целой, а не разваливается на два огрызка.
+fn chain_arcs(ring: &[Vec2], step: usize, drawn: &[bool]) -> Vec<Vec<Vec2>> {
+    let Some(gap) = drawn.iter().position(|&on| !on) else {
+        // нарисовано всё кольцо — одна замкнутая ломаная
+        let mut arc = ring.to_vec();
+        arc.push(ring[0]);
+        return vec![arc];
+    };
     let mut arcs: Vec<Vec<Vec2>> = Vec::new();
     let mut current: Vec<Vec2> = Vec::new();
-    for index in 0..ring.len() {
-        let from = ring[index];
-        let to = ring[(index + 1) % ring.len()];
-        let drawn = (to - from).try_normalize().is_some_and(|direction| {
-            rng.next_f32() < weight * (0.5 + 0.5 * SHADE_DIR.dot(direction))
-        });
-        if drawn {
+    for offset in 0..drawn.len() {
+        let chunk = (gap + offset) % drawn.len();
+        if drawn[chunk] {
             if current.is_empty() {
-                current.push(from);
+                current.push(ring[chunk * step]);
             }
-            current.push(to);
+            current.extend((1..=step).map(|edge| ring[(chunk * step + edge) % ring.len()]));
         } else if !current.is_empty() {
             arcs.push(std::mem::take(&mut current));
         }
@@ -321,21 +366,146 @@ fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
     if !current.is_empty() {
         arcs.push(current);
     }
+    arcs
+}
+
+/// `drawShaded1` — штриховка облачной кроны. Вероятность нарисовать ребро тем
+/// выше, чем ближе его направление к `SHADE_DIR`: штрихи скапливаются на
+/// теневой стороне кольца. Кольцо `0.8` (вес 1.92) выходит одной длинной дугой
+/// по теневой стороне плюс россыпь коротких штрихов по краям — их **надо**
+/// рисовать, иначе кольцо читается как рваное. Отбрасываются только дуги
+/// короче собственной толщины: такая при зуме уже не штрих, а квадратик.
+fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+    let drawn: Vec<bool> = (0..ring.len())
+        .map(|index| {
+            let edge = ring[(index + 1) % ring.len()] - ring[index];
+            edge.try_normalize().is_some_and(|direction| {
+                rng.next_f32() < weight * (0.5 + 0.5 * SHADE_DIR.dot(direction))
+            })
+        })
+        .collect();
+    let mut arcs = chain_arcs(ring, 1, &drawn);
     arcs.retain(|arc| {
         arc.windows(2)
             .map(|pair| pair[0].distance(pair[1]))
             .sum::<f32>()
-            >= MIN_ARC_LENGTH
+            >= TREE_DETAIL_STROKE
     });
     arcs
 }
 
+/// `drawShaded2` — штриховка хвойной кроны. Кольцо после [`spike_simple`] идёт
+/// «вершина базы, кончик шипа, вершина базы, …», и рисуется оно **шевронами**:
+/// шаг 2, кусок база→шип→база целиком. Направление берётся по хорде между
+/// вершинами базы, а не по ребру шипа, и **лотереи нет** — условие
+/// `w·(0.5 + 0.5·cos) > 0.5` либо выполнено, либо нет. Поэтому соседние
+/// шевроны смыкаются в сплошную ломаную-«этаж» на теневой стороне, а светлая
+/// остаётся чистой. Веса `0.5 + scale` дают дуги примерно в 190°, 167° и 96°;
+/// последняя, у кольца `0.1`, поднятого к макушке, и есть верхушка ели.
+fn chevron_arcs(ring: &[Vec2], weight: f32) -> Vec<Vec<Vec2>> {
+    let drawn: Vec<bool> = (0..ring.len() / 2)
+        .map(|chevron| {
+            let chord = ring[(chevron * 2 + 2) % ring.len()] - ring[chevron * 2];
+            chord
+                .try_normalize()
+                .is_some_and(|direction| weight * (0.5 + 0.5 * SHADE_DIR.dot(direction)) > 0.5)
+        })
+        .collect();
+    chain_arcs(ring, 2, &drawn)
+}
+
+/// `drawShaded4` — штриховка пальмы. Кольцо после [`spike_bent`] тратит по
+/// четыре точки на лист, и лист рисуется целиком: шаг 4, направление по хорде
+/// между основаниями соседних листьев, вероятность как у `drawShaded1`.
+fn leaf_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+    let drawn: Vec<bool> = (0..ring.len() / 4)
+        .map(|leaf| {
+            let chord = ring[(leaf * 4 + 4) % ring.len()] - ring[leaf * 4];
+            chord.try_normalize().is_some_and(|direction| {
+                rng.next_f32() < weight * (0.5 + 0.5 * SHADE_DIR.dot(direction))
+            })
+        })
+        .collect();
+    chain_arcs(ring, 4, &drawn)
+}
+
 /// Силуэт тени единичного радиуса — шаблон, который `spawn_trees` кладёт в
-/// общий меш теней под каждое дерево этого варианта.
-fn shadow_template(geometry: &CrownGeometry) -> MeshBuilder {
+/// общий меш теней под каждое дерево этого варианта. Тип тени выбирает
+/// «высота» `h` (`drawTree`): у облака и пальмы высокая крона даёт длинную
+/// тень, низкая — простой сдвинутый силуэт; ель вместо этого отбрасывает
+/// веер-конус. `h` разыгрывается на вариант, так что соседние деревья стоят с
+/// тенями разной длины.
+fn shadow_template(geometry: &CrownGeometry, rng: &mut Lcg) -> MeshBuilder {
+    let height = SHADOW_HEIGHT_BASE + SHADOW_HEIGHT_SPREAD * rng.gauss3();
     let mut builder = MeshBuilder::default();
-    builder.push_polygon(&shadow_ring(&geometry.outer), &[], LinearRgba::WHITE);
+    match geometry.shape {
+        TreeShape::Conifer => {
+            for (outer, holes) in conifer_shadow(&geometry.outer, height) {
+                builder.push_polygon(&outer, &holes, LinearRgba::WHITE);
+            }
+        }
+        _ if height > LONG_SHADOW_HEIGHT => {
+            builder.push_polygon(&shadow_ring(&geometry.outer), &[], LinearRgba::WHITE);
+        }
+        // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
+        _ => {
+            let offset = SHADOW_DIR * height;
+            let ring: Vec<Vec2> = geometry.outer.iter().map(|&p| p + offset).collect();
+            builder.push_polygon(&ring, &[], LinearRgba::WHITE);
+        }
+    }
     builder
+}
+
+/// `drawConiferShadow`: тень ели — не растянутый силуэт, а **конус**.
+/// Треугольник от ствола (± радиус поперёк тени) к дальнему концу `3h`
+/// задаёт ствол конуса, а поверх вдоль тени ложатся копии кроны убывающего
+/// масштаба — получается ярусная «ёлка» вместо кляксы.
+///
+/// Фигуры объединяются булевым union: слой теней полупрозрачный, и наложение
+/// копий внутри одного дерева читалось бы пятнами двойной темноты — та же
+/// причина, по которой union стоит у теней зданий
+/// (`buildings::layers::shadow_builder`). Считается один раз на вариант.
+fn conifer_shadow(outer: &[Vec2], height: f32) -> Vec<(Vec<Vec2>, Vec<Vec<Vec2>>)> {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::float::simplify::SimplifyShape;
+
+    let tip = SHADOW_DIR * 3.0 * height;
+    let across = SHADOW_DIR.perp();
+    let steps = (3.0 * height).ceil().max(1.0);
+    let mut parts: Vec<Vec<Vec2>> = vec![vec![across, -across, tip]];
+    for step in 0..steps as usize {
+        let scale = 1.0 - step as f32 / steps;
+        let offset = tip * (step as f32 + 1.0) / (steps + 1.0);
+        parts.push(outer.iter().map(|&point| point * scale + offset).collect());
+    }
+
+    let parts: Vec<Vec<[f32; 2]>> = parts
+        .into_iter()
+        .map(|mut ring| {
+            // NonZero гасит контуры противоположного обхода — все части
+            // обязаны быть закручены одинаково
+            if signed_ring_area(&ring) < 0.0 {
+                ring.reverse();
+            }
+            ring.into_iter().map(|point| [point.x, point.y]).collect()
+        })
+        .collect();
+
+    parts
+        .simplify_shape(FillRule::NonZero)
+        .into_iter()
+        .filter_map(|shape| {
+            let mut rings = shape.into_iter().map(|contour| {
+                contour
+                    .into_iter()
+                    .map(Vec2::from_array)
+                    .collect::<Vec<Vec2>>()
+            });
+            let outer = rings.next()?;
+            Some((outer, rings.collect()))
+        })
+        .collect()
 }
 
 /// Стиль деревьев — вкладка Trees из «Style settings» watabou. Меняется на
@@ -429,7 +599,7 @@ pub fn spawn_trees(
                     let geometry = crown_geometry(shape, &mut rng);
                     (
                         meshes.add(crown_mesh(&geometry, style, &mut rng)),
-                        shadow_template(&geometry),
+                        shadow_template(&geometry, &mut rng),
                     )
                 })
                 .collect();

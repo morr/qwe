@@ -391,7 +391,15 @@ in `main.rs`.
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the
   light, and a **long shadow** — the crown silhouette stretched ×1.4 along the 30°
-  shadow axis on `Z_TREE_SHADOW`. `TREE_VARIANTS` unit-radius crown meshes are reused
+  shadow axis on `Z_TREE_SHADOW`. Each shape shades its bands its own way, as watabou
+  does: cotton by single edges through the RNG (`drawShaded1`), **conifer by chevrons
+  with no RNG at all** (`drawShaded2` — base→spike→base in one deterministic stroke, so
+  a tier is one unbroken zigzag on the shadow side and the lit side stays clean; the
+  innermost band, lifted to the top, reads as the fir's tip), palm by whole leaves
+  (`drawShaded4`). A tree's «height» `h` (`0.4 + 0.8·gauss3`, per crown variant) picks
+  its shadow: long, or plain offset, or — for a conifer — the **cone fan** of shrinking
+  silhouettes along the shadow (`drawConiferShadow`), unioned with `i_overlay` so the
+  translucent copies never stack into double darkness. `TREE_VARIANTS` unit-radius crown meshes are reused
   across all trees; per tree — variant, quantized brightness tint (material multiplies
   vertex colors, so ink stays ink) and radius as `Transform::scale`.
   Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
