@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use qwe::demon::Demon;
-use qwe::spatial::SpatialGrid;
+use qwe::spatial::{DemonDangerMap, SpatialGrid};
 
 fn entity(index: u32) -> Entity {
     Entity::from_raw_u32(index).unwrap()
@@ -55,4 +55,25 @@ fn positions_outside_map_are_clamped() {
     let mut grid = SpatialGrid::<Demon>::default();
     grid.rebuild([(entity(1), Vec2::new(-5.0, 950.0))].into_iter());
     assert!(grid.nearest_in_range(Vec2::new(0.0, 899.0), 60.0).is_some());
+}
+
+#[test]
+fn danger_map_covers_neighbor_cell_across_boundary() {
+    let mut danger = DemonDangerMap::default();
+    // демон у левого края своей ячейки [60..120): человек в соседней ячейке
+    // в 56 м от него обязан попасть под пометку
+    danger.rebuild([Vec2::new(61.0, 10.0)].into_iter());
+    assert!(!danger.is_safe(Vec2::new(5.0, 10.0)));
+    // а через две ячейки (заведомо дальше радиуса паники) — безопасно
+    assert!(danger.is_safe(Vec2::new(190.0, 10.0)));
+}
+
+#[test]
+fn danger_map_rebuild_clears_previous_marks() {
+    let mut danger = DemonDangerMap::default();
+    danger.rebuild([Vec2::new(100.0, 100.0)].into_iter());
+    assert!(!danger.is_safe(Vec2::new(100.0, 100.0)));
+    // демон ушёл — пересборка снимает старую пометку
+    danger.rebuild(std::iter::empty());
+    assert!(danger.is_safe(Vec2::new(100.0, 100.0)));
 }

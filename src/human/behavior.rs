@@ -12,7 +12,7 @@ use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
 };
-use crate::spatial::SpatialGrid;
+use crate::spatial::{DemonDangerMap, SpatialGrid};
 use crate::telemetry::Telemetry;
 
 /// Шаг бегства: насколько далеко от себя прокладывается точка «от демона», м.
@@ -35,11 +35,17 @@ pub fn panic(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     demons: Res<SpatialGrid<Demon>>,
+    danger: Res<DemonDangerMap>,
     query: Query<(Entity, &SimPosition), (With<Human>, With<HumanWanderTag>)>,
     mut movables: Query<&mut Movable>,
 ) {
     let started = std::time::Instant::now();
     for (entity, sim_position) in &query {
+        // грубый префильтр по danger-карте: подавляющее большинство гуляющих
+        // далеко от демонов, и им хватает одного чтения вместо обхода 3×3
+        if danger.is_safe(sim_position.0) {
+            continue;
+        }
         if demons
             .nearest_in_range(sim_position.0, HUMAN_PANIC_RADIUS)
             .is_none()

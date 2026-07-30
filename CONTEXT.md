@@ -573,6 +573,17 @@ in `main.rs`.
 - **SpatialGrid<T>** — uniform grid of `(Entity, Vec2)` per marker type (`Demon`,
   `Human`), 60 m cells (≥ the largest search radius), fully rebuilt every tick.
   `nearest_in_range_where` — nearest entity passing a filter.
+- **DemonDangerMap** (`spatial.rs`) — coarse prefilter for `panic`: a `Vec<bool>` over
+  the same 60 m cells, marking the 3×3 neighborhood of every demon's cell. Cell ≥ panic
+  radius (compile-time assert), so an unmarked cell *guarantees* no demon within
+  `HUMAN_PANIC_RADIUS` — a wandering human then skips the 3×3 `SpatialGrid<Demon>` scan
+  on a single read. A marked cell only means "maybe"; the exact distance still comes from
+  `nearest_in_range`, so behavior is unchanged. Rebuilt from scratch each tick in
+  `rebuild_demon_grid` (~100 demons × 9 cells — microseconds); deliberately *not*
+  maintained incrementally on cell crossings — that saves nothing here and adds lifecycle
+  invariants (spawn, restart, city switch, lunge moving `SimPosition` outside the mover).
+  Before it, `panic` scanned the demon grid per wandering human and alone set the speed
+  ceiling (~0.8 ms/tick of a ~1.0 ms tick).
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
   walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding
@@ -680,10 +691,10 @@ in `main.rs`.
     restarts it). Not wall-clock: it stops on pause and runs `actual`× faster on speedup.
     The panel's first line shows it as plain seconds (`T+8130`), and it is readable
     over BRP as `SimClock`.
-  - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): `panic`
-    ~1.8 ms ≫ `spatial` ~0.7 ms > `move` ~0.16 ms ≈ `flee` ~0.14 ms ≫ `chase` ~0.01 ms.
-    `panic` scans every wandering human against the demon grid every tick — that single
-    system is what sets the speed ceiling.
+  - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): with the
+    `DemonDangerMap` prefilter `panic` dropped from ~0.8 ms (the old ceiling-setter) to
+    the same order as `spatial` ~0.1 ms > `flee` ~0.05 ms > `move` ~0.01 ms ≈ `chase`.
+    The ceiling is now the sum of many small systems, not one dominant scan.
 - **Remembered UI options** (`prefs.rs`) — every UI-settable resource (`DebugGrid`,
   `DebugNavmesh`, `DrawMovePaths`, `PathfindingAlgorithm`, `TreeStyle`) is a
   `bevy::settings::SettingsGroup`, so a click survives a restart. `SettingsPlugin` reads
