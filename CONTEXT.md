@@ -669,8 +669,8 @@ in `main.rs`.
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the
   noise overlay is one sprite with a CPU-built texture (see Conifer stands).
-- **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (unbounded, unlike the
-  button's `cycle_time_scale`).
+- **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (1 → 3 → 5 → 10 → 15 →
+  25 → 50, stopping at `MAX_SIM_SPEED`; the button's `cycle_time_scale` wraps earlier).
   - **SimSpeed** — `{requested, effective, actual}`. `requested` is what the ladder says;
     `effective` is the regulator's command, what reaches `Time<Virtual>` after **fps
     throttling**; `actual` is measured — virtual seconds per real second, averaged over
@@ -690,8 +690,14 @@ in `main.rs`.
     `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited, and
     `1x → 0.42x` while something (the async northstar build, say) is starving the
     frame.
-  - Set the requested speed over BRP with `res set SimSpeed .requested N` — `brp speed`
-    writes `Time<Virtual>` directly and the throttle overwrites it on the next frame.
+  - **Requested cap** — `MAX_SIM_SPEED` (50x) is a hard ceiling on `requested`, above the
+    fps ceiling on purpose: the ladder never steps past it, and `throttle_speed_to_fps`
+    clamps `requested` itself so a BRP write cannot exceed it either. Asking for more than
+    the hardware can hand `FixedUpdate` only makes the panel display a number that never
+    happens.
+  - Set the requested speed over BRP with `res set SimSpeed .requested N` (clamped to
+    `MAX_SIM_SPEED`) — `brp speed` writes `Time<Virtual>` directly and the throttle
+    overwrites it on the next frame.
   - **SimClock** — `elapsed`, virtual seconds the *current world* has lived, zeroed on
     entering `PlayPhase::Live` (so map load and warmup don't count, and a city switch
     restarts it). Not wall-clock: it stops on pause and runs `actual`× faster on speedup.

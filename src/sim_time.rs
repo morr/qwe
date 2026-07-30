@@ -3,7 +3,8 @@
 //!
 //! Запрошенная скорость и фактическая — разные величины: машина не всегда
 //! тянет запрошенную, и тогда время автоматически замедляется до посильного
-//! (см. `throttle_speed_to_fps`).
+//! (см. `throttle_speed_to_fps`). Сверху запрошенная упирается в
+//! `MAX_SIM_SPEED`.
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -11,8 +12,8 @@ use bevy::prelude::*;
 use crate::loading::PlayPhase;
 use crate::restart::RestartEvent;
 use crate::settings::{
-    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MIN_SIM_SPEED, SPEED_CYCLE_MAX, SPEED_DROP_RATE,
-    SPEED_SETTLE_RATE,
+    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MAX_SIM_SPEED, MIN_SIM_SPEED, SPEED_CYCLE_MAX,
+    SPEED_DROP_RATE, SPEED_SETTLE_RATE,
 };
 
 /// Скорость симуляции: `requested` крутит пользователь лесенкой, `effective`
@@ -190,6 +191,13 @@ fn throttle_speed_to_fps(
         return;
     }
 
+    // Лесенка выше `MAX_SIM_SPEED` не поднимается, но `requested` пишут и
+    // напрямую (по BRP) — режем здесь, чтобы потолок был один на все входы и
+    // панель не показывала запрошенное число, которого не бывает.
+    if speed.requested > MAX_SIM_SPEED {
+        speed.requested = MAX_SIM_SPEED;
+    }
+
     let target = speed.requested.min(affordable_speed(fps));
     speed.effective = approach(speed.effective, target);
 
@@ -275,26 +283,19 @@ pub fn cycle_time_scale(speed: f32) -> f32 {
     if next > SPEED_CYCLE_MAX { 1.0 } else { next }
 }
 
-/// Следующая ступень лесенки скоростей.
+/// Следующая ступень лесенки скоростей, но не выше `MAX_SIM_SPEED`.
 pub fn next_time_scale(speed: f32) -> f32 {
-    speed
+    let step = speed
         + if speed < 5. {
             2.
         } else if speed < 15. {
             5.
         } else if speed < 20. {
             10.
-        } else if speed < 100. {
-            25.
-        } else if speed < 200. {
-            50.
-        } else if speed < 500. {
-            100.
-        } else if speed < 2000. {
-            500.
         } else {
-            1000.
-        }
+            25.
+        };
+    step.min(MAX_SIM_SPEED)
 }
 
 /// Предыдущая ступень лесенки скоростей.
@@ -310,16 +311,8 @@ pub fn previous_time_scale(speed: f32) -> f32 {
             5.
         } else if speed <= 25. {
             10.
-        } else if speed <= 100. {
-            25.
-        } else if speed <= 200. {
-            50.
-        } else if speed <= 500. {
-            100.
-        } else if speed <= 2000. {
-            500.
         } else {
-            1000.
+            25.
         }
 }
 
@@ -335,6 +328,14 @@ mod tests {
         // ниже 2 fps не тянется и 1x — замедляемся честно
         assert_eq!(affordable_speed(1.0), 0.5);
         assert_eq!(affordable_speed(0.1), MIN_SIM_SPEED);
+    }
+
+    #[test]
+    fn ladder_stops_at_the_cap() {
+        assert_eq!(next_time_scale(25.0), MAX_SIM_SPEED);
+        assert_eq!(next_time_scale(MAX_SIM_SPEED), MAX_SIM_SPEED);
+        // сверху лесенка спускается обычными ступенями
+        assert_eq!(previous_time_scale(MAX_SIM_SPEED), 25.0);
     }
 
     #[test]
