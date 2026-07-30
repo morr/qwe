@@ -168,7 +168,7 @@ fn modify_time(
 /// ожидании следующего кадра. Так что скорость лучше честно снизить, чем
 /// делать вид, что идёт 15x.
 ///
-/// Потолок не ограничен снизу единицей: на 4 fps посильна ровно 1x, а ниже
+/// Потолок не ограничен снизу единицей: на 2 fps посильна ровно 1x, а ниже
 /// симуляция не тянет и реальное время. Делать вид, что идёт 1x, там нельзя —
 /// Bevy всё равно обрежет кадровую дельту по `max_delta`, только молча; лучше
 /// честно снизить команду (до `MIN_SIM_SPEED`), тогда кадр считает меньше
@@ -329,12 +329,12 @@ mod tests {
 
     #[test]
     fn affordable_speed_falls_below_real_time() {
-        // 60 fps тянут 15x, 4 fps — ровно реальное время
-        assert_eq!(affordable_speed(60.0), 15.0);
-        assert_eq!(affordable_speed(4.0), 1.0);
-        // ниже 4 fps не тянется и 1x — замедляемся честно
-        assert_eq!(affordable_speed(2.0), 0.5);
-        assert_eq!(affordable_speed(0.4), MIN_SIM_SPEED);
+        // 60 fps тянут 30x, 2 fps — ровно реальное время
+        assert_eq!(affordable_speed(60.0), 30.0);
+        assert_eq!(affordable_speed(2.0), 1.0);
+        // ниже 2 fps не тянется и 1x — замедляемся честно
+        assert_eq!(affordable_speed(1.0), 0.5);
+        assert_eq!(affordable_speed(0.1), MIN_SIM_SPEED);
     }
 
     #[test]

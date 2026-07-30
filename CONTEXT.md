@@ -641,7 +641,7 @@ in `main.rs`.
   avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button in
   the Buildings-panel style. Left click walks the ladder up and wraps to 1x past
-  `SPEED_CYCLE_MAX` (15x — the 60 fps ceiling), right click steps down; green while
+  `SPEED_CYCLE_MAX` (15x — comfortably under the 30x @ 60 fps ceiling), right click steps down; green while
   paused. It reads `Pointer<Click>` itself instead of `Activate`, which fires for *any*
   mouse button and would make one right click move both ways.
 - **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
@@ -674,9 +674,10 @@ in `main.rs`.
     a stall eats simulated time behind the regulator's back. The panel and `is_throttled`
     read `actual`.
   - **Speed ceiling** — Bevy hands `FixedUpdate` at most `Time<Virtual>::max_delta`
-    (`MAX_FRAME_DELTA` = 0.25 s, pinned explicitly at startup) of virtual time per frame,
-    so a speed of S is only real if `S ≤ fps × MAX_FRAME_DELTA` — 15 at 60 fps, 10 at
-    40 fps. Above the ceiling the ticks pile into frames, `Update` (path dispatcher,
+    (`MAX_FRAME_DELTA` = 0.5 s, pinned explicitly at startup; was Bevy's default 0.25,
+    which put the ceiling at exactly 15x under 60 Hz vsync — zero margin, any fps jitter
+    knocked a requested 15x down) of virtual time per frame, so a speed of S is only
+    real if `S ≤ fps × MAX_FRAME_DELTA` — 30 at 60 fps, 20 at 40 fps. Above the ceiling the ticks pile into frames, `Update` (path dispatcher,
     input, UI) starves, and humans that finish a route just stand there.
     `throttle_speed_to_fps` closes the loop on measured fps and eases `effective` toward
     the ceiling (`SPEED_SETTLE_RATE` up, the faster `SPEED_DROP_RATE` down). It throttles
