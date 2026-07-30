@@ -524,7 +524,10 @@ in `main.rs`.
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
   (polled with `check_ready`). **Visibility gating**: peacefully wandering humans
   OUTSIDE the camera view (×1.2 margin) are never dispatched — their requests wait
-  until the camera arrives; demons and fleeing humans are always dispatched.
+  until the camera arrives; at zoom ≥ `WANDER_DISPATCH_MAX_ZOOM` (0.75 m/px) *no*
+  wanderer counts as on screen — a pawn is a dot there, and "in view" would otherwise
+  mean half the map, flooding the task pool and the per-frame sort with ~17k peaceful
+  requests. Demons and fleeing humans are always dispatched at any zoom.
   **Priority** (`priority::` in `movement/systems.rs`): demons and fleeing humans
   (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
   priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`

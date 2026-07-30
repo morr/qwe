@@ -63,12 +63,19 @@ pub fn dispatch_pathfinding_requests(
     let camera_position = camera.translation.truncate();
     // масштаб камеры = мировых метров на логический пиксель
     let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * VIEW_MARGIN;
+    // на сильном отдалении пешка — точка, её простой не виден, а «в кадре» —
+    // полкарты: без отсечки полный зум-аут разом делает диспатчабельными все
+    // ~17k мирных, топит пул тасков (URGENT встают за ними на кадры) и
+    // заставляет сортировать 17k заявок каждый кадр
+    let wanderers_visible_at_this_zoom = camera.scale.x < crate::settings::WANDER_DISPATCH_MAX_ZOOM;
 
     let mut queue: Vec<(u8, f32, Entity, IVec2, IVec2)> = requests
         .iter()
         .filter_map(|(entity, sim_position, request, is_human, is_fleeing)| {
             let offset = (sim_position.0 - camera_position).abs();
-            let on_screen = offset.x <= half_view.x && offset.y <= half_view.y;
+            let on_screen = wanderers_visible_at_this_zoom
+                && offset.x <= half_view.x
+                && offset.y <= half_view.y;
             let priority = match (is_human && !is_fleeing, on_screen) {
                 (false, _) => priority::URGENT,
                 (true, true) => priority::WANDER_ON_SCREEN,
