@@ -41,6 +41,10 @@ pub struct Movable {
     pub speed: f32,
     pub path: VecDeque<IVec2>,
     pub state: MovableState,
+    /// Направление последнего шага — вектор доката: когда путь дожёван раньше,
+    /// чем пришёл ответ перепрокладки, сущность продолжает по нему двигаться
+    /// (см. `move_moving_entities`). Из пути его не достать — путь уже пуст.
+    pub last_direction: Vec2,
 }
 
 /// Асинхронный поиск пути этой сущности. Один таск на сущность: новый запрос
@@ -69,6 +73,7 @@ impl Movable {
             speed,
             path: VecDeque::new(),
             state: MovableState::Idle,
+            last_direction: Vec2::ZERO,
         }
     }
 

@@ -90,6 +90,7 @@ fn spawn_walker(app: &mut App, start_tile: IVec2, tiles: i32, speed: f32) -> (En
                 speed,
                 path,
                 state: MovableState::Moving(end_tile),
+                last_direction: Vec2::ZERO,
             },
             MovableStateMovingTag,
             Transform::from_translation(start_world.extend(0.0)),
@@ -314,5 +315,81 @@ fn stopped_entity_transform_settles_on_the_sim_position() {
             .translation
             .truncate(),
         destination
+    );
+}
+
+/// Путь дожёван, а ответ перепрокладки ещё не пришёл (`Pathfinding`) —
+/// сущность докатывает по последнему вектору вместо остановки.
+#[test]
+fn coasts_along_last_direction_while_repath_is_pending() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    let start = tile_center(IVec2::new(10, 10));
+    let entity = app
+        .world_mut()
+        .spawn((
+            Movable {
+                speed: ONE_TILE_PER_STEP,
+                path: VecDeque::new(),
+                state: MovableState::Pathfinding(IVec2::new(50, 10)),
+                last_direction: Vec2::X,
+            },
+            MovableStateMovingTag,
+            Transform::from_translation(start.extend(0.0)),
+        ))
+        .id();
+
+    for _ in 0..3 {
+        app.update();
+    }
+
+    let position = sim_position(&app, entity);
+    assert!(
+        position.x > start.x + NAVTILE_SIZE,
+        "должна была докатить на восток: {position}"
+    );
+    assert!(
+        app.world().get::<MovableStateMovingTag>(entity).is_some(),
+        "докат не снимает тег движения"
+    );
+}
+
+/// Докат упирается в непроходимый тайл — сущность останавливается и теряет
+/// тег движения, сквозь стену не проходит.
+#[test]
+fn coasting_stops_at_an_impassable_tile() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    // стена ровно на пути доката: тайл (12, 10)
+    app.world()
+        .resource::<ArcNavmesh>()
+        .write()
+        .set_passable(12, 10, false);
+
+    let start = tile_center(IVec2::new(10, 10));
+    let entity = app
+        .world_mut()
+        .spawn((
+            Movable {
+                speed: ONE_TILE_PER_STEP,
+                path: VecDeque::new(),
+                state: MovableState::Pathfinding(IVec2::new(50, 10)),
+                last_direction: Vec2::X,
+            },
+            MovableStateMovingTag,
+            Transform::from_translation(start.extend(0.0)),
+        ))
+        .id();
+
+    for _ in 0..5 {
+        app.update();
+    }
+
+    let position = sim_position(&app, entity);
+    assert!(
+        position.x < tile_center(IVec2::new(12, 10)).x - NAVTILE_SIZE / 2.0,
+        "в стену докат не заходит: {position}"
+    );
+    assert!(
+        app.world().get::<MovableStateMovingTag>(entity).is_none(),
+        "у стены докат заканчивается и тег снимается"
     );
 }

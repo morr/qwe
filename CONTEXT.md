@@ -532,13 +532,22 @@ in `main.rs`.
   around 100 of 512. The speed panel shows in-flight / queued / avg ms.
 - **Repath on the move** — `to_pathfinding` keeps the current path and the
   `MovableStateMovingTag`, so an entity walks its old path while the new one is
-  computed; `MovableStateMovingTag` therefore means "has a path", *not* "state is
-  `Moving`". Dispatch and pickup both live in `Update`, so a reply costs at least a
-  frame, and a fleeing human repaths every ~1 s: stopping for that frame left a
-  quarter of all panicking humans standing at any instant at 10× (measured). When the
-  reply lands, up to `REPATH_TRIM_LIMIT` (2) leading waypoints are dropped while the
-  next one is no further than the first — the entity has moved off the tile the
-  search started from, and without the trim its first step would be backwards.
+  computed; `MovableStateMovingTag` therefore means "has a path **or is coasting**",
+  *not* "state is `Moving`". Dispatch and pickup both live in `Update`, so a reply
+  costs 2–3 frames — and a frame carries `speed × 1/fps` virtual seconds, so at 30×
+  the reply lags by 1–1.5 virtual seconds while a fleeing human repaths every ~1 s:
+  the old path routinely runs out before the reply lands.
+- **Coasting** (`move_moving_entities`) — an entity whose path is exhausted while the
+  state is still `Pathfinding` keeps moving along `Movable::last_direction` (the
+  direction of its last step) as long as the tile ahead is passable; a zero vector,
+  a wall or the map edge ends the coast (tag removed, as before). Arrival is not
+  coasting: state `Moving` + empty path still means `to_idle` — a wanderer must stop
+  at its destination. Before coasting, 26–42% of fleeing humans stood at any instant
+  at 30× (measured); the reply (`to_moving`) or `PathfindingError` ends the coast.
+  When the reply lands, up to `REPATH_TRIM_LIMIT` (4 — coasting drifts 4–6 tiles off
+  the request's start tile at flee speed) leading waypoints are dropped while the
+  next one is no further than the first — without the trim the first step would be
+  backwards; each drop is geometry-gated, the limit only guards corner-straightening.
 - **find_passable_tile_near** — the target tile or its 8 neighbors only; callers must
   tolerate `None`.
 - **pathfinding_bench** (`examples/pathfinding_bench.rs`) — offline comparison of all six

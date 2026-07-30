@@ -15,7 +15,13 @@ use crate::settings::unit_z;
 
 /// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
 /// и запускаются диспетчером по приоритету близости к камере.
-const MAX_PATHFINDING_IN_FLIGHT: usize = 512;
+///
+/// Размер — под спрос на 30x: ~1000 бегущих перепрокладываются каждые
+/// 0.7–1.2 виртуальных секунды, то есть ~27k заявок в реальную секунду.
+/// Диспетчер выдаёт до лимита за кадр; 512 при ~55 fps давали ~14k/с — и
+/// URGENT-заявки часами стояли в очереди, а пул (8 потоков × ~0.4 мс на
+/// поиск) при этом скучал.
+const MAX_PATHFINDING_IN_FLIGHT: usize = 1024;
 /// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
 /// «замирали» при лёгком движении камеры.
 const VIEW_MARGIN: f32 = 1.2;
@@ -157,9 +163,17 @@ pub fn snapshot_previous_sim_positions(
 
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.
 ///
-/// `MovableStateMovingTag` означает «есть путь, по которому идём», а не
-/// «состояние `Moving`»: при перепрокладке на ходу состояние уже
-/// `Pathfinding`, а идти по старому пути надо до прихода нового.
+/// `MovableStateMovingTag` означает «есть путь или докат», а не «состояние
+/// `Moving`»: при перепрокладке на ходу состояние уже `Pathfinding`, а идти
+/// по старому пути — и докатывать за его концом — надо до прихода нового.
+///
+/// **Докат**: путь дожёван, а состояние ещё `Pathfinding` — ответ поиска
+/// опаздывает (конвейер заявка → диспетчер → таск → приёмка стоит 2–3 кадра,
+/// на 30x это 1–1.5 виртуальных секунды). Вместо остановки сущность
+/// продолжает двигаться по `last_direction`, пока тайл впереди проходим:
+/// бегущий и так бежит «прочь», демону докат к жертве только на пользу, а
+/// видимое «бежит — замер — бежит» исчезает. Пришедший ответ (`to_moving`)
+/// или `PathfindingError` завершают докат штатно.
 ///
 /// Заодно ведёт сетку людей: пересёк границу 60-метровой ячейки — переезд.
 /// Сравнение ячеек — арифметика без hash, само событие редкое (гуляющий
@@ -169,6 +183,7 @@ pub fn snapshot_previous_sim_positions(
 pub fn move_moving_entities(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
+    navmesh: Res<crate::navigation::ArcNavmesh>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     mut query: Query<
         (
@@ -182,6 +197,7 @@ pub fn move_moving_entities(
     time: Res<Time>,
 ) {
     let started = std::time::Instant::now();
+    let navmesh = navmesh.read();
     for (entity, mut movable, mut sim_position, is_human) in &mut query {
         let cell_before = crate::spatial::cell_of(sim_position.0);
         let mut remaining_time = time.delta_secs();
@@ -192,9 +208,22 @@ pub fn move_moving_entities(
                         let destination_reached = world_to_tile(sim_position.0) == target;
                         movable.to_idle(entity, &mut commands, destination_reached);
                     }
-                    // старый путь пройден раньше, чем посчитан новый: снимаем
-                    // тег движения, но состояние не трогаем — ответ придёт и
-                    // снова поставит путь
+                    // старый путь пройден раньше, чем посчитан новый — докат
+                    MovableState::Pathfinding(_) => {
+                        let step = movable.last_direction * movable.speed * remaining_time;
+                        let coasted = sim_position.0 + step;
+                        let tile = world_to_tile(coasted);
+                        // стоять на месте (нулевой вектор) или упереться в
+                        // непроходимое (за картой — непроходимо само по себе) —
+                        // конец доката
+                        if step == Vec2::ZERO || !navmesh.is_passable(tile.x, tile.y) {
+                            commands.entity(entity).remove::<MovableStateMovingTag>();
+                        } else {
+                            sim_position.0 = coasted;
+                        }
+                    }
+                    // ошибка поиска или явная остановка — поведение выберет
+                    // новую цель, докатывать некуда
                     _ => {
                         commands.entity(entity).remove::<MovableStateMovingTag>();
                     }
@@ -208,11 +237,16 @@ pub fn move_moving_entities(
             let distance_to_move = movable.speed * remaining_time;
 
             if distance_to_move < distance {
-                sim_position.0 += to_target.normalize_or_zero() * distance_to_move;
+                let direction = to_target.normalize_or_zero();
+                movable.last_direction = direction;
+                sim_position.0 += direction * distance_to_move;
                 break;
             }
 
             // дошли до waypoint'а — встаём на него и тратим остаток времени
+            if distance > 0.0 {
+                movable.last_direction = to_target / distance;
+            }
             sim_position.0 = target;
             movable.path.pop_front();
             remaining_time -= distance / movable.speed;
@@ -263,9 +297,11 @@ pub fn on_movable_added_init_sim_position(
 }
 
 /// Сколько ведущих waypoint'ов нового пути можно срезать. Пока путь считался,
-/// сущность шла по старому и ушла со стартового тайла заявки на тайл-другой;
-/// срезать больше — риск спрямить угол сквозь стену.
-const REPATH_TRIM_LIMIT: usize = 2;
+/// сущность шла по старому и докатывала за его концом: на 30x ответ опаздывает
+/// на 1–1.5 виртуальных секунды, это 4–6 тайлов от стартового тайла заявки.
+/// Каждый срез и так гейтится геометрией («следующий waypoint не дальше
+/// текущего»); лимит — страховка от спрямления угла сквозь стену.
+const REPATH_TRIM_LIMIT: usize = 4;
 
 /// Снимает готовые асинхронные ответы поиска пути.
 pub fn listen_for_pathfinding_tasks(

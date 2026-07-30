@@ -36,7 +36,12 @@ impl Plugin for MovementPlugin {
         app.add_observer(on_movable_added_init_sim_position)
             .add_systems(
                 Update,
-                (dispatch_pathfinding_requests, listen_for_pathfinding_tasks).chain(),
+                // приёмка ДО диспетчера: снятые готовые таски освобождают
+                // бюджет in-flight в этом же кадре. В обратном порядке бюджет
+                // каждый кадр видел ~250 уже готовых, но не снятых тасков и
+                // выдавал вдвое меньше новых — на 30x диспетчер хронически
+                // голодал (156 из 258 стоящих бегущих ждали в очереди)
+                (listen_for_pathfinding_tasks, dispatch_pathfinding_requests).chain(),
             )
             .add_systems(
                 Update,
