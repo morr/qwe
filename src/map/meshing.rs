@@ -194,7 +194,8 @@ impl MeshBuilder {
 
         match join {
             RibbonJoin::Miter => {
-                let offsets: Vec<Vec2> = (0..count)
+                // (сдвиг стыка, срезан ли он лимитом)
+                let joins: Vec<(Vec2, bool)> = (0..count)
                     .map(|index| {
                         let incoming = (index > 0 || closed).then(|| {
                             let previous = path[(index + count - 1) % count];
@@ -208,11 +209,14 @@ impl MeshBuilder {
                             (Some(before), Some(after)) => {
                                 let bisector = (before + after).normalize_or(before);
                                 // на острых стыках длина miter уходит в бесконечность — режем
-                                let cosine = bisector.dot(before).max(1.0 / MITER_LIMIT);
-                                bisector * (half_width / cosine)
+                                let exact = bisector.dot(before);
+                                let cosine = exact.max(1.0 / MITER_LIMIT);
+                                (bisector * (half_width / cosine), cosine > exact)
                             }
-                            (Some(normal), None) | (None, Some(normal)) => normal * half_width,
-                            (None, None) => Vec2::ZERO,
+                            (Some(normal), None) | (None, Some(normal)) => {
+                                (normal * half_width, false)
+                            }
+                            (None, None) => (Vec2::ZERO, false),
                         }
                     })
                     .collect();
@@ -221,13 +225,33 @@ impl MeshBuilder {
                     let next = (index + 1) % count;
                     self.push_quad(
                         [
-                            path[index] + offsets[index],
-                            path[index] - offsets[index],
-                            path[next] - offsets[next],
-                            path[next] + offsets[next],
+                            path[index] + joins[index].0,
+                            path[index] - joins[index].0,
+                            path[next] - joins[next].0,
+                            path[next] + joins[next].0,
                         ],
                         color,
                     );
+                }
+
+                // Срезанный стык оставляет снаружи излома клин пустоты — на
+                // остриях (шипы хвойной кроны, впадины между фестонами
+                // облачной) он читается как разрыв контура. Закрываем веером,
+                // как у `RibbonJoin::Round`: остриё выходит скруглённым в
+                // полуширину штриха, а не разорванным.
+                for index in 0..count {
+                    if !joins[index].1 || (!closed && (index == 0 || index + 1 == count)) {
+                        continue;
+                    }
+                    let previous = path[(index + count - 1) % count];
+                    let next = path[(index + 1) % count];
+                    let (Some(incoming), Some(outgoing)) = (
+                        (path[index] - previous).try_normalize(),
+                        (next - path[index]).try_normalize(),
+                    ) else {
+                        continue;
+                    };
+                    self.push_join_fan(path[index], half_width, incoming, outgoing, color);
                 }
             }
             RibbonJoin::Round => {
