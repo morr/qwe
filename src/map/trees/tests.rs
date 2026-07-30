@@ -204,39 +204,43 @@ fn every_shape_has_its_own_outline_and_bands() {
     }
 }
 
-/// Метрики вырезов, которые обводка залила бы целиком: устье уже
-/// `NOTCH_MOUTH_MIN` при глубине от `NOTCH_DEPTH_MIN`.
-fn pinched_metrics(ring: &[Vec2]) -> Vec<(f32, f32)> {
+/// Углы контура: `(устье, высота, впадина ли)` по каждой вершине.
+fn corners(ring: &[Vec2]) -> Vec<(f32, f32, bool)> {
     (0..ring.len())
         .filter_map(|index| {
             let previous = ring[(index + ring.len() - 1) % ring.len()];
             let next = ring[(index + 1) % ring.len()];
-            notch_metrics(previous, ring[index], next)
+            corner_metrics(previous, ring[index], next)
         })
-        .filter(|&(mouth, depth)| mouth < NOTCH_MOUTH_MIN && depth >= NOTCH_DEPTH_MIN)
         .collect()
 }
 
 #[test]
-fn conifer_outline_has_no_pinched_notches() {
+fn every_conifer_notch_survives_the_outline_stroke() {
     for variant in 0..TREE_VARIANTS {
         let crown = crown_geometry(TreeShape::Conifer, &mut variant_rng(variant));
-        let pinched = pinched_metrics(&crown.outer);
-        assert!(
-            pinched.is_empty(),
-            "variant {variant}: {} залипших вырезов, худший {:?}",
-            pinched.len(),
-            pinched[0]
-        );
+        for (mouth, depth, valley) in corners(&crown.outer) {
+            if !valley {
+                continue;
+            }
+            assert!(
+                mouth >= NOTCH_MOUTH_MIN,
+                "variant {variant}: вырез с устьем {mouth} — обводка сомкнётся поперёк"
+            );
+            assert!(
+                depth >= NOTCH_DEPTH_MIN,
+                "variant {variant}: вырез глубиной {depth} — обводка закроет ямку"
+            );
+        }
     }
 }
 
 #[test]
-fn nudging_notches_keeps_every_spike() {
-    // вырез раскрывается сдвигом вершины базы, а не снятием шипа: 16-угольник с
-    // шипом на каждом ребре остаётся 32-точечным, вылет держится в тех же
-    // границах (снятие шипа увело бы его к 1.9), а остриё — острым (снятие шипа
-    // с готового контура дотягивало до 107°)
+fn opening_notches_keeps_every_spike() {
+    // вырезы раскрываются полом высоты шипа и сдвигом вершины базы, а не снятием
+    // шипа: 16-угольник с шипом на каждом ребре остаётся 32-точечным, вылет
+    // держится в прежних границах (снятие шипа увело бы его к 1.9), острия не
+    // тупые (снятие шипа с готового контура дотягивало до 107°) и не иглы
     for variant in 0..TREE_VARIANTS {
         let crown = crown_geometry(TreeShape::Conifer, &mut variant_rng(variant));
         assert_eq!(crown.outer.len(), 32, "variant {variant}");
@@ -250,31 +254,26 @@ fn nudging_notches_keeps_every_spike() {
             (1.1..1.6).contains(&reach),
             "variant {variant}: шипы дотягивают до {reach}"
         );
-        for index in 0..crown.outer.len() {
-            let previous = crown.outer[(index + crown.outer.len() - 1) % crown.outer.len()];
-            let next = crown.outer[(index + 1) % crown.outer.len()];
-            let vertex = crown.outer[index];
-            if notch_metrics(previous, vertex, next).is_some() {
-                continue; // впадина, а не остриё
-            }
-            let angle = (previous - vertex)
-                .angle_to(next - vertex)
-                .abs()
-                .to_degrees();
-            assert!(angle < 90.0, "variant {variant}: остриё в {angle}°");
+        for (mouth, _, _) in corners(&crown.outer) {
+            assert!(
+                mouth >= CORNER_MOUTH_FLOOR,
+                "variant {variant}: угол с устьем {mouth} схлопнулся в иглу"
+            );
         }
     }
 }
 
 #[test]
-fn cotton_outline_needs_no_pinched_pass() {
-    // облачный контур мимо правки идёт не «на всякий случай»: его вырезы
-    // мельче `NOTCH_DEPTH_MIN`, так что раскрывать там нечего
-    for variant in 0..TREE_VARIANTS {
-        let crown = crown_geometry(TreeShape::Cotton, &mut variant_rng(variant));
+fn the_cloud_outline_keeps_its_sub_stroke_ripple() {
+    // облако и пальма идут мимо прохода: их мелкая рябь по замыслу тонет в
+    // чернилах, и мерка «вырез шире обводки» к ним неприменима
+    for shape in [TreeShape::Cotton, TreeShape::Palm] {
+        let crown = crown_geometry(shape, &mut Lcg::new(11));
         assert!(
-            pinched_metrics(&crown.outer).is_empty(),
-            "variant {variant}"
+            corners(&crown.outer)
+                .iter()
+                .any(|&(mouth, _, valley)| valley && mouth < NOTCH_MOUTH_MIN),
+            "{shape:?}: рябь контура пропала — проход задел не только хвою"
         );
     }
 }

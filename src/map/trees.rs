@@ -48,12 +48,18 @@ const LONG_SHADOW_HEIGHT: f32 = 0.5;
 /// Ширина устья выреза, ниже которой обводка съедает просвет целиком: один
 /// штрих уходит на чернила, второй — на видимую зелень между стенками.
 const NOTCH_MOUTH_MIN: f32 = 2.0 * TREE_OUTLINE_STROKE;
-/// Глубина, с которой залипший вырез читается иглой внутри кроны. Мельче —
-/// обычная зазубрина контура: она лишь утолщает линию, и трогать её нельзя,
-/// иначе контур обеднеет.
-const NOTCH_DEPTH_MIN: f32 = 1.5 * TREE_OUTLINE_STROKE;
+/// Глубина выреза, ниже которой ямку целиком закрывает обводка: два шипа по её
+/// краям сливаются в один горб с плоской верхушкой.
+const NOTCH_DEPTH_MIN: f32 = TREE_OUTLINE_STROKE;
+/// Пол высоты шипа контура. У watabou шип над коротким ребром выходит
+/// непропорционально низким (`len^1.5`) — от таких шипов и вырезы мелкие, и
+/// острия тупые.
+const SPIKE_HEIGHT_MIN: f32 = 2.0 * TREE_OUTLINE_STROKE;
+/// Ни один угол контура не должен стать уже этого: сдвиг, раскрывающий вырез,
+/// не имеет права схлопнуть соседнее остриё в иглу.
+const CORNER_MOUTH_FLOOR: f32 = TREE_OUTLINE_STROKE;
 /// Предел сдвига вершины базы, которым раскрывается залипший вырез, — доля
-/// радиуса кроны. Замерено: на 12 вариантах хватает 0.06.
+/// радиуса кроны. Замерено: на 12 вариантах хватает 0.08.
 const NOTCH_NUDGE_LIMIT: f32 = 0.15;
 /// Шагов поиска сдвига: берётся наименьший из подходящих, чтобы силуэт менялся
 /// как можно меньше.
@@ -185,7 +191,7 @@ impl TreeShape {
     fn outline(self, ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
         match self {
             Self::Cotton => bloat(ring, lobe),
-            Self::Conifer => spike_simple(ring, lobe),
+            Self::Conifer => spike_simple(ring, lobe, 0.0),
             Self::Palm => spike_bent(ring, lobe),
             Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
@@ -259,12 +265,20 @@ fn crown_geometry(shape: TreeShape, rng: &mut Lcg) -> CrownGeometry {
 
 /// `Spiker::simple`: между соседними вершинами вставлен один шип наружу
 /// длиной `sqrt(len/lobe)·len` — хвойная «ёлочная» кромка.
-fn spike_simple(ring: &[Vec2], lobe: f32) -> Vec<Vec2> {
+///
+/// `min_height` — пол высоты шипа; кольцам штриховки он не нужен (0.0), контуру
+/// нужен, см. [`cone_outline`].
+fn spike_simple(ring: &[Vec2], lobe: f32, min_height: f32) -> Vec<Vec2> {
     let mut out = Vec::with_capacity(ring.len() * 2);
     let mut previous = ring[ring.len() - 1];
     for &point in ring {
+        let mut spike = spike_vector(previous, point, lobe);
+        let height = spike.length();
+        if height > f32::EPSILON && height < min_height {
+            spike *= min_height / height;
+        }
         out.push(previous);
-        out.push(previous.midpoint(point) + spike_vector(previous, point, lobe));
+        out.push(previous.midpoint(point) + spike);
         previous = point;
     }
     out
@@ -310,46 +324,51 @@ fn variant_rng(variant: usize) -> Lcg {
     Lcg::new(0x051E_D2E5 + variant as u32 * 7919)
 }
 
-/// Контур хвойной кроны без **залипших вырезов**. Залипший — тот, чьё устье
-/// уже `NOTCH_MOUTH_MIN`: обводка заливает его целиком, просвет между стенками
-/// исчезает, и вместо двух шипов с вырезом читается один чёрный горб с иглой
-/// внутрь кроны.
+/// Контур хвойной кроны, у которого **каждый вырез читается под обводкой**.
+/// Обводка шириной `TREE_OUTLINE_STROKE` (12% радиуса) съедает вырез двумя
+/// способами, и оба дают на глаз один и тот же «горб» вместо двух шипов:
 ///
-/// Лечится он **на базовом многоугольнике**: устье узко потому, что шипы над
-/// двумя соседними рёбрами почти параллельны, а расходятся они тем сильнее, чем
-/// круче излом базы между этими рёбрами. Поэтому виновная вершина базы
-/// сдвигается поперёк хорды своих соседей на наименьшее смещение, которое
-/// вырез раскрывает, — замерено, хватает шести сотых радиуса, и ни вылет шипов,
-/// ни их острота от такого сдвига не меняются.
+/// - вырез **уже** `NOTCH_MOUTH_MIN` — чернила смыкаются поперёк, и он читается
+///   иглой внутрь кроны;
+/// - вырез **мельче** `NOTCH_DEPTH_MIN` — ямку закрывает сама линия, и остаётся
+///   плоская верхушка между двумя тупыми остриями.
 ///
-/// Убирать шип нельзя ни с контура (у соседа база расширяется вдвое — остриё
-/// тупеет до 107° против обычных 51–88°), ни с базы (объединённое ребро вдвое
-/// длиннее, а шип растёт как `len^1.5` — вылет уходит с 1.5 до 1.9 радиуса).
-/// Мелкие зазубрины (мельче `NOTCH_DEPTH_MIN`) не трогаются — они лишь
-/// утолщают линию.
+/// Мелкие вырезы лечит `SPIKE_HEIGHT_MIN`: у watabou высота шипа растёт как
+/// `len^1.5`, поэтому над коротким ребром он выходит непропорционально низким —
+/// пол высоты и поднимает такие шипы, и заодно заостряет их (острия 51–88° →
+/// 35–67°). Узкие лечит сдвиг виновной вершины базы поперёк хорды её соседей:
+/// шипы над двумя соседними рёбрами тем сильнее расходятся, чем круче излом
+/// базы между ними. Сдвиг берётся наименьший из подходящих — замерено, хватает
+/// восьми сотых радиуса, и вылет шипов (1.31–1.55) от него не меняется.
+///
+/// Убирать лишний шип нельзя ни с контура (у соседа база расширяется вдвое —
+/// остриё тупеет до 107°), ни с базы (объединённое ребро вдвое длиннее, шип
+/// растёт как `len^1.5`, вылет уходит к 1.9 радиуса).
 ///
 /// Отступление от watabou: у него обводка фиксированной ширины в мировых
-/// единицах и город смотрят издалека, так что вырождение не видно.
+/// единицах и город смотрят издалека, так что вырождение не видно. Кроны
+/// облака и пальмы мимо: их мелкая рябь по замыслу тонет в чернилах.
 fn cone_outline(base: &[Vec2], lobe: f32) -> Vec<Vec2> {
     let mut base = base.to_vec();
     loop {
-        let ring = spike_simple(&base, lobe);
-        let pinched = pinched_notches(&ring);
-        if pinched.is_empty() {
+        let ring = spike_simple(&base, lobe, SPIKE_HEIGHT_MIN);
+        let swallowed = swallowed_notches(&ring);
+        if swallowed.is_empty() {
             return ring;
         }
-        let opened = pinched
-            .into_iter()
-            .filter(|&vertex| nudge_notch_open(&mut base, vertex, lobe))
-            .count();
-        if opened == 0 {
-            return spike_simple(&base, lobe);
+        // за круг раскрывается один вырез: их число строго убывает, поэтому
+        // цикл конечен
+        if !swallowed
+            .iter()
+            .any(|&vertex| nudge_notch_open(&mut base, vertex, lobe, swallowed.len()))
+        {
+            return spike_simple(&base, lobe, SPIKE_HEIGHT_MIN);
         }
     }
 }
 
-/// Вершины базы, над которыми `Spiker::simple` оставляет залипший вырез.
-fn pinched_notches(ring: &[Vec2]) -> Vec<usize> {
+/// Вершины базы, вырез над которыми обводка съедает — поперёк или по глубине.
+fn swallowed_notches(ring: &[Vec2]) -> Vec<usize> {
     let count = ring.len() / 2;
     // впадины — чётные вершины контура: `spike_simple` кладёт вершину базы,
     // затем шип над ребром, которое из неё выходит
@@ -357,17 +376,21 @@ fn pinched_notches(ring: &[Vec2]) -> Vec<usize> {
         .step_by(2)
         .filter(|&index| {
             let previous = ring[(index + ring.len() - 1) % ring.len()];
-            notch_metrics(previous, ring[index], ring[index + 1])
-                .is_some_and(|(mouth, depth)| mouth < NOTCH_MOUTH_MIN && depth >= NOTCH_DEPTH_MIN)
+            corner_metrics(previous, ring[index], ring[index + 1]).is_some_and(
+                |(mouth, depth, valley)| {
+                    valley && (mouth < NOTCH_MOUTH_MIN || depth < NOTCH_DEPTH_MIN)
+                },
+            )
         })
         .map(|index| (index / 2 + count - 1) % count)
         .collect()
 }
 
 /// Сдвигает вершину базы поперёк хорды её соседей на наименьшее смещение, при
-/// котором вырез над ней раскрывается; пробуются оба направления. Если до
-/// `NOTCH_NUDGE_LIMIT` не помогло ни одно, вершина возвращается на место.
-fn nudge_notch_open(base: &mut [Vec2], vertex: usize, lobe: f32) -> bool {
+/// котором съеденных вырезов становится меньше, а ни один угол контура не
+/// сужается за `CORNER_MOUTH_FLOOR`; пробуются оба направления. Без такого
+/// смещения вершина остаётся на месте.
+fn nudge_notch_open(base: &mut [Vec2], vertex: usize, lobe: f32, swallowed: usize) -> bool {
     let count = base.len();
     let chord = base[(vertex + 1) % count] - base[(vertex + count - 1) % count];
     let step = chord.perp().normalize_or_zero() * (NOTCH_NUDGE_LIMIT / NOTCH_NUDGE_STEPS as f32);
@@ -375,7 +398,10 @@ fn nudge_notch_open(base: &mut [Vec2], vertex: usize, lobe: f32) -> bool {
     for offset in 1..=NOTCH_NUDGE_STEPS {
         for direction in [1.0_f32, -1.0] {
             base[vertex] = origin + step * (offset as f32 * direction);
-            if !pinched_notches(&spike_simple(base, lobe)).contains(&vertex) {
+            let ring = spike_simple(base, lobe, SPIKE_HEIGHT_MIN);
+            if swallowed_notches(&ring).len() < swallowed
+                && narrowest_corner(&ring) >= CORNER_MOUTH_FLOOR
+            {
                 return true;
             }
         }
@@ -384,20 +410,35 @@ fn nudge_notch_open(base: &mut [Vec2], vertex: usize, lobe: f32) -> bool {
     false
 }
 
-/// Вырез контура в вершине: ширина устья (просвет между стенками на высоте
-/// ближнего шипа) и глубина (отступ вершины от хорды между шипами). `None` для
-/// острия шипа и вырожденной вершины — обход контура CCW, поэтому впадина та,
-/// где плечи разворачиваются против часовой.
-fn notch_metrics(previous: Vec2, vertex: Vec2, next: Vec2) -> Option<(f32, f32)> {
+/// Самый узкий угол контура — и впадина, и остриё.
+fn narrowest_corner(ring: &[Vec2]) -> f32 {
+    (0..ring.len())
+        .filter_map(|index| {
+            let previous = ring[(index + ring.len() - 1) % ring.len()];
+            let next = ring[(index + 1) % ring.len()];
+            corner_metrics(previous, ring[index], next).map(|(mouth, _, _)| mouth)
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Угол контура в вершине: ширина устья (просвет между плечами на высоте
+/// ближнего из них), высота (отступ вершины от хорды между соседями) и признак
+/// впадины. Обход контура CCW, поэтому впадина та, где плечи разворачиваются
+/// против часовой. `None` — вырожденная вершина.
+fn corner_metrics(previous: Vec2, vertex: Vec2, next: Vec2) -> Option<(f32, f32, bool)> {
     let (to_previous, to_next) = (previous - vertex, next - vertex);
     let chord = next - previous;
-    if to_previous.perp_dot(to_next) <= 0.0 || chord.length() < f32::EPSILON {
+    if chord.length() < f32::EPSILON
+        || to_previous.length() < f32::EPSILON
+        || to_next.length() < f32::EPSILON
+    {
         return None;
     }
     let angle = to_previous.angle_to(to_next).abs();
     let arm = to_previous.length().min(to_next.length());
     let depth = chord.perp_dot(vertex - previous).abs() / chord.length();
-    Some((2.0 * arm * (angle / 2.0).sin(), depth))
+    let valley = to_previous.perp_dot(to_next) > 0.0;
+    Some((2.0 * arm * (angle / 2.0).sin(), depth, valley))
 }
 
 /// `Bloater.bloat`: каждое ребро кольца — в цепочку наружных горбов.
