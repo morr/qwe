@@ -140,9 +140,16 @@ pub fn dispatch_pathfinding_requests(
 }
 
 /// Снимок позиции на начало фиксированного шага — второй конец интерполяции.
-/// Для всех сущностей, не только движущихся: иначе у остановившейся сущности
-/// `PreviousSimPosition` протухает и `Transform` дрожит вокруг цели.
-pub fn snapshot_previous_sim_positions(mut query: Query<(&mut PreviousSimPosition, &SimPosition)>) {
+///
+/// `Changed<SimPosition>` вместо «всех подряд»: у сущности, не сдвинувшейся
+/// с прошлого снимка, `PreviousSimPosition` уже равен `SimPosition`, и копия
+/// ничего бы не изменила — а стоящих ~90% из 20 000. Остановившаяся сущность
+/// не протухает: последний сдвиг и есть последнее изменение, его снимок
+/// выравнивает оба конца интерполяции. Спавн тоже покрыт — `Added` входит
+/// в `Changed`.
+pub fn snapshot_previous_sim_positions(
+    mut query: Query<(&mut PreviousSimPosition, &SimPosition), Changed<SimPosition>>,
+) {
     for (mut previous, current) in &mut query {
         previous.0 = current.0;
     }
