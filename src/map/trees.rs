@@ -12,7 +12,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 pub use self::conifer::ConiferField;
 use crate::loading::AppState;
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::MapData;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
@@ -331,7 +331,18 @@ fn crown_mesh(geometry: &CrownGeometry, style: &TreeStyle, rng: &mut Lcg) -> Mes
 
     for (ring, weight) in &geometry.bands {
         for arc in geometry.shape.shade(ring, *weight, rng) {
-            builder.push_stroke(&arc, false, TREE_DETAIL_STROKE, ink);
+            // круглые стыки, а не miter: «этаж» разворачивается на кончике
+            // каждого шипа почти на 180°, и срезанный miter оставлял бы там
+            // клин пустоты — ломаная читалась бы рваной. Контур кроны рисуется
+            // прежним miter: у него излом наружу, и острия должны быть острыми
+            builder.push_ribbon(
+                &arc,
+                false,
+                TREE_DETAIL_STROKE,
+                ink,
+                RibbonJoin::Round,
+                RibbonCap::Butt,
+            );
         }
     }
     builder.build()
