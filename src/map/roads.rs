@@ -57,6 +57,22 @@ const RAIL_DASH_LEN: f32 = 6.0;
 const RAIL_DASH_GAP: f32 = 6.0;
 const RAIL_DASH_SCALE: f32 = 0.6;
 
+/// Трамвай — не лента, а линия с поперечной насечкой, как в Яндекс.Картах и
+/// 2ГИС. Причина не в стиле: трамвайный путь лежит **на проезжей части**, и
+/// лента в ширину колеи закрыла бы улицу, по которой он идёт.
+///
+/// Цвет — единственное, чем два этих источника различаются: у Яндекса линия
+/// тёмно-красная, у 2ГИС синяя. Геометрия одна и та же; взят вариант 2ГИС —
+/// синее на сером асфальте видно лучше, а красным на карте уже размечены
+/// стены Кремля.
+const TRAM_COLOR: Color = Color::srgb(0.290, 0.451, 0.780);
+
+/// Шпала: длина поперёк пути, толщина и шаг, м. Насечка обязана быть заметно
+/// длиннее толщины самой линии — иначе она сливается с ней в утолщение.
+const TRAM_TIE_LENGTH: f32 = 4.0;
+const TRAM_TIE_THICKNESS: f32 = 0.7;
+const TRAM_TIE_SPACING: f32 = 6.0;
+
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
 
@@ -190,11 +206,25 @@ pub fn spawn_roads(
     }
 
     for rail in rails {
+        let points = smooth_path(&rail.points, rail.width, style.smoothing);
         let (color, dash_color) = match rail.kind {
+            RailKind::Tram => {
+                // линия и шпалы — один цвет, поэтому лежат в одном слое:
+                // накладываться сами на себя они могут без всякого z-файтинга
+                let color = TRAM_COLOR.to_linear();
+                push_ribbon(&mut rail_beds, &points, rail.width, color, style.join);
+                rail_beds.push_ticks(
+                    &points,
+                    TRAM_TIE_LENGTH,
+                    TRAM_TIE_THICKNESS,
+                    TRAM_TIE_SPACING,
+                    color,
+                );
+                continue;
+            }
             RailKind::Active => (RAIL_COLOR, RAIL_DASH_COLOR),
             RailKind::Disused => (RAIL_DISUSED_COLOR, RAIL_DISUSED_DASH_COLOR),
         };
-        let points = smooth_path(&rail.points, rail.width, style.smoothing);
         push_ribbon(
             &mut rail_beds,
             &points,

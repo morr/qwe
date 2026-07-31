@@ -100,7 +100,9 @@ fn parses_rails_and_drops_station_furniture() {
     assert_eq!(map.rails[1].kind, RailKind::Disused);
 
     // трамвайный путь на улице — это и улица, и путь: way попадает в оба списка
-    assert_eq!(map.rails[2].kind, RailKind::Active);
+    assert_eq!(map.rails[2].kind, RailKind::Tram);
+    // и он тоньше улицы, по которой идёт, — иначе линия закрыла бы саму улицу
+    assert!(map.rails[2].width < map.roads[0].width);
     assert_eq!(map.roads.len(), 1);
     assert_eq!(map.roads[0].width, 8.0);
     assert_eq!(map.roads[0].points, map.rails[2].points);

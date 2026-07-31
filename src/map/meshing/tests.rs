@@ -154,6 +154,64 @@ fn dashes_follow_the_bends_of_the_path() {
 }
 
 #[test]
+fn ticks_sit_across_the_path_at_the_given_step() {
+    let mut builder = MeshBuilder::default();
+    // шаг 6 м на 60 м, первая шпала на 3 м: 3, 9, … 57 — десять штук
+    builder.push_ticks(
+        &[Vec2::ZERO, Vec2::new(60.0, 0.0)],
+        4.0,
+        0.7,
+        6.0,
+        LinearRgba::WHITE,
+    );
+    assert_eq!(builder.positions.len(), 10 * 4);
+
+    // путь идёт по x, значит шпала обязана стоять поперёк — по y, на ±половину
+    // длины, и нигде не выйти за неё
+    let spread = |axis: usize| {
+        builder
+            .positions
+            .iter()
+            .map(|position| position[axis].abs())
+            .fold(0.0_f32, f32::max)
+    };
+    assert!((spread(1) - 2.0).abs() < 1e-4, "tick is not 4 m across");
+}
+
+#[test]
+fn ticks_turn_with_the_path() {
+    // после излома на 90° шпалы обязаны развернуться вместе с путём
+    let mut builder = MeshBuilder::default();
+    builder.push_ticks(
+        &[Vec2::ZERO, Vec2::new(30.0, 0.0), Vec2::new(30.0, 30.0)],
+        4.0,
+        0.7,
+        6.0,
+        LinearRgba::WHITE,
+    );
+    // на втором колене шпала лежит поперёк y, то есть тянется по x за x = 30
+    let beyond = builder
+        .positions
+        .iter()
+        .any(|position| position[0] > 31.0 && position[1] > 1.0);
+    assert!(beyond, "ticks did not rotate on the bend");
+}
+
+#[test]
+fn a_degenerate_path_makes_no_ticks() {
+    let mut builder = MeshBuilder::default();
+    builder.push_ticks(&[Vec2::ZERO], 4.0, 0.7, 6.0, LinearRgba::WHITE);
+    builder.push_ticks(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        4.0,
+        0.7,
+        0.0,
+        LinearRgba::WHITE,
+    );
+    assert!(builder.is_empty());
+}
+
+#[test]
 fn a_degenerate_path_makes_no_dashes() {
     let mut builder = MeshBuilder::default();
     builder.push_dashes(

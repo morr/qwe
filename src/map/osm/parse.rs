@@ -359,7 +359,9 @@ fn rail_class(railway: &str) -> Option<(f32, RailKind)> {
     Some(match railway {
         "rail" => (5.0, RailKind::Active),
         "light_rail" | "narrow_gauge" | "subway" => (4.0, RailKind::Active),
-        "tram" => (3.5, RailKind::Active),
+        // трамвай меряется не колеёй, а толщиной линии: он идёт по проезжей
+        // части, и лента в ширину пути перекрыла бы саму улицу
+        "tram" => (1.2, RailKind::Tram),
         "abandoned" | "disused" | "razed" | "dismantled" => (3.5, RailKind::Disused),
         _ => return None,
     })

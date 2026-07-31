@@ -231,6 +231,56 @@ impl MeshBuilder {
         }
     }
 
+    /// Поперечные шпалы вдоль ломаной: через каждые `spacing` метров — планка
+    /// длиной `length` поперёк пути и толщиной `thickness`. Так рисуют трамвай
+    /// Яндекс.Карты и 2ГИС — тонкая линия с частой поперечной насечкой.
+    ///
+    /// Тот же проход по длине дуги, что и у [`Self::push_dashes`], только на
+    /// отметке ставится не кусок пути, а перпендикуляр к нему. Первая шпала
+    /// отступает на полшага: планка ровно в торце пути выглядит обрубком, а на
+    /// стыке двух ways две такие складываются в крест.
+    pub fn push_ticks(
+        &mut self,
+        points: &[Vec2],
+        length: f32,
+        thickness: f32,
+        spacing: f32,
+        color: LinearRgba,
+    ) {
+        if spacing <= 0.0 || length <= 0.0 || thickness <= 0.0 || points.len() < 2 {
+            return;
+        }
+
+        let half = length / 2.0;
+        let mut left = spacing / 2.0;
+
+        for segment in points.windows(2) {
+            let (from, to) = (segment[0], segment[1]);
+            let Some(direction) = (to - from).try_normalize() else {
+                continue;
+            };
+            let mut remaining = from.distance(to);
+            let mut cursor = from;
+
+            while remaining > left {
+                cursor += direction * left;
+                remaining -= left;
+                let arm = direction.perp() * half;
+                self.push_ribbon(
+                    &[cursor - arm, cursor + arm],
+                    false,
+                    thickness,
+                    color,
+                    RibbonJoin::Miter,
+                    RibbonCap::Butt,
+                );
+                left = spacing;
+            }
+
+            left -= remaining;
+        }
+    }
+
     /// Лента постоянной ширины вдоль ломаной: `join` — чем закрыт излом,
     /// `cap` — чем закрыты торцы разомкнутой ленты.
     ///

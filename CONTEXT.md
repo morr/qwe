@@ -131,8 +131,12 @@ in `main.rs`.
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
     z). `bridge` and `passage` flags — see navmesh.
   - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
-    `narrow_gauge` / `subway` 4 → `tram` 3.5). `RailKind: Active | Disused` — `abandoned`
-    / `disused` / `razed` / `dismantled` draw washed out. `parse::rail_class` is a
+    `narrow_gauge` / `subway` 4 → `tram` 1.2). `RailKind: Active | Tram | Disused` — the
+    kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
+    (see Rail layers), **Disused** (`abandoned` / `disused` / `razed` / `dismantled`)
+    is the `Active` ribbon washed out. Tram's width is a line thickness, not a gauge —
+    it runs *on* the carriageway, so a gauge-wide ribbon would cover its own street.
+    `parse::rail_class` is a
     **whitelist**, so the station vocabulary (`platform`, `station`, `switch`, `signal`,
     `construction`, …) never becomes a line. The rail branch in `parse_way` runs *before*
     the highway branch and deliberately **falls through**: an OSM way is routinely tagged
@@ -466,6 +470,16 @@ in `main.rs`.
   `Butt`-capped ribbon chunks, keeping the OSM vertices inside a dash so the pattern
   turns with the track. A way shorter than one dash still gets one, since most ways in a
   junction are short and a bare bed reads as a road.
+
+  **Tram is drawn differently** — a thin blue line with perpendicular cross ties every
+  6 m (4 m across, 0.7 m thick), the Yandex/2GIS convention; `TRAM_COLOR` is the only
+  thing separating the two (Yandex dark red, 2GIS blue) and we take 2GIS's blue, since
+  red on this map already means kremlin wall.
+  Line and ties share one colour, so both go in the *bed* builder — self-overlap in one
+  mesh costs nothing, and there is no white dash layer for a tram. The primitive is
+  `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
+  a perpendicular bar rather than a piece of the path, and the first one is offset half
+  a step so a bar never lands exactly on a way endpoint and pairs into a cross at joins.
 - **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The panel lives in
