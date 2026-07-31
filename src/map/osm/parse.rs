@@ -322,6 +322,24 @@ fn rail_class(railway: &str) -> Option<(f32, RailKind)> {
     })
 }
 
+/// Путь под землёй — метро в тоннеле, подземный перегон. Сверху его не видно,
+/// значит и рисовать нечего.
+///
+/// Двух признаков мало по одному: в Туле из трёх подземных путей у двух стоит
+/// `tunnel=yes` вместе с `layer=-1`, а у третьего только `layer=-1`. `layer`
+/// читается дробным разбором, потому что в OSM попадается и `-1.5`; `tunnel=no`
+/// — явное «нет», а не отсутствие тега.
+fn is_underground(tags: &HashMap<String, String>) -> bool {
+    let tunnel = tags
+        .get("tunnel")
+        .is_some_and(|value| value != "no" && value != "building_passage");
+    let below = tags
+        .get("layer")
+        .and_then(|value| value.parse::<f32>().ok())
+        .is_some_and(|layer| layer < 0.0);
+    tunnel || below
+}
+
 /// Арка — дорога, проложенная сквозь здание. В Туле это `tunnel=building_passage`
 /// (основной тег) и `covered` — часть таких проездов размечена только им.
 /// `tunnel=yes` сюда не входит: это подземный туннель, поверху он ничего не
@@ -374,6 +392,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     // обязан стать и улицей, и путём.
     if let Some(railway) = element.tags.get("railway")
         && let Some((width, kind)) = rail_class(railway)
+        && !is_underground(&element.tags)
     {
         map.rails.push(RailLine {
             points: points.clone(),

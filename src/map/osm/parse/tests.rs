@@ -111,6 +111,38 @@ fn parses_rails_and_drops_station_furniture() {
 }
 
 #[test]
+fn underground_tracks_are_not_drawn() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    // подземные размечены по-разному: тоннелем, отрицательным слоем или обоими
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "way", "id": 30, "tags": {{"railway": "subway", "tunnel": "yes", "layer": "-1"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 31, "tags": {{"railway": "rail", "layer": "-1"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 32, "tags": {{"railway": "rail", "tunnel": "yes"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 33, "tags": {{"railway": "subway", "layer": "1"}},
+    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}},
+  {{"type": "way", "id": 34, "tags": {{"railway": "rail", "tunnel": "no"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
+]}}"#,
+        a = lat - d,
+        e = lat + d,
+        b = lon - d,
+        c = lon + d,
+    );
+
+    let map = parse(&json, CITY).unwrap();
+
+    // остаются только надземные: эстакадное метро и путь с явным `tunnel=no`
+    assert_eq!(map.rails.len(), 2);
+    assert_eq!(map.rails[0].width, 4.0, "elevated subway must survive");
+    assert_eq!(map.rails[1].width, 5.0);
+}
+
+#[test]
 fn trees_are_deterministic_and_inside_the_wood() {
     let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
     let d = 0.001;

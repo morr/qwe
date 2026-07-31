@@ -135,7 +135,12 @@ in `main.rs`.
     `construction`, …) never becomes a line. The rail branch in `parse_way` runs *before*
     the highway branch and deliberately **falls through**: an OSM way is routinely tagged
     both `railway=tram` and `highway=*`, and such a way is both a street and a track.
-    **Rails never touch the navmesh** — see below.
+    **Underground track is dropped** (`parse::is_underground`) — a metro tunnel or a
+    sunken through-line is invisible from above. Both markers are needed, neither alone
+    suffices: of Tula's three underground ways two carry `tunnel=yes` *and* `layer=-1`,
+    the third only `layer=-1`. `tunnel=no` is an explicit no, and elevated track
+    (`layer` ≥ 0, no tunnel) still draws — that is what keeps an elevated subway on the
+    map. **Rails never touch the navmesh** — see below.
   - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
     impassable.
   - **trees** — `(pos, radius)` pairs, precomputed at parse.
