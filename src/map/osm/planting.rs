@@ -350,11 +350,16 @@ pub(super) fn near_area_edge(point: Vec2, area: &PolyArea, clearance: f32) -> bo
 /// пересаживает его. Так ползунок отвечает мгновенно и уже стоящие деревья не
 /// прыгают с места на место при каждом его шаге.
 ///
-/// Возвращает деревья (по возрастанию порога появления), **сколько деревьев было
-/// запрошено** по площади лесов — если посажено заметно меньше, потолок плотности
-/// стоит выше насыщения (см. [`TREE_MIN_SPACING`] и [`TREE_DENSITY_HEADROOM`]) —
-/// и сетку занятых мест, чтобы аллеи не вставали поверх лесных деревьев.
-fn plant_woods(map: &MapData, obstacles: &Obstacles) -> (Vec<PlantedTree>, usize, Occupied) {
+/// Возвращает деревья (по возрастанию порога появления) и **сколько деревьев
+/// было запрошено** по площади лесов — если посажено заметно меньше, потолок
+/// плотности стоит выше насыщения (см. [`TREE_MIN_SPACING`] и
+/// [`TREE_DENSITY_HEADROOM`]). Занятые места пишутся в переданную сетку, чтобы
+/// аллеи не вставали поверх лесных деревьев, а лес — поверх одиночных.
+fn plant_woods(
+    map: &MapData,
+    obstacles: &Obstacles,
+    occupied: &mut Occupied,
+) -> (Vec<PlantedTree>, usize) {
     // (центр, радиус, плотность появления). Порог считается по номеру дерева
     // внутри своего массива: `n`-е посаженное дерево нужно уже на плотности
     // `n · TREE_AREA_PER_TREE / площадь`. Порядок посадки случайный, так что
@@ -364,7 +369,6 @@ fn plant_woods(map: &MapData, obstacles: &Obstacles) -> (Vec<PlantedTree>, usize
     // сколько деревьев запрошено по площади лесов: если посажено заметно
     // меньше, лес уперся в насыщение (см. `TREE_DENSITY_HEADROOM`)
     let mut asked = 0usize;
-    let mut occupied = Occupied::default();
     for wood in &map.woods {
         let (min, max) = ring_bounds(&wood.outer);
         let size = max - min;
@@ -410,7 +414,85 @@ fn plant_woods(map: &MapData, obstacles: &Obstacles) -> (Vec<PlantedTree>, usize
     // массив. Сортировка устойчивая, так что порядок посадки внутри леса
     // сохраняется и набор остаётся детерминированным.
     planted_trees.sort_by(|left, right| left.2.total_cmp(&right.2));
-    (planted_trees, asked, occupied)
+    (planted_trees, asked)
+}
+
+/// Одиночные деревья из OSM-нод (`natural=tree`). Ноды в лесу и ближе
+/// [`TREE_MIN_SPACING`] к оси аллеи пропускаются — там дерево уже сажает
+/// процедурная посадка ([`plant_woods`] / [`plant_rows`]); в домах и в воде
+/// ([`Obstacles::solid`]) тоже. Дороги и газоны преградой **не** считаются:
+/// уличное дерево законно стоит у кромки, и полная `blocked` стёрла бы ровно
+/// те деревья, ради которых тег и качается (ср. [`TreeRowPlacement::Keep`]).
+///
+/// Порог появления — 0: дерево из данных видно на любой плотности, как и ряд
+/// с шагом из OSM. Сажаются раньше леса и аллей и занимают клетки `occupied`,
+/// так что процедурная посадка держит от них [`TREE_MIN_SPACING`]; заодно та
+/// же сетка схлопывает продублированные ноды.
+fn plant_standalone(
+    map: &MapData,
+    obstacles: &Obstacles,
+    occupied: &mut Occupied,
+) -> Vec<PlantedTree> {
+    let wood_bounds: Vec<(Vec2, Vec2)> = map
+        .woods
+        .iter()
+        .map(|wood| ring_bounds(&wood.outer))
+        .collect();
+    let row_bounds: Vec<(Vec2, Vec2)> = map
+        .tree_rows
+        .iter()
+        .map(|row| {
+            let (min, max) = ring_bounds(&row.points);
+            (min - TREE_MIN_SPACING, max + TREE_MIN_SPACING)
+        })
+        .collect();
+
+    let mut planted: Vec<PlantedTree> = Vec::new();
+    for node in &map.tree_nodes {
+        let pos = node.pos;
+        if pos.x < 0.0 || pos.y < 0.0 || pos.x > MAP_SIZE.x || pos.y > MAP_SIZE.y {
+            continue;
+        }
+        let in_wood = map
+            .woods
+            .iter()
+            .zip(&wood_bounds)
+            .any(|(wood, &(min, max))| in_bbox(pos, min, max) && point_in_area(pos, wood));
+        if in_wood {
+            continue;
+        }
+        let near_row = map
+            .tree_rows
+            .iter()
+            .zip(&row_bounds)
+            .any(|(row, &(min, max))| {
+                in_bbox(pos, min, max)
+                    && row.points.windows(2).any(|segment| {
+                        distance_to_segment(pos, segment[0], segment[1]) <= TREE_MIN_SPACING
+                    })
+            });
+        if near_row {
+            continue;
+        }
+        // радиус из `diameter_crown`, иначе тот же LCG, что в лесу, но с
+        // затравкой от координат самой ноды — дерево детерминировано само по
+        // себе, а не порядком нод в выгрузке
+        let radius = node.radius.unwrap_or_else(|| {
+            let mut state: u64 =
+                0x9E37_79B9_7F4A_7C15 ^ (pos.x.to_bits() as u64) ^ ((pos.y.to_bits() as u64) << 32);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let roll = ((state >> 33) as f32) / (u32::MAX >> 1) as f32;
+            TREE_MIN_RADIUS + roll * (TREE_MAX_RADIUS - TREE_MIN_RADIUS)
+        });
+        if obstacles.solid(pos, radius) || occupied.crowded(pos) {
+            continue;
+        }
+        planted.push((pos, radius, 0.0));
+        occupied.insert(pos);
+    }
+    planted
 }
 
 /// Длина полилинии, м.
@@ -473,8 +555,9 @@ fn scattered_ranks(count: usize) -> Vec<usize> {
 /// что лес — двумерный, а ряд — одномерный, и линейная формула делала аллею
 /// вдвое гуще соседнего парка.
 ///
-/// `occupied` приходит из [`plant_woods`] и **клонируется** вызывающим на каждую
-/// политику: обе посадки должны видеть один и тот же лес и не видеть друг друга.
+/// `occupied` приходит из [`plant_standalone`] и [`plant_woods`] и
+/// **клонируется** вызывающим на каждую политику: все посадки должны видеть
+/// одни и те же одиночные и лесные деревья и не видеть друг друга.
 fn plant_rows(
     map: &MapData,
     obstacles: &Obstacles,
@@ -576,7 +659,8 @@ fn free_spot(
     }
 }
 
-/// Все деревья карты: лес и аллеи под **каждую** раскладку [`TreeRowLayout`].
+/// Все деревья карты: одиночные ноды, лес и аллеи под **каждую** раскладку
+/// [`TreeRowLayout`].
 ///
 /// Все раскладки считаются здесь, а не по требованию из UI, потому что ручки в
 /// панели переключаются на лету, а построение индексов близости
@@ -584,11 +668,16 @@ fn free_spot(
 /// платить этим за клик нельзя. Сами аллеи — сотни объектов, четыре прохода по
 /// ним стоят копейки.
 ///
-/// Возвращает лес, аллеи под все раскладки и сколько лесных деревьев было
-/// запрошено по площади (см. [`plant_woods`]).
-pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, RowTrees, usize) {
+/// Возвращает лес (с одиночными деревьями впереди — их порог 0, лесные строго
+/// больше, так что конкатенация уже отсортирована по порогу), аллеи под все
+/// раскладки, сколько лесных деревьев было запрошено по площади (см.
+/// [`plant_woods`]) и сколько одиночных посажено.
+pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, RowTrees, usize, usize) {
     let obstacles = Obstacles::build(map);
-    let (woods, asked, occupied) = plant_woods(map, &obstacles);
+    let mut occupied = Occupied::default();
+    // одиночные — первыми: лес и аллеи держат от них TREE_MIN_SPACING
+    let standalone = plant_standalone(map, &obstacles, &mut occupied);
+    let (woods, asked) = plant_woods(map, &obstacles, &mut occupied);
 
     let mut rows = RowTrees::default();
     for layout in TreeRowLayout::ALL {
@@ -599,13 +688,16 @@ pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, RowTrees, usize) 
             plant_rows(map, &obstacles, occupied.clone(), layout),
         );
     }
-    (woods, rows, asked)
+    let standalone_count = standalone.len();
+    let mut trees = standalone;
+    trees.extend(woods);
+    (trees, rows, asked, standalone_count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::model::{AreaKind, RoadClass, TreeRow};
+    use crate::map::osm::model::{AreaKind, RoadClass, TreeNode, TreeRow};
     use crate::settings::TREE_DENSITY_MIN;
 
     /// Прямой ряд длиной `length` вдоль оси X, на высоте 1000 — подальше от
@@ -900,5 +992,145 @@ mod tests {
             TreeRowPlacement::Keep,
         );
         assert!(planted.len() <= TREE_ROW_MAX_TREES);
+    }
+
+    fn node_at(x: f32, y: f32) -> TreeNode {
+        TreeNode {
+            pos: Vec2::new(x, y),
+            radius: None,
+        }
+    }
+
+    fn wood_square() -> PolyArea {
+        PolyArea {
+            outer: vec![
+                Vec2::new(1000.0, 1000.0),
+                Vec2::new(1100.0, 1000.0),
+                Vec2::new(1100.0, 1100.0),
+                Vec2::new(1000.0, 1100.0),
+            ],
+            holes: Vec::new(),
+            kind: AreaKind::Wood,
+            height: None,
+            entrances: Vec::new(),
+        }
+    }
+
+    fn plant_nodes(map: &MapData) -> Vec<PlantedTree> {
+        let obstacles = Obstacles::build(map);
+        plant_standalone(map, &obstacles, &mut Occupied::default())
+    }
+
+    /// Нода в лесном полигоне пропускается: там дерево уже сажает
+    /// [`plant_woods`], и своё сверху дало бы двойную крону.
+    #[test]
+    fn standalone_skips_nodes_inside_woods() {
+        let mut map = MapData {
+            woods: vec![wood_square()],
+            ..MapData::default()
+        };
+        map.tree_nodes.push(node_at(1050.0, 1050.0)); // в лесу
+        map.tree_nodes.push(node_at(1200.0, 1050.0)); // в чистом поле
+        let planted = plant_nodes(&map);
+        assert_eq!(planted.len(), 1);
+        assert_eq!(planted[0].0, Vec2::new(1200.0, 1050.0));
+    }
+
+    /// Нода на аллее пропускается: ряд по этому way уже посажен, а нода ближе
+    /// минимального зазора к оси — то же дерево, размеченное дважды.
+    #[test]
+    fn standalone_skips_nodes_hugging_a_tree_row() {
+        let mut map = map_with_row(straight_row(100.0, None));
+        map.tree_nodes.push(node_at(1050.0, 1004.0)); // 4 м от оси — это сама аллея
+        map.tree_nodes.push(node_at(1050.0, 1020.0)); // 20 м — отдельное дерево
+        let planted = plant_nodes(&map);
+        assert_eq!(planted.len(), 1);
+        assert_eq!(planted[0].0, Vec2::new(1050.0, 1020.0));
+    }
+
+    /// В доме дерево не сажается даже по данным, а вот дорога — не преграда:
+    /// уличные деревья и стоят у кромки (та же логика, что у
+    /// [`TreeRowPlacement::Keep`]).
+    #[test]
+    fn standalone_respects_solid_but_not_roads() {
+        let mut map = MapData::default();
+        map.buildings.push(building_on_the_row());
+        map.roads.push(road_across_the_row());
+        map.tree_nodes.push(node_at(1050.0, 1000.0)); // внутри дома
+        map.tree_nodes.push(node_at(1050.0, 950.0)); // на дороге
+        let planted = plant_nodes(&map);
+        assert_eq!(planted.len(), 1);
+        assert_eq!(planted[0].0, Vec2::new(1050.0, 950.0));
+    }
+
+    /// Две ноды ближе минимального зазора — одно дерево: в OSM встречаются
+    /// продублированные ноды, и обе кроны рисовать незачем.
+    #[test]
+    fn duplicate_standalone_nodes_collapse() {
+        let mut map = MapData::default();
+        map.tree_nodes.push(node_at(1000.0, 1000.0));
+        map.tree_nodes.push(node_at(1003.0, 1000.0));
+        assert_eq!(plant_nodes(&map).len(), 1);
+    }
+
+    /// Порог одиночных — 0 (дерево из данных видно на любой плотности), радиус
+    /// из `diameter_crown` доезжает как есть, без тега — разыгрывается в
+    /// лесной вилке.
+    #[test]
+    fn standalone_trees_are_always_visible_and_keep_tagged_radius() {
+        let mut map = MapData::default();
+        map.tree_nodes.push(TreeNode {
+            pos: Vec2::new(1000.0, 1000.0),
+            radius: Some(5.0),
+        });
+        map.tree_nodes.push(node_at(1000.0, 1050.0));
+        let planted = plant_nodes(&map);
+        assert_eq!(planted.len(), 2);
+        assert!(planted.iter().all(|&(.., at)| at == 0.0));
+        assert_eq!(visible(&planted, TREE_DENSITY_MIN).len(), 2);
+        assert_eq!(planted[0].1, 5.0);
+        assert!((TREE_MIN_RADIUS..=TREE_MAX_RADIUS).contains(&planted[1].1));
+    }
+
+    /// Лес держит минимальный зазор от уже занятых мест — так одиночные
+    /// деревья, посаженные первыми, не получают лесного соседа впритык.
+    #[test]
+    fn woods_keep_clear_of_preoccupied_spots() {
+        let map = MapData {
+            woods: vec![wood_square()],
+            ..MapData::default()
+        };
+        let obstacles = Obstacles::build(&map);
+        let mut occupied = Occupied::default();
+        let spot = Vec2::new(1050.0, 1050.0);
+        occupied.insert(spot);
+        let (woods, _) = plant_woods(&map, &obstacles, &mut occupied);
+        assert!(!woods.is_empty());
+        assert!(
+            woods
+                .iter()
+                .all(|&(pos, ..)| pos.distance(spot) >= TREE_MIN_SPACING),
+            "лесное дерево встало поверх занятого места"
+        );
+    }
+
+    /// Одиночные деревья идут в общем массиве первыми, и массив остаётся
+    /// отсортированным по порогу — на этом стоит `compose_trees`.
+    #[test]
+    fn standalone_trees_lead_the_planted_array() {
+        let mut map = MapData {
+            woods: vec![wood_square()],
+            ..MapData::default()
+        };
+        map.tree_nodes.push(node_at(2000.0, 2000.0));
+        let (trees, _, _, standalone) = plant_trees(&map);
+        assert_eq!(standalone, 1);
+        assert_eq!(trees[0].0, Vec2::new(2000.0, 2000.0));
+        assert_eq!(trees[0].2, 0.0);
+        assert!(
+            trees.len() > 1,
+            "лес не посадился рядом с одиночным деревом"
+        );
+        assert!(trees.windows(2).all(|pair| pair[0].2 <= pair[1].2));
     }
 }

@@ -94,9 +94,10 @@ in `main.rs`.
   `out geom` (inline geometry, no node lookup). Query covers: `building` (way+rel),
   `highway` (way), `natural=water` / `waterway=riverbank` (way+rel), `leisure=park|garden`,
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
-  `landuse=grass|meadow` / `natural=grassland|meadow`, `natural=sand|beach`,
-  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected `City`'s geo center.
-  `QUERY_VERSION` is **5** (v3 added `entrance` nodes, v4 `railway`, v5 `natural=tree_row`).
+  `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
+  `natural=sand|beach`, `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **6** (v3 added `entrance` nodes, v4 `railway`,
+  v5 `natural=tree_row`, v6 `natural=tree` nodes).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -150,8 +151,12 @@ in `main.rs`.
     `diameter_crown`). Both are rare, semi-standard tags, so almost every row is
     `None`/`None` and falls back to the density slider. Like the rail branch, the
     `tree_row` branch in `parse_way` runs before `highway` and **falls through**.
+  - **TreeNode** — `natural=tree` node: a single surveyed tree, position plus
+    `radius: Option<f32>` (half `diameter_crown`, same parse as on rows). Raw input for
+    `planting::plant_standalone`; see **Standalone trees** below.
   - **wood_trees / row_trees_kept / row_trees_slid** — `(pos, radius, appears_at)`,
-    each sorted by threshold: the forest, and the avenues under each placement policy.
+    each sorted by threshold: the forest (with standalone surveyed trees at threshold 0
+    in front), and the avenues under each placement policy.
     Raw material, not what the renderer reads.
   - **trees** / **tree_appears_at** — what the renderer reads: `MapData::compose_trees`
     merges the forest with the avenues of the selected policy (a merge, not a sort — both
@@ -301,6 +306,18 @@ in `main.rs`.
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
   (a lawn is a lawn; overhang from a neighbouring tree is fine).
+- **Standalone trees** (`planting.rs::plant_standalone`) — single surveyed trees from
+  `natural=tree` nodes, planted **first**, before the forest and the rows, so both keep
+  `TREE_MIN_SPACING` from them via the shared `Occupied` grid. A node is dropped when the
+  procedural planting already covers it: inside any Wood polygon, or within
+  `TREE_MIN_SPACING` (6 m) of a `tree_row` centerline. Also dropped when
+  `Obstacles::solid` (in a building or water) or `Occupied::crowded` (a duplicate node) —
+  but **not** on `blocked`: street trees legitimately stand at kerbs and on lawns, the
+  same reasoning as `TreeRowPlacement::Keep`. Every standalone tree gets
+  `appears_at = 0` (a surveyed tree is visible at any density), radius from
+  `diameter_crown` or rolled in the forest range from an LCG seeded by the node's own
+  coordinates. They ride in front of `wood_trees`, so everything downstream — crowns,
+  shadows, conifer field, density prefix — needs no new code.
 - **Tree rows** (`planting.rs::plant_rows`) — avenues from `natural=tree_row`, walked
   along the polyline instead of sampled inside a polygon. Everything downstream is
   untouched: row trees land in the same `MapData::trees`, so crowns, the merged shadow

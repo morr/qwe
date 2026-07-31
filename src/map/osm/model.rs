@@ -96,6 +96,15 @@ pub struct TreeRow {
     pub radius: Option<f32>,
 }
 
+/// Одиночное дерево из OSM (`node natural=tree`): позиция и радиус кроны из
+/// `diameter_crown`. `None` — радиус разыгрывается, как в лесу. Сажает
+/// `planting::plant_standalone`; ноды в лесу и у аллей там же и отсеиваются.
+#[derive(Debug, Clone, Copy)]
+pub struct TreeNode {
+    pub pos: Vec2,
+    pub radius: Option<f32>,
+}
+
 /// Посаженное дерево: центр, радиус кроны и плотность, на которой оно
 /// появляется (см. [`MapData::tree_appears_at`]).
 pub type PlantedTree = (Vec2, f32, f32);
@@ -220,8 +229,12 @@ pub struct MapData {
     /// Аллеи (`natural=tree_row`) — исходная геометрия, для отладки; деревья по
     /// ним уже разложены в [`MapData::row_trees_kept`] / [`MapData::row_trees_slid`].
     pub tree_rows: Vec<TreeRow>,
-    /// Деревья лесных полигонов, по возрастанию порога появления. Сырьё для
-    /// [`MapData::compose_trees`], а не то, что читает рендер.
+    /// Одиночные деревья (`node natural=tree`) — сырые ноды, для отладки;
+    /// посаженные уже влиты в [`MapData::wood_trees`] с порогом 0.
+    pub tree_nodes: Vec<TreeNode>,
+    /// Деревья лесных полигонов по возрастанию порога появления, с одиночными
+    /// деревьями из OSM впереди (их порог 0 — дерево из данных видно всегда).
+    /// Сырьё для [`MapData::compose_trees`], а не то, что читает рендер.
     pub wood_trees: Vec<PlantedTree>,
     /// Деревья аллей под каждую раскладку, по возрастанию порога.
     pub row_trees: RowTrees,

@@ -11,8 +11,8 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeRow, TreeRowLayout,
-    WallLine, point_in_area, point_in_polygon, ring_bounds,
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeNode, TreeRow,
+    TreeRowLayout, WallLine, point_in_area, point_in_polygon, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -44,9 +44,9 @@ const NON_WALKABLE_ENTRANCES: [&str; 3] = ["no", "garage", "emergency"];
 const TREE_ROW_SPACING_RANGE: RangeInclusive<f32> = 2.0..=40.0;
 
 /// Границы правдоподобия радиуса кроны из `diameter_crown`, м. Шире лесной
-/// вилки (2.5..4): аллейный тополь честно бывает крупнее, а вот `diameter_crown=50`
-/// — опечатка.
-const TREE_ROW_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
+/// вилки (2.5..4): аллейный или одиночный тополь честно бывает крупнее, а вот
+/// `diameter_crown=50` — опечатка.
+const TREE_CROWN_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
 
 /// Шаг квантования координат при привязке входа к зданию, 1/м. Вход в OSM —
 /// как правило общий узел контура здания (Тула 82%, Берлин 79%, Париж 65%),
@@ -70,6 +70,9 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
             "node" => {
                 if let Some(position) = parse_entrance(element, &bounds) {
                     entrances.push(position);
+                }
+                if let Some(node) = parse_tree_node(element, &bounds) {
+                    map.tree_nodes.push(node);
                 }
             }
             "way" => parse_way(element, &bounds, &mut map),
@@ -108,20 +111,22 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     );
 
     let started = std::time::Instant::now();
-    let (woods, rows, asked) = plant_trees(&map);
+    let (woods, rows, asked, standalone) = plant_trees(&map);
     // «посажено меньше, чем запрошено» — лес уперся в насыщение, потолок
     // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
     // Аллеи считаются отдельно и под обе политики: `kept` = `slid` означает,
     // что сдвигать было нечего, а `0 in K tree rows` при `K > 0` — что тег
-    // доехал, а посадка по нему не встала никуда
+    // доехал, а посадка по нему не встала никуда. Одиночные ноды выбывают
+    // штатно — в лесу и у аллей дерево уже посажено процедурно
     let counts: Vec<String> = TreeRowLayout::ALL
         .iter()
         .map(|&layout| rows.get(layout).len().to_string())
         .collect();
     eprintln!(
-        "osm parse: {} trees planted of {asked} asked, {} in {} tree rows \
-         (keep/slide x osm/slider) in {:?}",
-        woods.len(),
+        "osm parse: {} trees planted of {asked} asked, {standalone} standalone of {} tree nodes, \
+         {} in {} tree rows (keep/slide x osm/slider) in {:?}",
+        woods.len() - standalone,
+        map.tree_nodes.len(),
         counts.join("/"),
         map.tree_rows.len(),
         started.elapsed()
@@ -183,6 +188,18 @@ fn parse_entrance(element: &Element, bounds: &GeoBounds) -> Option<Vec2> {
         return None;
     }
     Some(bounds.project(element.lat?, element.lon?))
+}
+
+/// Нода `natural=tree` → одиночное дерево. Сажает его (и отсеивает
+/// продублированные процедурной посадкой) `planting::plant_standalone`.
+fn parse_tree_node(element: &Element, bounds: &GeoBounds) -> Option<TreeNode> {
+    if element.tags.get("natural").map(String::as_str) != Some("tree") {
+        return None;
+    }
+    Some(TreeNode {
+        pos: bounds.project(element.lat?, element.lon?),
+        radius: crown_radius(&element.tags),
+    })
 }
 
 /// Раскладка входов по зданиям: вход ищется среди вершин контуров, потому что
@@ -407,14 +424,14 @@ fn row_spacing(tags: &HashMap<String, String>, points: &[Vec2]) -> Option<f32> {
     plausible(length / (count - 1.0))
 }
 
-/// Радиус кроны аллеи из `diameter_crown`, м. Тег документирован на
-/// `natural=tree` и переносится на ряд; `None` — радиус разыгрывается, как в лесу.
-fn row_radius(tags: &HashMap<String, String>) -> Option<f32> {
+/// Радиус кроны из `diameter_crown`, м. Тег документирован на `natural=tree`
+/// и переносится на ряд; `None` — радиус разыгрывается, как в лесу.
+fn crown_radius(tags: &HashMap<String, String>) -> Option<f32> {
     let diameter = tags
         .get("diameter_crown")
         .and_then(|value| parse_measure(value))?;
     let radius = diameter / 2.0;
-    TREE_ROW_RADIUS_RANGE.contains(&radius).then_some(radius)
+    TREE_CROWN_RADIUS_RANGE.contains(&radius).then_some(radius)
 }
 
 fn project_points(points: &[LatLon], bounds: &GeoBounds) -> Vec<Vec2> {
@@ -471,7 +488,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     if element.tags.get("natural").map(String::as_str) == Some("tree_row") {
         map.tree_rows.push(TreeRow {
             spacing: row_spacing(&element.tags, &points),
-            radius: row_radius(&element.tags),
+            radius: crown_radius(&element.tags),
             points: points.clone(),
         });
     }

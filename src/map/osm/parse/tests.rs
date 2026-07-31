@@ -707,3 +707,24 @@ fn implausible_tree_row_tags_fall_back_to_the_slider() {
         assert!(map.tree_rows[0].radius.is_none(), "{tags}");
     }
 }
+
+/// Нода `natural=tree` доезжает до `MapData::tree_nodes` и до собранного
+/// набора, который читает рендер; `diameter_crown` задаёт радиус кроны, порог
+/// нулевой — дерево из данных видно на любой плотности.
+#[test]
+fn parses_standalone_tree_nodes() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "node", "id": 1, "tags": {{"natural": "tree", "diameter_crown": "10"}},
+    "lat": {lat}, "lon": {lon}}}
+]}}"#
+    );
+
+    let map = parse(&json, CITY).unwrap();
+    assert_eq!(map.tree_nodes.len(), 1);
+    assert_eq!(map.tree_nodes[0].radius, Some(5.0));
+    assert_eq!(map.trees.len(), 1);
+    assert_eq!(map.trees[0].1, 5.0);
+    assert_eq!(map.tree_appears_at[0], 0.0);
+}
