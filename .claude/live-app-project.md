@@ -91,8 +91,8 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
-`BuildingHeightMode`, `TreeStyle` / `TreeShape`, `DrawMovePaths`, `DebugGrid`,
-`DebugNavmesh`, `DebugDoors`.
+`BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `DrawMovePaths`,
+`DebugGrid`, `DebugNavmesh`, `DebugDoors`.
 
 Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
@@ -126,6 +126,9 @@ $b res set DebugNavmesh .0 true
 $b res set DrawMovePaths .0 true
 $b res set BuildingHeightMode . '"Shadows"'      # whole resource: path `.`
 $b res set TreeStyle .shape '"Conifer"'
+$b res set TreeStyle .woods false                 # источники деревьев: лес
+$b res set TreeStyle .standalone false            # …одиночные natural=tree
+$b res set TreeRowStyle .enabled false            # …аллеи (панель Tree rows)
 $b res set PathfindingAlgorithm . '"Hpa"'
 ```
 

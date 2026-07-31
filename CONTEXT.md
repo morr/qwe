@@ -311,9 +311,12 @@ in `main.rs`.
   `TREE_MIN_SPACING` from them via the shared `Occupied` grid. A node is dropped when the
   procedural planting already covers it: inside any Wood polygon, or within
   `TREE_MIN_SPACING` (6 m) of a `tree_row` centerline. Also dropped when
-  `Obstacles::solid` (in a building or water) or `Occupied::crowded` (a duplicate node) —
-  but **not** on `blocked`: street trees legitimately stand at kerbs and on lawns, the
-  same reasoning as `TreeRowPlacement::Keep`. Every standalone tree gets
+  `Obstacles::solid` (in a building or water), when the trunk stands on a road bed or
+  its casing (`Obstacles::on_road` — our synthesized roads are wider than real ones, so
+  a pavement tree routinely lands "in the asphalt"), or on `Occupied::crowded` (a
+  duplicate node). Kerb-side and lawn trees survive: unlike the road clause of
+  `blocked`, `on_road` has no crown gap — the same reasoning as
+  `TreeRowPlacement::Keep`. Every standalone tree gets
   `appears_at = 0` (a surveyed tree is visible at any density), radius from
   `diameter_crown` or rolled in the forest range from an LCG seeded by the node's own
   coordinates. They ride in front of `wood_trees`, so everything downstream — crowns,
@@ -356,7 +359,7 @@ in `main.rs`.
     n in order" is its *beginning*, so a natural order would show half the avenue and
     half bare ground. Reversing the index bits makes every prefix spread over the whole
     row while keeping thinning monotone.
-  - **`TreeRowPlacement`, a toggle in the Trees panel.** Road widths here are
+  - **`TreeRowPlacement`, a toggle in the Tree rows panel.** Road widths here are
     *synthesised* from the highway class (8–16 m) and know nothing about real kerbs, so a
     mapped avenue routinely lies inside our road polygon. **`Keep`** (default) trusts the
     OSM position and rejects only what can never be right — inside a building or in water
@@ -531,15 +534,23 @@ in `main.rs`.
   item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
   `foliage`, `details` (ink), `variance` (brightness spread), `shape`, `conifer_share`
-  (see Conifer stands below), `density` (planting multiplier, see Tree density above) and
-  and the five avenue knobs — `row_placement`, `row_osm_spacing`, `row_join`,
-  `row_smoothing`, `row_casing` (see Tree rows above). **TreeShape** is
-  `Cotton | Conifer | Palm | Mixed` — cloud outline (`bloat`),
-  spiky cone (`Spiker::simple`), bent fronds (`Spiker::bent`), and conifer stands among
-  cloud crowns. Any change reruns `rebuild_trees` (despawn `TreeTag`, respawn from the
-  `MapData::trees` positions); `row_placement` additionally reruns
-  `recompose_row_trees` first, because it changes the position set itself rather than the
-  look. The panel lives in `ui/trees.rs`, bottom-right, one cycling button per field.
+  (see Conifer stands below), `density` (planting multiplier, see Tree density above),
+  plus the two source toggles — `woods` (forest polygons) and `standalone` (individual
+  `natural=tree` trees). **TreeShape** is `Cotton | Conifer | Palm | Mixed` — cloud
+  outline (`bloat`), spiky cone (`Spiker::simple`), bent fronds (`Spiker::bent`), and
+  conifer stands among cloud crowns. Any change reruns `rebuild_trees` (despawn
+  `TreeTag`, respawn from the `MapData::trees` positions); the source toggles
+  additionally rerun `recompose_row_trees` first, because they change the position set
+  itself rather than the look. The panel lives in `ui/trees.rs`, bottom-right, one
+  cycling button per field.
+- **TreeRowStyle** (resource, BRP-writable, persisted; panel `ui/tree_rows.rs` above
+  Trees) — the avenue knobs, split from TreeStyle the way Buildings is: `enabled` (rows
+  on/off — removes both the row trees and the green band), `placement`
+  (`TreeRowPlacement`), `osm_spacing`, and the band's `join` / `smoothing` / `casing`
+  (see Tree rows above). Which sources end up in `MapData::trees` is captured by
+  **`TreeCompose`** (layout + woods/rows/standalone flags, `model.rs`) — the value stored
+  in `composed_for`, so `recompose_row_trees` re-merges only when the composition
+  actually changed. Crown look is inherited from `TreeStyle`.
 - **Conifer stands / conifer field** (`map/trees/conifer.rs`, `ConiferField` resource) —
   which trees of a `Mixed` forest are spruce. Conifers grow in **stands**: a patch of
   forest is conifer almost entirely, and between patches there is almost none. So the

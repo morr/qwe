@@ -8,6 +8,7 @@ mod debug;
 mod hotkeys;
 mod roads;
 mod speed;
+mod tree_rows;
 mod trees;
 
 use bevy::ecs::system::IntoObserverSystem;
@@ -17,17 +18,91 @@ use bevy::ui_widgets::{Activate, Button};
 
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 use crate::loading::{AppState, PlayPhase};
+use crate::map::osm::MapData;
+use crate::map::trees::visible_count;
+use crate::map::{TreeRowStyle, TreeStyle};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
-/// Место панели в правой колонке, снизу вверх: 0 — Trees у края экрана, дальше
-/// Buildings, Roads, справка по хоткеям. Панели абсолютные, `bevy_ui` их не
-/// стыкует, поэтому `bottom` каждой считает [`stack_right_column`] по
-/// **замеренным** высотам тех, что под ней: высота панели Trees меняется на
-/// ходу (строка доли хвои появляется только у формы `Mixed`), и прошитые
-/// константы высот такую панель уронили бы под соседнюю.
+/// Место панели в правой колонке, снизу вверх: 0 — Tree rows у края экрана,
+/// дальше Trees, Buildings, Roads, справка по хоткеям. Панели абсолютные,
+/// `bevy_ui` их не стыкует, поэтому `bottom` каждой считает
+/// [`stack_right_column`] по **замеренным** высотам тех, что под ней: высота
+/// панели Trees меняется на ходу (строка доли хвои появляется только у формы
+/// `Mixed`), и прошитые константы высот такую панель уронили бы под соседнюю.
 #[derive(Component)]
 pub struct UiRightColumnSlot(pub u8);
+
+/// Тип объектов мира, чьё число стоит в заголовке панели (см.
+/// [`panel_header`]); компонент висит на тексте счётчика.
+#[derive(Component, Clone, Copy)]
+pub enum PanelCount {
+    Trees,
+    TreeRows,
+    Buildings,
+    Roads,
+}
+
+/// Заголовок панели: название и у правого края блока мелким шрифтом число
+/// объектов этого типа в мире. Число пустое до загрузки карты — его заполняет
+/// и дальше ведёт [`sync_panel_counts`].
+pub fn panel_header(title: &str, count: PanelCount) -> impl Bundle {
+    (
+        Node {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Baseline,
+            column_gap: px(6.),
+            ..default()
+        },
+        children![
+            (
+                Text::new(title),
+                TextFont {
+                    font_size: FontSize::Px(14.),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                UI_TEXT_SHADOW,
+                // распорка: заголовок забирает всю ширину, число прижимается
+                // к правому краю блока
+                Node {
+                    flex_grow: 1.,
+                    ..default()
+                },
+            ),
+            (
+                count,
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(10.),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                UI_TEXT_SHADOW,
+            ),
+        ],
+    )
+}
+
+/// Счётчики в заголовках панелей: сколько объектов этого типа сейчас в мире.
+/// Деревья считаются по собранному набору с учётом ползунка плотности и
+/// тумблеров источников — то есть ровно столько крон и стоит на карте.
+fn sync_panel_counts(
+    map: Res<MapData>,
+    style: Res<TreeStyle>,
+    mut labels: Query<(&PanelCount, &mut Text)>,
+) {
+    for (count, mut text) in &mut labels {
+        let total = match count {
+            PanelCount::Trees => visible_count(&map.tree_appears_at, style.density),
+            PanelCount::TreeRows => map.tree_rows.len(),
+            PanelCount::Buildings => map.buildings.len(),
+            PanelCount::Roads => map.roads.len(),
+        };
+        text.0 = total.to_string();
+    }
+}
 
 /// Подсветка «кнопка активна» и осветление под курсором / при нажатии —
 /// общие для тумблеров и панели городов.
@@ -119,12 +194,25 @@ impl Plugin for UiPlugin {
             speed::UiSpeedPlugin,
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
+            tree_rows::UiTreeRowStylePlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
         ))
         .add_systems(Update, stack_right_column)
+        .add_systems(
+            Update,
+            // `resource_changed` без `resource_exists` паникует до загрузки
+            // карты, а `and_then` не вычисляет правую часть зря
+            sync_panel_counts.run_if(
+                resource_exists::<MapData>.and_then(
+                    resource_changed::<MapData>
+                        .or_else(resource_changed::<TreeStyle>)
+                        .or_else(resource_changed::<TreeRowStyle>),
+                ),
+            ),
+        )
         .add_systems(OnEnter(PlayPhase::Live), show_game_ui)
         // смена города возвращает приложение на экран загрузки — панели
         // прячутся до конца следующего прогрева

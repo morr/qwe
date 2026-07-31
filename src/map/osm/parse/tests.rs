@@ -652,7 +652,7 @@ fn parses_tree_rows_and_plants_along_them() {
 
     // и они же — в собранном наборе, который читает рендер
     assert_eq!(map.trees.len(), rows.len());
-    assert_eq!(map.composed_for, Some(TreeRowLayout::default()));
+    assert_eq!(map.composed_for, Some(TreeCompose::default()));
 }
 
 /// Шаг из данных: `count` растягивается на длину ряда, а ползунок такой ряд не

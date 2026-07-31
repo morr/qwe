@@ -9,7 +9,7 @@ pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
-pub use self::trees::{ConiferField, TreeShape, TreeStyle};
+pub use self::trees::{ConiferField, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
 
@@ -28,10 +28,12 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeStyle>()
+            .init_resource::<TreeRowStyle>()
             .init_resource::<ConiferField>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
             .register_type::<TreeStyle>()
+            .register_type::<TreeRowStyle>()
             .register_type::<TreeShape>()
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
@@ -57,9 +59,10 @@ impl Plugin for MapPlugin {
             .add_systems(
                 Update,
                 (
-                    // тумблер политики аллей меняет сам набор деревьев, так что
-                    // пересборка идёт до крон; сама система выходит сразу, если
-                    // политика не поехала, — отдельного условия на неё не надо
+                    // тумблеры состава (лес/аллеи/одиночные) и политика аллей
+                    // меняют сам набор деревьев, так что пересборка идёт до
+                    // крон; сама система выходит сразу, если состав не поехал,
+                    // — отдельного условия на неё не надо
                     (
                         trees::recompose_row_trees,
                         spawn::rebuild_tree_row_band,
@@ -67,10 +70,16 @@ impl Plugin for MapPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing))
-                        .run_if(resource_changed::<TreeStyle>)
                         // ресурс «изменён» и в кадре, где он появился, — там
                         // кроны ещё не спавнены и пересобирать нечего
-                        .run_if(not(resource_added::<TreeStyle>)),
+                        .run_if(
+                            resource_changed::<TreeStyle>
+                                .and_then(not(resource_added::<TreeStyle>))
+                                .or_else(
+                                    resource_changed::<TreeRowStyle>
+                                        .and_then(not(resource_added::<TreeRowStyle>)),
+                                ),
+                        ),
                     buildings::rebuild_buildings
                         .run_if(in_state(AppState::Playing))
                         .run_if(resource_changed::<BuildingHeightMode>)

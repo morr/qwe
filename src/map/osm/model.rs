@@ -113,7 +113,7 @@ pub type PlantedTree = (Vec2, f32, f32);
 ///
 /// Живёт здесь, а не в `planting`, потому что по нему собирается
 /// [`MapData::trees`]: политика — часть состояния модели, а не только аргумент
-/// посадки. Переключается на лету из панели Trees (`TreeStyle::row_placement`),
+/// посадки. Переключается на лету из панели Tree rows (`TreeRowStyle::placement`),
 /// поэтому оба варианта считаются на загрузке разом (см. `planting::plant_rows`).
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TreeRowPlacement {
@@ -210,6 +210,31 @@ impl RowTrees {
     }
 }
 
+/// Что входит в собранный [`MapData::trees`]: раскладка аллей и какие
+/// источники деревьев включены. Тумблеры панелей выключают источник целиком —
+/// сборка та же, выключенное слагаемое пустое.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeCompose {
+    pub layout: TreeRowLayout,
+    /// Лесные массивы ([`MapData::wood_trees`]).
+    pub woods: bool,
+    /// Аллеи выбранной раскладки ([`MapData::row_trees`]).
+    pub rows: bool,
+    /// Одиночные деревья из OSM-нод ([`MapData::standalone_trees`]).
+    pub standalone: bool,
+}
+
+impl Default for TreeCompose {
+    fn default() -> Self {
+        Self {
+            layout: TreeRowLayout::default(),
+            woods: true,
+            rows: true,
+            standalone: true,
+        }
+    }
+}
+
 /// Распарсенная карта; остаётся ресурсом после спавна — для отладки.
 #[derive(Resource, Debug, Default)]
 pub struct MapData {
@@ -230,20 +255,22 @@ pub struct MapData {
     /// ним уже разложены в [`MapData::row_trees_kept`] / [`MapData::row_trees_slid`].
     pub tree_rows: Vec<TreeRow>,
     /// Одиночные деревья (`node natural=tree`) — сырые ноды, для отладки;
-    /// посаженные уже влиты в [`MapData::wood_trees`] с порогом 0.
+    /// посаженные лежат в [`MapData::standalone_trees`].
     pub tree_nodes: Vec<TreeNode>,
-    /// Деревья лесных полигонов по возрастанию порога появления, с одиночными
-    /// деревьями из OSM впереди (их порог 0 — дерево из данных видно всегда).
-    /// Сырьё для [`MapData::compose_trees`], а не то, что читает рендер.
+    /// Посаженные одиночные деревья, все с порогом 0 — дерево из данных видно
+    /// всегда. Сырьё для [`MapData::compose_trees`], как и лес с аллеями.
+    pub standalone_trees: Vec<PlantedTree>,
+    /// Деревья лесных полигонов, по возрастанию порога появления. Сырьё для
+    /// [`MapData::compose_trees`], а не то, что читает рендер.
     pub wood_trees: Vec<PlantedTree>,
     /// Деревья аллей под каждую раскладку, по возрастанию порога.
     pub row_trees: RowTrees,
-    /// Под какую раскладку собран [`MapData::trees`]; `None` — ещё не собран.
+    /// Из чего собран [`MapData::trees`]; `None` — ещё не собран.
     ///
     /// Признак живёт в `MapData`, а не в `Local` системы, именно потому, что при
     /// смене города ресурс заменяется целиком: `Local` пережил бы замену и
     /// решил, что для нового города всё уже собрано.
-    pub composed_for: Option<TreeRowLayout>,
+    pub composed_for: Option<TreeCompose>,
     /// Деревья карты: (центр, радиус). Детерминированы данными карты.
     /// Отсортированы по [`MapData::tree_appears_at`] — по возрастанию плотности,
     /// на которой дерево появляется. Собираются
@@ -263,26 +290,46 @@ pub struct MapData {
 }
 
 impl MapData {
-    /// Собрать [`MapData::trees`] из леса и аллей выбранной раскладки.
+    /// Собрать [`MapData::trees`] из включённых источников: одиночные деревья,
+    /// лес и аллеи выбранной раскладки.
     ///
-    /// Оба слагаемых уже отсортированы по порогу появления, так что это слияние,
+    /// Все слагаемые уже отсортированы по порогу появления, так что это слияние,
     /// а не сортировка: префикс по плотности (`trees::visible_count`) обязан
     /// оставаться монотонным, иначе шаг ползунка вверх убирал бы деревья.
-    pub fn compose_trees(&mut self, layout: TreeRowLayout) {
+    pub fn compose_trees(&mut self, compose: TreeCompose) {
         // разбор по полям, а не `self.…`: аллеи читаются, пока выход пишется
         let MapData {
             row_trees,
             wood_trees,
+            standalone_trees,
             trees,
             tree_appears_at,
             ..
         } = self;
-        let rows = row_trees.get(layout);
+        let empty: &[PlantedTree] = &[];
+        let rows = if compose.rows {
+            row_trees.get(compose.layout)
+        } else {
+            empty
+        };
+        let wood_trees: &[PlantedTree] = if compose.woods { wood_trees } else { empty };
+        let standalone: &[PlantedTree] = if compose.standalone {
+            standalone_trees
+        } else {
+            empty
+        };
 
         trees.clear();
         tree_appears_at.clear();
-        trees.reserve(wood_trees.len() + rows.len());
-        tree_appears_at.reserve(wood_trees.len() + rows.len());
+        trees.reserve(standalone.len() + wood_trees.len() + rows.len());
+        tree_appears_at.reserve(standalone.len() + wood_trees.len() + rows.len());
+
+        // одиночные первыми: у всех порог 0, ниже любого лесного, и на равных
+        // порогах с OSM-аллеями они и раньше стояли впереди
+        for &(position, radius, at) in standalone {
+            trees.push((position, radius));
+            tree_appears_at.push(at);
+        }
 
         let (mut wood, mut row) = (0, 0);
         while wood < wood_trees.len() || row < rows.len() {
@@ -304,7 +351,7 @@ impl MapData {
             tree_appears_at.push(at);
         }
 
-        self.composed_for = Some(layout);
+        self.composed_for = Some(compose);
     }
 }
 

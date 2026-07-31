@@ -11,7 +11,8 @@ use bevy::prelude::*;
 
 use crate::map::BuildingHeightMode;
 use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiRightColumnSlot, ui_color,
+    GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
+    ui_color,
 };
 
 /// Строки — как у панели деревьев: плотный фон поверх полупрозрачной панели.
@@ -63,19 +64,11 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(1),
+            UiRightColumnSlot(2),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("building_style_panel"),
-            children![(
-                Text::new("Buildings"),
-                TextFont {
-                    font_size: FontSize::Px(14.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
-            )],
+            children![panel_header("Buildings", PanelCount::Buildings)],
         ))
         .id();
 

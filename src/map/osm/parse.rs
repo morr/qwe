@@ -11,8 +11,8 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeNode, TreeRow,
-    TreeRowLayout, WallLine, point_in_area, point_in_polygon, ring_bounds,
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeCompose, TreeNode,
+    TreeRow, TreeRowLayout, WallLine, point_in_area, point_in_polygon, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -111,7 +111,7 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     );
 
     let started = std::time::Instant::now();
-    let (woods, rows, asked, standalone) = plant_trees(&map);
+    let (standalone, woods, rows, asked) = plant_trees(&map);
     // «посажено меньше, чем запрошено» — лес уперся в насыщение, потолок
     // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
     // Аллеи считаются отдельно и под обе политики: `kept` = `slid` означает,
@@ -123,21 +123,23 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         .map(|&layout| rows.get(layout).len().to_string())
         .collect();
     eprintln!(
-        "osm parse: {} trees planted of {asked} asked, {standalone} standalone of {} tree nodes, \
+        "osm parse: {} trees planted of {asked} asked, {} standalone of {} tree nodes, \
          {} in {} tree rows (keep/slide x osm/slider) in {:?}",
-        woods.len() - standalone,
+        woods.len(),
+        standalone.len(),
         map.tree_nodes.len(),
         counts.join("/"),
         map.tree_rows.len(),
         started.elapsed()
     );
+    map.standalone_trees = standalone;
     map.wood_trees = woods;
     map.row_trees = rows;
-    // сборка по политике **по умолчанию**: парсер о `TreeStyle` ничего не знает,
+    // сборка по составу **по умолчанию**: парсер о панелях ничего не знает,
     // но и отдавать `MapData` с пустым `trees` не должен — иначе каждый читатель
-    // обязан помнить про отдельный шаг сборки. Выбранную игроком политику
-    // доложит `map::trees::recompose_row_trees`, и только если она другая
-    map.compose_trees(TreeRowLayout::default());
+    // обязан помнить про отдельный шаг сборки. Выбранный игроком состав
+    // доложит `map::trees::recompose_row_trees`, и только если он другой
+    map.compose_trees(TreeCompose::default());
     Ok(map)
 }
 

@@ -10,7 +10,7 @@ use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, TreeRow};
 use crate::map::roads::{self, RoadStyle};
-use crate::map::trees::TreeStyle;
+use crate::map::trees::TreeRowStyle;
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING,
     Z_WOOD,
@@ -152,22 +152,25 @@ pub fn spawn_tree_row_band(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
     rows: &[TreeRow],
-    style: &TreeStyle,
+    style: &TreeRowStyle,
 ) {
     let mut casing = MeshBuilder::default();
     let mut fill = MeshBuilder::default();
+    // тумблер панели выключает аллеи целиком: без деревьев ряда полоса под
+    // ними — просто зелёная линия поперёк города
+    let rows = if style.enabled { rows } else { &[] };
     for row in rows {
         // Chaikin тот же, что у дорог: ломаная из OSM на повороте даёт полосе
         // заметный угол, которого у лесного контура не бывает
-        let path = roads::smooth_path(&row.points, TREE_ROW_BAND_WIDTH, style.row_smoothing);
-        if style.row_casing {
+        let path = roads::smooth_path(&row.points, TREE_ROW_BAND_WIDTH, style.smoothing);
+        if style.casing {
             let width = TREE_ROW_BAND_WIDTH + 2.0 * roads::casing_width(TREE_ROW_BAND_WIDTH);
             roads::push_ribbon(
                 &mut casing,
                 &path,
                 width,
                 TREE_ROW_CASING_COLOR.to_linear(),
-                style.row_join,
+                style.join,
             );
         }
         roads::push_ribbon(
@@ -175,7 +178,7 @@ pub fn spawn_tree_row_band(
             &path,
             TREE_ROW_BAND_WIDTH,
             WOOD_COLOR.to_linear(),
-            style.row_join,
+            style.join,
         );
     }
 
@@ -203,7 +206,7 @@ pub fn rebuild_tree_row_band(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    style: Res<TreeStyle>,
+    style: Res<TreeRowStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<TreeRowBandTag>>,
 ) {

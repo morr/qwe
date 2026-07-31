@@ -10,6 +10,7 @@ use crate::map::osm::model::{
     MapData, PlantedTree, PolyArea, RoadLine, RowTrees, TreeRowLayout, TreeRowPlacement,
     distance_to_segment, point_in_area, ring_area, ring_bounds,
 };
+use crate::map::roads::casing_width;
 use crate::settings::{MAP_SIZE, TREE_DENSITY_STEP};
 
 /// Плотность деревьев при `TreeStyle::density == 1`: одно дерево на столько м²
@@ -290,6 +291,16 @@ impl<'a> Obstacles<'a> {
                 in_bbox(pos, min, max) && point_in_area(pos, self.bare[index])
             })
     }
+
+    /// Ствол стоит на полотне дороги или на её канте. Мягче дорожной части
+    /// [`Obstacles::blocked`]: без зазора кроны — дерево у кромки с нависшей
+    /// над полотном кроной легально, дерево, растущее из асфальта, нет.
+    fn on_road(&self, pos: Vec2) -> bool {
+        self.road_index.near(pos).iter().any(|&(index, from, to)| {
+            let width = self.map.roads[index].width;
+            distance_to_segment(pos, from, to) <= width / 2.0 + casing_width(width)
+        })
+    }
 }
 
 /// Сетка занятых мест со стороной ячейки [`TREE_MIN_SPACING`]: единственная
@@ -420,9 +431,12 @@ fn plant_woods(
 /// Одиночные деревья из OSM-нод (`natural=tree`). Ноды в лесу и ближе
 /// [`TREE_MIN_SPACING`] к оси аллеи пропускаются — там дерево уже сажает
 /// процедурная посадка ([`plant_woods`] / [`plant_rows`]); в домах и в воде
-/// ([`Obstacles::solid`]) тоже. Дороги и газоны преградой **не** считаются:
-/// уличное дерево законно стоит у кромки, и полная `blocked` стёрла бы ровно
-/// те деревья, ради которых тег и качается (ср. [`TreeRowPlacement::Keep`]).
+/// ([`Obstacles::solid`]) тоже, как и стволом на полотне или канте дороги
+/// ([`Obstacles::on_road`]): наши дороги шире настоящих, и дерево с тротуара
+/// регулярно попадает «в асфальт», где крона без подложки повисает на белом.
+/// Газоны преградой **не** считаются, а у дороги — в отличие от полной
+/// `blocked` — нет зазора кроны: дерево вплотную к кромке легально
+/// (ср. [`TreeRowPlacement::Keep`]).
 ///
 /// Порог появления — 0: дерево из данных видно на любой плотности, как и ряд
 /// с шагом из OSM. Сажаются раньше леса и аллей и занимают клетки `occupied`,
@@ -486,7 +500,7 @@ fn plant_standalone(
             let roll = ((state >> 33) as f32) / (u32::MAX >> 1) as f32;
             TREE_MIN_RADIUS + roll * (TREE_MAX_RADIUS - TREE_MIN_RADIUS)
         });
-        if obstacles.solid(pos, radius) || occupied.crowded(pos) {
+        if obstacles.solid(pos, radius) || obstacles.on_road(pos) || occupied.crowded(pos) {
             continue;
         }
         planted.push((pos, radius, 0.0));
@@ -668,11 +682,11 @@ fn free_spot(
 /// платить этим за клик нельзя. Сами аллеи — сотни объектов, четыре прохода по
 /// ним стоят копейки.
 ///
-/// Возвращает лес (с одиночными деревьями впереди — их порог 0, лесные строго
-/// больше, так что конкатенация уже отсортирована по порогу), аллеи под все
-/// раскладки, сколько лесных деревьев было запрошено по площади (см.
-/// [`plant_woods`]) и сколько одиночных посажено.
-pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, RowTrees, usize, usize) {
+/// Возвращает одиночные деревья, лес, аллеи под все раскладки и сколько лесных
+/// деревьев было запрошено по площади (см. [`plant_woods`]). Источники лежат
+/// отдельными массивами — панели включают и выключают каждый сам по себе, а
+/// сводит их уже `MapData::compose_trees`.
+pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, Vec<PlantedTree>, RowTrees, usize) {
     let obstacles = Obstacles::build(map);
     let mut occupied = Occupied::default();
     // одиночные — первыми: лес и аллеи держат от них TREE_MIN_SPACING
@@ -688,16 +702,13 @@ pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, RowTrees, usize, 
             plant_rows(map, &obstacles, occupied.clone(), layout),
         );
     }
-    let standalone_count = standalone.len();
-    let mut trees = standalone;
-    trees.extend(woods);
-    (trees, rows, asked, standalone_count)
+    (standalone, woods, rows, asked)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::model::{AreaKind, RoadClass, TreeNode, TreeRow};
+    use crate::map::osm::model::{AreaKind, RoadClass, TreeCompose, TreeNode, TreeRow};
     use crate::settings::TREE_DENSITY_MIN;
 
     /// Прямой ряд длиной `length` вдоль оси X, на высоте 1000 — подальше от
@@ -1048,19 +1059,20 @@ mod tests {
         assert_eq!(planted[0].0, Vec2::new(1050.0, 1020.0));
     }
 
-    /// В доме дерево не сажается даже по данным, а вот дорога — не преграда:
-    /// уличные деревья и стоят у кромки (та же логика, что у
-    /// [`TreeRowPlacement::Keep`]).
+    /// В доме и на полотне (или канте) дороги дерево не сажается даже по
+    /// данным, а у самой кромки — живёт: зазора кроны у одиночных нет
+    /// (та же логика, что у [`TreeRowPlacement::Keep`]).
     #[test]
-    fn standalone_respects_solid_but_not_roads() {
+    fn standalone_avoids_buildings_and_roadbed_but_keeps_kerbside() {
         let mut map = MapData::default();
         map.buildings.push(building_on_the_row());
         map.roads.push(road_across_the_row());
         map.tree_nodes.push(node_at(1050.0, 1000.0)); // внутри дома
-        map.tree_nodes.push(node_at(1050.0, 950.0)); // на дороге
+        map.tree_nodes.push(node_at(1050.0, 950.0)); // на полотне (ось дороги)
+        map.tree_nodes.push(node_at(1058.0, 950.0)); // за кантом, на тротуаре
         let planted = plant_nodes(&map);
         assert_eq!(planted.len(), 1);
-        assert_eq!(planted[0].0, Vec2::new(1050.0, 950.0));
+        assert_eq!(planted[0].0, Vec2::new(1058.0, 950.0));
     }
 
     /// Две ноды ближе минимального зазора — одно дерево: в OSM встречаются
@@ -1123,14 +1135,56 @@ mod tests {
             ..MapData::default()
         };
         map.tree_nodes.push(node_at(2000.0, 2000.0));
-        let (trees, _, _, standalone) = plant_trees(&map);
-        assert_eq!(standalone, 1);
-        assert_eq!(trees[0].0, Vec2::new(2000.0, 2000.0));
-        assert_eq!(trees[0].2, 0.0);
+        let (standalone, woods, rows, _) = plant_trees(&map);
+        assert_eq!(standalone.len(), 1);
         assert!(
-            trees.len() > 1,
+            !woods.is_empty(),
             "лес не посадился рядом с одиночным деревом"
         );
-        assert!(trees.windows(2).all(|pair| pair[0].2 <= pair[1].2));
+        map.standalone_trees = standalone;
+        map.wood_trees = woods;
+        map.row_trees = rows;
+
+        map.compose_trees(TreeCompose::default());
+        assert_eq!(map.trees[0].0, Vec2::new(2000.0, 2000.0));
+        assert_eq!(map.tree_appears_at[0], 0.0);
+        assert!(
+            map.tree_appears_at
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1])
+        );
+    }
+
+    /// Тумблер источника выключает своё слагаемое и не трогает чужие.
+    #[test]
+    fn compose_toggles_exclude_sources() {
+        let mut map = MapData {
+            woods: vec![wood_square()],
+            ..MapData::default()
+        };
+        map.tree_nodes.push(node_at(2000.0, 2000.0));
+        let (standalone, woods, rows, _) = plant_trees(&map);
+        map.standalone_trees = standalone;
+        map.wood_trees = woods;
+        map.row_trees = rows;
+
+        map.compose_trees(TreeCompose {
+            standalone: false,
+            ..TreeCompose::default()
+        });
+        assert_eq!(map.trees.len(), map.wood_trees.len());
+
+        map.compose_trees(TreeCompose {
+            woods: false,
+            ..TreeCompose::default()
+        });
+        assert_eq!(map.trees.len(), map.standalone_trees.len());
+
+        map.compose_trees(TreeCompose {
+            woods: false,
+            standalone: false,
+            ..TreeCompose::default()
+        });
+        assert!(map.trees.is_empty());
     }
 }

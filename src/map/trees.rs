@@ -14,7 +14,7 @@ pub use self::conifer::ConiferField;
 use crate::loading::AppState;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::signed_ring_area;
-use crate::map::osm::{MapData, TreeRowLayout, TreeRowPlacement};
+use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
@@ -713,21 +713,11 @@ pub struct TreeStyle {
     /// показывает префикс набора (см. [`visible_count`]) — деревья при движении
     /// ползунка не пересаживаются, а появляются и исчезают.
     pub density: f32,
-    /// Что делать с деревом аллеи (`natural=tree_row`), попавшим на занятое
-    /// место. Обе раскладки посчитаны на загрузке, так что переключение только
-    /// пересобирает `MapData::trees` (`recompose_row_trees`).
-    pub row_placement: TreeRowPlacement,
-    /// Слушать ли шаг посадки из тегов OSM (`spacing` / `count`). `true` — такой
-    /// ряд стоит целиком на любом шаге ползунка плотности, `false` — теги
-    /// игнорируются и ряд подчиняется ползунку наравне с лесом. Меняет позиции,
-    /// а не вид, поэтому раскладка под неё считается на загрузке заранее.
-    pub row_osm_spacing: bool,
-    /// Стык ленты зелёной подложки аллеи (`map::spawn::spawn_tree_row_band`).
-    pub row_join: RoadJoin,
-    /// Сглаживание той же подложки — Chaikin, как у дорог.
-    pub row_smoothing: RoadSmoothing,
-    /// Тёмный кант по краю подложки, отдельным слоем под заливкой.
-    pub row_casing: bool,
+    /// Лесные массивы включены. Выключение убирает из мира лес целиком, аллеи и
+    /// одиночные деревья живут своими тумблерами.
+    pub woods: bool,
+    /// Одиночные деревья из OSM-нод (`natural=tree`) включены.
+    pub standalone: bool,
 }
 
 impl Default for TreeStyle {
@@ -739,17 +729,53 @@ impl Default for TreeStyle {
             shape: TreeShape::default(),
             conifer_share: 0.1,
             density: 1.0,
-            row_placement: TreeRowPlacement::default(),
-            row_osm_spacing: TreeRowLayout::default().osm_spacing,
-            row_join: RoadJoin::default(),
+            woods: true,
+            standalone: true,
+        }
+    }
+}
+
+/// Стиль аллей (`natural=tree_row`) — своя панель Tree rows, отдельная от
+/// Trees так же, как Buildings: у аллей свой набор ручек — состав посадки и
+/// вид зелёной подложки. Вид крон аллейные деревья наследуют из [`TreeStyle`].
+#[derive(Resource, Reflect, SettingsGroup, Clone, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "tree_rows")]
+pub struct TreeRowStyle {
+    /// Аллеи включены. Выключение убирает и деревья рядов, и зелёную подложку.
+    pub enabled: bool,
+    /// Что делать с деревом аллеи, попавшим на занятое место. Обе раскладки
+    /// посчитаны на загрузке, так что переключение только пересобирает
+    /// `MapData::trees` (`recompose_row_trees`).
+    pub placement: TreeRowPlacement,
+    /// Слушать ли шаг посадки из тегов OSM (`spacing` / `count`). `true` — такой
+    /// ряд стоит целиком на любом шаге ползунка плотности, `false` — теги
+    /// игнорируются и ряд подчиняется ползунку наравне с лесом. Меняет позиции,
+    /// а не вид, поэтому раскладка под неё считается на загрузке заранее.
+    pub osm_spacing: bool,
+    /// Стык ленты зелёной подложки аллеи (`map::spawn::spawn_tree_row_band`).
+    pub join: RoadJoin,
+    /// Сглаживание той же подложки — Chaikin, как у дорог.
+    pub smoothing: RoadSmoothing,
+    /// Тёмный кант по краю подложки, отдельным слоем под заливкой.
+    pub casing: bool,
+}
+
+impl Default for TreeRowStyle {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            placement: TreeRowPlacement::default(),
+            osm_spacing: TreeRowLayout::default().osm_spacing,
+            join: RoadJoin::default(),
             // не `Off`, как у дорог: улица углом на повороте выглядит улицей, а
             // лес — никогда. Полоса без сглаживания читается как нарисованная
             // линия, а не как заросшая обочина
-            row_smoothing: RoadSmoothing::Light,
+            smoothing: RoadSmoothing::Light,
             // у дороги кант отделяет полотно от фона, у зарослей отделять нечего:
             // подложка и так темнее газона, а второй зелёный контур читается как
             // ещё одна дорожка вдоль аллеи
-            row_casing: false,
+            casing: false,
         }
     }
 }
@@ -770,7 +796,7 @@ impl TreeStyle {
 /// Породе прореживание ортогонально: её решает поле хвои по координатам, так
 /// что доля хвои в прореженном наборе та же, а дерево при движении ползунка
 /// плотности породу не меняет.
-fn visible_count(appears_at: &[f32], density: f32) -> usize {
+pub fn visible_count(appears_at: &[f32], density: f32) -> usize {
     appears_at.partition_point(|&at| at <= density)
 }
 
@@ -862,7 +888,8 @@ pub fn spawn_trees(
     }
 }
 
-/// Сборка `MapData::trees` из леса и аллей выбранной политики размещения.
+/// Сборка `MapData::trees` из включённых источников: одиночные деревья, лес и
+/// аллеи выбранной политики размещения.
 ///
 /// Меняется сам набор деревьев, а не только их вид, поэтому вслед за сборкой
 /// пересчитывается поле хвои: оно индексировано по `MapData::trees`, и без
@@ -874,16 +901,22 @@ pub fn spawn_trees(
 pub fn recompose_row_trees(
     mut map: ResMut<MapData>,
     style: Res<TreeStyle>,
+    rows: Res<TreeRowStyle>,
     mut field: ResMut<ConiferField>,
 ) {
-    let layout = TreeRowLayout {
-        placement: style.row_placement,
-        osm_spacing: style.row_osm_spacing,
+    let compose = TreeCompose {
+        layout: TreeRowLayout {
+            placement: rows.placement,
+            osm_spacing: rows.osm_spacing,
+        },
+        woods: style.woods,
+        rows: rows.enabled,
+        standalone: style.standalone,
     };
-    if map.composed_for == Some(layout) {
+    if map.composed_for == Some(compose) {
         return;
     }
-    map.compose_trees(layout);
+    map.compose_trees(compose);
     field.resample(&map.trees);
     field.set_share(style.conifer_share);
 }

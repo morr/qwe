@@ -1,7 +1,8 @@
-//! Панель стиля дорожных лент: стык на изломе, сглаживание осевой, кант.
-//! Полей ввода в `bevy_ui` нет, поэтому каждая строка — кнопка, листающая
-//! значение по кругу (как у панели деревьев); правка `RoadStyle` пересобирает
-//! дорожные слои (`map::roads::rebuild_roads`).
+//! Панель стиля аллей (`natural=tree_row`) — отделена от панели Trees так же,
+//! как Buildings: тумблер аллей целиком, состав посадки (политика размещения,
+//! источник шага) и три ручки зелёной подложки. Каждая строка — кнопка,
+//! листающая значение по кругу; правка `TreeRowStyle` пересобирает набор
+//! деревьев и подложку (`map::mod` — та же цепочка, что у `TreeStyle`).
 
 use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
@@ -11,14 +12,13 @@ use bevy::ui_widgets::{Activate, Button};
 
 use bevy::prelude::*;
 
-use crate::map::{RoadJoin, RoadSmoothing, RoadStyle};
+use crate::map::{RoadJoin, RoadSmoothing, TreeRowPlacement, TreeRowStyle};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
 };
 
-/// Строки — как у панелей деревьев и зданий: плотный фон поверх полупрозрачной
-/// панели.
+/// Строки — как у соседних панелей: плотный фон поверх полупрозрачной панели.
 const ROW_LIGHTEN: f32 = 0.0;
 const HOVER_LIGHTEN: f32 = 0.12;
 const PRESSED_LIGHTEN: f32 = 0.24;
@@ -29,7 +29,10 @@ fn row_color(lighten: f32) -> Color {
 
 /// Какое поле стиля листает кнопка — она же адресует подпись значения.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum RoadStyleRow {
+enum TreeRowStyleRow {
+    Enabled,
+    Placement,
+    Spacing,
     Join,
     Smoothing,
     Casing,
@@ -37,31 +40,29 @@ enum RoadStyleRow {
 
 /// Текст значения в строке.
 #[derive(Component)]
-struct RoadStyleValueLabel(RoadStyleRow);
+struct TreeRowStyleValueLabel(TreeRowStyleRow);
 
-pub struct UiRoadStylePlugin;
+pub struct UiTreeRowStylePlugin;
 
-impl Plugin for UiRoadStylePlugin {
+impl Plugin for UiTreeRowStylePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_road_style_panel)
+        app.add_systems(Startup, render_tree_row_style_panel)
             .add_systems(
                 Update,
                 (
                     highlight_rows,
                     // и клик по кнопке, и правка по BRP
-                    sync_row_values.run_if(resource_changed::<RoadStyle>),
+                    sync_row_values.run_if(resource_changed::<TreeRowStyle>),
                 ),
             );
     }
 }
 
-fn render_road_style_panel(mut commands: Commands, style: Res<RoadStyle>) {
+fn render_tree_row_style_panel(mut commands: Commands, style: Res<TreeRowStyle>) {
     let panel = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                // `bottom` доедет от stack_right_column: под панелью стоят
-                // Buildings и Trees, а Trees меняет высоту на ходу
                 bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 right: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
@@ -72,41 +73,77 @@ fn render_road_style_panel(mut commands: Commands, style: Res<RoadStyle>) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(3),
+            UiRightColumnSlot(0),
             GameUiRoot,
             Visibility::Hidden,
-            Name::new("road_style_panel"),
-            children![panel_header("Roads", PanelCount::Roads)],
+            Name::new("tree_row_style_panel"),
+            children![panel_header("Tree rows", PanelCount::TreeRows)],
         ))
         .id();
 
     spawn_row(
         &mut commands,
         panel,
-        RoadStyleRow::Join,
+        TreeRowStyleRow::Enabled,
+        "Rows",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
+            style.enabled = !style.enabled;
+        },
+    );
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeRowStyleRow::Placement,
+        "Placement",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
+            style.placement = next_in(&TreeRowPlacement::ALL, style.placement);
+        },
+    );
+    // откуда берётся шаг посадки ряда. `OSM` — из тегов `spacing`/`count`, и
+    // такой ряд ползунок плотности не трогает; `slider` — теги игнорируются, и
+    // ряд подчиняется ползунку наравне с лесом
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeRowStyleRow::Spacing,
+        "Spacing",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
+            style.osm_spacing = !style.osm_spacing;
+        },
+    );
+    // те же три ручки, что у панели Roads, но **свои**: ломаная аллеи и ломаная
+    // улицы приходят из разных данных, и подложка обязана выглядеть лесом даже
+    // там, где дороги оставлены нетронутыми
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeRowStyleRow::Join,
         "Joins",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<RoadStyle>| {
+        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
             style.join = next_in(&RoadJoin::ALL, style.join);
         },
     );
     spawn_row(
         &mut commands,
         panel,
-        RoadStyleRow::Smoothing,
+        TreeRowStyleRow::Smoothing,
         "Smoothing",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<RoadStyle>| {
+        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
             style.smoothing = next_in(&RoadSmoothing::ALL, style.smoothing);
         },
     );
     spawn_row(
         &mut commands,
         panel,
-        RoadStyleRow::Casing,
+        TreeRowStyleRow::Casing,
         "Casing",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<RoadStyle>| {
+        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
             style.casing = !style.casing;
         },
     );
@@ -124,9 +161,9 @@ fn next_in<T: Copy + PartialEq>(values: &[T], current: T) -> T {
 fn spawn_row<M>(
     commands: &mut Commands,
     panel: Entity,
-    row: RoadStyleRow,
+    row: TreeRowStyleRow,
     label: &str,
-    style: &RoadStyle,
+    style: &TreeRowStyle,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
     let button = commands
@@ -164,7 +201,7 @@ fn spawn_row<M>(
                     },
                 ),
                 (
-                    RoadStyleValueLabel(row),
+                    TreeRowStyleValueLabel(row),
                     Text::new(row_value(row, style)),
                     TextFont {
                         font_size: FontSize::Px(12.),
@@ -179,17 +216,21 @@ fn spawn_row<M>(
     commands.entity(panel).add_child(button);
 }
 
-fn row_value(row: RoadStyleRow, style: &RoadStyle) -> String {
+fn row_value(row: TreeRowStyleRow, style: &TreeRowStyle) -> String {
+    let on_off = |value: bool| (if value { "On" } else { "Off" }).to_string();
     match row {
-        RoadStyleRow::Join => style.join.label().to_string(),
-        RoadStyleRow::Smoothing => style.smoothing.label().to_string(),
-        RoadStyleRow::Casing => if style.casing { "On" } else { "Off" }.to_string(),
+        TreeRowStyleRow::Enabled => on_off(style.enabled),
+        TreeRowStyleRow::Placement => style.placement.label().to_string(),
+        TreeRowStyleRow::Spacing => (if style.osm_spacing { "OSM" } else { "slider" }).to_string(),
+        TreeRowStyleRow::Join => style.join.label().to_string(),
+        TreeRowStyleRow::Smoothing => style.smoothing.label().to_string(),
+        TreeRowStyleRow::Casing => on_off(style.casing),
     }
 }
 
-/// Подсветка строки под курсором и при нажатии (как у панели деревьев).
+/// Подсветка строки под курсором и при нажатии (как у соседних панелей).
 fn highlight_rows(
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<RoadStyleRow>>,
+    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<TreeRowStyleRow>>,
 ) {
     for (hovered, pressed, mut background) in &mut rows {
         let lighten = if pressed {
@@ -204,7 +245,10 @@ fn highlight_rows(
 }
 
 /// Актуализация подписей после смены стиля (кликом или по BRP).
-fn sync_row_values(style: Res<RoadStyle>, mut labels: Query<(&RoadStyleValueLabel, &mut Text)>) {
+fn sync_row_values(
+    style: Res<TreeRowStyle>,
+    mut labels: Query<(&TreeRowStyleValueLabel, &mut Text)>,
+) {
     for (label, mut text) in &mut labels {
         text.0 = row_value(label.0, &style);
     }

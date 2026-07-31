@@ -30,7 +30,7 @@ use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::ConiferField;
 use crate::map::osm::MapData;
-use crate::map::trees::TreeStyle;
+use crate::map::trees::{TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE, Z_CONIFER_NOISE_OVERLAY};
@@ -140,12 +140,15 @@ impl Plugin for UiDebugTogglesPlugin {
                         .run_if(|doors: Res<DebugDoors>| doors.0)
                         .run_if(in_state(AppState::Playing)),
                     sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
-                    // подсвеченная область следует за ползунком доли хвои
+                    // подсвеченная область следует за ползунком доли хвои; смена
+                    // состава деревьев (тумблеры Trees / Tree rows) меняет сам
+                    // набор, по которому посчитано поле
                     sync_conifer_noise_overlay
                         .run_if(in_state(AppState::Playing))
                         .run_if(
                             resource_changed::<DebugConiferNoise>
-                                .or_else(resource_changed::<TreeStyle>),
+                                .or_else(resource_changed::<TreeStyle>)
+                                .or_else(resource_changed::<TreeRowStyle>),
                         ),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
