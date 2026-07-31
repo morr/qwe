@@ -25,6 +25,7 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → woods 0.55 → grass
   0.6 → sand 0.7 → water 1 → alley casings 1.4 → alleys 1.5 → road casings 1.9 → roads 2
+  → bridge casings 2.1 → bridges 2.2
   → rails 2.4 → rail dashes 2.5 → corpses 3 → portal 4 → buildings 5 → units → tree
   shadows 19 → trees 20. Three more
   live in their own modules: `Z_BUILDING_SHADOW` 4.5 and `Z_FACADE` 4.9
@@ -129,7 +130,8 @@ in `main.rs`.
     doors on this building's outline, empty for most buildings; see **Entrances**.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
-    z). `bridge` and `passage` flags — see navmesh.
+    z). `bridge` and `passage` flags — the navmesh carves (see navmesh); `bridge` also
+    moves the road into the bridge deck layers (see **Bridge layers** below).
   - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
     `narrow_gauge` / `subway` 4 → `tram` 1.2). `RailKind: Active | Tram | Disused` — the
     kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
@@ -460,6 +462,20 @@ in `main.rs`.
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
+- **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
+  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
+  (`Z_BRIDGE` 2.2): a gray **curb** (`BRIDGE_CURB_COLOR` 0.60, 12% of the width clamped
+  0.8–2 m) under the fill in the class color. The 2GIS look — the curb bands along both
+  deck edges are what makes a bridge read as a bridge, so the curb draws **always**,
+  independent of `RoadStyle::casing`, and is both darker and thicker than a casing so
+  the two never blend. Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
+  in a square cut; a `Round` half-disc or the `Square` end-extension would poke a curb
+  tongue past the bridge end. The deck sits above `Z_ROAD` so an overpass covers the
+  street it crosses, and below `Z_RAIL` so a track on the bridge stays visible; curbs
+  below fills for the casing reason (a junction of two bridge ways is never cut by a
+  curb band). Street and footbridge fills share one mesh — bridge-over-bridge overlap
+  is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
+  rail bridges are out of scope.
 - **Rail layers** (`map/roads.rs`, same file and the same `RoadLayerTag`, so a style
   change rebuilds them with the roads) — osm-carto's dashed railway, two merged meshes:
   a dark bed at `Z_RAIL` (2.4) and a white dash pattern at `Z_RAIL_DASH` (2.5), 6 m on /

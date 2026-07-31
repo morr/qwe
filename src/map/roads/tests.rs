@@ -161,3 +161,39 @@ fn casing_is_wider_than_the_fill() {
     let fill = 3.5;
     assert!(extent(fill + 2.0 * casing_width(fill)) > extent(fill));
 }
+
+#[test]
+fn bridge_curb_is_thicker_than_a_casing() {
+    // бордюр обязан торчать из-под канта на любом классе — иначе при
+    // включённом канте мост неотличим от окантованной дороги
+    for width in [3.5_f32, 5.0, 8.0, 16.0] {
+        assert!(bridge_curb_width(width) > casing_width(width));
+        assert!(bridge_curb_width(width) >= *BRIDGE_CURB_RANGE.start());
+        assert!(bridge_curb_width(width) <= *BRIDGE_CURB_RANGE.end());
+    }
+}
+
+#[test]
+fn bridge_curb_ends_are_square_under_every_join() {
+    let points = [Vec2::ZERO, Vec2::new(20.0, 0.0)];
+    let max_x = |builder: &MeshBuilder| {
+        builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[0])
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+
+    // ровный срез: бордюр кончается ровно на конце осевой при любом стиле стыка
+    for join in RoadJoin::ALL {
+        let mut curb = MeshBuilder::default();
+        push_bridge_curb(&mut curb, &points, 5.0, join);
+        assert!(!curb.is_empty());
+        assert!(max_x(&curb) <= 20.0 + 1e-4, "curb pokes past the deck end");
+    }
+
+    // а заливка со стилем Round — полудиск за концом, для контраста
+    let mut fill = MeshBuilder::default();
+    push_ribbon(&mut fill, &points, 5.0, LinearRgba::WHITE, RoadJoin::Round);
+    assert!(max_x(&fill) > 20.0);
+}
