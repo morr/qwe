@@ -93,9 +93,10 @@ in `main.rs`.
 - **Overpass** — the Overpass API (`overpass-api.de`), queried once with `[out:json]` +
   `out geom` (inline geometry, no node lookup). Query covers: `building` (way+rel),
   `highway` (way), `natural=water` / `waterway=riverbank` (way+rel), `leisure=park|garden`,
-  `landuse=recreation_ground|forest` + `natural=wood`, `landuse=grass|meadow` /
-  `natural=grassland|meadow`, `natural=sand|beach`, `barrier=city_wall`. The bbox is
-  `MAP_SIZE` around the selected `City`'s geo center.
+  `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
+  `landuse=grass|meadow` / `natural=grassland|meadow`, `natural=sand|beach`,
+  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected `City`'s geo center.
+  `QUERY_VERSION` is **5** (v3 added `entrance` nodes, v4 `railway`, v5 `natural=tree_row`).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -143,7 +144,20 @@ in `main.rs`.
     map. **Rails never touch the navmesh** — see below.
   - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
     impassable.
-  - **trees** — `(pos, radius)` pairs, precomputed at parse.
+  - **TreeRow** — `natural=tree_row`: an avenue's centerline polyline plus what the data
+    itself knows about the planting — `spacing: Option<f32>` (from `spacing`, or the row
+    length spread over `count` / `tree:count`) and `radius: Option<f32>` (half
+    `diameter_crown`). Both are rare, semi-standard tags, so almost every row is
+    `None`/`None` and falls back to the density slider. Like the rail branch, the
+    `tree_row` branch in `parse_way` runs before `highway` and **falls through**.
+  - **wood_trees / row_trees_kept / row_trees_slid** — `(pos, radius, appears_at)`,
+    each sorted by threshold: the forest, and the avenues under each placement policy.
+    Raw material, not what the renderer reads.
+  - **trees** / **tree_appears_at** — what the renderer reads: `MapData::compose_trees`
+    merges the forest with the avenues of the selected policy (a merge, not a sort — both
+    inputs are already ordered). `composed_for` records which policy it was built for;
+    it lives on `MapData` rather than in a system `Local` precisely because a city switch
+    replaces the whole resource, and a `Local` would survive it and skip the rebuild.
 - **Building height** (`parse.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
   LiDAR import) or else `building:levels` + `roof:levels` × `METERS_PER_LEVEL` (3 m)
@@ -278,14 +292,69 @@ in `main.rs`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
-- **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons**, never across
-  a whole park:
+- **Trees** (`map/osm/planting.rs::plant_woods`) — planted **only inside Wood polygons**,
+  never across a whole park (avenues are separate, see **Tree rows** below):
   deterministic LCG seeded per wood polygon, rejection sampling
-  inside the polygon, never on buildings or within `TREE_CLEARANCE` (1.5 m) of a road
-  edge (park alleys count as roads). Also rejected inside water or within
+  inside the polygon, never on buildings or within `TREE_KERB_CLEARANCE` (0.5 m) of a road
+  edge (park alleys count as roads) or `TREE_WALL_CLEARANCE` (1.5 m) of a building wall,
+  the latter measured from the **crown** edge. Also rejected inside water or within
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
   (a lawn is a lawn; overhang from a neighbouring tree is fine).
+- **Tree rows** (`planting.rs::plant_rows`) — avenues from `natural=tree_row`, walked
+  along the polyline instead of sampled inside a polygon. Everything downstream is
+  untouched: row trees land in the same `MapData::trees`, so crowns, the merged shadow
+  layer, the conifer field and the density prefix apply to them without a line of new
+  rendering code.
+  - **A row carries a green band under it** (`spawn.rs::spawn_tree_row_band`) — a ribbon
+    of `TREE_ROW_BAND_WIDTH` (10 m) in `WOOD_COLOR` at `Z_TREE_ROW_BAND`. On the map an
+    avenue is a wood one crown wide, and without the band its crowns hang over bare
+    asphalt while every park tree stands on green. The band is deliberately narrower than
+    the full crown reach (12 m) so crowns overhang its edge — otherwise the eye reads the
+    stripe instead of the trees. It sits just above `Z_WOOD` and therefore *under* alleys
+    and roads, exactly as the wood fill does inside a park.
+    It is its **own entity**, not part of the merged `woods` mesh, because it carries the
+    same three knobs the road ribbons do — **join, smoothing (Chaikin), casing** — reusing
+    `roads::push_ribbon` / `smooth_path` / `casing_width` verbatim. The knobs are separate
+    from the Roads panel's on purpose: an avenue's polyline and a street's come from
+    different data, and the band must read as *wood* even where the roads are left raw.
+    Defaults differ from roads accordingly — smoothing `Light` (a street may turn a
+    corner, a wood never does) and casing off (a second green outline reads as one more
+    path alongside the avenue).
+  - **Spacing comes from the data when the data has it** — and the *Row spacing* toggle
+    decides whether we listen. On `OSM` (default) `TreeRow::spacing` (from `spacing`, or
+    the row length spread over `count`) fixes the planting, and every tree of such a row
+    gets `appears_at = 0`: the slider does not thin what the map already decided. On
+    `slider`, or when the tags are absent, the row is planted at `TREE_MIN_SPACING` (the
+    same physical floor as the forest) and thresholds come from the slider, below.
+  - **Spacing is derived from the forest, not chosen.** A wood at density `d` holds one
+    tree per `TREE_AREA_PER_TREE / d` m², so its neighbours sit roughly `√(410/d)` apart —
+    `row_spacing_at(d)`. A row targets exactly that, so the threshold of slot `n` is
+    `density_for_row_spacing(length / n)` = `n² · 410 / length²`. The **square** is the
+    whole point: the wood is two-dimensional and a row is one-dimensional, and the earlier
+    linear formula (a flat 9 m at `d == 1`) made every avenue about twice as dense as the
+    park beside it — a solid green sausage next to a sparse wood, and it pinned the row to
+    `TREE_MIN_SPACING` at slider settings where the forest never comes near that floor.
+  - **Ranks are bit-reversed** (van der Corput, `scattered_ranks`). On a line the "first
+    n in order" is its *beginning*, so a natural order would show half the avenue and
+    half bare ground. Reversing the index bits makes every prefix spread over the whole
+    row while keeping thinning monotone.
+  - **`TreeRowPlacement`, a toggle in the Trees panel.** Road widths here are
+    *synthesised* from the highway class (8–16 m) and know nothing about real kerbs, so a
+    mapped avenue routinely lies inside our road polygon. **`Keep`** (default) trusts the
+    OSM position and rejects only what can never be right — inside a building or in water
+    (`Obstacles::solid`); the full check would erase exactly the boulevard rows the
+    feature exists for. **`Slide`** runs the full `Obstacles::blocked` and walks a
+    blocked tree forward along the row in 1 m steps, at most one planting step, then
+    gives up on it. Both respect the forest's `Occupied` grid, so a row crossing a wood
+    never stacks on a forest tree.
+  - **Every layout is planted at load.** `TreeRowLayout` = placement × `osm_spacing`, and
+    both axes move *positions*, so all four combinations are planted up front into
+    `MapData::row_trees` (`RowTrees`); flipping either toggle only re-runs
+    `MapData::compose_trees` + a conifer resample (`trees::recompose_row_trees`).
+    Planting on click would mean rebuilding `Obstacles` — index grids over ~7 000
+    buildings and every road — which is far too expensive for a UI toggle; four passes
+    over a few hundred rows are not. The load log prints all four counts.
 - **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m² of wood outline) at
   `TreeStyle::density == 1`; the slider multiplies it, `TREE_DENSITY_MIN` (0.25, in
   `settings.rs`) … `TREE_DENSITY_MAX`, step 0.25. Planting runs once at the ceiling, so
@@ -304,11 +373,14 @@ in `main.rs`.
   order as `MapData::trees` (sorted ascending). Threshold is
   `(rank within its wood + 1) · TREE_AREA_PER_TREE / wood area`, so every wood contributes
   exactly its own share at any density, *including* woods that hit saturation and never
-  filled their ask. `map::trees::visible_count` is then a `partition_point` — thinning is
+  filled their ask. Row trees carry their own threshold (see **Tree rows**), and a row
+  whose spacing came from OSM carries `0` — it stands whole at every step of the slider.
+  `map::trees::visible_count` is then a `partition_point` — thinning is
   monotone (a step up only adds trees) and exact, where the earlier hash-share thinning
   drifted ~20% sparse at 1× because it divided by the nominal ceiling the map never reached.
-- **Asked vs planted** — the log line `osm parse: N trees planted of M asked in T` is the
-  health check: Tula plants 15 356 of 21 155 (73%). The shortfall is real and expected —
+- **Asked vs planted** — the log line
+  `osm parse: N trees planted of M asked, a/b/c/d in R tree rows (keep/slide x osm/slider)
+  in T` is the health check: Tula plants 15 356 of 21 155 (73%). The shortfall is real and expected —
   a wood outline contains alleys, lawns and ponds where nothing can stand, and the last
   few percent of saturation costs unbounded attempts. `ATTEMPTS_PER_TREE` (60) is the knob:
   doubling it from 30 bought +740 trees for +67 ms of load.
@@ -442,19 +514,22 @@ in `main.rs`.
   item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
   `foliage`, `details` (ink), `variance` (brightness spread), `shape`, `conifer_share`
-  (see Conifer stands below), plus `density` (planting multiplier, see Tree density
-  above). **TreeShape** is `Cotton | Conifer | Palm | Mixed` — cloud outline (`bloat`),
+  (see Conifer stands below), `density` (planting multiplier, see Tree density above) and
+  and the five avenue knobs — `row_placement`, `row_osm_spacing`, `row_join`,
+  `row_smoothing`, `row_casing` (see Tree rows above). **TreeShape** is
+  `Cotton | Conifer | Palm | Mixed` — cloud outline (`bloat`),
   spiky cone (`Spiker::simple`), bent fronds (`Spiker::bent`), and conifer stands among
   cloud crowns. Any change reruns `rebuild_trees` (despawn `TreeTag`, respawn from the
-  unchanged `MapData::trees` positions); the panel lives in `ui/trees.rs`, bottom-right,
-  one cycling button per field.
+  `MapData::trees` positions); `row_placement` additionally reruns
+  `recompose_row_trees` first, because it changes the position set itself rather than the
+  look. The panel lives in `ui/trees.rs`, bottom-right, one cycling button per field.
 - **Conifer stands / conifer field** (`map/trees/conifer.rs`, `ConiferField` resource) —
   which trees of a `Mixed` forest are spruce. Conifers grow in **stands**: a patch of
   forest is conifer almost entirely, and between patches there is almost none. So the
   species is **not** a function of the tree's index in `MapData::trees` (that carries no
   geography and would scatter single conifers among the cloud crowns) but of an
   **fbm-simplex field of the trunk's world position** — neighbouring trees read nearly
-  the same value and turn conifer together. `CONIFER_NOISE_FREQUENCY` 1/120 m sets the
+  the same value and turn conifer together. `CONIFER_NOISE_FREQUENCY` 1/400 m sets the
   stand size (~120–250 m across); the seed is fixed, so a city looks the same every run.
   - The cut is an **empirical quantile** of the field's values at the trees, not a fixed
     noise level: fbm is bell-distributed, so «everything above 0.9» would give a share

@@ -184,8 +184,9 @@ fn fill_from_mapdata_blocks_and_carves() {
             points: vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],
             width: 3.0,
         }],
-        trees: Vec::new(),
-        tree_appears_at: Vec::new(),
+        // деревья навмеша не касаются — они и лесные, и аллейные чисто
+        // визуальные, так что перечислять их поля тут нечего
+        ..MapData::default()
     };
 
     let mut navmesh = Navmesh::default();

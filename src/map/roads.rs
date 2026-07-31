@@ -290,13 +290,15 @@ pub fn rebuild_roads(
     );
 }
 
-/// Толщина канта для дороги такой ширины.
-fn casing_width(width: f32) -> f32 {
+/// Толщина канта для ленты такой ширины. Общая с подложкой аллей
+/// (`map::spawn`), чтобы кант везде на карте был одной толщины.
+pub fn casing_width(width: f32) -> f32 {
     (width * CASING_SCALE).clamp(*CASING_RANGE.start(), *CASING_RANGE.end())
 }
 
-/// Лента выбранного стиля.
-fn push_ribbon(
+/// Лента выбранного стиля. Общая с подложкой аллей (`map::spawn`): у неё те же
+/// три настройки, что у дорог, и мапиться на `MeshBuilder` они обязаны одинаково.
+pub fn push_ribbon(
     builder: &mut MeshBuilder,
     points: &[Vec2],
     width: f32,
@@ -343,9 +345,10 @@ fn centerline(road: &RoadLine, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
     smooth_path(&road.points, road.width, smoothing)
 }
 
-/// Сглаживание осевой на копии — общее для дорог и рельсов. Длина среза зажата
-/// шириной ленты, поэтому ширина здесь параметр, а не константа.
-fn smooth_path(points: &[Vec2], width: f32, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
+/// Сглаживание осевой на копии — общее для дорог, рельсов и зелёной полосы под
+/// аллеей (`map::spawn`). Длина среза зажата шириной ленты, поэтому ширина
+/// здесь параметр, а не константа.
+pub fn smooth_path(points: &[Vec2], width: f32, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
     let iterations = smoothing.iterations();
     if iterations == 0 || points.len() < 3 {
         return Cow::Borrowed(points);

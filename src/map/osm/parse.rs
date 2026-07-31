@@ -11,8 +11,8 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, point_in_area,
-    point_in_polygon, ring_bounds,
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeRow, TreeRowLayout,
+    WallLine, point_in_area, point_in_polygon, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -38,6 +38,15 @@ const BUILDING_HEIGHT_RANGE: RangeInclusive<f32> = 2.0..=600.0;
 /// пожарная дверь. Всё остальное (`yes`, `main`, `staircase`, `home`, `shop`,
 /// `service`, `exit`) — дверь как дверь.
 const NON_WALKABLE_ENTRANCES: [&str; 3] = ["no", "garage", "emergency"];
+
+/// Границы правдоподобия шага посадки аллеи, м: ниже кроны сливаются в живую
+/// изгородь, выше — это уже не ряд, а отдельные деревья.
+const TREE_ROW_SPACING_RANGE: RangeInclusive<f32> = 2.0..=40.0;
+
+/// Границы правдоподобия радиуса кроны из `diameter_crown`, м. Шире лесной
+/// вилки (2.5..4): аллейный тополь честно бывает крупнее, а вот `diameter_crown=50`
+/// — опечатка.
+const TREE_ROW_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
 
 /// Шаг квантования координат при привязке входа к зданию, 1/м. Вход в OSM —
 /// как правило общий узел контура здания (Тула 82%, Берлин 79%, Париж 65%),
@@ -99,16 +108,31 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     );
 
     let started = std::time::Instant::now();
-    let (trees, appears_at, asked) = plant_trees(&map);
+    let (woods, rows, asked) = plant_trees(&map);
     // «посажено меньше, чем запрошено» — лес уперся в насыщение, потолок
-    // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`)
+    // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
+    // Аллеи считаются отдельно и под обе политики: `kept` = `slid` означает,
+    // что сдвигать было нечего, а `0 in K tree rows` при `K > 0` — что тег
+    // доехал, а посадка по нему не встала никуда
+    let counts: Vec<String> = TreeRowLayout::ALL
+        .iter()
+        .map(|&layout| rows.get(layout).len().to_string())
+        .collect();
     eprintln!(
-        "osm parse: {} trees planted of {asked} asked in {:?}",
-        trees.len(),
+        "osm parse: {} trees planted of {asked} asked, {} in {} tree rows \
+         (keep/slide x osm/slider) in {:?}",
+        woods.len(),
+        counts.join("/"),
+        map.tree_rows.len(),
         started.elapsed()
     );
-    map.trees = trees;
-    map.tree_appears_at = appears_at;
+    map.wood_trees = woods;
+    map.row_trees = rows;
+    // сборка по политике **по умолчанию**: парсер о `TreeStyle` ничего не знает,
+    // но и отдавать `MapData` с пустым `trees` не должен — иначе каждый читатель
+    // обязан помнить про отдельный шаг сборки. Выбранную игроком политику
+    // доложит `map::trees::recompose_row_trees`, и только если она другая
+    map.compose_trees(TreeRowLayout::default());
     Ok(map)
 }
 
@@ -352,6 +376,47 @@ fn is_building_passage(tags: &HashMap<String, String>) -> bool {
         )
 }
 
+/// Шаг посадки аллеи из тегов, м. `spacing` как есть, иначе `count` /
+/// `tree:count` деревьев, растянутые на длину ряда.
+///
+/// Оба тега на `natural=tree_row` редки и полустандартны — подавляющее
+/// большинство рядов вернёт `None` и получит шаг из ползунка плотности. Границы
+/// нужны не для красоты: в OSM попадаются и `spacing=0.5`, и `count=1`.
+fn row_spacing(tags: &HashMap<String, String>, points: &[Vec2]) -> Option<f32> {
+    let plausible = |meters: f32| TREE_ROW_SPACING_RANGE.contains(&meters).then_some(meters);
+
+    if let Some(step) = tags
+        .get("spacing")
+        .and_then(|value| parse_measure(value))
+        .and_then(plausible)
+    {
+        return Some(step);
+    }
+
+    let count = tags
+        .get("count")
+        .or_else(|| tags.get("tree:count"))
+        .and_then(|value| parse_measure(value))?;
+    if count < 2.0 {
+        return None;
+    }
+    let length: f32 = points
+        .windows(2)
+        .map(|segment| segment[0].distance(segment[1]))
+        .sum();
+    plausible(length / (count - 1.0))
+}
+
+/// Радиус кроны аллеи из `diameter_crown`, м. Тег документирован на
+/// `natural=tree` и переносится на ряд; `None` — радиус разыгрывается, как в лесу.
+fn row_radius(tags: &HashMap<String, String>) -> Option<f32> {
+    let diameter = tags
+        .get("diameter_crown")
+        .and_then(|value| parse_measure(value))?;
+    let radius = diameter / 2.0;
+    TREE_ROW_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
 fn project_points(points: &[LatLon], bounds: &GeoBounds) -> Vec<Vec2> {
     points
         .iter()
@@ -398,6 +463,16 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points: points.clone(),
             width,
             kind,
+        });
+    }
+
+    // аллея — тоже до дорог и тоже без `return`, по той же причине, что рельсы:
+    // ветка не должна затыкаться чужим ранним выходом
+    if element.tags.get("natural").map(String::as_str) == Some("tree_row") {
+        map.tree_rows.push(TreeRow {
+            spacing: row_spacing(&element.tags, &points),
+            radius: row_radius(&element.tags),
+            points: points.clone(),
         });
     }
 

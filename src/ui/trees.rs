@@ -15,7 +15,9 @@ use bevy::ui_widgets::{
 
 use bevy::prelude::*;
 
-use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
+use crate::map::{
+    RoadJoin, RoadSmoothing, TREE_DENSITY_MAX, TreeRowPlacement, TreeShape, TreeStyle,
+};
 use crate::settings::{
     TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
     TREE_DENSITY_STEP,
@@ -71,6 +73,11 @@ enum TreeStyleRow {
     Variance,
     ConiferShare,
     Density,
+    RowPlacement,
+    RowSpacing,
+    RowJoin,
+    RowSmoothing,
+    RowCasing,
 }
 
 /// Текст значения в строке.
@@ -215,6 +222,75 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
         &style,
         (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
         on_density_change,
+    );
+    // под плотностью: обе строки про посадку, а не про вид кроны
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::RowPlacement,
+        "Tree rows",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
+            let next = TreeRowPlacement::ALL
+                .iter()
+                .position(|&placement| placement == style.row_placement)
+                .map_or(0, |index| (index + 1) % TreeRowPlacement::ALL.len());
+            style.row_placement = TreeRowPlacement::ALL[next];
+        },
+    );
+    // откуда берётся шаг посадки ряда. `OSM` — из тегов `spacing`/`count`, и
+    // такой ряд ползунок плотности не трогает; `slider` — теги игнорируются, и
+    // ряд подчиняется ползунку наравне с лесом
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::RowSpacing,
+        "Row spacing",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
+            style.row_osm_spacing = !style.row_osm_spacing;
+        },
+    );
+    // те же три ручки, что у панели Roads, но **свои**: ломаная аллеи и ломаная
+    // улицы приходят из разных данных, и подложка обязана выглядеть лесом даже
+    // там, где дороги оставлены нетронутыми
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::RowJoin,
+        "Row joins",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
+            let next = RoadJoin::ALL
+                .iter()
+                .position(|&join| join == style.row_join)
+                .map_or(0, |index| (index + 1) % RoadJoin::ALL.len());
+            style.row_join = RoadJoin::ALL[next];
+        },
+    );
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::RowSmoothing,
+        "Row smoothing",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
+            let next = RoadSmoothing::ALL
+                .iter()
+                .position(|&smoothing| smoothing == style.row_smoothing)
+                .map_or(0, |index| (index + 1) % RoadSmoothing::ALL.len());
+            style.row_smoothing = RoadSmoothing::ALL[next];
+        },
+    );
+    spawn_row(
+        &mut commands,
+        panel,
+        TreeStyleRow::RowCasing,
+        "Row casing",
+        &style,
+        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
+            style.row_casing = !style.row_casing;
+        },
     );
 }
 
@@ -508,6 +584,16 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
         TreeStyleRow::Variance => format!("{:.2}", style.variance),
         TreeStyleRow::ConiferShare => format!("{:.0}%", style.conifer_share * 100.),
         TreeStyleRow::Density => format!("{:.2}x", style.density),
+        TreeStyleRow::RowPlacement => style.row_placement.label().to_string(),
+        TreeStyleRow::RowSpacing => (if style.row_osm_spacing {
+            "OSM"
+        } else {
+            "slider"
+        })
+        .to_string(),
+        TreeStyleRow::RowJoin => style.row_join.label().to_string(),
+        TreeStyleRow::RowSmoothing => style.row_smoothing.label().to_string(),
+        TreeStyleRow::RowCasing => (if style.row_casing { "On" } else { "Off" }).to_string(),
     }
 }
 
@@ -520,7 +606,12 @@ fn slider_value(row: TreeStyleRow, style: &TreeStyle) -> Option<f32> {
         TreeStyleRow::Shape
         | TreeStyleRow::Foliage
         | TreeStyleRow::Details
-        | TreeStyleRow::Variance => None,
+        | TreeStyleRow::Variance
+        | TreeStyleRow::RowPlacement
+        | TreeStyleRow::RowSpacing
+        | TreeStyleRow::RowJoin
+        | TreeStyleRow::RowSmoothing
+        | TreeStyleRow::RowCasing => None,
     }
 }
 

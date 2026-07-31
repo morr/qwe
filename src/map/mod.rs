@@ -7,7 +7,7 @@ pub mod trees;
 
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
-pub use self::osm::TREE_DENSITY_MAX;
+pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::trees::{ConiferField, TreeShape, TreeStyle};
 
@@ -33,17 +33,22 @@ impl Plugin for MapPlugin {
             .init_resource::<RoadStyle>()
             .register_type::<TreeStyle>()
             .register_type::<TreeShape>()
+            .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
             .register_type::<RoadStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
-                // поле хвои решает форму кроны, поэтому считается до крон.
-                // Сами кроны спавнит `rebuild_trees` — в свежем мире деспавнить
-                // ему нечего, а спавн из одного места избавляет `spawn_map` от
-                // стиля деревьев и поля хвои разом
+                // набор деревьев собирается первым (лес плюс аллеи выбранной
+                // политики), поле хвои решает форму кроны и потому считается по
+                // уже собранному набору и до крон. Сами кроны спавнит
+                // `rebuild_trees` — в свежем мире деспавнить ему нечего, а спавн
+                // из одного места избавляет `spawn_map` от стиля деревьев и поля
+                // хвои разом
                 (
+                    trees::recompose_row_trees,
                     trees::build_conifer_field,
                     spawn::spawn_map,
+                    spawn::rebuild_tree_row_band,
                     trees::rebuild_trees,
                 )
                     .chain()
@@ -52,7 +57,15 @@ impl Plugin for MapPlugin {
             .add_systems(
                 Update,
                 (
-                    trees::rebuild_trees
+                    // тумблер политики аллей меняет сам набор деревьев, так что
+                    // пересборка идёт до крон; сама система выходит сразу, если
+                    // политика не поехала, — отдельного условия на неё не надо
+                    (
+                        trees::recompose_row_trees,
+                        spawn::rebuild_tree_row_band,
+                        trees::rebuild_trees,
+                    )
+                        .chain()
                         .run_if(in_state(AppState::Playing))
                         .run_if(resource_changed::<TreeStyle>)
                         // ресурс «изменён» и в кадре, где он появился, — там

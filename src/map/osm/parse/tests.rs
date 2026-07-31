@@ -618,3 +618,92 @@ fn kremlin_buildings_classified_by_historic_tag() {
     };
     assert_eq!(area_kind(&element), Some(AreaKind::Kremlin));
 }
+
+/// `natural=tree_row` доезжает до `MapData::tree_rows` и даёт деревья вдоль
+/// полилинии. Тег в OSM всегда на way, кольцом почти не бывает — ряд разбирается
+/// как открытая полилиния, а не как площадь.
+#[test]
+fn parses_tree_rows_and_plants_along_them() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "way", "id": 1, "tags": {{"natural": "tree_row"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
+]}}"#,
+        a = lat - d,
+        b = lon - d,
+        c = lon + d,
+    );
+
+    let map = parse(&json, CITY).unwrap();
+    assert_eq!(map.tree_rows.len(), 1);
+    // шага в тегах нет — плотность берётся из ползунка, порог ненулевой
+    assert!(map.tree_rows[0].spacing.is_none());
+    let rows = map.row_trees.get(TreeRowLayout::default());
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|&(.., at)| at > 0.0));
+
+    // деревья лежат на самом ряду, а не где придётся
+    let row = &map.tree_rows[0];
+    for &(pos, ..) in rows {
+        assert!(distance_to_segment(pos, row.points[0], row.points[1]) < 1.0);
+    }
+
+    // и они же — в собранном наборе, который читает рендер
+    assert_eq!(map.trees.len(), rows.len());
+    assert_eq!(map.composed_for, Some(TreeRowLayout::default()));
+}
+
+/// Шаг из данных: `count` растягивается на длину ряда, а ползунок такой ряд не
+/// прореживает — порог нулевой у всех его деревьев.
+#[test]
+fn tree_row_count_tag_fixes_the_spacing() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "way", "id": 1, "tags": {{"natural": "tree_row", "count": "5"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
+]}}"#,
+        a = lat - d,
+        b = lon - d,
+        c = lon + d,
+    );
+
+    let map = parse(&json, CITY).unwrap();
+    let row = &map.tree_rows[0];
+    let length = row.points[0].distance(row.points[1]);
+    let spacing = row.spacing.expect("count даёт шаг");
+    assert!((spacing - length / 4.0).abs() < 1e-2);
+
+    let rows = map.row_trees.get(TreeRowLayout::default());
+    assert_eq!(rows.len(), 5);
+    assert!(rows.iter().all(|&(.., at)| at == 0.0));
+}
+
+/// Мусорные значения тегов не должны становиться посадкой: `spacing=0.1`
+/// смыкает кроны в сплошную кляксу, `count=1` не задаёт шага вовсе.
+#[test]
+fn implausible_tree_row_tags_fall_back_to_the_slider() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    for tags in [
+        r#""natural": "tree_row", "spacing": "0.1""#,
+        r#""natural": "tree_row", "count": "1""#,
+        r#""natural": "tree_row", "diameter_crown": "50""#,
+    ] {
+        let json = format!(
+            r#"{{"elements": [
+  {{"type": "way", "id": 1, "tags": {{{tags}}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
+]}}"#,
+            a = lat - d,
+            b = lon - d,
+            c = lon + d,
+        );
+        let map = parse(&json, CITY).unwrap();
+        assert!(map.tree_rows[0].spacing.is_none(), "{tags}");
+        assert!(map.tree_rows[0].radius.is_none(), "{tags}");
+    }
+}

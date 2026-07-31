@@ -81,6 +81,126 @@ pub struct WallLine {
     pub width: f32,
 }
 
+/// Аллея из OSM (`natural=tree_row`): осевая полилиния и то, что данные знают о
+/// самой посадке. Деревья по ней расставляет `planting::plant_rows`.
+#[derive(Debug, Clone)]
+pub struct TreeRow {
+    pub points: Vec<Vec2>,
+    /// Шаг посадки из тегов, м (`spacing`, либо длина / (`count` − 1)).
+    /// `None` — в данных шага нет, и он берётся из ползунка плотности.
+    ///
+    /// Теги эти в OSM редки и полустандартны, так что почти каждый ряд —
+    /// `None`; ветка «шаг из данных» проверяется тестом, а не городом.
+    pub spacing: Option<f32>,
+    /// Радиус кроны из `diameter_crown`, м. `None` — разыгрывается, как в лесу.
+    pub radius: Option<f32>,
+}
+
+/// Посаженное дерево: центр, радиус кроны и плотность, на которой оно
+/// появляется (см. [`MapData::tree_appears_at`]).
+pub type PlantedTree = (Vec2, f32, f32);
+
+/// Что делать с деревом аллеи, попавшим на занятое место.
+///
+/// Живёт здесь, а не в `planting`, потому что по нему собирается
+/// [`MapData::trees`]: политика — часть состояния модели, а не только аргумент
+/// посадки. Переключается на лету из панели Trees (`TreeStyle::row_placement`),
+/// поэтому оба варианта считаются на загрузке разом (см. `planting::plant_rows`).
+#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TreeRowPlacement {
+    /// Позиция из OSM как есть: выбрасываются только деревья в домах и в воде.
+    ///
+    /// По умолчанию именно так, потому что ширина дороги у нас **синтезирована**
+    /// по классу highway (8–16 м) и о настоящих кромках ничего не знает.
+    /// Аллея вдоль бульвара сплошь и рядом лежит внутри этой ширины, и полная
+    /// проверка `blocked` стёрла бы ровно те ряды, ради которых всё и делалось.
+    #[default]
+    Keep,
+    /// Занятое место — сдвиг вперёд по ряду до свободного; не нашлось на длине
+    /// одного шага — дерева нет. Дороги и газоны при этом уважаются полностью.
+    Slide,
+}
+
+impl TreeRowPlacement {
+    pub const ALL: [Self; 2] = [Self::Keep, Self::Slide];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Slide => "slide",
+        }
+    }
+}
+
+/// Что решает, **где именно** встанут деревья аллеи: политика размещения и то,
+/// слушаем ли мы шаг из тегов OSM. Обе оси меняют позиции, а не вид, поэтому
+/// каждое сочетание раскладывается на загрузке и переключение в UI остаётся
+/// пересборкой массива, а не пересадкой (см. [`RowTrees`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeRowLayout {
+    pub placement: TreeRowPlacement,
+    /// `true` — шаг берётся из `spacing` / `count`, и ползунок плотности такой
+    /// ряд не прореживает. `false` — теги игнорируются, ряд живёт по ползунку
+    /// наравне с лесом.
+    pub osm_spacing: bool,
+}
+
+impl Default for TreeRowLayout {
+    fn default() -> Self {
+        // по умолчанию данные важнее ползунка: если картограф проставил шаг,
+        // он знает про эту аллею больше, чем наша формула
+        Self {
+            placement: TreeRowPlacement::default(),
+            osm_spacing: true,
+        }
+    }
+}
+
+impl TreeRowLayout {
+    pub const ALL: [Self; 4] = [
+        Self {
+            placement: TreeRowPlacement::Keep,
+            osm_spacing: true,
+        },
+        Self {
+            placement: TreeRowPlacement::Keep,
+            osm_spacing: false,
+        },
+        Self {
+            placement: TreeRowPlacement::Slide,
+            osm_spacing: true,
+        },
+        Self {
+            placement: TreeRowPlacement::Slide,
+            osm_spacing: false,
+        },
+    ];
+}
+
+/// Аллеи, разложенные под каждое сочетание [`TreeRowLayout`]. Четыре варианта
+/// вместо одного стоят копейки — рядов на карте сотни против десятков тысяч
+/// лесных деревьев, — а взамен переключение любой из двух ручек не трогает
+/// индексы близости, которые строятся по всем домам и дорогам карты.
+#[derive(Debug, Default)]
+pub struct RowTrees([Vec<PlantedTree>; 4]);
+
+impl RowTrees {
+    fn slot(layout: TreeRowLayout) -> usize {
+        TreeRowLayout::ALL
+            .iter()
+            .position(|&known| known == layout)
+            .expect("TreeRowLayout::ALL перечисляет все сочетания")
+    }
+
+    pub fn get(&self, layout: TreeRowLayout) -> &[PlantedTree] {
+        &self.0[Self::slot(layout)]
+    }
+
+    pub fn set(&mut self, layout: TreeRowLayout, trees: Vec<PlantedTree>) {
+        self.0[Self::slot(layout)] = trees;
+    }
+}
+
 /// Распарсенная карта; остаётся ресурсом после спавна — для отладки.
 #[derive(Resource, Debug, Default)]
 pub struct MapData {
@@ -97,9 +217,26 @@ pub struct MapData {
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
-    /// Деревья в парках: (центр, радиус). Детерминированы данными карты.
+    /// Аллеи (`natural=tree_row`) — исходная геометрия, для отладки; деревья по
+    /// ним уже разложены в [`MapData::row_trees_kept`] / [`MapData::row_trees_slid`].
+    pub tree_rows: Vec<TreeRow>,
+    /// Деревья лесных полигонов, по возрастанию порога появления. Сырьё для
+    /// [`MapData::compose_trees`], а не то, что читает рендер.
+    pub wood_trees: Vec<PlantedTree>,
+    /// Деревья аллей под каждую раскладку, по возрастанию порога.
+    pub row_trees: RowTrees,
+    /// Под какую раскладку собран [`MapData::trees`]; `None` — ещё не собран.
+    ///
+    /// Признак живёт в `MapData`, а не в `Local` системы, именно потому, что при
+    /// смене города ресурс заменяется целиком: `Local` пережил бы замену и
+    /// решил, что для нового города всё уже собрано.
+    pub composed_for: Option<TreeRowLayout>,
+    /// Деревья карты: (центр, радиус). Детерминированы данными карты.
     /// Отсортированы по [`MapData::tree_appears_at`] — по возрастанию плотности,
-    /// на которой дерево появляется.
+    /// на которой дерево появляется. Собираются
+    /// [`MapData::compose_trees`] из леса и аллей выбранной политики; всё
+    /// остальное (рендер, тени, поле хвои, ползунок плотности) видит только этот
+    /// массив и про аллеи не знает.
     pub trees: Vec<(Vec2, f32)>,
     /// На какой плотности (`TreeStyle::density`) появляется каждое дерево —
     /// массив **той же длины и того же порядка**, что [`MapData::trees`].
@@ -110,6 +247,52 @@ pub struct MapData {
     /// поэтому каждый лес отдаёт ровно свою долю, даже если он засаживался до
     /// упора и не добрал запрошенного (см. `planting.rs`).
     pub tree_appears_at: Vec<f32>,
+}
+
+impl MapData {
+    /// Собрать [`MapData::trees`] из леса и аллей выбранной раскладки.
+    ///
+    /// Оба слагаемых уже отсортированы по порогу появления, так что это слияние,
+    /// а не сортировка: префикс по плотности (`trees::visible_count`) обязан
+    /// оставаться монотонным, иначе шаг ползунка вверх убирал бы деревья.
+    pub fn compose_trees(&mut self, layout: TreeRowLayout) {
+        // разбор по полям, а не `self.…`: аллеи читаются, пока выход пишется
+        let MapData {
+            row_trees,
+            wood_trees,
+            trees,
+            tree_appears_at,
+            ..
+        } = self;
+        let rows = row_trees.get(layout);
+
+        trees.clear();
+        tree_appears_at.clear();
+        trees.reserve(wood_trees.len() + rows.len());
+        tree_appears_at.reserve(wood_trees.len() + rows.len());
+
+        let (mut wood, mut row) = (0, 0);
+        while wood < wood_trees.len() || row < rows.len() {
+            // при равных порогах первым идёт лес — порядок должен быть
+            // детерминированным, иначе поле хвои и оттенки крон разъезжаются
+            let take_wood = match (wood_trees.get(wood), rows.get(row)) {
+                (Some(&(.., wood_at)), Some(&(.., row_at))) => wood_at <= row_at,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            let &(position, radius, at) = if take_wood {
+                wood += 1;
+                &wood_trees[wood - 1]
+            } else {
+                row += 1;
+                &rows[row - 1]
+            };
+            trees.push((position, radius));
+            tree_appears_at.push(at);
+        }
+
+        self.composed_for = Some(layout);
+    }
 }
 
 /// Точка внутри кольца (even-odd raycast). Кольцо открытое.

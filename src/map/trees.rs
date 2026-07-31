@@ -13,8 +13,9 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 pub use self::conifer::ConiferField;
 use crate::loading::AppState;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::MapData;
 use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::{MapData, TreeRowLayout, TreeRowPlacement};
+use crate::map::roads::{RoadJoin, RoadSmoothing};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
     TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
@@ -712,6 +713,21 @@ pub struct TreeStyle {
     /// показывает префикс набора (см. [`visible_count`]) — деревья при движении
     /// ползунка не пересаживаются, а появляются и исчезают.
     pub density: f32,
+    /// Что делать с деревом аллеи (`natural=tree_row`), попавшим на занятое
+    /// место. Обе раскладки посчитаны на загрузке, так что переключение только
+    /// пересобирает `MapData::trees` (`recompose_row_trees`).
+    pub row_placement: TreeRowPlacement,
+    /// Слушать ли шаг посадки из тегов OSM (`spacing` / `count`). `true` — такой
+    /// ряд стоит целиком на любом шаге ползунка плотности, `false` — теги
+    /// игнорируются и ряд подчиняется ползунку наравне с лесом. Меняет позиции,
+    /// а не вид, поэтому раскладка под неё считается на загрузке заранее.
+    pub row_osm_spacing: bool,
+    /// Стык ленты зелёной подложки аллеи (`map::spawn::spawn_tree_row_band`).
+    pub row_join: RoadJoin,
+    /// Сглаживание той же подложки — Chaikin, как у дорог.
+    pub row_smoothing: RoadSmoothing,
+    /// Тёмный кант по краю подложки, отдельным слоем под заливкой.
+    pub row_casing: bool,
 }
 
 impl Default for TreeStyle {
@@ -723,6 +739,17 @@ impl Default for TreeStyle {
             shape: TreeShape::default(),
             conifer_share: 0.1,
             density: 1.0,
+            row_placement: TreeRowPlacement::default(),
+            row_osm_spacing: TreeRowLayout::default().osm_spacing,
+            row_join: RoadJoin::default(),
+            // не `Off`, как у дорог: улица углом на повороте выглядит улицей, а
+            // лес — никогда. Полоса без сглаживания читается как нарисованная
+            // линия, а не как заросшая обочина
+            row_smoothing: RoadSmoothing::Light,
+            // у дороги кант отделяет полотно от фона, у зарослей отделять нечего:
+            // подложка и так темнее газона, а второй зелёный контур читается как
+            // ещё одна дорожка вдоль аллеи
+            row_casing: false,
         }
     }
 }
@@ -833,6 +860,32 @@ pub fn spawn_trees(
             Name::new("tree_shadows"),
         ));
     }
+}
+
+/// Сборка `MapData::trees` из леса и аллей выбранной политики размещения.
+///
+/// Меняется сам набор деревьев, а не только их вид, поэтому вслед за сборкой
+/// пересчитывается поле хвои: оно индексировано по `MapData::trees`, и без
+/// пересемплирования порода поехала бы на все деревья после первой же аллеи.
+///
+/// Признак «уже собрано» лежит в `MapData::composed_for`, а не в `Local`: при
+/// смене города ресурс заменяется целиком, а `Local` пережил бы замену и решил,
+/// что для нового города работа сделана.
+pub fn recompose_row_trees(
+    mut map: ResMut<MapData>,
+    style: Res<TreeStyle>,
+    mut field: ResMut<ConiferField>,
+) {
+    let layout = TreeRowLayout {
+        placement: style.row_placement,
+        osm_spacing: style.row_osm_spacing,
+    };
+    if map.composed_for == Some(layout) {
+        return;
+    }
+    map.compose_trees(layout);
+    field.resample(&map.trees);
+    field.set_share(style.conifer_share);
 }
 
 /// Значение поля хвои в каждом посаженном дереве — до спавна крон, потому что
