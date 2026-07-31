@@ -1,17 +1,12 @@
 //! Слой дорог, аллей, ж/д путей и стен Кремля: по ленте на
 //! `RoadLine`/`RailLine`/`WallLine`, слитой в merged-меш на класс. Стиль ленты —
 //! ресурс [`RoadStyle`], переключаемый на лету панелью Roads (`ui/roads.rs`);
-//! правка пересобирает только эти слои ([`rebuild_roads`]).
+//! правка пересобирает только эти слои ([`rebuild_roads`]). Трамвай — в
+//! `map/tram.rs`, со своим стилем и зум-LOD.
 //!
-//! Путь рисуется как в osm-carto: тёмная лента и белая штриховка поверх неё
+//! Ж/д путь рисуется как в osm-carto: тёмная лента и белая штриховка поверх неё
 //! отдельным слоем. Навмеша путь не касается — люди ходят через рельсы как по
 //! земле.
-//!
-//! Мост (`RoadLine::bridge`) уходит из слоёв своего класса в пару
-//! `bridge_casings` + `bridges`: серый бордюр по краям настила (всегда, вне
-//! зависимости от `RoadStyle::casing`) и заливка цветом класса над `Z_ROAD` —
-//! эстакада кроет улицу, которую пересекает, а ровные торцы бордюра читаются
-//! как края настила, вид 2ГИС.
 //!
 //! Раньше дороги рисовал `MeshBuilder::push_polyline` — свой квад на
 //! сегмент, продлённый с обоих концов на полуширины. Стыков у него нет вообще:
@@ -37,8 +32,7 @@ use crate::loading::AppState;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine, WallLine};
 use crate::settings::{
-    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BUILDING, Z_RAIL, Z_RAIL_DASH, Z_ROAD,
-    Z_ROAD_CASING,
+    Z_ALLEY, Z_ALLEY_CASING, Z_BUILDING, Z_RAIL, Z_RAIL_DASH, Z_ROAD, Z_ROAD_CASING,
 };
 
 const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -64,22 +58,6 @@ const RAIL_DASH_LEN: f32 = 6.0;
 const RAIL_DASH_GAP: f32 = 6.0;
 const RAIL_DASH_SCALE: f32 = 0.6;
 
-/// Трамвай — не лента, а линия с поперечной насечкой, как в Яндекс.Картах и
-/// 2ГИС. Причина не в стиле: трамвайный путь лежит **на проезжей части**, и
-/// лента в ширину колеи закрыла бы улицу, по которой он идёт.
-///
-/// Цвет — единственное, чем два этих источника различаются: у Яндекса линия
-/// тёмно-красная, у 2ГИС синяя. Геометрия одна и та же; взят вариант 2ГИС —
-/// синее на сером асфальте видно лучше, а красным на карте уже размечены
-/// стены Кремля.
-const TRAM_COLOR: Color = Color::srgb(0.290, 0.451, 0.780);
-
-/// Шпала: длина поперёк пути, толщина и шаг, м. Насечка обязана быть заметно
-/// длиннее толщины самой линии — иначе она сливается с ней в утолщение.
-const TRAM_TIE_LENGTH: f32 = 4.0;
-const TRAM_TIE_THICKNESS: f32 = 0.7;
-const TRAM_TIE_SPACING: f32 = 6.0;
-
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
 
@@ -87,13 +65,6 @@ const Z_WALL: f32 = Z_BUILDING + 0.1;
 /// быть виден, у магистрали (16 м) — не превратиться во вторую дорогу.
 const CASING_SCALE: f32 = 0.08;
 const CASING_RANGE: RangeInclusive<f32> = 0.3..=1.0;
-
-/// Бордюр моста — серый бетон, общий для улиц и пешеходных мостиков. Темнее
-/// канта (0.702) и толще его на любом классе (диапазоны не пересекаются) —
-/// иначе при включённом канте мост неотличим от окантованной дороги.
-const BRIDGE_CURB_COLOR: Color = Color::srgb(0.6, 0.6, 0.6);
-const BRIDGE_CURB_SCALE: f32 = 0.12;
-const BRIDGE_CURB_RANGE: RangeInclusive<f32> = 0.8..=2.0;
 
 /// Изломы мельче Chaikin не срезает: прямые участки обязаны остаться точками
 /// OSM, иначе сглаживание съедает и без того редкую геометрию длинных улиц.
@@ -192,38 +163,26 @@ pub fn spawn_roads(
     let mut alleys = MeshBuilder::default();
     let mut street_casings = MeshBuilder::default();
     let mut streets = MeshBuilder::default();
-    // Настилы мостов — один меш на улицы и пешеходные мостики разом: белая и
-    // песочная заливки соседствуют, и порядок перекрытия моста над мостом —
-    // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
-    let mut bridge_casings = MeshBuilder::default();
-    let mut bridge_fills = MeshBuilder::default();
     let mut rail_beds = MeshBuilder::default();
     let mut rail_dashes = MeshBuilder::default();
     let mut wall_ribbons = MeshBuilder::default();
 
     for road in roads {
-        let (casing_color, color) = match road.class {
-            RoadClass::Street => (ROAD_CASING_COLOR, ROAD_COLOR),
-            RoadClass::Alley => (ALLEY_CASING_COLOR, ALLEY_COLOR),
+        let (casing, fill, casing_color, color) = match road.class {
+            RoadClass::Street => (
+                &mut street_casings,
+                &mut streets,
+                ROAD_CASING_COLOR,
+                ROAD_COLOR,
+            ),
+            RoadClass::Alley => (
+                &mut alley_casings,
+                &mut alleys,
+                ALLEY_CASING_COLOR,
+                ALLEY_COLOR,
+            ),
         };
         let points = centerline(road, style.smoothing);
-        if road.bridge {
-            // бордюр — всегда, независимо от style.casing: он и есть мост
-            let width = road.width + 2.0 * bridge_curb_width(road.width);
-            push_bridge_curb(&mut bridge_casings, &points, width, style.join);
-            push_ribbon(
-                &mut bridge_fills,
-                &points,
-                road.width,
-                color.to_linear(),
-                style.join,
-            );
-            continue;
-        }
-        let (casing, fill) = match road.class {
-            RoadClass::Street => (&mut street_casings, &mut streets),
-            RoadClass::Alley => (&mut alley_casings, &mut alleys),
-        };
         if style.casing {
             let width = road.width + 2.0 * casing_width(road.width);
             push_ribbon(casing, &points, width, casing_color.to_linear(), style.join);
@@ -232,25 +191,13 @@ pub fn spawn_roads(
     }
 
     for rail in rails {
-        let points = smooth_path(&rail.points, rail.width, style.smoothing);
         let (color, dash_color) = match rail.kind {
-            RailKind::Tram => {
-                // линия и шпалы — один цвет, поэтому лежат в одном слое:
-                // накладываться сами на себя они могут без всякого z-файтинга
-                let color = TRAM_COLOR.to_linear();
-                push_ribbon(&mut rail_beds, &points, rail.width, color, style.join);
-                rail_beds.push_ticks(
-                    &points,
-                    TRAM_TIE_LENGTH,
-                    TRAM_TIE_THICKNESS,
-                    TRAM_TIE_SPACING,
-                    color,
-                );
-                continue;
-            }
+            // трамвай — свой меш со своим стилем и зум-LOD (`map/tram.rs`)
+            RailKind::Tram => continue,
             RailKind::Active => (RAIL_COLOR, RAIL_DASH_COLOR),
             RailKind::Disused => (RAIL_DISUSED_COLOR, RAIL_DISUSED_DASH_COLOR),
         };
+        let points = smooth_path(&rail.points, rail.width, style.smoothing);
         push_ribbon(
             &mut rail_beds,
             &points,
@@ -283,8 +230,6 @@ pub fn spawn_roads(
         &alleys,
         &street_casings,
         &streets,
-        &bridge_casings,
-        &bridge_fills,
         &rail_beds,
         &rail_dashes,
         &wall_ribbons,
@@ -298,8 +243,6 @@ pub fn spawn_roads(
         (alleys, Z_ALLEY, "alleys"),
         (street_casings, Z_ROAD_CASING, "road_casings"),
         (streets, Z_ROAD, "roads"),
-        (bridge_casings, Z_BRIDGE_CASING, "bridge_casings"),
-        (bridge_fills, Z_BRIDGE, "bridges"),
         (rail_beds, Z_RAIL, "rails"),
         (rail_dashes, Z_RAIL_DASH, "rail_dashes"),
         (wall_ribbons, Z_WALL, "walls"),
@@ -354,26 +297,6 @@ pub fn rebuild_roads(
 /// (`map::spawn`), чтобы кант везде на карте был одной толщины.
 pub fn casing_width(width: f32) -> f32 {
     (width * CASING_SCALE).clamp(*CASING_RANGE.start(), *CASING_RANGE.end())
-}
-
-/// Толщина бордюра моста для дороги такой ширины.
-fn bridge_curb_width(width: f32) -> f32 {
-    (width * BRIDGE_CURB_SCALE).clamp(*BRIDGE_CURB_RANGE.start(), *BRIDGE_CURB_RANGE.end())
-}
-
-/// Бордюр моста: торцы всегда [`RibbonCap::Butt`] — настил кончается ровным
-/// срезом, как на 2ГИС. Полудиск `Round` или продление `push_polyline` при
-/// `Square` торчали бы бордюрным языком за конец моста, поэтому мимо
-/// [`push_ribbon`]-обёртки, а стык — как у штриховки ([`dash_join`]).
-fn push_bridge_curb(builder: &mut MeshBuilder, points: &[Vec2], width: f32, join: RoadJoin) {
-    builder.push_ribbon(
-        points,
-        false,
-        width,
-        BRIDGE_CURB_COLOR.to_linear(),
-        dash_join(join),
-        RibbonCap::Butt,
-    );
 }
 
 /// Лента выбранного стиля. Общая с подложкой аллей (`map::spawn`): у неё те же

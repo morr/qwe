@@ -13,7 +13,9 @@ use crate::portal::PortalPos;
 /// ~4.4 — вся карта (5600 м) в кадре при окне 1280.
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 4.5;
-const START_ZOOM: f32 = 0.4;
+/// Публичный: от него считается стартовая ступень зум-LOD трамвая
+/// (`map::tram::TramZoomBucket`).
+pub const START_ZOOM: f32 = 0.4;
 /// Множитель зума на один щелчок колеса.
 const ZOOM_STEP: f32 = 1.12;
 /// Скорость WASD-пана в *экранных* логических пикселях в секунду — как у

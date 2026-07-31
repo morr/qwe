@@ -25,8 +25,7 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → woods 0.55 → grass
   0.6 → sand 0.7 → water 1 → alley casings 1.4 → alleys 1.5 → road casings 1.9 → roads 2
-  → bridge casings 2.1 → bridges 2.2
-  → rails 2.4 → rail dashes 2.5 → corpses 3 → portal 4 → buildings 5 → units → tree
+  → rails 2.4 → rail dashes 2.5 → tram 2.6 → corpses 3 → portal 4 → buildings 5 → units → tree
   shadows 19 → trees 20. Three more
   live in their own modules: `Z_BUILDING_SHADOW` 4.5 and `Z_FACADE` 4.9
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
@@ -130,14 +129,14 @@ in `main.rs`.
     doors on this building's outline, empty for most buildings; see **Entrances**.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
-    z). `bridge` and `passage` flags — the navmesh carves (see navmesh); `bridge` also
-    moves the road into the bridge deck layers (see **Bridge layers** below).
+    z). `bridge` and `passage` flags — see navmesh.
   - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
     `narrow_gauge` / `subway` 4 → `tram` 1.2). `RailKind: Active | Tram | Disused` — the
     kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
-    (see Rail layers), **Disused** (`abandoned` / `disused` / `razed` / `dismantled`)
-    is the `Active` ribbon washed out. Tram's width is a line thickness, not a gauge —
-    it runs *on* the carriageway, so a gauge-wide ribbon would cover its own street.
+    (see **Tram** below — its width from parse is ignored, the zoom LOD picks it),
+    **Disused** (`abandoned` / `disused` / `razed` / `dismantled`)
+    is the `Active` ribbon washed out. A tram runs *on* the carriageway, so a
+    gauge-wide ribbon would cover its own street.
     `parse::rail_class` is a
     **whitelist**, so the station vocabulary (`platform`, `station`, `switch`, `signal`,
     `construction`, …) never becomes a line. The rail branch in `parse_way` runs *before*
@@ -462,40 +461,48 @@ in `main.rs`.
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
-- **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
-  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2): a gray **curb** (`BRIDGE_CURB_COLOR` 0.60, 12% of the width clamped
-  0.8–2 m) under the fill in the class color. The 2GIS look — the curb bands along both
-  deck edges are what makes a bridge read as a bridge, so the curb draws **always**,
-  independent of `RoadStyle::casing`, and is both darker and thicker than a casing so
-  the two never blend. Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
-  in a square cut; a `Round` half-disc or the `Square` end-extension would poke a curb
-  tongue past the bridge end. The deck sits above `Z_ROAD` so an overpass covers the
-  street it crosses, and below `Z_RAIL` so a track on the bridge stays visible; curbs
-  below fills for the casing reason (a junction of two bridge ways is never cut by a
-  curb band). Street and footbridge fills share one mesh — bridge-over-bridge overlap
-  is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
-  rail bridges are out of scope.
 - **Rail layers** (`map/roads.rs`, same file and the same `RoadLayerTag`, so a style
   change rebuilds them with the roads) — osm-carto's dashed railway, two merged meshes:
   a dark bed at `Z_RAIL` (2.4) and a white dash pattern at `Z_RAIL_DASH` (2.5), 6 m on /
   6 m off, dash width 60% of the bed. Two layers rather than one mesh, for the casing
   reason inverted: coplanar geometry z-fights, and the dashes must sit above *every*
-  bed. Both above `Z_ROAD` (2) so a tram track lies on its street, not under it.
+  bed. Both above `Z_ROAD` (2) so a track lies on its street, not under it.
   `MeshBuilder::push_dashes` is the primitive — a single arclength pass emitting
   `Butt`-capped ribbon chunks, keeping the OSM vertices inside a dash so the pattern
   turns with the track. A way shorter than one dash still gets one, since most ways in a
-  junction are short and a bare bed reads as a road.
-
-  **Tram is drawn differently** — a thin blue line with perpendicular cross ties every
-  6 m (4 m across, 0.7 m thick), the Yandex/2GIS convention; `TRAM_COLOR` is the only
-  thing separating the two (Yandex dark red, 2GIS blue) and we take 2GIS's blue, since
-  red on this map already means kremlin wall.
-  Line and ties share one colour, so both go in the *bed* builder — self-overlap in one
-  mesh costs nothing, and there is no white dash layer for a tram. The primitive is
+  junction are short and a bare bed reads as a road. Tram ways are skipped here — they
+  have their own module.
+- **TramStyle** (resource, BRP-writable, persisted; panel `ui/tram.rs` above Roads) —
+  how the tram track is drawn; any change reruns `rebuild_tram` (despawn the
+  `TramLayerTag` mesh, respawn from the unchanged `MapData::rails`). The tram lives in
+  its own module (`map/tram.rs`) so neither a style change nor a zoom-LOD step ever
+  rebuilds the road/rail meshes. Three knobs: **join** and **smoothing** are the same
+  enums as RoadStyle's (`RoadJoin` / `RoadSmoothing`); **ties** (`TieDensity: Sparse |
+  Normal | Dense`) multiplies the tie spacing (×1.6 / ×1 / ×0.6) on top of whatever the
+  zoom LOD picked. Regular railways are *not* governed by this style — they follow
+  RoadStyle with the road layers.
+- **Tram** (`map/tram.rs`) — a thin blue line with perpendicular cross ties, the
+  Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark
+  red, 2GIS blue) and we take 2GIS's blue, since red on this map already means kremlin
+  wall. Line and ties share one colour, so both go in one mesh (`TramLayerTag`, `Z_TRAM`
+  2.6 — above the rail dashes at crossings, name `tram`) — self-overlap costs nothing,
+  and there is no white dash layer for a tram. The tie primitive is
   `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
   a perpendicular bar rather than a piece of the path, and the first one is offset half
   a step so a bar never lands exactly on a way endpoint and pairs into a cross at joins.
+
+  **Tram zoom LOD** (`TRAM_LODS`) — the mesh is rebuilt at discrete zoom thresholds,
+  pseudo-gizmo style: five buckets over the camera zoom range, each with its own line
+  width (targeting ~1.8 screen px, so the line neither fattens close up nor vanishes far
+  out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~6 px);
+  the farthest bucket drops ties entirely, as 2GIS does at city scale. `TramZoomBucket`
+  (resource, **not** persisted — zoom resets to `START_ZOOM` on every world entry) holds
+  the current bucket index; `update_tram_zoom_bucket` recomputes it each Update frame
+  from `PanCamera::zoom_factor` via `set_if_neq`, so `rebuild_tram` fires only on an
+  actual threshold crossing, never per frame. The tram centerline is smoothed with a
+  fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
+  path itself is identical across buckets and LOD switches don't wiggle the track.
+  `RailLine::width` from parse is ignored for trams.
 - **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The panel lives in
@@ -835,7 +842,7 @@ in `main.rs`.
   the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the change up.
   Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
 - **Right UI column** (`ui/mod.rs::stack_right_column`, `UiRightColumnSlot`) — Trees →
-  Buildings → Roads → hotkey help, bottom-up. The panels are absolute (`bevy_ui` does not
+  Buildings → Roads → Tram → hotkey help, bottom-up. The panels are absolute (`bevy_ui` does not
   stack them), and the Trees panel changes height at runtime, so each panel's `bottom` is
   the summed **measured** height of those below it instead of a hardcoded constant.
   `ComputedNode::size` is in *physical* pixels — multiply by `inverse_scale_factor` or
