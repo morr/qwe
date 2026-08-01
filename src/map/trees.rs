@@ -18,7 +18,7 @@ use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR};
 use crate::settings::{
-    CONIFER_MIX_DEFAULT, TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
+    TREE_DETAIL_STROKE, TREE_NOISE_MIX_DEFAULT, TREE_OUTLINE_STROKE, TREE_VARIANTS, Z_TREE,
     Z_TREE_SHADOW,
 };
 
@@ -709,11 +709,11 @@ pub struct TreeStyle {
     /// На прочих формах не используется.
     pub conifer_share: f32,
     /// Сила примеси пород при форме `Mixed`, 0..1: к значению поля в дереве
-    /// добавляется `conifer_mix · jitter` по позиции ствола — лиственные
+    /// добавляется `noise_mix · jitter` по позиции ствола — лиственные
     /// вкрапления в хвойных массивах и одиночные ели среди лиственных. Ноль —
     /// сплошные массивы; долю хвои примесь не сдвигает (квантиль считается по
     /// значениям с примесью).
-    pub conifer_mix: f32,
+    pub noise_mix: f32,
     /// Плотность посадки, множитель к базовой (`TREE_DENSITY_MIN..MAX`):
     /// `1` — одно дерево на `TREE_AREA_PER_TREE` (410 м²) леса.
     /// `map::osm::planting` засаживает лес сразу по `TREE_DENSITY_MAX`, а спавн
@@ -735,7 +735,7 @@ impl Default for TreeStyle {
             variance: 0.2,
             shape: TreeShape::default(),
             conifer_share: 0.1,
-            conifer_mix: CONIFER_MIX_DEFAULT,
+            noise_mix: TREE_NOISE_MIX_DEFAULT,
             density: 1.0,
             woods: true,
             standalone: true,
@@ -926,7 +926,7 @@ pub fn recompose_row_trees(
         return;
     }
     map.compose_trees(compose);
-    field.resample(&map.trees, &noise, style.conifer_mix);
+    field.resample(&map.trees, &noise, style.noise_mix);
     field.set_share(style.conifer_share);
 }
 
@@ -940,7 +940,7 @@ pub fn build_conifer_field(
     noise: Res<ConiferNoiseStyle>,
 ) {
     let started = std::time::Instant::now();
-    field.resample(&map.trees, &noise, style.conifer_mix);
+    field.resample(&map.trees, &noise, style.noise_mix);
     field.set_share(style.conifer_share);
     debug!(
         "conifer field: {} trees sampled in {:.1?}",
@@ -950,7 +950,7 @@ pub fn build_conifer_field(
 }
 
 /// Пересемплирование поля после правки параметров шума (панель Noise) или
-/// примеси (`TreeStyle::conifer_mix`). Идёт в цепочке между
+/// примеси (`TreeStyle::noise_mix`). Идёт в цепочке между
 /// [`recompose_row_trees`] и [`rebuild_trees`], и выходит сразу, если поле уже
 /// посчитано под текущие параметры, — так смена состава не платит за второй
 /// resample, а правка цвета листвы не платит вовсе.
@@ -960,11 +960,11 @@ pub fn retune_conifer_field(
     style: Res<TreeStyle>,
     noise: Res<ConiferNoiseStyle>,
 ) {
-    if field.sampled_for(&noise, style.conifer_mix) {
+    if field.sampled_for(&noise, style.noise_mix) {
         return;
     }
     let started = std::time::Instant::now();
-    field.resample(&map.trees, &noise, style.conifer_mix);
+    field.resample(&map.trees, &noise, style.noise_mix);
     field.set_share(style.conifer_share);
     debug!(
         "conifer field retuned: {} trees resampled in {:.1?}",

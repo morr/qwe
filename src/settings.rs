@@ -227,9 +227,9 @@ pub const TREE_CONIFER_SHARE_STEP: f32 = 0.05;
 /// длиной 120 м (первый заход) массивы выходили по 50 м, то есть вкраплениями в
 /// десяток крон, а не участками леса.
 ///
-/// Отсюда и до `CONIFER_MIX_STEP` — дефолты и границы ползунков панелей Noise
+/// Отсюда и до `TREE_NOISE_MIX_STEP` — дефолты и границы ползунков панелей Noise
 /// и Trees: параметры поля живут в ресурсе `map::trees::ConiferNoiseStyle` (и
-/// `TreeStyle::conifer_mix`) и правятся на лету.
+/// `TreeStyle::noise_mix`) и правятся на лету.
 pub const CONIFER_NOISE_WAVELENGTH: f32 = 400.0;
 /// Границы длины волны: 50 м — уже рябь в несколько крон, 1600 м — четверть
 /// карты одной волной.
@@ -254,17 +254,17 @@ pub const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
 pub const CONIFER_NOISE_PERSISTENCE_MIN: f32 = 0.0;
 pub const CONIFER_NOISE_PERSISTENCE_MAX: f32 = 1.0;
 pub const CONIFER_NOISE_PERSISTENCE_STEP: f32 = 0.05;
-/// Сила примеси (`TreeStyle::conifer_mix`): к значению поля в дереве
+/// Сила примеси (`TreeStyle::noise_mix`): к значению поля в дереве
 /// добавляется `mix · jitter`, jitter ∈ ±0.5 детерминированно по позиции
 /// ствола. Ноль — сплошные массивы; 0.1 рвёт их кромки; около 0.2 одиночные
 /// ели добираются до сердцевины лиственных массивов (и наоборот), а массивы
 /// ещё читаются; от ~0.35 кластеризация падает вдвое и лес уходит в
 /// соль-перец — само поле в пределах массива гуляет лишь на 0.1–0.3, и
 /// разброс примеси быстро его перекрикивает.
-pub const CONIFER_MIX_DEFAULT: f32 = 0.1;
-pub const CONIFER_MIX_MIN: f32 = 0.0;
-pub const CONIFER_MIX_MAX: f32 = 1.0;
-pub const CONIFER_MIX_STEP: f32 = 0.05;
+pub const TREE_NOISE_MIX_DEFAULT: f32 = 0.1;
+pub const TREE_NOISE_MIX_MIN: f32 = 0.0;
+pub const TREE_NOISE_MIX_MAX: f32 = 1.0;
+pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
 /// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
 /// к запуску, как и посадка деревьев.
 pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;

@@ -14,8 +14,8 @@ use bevy::prelude::*;
 
 use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::settings::{
-    CONIFER_MIX_MAX, CONIFER_MIX_MIN, CONIFER_MIX_STEP, TREE_CONIFER_SHARE_MAX,
-    TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN, TREE_DENSITY_STEP,
+    TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
+    TREE_DENSITY_STEP, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_STEP,
 };
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
@@ -53,7 +53,7 @@ fn row_color(lighten: f32) -> Color {
 }
 
 /// Какое поле стиля показывает строка — она же адресует подпись и свотч.
-/// `ConiferShare`, `ConiferMix` и `Density` — не кнопки, а ползунки, но подпись
+/// `ConiferShare`, `NoiseMix` и `Density` — не кнопки, а ползунки, но подпись
 /// значения у них общая с остальными строками.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum TreeStyleRow {
@@ -64,7 +64,7 @@ enum TreeStyleRow {
     Details,
     Variance,
     ConiferShare,
-    ConiferMix,
+    NoiseMix,
     Density,
 }
 
@@ -187,14 +187,14 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
         &mut commands,
         panel,
         SliderRow {
-            label: "Mix",
-            value: style.conifer_mix,
-            value_text: row_value(TreeStyleRow::ConiferMix, &style),
-            range: (CONIFER_MIX_MIN, CONIFER_MIX_MAX, CONIFER_MIX_STEP),
+            label: "Noise mix",
+            value: style.noise_mix,
+            value_text: row_value(TreeStyleRow::NoiseMix, &style),
+            range: (TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_STEP),
         },
-        TreeStyleValueLabel(TreeStyleRow::ConiferMix),
-        TreeStyleSlider(TreeStyleRow::ConiferMix),
-        on_conifer_mix_change,
+        TreeStyleValueLabel(TreeStyleRow::NoiseMix),
+        TreeStyleSlider(TreeStyleRow::NoiseMix),
+        on_noise_mix_change,
     );
     commands.entity(mix_row).insert(MixedOnlyRow);
     spawn_row(
@@ -287,20 +287,20 @@ fn on_conifer_share_change(
 
 /// Примесь пород: тот же дискретный шаг — каждый шаг пересемплирует поле хвои
 /// и пересобирает кроны.
-fn on_conifer_mix_change(
+fn on_noise_mix_change(
     change: On<ValueChange<f32>>,
     mut commands: Commands,
     mut style: ResMut<TreeStyle>,
 ) {
     let stepped = quantize(
         change.value,
-        CONIFER_MIX_MIN,
-        CONIFER_MIX_MAX,
-        CONIFER_MIX_STEP,
+        TREE_NOISE_MIX_MIN,
+        TREE_NOISE_MIX_MAX,
+        TREE_NOISE_MIX_STEP,
     );
     commands.entity(change.source).insert(SliderValue(stepped));
-    if (style.conifer_mix - stepped).abs() > f32::EPSILON {
-        style.conifer_mix = stepped;
+    if (style.noise_mix - stepped).abs() > f32::EPSILON {
+        style.noise_mix = stepped;
     }
 }
 
@@ -400,7 +400,7 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
         TreeStyleRow::Details => hex(style.details),
         TreeStyleRow::Variance => format!("{:.2}", style.variance),
         TreeStyleRow::ConiferShare => format!("{:.0}%", style.conifer_share * 100.),
-        TreeStyleRow::ConiferMix => format!("{:.0}%", style.conifer_mix * 100.),
+        TreeStyleRow::NoiseMix => format!("{:.0}%", style.noise_mix * 100.),
         TreeStyleRow::Density => format!("{:.2}x", style.density),
     }
 }
@@ -410,7 +410,7 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
 fn slider_value(row: TreeStyleRow, style: &TreeStyle) -> Option<f32> {
     match row {
         TreeStyleRow::ConiferShare => Some(style.conifer_share),
-        TreeStyleRow::ConiferMix => Some(style.conifer_mix),
+        TreeStyleRow::NoiseMix => Some(style.noise_mix),
         TreeStyleRow::Density => Some(style.density),
         TreeStyleRow::Woods
         | TreeStyleRow::Standalone

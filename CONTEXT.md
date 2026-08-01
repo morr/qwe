@@ -587,7 +587,7 @@ in `main.rs`.
   item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
   `foliage`, `details` (ink), `variance` (brightness spread), `shape`, `conifer_share`
-  and `conifer_mix` (see Conifer stands below), `density` (planting multiplier, see Tree
+  and `noise_mix` (see Conifer stands below), `density` (planting multiplier, see Tree
   density above), plus the two source toggles — `woods` (forest polygons) and
   `standalone` (individual `natural=tree` trees). **TreeShape** is `Cotton | Conifer | Palm | Mixed` — cloud
   outline (`bloat`), spiky cone (`Spiker::simple`), bent fronds (`Spiker::bent`), and
@@ -621,7 +621,7 @@ in `main.rs`.
     unrelated to the one asked for. The quantile makes `TreeStyle::conifer_share` an
     exact share at any noise parameters, and clustering is unaffected — the trees kept
     are still the ones on the peaks. 0 % / 100 % are special-cased to «nobody» / «all».
-  - **Mix jitter** (`TreeStyle::conifer_mix`, «Mix» slider next to Conifer share) —
+  - **Mix jitter** (`TreeStyle::noise_mix`, «Noise mix» slider next to Conifer share) —
     stands need not be solid: each tree's value gets `mix · jitter` added at resample
     time, where jitter ∈ ±0.5 is a position-hashed (murmur3 finalizer), deterministic
     per-trunk offset. It pushes trees across the threshold both ways — deciduous
@@ -868,8 +868,8 @@ in `main.rs`.
   color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
   text input, so hex fields became cycles), plus **slider rows** built by the shared
   `ui/slider.rs::spawn_slider_row` kit — **density** over `TREE_DENSITY_MIN..MAX`,
-  **conifer share** over `TREE_CONIFER_SHARE_MIN..MAX` and **mix** over
-  `CONIFER_MIX_MIN..MAX`. Each `ValueChange` observer quantizes to its step and writes
+  **conifer share** over `TREE_CONIFER_SHARE_MIN..MAX` and **noise mix** over
+  `TREE_NOISE_MIX_MIN..MAX`. Each `ValueChange` observer quantizes to its step and writes
   `TreeStyle` only when the step actually changes, so one drag rebuilds the crowns
   a handful of times, not once per pixel. The conifer-share and mix rows are
   `Display::None`ed outside `TreeShape::Mixed` (`sync_mixed_row_visibility`) — they mean
@@ -878,8 +878,8 @@ in `main.rs`.
 - **Noise panel** (`ui/noise.rs`) — the conifer-field fbm knobs (`ConiferNoiseStyle`:
   wavelength / octaves / lacunarity / persistence), same slider kit; lives in the right
   column above Trees and is `Display::None`ed while the `noise` debug toggle is off —
-  tuning the field without the overlay showing it is pointless. Mix is deliberately
-  *not* here: it is a gameplay look knob, so it sits in the Trees panel.
+  tuning the field without the overlay showing it is pointless. Noise mix is
+  deliberately *not* here: it is a gameplay look knob, so it sits in the Trees panel.
 - **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
   `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers

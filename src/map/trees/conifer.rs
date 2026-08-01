@@ -8,7 +8,7 @@
 //! вместе.
 //!
 //! Сплошным массив быть не обязан: к значению поля в дереве добавляется
-//! примесь `mix · jitter` ([`TreeStyle::conifer_mix`]) — детерминированный
+//! примесь `mix · jitter` ([`TreeStyle::noise_mix`]) — детерминированный
 //! джиттер по позиции ствола. Он двигает деревья через порог в обе стороны:
 //! лиственные вкрапления в хвойном массиве и одиночные ели среди лиственных,
 //! тем глубже от кромки, чем больше `mix`.
@@ -20,7 +20,7 @@
 //! любой силе примеси, а кластеризацию не портит — без примеси отбираются те
 //! же деревья на вершинах пятен.
 //!
-//! [`TreeStyle::conifer_mix`]: super::TreeStyle::conifer_mix
+//! [`TreeStyle::noise_mix`]: super::TreeStyle::noise_mix
 
 use bevy::math::Vec2;
 use bevy::prelude::{Reflect, ReflectDefault, ReflectResource, Resource};
@@ -28,8 +28,8 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use noise::{NoiseFn, Simplex};
 
 use crate::settings::{
-    CONIFER_MIX_DEFAULT, CONIFER_NOISE_LACUNARITY, CONIFER_NOISE_OCTAVES,
-    CONIFER_NOISE_PERSISTENCE, CONIFER_NOISE_SEED, CONIFER_NOISE_WAVELENGTH,
+    CONIFER_NOISE_LACUNARITY, CONIFER_NOISE_OCTAVES, CONIFER_NOISE_PERSISTENCE, CONIFER_NOISE_SEED,
+    CONIFER_NOISE_WAVELENGTH, TREE_NOISE_MIX_DEFAULT,
 };
 
 /// Параметры fbm поля хвои — панель Noise (видна при включённом дебаг-слое
@@ -83,7 +83,7 @@ impl Default for ConiferField {
         Self {
             noise: Simplex::new(CONIFER_NOISE_SEED),
             style: ConiferNoiseStyle::default(),
-            mix: CONIFER_MIX_DEFAULT,
+            mix: TREE_NOISE_MIX_DEFAULT,
             values: Vec::new(),
             share: f32::NAN,
             threshold: f32::INFINITY,
