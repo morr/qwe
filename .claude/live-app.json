@@ -1,5 +1,6 @@
 {
   "process": "target/debug/qwe",
+  "port": 15703,
   "shot": {
     "event": "TakeScreenshotEvent",
     "path": "screenshot.png"

@@ -7,6 +7,39 @@ next to it configures `brp shot` / `brp speed` / `brp raise`.
 
 Shorthand below: `b=.claude/skills/live-app/scripts/brp`.
 
+## Launch: port 15703, always
+
+```
+Bash(command: "BRP_PORT=15703 cargo run 2>&1", run_in_background: true)
+```
+
+The user keeps his own qwe open on the default 15702 most of the time, and a
+second app on the same port does not fail loudly — it just makes every `brp` call
+answer from *his* window. `main.rs::brp_port` reads `BRP_PORT` (default 15702),
+`.claude/live-app.json` points the client at 15703, and the port is in the window
+title (`qwe :15703`) so the two windows are told apart on screen.
+
+If 15703 is taken too — a parallel agent session in the same repo — the launch
+panics on the first lines of the task output instead of running BRP-less:
+
+```
+BRP port 15703 is busy (Address already in use) — another qwe already holds it;
+pick a free BRP_PORT
+```
+
+Then launch on 15704 and prefix every client call with the same port, because the
+config still points at 15703: `BRP_PORT=15704 $b count Human`. A busy *default*
+port only warns and disables BRP (`qwe (no brp)` in the title) — a second window
+started by hand still runs.
+
+```bash
+$b alive     # alive: qwe 0.1.0 on http://127.0.0.1:15703/ (pid 40321) — pid must be the task's
+$b procs     # both copies, with their ports and start times
+```
+
+Never `pkill -f target/debug/qwe` and never `brp quit` on 15702 — that kills the
+user's session. Stop your own instance with `TaskStop`.
+
 ## Ready markers in the log
 
 `brp wait` only proves the port answers — the map is still loading at that point. The
