@@ -488,16 +488,8 @@ in `main.rs`.
   turns with the track. A way shorter than one dash still gets one, since most ways in a
   junction are short and a bare bed reads as a road. Tram ways are skipped here — they
   have their own module.
-- **TramStyle** (resource, BRP-writable, persisted; panel `ui/tram.rs` above Roads) —
-  how the tram track is drawn; any change reruns `rebuild_tram` (despawn the
-  `TramLayerTag` mesh, respawn from the unchanged `MapData::rails`). The tram lives in
-  its own module (`map/tram.rs`) so neither a style change nor a zoom-LOD step ever
-  rebuilds the road/rail meshes. Three knobs: **join** and **smoothing** are the same
-  enums as RoadStyle's (`RoadJoin` / `RoadSmoothing`); **ties** (`TieDensity: Sparse |
-  Normal | Dense`) multiplies the tie spacing (×1.6 / ×1 / ×0.6) on top of whatever the
-  zoom LOD picked. Regular railways are *not* governed by this style — they follow
-  RoadStyle with the road layers.
-- **Tram** (`map/tram.rs`) — a thin blue line with perpendicular cross ties, the
+- **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
+  road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark
   red, 2GIS blue) and we take 2GIS's blue, since red on this map already means kremlin
   wall. Line and ties share one colour, so both go in one mesh (`TramLayerTag`, `Z_TRAM`
@@ -506,11 +498,15 @@ in `main.rs`.
   `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
   a perpendicular bar rather than a piece of the path, and the first one is offset half
   a step so a bar never lands exactly on a way endpoint and pairs into a cross at joins.
+  The style is fixed, no panel and no resource: on a line 1.5–2 px wide a join style is
+  invisible and Strong smoothing is indistinguishable from Light, so it is hardwired to
+  `Round` + `Light` (`TRAM_JOIN` / `TRAM_SMOOTHING`), and the sparse tie spacing is
+  baked into the LOD table.
 
   **Tram zoom LOD** (`TRAM_LODS`) — the mesh is rebuilt at discrete zoom thresholds,
   pseudo-gizmo style: five buckets over the camera zoom range, each with its own line
   width (targeting ~1.8 screen px, so the line neither fattens close up nor vanishes far
-  out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~6 px);
+  out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~10 px);
   the farthest bucket drops ties entirely, as 2GIS does at city scale. `TramZoomBucket`
   (resource, **not** persisted — zoom resets to `START_ZOOM` on every world entry) holds
   the current bucket index; `update_tram_zoom_bucket` recomputes it each Update frame
@@ -887,11 +883,11 @@ in `main.rs`.
   pass their own marker bundles for the value label and the slider to address them in
   their sync systems.
 - **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumnSlot` /
-  `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → Tram → hotkey
-  help; left: debug toggles → Noise; both bottom-up. The panels are absolute (`bevy_ui`
-  does not stack them), and the columns change height at runtime (Trees grows two rows
-  on `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is
-  the summed **measured** height of those below it instead of a hardcoded constant;
+  `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
+  left: debug toggles → Noise; both bottom-up. The panels are absolute (`bevy_ui` does
+  not stack them), and the columns change height at runtime (Trees grows two rows on
+  `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is the
+  summed **measured** height of those below it instead of a hardcoded constant;
   `Display::None` panels are skipped by their `Node.display`, not their last-frame
   `ComputedNode`. `ComputedNode::size` is in *physical* pixels — multiply by
   `inverse_scale_factor` or every offset doubles on a retina screen.

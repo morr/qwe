@@ -1,14 +1,13 @@
-//! Трамвайные пути, вынесенные из дорожных слоёв: у трамвая свой стиль
-//! ([`TramStyle`], панель Tram) и пересборка по ступеням зума ([`TRAM_LODS`]) —
-//! линия держит почти постоянную экранную толщину («почти gizmo»), а шпалы
-//! редеют с отъездом камеры и на общем плане исчезают, иначе они сливаются в
-//! сплошную массу. Обычные ж/д пути остаются в `map/roads.rs` под стилем дорог.
+//! Трамвайные пути, вынесенные из дорожных слоёв: трамвай пересобирается по
+//! ступеням зума ([`TRAM_LODS`]) — линия держит почти постоянную экранную
+//! толщину («почти gizmo»), а шпалы редеют с отъездом камеры и на общем плане
+//! исчезают, иначе они сливаются в сплошную массу. Обычные ж/д пути остаются
+//! в `map/roads.rs` под стилем дорог.
 //!
 //! Навмеша путь не касается — люди ходят через рельсы как по земле.
 
 use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::prelude::*;
-use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
@@ -31,6 +30,13 @@ const TRAM_COLOR: Color = Color::srgb(0.290, 0.451, 0.780);
 /// при переходе через порог зума.
 const TRAM_SMOOTH_WIDTH: f32 = 1.2;
 
+/// Стиль зафиксирован, без ручек панели: на линии в полтора-два экранных
+/// пикселя стык излома не читается вовсе, а Strong-сглаживание неотличимо от
+/// Light. Осевая всегда слегка сглажена — ломаная OSM на повороте даёт тонкой
+/// линии заметный угол.
+const TRAM_JOIN: RoadJoin = RoadJoin::Round;
+const TRAM_SMOOTHING: RoadSmoothing = RoadSmoothing::Light;
+
 /// Шпала одной ступени: длина поперёк пути, толщина и шаг, м. Насечка обязана
 /// быть заметно длиннее толщины самой линии — иначе она сливается с ней в
 /// утолщение.
@@ -52,8 +58,8 @@ pub struct TramLod {
 
 /// Ступени зум-LOD: линия целится в ~1.8 px на середине каждой ступени
 /// (экранная толщина гуляет в пределах ~1.1–2.9 px — «почти gizmo»), шаг шпал
-/// на экране нигде не падает ниже ~6 px. На последней ступени шпалы исчезают,
-/// как в 2ГИС на общем плане города.
+/// на экране нигде не падает ниже ~10 px — редкая насечка, а не гребёнка. На
+/// последней ступени шпалы исчезают, как в 2ГИС на общем плане города.
 pub const TRAM_LODS: [TramLod; 5] = [
     TramLod {
         max_zoom: 0.12,
@@ -61,7 +67,7 @@ pub const TRAM_LODS: [TramLod; 5] = [
         tie: Some(TramTieLod {
             length: 0.45,
             thickness: 0.09,
-            spacing: 0.9,
+            spacing: 1.45,
         }),
     },
     TramLod {
@@ -70,7 +76,7 @@ pub const TRAM_LODS: [TramLod; 5] = [
         tie: Some(TramTieLod {
             length: 1.1,
             thickness: 0.20,
-            spacing: 2.2,
+            spacing: 3.5,
         }),
     },
     TramLod {
@@ -79,7 +85,7 @@ pub const TRAM_LODS: [TramLod; 5] = [
         tie: Some(TramTieLod {
             length: 2.8,
             thickness: 0.50,
-            spacing: 5.5,
+            spacing: 8.8,
         }),
     },
     TramLod {
@@ -88,7 +94,7 @@ pub const TRAM_LODS: [TramLod; 5] = [
         tie: Some(TramTieLod {
             length: 7.0,
             thickness: 1.2,
-            spacing: 17.0,
+            spacing: 27.0,
         }),
     },
     TramLod {
@@ -97,48 +103,6 @@ pub const TRAM_LODS: [TramLod; 5] = [
         tie: None,
     },
 ];
-
-/// Множитель шага шпал поверх ступени LOD — ручка Ties панели Tram.
-#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum TieDensity {
-    Sparse,
-    #[default]
-    Normal,
-    Dense,
-}
-
-impl TieDensity {
-    pub const ALL: [Self; 3] = [Self::Sparse, Self::Normal, Self::Dense];
-
-    pub fn spacing_multiplier(self) -> f32 {
-        match self {
-            Self::Sparse => 1.6,
-            Self::Normal => 1.0,
-            Self::Dense => 0.6,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Sparse => "Sparse",
-            Self::Normal => "Normal",
-            Self::Dense => "Dense",
-        }
-    }
-}
-
-/// Стиль трамвайного пути; переключается панелью Tram и BRP, сохраняется в
-/// настройках между запусками. Правка пересобирает трамвайный меш
-/// ([`rebuild_tram`]). Ручки стыка и сглаживания — те же, что у дорог; обычные
-/// ж/д пути этим стилем не управляются.
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug, Default)]
-#[reflect(Resource, SettingsGroup, Default)]
-#[settings_group(group = "tram")]
-pub struct TramStyle {
-    pub join: RoadJoin,
-    pub smoothing: RoadSmoothing,
-    pub ties: TieDensity,
-}
 
 /// Текущая ступень [`TRAM_LODS`] — индекс. Меняется только при пересечении
 /// порога зума ([`update_tram_zoom_bucket`]), на что [`rebuild_tram`] отвечает
@@ -166,16 +130,15 @@ pub fn bucket_for_zoom(zoom: f32) -> usize {
 #[derive(Component)]
 pub struct TramLayerTag;
 
-/// Трамвайный меш текущей ступени зума и стиля. Единственный вызов — из
-/// [`rebuild_tram`]: и вход в мир, и правка стиля, и смена ступени зума идут
-/// через пересборку (в свежем мире деспавнить ей нечего). Линия и шпалы — один
-/// цвет, поэтому лежат в одном меше: накладываться сами на себя они могут без
-/// всякого z-файтинга.
+/// Трамвайный меш текущей ступени зума. Единственный вызов — из
+/// [`rebuild_tram`]: и вход в мир, и смена ступени зума идут через пересборку
+/// (в свежем мире деспавнить ей нечего). Линия и шпалы — один цвет, поэтому
+/// лежат в одном меше: накладываться сами на себя они могут без всякого
+/// z-файтинга.
 fn spawn_tram(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
-    style: TramStyle,
     bucket: TramZoomBucket,
     rails: &[RailLine],
 ) {
@@ -187,8 +150,8 @@ fn spawn_tram(
         if rail.kind != RailKind::Tram {
             continue;
         }
-        let points = smooth_path(&rail.points, TRAM_SMOOTH_WIDTH, style.smoothing);
-        push_tram(&mut builder, &points, style, lod);
+        let points = smooth_path(&rail.points, TRAM_SMOOTH_WIDTH, TRAM_SMOOTHING);
+        push_tram(&mut builder, &points, lod);
     }
     if builder.is_empty() {
         return;
@@ -206,31 +169,19 @@ fn spawn_tram(
     ));
 
     info!(
-        "tram meshing: {vertices} verts in {:?} (bucket {}, ties {:?})",
+        "tram meshing: {vertices} verts in {:?} (bucket {})",
         started.elapsed(),
         bucket.0,
-        style.ties,
     );
 }
 
 /// Линия и шпалы одного пути на одной ступени LOD — отдельно от спавна ради
 /// тестов на геометрию.
-pub(crate) fn push_tram(
-    builder: &mut MeshBuilder,
-    points: &[Vec2],
-    style: TramStyle,
-    lod: &TramLod,
-) {
+pub(crate) fn push_tram(builder: &mut MeshBuilder, points: &[Vec2], lod: &TramLod) {
     let color = TRAM_COLOR.to_linear();
-    push_ribbon(builder, points, lod.line_width, color, style.join);
+    push_ribbon(builder, points, lod.line_width, color, TRAM_JOIN);
     if let Some(tie) = &lod.tie {
-        builder.push_ticks(
-            points,
-            tie.length,
-            tie.thickness,
-            tie.spacing * style.ties.spacing_multiplier(),
-            color,
-        );
+        builder.push_ticks(points, tie.length, tie.thickness, tie.spacing, color);
     }
 }
 
@@ -244,13 +195,12 @@ pub fn update_tram_zoom_bucket(
     bucket.set_if_neq(TramZoomBucket(bucket_for_zoom(camera.zoom_factor)));
 }
 
-/// Пересборка трамвайного меша при смене ступени зума или правке стиля из UI
-/// или BRP — дорожные и рельсовые слои не трогаются.
+/// Пересборка трамвайного меша при смене ступени зума — дорожные и рельсовые
+/// слои не трогаются.
 pub fn rebuild_tram(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    style: Res<TramStyle>,
     bucket: Res<TramZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<TramLayerTag>>,
@@ -262,7 +212,6 @@ pub fn rebuild_tram(
         &mut commands,
         &mut meshes,
         &mut materials,
-        *style,
         *bucket,
         &map.rails,
     );

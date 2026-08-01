@@ -22,9 +22,7 @@ use bevy::prelude::*;
 use bevy::settings::{SaveSettingsSync, SettingsPlugin};
 
 use crate::city::City;
-use crate::map::{
-    BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TramStyle, TreeRowStyle, TreeStyle,
-};
+use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PathfindingAlgorithm;
 use crate::ui::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
@@ -55,8 +53,7 @@ impl Plugin for PrefsPlugin {
                     // RoadStyle здесь не хватало с самого начала: его правки
                     // сохранялись, только если в тот же кадр менялся другой
                     // отслеживаемый ресурс
-                    .or_else(resource_changed::<RoadStyle>)
-                    .or_else(resource_changed::<TramStyle>),
+                    .or_else(resource_changed::<RoadStyle>),
             ),
         );
     }

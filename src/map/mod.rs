@@ -10,7 +10,6 @@ pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::MeshBuilder;
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
-pub use self::tram::{TieDensity, TramStyle};
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
@@ -35,7 +34,6 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
-            .init_resource::<TramStyle>()
             .init_resource::<tram::TramZoomBucket>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
@@ -44,7 +42,6 @@ impl Plugin for MapPlugin {
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
             .register_type::<RoadStyle>()
-            .register_type::<TramStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -53,7 +50,7 @@ impl Plugin for MapPlugin {
                 // `rebuild_trees` — в свежем мире деспавнить ему нечего, а спавн
                 // из одного места избавляет `spawn_map` от стиля деревьев и поля
                 // хвои разом. Трамвай спавнит `rebuild_tram` по той же причине:
-                // стиль и ступень зума остаются его личным делом
+                // ступень зума остаётся его личным делом
                 (
                     trees::recompose_row_trees,
                     trees::build_conifer_field,
@@ -106,16 +103,12 @@ impl Plugin for MapPlugin {
                         .run_if(not(resource_added::<RoadStyle>)),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку трамвая запускает только её
-                    // фактическая смена — либо правка стиля из панели/BRP
+                    // фактическая смена
                     (
                         tram::update_tram_zoom_bucket,
                         tram::rebuild_tram.run_if(
                             resource_changed::<tram::TramZoomBucket>
-                                .and_then(not(resource_added::<tram::TramZoomBucket>))
-                                .or_else(
-                                    resource_changed::<TramStyle>
-                                        .and_then(not(resource_added::<TramStyle>)),
-                                ),
+                                .and_then(not(resource_added::<tram::TramZoomBucket>)),
                         ),
                     )
                         .chain()

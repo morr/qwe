@@ -44,7 +44,7 @@ fn tram_line_stays_near_screen_width() {
     }
 }
 
-/// Шпалы не сливаются в массу: шаг на экране не меньше ~6 px даже у дальнего
+/// Шпалы не сливаются в массу: шаг на экране не меньше ~10 px даже у дальнего
 /// края ступени, а сама шпала длиннее и линии, и собственной толщины.
 #[test]
 fn tram_ties_stay_sparse_on_screen() {
@@ -52,7 +52,7 @@ fn tram_ties_stay_sparse_on_screen() {
         let Some(tie) = &lod.tie else { continue };
         let worst_zoom = lod.max_zoom.min(4.5);
         assert!(
-            tie.spacing / worst_zoom >= 5.5,
+            tie.spacing / worst_zoom >= 10.0,
             "ties merge at zoom {worst_zoom}"
         );
         assert!(tie.length > lod.line_width);
@@ -66,20 +66,12 @@ fn far_bucket_drops_ties() {
     assert!(TRAM_LODS[TRAM_LODS.len() - 1].tie.is_none());
 }
 
-#[test]
-fn tie_density_orders_spacing() {
-    assert!(TieDensity::Sparse.spacing_multiplier() > TieDensity::Normal.spacing_multiplier());
-    assert!(TieDensity::Normal.spacing_multiplier() > TieDensity::Dense.spacing_multiplier());
-    assert_eq!(TieDensity::Normal.spacing_multiplier(), 1.0);
-}
-
 /// Смена ступени и правда меняет геометрию: вблизи линия тоньше (шпалы торчат,
 /// но общий размах всё равно меньше дальней ленты), а дальняя ступень — голая
 /// лента без единой вершины шпал.
 #[test]
 fn tram_mesh_narrows_and_sheds_ties_per_bucket() {
     let points = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
-    let style = TramStyle::default();
 
     let extent = |builder: &MeshBuilder| {
         builder
@@ -90,9 +82,9 @@ fn tram_mesh_narrows_and_sheds_ties_per_bucket() {
     };
 
     let mut near = MeshBuilder::default();
-    push_tram(&mut near, &points, style, &TRAM_LODS[0]);
+    push_tram(&mut near, &points, &TRAM_LODS[0]);
     let mut far = MeshBuilder::default();
-    push_tram(&mut far, &points, style, &TRAM_LODS[TRAM_LODS.len() - 1]);
+    push_tram(&mut far, &points, &TRAM_LODS[TRAM_LODS.len() - 1]);
 
     assert!(extent(&near) < extent(&far));
 
@@ -102,7 +94,7 @@ fn tram_mesh_narrows_and_sheds_ties_per_bucket() {
         &points,
         TRAM_LODS[TRAM_LODS.len() - 1].line_width,
         TRAM_COLOR.to_linear(),
-        style.join,
+        TRAM_JOIN,
     );
     assert_eq!(far.vertex_count(), bare_far.vertex_count());
 
@@ -112,7 +104,7 @@ fn tram_mesh_narrows_and_sheds_ties_per_bucket() {
         &points,
         TRAM_LODS[0].line_width,
         TRAM_COLOR.to_linear(),
-        style.join,
+        TRAM_JOIN,
     );
     assert!(near.vertex_count() > bare_near.vertex_count());
 }

@@ -10,7 +10,6 @@ mod noise;
 mod roads;
 mod slider;
 mod speed;
-mod tram;
 mod tree_rows;
 mod trees;
 
@@ -21,14 +20,14 @@ use bevy::ui_widgets::{Activate, Button};
 
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 use crate::loading::{AppState, PlayPhase};
-use crate::map::osm::{MapData, RailKind};
+use crate::map::osm::MapData;
 use crate::map::trees::visible_count;
 use crate::map::{TreeRowStyle, TreeStyle};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
 /// Место панели в правой колонке, снизу вверх: 0 — Tree rows у края экрана,
-/// дальше Trees, Buildings, Roads, Tram, справка по хоткеям. Панели
+/// дальше Trees, Buildings, Roads, справка по хоткеям. Панели
 /// абсолютные, `bevy_ui` их не стыкует, поэтому `bottom` каждой считает
 /// [`stack_bottom_columns`] по **замеренным** высотам тех, что под ней: высота
 /// панели Trees меняется на ходу (строки доли хвои и примеси появляются только
@@ -50,7 +49,6 @@ pub enum PanelCount {
     TreeRows,
     Buildings,
     Roads,
-    Trams,
 }
 
 /// Заголовок панели: название и у правого края блока мелким шрифтом число
@@ -109,11 +107,6 @@ fn sync_panel_counts(
             PanelCount::TreeRows => map.tree_rows.len(),
             PanelCount::Buildings => map.buildings.len(),
             PanelCount::Roads => map.roads.len(),
-            PanelCount::Trams => map
-                .rails
-                .iter()
-                .filter(|rail| rail.kind == RailKind::Tram)
-                .count(),
         };
         text.0 = total.to_string();
     }
@@ -213,7 +206,6 @@ impl Plugin for UiPlugin {
             noise::UiConiferNoisePlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
-            tram::UiTramStylePlugin,
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
         ))

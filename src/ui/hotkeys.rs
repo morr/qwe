@@ -59,7 +59,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
             BackgroundColor(ui_color(UiOpacity::Light)),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
-            UiRightColumnSlot(6),
+            UiRightColumnSlot(4),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("hotkeys_panel"),
