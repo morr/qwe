@@ -81,8 +81,9 @@ in `main.rs`.
   to `AppState::Loading`: leaving `Playing` despawns the scene, the load thread downloads
   / re-parses the new extract, refills the same navmesh (`fill_from_mapdata` resets it
   first), re-snaps the portal, and `OnEnter(Playing)` rebuilds map and population and
-  resets the camera (`camera.rs::reset_camera_to_portal` — onto the new portal, back to
-  `START_ZOOM`). `DemonSpawner`, `Telemetry`, `NorthstarGrid` and `WarmupProgress` are
+  resets the camera (`camera.rs::place_camera_on_world_ready` — onto the new portal, back
+  to `START_ZOOM`, whatever `CameraPositionMode` says: the saved view belongs to the map
+  that was just thrown away). `DemonSpawner`, `Telemetry`, `NorthstarGrid` and `WarmupProgress` are
   reset on the way. The switch is gated on `in_state(Playing)` — restarting a load on top
   of a running one would put two threads into one navmesh.
 - **`DespawnOnExit(AppState::Playing)`** — the *only* thing that clears the old city.
@@ -529,7 +530,8 @@ in `main.rs`.
   width (targeting ~1.8 screen px, so the line neither fattens close up nor vanishes far
   out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~10 px);
   the farthest bucket drops ties entirely, as 2GIS does at city scale. `TramZoomBucket`
-  (resource, **not** persisted — zoom resets to `START_ZOOM` on every world entry) holds
+  (resource, **not** persisted — zoom comes back from the camera's start view on every
+  world entry: `START_ZOOM`, or the saved zoom under `position: save`) holds
   the current bucket index; `update_tram_zoom_bucket` recomputes it each Update frame
   from `PanCamera::zoom_factor` via `set_if_neq`, so `rebuild_tram` fires only on an
   actual threshold crossing, never per frame. The tram centerline is smoothed with a
@@ -942,7 +944,28 @@ in `main.rs`.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / doors / movepath / noise buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the
-  noise overlay is one sprite with a CPU-built texture (see Conifer stands).
+  noise overlay is one sprite with a CPU-built texture (see Conifer stands). The row also
+  carries the two cycling buttons that are not layer toggles — `pathfind:` and
+  `position:` — since there is no other row of buttons in the UI.
+- **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, the
+  `position:` button, persisted) decides where the camera stands when the world comes up:
+  `reset` — the snapped portal at `START_ZOOM`; `save` — the x/y/zoom written into
+  **`SavedCameraView`** (persisted, same `camera` settings group) by
+  `save_camera_view_on_exit`, a `Last` system that fires on `AppExit` and saves
+  synchronously. It must run **after `bevy::window::ExitSystems`**: closing the window
+  writes `AppExit` from `exit_on_all_closed`, which is itself in `Last`, so without the
+  ordering the save silently ran a system too early and nothing was ever written.
+  `track_camera_view` (Update, only in `save` mode) covers the exits no schedule can see —
+  macOS Cmd-Q, `brp quit` (its `AppExit` comes from `RemoteLast`, after `Last`), a crash —
+  by writing during play, **debounced 1 s after the camera stops and throttled to one
+  write per 10 s while it keeps moving**: a drag is dozens of frames, and a per-frame write
+  would rewrite `settings.toml` a hundred times per gesture. The debounce runs on
+  `Time<Real>` on purpose — first-party `SaveSettingsDeferred` ticks on virtual time, so it
+  would never fire while paused and fire 30× early at 30x speed. The view is applied in three places, all through `start_view` + `apply_view`:
+  camera spawn (`Startup`, portal *hint* — the snapped position isn't known yet),
+  `place_camera_on_world_ready` (`OnEnter(Playing)`) and the `RestartEvent` observer, so R
+  puts the camera exactly where an app start would. A world entry that is **not** the
+  first one is a city switch and always resets to the new portal.
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (`SPEED_LADDER`:
   1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
@@ -986,8 +1009,9 @@ in `main.rs`.
     inversion replaced the map entirely. At full zoom-out (every pawn moving) the sim
     stays ~0.2 ms/tick — the limiter there is rendering 20k sprites, not the sim.
 - **Remembered UI options** (`prefs.rs`) — every UI-settable resource (`DebugGrid`,
-  `DebugNavmesh`, `DrawMovePaths`, `PathfindingAlgorithm`, `TreeStyle`) is a
-  `bevy::settings::SettingsGroup`, so a click survives a restart. `SettingsPlugin` reads
+  `DebugNavmesh`, `DrawMovePaths`, `PathfindingAlgorithm`, `TreeStyle`,
+  `CameraPositionMode`) is a `bevy::settings::SettingsGroup`, so a click survives a
+  restart. `SettingsPlugin` reads
   `settings.toml` from the OS settings dir (macOS:
   `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being
   built, before any schedule; `PrefsPlugin` is registered **last** because that scan needs

@@ -1,6 +1,6 @@
 //! Запоминание выбранных в UI опций между запусками: выбранный город,
-//! дебаг-тумблеры (grid / navmesh / movepath), алгоритм поиска пути и панель
-//! стиля деревьев.
+//! дебаг-тумблеры (grid / navmesh / movepath), алгоритм поиска пути, режим
+//! стартовой позиции камеры и панель стиля деревьев.
 //!
 //! Поверх первопартийного `bevy::settings` (см. upstream-пример
 //! `window/persisting_window_settings.rs`): сами ресурсы помечены
@@ -21,6 +21,7 @@
 use bevy::prelude::*;
 use bevy::settings::{SaveSettingsSync, SettingsPlugin};
 
+use crate::camera::CameraPositionMode;
 use crate::city::City;
 use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
@@ -53,7 +54,10 @@ impl Plugin for PrefsPlugin {
                     // RoadStyle здесь не хватало с самого начала: его правки
                     // сохранялись, только если в тот же кадр менялся другой
                     // отслеживаемый ресурс
-                    .or_else(resource_changed::<RoadStyle>),
+                    .or_else(resource_changed::<RoadStyle>)
+                    // сам сохранённый вид камеры (`SavedCameraView`) пишется не
+                    // отсюда, а из `camera::save_camera_view_on_exit`
+                    .or_else(resource_changed::<CameraPositionMode>),
             ),
         );
     }

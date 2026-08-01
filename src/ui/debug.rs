@@ -11,6 +11,10 @@
 //! Хоткеи: N — navmesh, M — movepath (в `movement`), G — «гизмо» одной
 //! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
 //! редко и только вблизи, кнопки в панели достаточно.
+//!
+//! Кроме тумблеров ряд держит листающие кнопки — алгоритм поиска пути и
+//! `position` (откуда стартует камера, `camera::CameraPositionMode`): другого
+//! ряда кнопок в UI нет, а заводить панель на одну строку незачем.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
@@ -26,6 +30,7 @@ use bevy::window::PrimaryWindow;
 
 use bevy::prelude::*;
 
+use crate::camera::CameraPositionMode;
 use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::ConiferField;
@@ -87,6 +92,10 @@ struct ConiferNoiseOverlayMarker {
 /// Подпись на кнопке-переключателе алгоритма поиска пути.
 #[derive(Component)]
 struct PathfindingMethodLabel;
+
+/// Подпись на кнопке-переключателе стартовой позиции камеры.
+#[derive(Component)]
+struct CameraPositionLabel;
 
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
 const NAVMESH_OVERLAY_Z: f32 = 5.2;
@@ -161,6 +170,7 @@ impl Plugin for UiDebugTogglesPlugin {
                         )
                         .after(crate::map::trees::rebuild_trees),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
+                    sync_camera_position_label.run_if(resource_changed::<CameraPositionMode>),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
                     toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
                 ),
@@ -168,7 +178,7 @@ impl Plugin for UiDebugTogglesPlugin {
     }
 }
 
-fn render_debug_toggles(mut commands: Commands) {
+fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositionMode>) {
     let row = commands
         .spawn((
             Node {
@@ -283,6 +293,54 @@ fn render_debug_toggles(mut commands: Commands) {
         )
         .id();
     commands.entity(row).add_child(method_button);
+
+    // откуда стартует камера — клик листает reset ⇄ save
+    let position_button = commands
+        .spawn((
+            Button,
+            Pickable::default(),
+            Hovered::default(),
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6.),
+                padding: UiRect {
+                    top: px(4.),
+                    right: px(8.),
+                    bottom: px(4.),
+                    left: px(8.),
+                },
+                ..default()
+            },
+            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            children![
+                (
+                    Text::new("position:"),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                ),
+                (
+                    CameraPositionLabel,
+                    Text::new(position_mode.label()),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ),
+            ],
+        ))
+        .observe(
+            |_activate: On<Activate>, mut mode: ResMut<CameraPositionMode>| {
+                *mode = mode.next();
+            },
+        )
+        .id();
+    commands.entity(row).add_child(position_button);
 }
 
 fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>) {
@@ -305,6 +363,16 @@ fn sync_pathfinding_method_label(
 ) {
     for mut text in &mut labels {
         text.0 = algorithm.label().to_string();
+    }
+}
+
+/// Актуализация подписи при смене режима стартовой позиции (кнопкой или по BRP).
+fn sync_camera_position_label(
+    mode: Res<CameraPositionMode>,
+    mut labels: Query<&mut Text, With<CameraPositionLabel>>,
+) {
+    for mut text in &mut labels {
+        text.0 = mode.label().to_string();
     }
 }
 

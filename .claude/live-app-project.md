@@ -40,6 +40,16 @@ $b procs     # both copies, with their ports and start times
 Never `pkill -f target/debug/qwe` and never `brp quit` on 15702 — that kills the
 user's session. Stop your own instance with `TaskStop`.
 
+`brp quit` is **not** a real exit path: it writes `AppExit` from `RemoteLast`, i.e. after
+`Last`, so anything the app does on exit (`camera::save_camera_view_on_exit`) never runs.
+To test a real quit, send the message the ✕ button sends, or the Esc key:
+
+```bash
+w=$($b window | grep -oE 'entity=[0-9]+' | cut -d= -f2)
+$b msg WindowCloseRequested "{\"window\":$w}"
+$b raise; $b msg KeyboardInput "{\"key_code\":\"Escape\",\"logical_key\":\"Escape\",\"state\":\"Pressed\",\"text\":null,\"repeat\":false,\"window\":$w}"
+```
+
 ## Ready markers in the log
 
 `brp wait` only proves the port answers — the map is still loading at that point. The
@@ -125,7 +135,8 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
-`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`.
+`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `CameraPositionMode`,
+`SavedCameraView`.
 
 Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
