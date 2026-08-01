@@ -97,6 +97,15 @@ struct PathfindingMethodLabel;
 #[derive(Component)]
 struct CameraPositionLabel;
 
+/// Кнопка-листалка в этом же ряду. Зелёная, пока выбрано значение по
+/// умолчанию, — так видно, что настройки не уведены от базовых, тем же цветом,
+/// каким тумблеры показывают «включено».
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum CyclerButton {
+    Pathfind,
+    Position,
+}
+
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
 const NAVMESH_OVERLAY_Z: f32 = 5.2;
 
@@ -148,6 +157,7 @@ impl Plugin for UiDebugTogglesPlugin {
                 Update,
                 (
                     update_toggle_buttons,
+                    update_cycler_buttons,
                     render_grid.run_if(|grid: Res<DebugGrid>| grid.0),
                     // MapData появляется только под Playing
                     render_doors
@@ -178,7 +188,11 @@ impl Plugin for UiDebugTogglesPlugin {
     }
 }
 
-fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositionMode>) {
+fn render_debug_toggles(
+    mut commands: Commands,
+    algorithm: Res<PathfindingAlgorithm>,
+    position_mode: Res<CameraPositionMode>,
+) {
     let row = commands
         .spawn((
             Node {
@@ -265,7 +279,14 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
                 },
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            CyclerButton::Pathfind,
+            // цвет ставится сразу, а не первым кадром `update_cycler_buttons`:
+            // иначе кнопка мигает серым на кадр спавна
+            BackgroundColor(cycler_background(
+                *algorithm == PathfindingAlgorithm::default(),
+                false,
+                false,
+            )),
             children![
                 (
                     Text::new("pathfind:"),
@@ -277,7 +298,7 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
                 ),
                 (
                     PathfindingMethodLabel,
-                    Text::new(PathfindingAlgorithm::default().label()),
+                    Text::new(algorithm.label()),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
@@ -313,7 +334,12 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
                 },
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            CyclerButton::Position,
+            BackgroundColor(cycler_background(
+                *position_mode == CameraPositionMode::default(),
+                false,
+                false,
+            )),
             children![
                 (
                     Text::new("position:"),
@@ -354,6 +380,43 @@ fn toggle_gizmos(mut doors: ResMut<DebugDoors>, mut movepaths: ResMut<DrawMovePa
     let on = !(doors.0 || movepaths.0);
     doors.0 = on;
     movepaths.0 = on;
+}
+
+/// Фон кнопки ряда: зелёный, когда значение «активно» (тумблер включён,
+/// листалка стоит на умолчании), плюс осветление под курсором и под нажатием.
+fn cycler_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Color {
+    let base = if is_active {
+        TOGGLE_ACTIVE_COLOR
+    } else {
+        ui_color(UiOpacity::Heavy)
+    };
+    let lighten = if is_pressed {
+        TOGGLE_PRESSED_LIGHTEN
+    } else if is_hovered {
+        TOGGLE_HOVER_LIGHTEN
+    } else {
+        0.0
+    };
+    base.mix(&Color::WHITE, lighten)
+}
+
+/// Зелёный на листалках держится, пока выбрано значение по умолчанию.
+fn update_cycler_buttons(
+    algorithm: Res<PathfindingAlgorithm>,
+    position_mode: Res<CameraPositionMode>,
+    mut buttons: Query<(&CyclerButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
+) {
+    for (cycler, hovered, is_pressed, mut background) in &mut buttons {
+        let is_default = match cycler {
+            CyclerButton::Pathfind => *algorithm == PathfindingAlgorithm::default(),
+            CyclerButton::Position => *position_mode == CameraPositionMode::default(),
+        };
+        background.set_if_neq(BackgroundColor(cycler_background(
+            is_default,
+            is_pressed,
+            hovered.get(),
+        )));
+    }
 }
 
 /// Актуализация подписи при смене алгоритма (кнопкой или через BRP).
@@ -407,19 +470,11 @@ fn update_toggle_buttons(
             DebugToggleButton::Movepath => movepaths.0,
             DebugToggleButton::ConiferNoise => conifer_noise.0,
         };
-        let base = if is_active {
-            TOGGLE_ACTIVE_COLOR
-        } else {
-            ui_color(UiOpacity::Heavy)
-        };
-        let lighten = if is_pressed {
-            TOGGLE_PRESSED_LIGHTEN
-        } else if hovered.get() {
-            TOGGLE_HOVER_LIGHTEN
-        } else {
-            0.0
-        };
-        background.set_if_neq(BackgroundColor(base.mix(&Color::WHITE, lighten)));
+        background.set_if_neq(BackgroundColor(cycler_background(
+            is_active,
+            is_pressed,
+            hovered.get(),
+        )));
     }
 }
 

@@ -42,9 +42,11 @@ const VIEW_SAVE_THROTTLE: f32 = 10.0;
 #[settings_group(group = "camera", key = "position_mode")]
 pub enum CameraPositionMode {
     /// Старт приложения и R — портал в `START_ZOOM`.
-    #[default]
     Reset,
     /// Старт приложения и R — точка и зум, на которых вышли из игры.
+    /// Умолчание: чаще работают с одним и тем же участком карты, и искать его
+    /// заново после каждого запуска дороже, чем нажать R.
+    #[default]
     Save,
 }
 

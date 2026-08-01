@@ -946,9 +946,13 @@ in `main.rs`.
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the
   noise overlay is one sprite with a CPU-built texture (see Conifer stands). The row also
   carries the two cycling buttons that are not layer toggles — `pathfind:` and
-  `position:` — since there is no other row of buttons in the UI.
-- **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, the
-  `position:` button, persisted) decides where the camera stands when the world comes up:
+  `position:` — since there is no other row of buttons in the UI. Those two go green
+  (`TOGGLE_ACTIVE_COLOR`, the same "on" colour as a toggle) while their resource equals
+  `Default::default()` — `Hpa` and `save` — so a setting steered away from the baseline is
+  visible at a glance; the check is against the `Default` impl, not a hardcoded variant, so
+  moving `#[default]` moves the highlight with it.
+- **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, default
+  `save`, the `position:` button, persisted) decides where the camera stands when the world comes up:
   `reset` — the snapped portal at `START_ZOOM`; `save` — the x/y/zoom written into
   **`SavedCameraView`** (persisted, same `camera` settings group) by
   `save_camera_view_on_exit`, a `Last` system that fires on `AppExit` and saves
