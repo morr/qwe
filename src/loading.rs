@@ -8,8 +8,11 @@ use bevy::ui_widgets::{Activate, Button};
 use bevy::window::PrimaryWindow;
 
 use crate::city::City;
+use crate::human::{Human, HumanFleeTag};
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
-use crate::movement::{PathfindingRequest, PathfindingTask, SimPosition};
+use crate::movement::{
+    PathfindingRequest, PathfindingTask, SimPosition, wanderers_dispatched_at_zoom,
+};
 use crate::navigation::ArcNavmesh;
 use crate::portal::PortalPos;
 use crate::ui::{UiOpacity, ui_color};
@@ -35,6 +38,10 @@ pub enum PlayPhase {
 /// Потолок ожидания прогрева, сек: экран загрузки не должен зависнуть
 /// навсегда, если пути почему-то не сходятся.
 const WARMUP_TIMEOUT: f32 = 10.0;
+/// Сколько ждать появления первой заявки, сек. Заявки вставляются командами в
+/// конце первого кадра мира, так что «заявок нет» в первые кадры — ещё не
+/// «ждать нечего»; после этого срока — уже да.
+const WARMUP_GRACE: f32 = 0.5;
 
 /// Порядок инициализации мира в `OnEnter(Playing)`: navmesh заполняется
 /// раньше спавнов — иначе население высадится в реку и стены.
@@ -318,15 +325,26 @@ fn poll_job(
 /// заявки на поиск пути. Ждать заявок вне кадра бессмысленно — диспетчер их
 /// и не запускает, пока камера не приедет.
 ///
+/// По той же причине ждать можно только то, что диспетчер вообще берёт: выше
+/// `WANDER_DISPATCH_MAX_ZOOM` мирные гуляющие пути не получают, и их заявки
+/// не закроются никогда — экран загрузки висел бы все 10 с таймаута с
+/// неподвижным счётчиком (камера, восстановленная в режиме `save` на общем
+/// плане, попадала в это ровно всегда).
+///
 /// `seen_requests` нужен, потому что в первый кадр после спавна заявки ещё
 /// не вставлены (команды `pick_wander_targets` применяются в конце кадра),
-/// и без него прогрев закончился бы, не начавшись.
+/// и без него прогрев закончился бы, не начавшись. Ждать их появления, однако,
+/// можно только `WARMUP_GRACE`: на общем плане ждать нечего в принципе, и без
+/// этого срока экран загрузки простоял бы весь таймаут с нулём на счётчике.
 fn poll_warmup(
     time: Res<Time<Real>>,
     mut progress: ResMut<WarmupProgress>,
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    pending: Query<&SimPosition, Or<(With<PathfindingRequest>, With<PathfindingTask>)>>,
+    pending: Query<
+        (&SimPosition, Has<Human>, Has<HumanFleeTag>),
+        Or<(With<PathfindingRequest>, With<PathfindingTask>)>,
+    >,
     mut texts: Query<&mut Text, With<LoaderText>>,
     mut next: ResMut<NextState<PlayPhase>>,
 ) {
@@ -338,16 +356,22 @@ fn poll_warmup(
 
     let camera_position = camera.translation.truncate();
     let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x;
+    let wanderers_dispatched = wanderers_dispatched_at_zoom(camera.scale.x);
     let waiting = pending
         .iter()
-        .filter(|sim_position| {
+        .filter(|(sim_position, is_human, is_fleeing)| {
+            // мирного гуляющего на общем плане диспетчер не возьмёт
+            if *is_human && !*is_fleeing && !wanderers_dispatched {
+                return false;
+            }
             let offset = (sim_position.0 - camera_position).abs();
             offset.x <= half_view.x && offset.y <= half_view.y
         })
         .count();
     *seen_requests |= waiting > 0;
 
-    if (*seen_requests && waiting == 0) || *elapsed > WARMUP_TIMEOUT {
+    let nothing_to_wait_for = waiting == 0 && (*seen_requests || *elapsed > WARMUP_GRACE);
+    if nothing_to_wait_for || *elapsed > WARMUP_TIMEOUT {
         if waiting > 0 {
             warn!("warmup timed out with {waiting} pawns still routing");
         } else {

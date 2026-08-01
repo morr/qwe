@@ -36,6 +36,19 @@ mod priority {
     pub const WANDER_ON_SCREEN: u8 = 1;
 }
 
+/// Берёт ли диспетчер мирных гуляющих на таком зуме. На сильном отдалении
+/// пешка — точка, её простой не виден, а «в кадре» — полкарты: без отсечки
+/// полный зум-аут разом делает диспатчабельными все ~17k мирных, топит пул
+/// тасков (URGENT встают за ними на кадры) и заставляет сортировать 17k заявок
+/// каждый кадр.
+///
+/// Публична, потому что ждать таких заявок нельзя никому: прогрев
+/// (`loading.rs::poll_warmup`) держал бы экран загрузки до таймаута с
+/// неподвижным счётчиком — заявки, которых диспетчер не берёт, не закроются.
+pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
+    camera_scale < crate::settings::WANDER_DISPATCH_MAX_ZOOM
+}
+
 /// Запуск тасков поиска пути из очереди запросов. МИРНО гуляющие люди вне
 /// экрана путь НЕ получают вовсе — их заявки ждут, пока камера не приедет;
 /// демоны и убегающие люди обсчитываются всегда (иначе инвазия и паника за
@@ -63,11 +76,7 @@ pub fn dispatch_pathfinding_requests(
     let camera_position = camera.translation.truncate();
     // масштаб камеры = мировых метров на логический пиксель
     let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * VIEW_MARGIN;
-    // на сильном отдалении пешка — точка, её простой не виден, а «в кадре» —
-    // полкарты: без отсечки полный зум-аут разом делает диспатчабельными все
-    // ~17k мирных, топит пул тасков (URGENT встают за ними на кадры) и
-    // заставляет сортировать 17k заявок каждый кадр
-    let wanderers_visible_at_this_zoom = camera.scale.x < crate::settings::WANDER_DISPATCH_MAX_ZOOM;
+    let wanderers_visible_at_this_zoom = wanderers_dispatched_at_zoom(camera.scale.x);
 
     let mut queue: Vec<(u8, f32, Entity, IVec2, IVec2)> = requests
         .iter()
