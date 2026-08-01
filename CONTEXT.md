@@ -24,7 +24,8 @@ in `main.rs`.
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → woods 0.55 → grass
-  0.6 → sand 0.7 → water 1 → alley casings 1.4 → alleys 1.5 → road casings 1.9 → roads 2
+  0.6 → sand 0.7 → water 1 → waterways 1.05 → alley casings 1.4 → alleys 1.5
+  → road casings 1.9 → roads 2
   → bridge casings 2.1 → bridges 2.2
   → rails 2.4 → rail dashes 2.5 → tram 2.6 → corpses 3 → portal 4 → buildings 5 → units → tree
   shadows 19 → trees 20. Three more
@@ -93,12 +94,14 @@ in `main.rs`.
 
 - **Overpass** — the Overpass API (`overpass-api.de`), queried once with `[out:json]` +
   `out geom` (inline geometry, no node lookup). Query covers: `building` (way+rel),
-  `highway` (way), `natural=water` / `waterway=riverbank` (way+rel), `leisure=park|garden`,
+  `highway` (way), `natural=water` / `waterway=riverbank` (way+rel),
+  `waterway=river|stream|brook|canal|ditch|drain|weir` (way — the *linear* watercourses),
+  `leisure=park|garden`,
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
   `natural=sand|beach`, `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **6** (v3 added `entrance` nodes, v4 `railway`,
-  v5 `natural=tree_row`, v6 `natural=tree` nodes).
+  `City`'s geo center. `QUERY_VERSION` is **7** (v3 added `entrance` nodes, v4 `railway`,
+  v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -152,6 +155,20 @@ in `main.rs`.
     map. **Rails never touch the navmesh** — see below.
   - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
     impassable.
+  - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
+    6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
+    `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
+    too narrow for a polygon, so a `river` line is narrower than the Упа (which is an
+    area). A plausible `width` tag (`WATER_WIDTH_RANGE`, 0.5..50 m) overrides the class
+    default. `parse::water_class` is a **whitelist** for the same reason `rail_class` is:
+    `waterway=*` also carries `riverbank` (that one is an area, and `area_kind` claims
+    it), `dam`, `dock`, `lock_gate`, `waterfall`. Like the rail and tree-row branches,
+    the waterway branch in `parse_way` runs before `highway` and **falls through** — a
+    culverted stream under a street shares its way with `highway=*`.
+    **`tunnel: bool`** (`parse::is_underground`, the same test that drops subway track)
+    marks a piped section: it is drawn as a **dashed** ribbon and, alone among
+    watercourses, **does not block the navmesh** — the water runs under the ground and a
+    pawn walks over it. Everything else about waterways *does* block; see Navigation.
   - **TreeRow** — `natural=tree_row`: an avenue's centerline polyline plus what the data
     itself knows about the planting — `spacing: Option<f32>` (from `spacing`, or the row
     length spread over `count` / `tree:count`) and `radius: Option<f32>` (half
@@ -312,7 +329,10 @@ in `main.rs`.
   the latter measured from the **crown** edge. Also rejected inside water or within
   `TREE_SHORE_CLEARANCE` (3 m) of a shoreline — a pond is drawn *over* the park fill, so
   an unfiltered tree grew out of the water — and anywhere inside a Grass or Sand polygon
-  (a lawn is a lawn; overhang from a neighbouring tree is fine).
+  (a lawn is a lawn; overhang from a neighbouring tree is fine). The same shore clearance
+  applies to a **linear** watercourse, measured from the ribbon edge (`NearbySegments`,
+  the per-segment index shared with roads); culverts are excluded, since above a pipe
+  there is ground and a tree on it is legitimate.
 - **Standalone trees** (`planting.rs::plant_standalone`) — single surveyed trees from
   `natural=tree` nodes, planted **first**, before the forest and the rows, so both keep
   `TREE_MIN_SPACING` from them via the shared `Occupied` grid. A node is dropped when the
@@ -415,12 +435,13 @@ in `main.rs`.
   road, pond, lawn?) runs once per rejection-sampling attempt, tens of thousands of times,
   and a linear pass over 7 475 buildings and every road was almost the whole planting cost
   (615 ms on Tula). Candidates now come from uniform cell grids over the same padded AABBs
-  (`NearbyAreas`, and `NearbyRoadSegments` — roads indexed **per segment**, because a river's
-  AABB spans the map). Same idiom as `entrances/index.rs`; the precise tests behind the
+  (`NearbyAreas`, and `NearbySegments` — roads and watercourses indexed **per segment**,
+  because a river's AABB spans the map; the cell carries the ribbon width, since the two
+  sources index different vectors). Same idiom as `entrances/index.rs`; the precise tests behind the
   lookup are unchanged, so the planted set is identical.
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
-  alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
+  waterways + culverts, alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
   `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
   colors over a single white `ColorMaterial`. ~7000 buildings cost a handful of entities.
   Trees stay individual entities (see tree crowns below).
@@ -647,10 +668,24 @@ in `main.rs`.
 - **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
   `x * GRID_SIZE.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
-- **Fill order matters** (`fill_from_mapdata`): water blocks → **bridge corridors carve
-  passable strips back** (`bridge=yes` roads) → buildings block → walls block →
-  **building passages carve back through them**. Without bridges the Упа river bisects
-  the map and no cross-river path exists.
+- **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
+  block** (all but culverts) → **bridge corridors carve passable strips back**
+  (`bridge=yes` roads) → buildings block → walls block → **building passages carve back
+  through them**. Without bridges the Упа river bisects the map and no cross-river path
+  exists.
+- **Linear waterways block, unlike rails** — a `WaterLine` is water, and water is crossed
+  by bridge, not waded. They carry the rail hazard below (an unbroken thread across the
+  city that `prune_unreachable` would amputate a bank of), so two things keep the map
+  connected and both are load-bearing: the bridge carve runs *after* this fill, and
+  **culverts do not block at all** (`WaterLine::tunnel`) — where a stream crosses under a
+  street, OSM far more often pipes it (`tunnel=culvert`) than bridges the street over it.
+  The number that proves it held is the **pruned-tile count** in the log — a jump of
+  thousands means a watercourse cut a district off, and that is the thing to check after
+  any change here or in `water_class`. On Tula (25 waterways, 7 of them culverts) the
+  channels took 6 253 tiles out of the passable set and pruning did **not** move at all
+  (9 781 before and after), i.e. no bank was severed. Much of that is free: the Упа's
+  *centerline* is also tagged `waterway=river`, and it runs inside the Упа water polygon,
+  which was already impassable.
 - **Ordinary roads do not touch the navmesh.** The grid starts all-passable and
   `fill_from_mapdata` only ever *subtracts* (water, buildings, walls); roads enter it
   solely through the `bridge` and `passage` carves above. Pawns walk on grass and asphalt

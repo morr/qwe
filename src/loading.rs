@@ -263,12 +263,17 @@ fn poll_job(
                 .iter()
                 .map(|building| building.entrances.len())
                 .sum();
+            // трубы считаются отдельно: только они из водотоков не блокируют
+            // навмеш, и когда русло вдруг режет город, первый вопрос — сколько
+            // переходов ушло в культверты
+            let culverts = map.water_lines.iter().filter(|line| line.tunnel).count();
             info!(
                 "osm map: {} buildings ({with_height} with height, {entrances} entrances), \
-                 {} water, {} parks, {} woods, {} grass, {} sand, {} roads, {} rails, \
-                 {} walls, {} trees",
+                 {} water, {} waterways ({culverts} culverts), {} parks, {} woods, {} grass, \
+                 {} sand, {} roads, {} rails, {} walls, {} trees",
                 map.buildings.len(),
                 map.water.len(),
+                map.water_lines.len(),
                 map.parks.len(),
                 map.woods.len(),
                 map.grass.len(),

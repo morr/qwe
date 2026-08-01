@@ -5,7 +5,8 @@ use bevy::math::{IVec2, Vec2};
 
 use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::{
-    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine,
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, WaterKind,
+    WaterLine,
 };
 use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path, line_of_sight};
 
@@ -168,13 +169,24 @@ fn fill_from_mapdata_blocks_and_carves() {
         woods: Vec::new(),
         grass: Vec::new(),
         sand: Vec::new(),
-        roads: vec![RoadLine {
-            points: vec![Vec2::new(280.0, 200.0), Vec2::new(360.0, 200.0)],
-            width: 8.0,
-            class: RoadClass::Street,
-            bridge: true,
-            passage: false,
-        }],
+        roads: vec![
+            RoadLine {
+                points: vec![Vec2::new(280.0, 200.0), Vec2::new(360.0, 200.0)],
+                width: 8.0,
+                class: RoadClass::Street,
+                bridge: true,
+                passage: false,
+            },
+            // мост через линейное русло — прорезка обязана работать и по нему,
+            // иначе ручей рассекал бы город без единого перехода
+            RoadLine {
+                points: vec![Vec2::new(680.0, 200.0), Vec2::new(720.0, 200.0)],
+                width: 8.0,
+                class: RoadClass::Street,
+                bridge: true,
+                passage: false,
+            },
+        ],
         rails: vec![RailLine {
             points: vec![Vec2::new(600.0, 100.0), Vec2::new(600.0, 200.0)],
             width: 5.0,
@@ -184,6 +196,22 @@ fn fill_from_mapdata_blocks_and_carves() {
             points: vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],
             width: 3.0,
         }],
+        water_lines: vec![
+            // открытое русло — вода, как пруд: вброд не переходят
+            WaterLine {
+                points: vec![Vec2::new(700.0, 100.0), Vec2::new(700.0, 300.0)],
+                width: 6.0,
+                kind: WaterKind::Stream,
+                tunnel: false,
+            },
+            // тот же ручей в трубе — под землёй, значит поверху ходят
+            WaterLine {
+                points: vec![Vec2::new(800.0, 100.0), Vec2::new(800.0, 300.0)],
+                width: 6.0,
+                kind: WaterKind::Stream,
+                tunnel: true,
+            },
+        ],
         // деревья навмеша не касаются — они и лесные, и аллейные чисто
         // визуальные, так что перечислять их поля тут нечего
         ..MapData::default()
@@ -211,6 +239,16 @@ fn fill_from_mapdata_blocks_and_carves() {
     // а рельсы — слой чисто визуальный: через путь ходят как по земле
     let rail_tile = world_to_tile(Vec2::new(600.0, 150.0));
     assert!(navmesh.is_passable(rail_tile.x, rail_tile.y));
+
+    // линейное русло, в отличие от рельсов, блокирует — и мост его прорезает
+    let stream_tile = world_to_tile(Vec2::new(700.0, 150.0));
+    assert!(!navmesh.is_passable(stream_tile.x, stream_tile.y));
+    let stream_bridge_tile = world_to_tile(Vec2::new(700.0, 200.0));
+    assert!(navmesh.is_passable(stream_bridge_tile.x, stream_bridge_tile.y));
+
+    // а труба не блокирует: вода под землёй, человек идёт поверху
+    let culvert_tile = world_to_tile(Vec2::new(800.0, 150.0));
+    assert!(navmesh.is_passable(culvert_tile.x, culvert_tile.y));
 
     // и путь через реку существует и идёт по мосту
     let path = astar_pathfinding(

@@ -145,6 +145,87 @@ fn underground_tracks_are_not_drawn() {
 }
 
 #[test]
+fn parses_linear_waterways_and_keeps_riverbank_an_area() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    // русло, ручей с ширинои из тегов, канава, замкнутый riverbank (площадь),
+    // плотина (не линия) и ручей под улицей в трубе
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "way", "id": 40, "tags": {{"waterway": "river"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 41, "tags": {{"waterway": "stream", "width": "3,5"}},
+    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}},
+  {{"type": "way", "id": 42, "tags": {{"waterway": "ditch"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}},
+  {{"type": "way", "id": 43, "tags": {{"waterway": "riverbank"}},
+    "geometry": [
+      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
+      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
+      {{"lat": {a}, "lon": {b}}}]}},
+  {{"type": "way", "id": 44, "tags": {{"waterway": "dam"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 45,
+    "tags": {{"waterway": "stream", "tunnel": "culvert", "highway": "residential"}},
+    "geometry": [{{"lat": {e}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}}
+]}}"#,
+        a = lat - d,
+        e = lat + d,
+        b = lon - d,
+        c = lon + d,
+    );
+
+    let map = parse(&json, CITY).unwrap();
+
+    // `dam` линией не становится — белый список, а не «всё, что waterway»
+    assert_eq!(map.water_lines.len(), 4);
+    assert_eq!(map.water_lines[0].kind, WaterKind::River);
+    assert_eq!(map.water_lines[0].width, 8.0);
+    // ширина из тегов бьёт дефолт класса, и запятая как разделитель разбирается
+    assert_eq!(map.water_lines[1].kind, WaterKind::Stream);
+    assert_eq!(map.water_lines[1].width, 3.5);
+    assert_eq!(map.water_lines[2].kind, WaterKind::Ditch);
+    assert_eq!(map.water_lines[2].width, 1.5);
+
+    // труба помечена, и way остался при этом улицей: ветка водотока не должна
+    // затыкать разбор чужих тегов на том же way
+    assert!(map.water_lines[3].tunnel);
+    assert!(!map.water_lines[0].tunnel);
+    assert_eq!(map.roads.len(), 1);
+    assert_eq!(map.roads[0].points, map.water_lines[3].points);
+
+    // замкнутый riverbank — по-прежнему площадь, а не лента
+    assert_eq!(map.water.len(), 1);
+    assert_eq!(map.water[0].outer.len(), 4);
+}
+
+#[test]
+fn implausible_waterway_width_falls_back_to_the_class_default() {
+    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
+    let d = 0.0005;
+    // `width=200` на ручье — это пойма или опечатка; лента такой ширины, раз
+    // водотоки блокируют навмеш, отрезала бы полгорода
+    let json = format!(
+        r#"{{"elements": [
+  {{"type": "way", "id": 50, "tags": {{"waterway": "stream", "width": "200"}},
+    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
+  {{"type": "way", "id": 51, "tags": {{"waterway": "canal", "width": "0.1"}},
+    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}}
+]}}"#,
+        a = lat - d,
+        e = lat + d,
+        b = lon - d,
+        c = lon + d,
+    );
+
+    let map = parse(&json, CITY).unwrap();
+
+    assert_eq!(map.water_lines.len(), 2);
+    assert_eq!(map.water_lines[0].width, 2.5);
+    assert_eq!(map.water_lines[1].width, 6.0);
+}
+
+#[test]
 fn trees_are_deterministic_and_inside_the_wood() {
     let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
     let d = 0.001;

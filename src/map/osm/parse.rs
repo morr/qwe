@@ -12,7 +12,8 @@ use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeCompose, TreeNode,
-    TreeRow, TreeRowLayout, WallLine, point_in_area, point_in_polygon, ring_bounds,
+    TreeRow, TreeRowLayout, WallLine, WaterKind, WaterLine, point_in_area, point_in_polygon,
+    ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -47,6 +48,11 @@ const TREE_ROW_SPACING_RANGE: RangeInclusive<f32> = 2.0..=40.0;
 /// вилки (2.5..4): аллейный или одиночный тополь честно бывает крупнее, а вот
 /// `diameter_crown=50` — опечатка.
 const TREE_CROWN_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
+
+/// Границы правдоподобия ширины русла из тега `width`, м: уже полуметра — не
+/// водоток, а разметочная линия; шире полусотни — либо опечатка, либо ширина
+/// поймы, а не воды (такое место в OSM размечают полигоном, а не линией).
+const WATER_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=50.0;
 
 /// Шаг квантования координат при привязке входа к зданию, 1/м. Вход в OSM —
 /// как правило общий узел контура здания (Тула 82%, Берлин 79%, Париж 65%),
@@ -367,6 +373,37 @@ fn rail_class(railway: &str) -> Option<(f32, RailKind)> {
     })
 }
 
+/// Ширина по умолчанию и род по значению `waterway`; `None` — не водоток.
+///
+/// Белый список по той же причине, что у [`rail_class`]: под `waterway=*` лежит
+/// не только русло, но и всё, что на нём стоит и линией не является —
+/// `riverbank` (это площадь, её берёт [`area_kind`]), `dam`, `dock`, `lock_gate`,
+/// `waterfall`, `fuel`, `water_point`.
+///
+/// Ширины — рисовальные, не гидрологические: OSM размечает линией то, что узко
+/// для полигона, поэтому река здесь уже́ настоящей Упы (та размечена площадью).
+/// Реальная ширина, если она есть в тегах, всё равно перебьёт эту в `parse_way`.
+fn water_class(waterway: &str) -> Option<(f32, WaterKind)> {
+    Some(match waterway {
+        "river" => (8.0, WaterKind::River),
+        "canal" => (6.0, WaterKind::Canal),
+        // водослив поперёк русла: своей ширины у него нет, лежит внутри реки
+        "weir" => (4.0, WaterKind::Canal),
+        "stream" | "brook" => (2.5, WaterKind::Stream),
+        "ditch" | "drain" => (1.5, WaterKind::Ditch),
+        _ => return None,
+    })
+}
+
+/// Ширина русла из тега `width`, если она правдоподобна. Верхняя граница есть
+/// не для красоты: линией размечают узкое, и `width=200` на ручье — это либо
+/// опечатка, либо ширина всей поймы, а лента в 200 м накрыла бы полгорода
+/// (и, поскольку водотоки блокируют навмеш, отрезала бы их друг от друга).
+fn water_width(tags: &HashMap<String, String>) -> Option<f32> {
+    let width = tags.get("width").and_then(|value| parse_measure(value))?;
+    WATER_WIDTH_RANGE.contains(&width).then_some(width)
+}
+
 /// Путь под землёй — метро в тоннеле, подземный перегон. Сверху его не видно,
 /// значит и рисовать нечего.
 ///
@@ -494,6 +531,21 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             spacing: row_spacing(&element.tags, &points),
             radius: crown_radius(&element.tags),
             points: points.clone(),
+        });
+    }
+
+    // водоток — снова до дорог и снова без `return`: ручей в трубе под улицей
+    // размечен `waterway=*` на том же way, что и `highway=*`, и обе ветки обязаны
+    // отработать. Замкнутый `waterway=riverbank` сюда не попадает — его нет в
+    // белом списке, и площадью он остаётся ниже, в `area_kind`.
+    if let Some(waterway) = element.tags.get("waterway")
+        && let Some((default_width, kind)) = water_class(waterway)
+    {
+        map.water_lines.push(WaterLine {
+            points: points.clone(),
+            width: water_width(&element.tags).unwrap_or(default_width),
+            kind,
+            tunnel: is_underground(&element.tags),
         });
     }
 

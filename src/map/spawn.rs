@@ -1,5 +1,5 @@
 //! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, луга, песок,
-//! вода) + дороги, аллеи и стены (`map/roads.rs`, стиль ленты переключается
+//! вода площадная и линейная) + дороги, аллеи и стены (`map/roads.rs`, стиль ленты переключается
 //! панелью Roads) + здания (`map/buildings/`, режим отображения высоты
 //! переключается панелью Buildings) + деревья отдельными сущностями.
 
@@ -7,13 +7,13 @@ use bevy::prelude::*;
 
 use crate::loading::AppState;
 use crate::map::buildings::{self, BuildingHeightMode};
-use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{MapData, TreeRow};
-use crate::map::roads::{self, RoadStyle};
+use crate::map::meshing::{MeshBuilder, RibbonJoin};
+use crate::map::osm::{MapData, TreeRow, WaterLine};
+use crate::map::roads::{self, RoadJoin, RoadSmoothing, RoadStyle};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING,
-    Z_WOOD,
+    Z_WATERWAY, Z_WOOD,
 };
 
 const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
@@ -39,6 +39,11 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
+/// Штрих и просвет пунктира трубы, м. Короче дорожной штриховки: культверт под
+/// улицей бывает длиной в десяток метров, и на нём должно уместиться несколько
+/// штрихов, иначе труба неотличима от сплошного русла.
+const CULVERT_DASH_LEN: f32 = 4.0;
+const CULVERT_DASH_GAP: f32 = 3.0;
 
 pub fn spawn_map(
     mut commands: Commands,
@@ -87,6 +92,8 @@ pub fn spawn_map(
         water.push_polygon(&area.outer, &area.holes, WATER_COLOR.to_linear());
     }
 
+    let (waterways, culverts) = mesh_water_lines(&map.water_lines);
+
     let skipped: usize = [&parks, &woods, &grass, &sand, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
@@ -101,6 +108,8 @@ pub fn spawn_map(
         (grass, Z_GRASS, "grass"),
         (sand, Z_SAND, "sand"),
         (water, Z_POND, "water"),
+        (waterways, Z_WATERWAY, "waterways"),
+        (culverts, Z_WATERWAY, "waterway_culverts"),
     ] {
         if builder.is_empty() {
             continue;
@@ -132,6 +141,41 @@ pub fn spawn_map(
         &map.buildings,
         &map.roads,
     );
+}
+
+/// Ленты линейных водотоков: открытые русла и трубы, двумя мешами.
+///
+/// Разделены не ради z (он у них общий — цвет один и тот же), а ради примитива:
+/// русло рисуется сплошной лентой, труба — пунктиром. Пунктир здесь несёт
+/// смысл, а не украшает: труба единственная из водотоков не блокирует навмеш,
+/// и человек, идущий «сквозь ручей» на глазах у игрока, объясняется именно этим
+/// разрывом линии.
+fn mesh_water_lines(lines: &[WaterLine]) -> (MeshBuilder, MeshBuilder) {
+    let color = WATER_COLOR.to_linear();
+    let mut open = MeshBuilder::default();
+    let mut culverts = MeshBuilder::default();
+
+    for line in lines {
+        // сглаживание как у дорог: русло в OSM — ломаная по точкам съёмки, и на
+        // её изломах лента без сглаживания заметно гранёная
+        let points = roads::smooth_path(&line.points, line.width, RoadSmoothing::Light);
+        if line.tunnel {
+            culverts.push_dashes(
+                &points,
+                line.width,
+                CULVERT_DASH_LEN,
+                CULVERT_DASH_GAP,
+                color,
+                RibbonJoin::Round,
+            );
+        } else {
+            // круглые стыки и торцы: два way одного русла встречаются в общем
+            // узле, и полудиски на торцах сливаются в непрерывную реку
+            roads::push_ribbon(&mut open, &points, line.width, color, RoadJoin::Round);
+        }
+    }
+
+    (open, culverts)
 }
 
 /// Зелёная полоса под аллеей — чтобы пересборка стиля знала, что деспавнить.

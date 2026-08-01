@@ -88,6 +88,39 @@ pub struct WallLine {
     pub width: f32,
 }
 
+/// Род водотока — он же ширина по умолчанию, когда в данных нет `width`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaterKind {
+    /// `waterway=river` — русло реки, самое широкое из линейных.
+    River,
+    /// `waterway=canal` — канал, и `waterway=weir` (водослив поперёк русла):
+    /// отдельным родом он не нужен, рисуется той же лентой и лежит внутри реки.
+    Canal,
+    /// `waterway=stream|brook` — ручей.
+    Stream,
+    /// `waterway=ditch|drain` — канава и дренаж, самые узкие.
+    Ditch,
+}
+
+/// Линейный водоток (`waterway=river|stream|canal|…`): осевая полилиния и
+/// ширина. Площадная вода — это [`AreaKind::Water`], а не эта структура:
+/// `waterway=riverbank` замкнутым way по-прежнему становится полигоном.
+///
+/// В отличие от рельсов навмеш **трогает**: русло — та же вода, что пруд, и
+/// перейти его можно только по мосту. От разрезания карты пополам спасают две
+/// вещи — прорезка мостов после заливки и [`WaterLine::tunnel`].
+#[derive(Debug, Clone)]
+pub struct WaterLine {
+    pub points: Vec<Vec2>,
+    pub width: f32,
+    pub kind: WaterKind,
+    /// Труба: `tunnel=culvert` у ручья под дорогой, коллектор под кварталом
+    /// (`layer<0`) — то же `parse::is_underground`, что отсеивает метро у
+    /// рельсов. Такой участок **не блокирует навмеш** (вода идёт под землёй,
+    /// человек проходит поверху) и рисуется пунктиром, чтобы это было видно.
+    pub tunnel: bool,
+}
+
 /// Аллея из OSM (`natural=tree_row`): осевая полилиния и то, что данные знают о
 /// самой посадке. Деревья по ней расставляет `planting::plant_rows`.
 #[derive(Debug, Clone)]
@@ -258,6 +291,9 @@ pub struct MapData {
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
+    /// Линейные водотоки — реки, ручьи, каналы, канавы. В навмеш попадают
+    /// (кроме труб), в отличие от рельсов: см. [`WaterLine`].
+    pub water_lines: Vec<WaterLine>,
     /// Аллеи (`natural=tree_row`) — исходная геометрия, для отладки; деревья по
     /// ним уже разложены в [`MapData::row_trees_kept`] / [`MapData::row_trees_slid`].
     pub tree_rows: Vec<TreeRow>,

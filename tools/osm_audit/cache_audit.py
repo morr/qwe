@@ -24,6 +24,9 @@ RAIL_OK = {
     "rail", "light_rail", "narrow_gauge", "subway", "tram",
     "abandoned", "disused", "razed", "dismantled",
 }
+# parse.rs::water_class — линейные водотоки; `riverbank` тут не значится,
+# это площадь и её забирает area_kind
+WATER_OK = {"river", "canal", "weir", "stream", "brook", "ditch", "drain"}
 # parse.rs::NON_WALKABLE_ENTRANCES
 NON_WALKABLE = {"no", "garage", "emergency"}
 
@@ -95,6 +98,16 @@ def analyse(path):
                     kept[f"rail {railway}"] += 1
             if tags.get("natural") == "tree_row":
                 kept["tree_row"] += 1
+                claimed = True
+
+            # водоток — тоже до дорог и тоже проваливается дальше: ручей в
+            # трубе под улицей размечен на том же way, что и `highway=*`.
+            # Значение не из белого списка тут не считается: в парсере оно
+            # просто едет дальше, в area_kind (`riverbank` там станет водой,
+            # `dam`/`dock` — «не классифицировано»)
+            waterway = tags.get("waterway")
+            if waterway in WATER_OK:
+                kept["culvert" if underground(tags) else f"waterway {waterway}"] += 1
                 claimed = True
 
             highway = tags.get("highway")

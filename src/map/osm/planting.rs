@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use bevy::math::{IVec2, Vec2};
 
 use crate::map::osm::model::{
-    MapData, PlantedTree, PolyArea, RoadLine, RowTrees, TreeRowLayout, TreeRowPlacement,
-    distance_to_segment, point_in_area, ring_area, ring_bounds,
+    MapData, PlantedTree, PolyArea, RowTrees, TreeRowLayout, TreeRowPlacement, distance_to_segment,
+    point_in_area, ring_area, ring_bounds,
 };
 use crate::map::roads::casing_width;
 use crate::settings::{MAP_SIZE, TREE_DENSITY_STEP};
@@ -160,19 +160,23 @@ impl NearbyAreas {
     }
 }
 
-/// Та же сетка для дорог, но по **отрезкам**, а не по дорогам: AABB реки или
-/// проспекта накрывает пол-карты, и индекс по дорогам вернул бы в кандидаты все
-/// её сотни отрезков. В ячейку кладётся `(номер дороги, начало, конец)`.
-struct NearbyRoadSegments(HashMap<IVec2, Vec<(usize, Vec2, Vec2)>>);
+/// Та же сетка для линейных объектов, но по **отрезкам**, а не по объектам:
+/// AABB реки или проспекта накрывает пол-карты, и индекс по объектам вернул бы
+/// в кандидаты все её сотни отрезков. В ячейку кладётся
+/// `(ширина ленты, начало, конец)` — ширина рядом с отрезком, а не номером в
+/// исходном векторе, потому что индексов теперь два (дороги и русла) и
+/// разыменовывать они бы стали разные вектора.
+struct NearbySegments(HashMap<IVec2, Vec<(f32, Vec2, Vec2)>>);
 
-impl NearbyRoadSegments {
-    fn build(roads: &[RoadLine]) -> Self {
-        let mut cells: HashMap<IVec2, Vec<(usize, Vec2, Vec2)>> = HashMap::new();
-        for (index, road) in roads.iter().enumerate() {
-            // паддинг — тот же, что у AABB дороги: отрезок, до которого дерево
-            // может не дотянуть зазор, обязан лежать в ячейке точки
-            let pad = road.width / 2.0 + TREE_MAX_RADIUS + TREE_KERB_CLEARANCE;
-            for segment in road.points.windows(2) {
+impl NearbySegments {
+    /// `clearance` — наибольший зазор, который потребитель прибавит к
+    /// полуширине; паддинг ячейки обязан его накрывать, иначе отрезок, до
+    /// которого дереву не хватило зазора, не попадёт в кандидаты.
+    fn build<'a>(lines: impl Iterator<Item = (&'a [Vec2], f32)>, clearance: f32) -> Self {
+        let mut cells: HashMap<IVec2, Vec<(f32, Vec2, Vec2)>> = HashMap::new();
+        for (points, width) in lines {
+            let pad = width / 2.0 + TREE_MAX_RADIUS + clearance;
+            for segment in points.windows(2) {
                 let (from, to) = (segment[0], segment[1]);
                 let lo = nearby_cell(from.min(to) - pad);
                 let hi = nearby_cell(from.max(to) + pad);
@@ -181,7 +185,7 @@ impl NearbyRoadSegments {
                         cells
                             .entry(IVec2::new(x, y))
                             .or_default()
-                            .push((index, from, to));
+                            .push((width, from, to));
                     }
                 }
             }
@@ -189,7 +193,7 @@ impl NearbyRoadSegments {
         Self(cells)
     }
 
-    fn near(&self, pos: Vec2) -> &[(usize, Vec2, Vec2)] {
+    fn near(&self, pos: Vec2) -> &[(f32, Vec2, Vec2)] {
         self.0.get(&nearby_cell(pos)).map_or(&[], Vec::as_slice)
     }
 }
@@ -210,8 +214,11 @@ struct Obstacles<'a> {
     bare: Vec<&'a PolyArea>,
     bare_bounds: Vec<(Vec2, Vec2)>,
     building_index: NearbyAreas,
-    road_index: NearbyRoadSegments,
+    road_index: NearbySegments,
     water_index: NearbyAreas,
+    /// Линейные русла — тот же запрет, что у пруда, только по отрезку. Трубы
+    /// сюда не попадают: над культвертом земля, и дерево на ней законно.
+    water_line_index: NearbySegments,
     bare_index: NearbyAreas,
 }
 
@@ -244,8 +251,20 @@ impl<'a> Obstacles<'a> {
 
         Self {
             building_index: NearbyAreas::build(&building_bounds),
-            road_index: NearbyRoadSegments::build(&map.roads),
+            road_index: NearbySegments::build(
+                map.roads
+                    .iter()
+                    .map(|road| (road.points.as_slice(), road.width)),
+                TREE_KERB_CLEARANCE,
+            ),
             water_index: NearbyAreas::build(&water_bounds),
+            water_line_index: NearbySegments::build(
+                map.water_lines
+                    .iter()
+                    .filter(|line| !line.tunnel)
+                    .map(|line| (line.points.as_slice(), line.width)),
+                TREE_SHORE_CLEARANCE,
+            ),
             bare_index: NearbyAreas::build(&bare_bounds),
             map,
             building_bounds,
@@ -272,7 +291,13 @@ impl<'a> Obstacles<'a> {
             let area = &self.map.water[index];
             in_bbox(pos, min, max)
                 && (point_in_area(pos, area) || near_area_edge(pos, area, TREE_SHORE_CLEARANCE))
-        })
+        }) || self
+            .water_line_index
+            .near(pos)
+            .iter()
+            .any(|&(width, from, to)| {
+                distance_to_segment(pos, from, to) <= width / 2.0 + TREE_SHORE_CLEARANCE
+            })
     }
 
     /// Полная проверка: [`Obstacles::solid`] плюс дороги (парковые аллеи — тоже
@@ -283,8 +308,8 @@ impl<'a> Obstacles<'a> {
         // ветка выглядит естественно, крона поверх стены — нет
         let kerb_gap = radius + TREE_KERB_CLEARANCE;
         self.solid(pos, radius)
-            || self.road_index.near(pos).iter().any(|&(index, from, to)| {
-                distance_to_segment(pos, from, to) <= self.map.roads[index].width / 2.0 + kerb_gap
+            || self.road_index.near(pos).iter().any(|&(width, from, to)| {
+                distance_to_segment(pos, from, to) <= width / 2.0 + kerb_gap
             })
             || self.bare_index.near(pos).iter().any(|&index| {
                 let (min, max) = self.bare_bounds[index];
@@ -296,8 +321,7 @@ impl<'a> Obstacles<'a> {
     /// [`Obstacles::blocked`]: без зазора кроны — дерево у кромки с нависшей
     /// над полотном кроной легально, дерево, растущее из асфальта, нет.
     fn on_road(&self, pos: Vec2) -> bool {
-        self.road_index.near(pos).iter().any(|&(index, from, to)| {
-            let width = self.map.roads[index].width;
+        self.road_index.near(pos).iter().any(|&(width, from, to)| {
             distance_to_segment(pos, from, to) <= width / 2.0 + casing_width(width)
         })
     }
@@ -708,7 +732,7 @@ pub(super) fn plant_trees(map: &MapData) -> (Vec<PlantedTree>, Vec<PlantedTree>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::model::{AreaKind, RoadClass, TreeCompose, TreeNode, TreeRow};
+    use crate::map::osm::model::{AreaKind, RoadClass, RoadLine, TreeCompose, TreeNode, TreeRow};
     use crate::settings::TREE_DENSITY_MIN;
 
     /// Прямой ряд длиной `length` вдоль оси X, на высоте 1000 — подальше от

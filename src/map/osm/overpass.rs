@@ -50,11 +50,11 @@ impl GeoBounds {
 /// Версия запроса в имени кеша: расширили набор тегов — старая выгрузка
 /// новых зон не содержит, и без этого её никто бы не перекачал.
 /// v3 — ноды `entrance`. v4 — ways `railway`. v5 — ways `natural=tree_row`.
-/// v6 — ноды `natural=tree`.
-const QUERY_VERSION: u32 = 6;
+/// v6 — ноды `natural=tree`. v7 — линейные `waterway`.
+const QUERY_VERSION: u32 = 7;
 
-/// QL-запрос: здания, дороги, ж/д пути, вода, парки/зелень, луга, песок,
-/// аллеи, одиночные деревья, стены Кремля, входы в здания.
+/// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
+/// луга, песок, аллеи, одиночные деревья, стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
         south,
@@ -74,6 +74,7 @@ pub fn overpass_query(city: City) -> String {
   way["natural"="water"]({bbox});
   relation["natural"="water"]({bbox});
   way["waterway"="riverbank"]({bbox});
+  way["waterway"~"^(river|stream|brook|canal|ditch|drain|weir)$"]({bbox});
   way["leisure"~"^(park|garden)$"]({bbox});
   relation["leisure"~"^(park|garden)$"]({bbox});
   way["landuse"~"^(recreation_ground|forest)$"]({bbox});
