@@ -44,7 +44,13 @@ in `main.rs`.
   exists but `Time<Virtual>` is **paused** and the loader screen stays up reading
   "Routing pawns... N left"; `poll_warmup` counts pawns *inside the camera view* that
   still hold a `PathfindingRequest`/`PathfindingTask` and flips to `Live` when none are
-  left (or after `WARMUP_TIMEOUT` = 10 s, logged as a warning). Reason: all 20 000 humans
+  left (or after `WARMUP_TIMEOUT` = 10 s, logged as a warning). It counts only what the
+  dispatcher will actually serve — `wanderers_dispatched_at_zoom`, the same cutoff
+  `dispatch_pathfinding_requests` uses: above `WANDER_DISPATCH_MAX_ZOOM` peaceful wanderers
+  get no path at all, so waiting for them meant the loader sat out the whole timeout with a
+  counter frozen on 4 000. `WARMUP_GRACE` = 0.5 s is the flip side: with nothing to wait
+  for, "no requests yet" must stop meaning "they haven't been inserted yet".
+  Reason for the hold at all: all 20 000 humans
   queue a path in the same frame, and without the hold the visible ones stood still for
   the first seconds. Typical warmup **~0.15 s** — see `HumanFirstWanderTag`.
   `Live` is what despawns the loader and reveals the game UI (`GameUiRoot`).
