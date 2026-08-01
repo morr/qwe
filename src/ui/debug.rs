@@ -243,6 +243,10 @@ fn render_debug_toggles(mut commands: Commands) {
             Pickable::default(),
             Hovered::default(),
             Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6.),
                 padding: UiRect {
                     top: px(4.),
                     right: px(8.),
@@ -252,15 +256,25 @@ fn render_debug_toggles(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Heavy)),
-            children![(
-                PathfindingMethodLabel,
-                Text::new(PathfindingAlgorithm::default().label()),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            )],
+            children![
+                (
+                    Text::new("pathfind:"),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                ),
+                (
+                    PathfindingMethodLabel,
+                    Text::new(PathfindingAlgorithm::default().label()),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ),
+            ],
         ))
         .observe(
             |_activate: On<Activate>, mut algorithm: ResMut<PathfindingAlgorithm>| {
