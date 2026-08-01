@@ -30,7 +30,7 @@ use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::ConiferField;
 use crate::map::osm::MapData;
-use crate::map::trees::{TreeRowStyle, TreeStyle};
+use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE, Z_CONIFER_NOISE_OVERLAY};
@@ -73,11 +73,16 @@ enum DebugToggleButton {
 #[derive(Component)]
 struct NavmeshOverlayMarker;
 
-/// Слой поля хвои и порог, под который он нарисован: пересобирать текстуру,
-/// пока порог тот же, незачем — правка любого другого поля `TreeStyle` (тот же
-/// ползунок плотности) иначе перерисовывала бы её на каждом шаге.
+/// Слой поля хвои и то, под что он нарисован: порог и поколение поля.
+/// Пересобирать текстуру, пока оба те же, незачем — правка любого другого поля
+/// `TreeStyle` (тот же ползунок плотности) иначе перерисовывала бы её на
+/// каждом шаге. Одного порога мало: правка параметров шума (панель Noise)
+/// меняет рельеф поля, а порог-квантиль при этом может совпасть числом.
 #[derive(Component)]
-struct ConiferNoiseOverlayMarker(f32);
+struct ConiferNoiseOverlayMarker {
+    threshold: f32,
+    generation: u32,
+}
 
 /// Подпись на кнопке-переключателе алгоритма поиска пути.
 #[derive(Component)]
@@ -142,14 +147,19 @@ impl Plugin for UiDebugTogglesPlugin {
                     sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
                     // подсвеченная область следует за ползунком доли хвои; смена
                     // состава деревьев (тумблеры Trees / Tree rows) меняет сам
-                    // набор, по которому посчитано поле
+                    // набор, по которому посчитано поле, панель Noise — его
+                    // рельеф. `after`: пересемплирование и порог считаются в
+                    // этом же кадре цепочкой деревьев — слой обязан читать поле
+                    // уже после неё, а не прошлокадровое
                     sync_conifer_noise_overlay
                         .run_if(in_state(AppState::Playing))
                         .run_if(
                             resource_changed::<DebugConiferNoise>
                                 .or_else(resource_changed::<TreeStyle>)
-                                .or_else(resource_changed::<TreeRowStyle>),
-                        ),
+                                .or_else(resource_changed::<TreeRowStyle>)
+                                .or_else(resource_changed::<ConiferNoiseStyle>),
+                        )
+                        .after(crate::map::trees::rebuild_trees),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
                     toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
@@ -433,6 +443,10 @@ fn sync_navmesh_overlay(
 /// порога, то есть **будущий хвойный массив**: так видно и рельеф шума, и что
 /// из него отберёт ползунок доли. Зелень покрывает и застройку — поле
 /// определено на всей карте, а деревья стоят только в лесах.
+///
+/// Слой рисует поле **без примеси** (`TreeStyle::conifer_mix` живёт только в
+/// деревьях): при mix > 0 одиночные кроны намеренно стоят «не с той стороны»
+/// зелёной границы — это вкрапления, а не рассинхрон слоя.
 fn sync_conifer_noise_overlay(
     mut commands: Commands,
     enabled: Res<DebugConiferNoise>,
@@ -442,9 +456,10 @@ fn sync_conifer_noise_overlay(
 ) {
     let threshold = field.threshold();
     if enabled.0
-        && overlay
-            .iter()
-            .any(|(_, drawn)| drawn.0.to_bits() == threshold.to_bits())
+        && overlay.iter().any(|(_, drawn)| {
+            drawn.threshold.to_bits() == threshold.to_bits()
+                && drawn.generation == field.generation()
+        })
     {
         return;
     }
@@ -492,7 +507,10 @@ fn sync_conifer_noise_overlay(
     image.sampler = ImageSampler::linear();
 
     commands.spawn((
-        ConiferNoiseOverlayMarker(threshold),
+        ConiferNoiseOverlayMarker {
+            threshold,
+            generation: field.generation(),
+        },
         Sprite {
             image: images.add(image),
             custom_size: Some(MAP_SIZE),
