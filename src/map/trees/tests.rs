@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::CONIFER_NOISE_FREQUENCY;
+use crate::settings::CONIFER_NOISE_WAVELENGTH;
 
 fn ring_area(ring: &[Vec2]) -> f32 {
     ring.windows(2)
@@ -48,55 +48,62 @@ fn test_forest() -> Vec<(Vec2, f32)> {
         .collect()
 }
 
-fn field_at(share: f32) -> ConiferField {
+fn field_with(share: f32, mix: f32) -> ConiferField {
     let mut field = ConiferField::default();
-    field.resample(&test_forest());
+    field.resample(&test_forest(), &ConiferNoiseStyle::default(), mix);
     field.set_share(share);
     field
 }
 
-/// Ползунок доли — точный: порог квантильный, так что число хвойных совпадает
-/// с запрошенной долей, а не «примерно похоже» на неё.
+/// Поле без примеси — на нём меряется сама кластеризация массивов.
+fn field_at(share: f32) -> ConiferField {
+    field_with(share, 0.0)
+}
+
+/// Ползунок доли — точный: порог квантильный и считается по значениям **с
+/// примесью**, так что число хвойных совпадает с запрошенной долей при любом
+/// mix, а не «примерно похоже» на неё.
 #[test]
 fn conifer_share_matches_the_slider() {
     let total = GRID_SIDE * GRID_SIDE;
-    for share in [0.05, 0.1, 0.25, 0.5] {
-        let field = field_at(share);
-        let conifers = (0..total).filter(|&index| field.is_conifer(index)).count();
-        let expected = (share * total as f32) as usize;
-        assert!(
-            conifers.abs_diff(expected) <= 1,
-            "share {share}: {conifers} conifers, expected {expected}"
-        );
+    for mix in [0.0, 0.3, 1.0] {
+        for share in [0.05, 0.1, 0.25, 0.5] {
+            let field = field_with(share, mix);
+            let conifers = (0..total).filter(|&index| field.is_conifer(index)).count();
+            let expected = (share * total as f32) as usize;
+            assert!(
+                conifers.abs_diff(expected) <= 1,
+                "share {share}, mix {mix}: {conifers} conifers, expected {expected}"
+            );
+        }
     }
 }
 
-/// Главное свойство поля: хвоя растёт **массивами**. У хвойного дерева почти
-/// все соседи тоже хвойные — при доле 0.1 случайный выбор дал бы 0.1.
-#[test]
-fn conifers_grow_in_stands() {
-    let share = 0.1;
-    let field = field_at(share);
-    let neighbours = |index: usize| {
-        let (x, y) = (index % GRID_SIDE, index / GRID_SIDE);
-        [
-            (-1, -1),
-            (0, -1),
-            (1, -1),
-            (-1, 0),
-            (1, 0),
-            (-1, 1),
-            (0, 1),
-            (1, 1),
-        ]
-        .into_iter()
-        .filter_map(move |(dx, dy): (isize, isize)| {
-            let nx = x.checked_add_signed(dx)?;
-            let ny = y.checked_add_signed(dy)?;
-            (nx < GRID_SIDE && ny < GRID_SIDE).then_some(ny * GRID_SIDE + nx)
-        })
-    };
+/// Соседи дерева в тестовой сетке — до восьми штук.
+fn grid_neighbours(index: usize) -> impl Iterator<Item = usize> {
+    let (x, y) = (index % GRID_SIDE, index / GRID_SIDE);
+    [
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 0),
+        (1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+    ]
+    .into_iter()
+    .filter_map(move |(dx, dy): (isize, isize)| {
+        let nx = x.checked_add_signed(dx)?;
+        let ny = y.checked_add_signed(dy)?;
+        (nx < GRID_SIDE && ny < GRID_SIDE).then_some(ny * GRID_SIDE + nx)
+    })
+}
 
+/// Статистика массивов: сколько хвойных всего, средняя доля хвойных среди
+/// соседей хвойного (кластеризация) и сколько хвойных стоят без единого
+/// хвойного соседа (одиночки).
+fn stand_stats(field: &ConiferField) -> (usize, f32, usize) {
     let mut conifers = 0;
     let mut same = 0.0;
     let mut lonely = 0;
@@ -105,7 +112,7 @@ fn conifers_grow_in_stands() {
             continue;
         }
         conifers += 1;
-        let around: Vec<usize> = neighbours(index).collect();
+        let around: Vec<usize> = grid_neighbours(index).collect();
         let kin = around
             .iter()
             .filter(|&&other| field.is_conifer(other))
@@ -115,17 +122,71 @@ fn conifers_grow_in_stands() {
             lonely += 1;
         }
     }
-    let clustering = same / conifers as f32;
+    (conifers, same / conifers as f32, lonely)
+}
+
+/// Главное свойство поля: хвоя растёт **массивами**. У хвойного дерева почти
+/// все соседи тоже хвойные — при доле 0.1 случайный выбор дал бы 0.1. Меряется
+/// без примеси: одиночки при mix > 0 появляются нарочно, см.
+/// [`mix_scatters_singles_without_moving_the_share`].
+#[test]
+fn conifers_grow_in_stands() {
+    let share = 0.1;
+    let field = field_at(share);
+    let (conifers, clustering, lonely) = stand_stats(&field);
     eprintln!("clustering {clustering:.3}, lonely {lonely}/{conifers}");
     assert!(
         clustering > 0.8,
         "conifer neighbours share {clustering:.2} at global share {share} — hardly a stand"
     );
-    // одинокая ель среди лиственных — ровно то, чего быть не должно; на
-    // отлаженных параметрах поля их ноль, порог оставлен с запасом
+    // одинокая ель среди лиственных — ровно то, чего без примеси быть не
+    // должно; на отлаженных параметрах поля их ноль, порог оставлен с запасом
     assert!(
         lonely * 200 < conifers,
         "{lonely} of {conifers} conifers stand alone"
+    );
+}
+
+/// Примесь — ровно те вкрапления, которые без неё запрещены: одиночные ели
+/// среди лиственных появляются, массивы при этом выживают, а доля хвои не
+/// сдвигается ([`conifer_share_matches_the_slider`] гоняет и mix > 0).
+#[test]
+fn mix_scatters_singles_without_moving_the_share() {
+    let (_, clustering, lonely) = stand_stats(&field_with(0.1, 0.2));
+    let (_, pure_clustering, _) = stand_stats(&field_at(0.1));
+    eprintln!("mixed clustering {clustering:.3}, lonely {lonely}");
+    assert!(lonely > 0, "mix 0.2 scattered no singles at all");
+    assert!(
+        clustering < pure_clustering,
+        "mix did not loosen the stands: {clustering:.2} vs pure {pure_clustering:.2}"
+    );
+    // 0.2 — середина полезного диапазона: вкрапления уже есть, массивы ещё
+    // есть; на 0.35 кластеризация падает к 0.4 — соль-перец, что тоже законно,
+    // но уже не «массивы с вкраплениями»
+    assert!(
+        clustering > 0.5,
+        "stands dissolved into salt-and-pepper: clustering {clustering:.2}"
+    );
+}
+
+/// Примесь привязана к **позиции** ствола, не к индексу: тот же лес, обойдённый
+/// в обратном порядке, получает те же значения — иначе тумблеры состава,
+/// пересобирающие `MapData::trees`, меняли бы породу стоящих деревьев.
+#[test]
+fn jitter_follows_the_position_not_the_index() {
+    let forest = test_forest();
+    let mut reversed = forest.clone();
+    reversed.reverse();
+    let style = ConiferNoiseStyle::default();
+    let mut field = ConiferField::default();
+    field.resample(&forest, &style, 0.35);
+    let mut flipped = ConiferField::default();
+    flipped.resample(&reversed, &style, 0.35);
+    let values = field.values_for_test();
+    let flipped_values = flipped.values_for_test();
+    assert!(
+        (0..values.len()).all(|index| values[index] == flipped_values[values.len() - 1 - index]),
+        "values depend on the traversal order, not the position"
     );
 }
 
@@ -156,7 +217,7 @@ fn conifer_field_varies_on_the_scale_of_a_stand() {
             / samples as f32
     };
     let between_trees = mean_step(GRID_STEP);
-    let across_stand = mean_step(1.0 / CONIFER_NOISE_FREQUENCY as f32);
+    let across_stand = mean_step(CONIFER_NOISE_WAVELENGTH);
     assert!(
         across_stand > between_trees * 2.5,
         "field moves {between_trees:.4} between trees vs {across_stand:.4} across a stand"

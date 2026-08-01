@@ -11,7 +11,7 @@ pub use self::meshing::MeshBuilder;
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::tram::{TieDensity, TramStyle};
-pub use self::trees::{ConiferField, TreeRowStyle, TreeShape, TreeStyle};
+pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
 
@@ -32,12 +32,14 @@ impl Plugin for MapPlugin {
         app.init_resource::<TreeStyle>()
             .init_resource::<TreeRowStyle>()
             .init_resource::<ConiferField>()
+            .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
             .init_resource::<TramStyle>()
             .init_resource::<tram::TramZoomBucket>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
+            .register_type::<ConiferNoiseStyle>()
             .register_type::<TreeShape>()
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
@@ -68,10 +70,13 @@ impl Plugin for MapPlugin {
                 (
                     // тумблеры состава (лес/аллеи/одиночные) и политика аллей
                     // меняют сам набор деревьев, так что пересборка идёт до
-                    // крон; сама система выходит сразу, если состав не поехал,
-                    // — отдельного условия на неё не надо
+                    // крон; параметры шума и примесь пересемплируют поле хвои
+                    // (`retune_conifer_field`) — тоже до крон. Обе системы
+                    // выходят сразу, если их вход не поехал, — отдельных
+                    // условий на них не надо
                     (
                         trees::recompose_row_trees,
+                        trees::retune_conifer_field,
                         spawn::rebuild_tree_row_band,
                         trees::rebuild_trees,
                     )
@@ -85,6 +90,10 @@ impl Plugin for MapPlugin {
                                 .or_else(
                                     resource_changed::<TreeRowStyle>
                                         .and_then(not(resource_added::<TreeRowStyle>)),
+                                )
+                                .or_else(
+                                    resource_changed::<ConiferNoiseStyle>
+                                        .and_then(not(resource_added::<ConiferNoiseStyle>)),
                                 ),
                         ),
                     buildings::rebuild_buildings

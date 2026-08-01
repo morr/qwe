@@ -166,6 +166,13 @@ pub const Z_ALLEY_CASING: f32 = 1.4;
 pub const Z_ALLEY: f32 = 1.5;
 pub const Z_ROAD_CASING: f32 = 1.9;
 pub const Z_ROAD: f32 = 2.0;
+/// Мост (`bridge=yes`) — над обычными дорогами, чтобы эстакада крыла улицу,
+/// которую пересекает, но под рельсами: трамвай, идущий по мосту, обязан
+/// остаться виден. Бордюр — под настилом, по той же логике, что канты под
+/// заливками: настилы всех мостов кроют бордюры всех мостов, и стык двух ways
+/// на одном мосту не режется бордюрной полосой.
+pub const Z_BRIDGE_CASING: f32 = 2.1;
+pub const Z_BRIDGE: f32 = 2.2;
 /// Ж/д путь поверх дорог: трамвайные пути в OSM висят на тех же ways, что и
 /// улица, и обязаны лежать на ней, а не под ней. Штриховка — отдельным слоем
 /// над всеми лентами, иначе компланарная геометрия в одном меше z-файтит и
@@ -219,14 +226,45 @@ pub const TREE_CONIFER_SHARE_STEP: f32 = 0.05;
 /// мельче волны, — поэтому 400 м на входе дают массивы поперёк 100–200 м. С
 /// длиной 120 м (первый заход) массивы выходили по 50 м, то есть вкраплениями в
 /// десяток крон, а не участками леса.
-pub const CONIFER_NOISE_FREQUENCY: f64 = 1.0 / 400.0;
-/// Октавы fbm: контур массива нужен рваный, а не гладкий овал. Больше трёх
-/// брать нельзя: при `CONIFER_NOISE_LACUNARITY` = 2 четвёртая октава — это
-/// волна в 50 м, то есть рябь мельче самого массива, и породу у его кромки она
-/// разыгрывает по монетке. Три октавы — 400/200/100 м.
-pub const CONIFER_NOISE_OCTAVES: usize = 3;
-pub const CONIFER_NOISE_LACUNARITY: f64 = 2.0;
-pub const CONIFER_NOISE_PERSISTENCE: f64 = 0.5;
+///
+/// Отсюда и до `CONIFER_MIX_STEP` — дефолты и границы ползунков панелей Noise
+/// и Trees: параметры поля живут в ресурсе `map::trees::ConiferNoiseStyle` (и
+/// `TreeStyle::conifer_mix`) и правятся на лету.
+pub const CONIFER_NOISE_WAVELENGTH: f32 = 400.0;
+/// Границы длины волны: 50 м — уже рябь в несколько крон, 1600 м — четверть
+/// карты одной волной.
+pub const CONIFER_NOISE_WAVELENGTH_MIN: f32 = 50.0;
+pub const CONIFER_NOISE_WAVELENGTH_MAX: f32 = 1600.0;
+pub const CONIFER_NOISE_WAVELENGTH_STEP: f32 = 50.0;
+/// Октавы fbm: контур массива нужен рваный, а не гладкий овал. Дефолт — три:
+/// при `CONIFER_NOISE_LACUNARITY` = 2 четвёртая октава — это волна в 50 м, то
+/// есть рябь мельче самого массива, и породу у его кромки она разыгрывает по
+/// монетке. Три октавы — 400/200/100 м; больше — осознанная рваность из панели
+/// Noise, а не дефолт.
+pub const CONIFER_NOISE_OCTAVES: u32 = 3;
+/// Диапазоны октав, lacunarity и persistence — как у слайдеров zxc
+/// (`zxc/src/map/generator/perlin_noise.rs`).
+pub const CONIFER_NOISE_OCTAVES_MIN: f32 = 1.0;
+pub const CONIFER_NOISE_OCTAVES_MAX: f32 = 8.0;
+pub const CONIFER_NOISE_LACUNARITY: f32 = 2.0;
+pub const CONIFER_NOISE_LACUNARITY_MIN: f32 = 1.0;
+pub const CONIFER_NOISE_LACUNARITY_MAX: f32 = 4.0;
+pub const CONIFER_NOISE_LACUNARITY_STEP: f32 = 0.1;
+pub const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
+pub const CONIFER_NOISE_PERSISTENCE_MIN: f32 = 0.0;
+pub const CONIFER_NOISE_PERSISTENCE_MAX: f32 = 1.0;
+pub const CONIFER_NOISE_PERSISTENCE_STEP: f32 = 0.05;
+/// Сила примеси (`TreeStyle::conifer_mix`): к значению поля в дереве
+/// добавляется `mix · jitter`, jitter ∈ ±0.5 детерминированно по позиции
+/// ствола. Ноль — сплошные массивы; 0.1 рвёт их кромки; около 0.2 одиночные
+/// ели добираются до сердцевины лиственных массивов (и наоборот), а массивы
+/// ещё читаются; от ~0.35 кластеризация падает вдвое и лес уходит в
+/// соль-перец — само поле в пределах массива гуляет лишь на 0.1–0.3, и
+/// разброс примеси быстро его перекрикивает.
+pub const CONIFER_MIX_DEFAULT: f32 = 0.1;
+pub const CONIFER_MIX_MIN: f32 = 0.0;
+pub const CONIFER_MIX_MAX: f32 = 1.0;
+pub const CONIFER_MIX_STEP: f32 = 0.05;
 /// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
 /// к запуску, как и посадка деревьев.
 pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
