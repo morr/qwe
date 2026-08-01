@@ -18,8 +18,8 @@ use crate::settings::{
 };
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
-    DebugConiferNoise, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity,
-    UiRightColumnSlot, ui_color,
+    DebugConiferNoise, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
+    UiOpacity, ui_color,
 };
 
 /// Корень панели — по нему видимость следует за тумблером `noise`.
@@ -70,7 +70,9 @@ fn render_noise_panel(
             Node {
                 position_type: PositionType::Absolute,
                 bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-                right: px(UI_SCREEN_EDGE_PX_OFFSET),
+                // левый нижний угол, над рядом дебаг-тумблеров: правая колонка
+                // панелями стилей уже забита до самого верха
+                left: px(UI_SCREEN_EDGE_PX_OFFSET),
                 // тумблер восстановлен из настроек до Startup — панель сразу
                 // спавнится в согласии с ним, без мигания на первом кадре
                 display: if enabled.0 {
@@ -85,7 +87,7 @@ fn render_noise_panel(
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(2),
+            UiLeftColumnSlot(1),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("conifer_noise_panel"),
@@ -279,7 +281,7 @@ fn sync_noise_values(
 }
 
 /// Панель живёт при включённом дебаг-слое `noise` и уходит из раскладки вместе
-/// с ним; правую колонку перестыкует `ui::stack_right_column`.
+/// с ним; левую колонку перестыкует `ui::stack_bottom_columns`.
 fn sync_noise_panel_visibility(
     enabled: Res<DebugConiferNoise>,
     mut panels: Query<&mut Node, With<ConiferNoisePanel>>,

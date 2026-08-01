@@ -36,7 +36,7 @@ use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE, Z_CONIFER_NOISE_OVERLAY};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, spawn_panel_button, ui_color,
+    UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumnSlot, UiOpacity, spawn_panel_button, ui_color,
 };
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
@@ -182,6 +182,8 @@ fn render_debug_toggles(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
+            // низ левой колонки: панель Noise стыкуется прямо над этим рядом
+            UiLeftColumnSlot(0),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("debug_toggles"),

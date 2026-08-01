@@ -28,15 +28,19 @@ use crate::map::{TreeRowStyle, TreeStyle};
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
 /// Место панели в правой колонке, снизу вверх: 0 — Tree rows у края экрана,
-/// дальше Trees, Noise, Buildings, Roads, Tram, справка по хоткеям. Панели
+/// дальше Trees, Buildings, Roads, Tram, справка по хоткеям. Панели
 /// абсолютные, `bevy_ui` их не стыкует, поэтому `bottom` каждой считает
-/// [`stack_right_column`] по **замеренным** высотам тех, что под ней: высота
+/// [`stack_bottom_columns`] по **замеренным** высотам тех, что под ней: высота
 /// панели Trees меняется на ходу (строки доли хвои и примеси появляются только
-/// у формы `Mixed`), а панель Noise целиком живёт при включённом дебаг-слое
-/// `noise`, — прошитые константы высот такую колонку уронили бы панелями друг
-/// на друга.
+/// у формы `Mixed`), — прошитые константы высот такую колонку уронили бы
+/// панелями друг на друга.
 #[derive(Component)]
 pub struct UiRightColumnSlot(pub u8);
+
+/// То же для левой колонки: 0 — ряд дебаг-тумблеров у края экрана, 1 — панель
+/// Noise над ним (целиком живёт при включённом дебаг-слое `noise`).
+#[derive(Component)]
+pub struct UiLeftColumnSlot(pub u8);
 
 /// Тип объектов мира, чьё число стоит в заголовке панели (см.
 /// [`panel_header`]); компонент висит на тексте счётчика.
@@ -215,7 +219,7 @@ impl Plugin for UiPlugin {
         ))
         // бегунки всех панелей ведёт одна система — ползунки помечены общим
         // `slider::UiSlider`
-        .add_systems(Update, (stack_right_column, slider::sync_slider_thumbs))
+        .add_systems(Update, (stack_bottom_columns, slider::sync_slider_thumbs))
         .add_systems(
             Update,
             // `resource_changed` без `resource_exists` паникует до загрузки
@@ -235,8 +239,9 @@ impl Plugin for UiPlugin {
     }
 }
 
-/// Отступ снизу у каждой панели правой колонки — сумма высот панелей под ней
-/// (см. [`UiRightColumnSlot`]). Панели стоят вплотную, без зазора.
+/// Отступ снизу у каждой панели обеих нижних колонок — сумма высот панелей под
+/// ней (см. [`UiRightColumnSlot`] / [`UiLeftColumnSlot`]). Панели стоят
+/// вплотную, без зазора.
 ///
 /// `ComputedNode::size` — **физические** пиксели, а `Node::bottom` — логические:
 /// без `inverse_scale_factor` на retina-экране каждая высота удваивалась и между
@@ -248,20 +253,36 @@ impl Plugin for UiPlugin {
 /// читается из `ComputedNode`, то есть с прошлого кадра: панель, у которой
 /// появилась строка, доезжает на кадр позже — заметить это можно только на
 /// смене формы кроны.
-fn stack_right_column(mut panels: Query<(&UiRightColumnSlot, &ComputedNode, &mut Node)>) {
+fn stack_bottom_columns(
+    mut right: Query<(&UiRightColumnSlot, &ComputedNode, &mut Node), Without<UiLeftColumnSlot>>,
+    mut left: Query<(&UiLeftColumnSlot, &ComputedNode, &mut Node), Without<UiRightColumnSlot>>,
+) {
+    let mut right: Vec<_> = right
+        .iter_mut()
+        .map(|(slot, computed, node)| (slot.0, computed, node))
+        .collect();
+    stack_column(&mut right);
+    let mut left: Vec<_> = left
+        .iter_mut()
+        .map(|(slot, computed, node)| (slot.0, computed, node))
+        .collect();
+    stack_column(&mut left);
+}
+
+fn stack_column(panels: &mut [(u8, &ComputedNode, Mut<Node>)]) {
     let mut heights: Vec<(u8, f32)> = panels
         .iter()
         // спрятанная панель (Noise при выключенном тумблере) не занимает места
         // — и не по `ComputedNode` с прошлого кадра, а по самому `Display`
         .filter(|(_, _, node)| node.display != Display::None)
-        .map(|(slot, computed, _)| (slot.0, computed.size.y * computed.inverse_scale_factor))
+        .map(|&(slot, computed, _)| (slot, computed.size.y * computed.inverse_scale_factor))
         .collect();
     heights.sort_unstable_by_key(|&(slot, _)| slot);
 
-    for (slot, _, mut node) in &mut panels {
+    for (slot, _, node) in panels.iter_mut() {
         let below: f32 = heights
             .iter()
-            .filter(|&&(other, _)| other < slot.0)
+            .filter(|&&(other, _)| other < *slot)
             .map(|&(_, height)| height)
             .sum();
         let bottom = px(UI_SCREEN_EDGE_PX_OFFSET + below);

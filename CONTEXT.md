@@ -613,9 +613,9 @@ in `main.rs`.
   the same value and turn conifer together. The fbm parameters live in
   **`ConiferNoiseStyle`** (resource, persisted, BRP-writable): `wavelength` (default
   400 m sets the stand size, ~120–250 m across), `octaves`, `lacunarity`, `persistence`
-  — tunable at runtime from the **Noise panel** (`ui/noise.rs`, right column above
-  Trees, visible only while the `noise` debug toggle is on; ranges modeled on zxc's
-  noise sliders). The seed stays fixed, so a city looks the same every run.
+  — tunable at runtime from the **Noise panel** (`ui/noise.rs`, bottom-left above the
+  debug toggles, visible only while the `noise` debug toggle is on; ranges modeled on
+  zxc's noise sliders). The seed stays fixed, so a city looks the same every run.
   - The cut is an **empirical quantile** of the field's values at the trees, not a fixed
     noise level: fbm is bell-distributed, so «everything above 0.9» would give a share
     unrelated to the one asked for. The quantile makes `TreeStyle::conifer_share` an
@@ -876,23 +876,25 @@ in `main.rs`.
   nothing for the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the
   change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
 - **Noise panel** (`ui/noise.rs`) — the conifer-field fbm knobs (`ConiferNoiseStyle`:
-  wavelength / octaves / lacunarity / persistence), same slider kit; lives in the right
-  column above Trees and is `Display::None`ed while the `noise` debug toggle is off —
-  tuning the field without the overlay showing it is pointless. Noise mix is
-  deliberately *not* here: it is a gameplay look knob, so it sits in the Trees panel.
+  wavelength / octaves / lacunarity / persistence), same slider kit; sits bottom-left
+  **above the debug-toggles row** (the right column is already packed with style
+  panels) and is `Display::None`ed while the `noise` debug toggle is off — tuning the
+  field without the overlay showing it is pointless. Noise mix is deliberately *not*
+  here: it is a gameplay look knob, so it sits in the Trees panel.
 - **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
   `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
   pass their own marker bundles for the value label and the slider to address them in
   their sync systems.
-- **Right UI column** (`ui/mod.rs::stack_right_column`, `UiRightColumnSlot`) — Tree rows →
-  Trees → Noise → Buildings → Roads → Tram → hotkey help, bottom-up. The panels are
-  absolute (`bevy_ui` does not stack them), and the column changes height at runtime
-  (Trees grows two rows on `Mixed`, Noise exists only with the `noise` toggle), so each
-  panel's `bottom` is the summed **measured** height of those below it instead of a
-  hardcoded constant; `Display::None` panels are skipped by their `Node.display`, not
-  their last-frame `ComputedNode`. `ComputedNode::size` is in *physical* pixels —
-  multiply by `inverse_scale_factor` or every offset doubles on a retina screen.
+- **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumnSlot` /
+  `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → Tram → hotkey
+  help; left: debug toggles → Noise; both bottom-up. The panels are absolute (`bevy_ui`
+  does not stack them), and the columns change height at runtime (Trees grows two rows
+  on `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is
+  the summed **measured** height of those below it instead of a hardcoded constant;
+  `Display::None` panels are skipped by their `Node.display`, not their last-frame
+  `ComputedNode`. `ComputedNode::size` is in *physical* pixels — multiply by
+  `inverse_scale_factor` or every offset doubles on a retina screen.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / doors / movepath / noise buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the
