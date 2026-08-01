@@ -72,7 +72,7 @@ fn render_road_style_panel(mut commands: Commands, style: Res<RoadStyle>) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(3),
+            UiRightColumnSlot(4),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("road_style_panel"),

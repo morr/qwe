@@ -8,18 +8,16 @@ use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
 use bevy::picking::hover::Hovered;
 use bevy::ui::Pressed;
-use bevy::ui_widgets::{
-    Activate, Button, Slider, SliderRange, SliderStep, SliderThumb, SliderValue, TrackClick,
-    ValueChange,
-};
+use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
 
 use bevy::prelude::*;
 
 use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::settings::{
-    TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
-    TREE_DENSITY_STEP,
+    CONIFER_MIX_MAX, CONIFER_MIX_MIN, CONIFER_MIX_STEP, TREE_CONIFER_SHARE_MAX,
+    TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN, TREE_DENSITY_STEP,
 };
+use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
@@ -54,16 +52,9 @@ fn row_color(lighten: f32) -> Color {
     ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
 }
 
-/// Дорожка и ползунок плотности; высота ползунка задаёт и высоту строки.
-const SLIDER_HEIGHT_PX: f32 = 12.0;
-const SLIDER_TRACK_PX: f32 = 4.0;
-const SLIDER_TRACK_COLOR: Color = Color::srgba(1., 1., 1., 0.18);
-const SLIDER_THUMB_COLOR: Color = Color::srgba(1., 1., 1., 0.75);
-const SLIDER_THUMB_HOVER_COLOR: Color = Color::WHITE;
-
 /// Какое поле стиля показывает строка — она же адресует подпись и свотч.
-/// `ConiferShare` и `Density` — не кнопки, а ползунки, но подпись значения у
-/// них общая с остальными строками.
+/// `ConiferShare`, `ConiferMix` и `Density` — не кнопки, а ползунки, но подпись
+/// значения у них общая с остальными строками.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum TreeStyleRow {
     Woods,
@@ -73,6 +64,7 @@ enum TreeStyleRow {
     Details,
     Variance,
     ConiferShare,
+    ConiferMix,
     Density,
 }
 
@@ -84,18 +76,15 @@ struct TreeStyleValueLabel(TreeStyleRow);
 #[derive(Component)]
 struct TreeStyleSwatch(TreeStyleRow);
 
-/// Ползунок строки и его бегунок.
+/// Ползунок строки.
 #[derive(Component)]
 struct TreeStyleSlider(TreeStyleRow);
 
+/// Блок строки, живущей только у формы `Mixed` (доля хвои и примесь): вне неё
+/// строка убирается из раскладки целиком (`Display::None`), а не гасится, —
+/// иначе в панели остаётся необъяснимая дыра.
 #[derive(Component)]
-struct TreeStyleThumb;
-
-/// Блок строки доли хвои: доля есть только у формы `Mixed`, и вне неё строка
-/// убирается из раскладки целиком (`Display::None`), а не гасится, — иначе в
-/// панели остаётся необъяснимая дыра.
-#[derive(Component)]
-struct ConiferShareRow;
+struct MixedOnlyRow;
 
 pub struct UiTreeStylePlugin;
 
@@ -107,10 +96,9 @@ impl Plugin for UiTreeStylePlugin {
                 (
                     highlight_rows,
                     sync_row_values.run_if(resource_changed::<TreeStyle>),
-                    // без run_if: строка одна, а зависеть от того, попал ли
+                    // без run_if: строк две, а зависеть от того, попал ли
                     // первый кадр в окно `resource_changed`, тут ни к чему
-                    sync_conifer_row_visibility,
-                    sync_slider_thumbs,
+                    sync_mixed_row_visibility,
                 ),
             );
     }
@@ -175,21 +163,40 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
             style.shape = TreeShape::ALL[next];
         },
     );
-    // сразу под формой: доля уточняет именно её и только при `Mixed` видна
-    let conifer_row = spawn_slider_row(
+    // сразу под формой: доля и примесь уточняют именно её и только при
+    // `Mixed` видны
+    let share_row = spawn_slider_row(
         &mut commands,
         panel,
-        TreeStyleRow::ConiferShare,
-        "Conifer share",
-        &style,
-        (
-            TREE_CONIFER_SHARE_MIN,
-            TREE_CONIFER_SHARE_MAX,
-            TREE_CONIFER_SHARE_STEP,
-        ),
+        SliderRow {
+            label: "Conifer share",
+            value: style.conifer_share,
+            value_text: row_value(TreeStyleRow::ConiferShare, &style),
+            range: (
+                TREE_CONIFER_SHARE_MIN,
+                TREE_CONIFER_SHARE_MAX,
+                TREE_CONIFER_SHARE_STEP,
+            ),
+        },
+        TreeStyleValueLabel(TreeStyleRow::ConiferShare),
+        TreeStyleSlider(TreeStyleRow::ConiferShare),
         on_conifer_share_change,
     );
-    commands.entity(conifer_row).insert(ConiferShareRow);
+    commands.entity(share_row).insert(MixedOnlyRow);
+    let mix_row = spawn_slider_row(
+        &mut commands,
+        panel,
+        SliderRow {
+            label: "Mix",
+            value: style.conifer_mix,
+            value_text: row_value(TreeStyleRow::ConiferMix, &style),
+            range: (CONIFER_MIX_MIN, CONIFER_MIX_MAX, CONIFER_MIX_STEP),
+        },
+        TreeStyleValueLabel(TreeStyleRow::ConiferMix),
+        TreeStyleSlider(TreeStyleRow::ConiferMix),
+        on_conifer_mix_change,
+    );
+    commands.entity(mix_row).insert(MixedOnlyRow);
     spawn_row(
         &mut commands,
         panel,
@@ -227,137 +234,16 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
     spawn_slider_row(
         &mut commands,
         panel,
-        TreeStyleRow::Density,
-        "Density",
-        &style,
-        (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
+        SliderRow {
+            label: "Density",
+            value: style.density,
+            value_text: row_value(TreeStyleRow::Density, &style),
+            range: (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
+        },
+        TreeStyleValueLabel(TreeStyleRow::Density),
+        TreeStyleSlider(TreeStyleRow::Density),
         on_density_change,
     );
-}
-
-/// Строка-ползунок: подпись со значением и под ней сам ползунок. Возвращает
-/// блок строки — на него навешивается маркер, если строку кто-то адресует
-/// (`ConiferShareRow` управляет её видимостью).
-fn spawn_slider_row<M>(
-    commands: &mut Commands,
-    panel: Entity,
-    row: TreeStyleRow,
-    label: &str,
-    style: &TreeStyle,
-    (min, max, step): (f32, f32, f32),
-    on_change: impl IntoObserverSystem<ValueChange<f32>, (), M>,
-) -> Entity {
-    let block = commands
-        .spawn((
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                row_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(6.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![(
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(6.),
-                    ..default()
-                },
-                children![
-                    (
-                        Text::new(label),
-                        TextFont {
-                            font_size: FontSize::Px(12.),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                        Node {
-                            flex_grow: 1.,
-                            ..default()
-                        },
-                    ),
-                    (
-                        TreeStyleValueLabel(row),
-                        Text::new(row_value(row, style)),
-                        TextFont {
-                            font_size: FontSize::Px(12.),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ),
-                ],
-            )],
-        ))
-        .id();
-
-    let slider = commands
-        .spawn((
-            TreeStyleSlider(row),
-            Slider {
-                // клик по дорожке ставит бегунок туда, куда ткнули
-                track_click: TrackClick::Snap,
-                ..default()
-            },
-            SliderValue(slider_value(row, style).expect("slider row has a value")),
-            SliderRange::new(min, max),
-            SliderStep(step),
-            Pickable::default(),
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                height: px(SLIDER_HEIGHT_PX),
-                ..default()
-            },
-            children![
-                // дорожка
-                (
-                    Node {
-                        height: px(SLIDER_TRACK_PX),
-                        border_radius: BorderRadius::all(px(SLIDER_TRACK_PX / 2.)),
-                        ..default()
-                    },
-                    BackgroundColor(SLIDER_TRACK_COLOR),
-                ),
-                // невидимая направляющая: она короче дорожки на ширину бегунка,
-                // поэтому бегунок ставится простым процентом, без замеров
-                (
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(0.),
-                        right: px(SLIDER_HEIGHT_PX),
-                        top: px(0.),
-                        bottom: px(0.),
-                        ..default()
-                    },
-                    children![(
-                        TreeStyleThumb,
-                        SliderThumb,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            width: px(SLIDER_HEIGHT_PX),
-                            height: px(SLIDER_HEIGHT_PX),
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        BackgroundColor(SLIDER_THUMB_COLOR),
-                    )],
-                ),
-            ],
-        ))
-        .observe(on_change)
-        .id();
-    commands.entity(block).add_child(slider);
-    commands.entity(panel).add_child(block);
-    block
 }
 
 /// Ползунок ведёт себя дискретно: значение с драга округляется до шага, и
@@ -399,34 +285,22 @@ fn on_conifer_share_change(
     }
 }
 
-fn quantize(value: f32, min: f32, max: f32, step: f32) -> f32 {
-    ((value / step).round() * step).clamp(min, max)
-}
-
-/// Позиция бегунка по значению плюс подсветка под курсором и при протяжке.
-fn sync_slider_thumbs(
-    sliders: Query<
-        (Entity, &SliderValue, &SliderRange, &Hovered),
-        (
-            With<TreeStyleSlider>,
-            Or<(Changed<SliderValue>, Changed<Hovered>)>,
-        ),
-    >,
-    children: Query<&Children>,
-    mut thumbs: Query<(&mut Node, &mut BackgroundColor), With<TreeStyleThumb>>,
+/// Примесь пород: тот же дискретный шаг — каждый шаг пересемплирует поле хвои
+/// и пересобирает кроны.
+fn on_conifer_mix_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut style: ResMut<TreeStyle>,
 ) {
-    for (slider, value, range, hovered) in &sliders {
-        for child in children.iter_descendants(slider) {
-            let Ok((mut node, mut background)) = thumbs.get_mut(child) else {
-                continue;
-            };
-            node.left = percent(range.thumb_position(value.0) * 100.);
-            background.0 = if hovered.get() {
-                SLIDER_THUMB_HOVER_COLOR
-            } else {
-                SLIDER_THUMB_COLOR
-            };
-        }
+    let stepped = quantize(
+        change.value,
+        CONIFER_MIX_MIN,
+        CONIFER_MIX_MAX,
+        CONIFER_MIX_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (style.conifer_mix - stepped).abs() > f32::EPSILON {
+        style.conifer_mix = stepped;
     }
 }
 
@@ -526,6 +400,7 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
         TreeStyleRow::Details => hex(style.details),
         TreeStyleRow::Variance => format!("{:.2}", style.variance),
         TreeStyleRow::ConiferShare => format!("{:.0}%", style.conifer_share * 100.),
+        TreeStyleRow::ConiferMix => format!("{:.0}%", style.conifer_mix * 100.),
         TreeStyleRow::Density => format!("{:.2}x", style.density),
     }
 }
@@ -535,6 +410,7 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
 fn slider_value(row: TreeStyleRow, style: &TreeStyle) -> Option<f32> {
     match row {
         TreeStyleRow::ConiferShare => Some(style.conifer_share),
+        TreeStyleRow::ConiferMix => Some(style.conifer_mix),
         TreeStyleRow::Density => Some(style.density),
         TreeStyleRow::Woods
         | TreeStyleRow::Standalone
@@ -608,12 +484,12 @@ fn sync_row_values(
     }
 }
 
-/// Доля хвои есть только у смешанного леса — на прочих формах строка уходит из
-/// раскладки, и панель становится ниже (её место в правой колонке пересчитает
-/// `ui::stack_right_column`).
-fn sync_conifer_row_visibility(
+/// Доля хвои и примесь есть только у смешанного леса — на прочих формах их
+/// строки уходят из раскладки, и панель становится ниже (её место в правой
+/// колонке пересчитает `ui::stack_right_column`).
+fn sync_mixed_row_visibility(
     style: Res<TreeStyle>,
-    mut rows: Query<&mut Node, With<ConiferShareRow>>,
+    mut rows: Query<&mut Node, With<MixedOnlyRow>>,
 ) {
     let display = if style.shape == TreeShape::Mixed {
         Display::Flex

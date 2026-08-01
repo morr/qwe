@@ -64,7 +64,7 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(2),
+            UiRightColumnSlot(3),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("building_style_panel"),

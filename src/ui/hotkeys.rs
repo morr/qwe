@@ -46,8 +46,8 @@ fn render_hotkeys_panel(mut commands: Commands) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                // последний в правой колонке: `bottom` доедет от
-                // stack_right_column по высотам Trees + Tree rows + Buildings + Roads
+                // последняя в правой колонке: `bottom` доедет от
+                // stack_right_column по высотам всех панелей под ней
                 bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 right: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
@@ -59,7 +59,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
             BackgroundColor(ui_color(UiOpacity::Light)),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
-            UiRightColumnSlot(5),
+            UiRightColumnSlot(6),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("hotkeys_panel"),

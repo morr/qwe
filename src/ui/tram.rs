@@ -72,7 +72,7 @@ fn render_tram_style_panel(mut commands: Commands, style: Res<TramStyle>) {
                 ..default()
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(4),
+            UiRightColumnSlot(5),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("tram_style_panel"),

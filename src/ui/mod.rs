@@ -6,7 +6,9 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
+mod noise;
 mod roads;
+mod slider;
 mod speed;
 mod tram;
 mod tree_rows;
@@ -26,11 +28,13 @@ use crate::map::{TreeRowStyle, TreeStyle};
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
 /// Место панели в правой колонке, снизу вверх: 0 — Tree rows у края экрана,
-/// дальше Trees, Buildings, Roads, Tram, справка по хоткеям. Панели абсолютные,
-/// `bevy_ui` их не стыкует, поэтому `bottom` каждой считает
+/// дальше Trees, Noise, Buildings, Roads, Tram, справка по хоткеям. Панели
+/// абсолютные, `bevy_ui` их не стыкует, поэтому `bottom` каждой считает
 /// [`stack_right_column`] по **замеренным** высотам тех, что под ней: высота
-/// панели Trees меняется на ходу (строка доли хвои появляется только у формы
-/// `Mixed`), и прошитые константы высот такую панель уронили бы под соседнюю.
+/// панели Trees меняется на ходу (строки доли хвои и примеси появляются только
+/// у формы `Mixed`), а панель Noise целиком живёт при включённом дебаг-слое
+/// `noise`, — прошитые константы высот такую колонку уронили бы панелями друг
+/// на друга.
 #[derive(Component)]
 pub struct UiRightColumnSlot(pub u8);
 
@@ -202,13 +206,16 @@ impl Plugin for UiPlugin {
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
             tree_rows::UiTreeRowStylePlugin,
+            noise::UiConiferNoisePlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
             tram::UiTramStylePlugin,
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
         ))
-        .add_systems(Update, stack_right_column)
+        // бегунки всех панелей ведёт одна система — ползунки помечены общим
+        // `slider::UiSlider`
+        .add_systems(Update, (stack_right_column, slider::sync_slider_thumbs))
         .add_systems(
             Update,
             // `resource_changed` без `resource_exists` паникует до загрузки
@@ -244,6 +251,9 @@ impl Plugin for UiPlugin {
 fn stack_right_column(mut panels: Query<(&UiRightColumnSlot, &ComputedNode, &mut Node)>) {
     let mut heights: Vec<(u8, f32)> = panels
         .iter()
+        // спрятанная панель (Noise при выключенном тумблере) не занимает места
+        // — и не по `ComputedNode` с прошлого кадра, а по самому `Display`
+        .filter(|(_, _, node)| node.display != Display::None)
         .map(|(slot, computed, _)| (slot.0, computed.size.y * computed.inverse_scale_factor))
         .collect();
     heights.sort_unstable_by_key(|&(slot, _)| slot);
