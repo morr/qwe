@@ -11,6 +11,14 @@ where each concept lives. Use its terms verbatim in code, commits, and test name
 When a change introduces or retires a domain concept, update `CONTEXT.md` in the same
 change — a stale glossary is worse than none.
 
+**`OSM.md` — load it before touching the OSM pipeline** (the Overpass query, `map/osm/*`,
+or anything that decides which map features get drawn). It is the coverage audit: which
+tags reach the map, which ones are downloaded and thrown away, which ones are never asked
+for at all, with per-city counts — so a feature that already exists does not get
+"added" twice, and the cheap gaps are visible. It also carries the two scripts in
+`tools/osm_audit/` that regenerate those numbers. Widening the query or adding a branch to
+`parse_way` means updating `OSM.md` in the same change.
+
 This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 
 ## Skills

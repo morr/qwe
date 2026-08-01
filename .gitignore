@@ -25,3 +25,7 @@ screenshot.png
 
 # cached OpenStreetMap extract, downloaded at first app start
 assets/osm/
+
+# python bytecode from tools/
+__pycache__/
+osm_counts.json
