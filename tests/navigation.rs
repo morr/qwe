@@ -57,6 +57,94 @@ fn line_of_sight_is_blocked_by_a_building() {
     assert!(line_of_sight(&navmesh, west, west));
 }
 
+/// Косое узкое русло обязано лечь в сетку **четырёхсвязной** преградой, а не
+/// цепочкой тайлов, соприкасающихся углами.
+///
+/// Растеризация метит тайлы по «центр ближе полуширины», и лента у́же
+/// `NAVTILE_SIZE · √2` (2.83 м) на косой линии вырождается в шахматку. Своим
+/// A* такую преграду не перейти — он не срезает углы, — но перейдут все
+/// остальные потребители сетки: `OrdinalGrid` из `bevy_northstar` (HPA*,
+/// Theta*) собирается без фильтра срезания углов и делает диагональный шаг
+/// прямо между двумя заблокированными тайлами, а `line_of_sight` сэмплирует
+/// точки и проходит через место касания. На реальном ручье Тулы (2.5 м) так и
+/// вышло: навмеш-оверлей рисовал вдоль русла шахматку, и на HPA* люди ходили
+/// через воду.
+///
+/// Проверяется тем же обходом, каким ходит HPA*: восемь направлений и углы
+/// срезать можно. Дошёл до другого берега — русло дырявое.
+#[test]
+fn a_narrow_diagonal_waterway_leaves_no_corner_squeeze() {
+    // 18° — один из худших углов: при ширине 2.5 м и тайле 2 м лента как раз
+    // вырождается в цепочку по углам
+    let (origin, direction) = (Vec2::new(200.0, 200.0), Vec2::new(3000.0, 970.0));
+    let map = MapData {
+        water_lines: vec![WaterLine {
+            points: vec![origin, origin + direction],
+            width: 2.5,
+            kind: WaterKind::Stream,
+            tunnel: false,
+        }],
+        ..MapData::default()
+    };
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    // Обход берега по правилам northstar: восемь направлений и **углы срезать
+    // можно** — именно так ходит HPA*. Окно берётся так, что русло пересекает
+    // его насквозь, и за края обход не выпускается: иначе он обошёл бы русло
+    // с торца, где никакой преграды и нет.
+    // окно у́же русла по обеим осям: русло входит слева и выходит справа
+    let lo = world_to_tile(Vec2::new(400.0, 150.0));
+    let hi = world_to_tile(Vec2::new(1400.0, 700.0));
+    // сторона относительно осевой: знак векторного произведения
+    let side = |tile: IVec2| {
+        let point = tile_center(tile) - origin;
+        point.x * direction.y - point.y * direction.x
+    };
+    let start = world_to_tile(Vec2::new(900.0, 200.0));
+    assert!(side(start) > 0.0 && navmesh.is_passable(start.x, start.y));
+
+    let mut seen = std::collections::HashSet::from([start]);
+    let mut queue = std::collections::VecDeque::from([start]);
+    let mut crossed = None;
+    while let Some(tile) = queue.pop_front() {
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let next = tile + IVec2::new(dx, dy);
+                if next.x < lo.x || next.x > hi.x || next.y < lo.y || next.y > hi.y {
+                    continue;
+                }
+                if !navmesh.is_passable(next.x, next.y) || !seen.insert(next) {
+                    continue;
+                }
+                if side(next) < 0.0 {
+                    crossed = crossed.or(Some((tile, next)));
+                }
+                queue.push_back(next);
+            }
+        }
+    }
+    assert!(
+        crossed.is_none(),
+        "HPA* перешёл русло: {:?}",
+        crossed.unwrap()
+    );
+
+    // и оно по-прежнему непрозрачно для луча, но не залило пол-округи
+    let mid = origin + direction * 0.3;
+    let normal = Vec2::new(-direction.y, direction.x).normalize();
+    assert!(!line_of_sight(
+        &navmesh,
+        mid - normal * 8.0,
+        mid + normal * 8.0
+    ));
+    assert!(line_of_sight(
+        &navmesh,
+        mid - normal * 8.0,
+        mid - normal * 8.0 + direction * 0.1
+    ));
+}
+
 #[test]
 fn astar_finds_path_around_building() {
     let navmesh = navmesh_with_block(IVec2::new(100, 100), IVec2::new(110, 110));

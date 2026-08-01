@@ -682,10 +682,23 @@ in `main.rs`.
   The number that proves it held is the **pruned-tile count** in the log — a jump of
   thousands means a watercourse cut a district off, and that is the thing to check after
   any change here or in `water_class`. On Tula (25 waterways, 7 of them culverts) the
-  channels took 6 253 tiles out of the passable set and pruning did **not** move at all
+  channels took 6 461 tiles out of the passable set and pruning did **not** move at all
   (9 781 before and after), i.e. no bank was severed. Much of that is free: the Упа's
   *centerline* is also tagged `waterway=river`, and it runs inside the Упа water polygon,
   which was already impassable.
+- **A rasterized polyline is a 4-connected chain, by construction.** `set_polyline` marks
+  tiles whose *center* is within half the width — and that alone is not a barrier: below
+  `NAVTILE_SIZE · √2` (2.83 m) a slanted band degenerates into tiles touching only at
+  their **corners** (the navmesh overlay draws it as a chequerboard along the line). Our
+  own A* cannot step through that — it does not cut corners — but every other consumer
+  can: `bevy_northstar`'s `OrdinalGrid` (HPA*, Theta*) is built with no corner-cutting
+  filter and steps diagonally between two blocked tiles, and `line_of_sight` samples
+  points along a ray and slips through the contact point. A 2.5 m stream was crossed by
+  pawns on HPA* for exactly this reason. So `set_polyline` also walks the centerline
+  tile by tile (Amanatides–Woo; each step crosses one grid line, so consecutive tiles
+  share an *edge*). Raising narrow widths to a minimum instead was tried and rejected:
+  the threshold depends on the line's angle and on its offset against the grid, and even
+  3 m still left a gap. Pinned by `tests/navigation.rs`.
 - **Ordinary roads do not touch the navmesh.** The grid starts all-passable and
   `fill_from_mapdata` only ever *subtracts* (water, buildings, walls); roads enter it
   solely through the `bridge` and `passage` carves above. Pawns walk on grass and asphalt

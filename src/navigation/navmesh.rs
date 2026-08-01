@@ -174,7 +174,23 @@ impl Navmesh {
         pruned
     }
 
-    /// Тайлы в пределах полуширины от осевой полилинии.
+    /// Тайлы в пределах полуширины от осевой полилинии — **плюс** все тайлы,
+    /// через которые осевая проходит ([`Self::set_segment_tiles`]).
+    ///
+    /// Одной полуширины мало. Тайлы метятся по «центр ближе полуширины», и
+    /// лента у́же `NAVTILE_SIZE · √2` (2.83 м) на косой линии вырождается в
+    /// цепочку тайлов, соприкасающихся **углами**: ручей в 2.5 м рисуется в
+    /// навмеш-оверлее шахматкой. Своим A* её не перейти — он не срезает углы, —
+    /// но `OrdinalGrid` из `bevy_northstar` (HPA*, Theta*) собирается без
+    /// такого фильтра и шагает по диагонали прямо между двумя
+    /// заблокированными тайлами, а `line_of_sight` сэмплирует точки и
+    /// проскакивает через место касания. На Туле это и вышло: на HPA* люди
+    /// ходили через ручей.
+    ///
+    /// Поднимать ширину до минимума — лечение симптома: порог зависит от угла и
+    /// от сдвига линии относительно сетки, и даже 3 м оставляли щель. Проход по
+    /// осевой даёт четырёхсвязную цепочку **по построению**, при любой ширине,
+    /// угле и сдвиге, и при этом не раздувает канаву в 1.5 м до трёх метров.
     fn set_polyline(&mut self, points: &[Vec2], width: f32, value: bool) {
         for segment in points.windows(2) {
             let (from, to) = (segment[0], segment[1]);
@@ -188,6 +204,47 @@ impl Navmesh {
                     }
                 }
             }
+            self.set_segment_tiles(from, to, value);
+        }
+    }
+
+    /// Тайлы, через которые проходит отрезок, — обход сетки по Amanatides–Woo:
+    /// на каждом шаге пересекается ближайшая граница, по x либо по y, поэтому
+    /// соседние тайлы цепочки всегда смежны **по стороне**, а не по углу.
+    /// Именно эта четырёхсвязность и делает преграду непроходимой для всех
+    /// потребителей сетки (см. [`Self::set_polyline`]).
+    fn set_segment_tiles(&mut self, from: Vec2, to: Vec2, value: bool) {
+        let mut tile = world_to_tile(from);
+        let end = world_to_tile(to);
+        let delta = to - from;
+
+        // t — доля отрезка; t_max — до следующей границы по оси, t_delta — шаг
+        // между границами. Нулевая проекция даёт бесконечность: по этой оси
+        // граница не пересекается никогда.
+        let axis = |d: f32, origin: f32, tile: i32| {
+            if d == 0.0 {
+                return (f32::INFINITY, f32::INFINITY, 0);
+            }
+            let step = if d > 0.0 { 1 } else { -1 };
+            let boundary = (tile + step.max(0)) as f32 * NAVTILE_SIZE;
+            ((boundary - origin) / d, NAVTILE_SIZE / d.abs(), step)
+        };
+        let (mut t_max_x, t_delta_x, step_x) = axis(delta.x, from.x, tile.x);
+        let (mut t_max_y, t_delta_y, step_y) = axis(delta.y, from.y, tile.y);
+
+        self.set_passable(tile.x, tile.y, value);
+        // потолок шагов — страховка от вырожденного отрезка: ходов не больше,
+        // чем тайлов по обеим осям вместе
+        let limit = (end.x - tile.x).abs() + (end.y - tile.y).abs();
+        for _ in 0..limit {
+            if t_max_x < t_max_y {
+                tile.x += step_x;
+                t_max_x += t_delta_x;
+            } else {
+                tile.y += step_y;
+                t_max_y += t_delta_y;
+            }
+            self.set_passable(tile.x, tile.y, value);
         }
     }
 }
