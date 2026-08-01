@@ -2,6 +2,7 @@
 //! дебаг-тумблеры. Обычные `bevy_ui`-ноды + первопартийный
 //! `bevy_ui_widgets::Button`.
 
+mod brp;
 mod buildings;
 mod city;
 mod debug;
@@ -18,6 +19,7 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 
+pub use self::brp::AgentBrpSession;
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
@@ -208,6 +210,7 @@ impl Plugin for UiPlugin {
             roads::UiRoadStylePlugin,
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
+            brp::UiBrpBadgePlugin,
         ))
         // бегунки всех панелей ведёт одна система — ползунки помечены общим
         // `slider::UiSlider`

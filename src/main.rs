@@ -122,6 +122,12 @@ fn main() {
         app.add_plugins(RemoteHttpPlugin::default().with_port(port));
     }
 
+    // Порт в окружении задаёт только агент, себе отдельный от пользовательского
+    // (см. `.claude/live-app-project.md`) — такой запуск помечен в углу экрана
+    if std::env::var_os("BRP_PORT").is_some() {
+        app.insert_resource(ui::AgentBrpSession);
+    }
+
     app.run();
 }
 
