@@ -35,6 +35,12 @@ const VIEW_SAVE_DEBOUNCE: f32 = 1.0;
 /// наступает никогда, — пишем не реже раза в эти секунды.
 const VIEW_SAVE_THROTTLE: f32 = 10.0;
 
+/// Окно двойного нажатия R, секунды реального времени: второй рестарт внутри
+/// него ставит камеру на портал независимо от [`CameraPositionMode`].
+/// Полсекунды — обычное окно двойного клика; на паузе и на 30x оно должно быть
+/// одинаковым, отсюда `Time<Real>`.
+const RESTART_DOUBLE_PRESS: f32 = 0.5;
+
 /// Откуда камера начинает — кнопка `position` в ряду тумблеров
 /// (`ui/debug.rs`), выбор запоминается между запусками (`prefs.rs`).
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -245,13 +251,27 @@ fn place_camera_on_world_ready(
 /// куда встаёт на старте приложения, то есть по настройке `position`.
 fn on_restart_place_camera(
     _event: On<RestartEvent>,
+    time: Res<Time<Real>>,
+    mut previous_restart: Local<Option<f32>>,
     mode: Res<CameraPositionMode>,
     saved: Res<SavedCameraView>,
     portal: Res<PortalPos>,
     mut camera: Single<(&mut Transform, &mut PanCamera), With<Camera2d>>,
 ) {
+    let now = time.elapsed_secs();
+    let double_press =
+        previous_restart.is_some_and(|previous| now - previous < RESTART_DOUBLE_PRESS);
+    *previous_restart = Some(now);
+
+    // второе R подряд — всегда портал, каким бы ни был режим: это жест
+    // «потерялся на карте, верни меня к началу», а не смена настройки
+    let mode = if double_press {
+        CameraPositionMode::Reset
+    } else {
+        *mode
+    };
     let (transform, controller) = &mut *camera;
-    apply_view(transform, controller, start_view(*mode, &saved, portal.0));
+    apply_view(transform, controller, start_view(mode, &saved, portal.0));
 }
 
 /// Запись вида камеры прямо по ходу игры, чтобы он переживал и те выходы, до

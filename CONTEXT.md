@@ -976,6 +976,10 @@ in `main.rs`.
   `place_camera_on_world_ready` (`OnEnter(Playing)`) and the `RestartEvent` observer, so R
   puts the camera exactly where an app start would. A world entry that is **not** the
   first one is a city switch and always resets to the new portal.
+  **RR** — a second `RestartEvent` within `RESTART_DOUBLE_PRESS` (0.5 s of real time) —
+  goes to the portal at `START_ZOOM` whatever the mode says: in `save` mode a single R is
+  a no-op for the camera (the saved view follows it live), so the way back to the portal
+  is the double press.
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (`SPEED_LADDER`:
   1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).

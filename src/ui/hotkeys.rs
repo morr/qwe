@@ -27,7 +27,7 @@ const ACTION_COLOR: Color = Color::srgb(0.86, 0.89, 0.86);
 
 /// `(клавиша, что делает)`.
 const HOTKEYS: &[(&str, &str)] = &[
-    ("R", "restart"),
+    ("R", "restart (RR - to portal)"),
     ("G", "gizmos"),
     ("N", "navmesh"),
     ("M", "movepath"),
