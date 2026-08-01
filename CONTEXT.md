@@ -25,6 +25,7 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`: ground 0 → parks 0.5 → woods 0.55 → grass
   0.6 → sand 0.7 → water 1 → alley casings 1.4 → alleys 1.5 → road casings 1.9 → roads 2
+  → bridge casings 2.1 → bridges 2.2
   → rails 2.4 → rail dashes 2.5 → tram 2.6 → corpses 3 → portal 4 → buildings 5 → units → tree
   shadows 19 → trees 20. Three more
   live in their own modules: `Z_BUILDING_SHADOW` 4.5 and `Z_FACADE` 4.9
@@ -129,7 +130,8 @@ in `main.rs`.
     doors on this building's outline, empty for most buildings; see **Entrances**.
   - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
     3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
-    z). `bridge` and `passage` flags — see navmesh.
+    z). `bridge` and `passage` flags — the navmesh carves (see navmesh); `bridge` also
+    moves the road into the bridge deck layers (see **Bridge layers** below).
   - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
     `narrow_gauge` / `subway` 4 → `tram` 1.2). `RailKind: Active | Tram | Disused` — the
     kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
@@ -461,6 +463,20 @@ in `main.rs`.
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
+- **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
+  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
+  (`Z_BRIDGE` 2.2): a gray **curb** (`BRIDGE_CURB_COLOR` 0.60, 12% of the width clamped
+  0.8–2 m) under the fill in the class color. The 2GIS look — the curb bands along both
+  deck edges are what makes a bridge read as a bridge, so the curb draws **always**,
+  independent of `RoadStyle::casing`, and is both darker and thicker than a casing so
+  the two never blend. Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
+  in a square cut; a `Round` half-disc or the `Square` end-extension would poke a curb
+  tongue past the bridge end. The deck sits above `Z_ROAD` so an overpass covers the
+  street it crosses, and below `Z_RAIL` so a track on the bridge stays visible; curbs
+  below fills for the casing reason (a junction of two bridge ways is never cut by a
+  curb band). Street and footbridge fills share one mesh — bridge-over-bridge overlap
+  is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
+  rail bridges are out of scope.
 - **Rail layers** (`map/roads.rs`, same file and the same `RoadLayerTag`, so a style
   change rebuilds them with the roads) — osm-carto's dashed railway, two merged meshes:
   a dark bed at `Z_RAIL` (2.4) and a white dash pattern at `Z_RAIL_DASH` (2.5), 6 m on /
@@ -571,9 +587,9 @@ in `main.rs`.
   item, no blinking (and one draw call instead of hundreds).
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
   `foliage`, `details` (ink), `variance` (brightness spread), `shape`, `conifer_share`
-  (see Conifer stands below), `density` (planting multiplier, see Tree density above),
-  plus the two source toggles — `woods` (forest polygons) and `standalone` (individual
-  `natural=tree` trees). **TreeShape** is `Cotton | Conifer | Palm | Mixed` — cloud
+  and `conifer_mix` (see Conifer stands below), `density` (planting multiplier, see Tree
+  density above), plus the two source toggles — `woods` (forest polygons) and
+  `standalone` (individual `natural=tree` trees). **TreeShape** is `Cotton | Conifer | Palm | Mixed` — cloud
   outline (`bloat`), spiky cone (`Spiker::simple`), bent fronds (`Spiker::bent`), and
   conifer stands among cloud crowns. Any change reruns `rebuild_trees` (despawn
   `TreeTag`, respawn from the `MapData::trees` positions); the source toggles
@@ -594,15 +610,30 @@ in `main.rs`.
   species is **not** a function of the tree's index in `MapData::trees` (that carries no
   geography and would scatter single conifers among the cloud crowns) but of an
   **fbm-simplex field of the trunk's world position** — neighbouring trees read nearly
-  the same value and turn conifer together. `CONIFER_NOISE_FREQUENCY` 1/400 m sets the
-  stand size (~120–250 m across); the seed is fixed, so a city looks the same every run.
+  the same value and turn conifer together. The fbm parameters live in
+  **`ConiferNoiseStyle`** (resource, persisted, BRP-writable): `wavelength` (default
+  400 m sets the stand size, ~120–250 m across), `octaves`, `lacunarity`, `persistence`
+  — tunable at runtime from the **Noise panel** (`ui/noise.rs`, right column above
+  Trees, visible only while the `noise` debug toggle is on; ranges modeled on zxc's
+  noise sliders). The seed stays fixed, so a city looks the same every run.
   - The cut is an **empirical quantile** of the field's values at the trees, not a fixed
     noise level: fbm is bell-distributed, so «everything above 0.9» would give a share
     unrelated to the one asked for. The quantile makes `TreeStyle::conifer_share` an
     exact share at any noise parameters, and clustering is unaffected — the trees kept
     are still the ones on the peaks. 0 % / 100 % are special-cased to «nobody» / «all».
+  - **Mix jitter** (`TreeStyle::conifer_mix`, «Mix» slider next to Conifer share) —
+    stands need not be solid: each tree's value gets `mix · jitter` added at resample
+    time, where jitter ∈ ±0.5 is a position-hashed (murmur3 finalizer), deterministic
+    per-trunk offset. It pushes trees across the threshold both ways — deciduous
+    inclusions inside stands and lone spruces deep in deciduous masses, deeper the
+    higher the mix. Baked **before** the quantile, so the share stays exact at any mix;
+    hashed by **position**, not index, so composition toggles and density thinning never
+    flip a standing tree's species. Mix 0 restores solid stands (test-pinned).
   - Values are sampled once per city in `build_conifer_field` (`WorldInitSet::Spawn`,
-    before `spawn_map`); only the threshold moves when the share slider does.
+    before `spawn_map`); only the threshold moves when the share slider does. Noise or
+    mix edits resample via `retune_conifer_field` in the rebuild chain (it no-ops when
+    the field is already sampled for the current params — `ConiferField` remembers what
+    it was sampled with, plus a `generation` counter the overlay uses as cache key).
   - Species is **orthogonal to density thinning**: the quantile runs over all planted
     trees while the density slider spawns a prefix of them (`visible_count`), and that
     prefix is a spatially uniform subsample, so the share among spawned trees holds and a
@@ -611,7 +642,9 @@ in `main.rs`.
     field as one CPU-built 512² texture sprite over the whole map on
     `Z_CONIFER_NOISE_OVERLAY`: grey ramp = field value, green = at or above the current
     threshold, i.e. the stands the current share will produce. Green also covers built-up
-    areas — the field is defined everywhere, trees only grow in Wood polygons.
+    areas — the field is defined everywhere, trees only grow in Wood polygons. The
+    overlay draws the **un-jittered** field: at mix > 0 single crowns deliberately sit
+    on the «wrong» side of the green boundary.
 
 ## Navigation
 
@@ -833,20 +866,33 @@ in `main.rs`.
   mouse button and would make one right click move both ways.
 - **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
   color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
-  text input, so hex fields became cycles), plus two **slider rows** built by one shared
-  `spawn_slider_row` — **density** over `TREE_DENSITY_MIN..MAX` and **conifer share** over
-  `TREE_CONIFER_SHARE_MIN..MAX`. Each `ValueChange` observer quantizes to its step and
-  writes `TreeStyle` only when the step actually changes, so one drag rebuilds the crowns
-  a handful of times, not once per pixel. The conifer-share row is `Display::None`ed
-  outside `TreeShape::Mixed` (`sync_conifer_row_visibility`) — the share means nothing for
-  the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the change up.
-  Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
-- **Right UI column** (`ui/mod.rs::stack_right_column`, `UiRightColumnSlot`) — Trees →
-  Buildings → Roads → Tram → hotkey help, bottom-up. The panels are absolute (`bevy_ui` does not
-  stack them), and the Trees panel changes height at runtime, so each panel's `bottom` is
-  the summed **measured** height of those below it instead of a hardcoded constant.
-  `ComputedNode::size` is in *physical* pixels — multiply by `inverse_scale_factor` or
-  every offset doubles on a retina screen.
+  text input, so hex fields became cycles), plus **slider rows** built by the shared
+  `ui/slider.rs::spawn_slider_row` kit — **density** over `TREE_DENSITY_MIN..MAX`,
+  **conifer share** over `TREE_CONIFER_SHARE_MIN..MAX` and **mix** over
+  `CONIFER_MIX_MIN..MAX`. Each `ValueChange` observer quantizes to its step and writes
+  `TreeStyle` only when the step actually changes, so one drag rebuilds the crowns
+  a handful of times, not once per pixel. The conifer-share and mix rows are
+  `Display::None`ed outside `TreeShape::Mixed` (`sync_mixed_row_visibility`) — they mean
+  nothing for the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the
+  change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
+- **Noise panel** (`ui/noise.rs`) — the conifer-field fbm knobs (`ConiferNoiseStyle`:
+  wavelength / octaves / lacunarity / persistence), same slider kit; lives in the right
+  column above Trees and is `Display::None`ed while the `noise` debug toggle is off —
+  tuning the field without the overlay showing it is pointless. Mix is deliberately
+  *not* here: it is a gameplay look knob, so it sits in the Trees panel.
+- **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
+  `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
+  (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
+  pass their own marker bundles for the value label and the slider to address them in
+  their sync systems.
+- **Right UI column** (`ui/mod.rs::stack_right_column`, `UiRightColumnSlot`) — Tree rows →
+  Trees → Noise → Buildings → Roads → Tram → hotkey help, bottom-up. The panels are
+  absolute (`bevy_ui` does not stack them), and the column changes height at runtime
+  (Trees grows two rows on `Mixed`, Noise exists only with the `noise` toggle), so each
+  panel's `bottom` is the summed **measured** height of those below it instead of a
+  hardcoded constant; `Display::None` panels are skipped by their `Node.display`, not
+  their last-frame `ComputedNode`. `ComputedNode::size` is in *physical* pixels —
+  multiply by `inverse_scale_factor` or every offset doubles on a retina screen.
 - **Debug toggles** (`ui/debug.rs`) — grid / navmesh / doors / movepath / noise buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the

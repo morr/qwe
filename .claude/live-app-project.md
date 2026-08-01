@@ -91,8 +91,8 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
-`BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `DrawMovePaths`,
-`DebugGrid`, `DebugNavmesh`, `DebugDoors`.
+`BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
+`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`.
 
 Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
