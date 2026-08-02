@@ -227,22 +227,31 @@ fn apply_view(transform: &mut Transform, controller: &mut PanCamera, view: Camer
 /// уже загруженного города, так что известна только к входу в `Playing`.
 ///
 /// Сохранённый вид уважается лишь на первом входе, то есть на старте
-/// приложения: следующие входы — это смена города, а сохранённая точка
-/// принадлежит прошлой карте, и в новом городе камеру ждут у его портала.
+/// приложения: следующий вход с **другим** городом — это его смена, а
+/// сохранённая точка принадлежит прошлой карте, и в новом городе камеру ждут
+/// у его портала. Перезагрузка **того же** города (смена размера навтайла)
+/// камеру не трогает вовсе: пользователь смотрит на тот же участок карты, и
+/// увозить его к порталу — значит терять место, которое он разглядывал.
 fn place_camera_on_world_ready(
-    mut world_loaded_before: Local<bool>,
+    mut last_city: Local<Option<City>>,
+    city: Res<City>,
     mode: Res<CameraPositionMode>,
     saved: Res<SavedCameraView>,
     portal: Res<PortalPos>,
     mut camera: Single<(&mut Transform, &mut PanCamera), With<Camera2d>>,
 ) {
-    let mode = if *world_loaded_before {
-        CameraPositionMode::Reset
-    } else {
-        *mode
-    };
-    *world_loaded_before = true;
+    let first_load = last_city.is_none();
+    let same_city = *last_city == Some(*city);
+    *last_city = Some(*city);
+    if same_city {
+        return;
+    }
 
+    let mode = if first_load {
+        *mode
+    } else {
+        CameraPositionMode::Reset
+    };
     let (transform, controller) = &mut *camera;
     apply_view(transform, controller, start_view(mode, &saved, portal.0));
 }
