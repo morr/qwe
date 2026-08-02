@@ -1,4 +1,6 @@
-use crate::map::osm::model::{AreaKind, RoadClass, RoadLine, point_in_polygon};
+use crate::map::osm::model::{
+    AreaKind, RoadClass, RoadLine, WaterKind, WaterLine, point_in_polygon,
+};
 
 use super::*;
 
@@ -156,6 +158,144 @@ fn bridge_curbs_block_the_deck_edges() {
     for x in [95.0, 165.0] {
         assert!(passable_at(Vec2::new(x, 100.0)), "подход по осевой, x={x}");
     }
+}
+
+/// Дорога, подошедшая к мосту снаружи, входит на мост: её панель пробивает
+/// проём в бордюре. Пробивает только бордюр — ручей, пересекающий ту же
+/// дорогу, остаётся непроходимым, его переходят по мосту.
+#[test]
+fn a_joining_road_breaks_through_the_curb_but_not_through_water() {
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        width: 8.0,
+        class: RoadClass::Street,
+        bridge: true,
+        passage: false,
+    });
+    // примыкающая с внешней стороны дорога, общий узел на осевой моста
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(130.0, 140.0), Vec2::new(130.0, 100.0)],
+        width: 5.0,
+        class: RoadClass::Street,
+        bridge: false,
+        passage: false,
+    });
+    map.water_lines.push(WaterLine {
+        points: vec![Vec2::new(110.0, 126.0), Vec2::new(150.0, 126.0)],
+        width: 2.0,
+        kind: WaterKind::Stream,
+        tunnel: false,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    let curb_line = 100.0 + (8.0 + bridge_curb_width(8.0)) / 2.0;
+    assert!(
+        passable_at(Vec2::new(130.0, curb_line)),
+        "проём в бордюре на примыкании"
+    );
+    assert!(
+        !passable_at(Vec2::new(115.0, curb_line)),
+        "бордюр в стороне от примыкания"
+    );
+    assert!(
+        !passable_at(Vec2::new(130.0, 126.0)),
+        "ручей поперёк примыкающей дороги"
+    );
+}
+
+/// Коллинеарный подход к мосту не слизывает бордюр: покрытие дороги — это её
+/// тело, без торцевого выступа за общий узел. Иначе у короткого моста подходы
+/// с двух концов открывали бы боковые бордюры почти целиком.
+#[test]
+fn a_collinear_approach_road_does_not_lick_the_curb_open() {
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        width: 8.0,
+        class: RoadClass::Street,
+        bridge: true,
+        passage: false,
+    });
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(60.0, 100.0), Vec2::new(100.0, 100.0)],
+        width: 8.0,
+        class: RoadClass::Street,
+        bridge: false,
+        passage: false,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    let curb_line = (8.0 + bridge_curb_width(8.0)) / 2.0;
+    for side in [-1.0, 1.0] {
+        assert!(
+            !passable_at(Vec2::new(101.0, 100.0 + side * curb_line)),
+            "бордюр у торца, сторона {side}"
+        );
+    }
+    assert!(passable_at(Vec2::new(95.0, 100.0)), "вход на мост по осевой");
+    assert!(passable_at(Vec2::new(105.0, 100.0)), "настил за торцом");
+}
+
+/// Мост и его тротуар — два параллельных bridge-ways одного физического
+/// моста. Встречные бордюры в шве между ними накрыты лентами друг друга и
+/// открыты, внешние кромки пары держат: пара ходит как один широкий мост.
+#[test]
+fn a_bridge_and_its_sidewalk_way_act_as_one_bridge() {
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        width: 8.0,
+        class: RoadClass::Street,
+        bridge: true,
+        passage: false,
+    });
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(100.0, 107.0), Vec2::new(160.0, 107.0)],
+        width: 3.5,
+        class: RoadClass::Alley,
+        bridge: true,
+        passage: false,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    assert!(
+        passable_at(Vec2::new(130.0, 100.0)),
+        "настил проезжей части"
+    );
+    assert!(passable_at(Vec2::new(130.0, 107.0)), "настил тротуара");
+    assert!(
+        passable_at(Vec2::new(130.0, 105.0)),
+        "шов между проезжей частью и тротуаром"
+    );
+    let street_curb = (8.0 + bridge_curb_width(8.0)) / 2.0;
+    let sidewalk_curb = (3.5 + bridge_curb_width(3.5)) / 2.0;
+    assert!(
+        !passable_at(Vec2::new(130.0, 100.0 - street_curb)),
+        "внешний бордюр проезжей части"
+    );
+    assert!(
+        !passable_at(Vec2::new(130.0, 107.0 + sidewalk_curb)),
+        "внешний бордюр тротуара"
+    );
 }
 
 /// Косой мост: тайлы цепочки бордюра гуляют внутрь настила до полудиагонали,

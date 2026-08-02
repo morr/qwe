@@ -695,9 +695,18 @@ in `main.rs`.
   off the curb centerline — i.e. *into* the deck on a slanted bridge — and a full-width
   carve re-opened those tiles, turning the barrier into a dashed line. Deck
   connectivity survives the narrowing because `set_polyline` always walks the
-  centerline chain, the same guarantee thin waterways rely on. Known cost of a
-  single-level grid: a street passing *under* a dry overpass gets the curb bands
-  stamped across it.
+  centerline chain, the same guarantee thin waterways rely on. A curb tile does
+  **not** block unconditionally — OSM cuts one physical bridge into several ways
+  (carriageway and its sidewalk are parallel ribbons), so each curb tile records
+  its owners and its covers (`CurbTile`) and blocks only if some owner has
+  neither a joining non-bridge road panel over the tile nor a *another* way's
+  ribbon (deck + curbs, Butt-rect so way joints don't erode each other) covering
+  it. Net effect: a road joining from outside breaks a gap through the curb, a
+  bridge + its sidewalk way act as one bridge (seam open, outer edges hold), and
+  the same road panel still does not carve through water or a stream — the rule
+  only refrains from blocking, it never re-opens. Known cost of a single-level
+  grid: a street passing *under* a dry overpass gets the curb bands stamped
+  across it — passable where the street runs, blocked either side of it.
 - **Linear waterways block, unlike rails** — a `WaterLine` is water, and water is crossed
   by bridge, not waded. They carry the rail hazard below (an unbroken thread across the
   city that `prune_unreachable` would amputate a bank of), so two things keep the map

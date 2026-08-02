@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::f32::consts::SQRT_2;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -112,11 +113,16 @@ impl Navmesh {
         for line in map.water_lines.iter().filter(|line| !line.tunnel) {
             self.set_polyline(&line.points, line.width, false);
         }
-        // бордюры всех мостов блокируются до прорезки всех настилов — тем же
-        // порядком, что в отрисовке (бордюры под заливками): на стыке двух
-        // bridge-ways настил одного заново прорезает бордюр другого, и мост
-        // не перегораживается поперёк собственным бордюром
-        for road in map.roads.iter().filter(|road| road.bridge) {
+        // бордюры мостов. Тайл бордюра блокируется не безусловно: OSM режет
+        // один физический мост на несколько ways (проезжая часть и тротуар —
+        // параллельные ленты, эстакада — цепочка кусков), и бордюр одного way
+        // не должен перегораживать ни настил соседнего, ни примыкающую
+        // дорогу. Поэтому сначала по каждому бордюрному тайлу собираются
+        // владельцы (чей бордюр) и покрытия (чей настил/панель его накрывает),
+        // и лишь потом решается блокировка — см. `CurbTile::blocked`
+        let mut curb_tiles: HashMap<usize, CurbTile> = HashMap::new();
+        for (index, road) in map.roads.iter().filter(|road| road.bridge).enumerate() {
+            let id = index as u32 + 1;
             let curb = bridge_curb_width(road.width);
             let offsets = miter_offsets(&road.points, false, (road.width + curb) / 2.0);
             for side in [-1.0, 1.0] {
@@ -126,7 +132,51 @@ impl Navmesh {
                     .zip(&offsets)
                     .map(|(&point, &offset)| point + side * offset)
                     .collect();
-                self.set_polyline(&edge, curb, false);
+                self.visit_polyline(&edge, curb, &mut |_, x, y| {
+                    if let Some(index) = Self::index(x, y) {
+                        push_id(&mut curb_tiles.entry(index).or_default().owners, id);
+                    }
+                });
+            }
+        }
+        // покрытие соседним bridge-way: вся его лента с бордюрами, с запасом в
+        // диагональ тайла на блуждание бордюрной цепочки. Прямоугольник без
+        // капсульных продлений за торцы: капсула съедала бы начало бордюра
+        // следующего way того же моста на каждом стыке
+        for (index, road) in map.roads.iter().filter(|road| road.bridge).enumerate() {
+            let id = index as u32 + 1;
+            let footprint =
+                road.width + 2.0 * bridge_curb_width(road.width) + NAVTILE_SIZE * SQRT_2;
+            self.visit_polyline_rect(&road.points, footprint, &mut |_, x, y| {
+                if let Some(index) = Self::index(x, y)
+                    && let Some(tile) = curb_tiles.get_mut(&index)
+                {
+                    push_id(&mut tile.covers, id);
+                }
+            });
+        }
+        // покрытие примыкающей дорогой: её панель входит на мост, бордюр под
+        // ней не блокируется — с тем же запасом на блуждание цепочки. Тоже
+        // прямоугольник: подходы моста коллинеарны ему, и капсульный торец,
+        // выступающий за общий узел на полширины, слизывал бы бордюр вдоль
+        // короткого моста с обоих концов. Проём на настоящем примыкании
+        // пробивает тело пересекающей дороги, торец для этого не нужен
+        for road in map.roads.iter().filter(|road| !road.bridge) {
+            let width = road.width + NAVTILE_SIZE * SQRT_2;
+            self.visit_polyline_rect(&road.points, width, &mut |_, x, y| {
+                if let Some(index) = Self::index(x, y)
+                    && let Some(tile) = curb_tiles.get_mut(&index)
+                {
+                    tile.road = true;
+                }
+            });
+        }
+        // блокировка не ставит и не снимает проходимость сама по себе: тайл,
+        // который правило оставило открытым, может всё ещё лежать в воде —
+        // щель между мостом и его тротуаром над рекой остаётся водой
+        for (&index, tile) in &curb_tiles {
+            if tile.blocked() {
+                self.passable[index] = false;
             }
         }
         for road in map.roads.iter().filter(|road| road.bridge) {
@@ -210,7 +260,7 @@ impl Navmesh {
     }
 
     /// Тайлы в пределах полуширины от осевой полилинии — **плюс** все тайлы,
-    /// через которые осевая проходит ([`Self::set_segment_tiles`]).
+    /// через которые осевая проходит ([`Self::visit_segment_tiles`]).
     ///
     /// Одной полуширины мало. Тайлы метятся по «центр ближе полуширины», и
     /// лента у́же `NAVTILE_SIZE · √2` (2.83 м) на косой линии вырождается в
@@ -227,6 +277,19 @@ impl Navmesh {
     /// осевой даёт четырёхсвязную цепочку **по построению**, при любой ширине,
     /// угле и сдвиге, и при этом не раздувает канаву в 1.5 м до трёх метров.
     fn set_polyline(&mut self, points: &[Vec2], width: f32, value: bool) {
+        self.visit_polyline(points, width, &mut |grid, x, y| {
+            grid.set_passable(x, y, value)
+        });
+    }
+
+    /// Обход тех же тайлов без записи в сетку: `visit` решает сам — так
+    /// собирается маска бордюров и режутся проёмы «только там, где бордюр».
+    fn visit_polyline(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        visit: &mut impl FnMut(&mut Self, i32, i32),
+    ) {
         for segment in points.windows(2) {
             let (from, to) = (segment[0], segment[1]);
             let min_tile = world_to_tile(from.min(to) - width);
@@ -235,11 +298,43 @@ impl Navmesh {
                 for y in min_tile.y.max(0)..=max_tile.y.min(GRID_SIZE.y - 1) {
                     let center = (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE;
                     if distance_to_segment(center, from, to) <= width / 2.0 {
-                        self.set_passable(x, y, value);
+                        visit(self, x, y);
                     }
                 }
             }
-            self.set_segment_tiles(from, to, value);
+            self.visit_segment_tiles(from, to, visit);
+        }
+    }
+
+    /// Тайлы в прямоугольнике вокруг каждого сегмента: как
+    /// [`Self::visit_polyline`], но без капсульных продлений за концы (та же
+    /// разница, что `Butt` против `Round` у торцов ленты в отрисовке) и без
+    /// цепочки по осевой — покрытию бордюров связность не нужна.
+    fn visit_polyline_rect(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        visit: &mut impl FnMut(&mut Self, i32, i32),
+    ) {
+        for segment in points.windows(2) {
+            let (from, to) = (segment[0], segment[1]);
+            let delta = to - from;
+            let length = delta.length();
+            let Some(direction) = delta.try_normalize() else {
+                continue;
+            };
+            let min_tile = world_to_tile(from.min(to) - width);
+            let max_tile = world_to_tile(from.max(to) + width);
+            for x in min_tile.x.max(0)..=max_tile.x.min(GRID_SIZE.x - 1) {
+                for y in min_tile.y.max(0)..=max_tile.y.min(GRID_SIZE.y - 1) {
+                    let center = (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE;
+                    let along = (center - from).dot(direction);
+                    let lateral = (center - from).perp_dot(direction).abs();
+                    if (0.0..=length).contains(&along) && lateral <= width / 2.0 {
+                        visit(self, x, y);
+                    }
+                }
+            }
         }
     }
 
@@ -248,7 +343,12 @@ impl Navmesh {
     /// соседние тайлы цепочки всегда смежны **по стороне**, а не по углу.
     /// Именно эта четырёхсвязность и делает преграду непроходимой для всех
     /// потребителей сетки (см. [`Self::set_polyline`]).
-    fn set_segment_tiles(&mut self, from: Vec2, to: Vec2, value: bool) {
+    fn visit_segment_tiles(
+        &mut self,
+        from: Vec2,
+        to: Vec2,
+        visit: &mut impl FnMut(&mut Self, i32, i32),
+    ) {
         let mut tile = world_to_tile(from);
         let end = world_to_tile(to);
         let delta = to - from;
@@ -267,7 +367,7 @@ impl Navmesh {
         let (mut t_max_x, t_delta_x, step_x) = axis(delta.x, from.x, tile.x);
         let (mut t_max_y, t_delta_y, step_y) = axis(delta.y, from.y, tile.y);
 
-        self.set_passable(tile.x, tile.y, value);
+        visit(self, tile.x, tile.y);
         // потолок шагов — страховка от вырожденного отрезка: ходов не больше,
         // чем тайлов по обеим осям вместе
         let limit = (end.x - tile.x).abs() + (end.y - tile.y).abs();
@@ -279,8 +379,57 @@ impl Navmesh {
                 tile.y += step_y;
                 t_max_y += t_delta_y;
             }
-            self.set_passable(tile.x, tile.y, value);
+            visit(self, tile.x, tile.y);
         }
+    }
+}
+
+/// Бордюрный тайл на этапе заливки: чьи бордюры на нём лежат и чем он накрыт.
+/// Два слота хватает: физически на одном тайле встречаются бордюры максимум
+/// двух соседних лент (проезжая часть и её тротуар).
+#[derive(Default)]
+struct CurbTile {
+    /// Bridge-ways, чей бордюр проходит через тайл.
+    owners: [u32; 2],
+    /// Bridge-ways, чья лента (настил + бордюры) накрывает тайл.
+    covers: [u32; 2],
+    /// Накрыт панелью обычной (не мостовой) дороги.
+    road: bool,
+}
+
+impl CurbTile {
+    /// Тайл непроходим, если хоть одному бордюру-владельцу нечем открыться:
+    /// нет ни панели примыкающей дороги, ни накрытия *чужим* bridge-way.
+    /// Собственная лента владельца не считается — иначе каждый мост стёр бы
+    /// свой же бордюр. Так пара «мост + его тротуар» работает как один мост:
+    /// встречные бордюры в шве накрыты лентами друг друга и открыты, внешние
+    /// кромки не накрыты ничем и держат.
+    fn blocked(&self) -> bool {
+        if self.road {
+            return false;
+        }
+        self.owners
+            .iter()
+            .filter(|&&owner| owner != 0)
+            .any(|&owner| {
+                !self
+                    .covers
+                    .iter()
+                    .any(|&cover| cover != 0 && cover != owner)
+            })
+    }
+}
+
+/// Дописывает id в первый свободный слот; дубликаты и переполнение — no-op
+/// (третий пересекающийся way не меняет исход `blocked`).
+fn push_id(slots: &mut [u32; 2], id: u32) {
+    if slots.contains(&id) {
+        return;
+    }
+    if slots[0] == 0 {
+        slots[0] = id;
+    } else if slots[1] == 0 {
+        slots[1] = id;
     }
 }
 
