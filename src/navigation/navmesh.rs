@@ -1,9 +1,11 @@
+use std::f32::consts::SQRT_2;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
 use crate::grid::world_to_tile;
 use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, ring_bounds};
+use crate::map::{bridge_curb_width, miter_offsets};
 use crate::settings::{GRID_SIZE, NAVTILE_SIZE, PASSAGE_MAX_WIDTH};
 
 /// Стоимость шага между тайлами (для A*): прямой и диагональный.
@@ -86,6 +88,12 @@ impl Navmesh {
     /// блокируют уже после, а арки прорезаются последними — их смысл именно в
     /// том, чтобы пробить только что заблокированный дом.
     ///
+    /// Бордюры мостов ([`bridge_curb_width`]) непроходимы: с моста не сходят
+    /// вбок через перила. Поверх воды это ничего не меняет (вода уже
+    /// заблокирована), а на сухопутных пролётах — подходах и эстакадах —
+    /// именно бордюр и мешает срезать путь через край настила. Торцы моста
+    /// бордюр не перекрывает: блокируются только две продольные кромки.
+    ///
     /// Линейные водотоки блокируют вместе с площадной водой и по той же
     /// причине — русло переходят по мосту, а не вброд. Опасность у них своя:
     /// ручей идёт через весь город непрерывной ниткой, и без переходов
@@ -104,8 +112,35 @@ impl Navmesh {
         for line in map.water_lines.iter().filter(|line| !line.tunnel) {
             self.set_polyline(&line.points, line.width, false);
         }
+        // бордюры всех мостов блокируются до прорезки всех настилов — тем же
+        // порядком, что в отрисовке (бордюры под заливками): на стыке двух
+        // bridge-ways настил одного заново прорезает бордюр другого, и мост
+        // не перегораживается поперёк собственным бордюром
         for road in map.roads.iter().filter(|road| road.bridge) {
-            self.set_polyline(&road.points, road.width, true);
+            let curb = bridge_curb_width(road.width);
+            let offsets = miter_offsets(&road.points, false, (road.width + curb) / 2.0);
+            for side in [-1.0, 1.0] {
+                let edge: Vec<Vec2> = road
+                    .points
+                    .iter()
+                    .zip(&offsets)
+                    .map(|(&point, &offset)| point + side * offset)
+                    .collect();
+                self.set_polyline(&edge, curb, false);
+            }
+        }
+        for road in map.roads.iter().filter(|road| road.bridge) {
+            // настил у́же полной ширины на диагональ тайла. Тайлы цепочки
+            // бордюра метятся по «осевая бордюра проходит через тайл», и на
+            // косом мосту центр такого тайла отклоняется от неё до полудиагонали
+            // (√2 м) — то есть залезает внутрь настила. Прорезка полной шириной
+            // открывала такие тайлы обратно, и барьер превращался в пунктир.
+            // Урезание ровно на этот заход оставляет цепочку бордюра целой при
+            // любом угле, а связность настила держит его собственная цепочка по
+            // осевой — так же, как у тонких рек в set_polyline.
+            let curb = bridge_curb_width(road.width);
+            let deck = (road.width + curb - NAVTILE_SIZE * SQRT_2).max(0.0);
+            self.set_polyline(&road.points, deck, true);
         }
         for area in &map.buildings {
             self.set_area(area, false);

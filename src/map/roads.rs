@@ -329,8 +329,10 @@ pub fn casing_width(width: f32) -> f32 {
     (width * CASING_SCALE).clamp(*CASING_RANGE.start(), *CASING_RANGE.end())
 }
 
-/// Толщина бордюра моста для дороги такой ширины.
-fn bridge_curb_width(width: f32) -> f32 {
+/// Толщина бордюра моста для дороги такой ширины. Общая с навмешем
+/// (`navigation::navmesh`): бордюр не только рисуется, но и блокирует
+/// проходимость, и обе полосы обязаны совпадать.
+pub fn bridge_curb_width(width: f32) -> f32 {
     (width * BRIDGE_CURB_SCALE).clamp(*BRIDGE_CURB_RANGE.start(), *BRIDGE_CURB_RANGE.end())
 }
 

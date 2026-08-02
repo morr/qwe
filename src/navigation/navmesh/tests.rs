@@ -123,6 +123,112 @@ fn a_building_passage_carves_a_corridor_through_the_building() {
     );
 }
 
+/// Бордюры моста непроходимы: сойти с настила вбок нельзя, но торцы моста
+/// открыты — бордюр блокирует только две продольные кромки.
+#[test]
+fn bridge_curbs_block_the_deck_edges() {
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        width: 8.0,
+        class: RoadClass::Street,
+        bridge: true,
+        passage: false,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    // осевая бордюрной полосы — на полширины настила плюс полбордюра от оси
+    let curb_line = (8.0 + bridge_curb_width(8.0)) / 2.0;
+    assert!(passable_at(Vec2::new(130.0, 100.0)), "настил");
+    for side in [-1.0, 1.0] {
+        assert!(
+            !passable_at(Vec2::new(130.0, 100.0 + side * curb_line)),
+            "бордюр со стороны {side}"
+        );
+    }
+    assert!(passable_at(Vec2::new(130.0, 110.0)), "земля за бордюром");
+    for x in [95.0, 165.0] {
+        assert!(passable_at(Vec2::new(x, 100.0)), "подход по осевой, x={x}");
+    }
+}
+
+/// Косой мост: тайлы цепочки бордюра гуляют внутрь настила до полудиагонали,
+/// и прорезка настила полной шириной открывала их обратно — бордюр
+/// превращался в пунктир, мост был проходим вбок посередине. Каждая точка
+/// бордюрной осевой обязана лежать в непроходимом тайле, а осевая настила —
+/// в проходимом.
+#[test]
+fn a_slanted_bridge_keeps_its_curbs_unbroken() {
+    let (from, to) = (Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0));
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        points: vec![from, to],
+        width: 8.0,
+        class: RoadClass::Street,
+        bridge: true,
+        passage: false,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    let normal = (to - from).normalize().perp();
+    let curb_line = (8.0 + bridge_curb_width(8.0)) / 2.0;
+    // торцы не проверяются: там бордюр кончается, а настил открыт
+    for step in 4..=36 {
+        let along = from.lerp(to, step as f32 / 40.0);
+        assert!(passable_at(along), "осевая настила, шаг {step}");
+        for side in [-1.0, 1.0] {
+            assert!(
+                !passable_at(along + normal * side * curb_line),
+                "бордюр со стороны {side}, шаг {step}"
+            );
+        }
+    }
+}
+
+/// Стык двух bridge-ways одного моста: настилы прорезаются после всех
+/// бордюров, и бордюр первого way не перегораживает настил второго.
+#[test]
+fn a_bridge_junction_is_not_walled_by_the_other_ways_curb() {
+    let mut map = MapData::default();
+    for points in [
+        vec![Vec2::new(100.0, 100.0), Vec2::new(130.0, 100.0)],
+        vec![Vec2::new(130.0, 100.0), Vec2::new(130.0, 140.0)],
+    ] {
+        map.roads.push(RoadLine {
+            points,
+            width: 8.0,
+            class: RoadClass::Street,
+            bridge: true,
+            passage: false,
+        });
+    }
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    // бордюр первого way тянется по y = 100 + (w + curb) / 2 и пересекает
+    // настил второго — тайл на пересечении обязан остаться проходимым
+    let curb_line = 100.0 + (8.0 + bridge_curb_width(8.0)) / 2.0;
+    assert!(passable_at(Vec2::new(130.0, curb_line)), "стык открыт");
+    assert!(passable_at(Vec2::new(130.0, 120.0)), "настил второго way");
+}
+
 /// Ширина арки ограничена: `service` шириной 5 м не должен вырезать по
 /// тайлу фасада с каждой стороны проёма.
 #[test]

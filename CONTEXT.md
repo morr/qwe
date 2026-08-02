@@ -504,7 +504,8 @@ in `main.rs`.
   below fills for the casing reason (a junction of two bridge ways is never cut by a
   curb band). Street and footbridge fills share one mesh — bridge-over-bridge overlap
   is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
-  rail bridges are out of scope.
+  rail bridges are out of scope. The curb is not just paint: the navmesh blocks the
+  same bands (see **Bridge curbs are impassable** under Pathfinding).
 - **Rail layers** (`map/roads.rs`, same file and the same `RoadLayerTag`, so a style
   change rebuilds them with the roads) — osm-carto's dashed railway, two merged meshes:
   a dark bed at `Z_RAIL` (2.4) and a white dash pattern at `Z_RAIL_DASH` (2.5), 6 m on /
@@ -677,10 +678,26 @@ in `main.rs`.
   `x * GRID_SIZE.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
-  block** (all but culverts) → **bridge corridors carve passable strips back**
-  (`bridge=yes` roads) → buildings block → walls block → **building passages carve back
-  through them**. Without bridges the Упа river bisects the map and no cross-river path
-  exists.
+  block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
+  strips back** (`bridge=yes` roads) → buildings block → walls block → **building
+  passages carve back through them**. Without bridges the Упа river bisects the map and
+  no cross-river path exists.
+- **Bridge curbs are impassable** — the same two bands the renderer draws
+  (`bridge_curb_width`, offset off the centerline by `miter_offsets`, shared with
+  `push_ribbon` so the blocked strip matches the drawn one by construction). Over water
+  this changes nothing (water already blocks); on dry spans — approaches, overpasses —
+  the curb is what stops a pawn from stepping off the deck sideways. Only the two
+  longitudinal edges block, the deck ends stay open. All curbs block *before* any deck
+  carves — the render layering (curbs under fills) repeated in the grid, so at a
+  junction of two bridge ways one way's deck re-carves the other's curb and the bridge
+  is never walled across by its own curb. The deck carve is **narrower than the deck by
+  a tile diagonal**: a curb-chain tile's center wanders up to half a diagonal (√2 m)
+  off the curb centerline — i.e. *into* the deck on a slanted bridge — and a full-width
+  carve re-opened those tiles, turning the barrier into a dashed line. Deck
+  connectivity survives the narrowing because `set_polyline` always walks the
+  centerline chain, the same guarantee thin waterways rely on. Known cost of a
+  single-level grid: a street passing *under* a dry overpass gets the curb bands
+  stamped across it.
 - **Linear waterways block, unlike rails** — a `WaterLine` is water, and water is crossed
   by bridge, not waded. They carry the rail hazard below (an unbroken thread across the
   city that `prune_unreachable` would amputate a bank of), so two things keep the map

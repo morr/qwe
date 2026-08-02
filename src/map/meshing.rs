@@ -306,28 +306,7 @@ impl MeshBuilder {
 
         match join {
             RibbonJoin::Miter => {
-                let offsets: Vec<Vec2> = (0..count)
-                    .map(|index| {
-                        let incoming = (index > 0 || closed).then(|| {
-                            let previous = path[(index + count - 1) % count];
-                            (path[index] - previous).normalize_or(Vec2::X).perp()
-                        });
-                        let outgoing = (index + 1 < count || closed).then(|| {
-                            let next = path[(index + 1) % count];
-                            (next - path[index]).normalize_or(Vec2::X).perp()
-                        });
-                        match (incoming, outgoing) {
-                            (Some(before), Some(after)) => {
-                                let bisector = (before + after).normalize_or(before);
-                                // на острых стыках длина miter уходит в бесконечность — режем
-                                let cosine = bisector.dot(before).max(1.0 / MITER_LIMIT);
-                                bisector * (half_width / cosine)
-                            }
-                            (Some(normal), None) | (None, Some(normal)) => normal * half_width,
-                            (None, None) => Vec2::ZERO,
-                        }
-                    })
-                    .collect();
+                let offsets = miter_offsets(&path, closed, half_width);
 
                 for index in 0..segments {
                     let next = (index + 1) % count;
@@ -488,6 +467,37 @@ impl MeshBuilder {
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
     }
+}
+
+/// Miter-офсет вершины ломаной: вектор от точки пути до края ленты полуширины
+/// `half_width`, по биссектрисе излома, с ограничением [`MITER_LIMIT`] на
+/// острых стыках. Край ленты — `path[i] ± offsets[i]`. Общий и для отрисовки
+/// ([`MeshBuilder::push_ribbon`]), и для навмеша (бордюры моста): полосы,
+/// заблокированные в сетке, совпадают с нарисованными по построению.
+pub fn miter_offsets(path: &[Vec2], closed: bool, half_width: f32) -> Vec<Vec2> {
+    let count = path.len();
+    (0..count)
+        .map(|index| {
+            let incoming = (index > 0 || closed).then(|| {
+                let previous = path[(index + count - 1) % count];
+                (path[index] - previous).normalize_or(Vec2::X).perp()
+            });
+            let outgoing = (index + 1 < count || closed).then(|| {
+                let next = path[(index + 1) % count];
+                (next - path[index]).normalize_or(Vec2::X).perp()
+            });
+            match (incoming, outgoing) {
+                (Some(before), Some(after)) => {
+                    let bisector = (before + after).normalize_or(before);
+                    // на острых стыках длина miter уходит в бесконечность — режем
+                    let cosine = bisector.dot(before).max(1.0 / MITER_LIMIT);
+                    bisector * (half_width / cosine)
+                }
+                (Some(normal), None) | (None, Some(normal)) => normal * half_width,
+                (None, None) => Vec2::ZERO,
+            }
+        })
+        .collect()
 }
 
 /// Ломаная без точек ближе `merge_distance` к предыдущей: на такой дистанции
