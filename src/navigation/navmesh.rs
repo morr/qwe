@@ -192,6 +192,64 @@ impl Navmesh {
             let deck = (road.width + curb - NAVTILE_SIZE * SQRT_2).max(0.0);
             self.set_polyline(&road.points, deck, true);
         }
+        // после прорезок бордюрный барьер обязан остаться без диагональных
+        // щелей. На узком мосту (аллея 3.5 м при тайле 2 м) цепочка настила
+        // проходит через те же тайлы, что цепочка его же бордюра, и настил
+        // отвоёвывает тайл себе — барьер продолжается со сдвигом в соседнюю
+        // колонку, касаясь углом. Свой A* сквозь угол не шагает, но
+        // OrdinalGrid из bevy_northstar (HPA*, Theta*) шагает по диагонали
+        // между двумя заблокированными тайлами — та же угроза, что у тонких
+        // рек (см. [`Self::visit_polyline`]). Латка — со внешней стороны: из
+        // двух открытых ортогональных соседей диагональной пары блокируется
+        // тот, что дальше от осевой моста-владельца, — настил не трогается,
+        // щель закрыта снаружи
+        let bridge_ways: Vec<&[Vec2]> = map
+            .roads
+            .iter()
+            .filter(|road| road.bridge)
+            .map(|road| road.points.as_slice())
+            .collect();
+        let tile_center = |index: usize| -> Vec2 {
+            let (x, y) = (index as i32 / GRID_SIZE.y, index as i32 % GRID_SIZE.y);
+            (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE
+        };
+        loop {
+            let mut seals: Vec<usize> = Vec::new();
+            for (&index, tile) in &curb_tiles {
+                if self.passable[index] {
+                    continue;
+                }
+                let (x, y) = (index as i32 / GRID_SIZE.y, index as i32 % GRID_SIZE.y);
+                for (dx, dy) in [(1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                    let Some(partner) = Self::index(x + dx, y + dy) else {
+                        continue;
+                    };
+                    let (Some(side), Some(vertical)) =
+                        (Self::index(x + dx, y), Self::index(x, y + dy))
+                    else {
+                        continue;
+                    };
+                    if self.passable[partner] || !self.passable[side] || !self.passable[vertical] {
+                        continue;
+                    }
+                    let way = bridge_ways[tile.owners[0] as usize - 1];
+                    let outer = if distance_to_polyline(tile_center(side), way)
+                        >= distance_to_polyline(tile_center(vertical), way)
+                    {
+                        side
+                    } else {
+                        vertical
+                    };
+                    seals.push(outer);
+                }
+            }
+            if seals.is_empty() {
+                break;
+            }
+            for index in seals {
+                self.passable[index] = false;
+            }
+        }
         for area in &map.buildings {
             self.set_area(area, false);
         }
@@ -418,6 +476,14 @@ impl CurbTile {
                     .any(|&cover| cover != 0 && cover != owner)
             })
     }
+}
+
+/// Минимальное расстояние от точки до ломаной — по всем её сегментам.
+fn distance_to_polyline(point: Vec2, points: &[Vec2]) -> f32 {
+    points
+        .windows(2)
+        .map(|segment| distance_to_segment(point, segment[0], segment[1]))
+        .fold(f32::INFINITY, f32::min)
 }
 
 /// Дописывает id в первый свободный слот; дубликаты и переполнение — no-op

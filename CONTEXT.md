@@ -704,9 +704,18 @@ in `main.rs`.
   it. Net effect: a road joining from outside breaks a gap through the curb, a
   bridge + its sidewalk way act as one bridge (seam open, outer edges hold), and
   the same road panel still does not carve through water or a stream — the rule
-  only refrains from blocking, it never re-opens. Known cost of a single-level
-  grid: a street passing *under* a dry overpass gets the curb bands stamped
-  across it — passable where the street runs, blocked either side of it.
+  only refrains from blocking, it never re-opens. After the deck carves a **seal
+  pass** restores the barrier where it degraded to corner contact: on a narrow
+  (alley-width) bridge the deck centerline chain claims the same tiles as the
+  way's own curb chain, the deck wins, and the curb continues one column over —
+  touching diagonally. Our A* cannot cut that corner but northstar's
+  `OrdinalGrid` (HPA*, Theta*) steps straight through it, the thin-waterway
+  hazard again. The seal blocks, of the two open orthogonal neighbours of such
+  a diagonal pair, the one **farther** from the owning bridge centerline — the
+  deck stays walkable, the gap closes on the outside. Known cost of a
+  single-level grid: a street passing *under* a dry overpass gets the curb
+  bands stamped across it — passable where the street runs, blocked either side
+  of it.
 - **Linear waterways block, unlike rails** — a `WaterLine` is water, and water is crossed
   by bridge, not waded. They carry the rail hazard below (an unbroken thread across the
   city that `prune_unreachable` would amputate a bank of), so two things keep the map

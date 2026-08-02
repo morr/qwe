@@ -210,6 +210,47 @@ fn a_joining_road_breaks_through_the_curb_but_not_through_water() {
     );
 }
 
+/// Узкий косой мост: цепочка настила делит тайлы с цепочкой собственного
+/// бордюра, настил отвоёвывает их себе, и без латки барьер продолжался бы со
+/// сдвигом в соседнюю колонку — касанием углов, сквозь которое шагает
+/// OrdinalGrid northstar. После заливки в окрестности моста не должно
+/// остаться ни одной диагональной пары заблокированных тайлов с двумя
+/// открытыми ортогональными соседями, а настил обязан остаться проходимым.
+#[test]
+fn a_narrow_slanted_bridge_leaves_no_corner_slips() {
+    let (from, to) = (Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0));
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        points: vec![from, to],
+        width: 3.5,
+        class: RoadClass::Alley,
+        bridge: true,
+        passage: false,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let min_tile = world_to_tile(Vec2::new(90.0, 90.0));
+    let max_tile = world_to_tile(Vec2::new(170.0, 140.0));
+    for x in min_tile.x..max_tile.x {
+        for y in min_tile.y..max_tile.y {
+            let blocked = |dx: i32, dy: i32| !navmesh.is_passable(x + dx, y + dy);
+            let slips = (blocked(0, 0) && blocked(1, 1) && !blocked(1, 0) && !blocked(0, 1))
+                || (blocked(1, 0) && blocked(0, 1) && !blocked(0, 0) && !blocked(1, 1));
+            assert!(!slips, "диагональная щель у тайла ({x}, {y})");
+        }
+    }
+    for step in 0..=40 {
+        let along = from.lerp(to, step as f32 / 40.0);
+        let tile = world_to_tile(along);
+        assert!(
+            navmesh.is_passable(tile.x, tile.y),
+            "осевая настила, шаг {step}"
+        );
+    }
+}
+
 /// Коллинеарный подход к мосту не слизывает бордюр: покрытие дороги — это её
 /// тело, без торцевого выступа за общий узел. Иначе у короткого моста подходы
 /// с двух концов открывали бы боковые бордюры почти целиком.
@@ -245,7 +286,10 @@ fn a_collinear_approach_road_does_not_lick_the_curb_open() {
             "бордюр у торца, сторона {side}"
         );
     }
-    assert!(passable_at(Vec2::new(95.0, 100.0)), "вход на мост по осевой");
+    assert!(
+        passable_at(Vec2::new(95.0, 100.0)),
+        "вход на мост по осевой"
+    );
     assert!(passable_at(Vec2::new(105.0, 100.0)), "настил за торцом");
 }
 
