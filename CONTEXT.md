@@ -698,13 +698,17 @@ in `main.rs`.
   centerline chain, the same guarantee thin waterways rely on. A curb tile does
   **not** block unconditionally — OSM cuts one physical bridge into several ways
   (carriageway and its sidewalk are parallel ribbons), so each curb tile records
-  its owners and its covers (`CurbTile`) and blocks only if some owner has
-  neither a joining non-bridge road panel over the tile nor a *another* way's
-  ribbon (deck + curbs, Butt-rect so way joints don't erode each other) covering
-  it. Net effect: a road joining from outside breaks a gap through the curb, a
-  bridge + its sidewalk way act as one bridge (seam open, outer edges hold), and
-  the same road panel still does not carve through water or a stream — the rule
-  only refrains from blocking, it never re-opens. After the deck carves a **seal
+  its owners (`CurbTile`) and the decision is an **outward probe**: step one
+  tile away from the owning way's centerline — if that point lands inside
+  another bridge way's ribbon, the tile is an interior seam and stays open; if
+  it lands on nothing, the tile is the outer boundary of the whole composite
+  and blocks. This survives nominal class widths swallowing a parallel sidewalk
+  whole (primary is 16 m by default — a "covered by a neighbour ribbon" rule
+  would open *both* of the pair's outer curbs there). A **joining** non-bridge
+  road opens the curb its panel covers — joining means sharing a node with a
+  bridge way (`JOIN_EPSILON`); a riverbank path passing a few metres *under*
+  the span shares no node and opens nothing. The rule only refrains from
+  blocking, it never re-opens — an open-by-rule tile over water stays water. After the deck carves a **seal
   pass** restores the barrier where it degraded to corner contact: on a narrow
   (alley-width) bridge the deck centerline chain claims the same tiles as the
   way's own curb chain, the deck wins, and the curb continues one column over —

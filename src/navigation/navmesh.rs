@@ -118,8 +118,19 @@ impl Navmesh {
         // параллельные ленты, эстакада — цепочка кусков), и бордюр одного way
         // не должен перегораживать ни настил соседнего, ни примыкающую
         // дорогу. Поэтому сначала по каждому бордюрному тайлу собираются
-        // владельцы (чей бордюр) и покрытия (чей настил/панель его накрывает),
-        // и лишь потом решается блокировка — см. `CurbTile::blocked`
+        // владельцы (чей бордюр) и примыкания, а блокировка решается ниже
+        // щупом «что снаружи»
+        let bridge_ways: Vec<(&[Vec2], f32)> = map
+            .roads
+            .iter()
+            .filter(|road| road.bridge)
+            .map(|road| {
+                (
+                    road.points.as_slice(),
+                    road.width / 2.0 + bridge_curb_width(road.width),
+                )
+            })
+            .collect();
         let mut curb_tiles: HashMap<usize, CurbTile> = HashMap::new();
         for (index, road) in map.roads.iter().filter(|road| road.bridge).enumerate() {
             let id = index as u32 + 1;
@@ -139,29 +150,28 @@ impl Navmesh {
                 });
             }
         }
-        // покрытие соседним bridge-way: вся его лента с бордюрами, с запасом в
-        // диагональ тайла на блуждание бордюрной цепочки. Прямоугольник без
-        // капсульных продлений за торцы: капсула съедала бы начало бордюра
-        // следующего way того же моста на каждом стыке
-        for (index, road) in map.roads.iter().filter(|road| road.bridge).enumerate() {
-            let id = index as u32 + 1;
-            let footprint =
-                road.width + 2.0 * bridge_curb_width(road.width) + NAVTILE_SIZE * SQRT_2;
-            self.visit_polyline_rect(&road.points, footprint, &mut |_, x, y| {
-                if let Some(index) = Self::index(x, y)
-                    && let Some(tile) = curb_tiles.get_mut(&index)
-                {
-                    push_id(&mut tile.covers, id);
-                }
-            });
-        }
         // покрытие примыкающей дорогой: её панель входит на мост, бордюр под
-        // ней не блокируется — с тем же запасом на блуждание цепочки. Тоже
-        // прямоугольник: подходы моста коллинеарны ему, и капсульный торец,
-        // выступающий за общий узел на полширины, слизывал бы бордюр вдоль
-        // короткого моста с обоих концов. Проём на настоящем примыкании
-        // пробивает тело пересекающей дороги, торец для этого не нужен
+        // ней не блокируется — с запасом в диагональ тайла на блуждание
+        // бордюрной цепочки. Прямоугольник без капсульных продлений за торцы:
+        // подходы моста коллинеарны ему, и капсульный торец, выступающий за
+        // общий узел на полширины, слизывал бы бордюр вдоль короткого моста с
+        // обоих концов; проём на настоящем примыкании пробивает тело
+        // пересекающей дороги. Примыкание — это общий узел (или конец на
+        // осевой моста): береговая тропа, прошедшая в паре метров ПОД
+        // пролётом, — не примыкание, открытый ею бордюр был бы сходом с
+        // моста в реку
         for road in map.roads.iter().filter(|road| !road.bridge) {
+            let joins = bridge_ways.iter().any(|&(way, _)| {
+                road.points
+                    .iter()
+                    .any(|&point| distance_to_polyline(point, way) < JOIN_EPSILON)
+                    || way
+                        .iter()
+                        .any(|&point| distance_to_polyline(point, &road.points) < JOIN_EPSILON)
+            });
+            if !joins {
+                continue;
+            }
             let width = road.width + NAVTILE_SIZE * SQRT_2;
             self.visit_polyline_rect(&road.points, width, &mut |_, x, y| {
                 if let Some(index) = Self::index(x, y)
@@ -171,11 +181,34 @@ impl Navmesh {
                 }
             });
         }
-        // блокировка не ставит и не снимает проходимость сама по себе: тайл,
-        // который правило оставило открытым, может всё ещё лежать в воде —
-        // щель между мостом и его тротуаром над рекой остаётся водой
+        let tile_center = |index: usize| -> Vec2 {
+            let (x, y) = (index as i32 / GRID_SIZE.y, index as i32 % GRID_SIZE.y);
+            (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE
+        };
+        // блокировка — щупом «что снаружи»: тайл держит бордюр, если на шаг
+        // наружу от осевой владельца НЕ лежит лента другого bridge-way. Так
+        // пара «мост + тротуар» запирается по внешнему краю ленты, которая
+        // оказалась крайней, — даже когда номинальная ширина проезжей части
+        // (primary 16 м) заглатывает свой тротуар целиком и правило «чужая
+        // лента накрыла — открыто» оставило бы пару вовсе без барьера.
+        // Внутренние швы при этом открыты: щуп из шва попадает в соседнюю
+        // ленту. Блокировка ничего не открывает сама по себе: тайл, который
+        // щуп оставил открытым, может всё ещё лежать в воде
         for (&index, tile) in &curb_tiles {
-            if tile.blocked() {
+            if tile.road {
+                continue;
+            }
+            let center = tile_center(index);
+            let holds = tile.owners.iter().filter(|&&id| id != 0).any(|&id| {
+                let owner = id as usize - 1;
+                let closest = closest_point_on_polyline(center, bridge_ways[owner].0);
+                let outward = (center - closest).normalize_or(Vec2::X);
+                let probe = center + outward * NAVTILE_SIZE;
+                !bridge_ways.iter().enumerate().any(|(other, &(way, band))| {
+                    other != owner && distance_to_polyline(probe, way) <= band
+                })
+            });
+            if holds {
                 self.passable[index] = false;
             }
         }
@@ -203,16 +236,6 @@ impl Navmesh {
         // двух открытых ортогональных соседей диагональной пары блокируется
         // тот, что дальше от осевой моста-владельца, — настил не трогается,
         // щель закрыта снаружи
-        let bridge_ways: Vec<&[Vec2]> = map
-            .roads
-            .iter()
-            .filter(|road| road.bridge)
-            .map(|road| road.points.as_slice())
-            .collect();
-        let tile_center = |index: usize| -> Vec2 {
-            let (x, y) = (index as i32 / GRID_SIZE.y, index as i32 % GRID_SIZE.y);
-            (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE
-        };
         loop {
             let mut seals: Vec<usize> = Vec::new();
             for (&index, tile) in &curb_tiles {
@@ -232,7 +255,7 @@ impl Navmesh {
                     if self.passable[partner] || !self.passable[side] || !self.passable[vertical] {
                         continue;
                     }
-                    let way = bridge_ways[tile.owners[0] as usize - 1];
+                    let way = bridge_ways[tile.owners[0] as usize - 1].0;
                     let outer = if distance_to_polyline(tile_center(side), way)
                         >= distance_to_polyline(tile_center(vertical), way)
                     {
@@ -442,40 +465,21 @@ impl Navmesh {
     }
 }
 
-/// Бордюрный тайл на этапе заливки: чьи бордюры на нём лежат и чем он накрыт.
-/// Два слота хватает: физически на одном тайле встречаются бордюры максимум
-/// двух соседних лент (проезжая часть и её тротуар).
+/// Насколько близко точка одной ломаной должна лежать к другой ломаной,
+/// чтобы дороги считались примыкающими. Развязка в OSM — это общий узел,
+/// то есть буквально одна и та же точка в обеих ways; допуск покрывает лишь
+/// потерю точности проекции.
+const JOIN_EPSILON: f32 = 0.5;
+
+/// Бордюрный тайл на этапе заливки. Два слота владельцев хватает: физически
+/// на одном тайле встречаются бордюры максимум двух соседних лент (проезжая
+/// часть и её тротуар).
 #[derive(Default)]
 struct CurbTile {
     /// Bridge-ways, чей бордюр проходит через тайл.
     owners: [u32; 2],
-    /// Bridge-ways, чья лента (настил + бордюры) накрывает тайл.
-    covers: [u32; 2],
-    /// Накрыт панелью обычной (не мостовой) дороги.
+    /// Накрыт панелью примыкающей обычной дороги.
     road: bool,
-}
-
-impl CurbTile {
-    /// Тайл непроходим, если хоть одному бордюру-владельцу нечем открыться:
-    /// нет ни панели примыкающей дороги, ни накрытия *чужим* bridge-way.
-    /// Собственная лента владельца не считается — иначе каждый мост стёр бы
-    /// свой же бордюр. Так пара «мост + его тротуар» работает как один мост:
-    /// встречные бордюры в шве накрыты лентами друг друга и открыты, внешние
-    /// кромки не накрыты ничем и держат.
-    fn blocked(&self) -> bool {
-        if self.road {
-            return false;
-        }
-        self.owners
-            .iter()
-            .filter(|&&owner| owner != 0)
-            .any(|&owner| {
-                !self
-                    .covers
-                    .iter()
-                    .any(|&cover| cover != 0 && cover != owner)
-            })
-    }
 }
 
 /// Минимальное расстояние от точки до ломаной — по всем её сегментам.
@@ -486,8 +490,30 @@ fn distance_to_polyline(point: Vec2, points: &[Vec2]) -> f32 {
         .fold(f32::INFINITY, f32::min)
 }
 
+/// Ближайшая к `point` точка ломаной.
+fn closest_point_on_polyline(point: Vec2, points: &[Vec2]) -> Vec2 {
+    let mut best = points[0];
+    let mut best_distance = f32::INFINITY;
+    for segment in points.windows(2) {
+        let (from, to) = (segment[0], segment[1]);
+        let delta = to - from;
+        let length_squared = delta.length_squared();
+        let candidate = if length_squared == 0.0 {
+            from
+        } else {
+            from + delta * ((point - from).dot(delta) / length_squared).clamp(0.0, 1.0)
+        };
+        let distance = point.distance_squared(candidate);
+        if distance < best_distance {
+            best_distance = distance;
+            best = candidate;
+        }
+    }
+    best
+}
+
 /// Дописывает id в первый свободный слот; дубликаты и переполнение — no-op
-/// (третий пересекающийся way не меняет исход `blocked`).
+/// (третий пересекающийся way не меняет исхода блокировки).
 fn push_id(slots: &mut [u32; 2], id: u32) {
     if slots.contains(&id) {
         return;
