@@ -16,10 +16,20 @@ in `main.rs`.
 ## Coordinates & units
 
 - World units are **meters**. Origin — **south-west corner** of the map, y grows north.
-  All world coordinates are positive. `MAP_SIZE = 3000 × 2250` m.
-- **Navtile** — navigation grid cell, `NAVTILE_SIZE = 2` m. `GRID_SIZE = 1500 × 1125`
-  tiles, hand-maintained as `MAP_SIZE / NAVTILE_SIZE` (they can silently desync — keep
-  them in step). `grid.rs`: `world_to_tile` / `tile_center` / `tile_in_bounds`.
+  All world coordinates are positive. `MAP_SIZE = 5600 × 3700` m.
+- **Navtile** — navigation grid cell, **2 m by default, runtime-switchable to 1 m** via
+  the `navtile:` cycler in the debug panel (`NavtileBase` in `settings.rs`, persisted in
+  prefs; changing it reloads the world like a city switch, except the camera stays where
+  it was — same city, same spot under inspection). The live value is a
+  process-global atomic read by `settings::navtile_size()` — background threads (navmesh
+  fill, entrance generation) have no ECS access; it is written only in
+  `OnEnter(Loading)` before the load thread starts. Grid size is derived as
+  `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m); a filled `Navmesh` carries its
+  own `grid_size`/`tile_size` snapshot, so stale snapshots (a cancelled northstar build)
+  never index against the switched atomic. The northstar chunk scales to stay 50 world
+  meters (25 tiles at 2 m, 50 at 1 m) — with the tile-25 chunk a 1 m build explodes from
+  ~14 s to ~140 s. Cost of 1 m: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU,
+  +1.6 GB RSS. `grid.rs`: `world_to_tile` / `tile_center`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
@@ -299,8 +309,8 @@ in `main.rs`.
   - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
     door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
     a door placed there sits *inside* the neighbour: invisible from the street and
-    unreachable. Every candidate point is probed `ENTRANCE_CLEARANCE` (= `NAVTILE_SIZE`,
-    2 m) along the edge's outward normal, and a probe that lands inside another
+    unreachable. Every candidate point is probed `entrance_clearance()` (= one navtile,
+    2 m by default) along the edge's outward normal, and a probe that lands inside another
     `AreaKind::Building` kills that slot; the facade simply yields fewer doors and the
     next one by score picks them up. The probe distance is also the smallest gap worth
     a door — less than a navtile of free space in front and nobody can stand there.
@@ -735,7 +745,7 @@ in `main.rs`.
   which was already impassable.
 - **A rasterized polyline is a 4-connected chain, by construction.** `set_polyline` marks
   tiles whose *center* is within half the width — and that alone is not a barrier: below
-  `NAVTILE_SIZE · √2` (2.83 m) a slanted band degenerates into tiles touching only at
+  `tile_size · √2` (2.83 m at the default 2 m tile) a slanted band degenerates into tiles touching only at
   their **corners** (the navmesh overlay draws it as a chequerboard along the line). Our
   own A* cannot step through that — it does not cut corners — but every other consumer
   can: `bevy_northstar`'s `OrdinalGrid` (HPA*, Theta*) is built with no corner-cutting

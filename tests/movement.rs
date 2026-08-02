@@ -18,13 +18,13 @@ use qwe::movement::{
     PreviousSimPosition, SimPosition,
 };
 use qwe::navigation::{ArcNavmesh, NorthstarGrid, PathfindingAlgorithm};
-use qwe::settings::NAVTILE_SIZE;
+use qwe::settings::DEFAULT_NAVTILE_SIZE;
 use qwe::spatial::SpatialPlugin;
 
-/// Шаг симуляции в тестах; при `NAVTILE_SIZE` = 2 м скорость 20 м/с даёт
+/// Шаг симуляции в тестах; при навтайле 2 м (дефолт) скорость 20 м/с даёт
 /// ровно один тайл за шаг — удобно считать пересечения.
 const FIXED_STEP: f32 = 0.1;
-const ONE_TILE_PER_STEP: f32 = NAVTILE_SIZE / FIXED_STEP;
+const ONE_TILE_PER_STEP: f32 = DEFAULT_NAVTILE_SIZE / FIXED_STEP;
 
 /// Приложение с реальным `MovementPlugin`: тесты проверяют в том числе
 /// расстановку систем по расписаниям (шаг — в `FixedUpdate`, интерполяция —
@@ -194,8 +194,8 @@ fn time_scale_adds_steps_instead_of_stretching_them() {
     for (index, position) in fast.iter().enumerate() {
         let previous = if index == 0 { start } else { fast[index - 1] };
         assert!(
-            (position.distance(previous) - NAVTILE_SIZE).abs() < 1e-3,
-            "шаг {index} прошёл {} м вместо {NAVTILE_SIZE}",
+            (position.distance(previous) - DEFAULT_NAVTILE_SIZE).abs() < 1e-3,
+            "шаг {index} прошёл {} м вместо {DEFAULT_NAVTILE_SIZE}",
             position.distance(previous)
         );
     }
@@ -230,13 +230,13 @@ fn transform_interpolates_between_fixed_steps() {
     assert_eq!(transform.translation.truncate(), start);
     assert_eq!(
         sim_position(&app, entity),
-        start + Vec2::new(NAVTILE_SIZE, 0.0)
+        start + Vec2::new(DEFAULT_NAVTILE_SIZE, 0.0)
     );
 
     // кадр без шага: остаток 0.5 — визуально сущность на середине шага
     app.update();
     let transform = app.world().get::<Transform>(entity).expect("transform");
-    let expected = start + Vec2::new(NAVTILE_SIZE / 2.0, 0.0);
+    let expected = start + Vec2::new(DEFAULT_NAVTILE_SIZE / 2.0, 0.0);
     assert!(
         transform.translation.truncate().distance(expected) < 1e-3,
         "ожидалась середина шага {expected}, а не {}",
@@ -344,7 +344,7 @@ fn coasts_along_last_direction_while_repath_is_pending() {
 
     let position = sim_position(&app, entity);
     assert!(
-        position.x > start.x + NAVTILE_SIZE,
+        position.x > start.x + DEFAULT_NAVTILE_SIZE,
         "должна была докатить на восток: {position}"
     );
     assert!(
@@ -385,7 +385,7 @@ fn coasting_stops_at_an_impassable_tile() {
 
     let position = sim_position(&app, entity);
     assert!(
-        position.x < tile_center(IVec2::new(12, 10)).x - NAVTILE_SIZE / 2.0,
+        position.x < tile_center(IVec2::new(12, 10)).x - DEFAULT_NAVTILE_SIZE / 2.0,
         "в стену докат не заходит: {position}"
     );
     assert!(

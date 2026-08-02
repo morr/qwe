@@ -12,7 +12,7 @@ pub use self::northstar::{
 };
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::PlayPhase;
-use crate::settings::NAVTILE_SIZE;
+use crate::settings::NavtileBase;
 
 /// Ответ асинхронного поиска пути (снимается в
 /// `movement::listen_for_pathfinding_tasks`).
@@ -45,17 +45,16 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
     .find(|candidate| navmesh.is_passable(candidate.x, candidate.y))
 }
 
-/// Шаг сэмплирования луча видимости — четверть тайла. Полностью «супернакрытие»
-/// не считаем: пропустить можно только срез угла короче полуметра, а стоит это
-/// вчетверо дешевле.
-const LINE_OF_SIGHT_STEP: f32 = NAVTILE_SIZE / 4.0;
-
 /// Есть ли прямая проходимая линия между двумя мировыми точками. Нужна там,
 /// где сущность идёт напрямую, минуя тайловый путь (бросок демона), — иначе
 /// «напрямик» означало бы сквозь здание.
+///
+/// Шаг сэмплирования — четверть тайла. Полностью «супернакрытие» не считаем:
+/// пропустить можно только срез угла короче четверти тайла, а стоит это
+/// вчетверо дешевле.
 pub fn line_of_sight(navmesh: &Navmesh, from: Vec2, to: Vec2) -> bool {
     let delta = to - from;
-    let steps = (delta.length() / LINE_OF_SIGHT_STEP).ceil() as i32;
+    let steps = (delta.length() / (navmesh.tile_size / 4.0)).ceil() as i32;
     (0..=steps).all(|step| {
         let point = from + delta * (step as f32 / steps.max(1) as f32);
         let tile = world_to_tile(point);
@@ -79,6 +78,8 @@ impl Plugin for NavigationPlugin {
         app.init_resource::<ArcNavmesh>()
             .register_type::<PathfindingAlgorithm>()
             .init_resource::<PathfindingAlgorithm>()
+            .register_type::<NavtileBase>()
+            .init_resource::<NavtileBase>()
             .init_resource::<NorthstarGrid>()
             // navmesh заполняется и прореживается фоновым потоком загрузки
             // (`map/osm/download.rs`) — здесь остаётся только иерархия,
@@ -91,12 +92,8 @@ impl Plugin for NavigationPlugin {
     }
 }
 
-/// Радиус, в котором вокруг кандидата на портал всё должно быть проходимо
-/// (диаметр портала + спавн демонов по кромке), тайлы.
-const PORTAL_CLEARANCE_TILES: i32 =
-    (crate::settings::PORTAL_DIAMETER / 2.0 / crate::settings::NAVTILE_SIZE) as i32 + 1;
-/// Предел спирального поиска места для портала, тайлы.
-const PORTAL_SEARCH_TILES: i32 = 200;
+/// Предел спирального поиска места для портала, метры мира.
+const PORTAL_SEARCH_METERS: f32 = 400.0;
 
 /// Ближайший к `position` центр тайла, вокруг которого хватает свободного
 /// места для портала. Хинт `PORTAL_POS` мог попасть в здание OSM-карты;
@@ -106,14 +103,17 @@ const PORTAL_SEARCH_TILES: i32 = 200;
 pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
     let start = world_to_tile(position);
 
+    // радиус, в котором вокруг кандидата всё должно быть проходимо
+    // (диаметр портала + спавн демонов по кромке), тайлы
+    let clearance = (crate::settings::PORTAL_DIAMETER / 2.0 / navmesh.tile_size) as i32 + 1;
     let is_clear = |tile: IVec2| {
-        (-PORTAL_CLEARANCE_TILES..=PORTAL_CLEARANCE_TILES).all(|dx| {
-            (-PORTAL_CLEARANCE_TILES..=PORTAL_CLEARANCE_TILES)
-                .all(|dy| navmesh.is_passable(tile.x + dx, tile.y + dy))
+        (-clearance..=clearance).all(|dx| {
+            (-clearance..=clearance).all(|dy| navmesh.is_passable(tile.x + dx, tile.y + dy))
         })
     };
 
-    for radius in 0..=PORTAL_SEARCH_TILES {
+    let search_tiles = (PORTAL_SEARCH_METERS / navmesh.tile_size) as i32;
+    for radius in 0..=search_tiles {
         for dx in -radius..=radius {
             for dy in -radius..=radius {
                 if dx.abs() != radius && dy.abs() != radius {

@@ -13,7 +13,6 @@ use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path, line_of_sight};
 fn astar_pathfinding(navmesh: &Navmesh, start: IVec2, end: IVec2) -> Option<Vec<IVec2>> {
     find_path(navmesh, start, end, PathfindingAlgorithm::Astar)
 }
-use qwe::settings::GRID_SIZE;
 
 /// Navmesh с одним прямоугольным препятствием (в тайлах, включительно).
 fn navmesh_with_block(min: IVec2, max: IVec2) -> Navmesh {
@@ -35,8 +34,8 @@ fn out_of_bounds_is_impassable() {
     let navmesh = Navmesh::default();
     assert!(!navmesh.is_passable(-1, 0));
     assert!(!navmesh.is_passable(0, -1));
-    assert!(!navmesh.is_passable(GRID_SIZE.x, 0));
-    assert!(!navmesh.is_passable(0, GRID_SIZE.y));
+    assert!(!navmesh.is_passable(navmesh.grid_size.x, 0));
+    assert!(!navmesh.is_passable(0, navmesh.grid_size.y));
 }
 
 #[test]
@@ -61,7 +60,7 @@ fn line_of_sight_is_blocked_by_a_building() {
 /// цепочкой тайлов, соприкасающихся углами.
 ///
 /// Растеризация метит тайлы по «центр ближе полуширины», и лента у́же
-/// `NAVTILE_SIZE · √2` (2.83 м) на косой линии вырождается в шахматку. Своим
+/// `tile_size · √2` (2.83 м при тайле 2 м) на косой линии вырождается в шахматку. Своим
 /// A* такую преграду не перейти — он не срезает углы, — но перейдут все
 /// остальные потребители сетки: `OrdinalGrid` из `bevy_northstar` (HPA*,
 /// Theta*) собирается без фильтра срезания углов и делает диагональный шаг

@@ -16,7 +16,7 @@ use crate::loading::AppState;
 use crate::navigation::NorthstarGrid;
 use crate::settings::{
     BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
-    PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
+    NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
 };
 use crate::telemetry::Telemetry;
 
@@ -98,25 +98,41 @@ impl Plugin for CityPlugin {
             .register_type::<City>()
             .add_systems(
                 Update,
-                reload_world_on_city_change
+                reload_world
                     .run_if(in_state(AppState::Playing))
-                    // ресурс «изменён» и в кадре, где его вставили настройки
-                    .run_if(resource_changed::<City>.and_then(not(resource_added::<City>))),
+                    // ресурс «изменён» и в кадре, где его вставили настройки —
+                    // guard по-ресурсный, внутри каждой ветки
+                    .run_if(
+                        resource_changed::<City>
+                            .and_then(not(resource_added::<City>))
+                            .or_else(
+                                resource_changed::<NavtileBase>
+                                    .and_then(not(resource_added::<NavtileBase>)),
+                            ),
+                    ),
             );
     }
 }
 
-/// Возврат в `Loading` под новый город. Гейт `in_state(Playing)` тут не
-/// только про UI: перезапускать загрузку поверх уже идущей — значит пустить
-/// два потока в один и тот же navmesh.
-fn reload_world_on_city_change(
+/// Возврат в `Loading` под новый город или размер навтайла. Гейт
+/// `in_state(Playing)` тут не только про UI: перезапускать загрузку поверх
+/// уже идущей — значит пустить два потока в один и тот же navmesh. Смена
+/// navtile по BRP во время `Loading` по той же причине не подхватывается на
+/// лету: мир доедет консистентным на старом размере, атомик и ресурс
+/// сойдутся на следующей перезагрузке.
+fn reload_world(
     city: Res<City>,
+    navtile: Res<NavtileBase>,
     mut next: ResMut<NextState<AppState>>,
     mut spawner: ResMut<DemonSpawner>,
     mut telemetry: ResMut<Telemetry>,
     mut northstar: ResMut<NorthstarGrid>,
 ) {
-    info!("city: reloading world as {:?}", *city);
+    info!(
+        "world reload: city {:?}, navtile {}",
+        *city,
+        navtile.label()
+    );
     *spawner = DemonSpawner::default();
     *telemetry = Telemetry::default();
     // иначе прогрев новой карты пойдёт по иерархии старой — пути сквозь дома

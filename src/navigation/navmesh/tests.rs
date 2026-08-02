@@ -20,7 +20,7 @@ fn scanline_row(outer: &[Vec2], holes: &[Vec<Vec2>], y: i32, width: i32) -> Vec<
 fn point_test_row(outer: &[Vec2], holes: &[Vec<Vec2>], y: i32, width: i32) -> Vec<i32> {
     (0..width)
         .filter(|&x| {
-            let center = (Vec2::new(x as f32, y as f32) + 0.5) * NAVTILE_SIZE;
+            let center = (Vec2::new(x as f32, y as f32) + 0.5) * navtile_size();
             point_in_polygon(center, outer)
                 && !holes.iter().any(|hole| point_in_polygon(center, hole))
         })
@@ -437,14 +437,14 @@ fn a_passage_is_no_wider_than_the_cap() {
     navmesh.fill_from_mapdata(&map);
 
     let row = world_to_tile(Vec2::new(131.0, 115.0)).y;
-    let open = (0..GRID_SIZE.x)
+    let open = (0..navmesh.grid_size.x)
         .filter(|&x| {
-            let center = (x as f32 + 0.5) * NAVTILE_SIZE;
+            let center = (x as f32 + 0.5) * navtile_size();
             (100.0..160.0).contains(&center) && navmesh.is_passable(x, row)
         })
         .count();
     assert!(
-        open as f32 <= PASSAGE_MAX_WIDTH / NAVTILE_SIZE + 1.0,
+        open as f32 <= PASSAGE_MAX_WIDTH / navtile_size() + 1.0,
         "проём в {open} тайлов шире потолка"
     );
 }

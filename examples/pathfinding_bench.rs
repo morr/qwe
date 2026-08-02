@@ -29,7 +29,7 @@ use qwe::navigation::{
     Navmesh, PathfindingAlgorithm, build_from_navmesh, find_passable_tile_near, find_path,
     find_path_northstar, snap_portal_position,
 };
-use qwe::settings::{GRID_SIZE, HUMAN_COUNT, HUMAN_WANDER_RANGE, MAP_SIZE, NAVTILE_SIZE};
+use qwe::settings::{HUMAN_COUNT, HUMAN_WANDER_RANGE, MAP_SIZE};
 
 /// Бенч гоняется по карте города по умолчанию — той же, что видит игра при
 /// первом запуске.
@@ -183,8 +183,8 @@ fn build_navmesh(map: &MapData) -> Navmesh {
         started.elapsed()
     );
 
-    let passable = (0..GRID_SIZE.x)
-        .flat_map(|x| (0..GRID_SIZE.y).map(move |y| (x, y)))
+    let passable = (0..navmesh.grid_size.x)
+        .flat_map(|x| (0..navmesh.grid_size.y).map(move |y| (x, y)))
         .filter(|&(x, y)| navmesh.is_passable(x, y))
         .count();
     println!("navmesh: {passable} passable tiles, portal at {portal:?}");
@@ -203,8 +203,8 @@ fn generate_tasks(map: &MapData, navmesh: &Navmesh, count: usize) -> Vec<Task> {
     while tasks.len() < count {
         let start = loop {
             let candidate = IVec2::new(
-                rng.random_range(0..GRID_SIZE.x),
-                rng.random_range(0..GRID_SIZE.y),
+                rng.random_range(0..navmesh.grid_size.x),
+                rng.random_range(0..navmesh.grid_size.y),
             );
             if navmesh.is_passable(candidate.x, candidate.y) {
                 break candidate;
@@ -294,7 +294,7 @@ fn path_length(path: &[IVec2]) -> f32 {
     path.windows(2)
         .map(|pair| {
             let delta = (pair[1] - pair[0]).as_vec2();
-            delta.length() * NAVTILE_SIZE
+            delta.length() * qwe::settings::navtile_size()
         })
         .sum()
 }

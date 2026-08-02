@@ -10,8 +10,8 @@ use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
 use crate::settings::{
-    GRID_SIZE, HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_RANGE,
-    MAP_SIZE, unit_z,
+    HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_RANGE, MAP_SIZE,
+    unit_z,
 };
 
 /// Отступ целей блуждания от края карты, м.
@@ -38,8 +38,8 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
     for _ in 0..HUMAN_COUNT {
         let tile = loop {
             let candidate = IVec2::new(
-                rng.random_range(0..GRID_SIZE.x),
-                rng.random_range(0..GRID_SIZE.y),
+                rng.random_range(0..navmesh.grid_size.x),
+                rng.random_range(0..navmesh.grid_size.y),
             );
             if navmesh.is_passable(candidate.x, candidate.y) {
                 break candidate;

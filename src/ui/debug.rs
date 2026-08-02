@@ -38,7 +38,7 @@ use crate::map::osm::MapData;
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
-use crate::settings::{GRID_SIZE, MAP_SIZE, NAVTILE_SIZE, Z_CONIFER_NOISE_OVERLAY};
+use crate::settings::{MAP_SIZE, NavtileBase, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
     UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumnSlot, UiOpacity, spawn_panel_button, ui_color,
@@ -97,6 +97,10 @@ struct PathfindingMethodLabel;
 #[derive(Component)]
 struct CameraPositionLabel;
 
+/// Подпись на кнопке-переключателе размера навтайла.
+#[derive(Component)]
+struct NavtileSizeLabel;
+
 /// Кнопка-листалка в этом же ряду. Зелёная, пока выбрано значение по
 /// умолчанию, — так видно, что настройки не уведены от базовых, тем же цветом,
 /// каким тумблеры показывают «включено».
@@ -104,6 +108,7 @@ struct CameraPositionLabel;
 enum CyclerButton {
     Pathfind,
     Position,
+    Navtile,
 }
 
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
@@ -181,6 +186,7 @@ impl Plugin for UiDebugTogglesPlugin {
                         .after(crate::map::trees::rebuild_trees),
                     sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                     sync_camera_position_label.run_if(resource_changed::<CameraPositionMode>),
+                    sync_navtile_label.run_if(resource_changed::<NavtileBase>),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
                     toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
                 ),
@@ -192,6 +198,7 @@ fn render_debug_toggles(
     mut commands: Commands,
     algorithm: Res<PathfindingAlgorithm>,
     position_mode: Res<CameraPositionMode>,
+    navtile: Res<NavtileBase>,
 ) {
     let row = commands
         .spawn((
@@ -367,6 +374,59 @@ fn render_debug_toggles(
         )
         .id();
     commands.entity(row).add_child(position_button);
+
+    // размер навтайла — клик листает 2m ⇄ 1m и перезагружает мир
+    let navtile_button = commands
+        .spawn((
+            Button,
+            Pickable::default(),
+            Hovered::default(),
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6.),
+                padding: UiRect {
+                    top: px(4.),
+                    right: px(8.),
+                    bottom: px(4.),
+                    left: px(8.),
+                },
+                ..default()
+            },
+            CyclerButton::Navtile,
+            BackgroundColor(cycler_background(
+                *navtile == NavtileBase::default(),
+                false,
+                false,
+            )),
+            children![
+                (
+                    Text::new("navtile:"),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                ),
+                (
+                    NavtileSizeLabel,
+                    Text::new(navtile.label()),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ),
+            ],
+        ))
+        .observe(
+            |_activate: On<Activate>, mut navtile: ResMut<NavtileBase>| {
+                *navtile = navtile.next();
+            },
+        )
+        .id();
+    commands.entity(row).add_child(navtile_button);
 }
 
 fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>) {
@@ -404,12 +464,14 @@ fn cycler_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Col
 fn update_cycler_buttons(
     algorithm: Res<PathfindingAlgorithm>,
     position_mode: Res<CameraPositionMode>,
+    navtile: Res<NavtileBase>,
     mut buttons: Query<(&CyclerButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
 ) {
     for (cycler, hovered, is_pressed, mut background) in &mut buttons {
         let is_default = match cycler {
             CyclerButton::Pathfind => *algorithm == PathfindingAlgorithm::default(),
             CyclerButton::Position => *position_mode == CameraPositionMode::default(),
+            CyclerButton::Navtile => *navtile == NavtileBase::default(),
         };
         background.set_if_neq(BackgroundColor(cycler_background(
             is_default,
@@ -436,6 +498,16 @@ fn sync_camera_position_label(
 ) {
     for mut text in &mut labels {
         text.0 = mode.label().to_string();
+    }
+}
+
+/// Актуализация подписи при смене размера навтайла (кнопкой или по BRP).
+fn sync_navtile_label(
+    navtile: Res<NavtileBase>,
+    mut labels: Query<&mut Text, With<NavtileSizeLabel>>,
+) {
+    for mut text in &mut labels {
+        text.0 = navtile.label().to_string();
     }
 }
 
@@ -481,16 +553,17 @@ fn update_toggle_buttons(
 /// Сетка navtiles гизмо-линиями по краям тайлов.
 fn render_grid(mut gizmos: Gizmos) {
     let color = Color::srgba(0.2, 0.2, 0.2, 0.3);
-    for x in 0..=GRID_SIZE.x {
-        let world_x = x as f32 * NAVTILE_SIZE;
+    let (grid_size, tile_size) = (grid_size(), navtile_size());
+    for x in 0..=grid_size.x {
+        let world_x = x as f32 * tile_size;
         gizmos.line_2d(
             Vec2::new(world_x, 0.0),
             Vec2::new(world_x, MAP_SIZE.y),
             color,
         );
     }
-    for y in 0..=GRID_SIZE.y {
-        let world_y = y as f32 * NAVTILE_SIZE;
+    for y in 0..=grid_size.y {
+        let world_y = y as f32 * tile_size;
         gizmos.line_2d(
             Vec2::new(0.0, world_y),
             Vec2::new(MAP_SIZE.x, world_y),
@@ -544,15 +617,15 @@ fn sync_navmesh_overlay(
     let color = Color::srgba(0.9, 0.15, 0.15, 0.35).to_linear();
     let mut builder = crate::map::MeshBuilder::default();
     let navmesh = arc_navmesh.read();
-    for x in 0..GRID_SIZE.x {
-        for y in 0..GRID_SIZE.y {
+    for x in 0..navmesh.grid_size.x {
+        for y in 0..navmesh.grid_size.y {
             if navmesh.is_passable(x, y) {
                 continue;
             }
             let center = tile_center(IVec2::new(x, y));
             builder.push_rect(
-                center - NAVTILE_SIZE / 2.0,
-                center + NAVTILE_SIZE / 2.0,
+                center - navmesh.tile_size / 2.0,
+                center + navmesh.tile_size / 2.0,
                 color,
             );
         }

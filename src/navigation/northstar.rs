@@ -11,17 +11,21 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_northstar::prelude::{GridSettingsBuilder, Nav, OrdinalGrid, PathfindArgs};
 
 use crate::navigation::{ArcNavmesh, Navmesh};
-use crate::settings::GRID_SIZE;
 
-/// Размер чанка иерархии; делит GRID_SIZE нацело (1500 и 1125 кратны 25),
+/// Размер чанка иерархии в метрах мира; в тайлах — `50 / tile_size`, то есть
+/// 25 при тайле 2 м и 50 при 1 м. Масштабировать чанк вместе с тайлом
+/// обязательно: при тайле 1 м с чанком 25 постройка взрывается со ~14 с до
+/// ~140 с (число чанков ×4 при том же входе на чанк). Обе конфигурации делят
+/// сетку нацело (2800×1850/25 и 5600×3700/50 — одни и те же 112×74 чанка),
 /// иначе northstar округляет с warning'ом.
-const CHUNK_SIZE: u32 = 25;
+const CHUNK_WORLD_METERS: f32 = 50.0;
 
 /// Иерархическая сетка northstar; `None`, пока она не построена.
 ///
-/// Постройка на карте 5600 × 3700 занимает ~11 с, и в главном потоке это
-/// ровно столько замершего экрана загрузки — поэтому она уходит в
-/// `AsyncComputeTaskPool`, а пути до её готовности ищет A*.
+/// Постройка на карте 5600 × 3700 занимает ~11 с при тайле 2 м (~14 с при
+/// 1 м), и в главном потоке это ровно столько замершего экрана загрузки —
+/// поэтому она уходит в `AsyncComputeTaskPool`, а пути до её готовности
+/// ищет A*.
 #[derive(Resource, Default)]
 pub struct NorthstarGrid {
     grid: Option<Arc<OrdinalGrid>>,
@@ -98,15 +102,19 @@ pub fn build_from_navmesh(navmesh: &Navmesh) -> OrdinalGrid {
 fn build_checked(navmesh: &Navmesh, cancelled: Option<&AtomicBool>) -> Option<OrdinalGrid> {
     let is_cancelled = || cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed));
 
-    let settings = GridSettingsBuilder::new_2d(GRID_SIZE.x as u32, GRID_SIZE.y as u32)
-        .chunk_size(CHUNK_SIZE)
+    // размеры — только из снапшота: отменённая постройка, пережившая смену
+    // размера навтайла, ходит по своей сетке, а не по уже переключённому
+    // атомику
+    let grid_size = navmesh.grid_size;
+    let settings = GridSettingsBuilder::new_2d(grid_size.x as u32, grid_size.y as u32)
+        .chunk_size((CHUNK_WORLD_METERS / navmesh.tile_size) as u32)
         .build();
     let mut grid = OrdinalGrid::new(&settings);
-    for x in 0..GRID_SIZE.x {
+    for x in 0..grid_size.x {
         if is_cancelled() {
             return None;
         }
-        for y in 0..GRID_SIZE.y {
+        for y in 0..grid_size.y {
             let nav = if navmesh.is_passable(x, y) {
                 Nav::Passable(1)
             } else {

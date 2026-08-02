@@ -75,7 +75,7 @@ impl Plugin for LoadingPlugin {
                 OnEnter(AppState::Loading),
                 (
                     spawn_loader_ui,
-                    start_job,
+                    (sync_navtile_size, start_job).chain(),
                     reset_warmup,
                     warn_leftover_world_entities,
                 ),
@@ -98,6 +98,14 @@ fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>, city: Res<City>) 
     let job = MapLoadJob::default();
     start_load_thread(job.clone(), navmesh.0.clone(), *city);
     commands.insert_resource(job);
+}
+
+/// Единственная точка записи атомика размера навтайла — перед стартом потока
+/// загрузки, когда ни заливка, ни генерация входов ещё не живы. Покрывает и
+/// первый запуск (настройки восстановлены при сборке `App`, до расписаний),
+/// и каждую перезагрузку мира.
+fn sync_navtile_size(base: Res<crate::settings::NavtileBase>) {
+    crate::settings::set_navtile_size(base.size());
 }
 
 fn spawn_loader_ui(mut commands: Commands) {

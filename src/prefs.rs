@@ -1,6 +1,6 @@
 //! Запоминание выбранных в UI опций между запусками: выбранный город,
-//! дебаг-тумблеры (grid / navmesh / movepath), алгоритм поиска пути, режим
-//! стартовой позиции камеры и панель стиля деревьев.
+//! дебаг-тумблеры (grid / navmesh / movepath), алгоритм поиска пути, размер
+//! навтайла, режим стартовой позиции камеры и панель стиля деревьев.
 //!
 //! Поверх первопартийного `bevy::settings` (см. upstream-пример
 //! `window/persisting_window_settings.rs`): сами ресурсы помечены
@@ -26,6 +26,7 @@ use crate::city::City;
 use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PathfindingAlgorithm;
+use crate::settings::NavtileBase;
 use crate::ui::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 
 /// Обратное доменное имя из URL репозитория — как просит документация
@@ -47,6 +48,7 @@ impl Plugin for PrefsPlugin {
                     .or_else(resource_changed::<DebugConiferNoise>)
                     .or_else(resource_changed::<DrawMovePaths>)
                     .or_else(resource_changed::<PathfindingAlgorithm>)
+                    .or_else(resource_changed::<NavtileBase>)
                     .or_else(resource_changed::<TreeStyle>)
                     .or_else(resource_changed::<TreeRowStyle>)
                     .or_else(resource_changed::<ConiferNoiseStyle>)
