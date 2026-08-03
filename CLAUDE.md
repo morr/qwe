@@ -175,7 +175,7 @@ Current third-party crates and why they exist:
 - `pathfinding` — A*/Dijkstra/Fringe/BFS over the navmesh grid
 - `bevy_northstar` — hierarchical HPA*/Theta* (its `Grid` is used directly, without the
   crate's plugin)
-- `polyanya` — polygonal navmesh prototype (`navigation/polymesh.rs`): CDT + agent-radius
+- `polyanya` — polygonal navmesh (`navigation/polymesh.rs`): CDT + agent-radius
   inflation of vector obstacles; used directly, no bevy integration. `polyanya_glam` is a
   renamed `glam` 0.30 dep only to construct its `Vec2` (bevy 0.19 ships glam 0.32)
 - `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)

@@ -12,7 +12,8 @@ pub use self::northstar::{
     start_northstar_build,
 };
 pub use self::polymesh::{
-    PolyNavmesh, PolymeshBuild, PolymeshDebug, poll_polymesh_build, sync_polymesh_build,
+    PolyNavmesh, PolymeshBuild, PolymeshDebug, find_path_polymesh, poll_polymesh_build,
+    sync_polymesh_build,
 };
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
@@ -23,7 +24,10 @@ use crate::settings::NavtileBase;
 /// `movement::listen_for_pathfinding_tasks`).
 #[derive(Debug)]
 pub struct PathfindingResult {
-    pub path: Option<Vec<IVec2>>,
+    /// Waypoint'ы в мировых метрах, включая стартовую точку. Сеточные
+    /// алгоритмы отдают тайлы, и диспетчер переводит их `tile_center`;
+    /// полигональный меш отдаёт мировые точки сразу.
+    pub path: Option<Vec<Vec2>>,
     pub start_tile: IVec2,
     pub end_tile: IVec2,
     /// Длительность самого поиска (без ожидания RwLock) — для диагностики.
@@ -67,13 +71,26 @@ pub fn line_of_sight(navmesh: &Navmesh, from: Vec2, to: Vec2) -> bool {
     })
 }
 
-/// Всё нужное для запуска поиска пути одним system-параметром:
-/// navmesh, иерархическая сетка и выбранный алгоритм.
+/// Всё нужное для запуска поиска пути одним system-параметром: сеточный
+/// navmesh, иерархическая сетка, выбранный алгоритм — и полигональный меш с
+/// его тумблером, который перекрывает всё перечисленное, когда готов.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Pathfinder<'w> {
     pub navmesh: Res<'w, ArcNavmesh>,
     pub northstar: Res<'w, NorthstarGrid>,
     pub algorithm: Res<'w, PathfindingAlgorithm>,
+    pub poly: Res<'w, PolyNavmesh>,
+    pub polymesh: Res<'w, PolymeshDebug>,
+}
+
+impl Pathfinder<'_> {
+    /// Полигональный меш, если панель включена и он уже построен. `None`
+    /// означает «ищем по сетке» — и пока панель выключена, и пока постройка
+    /// идёт (5–20 с): тот же приём, которым HPA* до готовности
+    /// `NorthstarGrid` обслуживается A*.
+    pub fn polymesh_build(&self) -> Option<std::sync::Arc<PolymeshBuild>> {
+        self.polymesh.enabled.then(|| self.poly.build()).flatten()
+    }
 }
 
 pub struct NavigationPlugin;

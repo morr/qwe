@@ -10,6 +10,7 @@ use crate::movement::components::{
 };
 use crate::navigation::{
     Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
+    find_path_polymesh,
 };
 use crate::settings::unit_z;
 
@@ -22,6 +23,19 @@ use crate::settings::unit_z;
 /// URGENT-заявки часами стояли в очереди, а пул (8 потоков × ~0.4 мс на
 /// поиск) при этом скучал.
 const MAX_PATHFINDING_IN_FLIGHT: usize = 1024;
+
+/// То же для поиска по полигональному мешу — на два порядка меньше.
+///
+/// Лимит выше стоит ровно столько, сколько стоит один поиск: при 0.4 мс
+/// накопить тысячу незавершённых тасков не выходит. Поиск polyanya стоит
+/// единицы миллисекунд **и** держит фронт, пропорциональный размеру меша:
+/// её бюджет — `polygons.len() * 10` итераций, то есть до полумиллиона узлов
+/// на запрос при 49k полигонов Тулы. Замерено: с лимитом 1024 память
+/// приложения сорок секунд стоит на 2.2 ГБ, а затем за десять секунд уходит
+/// на 7.4 ГБ и процесс убивают. Пул синхронный и восьмипоточный — больше
+/// восьми поисков всё равно не считается одновременно, так что низкий лимит
+/// не отнимает пропускной способности, он лишь не даёт копить фронты.
+const MAX_POLYMESH_PATHFINDING_IN_FLIGHT: usize = 32;
 /// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
 /// «замирали» при лёгком движении камеры.
 const VIEW_MARGIN: f32 = 1.2;
@@ -68,7 +82,16 @@ pub fn dispatch_pathfinding_requests(
     )>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
-    let budget = MAX_PATHFINDING_IN_FLIGHT.saturating_sub(tasks.iter().count());
+    // включённая панель Polymesh перекрывает выбор алгоритма — но только
+    // когда меш уже построен; пока он строится (5–20 с), здесь `None`, и
+    // запросы обслуживает сетка
+    let polymesh = pathfinder.polymesh_build();
+    let limit = if polymesh.is_some() {
+        MAX_POLYMESH_PATHFINDING_IN_FLIGHT
+    } else {
+        MAX_PATHFINDING_IN_FLIGHT
+    };
+    let budget = limit.saturating_sub(tasks.iter().count());
     if budget == 0 || requests.is_empty() {
         return;
     }
@@ -78,7 +101,7 @@ pub fn dispatch_pathfinding_requests(
     let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * VIEW_MARGIN;
     let wanderers_visible_at_this_zoom = wanderers_dispatched_at_zoom(camera.scale.x);
 
-    let mut queue: Vec<(u8, f32, Entity, IVec2, IVec2)> = requests
+    let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = requests
         .iter()
         .filter_map(|(entity, sim_position, request, is_human, is_fleeing)| {
             let offset = (sim_position.0 - camera_position).abs();
@@ -95,6 +118,10 @@ pub fn dispatch_pathfinding_requests(
                 priority,
                 offset.length_squared(),
                 entity,
+                // полигональный поиск стартует из реальной позиции пешки, а
+                // не из центра её тайла: снап старта к центру — ровно та
+                // ступенька, ради избавления от которой всё и делается
+                sim_position.0,
                 request.start_tile,
                 request.end_tile,
             )
@@ -112,39 +139,31 @@ pub fn dispatch_pathfinding_requests(
     }
 
     let algorithm = *pathfinder.algorithm;
-    for (_, _, entity, start_tile, end_tile) in queue {
+    for (_, _, entity, start_world, start_tile, end_tile) in queue {
         let navmesh = pathfinder.navmesh.0.clone();
         let northstar = pathfinder.northstar.get();
+        let polymesh = polymesh.clone();
         let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
-            let started_at;
-            let path = match algorithm {
-                // иерархические алгоритмы идут через сетку northstar
-                PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar
-                    if northstar.is_some() =>
-                {
-                    started_at = std::time::Instant::now();
-                    northstar.as_deref().and_then(|grid| {
-                        find_path_northstar(
-                            grid,
-                            start_tile,
-                            end_tile,
-                            algorithm == PathfindingAlgorithm::ThetaStar,
-                        )
-                    })
+            let (path, started_at) = match polymesh {
+                Some(polymesh) => {
+                    let started_at = std::time::Instant::now();
+                    // цель осталась тайловой (её выбрало поведение по
+                    // проходимости сетки) — на меше это её центр
+                    let path =
+                        find_path_polymesh(&polymesh.mesh, start_world, tile_center(end_tile));
+                    (path, started_at)
                 }
-                _ => {
-                    // сетка northstar ещё строится — до её готовности
-                    // иерархические алгоритмы обслуживает A*
-                    let algorithm = match algorithm {
-                        PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar => {
-                            PathfindingAlgorithm::Astar
-                        }
-                        other => other,
-                    };
-                    let navmesh = navmesh.read().unwrap();
-                    // после захвата лока: метрика — сам поиск, без RwLock
-                    started_at = std::time::Instant::now();
-                    find_path(&navmesh, start_tile, end_tile, algorithm)
+                None => {
+                    let (tiles, started_at) = grid_path(
+                        &navmesh,
+                        northstar.as_deref(),
+                        algorithm,
+                        start_tile,
+                        end_tile,
+                    );
+                    let path = tiles
+                        .map(|tiles| tiles.into_iter().map(tile_center).collect::<Vec<Vec2>>());
+                    (path, started_at)
                 }
             };
             PathfindingResult {
@@ -159,6 +178,46 @@ pub fn dispatch_pathfinding_requests(
             .remove::<PathfindingRequest>()
             .insert(PathfindingTask(task));
     }
+}
+
+/// Сеточный поиск: иерархия northstar, если она построена, иначе плоский
+/// алгоритм. Возвращает путь в тайлах и момент старта самого поиска — метрика
+/// не должна включать ожидание `RwLock`.
+fn grid_path(
+    navmesh: &std::sync::RwLock<crate::navigation::Navmesh>,
+    northstar: Option<&bevy_northstar::prelude::OrdinalGrid>,
+    algorithm: PathfindingAlgorithm,
+    start_tile: IVec2,
+    end_tile: IVec2,
+) -> (Option<Vec<IVec2>>, std::time::Instant) {
+    let hierarchical = matches!(
+        algorithm,
+        PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar
+    );
+    if let Some(grid) = northstar.filter(|_| hierarchical) {
+        let started_at = std::time::Instant::now();
+        let path = find_path_northstar(
+            grid,
+            start_tile,
+            end_tile,
+            algorithm == PathfindingAlgorithm::ThetaStar,
+        );
+        return (path, started_at);
+    }
+    // сетка northstar ещё строится — до её готовности иерархические
+    // алгоритмы обслуживает A*
+    let algorithm = if hierarchical {
+        PathfindingAlgorithm::Astar
+    } else {
+        algorithm
+    };
+    let navmesh = navmesh.read().unwrap();
+    // после захвата лока: метрика — сам поиск, без RwLock
+    let started_at = std::time::Instant::now();
+    (
+        find_path(&navmesh, start_tile, end_tile, algorithm),
+        started_at,
+    )
 }
 
 /// Снимок позиции на начало фиксированного шага — второй конец интерполяции.
@@ -247,7 +306,7 @@ pub fn move_moving_entities(
                 break;
             }
 
-            let target = tile_center(*movable.path.front().expect("path is non-empty"));
+            let target = *movable.path.front().expect("path is non-empty");
             let to_target = target - sim_position.0;
             let distance = to_target.length();
             let distance_to_move = movable.speed * remaining_time;
@@ -316,7 +375,9 @@ pub fn on_movable_added_init_sim_position(
 /// сущность шла по старому и докатывала за его концом: на 30x ответ опаздывает
 /// на 1–1.5 виртуальных секунды, это 4–6 тайлов от стартового тайла заявки.
 /// Каждый срез и так гейтится геометрией («следующий waypoint не дальше
-/// текущего»); лимит — страховка от спрямления угла сквозь стену.
+/// текущего»); лимит — страховка от спрямления угла сквозь стену. На
+/// полигональном пути гейт почти не срабатывает: его waypoint'ы — углы
+/// препятствий, и следующий угол дальше предыдущего, пока тот не пройден.
 const REPATH_TRIM_LIMIT: usize = 4;
 
 /// Снимает готовые асинхронные ответы поиска пути.
@@ -325,6 +386,8 @@ pub fn listen_for_pathfinding_tasks(
     mut diagnostics: bevy::diagnostic::Diagnostics,
     mut tasks: Query<(Entity, &mut Movable, &SimPosition, &mut PathfindingTask)>,
 ) {
+    let mut answered = 0u32;
+    let mut failed = 0u32;
     for (entity, mut movable, sim_position, mut task) in &mut tasks {
         let Some(result) = check_ready(&mut task.0) else {
             continue;
@@ -333,6 +396,8 @@ pub fn listen_for_pathfinding_tasks(
         diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
             result.duration.as_secs_f64() * 1000.0
         });
+        answered += 1;
+        failed += u32::from(result.path.is_none());
 
         let MovableState::Pathfinding(end_tile) = movable.state else {
             continue;
@@ -347,27 +412,34 @@ pub fn listen_for_pathfinding_tasks(
             continue;
         };
 
-        // путь всегда включает стартовый тайл; один элемент — мы уже на месте
+        // путь всегда включает стартовую точку; один элемент — мы уже на месте
         if path.len() == 1 {
             movable.to_idle(entity, &mut commands, true);
             continue;
         }
 
-        // перепрокладка шла на ходу, и сущность уже не на стартовом тайле:
+        // перепрокладка шла на ходу, и сущность уже не в стартовой точке:
         // срезаем начало пути, пока следующий waypoint не дальше текущего —
         // иначе первый шаг был бы назад
-        let mut path: std::collections::VecDeque<IVec2> = path.into_iter().skip(1).collect();
+        let mut path: std::collections::VecDeque<Vec2> = path.into_iter().skip(1).collect();
         let position = sim_position.0;
         let mut trimmed = 0;
         while trimmed < REPATH_TRIM_LIMIT
             && path.len() >= 2
-            && position.distance_squared(tile_center(path[1]))
-                <= position.distance_squared(tile_center(path[0]))
+            && position.distance_squared(path[1]) <= position.distance_squared(path[0])
         {
             path.pop_front();
             trimmed += 1;
         }
         movable.to_moving(end_tile, path, entity, &mut commands);
+    }
+
+    // доля отказов, а не их число: снятых за кадр ответов на 30x сотни, и
+    // «12 отказов» без знаменателя ничего не говорит
+    if answered > 0 {
+        diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || {
+            failed as f64 / answered as f64 * 100.0
+        });
     }
 }
 
@@ -418,8 +490,7 @@ pub fn draw_move_paths(
         // в сторону цели
         let last = movable.path.len().saturating_sub(1);
         let mut prev = sim_position.0;
-        for (index, &tile) in movable.path.iter().enumerate() {
-            let next = tile_center(tile);
+        for (index, &next) in movable.path.iter().enumerate() {
             if index < last {
                 gizmos.line_2d(prev, next, MOVEPATH_COLOR);
             } else {

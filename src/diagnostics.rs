@@ -21,6 +21,14 @@ pub const PATHFINDING_QUEUED: DiagnosticPath = DiagnosticPath::const_new("pathfi
 pub const PATHFINDING_DURATION_MS: DiagnosticPath =
     DiagnosticPath::const_new("pathfinding/duration_ms");
 
+/// Доля снятых ответов без пути, проценты. Сеточный поиск промахивается
+/// редко (цель заранее просеяна `find_passable_tile_near`), а полигональный —
+/// всякий раз, когда цель или сама пешка оказались внутри препятствия,
+/// раздутого радиусом агента. Отказ означает `PathfindingError`, то есть
+/// стоящую пешку, так что цена выбранной семантики должна быть видна числом,
+/// а не на глаз.
+pub const PATHFINDING_FAILED: DiagnosticPath = DiagnosticPath::const_new("pathfinding/failed");
+
 /// Длительность систем симуляции, мс на один тик `FixedUpdate`. На высоких
 /// скоростях тиков в секунду становится в разы больше (64 × time_scale), и
 /// главный поток упирается именно в эту сумму — без разреза по системам
@@ -55,6 +63,7 @@ impl Plugin for GameDiagnosticsPlugin {
                 .with_max_history_length(1),
         )
         .register_diagnostic(Diagnostic::new(PATHFINDING_DURATION_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(PATHFINDING_FAILED).with_suffix(" %"))
         .register_diagnostic(Diagnostic::new(SIM_SPATIAL_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_PANIC_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_FLEE_MS).with_suffix(" ms"))

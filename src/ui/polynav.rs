@@ -153,8 +153,8 @@ fn render_polynav_panel(mut commands: Commands, debug: Res<PolymeshDebug>) {
         panel,
         SliderRow {
             label: "Agent radius",
-            value: debug.agent_radius,
-            value_text: radius_text(debug.agent_radius),
+            value: debug.radius(),
+            value_text: radius_text(debug.radius()),
             range: (
                 POLYMESH_AGENT_RADIUS_MIN,
                 POLYMESH_AGENT_RADIUS_MAX,
@@ -270,10 +270,15 @@ fn highlight_rows(
 
 /// Полигональный и сеточный слои закрашивают одно и то же — непроходимое —
 /// поверх одной карты, и включённые вместе они читаются как один слой с
-/// удвоенной альфой: сравнить точность, ради чего прототип и сделан,
+/// удвоенной альфой: сравнить их точность, ради чего всё и делалось,
 /// невозможно. Поэтому включение одного гасит другой. Гасит **только**
 /// включение: обратная правка видит выключенный ресурс и ничего не пишет,
 /// так что цикла из двух систем, толкающих друг друга, не выходит.
+///
+/// Следствие единого тумблера: включить сеточный оверлей — значит вернуть
+/// навигацию на сетку. Это не побочный эффект отрисовки, а то же самое
+/// «выключить Polymesh»; меш при этом остаётся построенным, и возврат
+/// бесплатен.
 fn enforce_overlay_exclusivity(
     mut polymesh: ResMut<PolymeshDebug>,
     mut navmesh: ResMut<DebugNavmesh>,
@@ -302,13 +307,11 @@ fn sync_polynav_values(
         text.0 = enabled_text(debug.enabled);
     }
     for mut text in &mut labels {
-        text.0 = radius_text(debug.agent_radius);
+        text.0 = radius_text(debug.radius());
     }
     for (slider, value) in &sliders {
-        if (value.0 - debug.agent_radius).abs() > f32::EPSILON {
-            commands
-                .entity(slider)
-                .insert(SliderValue(debug.agent_radius));
+        if (value.0 - debug.radius()).abs() > f32::EPSILON {
+            commands.entity(slider).insert(SliderValue(debug.radius()));
         }
     }
 }

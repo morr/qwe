@@ -39,7 +39,14 @@ pub struct PreviousSimPosition(pub Vec2);
 #[require(SimPosition, PreviousSimPosition)]
 pub struct Movable {
     pub speed: f32,
-    pub path: VecDeque<IVec2>,
+    /// Waypoint'ы в мировых метрах, а не в тайлах: по полигональному мешу
+    /// путь идёт углами препятствий, и центр тайла в нём смысла не имеет.
+    /// Сеточный поиск отдаёт свои тайлы через `tile_center` — для движения
+    /// оба источника выглядят одинаково.
+    ///
+    /// Цель при этом осталась тайлом (`MovableState`, `PathfindingRequest`):
+    /// по ней отсеивается устаревший ответ и считается прибытие.
+    pub path: VecDeque<Vec2>,
     pub state: MovableState,
     /// Направление последнего шага — вектор доката: когда путь дожёван раньше,
     /// чем пришёл ответ перепрокладки, сущность продолжает по нему двигаться
@@ -95,7 +102,7 @@ impl Movable {
     pub fn to_moving(
         &mut self,
         end_tile: IVec2,
-        path: VecDeque<IVec2>,
+        path: VecDeque<Vec2>,
         entity: Entity,
         commands: &mut Commands,
     ) {

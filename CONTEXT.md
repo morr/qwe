@@ -881,11 +881,12 @@ in `main.rs`.
   from `PORTAL_DIAMETER`. The map-load thread snaps it between fill and prune (the flood
   starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
   the resource before switching to `Playing`.
-- **Poly navmesh prototype** (`navigation/polymesh.rs`, panel — `ui/polynav.rs`) — a
-  *polygonal* polyanya mesh triangulated from the same vector sources the grid fill
-  rasterizes, to judge by eye how much fidelity the 2 m grid loses (bridge curbs, narrow
-  waterways) before any movement code migrates. Nothing walks on it yet. The whole fill
-  order collapses into one boolean (`i_overlay` difference):
+- **Poly navmesh** (`navigation/polymesh.rs`, panel — `ui/polynav.rs`) — a *polygonal*
+  polyanya mesh triangulated from the same vector sources the grid fill rasterizes,
+  recovering the fidelity the 2 m grid loses (bridge curbs, narrow waterways). While the
+  Polymesh panel is on and the mesh is built, **it is the pathfinding backend** — see
+  **Polygonal routing** below. The whole fill order collapses into one boolean
+  (`i_overlay` difference):
   union(water ∪ non-culvert waterways ∪ bridge curb bands ∪ buildings ∪ walls) −
   union(bridge decks ∪ joining roads ∪ passages), clipped to the map rect **outset** by
   `MAP_EDGE_MARGIN` (an inset clip would leave a walkable sliver along the map edge for
@@ -919,6 +920,51 @@ in `main.rs`.
   without the flag five superseded builds ran all cores to completion. Checks sit before
   each long stage (boolean, clip, `as_navmesh`, `merge_polygons`); inside `i_overlay` and
   `spade` there is nowhere to look.
+  The build ends with **`mesh.bake()`**, strictly after `merge_polygons` (which starts by
+  un-baking). Baking is what makes the mesh queryable at scale: without it point location
+  is a linear scan over every polygon, twice per query, and an unreachable goal burns the
+  full `polygons.len() * 10` budget instead of failing at once on the island check.
+
+- **Polygonal routing** (`polymesh::find_path_polymesh`, dispatched in
+  `movement/systems.rs`) — with the Polymesh panel on, `dispatch_pathfinding_requests`
+  routes through the polygonal mesh and the `PathfindingAlgorithm` cycler is bypassed.
+  **While the mesh is still building** (5–20 s) `Pathfinder::polymesh_build()` is `None`
+  and the grid serves the request — the same fallback shape HPA* uses while
+  `NorthstarGrid` builds.
+  A path is a **world-space polyline** (`Movable::path: VecDeque<Vec2>`,
+  `PathfindingResult::path: Option<Vec<Vec2>>`), always including its start point: the
+  consumer drops the first waypoint and reads a single-element path as "already there".
+  polyanya's `Path::path` omits the start, so `find_path_polymesh` prepends it; the grid
+  backends still return tiles and the dispatcher maps them through `tile_center`, so both
+  look identical downstream.
+  The **goal stays a tile** (`MovableState`, `PathfindingRequest`,
+  `MovableReachedDestinationEvent`): it is the identity that discards a stale answer and
+  the arrival test. Only waypoints became metric. The polygonal query therefore starts at
+  the pawn's real `SimPosition` and ends at `tile_center(end_tile)`.
+  A **missed goal is `PathfindingError`, not a fallback**: with a non-zero agent radius a
+  target picked by tile passability can land inside an inflated obstacle, and polyanya
+  only snaps endpoints within `search_delta * search_steps` (0.2 m). The cost of that
+  choice is visible as `pathfinding/failed` (percent of answers with no path, shown in
+  the speed panel) — a pawn whose own position is off-mesh fails *every* repath and
+  stands still, so the number is worth watching.
+  Coasting and the demon lunge's `line_of_sight` stay **grid** tests: they are cheap
+  guards against walking into a wall, not path searches.
+  Two knobs exist only because the default fails at city scale, both measured on Tula
+  (40 199 polygons after merging, 20 000 pawns, 30×):
+  - **Endpoint tolerance** (`SEARCH_DELTA * SEARCH_STEPS` = 1 m, half a navtile). polyanya
+    defaults to 0.2 m, exactly the agent radius, and that is not enough: 80 % of wander
+    targets are building outline vertices, and the grid calls a tile passable when its
+    centre clears the polygon by a centimetre. **96 % of requests failed** with the
+    default against 3.5 % on the grid; at 1 m it is **0.6 %**.
+  - **`MAX_POLYMESH_PATHFINDING_IN_FLIGHT` = 32** against the grid's 1024, because a
+    polygonal search costs ~6 ms instead of ~0.9 ms and holds a frontier proportional to
+    the mesh.
+  **Known limit, unresolved**: a single search can allocate unbounded memory — polyanya's
+  budget is `polygons.len() * 10` iterations with no cap on the frontier. Memory sits flat
+  at ~3 GB for a minute or two and then climbs past 17 GB in ten seconds, and the OS kills
+  the process. The in-flight cap does not prevent it (it is one query, not their number),
+  and merging to convergence only trims 49 075 → 40 199 polygons. Routing on the polygonal
+  mesh is therefore **not safe to leave on** at this map size.
 
 ## Simulation
 
@@ -1037,7 +1083,12 @@ in `main.rs`.
   **`Enabled` row** (the Roads/Trees row-button idiom — label left, `On`/`Off` right)
   toggling `PolymeshDebug::enabled`, plus an **agent radius** slider
   (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at triangulation
-  time. The overlay is one merged mesh at z 5.3 (above the grid navmesh fill at 5.2):
+  time. One toggle drives everything the mesh is for: building it, drawing it, and
+  **routing on it**. The radius minimum is deliberately non-zero (0.2 m) now that pawns
+  walk the mesh, and it is read through `PolymeshDebug::radius()`, which clamps — the
+  minimum was raised after the setting was already being persisted, so an older prefs
+  file holds 0.0. The overlay is one merged mesh at z 5.3 (above the grid navmesh fill
+  at 5.2):
   **blocked contours filled** in the *same* red as `sync_navmesh_overlay`, then **all
   polygon edges** of the built mesh stroked over it (shared edges deduped, so a
   translucent seam is never double-painted). Same colour is the point — the two layers
@@ -1048,8 +1099,8 @@ in `main.rs`.
   exclusive** (`enforce_overlay_exclusivity`): enabling either switches the other off,
   since two red fills over one map read as a single layer at double alpha. Only
   *enabling* pushes; the reverse edit sees a disabled resource and writes nothing, so
-  the two systems cannot loop. See **Poly navmesh prototype** under Navigation for what
-  the mesh is.
+  the two systems cannot loop. See **Poly navmesh** and **Polygonal routing** under
+  Navigation for what the mesh is and how pawns walk it.
 - **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
   `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers

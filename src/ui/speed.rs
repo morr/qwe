@@ -18,7 +18,9 @@ use bevy::ui_widgets::Button;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::cursor_offset;
-use crate::diagnostics::{PATHFINDING_DURATION_MS, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED};
+use crate::diagnostics::{
+    PATHFINDING_DURATION_MS, PATHFINDING_FAILED, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED,
+};
 use crate::sim_time::{SimClock, SimSpeed, cycle_time_scale, previous_time_scale};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
@@ -271,6 +273,10 @@ fn update_pathfinding_text(
         .get(&PATHFINDING_DURATION_MS)
         .and_then(|diagnostic| diagnostic.average())
         .unwrap_or_default();
+    let failed = diagnostics
+        .get(&PATHFINDING_FAILED)
+        .and_then(|diagnostic| diagnostic.average())
+        .unwrap_or_default();
     let entities = diagnostics
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(|diagnostic| diagnostic.value())
@@ -278,7 +284,7 @@ fn update_pathfinding_text(
 
     // выравнивание цифр по правому краю, чтобы строка не «плясала»
     text.into_inner().set_if_neq(Text(format!(
-        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nentities: {entities:>6.0}"
+        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg, {failed:>4.1}% failed\nentities: {entities:>6.0}"
     )));
 }
 

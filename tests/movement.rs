@@ -77,10 +77,11 @@ fn test_app(frame_delta: f32, time_scale: f32) -> App {
 /// `tiles` тайлов. Состояние `Moving` задаётся полем, поэтому тег
 /// (обычно его ставит `Movable::to_moving`) вставляется руками.
 fn spawn_walker(app: &mut App, start_tile: IVec2, tiles: i32, speed: f32) -> (Entity, IVec2) {
-    let path: VecDeque<IVec2> = (1..=tiles)
-        .map(|step| start_tile + IVec2::new(step, 0))
+    let end_tile = start_tile + IVec2::new(tiles, 0);
+    // путь — мировые точки; сеточный поиск отдаёт их центрами тайлов
+    let path: VecDeque<Vec2> = (1..=tiles)
+        .map(|step| tile_center(start_tile + IVec2::new(step, 0)))
         .collect();
-    let end_tile = *path.back().expect("path is non-empty");
     let start_world = tile_center(start_tile);
 
     let entity = app

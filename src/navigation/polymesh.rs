@@ -1,8 +1,8 @@
-//! Прототип полигонального navmesh (polyanya): CDT по векторной геометрии
-//! карты вместо растеризации в тайлы. Строится лениво — по включению панели
-//! Polymesh (`ui/polynav.rs`) — и асинхронно, по образцу постройки
-//! northstar-иерархии; результат пока только рисуется оверлеем, поиск пути
-//! по нему не ходит.
+//! Полигональный navmesh (polyanya): CDT по векторной геометрии карты вместо
+//! растеризации в тайлы. Строится лениво — по включению панели Polymesh
+//! (`ui/polynav.rs`) — и асинхронно, по образцу постройки northstar-иерархии;
+//! готовый меш и рисуется оверлеем, и водит пешек
+//! ([`find_path_polymesh`]), пока панель включена.
 //!
 //! Препятствия — те же источники и та же семантика порядка, что у
 //! `Navmesh::fill_from_mapdata`, сведённые в один boolean:
@@ -28,7 +28,19 @@ use crate::map::osm::model::{
     MapData, PolyArea, RoadLine, WallLine, WaterLine, distance_to_segment, signed_ring_area,
 };
 use crate::map::{bridge_curb_width, miter_offsets};
-use crate::settings::{MAP_SIZE, PASSAGE_MAX_WIDTH};
+use crate::settings::{
+    MAP_SIZE, PASSAGE_MAX_WIDTH, POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN,
+};
+
+/// polyanya живёт на glam 0.30, bevy — на 0.32: типы не связаны ничем, и
+/// конверсия возможна только по полям.
+fn to_poly(point: Vec2) -> polyanya_glam::Vec2 {
+    polyanya_glam::Vec2::new(point.x, point.y)
+}
+
+fn from_poly(point: polyanya_glam::Vec2) -> Vec2 {
+    Vec2::new(point.x, point.y)
+}
 
 /// Близнец `navmesh.rs::JOIN_EPSILON`: примыкание — общий узел двух ways,
 /// допуск покрывает лишь потерю точности проекции.
@@ -49,15 +61,45 @@ const SIMPLIFY_EPSILON: f32 = 0.05;
 /// (`polyanya::input/triangulation.rs::as_layer`).
 const MAP_EDGE_MARGIN: f32 = 10.0;
 
+/// Шаг и число шагов посадки конца запроса на меш: polyanya пробует сам
+/// запрошенный конец, затем окружности радиусом `delta`, `2·delta`, … по
+/// `10 · step` точек. Итоговый допуск — `SEARCH_DELTA * SEARCH_STEPS`, метр;
+/// половина навтайла, то есть ровно та неопределённость, с которой цель
+/// приходит из сетки. Цена платится только за конец, оказавшийся вне меша, и
+/// только точечными запросами к BVH.
+const SEARCH_DELTA: f32 = 0.25;
+const SEARCH_STEPS: u32 = 4;
+
 /// Панель Polymesh: тумблер и радиус агента (инфляция препятствий).
 /// Персистится, как остальные панели; восстановленный `enabled` означает
 /// «кнопка уже нажата» — постройка стартует на входе в мир.
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[derive(Resource, Reflect, SettingsGroup)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "polymesh")]
 pub struct PolymeshDebug {
     pub enabled: bool,
     pub agent_radius: f32,
+}
+
+impl Default for PolymeshDebug {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            agent_radius: POLYMESH_AGENT_RADIUS_MIN,
+        }
+    }
+}
+
+impl PolymeshDebug {
+    /// Радиус агента, приведённый к диапазону ползунка. Читать надо через
+    /// него: минимум подняли с нуля уже после того, как настройки начали
+    /// сохраняться, и в файле у любого, кто трогал панель раньше, лежит 0.0.
+    /// Клампить на чтении дешевле, чем чинить ресурс из системы, которая
+    /// сама гейтится на `resource_changed` по нему же.
+    pub fn radius(&self) -> f32 {
+        self.agent_radius
+            .clamp(POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_MAX)
+    }
 }
 
 /// Результат одной постройки: сам меш и контуры препятствий, которые в него
@@ -150,7 +192,7 @@ pub fn sync_polymesh_build(
         poly.cancel_task();
         return;
     }
-    let radius = debug.agent_radius;
+    let radius = debug.radius();
     if poly.build.is_some() && poly.built_radius.to_bits() == radius.to_bits() {
         return;
     }
@@ -379,8 +421,67 @@ fn build_polymesh(
     if is_cancelled() {
         return None;
     }
-    mesh.merge_polygons();
+    // до сходимости, а не один раз: `merge_polygons` возвращает «слил хоть
+    // что-то», и каждый проход открывает следующие пары — слитый выпуклый
+    // полигон становится соседом, которым не был. Число полигонов здесь не
+    // косметика: бюджет поиска polyanya — `polygons.len() * 10` итераций, и
+    // фронт такого размера приложение не переживает (см. лимит
+    // `MAX_POLYMESH_PATHFINDING_IN_FLIGHT`).
+    let merging = Instant::now();
+    let mut rounds = 0;
+    while mesh.merge_polygons() {
+        rounds += 1;
+        if is_cancelled() {
+            return None;
+        }
+    }
+    let polygons: usize = mesh.layers.iter().map(|layer| layer.polygons.len()).sum();
+    info!(
+        "polymesh merged to {polygons} polygons in {rounds} rounds, {:?}",
+        merging.elapsed()
+    );
+    if is_cancelled() {
+        return None;
+    }
+    // строго после слияния: `Layer::merge_polygons` начинается с `unbake()`.
+    //
+    // Без bake меш только рисуется: поиску он даёт линейный скан по всем
+    // полигонам на каждый конец запроса (BVH нет), а недостижимой цели —
+    // полный бюджет `polygons.len() * 10` вместо мгновенного отказа
+    // (компонент связности неизвестен). При ~30k полигонов и тысячах
+    // запросов в секунду это стена, поэтому индексы строятся всегда, а не
+    // по требованию.
+    let baking = Instant::now();
+    mesh.bake();
+    info!("polymesh baked in {:?}", baking.elapsed());
+    // допуск посадки концов запроса на меш. Дефолт polyanya —
+    // `search_delta 0.1 × search_steps 2` = 0.2 м, ровно вровень с радиусом
+    // агента, и этого не хватает: цель прогулки — вершина контура здания
+    // (`human::pick_building_ahead`), а сетка объявляет тайл проходимым, если
+    // его центр вне полигона хоть на сантиметр. Раздутый на радиус контур
+    // такой центр накрывает, и цель оказывается вне меша. Замерено на Туле:
+    // с дефолтным допуском отказывало 96% запросов против 3.5% у сетки.
+    mesh.set_search_delta(SEARCH_DELTA);
+    mesh.set_search_steps(SEARCH_STEPS);
     Some(PolymeshBuild { mesh, obstacles })
+}
+
+/// Путь по полигональному мешу от точки к точке, **включая стартовую** —
+/// таков контракт `movement::listen_for_pathfinding_tasks`, унаследованный от
+/// сеточного поиска (первый waypoint отбрасывается, единственный означает
+/// «уже на месте»). У polyanya `Path::path` старта не содержит.
+///
+/// `None` — цель недостижима или конец лежит вне меша. Свои концы polyanya
+/// досаживает на меш сама, но радиусом `search_delta * search_steps` = 0.2 м,
+/// не больше: при ненулевом радиусе агента цель, выбранная по проходимости
+/// тайла, вполне может оказаться внутри раздутого препятствия, и это штатный
+/// отказ, а не ошибка.
+pub fn find_path_polymesh(mesh: &polyanya::Mesh, from: Vec2, to: Vec2) -> Option<Vec<Vec2>> {
+    let path = mesh.path(to_poly(from), to_poly(to))?;
+    let mut points = Vec::with_capacity(path.path.len() + 1);
+    points.push(from);
+    points.extend(path.path.into_iter().map(from_poly));
+    Some(points)
 }
 
 /// Кольцо → контур i_overlay, нормализованный CCW: NonZero гасит контуры
@@ -459,12 +560,12 @@ mod tests {
     /// после них — иначе моста либо нет, либо он перегорожен своим бордюром.
     #[test]
     fn bridge_deck_opens_a_crossing_over_a_waterway() {
-        let from = polyanya_glam::Vec2::new(300.0, 450.0);
-        let to = polyanya_glam::Vec2::new(300.0, 550.0);
+        let from = Vec2::new(300.0, 450.0);
+        let to = Vec2::new(300.0, 550.0);
 
         let severed = build_polymesh(&input_with(vec![]), 0.0, None).expect("not cancelled");
         assert!(
-            severed.mesh.path(from, to).is_none(),
+            find_path_polymesh(&severed.mesh, from, to).is_none(),
             "waterway without a bridge must sever the banks"
         );
         assert!(
@@ -480,9 +581,16 @@ mod tests {
             passage: false,
         };
         let bridged = build_polymesh(&input_with(vec![bridge]), 0.0, None).expect("not cancelled");
+        let path = find_path_polymesh(&bridged.mesh, from, to)
+            .expect("bridge deck must carry a path over the waterway");
+
+        // контракт для `listen_for_pathfinding_tasks`: стартовая точка входит
+        // в путь (её там срежут), последняя — цель
+        assert_eq!(path.first(), Some(&from), "path must start at `from`");
         assert!(
-            bridged.mesh.path(from, to).is_some(),
-            "bridge deck must carry a path over the waterway"
+            path.last().expect("path is non-empty").distance(to) < 0.5,
+            "path must end at `to`, got {:?}",
+            path.last()
         );
     }
 }
