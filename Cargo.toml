@@ -23,6 +23,11 @@ i_overlay = "7"
 # симплекс-шум под поле хвойных массивов (src/map/trees/conifer.rs)
 noise = "0.9"
 pathfinding = "4"
+# полигональный navmesh: CDT + инфляция препятствий радиусом агента (navigation/polymesh.rs)
+polyanya = "0.16"
+# polyanya говорит на glam 0.30 (bevy 0.19 несёт 0.32) — отдельный инстанс
+# только чтобы конструировать её Vec2 на входе триангуляции
+polyanya_glam = { package = "glam", version = "0.30" }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

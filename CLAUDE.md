@@ -175,6 +175,9 @@ Current third-party crates and why they exist:
 - `pathfinding` — A*/Dijkstra/Fringe/BFS over the navmesh grid
 - `bevy_northstar` — hierarchical HPA*/Theta* (its `Grid` is used directly, without the
   crate's plugin)
+- `polyanya` — polygonal navmesh prototype (`navigation/polymesh.rs`): CDT + agent-radius
+  inflation of vector obstacles; used directly, no bevy integration. `polyanya_glam` is a
+  renamed `glam` 0.30 dep only to construct its `Vec2` (bevy 0.19 ships glam 0.32)
 - `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)
 - `serde` / `serde_json` — Overpass JSON parsing
 - `ureq` 3 — blocking HTTPS download of the OSM extract (rustls + gzip by default)
@@ -251,6 +254,7 @@ step when adding one):
 | demons | `demon/systems.rs::spawn_demon` |
 | navmesh overlay | `ui/debug.rs::sync_navmesh_overlay` |
 | conifer noise overlay | `ui/debug.rs::sync_conifer_noise_overlay` |
+| polymesh overlay | `ui/polynav.rs::sync_polymesh_overlay` |
 | test walker | `dev.rs::on_spawn_test_walker` |
 
 Not world entities, and deliberately without the component: the camera (`camera.rs`), the

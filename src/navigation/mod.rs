@@ -1,6 +1,7 @@
 mod astar;
 mod navmesh;
 mod northstar;
+mod polymesh;
 
 use bevy::prelude::*;
 
@@ -10,8 +11,12 @@ pub use self::northstar::{
     NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
     start_northstar_build,
 };
+pub use self::polymesh::{
+    PolyNavmesh, PolymeshBuild, PolymeshDebug, poll_polymesh_build, sync_polymesh_build,
+};
 use crate::grid::{tile_center, world_to_tile};
-use crate::loading::PlayPhase;
+use crate::loading::{AppState, PlayPhase, WorldInitSet};
+use crate::map::osm::model::MapData;
 use crate::settings::NavtileBase;
 
 /// Ответ асинхронного поиска пути (снимается в
@@ -88,7 +93,33 @@ impl Plugin for NavigationPlugin {
             // и A*, который в это время развозит пешек в кадре, замедляется
             // вдвое (85 мс на поиск против 36 мс в бенче)
             .add_systems(OnEnter(PlayPhase::Live), start_northstar_build)
-            .add_systems(Update, poll_northstar_build);
+            .add_systems(Update, poll_northstar_build)
+            // полигональный меш-прототип: ленив (ничего не строит, пока
+            // панель Polymesh не включат) и постройка асинхронна
+            .register_type::<PolymeshDebug>()
+            .init_resource::<PolymeshDebug>()
+            .init_resource::<PolyNavmesh>()
+            // восстановленный из настроек enabled: перестройка на входе в
+            // мир, когда MapData нового города уже вставлена
+            .add_systems(
+                OnEnter(AppState::Playing),
+                sync_polymesh_build
+                    .run_if(|debug: Res<PolymeshDebug>| debug.enabled)
+                    .in_set(WorldInitSet::Spawn),
+            )
+            .add_systems(
+                Update,
+                (
+                    // resource_changed без resource_exists паникует до
+                    // загрузки карты (BRP может дёрнуть тумблер в Loading)
+                    sync_polymesh_build.run_if(
+                        resource_exists::<MapData>
+                            .and_then(resource_changed::<PolymeshDebug>)
+                            .and_then(in_state(AppState::Playing)),
+                    ),
+                    poll_polymesh_build.run_if(|poly: Res<PolyNavmesh>| poly.is_building()),
+                ),
+            );
     }
 }
 

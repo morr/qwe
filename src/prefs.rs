@@ -25,7 +25,7 @@ use crate::camera::CameraPositionMode;
 use crate::city::City;
 use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
-use crate::navigation::PathfindingAlgorithm;
+use crate::navigation::{PathfindingAlgorithm, PolymeshDebug};
 use crate::settings::NavtileBase;
 use crate::ui::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 
@@ -48,6 +48,7 @@ impl Plugin for PrefsPlugin {
                     .or_else(resource_changed::<DebugConiferNoise>)
                     .or_else(resource_changed::<DrawMovePaths>)
                     .or_else(resource_changed::<PathfindingAlgorithm>)
+                    .or_else(resource_changed::<PolymeshDebug>)
                     .or_else(resource_changed::<NavtileBase>)
                     .or_else(resource_changed::<TreeStyle>)
                     .or_else(resource_changed::<TreeRowStyle>)

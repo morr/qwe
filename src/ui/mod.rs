@@ -8,6 +8,7 @@ mod city;
 mod debug;
 mod hotkeys;
 mod noise;
+mod polynav;
 mod roads;
 mod slider;
 mod speed;
@@ -39,7 +40,8 @@ pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 pub struct UiRightColumnSlot(pub u8);
 
 /// То же для левой колонки: 0 — ряд дебаг-тумблеров у края экрана, 1 — панель
-/// Noise над ним (целиком живёт при включённом дебаг-слое `noise`).
+/// Noise над ним (целиком живёт при включённом дебаг-слое `noise`), 2 —
+/// панель Polymesh.
 #[derive(Component)]
 pub struct UiLeftColumnSlot(pub u8);
 
@@ -206,6 +208,7 @@ impl Plugin for UiPlugin {
             trees::UiTreeStylePlugin,
             tree_rows::UiTreeRowStylePlugin,
             noise::UiConiferNoisePlugin,
+            polynav::UiPolynavPlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
             city::UiCityPlugin,

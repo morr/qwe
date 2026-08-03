@@ -13,7 +13,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::demon::DemonSpawner;
 use crate::loading::AppState;
-use crate::navigation::NorthstarGrid;
+use crate::navigation::{NorthstarGrid, PolyNavmesh};
 use crate::settings::{
     BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
     NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
@@ -127,6 +127,7 @@ fn reload_world(
     mut spawner: ResMut<DemonSpawner>,
     mut telemetry: ResMut<Telemetry>,
     mut northstar: ResMut<NorthstarGrid>,
+    mut polymesh: ResMut<PolyNavmesh>,
 ) {
     info!(
         "world reload: city {:?}, navtile {}",
@@ -137,5 +138,8 @@ fn reload_world(
     *telemetry = Telemetry::default();
     // иначе прогрев новой карты пойдёт по иерархии старой — пути сквозь дома
     northstar.clear();
+    // полигональный меш описывает геометрию старого города, летящая
+    // постройка — тем более; включённая панель перестроит его на входе в мир
+    polymesh.clear();
     next.set(AppState::Loading);
 }

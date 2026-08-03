@@ -869,6 +869,44 @@ in `main.rs`.
   from `PORTAL_DIAMETER`. The map-load thread snaps it between fill and prune (the flood
   starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
   the resource before switching to `Playing`.
+- **Poly navmesh prototype** (`navigation/polymesh.rs`, panel — `ui/polynav.rs`) — a
+  *polygonal* polyanya mesh triangulated from the same vector sources the grid fill
+  rasterizes, to judge by eye how much fidelity the 2 m grid loses (bridge curbs, narrow
+  waterways) before any movement code migrates. Nothing walks on it yet. The whole fill
+  order collapses into one boolean (`i_overlay` difference):
+  union(water ∪ non-culvert waterways ∪ bridge curb bands ∪ buildings ∪ walls) −
+  union(bridge decks ∪ joining roads ∪ passages), clipped to the map rect **outset** by
+  `MAP_EDGE_MARGIN` (an inset clip would leave a walkable sliver along the map edge for
+  paths to sneak around a river; polyanya digests obstacles crossing its outer boundary —
+  triangle walkability is a point-in-polygon test of the triangle center), then CDT via
+  `polyanya::Triangulation` with agent-radius inflation.
+  Deliberate deltas from the grid: obstacle **holes are dropped** (an unreachable pocket
+  ≙ what `prune_unreachable` kills), the **diagonal seal pass has no analogue** (patches
+  raster corner-contact only), and deck/joining widths are **verbatim** — the grid's
+  `±tile·√2` corrections compensate wandering tile centers, which vectors don't have.
+  The deck carve is therefore `road.width`, the carriageway the renderer fills, *not*
+  the grid's `width + curb`: the curb bands live just outside the carriageway, and a
+  carve that wide eats half of the barrier it is supposed to leave standing.
+  The grid's **outward probe** — which curb tile is an interior seam of a composite
+  bridge (carriageway + its sidewalk way, mapped separately) and which is the outer
+  boundary — becomes the direct vector statement of the same intent: each way's curb
+  bands **minus the full drawn bands of every other bridge way**. Covered by a
+  neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer edge ⇒ blocks. N differences over
+  a few dozen bridges cost less than the single building union.
+  **Lazy and async**: nothing builds until the Polymesh panel is enabled
+  (`PolymeshDebug`, persisted); the build runs on `AsyncComputeTaskPool`
+  (`PolyNavmesh` resource: `PolymeshBuild` + generation counter + in-flight task,
+  cleared by `city.rs::reload_world` alongside `NorthstarGrid`). `PolymeshBuild`
+  carries the obstacle contours next to the mesh on purpose: polyanya stores only
+  **walkable** polygons, so without them the overlay could not paint what is blocked.
+  A radius-slider step supersedes the in-flight build, and superseding **cancels** it
+  through an `Arc<AtomicBool>` — the same machinery `NorthstarGrid` uses and for the same
+  reason: the task body is synchronous, so dropping the `Task` throws away the result but
+  not the work. Measured on Tula: **~5 s at radius 0, ~20 s at any non-zero radius** (the
+  obstacle inflation dominates), and one drag across the slider queues a build per step —
+  without the flag five superseded builds ran all cores to completion. Checks sit before
+  each long stage (boolean, clip, `as_navmesh`, `merge_polygons`); inside `i_overlay` and
+  `spade` there is nowhere to look.
 
 ## Simulation
 
@@ -982,6 +1020,24 @@ in `main.rs`.
   panels) and is `Display::None`ed while the `noise` debug toggle is off — tuning the
   field without the overlay showing it is pointless. Noise mix is deliberately *not*
   here: it is a gameplay look knob, so it sits in the Trees panel.
+- **Polymesh panel** (`ui/polynav.rs`) — slot 2 of the left column, always visible (it
+  carries its own knobs, so it is a separate block, not a debug-row toggle): an
+  **`Enabled` row** (the Roads/Trees row-button idiom — label left, `On`/`Off` right)
+  toggling `PolymeshDebug::enabled`, plus an **agent radius** slider
+  (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at triangulation
+  time. The overlay is one merged mesh at z 5.3 (above the grid navmesh fill at 5.2):
+  **blocked contours filled** in the *same* red as `sync_navmesh_overlay`, then **all
+  polygon edges** of the built mesh stroked over it (shared edges deduped, so a
+  translucent seam is never double-painted). Same colour is the point — the two layers
+  paint the same claim, and only an identical fill makes their accuracy comparable by
+  eye; with a non-zero agent radius the gap between fill and edges *is* the inflation.
+  Cache key (build generation + radius bits) lives on the overlay marker, the
+  conifer-overlay idiom. **The `polymesh` and `navmesh` toggles are mutually
+  exclusive** (`enforce_overlay_exclusivity`): enabling either switches the other off,
+  since two red fills over one map read as a single layer at double alpha. Only
+  *enabling* pushes; the reverse edit sees a disabled resource and writes nothing, so
+  the two systems cannot loop. See **Poly navmesh prototype** under Navigation for what
+  the mesh is.
 - **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
   `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
@@ -989,7 +1045,7 @@ in `main.rs`.
   their sync systems.
 - **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumnSlot` /
   `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
-  left: debug toggles → Noise; both bottom-up. The panels are absolute (`bevy_ui` does
+  left: debug toggles → Noise → Polymesh; both bottom-up. The panels are absolute (`bevy_ui` does
   not stack them), and the columns change height at runtime (Trees grows two rows on
   `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is the
   summed **measured** height of those below it instead of a hardcoded constant;

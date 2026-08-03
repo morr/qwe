@@ -334,6 +334,12 @@ pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
 /// к запуску, как и посадка деревьев.
 pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
 
+/// Радиус агента полигонального меша (панель Polymesh): инфляция препятствий
+/// при триангуляции. 0 — контур точно по нарисованной геометрии.
+pub const POLYMESH_AGENT_RADIUS_MIN: f32 = 0.0;
+pub const POLYMESH_AGENT_RADIUS_MAX: f32 = 1.0;
+pub const POLYMESH_AGENT_RADIUS_STEP: f32 = 0.1;
+
 /// Z юнита по его мировой y-координате.
 pub fn unit_z(y: f32) -> f32 {
     Z_UNIT_BASE - y * Y_SORT_FACTOR
