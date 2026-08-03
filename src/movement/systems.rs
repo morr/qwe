@@ -434,13 +434,13 @@ pub fn listen_for_pathfinding_tasks(
         movable.to_moving(end_tile, path, entity, &mut commands);
     }
 
-    // доля отказов, а не их число: снятых за кадр ответов на 30x сотни, и
-    // «12 отказов» без знаменателя ничего не говорит
-    if answered > 0 {
-        diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || {
-            failed as f64 / answered as f64 * 100.0
-        });
-    }
+    // оба счётчика пишутся каждый кадр, в том числе нулями: доля считается в
+    // UI как отношение средних, и это верно только пока обе истории одной
+    // длины (см. `diagnostics::PATHFINDING_ANSWERED`)
+    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_ANSWERED, || {
+        answered as f64
+    });
+    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
 }
 
 /// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.

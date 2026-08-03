@@ -21,12 +21,23 @@ pub const PATHFINDING_QUEUED: DiagnosticPath = DiagnosticPath::const_new("pathfi
 pub const PATHFINDING_DURATION_MS: DiagnosticPath =
     DiagnosticPath::const_new("pathfinding/duration_ms");
 
-/// Доля снятых ответов без пути, проценты. Сеточный поиск промахивается
-/// редко (цель заранее просеяна `find_passable_tile_near`), а полигональный —
-/// всякий раз, когда цель или сама пешка оказались внутри препятствия,
-/// раздутого радиусом агента. Отказ означает `PathfindingError`, то есть
-/// стоящую пешку, так что цена выбранной семантики должна быть видна числом,
-/// а не на глаз.
+/// Сколько ответов поиска снято за кадр и сколько из них без пути. Сеточный
+/// поиск промахивается редко (цель заранее просеяна `find_passable_tile_near`),
+/// а полигональный — всякий раз, когда цель или сама пешка оказались внутри
+/// препятствия, раздутого радиусом агента. Отказ означает `PathfindingError`,
+/// то есть стоящую пешку, так что цена выбранной семантики должна быть видна
+/// числом, а не на глаз.
+///
+/// Записываются именно два счётчика, а не готовая доля: доля, посчитанная в
+/// кадре и усреднённая по кадрам, считает кадры, а не ответы — кадр с одним
+/// ответом (и потому ровно 0 % или ровно 100 %) весит в среднем столько же,
+/// сколько кадр с сотней. И, хуже того, замер писался только в кадрах с
+/// ответами: стоило потоку иссякнуть — пауза, зум за `WANDER_DISPATCH_MAX_ZOOM`,
+/// упёршийся в лимит полимеш — как история переставала обновляться и на панели
+/// навсегда оставалось последнее значение. Отношение средних по двум историям
+/// одинаковой длины (обе пишутся каждый кадр, в том числе нулями) — это отказы
+/// на ответы за окно истории, и оно сходит к нулю, когда ответов нет.
+pub const PATHFINDING_ANSWERED: DiagnosticPath = DiagnosticPath::const_new("pathfinding/answered");
 pub const PATHFINDING_FAILED: DiagnosticPath = DiagnosticPath::const_new("pathfinding/failed");
 
 /// Длительность систем симуляции, мс на один тик `FixedUpdate`. На высоких
@@ -63,7 +74,8 @@ impl Plugin for GameDiagnosticsPlugin {
                 .with_max_history_length(1),
         )
         .register_diagnostic(Diagnostic::new(PATHFINDING_DURATION_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(PATHFINDING_FAILED).with_suffix(" %"))
+        .register_diagnostic(Diagnostic::new(PATHFINDING_ANSWERED).with_suffix(" answers"))
+        .register_diagnostic(Diagnostic::new(PATHFINDING_FAILED).with_suffix(" failures"))
         .register_diagnostic(Diagnostic::new(SIM_SPATIAL_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_PANIC_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_FLEE_MS).with_suffix(" ms"))

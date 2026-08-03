@@ -19,7 +19,8 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::cursor_offset;
 use crate::diagnostics::{
-    PATHFINDING_DURATION_MS, PATHFINDING_FAILED, PATHFINDING_IN_FLIGHT, PATHFINDING_QUEUED,
+    PATHFINDING_ANSWERED, PATHFINDING_DURATION_MS, PATHFINDING_FAILED, PATHFINDING_IN_FLIGHT,
+    PATHFINDING_QUEUED,
 };
 use crate::sim_time::{SimClock, SimSpeed, cycle_time_scale, previous_time_scale};
 use crate::ui::{
@@ -256,7 +257,8 @@ fn update_speed_button(
         .set_if_neq(Text(format_speed_label(&time, &speed)));
 }
 
-/// Строка pathfinding-диагностики: в полёте, среднее время поиска, сущности.
+/// Строка pathfinding-диагностики: в полёте, среднее время поиска, доля
+/// отказов со своим знаменателем, сущности.
 fn update_pathfinding_text(
     text: Single<&mut Text, With<PathfindingTextMarker>>,
     diagnostics: Res<DiagnosticsStore>,
@@ -273,18 +275,32 @@ fn update_pathfinding_text(
         .get(&PATHFINDING_DURATION_MS)
         .and_then(|diagnostic| diagnostic.average())
         .unwrap_or_default();
+    // отказы на ответ за окно истории: отношение средних, а не среднее
+    // подолей — кадр с одним ответом иначе весит как кадр с сотней
+    let answered = diagnostics
+        .get(&PATHFINDING_ANSWERED)
+        .and_then(|diagnostic| diagnostic.average())
+        .unwrap_or_default();
     let failed = diagnostics
         .get(&PATHFINDING_FAILED)
         .and_then(|diagnostic| diagnostic.average())
         .unwrap_or_default();
+    let failed = if answered > 0.0 {
+        failed / answered * 100.0
+    } else {
+        0.0
+    };
     let entities = diagnostics
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(|diagnostic| diagnostic.value())
         .unwrap_or_default();
 
-    // выравнивание цифр по правому краю, чтобы строка не «плясала»
+    // выравнивание цифр по правому краю, чтобы строка не «плясала»;
+    // знаменатель доли отказов показан рядом с ней: «100 % отказов» на
+    // ручейке в один ответ за кадр и на сотне ответов — разные новости, а
+    // само число одинаковое
     text.into_inner().set_if_neq(Text(format!(
-        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg, {failed:>4.1}% failed\nentities: {entities:>6.0}"
+        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nanswers: {answered:>6.1}/frame, {failed:>5.1}% failed\nentities: {entities:>6.0}"
     )));
 }
 

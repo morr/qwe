@@ -944,9 +944,15 @@ in `main.rs`.
   A **missed goal is `PathfindingError`, not a fallback**: with a non-zero agent radius a
   target picked by tile passability can land inside an inflated obstacle, and polyanya
   only snaps endpoints within `search_delta * search_steps` (0.2 m). The cost of that
-  choice is visible as `pathfinding/failed` (percent of answers with no path, shown in
-  the speed panel) — a pawn whose own position is off-mesh fails *every* repath and
-  stands still, so the number is worth watching.
+  choice is visible in the speed panel as `answers: N/frame, X % failed` — a pawn whose
+  own position is off-mesh fails *every* repath and stands still, so the number is worth
+  watching. It is computed from **two** diagnostics, `pathfinding/answered` and
+  `pathfinding/failed`, both written every frame including zeros, and shown as the ratio
+  of their averages: a percentage computed per frame and then averaged would count
+  frames instead of answers (a lone late failure makes its frame read 100 %) and would
+  freeze on its last value the moment answers stop. The denominator is on screen for the
+  same reason: 100 % of 0.7 answers a frame is a trickle of hopeless repaths, not a dead
+  navmesh.
   Coasting and the demon lunge's `line_of_sight` stay **grid** tests: they are cheap
   guards against walking into a wall, not path searches.
   Two knobs exist only because the default fails at city scale, both measured on Tula
