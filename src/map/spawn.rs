@@ -7,9 +7,9 @@ use bevy::prelude::*;
 
 use crate::loading::AppState;
 use crate::map::buildings::{self, BuildingHeightMode};
-use crate::map::meshing::{MeshBuilder, RibbonJoin};
-use crate::map::osm::{MapData, TreeRow, WaterLine};
-use crate::map::roads::{self, RoadJoin, RoadSmoothing, RoadStyle};
+use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
+use crate::map::osm::{MapData, TreeRow, WaterLine, water_line_caps};
+use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING,
@@ -39,11 +39,6 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
-/// Штрих и просвет пунктира трубы, м. Короче дорожной штриховки: культверт под
-/// улицей бывает длиной в десяток метров, и на нём должно уместиться несколько
-/// штрихов, иначе труба неотличима от сплошного русла.
-const CULVERT_DASH_LEN: f32 = 4.0;
-const CULVERT_DASH_GAP: f32 = 3.0;
 
 pub fn spawn_map(
     mut commands: Commands,
@@ -92,7 +87,7 @@ pub fn spawn_map(
         water.push_polygon(&area.outer, &area.holes, WATER_COLOR.to_linear());
     }
 
-    let (waterways, culverts) = mesh_water_lines(&map.water_lines);
+    let waterways = mesh_water_lines(&map.water_lines);
 
     let skipped: usize = [&parks, &woods, &grass, &sand, &water]
         .iter()
@@ -109,7 +104,6 @@ pub fn spawn_map(
         (sand, Z_SAND, "sand"),
         (water, Z_POND, "water"),
         (waterways, Z_WATERWAY, "waterways"),
-        (culverts, Z_WATERWAY, "waterway_culverts"),
     ] {
         if builder.is_empty() {
             continue;
@@ -143,39 +137,34 @@ pub fn spawn_map(
     );
 }
 
-/// Ленты линейных водотоков: открытые русла и трубы, двумя мешами.
-///
-/// Разделены не ради z (он у них общий — цвет один и тот же), а ради примитива:
-/// русло рисуется сплошной лентой, труба — пунктиром. Пунктир здесь несёт
-/// смысл, а не украшает: труба единственная из водотоков не блокирует навмеш,
-/// и человек, идущий «сквозь ручей» на глазах у игрока, объясняется именно этим
-/// разрывом линии.
-fn mesh_water_lines(lines: &[WaterLine]) -> (MeshBuilder, MeshBuilder) {
+/// Лента открытых русел одним мешем. **Трубы не рисуются вовсе**: под землёй
+/// воды не видно, а пунктир вдоль улицы читался как ручей поверх неё. Тем, что
+/// человек проходит там, где на карте «ручей», управляет не эта отрисовка, а
+/// её отсутствие: русло обрывается на портале культверта и продолжается за ним
+/// (`water_line_caps`), и между порталами воды на карте просто нет.
+fn mesh_water_lines(lines: &[WaterLine]) -> MeshBuilder {
     let color = WATER_COLOR.to_linear();
     let mut open = MeshBuilder::default();
-    let mut culverts = MeshBuilder::default();
 
-    for line in lines {
+    for line in lines.iter().filter(|line| !line.tunnel) {
         // сглаживание как у дорог: русло в OSM — ломаная по точкам съёмки, и на
         // её изломах лента без сглаживания заметно гранёная
         let points = roads::smooth_path(&line.points, line.width, RoadSmoothing::Light);
-        if line.tunnel {
-            culverts.push_dashes(
-                &points,
-                line.width,
-                CULVERT_DASH_LEN,
-                CULVERT_DASH_GAP,
-                color,
-                RibbonJoin::Round,
-            );
-        } else {
-            // круглые стыки и торцы: два way одного русла встречаются в общем
-            // узле, и полудиски на торцах сливаются в непрерывную реку
-            roads::push_ribbon(&mut open, &points, line.width, color, RoadJoin::Round);
-        }
+        // круглые стыки, и круглые торцы там, где вода продолжается: два way
+        // одного русла встречаются в общем узле, и полудиски на торцах
+        // сливаются в непрерывную реку. Портал культверта — исключение: за ним
+        // воды нет, и полудиск торчал бы на полуширину русла в сухую землю
+        let caps = water_line_caps(line, lines).map(|round| {
+            if round {
+                RibbonCap::Round
+            } else {
+                RibbonCap::Butt
+            }
+        });
+        open.push_ribbon_capped(&points, false, line.width, color, RibbonJoin::Round, caps);
     }
 
-    (open, culverts)
+    open
 }
 
 /// Зелёная полоса под аллеей — чтобы пересборка стиля знала, что деспавнить.

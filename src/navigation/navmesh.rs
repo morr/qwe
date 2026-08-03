@@ -5,7 +5,9 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use bevy::prelude::*;
 
 use crate::grid::world_to_tile;
-use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, ring_bounds};
+use crate::map::osm::model::{
+    MapData, PolyArea, distance_to_segment, ring_bounds, water_line_caps,
+};
 use crate::map::{bridge_curb_width, miter_offsets};
 use crate::settings::{PASSAGE_MAX_WIDTH, navtile_size};
 
@@ -132,7 +134,11 @@ impl Navmesh {
             self.set_area(area, false);
         }
         for line in map.water_lines.iter().filter(|line| !line.tunnel) {
-            self.set_polyline(&line.points, line.width, false);
+            // торец у входа в трубу срезан, а не скруглён: за порталом вода
+            // уже под землёй, и капсульный полукруг глушил бы вход в культверт
+            // на полуширину русла (`water_line_caps`, то же правило у отрисовки)
+            let caps = water_line_caps(line, &map.water_lines);
+            self.set_polyline_capped(&line.points, line.width, false, caps);
         }
         // бордюры мостов. Тайл бордюра блокируется не безусловно: OSM режет
         // один физический мост на несколько ways (проезжая часть и тротуар —
@@ -383,7 +389,21 @@ impl Navmesh {
     /// осевой даёт четырёхсвязную цепочку **по построению**, при любой ширине,
     /// угле и сдвиге, и при этом не раздувает канаву в 1.5 м до трёх метров.
     fn set_polyline(&mut self, points: &[Vec2], width: f32, value: bool) {
-        self.visit_polyline(points, width, &mut |grid, x, y| {
+        self.set_polyline_capped(points, width, value, [true; 2]);
+    }
+
+    /// То же, но с управляемыми торцами — `[начало, конец]`, `true` — капсульное
+    /// продление за конец. Срезанный торец нужен руслу на входе в трубу: там
+    /// вода уходит под землю, и полукруг непроходимых тайлов за узлом глушил бы
+    /// вход в культверт (`water_line_caps`; отрисовка режет тот же торец).
+    fn set_polyline_capped(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        value: bool,
+        round_caps: [bool; 2],
+    ) {
+        self.visit_polyline_capped(points, width, round_caps, &mut |grid, x, y| {
             grid.set_passable(x, y, value)
         });
     }
@@ -396,17 +416,40 @@ impl Navmesh {
         width: f32,
         visit: &mut impl FnMut(&mut Self, i32, i32),
     ) {
+        self.visit_polyline_capped(points, width, [true; 2], visit);
+    }
+
+    fn visit_polyline_capped(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        round_caps: [bool; 2],
+        visit: &mut impl FnMut(&mut Self, i32, i32),
+    ) {
         let (grid_size, tile_size) = (self.grid_size, self.tile_size);
-        for segment in points.windows(2) {
+        let last = points.len().saturating_sub(2);
+        for (index, segment) in points.windows(2).enumerate() {
             let (from, to) = (segment[0], segment[1]);
+            // срез торца: тайл за плоскостью конца не в ленте, даже если до
+            // самого узла ему ближе полуширины
+            let butt_start = index == 0 && !round_caps[0];
+            let butt_end = index == last && !round_caps[1];
+            let along = (to - from).normalize_or_zero();
             let min_tile = world_to_tile(from.min(to) - width);
             let max_tile = world_to_tile(from.max(to) + width);
             for x in min_tile.x.max(0)..=max_tile.x.min(grid_size.x - 1) {
                 for y in min_tile.y.max(0)..=max_tile.y.min(grid_size.y - 1) {
                     let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
-                    if distance_to_segment(center, from, to) <= width / 2.0 {
-                        visit(self, x, y);
+                    if distance_to_segment(center, from, to) > width / 2.0 {
+                        continue;
                     }
+                    if butt_start && (center - from).dot(along) < 0.0 {
+                        continue;
+                    }
+                    if butt_end && (center - to).dot(along) > 0.0 {
+                        continue;
+                    }
+                    visit(self, x, y);
                 }
             }
             self.visit_segment_tiles(from, to, visit);

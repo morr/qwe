@@ -183,9 +183,18 @@ in `main.rs`.
     the waterway branch in `parse_way` runs before `highway` and **falls through** — a
     culverted stream under a street shares its way with `highway=*`.
     **`tunnel: bool`** (`parse::is_underground`, the same test that drops subway track)
-    marks a piped section: it is drawn as a **dashed** ribbon and, alone among
+    marks a piped section: it is **not drawn at all** and, alone among
     watercourses, **does not block the navmesh** — the water runs under the ground and a
-    pawn walks over it. Everything else about waterways *does* block; see Navigation.
+    pawn walks over it, so there is nothing to see and nothing to cross. Everything else
+    about waterways *does* block; see Navigation.
+    A **culvert portal** — the node where an open way ends against the end of a piped one
+    (`model::water_line_caps`) — is where the channel is cut **flat**. Everywhere else an
+    open end is capped with a half-disk of half the channel width, because OSM splits one
+    channel into several ways and the two caps meeting in a shared node fuse the joint;
+    past a portal there is no more water, and the half-disk would jut into dry land and
+    (the grid fill measures the same distance-to-segment) plug the culvert mouth with a
+    semicircle of blocked tiles. One rule, both layers: `spawn::mesh_water_lines` and
+    `Navmesh::fill_from_mapdata`.
   - **TreeRow** — `natural=tree_row`: an avenue's centerline polyline plus what the data
     itself knows about the planting — `spacing: Option<f32>` (from `spacing`, or the row
     length spread over `count` / `tree:count`) and `radius: Option<f32>` (half
@@ -458,7 +467,7 @@ in `main.rs`.
   lookup are unchanged, so the planted set is identical.
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
-  waterways + culverts, alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
+  waterways, alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
   `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
   colors over a single white `ColorMaterial`. ~7000 buildings cost a handful of entities.
   Trees stay individual entities (see tree crowns below).
@@ -742,7 +751,10 @@ in `main.rs`.
   channels took 6 461 tiles out of the passable set and pruning did **not** move at all
   (9 781 before and after), i.e. no bank was severed. Much of that is free: the Упа's
   *centerline* is also tagged `waterway=river`, and it runs inside the Упа water polygon,
-  which was already impassable.
+  which was already impassable. The one place the fill stops short of the capsule is the
+  **culvert portal**: `set_polyline_capped` drops the tiles past the end plane there, so
+  the mouth of the pipe — the only dry crossing a channel has — is not plugged by the
+  half-disk. Same `water_line_caps` rule the ribbon is drawn with.
 - **A rasterized polyline is a 4-connected chain, by construction.** `set_polyline` marks
   tiles whose *center* is within half the width — and that alone is not a barrier: below
   `tile_size · √2` (2.83 m at the default 2 m tile) a slanted band degenerates into tiles touching only at

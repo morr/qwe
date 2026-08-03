@@ -295,6 +295,22 @@ impl MeshBuilder {
         join: RibbonJoin,
         cap: RibbonCap,
     ) {
+        self.push_ribbon_capped(points, closed, width, color, join, [cap; 2]);
+    }
+
+    /// То же, но торцы задаются по отдельности — `[начало, конец]`. Нужно
+    /// руслу: один его конец продолжается открытым руслом (там полудиск
+    /// сливает стык), а другой упирается во вход в трубу, где полудиску за
+    /// узлом взяться неоткуда (`spawn::mesh_water_lines`).
+    pub fn push_ribbon_capped(
+        &mut self,
+        points: &[Vec2],
+        closed: bool,
+        width: f32,
+        color: LinearRgba,
+        join: RibbonJoin,
+        caps: [RibbonCap; 2],
+    ) {
         let path = merge_close_points(points, closed, width / 4.0);
         if path.len() < 2 {
             return;
@@ -357,13 +373,17 @@ impl MeshBuilder {
             }
         }
 
-        if !closed && cap == RibbonCap::Round {
+        if !closed {
             // полудиск за начальной точкой: от нормали через −direction,
             // то есть назад по ходу пути
-            if let Some(direction) = (path[1] - path[0]).try_normalize() {
+            if caps[0] == RibbonCap::Round
+                && let Some(direction) = (path[1] - path[0]).try_normalize()
+            {
                 self.push_arc_fan(path[0], half_width, direction.perp().to_angle(), PI, color);
             }
-            if let Some(direction) = (path[count - 1] - path[count - 2]).try_normalize() {
+            if caps[1] == RibbonCap::Round
+                && let Some(direction) = (path[count - 1] - path[count - 2]).try_normalize()
+            {
                 self.push_arc_fan(
                     path[count - 1],
                     half_width,

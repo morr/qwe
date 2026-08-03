@@ -367,6 +367,39 @@ fn round_cap_bulges_past_the_end_by_half_width() {
     assert!(min_x <= -1.0 + ARC_TOLERANCE, "start cap short: {min_x}");
 }
 
+/// Торцы задаются по отдельности: русло, упирающееся одним концом во вход в
+/// трубу, обязано быть срезано ровно там и остаться скруглённым с другого.
+#[test]
+fn capped_ribbon_rounds_only_the_asked_end() {
+    let mut builder = MeshBuilder::default();
+    builder.push_ribbon_capped(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        false,
+        2.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        [RibbonCap::Round, RibbonCap::Butt],
+    );
+    let max_x = builder
+        .positions
+        .iter()
+        .map(|position| position[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_x = builder
+        .positions
+        .iter()
+        .map(|position| position[0])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        max_x <= 10.0 + 1e-4,
+        "butt end bulges past the node: {max_x}"
+    );
+    assert!(
+        min_x <= -1.0 + ARC_TOLERANCE,
+        "round start is missing: {min_x}"
+    );
+}
+
 #[test]
 fn arc_steps_scale_with_radius() {
     // допуск на стрелку хорды один, поэтому широкой дороге нужно больше хорд

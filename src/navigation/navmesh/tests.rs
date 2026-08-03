@@ -448,3 +448,50 @@ fn a_passage_is_no_wider_than_the_cap() {
         "проём в {open} тайлов шире потолка"
     );
 }
+
+/// Портал культверта: русло уходит в трубу, и заливка обязана оборваться на
+/// узле портала, а не продлить капсулу на полуширину русла за него. Полукруг
+/// непроходимых тайлов за порталом глушил бы вход в трубу — единственное
+/// место, где ручей вообще переходят посуху.
+#[test]
+fn a_culvert_portal_cuts_the_channel_flat() {
+    let portal = Vec2::new(130.0, 100.0);
+    let width = 8.0;
+    let mut map = MapData::default();
+    map.water_lines.push(WaterLine {
+        points: vec![Vec2::new(100.0, 100.0), portal],
+        width,
+        kind: WaterKind::River,
+        tunnel: false,
+    });
+    map.water_lines.push(WaterLine {
+        points: vec![portal, Vec2::new(160.0, 100.0)],
+        width,
+        kind: WaterKind::River,
+        tunnel: true,
+    });
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+
+    // точка внутри полудиска, но за плоскостью торца, и не на осевой — её
+    // тайлы отдельно метит `visit_segment_tiles`
+    let past_the_portal = portal + Vec2::new(1.0, 3.0);
+    assert!(!passable_at(Vec2::new(120.0, 100.0)), "русло до портала");
+    assert!(passable_at(past_the_portal), "земля за порталом культверта");
+
+    // то же русло, но обрывающееся ничем: торец остаётся круглым, и тот же
+    // тайл — вода
+    map.water_lines.pop();
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let tile = world_to_tile(past_the_portal);
+    assert!(
+        !navmesh.is_passable(tile.x, tile.y),
+        "торец русла без трубы обязан остаться круглым"
+    );
+}
