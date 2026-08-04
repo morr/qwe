@@ -12,13 +12,21 @@
 //! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
 //! редко и только вблизи, кнопки в панели достаточно.
 //!
-//! Кроме тумблеров ряд держит листающую кнопку `camera` (откуда стартует
-//! камера — `save` ⇄ `reset`, `camera::CameraPositionMode`): другого ряда
-//! кнопок в UI нет, а
-//! заводить панель на одну строку незачем. Всё, что про навигацию — сеточный
-//! слой, размер навтайла, алгоритм поиска пути, — жило здесь же, а теперь
-//! стоит в панели Navigation (`ui/navigation.rs`) рядом с настройками второго
-//! бэкенда: они взаимоисключающие, и видеть надо только настройки выбранного.
+//! Кроме тумблеров ряд держит листалки — кнопки, где клик перебирает значения,
+//! а зелёный держится, пока стоит умолчание:
+//!
+//! - `camera:` — откуда стартует камера (`save` ⇄ `reset`,
+//!   `camera::CameraPositionMode`);
+//! - `navtile:` — сторона ячейки навигации (`settings::NavtileBase`, смена
+//!   перезагружает мир).
+//!
+//! Настройки бэкендов поиска пути — сеточный слой, алгоритм, радиус агента —
+//! стоят в панели Navigation (`ui/navigation.rs`) рядом друг с другом: они
+//! взаимоисключающие, и видеть надо только настройки выбранного. Навтайл к ним
+//! не относится, хотя и жил там: в тайлах этого размера мир строится всегда —
+//! заливка проходимости, отсечение недостижимого, снап портала, генерация
+//! входов в здания, — по какому бы бэкенду ни ходили пешки, и прятать его
+//! вместе с настройками сетки значило бы называть глобальное частным.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
@@ -42,7 +50,7 @@ use crate::map::osm::MapData;
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
-use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
+use crate::settings::{MAP_SIZE, NavtileBase, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
     UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumnSlot, UiOpacity, spawn_panel_button, ui_color,
@@ -96,16 +104,38 @@ struct ConiferNoiseOverlayMarker {
     generation: u32,
 }
 
-/// Подпись на кнопке-переключателе стартовой позиции камеры.
-#[derive(Component)]
-struct CameraPositionLabel;
-
 /// Кнопка-листалка в этом же ряду. Зелёная, пока выбрано значение по
 /// умолчанию, — так видно, что настройки не уведены от базовых, тем же цветом,
 /// каким тумблеры показывают «включено».
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum CyclerButton {
     Camera,
+    Navtile,
+}
+
+/// Текст значения справа на листалке; та же метка, что на самой кнопке, —
+/// один компонент на все листалки, а не маркер на каждую (идиома
+/// `ui/navigation.rs::NavValueLabel`).
+#[derive(Component, Clone, Copy)]
+struct CyclerValueLabel(CyclerButton);
+
+/// Что показывает листалка и стоит ли она на умолчании. Одна функция на спавн
+/// и на актуализацию: разойтись подписи и подсветке негде.
+fn cycler_state(
+    kind: CyclerButton,
+    position_mode: &CameraPositionMode,
+    navtile: &NavtileBase,
+) -> (String, bool) {
+    match kind {
+        CyclerButton::Camera => (
+            position_mode.label().to_string(),
+            *position_mode == CameraPositionMode::default(),
+        ),
+        CyclerButton::Navtile => (
+            navtile.label().to_string(),
+            *navtile == NavtileBase::default(),
+        ),
+    }
 }
 
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
@@ -186,7 +216,10 @@ impl Plugin for UiDebugTogglesPlugin {
                                 .or_else(resource_changed::<ConiferNoiseStyle>),
                         )
                         .after(crate::map::trees::rebuild_trees),
-                    sync_camera_position_label.run_if(resource_changed::<CameraPositionMode>),
+                    sync_cycler_labels.run_if(
+                        resource_changed::<CameraPositionMode>
+                            .or_else(resource_changed::<NavtileBase>),
+                    ),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
                     toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
                 ),
@@ -194,7 +227,11 @@ impl Plugin for UiDebugTogglesPlugin {
     }
 }
 
-fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositionMode>) {
+fn render_debug_toggles(
+    mut commands: Commands,
+    position_mode: Res<CameraPositionMode>,
+    navtile: Res<NavtileBase>,
+) {
     let row = commands
         .spawn((
             Node {
@@ -254,7 +291,45 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
     );
 
     // откуда стартует камера — клик листает reset ⇄ save
-    let camera_button = commands
+    spawn_cycler(
+        &mut commands,
+        row,
+        CyclerButton::Camera,
+        "camera:",
+        &position_mode,
+        &navtile,
+        |_activate: On<Activate>, mut mode: ResMut<CameraPositionMode>| {
+            *mode = mode.next();
+        },
+    );
+    // сторона навтайла: клик листает 2m ⇄ 1m и перезагружает мир
+    // (`city::reload_world`) — проходимость существует только в тайлах
+    // текущего размера
+    spawn_cycler(
+        &mut commands,
+        row,
+        CyclerButton::Navtile,
+        "navtile:",
+        &position_mode,
+        &navtile,
+        |_activate: On<Activate>, mut navtile: ResMut<NavtileBase>| {
+            *navtile = navtile.next();
+        },
+    );
+}
+
+/// Кнопка-листалка: подпись слева, текущее значение справа.
+fn spawn_cycler<M>(
+    commands: &mut Commands,
+    row: Entity,
+    kind: CyclerButton,
+    label: &str,
+    position_mode: &CameraPositionMode,
+    navtile: &NavtileBase,
+    on_activate: impl IntoObserverSystem<Activate, (), M>,
+) {
+    let (value, is_default) = cycler_state(kind, position_mode, navtile);
+    let button = commands
         .spawn((
             Button,
             Pickable::default(),
@@ -272,15 +347,11 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
                 },
                 ..default()
             },
-            CyclerButton::Camera,
-            BackgroundColor(cycler_background(
-                *position_mode == CameraPositionMode::default(),
-                false,
-                false,
-            )),
+            kind,
+            BackgroundColor(cycler_background(is_default, false, false)),
             children![
                 (
-                    Text::new("camera:"),
+                    Text::new(label),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
@@ -288,8 +359,8 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
                     TextColor(Color::srgb(0.75, 0.78, 0.75)),
                 ),
                 (
-                    CameraPositionLabel,
-                    Text::new(position_mode.label()),
+                    CyclerValueLabel(kind),
+                    Text::new(value),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
@@ -298,13 +369,9 @@ fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositio
                 ),
             ],
         ))
-        .observe(
-            |_activate: On<Activate>, mut mode: ResMut<CameraPositionMode>| {
-                *mode = mode.next();
-            },
-        )
+        .observe(on_activate)
         .id();
-    commands.entity(row).add_child(camera_button);
+    commands.entity(row).add_child(button);
 }
 
 /// N — «показать слой навигации»: у сетки и у меша свои тумблеры показа, а
@@ -348,12 +415,11 @@ fn cycler_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Col
 /// Зелёный на листалках держится, пока выбрано значение по умолчанию.
 fn update_cycler_buttons(
     position_mode: Res<CameraPositionMode>,
+    navtile: Res<NavtileBase>,
     mut buttons: Query<(&CyclerButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
 ) {
     for (cycler, hovered, is_pressed, mut background) in &mut buttons {
-        let is_default = match cycler {
-            CyclerButton::Camera => *position_mode == CameraPositionMode::default(),
-        };
+        let (_, is_default) = cycler_state(*cycler, &position_mode, &navtile);
         background.set_if_neq(BackgroundColor(cycler_background(
             is_default,
             is_pressed,
@@ -362,13 +428,16 @@ fn update_cycler_buttons(
     }
 }
 
-/// Актуализация подписи при смене режима стартовой позиции (кнопкой или по BRP).
-fn sync_camera_position_label(
-    mode: Res<CameraPositionMode>,
-    mut labels: Query<&mut Text, With<CameraPositionLabel>>,
+/// Актуализация подписей листалок после правки ресурса извне (кнопкой,
+/// восстановленными настройками, BRP).
+fn sync_cycler_labels(
+    position_mode: Res<CameraPositionMode>,
+    navtile: Res<NavtileBase>,
+    mut labels: Query<(&mut Text, &CyclerValueLabel)>,
 ) {
-    for mut text in &mut labels {
-        text.0 = mode.label().to_string();
+    for (mut text, label) in &mut labels {
+        let (value, _) = cycler_state(label.0, &position_mode, &navtile);
+        text.0 = value;
     }
 }
 

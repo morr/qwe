@@ -12,12 +12,17 @@
 //! Настройки каждой подсистемы живут под её строкой и **видны только пока она
 //! выбрана** (`Display::None`, левую колонку перестыкует
 //! `ui::stack_bottom_columns`): ползунок радиуса агента ничего не значит, пока
-//! ходят по сетке, а размер навтайла — пока ходят по мешу.
+//! ходят по сетке, а алгоритм поиска по ней — пока ходят по мешу.
 //!
-//! - `Navmesh` → `Show` (сеточный оверлей, он же `DebugNavmesh`), `Navtile`
-//!   (сторона тайла, смена перезагружает мир);
+//! - `Navmesh` → `Pathfind` (алгоритм поиска), `Show` (сеточный оверлей, он же
+//!   `DebugNavmesh`);
 //! - `Polymesh` → `Show` (оверлей меша), `Chunks` (иерархия чанков: и постройка
 //!   слоями, и их границы на оверлее), `Agent radius` (инфляция препятствий).
+//!
+//! Размера навтайла здесь нет, хотя он и похож на настройку сетки: в тайлах
+//! этого размера мир строится при любом бэкенде (см. `ui/debug.rs`), поэтому
+//! кнопка `navtile:` стоит в ряду дебаг-кнопок и не гаснет вместе с этой
+//! секцией.
 //!
 //! Оверлей polymesh рисует **все** рёбра полигонов построенного меша одним
 //! merged-мешем — по нему видно и контуры препятствий, и как polyanya разбила
@@ -38,8 +43,7 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::map::MeshBuilder;
 use crate::navigation::{PathfindingAlgorithm, PolyNavmesh, PolymeshDebug};
 use crate::settings::{
-    MAP_SIZE, NavtileBase, POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN,
-    POLYMESH_AGENT_RADIUS_STEP,
+    MAP_SIZE, POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
 };
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
@@ -109,7 +113,6 @@ enum NavValueLabel {
     Backend,
     Pathfind,
     NavmeshShow,
-    Navtile,
     PolymeshShow,
     PolymeshChunks,
     PolymeshRadius,
@@ -122,7 +125,6 @@ impl NavValueLabel {
             Self::Backend => active_section(poly).label().to_string(),
             Self::Pathfind => values.algorithm.label().to_string(),
             Self::NavmeshShow => enabled_text(values.navmesh_show.0),
-            Self::Navtile => values.navtile.label().to_string(),
             Self::PolymeshShow => enabled_text(poly.show),
             Self::PolymeshChunks => enabled_text(poly.chunks),
             Self::PolymeshRadius => radius_text(poly.radius()),
@@ -137,7 +139,6 @@ impl NavValueLabel {
 struct NavPanelValues<'w> {
     polymesh: Res<'w, PolymeshDebug>,
     navmesh_show: Res<'w, DebugNavmesh>,
-    navtile: Res<'w, NavtileBase>,
     algorithm: Res<'w, PathfindingAlgorithm>,
 }
 
@@ -181,7 +182,6 @@ impl Plugin for UiNavigationPlugin {
                     (sync_nav_values, sync_section_visibility).run_if(
                         resource_changed::<PolymeshDebug>
                             .or_else(resource_changed::<DebugNavmesh>)
-                            .or_else(resource_changed::<NavtileBase>)
                             .or_else(resource_changed::<PathfindingAlgorithm>),
                     ),
                     // PolyNavmesh меняется ровно в момент снятия готового
@@ -268,18 +268,6 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
             show.0 = !show.0;
         },
     );
-    spawn_row(
-        &mut commands,
-        panel,
-        "Navtile",
-        RowStyle::Setting(NavSection::Navmesh),
-        NavValueLabel::Navtile,
-        values.navtile.label().to_string(),
-        |_activate: On<Activate>, mut navtile: ResMut<NavtileBase>| {
-            *navtile = navtile.next();
-        },
-    );
-
     // настройки полигональной навигации
     spawn_row(
         &mut commands,

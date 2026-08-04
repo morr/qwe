@@ -1113,11 +1113,10 @@ in `main.rs`.
   `PolymeshDebug::enabled`.
   Under it stand the settings **of the selected backend only** — the other set is
   `Display::None`d out of the layout (`sync_section_visibility`), because an agent radius
-  means nothing while pawns walk tiles, and a navtile size means nothing while they walk
-  the mesh:
+  means nothing while pawns walk tiles, and a grid search algorithm means nothing while
+  they walk the mesh:
   - `Navmesh` → **`Pathfind`** (`PathfindingAlgorithm`, cycles A*/Dijkstra/Fringe/BFS/
-    HPA*/Theta*), **`Show`** (the grid fill overlay, `DebugNavmesh`), **`Navtile`**
-    (`NavtileBase`, 2 m ⇄ 1 m, reloads the world);
+    HPA*/Theta*), **`Show`** (the grid fill overlay, `DebugNavmesh`);
   - `Polymesh` → **`Show`** (mesh overlay, draws nothing else), **`Chunks`** (default on)
     — the chunk hierarchy: it switches the *build* between layered and one flat layer
     (`FLAT_CHUNK_METERS`) and therefore triggers a rebuild, and it is what puts the grid
@@ -1172,13 +1171,19 @@ in `main.rs`.
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay it still owns is **one merged mesh** — per-tile entities once cost 330 k
   entities; the noise overlay is one sprite with a CPU-built texture (see Conifer stands).
-  Everything about navigation — the grid overlay toggle, `navtile:`, `pathfind:` — moved
+  The *backend* settings — the grid overlay toggle, `pathfind:`, the agent radius — moved
   into the **Navigation panel** above, next to the other backend's settings; the row keeps
-  the one cycling button that is not about a layer, `camera:` (start view). It goes green
+  the cycling buttons that are not about one backend's layer: **`camera:`** (start view)
+  and **`navtile:`** (`NavtileBase`, 2 m ⇄ 1 m, reloads the world). Navtile is here and
+  not under `Navmesh` because the world is *always* built in tiles of that size — the
+  passability fill, the unreachable prune, the portal snap, the entrance generation —
+  whichever backend the pawns then walk; hiding it with the grid settings would call a
+  global setting a local one. A cycler goes green
   (`TOGGLE_ACTIVE_COLOR`, the same "on" colour as a toggle) while its resource equals
-  `Default::default()` — `save` — so a setting steered away from the baseline is
+  `Default::default()` — `save`, `2m` — so a setting steered away from the baseline is
   visible at a glance; the check is against the `Default` impl, not a hardcoded variant, so
-  moving `#[default]` moves the highlight with it.
+  moving `#[default]` moves the highlight with it. Label text and green-ness come from one
+  `cycler_state` used by both the spawn and the sync system, so they cannot drift apart.
 - **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, default
   `save`, the `camera:` button, persisted) decides where the camera stands when the world comes up:
   `reset` — the snapped portal at `START_ZOOM`; `save` — the x/y/zoom written into
