@@ -4366,8 +4366,6 @@ dependencies = [
 [[package]]
 name = "polyanya"
 version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a1cb0a84a11080ff93d943a023e9e386c34d3dcc3c988bc6785f990b1964277"
 dependencies = [
  "bvh2d",
  "geo",
