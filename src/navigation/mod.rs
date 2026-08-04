@@ -8,7 +8,7 @@ use bevy::prelude::*;
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
 pub use self::northstar::{
-    NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
+    NorthstarGrid, build_from_navmesh, find_path_northstar, northstar_wanted, poll_northstar_build,
     start_northstar_build,
 };
 pub use self::polymesh::{
@@ -108,9 +108,29 @@ impl Plugin for NavigationPlugin {
             // которая строится по уже финальной проходимости
             // не раньше конца прогрева: постройка занимает rayon'ом все ядра,
             // и A*, который в это время развозит пешек в кадре, замедляется
-            // вдвое (85 мс на поиск против 36 мс в бенче)
-            .add_systems(OnEnter(PlayPhase::Live), start_northstar_build)
-            .add_systems(Update, poll_northstar_build)
+            // вдвое (85 мс на поиск против 36 мс в бенче).
+            //
+            // И только если иерархия выбрана: строится ровно тот бэкенд, по
+            // которому ходят (`northstar_wanted`). Переключение алгоритма или
+            // возврат с polymesh на сетку запускает постройку тогда же — тем
+            // же условием в `Update`, как ленивая постройка меша
+            .add_systems(
+                OnEnter(PlayPhase::Live),
+                start_northstar_build.run_if(northstar_wanted),
+            )
+            .add_systems(
+                Update,
+                (
+                    start_northstar_build
+                        .run_if(in_state(PlayPhase::Live))
+                        .run_if(northstar_wanted)
+                        .run_if(
+                            resource_changed::<PathfindingAlgorithm>
+                                .or_else(resource_changed::<PolymeshDebug>),
+                        ),
+                    poll_northstar_build,
+                ),
+            )
             // полигональный меш-прототип: ленив (ничего не строит, пока
             // панель Polymesh не включат) и постройка асинхронна
             .register_type::<PolymeshDebug>()

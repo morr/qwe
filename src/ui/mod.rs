@@ -7,8 +7,8 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
+mod navigation;
 mod noise;
-mod polynav;
 mod roads;
 mod slider;
 mod speed;
@@ -41,9 +41,17 @@ pub struct UiRightColumnSlot(pub u8);
 
 /// То же для левой колонки: 0 — ряд дебаг-тумблеров у края экрана, 1 — панель
 /// Noise над ним (целиком живёт при включённом дебаг-слое `noise`), 2 —
-/// панель Polymesh.
+/// панель Navigation.
 #[derive(Component)]
 pub struct UiLeftColumnSlot(pub u8);
+
+/// «Оставить зазор под этой панелью». Колонка по умолчанию стоит вплотную —
+/// панели настроек карты читаются как один блок, и щели между ними лишние.
+/// Зазор нужен там, где над блоком начинается **другой род** UI: ряд кнопок
+/// под панелью Navigation, справка по хоткеям над панелями OSM. Зазор один на
+/// всё и равен отступу от края экрана ([`UI_SCREEN_EDGE_PX_OFFSET`]).
+#[derive(Component)]
+pub struct UiPanelGapBelow;
 
 /// Тип объектов мира, чьё число стоит в заголовке панели (см.
 /// [`panel_header`]); компонент висит на тексте счётчика.
@@ -208,7 +216,7 @@ impl Plugin for UiPlugin {
             trees::UiTreeStylePlugin,
             tree_rows::UiTreeRowStylePlugin,
             noise::UiConiferNoisePlugin,
-            polynav::UiPolynavPlugin,
+            navigation::UiNavigationPlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
             city::UiCityPlugin,
@@ -238,8 +246,8 @@ impl Plugin for UiPlugin {
 }
 
 /// Отступ снизу у каждой панели обеих нижних колонок — сумма высот панелей под
-/// ней (см. [`UiRightColumnSlot`] / [`UiLeftColumnSlot`]). Панели стоят
-/// вплотную, без зазора.
+/// ней (см. [`UiRightColumnSlot`] / [`UiLeftColumnSlot`]) плюс зазор за каждую
+/// помеченную [`UiPanelGapBelow`] панель на её уровне и ниже.
 ///
 /// `ComputedNode::size` — **физические** пиксели, а `Node::bottom` — логические:
 /// без `inverse_scale_factor` на retina-экране каждая высота удваивалась и между
@@ -252,38 +260,61 @@ impl Plugin for UiPlugin {
 /// появилась строка, доезжает на кадр позже — заметить это можно только на
 /// смене формы кроны.
 fn stack_bottom_columns(
-    mut right: Query<(&UiRightColumnSlot, &ComputedNode, &mut Node), Without<UiLeftColumnSlot>>,
-    mut left: Query<(&UiLeftColumnSlot, &ComputedNode, &mut Node), Without<UiRightColumnSlot>>,
+    mut right: Query<
+        (
+            &UiRightColumnSlot,
+            &ComputedNode,
+            &mut Node,
+            Has<UiPanelGapBelow>,
+        ),
+        Without<UiLeftColumnSlot>,
+    >,
+    mut left: Query<
+        (
+            &UiLeftColumnSlot,
+            &ComputedNode,
+            &mut Node,
+            Has<UiPanelGapBelow>,
+        ),
+        Without<UiRightColumnSlot>,
+    >,
 ) {
     let mut right: Vec<_> = right
         .iter_mut()
-        .map(|(slot, computed, node)| (slot.0, computed, node))
+        .map(|(slot, computed, node, gap)| (slot.0, computed, node, gap))
         .collect();
     stack_column(&mut right);
     let mut left: Vec<_> = left
         .iter_mut()
-        .map(|(slot, computed, node)| (slot.0, computed, node))
+        .map(|(slot, computed, node, gap)| (slot.0, computed, node, gap))
         .collect();
     stack_column(&mut left);
 }
 
-fn stack_column(panels: &mut [(u8, &ComputedNode, Mut<Node>)]) {
-    let mut heights: Vec<(u8, f32)> = panels
+fn stack_column(panels: &mut [(u8, &ComputedNode, Mut<Node>, bool)]) {
+    // спрятанная панель (Noise при выключенном тумблере) не занимает места —
+    // и не по `ComputedNode` с прошлого кадра, а по самому `Display`
+    let visible: Vec<(u8, f32, bool)> = panels
         .iter()
-        // спрятанная панель (Noise при выключенном тумблере) не занимает места
-        // — и не по `ComputedNode` с прошлого кадра, а по самому `Display`
-        .filter(|(_, _, node)| node.display != Display::None)
-        .map(|&(slot, computed, _)| (slot, computed.size.y * computed.inverse_scale_factor))
+        .filter(|(_, _, node, _)| node.display != Display::None)
+        .map(|&(slot, computed, _, gap)| {
+            (slot, computed.size.y * computed.inverse_scale_factor, gap)
+        })
         .collect();
-    heights.sort_unstable_by_key(|&(slot, _)| slot);
 
-    for (slot, _, node) in panels.iter_mut() {
-        let below: f32 = heights
+    for (slot, _, node, _) in panels.iter_mut() {
+        let below: f32 = visible
             .iter()
-            .filter(|&&(other, _)| other < *slot)
-            .map(|&(_, height)| height)
+            .filter(|&&(other, _, _)| other < *slot)
+            .map(|&(_, height, _)| height)
             .sum();
-        let bottom = px(UI_SCREEN_EDGE_PX_OFFSET + below);
+        // зазор считается по панелям на своём уровне и ниже: помеченная
+        // отодвигается от того, что под ней, вместе со всеми над ней
+        let gaps = visible
+            .iter()
+            .filter(|&&(other, _, gap)| gap && other <= *slot)
+            .count() as f32;
+        let bottom = px(UI_SCREEN_EDGE_PX_OFFSET * (1. + gaps) + below);
         if node.bottom != bottom {
             node.bottom = bottom;
         }

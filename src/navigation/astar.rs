@@ -62,6 +62,13 @@ impl PathfindingAlgorithm {
         }
     }
 
+    /// Нужна ли алгоритму иерархия northstar. Плоские четыре обходятся сеткой
+    /// проходимости, и строить под них `OrdinalGrid` — двенадцать секунд всех
+    /// ядер впустую (`northstar::northstar_wanted`).
+    pub fn needs_northstar(self) -> bool {
+        matches!(self, Self::Hpa | Self::ThetaStar)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Astar => "A*",

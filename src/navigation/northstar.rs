@@ -53,6 +53,22 @@ impl NorthstarGrid {
             cancelled.store(true, Ordering::Relaxed);
         }
     }
+
+    /// Сетки нет и постройка не идёт — то есть её ещё надо запустить.
+    fn is_missing(&self) -> bool {
+        self.grid.is_none() && self.task.is_none()
+    }
+}
+
+/// Строить ли иерархию сейчас: она нужна только выбранному бэкенду и только
+/// двум его алгоритмам. Двенадцать секунд всех ядер за сетку, по которой в
+/// этом запуске никто не пойдёт, — самая дорогая работа в загрузке.
+pub fn northstar_wanted(
+    polymesh: Res<crate::navigation::PolymeshDebug>,
+    algorithm: Res<crate::navigation::PathfindingAlgorithm>,
+    grid: Res<NorthstarGrid>,
+) -> bool {
+    grid.is_missing() && !polymesh.enabled && algorithm.needs_northstar()
 }
 
 /// Постройка стартует по входу в `Playing` — navmesh к этому моменту

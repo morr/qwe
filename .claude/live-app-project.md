@@ -135,8 +135,8 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
-`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `CameraPositionMode`,
-`SavedCameraView`.
+`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
+`NavtileBase`, `CameraPositionMode`, `SavedCameraView`.
 
 Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
@@ -166,7 +166,9 @@ requests plus the average search time, already computed by the app.
 ```bash
 $b res set DebugDoors .0 true         # tuple structs: field .0
 $b res set DebugGrid .0 true
-$b res set DebugNavmesh .0 true
+$b res set DebugNavmesh .0 true       # grid overlay: the `Show` row under Algo: Navmesh
+$b res set PolymeshDebug .enabled true            # Algo: Navmesh (false) ⇄ Polymesh (true)
+$b res set PolymeshDebug .show false              # polymesh overlay off, routing untouched
 $b res set DrawMovePaths .0 true
 $b res set BuildingHeightMode . '"Shadows"'      # whole resource: path `.`
 $b res set TreeStyle .shape '"Conifer"'
@@ -176,9 +178,11 @@ $b res set TreeRowStyle .enabled false            # …аллеи (панель 
 $b res set PathfindingAlgorithm . '"Hpa"'
 ```
 
-Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` navmesh,
-`M` movepath, `Space` pause, `=`/`-` speed. The bottom-left panel has the same toggles as
-buttons, the bottom-centre one switches city — find them with `brp texts` / `brp ui-at`
+Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the
+navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
+`=`/`-` speed. The bottom-left button row has the layer toggles, the **Navigation**
+panel above it picks the pathfinding backend (`Algo`) and shows only that backend's
+settings, the bottom-centre panel switches city — find them with `brp texts` / `brp ui-at`
 rather than hardcoding pixels, the layout moves.
 
 ## Restart and city switch

@@ -1,20 +1,24 @@
 //! Дебаг-тумблеры (порт `zxc/src/ui/debug/toggles.rs` на ресурсах вместо
-//! стейтов): кнопки grid / navmesh / doors / movepath в левом нижнем углу.
+//! стейтов): кнопки grid / doors / movepath в левом нижнем углу.
 //!
 //! - grid — сетка navtiles гизмо-линиями;
-//! - navmesh — заливка непроходимых тайлов (Mesh2d, спавнится по включению);
 //! - doors — входы в здания, свои и досочинённые (`map/osm/entrances/`);
 //! - movepath — существующий `DrawMovePaths` (он же на клавише M);
 //! - noise — поле хвои (`map/trees/conifer.rs`) текстурой на всю карту:
 //!   серым — значение поля, зелёным — будущие хвойные массивы.
 //!
-//! Хоткеи: N — navmesh, M — movepath (в `movement`), G — «гизмо» одной
+//! Хоткеи: N — слой навигации (`toggle_navmesh`: показ той подсистемы, по
+//! которой сейчас ходят), M — movepath (в `movement`), G — «гизмо» одной
 //! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
 //! редко и только вблизи, кнопки в панели достаточно.
 //!
-//! Кроме тумблеров ряд держит листающие кнопки — алгоритм поиска пути и
-//! `position` (откуда стартует камера, `camera::CameraPositionMode`): другого
-//! ряда кнопок в UI нет, а заводить панель на одну строку незачем.
+//! Кроме тумблеров ряд держит листающую кнопку `camera` (откуда стартует
+//! камера — `save` ⇄ `reset`, `camera::CameraPositionMode`): другого ряда
+//! кнопок в UI нет, а
+//! заводить панель на одну строку незачем. Всё, что про навигацию — сеточный
+//! слой, размер навтайла, алгоритм поиска пути, — жило здесь же, а теперь
+//! стоит в панели Navigation (`ui/navigation.rs`) рядом с настройками второго
+//! бэкенда: они взаимоисключающие, и видеть надо только настройки выбранного.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
@@ -37,8 +41,8 @@ use crate::map::ConiferField;
 use crate::map::osm::MapData;
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
-use crate::navigation::{ArcNavmesh, PathfindingAlgorithm};
-use crate::settings::{MAP_SIZE, NavtileBase, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
+use crate::navigation::{ArcNavmesh, PolymeshDebug};
+use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
     UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumnSlot, UiOpacity, spawn_panel_button, ui_color,
@@ -50,6 +54,10 @@ use crate::ui::{
 #[settings_group(group = "debug", key = "grid")]
 pub struct DebugGrid(pub bool);
 
+/// Показывать ли заливку непроходимых тайлов — строка `Show` под `Navmesh` в
+/// панели Navigation (`ui/navigation.rs`). Слой рисуется, только пока сетка и
+/// есть бэкенд навигации: поверх меша, по которому ходят, он показывал бы не
+/// ту проходимость.
 #[derive(Resource, Reflect, SettingsGroup, Default)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "navmesh")]
@@ -69,7 +77,6 @@ pub struct DebugConiferNoise(pub bool);
 #[derive(Component, Clone, Copy)]
 enum DebugToggleButton {
     Grid,
-    Navmesh,
     Doors,
     Movepath,
     ConiferNoise,
@@ -89,26 +96,16 @@ struct ConiferNoiseOverlayMarker {
     generation: u32,
 }
 
-/// Подпись на кнопке-переключателе алгоритма поиска пути.
-#[derive(Component)]
-struct PathfindingMethodLabel;
-
 /// Подпись на кнопке-переключателе стартовой позиции камеры.
 #[derive(Component)]
 struct CameraPositionLabel;
-
-/// Подпись на кнопке-переключателе размера навтайла.
-#[derive(Component)]
-struct NavtileSizeLabel;
 
 /// Кнопка-листалка в этом же ряду. Зелёная, пока выбрано значение по
 /// умолчанию, — так видно, что настройки не уведены от базовых, тем же цветом,
 /// каким тумблеры показывают «включено».
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum CyclerButton {
-    Pathfind,
-    Position,
-    Navtile,
+    Camera,
 }
 
 /// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
@@ -168,7 +165,12 @@ impl Plugin for UiDebugTogglesPlugin {
                     render_doors
                         .run_if(|doors: Res<DebugDoors>| doors.0)
                         .run_if(in_state(AppState::Playing)),
-                    sync_navmesh_overlay.run_if(resource_changed::<DebugNavmesh>),
+                    // слой сетки гаснет и при выборе полигонального бэкенда:
+                    // рисовать его поверх меша, по которому ходят, — значит
+                    // показывать не ту проходимость
+                    sync_navmesh_overlay.run_if(
+                        resource_changed::<DebugNavmesh>.or_else(resource_changed::<PolymeshDebug>),
+                    ),
                     // подсвеченная область следует за ползунком доли хвои; смена
                     // состава деревьев (тумблеры Trees / Tree rows) меняет сам
                     // набор, по которому посчитано поле, панель Noise — его
@@ -184,9 +186,7 @@ impl Plugin for UiDebugTogglesPlugin {
                                 .or_else(resource_changed::<ConiferNoiseStyle>),
                         )
                         .after(crate::map::trees::rebuild_trees),
-                    sync_pathfinding_method_label.run_if(resource_changed::<PathfindingAlgorithm>),
                     sync_camera_position_label.run_if(resource_changed::<CameraPositionMode>),
-                    sync_navtile_label.run_if(resource_changed::<NavtileBase>),
                     toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
                     toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
                 ),
@@ -194,12 +194,7 @@ impl Plugin for UiDebugTogglesPlugin {
     }
 }
 
-fn render_debug_toggles(
-    mut commands: Commands,
-    algorithm: Res<PathfindingAlgorithm>,
-    position_mode: Res<CameraPositionMode>,
-    navtile: Res<NavtileBase>,
-) {
+fn render_debug_toggles(mut commands: Commands, position_mode: Res<CameraPositionMode>) {
     let row = commands
         .spawn((
             Node {
@@ -233,15 +228,6 @@ fn render_debug_toggles(
     spawn_toggle(
         &mut commands,
         row,
-        "navmesh",
-        DebugToggleButton::Navmesh,
-        |_activate: On<Activate>, mut navmesh: ResMut<DebugNavmesh>| {
-            navmesh.0 = !navmesh.0;
-        },
-    );
-    spawn_toggle(
-        &mut commands,
-        row,
         "doors",
         DebugToggleButton::Doors,
         |_activate: On<Activate>, mut doors: ResMut<DebugDoors>| {
@@ -267,63 +253,8 @@ fn render_debug_toggles(
         },
     );
 
-    // переключатель алгоритма поиска пути — клик листает по циклу
-    let method_button = commands
-        .spawn((
-            Button,
-            Pickable::default(),
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            CyclerButton::Pathfind,
-            // цвет ставится сразу, а не первым кадром `update_cycler_buttons`:
-            // иначе кнопка мигает серым на кадр спавна
-            BackgroundColor(cycler_background(
-                *algorithm == PathfindingAlgorithm::default(),
-                false,
-                false,
-            )),
-            children![
-                (
-                    Text::new("pathfind:"),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                ),
-                (
-                    PathfindingMethodLabel,
-                    Text::new(algorithm.label()),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(
-            |_activate: On<Activate>, mut algorithm: ResMut<PathfindingAlgorithm>| {
-                *algorithm = algorithm.next();
-            },
-        )
-        .id();
-    commands.entity(row).add_child(method_button);
-
     // откуда стартует камера — клик листает reset ⇄ save
-    let position_button = commands
+    let camera_button = commands
         .spawn((
             Button,
             Pickable::default(),
@@ -341,7 +272,7 @@ fn render_debug_toggles(
                 },
                 ..default()
             },
-            CyclerButton::Position,
+            CyclerButton::Camera,
             BackgroundColor(cycler_background(
                 *position_mode == CameraPositionMode::default(),
                 false,
@@ -349,7 +280,7 @@ fn render_debug_toggles(
             )),
             children![
                 (
-                    Text::new("position:"),
+                    Text::new("camera:"),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
@@ -373,64 +304,18 @@ fn render_debug_toggles(
             },
         )
         .id();
-    commands.entity(row).add_child(position_button);
-
-    // размер навтайла — клик листает 2m ⇄ 1m и перезагружает мир
-    let navtile_button = commands
-        .spawn((
-            Button,
-            Pickable::default(),
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            CyclerButton::Navtile,
-            BackgroundColor(cycler_background(
-                *navtile == NavtileBase::default(),
-                false,
-                false,
-            )),
-            children![
-                (
-                    Text::new("navtile:"),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                ),
-                (
-                    NavtileSizeLabel,
-                    Text::new(navtile.label()),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(
-            |_activate: On<Activate>, mut navtile: ResMut<NavtileBase>| {
-                *navtile = navtile.next();
-            },
-        )
-        .id();
-    commands.entity(row).add_child(navtile_button);
+    commands.entity(row).add_child(camera_button);
 }
 
-fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>) {
-    navmesh.0 = !navmesh.0;
+/// N — «показать слой навигации»: у сетки и у меша свои тумблеры показа, а
+/// клавиша одна, и жать её осмысленно только для той подсистемы, по которой
+/// сейчас ходят (панель Navigation, `ui/navigation.rs`).
+fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>, mut polymesh: ResMut<PolymeshDebug>) {
+    if polymesh.enabled {
+        polymesh.show = !polymesh.show;
+    } else {
+        navmesh.0 = !navmesh.0;
+    }
 }
 
 /// G — общий тумблер «гизмо»: doors и movepath разом. Гасит всё, если горит
@@ -462,32 +347,18 @@ fn cycler_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Col
 
 /// Зелёный на листалках держится, пока выбрано значение по умолчанию.
 fn update_cycler_buttons(
-    algorithm: Res<PathfindingAlgorithm>,
     position_mode: Res<CameraPositionMode>,
-    navtile: Res<NavtileBase>,
     mut buttons: Query<(&CyclerButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
 ) {
     for (cycler, hovered, is_pressed, mut background) in &mut buttons {
         let is_default = match cycler {
-            CyclerButton::Pathfind => *algorithm == PathfindingAlgorithm::default(),
-            CyclerButton::Position => *position_mode == CameraPositionMode::default(),
-            CyclerButton::Navtile => *navtile == NavtileBase::default(),
+            CyclerButton::Camera => *position_mode == CameraPositionMode::default(),
         };
         background.set_if_neq(BackgroundColor(cycler_background(
             is_default,
             is_pressed,
             hovered.get(),
         )));
-    }
-}
-
-/// Актуализация подписи при смене алгоритма (кнопкой или через BRP).
-fn sync_pathfinding_method_label(
-    algorithm: Res<PathfindingAlgorithm>,
-    mut labels: Query<&mut Text, With<PathfindingMethodLabel>>,
-) {
-    for mut text in &mut labels {
-        text.0 = algorithm.label().to_string();
     }
 }
 
@@ -498,16 +369,6 @@ fn sync_camera_position_label(
 ) {
     for mut text in &mut labels {
         text.0 = mode.label().to_string();
-    }
-}
-
-/// Актуализация подписи при смене размера навтайла (кнопкой или по BRP).
-fn sync_navtile_label(
-    navtile: Res<NavtileBase>,
-    mut labels: Query<&mut Text, With<NavtileSizeLabel>>,
-) {
-    for mut text in &mut labels {
-        text.0 = navtile.label().to_string();
     }
 }
 
@@ -523,7 +384,6 @@ fn spawn_toggle<M>(
 
 fn update_toggle_buttons(
     grid: Res<DebugGrid>,
-    navmesh: Res<DebugNavmesh>,
     doors: Res<DebugDoors>,
     movepaths: Res<DrawMovePaths>,
     conifer_noise: Res<DebugConiferNoise>,
@@ -537,7 +397,6 @@ fn update_toggle_buttons(
     for (toggle, hovered, is_pressed, mut background) in &mut buttons {
         let is_active = match toggle {
             DebugToggleButton::Grid => grid.0,
-            DebugToggleButton::Navmesh => navmesh.0,
             DebugToggleButton::Doors => doors.0,
             DebugToggleButton::Movepath => movepaths.0,
             DebugToggleButton::ConiferNoise => conifer_noise.0,
@@ -601,13 +460,14 @@ fn render_doors(
 /// entity на каждый укладывали кадр.
 fn sync_navmesh_overlay(
     mut commands: Commands,
-    navmesh_enabled: Res<DebugNavmesh>,
+    navmesh_show: Res<DebugNavmesh>,
+    polymesh: Res<PolymeshDebug>,
     arc_navmesh: Res<ArcNavmesh>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     overlay: Query<Entity, With<NavmeshOverlayMarker>>,
 ) {
-    if !navmesh_enabled.0 {
+    if polymesh.enabled || !navmesh_show.0 {
         for entity in &overlay {
             commands.entity(entity).despawn();
         }

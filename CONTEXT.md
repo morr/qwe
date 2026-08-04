@@ -835,6 +835,12 @@ in `main.rs`.
   dispatcher **falls back to flat A\*** for HPA*/Theta* requests. Doing it inline cost
   11 s of frozen loader screen; starting it before the warmup ends made it fight the
   warmup's A* for cores through rayon (85 ms per search instead of 36 ms).
+  **Only the selected backend is built** (`northstar_wanted`): the hierarchy serves
+  HPA*/Theta* on the grid, so with `Algo: Polymesh`, or with a flat grid algorithm
+  picked, those 12 s of every core are skipped entirely (measured on Tula: no
+  `northstar grid built` line at all). Switching `Algo` back to `Navmesh` or cycling
+  `Pathfind` to HPA* starts the build right then — the same lazy shape the polygonal mesh
+  has, run from `Update` on a resource change.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
@@ -1099,18 +1105,27 @@ in `main.rs`.
   panels) and is `Display::None`ed while the `noise` debug toggle is off — tuning the
   field without the overlay showing it is pointless. Noise mix is deliberately *not*
   here: it is a gameplay look knob, so it sits in the Trees panel.
-- **Polymesh panel** (`ui/polynav.rs`) — slot 2 of the left column, always visible (it
-  carries its own knobs, so it is a separate block, not a debug-row toggle): an
-  **`Enabled` row** (the Roads/Trees row-button idiom — label left, `On`/`Off` right)
-  toggling `PolymeshDebug::enabled`, plus an **agent radius** slider
-  (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at triangulation
-  time. Three toggles, split by what they change: **`Enabled`** builds the mesh and
-  **routes on it** (the backend), **`Show`** (default on) only draws the overlay and
-  rebuilds nothing, **`Chunks`** (default on) is the chunk hierarchy — it switches the
-  *build* between layered and one flat layer (`FLAT_CHUNK_METERS`) and therefore
-  triggers a rebuild, and it is what puts the grid on the overlay. One toggle for both
-  halves of chunking on purpose: a grid drawn over a search that does not use it is a
-  picture of something untrue. The radius minimum is deliberately non-zero (0.2 m) now that pawns
+- **Navigation panel** (`ui/navigation.rs`) — slot 2 of the left column, always visible,
+  **one UI for both pathfinding backends** (the Roads/Trees row-button idiom — label
+  left, value right). The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always
+  walk one of the two, so it is a choice, not two toggles that could both read `Off`
+  while the grid quietly served every request. Its single source of truth is
+  `PolymeshDebug::enabled`.
+  Under it stand the settings **of the selected backend only** — the other set is
+  `Display::None`d out of the layout (`sync_section_visibility`), because an agent radius
+  means nothing while pawns walk tiles, and a navtile size means nothing while they walk
+  the mesh:
+  - `Navmesh` → **`Pathfind`** (`PathfindingAlgorithm`, cycles A*/Dijkstra/Fringe/BFS/
+    HPA*/Theta*), **`Show`** (the grid fill overlay, `DebugNavmesh`), **`Navtile`**
+    (`NavtileBase`, 2 m ⇄ 1 m, reloads the world);
+  - `Polymesh` → **`Show`** (mesh overlay, draws nothing else), **`Chunks`** (default on)
+    — the chunk hierarchy: it switches the *build* between layered and one flat layer
+    (`FLAT_CHUNK_METERS`) and therefore triggers a rebuild, and it is what puts the grid
+    on the overlay; one toggle for both halves on purpose, since a grid drawn over a
+    search that does not use it is a picture of something untrue — and an **agent
+    radius** slider (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at
+    triangulation time.
+  The radius minimum is deliberately non-zero (0.2 m) now that pawns
   walk the mesh, and it is read through `PolymeshDebug::radius()`, which clamps — the
   minimum was raised after the setting was already being persisted, so an older prefs
   file holds 0.0. The overlay is one merged mesh at z 5.3 (above the grid navmesh fill
@@ -1127,14 +1142,12 @@ in `main.rs`.
   actually walks, not what the toggle asks for.
   Cache key (build generation + radius bits) lives on the overlay marker, the
   conifer-overlay idiom; chunks are absent from it because flipping them moves the
-  generation. **The polymesh and `navmesh` overlays are mutually
-  exclusive** (`enforce_overlay_exclusivity`): enabling either switches the other off,
-  since two red fills over one map read as a single layer at double alpha. What gets
-  switched off on the polymesh side is **`show`**, not `enabled` — the quarrel is about
-  the picture, and pawns keep walking the mesh. Only
-  *enabling* pushes; the reverse edit sees a hidden overlay and writes nothing, so
-  the two systems cannot loop. See **Poly navmesh** and **Polygonal routing** under
-  Navigation for what the mesh is and how pawns walk it.
+  generation. The two overlays can no longer collide — two red fills over one map read as
+  a single layer at double alpha, and each is now drawn **only while its backend is the
+  selected one** (`sync_navmesh_overlay` returns early when `polymesh.enabled`), so the
+  mutual-exclusion system that used to push the toggles apart is gone. See **Poly
+  navmesh** and **Polygonal routing** under Navigation for what the mesh is and how pawns
+  walk it.
 - **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
   `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
@@ -1142,25 +1155,32 @@ in `main.rs`.
   their sync systems.
 - **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumnSlot` /
   `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
-  left: debug toggles → Noise → Polymesh; both bottom-up. The panels are absolute (`bevy_ui` does
+  left: debug toggles → Noise → Navigation; both bottom-up. The panels are absolute (`bevy_ui` does
   not stack them), and the columns change height at runtime (Trees grows two rows on
   `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is the
   summed **measured** height of those below it instead of a hardcoded constant;
   `Display::None` panels are skipped by their `Node.display`, not their last-frame
   `ComputedNode`. `ComputedNode::size` is in *physical* pixels — multiply by
   `inverse_scale_factor` or every offset doubles on a retina screen.
-- **Debug toggles** (`ui/debug.rs`) — grid / navmesh / doors / movepath / noise buttons
+  Panels sit flush by default — a column of map-style panels reads as one block. A
+  **`UiPanelGapBelow`** marker inserts one gap under a panel, and the gap is
+  `UI_SCREEN_EDGE_PX_OFFSET`, the same distance the UI keeps from the screen edge, so
+  every space in the layout is the same width. Two panels carry it, both where the
+  *kind* of UI changes: Navigation (the button row below it is not a panel) and the
+  hotkey help (the panels below it are map settings).
+- **Debug toggles** (`ui/debug.rs`) — grid / doors / movepath / noise buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
-  navmesh overlay is **one merged mesh** — per-tile entities once cost 330 k entities; the
-  noise overlay is one sprite with a CPU-built texture (see Conifer stands). The row also
-  carries the two cycling buttons that are not layer toggles — `pathfind:` and
-  `position:` — since there is no other row of buttons in the UI. Those two go green
-  (`TOGGLE_ACTIVE_COLOR`, the same "on" colour as a toggle) while their resource equals
-  `Default::default()` — `Hpa` and `save` — so a setting steered away from the baseline is
+  navmesh overlay it still owns is **one merged mesh** — per-tile entities once cost 330 k
+  entities; the noise overlay is one sprite with a CPU-built texture (see Conifer stands).
+  Everything about navigation — the grid overlay toggle, `navtile:`, `pathfind:` — moved
+  into the **Navigation panel** above, next to the other backend's settings; the row keeps
+  the one cycling button that is not about a layer, `camera:` (start view). It goes green
+  (`TOGGLE_ACTIVE_COLOR`, the same "on" colour as a toggle) while its resource equals
+  `Default::default()` — `save` — so a setting steered away from the baseline is
   visible at a glance; the check is against the `Default` impl, not a hardcoded variant, so
   moving `#[default]` moves the highlight with it.
 - **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, default
-  `save`, the `position:` button, persisted) decides where the camera stands when the world comes up:
+  `save`, the `camera:` button, persisted) decides where the camera stands when the world comes up:
   `reset` — the snapped portal at `START_ZOOM`; `save` — the x/y/zoom written into
   **`SavedCameraView`** (persisted, same `camera` settings group) by
   `save_camera_view_on_exit`, a `Last` system that fires on `AppExit` and saves
