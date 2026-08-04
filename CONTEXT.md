@@ -920,6 +920,15 @@ in `main.rs`.
   without the flag five superseded builds ran all cores to completion. Checks sit before
   each long stage (boolean, clip, `as_navmesh`, `merge_polygons`); inside `i_overlay` and
   `spade` there is nowhere to look.
+  **Chunked by default** (`CHUNK_TARGET_METERS` = 400 m, capped at `MAX_CHUNKS` = 240
+  layers): the map is cut into a grid of polyanya layers stitched along seams computed
+  once in world coordinates, and the search runs over the chunk graph. Now that the
+  divergence is fixed (see below) the hierarchy is the default, and it wins on both
+  numbers (Tula, 500 queries, radius 0.2, `examples/polymesh_bench`): **build 0.31 s vs
+  5.72 s** flat — each chunk triangulates from its own small edge set — and **5.66 ms
+  mean / 43 ms worst vs 6.18 / 104**, same misses. `QWE_POLYMESH_CHUNK_M` set larger than
+  the map returns the flat single layer, which is how "hierarchy's fault" is told apart
+  from "geometry's fault".
   The build ends with **`mesh.bake()`**, strictly after `merge_polygons` (which starts by
   un-baking). Baking is what makes the mesh queryable at scale: without it point location
   is a linear scan over every polygon, twice per query, and an unreachable goal burns the
@@ -1106,8 +1115,11 @@ in `main.rs`.
   translucent seam is never double-painted). Same colour is the point — the two layers
   paint the same claim, and only an identical fill makes their accuracy comparable by
   eye; with a non-zero agent radius the gap between fill and edges *is* the inflation.
-  Cache key (build generation + radius bits) lives on the overlay marker, the
-  conifer-overlay idiom. **The `polymesh` and `navmesh` toggles are mutually
+  A **`Chunks` row** (default **on**) adds the chunk-grid boundaries on top of the mesh
+  edges — dark, half-transparent, and the same 0.4 m stroke width as an edge, since the
+  grid is a partition drawn over the geometry, not another layer of world.
+  Cache key (build generation + radius bits + the chunks toggle) lives on the overlay
+  marker, the conifer-overlay idiom. **The `polymesh` and `navmesh` toggles are mutually
   exclusive** (`enforce_overlay_exclusivity`): enabling either switches the other off,
   since two red fills over one map read as a single layer at double alpha. Only
   *enabling* pushes; the reverse edit sees a disabled resource and writes nothing, so
