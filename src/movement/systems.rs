@@ -147,8 +147,7 @@ pub fn dispatch_pathfinding_requests(
                     let started_at = std::time::Instant::now();
                     // цель осталась тайловой (её выбрало поведение по
                     // проходимости сетки) — на меше это её центр
-                    let path =
-                        find_path_polymesh(&polymesh, start_world, tile_center(end_tile));
+                    let path = find_path_polymesh(&polymesh, start_world, tile_center(end_tile));
                     (path, started_at)
                 }
                 None => {

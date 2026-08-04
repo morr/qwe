@@ -330,10 +330,7 @@ fn sync_polynav_values(
             Without<PolymeshChunksLabel>,
         ),
     >,
-    mut chunk_labels: Query<
-        &mut Text,
-        (With<PolymeshChunksLabel>, Without<PolymeshRadiusLabel>),
-    >,
+    mut chunk_labels: Query<&mut Text, (With<PolymeshChunksLabel>, Without<PolymeshRadiusLabel>)>,
     mut labels: Query<&mut Text, With<PolymeshRadiusLabel>>,
     sliders: Query<(Entity, &SliderValue), With<PolymeshRadiusSlider>>,
     mut commands: Commands,
