@@ -21,7 +21,7 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::map::MeshBuilder;
 use crate::navigation::{PolyNavmesh, PolymeshDebug};
 use crate::settings::{
-    POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
+    MAP_SIZE, POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
 };
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
@@ -38,6 +38,13 @@ const POLYMESH_EDGE_COLOR: Color = Color::srgba(0.2, 0.85, 0.95, 0.6);
 /// (`debug.rs::sync_navmesh_overlay`): два слоя показывают одно и то же, и
 /// одинаковый цвет — единственное, что делает их точность сравнимой на глаз.
 const POLYMESH_BLOCKED_COLOR: Color = Color::srgba(0.9, 0.15, 0.15, 0.35);
+
+/// Границы чанков — верхний уровень иерархии, по которому выбирается коридор
+/// (`polymesh::find_path_polymesh`). Тёмные и почти непрозрачные: они не часть
+/// геометрии, а разбиение поверх неё, и читаться должны как сетка на карте, а
+/// не как ещё один слой мира. Жёлтый пробовался и сливался с песком и дорогами.
+const POLYMESH_CHUNK_COLOR: Color = Color::srgba(0.05, 0.05, 0.08, 0.85);
+const POLYMESH_CHUNK_WIDTH: f32 = 1.2;
 
 /// Строки — как у панелей Roads и Trees: плотный фон поверх полупрозрачной
 /// панели, осветление под курсором и при нажатии.
@@ -58,6 +65,10 @@ struct PolymeshEnabledRow;
 #[derive(Component)]
 struct PolymeshEnabledLabel;
 
+/// Текст значения строки `Chunks` (`On` / `Off`).
+#[derive(Component)]
+struct PolymeshChunksLabel;
+
 /// Текст значения радиуса.
 #[derive(Component)]
 struct PolymeshRadiusLabel;
@@ -66,12 +77,13 @@ struct PolymeshRadiusLabel;
 #[derive(Component)]
 struct PolymeshRadiusSlider;
 
-/// Что нарисовано: поколение постройки и радиус — пока оба те же,
-/// пересобирать слой незачем (идиома `ConiferNoiseOverlayMarker`).
+/// Что нарисовано: поколение постройки, радиус и тумблер чанков — пока все
+/// те же, пересобирать слой незачем (идиома `ConiferNoiseOverlayMarker`).
 #[derive(Component)]
 struct PolymeshOverlayMarker {
     generation: u32,
     radius_bits: u32,
+    chunks: bool,
 }
 
 pub struct UiPolynavPlugin;
@@ -139,12 +151,25 @@ fn render_polynav_panel(mut commands: Commands, debug: Res<PolymeshDebug>) {
         ))
         .id();
 
-    spawn_enabled_row(
+    spawn_toggle_row(
         &mut commands,
         panel,
-        &debug,
+        "Enabled",
+        debug.enabled,
+        PolymeshEnabledLabel,
         |_activate: On<Activate>, mut debug: ResMut<PolymeshDebug>| {
             debug.enabled = !debug.enabled;
+        },
+    );
+
+    spawn_toggle_row(
+        &mut commands,
+        panel,
+        "Chunks",
+        debug.chunks,
+        PolymeshChunksLabel,
+        |_activate: On<Activate>, mut debug: ResMut<PolymeshDebug>| {
+            debug.chunks = !debug.chunks;
         },
     );
 
@@ -169,10 +194,12 @@ fn render_polynav_panel(mut commands: Commands, debug: Res<PolymeshDebug>) {
 
 /// Строка-тумблер `Enabled` со значением справа — та же кнопка-строка, что
 /// листает значения в панелях Roads и Trees, только значение булево.
-fn spawn_enabled_row<M>(
+fn spawn_toggle_row<L: Component, M>(
     commands: &mut Commands,
     panel: Entity,
-    debug: &PolymeshDebug,
+    label: &str,
+    value: bool,
+    value_marker: L,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
     let row = commands
@@ -198,7 +225,7 @@ fn spawn_enabled_row<M>(
             BackgroundColor(row_color(ROW_LIGHTEN)),
             children![
                 (
-                    Text::new("Enabled"),
+                    Text::new(label),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
@@ -210,8 +237,8 @@ fn spawn_enabled_row<M>(
                     },
                 ),
                 (
-                    PolymeshEnabledLabel,
-                    Text::new(enabled_text(debug.enabled)),
+                    value_marker,
+                    Text::new(enabled_text(value)),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
@@ -297,7 +324,15 @@ fn sync_polynav_values(
     debug: Res<PolymeshDebug>,
     mut enabled_labels: Query<
         &mut Text,
-        (With<PolymeshEnabledLabel>, Without<PolymeshRadiusLabel>),
+        (
+            With<PolymeshEnabledLabel>,
+            Without<PolymeshRadiusLabel>,
+            Without<PolymeshChunksLabel>,
+        ),
+    >,
+    mut chunk_labels: Query<
+        &mut Text,
+        (With<PolymeshChunksLabel>, Without<PolymeshRadiusLabel>),
     >,
     mut labels: Query<&mut Text, With<PolymeshRadiusLabel>>,
     sliders: Query<(Entity, &SliderValue), With<PolymeshRadiusSlider>>,
@@ -305,6 +340,9 @@ fn sync_polynav_values(
 ) {
     for mut text in &mut enabled_labels {
         text.0 = enabled_text(debug.enabled);
+    }
+    for mut text in &mut chunk_labels {
+        text.0 = enabled_text(debug.chunks);
     }
     for mut text in &mut labels {
         text.0 = radius_text(debug.radius());
@@ -330,9 +368,11 @@ fn sync_polymesh_overlay(
     let generation = poly.generation();
     let radius_bits = poly.built_radius().to_bits();
     if debug.enabled
-        && overlay
-            .iter()
-            .any(|(_, drawn)| drawn.generation == generation && drawn.radius_bits == radius_bits)
+        && overlay.iter().any(|(_, drawn)| {
+            drawn.generation == generation
+                && drawn.radius_bits == radius_bits
+                && drawn.chunks == debug.chunks
+        })
     {
         return;
     }
@@ -366,11 +406,17 @@ fn sync_polymesh_overlay(
                 if !seen.insert((a.min(b), a.max(b))) {
                     continue;
                 }
-                // polyanya живёт на glam 0.30 — конверсия по полям
+                // polyanya живёт на glam 0.30 — конверсия по полям. Координаты
+                // вершин локальные для слоя: чанк триангулирован от своего
+                // угла, мировая точка — плюс `offset`
+                let origin = Vec2::new(layer.offset.x, layer.offset.y);
                 let from = &layer.vertices[a as usize].coords;
                 let to = &layer.vertices[b as usize].coords;
                 builder.push_stroke(
-                    &[Vec2::new(from.x, from.y), Vec2::new(to.x, to.y)],
+                    &[
+                        origin + Vec2::new(from.x, from.y),
+                        origin + Vec2::new(to.x, to.y),
+                    ],
                     false,
                     POLYMESH_EDGE_WIDTH,
                     color,
@@ -378,6 +424,31 @@ fn sync_polymesh_overlay(
             }
         }
     }
+
+    // границы чанков — последними, чтобы легли поверх рёбер меша
+    if debug.chunks {
+        let (grid, chunk_size) = built.chunks();
+        let chunk_color = POLYMESH_CHUNK_COLOR.to_linear();
+        for column in 1..grid.x {
+            let x = column as f32 * chunk_size.x;
+            builder.push_stroke(
+                &[Vec2::new(x, 0.0), Vec2::new(x, MAP_SIZE.y)],
+                false,
+                POLYMESH_CHUNK_WIDTH,
+                chunk_color,
+            );
+        }
+        for row in 1..grid.y {
+            let y = row as f32 * chunk_size.y;
+            builder.push_stroke(
+                &[Vec2::new(0.0, y), Vec2::new(MAP_SIZE.x, y)],
+                false,
+                POLYMESH_CHUNK_WIDTH,
+                chunk_color,
+            );
+        }
+    }
+
     if builder.is_empty() {
         return;
     }
@@ -385,6 +456,7 @@ fn sync_polymesh_overlay(
         PolymeshOverlayMarker {
             generation,
             radius_bits,
+            chunks: debug.chunks,
         },
         Mesh2d(meshes.add(builder.build())),
         MeshMaterial2d(materials.add(ColorMaterial {
