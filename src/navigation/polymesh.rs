@@ -974,11 +974,98 @@ pub fn find_path_polymesh(build: &PolymeshBuild, from: Vec2, to: Vec2) -> Option
         )
     };
 
-    let path = build.mesh.path_on_layers(start, goal, blocked)?;
+    let path = if blocked.is_empty() {
+        // коридора нет (один слой — иерархия выключена): поиск идёт под
+        // внешним потолком, см. `bounded_path`
+        bounded_path(&build.mesh, start, goal, build.open_polygons(&blocked))?
+    } else {
+        build.mesh.path_on_layers(start, goal, blocked)?
+    };
     let mut points = Vec::with_capacity(path.path.len() + 1);
     points.push(from);
     points.extend(path.path.into_iter().map(from_poly));
     Some(points)
+}
+
+/// Сколько извлечений из очереди на полигон открытого пространства поиск может
+/// себе позволить, прежде чем считаться расходящимся.
+///
+/// Тот же порядок, что у собственного предела polyanya (`polygons * 10`), — но
+/// с двумя отличиями, и оба существенны. Во-первых, предел polyanya считается
+/// по всему мешу, а этот по **открытым** слоям: с коридором пространство
+/// меньше на порядок, и потолок обязан ужиматься вместе с ним, иначе он ничего
+/// не ограничивает. Во-вторых, предел polyanya стоит внутри блокирующего
+/// `Mesh::path` и ограничивает только извлечения; вставки не ограничены ничем,
+/// а прервать вызов снаружи нельзя. `Mesh::get_path` отдаёт будущее, которое
+/// двигает поиск по три шага за опрос, — потолок ставится снаружи и режет
+/// работу целиком.
+///
+/// Замер на Туле (плоский меш, 22 297 полигонов, 400 запросов): худший
+/// успешный запрос — 20 370 опросов при бюджете 74 323, то есть запас 3.6×.
+/// Медиана 423, p99 — 12 673.
+const SEARCH_POPS_PER_POLYGON: usize = 10;
+
+/// `FuturePath::poll` продвигает поиск на три шага.
+const SEARCH_STEPS_PER_POLL: usize = 3;
+
+/// Нижняя граница бюджета: на крошечном меше (тесты, синтетика) доля от числа
+/// полигонов вырождается в единицы опросов.
+const MIN_SEARCH_POLLS: usize = 4096;
+
+impl PolymeshBuild {
+    /// Полигоны в слоях, открытых поиску.
+    fn open_polygons(&self, blocked: &std::collections::HashSet<u8>) -> usize {
+        self.mesh
+            .layers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !blocked.contains(&(*index as u8)))
+            .map(|(_, layer)| layer.polygons.len())
+            .sum()
+    }
+}
+
+/// Поиск под внешним потолком работы.
+///
+/// `None` — пути нет **или** бюджет исчерпан. Второе означает расходящийся
+/// поиск, то есть дефект геометрии: воронка не сходится, очередь растёт без
+/// предела (замерено: 6.65 ГБ за 64 000 опросов на одном битом шве). В
+/// отладочной сборке это падение с внятным сообщением — чинить надо геометрию,
+/// а не поднимать потолок. В релизе — отказ, такой же как «цель недостижима»:
+/// `movement::listen_for_pathfinding_tasks` разберётся, пешка выберет другую
+/// цель, а мир не встанет и память не потечёт.
+fn bounded_path(
+    mesh: &polyanya::Mesh,
+    from: polyanya::Coords,
+    to: polyanya::Coords,
+    open_polygons: usize,
+) -> Option<polyanya::Path> {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let budget = (open_polygons * SEARCH_POPS_PER_POLYGON)
+        .div_ceil(SEARCH_STEPS_PER_POLL)
+        .max(MIN_SEARCH_POLLS);
+
+    // `FuturePath` сажает концы на меш сам и допуска `search_delta` при этом не
+    // применяет — поэтому ему отдаются уже посаженные точки от `locate`
+    let mut future = std::pin::pin!(mesh.get_path(from.position(), to.position()));
+    let mut context = Context::from_waker(Waker::noop());
+    for _ in 0..budget {
+        if let Poll::Ready(path) = future.as_mut().poll(&mut context) {
+            return path;
+        }
+    }
+    debug_assert!(
+        false,
+        "polymesh search diverged: {budget} polls ({} steps) spent on {open_polygons} open \
+         polygons without an answer, {:?} -> {:?}. The funnel is not converging, which means \
+         broken mesh geometry — fix the geometry, do not raise the budget",
+        budget * SEARCH_STEPS_PER_POLL,
+        from_poly(from.position()),
+        from_poly(to.position()),
+    );
+    None
 }
 
 /// Веса графа целочисленные (у `astar` из `pathfinding` порядок на стоимости);
@@ -1306,6 +1393,10 @@ fn stitch_chunks(
     // кромке задан глобально (`seam_points`), одинаковый для обоих соседей.
     // Расхождение означает, что кромку разошлись строить, и шов станет
     // односторонним — см. `SEAM_QUANTUM`
+    debug_assert_eq!(
+        unmatched, 0,
+        "polymesh: seam vertices without a match on the other side"
+    );
     if unmatched > 0 {
         warn!("polymesh: {unmatched} seam vertices have no match on the other side");
     }
@@ -1314,12 +1405,70 @@ fn stitch_chunks(
         // `+=`, и второй вызов пометил бы их повторно
         mesh.stitch_at_vertices(stitches, false);
     }
+    #[cfg(debug_assertions)]
+    verify_seams(mesh);
 
     ChunkGraph {
         node_of,
         nodes,
         edges,
         seam_vertices,
+    }
+}
+
+/// Проверка сшивки, только в отладочной сборке: **каждый шов обязан быть
+/// двусторонним**.
+///
+/// Именно этот инвариант и ломался, причём молча. `successors` переходит в
+/// соседний слой по ребру, у которого обе вершины лежат в одном полигоне того
+/// слоя. Если два чанка разошлись в наборе вершин на общей кромке — у соседа
+/// ребро цельное, у нас разбитое лишней вершиной надвое, — то переход
+/// находится только в одну сторону. Меш при этом выглядит здоровым: путь
+/// строится, короткие маршруты проходят, а воронка на длинных перестаёт
+/// сходиться, очередь растёт без предела и процесс умирает от OOM. Дешевле
+/// уронить постройку здесь с внятным сообщением, чем ловить это потом.
+#[cfg(debug_assertions)]
+fn verify_seams(mesh: &polyanya::Mesh) {
+    let layer_of = |packed: u32| (packed >> 24) as usize;
+    let index_of = |packed: u32| (packed & 0x00FF_FFFF) as usize;
+
+    for (index, layer) in mesh.layers.iter().enumerate() {
+        for (number, polygon) in layer.polygons.iter().enumerate() {
+            let ring = &polygon.vertices;
+            for position in 0..ring.len() {
+                let here = &layer.vertices[ring[position] as usize];
+                let next = &layer.vertices[ring[(position + 1) % ring.len()] as usize];
+                // ребро ведёт в другой слой ровно тогда, когда обе его вершины
+                // держат один и тот же чужой полигон — так его находит и
+                // `successors`
+                let Some(&across) = here.polygons.iter().find(|packed| {
+                    **packed != u32::MAX
+                        && layer_of(**packed) != index
+                        && next.polygons.contains(packed)
+                }) else {
+                    continue;
+                };
+                let other = &mesh.layers[layer_of(across)];
+                let ring_there = &other.polygons[index_of(across)].vertices;
+                let mirrored = (0..ring_there.len()).any(|at| {
+                    let one = other.vertices[ring_there[at] as usize].coords;
+                    let two =
+                        other.vertices[ring_there[(at + 1) % ring_there.len()] as usize].coords;
+                    (one == here.coords && two == next.coords)
+                        || (one == next.coords && two == here.coords)
+                });
+                assert!(
+                    mirrored,
+                    "polymesh seam is one-way: edge {:?}-{:?} of polygon {number} in layer {index} \
+                     leads into polygon {} of layer {}, which has no matching edge — the two \
+                     chunks cut their shared border differently (see SEAM_QUANTUM, seam_points)",
+                    from_poly(here.coords),
+                    from_poly(next.coords),
+                    index_of(across),
+                    layer_of(across),
+                );
+            }
+        }
     }
 }
 
