@@ -962,15 +962,21 @@ in `main.rs`.
     targets are building outline vertices, and the grid calls a tile passable when its
     centre clears the polygon by a centimetre. **96 % of requests failed** with the
     default against 3.5 % on the grid; at 1 m it is **0.6 %**.
-  - **`MAX_POLYMESH_PATHFINDING_IN_FLIGHT` = 32** against the grid's 1024, because a
-    polygonal search costs ~6 ms instead of ~0.9 ms and holds a frontier proportional to
-    the mesh.
-  **Known limit, unresolved**: a single search can allocate unbounded memory — polyanya's
-  budget is `polygons.len() * 10` iterations with no cap on the frontier. Memory sits flat
-  at ~3 GB for a minute or two and then climbs past 17 GB in ten seconds, and the OS kills
-  the process. The in-flight cap does not prevent it (it is one query, not their number),
-  and merging to convergence only trims 49 075 → 40 199 polygons. Routing on the polygonal
-  mesh is therefore **not safe to leave on** at this map size.
+  - **`MAX_POLYMESH_PATHFINDING_IN_FLIGHT`** equals the grid's 1024 — an earlier low cap
+    tried to contain runaway memory and instead stalled the whole dispatcher.
+  **Divergence, resolved twice over.** A single search used to allocate unbounded memory
+  (flat ~3 GB, then past 17 GB in seconds, OS kill): polyanya's iteration budget caps
+  only queue *pops* while `successors` pushes fans of nodes unchecked. Fixed at the root
+  in the **vendored** `vendor/polyanya` (a `[patch.crates-io]` path dep, edits marked
+  `QWE:`): exact node repeats — same polygon, root and interval — are deduplicated,
+  killing the cycle where a corner vertex on a seam's collinear edge chain spins
+  equal-cost nodes around its polygon ring forever (root_history only drops strictly
+  worse nodes). Belt and braces on top: `bounded_path` polls `get_path` under an external
+  work budget scaled to the open polygon count (~10 pops each, min 4096 polls), a
+  `NotFound` returns immediately instead of idling out the limit, and in debug builds an
+  exhausted budget or a one-way seam (`verify_seams`) is a panic, because either means
+  broken mesh geometry. Measured after the fix: 2000 chunked queries, 0.7 % missed,
+  5.3 ms mean, 42 ms worst, flat memory.
 
 ## Simulation
 
