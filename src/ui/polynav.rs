@@ -1,7 +1,12 @@
 //! Панель Polymesh — прототип полигонального navmesh (`navigation/polymesh.rs`):
-//! строка-тумблер `Enabled` и ползунок радиуса агента. Отдельный блок над
-//! дебаг-рядом, а не тумблер в нём: у панели есть собственные ручки, и строка
-//! со значением справа читается так же, как строки панелей Roads и Trees.
+//! три тумблера и ползунок радиуса агента. Отдельный блок над дебаг-рядом, а
+//! не тумблер в нём: у панели есть собственные ручки, и строка со значением
+//! справа читается так же, как строки панелей Roads и Trees.
+//!
+//! Тумблеры разведены по тому, что они меняют:
+//! `Enabled` — строить меш и ходить по нему (бэкенд поиска пути),
+//! `Show` — рисовать оверлей (ничего не перестраивает),
+//! `Chunks` — иерархия чанков: и постройка слоями, и их границы на оверлее.
 //! Оверлей рисует **все** рёбра полигонов построенного меша одним merged-мешем
 //! — по нему видно и контуры препятствий, и как polyanya разбила проходимое
 //! пространство.
@@ -63,13 +68,26 @@ fn row_color(lighten: f32) -> Color {
 #[derive(Component)]
 struct PolymeshEnabledRow;
 
-/// Текст значения строки `Enabled` (`On` / `Off`).
-#[derive(Component)]
-struct PolymeshEnabledLabel;
+/// Текст значения тумблера (`On` / `Off`) и то, какой именно тумблер он
+/// подписывает. Один компонент на все три строки, а не маркер на каждую:
+/// три отдельных `&mut Text`-запроса пришлось бы разводить `Without` каждый
+/// с каждым, и добавление четвёртой строки ломало бы все предыдущие.
+#[derive(Component, Clone, Copy)]
+enum PolymeshToggleLabel {
+    Enabled,
+    Show,
+    Chunks,
+}
 
-/// Текст значения строки `Chunks` (`On` / `Off`).
-#[derive(Component)]
-struct PolymeshChunksLabel;
+impl PolymeshToggleLabel {
+    fn value(self, debug: &PolymeshDebug) -> bool {
+        match self {
+            Self::Enabled => debug.enabled,
+            Self::Show => debug.show,
+            Self::Chunks => debug.chunks,
+        }
+    }
+}
 
 /// Текст значения радиуса.
 #[derive(Component)]
@@ -79,13 +97,13 @@ struct PolymeshRadiusLabel;
 #[derive(Component)]
 struct PolymeshRadiusSlider;
 
-/// Что нарисовано: поколение постройки, радиус и тумблер чанков — пока все
-/// те же, пересобирать слой незачем (идиома `ConiferNoiseOverlayMarker`).
+/// Что нарисовано: поколение постройки и радиус — пока те же, пересобирать
+/// слой незачем (идиома `ConiferNoiseOverlayMarker`). Чанков в ключе нет:
+/// их переключение перестраивает меш, то есть двигает поколение.
 #[derive(Component)]
 struct PolymeshOverlayMarker {
     generation: u32,
     radius_bits: u32,
-    chunks: bool,
 }
 
 pub struct UiPolynavPlugin;
@@ -158,7 +176,7 @@ fn render_polynav_panel(mut commands: Commands, debug: Res<PolymeshDebug>) {
         panel,
         "Enabled",
         debug.enabled,
-        PolymeshEnabledLabel,
+        PolymeshToggleLabel::Enabled,
         |_activate: On<Activate>, mut debug: ResMut<PolymeshDebug>| {
             debug.enabled = !debug.enabled;
         },
@@ -167,9 +185,20 @@ fn render_polynav_panel(mut commands: Commands, debug: Res<PolymeshDebug>) {
     spawn_toggle_row(
         &mut commands,
         panel,
+        "Show",
+        debug.show,
+        PolymeshToggleLabel::Show,
+        |_activate: On<Activate>, mut debug: ResMut<PolymeshDebug>| {
+            debug.show = !debug.show;
+        },
+    );
+
+    spawn_toggle_row(
+        &mut commands,
+        panel,
         "Chunks",
         debug.chunks,
-        PolymeshChunksLabel,
+        PolymeshToggleLabel::Chunks,
         |_activate: On<Activate>, mut debug: ResMut<PolymeshDebug>| {
             debug.chunks = !debug.chunks;
         },
@@ -304,18 +333,18 @@ fn highlight_rows(
 /// включение: обратная правка видит выключенный ресурс и ничего не пишет,
 /// так что цикла из двух систем, толкающих друг друга, не выходит.
 ///
-/// Следствие единого тумблера: включить сеточный оверлей — значит вернуть
-/// навигацию на сетку. Это не побочный эффект отрисовки, а то же самое
-/// «выключить Polymesh»; меш при этом остаётся построенным, и возврат
-/// бесплатен.
+/// Спор идёт только о картинке, поэтому гасится `show`, а не `enabled`:
+/// включить сеточный оверлей — значит перестать рисовать полигональный, но
+/// не свести пешек с меша. Кто по чему ходит, решает строка `Enabled`.
 fn enforce_overlay_exclusivity(
     mut polymesh: ResMut<PolymeshDebug>,
     mut navmesh: ResMut<DebugNavmesh>,
 ) {
-    if polymesh.is_changed() && polymesh.enabled && navmesh.0 {
+    let polymesh_drawn = polymesh.enabled && polymesh.show;
+    if polymesh.is_changed() && polymesh_drawn && navmesh.0 {
         navmesh.0 = false;
-    } else if navmesh.is_changed() && navmesh.0 && polymesh.enabled {
-        polymesh.enabled = false;
+    } else if navmesh.is_changed() && navmesh.0 && polymesh_drawn {
+        polymesh.show = false;
     }
 }
 
@@ -324,24 +353,13 @@ fn enforce_overlay_exclusivity(
 /// `sync_noise_values`.
 fn sync_polynav_values(
     debug: Res<PolymeshDebug>,
-    mut enabled_labels: Query<
-        &mut Text,
-        (
-            With<PolymeshEnabledLabel>,
-            Without<PolymeshRadiusLabel>,
-            Without<PolymeshChunksLabel>,
-        ),
-    >,
-    mut chunk_labels: Query<&mut Text, (With<PolymeshChunksLabel>, Without<PolymeshRadiusLabel>)>,
-    mut labels: Query<&mut Text, With<PolymeshRadiusLabel>>,
+    mut toggles: Query<(&mut Text, &PolymeshToggleLabel)>,
+    mut labels: Query<&mut Text, (With<PolymeshRadiusLabel>, Without<PolymeshToggleLabel>)>,
     sliders: Query<(Entity, &SliderValue), With<PolymeshRadiusSlider>>,
     mut commands: Commands,
 ) {
-    for mut text in &mut enabled_labels {
-        text.0 = enabled_text(debug.enabled);
-    }
-    for mut text in &mut chunk_labels {
-        text.0 = enabled_text(debug.chunks);
+    for (mut text, toggle) in &mut toggles {
+        text.0 = enabled_text(toggle.value(&debug));
     }
     for mut text in &mut labels {
         text.0 = radius_text(debug.radius());
@@ -366,19 +384,18 @@ fn sync_polymesh_overlay(
 ) {
     let generation = poly.generation();
     let radius_bits = poly.built_radius().to_bits();
-    if debug.enabled
-        && overlay.iter().any(|(_, drawn)| {
-            drawn.generation == generation
-                && drawn.radius_bits == radius_bits
-                && drawn.chunks == debug.chunks
-        })
+    let visible = debug.enabled && debug.show;
+    if visible
+        && overlay
+            .iter()
+            .any(|(_, drawn)| drawn.generation == generation && drawn.radius_bits == radius_bits)
     {
         return;
     }
     for (entity, _) in &overlay {
         commands.entity(entity).despawn();
     }
-    if !debug.enabled {
+    if !visible {
         return;
     }
     let Some(built) = poly.build() else {
@@ -424,8 +441,10 @@ fn sync_polymesh_overlay(
         }
     }
 
-    // границы чанков — последними, чтобы легли поверх рёбер меша
-    if debug.chunks {
+    // границы чанков — последними, чтобы легли поверх рёбер меша. Условия нет:
+    // сетка берётся из самой постройки, и у плоского меша она 1x1, то есть ни
+    // одной внутренней линии. Рисуется ровно то, по чему ходит поиск
+    {
         let (grid, chunk_size) = built.chunks();
         let chunk_color = POLYMESH_CHUNK_COLOR.to_linear();
         for column in 1..grid.x {
@@ -455,7 +474,6 @@ fn sync_polymesh_overlay(
         PolymeshOverlayMarker {
             generation,
             radius_bits,
-            chunks: debug.chunks,
         },
         Mesh2d(meshes.add(builder.build())),
         MeshMaterial2d(materials.add(ColorMaterial {

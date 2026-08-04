@@ -79,13 +79,20 @@ const SEARCH_STEPS: u32 = 4;
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "polymesh")]
 pub struct PolymeshDebug {
+    /// Строить меш и **ходить по нему**: это бэкенд поиска пути, а не картинка.
     pub enabled: bool,
+    /// Рисовать ли оверлей построенного меша. Отдельно от `enabled`, потому
+    /// что это разные вопросы: по мешу можно ходить, не заливая им карту, —
+    /// а рёбра 24 тысяч полигонов поверх города мешают смотреть на всё
+    /// остальное. Меш от этого тумблера не перестраивается.
+    pub show: bool,
     pub agent_radius: f32,
-    /// Рисовать ли границы чанков — верхний уровень иерархии. Отдельно от
-    /// `enabled`, потому что это разные вопросы: чанки нужны, чтобы понять
-    /// **как** выбирается коридор, а меш — чтобы видеть саму геометрию.
-    /// По умолчанию включено: иерархия работает всегда, и сетка объясняет
-    /// форму найденного пути.
+    /// Иерархия чанков: и **строить** ли меш слоями (иначе один плоский слой,
+    /// см. [`FLAT_CHUNK_METERS`]), и рисовать ли их границы. Один тумблер, а
+    /// не два, потому что рисовать сетку, по которой поиск не идёт, значит
+    /// показывать неправду; переключение поэтому запускает перестройку меша.
+    /// По умолчанию включено — иерархия быстрее по обоим числам
+    /// (см. [`CHUNK_TARGET_METERS`]).
     pub chunks: bool,
 }
 
@@ -93,6 +100,7 @@ impl Default for PolymeshDebug {
     fn default() -> Self {
         Self {
             enabled: false,
+            show: true,
             agent_radius: POLYMESH_AGENT_RADIUS_MIN,
             chunks: true,
         }
@@ -139,10 +147,16 @@ const MAX_CHUNKS: u32 = 240;
 /// а лучше по обоим числам — постройка 0.31 с против 5.72 с (каждый чанк
 /// триангулируется от своего маленького набора рёбер), среднее 5.66 мс против
 /// 6.18 мс, худший 43 мс против 104 мс, промахи одни и те же. Плоский слой
-/// (один слой, без сшивки)
-/// возвращается через `QWE_POLYMESH_CHUNK_M` со стороной больше карты — так
-/// разводятся «виновата иерархия» и «виновата геометрия».
+/// возвращается тумблером `Chunks` в панели (или `QWE_POLYMESH_CHUNK_M` для
+/// офлайн-прогонов) — так разводятся «виновата иерархия» и «виновата
+/// геометрия».
 const CHUNK_TARGET_METERS: f32 = 400.0;
+
+/// Сторона чанка при выключенном тумблере `Chunks`: больше любой карты, то
+/// есть один слой и никаких швов. Не `0` и не `Option` в конвейере — «чанк
+/// размером с мир» и есть определение плоского меша, и весь код ниже остаётся
+/// одним путём.
+const FLAT_CHUNK_METERS: f32 = 99_000.0;
 
 /// Сетка чанков под размер карты. Считается, а не задаётся константой в
 /// метрах: фиксированная сторона на вдвое большей карте дала бы тысячи
@@ -212,6 +226,34 @@ pub struct PolymeshBuild {
     graph: ChunkGraph,
 }
 
+/// Под что построен меш: всё, что меняет геометрию и потому требует
+/// перестройки. Радиус — по битам, а не по `f32`: ключ сравнивается на
+/// равенство, а не на близость.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct BuildKey {
+    radius_bits: u32,
+    chunked: bool,
+}
+
+impl BuildKey {
+    fn new(debug: &PolymeshDebug) -> Self {
+        Self {
+            radius_bits: debug.radius().to_bits(),
+            chunked: debug.chunks,
+        }
+    }
+
+    fn radius(&self) -> f32 {
+        f32::from_bits(self.radius_bits)
+    }
+
+    /// Сторона чанка для конвейера: `None` — «как решит [`chunk_grid`]», то
+    /// есть [`CHUNK_TARGET_METERS`] с возможностью переопределить окружением.
+    fn chunk_meters(&self) -> Option<f32> {
+        (!self.chunked).then_some(FLAT_CHUNK_METERS)
+    }
+}
+
 /// Построенный полигональный меш; `None`, пока панель ни разу не включали
 /// (ленивость) или постройка ещё идёт.
 #[derive(Resource, Default)]
@@ -219,10 +261,10 @@ pub struct PolyNavmesh {
     build: Option<Arc<PolymeshBuild>>,
     /// Счётчик завершённых построек — ключ кеша оверлея.
     generation: u32,
-    /// Радиус агента, под который построен текущий меш.
-    built_radius: f32,
-    /// Радиус летящей постройки и её таск.
-    task: Option<(f32, Task<Option<PolymeshBuild>>)>,
+    /// Параметры, под которые построен текущий меш.
+    built_for: BuildKey,
+    /// Параметры летящей постройки и её таск.
+    task: Option<(BuildKey, Task<Option<PolymeshBuild>>)>,
     /// Флаг отмены текущей постройки — та же машинерия, что у
     /// [`NorthstarGrid`](super::NorthstarGrid), и по той же причине: тело
     /// таска синхронно, await-точек, на которых пул мог бы его выбросить,
@@ -243,7 +285,7 @@ impl PolyNavmesh {
     }
 
     pub fn built_radius(&self) -> f32 {
-        self.built_radius
+        self.built_for.radius()
     }
 
     pub fn is_building(&self) -> bool {
@@ -310,12 +352,12 @@ pub fn sync_polymesh_build(
         poly.cancel_task();
         return;
     }
-    let radius = debug.radius();
-    if poly.build.is_some() && poly.built_radius.to_bits() == radius.to_bits() {
+    let key = BuildKey::new(&debug);
+    if poly.build.is_some() && poly.built_for == key {
         return;
     }
     if let Some((in_flight, _)) = &poly.task
-        && in_flight.to_bits() == radius.to_bits()
+        && *in_flight == key
     {
         return;
     }
@@ -324,10 +366,12 @@ pub fn sync_polymesh_build(
     let started = Instant::now();
     let cancelled = Arc::new(AtomicBool::new(false));
     poly.cancelled = Some(cancelled.clone());
+    let radius = key.radius();
+    let chunk_meters = key.chunk_meters();
     poly.task = Some((
-        radius,
+        key,
         AsyncComputeTaskPool::get().spawn(async move {
-            let built = build_polymesh(&input, radius, Some(&cancelled), None);
+            let built = build_polymesh(&input, radius, Some(&cancelled), chunk_meters);
             match &built {
                 Some(built) => {
                     let polygons: usize = built
@@ -356,10 +400,10 @@ pub fn sync_polymesh_build(
 /// эта запись (не опрос) даёт `resource_changed` оверлею.
 pub fn poll_polymesh_build(mut poly: ResMut<PolyNavmesh>) {
     let silent = poly.bypass_change_detection();
-    let Some((radius, task)) = silent.task.as_mut() else {
+    let Some((key, task)) = silent.task.as_mut() else {
         return;
     };
-    let radius = *radius;
+    let key = *key;
     let Some(built) = check_ready(task) else {
         return;
     };
@@ -370,7 +414,7 @@ pub fn poll_polymesh_build(mut poly: ResMut<PolyNavmesh>) {
         return;
     };
     poly.build = Some(Arc::new(built));
-    poly.built_radius = radius;
+    poly.built_for = key;
     poly.generation = poly.generation.wrapping_add(1);
 }
 

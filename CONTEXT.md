@@ -1104,8 +1104,13 @@ in `main.rs`.
   **`Enabled` row** (the Roads/Trees row-button idiom — label left, `On`/`Off` right)
   toggling `PolymeshDebug::enabled`, plus an **agent radius** slider
   (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at triangulation
-  time. One toggle drives everything the mesh is for: building it, drawing it, and
-  **routing on it**. The radius minimum is deliberately non-zero (0.2 m) now that pawns
+  time. Three toggles, split by what they change: **`Enabled`** builds the mesh and
+  **routes on it** (the backend), **`Show`** (default on) only draws the overlay and
+  rebuilds nothing, **`Chunks`** (default on) is the chunk hierarchy — it switches the
+  *build* between layered and one flat layer (`FLAT_CHUNK_METERS`) and therefore
+  triggers a rebuild, and it is what puts the grid on the overlay. One toggle for both
+  halves of chunking on purpose: a grid drawn over a search that does not use it is a
+  picture of something untrue. The radius minimum is deliberately non-zero (0.2 m) now that pawns
   walk the mesh, and it is read through `PolymeshDebug::radius()`, which clamps — the
   minimum was raised after the setting was already being persisted, so an older prefs
   file holds 0.0. The overlay is one merged mesh at z 5.3 (above the grid navmesh fill
@@ -1115,14 +1120,19 @@ in `main.rs`.
   translucent seam is never double-painted). Same colour is the point — the two layers
   paint the same claim, and only an identical fill makes their accuracy comparable by
   eye; with a non-zero agent radius the gap between fill and edges *is* the inflation.
-  A **`Chunks` row** (default **on**) adds the chunk-grid boundaries on top of the mesh
-  edges — dark, half-transparent, and the same 0.4 m stroke width as an edge, since the
-  grid is a partition drawn over the geometry, not another layer of world.
-  Cache key (build generation + radius bits + the chunks toggle) lives on the overlay
-  marker, the conifer-overlay idiom. **The `polymesh` and `navmesh` toggles are mutually
+  The chunk-grid boundaries go on top of the mesh edges — dark, half-transparent, and the
+  same 0.4 m stroke width as an edge, since the grid is a partition drawn over the
+  geometry, not another layer of world. They are drawn unconditionally from the built
+  grid, which is 1×1 (no lines) for a flat mesh — the overlay states what the search
+  actually walks, not what the toggle asks for.
+  Cache key (build generation + radius bits) lives on the overlay marker, the
+  conifer-overlay idiom; chunks are absent from it because flipping them moves the
+  generation. **The polymesh and `navmesh` overlays are mutually
   exclusive** (`enforce_overlay_exclusivity`): enabling either switches the other off,
-  since two red fills over one map read as a single layer at double alpha. Only
-  *enabling* pushes; the reverse edit sees a disabled resource and writes nothing, so
+  since two red fills over one map read as a single layer at double alpha. What gets
+  switched off on the polymesh side is **`show`**, not `enabled` — the quarrel is about
+  the picture, and pawns keep walking the mesh. Only
+  *enabling* pushes; the reverse edit sees a hidden overlay and writes nothing, so
   the two systems cannot loop. See **Poly navmesh** and **Polygonal routing** under
   Navigation for what the mesh is and how pawns walk it.
 - **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
