@@ -935,6 +935,25 @@ in `main.rs`.
   mean / 43 ms worst vs 6.18 / 104**, same misses. `QWE_POLYMESH_CHUNK_M` set larger than
   the map returns the flat single layer, which is how "hierarchy's fault" is told apart
   from "geometry's fault".
+  **Seam vertex sets are allowed to differ** between two neighbours, and the stitch is
+  written for that. Only the chunk *outline* is global (`seam_points` — every crossing of
+  an obstacle contour with a grid line, computed once for the whole map); the obstacles
+  themselves are clipped, simplified and triangulated per chunk, so a half-metre slit
+  between inflated contours can stay open in one chunk and close in its neighbour, and
+  spade can split a boundary edge at an intersection only one side knows about. A vertex
+  without a partner is therefore normal (Tula: 0–9 per map depending on radius, logged as
+  `seam vertices face a wall on the other side`) — an earlier `debug_assert` demanding
+  zero was measuring an invariant that never held, and it killed the build task whenever
+  the radius slider landed on the wrong value.
+  What is *not* allowed is a **one-way seam** (`verify_seams`), and `unstitchable` keeps
+  it impossible by construction: an unpaired vertex is dangerous exactly when it sits
+  strictly inside a segment the blind side keeps as a whole edge **and** the rich side
+  holds both ends of that segment in one polygon — then stitching would hand the
+  neighbour's edge a crossing its own two halves cannot answer. Such a segment is left
+  unstitched (both ends dropped, since stitching addresses vertices, not edges). On Tula
+  the test fires on none of the nine slider radii — usually the extra vertex splits the
+  polygon too, so no shared polygon survives and nothing one-way can form.
+  `examples/polymesh_seam_audit` prints both numbers per radius.
   The build ends with **`mesh.bake()`**, strictly after `merge_polygons` (which starts by
   un-baking). Baking is what makes the mesh queryable at scale: without it point location
   is a linear scan over every polygon, twice per query, and an unreachable goal burns the
