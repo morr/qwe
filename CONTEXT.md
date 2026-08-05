@@ -950,10 +950,15 @@ in `main.rs`.
   strictly inside a segment the blind side keeps as a whole edge **and** the rich side
   holds both ends of that segment in one polygon — then stitching would hand the
   neighbour's edge a crossing its own two halves cannot answer. Such a segment is left
-  unstitched (both ends dropped, since stitching addresses vertices, not edges). On Tula
-  the test fires on none of the nine slider radii — usually the extra vertex splits the
-  polygon too, so no shared polygon survives and nothing one-way can form.
-  `examples/polymesh_seam_audit` prints both numbers per radius.
+  unstitched (both ends dropped, since stitching addresses vertices, not edges), and in a
+  debug build that is a **panic**: the mesh saved itself, but the geometry is broken and
+  the dev build says so at once. The message is written to be read by an agent handed the
+  log — what broke, what it costs, which functions to fix, what *not* to do, and the
+  offline repro (`examples/polymesh_seam_audit -- <radius>`, which prints both counts per
+  radius with coordinates). The sample it names is collected under `debug_assertions`
+  only. On Tula the assert fires on none of the nine slider radii — usually the extra
+  vertex splits the polygon too, so no shared polygon survives and nothing one-way can
+  form.
   The build ends with **`mesh.bake()`**, strictly after `merge_polygons` (which starts by
   un-baking). Baking is what makes the mesh queryable at scale: without it point location
   is a linear scan over every polygon, twice per query, and an unreachable goal burns the

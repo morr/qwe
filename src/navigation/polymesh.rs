@@ -1284,8 +1284,20 @@ fn shared_polygon_excluding(
 /// локальные координаты чанка.
 const SEAM_EPSILON: f32 = 1e-3;
 
-/// Номера пар в `pairs`, стежок которых пришлось бы отменить, и сколько
-/// непарных вершин оказались опасными.
+/// Итог разбора непарных вершин одного шва.
+struct Unstitched {
+    /// номера пар в `pairs`, стежок которых пришлось отменить
+    dropped: Vec<usize>,
+    /// сколько непарных вершин оказались опасными
+    dangerous: usize,
+    /// первая из них: точка и слой, у которого её нет. Собирается **только в
+    /// отладочной сборке** — читает её один `debug_assert!`, в релизе поле
+    /// не существует и заполнять его незачем
+    #[cfg(debug_assertions)]
+    first: Option<(Vec2, usize)>,
+}
+
+/// Разбор непарных вершин одного шва: какие стежки придётся отменить.
 ///
 /// Опасна не всякая непарная вершина, а лежащая **строго внутри отрезка,
 /// который у соседа остался цельным ребром, притом что у нас концы этого
@@ -1311,7 +1323,7 @@ fn unstitchable(
     pairs: &[(usize, usize)],
     corners: &[Vec2; 2],
     lonely: &[(Vec2, usize)],
-) -> (Vec<usize>, usize) {
+) -> Unstitched {
     let at_corner = |layer: usize, list: &[usize], corner: Vec2| -> Option<usize> {
         list.iter().copied().find(|&vertex| {
             from_poly(mesh.layers[layer].vertices[vertex].coords).distance_squared(corner)
@@ -1339,6 +1351,8 @@ fn unstitchable(
 
     let mut dropped = Vec::new();
     let mut dangerous = 0;
+    #[cfg(debug_assertions)]
+    let mut first = None;
     for &(point, blind) in lonely {
         // вершины идут вдоль шва по порядку, так что соседние в цепочке и есть
         // концы отрезка
@@ -1375,12 +1389,21 @@ fn unstitchable(
             continue;
         }
         dangerous += 1;
+        #[cfg(debug_assertions)]
+        if first.is_none() {
+            first = Some((point, blind));
+        }
         dropped.extend(chain[at].1);
         dropped.extend(chain[at + 1].1);
     }
     dropped.sort_unstable();
     dropped.dedup();
-    (dropped, dangerous)
+    Unstitched {
+        dropped,
+        dangerous,
+        #[cfg(debug_assertions)]
+        first,
+    }
 }
 
 /// Лежит ли точка на отрезке, не совпадая с его концами.
@@ -1439,6 +1462,10 @@ fn stitch_chunks(
     let mut weak_seams = 0;
     let mut blind_vertices = 0;
     let mut split_edges = 0;
+    // первое опасное место целиком — только для сообщения ассерта: по нему
+    // сразу видно, какой шов и какую точку смотреть. В релизе не собирается
+    #[cfg(debug_assertions)]
+    let mut first_split: Option<(Vec2, usize, usize)> = None;
 
     for y in 0..grid.y {
         for x in 0..grid.x {
@@ -1517,16 +1544,23 @@ fn stitch_chunks(
                         lonely.push((world, chunk));
                     }
                 }
-                let (dropped, dangerous) = unstitchable(
+                let unstitched = unstitchable(
                     mesh, chunk, neighbour, &here, &there, &pairs, &corners, &lonely,
                 );
-                split_edges += dangerous;
-                blind_vertices += lonely.len() - dangerous;
-                if !dropped.is_empty() {
+                split_edges += unstitched.dangerous;
+                blind_vertices += lonely.len() - unstitched.dangerous;
+                #[cfg(debug_assertions)]
+                if first_split.is_none()
+                    && let Some((point, blind)) = unstitched.first
+                {
+                    let rich = if blind == chunk { neighbour } else { chunk };
+                    first_split = Some((point, blind, rich));
+                }
+                if !unstitched.dropped.is_empty() {
                     pairs = pairs
                         .iter()
                         .enumerate()
-                        .filter(|(index, _)| !dropped.contains(index))
+                        .filter(|(index, _)| !unstitched.dropped.contains(index))
                         .map(|(_, &pair)| pair)
                         .collect();
                 }
@@ -1639,16 +1673,50 @@ fn stitch_chunks(
     // у другого. Пары такой вершине нет, потому что у соседа в этом месте
     // стена, — сшивать нечего, и падать не на чем.
     if blind_vertices > 0 {
-        debug!("polymesh: {blind_vertices} seam vertices face a wall on the other side");
+        debug!(
+            "polymesh: {blind_vertices} seam vertices face a wall on the other side \
+             (normal, not an error: the neighbour has no free space there to pair with)"
+        );
     }
-    // А вот отрезок, оставшийся у соседа цельным ребром, — уже не остаток:
-    // сшитый, он даёт переход, который находится только с одной стороны
-    // (см. `verify_seams`). Такие отрезки не сшиваются вовсе, и шов на них
-    // становится стеной — потеря коридора в паре мест на карту против
-    // расходящейся воронки и OOM.
+    // А вот отрезок, оставшийся у соседа цельным ребром, — уже не остаток, а
+    // сорванный инвариант: сшитый, он даёт переход, который находится только с
+    // одной стороны (см. `verify_seams`), и на этом воронка перестаёт сходиться.
+    // Постройка себя спасает — такие отрезки не сшиваются вовсе, шов на них
+    // становится стеной, — но в отладочной сборке это повод остановиться и
+    // чинить геометрию, а не жить со стеной посреди шва.
     if split_edges > 0 {
-        warn!(
-            "polymesh: {split_edges} seam segments left unstitched: the neighbour keeps them whole"
+        warn!("polymesh: {split_edges} seam segments left unstitched — see stitch_chunks");
+    }
+    // Сообщение длинное сознательно: его читает не только человек, но и агент,
+    // которому скормили лог падения, — и по нему должно быть видно, что именно
+    // сломано, чем это грозит, что чинить и чем воспроизвести без приложения.
+    #[cfg(debug_assertions)]
+    if let Some((point, blind, rich)) = first_split {
+        let cell = |chunk: usize| UVec2::new(chunk as u32 % grid.x, chunk as u32 / grid.x);
+        let (blind, rich) = (cell(blind), cell(rich));
+        panic!(
+            "polymesh: BROKEN CHUNK SEAM GEOMETRY — {split_edges} seam segment(s) had to be \
+             left unstitched, first at {point} between chunks {rich} and {blind}.\n\
+             WHAT HAPPENED: chunk {rich} has a vertex strictly inside a seam segment that chunk \
+             {blind} keeps as one whole edge, and {rich} holds both ends of that segment in a \
+             single polygon. Stitching those ends would give {blind}'s edge a crossing into \
+             {rich} that {rich}'s own two halves cannot answer — a ONE-WAY SEAM (see \
+             `verify_seams`), on which polyanya's funnel stops converging and one query eats \
+             memory until the process is killed. `stitch_chunks` defended itself by not \
+             stitching that segment: the seam is a wall there, the mesh is safe but poorer.\n\
+             WHAT TO FIX: the per-chunk geometry, so both neighbours cut their shared border at \
+             the same points — `chunk_layer` (i_overlay clip plus `Triangulation::simplify`, \
+             both computed per chunk) and `seam_points` (the global crossings, the only part \
+             that is shared today). Do NOT 'fix' this by deleting this assert, by widening \
+             `SEAM_EPSILON`, or by stitching the segment anyway.\n\
+             NOT THIS FAILURE: an unpaired seam vertex on its own is normal — it means the \
+             neighbour has a wall there and nothing to pair with; those are counted separately \
+             in the `seam vertices face a wall on the other side` debug line.\n\
+             REPRODUCE OFFLINE, no app needed:\n\
+             cargo run --release --example polymesh_seam_audit -- <agent radius>\n\
+             It prints, per radius, every unpaired seam vertex with its coordinates and both \
+             chunks, what each side has within 2 m of it, and where obstacle contours cross \
+             that seam line."
         );
     }
     if !stitches.is_empty() {

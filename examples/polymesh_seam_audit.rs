@@ -1,9 +1,14 @@
-//! Временный аудит шва: какие вершины на общей кромке чанков остались без пары
-//! на другой стороне — то, на чём падает `debug_assert` в `stitch_chunks`.
+//! Аудит шва: какие вершины на общей кромке чанков остались без пары на другой
+//! стороне и какие из них опасны — то есть рвут отрезок, который сосед держит
+//! цельным ребром, и на которых падает `stitch_chunks` в отладочной сборке.
+//! Непарная вершина сама по себе нормальна: у соседа в этом месте стена.
 //!
 //! ```text
 //! cargo run --release --example polymesh_seam_audit -- [radius ...]
 //! ```
+//!
+//! Без аргументов проходит все девять радиусов слайдера. На Туле: от 0 до 9
+//! непарных вершин на карту и ни одной опасной.
 
 use bevy::math::{UVec2, Vec2};
 use qwe::city::City;
@@ -64,7 +69,7 @@ fn main() {
                         (&here, &there, chunk, neighbour),
                         (&there, &here, neighbour, chunk),
                     ] {
-                        for &vertex in mine.iter() {
+                        for (at, &vertex) in mine.iter().enumerate() {
                             let world = from_poly(mesh.layers[from].vertices[vertex].coords);
                             if [start, end]
                                 .iter()
@@ -78,7 +83,8 @@ fn main() {
                                     <= SEAM_EPSILON * SEAM_EPSILON
                             });
                             if !matched {
-                                let dangerous = covered(&mesh.layers[to], to as u32, other, world);
+                                let dangerous =
+                                    splits_a_whole_edge(mesh, from, to, mine, other, at);
                                 lonely.push((from, to, world, dangerous));
                             }
                         }
@@ -149,29 +155,69 @@ fn main() {
     }
 }
 
-/// Опасен ли непарный шов: есть ли у соседа настоящее ребро, накрывающее эту
-/// точку — пара соседних по шву вершин, лежащих в одном его полигоне. Если
-/// есть, наша лишняя вершина рвёт это ребро надвое, и переход через шов
-/// находится только с одной стороны. Если нет, у соседа там стена.
-fn covered(layer: &polyanya::Layer, layer_index: u32, list: &[usize], point: Vec2) -> bool {
-    list.windows(2).any(|pair| {
-        let (first, second) = (pair[0], pair[1]);
-        let a = from_poly(layer.vertices[first].coords);
-        let b = from_poly(layer.vertices[second].coords);
-        let along = b - a;
-        let length_squared = along.length_squared();
-        if length_squared == 0.0 {
-            return false;
-        }
-        let ratio = (point - a).dot(along) / length_squared;
-        if !(0.0..=1.0).contains(&ratio) {
-            return false;
-        }
-        // после сшивки индексы помечены номером слоя в старших 8 битах
-        let others = &layer.vertices[second].polygons;
-        layer.vertices[first].polygons.iter().any(|&polygon| {
-            polygon != u32::MAX && polygon >> 24 == layer_index && others.contains(&polygon)
+/// Опасна ли непарная вершина — **тот же двухчастный тест, что и
+/// `unstitchable`** в `src/navigation/polymesh.rs`, иначе инструмент, на
+/// который ссылается ассерт, считал бы не то, что ассерт: у слепой стороны
+/// отрезок между соседями этой вершины должен быть цельным ребром, а у богатой
+/// оба его конца — лежать в одном полигоне. Только тогда сшивка концов дала бы
+/// переход, который находится с одной стороны и не находится с другой.
+///
+/// Разница с оригиналом одна: концы кромки здесь не рассматриваются как соседи
+/// по цепочке (их сшивает отдельный проход по узлам сетки), так что вершина
+/// первая или последняя в списке считается безопасной.
+fn splits_a_whole_edge(
+    mesh: &polyanya::Mesh,
+    rich: usize,
+    blind: usize,
+    mine: &[usize],
+    other: &[usize],
+    at: usize,
+) -> bool {
+    let (Some(&before), Some(&after)) = (mine.get(at.wrapping_sub(1)), mine.get(at + 1)) else {
+        return false;
+    };
+    let partner = |vertex: usize| -> Option<usize> {
+        let point = from_poly(mesh.layers[rich].vertices[vertex].coords);
+        other.iter().copied().find(|&candidate| {
+            from_poly(mesh.layers[blind].vertices[candidate].coords).distance_squared(point)
+                <= SEAM_EPSILON * SEAM_EPSILON
         })
+    };
+    let (Some(first), Some(second)) = (partner(before), partner(after)) else {
+        return false;
+    };
+    shared_edge(&mesh.layers[blind], blind as u32, first, second)
+        && shared_polygon(&mesh.layers[rich], rich as u32, before, after)
+}
+
+/// Есть ли между вершинами ребро: полигон слоя, в кольце которого они стоят
+/// рядом. После сшивки индексы помечены номером слоя в старших 8 битах, чужие
+/// слои сюда не считаются.
+fn shared_edge(layer: &polyanya::Layer, layer_index: u32, first: usize, second: usize) -> bool {
+    layer.vertices[first].polygons.iter().any(|&polygon| {
+        polygon != u32::MAX
+            && polygon >> 24 == layer_index
+            && layer
+                .polygons
+                .get((polygon & 0x00FF_FFFF) as usize)
+                .is_some_and(|ring| {
+                    let ring = &ring.vertices;
+                    (0..ring.len()).any(|corner| {
+                        let pair = (
+                            ring[corner] as usize,
+                            ring[(corner + 1) % ring.len()] as usize,
+                        );
+                        pair == (first, second) || pair == (second, first)
+                    })
+                })
+    })
+}
+
+/// Лежат ли вершины в одном полигоне слоя — рядом или через третью, неважно.
+fn shared_polygon(layer: &polyanya::Layer, layer_index: u32, first: usize, second: usize) -> bool {
+    let others = &layer.vertices[second].polygons;
+    layer.vertices[first].polygons.iter().any(|&polygon| {
+        polygon != u32::MAX && polygon >> 24 == layer_index && others.contains(&polygon)
     })
 }
 
