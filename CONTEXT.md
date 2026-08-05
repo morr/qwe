@@ -947,11 +947,28 @@ in `main.rs`.
   counts it: on Tula (400 queries, radius 0.4) a bend exactly on a grid node fell from
   **40.9 % of paths to 16.2 %** with the corner fill, 7.2 → 3.15 m per bend, path length
   against the straight line 1.090 → 1.061 (a flat mesh gives 1.037). It is paid for in
-  open area — `polymesh_bench` goes 5.75 → 8.54 ms mean, 54 → 121 ms worst, same misses —
-  and only routes with a turn pay. Opening the whole ring of neighbours instead, or
-  filtering turns by "the straight start→goal line touches that chunk", were both
-  measured and rejected (the filter saves 8 % of the time and gives back most of the
-  bends).
+  open area — the corridor grows from 9.6 to 12.9 chunks and `polymesh_bench` goes
+  5.61 → 6.23 ms mean, 45 → 75 ms worst, same misses — and only routes with a turn pay.
+  The added chunk is the expensive kind: it sits *on* the straight line to the goal, so
+  its polygons carry the smallest heuristic and get expanded first, all of them.
+  Opening the whole ring of neighbours instead, or filtering turns by "the straight
+  start→goal line touches that chunk", were both measured and rejected (the filter saves
+  a few percent of the time and gives back most of the bends).
+  **The polyline is then string-pulled** (`smoothed` / `segment_clear`): a waypoint is
+  dropped when the straight cut past it lies wholly on the mesh, tested by walking
+  polygons — not by sampling, which would step over a gap between buildings. The walk
+  crosses seams the way polyanya's own `successors` does (the polygon shared by both
+  endpoints of an edge), and it is deliberately conservative: an ambiguous crossing
+  (exactly through a vertex, a start that never sat on the mesh) counts as blocked.
+  Two subtleties cost a full debugging round each, both because **every waypoint is a
+  mesh vertex**: the walk must start from a point a centimetre *along* the segment (a
+  vertex belongs to several polygons, and the one localisation returns can be behind the
+  cut — the walk then finds no exit and reports "clear" without moving; that let 10 % of
+  smoothed segments run through blocks, one for 3.2 km), and a crossing at the very end
+  of the segment is an arrival, not an exit. Corridor and smoothing fix *different*
+  things and are both kept: the corridor shortens the route (1.090 → 1.061), smoothing
+  removes the bend that remains (16.2 % → 5.1 % of paths, 20 bends over 396 paths) and
+  costs 0.3 ms of the 6.5 ms mean.
   **Seam vertex sets are allowed to differ** between two neighbours, and the stitch is
   written for that. Only the chunk *outline* is global (`seam_points` — every crossing of
   an obstacle contour with a grid line, computed once for the whole map); the obstacles

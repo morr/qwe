@@ -74,6 +74,11 @@ fn main() {
     let mut bend_cost = 0.0f64;
     let mut bends = 0usize;
     let mut free_cuts = 0usize;
+    // отрезков пути, у которых нашлась точка вне меша
+    let mut off_mesh = 0usize;
+    let mut deep = 0usize;
+    let mut depth = 0.0f32;
+    let mut grazing = 0usize;
 
     for (from, to) in &queries {
         let Some(path) = find_path_polymesh(&build, *from, *to) else {
@@ -85,6 +90,36 @@ fn main() {
             .windows(2)
             .map(|w| w[0].distance(w[1]) as f64)
             .sum::<f64>();
+
+        // страховка для сглаживания: срезанный отрезок обязан лежать на меше.
+        // Сэмплирование грубее честного прохода по полигонам, но независимо от
+        // него — на несглаженном пути даёт ноль, и на сглаженном обязано тоже
+        for pair in path.windows(2) {
+            let steps = (pair[0].distance(pair[1]) / 0.5).ceil().max(1.0) as usize;
+            let worst = (0..=steps)
+                .map(|step| pair[0].lerp(pair[1], step as f32 / steps as f32))
+                .filter(|point| !build.contains(*point))
+                // насколько точка вне меша: сантиметры — это касание кромки
+                // (путь идёт вплотную к стене, `point_in_mesh` на границе даёт
+                // false), метры — это дыра в проверке отрезка
+                // `None` — снап в метр не достал, точка глубоко в препятствии
+                .map(|point| {
+                    build
+                        .nearest_free_point(point)
+                        .map(|free| free.distance(point))
+                        .unwrap_or(9.99)
+                })
+                .fold(0.0f32, f32::max);
+            if worst > 0.0 {
+                off_mesh += 1;
+                depth = depth.max(worst);
+                if worst > 0.5 {
+                    deep += 1;
+                } else if worst > 0.05 {
+                    grazing += 1;
+                }
+            }
+        }
 
         let mut hit = false;
         // первая точка — сам старт, последняя — цель: обе не выбраны поиском
@@ -139,6 +174,10 @@ fn main() {
         detour / straight.max(1.0),
     );
 
+    println!(
+        "path segments with an off-mesh sample: {off_mesh} — {deep} deeper than 0.5 m, \
+         {grazing} between 0.05 and 0.5 m, the rest touching the edge; worst {depth:.2} m"
+    );
     println!(
         "bends at a node: {bends}, cost {:.0} m total ({:.2} m each), \
          straight cut free on the mesh in {free_cuts} of them ({:.1}%)",
