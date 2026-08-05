@@ -1184,7 +1184,7 @@ in `main.rs`.
   a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on exit.
 - **DEMON_SPEED** — single constant, always `HUMAN_FLEE_SPEED × 1.35`, both wandering
   and chasing. Do not reintroduce per-state demon speeds.
-- **DemonSpawner** — initial burst of 8 at the portal rim, then one per 5 s up to
+- **DemonSpawner** — initial burst of 8 at the portal rim, then one per second up to
   `DEMON_CAP = 100`. Runs in `FixedUpdate` so restart re-fires the burst for free.
 - **Telemetry** — `{killed, escaped}`, BRP-readable. Invariant (check paused):
   `killed + escaped + alive == HUMAN_COUNT`. At high sim speed BRP reads are skewed —

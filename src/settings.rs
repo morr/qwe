@@ -163,7 +163,7 @@ pub const DEMON_DEVOUR_PAUSE: (f32, f32) = (1.5, 2.0);
 pub const KILL_DISTANCE: f32 = 1.0;
 /// Спавн: стартовый залп, затем интервал, кап.
 pub const DEMON_INITIAL_BURST: usize = 8;
-pub const DEMON_SPAWN_INTERVAL: f32 = 5.0;
+pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
 pub const DEMON_CAP: usize = 100;
 
 /// Гистерезис выхода из погони/паники: множитель радиуса.
