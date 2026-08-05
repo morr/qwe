@@ -935,6 +935,23 @@ in `main.rs`.
   mean / 43 ms worst vs 6.18 / 104**, same misses. `QWE_POLYMESH_CHUNK_M` set larger than
   the map returns the flat single layer, which is how "hierarchy's fault" is told apart
   from "geometry's fault".
+  **The corridor is the route plus a corner fill** (`PolymeshBuild::corridor`): the
+  low-level polyanya query sees only the chunks the level-1 A* walked, every other layer
+  blocked — *and* the fourth chunk of each 2×2 block the route turns in. The graph is
+  four-connected (an edge is a shared seam **segment**, not a point), so a diagonal trip
+  is always a staircase A→B→C; with only those three open the free region has a reflex
+  corner, the shortest path must round its vertex, and that vertex is a chunk grid node.
+  polyanya's funnel lands on it *exactly* — with a non-empty `blocked_layers` any vertex
+  touching a blocked layer counts as a corner — and on screen dozens of paths converge on
+  one point and radiate out of it (`Show` + movepath). `examples/polymesh_corner_audit`
+  counts it: on Tula (400 queries, radius 0.4) a bend exactly on a grid node fell from
+  **40.9 % of paths to 16.2 %** with the corner fill, 7.2 → 3.15 m per bend, path length
+  against the straight line 1.090 → 1.061 (a flat mesh gives 1.037). It is paid for in
+  open area — `polymesh_bench` goes 5.75 → 8.54 ms mean, 54 → 121 ms worst, same misses —
+  and only routes with a turn pay. Opening the whole ring of neighbours instead, or
+  filtering turns by "the straight start→goal line touches that chunk", were both
+  measured and rejected (the filter saves 8 % of the time and gives back most of the
+  bends).
   **Seam vertex sets are allowed to differ** between two neighbours, and the stitch is
   written for that. Only the chunk *outline* is global (`seam_points` — every crossing of
   an obstacle contour with a grid line, computed once for the whole map); the obstacles
