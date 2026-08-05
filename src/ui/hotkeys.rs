@@ -1,8 +1,8 @@
 //! Справка по хоткеям: неинтерактивный блок в правом нижнем углу, над панелью
-//! Buildings. Единственная панель на `UiOpacity::Light` — она ничего не
-//! переключает, поэтому не должна глушить карту под собой так же, как рабочие
-//! панели. Светлый фон почти не даёт контраста поверх бежевой карты, поэтому
-//! буквы идут с общей `UI_TEXT_SHADOW` — без неё справка нечитаема.
+//! Buildings. Фон — общий `UiOpacity::Medium`, как у рабочих панелей: на
+//! `Light` (0.25) контраста поверх бежевой карты не хватало даже с тенью под
+//! буквами, и справка читалась хуже всего на экране. Тень (`UI_TEXT_SHADOW`)
+//! остаётся — панель узкая, и её край нередко приходится на светлое пятно.
 //!
 //! Список — единственное место, где хоткеи перечислены целиком; клавиши сами
 //! живут в своих плагинах (`restart`, `ui::debug`, `movement`). Добавил
@@ -24,7 +24,7 @@ const FONT_PX: f32 = 11.0;
 const KEY_COLUMN_PX: f32 = 12.0;
 
 const KEY_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
-const ACTION_COLOR: Color = Color::srgb(0.86, 0.89, 0.86);
+const ACTION_COLOR: Color = Color::srgb(0.92, 0.94, 0.92);
 
 /// `(клавиша, что делает)`.
 const HOTKEYS: &[(&str, &str)] = &[
@@ -57,7 +57,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
                 padding: UiRect::all(px(8.)),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Light)),
+            BackgroundColor(ui_color(UiOpacity::Medium)),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
             UiRightColumnSlot(4),
