@@ -957,6 +957,38 @@ impl PolymeshBuild {
         (cell.y as u32 * self.grid.x + cell.x as u32) as usize
     }
 
+    /// Стоит ли точка на меше — то есть свободна ли она для агента с его
+    /// радиусом. Строже сеточной проходимости: контуры раздуты на радиус, и
+    /// свободный тайл у стены на меше уже внутри препятствия.
+    ///
+    /// Слой подсказывается чанком, иначе локализация перебирает все ~140;
+    /// отрицательный ответ перепроверяется без подсказки — точка ровно на шве
+    /// принадлежит соседнему чанку по `floor`, и без второй попытки стоящий на
+    /// границе считался бы замурованным.
+    pub fn contains(&self, point: Vec2) -> bool {
+        let chunk = self.chunk_at(point);
+        self.mesh
+            .point_in_mesh(polyanya::Coords::on_layer(to_poly(point), chunk as u8))
+            || self.mesh.point_in_mesh(to_poly(point))
+    }
+
+    /// Ближайшая точка на меше в пределах допуска локализации (метр) — тем же
+    /// снапом, которым садятся на меш концы запроса. `None` — свободного места
+    /// в допуске нет, то есть точка не «чуть внутри раздутого контура», а
+    /// глубоко в препятствии.
+    ///
+    /// Спасению это дешёвая дорога: пешка, оказавшаяся внутри инфляции после
+    /// постройки меша с новым радиусом, стоит от свободного места в сантиметрах,
+    /// и кольцевой перебор тайлов с запросом в BVH на каждый был бы за неё
+    /// на три порядка дороже одного снапа.
+    pub fn nearest_free_point(&self, point: Vec2) -> Option<Vec2> {
+        let chunk = self.chunk_at(point);
+        self.mesh
+            .get_closest_point(polyanya::Coords::on_layer(to_poly(point), chunk as u8))
+            .or_else(|| self.mesh.get_closest_point(to_poly(point)))
+            .map(|coords| from_poly(coords.position()))
+    }
+
     /// Точка на меше и её узел графа. Слой подсказывается явно
     /// (`Coords::on_layer`): без подсказки локализация линейно перебирает все
     /// слои, а с ней идёт сразу в BVH нужного. Если в своём чанке точка не
@@ -1709,6 +1741,44 @@ mod tests {
         assert!(
             find_path_polymesh(&closed, from, to).is_none(),
             "a wall without a gap must sever the map"
+        );
+    }
+
+    /// `contains` строже сеточной проходимости: контур раздут на радиус
+    /// агента, и точка вплотную к стене на меше уже внутри препятствия. На
+    /// этом держится спасение застрявших после постройки меша с новым
+    /// радиусом — сетка о нём ничего не знает.
+    #[test]
+    fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
+        let building = PolyArea {
+            outer: vec![
+                Vec2::new(1000.0, 1000.0),
+                Vec2::new(1040.0, 1000.0),
+                Vec2::new(1040.0, 1030.0),
+                Vec2::new(1000.0, 1030.0),
+            ],
+            holes: vec![],
+            kind: crate::map::osm::model::AreaKind::Building,
+            height: None,
+            entrances: vec![],
+        };
+        let input = PolymeshInput {
+            buildings: vec![building],
+            water: vec![],
+            water_lines: vec![],
+            walls: vec![],
+            roads: vec![],
+        };
+        let mesh = build_polymesh(&input, 1.0, None, None).expect("not cancelled");
+
+        assert!(!mesh.contains(Vec2::new(1020.0, 1015.0)), "внутри дома");
+        assert!(
+            !mesh.contains(Vec2::new(999.5, 1015.0)),
+            "в полуметре от стены при радиусе агента 1 м"
+        );
+        assert!(
+            mesh.contains(Vec2::new(995.0, 1015.0)),
+            "в пяти метрах от стены"
         );
     }
 }

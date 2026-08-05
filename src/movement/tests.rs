@@ -9,7 +9,10 @@ use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 use super::components::{Movable, MovableState, PathfindingTask, PreviousSimPosition, SimPosition};
 use super::systems::{listen_for_pathfinding_tasks, rescue_trapped_entities};
 use crate::grid::{tile_center, world_to_tile};
-use crate::navigation::{ArcNavmesh, Navmesh, PathfindingResult};
+use crate::navigation::{
+    ArcNavmesh, Navmesh, NorthstarGrid, PathfindingAlgorithm, PathfindingResult, PolyNavmesh,
+    PolymeshDebug,
+};
 use crate::settings::RESCUE_SEARCH_TILES;
 
 /// Квартал непроходимых тайлов `[min, max]` (включительно) на пустой сетке.
@@ -23,14 +26,25 @@ fn navmesh_with_block(min: IVec2, max: IVec2) -> ArcNavmesh {
     ArcNavmesh(Arc::new(RwLock::new(navmesh)))
 }
 
+/// Приложение с непроходимым кварталом в центре карты. Ресурсы — те, из
+/// которых собирается `Pathfinder`: полигонального меша в тестах нет, так что
+/// «свободно» здесь меряется одной сеткой.
+fn app_with(navmesh: ArcNavmesh) -> App {
+    let mut app = App::new();
+    app.insert_resource(navmesh)
+        .init_resource::<PathfindingAlgorithm>()
+        .init_resource::<NorthstarGrid>()
+        .init_resource::<PolyNavmesh>()
+        .init_resource::<PolymeshDebug>();
+    app
+}
+
 /// Квартал в центре карты — общий для всех проверок.
 fn app_with_block() -> App {
-    let mut app = App::new();
-    app.insert_resource(navmesh_with_block(
+    app_with(navmesh_with_block(
         IVec2::new(100, 100),
         IVec2::new(110, 110),
-    ));
-    app
+    ))
 }
 
 fn spawn_pawn(app: &mut App, position: Vec2) -> Entity {
@@ -139,8 +153,7 @@ fn the_rescue_syncs_the_interpolation_and_drops_the_stale_path() {
 #[test]
 fn a_pawn_deeper_than_the_search_radius_is_left_alone() {
     let side = RESCUE_SEARCH_TILES * 3;
-    let mut app = App::new();
-    app.insert_resource(navmesh_with_block(
+    let mut app = app_with(navmesh_with_block(
         IVec2::new(100, 100),
         IVec2::new(100 + side, 100 + side),
     ));

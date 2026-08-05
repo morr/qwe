@@ -10,7 +10,7 @@ use crate::movement::components::{
 };
 use crate::navigation::{
     Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
-    find_path_polymesh, nearest_passable_tile,
+    find_path_polymesh, nearest_tile_where,
 };
 use crate::settings::{RESCUE_SEARCH_TILES, unit_z};
 
@@ -337,52 +337,86 @@ pub fn move_moving_entities(
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
 }
 
-/// Переезд одной сущности на ближайший проходимый тайл, если она стоит в
+/// Чем меряется «свободно» при спасении — тем же бэкендом, по которому пешки
+/// ходят. Полигональный меш строже сетки: его контуры раздуты на радиус агента,
+/// и свободный тайл вплотную к стене на меше уже внутри препятствия. Пока меш
+/// строится или выключен, остаётся одна сетка.
+struct Walkable<'a> {
+    navmesh: &'a crate::navigation::Navmesh,
+    polymesh: Option<&'a crate::navigation::PolymeshBuild>,
+}
+
+impl Walkable<'_> {
+    fn allows(&self, point: Vec2) -> bool {
+        let tile = world_to_tile(point);
+        // сетка первой: индекс в `Vec` против запроса в BVH
+        self.navmesh.is_passable(tile.x, tile.y)
+            && self.polymesh.is_none_or(|mesh| mesh.contains(point))
+    }
+
+    /// Куда переставить застрявшего. Сперва — снап меша (метровый допуск): в
+    /// инфляцию контура пешка попадает сантиметрами, и перебирать за неё тайлы
+    /// с запросом в BVH на каждый незачем. Не помог — значит она не у стены, а
+    /// внутри дома, и тогда работает кольцевой поиск по тайлам, тот же, что и
+    /// на голой сетке.
+    fn nearest_free_point(&self, point: Vec2) -> Option<Vec2> {
+        self.polymesh
+            .and_then(|mesh| mesh.nearest_free_point(point))
+            .filter(|&snapped| self.allows(snapped))
+            .or_else(|| {
+                nearest_tile_where(world_to_tile(point), RESCUE_SEARCH_TILES, |candidate| {
+                    self.allows(tile_center(candidate))
+                })
+                .map(tile_center)
+            })
+    }
+}
+
+/// Переезд одной сущности на ближайший свободный тайл, если она стоит в
 /// непроходимом. `true` — переехала.
 ///
 /// Попасть внутрь препятствия можно не одним способом: спавн просеивает тайлы
 /// по сетке, но пешку ставит в центр тайла, чей край может быть уже внутри дома
-/// (заливка метит тайл по центру); на полигональном меше проходимое — это
-/// контуры, раздутые на радиус агента, и то, что для сетки свободно, для меша
-/// бывает внутри препятствия; докат за концом пути и бросок демона двигают
-/// `SimPosition` напрямую. Лечить каждый вход отдельно бессмысленно — итог
-/// один: поиск из непроходимого стартового тайла не находит пути, поведение
-/// выбирает новую цель, поиск снова не находит, и так навсегда.
+/// (заливка метит тайл по центру); постройка меша с новым радиусом агента
+/// раздувает контуры под уже стоящими пешками; докат за концом пути и бросок
+/// демона двигают `SimPosition` напрямую. Лечить каждый вход отдельно
+/// бессмысленно — итог один: поиск из непроходимого старта не находит пути,
+/// поведение выбирает новую цель, поиск снова не находит, и так навсегда.
 ///
 /// Переезд ставит и `PreviousSimPosition`: иначе интерполяция протянула бы
 /// пешку через полгорода за один кадр. Старый путь сбрасывается — он ведёт из
 /// места, где сущности больше нет.
 fn rescue_from_impassable(
-    navmesh: &crate::navigation::Navmesh,
+    walkable: &Walkable,
     entity: Entity,
     movable: &mut Movable,
     sim_position: &mut SimPosition,
     previous: &mut PreviousSimPosition,
     commands: &mut Commands,
 ) -> bool {
-    let tile = world_to_tile(sim_position.0);
-    if navmesh.is_passable(tile.x, tile.y) {
+    if walkable.allows(sim_position.0) {
         return false;
     }
     // не нашлось — оставляем как есть: телепорт за пределы кольца увёл бы
     // пешку дальше, чем она вообще могла бы дойти
-    let Some(free) = nearest_passable_tile(navmesh, tile, RESCUE_SEARCH_TILES) else {
+    let Some(free) = walkable.nearest_free_point(sim_position.0) else {
         return false;
     };
-    sim_position.0 = tile_center(free);
+    sim_position.0 = free;
     previous.0 = sim_position.0;
     movable.to_idle(entity, commands, false);
     true
 }
 
-/// Разовый скан всего населения на входе в живой мир: спавн ставит пешку в
-/// центр просеянного тайла, и та, чей центр оказался внутри дома, чинится здесь
-/// — до первой заявки, а не после её провала. Дальше застрявших ловит уже сам
-/// провал поиска (`listen_for_pathfinding_tasks`), и полный проход по 20 000
-/// сущностей больше не повторяется ни разу за жизнь города.
+/// Полный скан населения — там, где меняется сама геометрия проходимости: на
+/// входе в мир (сетка залита и прорежена, население только что расставлено) и
+/// на каждой готовой постройке полигонального меша, потому что новый радиус
+/// агента раздувает контуры под уже стоящими пешками. В остальное время
+/// застрявших ловит провал поиска (`listen_for_pathfinding_tasks`), и проход по
+/// 20 000 сущностей не повторяется ни разу.
 pub fn rescue_trapped_entities(
     mut commands: Commands,
-    navmesh: Res<crate::navigation::ArcNavmesh>,
+    pathfinder: Pathfinder,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     mut query: Query<(
         Entity,
@@ -392,11 +426,17 @@ pub fn rescue_trapped_entities(
         Has<crate::human::Human>,
     )>,
 ) {
-    let navmesh = navmesh.read();
+    let navmesh = pathfinder.navmesh.read();
+    let polymesh = pathfinder.polymesh_build();
+    let walkable = Walkable {
+        navmesh: &navmesh,
+        polymesh: polymesh.as_deref(),
+    };
+    let started = std::time::Instant::now();
     let mut rescued = 0;
     for (entity, mut sim_position, mut previous, mut movable, is_human) in &mut query {
         if !rescue_from_impassable(
-            &navmesh,
+            &walkable,
             entity,
             &mut movable,
             &mut sim_position,
@@ -411,8 +451,22 @@ pub fn rescue_trapped_entities(
         }
     }
     if rescued > 0 {
-        info!("rescued {rescued} entities spawned inside impassable tiles");
+        info!(
+            "rescued {rescued} entities standing in impassable places in {:?}",
+            started.elapsed()
+        );
     }
+}
+
+/// Отдал ли таск постройки меша **новый** результат с прошлого кадра.
+/// `resource_changed` здесь не годится: `sync_polymesh_build` берёт
+/// `ResMut<PolyNavmesh>` и на старте постройки, и на отмене, а геометрия
+/// меняется ровно тогда, когда растёт `generation`.
+pub fn polymesh_rebuilt(poly: Res<crate::navigation::PolyNavmesh>, mut seen: Local<u32>) -> bool {
+    let current = poly.generation();
+    let rebuilt = current != *seen;
+    *seen = current;
+    rebuilt
 }
 
 /// Визуальная позиция: лерп между прошлым и текущим фиксированным шагом,
@@ -469,7 +523,7 @@ const REPATH_TRIM_LIMIT: usize = 4;
 pub fn listen_for_pathfinding_tasks(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    arc_navmesh: Res<crate::navigation::ArcNavmesh>,
+    pathfinder: Pathfinder,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     mut tasks: Query<(
         Entity,
@@ -482,6 +536,7 @@ pub fn listen_for_pathfinding_tasks(
 ) {
     let mut answered = 0u32;
     let mut failed = 0u32;
+    let polymesh = pathfinder.polymesh_build();
     // read-лок берётся лениво и только под спасение: во время загрузки его на
     // секунды держит на запись поток заливки
     let mut navmesh = None;
@@ -505,9 +560,13 @@ pub fn listen_for_pathfinding_tasks(
         }
 
         let Some(path) = result.path else {
-            let navmesh = navmesh.get_or_insert_with(|| arc_navmesh.read());
-            if rescue_from_impassable(
+            let navmesh = navmesh.get_or_insert_with(|| pathfinder.navmesh.read());
+            let walkable = Walkable {
                 navmesh,
+                polymesh: polymesh.as_deref(),
+            };
+            if rescue_from_impassable(
+                &walkable,
                 entity,
                 &mut movable,
                 &mut sim_position,

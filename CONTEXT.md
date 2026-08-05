@@ -1029,11 +1029,18 @@ in `main.rs`.
   (~45 a frame on Tula at 31 % failures), and the ring search runs only for those
   actually walled in. A periodic scan over all 20 000 pawns would do the same work
   thousands of times over for nothing.
-  `rescue_trapped_entities` is the same check as a **one-off** full pass on
-  `OnEnter(PlayPhase::Live)`, so spawn-trapped pawns are fixed before their first request
-  rather than after its failure; it logs `rescued N entities` when it moves anyone.
-  Both are **grid** tests; a pawn inside the agent-radius inflation but on a free tile is
-  left to the endpoint tolerance.
+  **What counts as free is the active backend** (`Walkable`): the grid tile first (an
+  index into a `Vec`), and — while the polygonal mesh is built and selected —
+  `PolymeshBuild::contains`, a layer-hinted `point_in_mesh`. The mesh is the stricter of
+  the two: its contours are inflated by the agent radius, so a tile that clears the grid
+  can be inside an obstacle on the mesh.
+  `rescue_trapped_entities` is the same check as a full pass, and it runs **where the
+  passability geometry itself changes**, not on a clock: `OnEnter(AppState::Playing)`
+  after `WorldInitSet::Spawn` (the grid is filled and pruned by the load thread, the
+  population has just been placed), and on every completed mesh build (`polymesh_rebuilt`
+  watches `PolyNavmesh::generation`, since a new agent radius inflates contours under
+  pawns already standing). It logs `rescued N entities` with its own duration when it
+  moves anyone.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells
   (≥ the largest search radius, so a radius query is a 3×3 cell walk). Cells hold
   **entities only** — a candidate's position is read live from `SimPosition` through the

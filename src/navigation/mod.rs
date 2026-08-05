@@ -51,7 +51,20 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
 /// `r ≥ 3`. Поиск идёт, пока лучшее найденное дальше внутренней границы
 /// следующего кольца.
 pub fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) -> Option<IVec2> {
-    if navmesh.is_passable(tile.x, tile.y) {
+    nearest_tile_where(tile, max_radius, |candidate| {
+        navmesh.is_passable(candidate.x, candidate.y)
+    })
+}
+
+/// То же кольцевым поиском, но «свободен» решает вызывающий: спасение
+/// застрявших меряет тайл активным бэкендом, и на полигональном меше
+/// проходимости сетки мало (контуры раздуты на радиус агента).
+pub fn nearest_tile_where(
+    tile: IVec2,
+    max_radius: i32,
+    is_free: impl Fn(IVec2) -> bool,
+) -> Option<IVec2> {
+    if is_free(tile) {
         return Some(tile);
     }
     let mut best: Option<(i32, IVec2)> = None;
@@ -69,7 +82,7 @@ pub fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) ->
                     continue;
                 }
                 let candidate = tile + IVec2::new(dx, dy);
-                if !navmesh.is_passable(candidate.x, candidate.y) {
+                if !is_free(candidate) {
                     continue;
                 }
                 let distance = dx * dx + dy * dy;
