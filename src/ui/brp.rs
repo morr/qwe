@@ -16,6 +16,11 @@ use super::{UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW};
 #[derive(Resource)]
 pub struct AgentBrpSession;
 
+/// Сама метка — по ней панель World отмеряет, на сколько съехать вниз
+/// (`ui::stats::offset_below_brp_badge`).
+#[derive(Component)]
+pub struct BrpBadge;
+
 /// Светло-красный полупрозрачный фон: заметно поверх любой карты, но не глушит
 /// её и не читается как часть игрового UI (тот тёмный, см. `ui_color`).
 const BADGE_COLOR: Color = Color::srgba(0.85, 0.24, 0.22, 0.85);
@@ -35,6 +40,7 @@ impl Plugin for UiBrpBadgePlugin {
 /// её вместе с панелями незачем, окна путаются как раз пока карта грузится.
 fn render_brp_badge(mut commands: Commands) {
     commands.spawn((
+        BrpBadge,
         Node {
             position_type: PositionType::Absolute,
             top: px(UI_SCREEN_EDGE_PX_OFFSET),

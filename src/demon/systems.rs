@@ -1,7 +1,12 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
 use rand::Rng;
 
-use crate::demon::components::{ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonWanderTag};
+use crate::demon::components::{
+    ChaseTarget, Demon, DemonLungeTag, DemonSpawnPause, DemonSpawnStyle, DemonSpawner,
+    DemonWanderTag,
+};
 use crate::grid::world_to_tile;
 use crate::loading::AppState;
 use crate::movement::{
@@ -10,7 +15,8 @@ use crate::movement::{
 use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::portal::PortalPos;
 use crate::settings::{
-    DEMON_CAP, DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, unit_z,
+    DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPAWN_PAUSE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER,
+    unit_z,
 };
 
 /// Блуждание: дистанция до следующей случайной точки, м.
@@ -25,6 +31,7 @@ const MAP_MARGIN: f32 = 4.0;
 pub fn spawn_initial_burst(
     mut commands: Commands,
     mut spawner: ResMut<DemonSpawner>,
+    style: Res<DemonSpawnStyle>,
     portal_pos: Res<PortalPos>,
 ) {
     if spawner.initial_burst_done {
@@ -32,9 +39,19 @@ pub fn spawn_initial_burst(
     }
     spawner.initial_burst_done = true;
 
-    for index in 0..DEMON_INITIAL_BURST {
-        let angle = index as f32 / DEMON_INITIAL_BURST as f32 * std::f32::consts::TAU;
-        spawn_demon(&mut commands, portal_pos.0, angle, spawner.spawned);
+    // залп тоже упирается в кап — иначе ползунок, выкрученный ниже восьми,
+    // врал бы: демоны всё равно выходили бы залпом
+    let burst = DEMON_INITIAL_BURST.min(style.cap);
+    let mut rng = rand::rng();
+    for index in 0..burst {
+        let angle = index as f32 / burst as f32 * std::f32::consts::TAU;
+        spawn_demon(
+            &mut commands,
+            &mut rng,
+            portal_pos.0,
+            angle,
+            spawner.spawned,
+        );
         spawner.spawned += 1;
     }
 }
@@ -43,9 +60,19 @@ pub fn tick_spawner(
     time: Res<Time>,
     mut commands: Commands,
     mut spawner: ResMut<DemonSpawner>,
+    style: Res<DemonSpawnStyle>,
     portal_pos: Res<PortalPos>,
 ) {
-    if spawner.spawned >= DEMON_CAP {
+    // период таймера подтягивается здесь, а не отдельной системой на
+    // `resource_changed`: рестарт и смена города пересоздают `DemonSpawner`
+    // целиком (`restart.rs`, `city.rs`), и таймер вернулся бы к константе,
+    // тогда как ресурс с тех пор не менялся — чинить было бы некому
+    let interval = Duration::from_secs_f32(style.interval);
+    if spawner.timer.duration() != interval {
+        spawner.timer.set_duration(interval);
+    }
+
+    if spawner.spawned >= style.cap {
         return;
     }
     spawner.timer.tick(time.delta());
@@ -53,13 +80,27 @@ pub fn tick_spawner(
         return;
     }
 
-    let angle = rand::rng().random_range(0.0..std::f32::consts::TAU);
-    spawn_demon(&mut commands, portal_pos.0, angle, spawner.spawned);
+    let mut rng = rand::rng();
+    let angle = rng.random_range(0.0..std::f32::consts::TAU);
+    spawn_demon(
+        &mut commands,
+        &mut rng,
+        portal_pos.0,
+        angle,
+        spawner.spawned,
+    );
     spawner.spawned += 1;
 }
 
-/// Демон появляется у кромки портала под заданным углом.
-fn spawn_demon(commands: &mut Commands, portal_pos: Vec2, angle: f32, index: usize) {
+/// Демон появляется у кромки портала под заданным углом и первые
+/// `DEMON_SPAWN_PAUSE` секунд стоит на месте (`DemonSpawnPause`).
+fn spawn_demon(
+    commands: &mut Commands,
+    rng: &mut impl Rng,
+    portal_pos: Vec2,
+    angle: f32,
+    index: usize,
+) {
     let position = portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
 
     // оттенки красного, чтобы демоны не сливались друг с другом
@@ -73,20 +114,43 @@ fn spawn_demon(commands: &mut Commands, portal_pos: Vec2, angle: f32, index: usi
         Transform::from_translation(position.extend(unit_z(position.y))),
         Demon,
         DemonWanderTag,
+        DemonSpawnPause(Timer::from_seconds(
+            rng.random_range(DEMON_SPAWN_PAUSE.0..DEMON_SPAWN_PAUSE.1),
+            TimerMode::Once,
+        )),
         Movable::new(DEMON_SPEED),
         DespawnOnExit(AppState::Playing),
         Name::new("demon"),
     ));
 }
 
+/// Пауза после выхода из портала: дотикала — компонент снимается, и демон
+/// впервые попадает в `pick_wander_targets` и `acquire_targets`.
+pub fn tick_spawn_pause(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut DemonSpawnPause)>,
+) {
+    for (entity, mut pause) in &mut query {
+        pause.0.tick(time.delta());
+        if pause.0.is_finished() {
+            commands.entity(entity).remove::<DemonSpawnPause>();
+        }
+    }
+}
+
 /// Блуждающий демон без пути выбирает случайную проходимую точку «от портала»
 /// и запрашивает путь. У края карты направление естественно заворачивает
-/// внутрь из-за клампа цели в границы.
+/// внутрь из-за клампа цели в границы. Демон, ещё стоящий в паузе после
+/// спавна, сюда не попадает.
 pub fn pick_wander_targets(
     mut commands: Commands,
     pathfinder: Pathfinder,
     portal_pos: Res<PortalPos>,
-    mut query: Query<(Entity, &SimPosition, &mut Movable), (With<Demon>, With<DemonWanderTag>)>,
+    mut query: Query<
+        (Entity, &SimPosition, &mut Movable),
+        (With<Demon>, With<DemonWanderTag>, Without<DemonSpawnPause>),
+    >,
 ) {
     let mut rng = rand::rng();
     let navmesh = pathfinder.navmesh.read();

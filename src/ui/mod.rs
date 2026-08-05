@@ -12,6 +12,7 @@ mod noise;
 mod roads;
 mod slider;
 mod speed;
+mod stats;
 mod tree_rows;
 mod trees;
 
@@ -212,6 +213,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             speed::UiSpeedPlugin,
+            stats::UiStatsPlugin,
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
             tree_rows::UiTreeRowStylePlugin,

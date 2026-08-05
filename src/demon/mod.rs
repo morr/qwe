@@ -7,9 +7,11 @@ use bevy::prelude::*;
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
 pub use self::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawner, DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonSpawnPause, DemonSpawnStyle, DemonSpawner, DemonWanderTag, DevourUntil,
 };
-use self::systems::{draw_lunge_paths, pick_wander_targets, spawn_initial_burst, tick_spawner};
+use self::systems::{
+    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, tick_spawn_pause, tick_spawner,
+};
 use crate::loading::AppState;
 use crate::spatial::SimSet;
 
@@ -25,7 +27,10 @@ impl Plugin for DemonPlugin {
             .register_type::<ChaseTarget>()
             .register_type::<ChaseRepath>()
             .register_type::<DevourUntil>()
+            .register_type::<DemonSpawnPause>()
+            .register_type::<DemonSpawnStyle>()
             .init_resource::<DemonSpawner>()
+            .init_resource::<DemonSpawnStyle>()
             .add_observer(on_demon_caught_human)
             .add_systems(
                 FixedUpdate,
@@ -41,7 +46,12 @@ impl Plugin for DemonPlugin {
             )
             .add_systems(
                 Update,
-                (pick_wander_targets, pulse_devouring, draw_lunge_paths)
+                (
+                    tick_spawn_pause,
+                    pick_wander_targets,
+                    pulse_devouring,
+                    draw_lunge_paths,
+                )
                     .run_if(in_state(AppState::Playing)),
             );
     }

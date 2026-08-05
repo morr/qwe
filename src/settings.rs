@@ -159,12 +159,25 @@ pub const DEMON_AGGRO_RADIUS: f32 = 45.0;
 pub const DEMON_LUNGE_RANGE: f32 = 6.0;
 /// Пауза «пожирания» после убийства, сек.
 pub const DEMON_DEVOUR_PAUSE: (f32, f32) = (1.5, 2.0);
+/// Пауза сразу после выхода из портала, сек: демон стоит на месте, не выбирая
+/// ни цели прогулки, ни жертвы. Иначе весь стартовый залп разлетается в один
+/// кадр и появление демона на карте не читается вовсе.
+pub const DEMON_SPAWN_PAUSE: (f32, f32) = (0.5, 3.0);
 /// Дистанция убийства.
 pub const KILL_DISTANCE: f32 = 1.0;
-/// Спавн: стартовый залп, затем интервал, кап.
+/// Спавн: стартовый залп, затем интервал, кап. Интервал и кап — только дефолты
+/// ресурса `DemonSpawnStyle`, системы читают его, а не эти константы.
 pub const DEMON_INITIAL_BURST: usize = 8;
 pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
 pub const DEMON_CAP: usize = 100;
+
+/// Границы ползунков панели World.
+pub const DEMON_CAP_MIN: f32 = 0.0;
+pub const DEMON_CAP_MAX: f32 = 250.0;
+pub const DEMON_CAP_STEP: f32 = 5.0;
+pub const DEMON_SPAWN_INTERVAL_MIN: f32 = 0.1;
+pub const DEMON_SPAWN_INTERVAL_MAX: f32 = 10.0;
+pub const DEMON_SPAWN_INTERVAL_STEP: f32 = 0.1;
 
 /// Гистерезис выхода из погони/паники: множитель радиуса.
 pub const RADIUS_HYSTERESIS: f32 = 1.5;

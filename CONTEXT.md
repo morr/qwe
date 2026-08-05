@@ -1154,6 +1154,15 @@ in `main.rs`.
   (the whole `PlayPhase::Warmup`), with strolls first — 0.15 s.
 - **CorpseTag** — a killed human: behavior/movement components removed, dark lying
   sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`).
+- **DemonSpawnPause** — a demon that just stepped out of the portal stands still for a
+  random **0.5–3 s** (`DEMON_SPAWN_PAUSE`), the initial burst included. The component
+  filters *both* `pick_wander_targets` and `acquire_targets` out with a plain
+  `Without<DemonSpawnPause>`, so the pause blocks aggro as well: humans walk past the
+  portal constantly, and a pause the first victim cancels is not a pause. `tick_spawn_pause`
+  (`Update`, so `Res<Time>` is `Time<Virtual>` — the pause scales with sim speed, like the
+  human `WanderPause`) removes the component when the timer finishes; nothing else reads
+  the timer. Without it the whole burst scattered inside one frame and a demon's arrival
+  on the map did not read at all.
 - **Demon** states (`demon/behavior.rs`): **Wander** (target biased away from portal) →
   **Chase** → **Devour** → Wander. Chase claims: **max 2 chasers per target**
   (`ChaserCounts`). Repath throttle 0.4 s, and on that same tick the demon may
@@ -1184,9 +1193,20 @@ in `main.rs`.
   a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on exit.
 - **DEMON_SPEED** — single constant, always `HUMAN_FLEE_SPEED × 1.35`, both wandering
   and chasing. Do not reintroduce per-state demon speeds.
-- **DemonSpawner** — initial burst of 8 at the portal rim, then one per second up to
-  `DEMON_CAP = 100`. Runs in `FixedUpdate` so restart re-fires the burst for free.
-- **Telemetry** — `{killed, escaped}`, BRP-readable. Invariant (check paused):
+- **DemonSpawner** — initial burst at the portal rim, then one demon per interval up to
+  the cap. Runs in `FixedUpdate` so restart re-fires the burst for free. Cap and interval
+  are **not** constants: they live in **`DemonSpawnStyle { cap, interval }`**, driven by
+  the two sliders of the World panel and persisted through `prefs` — `DEMON_CAP = 100` and
+  `DEMON_SPAWN_INTERVAL = 1.0` are only its `Default`. Three consequences worth knowing:
+  the burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, and it fans over the *reduced*
+  count, else a cap below 8 would still let a full burst out); lowering the cap never
+  despawns demons already out — the spawner just goes quiet, so it reads on screen only
+  after `R`; and the timer's period is re-synced inside `tick_spawner` rather than by a
+  `resource_changed` system, because restart and city switch rebuild `DemonSpawner` whole
+  (`restart.rs`, `city.rs`) — the timer would fall back to the constant with no further
+  resource change to fix it.
+- **Telemetry** — `{killed, escaped}`, BRP-readable, and `killed` is what the World panel
+  shows as **Souls**. Invariant (check paused):
   `killed + escaped + alive == HUMAN_COUNT`. At high sim speed BRP reads are skewed —
   pause before asserting.
 
@@ -1200,6 +1220,17 @@ in `main.rs`.
   of every slider drag that runs off the panel. See CLAUDE.md for the rule.
 - **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
   avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
+- **World panel** (`ui/stats.rs`) — top-left, the only corner the other panels leave free.
+  Three live counters — **Pawns** (`With<Human>`, i.e. alive: the component is stripped on
+  death), **Demons**, **Souls reaped** (`Telemetry::killed`), on their own `Heavy` backing
+  the way slider rows have one — and the two `DemonSpawnStyle`
+  slider rows, **Max demons** (0…250, step 5) and **Spawn every** (0.1…10 s, step 0.1),
+  from the same `ui/slider.rs` kit as Trees and Noise. The counters use `iter().len()`, not
+  `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so the
+  length is a sum over archetypes rather than a walk over 20 000 entities every frame.
+  In agent runs the red **BRP badge** owns that same corner, and `offset_below_brp_badge`
+  measures it and pushes the panel below — the `ComputedNode` physical-vs-logical px trap
+  is the same one `stack_bottom_columns` documents.
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button in
   the Buildings-panel style. Left click walks the ladder up and wraps to 1x from its
   top step (`MAX_SIM_SPEED`), right click steps down; green while
