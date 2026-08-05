@@ -12,7 +12,7 @@ use crate::navigation::{
     Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
     find_path_polymesh, nearest_passable_tile,
 };
-use crate::settings::{RESCUE_SCAN_STEPS, RESCUE_SEARCH_TILES, unit_z};
+use crate::settings::{RESCUE_SEARCH_TILES, unit_z};
 
 /// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
 /// и запускаются диспетчером по приоритету близости к камере.
@@ -337,30 +337,49 @@ pub fn move_moving_entities(
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
 }
 
-/// Скан «застрявших» — не каждый шаг, а раз в [`RESCUE_SCAN_STEPS`]
-/// (см. там же, почему). `Local` вместо ресурса: счётчик не нужен никому,
-/// кроме самого условия.
-pub fn rescue_scan_due(mut step: Local<u32>) -> bool {
-    let due = *step == 0;
-    *step = (*step + 1) % RESCUE_SCAN_STEPS;
-    due
-}
-
-/// Сущность, стоящая в непроходимом, переезжает на ближайший проходимый тайл.
+/// Переезд одной сущности на ближайший проходимый тайл, если она стоит в
+/// непроходимом. `true` — переехала.
 ///
-/// Попасть внутрь препятствия можно не одним способом, и лечить каждый по
-/// отдельности бессмысленно: спавн просеивает тайлы по сетке, но пешку ставит
-/// в центр тайла, чей край может быть уже внутри дома (заливка метит тайл по
-/// центру); на полигональном меше проходимое — это контуры, раздутые на радиус
-/// агента, и то, что для сетки свободно, для меша бывает внутри препятствия;
-/// докат за концом пути и бросок демона двигают `SimPosition` напрямую. Общее
-/// у всех — результат: пешка стоит в доме, сеточный поиск из её тайла не
-/// стартует, и она остаётся там навсегда. Инвариант «никто не стоит в
-/// непроходимом» дешевле держать одним скана, чем доказывать в каждом месте,
-/// которое двигает позицию.
+/// Попасть внутрь препятствия можно не одним способом: спавн просеивает тайлы
+/// по сетке, но пешку ставит в центр тайла, чей край может быть уже внутри дома
+/// (заливка метит тайл по центру); на полигональном меше проходимое — это
+/// контуры, раздутые на радиус агента, и то, что для сетки свободно, для меша
+/// бывает внутри препятствия; докат за концом пути и бросок демона двигают
+/// `SimPosition` напрямую. Лечить каждый вход отдельно бессмысленно — итог
+/// один: поиск из непроходимого стартового тайла не находит пути, поведение
+/// выбирает новую цель, поиск снова не находит, и так навсегда.
 ///
 /// Переезд ставит и `PreviousSimPosition`: иначе интерполяция протянула бы
-/// пешку через полгорода за один кадр.
+/// пешку через полгорода за один кадр. Старый путь сбрасывается — он ведёт из
+/// места, где сущности больше нет.
+fn rescue_from_impassable(
+    navmesh: &crate::navigation::Navmesh,
+    entity: Entity,
+    movable: &mut Movable,
+    sim_position: &mut SimPosition,
+    previous: &mut PreviousSimPosition,
+    commands: &mut Commands,
+) -> bool {
+    let tile = world_to_tile(sim_position.0);
+    if navmesh.is_passable(tile.x, tile.y) {
+        return false;
+    }
+    // не нашлось — оставляем как есть: телепорт за пределы кольца увёл бы
+    // пешку дальше, чем она вообще могла бы дойти
+    let Some(free) = nearest_passable_tile(navmesh, tile, RESCUE_SEARCH_TILES) else {
+        return false;
+    };
+    sim_position.0 = tile_center(free);
+    previous.0 = sim_position.0;
+    movable.to_idle(entity, commands, false);
+    true
+}
+
+/// Разовый скан всего населения на входе в живой мир: спавн ставит пешку в
+/// центр просеянного тайла, и та, чей центр оказался внутри дома, чинится здесь
+/// — до первой заявки, а не после её провала. Дальше застрявших ловит уже сам
+/// провал поиска (`listen_for_pathfinding_tasks`), и полный проход по 20 000
+/// сущностей больше не повторяется ни разу за жизнь города.
 pub fn rescue_trapped_entities(
     mut commands: Commands,
     navmesh: Res<crate::navigation::ArcNavmesh>,
@@ -374,24 +393,25 @@ pub fn rescue_trapped_entities(
     )>,
 ) {
     let navmesh = navmesh.read();
+    let mut rescued = 0;
     for (entity, mut sim_position, mut previous, mut movable, is_human) in &mut query {
-        let tile = world_to_tile(sim_position.0);
-        if navmesh.is_passable(tile.x, tile.y) {
+        if !rescue_from_impassable(
+            &navmesh,
+            entity,
+            &mut movable,
+            &mut sim_position,
+            &mut previous,
+            &mut commands,
+        ) {
             continue;
         }
-        // не нашлось — оставляем как есть: телепорт за пределы кольца увёл бы
-        // пешку дальше, чем она вообще могла бы дойти
-        let Some(free) = nearest_passable_tile(&navmesh, tile, RESCUE_SEARCH_TILES) else {
-            continue;
-        };
-        sim_position.0 = tile_center(free);
-        previous.0 = sim_position.0;
-        // старый путь ведёт из места, где сущности больше нет: поведение
-        // выберет цель заново
-        movable.to_idle(entity, &mut commands, false);
+        rescued += 1;
         if is_human && let Some(grid) = human_grid.as_mut() {
             grid.insert(entity, sim_position.0);
         }
+    }
+    if rescued > 0 {
+        info!("rescued {rescued} entities spawned inside impassable tiles");
     }
 }
 
@@ -436,14 +456,36 @@ pub fn on_movable_added_init_sim_position(
 const REPATH_TRIM_LIMIT: usize = 4;
 
 /// Снимает готовые асинхронные ответы поиска пути.
+///
+/// Здесь же ловятся застрявшие. Провал поиска — единственный сигнал, который
+/// сущность подаёт о себе сама, и он же отбирает ровно тех, кому спасение
+/// нужно: плоский A* стартовый тайл не проверяет и из дома в тайл-другой
+/// выводит сам, полигональный меш снапит старт на меш, а `None` возвращается,
+/// когда выхода действительно нет — все восемь соседей непроходимы либо старт
+/// не принадлежит ни одному чанку иерархии. Поэтому вместо периодического
+/// прохода по всем 20 000 сущностей проверка стоит на ответе: один индекс в
+/// `Vec` проходимости на каждый провал (сотые доли процента кадра), а кольцевой
+/// поиск — только за теми, кто действительно в непроходимом.
 pub fn listen_for_pathfinding_tasks(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    mut tasks: Query<(Entity, &mut Movable, &SimPosition, &mut PathfindingTask)>,
+    arc_navmesh: Res<crate::navigation::ArcNavmesh>,
+    mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut tasks: Query<(
+        Entity,
+        &mut Movable,
+        &mut SimPosition,
+        &mut PreviousSimPosition,
+        &mut PathfindingTask,
+        Has<crate::human::Human>,
+    )>,
 ) {
     let mut answered = 0u32;
     let mut failed = 0u32;
-    for (entity, mut movable, sim_position, mut task) in &mut tasks {
+    // read-лок берётся лениво и только под спасение: во время загрузки его на
+    // секунды держит на запись поток заливки
+    let mut navmesh = None;
+    for (entity, mut movable, mut sim_position, mut previous, mut task, is_human) in &mut tasks {
         let Some(result) = check_ready(&mut task.0) else {
             continue;
         };
@@ -463,6 +505,21 @@ pub fn listen_for_pathfinding_tasks(
         }
 
         let Some(path) = result.path else {
+            let navmesh = navmesh.get_or_insert_with(|| arc_navmesh.read());
+            if rescue_from_impassable(
+                navmesh,
+                entity,
+                &mut movable,
+                &mut sim_position,
+                &mut previous,
+                &mut commands,
+            ) {
+                if is_human && let Some(grid) = human_grid.as_mut() {
+                    grid.insert(entity, sim_position.0);
+                }
+                continue;
+            }
+            // не застрял — цель просто недостижима; новую выберет поведение
             movable.to_pathfinding_error(end_tile);
             continue;
         };

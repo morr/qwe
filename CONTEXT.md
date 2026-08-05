@@ -1009,21 +1009,31 @@ in `main.rs`.
   `MovableState: Idle | Pathfinding(goal) | Moving(goal) | PathfindingError`.
   `to_pathfinding` queues the search and keeps the current path (see *Repath on the
   move*); `to_idle` is the only transition that stops movement.
-- **Rescue scan** (`movement::rescue_trapped_entities`, first system of the fixed step,
-  every `RESCUE_SCAN_STEPS` = 60 steps): anything with a `SimPosition` standing on an
-  impassable tile moves to the nearest passable one (`nearest_passable_tile`, ring search
-  capped at `RESCUE_SEARCH_TILES` = 16 tiles), both ends of the interpolation are set to
-  the new point and the stale path is dropped (`to_idle`). It holds the invariant *nobody
-  stands in the impassable* — cheaper than proving it at every site that writes a
-  position, and a pawn that fails it is stuck forever: a grid search out of an impassable
-  start tile returns `None` on every repath. Ways in exist by construction — the spawn
-  sifts tiles but stands the pawn on a tile centre whose own corner may already be inside
-  a house (fill marks a tile by its centre), the polygonal mesh calls passable what the
-  grid does not (contours inflated by the agent radius), coasting and the demon lunge
-  move `SimPosition` past the path. Whole-population scan on an interval, not every step:
-  at 30× the fixed step runs 1800× a real second, and being stuck is rare, so a wait of
-  one virtual second costs nothing. The scan is a **grid** test only; a pawn inside the
-  agent-radius inflation but on a free tile is left to the endpoint tolerance.
+- **Rescue** (`movement::rescue_from_impassable`) — a pawn standing on an impassable tile
+  moves to the nearest passable one (`nearest_passable_tile`, ring search capped at
+  `RESCUE_SEARCH_TILES` = 16 tiles), both ends of the interpolation are set to the new
+  point and the stale path is dropped (`to_idle`). Ways in exist by construction: the
+  spawn sifts tiles but stands the pawn on a tile centre whose own corner may already be
+  inside a house (fill marks a tile by its centre), the polygonal mesh calls passable
+  what the grid does not (contours inflated by the agent radius), coasting and the demon
+  lunge move `SimPosition` past the path. Fixing each entrance separately is pointless —
+  the end state is one and the same, and it is terminal: behaviour picks a target, the
+  search finds nothing, behaviour picks another, forever.
+  **The trigger is a failed search**, not a clock (`listen_for_pathfinding_tasks`, the
+  `result.path == None` branch). That is the only signal a stuck pawn raises about
+  itself, and it selects exactly the ones worth rescuing: flat A* does not test the start
+  tile at all, so a pawn a tile or two inside a house walks out on its own successors;
+  polyanya snaps the start onto the mesh; `None` comes back only when there is really no
+  way out — all eight neighbours impassable, or a start belonging to no chunk of the
+  northstar hierarchy. Cost is one index into the passability `Vec` per failed answer
+  (~45 a frame on Tula at 31 % failures), and the ring search runs only for those
+  actually walled in. A periodic scan over all 20 000 pawns would do the same work
+  thousands of times over for nothing.
+  `rescue_trapped_entities` is the same check as a **one-off** full pass on
+  `OnEnter(PlayPhase::Live)`, so spawn-trapped pawns are fixed before their first request
+  rather than after its failure; it logs `rescued N entities` when it moves anyone.
+  Both are **grid** tests; a pawn inside the agent-radius inflation but on a free tile is
+  left to the endpoint tolerance.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells
   (≥ the largest search radius, so a radius query is a 3×3 cell walk). Cells hold
   **entities only** — a candidate's position is read live from `SimPosition` through the
