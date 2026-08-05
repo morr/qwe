@@ -1003,6 +1003,17 @@ in `main.rs`.
     default against 3.5 % on the grid; at 1 m it is **0.6 %**.
   - **`MAX_POLYMESH_PATHFINDING_IN_FLIGHT`** equals the grid's 1024 — an earlier low cap
     tried to contain runaway memory and instead stalled the whole dispatcher.
+  The same arithmetic sets the **ceiling of the agent radius slider**
+  (`POLYMESH_AGENT_RADIUS_MAX` = 0.6, range 0.2–0.6): the tolerance rescues a goal that
+  sits inside the inflation by less than a metre, and the inflation grows with the radius,
+  so the two meet. Misses over the ladder (`examples/polymesh_miss_audit`, 600 queries,
+  the seeded set of `polymesh_bench`): 0.5 % at 0.2–0.3, 1.0 % at 0.4, 1.7 % at 0.6,
+  2.7 % at 0.7, then the cliff — 6.7 %, 12.3 %, **20.7 % at 1.0**, where 47 % of goals no
+  longer sit on the mesh at all and 88 % of the misses are the goal walled in, not a
+  search that ran out. Physics agrees with the number: a human is 0.5 m across
+  (`HUMAN_SIZE` is the doubled, readable size), so 0.6 is already twice the real body.
+  The audit is the tool for that question — it splits each miss into an endpoint that
+  never sat on the mesh and one that sat in another connected component.
   **Divergence, resolved twice over.** A single search used to allocate unbounded memory
   (flat ~3 GB, then past 17 GB in seconds, OS kill): polyanya's iteration budget caps
   only queue *pops* while `successors` pushes fans of nodes unchecked. Fixed at the root
