@@ -10,8 +10,8 @@ use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
 use crate::settings::{
-    HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_RANGE, MAP_SIZE,
-    unit_z,
+    HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
+    HUMAN_WANDER_RANGE, MAP_SIZE, unit_z,
 };
 
 /// Отступ целей блуждания от края карты, м.
@@ -120,7 +120,25 @@ fn pick_building_ahead(map: &MapData, rng: &mut impl Rng, position: Vec2, headin
     best.map(|(_, point)| point).unwrap_or(position)
 }
 
-/// Мирное блуждание: пауза 2–10 с, затем цель — 80% идут «по делам» к
+/// Пауза, которую человек выстоит на следующей цели: `HUMAN_WANDER_PAUSE_SHARE`
+/// останавливаются на 2–10 с, остальные уходят дальше тем же кадром.
+///
+/// Бросок делается на цель, а не на человека: постоянно спешащая пятая часть
+/// населения — это два разных сорта пешеходов, а нужен один, который иногда
+/// останавливается. И бросается он заранее, при выборе цели, потому что это тот
+/// же кадр, где пауза и так перезаряжается, — прибытие о ней ничего не знает.
+///
+/// Нулевая пауза срабатывает сразу: `Timer` в `Once` считает себя истёкшим при
+/// первом же `tick`, если `elapsed >= duration`.
+fn roll_wander_pause(rng: &mut impl Rng) -> std::time::Duration {
+    if rng.random_range(0.0..1.0) >= HUMAN_WANDER_PAUSE_SHARE {
+        return std::time::Duration::ZERO;
+    }
+    std::time::Duration::from_secs_f32(rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1))
+}
+
+/// Мирное блуждание: пауза 2–10 с на каждом пятом прибытии (см.
+/// `roll_wander_pause`), затем цель — 80% идут «по делам» к
 /// случайному зданию города (длинные маршруты, настоящая нагрузка на
 /// pathfinding), 20% гуляют в 20–40 м от себя. Первая цель после спавна —
 /// всегда прогулка поблизости (`HumanFirstWanderTag`).
@@ -192,10 +210,7 @@ pub fn pick_wander_targets(
         }
 
         // следующая пауза — уже после прибытия
-        let next_pause = rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1);
-        pause
-            .0
-            .set_duration(std::time::Duration::from_secs_f32(next_pause));
+        pause.0.set_duration(roll_wander_pause(&mut rng));
         pause.0.reset();
     }
 }
