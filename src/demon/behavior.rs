@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::demon::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawnPause, DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonSpawnPause, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use crate::grid::world_to_tile;
 use crate::human::{CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
@@ -15,8 +15,8 @@ use crate::movement::{
 };
 use crate::navigation::{Pathfinder, find_passable_tile_near, line_of_sight};
 use crate::settings::{
-    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_RANGE, DEMON_SPEED, KILL_DISTANCE,
-    RADIUS_HYSTERESIS, Z_CORPSE,
+    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_RANGE, KILL_DISTANCE, RADIUS_HYSTERESIS,
+    Z_CORPSE,
 };
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
@@ -50,7 +50,6 @@ pub fn acquire_targets(
         (Entity, &SimPosition),
         (With<Demon>, With<DemonWanderTag>, Without<DemonSpawnPause>),
     >,
-    mut movables: Query<&mut Movable>,
 ) {
     let mut chasers: ChaserCounts = ChaserCounts::default();
     for chase_target in &chasing {
@@ -68,9 +67,8 @@ pub fn acquire_targets(
         };
         *chasers.entry(human).or_insert(0) += 1;
 
-        if let Ok(mut movable) = movables.get_mut(entity) {
-            movable.speed = DEMON_SPEED;
-        }
+        // скорость здесь не трогаем: она одна на все состояния демона и живёт
+        // в `Movable::speed` со спавна (`sync_demon_speed` ведёт её дальше)
         commands.entity(entity).remove::<DemonWanderTag>().insert((
             DemonChaseTag,
             ChaseTarget(human),
@@ -89,10 +87,12 @@ pub fn acquire_targets(
 ///
 /// `Without<Human>` в фильтре обязателен: обе выборки трогают `SimPosition`,
 /// и без него планировщик видит конфликт доступа.
+#[allow(clippy::too_many_arguments)]
 pub fn chase(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
+    style: Res<DemonStyle>,
     pathfinder: Pathfinder,
     humans: Res<SpatialGrid<Human>>,
     mut query: Query<
@@ -124,11 +124,11 @@ pub fn chase(
     {
         // цель умерла (труп/despawn) — снова блуждание
         let Ok(target_position) = targets.get(chase_target.0) else {
-            back_to_wander(&mut commands, entity, &mut movable);
+            back_to_wander(&mut commands, entity);
             continue;
         };
         if killed_this_tick.contains(&chase_target.0) {
-            back_to_wander(&mut commands, entity, &mut movable);
+            back_to_wander(&mut commands, entity);
             continue;
         }
 
@@ -138,7 +138,7 @@ pub fn chase(
         // гистерезис выхода из погони
         if distance > DEMON_AGGRO_RADIUS * RADIUS_HYSTERESIS {
             *chasers.entry(chase_target.0).or_insert(1) -= 1;
-            back_to_wander(&mut commands, entity, &mut movable);
+            back_to_wander(&mut commands, entity);
             continue;
         }
 
@@ -166,7 +166,12 @@ pub fn chase(
             if !lunging {
                 commands.entity(entity).insert(DemonLungeTag);
             }
-            let step = (movable.speed * time.delta_secs()).min(distance);
+            // Надбавка на бросок применяется прямо здесь, а не через
+            // `Movable::speed`: в этой фазе путь снят, демона двигает эта
+            // строка, а не `move_moving_entities`, — и снимать надбавку с
+            // выходом из броска не нужно, её просто некому унести.
+            let speed = movable.speed * (1.0 + style.lunge);
+            let step = (speed * time.delta_secs()).min(distance);
             let lunge = (target_pos - sim_position.0).normalize_or_zero() * step;
             sim_position.0 += lunge;
             continue;
@@ -251,8 +256,7 @@ pub fn chase(
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_CHASE_MS, started);
 }
 
-fn back_to_wander(commands: &mut Commands, entity: Entity, movable: &mut Movable) {
-    movable.speed = DEMON_SPEED;
+fn back_to_wander(commands: &mut Commands, entity: Entity) {
     commands
         .entity(entity)
         .remove::<(DemonChaseTag, ChaseTarget, ChaseRepath, DemonLungeTag)>()
@@ -330,17 +334,16 @@ pub fn devour(
     mut commands: Commands,
     time: Res<Time>,
     mut query: Query<
-        (Entity, &mut DevourUntil, &mut Movable, &mut Transform),
+        (Entity, &mut DevourUntil, &mut Transform),
         (With<Demon>, With<DemonDevourTag>),
     >,
 ) {
-    for (entity, mut devour_until, mut movable, mut transform) in &mut query {
+    for (entity, mut devour_until, mut transform) in &mut query {
         devour_until.0.tick(time.delta());
         if !devour_until.0.is_finished() {
             continue;
         }
         transform.scale = Vec3::ONE;
-        movable.speed = DEMON_SPEED;
         commands
             .entity(entity)
             .remove::<(DemonDevourTag, DevourUntil)>()

@@ -147,8 +147,9 @@ pub const HUMAN_WANDER_PAUSE_SHARE: f32 = 0.2;
 // --- Демоны ---
 /// Визуальный габарит ×2 против фигуры-заглушки 1 × 1 м.
 pub const DEMON_SIZE: f32 = 2.0;
-/// Единая скорость демона: всегда +35% к скорости убегающего человека,
-/// и в блуждании, и в погоне.
+/// Базовая скорость демона: +35% к скорости убегающего человека, одна и та же
+/// в блуждании и в погоне. Реальная скорость — это база, умноженная на
+/// `DemonStyle::speed` (ползунок панели Demon).
 pub const DEMON_SPEED: f32 = HUMAN_FLEE_SPEED * 1.35;
 /// Радиус агро демона.
 pub const DEMON_AGGRO_RADIUS: f32 = 45.0;
@@ -166,18 +167,29 @@ pub const DEMON_SPAWN_PAUSE: (f32, f32) = (0.5, 3.0);
 /// Дистанция убийства.
 pub const KILL_DISTANCE: f32 = 1.0;
 /// Спавн: стартовый залп, затем интервал, кап. Интервал и кап — только дефолты
-/// ресурса `DemonSpawnStyle`, системы читают его, а не эти константы.
+/// ресурса `DemonStyle`, системы читают его, а не эти константы.
 pub const DEMON_INITIAL_BURST: usize = 8;
 pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
 pub const DEMON_CAP: usize = 100;
+/// Множитель к `DEMON_SPEED` и надбавка к ней на время броска — тоже дефолты
+/// `DemonStyle`. Оба ползунка стоят на 30% своего хода: скорость 130% от базы,
+/// бросок +30% к получившейся скорости.
+pub const DEMON_SPEED_FACTOR: f32 = 1.3;
+pub const DEMON_LUNGE_BOOST: f32 = 0.3;
 
-/// Границы ползунков панели World.
+/// Границы ползунков панели Demon.
 pub const DEMON_CAP_MIN: f32 = 0.0;
-pub const DEMON_CAP_MAX: f32 = 250.0;
+pub const DEMON_CAP_MAX: f32 = 500.0;
 pub const DEMON_CAP_STEP: f32 = 5.0;
 pub const DEMON_SPAWN_INTERVAL_MIN: f32 = 0.1;
 pub const DEMON_SPAWN_INTERVAL_MAX: f32 = 10.0;
 pub const DEMON_SPAWN_INTERVAL_STEP: f32 = 0.1;
+pub const DEMON_SPEED_FACTOR_MIN: f32 = 1.0;
+pub const DEMON_SPEED_FACTOR_MAX: f32 = 2.0;
+pub const DEMON_SPEED_FACTOR_STEP: f32 = 0.05;
+pub const DEMON_LUNGE_BOOST_MIN: f32 = 0.0;
+pub const DEMON_LUNGE_BOOST_MAX: f32 = 1.0;
+pub const DEMON_LUNGE_BOOST_STEP: f32 = 0.05;
 
 /// Гистерезис выхода из погони/паники: множитель радиуса.
 pub const RADIUS_HYSTERESIS: f32 = 1.5;

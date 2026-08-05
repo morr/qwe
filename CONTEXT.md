@@ -1180,8 +1180,9 @@ in `main.rs`.
   which self-limits at both ends: 1.4 m when the demon is 2 m from its victim (it no
   longer turns aside), 47 m at the far end of the hysteresis (still a 3×3 cell walk).
   **Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with `line_of_sight` to the victim,
-  the demon drops its path and steps `SimPosition` straight at the target. Without it a
-  chase never converts: a tile path aims at the *center* of the victim's tile while the
+  the demon drops its path and steps `SimPosition` straight at the target, at its speed
+  plus `DemonStyle::lunge`. Without it a chase never converts: a tile path aims at the
+  *center* of the victim's tile while the
   victim keeps moving inside it, so the last ~1.4 m — more than `KILL_DISTANCE` — is
   never closed and the demon "almost catches" forever. The line-of-sight check is what
   keeps the lunge from cutting through a building when the victim rounds a corner.
@@ -1191,14 +1192,21 @@ in `main.rs`.
   Kill at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); `killed_this_tick`
   HashSet dedupes double kills within one command flush. **Devour** — pause 1.5–2 s with
   a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on exit.
-- **DEMON_SPEED** — single constant, always `HUMAN_FLEE_SPEED × 1.35`, both wandering
-  and chasing. Do not reintroduce per-state demon speeds.
+- **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`, wandering and
+  chasing alike. Do not reintroduce per-state demon speeds: the only multipliers are the
+  two user ones, `DemonStyle::speed` (whole demon, ×1.0…×2.0) and `DemonStyle::lunge`
+  (the lunge phase only, +0…+100%). `Movable::speed` is written **once**, at spawn, as
+  `DEMON_SPEED × speed`; moving the slider reaches the demons already out through
+  `sync_demon_speed` (`resource_changed`, not per-frame). The lunge boost never touches
+  `Movable::speed` — that phase moves `SimPosition` itself, past
+  `move_moving_entities`, so the multiplier belongs at the one line in `chase` that
+  steps it, and there is nothing to unwind when the lunge ends.
 - **DemonSpawner** — initial burst at the portal rim, then one demon per interval up to
   the cap. Runs in `FixedUpdate` so restart re-fires the burst for free. Cap and interval
-  are **not** constants: they live in **`DemonSpawnStyle { cap, interval }`**, driven by
-  the two sliders of the World panel and persisted through `prefs` — `DEMON_CAP = 100` and
-  `DEMON_SPAWN_INTERVAL = 1.0` are only its `Default`. Three consequences worth knowing:
-  the burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, and it fans over the *reduced*
+  are **not** constants: they live in **`DemonStyle { cap, interval, speed, lunge }`**,
+  driven by the sliders of the Demon panel and persisted through `prefs` —
+  `DEMON_CAP = 100` and `DEMON_SPAWN_INTERVAL = 1.0` are only its `Default`. Three
+  consequences worth knowing: the burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, and it fans over the *reduced*
   count, else a cap below 8 would still let a full burst out); lowering the cap never
   despawns demons already out — the spawner just goes quiet, so it reads on screen only
   after `R`; and the timer's period is re-synced inside `tick_spawner` rather than by a
@@ -1220,16 +1228,20 @@ in `main.rs`.
   of every slider drag that runs off the panel. See CLAUDE.md for the rule.
 - **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
   avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
-- **World panel** (`ui/stats.rs`) — top-left, the only corner the other panels leave free.
-  Three live counters — **Pawns** (`With<Human>`, i.e. alive: the component is stripped on
-  death), **Demons**, **Souls reaped** (`Telemetry::killed`), on their own `Heavy` backing
-  the way slider rows have one — and the two `DemonSpawnStyle`
-  slider rows, **Max demons** (0…250, step 5) and **Spawn every** (0.1…10 s, step 0.1),
-  from the same `ui/slider.rs` kit as Trees and Noise. The counters use `iter().len()`, not
+- **World and Demon panels** (`ui/stats.rs`) — top-left, the only corner the other panels
+  leave free, one under the other in a plain flex column (it grows *downward* from the
+  screen edge, so unlike `stack_bottom_columns` nothing has to measure heights).
+  **World** holds three live counters — **Pawns** (`With<Human>`, i.e. alive: the
+  component is stripped on death), **Demons**, **Souls reaped** (`Telemetry::killed`), on
+  their own `Heavy` backing the way slider rows have one. **Demon** holds the four
+  `DemonStyle` slider rows from the same `ui/slider.rs` kit as Trees and Noise —
+  **Max demons** (0…500, step 5), **Spawn every** (0.1…10 s, step 0.1), **Speed**
+  (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows print as
+  percent, a bare `1.3` on the panel says nothing. The counters use `iter().len()`, not
   `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so the
   length is a sum over archetypes rather than a walk over 20 000 entities every frame.
   In agent runs the red **BRP badge** owns that same corner, and `offset_below_brp_badge`
-  measures it and pushes the panel below — the `ComputedNode` physical-vs-logical px trap
+  measures it and pushes the column below — the `ComputedNode` physical-vs-logical px trap
   is the same one `stack_bottom_columns` documents.
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button in
   the Buildings-panel style. Left click walks the ladder up and wraps to 1x from its

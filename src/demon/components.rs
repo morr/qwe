@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::{DEMON_CAP, DEMON_SPAWN_INTERVAL, DEMON_SPAWN_PAUSE};
+use crate::settings::{
+    DEMON_CAP, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL, DEMON_SPAWN_PAUSE, DEMON_SPEED_FACTOR,
+};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -32,8 +34,9 @@ impl Default for ChaseTarget {
 }
 
 /// Финальный бросок: демон идёт напрямую на текущую позицию жертвы, минуя
-/// тайловый путь. Ставится и снимается в `chase`; movepath-гизмо по нему
-/// рисует стрелку прямо в цель, а не по остаткам старого пути.
+/// тайловый путь, и с надбавкой к скорости (`DemonStyle::lunge`). Ставится и
+/// снимается в `chase`; movepath-гизмо по нему рисует стрелку прямо в цель,
+/// а не по остаткам старого пути.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct DemonLungeTag;
@@ -81,26 +84,35 @@ pub struct DemonCaughtHumanEvent {
     pub human: Entity,
 }
 
-/// Настройки спавна, крутятся ползунками панели World и сохраняются между
+/// Настройки демонов, крутятся ползунками панели Demon и сохраняются между
 /// запусками. Отдельно от `DemonSpawner`: тот — состояние мира и сбрасывается
 /// на рестарте и смене города, а это — выбор пользователя, который рестарт
 /// переживает.
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
 #[reflect(Resource, SettingsGroup, Default)]
-#[settings_group(group = "demon_spawn")]
-pub struct DemonSpawnStyle {
+#[settings_group(group = "demon")]
+pub struct DemonStyle {
     /// Потолок числа демонов; дойдя до него, спавнер молчит. Понижение уже
     /// вышедших демонов не убирает — оно видно только после рестарта.
     pub cap: usize,
     /// Секунды между демонами после стартового залпа.
     pub interval: f32,
+    /// Множитель к `DEMON_SPEED`, 1.0…2.0. Пишется в `Movable::speed` при
+    /// спавне, а уже вышедшим демонам его раздаёт `sync_demon_speed`.
+    pub speed: f32,
+    /// Надбавка к скорости на время броска (`DemonLungeTag`), 0.0…1.0.
+    /// В `Movable::speed` не попадает: бросок двигает `SimPosition` сам,
+    /// мимо `move_moving_entities`, и множитель нужен только там.
+    pub lunge: f32,
 }
 
-impl Default for DemonSpawnStyle {
+impl Default for DemonStyle {
     fn default() -> Self {
         Self {
             cap: DEMON_CAP,
             interval: DEMON_SPAWN_INTERVAL,
+            speed: DEMON_SPEED_FACTOR,
+            lunge: DEMON_LUNGE_BOOST,
         }
     }
 }

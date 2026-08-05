@@ -4,8 +4,7 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::demon::components::{
-    ChaseTarget, Demon, DemonLungeTag, DemonSpawnPause, DemonSpawnStyle, DemonSpawner,
-    DemonWanderTag,
+    ChaseTarget, Demon, DemonLungeTag, DemonSpawnPause, DemonSpawner, DemonStyle, DemonWanderTag,
 };
 use crate::grid::world_to_tile;
 use crate::loading::AppState;
@@ -31,7 +30,7 @@ const MAP_MARGIN: f32 = 4.0;
 pub fn spawn_initial_burst(
     mut commands: Commands,
     mut spawner: ResMut<DemonSpawner>,
-    style: Res<DemonSpawnStyle>,
+    style: Res<DemonStyle>,
     portal_pos: Res<PortalPos>,
 ) {
     if spawner.initial_burst_done {
@@ -51,6 +50,7 @@ pub fn spawn_initial_burst(
             portal_pos.0,
             angle,
             spawner.spawned,
+            DEMON_SPEED * style.speed,
         );
         spawner.spawned += 1;
     }
@@ -60,7 +60,7 @@ pub fn tick_spawner(
     time: Res<Time>,
     mut commands: Commands,
     mut spawner: ResMut<DemonSpawner>,
-    style: Res<DemonSpawnStyle>,
+    style: Res<DemonStyle>,
     portal_pos: Res<PortalPos>,
 ) {
     // период таймера подтягивается здесь, а не отдельной системой на
@@ -88,6 +88,7 @@ pub fn tick_spawner(
         portal_pos.0,
         angle,
         spawner.spawned,
+        DEMON_SPEED * style.speed,
     );
     spawner.spawned += 1;
 }
@@ -100,6 +101,7 @@ fn spawn_demon(
     portal_pos: Vec2,
     angle: f32,
     index: usize,
+    speed: f32,
 ) {
     let position = portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
 
@@ -118,10 +120,22 @@ fn spawn_demon(
             rng.random_range(DEMON_SPAWN_PAUSE.0..DEMON_SPAWN_PAUSE.1),
             TimerMode::Once,
         )),
-        Movable::new(DEMON_SPEED),
+        Movable::new(speed),
         DespawnOnExit(AppState::Playing),
         Name::new("demon"),
     ));
+}
+
+/// Ползунок скорости — уже вышедшим демонам. `Movable::speed` пишется один раз,
+/// при спавне, поэтому без этой системы новая скорость доставалась бы только
+/// следующим демонам из портала, а сотня уже гуляющих осталась бы на старой.
+/// Гоняется по `resource_changed::<DemonStyle>`, то есть на движение ползунка,
+/// а не покадрово.
+pub fn sync_demon_speed(style: Res<DemonStyle>, mut demons: Query<&mut Movable, With<Demon>>) {
+    let speed = DEMON_SPEED * style.speed;
+    for mut movable in &mut demons {
+        movable.speed = speed;
+    }
 }
 
 /// Пауза после выхода из портала: дотикала — компонент снимается, и демон

@@ -1,5 +1,6 @@
-//! Панель World в левом верхнем углу: сколько пешек ещё живо, сколько демонов
-//! ходит по городу, сколько душ съедено, — и два ползунка спавна демонов.
+//! Две панели левого верхнего угла: World — сколько пешек ещё живо, сколько
+//! демонов ходит по городу, сколько душ съедено; Demon под ней — ползунки
+//! `DemonStyle`: кап, интервал спавна, скорость и надбавка на бросок.
 //!
 //! Счётчики до этого жили только в BRP (`count Human`, `res get Telemetry`), то
 //! есть смотреть на симуляцию без агентского клиента рядом было нечем.
@@ -10,24 +11,29 @@ use bevy::ui_widgets::{SliderValue, ValueChange};
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::slider::{SliderRow, quantize, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
-use crate::demon::{Demon, DemonSpawnStyle};
+use crate::demon::{Demon, DemonStyle};
 use crate::human::Human;
 use crate::settings::{
-    DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_SPAWN_INTERVAL_MAX,
-    DEMON_SPAWN_INTERVAL_MIN, DEMON_SPAWN_INTERVAL_STEP,
+    DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
+    DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
+    DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
+    DEMON_SPEED_FACTOR_STEP,
 };
 use crate::telemetry::Telemetry;
 
-/// Ширина панели — как у остальных панелей с ползунками.
+/// Ширина панелей — как у остальных панелей с ползунками.
 const PANEL_WIDTH_PX: f32 = 210.0;
 /// Подпись счётчика. Светлее тусклой подписи строк-ползунков
 /// (`slider.rs`, 0.75): те лежат на своей плотной подложке, а счётчики
 /// читаются на фоне карты, и на бежевой Туле серый на сером пропадал.
 const LABEL_COLOR: Color = Color::srgb(0.88, 0.91, 0.88);
 
-/// Корень панели: по нему система развода с меткой BRP правит `top`.
+/// Колонка обеих панелей: по ней система развода с меткой BRP правит `top`.
+/// Панели внутри неё стыкует обычный флекс — в отличие от нижних колонок
+/// (`stack_bottom_columns`), которым приходится считать высоты вручную, потому
+/// что растут они вверх, от края экрана.
 #[derive(Component)]
-struct WorldStatsPanel;
+struct TopLeftColumn;
 
 /// Какой счётчик показывает строка; компонент висит на тексте значения.
 #[derive(Component, Clone, Copy)]
@@ -37,20 +43,22 @@ enum StatRow {
     Souls,
 }
 
-/// Какой параметр спавна крутит строка-ползунок.
+/// Какое поле `DemonStyle` крутит строка-ползунок.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum SpawnRow {
+enum DemonRow {
     Cap,
     Interval,
+    Speed,
+    Lunge,
 }
 
 /// Текст значения в строке-ползунке.
 #[derive(Component)]
-struct SpawnValueLabel(SpawnRow);
+struct DemonValueLabel(DemonRow);
 
 /// Ползунок строки.
 #[derive(Component)]
-struct SpawnSlider(SpawnRow);
+struct DemonSlider(DemonRow);
 
 pub struct UiStatsPlugin;
 
@@ -60,7 +68,7 @@ impl Plugin for UiStatsPlugin {
             Update,
             (
                 sync_world_counts,
-                sync_spawn_values.run_if(resource_changed::<DemonSpawnStyle>),
+                sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 // метка BRP стоит только в агентских запусках, и только тогда
                 // панели есть что обходить
                 offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
@@ -110,10 +118,35 @@ fn count_row(label: &str, row: StatRow) -> impl Bundle {
     )
 }
 
-fn render_stats_panel(mut commands: Commands, style: Res<DemonSpawnStyle>) {
-    let panel = commands
+/// Тело панели этой колонки: столбец на полупрозрачной подложке.
+fn panel_node() -> Node {
+    Node {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        row_gap: px(4.),
+        padding: UiRect::all(px(10.)),
+        ..default()
+    }
+}
+
+/// Заголовок панели. Не `super::panel_header`: тот считает объекты карты по
+/// `MapData`, а этим панелям считать в заголовке нечего.
+fn panel_title(title: &str) -> impl Bundle {
+    (
+        Text::new(title),
+        TextFont {
+            font_size: FontSize::Px(14.),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        UI_TEXT_SHADOW,
+    )
+}
+
+fn render_stats_panel(mut commands: Commands, style: Res<DemonStyle>) {
+    let column = commands
         .spawn((
-            WorldStatsPanel,
+            TopLeftColumn,
             Node {
                 position_type: PositionType::Absolute,
                 top: px(UI_SCREEN_EDGE_PX_OFFSET),
@@ -122,65 +155,70 @@ fn render_stats_panel(mut commands: Commands, style: Res<DemonSpawnStyle>) {
                 left: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                padding: UiRect::all(px(10.)),
+                row_gap: px(UI_SCREEN_EDGE_PX_OFFSET),
                 width: px(PANEL_WIDTH_PX),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Medium)),
             GameUiRoot,
             Visibility::Hidden,
-            Name::new("world_stats_panel"),
-            // без `panel_header`: тот считает объекты карты по `MapData`,
-            // а здесь счётчики свои и живут покадрово
-            children![
-                (
-                    Text::new("World"),
-                    TextFont {
-                        font_size: FontSize::Px(14.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                    UI_TEXT_SHADOW,
-                ),
-                // счётчики на своей плотной подложке, как строки-ползунки:
-                // на полупрозрачном фоне панели поверх светлой карты они
-                // читались заметно хуже соседних строк
-                (
-                    Node {
-                        display: Display::Flex,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(2.),
-                        padding: UiRect {
-                            top: px(4.),
-                            right: px(8.),
-                            bottom: px(6.),
-                            left: px(8.),
+            Name::new("world_panels"),
+            children![(
+                panel_node(),
+                BackgroundColor(ui_color(UiOpacity::Medium)),
+                Name::new("world_stats_panel"),
+                children![
+                    panel_title("World"),
+                    // счётчики на своей плотной подложке, как строки-ползунки:
+                    // на полупрозрачном фоне панели поверх светлой карты они
+                    // читались заметно хуже соседних строк
+                    (
+                        Node {
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(2.),
+                            padding: UiRect {
+                                top: px(4.),
+                                right: px(8.),
+                                bottom: px(6.),
+                                left: px(8.),
+                            },
+                            ..default()
                         },
-                        ..default()
-                    },
-                    BackgroundColor(ui_color(UiOpacity::Heavy)),
-                    children![
-                        count_row("Pawns", StatRow::Pawns),
-                        count_row("Demons", StatRow::Demons),
-                        count_row("Souls reaped", StatRow::Souls),
-                    ],
-                ),
-            ],
+                        BackgroundColor(ui_color(UiOpacity::Heavy)),
+                        children![
+                            count_row("Pawns", StatRow::Pawns),
+                            count_row("Demons", StatRow::Demons),
+                            count_row("Souls reaped", StatRow::Souls),
+                        ],
+                    ),
+                ],
+            )],
         ))
         .id();
+
+    // панель Demon отдельной сущностью, а не внутри `children!`:
+    // `spawn_slider_row` берёт родителя сущностью, а там её ещё нет
+    let panel = commands
+        .spawn((
+            panel_node(),
+            BackgroundColor(ui_color(UiOpacity::Medium)),
+            Name::new("demon_style_panel"),
+            children![panel_title("Demon")],
+        ))
+        .id();
+    commands.entity(column).add_child(panel);
 
     spawn_slider_row(
         &mut commands,
         panel,
         SliderRow {
             label: "Max demons",
-            value: slider_value(SpawnRow::Cap, &style),
-            value_text: row_value(SpawnRow::Cap, &style),
+            value: slider_value(DemonRow::Cap, &style),
+            value_text: row_value(DemonRow::Cap, &style),
             range: (DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP),
         },
-        SpawnValueLabel(SpawnRow::Cap),
-        SpawnSlider(SpawnRow::Cap),
+        DemonValueLabel(DemonRow::Cap),
+        DemonSlider(DemonRow::Cap),
         on_cap_change,
     );
     spawn_slider_row(
@@ -188,17 +226,51 @@ fn render_stats_panel(mut commands: Commands, style: Res<DemonSpawnStyle>) {
         panel,
         SliderRow {
             label: "Spawn every",
-            value: slider_value(SpawnRow::Interval, &style),
-            value_text: row_value(SpawnRow::Interval, &style),
+            value: slider_value(DemonRow::Interval, &style),
+            value_text: row_value(DemonRow::Interval, &style),
             range: (
                 DEMON_SPAWN_INTERVAL_MIN,
                 DEMON_SPAWN_INTERVAL_MAX,
                 DEMON_SPAWN_INTERVAL_STEP,
             ),
         },
-        SpawnValueLabel(SpawnRow::Interval),
-        SpawnSlider(SpawnRow::Interval),
+        DemonValueLabel(DemonRow::Interval),
+        DemonSlider(DemonRow::Interval),
         on_interval_change,
+    );
+    spawn_slider_row(
+        &mut commands,
+        panel,
+        SliderRow {
+            label: "Speed",
+            value: slider_value(DemonRow::Speed, &style),
+            value_text: row_value(DemonRow::Speed, &style),
+            range: (
+                DEMON_SPEED_FACTOR_MIN,
+                DEMON_SPEED_FACTOR_MAX,
+                DEMON_SPEED_FACTOR_STEP,
+            ),
+        },
+        DemonValueLabel(DemonRow::Speed),
+        DemonSlider(DemonRow::Speed),
+        on_speed_change,
+    );
+    spawn_slider_row(
+        &mut commands,
+        panel,
+        SliderRow {
+            label: "Lunge boost",
+            value: slider_value(DemonRow::Lunge, &style),
+            value_text: row_value(DemonRow::Lunge, &style),
+            range: (
+                DEMON_LUNGE_BOOST_MIN,
+                DEMON_LUNGE_BOOST_MAX,
+                DEMON_LUNGE_BOOST_STEP,
+            ),
+        },
+        DemonValueLabel(DemonRow::Lunge),
+        DemonSlider(DemonRow::Lunge),
+        on_lunge_change,
     );
 }
 
@@ -226,11 +298,11 @@ fn sync_world_counts(
 
 /// Подписи и бегунки вслед за ресурсом — правка извне (BRP, восстановленные
 /// настройки) должна двигать ползунок, а не только менять поведение.
-fn sync_spawn_values(
-    style: Res<DemonSpawnStyle>,
+fn sync_demon_values(
+    style: Res<DemonStyle>,
     mut commands: Commands,
-    mut labels: Query<(&SpawnValueLabel, &mut Text)>,
-    sliders: Query<(Entity, &SpawnSlider, &SliderValue)>,
+    mut labels: Query<(&DemonValueLabel, &mut Text)>,
+    sliders: Query<(Entity, &DemonSlider, &SliderValue)>,
 ) {
     for (label, mut text) in &mut labels {
         text.0 = row_value(label.0, &style);
@@ -247,7 +319,7 @@ fn sync_spawn_values(
 fn on_cap_change(
     change: On<ValueChange<f32>>,
     mut commands: Commands,
-    mut style: ResMut<DemonSpawnStyle>,
+    mut style: ResMut<DemonStyle>,
 ) {
     let stepped = quantize(change.value, DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP);
     commands.entity(change.source).insert(SliderValue(stepped));
@@ -259,7 +331,7 @@ fn on_cap_change(
 fn on_interval_change(
     change: On<ValueChange<f32>>,
     mut commands: Commands,
-    mut style: ResMut<DemonSpawnStyle>,
+    mut style: ResMut<DemonStyle>,
 ) {
     let stepped = quantize(
         change.value,
@@ -273,23 +345,62 @@ fn on_interval_change(
     }
 }
 
-/// Текст значения строки-ползунка.
-fn row_value(row: SpawnRow, style: &DemonSpawnStyle) -> String {
+fn on_speed_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut style: ResMut<DemonStyle>,
+) {
+    let stepped = quantize(
+        change.value,
+        DEMON_SPEED_FACTOR_MIN,
+        DEMON_SPEED_FACTOR_MAX,
+        DEMON_SPEED_FACTOR_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (style.speed - stepped).abs() > f32::EPSILON {
+        style.speed = stepped;
+    }
+}
+
+fn on_lunge_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut style: ResMut<DemonStyle>,
+) {
+    let stepped = quantize(
+        change.value,
+        DEMON_LUNGE_BOOST_MIN,
+        DEMON_LUNGE_BOOST_MAX,
+        DEMON_LUNGE_BOOST_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (style.lunge - stepped).abs() > f32::EPSILON {
+        style.lunge = stepped;
+    }
+}
+
+/// Текст значения строки-ползунка. Скорость и бросок — проценты: множитель
+/// «1.3» на панели ничего не сообщает, «130%» и «+30%» читаются сразу.
+fn row_value(row: DemonRow, style: &DemonStyle) -> String {
     match row {
-        SpawnRow::Cap => style.cap.to_string(),
-        SpawnRow::Interval => format!("{:.1} s", style.interval),
+        DemonRow::Cap => style.cap.to_string(),
+        DemonRow::Interval => format!("{:.1} s", style.interval),
+        DemonRow::Speed => format!("{:.0}%", style.speed * 100.0),
+        DemonRow::Lunge => format!("+{:.0}%", style.lunge * 100.0),
     }
 }
 
 /// Значение ползунка строки.
-fn slider_value(row: SpawnRow, style: &DemonSpawnStyle) -> f32 {
+fn slider_value(row: DemonRow, style: &DemonStyle) -> f32 {
     match row {
-        SpawnRow::Cap => style.cap as f32,
-        SpawnRow::Interval => style.interval,
+        DemonRow::Cap => style.cap as f32,
+        DemonRow::Interval => style.interval,
+        DemonRow::Speed => style.speed,
+        DemonRow::Lunge => style.lunge,
     }
 }
 
-/// Метка BRP занимает тот же угол, но только в агентских запусках — панель
+/// Метка BRP занимает тот же угол, но только в агентских запусках — колонка
 /// уступает ей место и съезжает под неё.
 ///
 /// Высота читается из `ComputedNode`, то есть с прошлого кадра, и она в
@@ -300,7 +411,7 @@ fn slider_value(row: SpawnRow, style: &DemonSpawnStyle) -> f32 {
 /// изменённым каждый кадр, заставляя `bevy_ui` пересчитывать раскладку зря.
 fn offset_below_brp_badge(
     badge: Single<&ComputedNode, With<BrpBadge>>,
-    panel: Single<&mut Node, With<WorldStatsPanel>>,
+    panel: Single<&mut Node, With<TopLeftColumn>>,
 ) {
     let top = px(UI_SCREEN_EDGE_PX_OFFSET * 2.0 + badge.size.y * badge.inverse_scale_factor);
     let mut panel = panel.into_inner();
