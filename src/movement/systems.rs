@@ -10,9 +10,9 @@ use crate::movement::components::{
 };
 use crate::navigation::{
     Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
-    find_path_polymesh,
+    find_path_polymesh, nearest_passable_tile,
 };
-use crate::settings::unit_z;
+use crate::settings::{RESCUE_SCAN_STEPS, RESCUE_SEARCH_TILES, unit_z};
 
 /// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
 /// и запускаются диспетчером по приоритету близости к камере.
@@ -335,6 +335,64 @@ pub fn move_moving_entities(
         }
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
+}
+
+/// Скан «застрявших» — не каждый шаг, а раз в [`RESCUE_SCAN_STEPS`]
+/// (см. там же, почему). `Local` вместо ресурса: счётчик не нужен никому,
+/// кроме самого условия.
+pub fn rescue_scan_due(mut step: Local<u32>) -> bool {
+    let due = *step == 0;
+    *step = (*step + 1) % RESCUE_SCAN_STEPS;
+    due
+}
+
+/// Сущность, стоящая в непроходимом, переезжает на ближайший проходимый тайл.
+///
+/// Попасть внутрь препятствия можно не одним способом, и лечить каждый по
+/// отдельности бессмысленно: спавн просеивает тайлы по сетке, но пешку ставит
+/// в центр тайла, чей край может быть уже внутри дома (заливка метит тайл по
+/// центру); на полигональном меше проходимое — это контуры, раздутые на радиус
+/// агента, и то, что для сетки свободно, для меша бывает внутри препятствия;
+/// докат за концом пути и бросок демона двигают `SimPosition` напрямую. Общее
+/// у всех — результат: пешка стоит в доме, сеточный поиск из её тайла не
+/// стартует, и она остаётся там навсегда. Инвариант «никто не стоит в
+/// непроходимом» дешевле держать одним скана, чем доказывать в каждом месте,
+/// которое двигает позицию.
+///
+/// Переезд ставит и `PreviousSimPosition`: иначе интерполяция протянула бы
+/// пешку через полгорода за один кадр.
+pub fn rescue_trapped_entities(
+    mut commands: Commands,
+    navmesh: Res<crate::navigation::ArcNavmesh>,
+    mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut query: Query<(
+        Entity,
+        &mut SimPosition,
+        &mut PreviousSimPosition,
+        &mut Movable,
+        Has<crate::human::Human>,
+    )>,
+) {
+    let navmesh = navmesh.read();
+    for (entity, mut sim_position, mut previous, mut movable, is_human) in &mut query {
+        let tile = world_to_tile(sim_position.0);
+        if navmesh.is_passable(tile.x, tile.y) {
+            continue;
+        }
+        // не нашлось — оставляем как есть: телепорт за пределы кольца увёл бы
+        // пешку дальше, чем она вообще могла бы дойти
+        let Some(free) = nearest_passable_tile(&navmesh, tile, RESCUE_SEARCH_TILES) else {
+            continue;
+        };
+        sim_position.0 = tile_center(free);
+        previous.0 = sim_position.0;
+        // старый путь ведёт из места, где сущности больше нет: поведение
+        // выберет цель заново
+        movable.to_idle(entity, &mut commands, false);
+        if is_human && let Some(grid) = human_grid.as_mut() {
+            grid.insert(entity, sim_position.0);
+        }
+    }
 }
 
 /// Визуальная позиция: лерп между прошлым и текущим фиксированным шагом,

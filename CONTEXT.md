@@ -1009,6 +1009,21 @@ in `main.rs`.
   `MovableState: Idle | Pathfinding(goal) | Moving(goal) | PathfindingError`.
   `to_pathfinding` queues the search and keeps the current path (see *Repath on the
   move*); `to_idle` is the only transition that stops movement.
+- **Rescue scan** (`movement::rescue_trapped_entities`, first system of the fixed step,
+  every `RESCUE_SCAN_STEPS` = 60 steps): anything with a `SimPosition` standing on an
+  impassable tile moves to the nearest passable one (`nearest_passable_tile`, ring search
+  capped at `RESCUE_SEARCH_TILES` = 16 tiles), both ends of the interpolation are set to
+  the new point and the stale path is dropped (`to_idle`). It holds the invariant *nobody
+  stands in the impassable* — cheaper than proving it at every site that writes a
+  position, and a pawn that fails it is stuck forever: a grid search out of an impassable
+  start tile returns `None` on every repath. Ways in exist by construction — the spawn
+  sifts tiles but stands the pawn on a tile centre whose own corner may already be inside
+  a house (fill marks a tile by its centre), the polygonal mesh calls passable what the
+  grid does not (contours inflated by the agent radius), coasting and the demon lunge
+  move `SimPosition` past the path. Whole-population scan on an interval, not every step:
+  at 30× the fixed step runs 1800× a real second, and being stuck is rare, so a wait of
+  one virtual second costs nothing. The scan is a **grid** test only; a pawn inside the
+  agent-radius inflation but on a free tile is left to the endpoint tolerance.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells
   (≥ the largest search radius, so a radius query is a 3×3 cell walk). Cells hold
   **entities only** — a candidate's position is read live from `SimPosition` through the

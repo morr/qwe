@@ -1,5 +1,7 @@
 mod components;
 mod systems;
+#[cfg(test)]
+mod tests;
 
 use bevy::app::RunFixedMainLoop;
 use bevy::input::common_conditions::input_just_pressed;
@@ -17,7 +19,8 @@ use crate::spatial::SimSet;
 use self::systems::{
     dispatch_pathfinding_requests, draw_move_paths, interpolate_movable_transforms,
     listen_for_pathfinding_tasks, move_moving_entities, on_movable_added_init_sim_position,
-    snapshot_previous_sim_positions, toggle_draw_move_paths,
+    rescue_scan_due, rescue_trapped_entities, snapshot_previous_sim_positions,
+    toggle_draw_move_paths,
 };
 
 pub struct MovementPlugin;
@@ -64,6 +67,11 @@ impl Plugin for MovementPlugin {
                 // ничего не упорядочивают, когда эти множества пусты (плагин
                 // движения используется отдельно в тестах)
                 (
+                    // спасение застрявших — до снимка: переезд обязан попасть
+                    // в оба конца интерполяции одним и тем же значением
+                    rescue_trapped_entities
+                        .run_if(rescue_scan_due)
+                        .before(SimSet::SpatialRebuild),
                     snapshot_previous_sim_positions.before(SimSet::SpatialRebuild),
                     move_moving_entities.after(SimSet::HumanBehavior),
                 )

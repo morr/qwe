@@ -34,24 +34,52 @@ pub struct PathfindingResult {
     pub duration: std::time::Duration,
 }
 
-/// Проходимый тайл в точке или среди 8 соседей — иначе `None`.
+/// Проходимый тайл в точке или среди 8 соседей — иначе `None`. Просеивание
+/// цели: точка, выбранная поведением (вершина контура дома, вход, случайная
+/// точка блуждания), лежит на препятствии чаще, чем нет, а нужен от неё лишь
+/// соседний свободный тайл.
 pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> {
+    nearest_passable_tile(navmesh, tile, 1)
+}
+
+/// Ближайший (по евклидову расстоянию) проходимый тайл в пределах
+/// `max_radius` тайлов — кольцевым поиском от `tile` наружу.
+///
+/// Кольца чебышёвские, а ответ евклидов, поэтому кольцо, в котором нашёлся
+/// первый кандидат, не последнее: у угла кольца `r` расстояние `r·√2`, а в
+/// кольце `r + 1` может стоять сосед по прямой на `r + 1`, что ближе уже при
+/// `r ≥ 3`. Поиск идёт, пока лучшее найденное дальше внутренней границы
+/// следующего кольца.
+pub fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) -> Option<IVec2> {
     if navmesh.is_passable(tile.x, tile.y) {
         return Some(tile);
     }
-    [
-        IVec2::new(-1, 0),
-        IVec2::new(1, 0),
-        IVec2::new(0, -1),
-        IVec2::new(0, 1),
-        IVec2::new(-1, -1),
-        IVec2::new(-1, 1),
-        IVec2::new(1, -1),
-        IVec2::new(1, 1),
-    ]
-    .iter()
-    .map(|&offset| tile + offset)
-    .find(|candidate| navmesh.is_passable(candidate.x, candidate.y))
+    let mut best: Option<(i32, IVec2)> = None;
+    for radius in 1..=max_radius {
+        // ближе, чем `radius`, в этом и во всех следующих кольцах уже не будет
+        if let Some((distance, found)) = best
+            && distance <= radius * radius
+        {
+            return Some(found);
+        }
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                // только само кольцо: его внутренность просмотрена раньше
+                if dx.abs() != radius && dy.abs() != radius {
+                    continue;
+                }
+                let candidate = tile + IVec2::new(dx, dy);
+                if !navmesh.is_passable(candidate.x, candidate.y) {
+                    continue;
+                }
+                let distance = dx * dx + dy * dy;
+                if best.is_none_or(|(best_distance, _)| distance < best_distance) {
+                    best = Some((distance, candidate));
+                }
+            }
+        }
+    }
+    best.map(|(_, found)| found)
 }
 
 /// Есть ли прямая проходимая линия между двумя мировыми точками. Нужна там,
@@ -195,4 +223,52 @@ pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Пустая сетка с одним свободным тайлом — так проверяется, какой именно
+    /// тайл выберет кольцевой поиск.
+    fn navmesh_with_only(free: &[IVec2]) -> Navmesh {
+        let mut navmesh = Navmesh::default();
+        for x in 0..navmesh.grid_size.x {
+            for y in 0..navmesh.grid_size.y {
+                navmesh.set_passable(x, y, false);
+            }
+        }
+        for tile in free {
+            navmesh.set_passable(tile.x, tile.y, true);
+        }
+        navmesh
+    }
+
+    #[test]
+    fn the_tile_itself_wins_when_it_is_passable() {
+        let navmesh = navmesh_with_only(&[IVec2::new(10, 10), IVec2::new(11, 10)]);
+        assert_eq!(
+            nearest_passable_tile(&navmesh, IVec2::new(10, 10), 4),
+            Some(IVec2::new(10, 10))
+        );
+    }
+
+    /// Кольца чебышёвские, ответ евклидов: угол кольца 3 (расстояние 4.24)
+    /// обязан проиграть прямому соседу из кольца 4 (расстояние 4.0).
+    #[test]
+    fn a_straight_neighbour_of_the_next_ring_beats_a_corner_of_this_one() {
+        let corner = IVec2::new(13, 13);
+        let straight = IVec2::new(14, 10);
+        let navmesh = navmesh_with_only(&[corner, straight]);
+        assert_eq!(
+            nearest_passable_tile(&navmesh, IVec2::new(10, 10), 8),
+            Some(straight)
+        );
+    }
+
+    #[test]
+    fn nothing_within_the_radius_means_none() {
+        let navmesh = navmesh_with_only(&[IVec2::new(30, 10)]);
+        assert_eq!(nearest_passable_tile(&navmesh, IVec2::new(10, 10), 8), None);
+    }
 }
