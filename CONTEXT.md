@@ -1156,8 +1156,20 @@ in `main.rs`.
   sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`).
 - **Demon** states (`demon/behavior.rs`): **Wander** (target biased away from portal) →
   **Chase** → **Devour** → Wander. Chase claims: **max 2 chasers per target**
-  (`ChaserCounts`); a demon sharing a target opportunistically **switches** to an
-  unclaimed human no farther than ×1.5 its current distance. Repath throttle 0.4 s.
+  (`ChaserCounts`). Repath throttle 0.4 s, and on that same tick the demon may
+  **switch** target, two cases: sharing its target, it takes any *unclaimed* human
+  no farther than ×1.5 its current distance (the pincer breaks up); otherwise it
+  takes whoever is nearer than **×0.7** of the current target — without that a demon
+  runs through a crowd past easy prey, holding the target it locked on to until the
+  victim dies or the aggro hysteresis drops it. The ×0.7 is the anti-flip-flop
+  margin: two near-equidistant victims would otherwise trade the demon back and
+  forth every repath tick, and each switch costs a fresh path request. Both cases
+  require **`line_of_sight`** to the candidate, checked on the search winner only
+  (in the grid filter it would run for every candidate in the 3×3 cells) — a human
+  close by euclid but cut off by a building is unreachable, and chasing it just
+  makes the demon dither. The search radius is proportional to the current distance,
+  which self-limits at both ends: 1.4 m when the demon is 2 m from its victim (it no
+  longer turns aside), 47 m at the far end of the hysteresis (still a 3×3 cell walk).
   **Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with `line_of_sight` to the victim,
   the demon drops its path and steps `SimPosition` straight at the target. Without it a
   chase never converts: a tile path aims at the *center* of the victim's tile while the

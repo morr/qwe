@@ -27,6 +27,11 @@ type ChaserCounts = bevy::platform::collections::HashMap<Entity, usize>;
 const MAX_CHASERS_PER_TARGET: usize = 2;
 /// Переключение на свободного человека, если он не дальше ×1.5 текущей цели.
 const SWITCH_DISTANCE_FACTOR: f32 = 1.5;
+/// Переключение на заметно более близкого человека: новая цель должна быть
+/// ближе текущей минимум на треть — иначе две почти равноудалённые жертвы
+/// перекидывают демона каждый такт перепрокладки, а каждое переключение
+/// стоит нового запроса пути.
+const CLOSER_SWITCH_FACTOR: f32 = 0.7;
 
 fn chasers_of(target: Entity, chasers: &ChaserCounts) -> usize {
     chasers.get(&target).copied().unwrap_or(0)
@@ -71,10 +76,11 @@ pub fn acquire_targets(
 }
 
 /// Chase: догоняем цель; цель умерла/сбежала/далеко — обратно в Wander;
-/// догнали — `DemonCaughtHumanEvent`. Если цель делим с другим демоном, в
-/// такт перепрокладки пробуем переключиться на никем не занятого человека
-/// не дальше ×1.5 текущей дистанции. Вблизи — бросок напрямую (см.
-/// `DEMON_LUNGE_RANGE`).
+/// догнали — `DemonCaughtHumanEvent`. В такт перепрокладки пробуем сменить
+/// цель: если делим её с другим демоном — на никем не занятого человека не
+/// дальше ×1.5 текущей дистанции, иначе — на любого, кто ближе ×0.7 её.
+/// В обоих случаях только при прямой видимости. Вблизи — бросок напрямую
+/// (см. `DEMON_LUNGE_RANGE`).
 ///
 /// `Without<Human>` в фильтре обязателен: обе выборки трогают `SimPosition`,
 /// и без него планировщик видит конфликт доступа.
@@ -176,29 +182,46 @@ pub fn chase(
             continue;
         }
 
-        // цель делится с другим демоном — предпочесть свободного человека,
-        // если тот не дальше ×1.5 текущей дистанции
-        if chasers_of(chase_target.0, &chasers) >= MAX_CHASERS_PER_TARGET {
-            let switch = humans.nearest_in_range_where(
+        // Смена цели, два случая. Цель делим с другим демоном — берём любого
+        // никем не занятого человека не дальше ×1.5 текущей дистанции («клещи»
+        // распадаются). Цель своя — берём человека, оказавшегося заметно ближе
+        // неё, иначе демон пробегает сквозь толпу мимо доступной добычи.
+        // Радиус пропорционален текущей дистанции, и это ровно то, что нужно:
+        // вплотную к жертве (2 м) он 1.4 м — демон уже никуда не сворачивает;
+        // в хвосте гистерезиса (67.5 м) — 47 м, обход сетки остаётся 3×3.
+        let shared = chasers_of(chase_target.0, &chasers) >= MAX_CHASERS_PER_TARGET;
+        let (switch_radius, chaser_limit) = if shared {
+            (distance * SWITCH_DISTANCE_FACTOR, 1)
+        } else {
+            (distance * CLOSER_SWITCH_FACTOR, MAX_CHASERS_PER_TARGET)
+        };
+        let switch = humans
+            .nearest_in_range_where(
                 sim_position.0,
-                distance * SWITCH_DISTANCE_FACTOR,
+                switch_radius,
                 |candidate| targets.get(candidate).ok().map(|p| p.0),
                 |candidate| {
                     candidate != chase_target.0
                         && !killed_this_tick.contains(&candidate)
-                        && chasers_of(candidate, &chasers) == 0
+                        && chasers_of(candidate, &chasers) < chaser_limit
                 },
+            )
+            // Прямая видимость — только у победителя поиска: близкий по евклиду,
+            // но отрезанный домом или рекой человек недостижим, и демон топтался
+            // бы, перекидывая цель туда-обратно. В фильтре выше `line_of_sight`
+            // прогнался бы по каждому кандидату в 3×3 клетках (при 20 000
+            // человек это десятки), поэтому он здесь. Не прошёл — цель остаётся,
+            // следующая попытка через такт перепрокладки.
+            .filter(|&(_, pos)| line_of_sight(&navmesh, sim_position.0, pos));
+        if let Some((new_target, new_pos)) = switch {
+            *chasers.entry(chase_target.0).or_insert(1) -= 1;
+            *chasers.entry(new_target).or_insert(0) += 1;
+            debug!(
+                "demon {entity} switches chase {} => {new_target}",
+                chase_target.0
             );
-            if let Some((new_target, new_pos)) = switch {
-                *chasers.entry(chase_target.0).or_insert(1) -= 1;
-                *chasers.entry(new_target).or_insert(0) += 1;
-                debug!(
-                    "demon {entity} switches chase {} => {new_target}",
-                    chase_target.0
-                );
-                chase_target.0 = new_target;
-                target_pos = new_pos;
-            }
+            chase_target.0 = new_target;
+            target_pos = new_pos;
         }
 
         let target_tile = world_to_tile(target_pos);
