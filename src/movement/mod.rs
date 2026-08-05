@@ -14,7 +14,7 @@ pub use self::components::{
 pub use self::systems::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
 };
-use crate::loading::{AppState, WorldInitSet};
+use crate::loading::AppState;
 use crate::spatial::SimSet;
 
 use self::systems::{
@@ -40,15 +40,10 @@ impl Plugin for MovementPlugin {
 
         app.register_type::<PathfindingRequest>();
         app.add_observer(on_movable_added_init_sim_position)
-            // скан на смену геометрии проходимости: сетка залита и прорежена
-            // потоком загрузки к входу в `Playing`, население расставлено
-            // `WorldInitSet::Spawn` — раньше сканировать нечего и некого
-            .add_systems(
-                OnEnter(AppState::Playing),
-                rescue_trapped_entities.after(WorldInitSet::Spawn),
-            )
-            // ...и на каждую готовую постройку полигонального меша: радиус
-            // агента раздувает контуры под уже стоящими пешками
+            // единственный полный скан — на готовую постройку полигонального
+            // меша: только там проходимость меняется под уже стоящими пешками
+            // (раздутые на радиус агента контуры). Скана на входе в мир нет
+            // намеренно, см. `rescue_trapped_entities`
             .add_systems(
                 Update,
                 rescue_trapped_entities

@@ -1034,13 +1034,17 @@ in `main.rs`.
   `PolymeshBuild::contains`, a layer-hinted `point_in_mesh`. The mesh is the stricter of
   the two: its contours are inflated by the agent radius, so a tile that clears the grid
   can be inside an obstacle on the mesh.
-  `rescue_trapped_entities` is the same check as a full pass, and it runs **where the
-  passability geometry itself changes**, not on a clock: `OnEnter(AppState::Playing)`
-  after `WorldInitSet::Spawn` (the grid is filled and pruned by the load thread, the
-  population has just been placed), and on every completed mesh build (`polymesh_rebuilt`
-  watches `PolyNavmesh::generation`, since a new agent radius inflates contours under
-  pawns already standing). It logs `rescued N entities` with its own duration when it
-  moves anyone.
+  `rescue_trapped_entities` is the same check as a full pass, and it runs in exactly one
+  place: **every completed mesh build** (`polymesh_rebuilt` watches
+  `PolyNavmesh::generation` — `resource_changed` would also fire when a build merely
+  starts). That is the only moment passability changes under pawns already standing. It
+  logs `rescued N entities` with its own duration when it moves anyone.
+  There is deliberately **no scan on entering the world**, though it looks called for: by
+  then the grid is final and `spawn_population` picked its tiles with the very same
+  `is_passable`, so the pass would re-test the predicate the spawn had just applied and
+  could not find anyone (measured live on Tula: zero rescued). No mesh exists at that
+  moment either — its build is async and starts in the same `OnEnter`, and the previous
+  city's mesh is dropped by `city::reload`.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells
   (≥ the largest search radius, so a radius query is a 3×3 cell walk). Cells hold
   **entities only** — a candidate's position is read live from `SimPosition` through the
