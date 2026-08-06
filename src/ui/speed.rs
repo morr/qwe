@@ -33,8 +33,10 @@ const PANEL_WIDTH_PX: f32 = 470.0;
 /// Зазор между кнопкой скорости и левым краем панели.
 const SPEED_BUTTON_GAP_PX: f32 = 6.0;
 /// Ширина кнопки скорости: хватает на самое длинное значение
-/// `Paused (15x)` / `15x → 8.4x` без переноса.
-const SPEED_BUTTON_WIDTH_PX: f32 = 170.0;
+/// `Paused (30x)` / `15x → 8.4x` без переноса. 12 знаков моноширинного
+/// FiraMono на 14 px — это 12 × 8.4 ≈ 101 px, плюс подпись `Speed:` (6 × 8.4 ≈
+/// 50), зазор 8 и горизонтальные отступы 16: 175 px, откуда и запас до 190.
+const SPEED_BUTTON_WIDTH_PX: f32 = 190.0;
 /// Тусклая подпись поля — как в строках панелей Buildings и Trees.
 const SPEED_LABEL_COLOR: Color = Color::srgb(0.75, 0.78, 0.75);
 
@@ -209,6 +211,10 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
                 (
                     SpeedValueLabel,
                     Text(format_speed_label(&time, &speed)),
+                    // значение живёт в строке кнопки фиксированной ширины: без
+                    // запрета переноса `Paused (30x)` ломается по пробелу на две
+                    // строки и кнопка вырастает вдвое
+                    TextLayout::no_wrap(),
                     TextFont {
                         font_size: FontSize::Px(14.),
                         ..default()
