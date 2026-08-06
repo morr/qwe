@@ -1152,6 +1152,27 @@ in `main.rs`.
   20 000 humans queue their first path in the same frame, and cross-city A* costs
   hundreds of ms per request: with errands first the on-screen pawns took 3.9 s to route
   (the whole `PlayPhase::Warmup`), with strolls first — 0.15 s.
+- **Pace** — a human's personal speed multiplier, rolled once at spawn and stored
+  **normalized**, −1…+1. The effective speed is `base × (1 + Pace × HumanStyle::spread)`:
+  a negative roll is slower than the base, a positive one faster, zero exactly the base.
+  The same multiplier applies to *both* bases, `HUMAN_WALK_SPEED` and `HUMAN_FLEE_SPEED` —
+  a fast human is fast walking and fleeing alike — so the three places that write
+  `Movable::speed` for a human (spawn, the Wander → Flee switch in `panic`, the calm-down
+  branch of `flee`) all go through `Pace::speed(base, spread)`. Storing the *normalized*
+  deviation rather than the finished multiplier is what makes the slider sane: it widens
+  and narrows the ordering the crowd already rolled (at 0% everyone walks the base speed)
+  instead of dealing every pawn a fresh lot on every frame of a drag. It is a component
+  and not something derived from `Movable::speed`, because that field is overwritten on
+  every Wander ⇄ Flee transition — the first panic would erase the spread.
+  **HumanStyle { spread }** carries it, a `SettingsGroup` persisted like `DemonStyle`,
+  driven by the **Speed spread** slider (0…35%, step 5, default `HUMAN_SPEED_SPREAD`
+  = 15%). The ceiling is derived, not round: a demon at `DEMON_SPEED_FACTOR_MIN` moves at
+  exactly `HUMAN_FLEE_SPEED × 1.35`, so a spread above 0.35 would make the fastest humans
+  literally uncatchable. Moving the slider reaches the humans already walking through
+  `sync_human_pace` (`resource_changed`, not per-frame), which picks the base off
+  `Has<HumanFleeTag>` — recomputing a fleeing human from the walk base would leave it
+  strolling for the rest of its panic, since `flee` only rewrites the speed on the way
+  *out* of the state.
 - **CorpseTag** — a killed human: behavior/movement components removed, dark lying
   sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`).
 - **DemonSpawnPause** — a demon that just stepped out of the portal stands still for a
@@ -1193,7 +1214,9 @@ in `main.rs`.
   HashSet dedupes double kills within one command flush. **Devour** — pause 1.5–2 s with
   a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on exit.
 - **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`, wandering and
-  chasing alike. Do not reintroduce per-state demon speeds: the only multipliers are the
+  chasing alike. Since humans got a per-pawn `Pace`, that "+35% over a fleeing human" is
+  true of the *average* human; it is also where the `Speed spread` slider's ceiling comes
+  from (see **Pace**). Do not reintroduce per-state demon speeds: the only multipliers are the
   two user ones, `DemonStyle::speed` (whole demon, ×1.0…×2.0) and `DemonStyle::lunge`
   (the lunge phase only, +0…+100%). `Movable::speed` is written **once**, at spawn, as
   `DEMON_SPEED × speed`; moving the slider reaches the demons already out through
@@ -1228,7 +1251,7 @@ in `main.rs`.
   of every slider drag that runs off the panel. See CLAUDE.md for the rule.
 - **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
   avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
-- **World and Demon panels** (`ui/stats.rs`) — top-left, the only corner the other panels
+- **World, Demon and Human panels** (`ui/stats.rs`) — top-left, the only corner the other panels
   leave free, one under the other in a plain flex column (it grows *downward* from the
   screen edge, so unlike `stack_bottom_columns` nothing has to measure heights).
   **World** holds three live counters — **Pawns** (`With<Human>`, i.e. alive: the
@@ -1237,7 +1260,14 @@ in `main.rs`.
   `DemonStyle` slider rows from the same `ui/slider.rs` kit as Trees and Noise —
   **Max demons** (0…500, step 5), **Spawn every** (0.1…10 s, step 0.1), **Speed**
   (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows print as
-  percent, a bare `1.3` on the panel says nothing. The counters use `iter().len()`, not
+  percent, a bare `1.3` on the panel says nothing. **Human** holds the single
+  `HumanStyle` row, **Speed spread** (0…35%, step 5) — printed with a sign because it is
+  a half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the
+  ASCII `+/-`, not `±`: the built-in font (the `default_font` feature) is a narrow subset
+  and draws anything outside ASCII as an empty box. One row means no
+  row enum: a pair of marker components (`SpreadValueLabel` / `SpreadSlider`) addresses
+  it, and `HumanRow` gets written when a second row appears.
+  The counters use `iter().len()`, not
   `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so the
   length is a sum over archetypes rather than a walk over 20 000 entities every frame.
   In agent runs the red **BRP badge** owns that same corner, and `offset_below_brp_badge`

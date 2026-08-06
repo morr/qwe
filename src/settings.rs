@@ -131,9 +131,14 @@ pub const PORTAL_DIAMETER: f32 = 36.0;
 pub const HUMAN_COUNT: usize = 20000;
 /// Визуальный габарит ×2 против реального (0.5 м) — иначе слишком мелко.
 pub const HUMAN_SIZE: f32 = 1.0;
-/// Скорости ×2 против реализма — так живее.
+/// Скорости ×2 против реализма — так живее. Обе — базы: реальная скорость
+/// человека это база, умноженная на его личный множитель (`Pace`).
 pub const HUMAN_WALK_SPEED: f32 = 2.8;
 pub const HUMAN_FLEE_SPEED: f32 = 8.0;
+/// Полуширина разброса личной скорости — дефолт `HumanStyle::spread`, системы
+/// читают ресурс, а не эту константу. ±15%: толпа перестаёт двигаться
+/// монолитом, но обгон остаётся медленным и строй распадается не мгновенно.
+pub const HUMAN_SPEED_SPREAD: f32 = 0.15;
 /// Радиус, в котором человек замечает демона и паникует.
 pub const HUMAN_PANIC_RADIUS: f32 = 60.0;
 /// Блуждание: случайная точка в 20–40 м, затем пауза 2–10 сек.
@@ -190,6 +195,15 @@ pub const DEMON_SPEED_FACTOR_STEP: f32 = 0.05;
 pub const DEMON_LUNGE_BOOST_MIN: f32 = 0.0;
 pub const DEMON_LUNGE_BOOST_MAX: f32 = 1.0;
 pub const DEMON_LUNGE_BOOST_STEP: f32 = 0.05;
+
+/// Границы ползунка панели Human. Потолок не круглый, а выведенный: демон
+/// быстрее бегущего человека ровно на 35% (`DEMON_SPEED`), и на своём
+/// минимальном множителе (`DEMON_SPEED_FACTOR_MIN`) он идёт как раз
+/// `HUMAN_FLEE_SPEED × 1.35`. Разброс выше 0.35 сделал бы самых быстрых людей
+/// недогоняемыми — паника перестала бы кончаться смертью в принципе.
+pub const HUMAN_SPEED_SPREAD_MIN: f32 = 0.0;
+pub const HUMAN_SPEED_SPREAD_MAX: f32 = 0.35;
+pub const HUMAN_SPEED_SPREAD_STEP: f32 = 0.05;
 
 /// Гистерезис выхода из погони/паники: множитель радиуса.
 pub const RADIUS_HYSTERESIS: f32 = 1.5;

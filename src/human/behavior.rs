@@ -5,7 +5,9 @@ use rand::Rng;
 
 use crate::demon::{ChaseTarget, Demon};
 use crate::grid::world_to_tile;
-use crate::human::components::{FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
+use crate::human::components::{
+    FleeRepath, Human, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, WanderPause,
+};
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::settings::{
@@ -40,9 +42,10 @@ pub fn panic(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     humans: Res<SpatialGrid<Human>>,
+    style: Res<HumanStyle>,
     demons: Query<&SimPosition, With<Demon>>,
     wanderers: Query<&SimPosition, (With<Human>, With<HumanWanderTag>)>,
-    mut movables: Query<&mut Movable>,
+    mut movables: Query<(&mut Movable, &Pace)>,
 ) {
     let started = std::time::Instant::now();
     // дедуп между демонами: человека в двух радиусах паникуем один раз
@@ -67,8 +70,8 @@ pub fn panic(
 
     let mut rng = rand::rng();
     for &entity in &panicked {
-        if let Ok(mut movable) = movables.get_mut(entity) {
-            movable.speed = HUMAN_FLEE_SPEED;
+        if let Ok((mut movable, pace)) = movables.get_mut(entity) {
+            movable.speed = pace.speed(HUMAN_FLEE_SPEED, style.spread);
         }
         let mut repath = FleeRepath::default();
         // первый путь — сразу, дальше по таймеру со случайным периодом
@@ -95,6 +98,7 @@ pub fn flee(
     demons: Res<SpatialGrid<Demon>>,
     demon_positions: Query<&SimPosition, With<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
+    style: Res<HumanStyle>,
     mut query: Query<
         (
             Entity,
@@ -102,6 +106,7 @@ pub fn flee(
             &mut FleeRepath,
             &mut WanderPause,
             &mut Movable,
+            &Pace,
         ),
         (With<Human>, With<HumanFleeTag>),
     >,
@@ -113,14 +118,14 @@ pub fn flee(
     let chased: bevy::platform::collections::HashSet<Entity> =
         chasing.iter().map(|chase_target| chase_target.0).collect();
 
-    for (entity, sim_position, mut repath, mut pause, mut movable) in &mut query {
+    for (entity, sim_position, mut repath, mut pause, mut movable, pace) in &mut query {
         let Some((_, demon_position)) = demons.nearest_in_range(
             sim_position.0,
             HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS,
             |d| demon_positions.get(d).ok().map(|p| p.0),
         ) else {
             // демоны далеко — мирный режим, отдышаться перед новой прогулкой
-            movable.speed = HUMAN_WALK_SPEED;
+            movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
             movable.to_idle(entity, &mut commands, false);
             pause.0.set_duration(std::time::Duration::from_secs_f32(
                 rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),

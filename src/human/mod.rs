@@ -6,11 +6,11 @@ use bevy::prelude::*;
 
 use self::behavior::{escape, flee, panic};
 pub use self::components::{
-    CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanWanderTag, WanderHeading,
-    WanderPause,
+    CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
+    Pace, WanderHeading, WanderPause,
 };
 pub use self::systems::spawn_population;
-use self::systems::{pick_wander_targets, spawn_humans};
+use self::systems::{pick_wander_targets, spawn_humans, sync_human_pace};
 use crate::loading::{AppState, WorldInitSet};
 use crate::spatial::SimSet;
 
@@ -26,6 +26,9 @@ impl Plugin for HumanPlugin {
             .register_type::<FleeRepath>()
             .register_type::<WanderPause>()
             .register_type::<WanderHeading>()
+            .register_type::<Pace>()
+            .register_type::<HumanStyle>()
+            .init_resource::<HumanStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),
@@ -36,7 +39,13 @@ impl Plugin for HumanPlugin {
             )
             .add_systems(
                 Update,
-                pick_wander_targets.run_if(in_state(AppState::Playing)),
+                (
+                    pick_wander_targets,
+                    // ползунок разброса уже вышедшим людям — только на смену
+                    // ресурса, проход по всей популяции каждый кадр не нужен
+                    sync_human_pace.run_if(resource_changed::<HumanStyle>),
+                )
+                    .run_if(in_state(AppState::Playing)),
             );
     }
 }

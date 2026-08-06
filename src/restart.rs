@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use crate::demon::{Demon, DemonSpawner};
 use crate::dev::TestWalker;
-use crate::human::{CorpseTag, Human, spawn_population};
+use crate::human::{CorpseTag, Human, HumanStyle, spawn_population};
 use crate::loading::AppState;
 use crate::navigation::ArcNavmesh;
 use crate::telemetry::Telemetry;
@@ -48,6 +48,7 @@ fn on_restart(
     mut spawner: ResMut<DemonSpawner>,
     mut telemetry: ResMut<Telemetry>,
     arc_navmesh: Res<ArcNavmesh>,
+    style: Res<HumanStyle>,
     scene_entities: Query<
         Entity,
         Or<(With<Human>, With<CorpseTag>, With<Demon>, With<TestWalker>)>,
@@ -64,5 +65,5 @@ fn on_restart(
     *telemetry = Telemetry::default();
     // часы симуляции сбрасывает свой обсервер в `sim_time`
 
-    spawn_population(&mut commands, &arc_navmesh.read());
+    spawn_population(&mut commands, &arc_navmesh.read(), style.spread);
 }

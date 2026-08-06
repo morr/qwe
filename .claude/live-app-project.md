@@ -131,9 +131,10 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `PreviousSimPosition`, `CorpseTag`, `TestWalker`, `PathfindingRequest`, `ChaseTarget`,
 `ChaseRepath`, `FleeRepath`, `DevourUntil`, `WanderHeading`, `WanderPause`,
 `MovableStateMovingTag`, `HumanWanderTag`, `HumanFirstWanderTag`, `HumanFleeTag`,
-`DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`.
+`Pace`, `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
+`DemonStyle`, `HumanStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`.

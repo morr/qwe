@@ -1,6 +1,7 @@
-//! Две панели левого верхнего угла: World — сколько пешек ещё живо, сколько
+//! Три панели левого верхнего угла: World — сколько пешек ещё живо, сколько
 //! демонов ходит по городу, сколько душ съедено; Demon под ней — ползунки
-//! `DemonStyle`: кап, интервал спавна, скорость и надбавка на бросок.
+//! `DemonStyle` (кап, интервал спавна, скорость и надбавка на бросок); Human
+//! под ними — разброс личных скоростей (`HumanStyle`).
 //!
 //! Счётчики до этого жили только в BRP (`count Human`, `res get Telemetry`), то
 //! есть смотреть на симуляцию без агентского клиента рядом было нечем.
@@ -12,12 +13,13 @@ use super::brp::{AgentBrpSession, BrpBadge};
 use super::slider::{SliderRow, quantize, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
-use crate::human::Human;
+use crate::human::{Human, HumanStyle};
 use crate::settings::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
     DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
     DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
-    DEMON_SPEED_FACTOR_STEP,
+    DEMON_SPEED_FACTOR_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
+    HUMAN_SPEED_SPREAD_STEP,
 };
 use crate::telemetry::Telemetry;
 
@@ -60,6 +62,14 @@ struct DemonValueLabel(DemonRow);
 #[derive(Component)]
 struct DemonSlider(DemonRow);
 
+/// Панель Human — одна строка, поэтому без enum'а строк: пара маркеров на
+/// текст значения и на сам бегунок. Появится вторая — заводить `HumanRow`.
+#[derive(Component)]
+struct SpreadValueLabel;
+
+#[derive(Component)]
+struct SpreadSlider;
+
 pub struct UiStatsPlugin;
 
 impl Plugin for UiStatsPlugin {
@@ -69,6 +79,7 @@ impl Plugin for UiStatsPlugin {
             (
                 sync_world_counts,
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
+                sync_human_values.run_if(resource_changed::<HumanStyle>),
                 // метка BRP стоит только в агентских запусках, и только тогда
                 // панели есть что обходить
                 offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
@@ -143,7 +154,11 @@ fn panel_title(title: &str) -> impl Bundle {
     )
 }
 
-fn render_stats_panel(mut commands: Commands, style: Res<DemonStyle>) {
+fn render_stats_panel(
+    mut commands: Commands,
+    style: Res<DemonStyle>,
+    human_style: Res<HumanStyle>,
+) {
     let column = commands
         .spawn((
             TopLeftColumn,
@@ -272,6 +287,34 @@ fn render_stats_panel(mut commands: Commands, style: Res<DemonStyle>) {
         DemonSlider(DemonRow::Lunge),
         on_lunge_change,
     );
+
+    let human_panel = commands
+        .spawn((
+            panel_node(),
+            BackgroundColor(ui_color(UiOpacity::Medium)),
+            Name::new("human_style_panel"),
+            children![panel_title("Human")],
+        ))
+        .id();
+    commands.entity(column).add_child(human_panel);
+
+    spawn_slider_row(
+        &mut commands,
+        human_panel,
+        SliderRow {
+            label: "Speed spread",
+            value: human_style.spread,
+            value_text: spread_value(&human_style),
+            range: (
+                HUMAN_SPEED_SPREAD_MIN,
+                HUMAN_SPEED_SPREAD_MAX,
+                HUMAN_SPEED_SPREAD_STEP,
+            ),
+        },
+        SpreadValueLabel,
+        SpreadSlider,
+        on_spread_change,
+    );
 }
 
 /// Счётчики панели. `Human` снимается с человека в момент смерти, а с трупа не
@@ -377,6 +420,48 @@ fn on_lunge_change(
     if (style.lunge - stepped).abs() > f32::EPSILON {
         style.lunge = stepped;
     }
+}
+
+/// То же для панели Human: подпись и бегунок вслед за ресурсом.
+fn sync_human_values(
+    style: Res<HumanStyle>,
+    mut commands: Commands,
+    mut label: Query<&mut Text, With<SpreadValueLabel>>,
+    slider: Query<(Entity, &SliderValue), With<SpreadSlider>>,
+) {
+    for mut text in &mut label {
+        text.0 = spread_value(&style);
+    }
+    for (entity, value) in &slider {
+        if (value.0 - style.spread).abs() > f32::EPSILON {
+            commands.entity(entity).insert(SliderValue(style.spread));
+        }
+    }
+}
+
+fn on_spread_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut style: ResMut<HumanStyle>,
+) {
+    let stepped = quantize(
+        change.value,
+        HUMAN_SPEED_SPREAD_MIN,
+        HUMAN_SPEED_SPREAD_MAX,
+        HUMAN_SPEED_SPREAD_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (style.spread - stepped).abs() > f32::EPSILON {
+        style.spread = stepped;
+    }
+}
+
+/// Значение строки разброса. Со знаком, потому что это полуширина: «15%»
+/// читалось бы как «все на 15% быстрее». Знак пишется как ASCII `+/-`, а не
+/// «±»: встроенный шрифт (фича `default_font`) — узкая подвыборка, и всё за
+/// пределами ASCII рисуется на панели пустым квадратом.
+fn spread_value(style: &HumanStyle) -> String {
+    format!("+/-{:.0}%", style.spread * 100.0)
 }
 
 /// Текст значения строки-ползунка. Скорость и бросок — проценты: множитель

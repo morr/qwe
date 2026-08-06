@@ -3,15 +3,16 @@ use rand::Rng;
 
 use crate::grid::{tile_center, world_to_tile};
 use crate::human::components::{
-    Human, HumanFirstWanderTag, HumanWanderTag, WanderHeading, WanderPause,
+    Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, WanderHeading,
+    WanderPause,
 };
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
 use crate::settings::{
-    HUMAN_COUNT, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
-    HUMAN_WANDER_RANGE, MAP_SIZE, unit_z,
+    HUMAN_COUNT, HUMAN_FLEE_SPEED, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
+    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, unit_z,
 };
 
 /// Отступ целей блуждания от края карты, м.
@@ -27,12 +28,16 @@ const WANDER_CONE: f32 = std::f32::consts::FRAC_PI_3;
 /// если ни одно не попало — берётся ближайшее по направлению из выборки.
 const WANDER_BUILDING_TRIES: usize = 8;
 
-pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>) {
-    spawn_population(&mut commands, &arc_navmesh.read());
+pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>, style: Res<HumanStyle>) {
+    spawn_population(&mut commands, &arc_navmesh.read(), style.spread);
 }
 
 /// Спавн населения; вызывается на старте и при рестарте сцены.
-pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Navmesh) {
+pub fn spawn_population(
+    commands: &mut Commands,
+    navmesh: &crate::navigation::Navmesh,
+    spread: f32,
+) {
     let mut rng = rand::rng();
 
     for _ in 0..HUMAN_COUNT {
@@ -58,6 +63,8 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
         // получают) и дешёвый HPA* — рассинхронизация тут только заставляла
         // пешек в кадре стоять первые секунды
         let pause = Timer::from_seconds(0.0, TimerMode::Once);
+        // жребий двусторонний: минус — человек медленнее базы, плюс — быстрее
+        let pace = Pace(rng.random_range(-1.0..=1.0));
 
         commands.spawn((
             Sprite {
@@ -69,7 +76,8 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             Human,
             HumanWanderTag,
             HumanFirstWanderTag,
-            Movable::new(HUMAN_WALK_SPEED),
+            Movable::new(pace.speed(HUMAN_WALK_SPEED, spread)),
+            pace,
             WanderPause(pause),
             WanderHeading(Vec2::from_angle(
                 rng.random_range(0.0..std::f32::consts::TAU),
@@ -77,6 +85,26 @@ pub fn spawn_population(commands: &mut Commands, navmesh: &crate::navigation::Na
             DespawnOnExit(AppState::Playing),
             Name::new("human"),
         ));
+    }
+}
+
+/// Ползунок разброса — людям, уже гуляющим по городу; аналог
+/// `sync_demon_speed`, и так же по `resource_changed`, а не каждый кадр.
+///
+/// База берётся по тегу состояния: пересчитать бегущего от `HUMAN_WALK_SPEED`
+/// значило бы посадить его на шаг до самого конца паники — `flee` вернёт
+/// беговую скорость только на выходе из состояния, а не на входе.
+pub fn sync_human_pace(
+    style: Res<HumanStyle>,
+    mut humans: Query<(&mut Movable, &Pace, Has<HumanFleeTag>), With<Human>>,
+) {
+    for (mut movable, pace, fleeing) in &mut humans {
+        let base = if fleeing {
+            HUMAN_FLEE_SPEED
+        } else {
+            HUMAN_WALK_SPEED
+        };
+        movable.speed = pace.speed(base, style.spread);
     }
 }
 
