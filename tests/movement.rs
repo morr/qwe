@@ -394,3 +394,75 @@ fn coasting_stops_at_an_impassable_tile() {
         "у стены докат заканчивается и тег снимается"
     );
 }
+
+/// Пара перекрывшихся людей в кадре: и камера, и окно, и зум — всё, что
+/// расталкивание требует, иначе оно молча не проходит валидацию параметров и
+/// тест прошёл бы впустую.
+fn spawn_overlapping_pair(app: &mut App) -> (Entity, Entity) {
+    let centre = tile_center(IVec2::new(20, 20));
+    app.world_mut()
+        .spawn((bevy::window::Window::default(), bevy::window::PrimaryWindow));
+    app.world_mut().spawn((
+        Camera2d,
+        // зум обязан быть мельче `SEPARATION_MAX_ZOOM` = 0.75, иначе
+        // расталкивание выключается само
+        Transform::from_translation(centre.extend(0.0)).with_scale(Vec3::splat(0.1)),
+    ));
+
+    let pawn = |app: &mut App, id: u32, offset: Vec2| {
+        app.world_mut()
+            .spawn((
+                qwe::human::Human,
+                qwe::rng::PawnId(id),
+                Movable::new(1.0),
+                Transform::from_translation((centre + offset).extend(0.0)),
+            ))
+            .id()
+    };
+    // 0.2 м между центрами — глубоко внутри дистанции покоя при любом радиусе
+    (
+        pawn(app, 1, Vec2::new(-0.1, 0.0)),
+        pawn(app, 2, Vec2::new(0.1, 0.0)),
+    )
+}
+
+/// Положительный контроль к тесту ниже: в обычном режиме расталкивание
+/// перекрывшуюся пару разводит. Без него тест на детерминизм проходил бы и в
+/// том случае, когда система просто не выполняется ни при каких условиях.
+#[test]
+fn separation_pushes_an_overlapping_pair_apart() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    let (left, right) = spawn_overlapping_pair(&mut app);
+
+    for _ in 0..5 {
+        app.update();
+    }
+
+    let distance = (sim_position(&app, right) - sim_position(&app, left)).length();
+    assert!(
+        distance > 0.2,
+        "пара должна разойтись, а стоит в {distance}"
+    );
+}
+
+/// В детерминированном режиме расталкивание не двигает НИКОГО.
+///
+/// Оно косметическое, но пишет `SimPosition` и завязано на камеру, зум и
+/// `FrameCount` — то есть ровно на то, от чего повтор прогона обязан не
+/// зависеть. Гейт стоит в расписании (`movement/mod.rs`), и этот тест
+/// стережёт именно его: система, случайно потерявшая `run_if`, собирается и
+/// проходит все остальные тесты.
+#[test]
+fn separation_never_runs_under_determinism() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    app.insert_resource(qwe::determinism::Determinism(true));
+    let (left, right) = spawn_overlapping_pair(&mut app);
+    let before = (sim_position(&app, left), sim_position(&app, right));
+
+    for _ in 0..5 {
+        app.update();
+    }
+
+    assert_eq!(sim_position(&app, left), before.0, "левого не трогают");
+    assert_eq!(sim_position(&app, right), before.1, "правого не трогают");
+}
