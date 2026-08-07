@@ -2,6 +2,47 @@
 name = "qwe"
 version = "0.1.0"
 edition = "2024"
+# примеры разложены по назначению (`examples/<вид>/<имя>.rs`), а cargo сам
+# находит только `examples/*.rs` и `examples/*/main.rs` — поэтому автопоиск
+# выключен, и каждый пример объявлен ниже явно. Имена не изменились:
+# `cargo run --example determinism_replay` работает как раньше.
+autoexamples = false
+
+# demos — оконные, для человека: запустил и смотришь
+[[example]]
+name = "crowd_demo"
+path = "examples/demos/crowd_demo.rs"
+
+# acceptance — headless-приёмка: печатает OK/FAILED и код возврата
+[[example]]
+name = "determinism_replay"
+path = "examples/acceptance/determinism_replay.rs"
+
+# bench — офлайн-замеры скорости
+[[example]]
+name = "pathfinding_bench"
+path = "examples/bench/pathfinding_bench.rs"
+
+[[example]]
+name = "polymesh_bench"
+path = "examples/bench/polymesh_bench.rs"
+
+# audit — офлайн-разбор геометрии меша, печатает отчёт
+[[example]]
+name = "polymesh_corner_audit"
+path = "examples/audit/polymesh_corner_audit.rs"
+
+[[example]]
+name = "polymesh_merge_audit"
+path = "examples/audit/polymesh_merge_audit.rs"
+
+[[example]]
+name = "polymesh_miss_audit"
+path = "examples/audit/polymesh_miss_audit.rs"
+
+[[example]]
+name = "polymesh_seam_audit"
+path = "examples/audit/polymesh_seam_audit.rs"
 
 [dependencies]
 bevy = { version = "0.19", default-features = false, features = [
