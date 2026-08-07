@@ -833,7 +833,7 @@ in `main.rs`.
   by the bottom-left button: A* / Dijkstra / Fringe / BFS (all from the `pathfinding`
   crate over the navmesh) plus **HPA*** and **Theta*** (hierarchical, from
   `bevy_northstar`). IDA*/IDDFS are deliberately excluded (never finish on open grids).
-  **Default is HPA\*** — 28× cheaper than flat A* per `examples/pathfinding_bench.rs`
+  **Default is HPA\*** — 28× cheaper than flat A* per `examples/bench/pathfinding_bench.rs`
   (1.3 ms vs 36.4 ms mean, 15 ms vs 450 ms worst case) at ~10% longer paths. The other
   five stay switchable for comparison.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid` built
@@ -885,7 +885,7 @@ in `main.rs`.
   backwards; each drop is geometry-gated, the limit only guards corner-straightening.
 - **find_passable_tile_near** — the target tile or its 8 neighbors only; callers must
   tolerate `None`.
-- **pathfinding_bench** (`examples/pathfinding_bench.rs`) — offline comparison of all six
+- **pathfinding_bench** (`examples/bench/pathfinding_bench.rs`) — offline comparison of all six
   algorithms without booting Bevy: reads the OSM cache, rebuilds the navmesh exactly as
   the map-load thread does (fill → `snap_portal_position` → prune), generates one
   seeded task list mirroring human wander (80% random building, 20% short stroll) and
@@ -1255,7 +1255,10 @@ in `main.rs`.
   lunge moves demon `SimPosition` outside the mover system anyway.
 - **Separation** (`movement/separation.rs`, toggle in the World panel, persisted) — soft
   pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
-  0.45 m / `DEMON_BODY_RADIUS` 0.9 m) apart. Deliberately local and cosmetic, three
+  0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart — deliberately **larger** than half the
+  sprite, so a resting pair leaves a visible gap (1.17 m against a 1.0 m `HUMAN_SIZE`).
+  At the earlier 0.45 m the rest distance was *narrower* than the sprite and a correctly
+  separated crowd still drew as a solid mosaic. Deliberately local and cosmetic, three
   gates in order: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
   right after `move_moving_entities` — the only point where the tick's positions are
   final and the snapshot is already taken, so the push reaches the screen through
@@ -1264,10 +1267,25 @@ in `main.rs`.
   below `SEPARATION_MAX_ZOOM`** (same 0.75 as the wander-dispatch cutoff — farther out a
   pawn is 1–2 px and overlap does not read). Candidates come from both coarse grids via
   `for_each_in_rect` over the viewport (`VIEW_MARGIN` slack), then a throwaway fine grid
-  (`SEPARATION_CELL` 2 m, head+next linked lists in `Local` buffers — no steady-state
+  (`SEPARATION_CELL` 2.4 m — tied to the radii, it must exceed the largest sum
+  demon+demon 2.34 m or a pair can fall outside the 3 × 3 scan; head+next linked lists in
+  `Local` buffers — no steady-state
   allocations) resolves pairs: each pair sheds `SEPARATION_RATE` (8/s) of its overlap per
   virtual second, clamped to `SEPARATION_MAX_STEP` (0.3 m) per run, split by mobility
   (human 1.0, demon 0.25, devouring demon 0 — it pushes but never moves off its corpse).
+  Three rules keep the push from fighting the walk it is correcting, each fixing a
+  symptom that was visible on screen:
+  **only across the heading** (`across_heading`) — a moving pawn is never displaced along
+  its own path, because the longitudinal part read as a follower reversing for a step,
+  and summed into a whole jam rotating like a carousel;
+  **the pawn behind gives way** (`shares`) — for a pair on roughly the same course the
+  follower takes the entire correction and the leader none, instead of the leader being
+  shoved in the back by someone who caught up;
+  **head-on pairs step right** (`sidestep`, strength `SeparationStyle::sidestep`) — two
+  pawns walking straight at each other have their pair axis collinear with both
+  velocities, so the plain correction has no lateral component at all and they lock
+  together until an outside asymmetry frees them. With the across-heading rule this is
+  the *only* thing that resolves a head-on pair, so it must stay above zero.
   Coincident positions split along a deterministic per-entity hash axis (the
   `personal_spread` trick). A push into an impassable tile is dropped (`rescue_*` only
   catches failed path searches, it would never find a pawn squeezed into a wall); a push
@@ -1278,7 +1296,15 @@ in `main.rs`.
   `SimPosition`). The sim is knowingly camera-dependent — the user's viewport-only
   optimization accepts that; off-screen crowds still stack and pay nothing.
   `sim/separation_ms` measures **per run** (~60/s), not per tick like its `sim/*_ms`
-  neighbours.
+  neighbours. Reproduced and measured on demand by `examples/demos/crowd_demo.rs` — a
+  windowed scene running the real `separate_pawns` on an empty navmesh, with the crowd
+  arranged into the cases that are otherwise waited for (a pile, a funnel, counter-flowing
+  columns, a walled corridor, real wander AI), a body-radius gizmo per pawn and a live
+  count of overlapping pairs. Two traps that scene made visible and any measurement of
+  separation has to respect: **count only pawns inside the camera rect** (off-screen ones
+  are never separated by design, and including them makes on/off indistinguishable), and
+  **allow a millimetre tail** — the solver is soft, so a converged crowd still reports
+  pairs a few mm inside the radius sum.
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
   walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding

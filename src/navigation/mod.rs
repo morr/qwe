@@ -244,7 +244,7 @@ const PORTAL_SEARCH_METERS: f32 = 400.0;
 /// места для портала. Хинт `PORTAL_POS` мог попасть в здание OSM-карты;
 /// снап делает поток загрузки (`map/osm/download.rs`) сразу после заливки
 /// navmesh, той же функцией пользуется офлайн-бенч
-/// (`examples/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
+/// (`examples/bench/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
 pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
     let start = world_to_tile(position);
 

@@ -9,8 +9,12 @@ pub use self::components::{
     CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
     Pace, PanicRecoil, WanderHeading, WanderPause,
 };
-pub use self::systems::spawn_population;
-use self::systems::{pick_wander_targets, spawn_humans, sync_human_pace};
+// `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
+// (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
+// не своей выдумкой; `HumanPlugin` целиком ей не подходит (его `spawn_humans`
+// расселил бы 20 000 пешек по всей карте)
+pub use self::systems::{pick_wander_targets, spawn_population};
+use self::systems::{spawn_humans, sync_human_pace};
 use crate::determinism::deterministic;
 use crate::loading::{AppState, WorldInitSet};
 use crate::spatial::SimSet;

@@ -163,7 +163,7 @@ const FLAT_CHUNK_METERS: f32 = 99_000.0;
 /// слоёв — то есть не ошибку, а тихо неверную навигацию.
 fn chunk_grid(map: Vec2, requested: Option<f32>) -> UVec2 {
     // переопределение стороны чанка — окружением для офлайн-прогонов
-    // (`examples/polymesh_bench.rs`) и параметром для тестов: выставить размер
+    // (`examples/bench/polymesh_bench.rs`) и параметром для тестов: выставить размер
     // больше карты значит получить один слой без сшивки, то есть развести
     // «виновата иерархия» и «виновата геометрия» без пересборки
     let mut side = requested
@@ -310,7 +310,7 @@ impl PolyNavmesh {
 }
 
 /// Постройка меша прямо из карты, без ECS и без таска — вход для офлайн-
-/// прогонов (`examples/polymesh_bench.rs`). Игровой путь идёт через
+/// прогонов (`examples/bench/polymesh_bench.rs`). Игровой путь идёт через
 /// `sync_polymesh_build` и зовёт ровно тот же конвейер.
 pub fn build_polymesh_from_map(map: &MapData, agent_radius: f32) -> Option<PolymeshBuild> {
     build_polymesh(&PolymeshInput::from_map(map), agent_radius, None, None)
