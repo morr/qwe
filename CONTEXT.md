@@ -1321,6 +1321,49 @@ in `main.rs`.
   are never separated by design, and including them makes on/off indistinguishable), and
   **allow a millimetre tail** — the solver is soft, so a converged crowd still reports
   pairs a few mm inside the radius sum.
+- **Destination slot** (`movement/destination.rs`) — the reservation that stops two pawns
+  from being aimed at the same point. A **slot** is a `k × k` block of navtiles,
+  `k = ceil(rest distance / navtile_size())`, claimed by one pawn
+  (`DestinationClaim`, reverse-indexed by the `DestinationClaims` resource); its goal is
+  strictly the block's **centre** tile, so the goals of neighbouring slots sit exactly
+  `k · navtile` apart — never less than the rest distance, for any combination of
+  `NavtileBase` and the `SeparationStyle::radius` slider. Without this, separation has no
+  way out at all: `move_moving_entities` only pops a waypoint when the tick's travel
+  budget covers the remaining distance, and a pawn pressing into a taken point is pushed
+  back exactly as far as it steps, so overlap parks on the equilibrium
+  `HUMAN_WALK_SPEED / (SEPARATION_RATE × share)` = 0.70 m and stays there — the pair
+  either orbits (with the sidestep) or stands and jitters (without it), and a crowd that
+  reaches a shared point never settles. Why a block and not a tile: one-per-tile only
+  guarantees a non-overlapping resting crowd while `2 × radius ≤ navtile_size()`, which
+  `NavtileBase::M1` (1 m tiles against a 1.8 m rest distance) and any radius above 1.0 m
+  break. Why not the user's fractional lattice: every goal here is navtile-keyed
+  (`MovableState`, `PathfindingRequest::end_tile`, the stale-answer filter, the arrival
+  test, `tile_center(end_tile)` in the polymesh), so a point that is not a tile centre is
+  a point no pawn can be said to have reached. The centre tile is fixed on purpose — let a
+  block pick any passable tile in itself and two neighbouring blocks pick adjacent
+  corners, which is the very thing the block exists to prevent; the price is that a block
+  with an impassable centre goes unused and the pitch rounds up to a whole tile (up to
+  ~2× the rest distance), so a crowd parks a little sparser than strictly needed. A taken
+  slot moves the goal outward by ring search (`nearest_tile_where`, bounded by
+  `CLAIM_SEARCH_METERS` 16 m); nothing free inside the bound falls back to the shared
+  goal with no claim — today's behaviour, better than leaving a pawn without a target.
+  The claim is **not** released on arrival: a pawn standing on its slot is exactly the
+  occupancy being modelled. It moves on the next target selection, and is released by an
+  `On<Remove, DestinationClaim>` observer on despawn (escape, restart, city switch) and by
+  the corpse strip in `demon/behavior.rs`. Hook point is a single system,
+  `assign_destination_slots` over `Added<PathfindingRequest>`, registered in both
+  dispatcher chains — human wander, demon wander and the test walker are all covered
+  without touching their behaviour systems; the `Update` registration needs an explicit
+  `.after(human::pick_wander_targets)`, or the request reaches the dispatcher unslotted
+  every so often. **Chase is excluded** (a shared goal is the pincer, by design) and so is
+  **flee** (targets churn every 0.7–1.2 s and point off-map — so a panicking crowd is not
+  covered by slots). Unlike separation this runs in **both** modes: it is simulation, not
+  cosmetics, which is also why there is no camera gate — unslotted clumps would pile up
+  and freeze off screen, and the camera would arrive into exactly the pathology. No
+  `HashMap` iteration reaches the output (keyed lookups only) and the assignment batch is
+  sorted by `(species, PawnId)`, the same key discipline as `apply_pathfinding_results`.
+  Changing the radius slider or the navtile size re-keys the lattice, so the index is
+  dropped and rebuilt from the next selections.
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
   walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding

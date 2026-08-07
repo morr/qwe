@@ -76,9 +76,12 @@ use qwe::human::{
 };
 use qwe::loading::{AppState, PlayPhase};
 use qwe::map::osm::MapData;
-use qwe::movement::{Movable, MovableStateMovingTag, SeparationStyle, SimPosition};
+use qwe::movement::{
+    DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationStyle,
+    SimPosition, slot_side,
+};
 use qwe::navigation::{ArcNavmesh, PathfindingAlgorithm};
-use qwe::rng::{EntityRng, PawnId, RngDomain, WorldSeed, stream};
+use qwe::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use qwe::settings::{
     HUMAN_SIZE, HUMAN_SPEED_SPREAD, HUMAN_WALK_SPEED, MAP_CENTER_PORTAL_POS, SEPARATION_MAX_ZOOM,
     navtile_size, unit_z,
@@ -613,15 +616,15 @@ fn spawn_pawn(
     route: Option<Route>,
     wandering: bool,
 ) {
-    let mut rng = EntityRng::seeded(seed, RngDomain::Human, pawn_id);
+    let mut rng = decision_stream(seed, RngDomain::Human, pawn_id, WanderIndex::SPAWN);
     let color = Color::hsl(
-        rng.0.random_range(0.0..360.0),
-        rng.0.random_range(0.35..0.75),
-        rng.0.random_range(0.35..0.65),
+        rng.random_range(0.0..360.0),
+        rng.random_range(0.35..0.75),
+        rng.random_range(0.35..0.65),
     );
-    let pace = Pace(rng.0.random_range(-1.0..=1.0));
+    let pace = Pace(rng.random_range(-1.0..=1.0));
     let heading = WanderHeading(Vec2::from_angle(
-        rng.0.random_range(0.0..std::f32::consts::TAU),
+        rng.random_range(0.0..std::f32::consts::TAU),
     ));
 
     let mut entity = commands.spawn((
@@ -636,7 +639,7 @@ fn spawn_pawn(
         Movable::new(pace.speed(HUMAN_WALK_SPEED, HUMAN_SPEED_SPREAD)),
         pace,
         PawnId(pawn_id),
-        rng,
+        WanderIndex::ready(),
         Name::new("demo pawn"),
     ));
     if let Some(route) = route {
@@ -709,18 +712,43 @@ fn clear_arena(navmesh: &ArcNavmesh, centre: Vec2) {
 /// асинхронный поиск пути: путь строится прямой, но waypoint'ами по центрам
 /// навтайлов — ровно в таком виде его отдаёт сеточный A*, и без этого не
 /// проверить, стирает ли постановка на waypoint боковой сдвиг.
+/// Отрезок идёт через тот же слот назначения, что и цели в игре
+/// (`movement::destination`): без этого «воронка» гоняла бы 200 пешек в одну
+/// точку — то есть проверяла бы не расталкивание, а очередь к одному тайлу.
 fn drive_routes(
     mut commands: Commands,
+    navmesh: Res<ArcNavmesh>,
+    style: Res<SeparationStyle>,
+    mut claims: ResMut<DestinationClaims>,
     mut pawns: Query<
-        (Entity, &mut Movable, &mut Route, &SimPosition),
+        (
+            Entity,
+            &mut Movable,
+            &mut Route,
+            &SimPosition,
+            Option<&DestinationClaim>,
+        ),
         Without<MovableStateMovingTag>,
     >,
 ) {
-    for (entity, mut movable, mut route, position) in &mut pawns {
-        let target = route.legs[route.next];
+    claims.sync_side(slot_side(style.human_radius() * 2.0));
+    let navmesh = navmesh.read();
+    for (entity, mut movable, mut route, position, claim) in &mut pawns {
+        let leg = route.legs[route.next];
         route.next = (route.next + 1) % route.legs.len();
+        let desired = world_to_tile(leg);
+        let slot = claims.claim_slot(entity, claim.map(|claim| claim.0), desired, |tile| {
+            navmesh.is_passable(tile.x, tile.y)
+        });
+        let (target_tile, target) = match slot {
+            Some((slot, tile)) => {
+                commands.entity(entity).insert(DestinationClaim(slot));
+                (tile, tile_center(tile))
+            }
+            None => (desired, leg),
+        };
         let path = straight_path(position.0, target);
-        movable.to_moving(world_to_tile(target), path, entity, &mut commands);
+        movable.to_moving(target_tile, path, entity, &mut commands);
     }
 }
 

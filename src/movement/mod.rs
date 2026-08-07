@@ -1,4 +1,5 @@
 mod components;
+mod destination;
 mod separation;
 mod systems;
 #[cfg(test)]
@@ -12,6 +13,9 @@ pub use self::components::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
     NeedsWanderTarget, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
     RetireAt, SimPosition,
+};
+pub use self::destination::{
+    DestinationClaim, DestinationClaims, assign_destination_slots, slot_side,
 };
 pub use self::separation::SeparationStyle;
 pub use self::systems::{
@@ -40,6 +44,15 @@ impl Plugin for MovementPlugin {
             .register_type::<DrawMovePaths>()
             .init_resource::<SeparationStyle>()
             .register_type::<SeparationStyle>()
+            .init_resource::<DestinationClaims>()
+            .register_type::<DestinationClaim>()
+            // индекс заявок переживает сущности только через это снятие:
+            // деспавн поднимает `Remove` на каждый компонент
+            .add_observer(self::destination::on_destination_claim_removed)
+            .add_systems(
+                OnEnter(AppState::Playing),
+                self::destination::reset_destination_claims,
+            )
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется
             .init_resource::<bevy::diagnostic::DiagnosticsStore>()
@@ -73,7 +86,16 @@ impl Plugin for MovementPlugin {
                 // каждый кадр видел ~250 уже готовых, но не снятых тасков и
                 // выдавал вдвое меньше новых — на 30x диспетчер хронически
                 // голодал (156 из 258 стоящих бегущих ждали в очереди)
-                (listen_for_pathfinding_tasks, dispatch_pathfinding_requests)
+                (
+                    listen_for_pathfinding_tasks,
+                    // слот — ДО диспетчера и ПОСЛЕ выбора цели. Обе связи
+                    // обязаны быть явными: `pick_wander_targets` людей живёт в
+                    // `Update` вне этой цепочки, и без них заявка успевала
+                    // уехать в поиск раньше, чем ей назначен слот, — через раз
+                    // и невоспроизводимо
+                    assign_destination_slots.after(crate::human::pick_wander_targets),
+                    dispatch_pathfinding_requests,
+                )
                     .chain()
                     // в детерминированном режиме этот конвейер заменён
                     // тик-локованным ниже: здесь ответ применяется в тот кадр,
@@ -122,6 +144,11 @@ impl Plugin for MovementPlugin {
                     separation::separate_pawns
                         .run_if(in_state(AppState::Playing))
                         .run_if(not(crate::determinism::deterministic)),
+                    // слоты — в обоих режимах и в обеих цепочках: демоны
+                    // выбирают цель всегда в `FixedUpdate`, люди — здесь же под
+                    // детерминизмом. Повторный прогон над той же заявкой
+                    // идемпотентен: своя заявка себе не помеха
+                    assign_destination_slots.run_if(in_state(AppState::Playing)),
                     // диспетчер — в самом конце тика: заявки, поданные
                     // поведением этого шага, командами применяются на точках
                     // синхронизации цепочки и уезжают в тот же тик

@@ -306,8 +306,15 @@ pub fn on_demon_caught_human(
             crate::movement::RequestedAt,
             crate::movement::RetireAt,
             crate::movement::NeedsWanderTarget,
-            SimPosition,
-            PreviousSimPosition,
+            // группой, а не в плоском списке: полей стало 16, а `Bundle`
+            // кончается на 15
+            (
+                SimPosition,
+                PreviousSimPosition,
+                // труп никуда не идёт — держать за ним слот назначения значило
+                // бы навсегда вычесть место из живой толпы
+                crate::movement::DestinationClaim,
+            ),
         )>()
         .insert(CorpseTag);
     if let Ok((mut sprite, mut transform)) = sprites.get_mut(human) {
