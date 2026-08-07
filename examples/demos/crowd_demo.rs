@@ -78,7 +78,7 @@ use qwe::loading::{AppState, PlayPhase};
 use qwe::map::osm::MapData;
 use qwe::movement::{
     DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationStyle,
-    SimPosition, slot_side,
+    SimPosition, SlotSearch, slot_side,
 };
 use qwe::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
@@ -280,6 +280,20 @@ struct RadiusSlider;
 #[derive(Component)]
 struct RadiusValueLabel;
 
+/// Пределы ползунка радиуса поиска слота. Снизу — меньше, чем нужно даже
+/// десятку пешек, чтобы было видно, как хвост толпы остаётся без слотов и
+/// сваливается в общую точку; сверху — вчетверо больше дефолта: 40 м на шаге
+/// 2 м это 21 × 21 слот, с запасом на всю «воронку».
+const SEARCH_MIN: f32 = 2.0;
+const SEARCH_MAX: f32 = 40.0;
+const SEARCH_STEP: f32 = 1.0;
+
+#[derive(Component)]
+struct SearchSlider;
+
+#[derive(Component)]
+struct SearchValueLabel;
+
 fn main() {
     let mut app = App::new();
     // часть систем игры просит параметры, которых в этой сцене нет (`Gizmos`
@@ -346,7 +360,7 @@ fn main() {
             .with_suffix(" ms")
             .with_max_history_length(1),
     )
-    .add_systems(Startup, (spawn_camera, spawn_overlay, spawn_radius_slider))
+    .add_systems(Startup, (spawn_camera, spawn_overlay, spawn_sliders))
     .add_systems(
         Update,
         (
@@ -411,11 +425,12 @@ fn spawn_camera(mut commands: Commands, config: Res<DemoConfig>) {
     ));
 }
 
-/// Ползунок радиуса — тот же кит строки-ползунка, что у панелей игры
-/// (`qwe::ui::slider`), чтобы «личное пространство» подбиралось глазом на живой
-/// толпе, а не пересборкой. Пишет в `SeparationStyle::radius`, откуда его берёт
-/// и само расталкивание, и гизмо этой сцены.
-fn spawn_radius_slider(mut commands: Commands, style: Res<SeparationStyle>) {
+/// Ползунки сцены — тот же кит строки-ползунка, что у панелей игры
+/// (`qwe::ui::slider`), чтобы обе величины подбирались глазом на живой толпе, а
+/// не пересборкой. Пишут прямо в ресурсы движения, откуда их берут и сама
+/// механика, и гизмо этой сцены: `SeparationStyle::radius` — «личное
+/// пространство», `SlotSearch` — докуда искать свободный слот назначения.
+fn spawn_sliders(mut commands: Commands, style: Res<SeparationStyle>, search: Res<SlotSearch>) {
     let panel = commands
         .spawn((
             Node {
@@ -454,6 +469,30 @@ fn spawn_radius_slider(mut commands: Commands, style: Res<SeparationStyle>) {
             style.radius = stepped;
             for mut text in &mut label {
                 text.0 = format!("{stepped:.2} m");
+            }
+        },
+    );
+
+    spawn_slider_row(
+        &mut commands,
+        panel,
+        SliderRow {
+            label: "Slot search",
+            value: search.0,
+            value_text: format!("{:.0} m", search.0),
+            range: (SEARCH_MIN, SEARCH_MAX, SEARCH_STEP),
+        },
+        SearchValueLabel,
+        SearchSlider,
+        |change: On<ValueChange<f32>>,
+         mut commands: Commands,
+         mut search: ResMut<SlotSearch>,
+         mut label: Query<&mut Text, With<SearchValueLabel>>| {
+            let stepped = quantize(change.value, SEARCH_MIN, SEARCH_MAX, SEARCH_STEP);
+            commands.entity(change.source).insert(SliderValue(stepped));
+            search.0 = stepped;
+            for mut text in &mut label {
+                text.0 = format!("{stepped:.0} m");
             }
         },
     );
@@ -719,6 +758,7 @@ fn drive_routes(
     mut commands: Commands,
     navmesh: Res<ArcNavmesh>,
     style: Res<SeparationStyle>,
+    search: Res<SlotSearch>,
     mut claims: ResMut<DestinationClaims>,
     mut pawns: Query<
         (
@@ -731,7 +771,7 @@ fn drive_routes(
         Without<MovableStateMovingTag>,
     >,
 ) {
-    claims.sync_side(slot_side(style.human_radius() * 2.0));
+    claims.sync(slot_side(style.human_radius() * 2.0), search.0);
     let navmesh = navmesh.read();
     for (entity, mut movable, mut route, position, claim) in &mut pawns {
         let leg = route.legs[route.next];

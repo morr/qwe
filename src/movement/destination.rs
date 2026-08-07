@@ -77,6 +77,24 @@ use crate::settings::{CLAIM_SEARCH_METERS, navtile_size};
 #[reflect(Component)]
 pub struct DestinationClaim(pub IVec2);
 
+/// Докуда ищется свободный слот, м. Ресурс, а не константа: у величины нет
+/// правильного значения, есть компромисс — мало, и хвост большой толпы остаётся
+/// без слотов (уходит в общую точку); много, и цель уезжает от задуманной
+/// поведением так далеко, что это уже другая цель. Подбирается ползунком на
+/// живой толпе (`examples/demos/crowd_demo.rs`), как радиус расталкивания.
+///
+/// Намеренно НЕ `SettingsGroup`: в игре величина не имеет смысла как вкус
+/// пользователя, а демо, подвинув её, не должно править конфиг игры.
+#[derive(Resource, Reflect, Clone, Copy, Debug)]
+#[reflect(Resource)]
+pub struct SlotSearch(pub f32);
+
+impl Default for SlotSearch {
+    fn default() -> Self {
+        Self(CLAIM_SEARCH_METERS)
+    }
+}
+
 /// Сторона слота в тайлах: `ceil(дистанция покоя / navtile_size())`, но не
 /// меньше одного тайла.
 pub fn slot_side(rest_distance: f32) -> i32 {
@@ -104,6 +122,8 @@ pub struct DestinationClaims {
     /// переключатель навтайла меняют её на лету, а ключи от прошлой решётки
     /// после этого не значат ничего.
     side: i32,
+    /// Докуда искать свободный слот, м — снимок [`SlotSearch`] на прогон.
+    search_meters: f32,
 }
 
 impl DestinationClaims {
@@ -115,20 +135,24 @@ impl DestinationClaims {
             .is_none_or(|owner| *owner == claimant)
     }
 
-    /// Перестроить решётку, если сторона слота изменилась. Старые ключи не
-    /// пересчитываются, а выбрасываются: заявки восстановятся сами при
-    /// следующем выборе цели, а неверная занятость держалась бы весь прогон.
-    pub fn sync_side(&mut self, side: i32) {
+    /// Принять текущие настройки решётки: сторону слота и радиус поиска.
+    ///
+    /// Смена стороны выбрасывает индекс — старые ключи не пересчитываются:
+    /// заявки восстановятся сами при следующем выборе цели, а неверная
+    /// занятость держалась бы весь прогон. Радиус поиска ничего не
+    /// перекеивает, он живёт только внутри одного поиска.
+    pub fn sync(&mut self, side: i32, search_meters: f32) {
         if self.side != side {
             self.by_slot.clear();
             self.side = side;
         }
+        self.search_meters = search_meters;
     }
 
     /// Занять слот под `desired` или ближайший свободный к нему; вернуть слот и
     /// его целевой тайл.
     ///
-    /// `None` — если в пределах [`CLAIM_SEARCH_METERS`] свободного слота с
+    /// `None` — если в пределах [`SlotSearch`] свободного слота с
     /// проходимой целью нет. Тогда цель остаётся общей и БЕЗ заявки: это ровно
     /// сегодняшнее поведение, и оно лучше, чем застопорить пешке выбор цели.
     ///
@@ -149,7 +173,7 @@ impl DestinationClaims {
             self.release(previous, claimant);
         }
         let side = self.side;
-        let radius = (CLAIM_SEARCH_METERS / (side as f32 * navtile_size())).ceil() as i32;
+        let radius = (self.search_meters / (side as f32 * navtile_size())).ceil() as i32;
         let slot = nearest_tile_where(slot_of(desired, side), radius.max(1), |slot| {
             self.is_free(slot, claimant) && passable(slot_target(slot, side))
         })?;
@@ -187,6 +211,7 @@ pub fn assign_destination_slots(
     mut commands: Commands,
     navmesh: Res<ArcNavmesh>,
     style: Res<SeparationStyle>,
+    search: Res<SlotSearch>,
     mut claims: ResMut<DestinationClaims>,
     mut fresh: Query<
         (
@@ -205,7 +230,7 @@ pub fn assign_destination_slots(
     >,
     mut order: Local<Vec<(u8, u32, Entity)>>,
 ) {
-    claims.sync_side(slot_side(style.human_radius() * 2.0));
+    claims.sync(slot_side(style.human_radius() * 2.0), search.0);
 
     // порядок назначения обязан не зависеть от порядка обхода архетипов:
     // ключ тот же, что у детерминированного диспетчера
@@ -285,7 +310,7 @@ mod tests {
     /// Индекс на решётке со стороной `side` тайлов.
     fn claims_with(side: i32) -> DestinationClaims {
         let mut claims = DestinationClaims::default();
-        claims.sync_side(side);
+        claims.sync(side, CLAIM_SEARCH_METERS);
         claims
     }
 
@@ -416,7 +441,7 @@ mod tests {
         let mut claims = claims_with(1);
         claims.claim_slot(entity(1), None, IVec2::new(10, 10), anywhere);
 
-        claims.sync_side(2);
+        claims.sync(2, CLAIM_SEARCH_METERS);
 
         assert_eq!(claims.len(), 0);
     }
@@ -446,7 +471,7 @@ mod tests {
         let pawn = app.world_mut().spawn_empty().id();
         let slot = {
             let mut claims = app.world_mut().resource_mut::<DestinationClaims>();
-            claims.sync_side(1);
+            claims.sync(1, CLAIM_SEARCH_METERS);
             claims
                 .claim_slot(pawn, None, IVec2::new(10, 10), anywhere)
                 .expect("свободно")

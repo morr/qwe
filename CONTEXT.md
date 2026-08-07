@@ -1344,9 +1344,16 @@ in `main.rs`.
   corners, which is the very thing the block exists to prevent; the price is that a block
   with an impassable centre goes unused and the pitch rounds up to a whole tile (up to
   ~2× the rest distance), so a crowd parks a little sparser than strictly needed. A taken
-  slot moves the goal outward by ring search (`nearest_tile_where`, bounded by
-  `CLAIM_SEARCH_METERS` 16 m); nothing free inside the bound falls back to the shared
-  goal with no claim — today's behaviour, better than leaving a pawn without a target.
+  slot moves the goal outward by ring search (`nearest_tile_where`, bounded by the
+  `SlotSearch` resource, `CLAIM_SEARCH_METERS` 16 m by default and a slider in the crowd
+  demo — deliberately not a `SettingsGroup`, it is a tuning bound and the demo must not
+  write the game's config). Nothing free inside the bound is the one branch where the old
+  pathology returns in full: the goal stays the shared unclaimed tile and the pawn presses
+  into it forever, exactly as before slots. That is still better than refusing a target,
+  which would park the pawn for good — and with the bound on a slider the branch is
+  visible on demand (drop `Slot search` to 2 m on the funnel and the tail of the crowd
+  collapses onto one point). A pawn that finds nothing also loses its previous claim, so a
+  saturated crowd churns reservations.
   The claim is **not** released on arrival: a pawn standing on its slot is exactly the
   occupancy being modelled. It moves on the next target selection, and is released by an
   `On<Remove, DestinationClaim>` observer on despawn (escape, restart, city switch) and by
@@ -1663,40 +1670,60 @@ in `main.rs`.
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (`SPEED_LADDER`:
   1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
-  - **SimSpeed** — `{requested, effective, actual}`. `requested` is what the ladder says;
-    `effective` is the regulator's command, what reaches `Time<Virtual>` after **fps
-    throttling**; `actual` is measured — virtual seconds per real second, averaged over
-    `ACTUAL_SPEED_WINDOW` (0.5 s of *real* time, so long frames weigh what they cost).
-    `actual` is the only honest one: Bevy clips a frame's virtual delta at `max_delta`, so
-    a stall eats simulated time behind the regulator's back. The panel and `is_throttled`
-    read `actual`.
-  - **The throttle defends a frame rate** — `MIN_SIM_FPS` (30). Speed `S` costs `64 × S`
-    ticks per real second, which lengthens frames; when frames drop below the target,
-    lowering `S` is the only knob that brings them back, and `throttle_speed_to_fps`
-    turns it: `affordable = effective × fps / MIN_SIM_FPS`, eased in
-    (`SPEED_SETTLE_RATE` up, the faster `SPEED_DROP_RATE` down), floored at
-    `MIN_SIM_SPEED` (0.1). **At or above the target it cannot throttle at all** —
-    `affordable ≥ effective` there, so the speed only ever climbs toward `requested`.
-    The button shows `15x → 8.6x` when limited.
+  - **SimSpeed** — `{requested, affordable, effective, actual}`. `requested` is what the
+    ladder says; `affordable` is what the regulator computed the machine can carry;
+    `effective` is its command, what reaches `Time<Virtual>`; `actual` is measured —
+    virtual seconds per real second, averaged over `ACTUAL_SPEED_WINDOW` (0.5 s of *real*
+    time, so long frames weigh what they cost). `actual` is the only honest one: Bevy
+    clips a frame's virtual delta at `max_delta`, so a stall eats simulated time behind
+    the regulator's back. The panel and `is_throttled` read `actual`.
+  - **SimLoad — the cost of one tick.** `begin_sim_load` / `end_sim_load` bracket the
+    fixed loop (`RunFixedMainLoopSystems::BeforeFixedMainLoop` / `AfterFixedMainLoop`) and
+    divide the wall time of the frame's `FixedUpdate` run by the `SimTick` delta over the
+    same bracket, smoothed with `SIM_LOAD_SMOOTHING` (0.5 s of real time, so the filter
+    does not change with the frame rate). Published as the `sim/tick_ms` diagnostic and on
+    the panel's third line. **Tick cost is a property of the world, not of the speed** —
+    speed changes how many steps a frame runs, not what a step costs — which is what makes
+    it usable as a feed-forward input. `SimTick` zeroes on restart and city switch, so the
+    delta is a `saturating_sub` and a frame whose counter went backwards is skipped.
+  - **The regulator solves, it does not hunt.** A frame of length `d` carries
+    `d × S × 64` ticks; allowing the simulation `SIM_FRAME_SHARE` of any frame gives
+    `S = 1000 × SIM_FRAME_SHARE / (64 × tick_ms)` — `d` cancels, so the answer does not
+    depend on which frame just happened, on vsync quantisation, or on history.
+    `SIM_FRAME_SHARE` is derived, not tuned: `1 − SIM_RENDER_BUDGET × MIN_SIM_FPS`
+    (13 ms per frame reserved for everything that is not simulation → 0.61). Frames then
+    settle at `rest / (1 − share)` — a contraction with gain `share < 1`, stable by
+    construction. Applied asymmetrically: **down at once, up by doubling every
+    `SPEED_CLIMB_DOUBLE_TIME` (0.75 s)**, with a symmetric `SPEED_DEADBAND` (2 %). The
+    climb limit is the one thing the solver cannot compute — tick cost lags the speed,
+    because a speed-up spawns path requests whose cost lands a second or two later.
+    Floored at `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited.
+  - **Why fps is not the feedback signal**, though the goal is stated in frames. The
+    window is `PresentMode::AutoVsync`, so measured fps only takes values `refresh/n`:
+    while a frame fits in 16.7 ms the reading is flat 60 and says nothing about the
+    remaining headroom — the regulator learns about an overload only after it has already
+    overshot. Deriving the render cost as `frame − sim` does not rescue it either: under
+    vsync that difference contains the sleep, and it grows exactly as the speed is cut,
+    which drives a limit cycle between the 60 and 30 steps. Both numbers are fine to show
+    and unfit to close a loop on. Two earlier attempts tuned this loop's coefficients
+    (smoothing, then a hysteresis band) without touching that; the sawtooth survived both.
   - **`MAX_FRAME_DELTA` is not a speed ceiling**, and reading it as one is the mistake
     this loop was built on for a while. `Time<Virtual>::max_delta` clamps the **raw**
     frame delta, *before* the speed multiplies it
     (`bevy_time/src/virt.rs::advance_with_raw_delta`) — it is "the longest real frame we
-    still count in full" (0.5 s here, against Bevy's default 0.25), and its only job is
-    to stop a freeze from becoming an avalanche of ticks. The old
-    `affordable = fps × MAX_FRAME_DELTA` therefore did not mean what it said: its
-    equilibrium `S = fps × 0.5` is `fps = 2 × S`, i.e. **the frame rate was assigned by
-    the speed** — a requested 10× that the machine could only run at 1.6× gave 3 fps, by
-    construction rather than by fault. Measured after the fix, same map and camera:
-    **1× holds 60 fps with `actual = 1.00`; a requested 10× settles around 30 fps** (it
-    still swings — the workload itself is uneven as demons spawn toward the cap).
-    A frame longer than `MAX_FRAME_DELTA` silently hands the simulation less time than
-    really passed, and the regulator cannot see that (it is closed on fps, not on
-    `actual`) — which is why the constant is generous rather than tight.
+    still count in full", and its only job is to stop a freeze from becoming an avalanche
+    of ticks. `Time<Fixed>` has no per-frame step limit of its own
+    (`bevy_time/src/fixed.rs::expend` runs while `overstep` allows), so this constant is
+    the only thing between a long frame and `max_delta × S × 64` ticks inside it — at 0.5 s
+    and 10× that was 320. A long frame carries more virtual time, hence more ticks, hence
+    a longer frame still: the pit was self-sustaining and exactly `max_delta` deep. Hence
+    **0.25 s** (Bevy's own default). The cost of the trade is that a frame longer than
+    that silently hands the simulation less time than really passed, visible only in
+    `actual`.
   - **Requested cap** — `MAX_SIM_SPEED` (30x, the top of `SPEED_LADDER`) is a hard
     ceiling on `requested`: a deliberate product limit, not a hardware one. The ladder
-    never steps past it, and `throttle_speed_to_fps` clamps `requested` itself so a BRP
-    write cannot exceed it either.
+    never steps past it, and `throttle_speed_to_frame_budget` clamps `requested` itself so
+    a BRP write cannot exceed it either.
   - Set the requested speed over BRP with `res set SimSpeed .requested N` (clamped to
     `MAX_SIM_SPEED`) — `brp speed` writes `Time<Virtual>` directly and the throttle
     overwrites it on the next frame.

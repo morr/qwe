@@ -15,7 +15,7 @@ pub use self::components::{
     RetireAt, SimPosition,
 };
 pub use self::destination::{
-    DestinationClaim, DestinationClaims, assign_destination_slots, slot_side,
+    DestinationClaim, DestinationClaims, SlotSearch, assign_destination_slots, slot_side,
 };
 pub use self::separation::SeparationStyle;
 pub use self::systems::{
@@ -46,6 +46,8 @@ impl Plugin for MovementPlugin {
             .register_type::<SeparationStyle>()
             .init_resource::<DestinationClaims>()
             .register_type::<DestinationClaim>()
+            .init_resource::<SlotSearch>()
+            .register_type::<SlotSearch>()
             // индекс заявок переживает сущности только через это снятие:
             // деспавн поднимает `Remove` на каждый компонент
             .add_observer(self::destination::on_destination_claim_removed)
