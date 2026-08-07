@@ -1116,25 +1116,38 @@ in `main.rs`.
   `apply_pathfinding_results` waits on it (`block_on`). That wait *is* the mechanism: it
   removes "when did the OS get around to it" from the simulation. Eight ticks ≈ 125 ms at
   1×, which is what today's `request → dispatch → task → collect` pipeline already costs,
-  so pawn behavior is unchanged; keeping eight batches in flight preserves throughput. The
+  so pawn behavior is unchanged. It does **not** set throughput — the dispatch rate below
+  does; K only buys a batch wall time before its join, and pays in path staleness. The
   constant must not scale with `SimSpeed` — that is user input and may not influence
-  replayed content. At 30× the batches stop finishing in wall time, `block_on` stalls the
-  frame, and `throttle_speed_to_fps` lowers the effective speed. That trade is the point of
-  the mode, not a bug — but it is not free either. **Measured on Tula, 20 000 pawns,
-  requested 30×: the mode settles at 3.0× against 13.4× with the toggle off.** Two causes,
-  both by design: every tick joins a batch instead of collecting whatever happened to
-  finish, and the camera gate is gone, so all ~17 000 wanderers are served instead of the
-  few hundred on screen (with the toggle off the same moment shows *19 000 requests
-  queued* and 11 in flight). The same reason makes the failure rate visible — ~2–5 % of
-  answers against 0 % — the sample is now the whole map, not the easy on-screen subset; a
-  failed search just sends the pawn to pick another target next tick. At 1× neither cost is
-  observable. `PATHFINDING_RETIRE_TICKS` is the lever if 3× is not enough: a larger K gives
-  each batch more wall time before its join, at the price of staler paths.
+  replayed content.
+- **Dispatch rate** (`PATHFINDING_WANDER_UNITS_PER_TICK = 128`,
+  `PATHFINDING_URGENT_UNITS_PER_TICK = 64`) — how much leaves the queue each tick,
+  measured in *predicted search cost*, not in requests. A request costs
+  `1 + chebyshev_tiles / PATHFINDING_UNIT_TILES` (integer: a float sum would depend on
+  iteration order). Measured on Tula with polymesh, a 20–40 m stroll costs **0.26 ms** and
+  a cross-city errand **5.3 ms** — 20× apart, so a budget in requests cannot fit both. The
+  rate is derived from what the pool chews per tick: 5 `AsyncCompute` threads (`main.rs`
+  overrides the policy to `percent: 0.5`) × 15.625 ms × ~45 % ≈ 35 ms of CPU, which is
+  either ~128 strolls or ~6 errands.
+  **Never reuse `MAX_*_IN_FLIGHT` here.** Those cap *concurrent* searches per frame in the
+  normal dispatcher, and they are sized for a queue the visibility gate has already
+  stripped by ~97 % (~9 searches/frame actually go out). With no gate, all 20 000 pawns
+  file requests, and the same 1024 meant up to 65 000 searches per real second: the first
+  errand wave (16 000 requests ≈ 85 s of CPU) collapsed the frame to **2.6 fps for ~19 s**
+  around T+8…T+20. With the rate in place the same wave queues up to ~11 000 requests,
+  drains over ~30 virtual seconds, and **holds 60 fps and `actual = 1.00` throughout**. A
+  long queue is the *normal* state of this mode, not a jam.
+  At 30× it still costs: tick rate scales with `SimSpeed`, so the mode settles around
+  **2–5× against 13.4× with the toggle off** — by design, and the failure rate is visible
+  for the same reason (~2–5 % against 0 %: the sample is the whole map, not the easy
+  on-screen subset; a failed search just sends the pawn to pick another target next tick).
 - **RequestedAt** — the tick a request was filed; the FIFO key of the deterministic
-  dispatcher, whose sort key is `(priority, requested_at, pawn_id)` — all integers, since
-  ties between floats have no defined order. The camera does not appear in it, and the
-  off-screen/zoom gate is gone: otherwise where the player is looking would change the
-  simulation.
+  dispatcher, whose key is `(requested_at, species, pawn_id)` — all integers, since ties
+  between floats have no defined order. **Species precedes the number** because `PawnId` is
+  only unique *within* a species, and the urgent queue mixes demons with fleeing humans.
+  A small rate plus this FIFO *is* the deterministic replacement for the camera gate:
+  distant pawns still wait longer, but reproducibly rather than because the player looked
+  away. The camera does not appear in it at all.
 - **DeterministicRun** (`determinism.rs`) — the navigation backend frozen for the run
   (algorithm + northstar grid + polymesh), snapshotted on entering `Live` and on every
   `RestartEvent`. northstar and polymesh finish building at some moment of *real* time; a
@@ -1142,6 +1155,16 @@ in `main.rs`.
   different tick. In this mode warmup waits for the wanted backend instead
   (`NavigationBuildPending`, `loading.rs::poll_warmup`), which costs ~11–14 s on first
   entry into a city on HPA — deliberately. Restarts do not pay it.
+- **No pawn warmup** — once the backend is built, this mode enters `Live` immediately
+  instead of waiting for on-screen pawns to be routed. There is nothing to wait *with*: the
+  whole pipeline lives in `FixedUpdate`, which is paused for warmup, so the counter could
+  not move and the screen burned the full `WARMUP_TIMEOUT` (`warmup timed out with 301
+  pawns still routing`). And nothing to wait *for*: "pawns on screen" is a camera notion,
+  and the number of ticks before entering the world may not depend on where the player
+  looks. Unpausing instead is not the fix — the world would move behind the loader, pawns
+  would reach their targets and file new requests, and the counter would oscillate near
+  zero forever. The crowd does not stand still at the reveal either: the dispatch rate
+  starts the population in a wave over a couple of seconds.
 - **NeedsWanderTarget** (`movement/components.rs`) — marker held exactly on `Idle` and
   `PathfindingError`, maintained only by the `Movable` transitions. Target picking moves to
   `FixedUpdate` in this mode, i.e. ~30 runs per frame at 30×; without the marker each run

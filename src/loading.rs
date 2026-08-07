@@ -359,15 +359,38 @@ fn poll_warmup(
     determinism: Option<Res<crate::determinism::Determinism>>,
     navigation_pending: NavigationBuildPending,
 ) {
-    // Детерминированный прогон идёт на одном бэкенде от начала до конца
-    // (`DeterministicRun` снимается на входе в `Live`), поэтому вход в мир
-    // ждёт, пока выбранный бэкенд построится. Счётчик `elapsed` при этом
-    // стоит: постройка иерархии занимает ~11–14 с, и `WARMUP_TIMEOUT` (10 с)
-    // оборвал бы её на полпути — ровно то, чего ждём.
-    if determinism.is_some_and(|mode| mode.0) && navigation_pending.is_building() {
-        for mut text in &mut texts {
-            text.set_if_neq(Text("Building navigation...".to_string()));
+    if determinism.is_some_and(|mode| mode.0) {
+        // Детерминированный прогон идёт на одном бэкенде от начала до конца
+        // (`DeterministicRun` снимается на входе в `Live`), поэтому вход в мир
+        // ждёт, пока выбранный бэкенд построится. Счётчик `elapsed` при этом
+        // стоит: постройка иерархии занимает ~11–14 с, и `WARMUP_TIMEOUT` (10 с)
+        // оборвал бы её на полпути — ровно то, чего ждём.
+        if navigation_pending.is_building() {
+            for mut text in &mut texts {
+                text.set_if_neq(Text("Building navigation...".to_string()));
+            }
+            return;
         }
+        // ПЕШЕЧНОГО прогрева в этом режиме нет, и это не упущение.
+        //
+        // Ждать здесь нечего и нечем. Нечем: весь конвейер поиска пути —
+        // подача, диспетчер, приёмка — живёт в `FixedUpdate`, а тот на паузе
+        // прогрева стоит; счётчик заявок физически не мог сдвинуться, и
+        // прогрев выжигал все `WARMUP_TIMEOUT` в лог строкой «warmup timed out
+        // with 301 pawns still routing». Нечего: «пешки в кадре» — понятие
+        // камерное, а число тиков до входа в мир в этом режиме не имеет права
+        // зависеть от того, куда смотрит игрок.
+        //
+        // Снимать вместо этого паузу нельзя: мир поехал бы за экраном
+        // загрузки, пешки доходили бы до целей и просили новые пути, и
+        // счётчик колебался бы у нуля бесконечно — условие «никто не ждёт» для
+        // движущегося мира не наступает.
+        //
+        // Толпа на входе в мир при этом не стоит: диспетчер выдаёт первые
+        // пути метрономом (`PATHFINDING_WANDER_UNITS_PER_TICK`), и население
+        // трогается с места волной за пару секунд, а не разом.
+        info!("warmup: skipped, deterministic mode routes pawns on the clock");
+        next.set(PlayPhase::Live);
         return;
     }
 

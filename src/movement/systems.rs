@@ -169,21 +169,135 @@ pub fn stamp_pathfinding_requests(
     }
 }
 
+/// Заявка в очереди детерминированного диспетчера.
+///
+/// Ключ отбора — `(requested_at, species, pawn_id)`, и он **уникален**.
+///
+/// Вид в ключе обязателен: `PawnId` — порядковый номер спавна **в пределах
+/// вида**, поэтому демон №5 и человек №5 существуют одновременно, а срочная
+/// очередь смешивает демонов с убегающими людьми. Без вида их ключи совпали
+/// бы, и порядок между ними задавала бы нестабильная сортировка, то есть
+/// порядок обхода запроса — ровно то, от чего режим обязан не зависеть.
+/// `u32::MAX` достаётся одному только тестовому ходоку из `dev.rs`, демонов с
+/// таким номером не бывает.
+///
+/// На уникальности держится детерминизм частичной выборки (см.
+/// `take_within_budget`), поэтому она проверяется `debug_assert`.
+pub struct QueuedRequest {
+    requested_at: u64,
+    species: u8,
+    pawn_id: u32,
+    units: u32,
+    entity: Entity,
+    start_world: Vec2,
+    start_tile: IVec2,
+    end_tile: IVec2,
+}
+
+impl QueuedRequest {
+    fn key(&self) -> (u64, u8, u32) {
+        (self.requested_at, self.species, self.pawn_id)
+    }
+}
+
+/// Предсказанная цена поиска в единицах бюджета — целая, по расстоянию между
+/// тайлами старта и цели (метрика Чебышёва).
+///
+/// Целочисленная намеренно: сумма float зависела бы от порядка слагаемых, а
+/// порядок обхода запроса меняется от спавнов и смертей. См.
+/// [`crate::settings::PATHFINDING_UNIT_TILES`] — там измеренные цены, из
+/// которых выведен делитель.
+fn request_units(start_tile: IVec2, end_tile: IVec2) -> u32 {
+    let offset = (end_tile - start_tile).abs();
+    let tiles = offset.x.max(offset.y).max(0);
+    1 + (tiles / crate::settings::PATHFINDING_UNIT_TILES) as u32
+}
+
+/// Добавить заявку в буфер кандидатов, не давая ему разрастаться.
+///
+/// Заявок в очереди этого режима — вся неохваченная популяция, до двадцати
+/// тысяч, и держать их все в буфере незачем: каждая стоит хотя бы одну
+/// единицу, значит уехать может не больше `budget` штук. Буфер поэтому
+/// подрезается O(n)-выборкой, как только перерастает вдвое, и в
+/// установившемся ходе занимает пару сотен записей вместо двадцати тысяч.
+///
+/// Это не микрооптимизация: очередь длиной в популяцию — **штатное**
+/// состояние режима (см. док-комментарий диспетчера), поэтому её обход идёт
+/// каждый тик, а полная копия означала бы ~1 МБ записи в память на тик, то
+/// есть 70 МБ/с на скорости 1× и вдвое больше на любой мелкой правке темпа.
+fn push_within_budget(queue: &mut Vec<QueuedRequest>, request: QueuedRequest, budget: u32) {
+    queue.push(request);
+    let cap = budget as usize;
+    if queue.len() > cap * 2 {
+        queue.select_nth_unstable_by_key(cap, QueuedRequest::key);
+        queue.truncate(cap);
+    }
+}
+
+/// Отобрать из буфера то, что влезает в бюджет: первые по ключу, пока хватает
+/// единиц.
+///
+/// Порядок работы, а не просто сортировка с обрезкой: единиц у заявок разное
+/// число, поэтому сколько их пройдёт — заранее неизвестно. Но каждая стоит
+/// хотя бы одну, значит пройдёт не больше `budget` штук.
+///
+/// Заявка, которая не влезла, обрывает набор, а не пропускается: иначе
+/// дорогое поручение вечно уступало бы дешёвым прогулкам, приходящим следом,
+/// и не уехало бы никогда. Оборвавшись, она остаётся первой в очереди
+/// следующего тика.
+fn take_within_budget(queue: &mut Vec<QueuedRequest>, budget: u32) {
+    let cap = budget as usize;
+    if queue.len() > cap {
+        queue.select_nth_unstable_by_key(cap, QueuedRequest::key);
+        queue.truncate(cap);
+    }
+    queue.sort_unstable_by_key(QueuedRequest::key);
+    debug_assert!(
+        queue.windows(2).all(|pair| pair[0].key() < pair[1].key()),
+        "ключ очереди обязан быть уникален, иначе частичная выборка недетерминирована"
+    );
+
+    let mut spent = 0;
+    let taken = queue
+        .iter()
+        .take_while(|request| {
+            spent += request.units;
+            spent <= budget
+        })
+        .count();
+    queue.truncate(taken);
+}
+
 /// Диспетчер детерминированного режима: **камера не участвует**.
 ///
 /// Обычный диспетчер сортирует по удалённости от центра кадра и мирных вне
 /// экрана не берёт вовсе — то есть симуляция зависит от того, куда смотрит
 /// игрок, и повтор прогона с другим положением камеры разошёлся бы. Здесь
-/// вместо этого честная очередь: сначала срочные (демоны и убегающие), внутри
-/// — по тику заявки, при равенстве — по `PawnId`. Ключ целочисленный, без
-/// сравнения float: у них порядок при равных значениях не определён.
+/// вместо этого честная очередь по `(тик заявки, PawnId)`: кто подал раньше,
+/// тот и уедет раньше. Это и есть детерминированная замена камерному гейту —
+/// дальние ждут дольше, но воспроизводимо, а не потому, что игрок отвернулся.
 ///
-/// Бюджет считается по числу тасков в полёте, как и раньше, но теперь он
-/// детерминирован: снятие тик-точное, значит в полёте всегда ровно пачки
-/// последних `PATHFINDING_RETIRE_TICKS` тиков — чистая функция истории тиков,
-/// а не того, насколько быстро машина успела их посчитать.
+/// Сколько уезжает за тик, задают **темпы выдачи** — отдельно срочным
+/// (демоны, убегающие) и мирным, оба в единицах предсказанной цены поиска
+/// (`crate::settings::PATHFINDING_*_UNITS_PER_TICK`). Темп отмерен по тому,
+/// сколько пул успевает сжевать за тик, а не по тому, как быстро хочется
+/// опустошить очередь, и это принципиально: 16 000 поручений через город —
+/// 85 с процессорного времени, и выданные разом они не считаются быстрее, они
+/// просто останавливают кадр в `apply_pathfinding_results`, который их ждёт.
+///
+/// `MAX_*_IN_FLIGHT` здесь не при делах, и подставлять их сюда нельзя. В
+/// обычном режиме это потолок ОДНОВРЕМЕННЫХ поисков за кадр, и он отмерен под
+/// очередь, из которой гейт видимости уже выбросил ~97% заявок (реально
+/// уходит ~9 поисков на кадр). Здесь гейта нет, заявки подают все 20 000
+/// пешек, и та же тысяча означала бы совсем другую величину — до 65 000
+/// поисков в реальную секунду.
+///
+/// Потолок «в полёте» остаётся страховкой: при тик-точном снятии в полёте по
+/// построению ровно пачки последних `PATHFINDING_RETIRE_TICKS` тиков, то есть
+/// в штатном ходе он не срабатывает никогда.
 pub fn dispatch_pathfinding_requests_deterministic(
     mut commands: Commands,
+    mut queues: Local<(Vec<QueuedRequest>, Vec<QueuedRequest>)>,
     run: Res<DeterministicRun>,
     arc_navmesh: Res<crate::navigation::ArcNavmesh>,
     tick: Res<SimTick>,
@@ -201,74 +315,64 @@ pub fn dispatch_pathfinding_requests_deterministic(
     )>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
-    let per_tick = if run.polymesh.is_some() {
-        MAX_POLYMESH_PATHFINDING_IN_FLIGHT
-    } else {
-        MAX_PATHFINDING_IN_FLIGHT
-    };
-    // Два потолка, и первый обязателен именно здесь.
-    //
-    // Смысл `MAX_*_IN_FLIGHT` в обычном режиме — «сколько поисков считается
-    // одновременно»; таск освобождает слот, как только досчитался, поэтому
-    // потолок ограничивает загрузку, а не поток заявок. Здесь слот держится
-    // ровно `PATHFINDING_RETIRE_TICKS` тиков независимо от того, как быстро
-    // поиск закончился, — и тот же потолок молча стал бы потолком
-    // ПРОПУСКНОЙ СПОСОБНОСТИ: 1024 заявки на восемь тиков, то есть 128 в тик.
-    // Двадцать тысяч пешек ждали бы первого пути 156 тиков вместо двадцати.
-    //
-    // Поэтому: `per_tick` — сколько выдаётся за тик (столько же, сколько
-    // обычный режим выдаёт за кадр), а `in_flight_cap` вчетверо-восьмеро
-    // больше, потому что пачек в конвейере ровно столько, сколько тиков
-    // задержки. Обе величины — константы, бухгалтерия остаётся
-    // детерминированной.
-    let in_flight_cap = per_tick * crate::settings::PATHFINDING_RETIRE_TICKS as usize;
-    let budget = in_flight_cap
-        .saturating_sub(tasks.iter().count())
-        .min(per_tick);
-    if budget == 0 || requests.is_empty() {
+    let in_flight_cap = (crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK
+        + crate::settings::PATHFINDING_WANDER_UNITS_PER_TICK) as usize
+        * crate::settings::PATHFINDING_RETIRE_TICKS as usize;
+    if requests.is_empty() || tasks.iter().count() >= in_flight_cap {
         return;
     }
 
-    let mut queue: Vec<(u8, u64, u32, Entity, Vec2, IVec2, IVec2)> = requests
-        .iter()
-        .map(
-            |(entity, sim_position, request, requested_at, pawn_id, is_human, is_fleeing)| {
-                let priority = if is_human && !is_fleeing {
-                    priority::WANDER_ON_SCREEN
-                } else {
-                    priority::URGENT
-                };
-                (
-                    priority,
-                    requested_at.0,
-                    pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
-                    entity,
-                    sim_position.0,
-                    request.start_tile,
-                    request.end_tile,
-                )
-            },
-        )
-        .collect();
-
-    if queue.len() > budget {
-        queue.sort_unstable_by_key(|entry| (entry.0, entry.1, entry.2));
-        queue.truncate(budget);
+    let (urgent, wander) = &mut *queues;
+    // буферы переиспользуются между тиками: при длинной очереди (штатное
+    // состояние этого режима) аллокация на каждый тик была бы заметнее самой
+    // выборки
+    urgent.clear();
+    wander.clear();
+    for (entity, sim_position, request, requested_at, pawn_id, is_human, is_fleeing) in &requests {
+        let queued = QueuedRequest {
+            requested_at: requested_at.0,
+            species: u8::from(is_human),
+            pawn_id: pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
+            units: request_units(request.start_tile, request.end_tile),
+            entity,
+            // полигональный поиск стартует из реальной позиции пешки, а не из
+            // центра её тайла: снап старта к центру — ровно та ступенька,
+            // ради избавления от которой всё и делается
+            start_world: sim_position.0,
+            start_tile: request.start_tile,
+            end_tile: request.end_tile,
+        };
+        if is_human && !is_fleeing {
+            push_within_budget(
+                wander,
+                queued,
+                crate::settings::PATHFINDING_WANDER_UNITS_PER_TICK,
+            );
+        } else {
+            push_within_budget(
+                urgent,
+                queued,
+                crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK,
+            );
+        }
     }
 
+    take_within_budget(urgent, crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK);
+    take_within_budget(wander, crate::settings::PATHFINDING_WANDER_UNITS_PER_TICK);
+
     let retire_at = tick.0 + crate::settings::PATHFINDING_RETIRE_TICKS;
-    for (_, _, _, entity, start_world, start_tile, end_tile) in queue {
+    for request in urgent.iter().chain(wander.iter()) {
         let task = spawn_path_task(
             arc_navmesh.0.clone(),
             run.northstar.clone(),
             run.polymesh.clone(),
             run.algorithm,
-            start_world,
-            start_tile,
-            end_tile,
+            request.start_world,
+            request.start_tile,
+            request.end_tile,
         );
         commands
-            .entity(entity)
+            .entity(request.entity)
             .remove::<(PathfindingRequest, RequestedAt)>()
             .insert((PathfindingTask(task), RetireAt(retire_at)));
     }
@@ -311,10 +415,20 @@ pub fn apply_pathfinding_results(
     // слот навсегда ушёл из бюджета. На детерминизм это не влияет: срок
     // вычисляется детерминированно, и подстраховка срабатывает только там,
     // где штатного хода уже не было
-    let mut due: Vec<(u32, Entity)> = tasks
+    // Вид перед номером — по той же причине, что и в очереди диспетчера:
+    // `PawnId` уникален лишь внутри вида, а срок настаёт разом и у демонов, и
+    // у людей. Без вида ничью разрешал бы `Entity`, а индексы сущностей
+    // переиспользуются после смертей и рестарта в другом порядке.
+    let mut due: Vec<(u8, u32, Entity)> = tasks
         .iter()
         .filter(|(.., retire_at, _)| retire_at.0 <= tick.0)
-        .map(|(entity, pawn_id, ..)| (pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0), entity))
+        .map(|(entity, pawn_id, .., is_human)| {
+            (
+                u8::from(is_human),
+                pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
+                entity,
+            )
+        })
         .collect();
     if due.is_empty() {
         return;
@@ -325,7 +439,7 @@ pub fn apply_pathfinding_results(
     let mut failed = 0u32;
     let polymesh = run.polymesh.clone();
     let mut navmesh = None;
-    for (_, entity) in due {
+    for (_, _, entity) in due {
         let Ok((entity, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
             tasks.get_mut(entity)
         else {

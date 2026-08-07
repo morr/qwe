@@ -260,3 +260,203 @@ fn a_successful_answer_is_taken_as_a_path() {
     assert_eq!(movable.state, MovableState::Moving(end_tile));
     assert_eq!(movable.path.len(), 2);
 }
+
+// --- детерминированный диспетчер ---
+
+use super::components::{PathfindingRequest, RequestedAt};
+use super::systems::dispatch_pathfinding_requests_deterministic;
+use crate::determinism::{DeterministicRun, SimTick};
+use crate::settings::{
+    PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK, PATHFINDING_WANDER_UNITS_PER_TICK,
+};
+
+/// Приложение с одним детерминированным диспетчером и пустой (проходимой)
+/// сеткой: проверяется бухгалтерия выдачи, а не сам поиск.
+fn app_with_deterministic_dispatcher() -> App {
+    AsyncComputeTaskPool::get_or_init(TaskPool::default);
+    let mut app = app_with(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))));
+    app.init_resource::<DeterministicRun>()
+        .init_resource::<SimTick>()
+        .add_systems(Update, dispatch_pathfinding_requests_deterministic);
+    app
+}
+
+/// Заявка от пешки: `wander` — мирный человек, иначе срочный (демон).
+/// `end_tile` задаётся расстоянием в тайлах от старта, чтобы тест мог
+/// управлять ценой заявки.
+fn spawn_request(app: &mut App, pawn_id: u32, requested_at: u64, wander: bool, tiles: i32) {
+    let start_tile = IVec2::new(10, 10);
+    let mut entity = app.world_mut().spawn((
+        Movable::new(1.0),
+        SimPosition(tile_center(start_tile)),
+        PreviousSimPosition(tile_center(start_tile)),
+        crate::rng::PawnId(pawn_id),
+        RequestedAt(requested_at),
+        PathfindingRequest {
+            start_tile,
+            end_tile: start_tile + IVec2::new(tiles, 0),
+        },
+    ));
+    if wander {
+        entity.insert(crate::human::Human);
+    }
+}
+
+/// Сколько заявок уехало: у выданных `PathfindingRequest` снят.
+fn dispatched(app: &mut App) -> usize {
+    app.world_mut()
+        .query::<&PathfindingTask>()
+        .iter(app.world())
+        .count()
+}
+
+/// Кто остался в очереди — по `PawnId`, отсортировано.
+fn still_queued(app: &mut App) -> Vec<u32> {
+    let mut left: Vec<u32> = app
+        .world_mut()
+        .query_filtered::<&crate::rng::PawnId, With<PathfindingRequest>>()
+        .iter(app.world())
+        .map(|pawn_id| pawn_id.0)
+        .collect();
+    left.sort_unstable();
+    left
+}
+
+/// Регрессия на саму яму: до бюджета диспетчер выдавал за тик всё, что в
+/// очереди, и 16 000 поручений через город останавливали кадр.
+#[test]
+fn the_dispatcher_never_exceeds_the_wander_rate_in_one_tick() {
+    let app = &mut app_with_deterministic_dispatcher();
+    let flood = PATHFINDING_WANDER_UNITS_PER_TICK * 4;
+    for pawn_id in 0..flood {
+        spawn_request(app, pawn_id, 0, true, 0);
+    }
+
+    app.update();
+
+    // заявки по одной единице каждая, значит бюджет измеряется в штуках
+    assert_eq!(dispatched(app), PATHFINDING_WANDER_UNITS_PER_TICK as usize);
+}
+
+#[test]
+fn the_dispatcher_never_exceeds_the_urgent_rate_in_one_tick() {
+    let app = &mut app_with_deterministic_dispatcher();
+    for pawn_id in 0..PATHFINDING_URGENT_UNITS_PER_TICK * 4 {
+        spawn_request(app, pawn_id, 0, false, 0);
+    }
+
+    app.update();
+
+    assert_eq!(dispatched(app), PATHFINDING_URGENT_UNITS_PER_TICK as usize);
+}
+
+/// Смысл двух счётчиков вместо одного с приоритетом: толпа демонов у портала
+/// не имеет права остановить город, а очередь города — задержать панику.
+#[test]
+fn a_full_urgent_queue_does_not_starve_the_wanderers() {
+    let app = &mut app_with_deterministic_dispatcher();
+    for pawn_id in 0..PATHFINDING_URGENT_UNITS_PER_TICK * 4 {
+        spawn_request(app, pawn_id, 0, false, 0);
+    }
+    for pawn_id in 0..PATHFINDING_WANDER_UNITS_PER_TICK * 4 {
+        spawn_request(app, pawn_id, 0, true, 0);
+    }
+
+    app.update();
+
+    assert_eq!(
+        dispatched(app),
+        (PATHFINDING_URGENT_UNITS_PER_TICK + PATHFINDING_WANDER_UNITS_PER_TICK) as usize
+    );
+}
+
+/// Цена заявки — расстояние: одно поручение через город стоит столько же,
+/// сколько десятки прогулок по соседству. Без этого бюджет, пропускающий залп
+/// коротких прогулок, пропустил бы и залп поручений.
+#[test]
+fn a_long_request_costs_more_of_the_budget_than_a_short_one() {
+    let app = &mut app_with_deterministic_dispatcher();
+    let far = PATHFINDING_UNIT_TILES * 20;
+    for pawn_id in 0..PATHFINDING_WANDER_UNITS_PER_TICK {
+        spawn_request(app, pawn_id, 0, true, far);
+    }
+
+    app.update();
+
+    // каждая стоит 21 единицу, значит в бюджет их влезает во столько же раз
+    // меньше — но не ноль
+    let expected = PATHFINDING_WANDER_UNITS_PER_TICK as usize / 21;
+    assert_eq!(dispatched(app), expected);
+    assert!(expected > 0, "дорогая заявка не должна блокировать очередь");
+}
+
+/// FIFO: кто подал раньше, тот и уедет раньше. Это и есть детерминированная
+/// замена камерному гейту — ожидание честное, а не по взгляду игрока.
+#[test]
+fn the_oldest_request_goes_first() {
+    let app = &mut app_with_deterministic_dispatcher();
+    let quota = PATHFINDING_WANDER_UNITS_PER_TICK;
+    for pawn_id in 0..quota {
+        spawn_request(app, pawn_id, 1, true, 0);
+    }
+    // самый молодой, но с наименьшим PawnId: без тика в ключе уехал бы первым
+    spawn_request(app, 0, 2, true, 0);
+
+    app.update();
+
+    assert_eq!(still_queued(app), vec![0]);
+    assert_eq!(
+        app.world_mut()
+            .query_filtered::<&RequestedAt, With<PathfindingRequest>>()
+            .single(app.world())
+            .expect("одна заявка в очереди")
+            .0,
+        2
+    );
+}
+
+/// Ничья по тику разрешается номером пешки, а не порядком обхода запроса:
+/// он зависит от спавнов и смертей и повтор бы разошёлся.
+#[test]
+fn a_pawn_id_breaks_a_tie_at_the_same_tick() {
+    let app = &mut app_with_deterministic_dispatcher();
+    let quota = PATHFINDING_WANDER_UNITS_PER_TICK;
+    for pawn_id in (0..=quota).rev() {
+        spawn_request(app, pawn_id, 7, true, 0);
+    }
+
+    app.update();
+
+    assert_eq!(still_queued(app), vec![quota]);
+}
+
+/// Вид перед номером: `PawnId` уникален только внутри вида, поэтому демон №5
+/// и убегающий человек №5 живут одновременно и попадают в одну срочную
+/// очередь. Без вида ключ бы совпал и порядок задавала бы нестабильная
+/// сортировка (в отладочной сборке это ловит `debug_assert` в диспетчере).
+#[test]
+fn a_demon_and_a_human_may_share_a_pawn_id() {
+    let app = &mut app_with_deterministic_dispatcher();
+    for pawn_id in 0..PATHFINDING_URGENT_UNITS_PER_TICK * 2 {
+        spawn_request(app, pawn_id, 0, false, 0);
+        // человек с тем же номером, но убегающий — тоже срочный
+        let start_tile = IVec2::new(10, 10);
+        app.world_mut().spawn((
+            Movable::new(1.0),
+            SimPosition(tile_center(start_tile)),
+            PreviousSimPosition(tile_center(start_tile)),
+            crate::rng::PawnId(pawn_id),
+            RequestedAt(0),
+            PathfindingRequest {
+                start_tile,
+                end_tile: start_tile,
+            },
+            crate::human::Human,
+            crate::human::HumanFleeTag,
+        ));
+    }
+
+    app.update();
+
+    assert_eq!(dispatched(app), PATHFINDING_URGENT_UNITS_PER_TICK as usize);
+}
