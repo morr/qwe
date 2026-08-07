@@ -131,13 +131,21 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `PreviousSimPosition`, `CorpseTag`, `TestWalker`, `PathfindingRequest`, `ChaseTarget`,
 `ChaseRepath`, `FleeRepath`, `DevourUntil`, `WanderHeading`, `WanderPause`,
 `MovableStateMovingTag`, `HumanWanderTag`, `HumanFirstWanderTag`, `HumanFleeTag`,
-`Pace`, `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`.
+`PanicRecoil`, `Pace`, `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`,
+`PawnId`, `NeedsWanderTarget`, `RequestedAt`, `RetireAt`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
-`NavtileBase`, `CameraPositionMode`, `SavedCameraView`.
+`NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
+`WorldSeed`, `Determinism`, `SimTick`, `RestartPending`.
+
+`EntityRng` is deliberately **not** registered: 20 000 PRNG states would only
+clutter the output, and its value is derived from `WorldSeed` + `PawnId` anyway.
+
+Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same path
+the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
 Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 

@@ -86,8 +86,16 @@ in `main.rs`.
   position. **Rule: heavy init belongs in this thread, not in `OnEnter(Playing)`** — no
   frame is drawn inside a schedule, so work there freezes the loader on its last message.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans/corpses/demons/walkers,
-  resets `DemonSpawner` + `Telemetry`, respawns population. The navmesh persists — it is
-  filled once per city.
+  resets `DemonSpawner` + `Telemetry` + `SimTick` + `DeterministicRun`, respawns
+  population. The navmesh persists — it is filled once per city. Under **Deterministic**
+  (see "Determinism") this replays the previous run tick for tick.
+- **RestartPending** (`restart.rs`, resource) — "a restart was ordered". The only way to
+  ask for one from anywhere but the R key: changing the **world seed** or flipping
+  **Deterministic**, whether from the panel or over BRP. `trigger_pending_restart`
+  consumes it in `PreUpdate` after `InputSystems`, the same slot the R key uses and for
+  the same reason — `on_restart` tears the scene down inside an observer, so triggering it
+  from `Update` would kill entities that sibling systems have already queued commands for
+  (see CLAUDE.md, "Where a mass despawn may happen").
 - **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built
   from: `Tula | NewYork | Paris | Berlin | London | Tokyo`. Each carries its **geo center** (bbox
   center of the Overpass extract), its **portal hint** and its **cache slug**; `MAP_SIZE`
@@ -1062,6 +1070,89 @@ in `main.rs`.
   broken mesh geometry. Measured after the fix: 2000 chunked queries, 0.7 % missed,
   5.3 ms mean, 42 ms worst, flat memory.
 
+## Determinism
+
+- **World seed** (`rng.rs::WorldSeed`, remembered by `prefs.rs`, panel row *Seed* in
+  World) — the one number every simulation draw descends from. It governs the
+  **simulation**, not the map: OSM is parsed from a cache file, and trees and entrances
+  are seeded by their own coordinates (`map/trees.rs::Lcg`,
+  `entrances::lcg_seeded_by`), so those are already reproducible without it. Capped at
+  `i64::MAX` (`MAX_SEED`) — `toml` cannot store more, and the seed has to survive a
+  restart of the app. The *new* button rolls a 9-digit one so it can be read off the
+  screen and typed back in.
+- **Seed derivation** — `seed_for(world_seed, domain, key)`, two rounds of splitmix64.
+  Nothing stores live RNG state, so **a restart has no RNG to reset**: every stream is
+  re-derived. `RngDomain: Population | Human | Demon`.
+- **Entity RNG** (`rng.rs::EntityRng`, on humans *and* demons) — each pawn's own
+  `SimRng`, seeded from its `PawnId`. Every behavioral draw of a pawn comes from its own
+  stream, so draws do not depend on query iteration order, nor on how many neighbours
+  drew before it this tick. This is what makes the whole thing sturdy: a single shared
+  generator collapses under any reordering — `panic` draws its repath period while walking
+  a `HashSet<Entity>`, whose order differs between runs.
+- **PawnId** (`rng.rs`) — a pawn's spawn ordinal within its species and run (humans
+  `0..HUMAN_COUNT`, demons `DemonSpawner::spawned`). Used wherever a stable "personal
+  number" is needed — the RNG seed key, the flee-fan angle (`personal_spread`), the
+  separation axis (`coincident_direction`), the dispatcher tiebreak. **Never `Entity`**:
+  entity indices are recycled in a different order after a restart (the free list depends
+  on who was eaten in the previous run), so an `entity.index()` hash would drift between a
+  run and its replay under an identical seed.
+- **SimTick** (`determinism.rs`) — the step counter, incremented at the head of the
+  `FixedUpdate` chain. **The unit of replay**: world state is a function of
+  `(seed, settings, SimTick)`. Not the same as `SimClock`, which counts virtual seconds
+  and loses whatever `max_delta` discarded on a long frame. Compare states by tick, never
+  by wall clock.
+- **Deterministic** (`determinism.rs::Determinism`, panel toggle) — gates *scheduling*,
+  not the dice; the RNG work above is unconditional. Off: today's behavior. On: wander
+  target picking runs in `FixedUpdate`, pathfinding answers land on a fixed tick, the
+  dispatcher stops looking at the camera, the navigation backend is frozen, and pawn
+  separation is off. A run is deterministic or not from tick 0, so flipping the toggle
+  (like changing the seed) orders a restart via `RestartPending`.
+- **Frame rate does not matter.** `Time<Fixed>`'s step is constant regardless of fps and
+  of `SimSpeed`; the answer to a path query waits for its tick; and everything left in
+  `Update` only draws. A slow machine therefore replays the same run more slowly — it does
+  not replay a different one.
+- **Retire tick** (`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`) — a request issued on tick
+  `T` is applied on exactly `T + 8`, whether or not the search finished; if it did not,
+  `apply_pathfinding_results` waits on it (`block_on`). That wait *is* the mechanism: it
+  removes "when did the OS get around to it" from the simulation. Eight ticks ≈ 125 ms at
+  1×, which is what today's `request → dispatch → task → collect` pipeline already costs,
+  so pawn behavior is unchanged; keeping eight batches in flight preserves throughput. The
+  constant must not scale with `SimSpeed` — that is user input and may not influence
+  replayed content. At 30× the batches stop finishing in wall time, `block_on` stalls the
+  frame, and `throttle_speed_to_fps` lowers the effective speed. That trade is the point of
+  the mode, not a bug — but it is not free either. **Measured on Tula, 20 000 pawns,
+  requested 30×: the mode settles at 3.0× against 13.4× with the toggle off.** Two causes,
+  both by design: every tick joins a batch instead of collecting whatever happened to
+  finish, and the camera gate is gone, so all ~17 000 wanderers are served instead of the
+  few hundred on screen (with the toggle off the same moment shows *19 000 requests
+  queued* and 11 in flight). The same reason makes the failure rate visible — ~2–5 % of
+  answers against 0 % — the sample is now the whole map, not the easy on-screen subset; a
+  failed search just sends the pawn to pick another target next tick. At 1× neither cost is
+  observable. `PATHFINDING_RETIRE_TICKS` is the lever if 3× is not enough: a larger K gives
+  each batch more wall time before its join, at the price of staler paths.
+- **RequestedAt** — the tick a request was filed; the FIFO key of the deterministic
+  dispatcher, whose sort key is `(priority, requested_at, pawn_id)` — all integers, since
+  ties between floats have no defined order. The camera does not appear in it, and the
+  off-screen/zoom gate is gone: otherwise where the player is looking would change the
+  simulation.
+- **DeterministicRun** (`determinism.rs`) — the navigation backend frozen for the run
+  (algorithm + northstar grid + polymesh), snapshotted on entering `Live` and on every
+  `RestartEvent`. northstar and polymesh finish building at some moment of *real* time; a
+  live `Pathfinder` would switch backends mid-run, and a replay would switch on a
+  different tick. In this mode warmup waits for the wanted backend instead
+  (`NavigationBuildPending`, `loading.rs::poll_warmup`), which costs ~11–14 s on first
+  entry into a city on HPA — deliberately. Restarts do not pay it.
+- **NeedsWanderTarget** (`movement/components.rs`) — marker held exactly on `Idle` and
+  `PathfindingError`, maintained only by the `Movable` transitions. Target picking moves to
+  `FixedUpdate` in this mode, i.e. ~30 runs per frame at 30×; without the marker each run
+  would scan all 17 000 wanderers to find the few thousand standing ones.
+- **The replay contract** — 1:1 holds only while `DemonStyle` / `HumanStyle` /
+  `SeparationStyle` / the algorithm / the navtile size are left alone mid-run. Sliders are
+  simulation input. Not enforced by code.
+- **Not claimed**: float reproducibility across machines or compilers; replaying a run
+  made with the toggle *off*. `bevy_northstar` builds its grid with rayon, so cross-process
+  HPA replay is unaudited — within one session the grid outlives R, so restarts are safe.
+
 ## Simulation
 
 - **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`):
@@ -1161,7 +1252,9 @@ in `main.rs`.
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
   walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding
-  load — and 20% stroll 20–40 m nearby) ⇄ **Flee** (demon within `HUMAN_PANIC_RADIUS`
+  load — and 20% stroll 20–40 m nearby; the one exception is the first target after
+  calming down from panic, which is *always* an errand — see **PanicRecoil**) ⇄
+  **Flee** (demon within `HUMAN_PANIC_RADIUS`
   60 m; repath every 0.7–1.2 s, step 40–60 m away from the nearest demon). The
   Wander → Flee check (`panic`) is **inverted**: each demon collects neighbors from the
   human grid instead of every wanderer polling the demon grid, so its cost tracks the
@@ -1174,12 +1267,37 @@ in `main.rs`.
   target, near stroll or cross-city errand, is picked inside a `WANDER_CONE` (60°)
   cone around it — a building errand samples `WANDER_BUILDING_TRIES` (8) random
   buildings and takes the first one inside the cone. Without the heading each pick was
-  uniformly random and pawns wobbled in place instead of walking somewhere.
+  uniformly random and pawns wobbled in place instead of walking somewhere. `flee`
+  rewrites it to the away-vector on every repath, so a calmed human resumes facing away
+  from the demon rather than on its stale pre-panic course — which pointed at the demon,
+  since that is where it was walking when it got scared.
+- **PanicRecoil** — inserted on the Flee → Wander calm-down, a unit vector *toward* the
+  demon (the negated `WanderHeading`, i.e. the last flee away-vector). It is remembered
+  during flee, never queried live: `pick_wander_targets` iterates all 20 000 wanderers
+  and must stay off the demon grid, which is the whole point of the inverted `panic`. At
+  calm-down the demon is already >90 m away and unavailable anyway — the branch fires
+  *because* `nearest_in_range` returned `None`. Staleness is ≲13° (≤9.6 m of travel at
+  the 0.7–1.2 s repath period against a ≥90 m separation). While the component is on,
+  the next target must be an errand and must clear two filters inside
+  `pick_building_ahead`: not within `RECOIL_CONE` (±45°, a 90° cone) of the recoil
+  vector, and not closer than `RECOIL_MIN_ERRAND` (90 m, the panic hysteresis radius) —
+  the second one matters because a building just outside the cone but 15 m away
+  reproduces the short walk being ruled out. Rejected candidates are dropped *before*
+  the "best-aligned of the 8" fallback, which is what used to hand back a building
+  nearly 180° from the heading, i.e. straight at the demon. A sample with nothing
+  acceptable re-rolls next frame (never a stroll); only a city with no buildings at all
+  falls back to a stroll, cone-checked after the `MAP_MARGIN` clamp, since at the map
+  edge the clamp is what turns the direction around. Dropped at the first successful
+  pick. Note the cone is centred on the human's own *spread-tilted* flee vector, so it
+  reads as "don't go back the way you came" — the exact demon bearing is inside it
+  regardless, as `FLEE_SPREAD` (±0.6 rad ≈ 34°) is smaller than the 45° half-angle.
 - **HumanFirstWanderTag** — the very first target after spawn is always the *near*
   stroll, never a building errand; the tag is dropped when that target is picked. All
   20 000 humans queue their first path in the same frame, and cross-city A* costs
   hundreds of ms per request: with errands first the on-screen pawns took 3.9 s to route
-  (the whole `PlayPhase::Warmup`), with strolls first — 0.15 s.
+  (the whole `PlayPhase::Warmup`), with strolls first — 0.15 s. `PanicRecoil` overrides
+  it: a panic at spawn reaches only the crowd within 60 m of the portal, and their
+  calm-downs spread over seconds, so there is no burst of that shape to guard against.
 - **Pace** — a human's personal speed multiplier, rolled once at spawn and stored
   **normalized**, −1…+1. The effective speed is `base × (1 + Pace × HumanStyle::spread)`:
   a negative roll is slower than the base, a positive one faster, zero exactly the base.

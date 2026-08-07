@@ -125,7 +125,16 @@ impl Plugin for CameraPlugin {
             .add_observer(on_restart_place_camera)
             // Мышь и WASD ведём сами (см. ниже); у PanCamera остаётся только
             // применение zoom_factor к масштабу трансформа.
-            .add_systems(Update, (zoom_to_cursor, drag_pan, key_pan))
+            .add_systems(
+                Update,
+                (
+                    zoom_to_cursor,
+                    drag_pan,
+                    // WASD в поле ввода — буквы: набирать seed, уезжая
+                    // камерой через полгорода, невозможно
+                    key_pan.run_if(not(crate::ui::typing_in_text_input)),
+                ),
+            )
             .add_systems(
                 Update,
                 track_camera_view

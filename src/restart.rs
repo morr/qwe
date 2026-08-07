@@ -9,17 +9,31 @@ use crate::dev::TestWalker;
 use crate::human::{CorpseTag, Human, HumanStyle, spawn_population};
 use crate::loading::AppState;
 use crate::navigation::ArcNavmesh;
+use crate::rng::WorldSeed;
 use crate::telemetry::Telemetry;
 
 #[derive(Event, Reflect, Debug, Default)]
 #[reflect(Event)]
 pub struct RestartEvent;
 
+/// «Рестарт заказан, выполнить в ближайшем `PreUpdate`».
+///
+/// Единственный способ попросить рестарт откуда угодно, кроме клавиши R:
+/// смена seed'а, переключение детерминированного режима, запись по BRP. Прямо
+/// триггерить [`RestartEvent`] из `Update` нельзя — `on_restart` сносит сцену
+/// в обсервере, и команды соседних систем того же расписания применились бы к
+/// уже мёртвым сущностям (см. комментарий к расписанию ниже).
+#[derive(Resource, Reflect, Default, Debug)]
+#[reflect(Resource, Default)]
+pub struct RestartPending(pub bool);
+
 pub struct RestartPlugin;
 
 impl Plugin for RestartPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<RestartEvent>()
+            .register_type::<RestartPending>()
+            .init_resource::<RestartPending>()
             .add_observer(on_restart)
             // `PreUpdate`, а не `Update`: рестарт сносит сцену прямо в
             // обсервере, и из середины `Update` он убивал сущности, на которые
@@ -31,9 +45,18 @@ impl Plugin for RestartPlugin {
             // трансформов в `PostUpdate` того же кадра.
             .add_systems(
                 PreUpdate,
-                trigger_restart.after(bevy::input::InputSystems).run_if(
-                    input_just_pressed(KeyCode::KeyR).and_then(in_state(AppState::Playing)),
-                ),
+                (
+                    trigger_restart
+                        .run_if(
+                            input_just_pressed(KeyCode::KeyR).and_then(in_state(AppState::Playing)),
+                        )
+                        // «r» в поле ввода — это буква, а не рестарт мира
+                        .run_if(not(crate::ui::typing_in_text_input)),
+                    trigger_pending_restart
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(|pending: Res<RestartPending>| pending.0),
+                )
+                    .after(bevy::input::InputSystems),
             );
     }
 }
@@ -42,6 +65,14 @@ fn trigger_restart(mut commands: Commands) {
     commands.trigger(RestartEvent);
 }
 
+/// Отложенный рестарт, заказанный через [`RestartPending`], — в том же слоте
+/// расписания, что и клавиша R, и ровно по той же причине.
+fn trigger_pending_restart(mut commands: Commands, mut pending: ResMut<RestartPending>) {
+    pending.0 = false;
+    commands.trigger(RestartEvent);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn on_restart(
     _event: On<RestartEvent>,
     mut commands: Commands,
@@ -49,6 +80,7 @@ fn on_restart(
     mut telemetry: ResMut<Telemetry>,
     arc_navmesh: Res<ArcNavmesh>,
     style: Res<HumanStyle>,
+    seed: Res<WorldSeed>,
     scene_entities: Query<
         Entity,
         Or<(With<Human>, With<CorpseTag>, With<Demon>, With<TestWalker>)>,
@@ -65,5 +97,8 @@ fn on_restart(
     *telemetry = Telemetry::default();
     // часы симуляции сбрасывает свой обсервер в `sim_time`
 
-    spawn_population(&mut commands, &arc_navmesh.read(), style.spread);
+    // состояние ГПСЧ сбрасывать нечего: все потоки выводятся из `WorldSeed` и
+    // `PawnId`, а `spawned = 0` у сброшенного спавнера возвращает демонам те
+    // же номера — значит, и те же потоки (см. `src/rng.rs`)
+    spawn_population(&mut commands, &arc_navmesh.read(), style.spread, seed.0);
 }

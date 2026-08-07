@@ -10,7 +10,8 @@ use bevy::prelude::*;
 
 pub use self::components::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
-    PathfindingRequest, PathfindingTask, PreviousSimPosition, SimPosition,
+    NeedsWanderTarget, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
+    RetireAt, SimPosition,
 };
 pub use self::separation::SeparationStyle;
 pub use self::systems::{
@@ -20,10 +21,11 @@ use crate::loading::AppState;
 use crate::spatial::SimSet;
 
 use self::systems::{
-    dispatch_pathfinding_requests, draw_move_paths, interpolate_movable_transforms,
+    apply_pathfinding_results, dispatch_pathfinding_requests,
+    dispatch_pathfinding_requests_deterministic, draw_move_paths, interpolate_movable_transforms,
     listen_for_pathfinding_tasks, move_moving_entities, on_movable_added_init_sim_position,
     polymesh_rebuilt, rescue_trapped_entities, snapshot_previous_sim_positions,
-    toggle_draw_move_paths,
+    stamp_pathfinding_requests, toggle_draw_move_paths,
 };
 
 pub struct MovementPlugin;
@@ -40,9 +42,15 @@ impl Plugin for MovementPlugin {
             .register_type::<SeparationStyle>()
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется
-            .init_resource::<bevy::diagnostic::DiagnosticsStore>();
+            .init_resource::<bevy::diagnostic::DiagnosticsStore>()
+            // по той же причине: счётчик тиков стоит в цепочке этого плагина,
+            // а плагин используется в тестах без `DeterminismPlugin`
+            .init_resource::<crate::determinism::SimTick>();
 
-        app.register_type::<PathfindingRequest>();
+        app.register_type::<PathfindingRequest>()
+            .register_type::<NeedsWanderTarget>()
+            .register_type::<self::components::RequestedAt>()
+            .register_type::<self::components::RetireAt>();
         app.add_observer(on_movable_added_init_sim_position)
             // единственный полный скан — на готовую постройку полигонального
             // меша: только там проходимость меняется под уже стоящими пешками
@@ -52,7 +60,11 @@ impl Plugin for MovementPlugin {
                 Update,
                 rescue_trapped_entities
                     .run_if(in_state(AppState::Playing))
-                    .run_if(polymesh_rebuilt),
+                    .run_if(polymesh_rebuilt)
+                    // в детерминированном режиме бэкенд заморожен на весь
+                    // прогон (`DeterministicRun`), проходимость под стоящими
+                    // пешками посреди прогона не меняется — спасать не от чего
+                    .run_if(not(crate::determinism::deterministic)),
             )
             .add_systems(
                 Update,
@@ -61,12 +73,19 @@ impl Plugin for MovementPlugin {
                 // каждый кадр видел ~250 уже готовых, но не снятых тасков и
                 // выдавал вдвое меньше новых — на 30x диспетчер хронически
                 // голодал (156 из 258 стоящих бегущих ждали в очереди)
-                (listen_for_pathfinding_tasks, dispatch_pathfinding_requests).chain(),
+                (listen_for_pathfinding_tasks, dispatch_pathfinding_requests)
+                    .chain()
+                    // в детерминированном режиме этот конвейер заменён
+                    // тик-локованным ниже: здесь ответ применяется в тот кадр,
+                    // когда посчитался, а приоритет считается от камеры
+                    .run_if(not(crate::determinism::deterministic)),
             )
             .add_systems(
                 Update,
                 (
-                    toggle_draw_move_paths.run_if(input_just_pressed(KeyCode::KeyM)),
+                    toggle_draw_move_paths
+                        .run_if(input_just_pressed(KeyCode::KeyM))
+                        .run_if(not(crate::ui::typing_in_text_input)),
                     draw_move_paths,
                 ),
             )
@@ -82,12 +101,37 @@ impl Plugin for MovementPlugin {
                 // ничего не упорядочивают, когда эти множества пусты (плагин
                 // движения используется отдельно в тестах)
                 (
+                    // счётчик тиков — голова цепочки: всё, что решает этот
+                    // шаг, ссылается на один и тот же номер
+                    crate::determinism::advance_sim_tick.run_if(in_state(AppState::Playing)),
                     snapshot_previous_sim_positions.before(SimSet::SpatialRebuild),
+                    // ответы — до поведения: путь, приземлившийся на этом
+                    // тике, на нём же и идётся
+                    apply_pathfinding_results
+                        .before(SimSet::SpatialRebuild)
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(crate::determinism::deterministic),
                     move_moving_entities.after(SimSet::HumanBehavior),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
                     // доедет до экрана интерполяцией
-                    separation::separate_pawns.run_if(in_state(AppState::Playing)),
+                    // расталкивание выключено в детерминированном режиме: оно
+                    // косметическое, но при этом пишет `SimPosition` и
+                    // завязано на камеру, зум и `FrameCount` — то есть на
+                    // всё, от чего повтор прогона обязан не зависеть
+                    separation::separate_pawns
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(not(crate::determinism::deterministic)),
+                    // диспетчер — в самом конце тика: заявки, поданные
+                    // поведением этого шага, командами применяются на точках
+                    // синхронизации цепочки и уезжают в тот же тик
+                    (
+                        stamp_pathfinding_requests,
+                        dispatch_pathfinding_requests_deterministic,
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(crate::determinism::deterministic),
                 )
                     .chain(),
             )

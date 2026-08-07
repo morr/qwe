@@ -13,7 +13,7 @@ use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread}
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, wanderers_dispatched_at_zoom,
 };
-use crate::navigation::ArcNavmesh;
+use crate::navigation::{ArcNavmesh, NavigationBuildPending};
 use crate::portal::PortalPos;
 use crate::ui::{UiOpacity, ui_color};
 
@@ -344,6 +344,7 @@ fn poll_job(
 /// и без него прогрев закончился бы, не начавшись. Ждать их появления, однако,
 /// можно только `WARMUP_GRACE`: на общем плане ждать нечего в принципе, и без
 /// этого срока экран загрузки простоял бы весь таймаут с нулём на счётчике.
+#[allow(clippy::too_many_arguments)]
 fn poll_warmup(
     time: Res<Time<Real>>,
     mut progress: ResMut<WarmupProgress>,
@@ -355,7 +356,21 @@ fn poll_warmup(
     >,
     mut texts: Query<&mut Text, With<LoaderText>>,
     mut next: ResMut<NextState<PlayPhase>>,
+    determinism: Option<Res<crate::determinism::Determinism>>,
+    navigation_pending: NavigationBuildPending,
 ) {
+    // Детерминированный прогон идёт на одном бэкенде от начала до конца
+    // (`DeterministicRun` снимается на входе в `Live`), поэтому вход в мир
+    // ждёт, пока выбранный бэкенд построится. Счётчик `elapsed` при этом
+    // стоит: постройка иерархии занимает ~11–14 с, и `WARMUP_TIMEOUT` (10 с)
+    // оборвал бы её на полпути — ровно то, чего ждём.
+    if determinism.is_some_and(|mode| mode.0) && navigation_pending.is_building() {
+        for mut text in &mut texts {
+            text.set_if_neq(Text("Building navigation...".to_string()));
+        }
+        return;
+    }
+
     let WarmupProgress {
         elapsed,
         seen_requests,

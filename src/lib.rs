@@ -1,6 +1,7 @@
 pub mod camera;
 pub mod city;
 pub mod demon;
+pub mod determinism;
 pub mod dev;
 pub mod diagnostics;
 pub mod grid;
@@ -12,6 +13,7 @@ pub mod navigation;
 pub mod portal;
 pub mod prefs;
 pub mod restart;
+pub mod rng;
 pub mod settings;
 pub mod sim_time;
 pub mod spatial;

@@ -8,7 +8,9 @@ use crate::demon::components::{
     DemonLungeTag, DemonSpawnPause, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use crate::grid::world_to_tile;
-use crate::human::{CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, WanderPause};
+use crate::human::{
+    CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, PanicRecoil, WanderPause,
+};
 use crate::movement::{
     Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
     PreviousSimPosition, SimPosition,
@@ -271,7 +273,7 @@ pub fn on_demon_caught_human(
     mut telemetry: ResMut<Telemetry>,
     humans: Query<(), With<Human>>,
     mut sprites: Query<(&mut Sprite, &mut Transform)>,
-    mut movables: Query<&mut Movable>,
+    mut movables: Query<(&mut Movable, &mut crate::rng::EntityRng)>,
 ) {
     let DemonCaughtHumanEvent { demon, human } = *event;
 
@@ -289,10 +291,16 @@ pub fn on_demon_caught_human(
             HumanFleeTag,
             WanderPause,
             FleeRepath,
+            PanicRecoil,
             Movable,
             MovableStateMovingTag,
             PathfindingTask,
             PathfindingRequest,
+            // метки тиков живут вместе со своей заявкой/таском — на трупе
+            // они означали бы срок, который никогда не наступит
+            crate::movement::RequestedAt,
+            crate::movement::RetireAt,
+            crate::movement::NeedsWanderTarget,
             SimPosition,
             PreviousSimPosition,
         )>()
@@ -304,11 +312,15 @@ pub fn on_demon_caught_human(
     }
     telemetry.killed += 1;
 
-    // демон → Devour
-    if let Ok(mut movable) = movables.get_mut(demon) {
+    // демон → Devour; пауза — из личного потока демона, а не общего: убийства
+    // прилетают обсерверами, и их порядок в тике задан порядком команд
+    let mut pause = DEMON_DEVOUR_PAUSE.0;
+    if let Ok((mut movable, mut rng)) = movables.get_mut(demon) {
         movable.to_idle(demon, &mut commands, false);
+        pause = rng
+            .0
+            .random_range(DEMON_DEVOUR_PAUSE.0..DEMON_DEVOUR_PAUSE.1);
     }
-    let pause = rand::rng().random_range(DEMON_DEVOUR_PAUSE.0..DEMON_DEVOUR_PAUSE.1);
     commands
         .entity(demon)
         .remove::<(

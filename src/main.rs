@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, city, demon, dev, diagnostics, human, loading, map, movement, navigation, portal,
-    prefs, restart, sim_time, spatial, telemetry, ui,
+    camera, city, demon, determinism, dev, diagnostics, human, loading, map, movement, navigation,
+    portal, prefs, restart, rng, sim_time, spatial, telemetry, ui,
 };
 
 /// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт занят
@@ -90,7 +90,11 @@ fn main() {
                 }),
         )
         .add_plugins(RemotePlugin::default())
-        .add_plugins(city::CityPlugin)
+        .add_plugins((
+            city::CityPlugin,
+            rng::RngPlugin,
+            determinism::DeterminismPlugin,
+        ))
         .add_plugins((
             loading::LoadingPlugin,
             camera::CameraPlugin,
@@ -113,7 +117,10 @@ fn main() {
         .add_plugins(prefs::PrefsPlugin)
         .add_systems(
             Update,
-            close_on_esc.run_if(input_just_pressed(KeyCode::Escape)),
+            close_on_esc
+                .run_if(input_just_pressed(KeyCode::Escape))
+                // Esc в поле ввода — «снять фокус», а не «выйти из игры»
+                .run_if(not(ui::typing_in_text_input)),
         );
 
     // Без свободного порта HTTP-сервер не поднимается вовсе: пусть отсутствие

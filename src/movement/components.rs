@@ -22,6 +22,23 @@ pub enum MovableState {
 #[reflect(Component)]
 pub struct MovableStateMovingTag;
 
+/// «Этой пешке пора выбрать новую цель»: висит ровно на состояниях
+/// [`MovableState::Idle`] и [`MovableState::PathfindingError`].
+///
+/// Тег, а не проверка состояния в теле системы, потому что выбор целей
+/// (`human::pick_wander_targets`, `demon::pick_wander_targets`) в
+/// детерминированном режиме переезжает в `FixedUpdate`: на 30× это ~30
+/// прогонов за кадр, и просмотр всех 17 000 гуляющих ради нескольких тысяч
+/// стоящих стоил бы миллионы проверок в кадр. С тегом запрос сразу видит
+/// только стоящих.
+///
+/// Ставится и снимается **только** переходами `Movable` — иначе тег разъедется
+/// с состоянием, и пешка либо застынет навсегда, либо начнёт выбирать цель на
+/// ходу.
+#[derive(Component, Default, Reflect)]
+#[reflect(Component)]
+pub struct NeedsWanderTarget;
+
 /// Позиция сущности в симуляции — источник истины для движения. Двигается в
 /// `FixedUpdate`; `Transform` — визуальное представление, интерполируемое
 /// между фиксированными шагами.
@@ -36,7 +53,8 @@ pub struct PreviousSimPosition(pub Vec2);
 
 #[derive(Component, Debug, Reflect)]
 #[reflect(Component)]
-#[require(SimPosition, PreviousSimPosition)]
+// свежая пешка стоит в `Idle`, то есть цель ей нужна с первого тика
+#[require(SimPosition, PreviousSimPosition, NeedsWanderTarget)]
 pub struct Movable {
     pub speed: f32,
     /// Waypoint'ы в мировых метрах, а не в тайлах: по полигональному мешу
@@ -68,6 +86,23 @@ pub struct PathfindingRequest {
     pub end_tile: IVec2,
 }
 
+/// Тик, на котором подана заявка — ключ FIFO-очереди детерминированного
+/// диспетчера. Живёт и умирает вместе с [`PathfindingRequest`].
+#[derive(Component, Debug, Reflect)]
+#[reflect(Component)]
+pub struct RequestedAt(pub u64);
+
+/// Тик, на котором ответ обязан быть применён, — `тик заявки +
+/// PATHFINDING_RETIRE_TICKS`.
+///
+/// Это и есть развязка симуляции с реальным временем: поиск считается
+/// асинхронно, но результат ждёт своего тика, а если не успел — его дожидаются
+/// (`block_on`). Пешка трогается с места на одном и том же тике при любой
+/// частоте кадров и любой загрузке машины.
+#[derive(Component, Debug, Reflect)]
+#[reflect(Component)]
+pub struct RetireAt(pub u64);
+
 #[derive(EntityEvent, Debug, Clone)]
 pub struct MovableReachedDestinationEvent {
     pub entity: Entity,
@@ -97,6 +132,7 @@ impl Movable {
 
         self.stop_moving(entity, commands);
         self.state = MovableState::Idle;
+        commands.entity(entity).insert(NeedsWanderTarget);
     }
 
     pub fn to_moving(
@@ -108,7 +144,10 @@ impl Movable {
     ) {
         self.state = MovableState::Moving(end_tile);
         self.path = path;
-        commands.entity(entity).insert(MovableStateMovingTag);
+        commands
+            .entity(entity)
+            .insert(MovableStateMovingTag)
+            .remove::<NeedsWanderTarget>();
     }
 
     /// Запустить асинхронный поиск пути; ответ снимает
@@ -133,7 +172,7 @@ impl Movable {
         // вытесняется вставкой
         commands
             .entity(entity)
-            .remove::<PathfindingTask>()
+            .remove::<(PathfindingTask, RetireAt, NeedsWanderTarget)>()
             .insert(PathfindingRequest {
                 start_tile,
                 end_tile,
@@ -142,8 +181,14 @@ impl Movable {
 
     /// Поиск пути не удался. Путь, если он ещё не пройден, остаётся: пока
     /// поведение выбирает новую цель, идти по старому лучше, чем стоять.
-    pub fn to_pathfinding_error(&mut self, end_tile: IVec2) {
+    pub fn to_pathfinding_error(
+        &mut self,
+        entity: Entity,
+        end_tile: IVec2,
+        commands: &mut Commands,
+    ) {
         self.state = MovableState::PathfindingError(end_tile);
+        commands.entity(entity).insert(NeedsWanderTarget);
     }
 
     fn stop_moving(&mut self, entity: Entity, commands: &mut Commands) {

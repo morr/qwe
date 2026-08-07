@@ -3,10 +3,11 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::tasks::futures::check_ready;
 use bevy::window::PrimaryWindow;
 
+use crate::determinism::{DeterministicRun, SimTick};
 use crate::grid::{tile_center, world_to_tile};
 use crate::movement::components::{
     Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
-    PreviousSimPosition, SimPosition,
+    PreviousSimPosition, RequestedAt, RetireAt, SimPosition,
 };
 use crate::navigation::{
     Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
@@ -139,43 +140,269 @@ pub fn dispatch_pathfinding_requests(
 
     let algorithm = *pathfinder.algorithm;
     for (_, _, entity, start_world, start_tile, end_tile) in queue {
-        let navmesh = pathfinder.navmesh.0.clone();
-        let northstar = pathfinder.northstar.get();
-        let polymesh = polymesh.clone();
-        let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
-            let (path, started_at) = match polymesh {
-                Some(polymesh) => {
-                    let started_at = std::time::Instant::now();
-                    // цель осталась тайловой (её выбрало поведение по
-                    // проходимости сетки) — на меше это её центр
-                    let path = find_path_polymesh(&polymesh, start_world, tile_center(end_tile));
-                    (path, started_at)
-                }
-                None => {
-                    let (tiles, started_at) = grid_path(
-                        &navmesh,
-                        northstar.as_deref(),
-                        algorithm,
-                        start_tile,
-                        end_tile,
-                    );
-                    let path = tiles
-                        .map(|tiles| tiles.into_iter().map(tile_center).collect::<Vec<Vec2>>());
-                    (path, started_at)
-                }
-            };
-            PathfindingResult {
-                start_tile,
-                end_tile,
-                path,
-                duration: started_at.elapsed(),
-            }
-        });
+        let task = spawn_path_task(
+            pathfinder.navmesh.0.clone(),
+            pathfinder.northstar.get(),
+            polymesh.clone(),
+            algorithm,
+            start_world,
+            start_tile,
+            end_tile,
+        );
         commands
             .entity(entity)
             .remove::<PathfindingRequest>()
             .insert(PathfindingTask(task));
     }
+}
+
+/// Метка тика на новых заявках — ключ FIFO детерминированного диспетчера.
+/// Отдельной системой, а не в `Movable::to_pathfinding`: тот вызывается из
+/// поведения, которое о номере тика знать не обязано.
+pub fn stamp_pathfinding_requests(
+    mut commands: Commands,
+    tick: Res<SimTick>,
+    fresh: Query<Entity, Added<PathfindingRequest>>,
+) {
+    for entity in &fresh {
+        commands.entity(entity).insert(RequestedAt(tick.0));
+    }
+}
+
+/// Диспетчер детерминированного режима: **камера не участвует**.
+///
+/// Обычный диспетчер сортирует по удалённости от центра кадра и мирных вне
+/// экрана не берёт вовсе — то есть симуляция зависит от того, куда смотрит
+/// игрок, и повтор прогона с другим положением камеры разошёлся бы. Здесь
+/// вместо этого честная очередь: сначала срочные (демоны и убегающие), внутри
+/// — по тику заявки, при равенстве — по `PawnId`. Ключ целочисленный, без
+/// сравнения float: у них порядок при равных значениях не определён.
+///
+/// Бюджет считается по числу тасков в полёте, как и раньше, но теперь он
+/// детерминирован: снятие тик-точное, значит в полёте всегда ровно пачки
+/// последних `PATHFINDING_RETIRE_TICKS` тиков — чистая функция истории тиков,
+/// а не того, насколько быстро машина успела их посчитать.
+pub fn dispatch_pathfinding_requests_deterministic(
+    mut commands: Commands,
+    run: Res<DeterministicRun>,
+    arc_navmesh: Res<crate::navigation::ArcNavmesh>,
+    tick: Res<SimTick>,
+    requests: Query<(
+        Entity,
+        &SimPosition,
+        &PathfindingRequest,
+        &RequestedAt,
+        // `Option`: `PawnId` есть у всех пешек симуляции, но не у тестового
+        // ходока из `dev.rs`. Без `Option` его заявка молча не диспетчилась
+        // бы вовсе, и он бы застыл — а так он просто последний в очереди
+        Option<&crate::rng::PawnId>,
+        Has<crate::human::Human>,
+        Has<crate::human::HumanFleeTag>,
+    )>,
+    tasks: Query<(), With<PathfindingTask>>,
+) {
+    let per_tick = if run.polymesh.is_some() {
+        MAX_POLYMESH_PATHFINDING_IN_FLIGHT
+    } else {
+        MAX_PATHFINDING_IN_FLIGHT
+    };
+    // Два потолка, и первый обязателен именно здесь.
+    //
+    // Смысл `MAX_*_IN_FLIGHT` в обычном режиме — «сколько поисков считается
+    // одновременно»; таск освобождает слот, как только досчитался, поэтому
+    // потолок ограничивает загрузку, а не поток заявок. Здесь слот держится
+    // ровно `PATHFINDING_RETIRE_TICKS` тиков независимо от того, как быстро
+    // поиск закончился, — и тот же потолок молча стал бы потолком
+    // ПРОПУСКНОЙ СПОСОБНОСТИ: 1024 заявки на восемь тиков, то есть 128 в тик.
+    // Двадцать тысяч пешек ждали бы первого пути 156 тиков вместо двадцати.
+    //
+    // Поэтому: `per_tick` — сколько выдаётся за тик (столько же, сколько
+    // обычный режим выдаёт за кадр), а `in_flight_cap` вчетверо-восьмеро
+    // больше, потому что пачек в конвейере ровно столько, сколько тиков
+    // задержки. Обе величины — константы, бухгалтерия остаётся
+    // детерминированной.
+    let in_flight_cap = per_tick * crate::settings::PATHFINDING_RETIRE_TICKS as usize;
+    let budget = in_flight_cap
+        .saturating_sub(tasks.iter().count())
+        .min(per_tick);
+    if budget == 0 || requests.is_empty() {
+        return;
+    }
+
+    let mut queue: Vec<(u8, u64, u32, Entity, Vec2, IVec2, IVec2)> = requests
+        .iter()
+        .map(
+            |(entity, sim_position, request, requested_at, pawn_id, is_human, is_fleeing)| {
+                let priority = if is_human && !is_fleeing {
+                    priority::WANDER_ON_SCREEN
+                } else {
+                    priority::URGENT
+                };
+                (
+                    priority,
+                    requested_at.0,
+                    pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
+                    entity,
+                    sim_position.0,
+                    request.start_tile,
+                    request.end_tile,
+                )
+            },
+        )
+        .collect();
+
+    if queue.len() > budget {
+        queue.sort_unstable_by_key(|entry| (entry.0, entry.1, entry.2));
+        queue.truncate(budget);
+    }
+
+    let retire_at = tick.0 + crate::settings::PATHFINDING_RETIRE_TICKS;
+    for (_, _, _, entity, start_world, start_tile, end_tile) in queue {
+        let task = spawn_path_task(
+            arc_navmesh.0.clone(),
+            run.northstar.clone(),
+            run.polymesh.clone(),
+            run.algorithm,
+            start_world,
+            start_tile,
+            end_tile,
+        );
+        commands
+            .entity(entity)
+            .remove::<(PathfindingRequest, RequestedAt)>()
+            .insert((PathfindingTask(task), RetireAt(retire_at)));
+    }
+}
+
+/// Приёмник детерминированного режима: снимает ровно те ответы, чей срок
+/// настал на этом тике, — и ждёт их, если поиск ещё не закончился.
+///
+/// Ожидание (`block_on`) и есть смысл системы: без него момент, когда пешка
+/// трогается с места, задавался бы тем, как быстро ОС домолотила задачу, то
+/// есть загрузкой машины и частотой кадров. Медленная машина здесь замедляет
+/// проигрывание, но не меняет содержимое тика.
+///
+/// Порядок обработки — по `PawnId`: обход запроса зависит от порядка спавна и
+/// смертей, а применение ответа шлёт команды и трогает сетку людей.
+pub fn apply_pathfinding_results(
+    mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
+    // бэкенд — из замороженного снимка, а не из живого `Pathfinder`: иначе
+    // достроившийся посреди прогона polymesh поменял бы проверку
+    // проходимости под спасением застрявших
+    run: Res<DeterministicRun>,
+    arc_navmesh: Res<crate::navigation::ArcNavmesh>,
+    tick: Res<SimTick>,
+    mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut tasks: Query<(
+        Entity,
+        Option<&crate::rng::PawnId>,
+        &mut Movable,
+        &mut SimPosition,
+        &mut PreviousSimPosition,
+        &mut PathfindingTask,
+        &RetireAt,
+        Has<crate::human::Human>,
+    )>,
+) {
+    // `<=`, а не `==`: в штатном ходе тики идут подряд и срок совпадает
+    // точно, но пропущенный тик (режим переключили, состояние сменилось)
+    // оставил бы таск висеть навсегда — пешка застыла бы в `Pathfinding`, а
+    // слот навсегда ушёл из бюджета. На детерминизм это не влияет: срок
+    // вычисляется детерминированно, и подстраховка срабатывает только там,
+    // где штатного хода уже не было
+    let mut due: Vec<(u32, Entity)> = tasks
+        .iter()
+        .filter(|(.., retire_at, _)| retire_at.0 <= tick.0)
+        .map(|(entity, pawn_id, ..)| (pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0), entity))
+        .collect();
+    if due.is_empty() {
+        return;
+    }
+    due.sort_unstable();
+
+    let mut answered = 0u32;
+    let mut failed = 0u32;
+    let polymesh = run.polymesh.clone();
+    let mut navmesh = None;
+    for (_, entity) in due {
+        let Ok((entity, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
+            tasks.get_mut(entity)
+        else {
+            continue;
+        };
+        let result = bevy::tasks::block_on(&mut task.0);
+        commands
+            .entity(entity)
+            .remove::<(PathfindingTask, RetireAt)>();
+        diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
+            result.duration.as_secs_f64() * 1000.0
+        });
+        answered += 1;
+        failed += u32::from(result.path.is_none());
+
+        apply_result(
+            result,
+            entity,
+            &mut movable,
+            &mut sim_position,
+            &mut previous,
+            is_human,
+            &mut navmesh,
+            &arc_navmesh,
+            polymesh.as_deref(),
+            &mut human_grid,
+            &mut commands,
+        );
+    }
+
+    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_ANSWERED, || {
+        answered as f64
+    });
+    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
+}
+
+/// Сам таск поиска пути — общий для обоих диспетчеров, чтобы режимы не
+/// разъехались в том, ЧТО именно считается.
+#[allow(clippy::too_many_arguments)]
+fn spawn_path_task(
+    navmesh: std::sync::Arc<std::sync::RwLock<crate::navigation::Navmesh>>,
+    northstar: Option<std::sync::Arc<bevy_northstar::prelude::OrdinalGrid>>,
+    polymesh: Option<std::sync::Arc<crate::navigation::PolymeshBuild>>,
+    algorithm: PathfindingAlgorithm,
+    start_world: Vec2,
+    start_tile: IVec2,
+    end_tile: IVec2,
+) -> bevy::tasks::Task<PathfindingResult> {
+    bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+        let (path, started_at) = match polymesh {
+            Some(polymesh) => {
+                let started_at = std::time::Instant::now();
+                // цель осталась тайловой (её выбрало поведение по
+                // проходимости сетки) — на меше это её центр
+                let path = find_path_polymesh(&polymesh, start_world, tile_center(end_tile));
+                (path, started_at)
+            }
+            None => {
+                let (tiles, started_at) = grid_path(
+                    &navmesh,
+                    northstar.as_deref(),
+                    algorithm,
+                    start_tile,
+                    end_tile,
+                );
+                let path =
+                    tiles.map(|tiles| tiles.into_iter().map(tile_center).collect::<Vec<Vec2>>());
+                (path, started_at)
+            }
+        };
+        PathfindingResult {
+            start_tile,
+            end_tile,
+            path,
+            duration: started_at.elapsed(),
+        }
+    })
 }
 
 /// Сеточный поиск: иерархия northstar, если она построена, иначе плоский
@@ -562,58 +789,19 @@ pub fn listen_for_pathfinding_tasks(
         answered += 1;
         failed += u32::from(result.path.is_none());
 
-        let MovableState::Pathfinding(end_tile) = movable.state else {
-            continue;
-        };
-        // устаревший ответ — уже запрошена другая цель
-        if end_tile != result.end_tile {
-            continue;
-        }
-
-        let Some(path) = result.path else {
-            let navmesh = navmesh.get_or_insert_with(|| pathfinder.navmesh.read());
-            let walkable = Walkable {
-                navmesh,
-                polymesh: polymesh.as_deref(),
-            };
-            if rescue_from_impassable(
-                &walkable,
-                entity,
-                &mut movable,
-                &mut sim_position,
-                &mut previous,
-                &mut commands,
-            ) {
-                if is_human && let Some(grid) = human_grid.as_mut() {
-                    grid.insert(entity, sim_position.0);
-                }
-                continue;
-            }
-            // не застрял — цель просто недостижима; новую выберет поведение
-            movable.to_pathfinding_error(end_tile);
-            continue;
-        };
-
-        // путь всегда включает стартовую точку; один элемент — мы уже на месте
-        if path.len() == 1 {
-            movable.to_idle(entity, &mut commands, true);
-            continue;
-        }
-
-        // перепрокладка шла на ходу, и сущность уже не в стартовой точке:
-        // срезаем начало пути, пока следующий waypoint не дальше текущего —
-        // иначе первый шаг был бы назад
-        let mut path: std::collections::VecDeque<Vec2> = path.into_iter().skip(1).collect();
-        let position = sim_position.0;
-        let mut trimmed = 0;
-        while trimmed < REPATH_TRIM_LIMIT
-            && path.len() >= 2
-            && position.distance_squared(path[1]) <= position.distance_squared(path[0])
-        {
-            path.pop_front();
-            trimmed += 1;
-        }
-        movable.to_moving(end_tile, path, entity, &mut commands);
+        apply_result(
+            result,
+            entity,
+            &mut movable,
+            &mut sim_position,
+            &mut previous,
+            is_human,
+            &mut navmesh,
+            &pathfinder.navmesh,
+            polymesh.as_deref(),
+            &mut human_grid,
+            &mut commands,
+        );
     }
 
     // оба счётчика пишутся каждый кадр, в том числе нулями: доля считается в
@@ -623,6 +811,73 @@ pub fn listen_for_pathfinding_tasks(
         answered as f64
     });
     diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
+}
+
+/// Применение ОДНОГО ответа поиска пути — общее тело обоих приёмников.
+///
+/// Вынесено намеренно: режимы отличаются только тем, КОГДА ответ снимается, а
+/// не тем, что с ним делают. Две копии этой логики разъехались бы на первой же
+/// правке, и детерминированный режим начал бы вести себя иначе не потому, что
+/// он детерминированный.
+///
+/// `navmesh_lock` — ленивый read-лок: во время загрузки его на секунды держит
+/// на запись поток заливки, а нужен он только под спасение застрявших.
+#[allow(clippy::too_many_arguments)]
+fn apply_result<'lock>(
+    result: PathfindingResult,
+    entity: Entity,
+    movable: &mut Movable,
+    sim_position: &mut SimPosition,
+    previous: &mut PreviousSimPosition,
+    is_human: bool,
+    navmesh_lock: &mut Option<std::sync::RwLockReadGuard<'lock, crate::navigation::Navmesh>>,
+    arc_navmesh: &'lock crate::navigation::ArcNavmesh,
+    polymesh: Option<&crate::navigation::PolymeshBuild>,
+    human_grid: &mut Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    commands: &mut Commands,
+) {
+    let MovableState::Pathfinding(end_tile) = movable.state else {
+        return;
+    };
+    // устаревший ответ — уже запрошена другая цель
+    if end_tile != result.end_tile {
+        return;
+    }
+
+    let Some(path) = result.path else {
+        let navmesh = navmesh_lock.get_or_insert_with(|| arc_navmesh.read());
+        let walkable = Walkable { navmesh, polymesh };
+        if rescue_from_impassable(&walkable, entity, movable, sim_position, previous, commands) {
+            if is_human && let Some(grid) = human_grid.as_mut() {
+                grid.insert(entity, sim_position.0);
+            }
+            return;
+        }
+        // не застрял — цель просто недостижима; новую выберет поведение
+        movable.to_pathfinding_error(entity, end_tile, commands);
+        return;
+    };
+
+    // путь всегда включает стартовую точку; один элемент — мы уже на месте
+    if path.len() == 1 {
+        movable.to_idle(entity, commands, true);
+        return;
+    }
+
+    // перепрокладка шла на ходу, и сущность уже не в стартовой точке:
+    // срезаем начало пути, пока следующий waypoint не дальше текущего —
+    // иначе первый шаг был бы назад
+    let mut path: std::collections::VecDeque<Vec2> = path.into_iter().skip(1).collect();
+    let position = sim_position.0;
+    let mut trimmed = 0;
+    while trimmed < REPATH_TRIM_LIMIT
+        && path.len() >= 2
+        && position.distance_squared(path[1]) <= position.distance_squared(path[0])
+    {
+        path.pop_front();
+        trimmed += 1;
+    }
+    movable.to_moving(end_tile, path, entity, commands);
 }
 
 /// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.

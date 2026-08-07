@@ -24,10 +24,12 @@ use bevy::settings::{SaveSettingsSync, SettingsPlugin};
 use crate::camera::CameraPositionMode;
 use crate::city::City;
 use crate::demon::DemonStyle;
+use crate::determinism::Determinism;
 use crate::human::HumanStyle;
 use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
 use crate::movement::{DrawMovePaths, SeparationStyle};
 use crate::navigation::{PathfindingAlgorithm, PolymeshDebug};
+use crate::rng::WorldSeed;
 use crate::settings::NavtileBase;
 use crate::ui::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 
@@ -44,6 +46,8 @@ impl Plugin for PrefsPlugin {
             Update,
             save_prefs.run_if(
                 resource_changed::<City>
+                    .or_else(resource_changed::<WorldSeed>)
+                    .or_else(resource_changed::<Determinism>)
                     .or_else(resource_changed::<DebugGrid>)
                     .or_else(resource_changed::<DebugNavmesh>)
                     .or_else(resource_changed::<DebugDoors>)

@@ -220,8 +220,12 @@ impl Plugin for UiDebugTogglesPlugin {
                         resource_changed::<CameraPositionMode>
                             .or_else(resource_changed::<NavtileBase>),
                     ),
-                    toggle_navmesh.run_if(input_just_pressed(KeyCode::KeyN)),
-                    toggle_gizmos.run_if(input_just_pressed(KeyCode::KeyG)),
+                    toggle_navmesh
+                        .run_if(input_just_pressed(KeyCode::KeyN))
+                        .run_if(not(super::typing_in_text_input)),
+                    toggle_gizmos
+                        .run_if(input_just_pressed(KeyCode::KeyG))
+                        .run_if(not(super::typing_in_text_input)),
                 ),
             );
     }

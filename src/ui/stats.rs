@@ -7,17 +7,23 @@
 //! есть смотреть на симуляцию без агентского клиента рядом было нечем.
 
 use bevy::color::Mix;
+use bevy::input_focus::InputFocus;
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::text::{EditableText, TextCursorStyle, TextEdit};
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
+use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::slider::{SliderRow, quantize, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
+use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
 use crate::movement::SeparationStyle;
+use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::settings::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
     DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
@@ -83,6 +89,17 @@ struct SeparationRow;
 #[derive(Component)]
 struct SeparationValueLabel;
 
+/// Строка-кнопка тумблера детерминированного режима.
+#[derive(Component)]
+struct DeterminismRow;
+
+#[derive(Component)]
+struct DeterminismValueLabel;
+
+/// Поле ввода seed'а мира.
+#[derive(Component)]
+struct SeedField;
+
 /// Панель Human — одна строка, поэтому без enum'а строк: пара маркеров на
 /// текст значения и на сам бегунок. Появится вторая — заводить `HumanRow`.
 #[derive(Component)]
@@ -100,6 +117,10 @@ impl Plugin for UiStatsPlugin {
             (
                 sync_world_counts,
                 highlight_separation_row,
+                highlight_determinism_row,
+                apply_seed_on_enter,
+                sync_seed_field.run_if(resource_changed::<WorldSeed>),
+                sync_determinism_value.run_if(resource_changed::<Determinism>),
                 sync_separation_value.run_if(resource_changed::<SeparationStyle>),
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
@@ -152,6 +173,101 @@ fn count_row(label: &str, row: StatRow) -> impl Bundle {
     )
 }
 
+/// Разметка строки-тумблера: подпись слева, значение справа.
+fn toggle_row_node() -> Node {
+    Node {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        column_gap: px(6.),
+        padding: UiRect {
+            top: px(4.),
+            right: px(8.),
+            bottom: px(4.),
+            left: px(8.),
+        },
+        ..default()
+    }
+}
+
+/// Подпись строки-тумблера — распорка, прижимающая значение к правому краю.
+fn toggle_row_label(text: &str) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(12.),
+            ..default()
+        },
+        TextColor(Color::srgb(0.75, 0.78, 0.75)),
+        Node {
+            flex_grow: 1.,
+            ..default()
+        },
+    )
+}
+
+fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
+/// Строка seed'а: подпись, поле ввода и кнопка перегенерации.
+///
+/// Ввод применяется по Enter, а не на каждое нажатие: смена seed'а
+/// перезапускает мир, и перезапуск на каждой набранной цифре был бы
+/// невыносим.
+fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
+    let field = commands
+        .spawn((
+            SeedField,
+            EditableText {
+                // видимая ширина текста чуть у́же ноды — под её padding
+                visible_width: Some(86.),
+                allow_newlines: false,
+                ..EditableText::new(seed.to_string())
+            },
+            TextLayout::no_wrap(),
+            TextFont {
+                font_size: FontSize::Px(12.),
+                ..default()
+            },
+            TextCursorStyle::default(),
+            TabIndex(0),
+            Node {
+                // ширина прибита, а не `flex_grow`: растущее поле выпихивало
+                // кнопку перегенерации за правый край панели (панель — 210 px)
+                width: px(90.),
+                padding: UiRect::all(px(2.)),
+                ..default()
+            },
+            BackgroundColor(ui_color(UiOpacity::Heavy)),
+        ))
+        .id();
+
+    let row = commands
+        .spawn((
+            toggle_row_node(),
+            BackgroundColor(row_color(ROW_LIGHTEN)),
+            children![toggle_row_label("Seed")],
+        ))
+        .id();
+    commands.entity(row).add_child(field);
+
+    let reroll = super::spawn_panel_button(
+        commands,
+        row,
+        (),
+        "new",
+        |_activate: On<Activate>, mut seed: ResMut<WorldSeed>| {
+            // единственное место, где ещё нужна системная энтропия: сам
+            // жребий нового мира. Диапазон девятизначный — seed должен
+            // читаться с экрана и набираться руками
+            seed.0 = rand::rng().random_range(0..SEED_ROLL_RANGE);
+        },
+    );
+    let _ = reroll;
+    row
+}
+
 /// Тело панели этой колонки: столбец на полупрозрачной подложке.
 fn panel_node() -> Node {
     Node {
@@ -182,6 +298,8 @@ fn render_stats_panel(
     style: Res<DemonStyle>,
     human_style: Res<HumanStyle>,
     separation: Res<SeparationStyle>,
+    determinism: Res<Determinism>,
+    seed: Res<WorldSeed>,
 ) {
     let column = commands
         .spawn((
@@ -295,6 +413,39 @@ fn render_stats_panel(
         )
         .id();
     commands.entity(world_panel).add_child(separation_row);
+
+    // тумблер детерминированного режима и поле seed'а — под расталкиванием:
+    // это тоже свойства мира целиком, а не вида
+    let determinism_row = commands
+        .spawn((
+            Button,
+            DeterminismRow,
+            Pickable::default(),
+            Hovered::default(),
+            toggle_row_node(),
+            BackgroundColor(row_color(ROW_LIGHTEN)),
+            children![
+                toggle_row_label("Deterministic"),
+                (
+                    DeterminismValueLabel,
+                    Text::new(on_off(determinism.0)),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ),
+            ],
+        ))
+        .observe(|_activate: On<Activate>, mut mode: ResMut<Determinism>| {
+            // рестарт заказывает наблюдатель в `determinism.rs`: прогон
+            // детерминирован или нет с тика 0, переключить его на ходу нельзя
+            mode.0 = !mode.0;
+        })
+        .id();
+    commands.entity(world_panel).add_child(determinism_row);
+    let seed_row = spawn_seed_row(&mut commands, seed.0);
+    commands.entity(world_panel).add_child(seed_row);
 
     // панель Demon отдельной сущностью, а не внутри `children!`:
     // `spawn_slider_row` берёт родителя сущностью, а там её ещё нет
@@ -437,6 +588,84 @@ fn highlight_separation_row(
             ROW_LIGHTEN
         };
         background.0 = row_color(lighten);
+    }
+}
+
+fn highlight_determinism_row(
+    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<DeterminismRow>>,
+) {
+    for (hovered, pressed, mut background) in &mut rows {
+        let lighten = if pressed {
+            PRESSED_LIGHTEN
+        } else if hovered.get() {
+            HOVER_LIGHTEN
+        } else {
+            ROW_LIGHTEN
+        };
+        background.0 = row_color(lighten);
+    }
+}
+
+fn sync_determinism_value(
+    mode: Res<Determinism>,
+    mut labels: Query<&mut Text, With<DeterminismValueLabel>>,
+) {
+    for mut text in &mut labels {
+        text.0 = on_off(mode.0).to_string();
+    }
+}
+
+/// Enter в поле seed'а применяет набранное. Дальше всё делает наблюдатель за
+/// `WorldSeed` в `determinism.rs`: он заказывает рестарт.
+///
+/// Неразобранный ввод не молчит, а откатывается к текущему seed'у — иначе
+/// опечатка выглядела бы как «поле приняло, а мир не перезапустился».
+fn apply_seed_on_enter(
+    keys: Res<ButtonInput<KeyCode>>,
+    focus: Res<InputFocus>,
+    mut seed: ResMut<WorldSeed>,
+    mut fields: Query<&mut EditableText, With<SeedField>>,
+) {
+    if !keys.just_pressed(KeyCode::Enter) {
+        return;
+    }
+    let Some(focused) = focus.get() else {
+        return;
+    };
+    let Ok(mut field) = fields.get_mut(focused) else {
+        return;
+    };
+    match field.value().to_string().trim().parse::<u64>() {
+        // потолок — `i64`: `toml` не умеет хранить больше, и seed не пережил
+        // бы перезапуск приложения
+        Ok(value) if value <= MAX_SEED => {
+            seed.set_if_neq(WorldSeed(value));
+        }
+        _ => set_field_text(&mut field, seed.0),
+    }
+}
+
+/// Записать в поле текст: у `EditableText` нет сеттера значения, а
+/// пересоздавать компонент нельзя — потеряется настройка ширины.
+fn set_field_text(field: &mut EditableText, seed: u64) {
+    field.editor_mut().set_text(&seed.to_string());
+    // курсор в конец — как это делает сам `EditableText::new`
+    field.queue_edit(TextEdit::TextEnd(false));
+}
+
+/// Поле вслед за ресурсом: кнопка перегенерации, BRP, восстановленные
+/// настройки. Пока поле в фокусе — не трогаем: иначе синхронизация затирала
+/// бы то, что человек набирает.
+fn sync_seed_field(
+    seed: Res<WorldSeed>,
+    focus: Res<InputFocus>,
+    mut fields: Query<(Entity, &mut EditableText), With<SeedField>>,
+) {
+    for (entity, mut field) in &mut fields {
+        if focus.get() == Some(entity) {
+            continue;
+        }
+        set_field_text(&mut field, seed.0);
     }
 }
 

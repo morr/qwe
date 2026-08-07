@@ -134,6 +134,28 @@ impl Pathfinder<'_> {
     }
 }
 
+/// «Выбранный бэкенд ещё строится» — один system-параметр вместо четырёх
+/// ресурсов в сигнатуре прогрева (`loading.rs::poll_warmup`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct NavigationBuildPending<'w> {
+    pub northstar: Res<'w, NorthstarGrid>,
+    pub algorithm: Res<'w, PathfindingAlgorithm>,
+    pub poly: Res<'w, PolyNavmesh>,
+    pub polymesh: Res<'w, PolymeshDebug>,
+}
+
+impl NavigationBuildPending<'_> {
+    /// Ждать ли ещё. Спрашивается только про **выбранный** бэкенд: сетка
+    /// northstar не нужна ни при включённой панели Polymesh, ни плоскому A*,
+    /// и ждать её в этих случаях значило бы держать экран загрузки зря.
+    pub fn is_building(&self) -> bool {
+        if self.polymesh.enabled {
+            return self.poly.build().is_none();
+        }
+        self.algorithm.needs_northstar() && self.northstar.get().is_none()
+    }
+}
+
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
@@ -157,7 +179,21 @@ impl Plugin for NavigationPlugin {
             // же условием в `Update`, как ленивая постройка меша
             .add_systems(
                 OnEnter(PlayPhase::Live),
-                start_northstar_build.run_if(northstar_wanted),
+                start_northstar_build
+                    .run_if(northstar_wanted)
+                    .run_if(not(crate::determinism::deterministic)),
+            )
+            // в детерминированном режиме — наоборот, на входе в ПРОГРЕВ:
+            // прогон обязан целиком пройти на одном бэкенде, а достроившаяся
+            // посреди него иерархия поменяла бы пути на полпути. Довод про
+            // отбираемые ядра здесь не работает: в этом режиме прогрев ничего
+            // не считает (`FixedUpdate` стоит на паузе), и ждать сборку —
+            // ровно его работа (см. `loading.rs::poll_warmup`)
+            .add_systems(
+                OnEnter(PlayPhase::Warmup),
+                start_northstar_build
+                    .run_if(northstar_wanted)
+                    .run_if(crate::determinism::deterministic),
             )
             .add_systems(
                 Update,

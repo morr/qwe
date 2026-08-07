@@ -39,17 +39,27 @@ impl Plugin for DemonPlugin {
                     .chain()
                     .run_if(in_state(AppState::Playing)),
             )
+            // отсчёт стартовой паузы и выбор цели блуждания — в `FixedUpdate`,
+            // а не в `Update`: это решения симуляции, и в `Update` они шли по
+            // разу на кадр, то есть зависели от fps. Демонов сотни, лишних
+            // прогонов эта система не боится
             .add_systems(
                 FixedUpdate,
-                (acquire_targets, chase, devour)
+                (
+                    tick_spawn_pause,
+                    pick_wander_targets,
+                    acquire_targets,
+                    chase,
+                    devour,
+                )
                     .chain()
                     .in_set(SimSet::DemonBehavior),
             )
             .add_systems(
                 Update,
                 (
-                    tick_spawn_pause,
-                    pick_wander_targets,
+                    // косметика: пульсация масштаба спрайта и отрисовка
+                    // траектории броска — на симуляцию не влияют
                     pulse_devouring,
                     draw_lunge_paths,
                     sync_demon_speed.run_if(resource_changed::<DemonStyle>),

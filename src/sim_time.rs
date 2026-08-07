@@ -97,7 +97,8 @@ impl Plugin for SimTimePlugin {
             .add_systems(
                 Update,
                 (
-                    modify_time,
+                    // пробел, `-` и `=` — символы, пока курсор в поле ввода
+                    modify_time.run_if(not(crate::ui::typing_in_text_input)),
                     throttle_speed_to_fps,
                     measure_actual_speed,
                     tick_sim_clock.run_if(in_state(PlayPhase::Live)),

@@ -69,6 +69,9 @@ impl Default for SeparationStyle {
 #[derive(Clone, Copy)]
 struct Pawn {
     entity: Entity,
+    /// Личный номер пешки — ось разведения совпавших позиций (см.
+    /// [`coincident_direction`]).
+    pawn_id: u32,
     position: Vec2,
     radius: f32,
     /// Доля коррекции пары, пропорциональная подвижности: человек 1.0, демон
@@ -97,10 +100,13 @@ fn fine_cell(pos: Vec2) -> IVec2 {
 }
 
 /// Детерминированное направление разведения точно совпавших позиций — хэш
-/// сущности, тот же трюк, что `personal_spread` у веера бегства: пара держит
+/// [`PawnId`], тот же трюк, что `personal_spread` у веера бегства: пара держит
 /// свою ось от прогона к прогону, а не дрожит случайной.
-fn coincident_direction(entity: Entity) -> Vec2 {
-    let hash = entity.index().index().wrapping_mul(2654435761);
+///
+/// По `PawnId`, а не по `Entity`, по той же причине, что и там: индексы
+/// сущностей после рестарта переиспользуются в другом порядке.
+fn coincident_direction(pawn_id: u32) -> Vec2 {
+    let hash = pawn_id.wrapping_mul(2654435761);
     let angle = (hash >> 8) as f32 / (u32::MAX >> 8) as f32 * std::f32::consts::TAU;
     Vec2::from_angle(angle)
 }
@@ -140,7 +146,7 @@ fn resolve_pushes(state: &mut SeparationState, fraction: f32) {
                             let direction = if distance > 1e-4 {
                                 offset / distance
                             } else {
-                                coincident_direction(a.entity)
+                                coincident_direction(a.pawn_id)
                             };
                             let correction = direction * ((min_distance - distance) * fraction);
                             state.pushes[i] -= correction * (a.mobility / weights);
@@ -169,7 +175,12 @@ pub fn separate_pawns(
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut pawns: Query<
-        (&mut SimPosition, Has<Demon>, Has<DemonDevourTag>),
+        (
+            &mut SimPosition,
+            &crate::rng::PawnId,
+            Has<Demon>,
+            Has<DemonDevourTag>,
+        ),
         (Or<(With<Human>, With<Demon>)>, Without<DemonLungeTag>),
     >,
     mut state: Local<SeparationState>,
@@ -202,7 +213,7 @@ pub fn separate_pawns(
         let pawn_buffer = &mut state.pawns;
         let mut collect = |entity: Entity| {
             // мимо запроса — бросок, труп, пешка чужого вида в чужой сетке
-            let Ok((sim_position, is_demon, is_devouring)) = pawns.get(entity) else {
+            let Ok((sim_position, pawn_id, is_demon, is_devouring)) = pawns.get(entity) else {
                 return;
             };
             let position = sim_position.0;
@@ -219,6 +230,7 @@ pub fn separate_pawns(
             };
             pawn_buffer.push(Pawn {
                 entity,
+                pawn_id: pawn_id.0,
                 position,
                 radius,
                 mobility,
@@ -244,7 +256,7 @@ pub fn separate_pawns(
         if !navmesh.is_passable(tile.x, tile.y) {
             continue;
         }
-        let Ok((mut sim_position, is_demon, _)) = pawns.get_mut(pawn.entity) else {
+        let Ok((mut sim_position, _, is_demon, _)) = pawns.get_mut(pawn.entity) else {
             continue;
         };
         sim_position.0 = target;
@@ -272,6 +284,7 @@ mod tests {
     fn pawn(index: u32, position: Vec2, radius: f32, mobility: f32) -> Pawn {
         Pawn {
             entity: entity(index),
+            pawn_id: index,
             position,
             radius,
             mobility,

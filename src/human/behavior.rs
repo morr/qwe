@@ -6,10 +6,12 @@ use rand::Rng;
 use crate::demon::{ChaseTarget, Demon};
 use crate::grid::world_to_tile;
 use crate::human::components::{
-    FleeRepath, Human, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, WanderPause,
+    FleeRepath, Human, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil, WanderHeading,
+    WanderPause,
 };
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{Pathfinder, find_passable_tile_near};
+use crate::rng::{EntityRng, PawnId};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
@@ -25,10 +27,15 @@ const ESCAPE_MARGIN: f32 = 2.0;
 /// радианы (±≈34°). Толпа без него выстраивается в колонну.
 const FLEE_SPREAD: f32 = 0.6;
 
-/// Персональный угол веера: детерминирован по сущности, чтобы человек между
+/// Персональный угол веера: детерминирован по [`PawnId`], чтобы человек между
 /// перепрокладками держал свою сторону, а не зигзагами метался.
-fn personal_spread(entity: Entity) -> f32 {
-    let hash = entity.index().index().wrapping_mul(2654435761);
+///
+/// Именно `PawnId`, а не `Entity`: индексы сущностей после рестарта
+/// переиспользуются в другом порядке (свободный список зависит от того, кого
+/// съели в прошлом прогоне), и веер разъехался бы между прогоном и его
+/// повтором при абсолютно одинаковом seed.
+fn personal_spread(pawn_id: u32) -> f32 {
+    let hash = pawn_id.wrapping_mul(2654435761);
     ((hash >> 8) as f32 / (u32::MAX >> 8) as f32 * 2.0 - 1.0) * FLEE_SPREAD
 }
 
@@ -45,7 +52,7 @@ pub fn panic(
     style: Res<HumanStyle>,
     demons: Query<&SimPosition, With<Demon>>,
     wanderers: Query<&SimPosition, (With<Human>, With<HumanWanderTag>)>,
-    mut movables: Query<(&mut Movable, &Pace)>,
+    mut movables: Query<(&mut Movable, &Pace, &mut EntityRng)>,
 ) {
     let started = std::time::Instant::now();
     // дедуп между демонами: человека в двух радиусах паникуем один раз
@@ -68,14 +75,18 @@ pub fn panic(
         });
     }
 
-    let mut rng = rand::rng();
     for &entity in &panicked {
-        if let Ok((mut movable, pace)) = movables.get_mut(entity) {
+        // период — из личного потока паникующего, и это не косметика:
+        // `panicked` — хэш-множество, его порядок обхода зависит от битов
+        // `Entity`, а те после рестарта другие. Общий генератор раздал бы
+        // тем же людям другие периоды при том же seed.
+        let mut period = 1.0;
+        if let Ok((mut movable, pace, mut rng)) = movables.get_mut(entity) {
             movable.speed = pace.speed(HUMAN_FLEE_SPEED, style.spread);
+            period = rng.0.random_range(0.7..1.2);
         }
         let mut repath = FleeRepath::default();
         // первый путь — сразу, дальше по таймеру со случайным периодом
-        let period = rng.random_range(0.7..1.2);
         repath
             .0
             .set_duration(std::time::Duration::from_secs_f32(period));
@@ -89,6 +100,15 @@ pub fn panic(
 
 /// Flee: бег от ближайшего демона с троттлингом перепрокладки;
 /// демоны отстали (×1.5 радиуса) — успокаивается.
+///
+/// Курс (`WanderHeading`) переписывается вектором бегства на каждой
+/// перепрокладке: в ветке успокоения демона в радиусе уже нет — она и
+/// срабатывает потому, что `nearest_in_range` вернул `None`, — так что
+/// направление угрозы надо запомнить заранее. Расширять поиск ради одного
+/// тика успокоения нельзя: это больший обход ячеек для каждого бегущего
+/// каждый тик. Устаревание ограничено: период перепрокладки 0.7–1.2 с при
+/// скорости бегства 8 м/с — не больше 9.6 м пройденного пути против разрыва
+/// в 90 м, то есть ≲13° ошибки, что заведомо внутри ±45° запретного конуса.
 #[allow(clippy::too_many_arguments)]
 pub fn flee(
     mut commands: Commands,
@@ -106,19 +126,33 @@ pub fn flee(
             &mut FleeRepath,
             &mut WanderPause,
             &mut Movable,
+            &mut WanderHeading,
             &Pace,
+            &PawnId,
+            &mut EntityRng,
         ),
         (With<Human>, With<HumanFleeTag>),
     >,
 ) {
     let started = std::time::Instant::now();
     let navmesh = pathfinder.navmesh.read();
-    let mut rng = rand::rng();
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
     let chased: bevy::platform::collections::HashSet<Entity> =
         chasing.iter().map(|chase_target| chase_target.0).collect();
 
-    for (entity, sim_position, mut repath, mut pause, mut movable, pace) in &mut query {
+    for (
+        entity,
+        sim_position,
+        mut repath,
+        mut pause,
+        mut movable,
+        mut heading,
+        pace,
+        pawn_id,
+        mut entity_rng,
+    ) in &mut query
+    {
+        let rng = &mut entity_rng.0;
         let Some((_, demon_position)) = demons.nearest_in_range(
             sim_position.0,
             HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS,
@@ -131,10 +165,14 @@ pub fn flee(
                 rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
             ));
             pause.0.reset();
+            // курс уже смотрит прочь от демона, обратный ему и есть центр
+            // запретного конуса. Он отклонён веером разбегания (±0.6 рад ≈
+            // 34°), то есть направление на самого демона всё равно внутри
+            // ±45° — а читается это как «не возвращайся тем же путём»
             commands
                 .entity(entity)
                 .remove::<(HumanFleeTag, FleeRepath)>()
-                .insert(HumanWanderTag);
+                .insert((HumanWanderTag, PanicRecoil(-heading.0)));
             continue;
         };
 
@@ -150,8 +188,11 @@ pub fn flee(
         let mut away = (sim_position.0 - demon_position).normalize_or(Vec2::X);
         // не преследуемые разбегаются веером — каждый под своим углом
         if !chased.contains(&entity) {
-            away = Vec2::from_angle(personal_spread(entity)).rotate(away);
+            away = Vec2::from_angle(personal_spread(pawn_id.0)).rotate(away);
         }
+        // память о направлении угрозы — пишется до отсева непроходимой цели,
+        // иначе неудачный кадр оставил бы курс от прошлой перепрокладки
+        heading.0 = away;
         let step = rng.random_range(FLEE_STEP.0..FLEE_STEP.1);
         // не клампим к «безопасной» зоне: цель у самой границы — путь к спасению
         let target = (sim_position.0 + away * step).clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);

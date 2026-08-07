@@ -3,16 +3,18 @@ use rand::Rng;
 
 use crate::grid::{tile_center, world_to_tile};
 use crate::human::components::{
-    Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, WanderHeading,
-    WanderPause,
+    Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
+    WanderHeading, WanderPause,
 };
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
-use crate::movement::{Movable, MovableState, SimPosition};
+use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
+use crate::rng::{EntityRng, PawnId, RngDomain, WorldSeed, stream};
 use crate::settings::{
-    HUMAN_COUNT, HUMAN_FLEE_SPEED, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
-    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, unit_z,
+    HUMAN_COUNT, HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED,
+    HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, RADIUS_HYSTERESIS,
+    unit_z,
 };
 
 /// Отступ целей блуждания от края карты, м.
@@ -27,24 +29,55 @@ const WANDER_CONE: f32 = std::f32::consts::FRAC_PI_3;
 /// Сколько зданий перебирается в поисках цели «по делам» в конусе курса;
 /// если ни одно не попало — берётся ближайшее по направлению из выборки.
 const WANDER_BUILDING_TRIES: usize = 8;
+/// Полураствор запретного конуса «назад к демону» после паники, рад
+/// (45°, полный раствор — 90°).
+const RECOIL_CONE: f32 = std::f32::consts::FRAC_PI_4;
+/// Минимальная дальность первой цели после паники, м: человек должен хотя бы
+/// выйти из зоны гистерезиса паники. Без порога здание за пределами конуса, но
+/// в пятнадцати метрах, даёт ровно ту короткую прогулку, ради ухода от которой
+/// цель и форсируется дальней.
+const RECOIL_MIN_ERRAND: f32 = HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS;
 
-pub fn spawn_humans(mut commands: Commands, arc_navmesh: Res<ArcNavmesh>, style: Res<HumanStyle>) {
-    spawn_population(&mut commands, &arc_navmesh.read(), style.spread);
+/// Лежит ли направление в запретном конусе вокруг `ban`. Косинус растёт с
+/// уменьшением угла, поэтому «внутри» — это строгое `>`: точно на границе
+/// конуса цель разрешена.
+fn in_recoil_cone(direction: Vec2, ban: Vec2) -> bool {
+    direction.dot(ban) > RECOIL_CONE.cos()
+}
+
+pub fn spawn_humans(
+    mut commands: Commands,
+    arc_navmesh: Res<ArcNavmesh>,
+    style: Res<HumanStyle>,
+    seed: Res<WorldSeed>,
+) {
+    spawn_population(&mut commands, &arc_navmesh.read(), style.spread, seed.0);
 }
 
 /// Спавн населения; вызывается на старте и при рестарте сцены.
+///
+/// Два потока жребия, а не один: размещение идёт общим потоком `Population`
+/// (цикл отбора тянет переменное число выборок на человека, и это нормально
+/// внутри одного последовательного обхода), а всё личное — цвет, темп, курс —
+/// уже из потока самой пешки по её [`PawnId`]. Так внешность и повадки
+/// человека номер N не зависят от того, сколько раз отбор промахнулся по
+/// непроходимым тайлам у его соседей.
 pub fn spawn_population(
     commands: &mut Commands,
     navmesh: &crate::navigation::Navmesh,
     spread: f32,
+    world_seed: u64,
 ) {
-    let mut rng = rand::rng();
+    let mut placement = stream(world_seed, RngDomain::Population, 0);
 
-    for _ in 0..HUMAN_COUNT {
+    for index in 0..HUMAN_COUNT {
+        let pawn_id = index as u32;
+        let mut rng = EntityRng::seeded(world_seed, RngDomain::Human, pawn_id);
+
         let tile = loop {
             let candidate = IVec2::new(
-                rng.random_range(0..navmesh.grid_size.x),
-                rng.random_range(0..navmesh.grid_size.y),
+                placement.random_range(0..navmesh.grid_size.x),
+                placement.random_range(0..navmesh.grid_size.y),
             );
             if navmesh.is_passable(candidate.x, candidate.y) {
                 break candidate;
@@ -54,9 +87,9 @@ pub fn spawn_population(
 
         // пастельная «одежда» со случайным тоном
         let color = Color::hsl(
-            rng.random_range(0.0..360.0),
-            rng.random_range(0.35..0.75),
-            rng.random_range(0.35..0.65),
+            rng.0.random_range(0.0..360.0),
+            rng.0.random_range(0.35..0.75),
+            rng.0.random_range(0.35..0.65),
         );
         // без стартовой паузы: все идут с первого кадра. Залп из 20 000 целей
         // разруливают гейт видимости диспетчера (мирные вне экрана путь не
@@ -64,7 +97,10 @@ pub fn spawn_population(
         // пешек в кадре стоять первые секунды
         let pause = Timer::from_seconds(0.0, TimerMode::Once);
         // жребий двусторонний: минус — человек медленнее базы, плюс — быстрее
-        let pace = Pace(rng.random_range(-1.0..=1.0));
+        let pace = Pace(rng.0.random_range(-1.0..=1.0));
+        let heading = WanderHeading(Vec2::from_angle(
+            rng.0.random_range(0.0..std::f32::consts::TAU),
+        ));
 
         commands.spawn((
             Sprite {
@@ -79,9 +115,9 @@ pub fn spawn_population(
             Movable::new(pace.speed(HUMAN_WALK_SPEED, spread)),
             pace,
             WanderPause(pause),
-            WanderHeading(Vec2::from_angle(
-                rng.random_range(0.0..std::f32::consts::TAU),
-            )),
+            heading,
+            PawnId(pawn_id),
+            rng,
             DespawnOnExit(AppState::Playing),
             Name::new("human"),
         ));
@@ -126,26 +162,45 @@ fn building_target(building: &PolyArea, rng: &mut impl Rng) -> Vec2 {
 /// берётся первое, попавшее в конус вокруг `heading`; если ни одно не попало —
 /// лучшее по направлению из выборки. Полный перебор 7500 зданий тут не нужен:
 /// цель и так случайная, важно лишь не отправить пешку назад.
-fn pick_building_ahead(map: &MapData, rng: &mut impl Rng, position: Vec2, heading: Vec2) -> Vec2 {
+///
+/// `ban` — запретный конус после паники (`PanicRecoil`). Кандидат в конусе или
+/// ближе `RECOIL_MIN_ERRAND` отсеивается до всякого сравнения, то есть не
+/// участвует и в запасном «лучшем по направлению»: именно этот запасной путь
+/// раньше и мог вернуть здание почти строго назад, к демону. Вся выборка
+/// отсеялась — `None`, вызывающий перебросит на следующем кадре.
+fn pick_building_ahead(
+    map: &MapData,
+    rng: &mut impl Rng,
+    position: Vec2,
+    heading: Vec2,
+    ban: Option<Vec2>,
+) -> Option<Vec2> {
     let cone_cos = WANDER_CONE.cos();
     let mut best: Option<(f32, Vec2)> = None;
 
     for _ in 0..WANDER_BUILDING_TRIES {
         let building = &map.buildings[rng.random_range(0..map.buildings.len())];
         let point = building_target(building, rng);
+        if ban.is_some() && point.distance_squared(position) < RECOIL_MIN_ERRAND * RECOIL_MIN_ERRAND
+        {
+            continue;
+        }
         let Some(direction) = (point - position).try_normalize() else {
             continue;
         };
+        if ban.is_some_and(|ban| in_recoil_cone(direction, ban)) {
+            continue;
+        }
         let alignment = direction.dot(heading);
         if alignment >= cone_cos {
-            return point;
+            return Some(point);
         }
         if best.is_none_or(|(best_alignment, _)| alignment > best_alignment) {
             best = Some((alignment, point));
         }
     }
 
-    best.map(|(_, point)| point).unwrap_or(position)
+    best.map(|(_, point)| point)
 }
 
 /// Пауза, которую человек выстоит на следующей цели: `HUMAN_WANDER_PAUSE_SHARE`
@@ -170,6 +225,10 @@ fn roll_wander_pause(rng: &mut impl Rng) -> std::time::Duration {
 /// случайному зданию города (длинные маршруты, настоящая нагрузка на
 /// pathfinding), 20% гуляют в 20–40 м от себя. Первая цель после спавна —
 /// всегда прогулка поблизости (`HumanFirstWanderTag`).
+///
+/// Первая цель после паники (`PanicRecoil`) — наоборот, всегда дальняя и не в
+/// запретном конусе: человек, отбежавший от демона, не должен ни вернуться
+/// туда же, ни остаться в том же квартале.
 pub fn pick_wander_targets(
     mut commands: Commands,
     time: Res<Time>,
@@ -182,15 +241,37 @@ pub fn pick_wander_targets(
             &mut Movable,
             &mut WanderPause,
             &mut WanderHeading,
+            &mut EntityRng,
+            Option<&PanicRecoil>,
             Has<HumanFirstWanderTag>,
         ),
-        (With<Human>, With<HumanWanderTag>),
+        (
+            With<Human>,
+            With<HumanWanderTag>,
+            // тег держит ровно `Idle` и `PathfindingError` — те же состояния,
+            // что отбирала проверка в теле цикла (она осталась подстраховкой)
+            With<NeedsWanderTarget>,
+        ),
     >,
 ) {
-    let mut rng = rand::rng();
     let navmesh = pathfinder.navmesh.read();
 
-    for (entity, sim_position, mut movable, mut pause, mut heading, is_first_wander) in &mut query {
+    for (
+        entity,
+        sim_position,
+        mut movable,
+        mut pause,
+        mut heading,
+        mut entity_rng,
+        recoil,
+        is_first_wander,
+    ) in &mut query
+    {
+        // жребий — из личного потока пешки, а не из общего на систему:
+        // иначе выбор цели зависел бы от порядка обхода запроса и от того,
+        // сколько соседей тянуло числа раньше в этом же проходе
+        let rng = &mut entity_rng.0;
+
         if !matches!(
             movable.state,
             MovableState::Idle | MovableState::PathfindingError(_)
@@ -203,20 +284,44 @@ pub fn pick_wander_targets(
             continue;
         }
 
-        let to_building = !is_first_wander
-            && rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE
-            && !map.buildings.is_empty();
+        // после паники — только «по делам», причём это перебивает и бросок
+        // 80/20, и `HumanFirstWanderTag`: тот существует, чтобы 20 000 пешек
+        // не подали маршрут через весь город одним кадром, а паника на спавне
+        // достаёт лишь толпу в 60 м от портала, и успокаиваются те вразнобой
+        let to_building = !map.buildings.is_empty()
+            && (recoil.is_some()
+                || (!is_first_wander && rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE));
         let target = if to_building {
             // «по делам»: вершина контура здания, лежащего по курсу — иначе
             // маршрут через весь город разворачивает пешку назад
-            pick_building_ahead(&map, &mut rng, sim_position.0, heading.0)
+            let Some(point) =
+                pick_building_ahead(&map, rng, sim_position.0, heading.0, recoil.map(|r| r.0))
+            else {
+                // вся выборка отсеялась запретом — новые восемь зданий
+                // следующим кадром; сорваться на прогулку поблизости нельзя,
+                // это ровно то, от чего человека и уводят
+                continue;
+            };
+            point
         } else {
             // прогулка поблизости — в конусе вокруг курса
             let turn = rng.random_range(-WANDER_CONE..WANDER_CONE);
             let direction = Vec2::from_angle(turn).rotate(heading.0);
             let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
-            (sim_position.0 + direction * distance)
-                .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN)
+            let point = (sim_position.0 + direction * distance)
+                .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN);
+            // под запретом сюда попадают только жители города без зданий:
+            // дальнего маршрута там не существует, и прогулка с проверкой
+            // конуса — лучшее доступное поведение. Проверять надо после
+            // клампа: у самого края карты он и разворачивает направление
+            if let Some(ban) = recoil.map(|r| r.0)
+                && (point - sim_position.0)
+                    .try_normalize()
+                    .is_none_or(|direction| in_recoil_cone(direction, ban))
+            {
+                continue;
+            }
+            point
         };
 
         let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
@@ -236,9 +341,81 @@ pub fn pick_wander_targets(
         if is_first_wander {
             commands.entity(entity).remove::<HumanFirstWanderTag>();
         }
+        // запрет живёт ровно до первой удачной цели
+        if recoil.is_some() {
+            commands.entity(entity).remove::<PanicRecoil>();
+        }
 
         // следующая пауза — уже после прибытия
-        pause.0.set_duration(roll_wander_pause(&mut rng));
+        pause.0.set_duration(roll_wander_pause(rng));
         pause.0.reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Запрет — на направление к демону и всё, что ближе 45° к нему.
+    #[test]
+    fn recoil_cone_catches_the_way_back() {
+        let ban = Vec2::X;
+        assert!(in_recoil_cone(Vec2::X, ban));
+        assert!(in_recoil_cone(Vec2::from_angle(0.7), ban));
+        assert!(in_recoil_cone(Vec2::from_angle(-0.7), ban));
+    }
+
+    /// Всё, что дальше 45°, — разрешено, включая ровно противоположное.
+    #[test]
+    fn recoil_cone_lets_the_rest_through() {
+        let ban = Vec2::X;
+        assert!(!in_recoil_cone(Vec2::from_angle(0.8), ban));
+        assert!(!in_recoil_cone(Vec2::Y, ban));
+        assert!(!in_recoil_cone(-Vec2::X, ban));
+    }
+
+    /// Точно на границе конуса цель разрешена: сравнение строгое.
+    #[test]
+    fn recoil_cone_boundary_is_allowed() {
+        assert!(!in_recoil_cone(Vec2::from_angle(RECOIL_CONE), Vec2::X));
+    }
+
+    /// Отпечаток населения: всё, что разыгрывается при спавне, в битах — на
+    /// float'ах сравнивать нечего, нужна побайтовая одинаковость.
+    fn population_fingerprint(seed: u64) -> Vec<(u32, u32, u32, u32, u32, u32)> {
+        let mut world = World::new();
+        let navmesh = crate::navigation::Navmesh::default();
+        spawn_population(&mut world.commands(), &navmesh, 0.3, seed);
+        world.flush();
+
+        let mut query = world.query::<(&PawnId, &Transform, &Pace, &WanderHeading)>();
+        let mut rows: Vec<_> = query
+            .iter(&world)
+            .map(|(pawn_id, transform, pace, heading)| {
+                (
+                    pawn_id.0,
+                    transform.translation.x.to_bits(),
+                    transform.translation.y.to_bits(),
+                    pace.0.to_bits(),
+                    heading.0.x.to_bits(),
+                    heading.0.y.to_bits(),
+                )
+            })
+            .collect();
+        rows.sort_unstable();
+        rows
+    }
+
+    /// Население — чистая функция от seed. Это фундамент всего остального:
+    /// если спавн разъезжается, повторять симуляцию уже нечему.
+    #[test]
+    fn population_is_a_function_of_the_seed() {
+        assert_eq!(population_fingerprint(7), population_fingerprint(7));
+    }
+
+    /// ...и при этом seed что-то значит: разные seed дают разное население.
+    #[test]
+    fn different_seeds_give_different_populations() {
+        assert_ne!(population_fingerprint(7), population_fingerprint(8));
     }
 }
