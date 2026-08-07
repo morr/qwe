@@ -141,19 +141,18 @@ struct Pawn {
 /// (`Pace`), третья пешка рядом, смена waypoint'а. Боковой составляющей у
 /// толчка нет ни в каком виде, поэтому шага в сторону не происходит никогда.
 ///
-/// Включается только для ВСТРЕЧНЫХ — когда каждый из двоих идёт в сторону
-/// другого (проверка на месте вызова). Пару, идущую в одну сторону, никто не
-/// держит: догоняющему достаточно продольной коррекции, а боковая добавка
-/// расползлась бы по всей очереди.
-///
 /// Добавка тем сильнее, чем более лобовая встреча (`frontal` — косинус между
-/// курсом и направлением на соседа). Сторона — всегда ПРАВАЯ относительно собственного курса,
-/// как у живых пешеходов: оба участника уходят вправо, и встреча разъезжается
-/// предсказуемо, а не в случайную сторону. Величина — доля [`SEPARATION_SIDESTEP`]
-/// от продольной коррекции той же пары.
+/// курсом и направлением на соседа). Сторона — всегда ПРАВАЯ относительно
+/// собственного курса, как у живых пешеходов: обход предсказуемый, а не в
+/// случайную сторону. Величина — доля [`SEPARATION_SIDESTEP`] от продольной
+/// коррекции той же пары.
 ///
 /// Курс берётся у идущих; у стоящей пешки он `ZERO`, и добавки нет — стоящего
 /// незачем «обходить», его достаточно раздвинуть.
+///
+/// Кому она достаётся — решают [`yields`] и «пара одна» на месте вызова; оба
+/// ограничения существуют затем, чтобы обход не превращался во вращение, см.
+/// их доки.
 fn sidestep(heading: Vec2, to_other: Vec2, correction: f32, strength: f32) -> Vec2 {
     let frontal = heading.dot(to_other);
     if frontal <= 0.0 {
@@ -161,6 +160,35 @@ fn sidestep(heading: Vec2, to_other: Vec2, correction: f32, strength: f32) -> Ve
     }
     // правая нормаль к курсу: `perp` в bevy — поворот на +90° (влево)
     -heading.perp() * (correction * strength * frontal)
+}
+
+/// Кто из встречной пары обходит: обходит РОВНО ОДИН.
+///
+/// Если вправо уходят оба, обход не работает совсем — он вырождается в
+/// вращение. Курсы у встречных противоположны, поэтому «вправо от себя» у них
+/// в мировых координатах противоположно, и две одинаковые по величине боковые
+/// добавки складываются в пару сил: связка проворачивается как твёрдое тело,
+/// а ВЗАИМНАЯ геометрия — расстояние и угол между курсом и осью пары — остаётся
+/// прежней. Пока контроллер пути держит курс на цель, лежащую за соседом (в
+/// «воронке» цель у всех одна точка), конфигурация воспроизводится каждый кадр:
+/// пара наматывает круги вокруг общего центра и не расходится никогда. Именно
+/// это и видно на экране как «слиплись и ходят по кругу».
+///
+/// Обходит один — и инварианта нет: ось пары поворачивается вокруг того, кто
+/// держит линию, `frontal` у обходящего падает, продольная коррекция получает
+/// боковую составляющую, и пара разъезжается. Ровно так расходятся живые
+/// пешеходы — в сторону уходит кто-то один, а не оба сразу.
+///
+/// Уступает более подвижный: у пожирающего демона (mobility 0) уступать нечем,
+/// и в паре «человек — демон» обходит человек. При равной подвижности —
+/// старший [`PawnId`], лишь бы выбор был устойчив от прогона к прогону (по
+/// `PawnId`, а не по `Entity`, по той же причине, что в
+/// [`coincident_direction`]).
+fn yields(a: &Pawn, b: &Pawn) -> bool {
+    if a.mobility != b.mobility {
+        return a.mobility > b.mobility;
+    }
+    a.pawn_id > b.pawn_id
 }
 
 /// Доли коррекции пары. По умолчанию — по подвижности (человек 1.0, демон
@@ -235,6 +263,12 @@ pub(super) struct SeparationState {
     /// индексам `pawns` — ни одного `Vec` на ячейку.
     heads: HashMap<IVec2, u32>,
     next: Vec<u32>,
+    /// Перекрывшиеся пары этого прогона, каждая по разу. Собираются отдельным
+    /// проходом, потому что толчок пары зависит от того, сколько соседей у её
+    /// участников (см. `contacts`), а это известно только когда найдены все.
+    pairs: Vec<(u32, u32)>,
+    /// Сколько перекрытий у каждой пешки в этом прогоне.
+    contacts: Vec<u32>,
     pushes: Vec<Vec2>,
 }
 
@@ -275,6 +309,9 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     } = tuning;
     state.heads.clear();
     state.next.clear();
+    state.pairs.clear();
+    state.contacts.clear();
+    state.contacts.resize(state.pawns.len(), 0);
     state.pushes.clear();
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
     for (i, pawn) in state.pawns.iter().enumerate() {
@@ -284,6 +321,7 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         state.next.push(head.unwrap_or(NONE));
     }
 
+    // проход 1 — кто с кем перекрылся и сколько соседей у каждого
     for i in 0..state.pawns.len() {
         let a = state.pawns[i];
         let cell = fine_cell(a.position, cell_size);
@@ -297,51 +335,63 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
                     // пара встречается с обеих сторон — обрабатываем один раз
                     if j > i as u32 {
                         let b = state.pawns[j as usize];
-                        let weights = a.mobility + b.mobility;
                         let min_distance = a.radius + b.radius;
-                        let offset = b.position - a.position;
-                        let distance_squared = offset.length_squared();
-                        if weights > 0.0 && distance_squared < min_distance * min_distance {
-                            let distance = distance_squared.sqrt();
-                            let direction = if distance > 1e-4 {
-                                offset / distance
-                            } else {
-                                coincident_direction(a.pawn_id)
-                            };
-                            let overlap = (min_distance - distance) * fraction;
-                            let correction = direction * overlap;
-                            let (share_a, share_b) = shares(&a, &b, direction);
-                            // обход — только встречным: догоняющего сзади
-                            // ничто не держит, а боковая добавка расползлась
-                            // бы по всей очереди, идущей в одну сторону
-                            let opposed =
-                                a.heading.dot(direction) > 0.0 && b.heading.dot(-direction) > 0.0;
-                            let (side_a, side_b) = if opposed {
-                                (
-                                    sidestep(
-                                        a.heading,
-                                        direction,
-                                        overlap * share_a,
-                                        sidestep_strength,
-                                    ),
-                                    sidestep(
-                                        b.heading,
-                                        -direction,
-                                        overlap * share_b,
-                                        sidestep_strength,
-                                    ),
-                                )
-                            } else {
-                                (Vec2::ZERO, Vec2::ZERO)
-                            };
-                            state.pushes[i] -= correction * share_a - side_a;
-                            state.pushes[j as usize] += correction * share_b + side_b;
+                        let overlapping = (b.position - a.position).length_squared()
+                            < min_distance * min_distance;
+                        if overlapping && a.mobility + b.mobility > 0.0 {
+                            state.pairs.push((i as u32, j));
+                            state.contacts[i] += 1;
+                            state.contacts[j as usize] += 1;
                         }
                     }
                     j = state.next[j as usize];
                 }
             }
         }
+    }
+
+    // проход 2 — толчки
+    for pair in 0..state.pairs.len() {
+        let (i, j) = state.pairs[pair];
+        let (a, b) = (state.pawns[i as usize], state.pawns[j as usize]);
+        let min_distance = a.radius + b.radius;
+        let offset = b.position - a.position;
+        let distance = offset.length();
+        let direction = if distance > 1e-4 {
+            offset / distance
+        } else {
+            coincident_direction(a.pawn_id)
+        };
+        let overlap = (min_distance - distance) * fraction;
+        let correction = direction * overlap;
+        let (share_a, share_b) = shares(&a, &b, direction);
+        // обход — только встречным: догоняющего сзади ничто не держит, а
+        // боковая добавка расползлась бы по всей очереди, идущей в одну сторону
+        let opposed = a.heading.dot(direction) > 0.0 && b.heading.dot(-direction) > 0.0;
+        // …и только паре, у которой нет других соседей. Обход разводит ДВОИХ,
+        // симметрию которых больше сломать некому; в куче симметрию ломает сама
+        // многотельная геометрия, а одинаковый разворот вправо у полусотни
+        // перекрывшихся складывается в общее вращение — затор начинает крутиться
+        // вместо того, чтобы рассасываться.
+        let alone = state.contacts[i as usize] == 1 && state.contacts[j as usize] == 1;
+        let (side_a, side_b) = if opposed && alone {
+            // уступает один: вправо уходят оба — и пара вращается, см. [`yields`]
+            if yields(&a, &b) {
+                (
+                    sidestep(a.heading, direction, overlap * share_a, sidestep_strength),
+                    Vec2::ZERO,
+                )
+            } else {
+                (
+                    Vec2::ZERO,
+                    sidestep(b.heading, -direction, overlap * share_b, sidestep_strength),
+                )
+            }
+        } else {
+            (Vec2::ZERO, Vec2::ZERO)
+        };
+        state.pushes[i as usize] -= correction * share_a - side_a;
+        state.pushes[j as usize] += correction * share_b + side_b;
     }
 }
 
@@ -589,8 +639,12 @@ mod tests {
 
     /// Идущие ЛОБ В ЛОБ получают боковую составляющую — иначе их толкает
     /// строго назад по собственному пути, и разойтись они не могут вообще.
+    ///
+    /// Обходит РОВНО ОДИН (здесь — старший `PawnId`): вправо от себя у
+    /// встречных — противоположные стороны мира, и две одинаковые добавки дали
+    /// бы паре сил вместо обхода (см. [`yields`]).
     #[test]
-    fn a_head_on_pair_is_pushed_sideways_as_well_as_apart() {
+    fn one_of_a_head_on_pair_steps_aside() {
         let mut state = state_with(vec![
             walking(1, Vec2::new(10.0, 10.0), Vec2::X),
             walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
@@ -600,10 +654,28 @@ mod tests {
         // продольная часть прежняя: каждого назад по своему курсу
         assert!(state.pushes[0].x < 0.0);
         assert!(state.pushes[1].x > 0.0);
-        // и оба уходят вправо ОТНОСИТЕЛЬНО СЕБЯ: идущий на +X — в −Y,
-        // встречный ему — в +Y
-        assert!(state.pushes[0].y < 0.0, "{:?}", state.pushes[0]);
+        // в сторону уходит только уступающий, и вправо ОТ СЕБЯ: идущий на −X — в +Y
+        assert_eq!(state.pushes[0].y, 0.0, "{:?}", state.pushes[0]);
         assert!(state.pushes[1].y > 0.0, "{:?}", state.pushes[1]);
+    }
+
+    /// Обход — только паре, которая одна: у встречных в куче он выключен.
+    ///
+    /// Одинаковый разворот вправо у всех перекрывшихся складывается в общее
+    /// вращение, и затор начинает крутиться вместо того, чтобы рассасываться.
+    #[test]
+    fn a_head_on_pair_with_a_third_pawn_nearby_does_not_step_aside() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+            // третий висит на встречном сзади — пара больше не одна
+            walking(3, Vec2::new(11.2, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        // толкает по-прежнему всех, но строго вдоль оси: боковой добавки нет
+        assert!(state.pushes.iter().all(|push| push.x != 0.0));
+        assert!(state.pushes.iter().all(|push| push.y == 0.0));
     }
 
     /// Идущие одним курсом: всю коррекцию забирает ЗАДНИЙ, переднего не
