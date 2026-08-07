@@ -1085,12 +1085,28 @@ in `main.rs`.
 - **Seed derivation** — `seed_for(world_seed, domain, key)`, two rounds of splitmix64.
   Nothing stores live RNG state, so **a restart has no RNG to reset**: every stream is
   re-derived. `RngDomain: Population | Human | Demon`.
-- **Entity RNG** (`rng.rs::EntityRng`, on humans *and* demons) — each pawn's own
-  `SimRng`, seeded from its `PawnId`. Every behavioral draw of a pawn comes from its own
-  stream, so draws do not depend on query iteration order, nor on how many neighbours
-  drew before it this tick. This is what makes the whole thing sturdy: a single shared
-  generator collapses under any reordering — `panic` draws its repath period while walking
-  a `HashSet<Entity>`, whose order differs between runs.
+- **Decision stream** (`rng.rs::WanderIndex::next`, on humans *and* demons) — a `SimRng`
+  is built per *decision* and dies with it, seeded from `(PawnId, decision number)`. The
+  seed is therefore the pawn's **observable identity plus which choice this is**, never
+  the history of a stream. Draws do not depend on query iteration order, on how many
+  neighbours drew before it this tick, or on how many draws the pawn's previous decision
+  happened to consume. Each of those has bitten: a single shared generator collapses under
+  any reordering (`panic` draws its repath period while walking a `HashSet<Entity>`, whose
+  order differs between runs), and a live per-pawn stream shifts under one added
+  `rng.random()` inside a decision.
+  Consequence worth having: pawn K's k-th decision draws the same numbers **whenever it
+  happens**, so it is the same with the toggle on and off. In normal mode that makes the
+  *opening* reproducible — measured across two app launches, 99.8 % of the population
+  picked an identical first target; the stragglers are the pawns near the camera that had
+  already reached it and made a second decision. It does **not** make the run reproducible
+  there: targets are chosen relative to the current position, and positions diverge with
+  frame timing. Full replay is what the toggle is for.
+  Position is deliberately *not* an input, tempting as it is: `move_moving_entities` sets
+  `sim_position.0 = target` on arrival and waypoints are `tile_center(...)`, so a pawn
+  standing on tile `T` is there bit-for-bit every time. `(pawn_id, tile) → target` would
+  be a deterministic function, and every trajectory of one on a finite set eventually
+  closes into a cycle — within minutes each human would pace a fixed loop forever. The
+  decision number only ever grows.
 - **PawnId** (`rng.rs`) — a pawn's spawn ordinal within its species and run (humans
   `0..HUMAN_COUNT`, demons `DemonSpawner::spawned`). Used wherever a stable "personal
   number" is needed — the RNG seed key, the flee-fan angle (`personal_spread`), the

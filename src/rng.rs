@@ -8,15 +8,29 @@
 //!
 //! Потоков два рода:
 //!
-//! - **потоки сущностей** ([`EntityRng`]) — по одному на человека и на демона,
-//!   засеяны его [`PawnId`]. Все поведенческие жребии пешки идут из её
-//!   собственного потока, поэтому не зависят ни от порядка обхода запроса, ни
-//!   от того, сколько соседей тянуло числа раньше в этом тике. Именно это
-//!   делает детерминизм устойчивым: общий генератор рассыпался бы от любой
+//! - **потоки решений** ([`WanderIndex::next`]) — поток заводится на каждое
+//!   решение пешки и живёт ровно до конца этого решения. Засев —
+//!   `(PawnId, номер решения)`, то есть **наблюдаемая личность пешки и
+//!   порядковый номер её выбора**, а не история потока. Поэтому жребий не
+//!   зависит ни от порядка обхода запроса, ни от того, сколько соседей тянуло
+//!   числа раньше в этом тике, ни от того, сколько выборок съело предыдущее
+//!   решение этой же пешки: общий генератор рассыпался бы от любой
 //!   перестановки в обходе (`panic` тянет жребий, обходя `HashSet<Entity>`, —
-//!   его порядок между рестартами не совпадает);
+//!   его порядок между рестартами не совпадает), а живой поток на пешке —
+//!   от любой добавленной строчки `rng.random()` внутри решения;
 //! - **потоки размещения** — локальные, живут внутри одной функции
 //!   (`spawn_population`), где обход заведомо последовательный.
+//!
+//! **Почему номер решения, а не позиция.** Соблазнительно засевать поток
+//! координатами пешки — тогда и в недетерминированном режиме она ходила бы
+//! из одной точки в одно и то же место. Но `move_moving_entities` при
+//! достижении путевой точки делает `sim_position.0 = target`, а точки пути —
+//! это `tile_center(...)`: пешка, дошедшая до тайла `T`, стоит **побитово**
+//! там же, где стояла в прошлый раз. Отображение `(pawn_id, тайл) → цель`
+//! стало бы детерминированной функцией, а всякая траектория такой функции на
+//! конечном множестве рано или поздно замыкается в цикл — через несколько
+//! минут каждый человек ходил бы по своему кольцу и никогда с него не сошёл.
+//! Номер решения только растёт, поэтому цикла не бывает по построению.
 //!
 //! Карту seed не трогает: OSM разбирается из кэш-файла, а деревья и входы
 //! засеяны собственными координатами (`map/trees.rs`,
@@ -111,19 +125,50 @@ pub const fn seed_for(world_seed: u64, domain: RngDomain, key: u64) -> u64 {
 #[reflect(Component)]
 pub struct PawnId(pub u32);
 
-/// Личный поток жребия пешки. Без `Reflect`: состояние ГПСЧ по BRP смотреть
-/// незачем, а 20 000 таких компонентов только замусорили бы выдачу.
-#[derive(Component)]
-pub struct EntityRng(pub SimRng);
+/// Сколько решений пешка уже приняла — второй (после [`PawnId`]) вход её
+/// жребия.
+///
+/// «Решение» — это один поход к [`WanderIndex::next`]: выбор цели прогулки,
+/// период перепрокладки при панике, направление бегства. Счётчик общий на все
+/// три: ключ `(pawn_id, номер)` уникален независимо от того, какое решение
+/// принималось, потому что `next` его сдвигает.
+///
+/// Хранится на пешке, но состоянием ГПСЧ **не** является: по нему поток
+/// выводится, а не продолжается. Рестарт сбрасывать его не обязан — пешки
+/// пересоздаются.
+#[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Component)]
+pub struct WanderIndex(pub u32);
 
-impl EntityRng {
-    pub fn seeded(world_seed: u64, domain: RngDomain, pawn_id: u32) -> Self {
-        Self(SimRng::seed_from_u64(seed_for(
-            world_seed,
-            domain,
-            u64::from(pawn_id),
-        )))
+impl WanderIndex {
+    /// Номер, отданный жребиям спавна (цвет, темп, начальный курс). Пешка
+    /// заводится со счётчиком `1`, чтобы её первое решение не столкнулось с
+    /// ними.
+    pub const SPAWN: u32 = 0;
+
+    /// Пешка, готовая принимать решения.
+    pub const fn ready() -> Self {
+        Self(Self::SPAWN + 1)
     }
+
+    /// Поток на очередное решение — и сдвиг счётчика.
+    ///
+    /// Сдвиг обязателен и потому безусловен: сайт, который взял бы поток, не
+    /// сдвинув счётчик, получал бы одно и то же число при каждом вызове —
+    /// убегающий вечно сворачивал бы в одну сторону.
+    pub fn next(&mut self, world_seed: u64, domain: RngDomain, pawn_id: u32) -> SimRng {
+        let stream = decision_stream(world_seed, domain, pawn_id, self.0);
+        self.0 = self.0.wrapping_add(1);
+        stream
+    }
+}
+
+/// Поток одного решения пешки. Ключ склеен из номера пешки и номера решения —
+/// целиком, без перемешивания: `seed_for` всё равно прогоняет его через
+/// splitmix64.
+pub fn decision_stream(world_seed: u64, domain: RngDomain, pawn_id: u32, decision: u32) -> SimRng {
+    let key = (u64::from(pawn_id) << 32) | u64::from(decision);
+    SimRng::seed_from_u64(seed_for(world_seed, domain, key))
 }
 
 /// Отдельный поток, не привязанный к сущности (размещение населения).
@@ -137,6 +182,7 @@ impl Plugin for RngPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<WorldSeed>()
             .register_type::<PawnId>()
+            .register_type::<WanderIndex>()
             .init_resource::<WorldSeed>();
     }
 }
@@ -182,28 +228,98 @@ mod tests {
     /// ближе 0.05 примерно в каждом десятом случае.
     #[test]
     fn neighbouring_pawn_ids_are_independent() {
+        assert_independent(|pawn_id| decision_stream(1, RngDomain::Human, pawn_id, 0).random());
+    }
+
+    /// То же требование к соседним **решениям** одной пешки, и оно строже: у
+    /// `(pawn_id, номер)` меняется младшая половина ключа, тогда как у
+    /// соседних `pawn_id` — старшая. Слипнись потоки здесь, человек ходил бы
+    /// раз за разом в одну и ту же сторону.
+    #[test]
+    fn neighbouring_decisions_are_independent() {
+        assert_independent(|decision| decision_stream(1, RngDomain::Human, 42, decision).random());
+    }
+
+    /// Среднее `|a − b|` первых чисел у 256 соседних пар: у двух независимых
+    /// равномерных величин оно равно 1/3, у слипшихся потоков — 0. Полоса
+    /// 0.28…0.39 — это ±4σ от 1/3 при 256 парах, то есть тест не может мигать,
+    /// но ловит и полное совпадение, и заметную корреляцию.
+    ///
+    /// Одну пару сравнивать бессмысленно: два независимых числа сходятся
+    /// ближе 0.05 примерно в каждом десятом случае.
+    fn assert_independent(draw: impl Fn(u32) -> f64) {
         const PAIRS: u32 = 256;
         let mut total = 0.0f64;
-        for pawn_id in 0..PAIRS {
-            let first: f64 = EntityRng::seeded(1, RngDomain::Human, pawn_id).0.random();
-            let second: f64 = EntityRng::seeded(1, RngDomain::Human, pawn_id + 1)
-                .0
-                .random();
-            total += (first - second).abs();
+        for index in 0..PAIRS {
+            total += (draw(index) - draw(index + 1)).abs();
         }
         let mean = total / f64::from(PAIRS);
         assert!(
             (0.28..0.39).contains(&mean),
-            "потоки соседних pawn_id не независимы: среднее |a − b| = {mean}, ждали ≈1/3"
+            "потоки не независимы: среднее |a − b| = {mean}, ждали ≈1/3"
         );
     }
 
     #[test]
     fn same_seed_same_stream() {
-        let mut left = EntityRng::seeded(7, RngDomain::Demon, 3).0;
-        let mut right = EntityRng::seeded(7, RngDomain::Demon, 3).0;
+        let mut left = decision_stream(7, RngDomain::Demon, 3, 0);
+        let mut right = decision_stream(7, RngDomain::Demon, 3, 0);
         for _ in 0..16 {
             assert_eq!(left.random::<u64>(), right.random::<u64>());
         }
+    }
+
+    /// Главное свойство схемы: k-е решение пешки одинаково, **когда бы оно ни
+    /// случилось**. Именно оно делает жребий независимым от расписания — и
+    /// поэтому одинаковым в обоих режимах.
+    #[test]
+    fn the_same_decision_number_gives_the_same_dice() {
+        let mut early = WanderIndex::ready();
+        let mut late = WanderIndex::ready();
+        // одна пешка приняла три решения подряд, другая — те же три, но между
+        // ними прошло сколько угодно тиков: номера совпадают, значит и числа
+        let mut from_early = Vec::new();
+        for _ in 0..3 {
+            from_early.push(early.next(9, RngDomain::Human, 5).random::<u64>());
+        }
+        let mut from_late = Vec::new();
+        for _ in 0..3 {
+            from_late.push(late.next(9, RngDomain::Human, 5).random::<u64>());
+        }
+        assert_eq!(from_early, from_late);
+        assert_eq!(early, late);
+    }
+
+    /// Счётчик обязан сдвигаться на каждом обращении: сайт, берущий поток без
+    /// сдвига, получал бы одно и то же число вечно — убегающий сворачивал бы
+    /// в одну сторону, а гуляющий ходил бы по кольцу.
+    #[test]
+    fn every_decision_advances_the_counter() {
+        let mut index = WanderIndex::ready();
+        let first = index.next(9, RngDomain::Human, 5).random::<u64>();
+        let second = index.next(9, RngDomain::Human, 5).random::<u64>();
+        assert_ne!(first, second);
+        assert_eq!(index, WanderIndex(WanderIndex::SPAWN + 3));
+    }
+
+    /// Жребии спавна (цвет, темп, курс) не имеют права столкнуться с первым
+    /// решением пешки.
+    #[test]
+    fn the_spawn_draw_is_not_the_first_decision() {
+        let spawn = decision_stream(9, RngDomain::Human, 5, WanderIndex::SPAWN).random::<u64>();
+        let first = WanderIndex::ready()
+            .next(9, RngDomain::Human, 5)
+            .random::<u64>();
+        assert_ne!(spawn, first);
+    }
+
+    /// Ключ склеен сдвигом, поэтому пешка №1 с решением №0 и пешка №0 с
+    /// решением №1 обязаны разойтись — иначе номера перетекали бы друг в друга.
+    #[test]
+    fn the_pawn_and_the_decision_do_not_bleed_into_each_other() {
+        assert_ne!(
+            decision_stream(9, RngDomain::Human, 1, 0).random::<u64>(),
+            decision_stream(9, RngDomain::Human, 0, 1).random::<u64>()
+        );
     }
 }

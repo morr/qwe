@@ -11,7 +11,7 @@ use crate::human::components::{
 };
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{Pathfinder, find_passable_tile_near};
-use crate::rng::{EntityRng, PawnId};
+use crate::rng::{PawnId, WanderIndex};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
@@ -45,6 +45,7 @@ fn personal_spread(pawn_id: u32) -> f32 {
 /// демонов», а «каждый из ~100 демонов собирает соседей по сетке людей».
 /// Стоимость пропорциональна толпе возле демонов, а не населению карты —
 /// и не меняется, сколько бы людей мирно ни гуляло на другом краю города.
+#[allow(clippy::too_many_arguments)]
 pub fn panic(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
@@ -52,7 +53,8 @@ pub fn panic(
     style: Res<HumanStyle>,
     demons: Query<&SimPosition, With<Demon>>,
     wanderers: Query<&SimPosition, (With<Human>, With<HumanWanderTag>)>,
-    mut movables: Query<(&mut Movable, &Pace, &mut EntityRng)>,
+    seed: Res<crate::rng::WorldSeed>,
+    mut movables: Query<(&mut Movable, &Pace, &PawnId, &mut WanderIndex)>,
 ) {
     let started = std::time::Instant::now();
     // дедуп между демонами: человека в двух радиусах паникуем один раз
@@ -81,9 +83,11 @@ pub fn panic(
         // `Entity`, а те после рестарта другие. Общий генератор раздал бы
         // тем же людям другие периоды при том же seed.
         let mut period = 1.0;
-        if let Ok((mut movable, pace, mut rng)) = movables.get_mut(entity) {
+        if let Ok((mut movable, pace, pawn_id, mut wander_index)) = movables.get_mut(entity) {
             movable.speed = pace.speed(HUMAN_FLEE_SPEED, style.spread);
-            period = rng.0.random_range(0.7..1.2);
+            period = wander_index
+                .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
+                .random_range(0.7..1.2);
         }
         let mut repath = FleeRepath::default();
         // первый путь — сразу, дальше по таймеру со случайным периодом
@@ -119,6 +123,7 @@ pub fn flee(
     demon_positions: Query<&SimPosition, With<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     style: Res<HumanStyle>,
+    seed: Res<crate::rng::WorldSeed>,
     mut query: Query<
         (
             Entity,
@@ -129,7 +134,7 @@ pub fn flee(
             &mut WanderHeading,
             &Pace,
             &PawnId,
-            &mut EntityRng,
+            &mut WanderIndex,
         ),
         (With<Human>, With<HumanFleeTag>),
     >,
@@ -149,10 +154,13 @@ pub fn flee(
         mut heading,
         pace,
         pawn_id,
-        mut entity_rng,
+        mut wander_index,
     ) in &mut query
     {
-        let rng = &mut entity_rng.0;
+        // поток заводится в каждой из двух точек решения отдельно, а не разом
+        // на итерацию: `next` сдвигает номер решения, и заведённый заранее
+        // поток крутил бы счётчик каждый тик у каждого бегущего — в том числе
+        // на тиках, где решения нет вовсе (таймер перепрокладки не сработал)
         let Some((_, demon_position)) = demons.nearest_in_range(
             sim_position.0,
             HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS,
@@ -162,7 +170,9 @@ pub fn flee(
             movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
             movable.to_idle(entity, &mut commands, false);
             pause.0.set_duration(std::time::Duration::from_secs_f32(
-                rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
+                wander_index
+                    .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
+                    .random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
             ));
             pause.0.reset();
             // курс уже смотрит прочь от демона, обратный ему и есть центр
@@ -193,7 +203,9 @@ pub fn flee(
         // память о направлении угрозы — пишется до отсева непроходимой цели,
         // иначе неудачный кадр оставил бы курс от прошлой перепрокладки
         heading.0 = away;
-        let step = rng.random_range(FLEE_STEP.0..FLEE_STEP.1);
+        let step = wander_index
+            .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
+            .random_range(FLEE_STEP.0..FLEE_STEP.1);
         // не клампим к «безопасной» зоне: цель у самой границы — путь к спасению
         let target = (sim_position.0 + away * step).clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);
 

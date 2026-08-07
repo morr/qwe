@@ -13,7 +13,7 @@ use crate::movement::{
 };
 use crate::navigation::{Pathfinder, find_passable_tile_near};
 use crate::portal::PortalPos;
-use crate::rng::{EntityRng, PawnId, RngDomain, WorldSeed};
+use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream};
 use crate::settings::{
     DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPAWN_PAUSE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER,
     unit_z,
@@ -109,10 +109,15 @@ fn spawn_demon(
     index: usize,
     speed: f32,
 ) {
-    let mut rng = EntityRng::seeded(world_seed, RngDomain::Demon, index as u32);
-    let angle = angle.unwrap_or_else(|| rng.0.random_range(0.0..std::f32::consts::TAU));
+    let mut rng = decision_stream(
+        world_seed,
+        RngDomain::Demon,
+        index as u32,
+        WanderIndex::SPAWN,
+    );
+    let angle = angle.unwrap_or_else(|| rng.random_range(0.0..std::f32::consts::TAU));
     let position = portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
-    let pause = rng.0.random_range(DEMON_SPAWN_PAUSE.0..DEMON_SPAWN_PAUSE.1);
+    let pause = rng.random_range(DEMON_SPAWN_PAUSE.0..DEMON_SPAWN_PAUSE.1);
 
     // оттенки красного, чтобы демоны не сливались друг с другом
     let tint = 0.45 + (index % 5) as f32 * 0.08;
@@ -128,7 +133,7 @@ fn spawn_demon(
         DemonSpawnPause(Timer::from_seconds(pause, TimerMode::Once)),
         Movable::new(speed),
         PawnId(index as u32),
-        rng,
+        WanderIndex::ready(),
         DespawnOnExit(AppState::Playing),
         Name::new("demon"),
     ));
@@ -169,8 +174,15 @@ pub fn pick_wander_targets(
     mut commands: Commands,
     pathfinder: Pathfinder,
     portal_pos: Res<PortalPos>,
+    seed: Res<WorldSeed>,
     mut query: Query<
-        (Entity, &SimPosition, &mut Movable, &mut EntityRng),
+        (
+            Entity,
+            &SimPosition,
+            &mut Movable,
+            &PawnId,
+            &mut WanderIndex,
+        ),
         (
             With<Demon>,
             With<DemonWanderTag>,
@@ -181,14 +193,17 @@ pub fn pick_wander_targets(
 ) {
     let navmesh = pathfinder.navmesh.read();
 
-    for (entity, sim_position, mut movable, mut entity_rng) in &mut query {
-        let rng = &mut entity_rng.0;
+    for (entity, sim_position, mut movable, pawn_id, mut wander_index) in &mut query {
         if !matches!(
             movable.state,
             MovableState::Idle | MovableState::PathfindingError(_)
         ) {
             continue;
         }
+
+        // после отсева, а не до: `next` сдвигает номер решения, и заведённый
+        // заранее поток крутил бы его вхолостую на каждом кадре
+        let rng = &mut wander_index.next(seed.0, RngDomain::Demon, pawn_id.0);
 
         let away = (sim_position.0 - portal_pos.0).normalize_or(Vec2::from_angle(
             rng.random_range(0.0..std::f32::consts::TAU),

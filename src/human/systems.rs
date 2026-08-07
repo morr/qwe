@@ -10,7 +10,7 @@ use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
-use crate::rng::{EntityRng, PawnId, RngDomain, WorldSeed, stream};
+use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
     HUMAN_COUNT, HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED,
     HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, RADIUS_HYSTERESIS,
@@ -72,7 +72,7 @@ pub fn spawn_population(
 
     for index in 0..HUMAN_COUNT {
         let pawn_id = index as u32;
-        let mut rng = EntityRng::seeded(world_seed, RngDomain::Human, pawn_id);
+        let mut rng = decision_stream(world_seed, RngDomain::Human, pawn_id, WanderIndex::SPAWN);
 
         let tile = loop {
             let candidate = IVec2::new(
@@ -87,9 +87,9 @@ pub fn spawn_population(
 
         // пастельная «одежда» со случайным тоном
         let color = Color::hsl(
-            rng.0.random_range(0.0..360.0),
-            rng.0.random_range(0.35..0.75),
-            rng.0.random_range(0.35..0.65),
+            rng.random_range(0.0..360.0),
+            rng.random_range(0.35..0.75),
+            rng.random_range(0.35..0.65),
         );
         // без стартовой паузы: все идут с первого кадра. Залп из 20 000 целей
         // разруливают гейт видимости диспетчера (мирные вне экрана путь не
@@ -97,9 +97,9 @@ pub fn spawn_population(
         // пешек в кадре стоять первые секунды
         let pause = Timer::from_seconds(0.0, TimerMode::Once);
         // жребий двусторонний: минус — человек медленнее базы, плюс — быстрее
-        let pace = Pace(rng.0.random_range(-1.0..=1.0));
+        let pace = Pace(rng.random_range(-1.0..=1.0));
         let heading = WanderHeading(Vec2::from_angle(
-            rng.0.random_range(0.0..std::f32::consts::TAU),
+            rng.random_range(0.0..std::f32::consts::TAU),
         ));
 
         commands.spawn((
@@ -117,7 +117,7 @@ pub fn spawn_population(
             WanderPause(pause),
             heading,
             PawnId(pawn_id),
-            rng,
+            WanderIndex::ready(),
             DespawnOnExit(AppState::Playing),
             Name::new("human"),
         ));
@@ -234,6 +234,7 @@ pub fn pick_wander_targets(
     time: Res<Time>,
     pathfinder: Pathfinder,
     map: Res<MapData>,
+    seed: Res<WorldSeed>,
     mut query: Query<
         (
             Entity,
@@ -241,7 +242,8 @@ pub fn pick_wander_targets(
             &mut Movable,
             &mut WanderPause,
             &mut WanderHeading,
-            &mut EntityRng,
+            &PawnId,
+            &mut WanderIndex,
             Option<&PanicRecoil>,
             Has<HumanFirstWanderTag>,
         ),
@@ -262,16 +264,12 @@ pub fn pick_wander_targets(
         mut movable,
         mut pause,
         mut heading,
-        mut entity_rng,
+        pawn_id,
+        mut wander_index,
         recoil,
         is_first_wander,
     ) in &mut query
     {
-        // жребий — из личного потока пешки, а не из общего на систему:
-        // иначе выбор цели зависел бы от порядка обхода запроса и от того,
-        // сколько соседей тянуло числа раньше в этом же проходе
-        let rng = &mut entity_rng.0;
-
         if !matches!(
             movable.state,
             MovableState::Idle | MovableState::PathfindingError(_)
@@ -283,6 +281,17 @@ pub fn pick_wander_targets(
         if !pause.0.is_finished() {
             continue;
         }
+
+        // Поток заводится здесь, а не в начале итерации: до этой точки решение
+        // ещё не принимается, а `next` сдвигает счётчик — тикающая пауза
+        // прокручивала бы номера решений вхолостую, и число прокруток зависело
+        // бы от частоты кадров.
+        //
+        // Засев — `(PawnId, номер решения)`, а не общий поток на систему и не
+        // живой поток на пешке: выбор цели не должен зависеть ни от порядка
+        // обхода запроса, ни от того, сколько выборок съело прошлое решение
+        // этой же пешки
+        let rng = &mut wander_index.next(seed.0, RngDomain::Human, pawn_id.0);
 
         // после паники — только «по делам», причём это перебивает и бросок
         // 80/20, и `HumanFirstWanderTag`: тот существует, чтобы 20 000 пешек

@@ -273,7 +273,12 @@ pub fn on_demon_caught_human(
     mut telemetry: ResMut<Telemetry>,
     humans: Query<(), With<Human>>,
     mut sprites: Query<(&mut Sprite, &mut Transform)>,
-    mut movables: Query<(&mut Movable, &mut crate::rng::EntityRng)>,
+    seed: Res<crate::rng::WorldSeed>,
+    mut movables: Query<(
+        &mut Movable,
+        &crate::rng::PawnId,
+        &mut crate::rng::WanderIndex,
+    )>,
 ) {
     let DemonCaughtHumanEvent { demon, human } = *event;
 
@@ -315,10 +320,10 @@ pub fn on_demon_caught_human(
     // демон → Devour; пауза — из личного потока демона, а не общего: убийства
     // прилетают обсерверами, и их порядок в тике задан порядком команд
     let mut pause = DEMON_DEVOUR_PAUSE.0;
-    if let Ok((mut movable, mut rng)) = movables.get_mut(demon) {
+    if let Ok((mut movable, pawn_id, mut wander_index)) = movables.get_mut(demon) {
         movable.to_idle(demon, &mut commands, false);
-        pause = rng
-            .0
+        pause = wander_index
+            .next(seed.0, crate::rng::RngDomain::Demon, pawn_id.0)
             .random_range(DEMON_DEVOUR_PAUSE.0..DEMON_DEVOUR_PAUSE.1);
     }
     commands
