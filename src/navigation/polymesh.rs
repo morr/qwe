@@ -1901,6 +1901,14 @@ fn stitch_chunks(
         }
     }
 
+    // порядок обхода `touching` — это порядок рёбер в списках смежности, а он
+    // разрешает ничьи в поиске: два равных по стоимости коридора выбираются
+    // тем, чьё ребро легло раньше. `std::HashMap` перемешивает обход своим
+    // случайным `RandomState`, то есть от запуска к запуску, — сортировка по
+    // ключу делает граф (а с ним и найденные пути) воспроизводимым
+    let mut touching: Vec<((u32, u32), u32)> = touching.into_iter().collect();
+    touching.sort_unstable_by_key(|&(pair, _)| pair);
+
     for ((from, to), segments) in touching {
         debug_assert!(segments > 0);
         let weight = nodes[from as usize]

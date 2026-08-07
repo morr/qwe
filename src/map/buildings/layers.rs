@@ -156,7 +156,16 @@ pub(super) fn shadow_builder(
     }
 
     if extruded {
-        for (index, passages) in arches_by_building(buildings, passages) {
+        // по возрастанию номера дома, а не в порядке обхода `HashMap`: тот у
+        // `std` перемешан случайным `RandomState`, и порядок вершин в
+        // объединённом меше менялся бы от запуска к запуску. Два других
+        // вызова `arches_by_building` берут дома по ключу и такой правки не
+        // требуют
+        let mut by_building: Vec<_> = arches_by_building(buildings, passages)
+            .into_iter()
+            .collect();
+        by_building.sort_unstable_by_key(|&(index, _)| index);
+        for (index, passages) in by_building {
             let building = &buildings[index];
             let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
             for opening in arch_openings(building, &passages, lift) {
