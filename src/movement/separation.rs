@@ -38,7 +38,7 @@ use crate::movement::components::SimPosition;
 use crate::movement::systems::VIEW_MARGIN;
 use crate::settings::{
     DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_CELL, SEPARATION_MAX_STEP,
-    SEPARATION_MAX_ZOOM, SEPARATION_RATE,
+    SEPARATION_MAX_ZOOM, SEPARATION_RATE, SEPARATION_SIDESTEP,
 };
 use crate::spatial::SpatialGrid;
 
@@ -52,18 +52,60 @@ const NONE: u32 = u32::MAX;
 /// Тумблер расталкивания — панель World. Выбор пользователя, переживает
 /// рестарт и смену города (тот же контракт, что у `DemonStyle`). Выключение
 /// ничего не откатывает: уже разведённые позиции просто остаются как есть.
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "separation")]
 pub struct SeparationStyle {
     pub enabled: bool,
+    /// Сила обхода встречного в долях продольной коррекции (см. [`sidestep`]).
+    /// Ручка, а не константа, потому что у неё узкое окно между двумя разными
+    /// поломками — ниже слипание, выше карусель — и подбирается она только
+    /// замером в толпе (`examples/demos/crowd_demo.rs`).
+    pub sidestep: f32,
+    /// Радиус «тела» человека, м — дефолт [`HUMAN_BODY_RADIUS`]. Радиус демона
+    /// не отдельная ручка: он всегда вдвое больше ([`DEMON_RADIUS_RATIO`]),
+    /// как и спрайт.
+    ///
+    /// Ручка, а не константа, ровно по той же причине, что и `sidestep`:
+    /// «сколько личного пространства» — это вопрос вкуса, который решается
+    /// глазом на живой толпе, и в демо у него свой ползунок.
+    pub radius: f32,
+}
+
+/// Во столько раз радиус демона больше человеческого — как и спрайты
+/// ([`DEMON_SIZE`] против [`HUMAN_SIZE`]).
+pub const DEMON_RADIUS_RATIO: f32 = DEMON_BODY_RADIUS / HUMAN_BODY_RADIUS;
+
+impl SeparationStyle {
+    pub fn human_radius(&self) -> f32 {
+        self.radius
+    }
+
+    pub fn demon_radius(&self) -> f32 {
+        self.radius * DEMON_RADIUS_RATIO
+    }
+
+    /// Сторона одноразовой мелкой сетки соседей. Считается от радиуса, а не
+    /// берётся константой: ячейка ОБЯЗАНА быть не меньше максимальной суммы
+    /// радиусов (демон+демон), иначе перекрывшаяся пара не попадёт в общие
+    /// 3 × 3 ячейки и её не найдут. С ползунком радиуса константа рано или
+    /// поздно оказалась бы мала.
+    pub fn cell(&self) -> f32 {
+        (self.demon_radius() * 2.0).max(SEPARATION_CELL)
+    }
 }
 
 impl Default for SeparationStyle {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            sidestep: SEPARATION_SIDESTEP,
+            radius: HUMAN_BODY_RADIUS,
+        }
     }
 }
+
+impl Eq for SeparationStyle {}
 
 /// Участник одного прогона: снятая позиция плюс всё, что нужно паре.
 #[derive(Clone, Copy)]
@@ -77,6 +119,96 @@ struct Pawn {
     /// Доля коррекции пары, пропорциональная подвижности: человек 1.0, демон
     /// [`DEMON_MOBILITY`], пожирающий 0.0 (толкает, но не двигается).
     mobility: f32,
+    /// Куда пешка идёт прямо сейчас, единичный; `ZERO` у стоящей. Нужен
+    /// только для обхода встречного (см. [`sidestep`]).
+    heading: Vec2,
+}
+
+/// Обход встречного: боковая добавка к толчку, чтобы двое идущих ЛОБ В ЛОБ
+/// могли разойтись.
+///
+/// Без неё они расходиться не могут в принципе. Коррекция пары идёт строго
+/// вдоль отрезка между центрами, а у лобовой встречи этот отрезок совпадает с
+/// вектором движения обоих — то есть каждого толкает ровно НАЗАД по его же
+/// пути, а на следующем тике движение снова закрывает зазор. Пара «слипается»
+/// и топчется, пока симметрию не сломает что-то постороннее: разброс скоростей
+/// (`Pace`), третья пешка рядом, смена waypoint'а. Боковой составляющей у
+/// толчка нет ни в каком виде, поэтому шага в сторону не происходит никогда.
+///
+/// Включается только для ВСТРЕЧНЫХ — когда каждый из двоих идёт в сторону
+/// другого (проверка на месте вызова). Пару, идущую в одну сторону, никто не
+/// держит: догоняющему достаточно продольной коррекции, а боковая добавка
+/// расползлась бы по всей очереди.
+///
+/// Добавка тем сильнее, чем более лобовая встреча (`frontal` — косинус между
+/// курсом и направлением на соседа). Сторона — всегда ПРАВАЯ относительно собственного курса,
+/// как у живых пешеходов: оба участника уходят вправо, и встреча разъезжается
+/// предсказуемо, а не в случайную сторону. Величина — доля [`SEPARATION_SIDESTEP`]
+/// от продольной коррекции той же пары.
+///
+/// Курс берётся у идущих; у стоящей пешки он `ZERO`, и добавки нет — стоящего
+/// незачем «обходить», его достаточно раздвинуть.
+fn sidestep(heading: Vec2, to_other: Vec2, correction: f32, strength: f32) -> Vec2 {
+    let frontal = heading.dot(to_other);
+    if frontal <= 0.0 {
+        return Vec2::ZERO;
+    }
+    // правая нормаль к курсу: `perp` в bevy — поворот на +90° (влево)
+    -heading.perp() * (correction * strength * frontal)
+}
+
+/// Доли коррекции пары. По умолчанию — по подвижности (человек 1.0, демон
+/// [`DEMON_MOBILITY`], пожирающий 0.0), но у пары, идущей ПРИМЕРНО ОДНИМ
+/// КУРСОМ, всю коррекцию забирает ЗАДНИЙ, а переднего не трогает никто.
+///
+/// Иначе догоняющий расталкивает того, кого догнал: передний, ничего не
+/// сделав, получает толчок в спину и сходит с линии, по которой шёл. На экране
+/// это читается как «его пихнули», и виноват всегда не тот. В жизни уступает
+/// тот, кто пришёл вторым, — он и обходит.
+///
+/// Кто задний, видно по курсу: если сосед у пешки СПЕРЕДИ (курс смотрит в его
+/// сторону), значит эта пешка — догоняющая. Уступать может только подвижный:
+/// у пожирающего демона (mobility 0) забирать нечего, и пара остаётся на
+/// долях по подвижности.
+fn shares(a: &Pawn, b: &Pawn, direction: Vec2) -> (f32, f32) {
+    let weights = a.mobility + b.mobility;
+    let by_mobility = (a.mobility / weights, b.mobility / weights);
+
+    let aligned =
+        a.heading != Vec2::ZERO && b.heading != Vec2::ZERO && a.heading.dot(b.heading) > 0.0;
+    if !aligned {
+        return by_mobility;
+    }
+    // `direction` смотрит от a к b: положительный dot — b впереди a
+    if a.heading.dot(direction) > 0.0 && a.mobility > 0.0 {
+        (1.0, 0.0)
+    } else if b.heading.dot(-direction) > 0.0 && b.mobility > 0.0 {
+        (0.0, 1.0)
+    } else {
+        by_mobility
+    }
+}
+
+/// Идущую пешку толчок двигает только ПОПЕРЁК её курса, продольная
+/// составляющая отбрасывается. Стоящую — как есть: у неё нет курса, вдоль
+/// которого можно было бы соврать.
+///
+/// Продольная составляющая — источник сразу двух артефактов, и оба видны
+/// глазом. Первый: в очереди, идущей одним курсом, догоняющего толкает НАЗАД
+/// по его же пути — на экране пешка разворачивается, отходит и снова идёт
+/// вперёд, хотя ничего не решала. Второй: в сходящейся толпе продольные
+/// составляющие складываются в общее вращение, и затор не рассасывается, а
+/// начинает крутиться каруселью.
+///
+/// Поперечный толчок ни того, ни другого не делает: он не отнимает у пешки
+/// пройденный путь и не спорит с её движением — он её обводит. Цена в том, что
+/// строго лобовая пара поперечной составляющей не имеет вовсе (отрезок между
+/// центрами совпадает с курсом) — её даёт [`sidestep`], ради этого он и нужен.
+fn across_heading(push: Vec2, heading: Vec2) -> Vec2 {
+    if heading == Vec2::ZERO {
+        return push;
+    }
+    push - heading * push.dot(heading)
 }
 
 /// Буферы прогона — в `Local`, чтобы steady state обходился без аллокаций.
@@ -95,8 +227,8 @@ pub(super) struct SeparationState {
     pushes: Vec<Vec2>,
 }
 
-fn fine_cell(pos: Vec2) -> IVec2 {
-    (pos / SEPARATION_CELL).floor().as_ivec2()
+fn fine_cell(pos: Vec2, cell: f32) -> IVec2 {
+    (pos / cell).floor().as_ivec2()
 }
 
 /// Детерминированное направление разведения точно совпавших позиций — хэш
@@ -114,19 +246,36 @@ fn coincident_direction(pawn_id: u32) -> Vec2 {
 /// Толчки всех пар текущего набора — чистая функция над буферами, без ECS
 /// (тестируется напрямую). `fraction` — доля перекрытия, разрешаемая этим
 /// прогоном; в `pushes` — суммарный сдвиг каждой пешки, ещё без клампа.
-fn resolve_pushes(state: &mut SeparationState, fraction: f32) {
+/// Ручки одного прогона: доля перекрытия, разрешаемая к снятию, плюс то, что
+/// задаёт [`SeparationStyle`]. Отдельной структурой, чтобы у чистой функции не
+/// росла череда безымянных `f32`.
+#[derive(Clone, Copy)]
+struct Tuning {
+    fraction: f32,
+    sidestep: f32,
+    cell: f32,
+}
+
+fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
+    let Tuning {
+        fraction,
+        sidestep: sidestep_strength,
+        cell: cell_size,
+    } = tuning;
     state.heads.clear();
     state.next.clear();
     state.pushes.clear();
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
     for (i, pawn) in state.pawns.iter().enumerate() {
-        let head = state.heads.insert(fine_cell(pawn.position), i as u32);
+        let head = state
+            .heads
+            .insert(fine_cell(pawn.position, cell_size), i as u32);
         state.next.push(head.unwrap_or(NONE));
     }
 
     for i in 0..state.pawns.len() {
         let a = state.pawns[i];
-        let cell = fine_cell(a.position);
+        let cell = fine_cell(a.position, cell_size);
         for dx in -1..=1 {
             for dy in -1..=1 {
                 let Some(&head) = state.heads.get(&(cell + IVec2::new(dx, dy))) else {
@@ -148,9 +297,34 @@ fn resolve_pushes(state: &mut SeparationState, fraction: f32) {
                             } else {
                                 coincident_direction(a.pawn_id)
                             };
-                            let correction = direction * ((min_distance - distance) * fraction);
-                            state.pushes[i] -= correction * (a.mobility / weights);
-                            state.pushes[j as usize] += correction * (b.mobility / weights);
+                            let overlap = (min_distance - distance) * fraction;
+                            let correction = direction * overlap;
+                            let (share_a, share_b) = shares(&a, &b, direction);
+                            // обход — только встречным: догоняющего сзади
+                            // ничто не держит, а боковая добавка расползлась
+                            // бы по всей очереди, идущей в одну сторону
+                            let opposed =
+                                a.heading.dot(direction) > 0.0 && b.heading.dot(-direction) > 0.0;
+                            let (side_a, side_b) = if opposed {
+                                (
+                                    sidestep(
+                                        a.heading,
+                                        direction,
+                                        overlap * share_a,
+                                        sidestep_strength,
+                                    ),
+                                    sidestep(
+                                        b.heading,
+                                        -direction,
+                                        overlap * share_b,
+                                        sidestep_strength,
+                                    ),
+                                )
+                            } else {
+                                (Vec2::ZERO, Vec2::ZERO)
+                            };
+                            state.pushes[i] -= correction * share_a - side_a;
+                            state.pushes[j as usize] += correction * share_b + side_b;
                         }
                     }
                     j = state.next[j as usize];
@@ -178,6 +352,8 @@ pub fn separate_pawns(
         (
             &mut SimPosition,
             &crate::rng::PawnId,
+            &crate::movement::Movable,
+            Has<crate::movement::MovableStateMovingTag>,
             Has<Demon>,
             Has<DemonDevourTag>,
         ),
@@ -208,12 +384,17 @@ pub fn separate_pawns(
     let min = camera_position - half_view;
     let max = camera_position + half_view;
 
+    let human_radius = style.human_radius();
+    let demon_radius = style.demon_radius();
+
     state.pawns.clear();
     {
         let pawn_buffer = &mut state.pawns;
         let mut collect = |entity: Entity| {
             // мимо запроса — бросок, труп, пешка чужого вида в чужой сетке
-            let Ok((sim_position, pawn_id, is_demon, is_devouring)) = pawns.get(entity) else {
+            let Ok((sim_position, pawn_id, movable, is_moving, is_demon, is_devouring)) =
+                pawns.get(entity)
+            else {
                 return;
             };
             let position = sim_position.0;
@@ -222,11 +403,11 @@ pub fn separate_pawns(
                 return;
             }
             let (radius, mobility) = if is_devouring {
-                (DEMON_BODY_RADIUS, 0.0)
+                (demon_radius, 0.0)
             } else if is_demon {
-                (DEMON_BODY_RADIUS, DEMON_MOBILITY)
+                (demon_radius, DEMON_MOBILITY)
             } else {
-                (HUMAN_BODY_RADIUS, 1.0)
+                (human_radius, 1.0)
             };
             pawn_buffer.push(Pawn {
                 entity,
@@ -234,18 +415,32 @@ pub fn separate_pawns(
                 position,
                 radius,
                 mobility,
+                // у стоящей курс не берём: `last_direction` у неё остался от
+                // прошлой ходьбы и увёл бы обход в сторону, куда она уже не идёт
+                heading: if is_moving {
+                    movable.last_direction.normalize_or_zero()
+                } else {
+                    Vec2::ZERO
+                },
             });
         };
         humans.for_each_in_rect(min, max, &mut collect);
         demons.for_each_in_rect(min, max, &mut collect);
     }
 
-    resolve_pushes(&mut state, fraction);
+    resolve_pushes(
+        &mut state,
+        Tuning {
+            fraction,
+            sidestep: style.sidestep,
+            cell: style.cell(),
+        },
+    );
 
     let navmesh = navmesh.read();
     for i in 0..state.pawns.len() {
         let pawn = state.pawns[i];
-        let push = state.pushes[i];
+        let push = across_heading(state.pushes[i], pawn.heading);
         if push == Vec2::ZERO {
             continue;
         }
@@ -256,7 +451,7 @@ pub fn separate_pawns(
         if !navmesh.is_passable(tile.x, tile.y) {
             continue;
         }
-        let Ok((mut sim_position, _, is_demon, _)) = pawns.get_mut(pawn.entity) else {
+        let Ok((mut sim_position, _, _, _, is_demon, _)) = pawns.get_mut(pawn.entity) else {
             continue;
         };
         sim_position.0 = target;
@@ -281,6 +476,8 @@ mod tests {
         Entity::from_raw_u32(index).unwrap()
     }
 
+    /// Стоящая пешка: без курса обход встречного не включается, и тесты
+    /// продольной коррекции меряют её одну.
     fn pawn(index: u32, position: Vec2, radius: f32, mobility: f32) -> Pawn {
         Pawn {
             entity: entity(index),
@@ -288,6 +485,23 @@ mod tests {
             position,
             radius,
             mobility,
+            heading: Vec2::ZERO,
+        }
+    }
+
+    fn walking(index: u32, position: Vec2, heading: Vec2) -> Pawn {
+        Pawn {
+            heading,
+            ..pawn(index, position, 0.45, 1.0)
+        }
+    }
+
+    /// Ручки по умолчанию: тесты меряют механику, а не подобранные значения.
+    fn tuning(fraction: f32) -> Tuning {
+        Tuning {
+            fraction,
+            sidestep: SEPARATION_SIDESTEP,
+            cell: SEPARATION_CELL,
         }
     }
 
@@ -306,7 +520,7 @@ mod tests {
             pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
             pawn(2, Vec2::new(10.5, 10.0), 0.45, 1.0),
         ]);
-        resolve_pushes(&mut state, 1.0);
+        resolve_pushes(&mut state, tuning(1.0));
 
         // перекрытие 0.4 м делится пополам: каждому по 0.2 вдоль оси пары
         assert!((state.pushes[0] - Vec2::new(-0.2, 0.0)).length() < 1e-4);
@@ -321,7 +535,7 @@ mod tests {
             pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
             pawn(2, Vec2::new(10.95, 10.0), 0.45, 1.0),
         ]);
-        resolve_pushes(&mut state, 1.0);
+        resolve_pushes(&mut state, tuning(1.0));
 
         assert_eq!(state.pushes[0], Vec2::ZERO);
         assert_eq!(state.pushes[1], Vec2::ZERO);
@@ -336,14 +550,14 @@ mod tests {
             pawn(1, position, 0.45, 1.0),
             pawn(2, position, 0.45, 1.0),
         ]);
-        resolve_pushes(&mut state, 1.0);
+        resolve_pushes(&mut state, tuning(1.0));
 
         assert!(state.pushes[0].length() > 1e-4);
         assert!((state.pushes[0] + state.pushes[1]).length() < 1e-4);
 
         // тот же набор — та же ось: направление не дрожит от прогона к прогону
         let first = state.pushes[0];
-        resolve_pushes(&mut state, 1.0);
+        resolve_pushes(&mut state, tuning(1.0));
         assert!((state.pushes[0] - first).length() < 1e-6);
     }
 
@@ -355,11 +569,47 @@ mod tests {
             pawn(1, Vec2::new(10.0, 10.0), 0.9, 0.0),
             pawn(2, Vec2::new(10.5, 10.0), 0.45, 1.0),
         ]);
-        resolve_pushes(&mut state, 1.0);
+        resolve_pushes(&mut state, tuning(1.0));
 
         assert_eq!(state.pushes[0], Vec2::ZERO);
         let expected = 0.45 + 0.9 - 0.5;
         assert!((state.pushes[1] - Vec2::new(expected, 0.0)).length() < 1e-4);
+    }
+
+    /// Идущие ЛОБ В ЛОБ получают боковую составляющую — иначе их толкает
+    /// строго назад по собственному пути, и разойтись они не могут вообще.
+    #[test]
+    fn a_head_on_pair_is_pushed_sideways_as_well_as_apart() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        // продольная часть прежняя: каждого назад по своему курсу
+        assert!(state.pushes[0].x < 0.0);
+        assert!(state.pushes[1].x > 0.0);
+        // и оба уходят вправо ОТНОСИТЕЛЬНО СЕБЯ: идущий на +X — в −Y,
+        // встречный ему — в +Y
+        assert!(state.pushes[0].y < 0.0, "{:?}", state.pushes[0]);
+        assert!(state.pushes[1].y > 0.0, "{:?}", state.pushes[1]);
+    }
+
+    /// Идущие одним курсом: всю коррекцию забирает ЗАДНИЙ, переднего не
+    /// трогает никто — его не за что толкать в спину.
+    #[test]
+    fn in_a_queue_only_the_pawn_behind_gives_way() {
+        let mut state = state_with(vec![
+            // догоняющий — первый: сосед у него спереди
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(10.5, 10.0), Vec2::X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert_eq!(state.pushes[1], Vec2::ZERO, "переднего толкать нельзя");
+        assert!(state.pushes[0].length() > 0.0);
+        // и обход в сторону догоняющему тоже не полагается — он не встречный
+        assert!(state.pushes[0].y.abs() < 1e-6, "{:?}", state.pushes[0]);
     }
 
     /// Соседи через границу ячейки мелкой сетки видят друг друга: пара на
@@ -370,7 +620,7 @@ mod tests {
             pawn(1, Vec2::new(SEPARATION_CELL - 0.1, 1.0), 0.45, 1.0),
             pawn(2, Vec2::new(SEPARATION_CELL + 0.1, 1.0), 0.45, 1.0),
         ]);
-        resolve_pushes(&mut state, 1.0);
+        resolve_pushes(&mut state, tuning(1.0));
 
         assert!(state.pushes[0].x < 0.0);
         assert!(state.pushes[1].x > 0.0);
