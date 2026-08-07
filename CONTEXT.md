@@ -95,7 +95,9 @@ in `main.rs`.
   consumes it in `PreUpdate` after `InputSystems`, the same slot the R key uses and for
   the same reason — `on_restart` tears the scene down inside an observer, so triggering it
   from `Update` would kill entities that sibling systems have already queued commands for
-  (see CLAUDE.md, "Where a mass despawn may happen").
+  (see CLAUDE.md, "Where a mass despawn may happen"). It always fires
+  `RestartEvent { to_portal: true }`: a changed world setting means a *different* world,
+  and leaving the camera where it was makes the restart invisible.
 - **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built
   from: `Tula | NewYork | Paris | Berlin | London | Tokyo`. Each carries its **geo center** (bbox
   center of the Overpass extract), its **portal hint** and its **cache slug**; `MAP_SIZE`
@@ -1105,8 +1107,13 @@ in `main.rs`.
   not the dice; the RNG work above is unconditional. Off: today's behavior. On: wander
   target picking runs in `FixedUpdate`, pathfinding answers land on a fixed tick, the
   dispatcher stops looking at the camera, the navigation backend is frozen, and pawn
-  separation is off. A run is deterministic or not from tick 0, so flipping the toggle
-  (like changing the seed) orders a restart via `RestartPending`.
+  separation is off — the World panel shows the `Separation` row as `off`, dimmed and
+  unclickable, rather than a toggle that flips a resource nothing reads. A run is
+  deterministic or not from tick 0, so flipping the toggle (like changing the seed) orders
+  a restart via `RestartPending` — and that restart carries `RestartEvent { to_portal:
+  true }`, i.e. the double-`R` camera reset. A changed seed or a flipped toggle is a
+  *different world*, not the current one from the top; without the camera move nothing on
+  screen changes and the setting reads as having done nothing.
 - **Frame rate does not matter.** `Time<Fixed>`'s step is constant regardless of fps and
   of `SimSpeed`; the answer to a path query waits for its tick; and everything left in
   `Update` only draws. A slow machine therefore replays the same run more slowly — it does
@@ -1565,7 +1572,9 @@ in `main.rs`.
   **RR** — a second `RestartEvent` within `RESTART_DOUBLE_PRESS` (0.5 s of real time) —
   goes to the portal at `START_ZOOM` whatever the mode says: in `save` mode a single R is
   a no-op for the camera (the saved view follows it live), so the way back to the portal
-  is the double press.
+  is the double press. `RestartEvent { to_portal: true }` asks for the same thing without
+  the double press, and every restart ordered by a changed world setting uses it
+  (`RestartPending`).
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (`SPEED_LADDER`:
   1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).

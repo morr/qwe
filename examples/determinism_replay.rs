@@ -90,7 +90,8 @@ fn main() {
         let first = run_to_tick(&mut app, ticks, &[1]);
 
         println!("restart, progon 2: тот же seed, ровный кадр");
-        app.world_mut().trigger(RestartEvent);
+        // камеры в примере нет вовсе, поле на прогон не влияет
+        app.world_mut().trigger(RestartEvent::default());
         // рестарт живёт в обсервере — даём кадр на применение команд
         app.update();
         let second = run_to_tick(&mut app, ticks, &[1]);

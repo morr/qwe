@@ -121,7 +121,9 @@ impl Plugin for UiStatsPlugin {
                 apply_seed_on_enter,
                 sync_seed_field.run_if(resource_changed::<WorldSeed>),
                 sync_determinism_value.run_if(resource_changed::<Determinism>),
-                sync_separation_value.run_if(resource_changed::<SeparationStyle>),
+                sync_separation_value.run_if(
+                    resource_changed::<SeparationStyle>.or_else(resource_changed::<Determinism>),
+                ),
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
                 // метка BRP стоит только в агентских запусках, и только тогда
@@ -397,17 +399,24 @@ fn render_stats_panel(
                 ),
                 (
                     SeparationValueLabel,
-                    Text::new(separation_value(&separation)),
+                    Text::new(separation_value(&separation, &determinism)),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
                     },
-                    TextColor(Color::WHITE),
+                    TextColor(separation_value_color(&determinism)),
                 ),
             ],
         ))
         .observe(
-            |_activate: On<Activate>, mut style: ResMut<SeparationStyle>| {
+            |_activate: On<Activate>,
+             mut style: ResMut<SeparationStyle>,
+             determinism: Res<Determinism>| {
+                // под детерминизмом расталкивания нет вовсе — тумблер не
+                // должен молча переключать то, что всё равно не работает
+                if determinism.0 {
+                    return;
+                }
                 style.enabled = !style.enabled;
             },
         )
@@ -576,11 +585,18 @@ fn sync_world_counts(
 }
 
 /// Подсветка строки тумблера под курсором и при нажатии (как у Buildings).
+///
+/// Под детерминизмом строка не подсвечивается вовсе: расталкивание там
+/// выключено расписанием (`movement/mod.rs`), нажимать нечего, и реакция на
+/// курсор обещала бы работающую кнопку.
 fn highlight_separation_row(
+    determinism: Res<Determinism>,
     mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<SeparationRow>>,
 ) {
     for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if pressed {
+        let lighten = if determinism.0 {
+            ROW_LIGHTEN
+        } else if pressed {
             PRESSED_LIGHTEN
         } else if hovered.get() {
             HOVER_LIGHTEN
@@ -673,15 +689,37 @@ fn sync_seed_field(
 /// настройки одинаково двигают текст.
 fn sync_separation_value(
     style: Res<SeparationStyle>,
-    mut labels: Query<&mut Text, With<SeparationValueLabel>>,
+    determinism: Res<Determinism>,
+    mut labels: Query<(&mut Text, &mut TextColor), With<SeparationValueLabel>>,
 ) {
-    for mut text in &mut labels {
-        text.0 = separation_value(&style);
+    for (mut text, mut color) in &mut labels {
+        text.0 = separation_value(&style, &determinism);
+        color.0 = separation_value_color(&determinism);
     }
 }
 
-fn separation_value(style: &SeparationStyle) -> String {
+/// Подпись тумблера расталкивания.
+///
+/// Под детерминизмом — всегда `off`, каким бы ни был `SeparationStyle`:
+/// система выключена run-условием (`movement/mod.rs`, расталкивание завязано
+/// на камеру, зум и `FrameCount`, то есть на всё, от чего повтор обязан не
+/// зависеть). Собственное значение стиля при этом сохраняется — выключение
+/// режима вернёт панель к нему.
+fn separation_value(style: &SeparationStyle, determinism: &Determinism) -> String {
+    if determinism.0 {
+        return "off".to_string();
+    }
     if style.enabled { "on" } else { "off" }.to_string()
+}
+
+/// Приглушённая подпись — тем же способом, каким панели показывают
+/// неактивное: цветом, а не отдельной иконкой.
+fn separation_value_color(determinism: &Determinism) -> Color {
+    if determinism.0 {
+        Color::srgb(0.45, 0.45, 0.45)
+    } else {
+        Color::WHITE
+    }
 }
 
 /// Подписи и бегунки вслед за ресурсом — правка извне (BRP, восстановленные

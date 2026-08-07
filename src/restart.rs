@@ -14,7 +14,18 @@ use crate::telemetry::Telemetry;
 
 #[derive(Event, Reflect, Debug, Default)]
 #[reflect(Event)]
-pub struct RestartEvent;
+pub struct RestartEvent {
+    /// Увезти камеру к порталу, как второе `R` подряд.
+    ///
+    /// Одиночное `R` оставляет камеру там, где велит настройка `position`:
+    /// пользователь разглядывал участок карты и хочет разглядывать его
+    /// дальше. Рестарт же по смене настройки мира (seed, тумблер
+    /// детерминизма) — это **другой мир**, а не тот же сначала: смотреть на
+    /// прежний участок незачем, и без переезда камеры перезапуск вообще
+    /// незаметен — толпа на экране выглядит так же, и правка настройки
+    /// читается как «ничего не произошло».
+    pub to_portal: bool,
+}
 
 /// «Рестарт заказан, выполнить в ближайшем `PreUpdate`».
 ///
@@ -62,14 +73,19 @@ impl Plugin for RestartPlugin {
 }
 
 fn trigger_restart(mut commands: Commands) {
-    commands.trigger(RestartEvent);
+    // одиночное R камеру не двигает; портал — это второе R подряд, и его
+    // ловит по времени `camera.rs::on_restart_place_camera`
+    commands.trigger(RestartEvent { to_portal: false });
 }
 
 /// Отложенный рестарт, заказанный через [`RestartPending`], — в том же слоте
 /// расписания, что и клавиша R, и ровно по той же причине.
+///
+/// Всегда «к порталу»: этот путь — только смена настройки мира, то есть
+/// новый мир, а не текущий сначала (см. [`RestartEvent::to_portal`]).
 fn trigger_pending_restart(mut commands: Commands, mut pending: ResMut<RestartPending>) {
     pending.0 = false;
-    commands.trigger(RestartEvent);
+    commands.trigger(RestartEvent { to_portal: true });
 }
 
 #[allow(clippy::too_many_arguments)]

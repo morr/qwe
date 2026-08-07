@@ -268,7 +268,7 @@ fn place_camera_on_world_ready(
 /// R — рестарт сцены (`restart.rs`) вместе с камерой: она возвращается туда же,
 /// куда встаёт на старте приложения, то есть по настройке `position`.
 fn on_restart_place_camera(
-    _event: On<RestartEvent>,
+    event: On<RestartEvent>,
     time: Res<Time<Real>>,
     mut previous_restart: Local<Option<f32>>,
     mode: Res<CameraPositionMode>,
@@ -282,8 +282,9 @@ fn on_restart_place_camera(
     *previous_restart = Some(now);
 
     // второе R подряд — всегда портал, каким бы ни был режим: это жест
-    // «потерялся на карте, верни меня к началу», а не смена настройки
-    let mode = if double_press {
+    // «потерялся на карте, верни меня к началу», а не смена настройки.
+    // Того же просит рестарт по смене настройки мира (`RestartEvent::to_portal`)
+    let mode = if double_press || event.to_portal {
         CameraPositionMode::Reset
     } else {
         *mode
