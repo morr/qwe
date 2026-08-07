@@ -10,7 +10,10 @@ mod hotkeys;
 mod navigation;
 mod noise;
 mod roads;
-mod slider;
+// `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
+// нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
+// поднять не может — он тянет панели, карту и настройки
+pub mod slider;
 mod speed;
 mod stats;
 mod tree_rows;
