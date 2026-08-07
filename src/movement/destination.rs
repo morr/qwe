@@ -25,7 +25,7 @@
 //! Но и «один хозяин на тайл» не годится: гарантия «осевшая толпа не
 //! перекрывается» держалась бы, только пока дистанция покоя `2 · radius`
 //! не больше тайла. Её ломает и `NavtileBase::M1` (тайл 1 м против покоя 1.8 м),
-//! и ползунок [`SeparationStyle::radius`], который задуман изменчивым.
+//! и ползунок [`HumanStyle::body_radius`], который задуман изменчивым.
 //!
 //! Отсюда блок: `k = ceil(дистанция покоя / navtile_size())`, слот —
 //! `tile.div_euclid(k)`, цель слота — строго ЦЕНТРАЛЬНЫЙ тайл блока
@@ -66,9 +66,10 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use crate::grid::tile_center;
+use crate::human::HumanStyle;
 use crate::movement::components::{Movable, MovableState, PathfindingRequest};
-use crate::movement::separation::SeparationStyle;
-use crate::navigation::{ArcNavmesh, nearest_tile_where};
+use crate::navigation::ArcNavmesh;
 use crate::settings::{CLAIM_SEARCH_METERS, navtile_size};
 
 /// Слот, зарезервированный этой пешкой под конечную точку (координаты решётки
@@ -150,7 +151,15 @@ impl DestinationClaims {
     }
 
     /// Занять слот под `desired` или ближайший свободный к нему; вернуть слот и
-    /// его целевой тайл.
+    /// его целевой тайл. `from` — где пешка стоит сейчас.
+    ///
+    /// Ближайший — по расстоянию ДО ЦЕЛИ: толпа обязана набиваться от цели
+    /// наружу, иначе первые же пришедшие встанут по краю круга поиска и в
+    /// середине останется дыра. Но среди одинаково близких к цели слот достаётся
+    /// тому, кто ближе К ПЕШКЕ, то есть лежащему с её стороны. Без этого выбор
+    /// внутри кольца произволен: пешка с одного края обода получала место у
+    /// противоположного, шла через всю толпу и толкалась со встречными всю
+    /// дорогу.
     ///
     /// `None` — если в пределах [`SlotSearch`] свободного слота с
     /// проходимой целью нет. Тогда цель остаётся общей и БЕЗ заявки: это ровно
@@ -165,6 +174,7 @@ impl DestinationClaims {
         claimant: Entity,
         previous: Option<IVec2>,
         desired: IVec2,
+        from: Vec2,
         passable: impl Fn(IVec2) -> bool,
     ) -> Option<(IVec2, IVec2)> {
         // старую заявку снимаем ДО поиска: иначе пешка, выбравшая ту же
@@ -174,11 +184,65 @@ impl DestinationClaims {
         }
         let side = self.side;
         let radius = (self.search_meters / (side as f32 * navtile_size())).ceil() as i32;
-        let slot = nearest_tile_where(slot_of(desired, side), radius.max(1), |slot| {
-            self.is_free(slot, claimant) && passable(slot_target(slot, side))
-        })?;
+        let slot = self.nearest_free_slot(
+            claimant,
+            slot_of(desired, side),
+            radius.max(1),
+            from,
+            &passable,
+        )?;
         self.by_slot.insert(slot, claimant);
         Some((slot, slot_target(slot, side)))
+    }
+
+    /// Свободный слот, ближайший к `desired`, а при равенстве — к `from`.
+    ///
+    /// Кольцевой поиск, как `navigation::nearest_tile_where`, но со вторым
+    /// ключом, ради которого он и написан отдельно. Кольца чебышёвские, а
+    /// первый ключ евклидов, поэтому кольцо, где нашёлся лучший кандидат, не
+    /// последнее: тайл кольца `r` не ближе `r`, значит обход идёт, пока
+    /// `r² ≤ лучшего` — на одно кольцо дальше, чем при поиске без второго
+    /// ключа, чтобы кандидаты на том же расстоянии от цели не потерялись.
+    fn nearest_free_slot(
+        &self,
+        claimant: Entity,
+        desired: IVec2,
+        radius: i32,
+        from: Vec2,
+        passable: &impl Fn(IVec2) -> bool,
+    ) -> Option<IVec2> {
+        let mut best: Option<(i32, f32, IVec2)> = None;
+        for ring in 0..=radius {
+            if let Some((to_target, ..)) = best
+                && ring * ring > to_target
+            {
+                break;
+            }
+            for dy in -ring..=ring {
+                for dx in -ring..=ring {
+                    // только само кольцо: его внутренность просмотрена раньше
+                    if ring > 0 && dx.abs() != ring && dy.abs() != ring {
+                        continue;
+                    }
+                    let slot = desired + IVec2::new(dx, dy);
+                    if !self.is_free(slot, claimant) {
+                        continue;
+                    }
+                    let target = slot_target(slot, self.side);
+                    if !passable(target) {
+                        continue;
+                    }
+                    let score = (
+                        dx * dx + dy * dy,
+                        (tile_center(target) - from).length_squared(),
+                    );
+                    if best.is_none_or(|(to_target, to_pawn, _)| score < (to_target, to_pawn)) {
+                        best = Some((score.0, score.1, slot));
+                    }
+                }
+            }
+        }
+        best.map(|(.., slot)| slot)
     }
 
     /// Снять заявку — только если слот числится за этой сущностью: после
@@ -210,7 +274,7 @@ impl DestinationClaims {
 pub fn assign_destination_slots(
     mut commands: Commands,
     navmesh: Res<ArcNavmesh>,
-    style: Res<SeparationStyle>,
+    style: Res<HumanStyle>,
     search: Res<SlotSearch>,
     mut claims: ResMut<DestinationClaims>,
     mut fresh: Query<
@@ -218,6 +282,7 @@ pub fn assign_destination_slots(
             Entity,
             Option<&crate::rng::PawnId>,
             Has<crate::human::Human>,
+            &crate::movement::SimPosition,
             &mut Movable,
             &mut PathfindingRequest,
             Option<&DestinationClaim>,
@@ -228,34 +293,54 @@ pub fn assign_destination_slots(
             Without<crate::demon::DemonChaseTag>,
         ),
     >,
-    mut order: Local<Vec<(u8, u32, Entity)>>,
+    mut order: Local<Vec<(f32, u8, u32, Entity)>>,
 ) {
-    claims.sync(slot_side(style.human_radius() * 2.0), search.0);
+    claims.sync(slot_side(style.body_radius * 2.0), search.0);
 
-    // порядок назначения обязан не зависеть от порядка обхода архетипов:
-    // ключ тот же, что у детерминированного диспетчера
+    // Пакет обрабатывается от ближних к своей цели к дальним: место у цели
+    // должно достаться тому, кто рядом, а не тому, у кого меньше `PawnId`.
+    // Иначе пешка с дальнего края забирает середину, а стоящая вплотную уезжает
+    // наружу — лишний крюк обоим и встречный поток между ними.
+    //
+    // Хвост ключа — вид и номер пешки: сам по себе порядок обхода архетипов
+    // ничего не гарантирует, а равные расстояния в толпе обычное дело. Тот же
+    // ключ, что у детерминированного диспетчера.
     order.clear();
-    order.extend(fresh.iter().map(|(entity, pawn_id, is_human, ..)| {
-        (
-            u8::from(is_human),
-            pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
-            entity,
-        )
-    }));
+    order.extend(
+        fresh
+            .iter()
+            .map(|(entity, pawn_id, is_human, position, _, request, _)| {
+                (
+                    (tile_center(request.end_tile) - position.0).length_squared(),
+                    u8::from(is_human),
+                    pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
+                    entity,
+                )
+            }),
+    );
     if order.is_empty() {
         return;
     }
-    order.sort_unstable();
+    order.sort_unstable_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| (left.1, left.2).cmp(&(right.1, right.2)))
+    });
 
     let navmesh = navmesh.read();
-    for (_, _, entity) in order.iter() {
-        let Ok((_, _, _, mut movable, mut request, claim)) = fresh.get_mut(*entity) else {
+    for (.., entity) in order.iter() {
+        let Ok((_, _, _, position, mut movable, mut request, claim)) = fresh.get_mut(*entity)
+        else {
             continue;
         };
         let desired = request.end_tile;
-        let slot = claims.claim_slot(*entity, claim.map(|claim| claim.0), desired, |tile| {
-            navmesh.is_passable(tile.x, tile.y)
-        });
+        let slot = claims.claim_slot(
+            *entity,
+            claim.map(|claim| claim.0),
+            desired,
+            position.0,
+            |tile| navmesh.is_passable(tile.x, tile.y),
+        );
         match slot {
             Some((slot, target)) => {
                 if target != desired {
@@ -353,7 +438,7 @@ mod tests {
         let desired = IVec2::new(10, 10);
 
         assert_eq!(
-            claims.claim_slot(entity(1), None, desired, anywhere),
+            claims.claim_slot(entity(1), None, desired, tile_center(desired), anywhere),
             Some((desired, desired))
         );
     }
@@ -364,10 +449,10 @@ mod tests {
     fn a_taken_slot_moves_the_claim_to_a_free_neighbour() {
         let mut claims = claims_with(1);
         let desired = IVec2::new(10, 10);
-        claims.claim_slot(entity(1), None, desired, anywhere);
+        claims.claim_slot(entity(1), None, desired, tile_center(desired), anywhere);
 
         let (_, target) = claims
-            .claim_slot(entity(2), None, desired, anywhere)
+            .claim_slot(entity(2), None, desired, tile_center(desired), anywhere)
             .expect("сосед свободен");
         assert_ne!(target, desired);
         // соседний, а не любой: кольцевой поиск отдаёт ближайший
@@ -381,13 +466,35 @@ mod tests {
         let mut claims = claims_with(2);
         let desired = IVec2::new(10, 10);
         let (_, first) = claims
-            .claim_slot(entity(1), None, desired, anywhere)
+            .claim_slot(entity(1), None, desired, tile_center(desired), anywhere)
             .expect("свободно");
         let (_, second) = claims
-            .claim_slot(entity(2), None, desired, anywhere)
+            .claim_slot(entity(2), None, desired, tile_center(desired), anywhere)
             .expect("сосед свободен");
 
         assert_eq!((first - second).abs().max_element(), 2);
+    }
+
+    /// Из одинаково близких к цели слотов пешке достаётся тот, что с ЕЁ
+    /// стороны. Без этого выбор внутри кольца произволен, и подошедшие с разных
+    /// краёв меняются местами: обе идут через занятую цель навстречу друг другу.
+    #[test]
+    fn a_pawn_takes_the_free_slot_on_its_own_side() {
+        let mut claims = claims_with(1);
+        let desired = IVec2::new(10, 10);
+        claims.claim_slot(entity(1), None, desired, tile_center(desired), anywhere);
+
+        let west = tile_center(desired) - Vec2::new(40.0, 0.0);
+        let east = tile_center(desired) + Vec2::new(40.0, 0.0);
+        let (_, from_west) = claims
+            .claim_slot(entity(2), None, desired, west, anywhere)
+            .expect("сосед свободен");
+        let (_, from_east) = claims
+            .claim_slot(entity(3), None, desired, east, anywhere)
+            .expect("сосед свободен");
+
+        assert!(from_west.x < desired.x, "подошедший с запада: {from_west}");
+        assert!(from_east.x > desired.x, "подошедший с востока: {from_east}");
     }
 
     /// Своя же заявка себе не помеха: пешка, выбравшая ту же цель второй раз,
@@ -397,11 +504,17 @@ mod tests {
         let mut claims = claims_with(1);
         let desired = IVec2::new(10, 10);
         let (slot, _) = claims
-            .claim_slot(entity(1), None, desired, anywhere)
+            .claim_slot(entity(1), None, desired, tile_center(desired), anywhere)
             .expect("свободно");
 
         assert_eq!(
-            claims.claim_slot(entity(1), Some(slot), desired, anywhere),
+            claims.claim_slot(
+                entity(1),
+                Some(slot),
+                desired,
+                tile_center(desired),
+                anywhere
+            ),
             Some((slot, desired))
         );
         assert_eq!(claims.len(), 1);
@@ -413,9 +526,10 @@ mod tests {
     fn re_claiming_frees_the_old_slot() {
         let mut claims = claims_with(1);
         let old = IVec2::new(10, 10);
-        claims.claim_slot(entity(1), None, old, anywhere);
+        claims.claim_slot(entity(1), None, old, tile_center(old), anywhere);
 
-        claims.claim_slot(entity(1), Some(old), IVec2::new(40, 40), anywhere);
+        let far = IVec2::new(40, 40);
+        claims.claim_slot(entity(1), Some(old), far, tile_center(far), anywhere);
 
         assert!(claims.is_free(old, entity(2)));
         assert_eq!(claims.len(), 1);
@@ -426,9 +540,10 @@ mod tests {
     #[test]
     fn nothing_free_falls_back_to_the_shared_target() {
         let mut claims = claims_with(1);
+        let desired = IVec2::new(10, 10);
 
         assert_eq!(
-            claims.claim_slot(entity(1), None, IVec2::new(10, 10), |_| false),
+            claims.claim_slot(entity(1), None, desired, tile_center(desired), |_| false),
             None
         );
         assert_eq!(claims.len(), 0);
@@ -439,7 +554,8 @@ mod tests {
     #[test]
     fn changing_the_slot_side_drops_the_index() {
         let mut claims = claims_with(1);
-        claims.claim_slot(entity(1), None, IVec2::new(10, 10), anywhere);
+        let desired = IVec2::new(10, 10);
+        claims.claim_slot(entity(1), None, desired, tile_center(desired), anywhere);
 
         claims.sync(2, CLAIM_SEARCH_METERS);
 
@@ -452,7 +568,7 @@ mod tests {
         let mut claims = claims_with(1);
         let tile = IVec2::new(10, 10);
         let (slot, _) = claims
-            .claim_slot(entity(1), None, tile, anywhere)
+            .claim_slot(entity(1), None, tile, tile_center(tile), anywhere)
             .expect("свободно");
 
         claims.release(slot, entity(2));
@@ -469,11 +585,12 @@ mod tests {
             .add_observer(on_destination_claim_removed);
 
         let pawn = app.world_mut().spawn_empty().id();
+        let tile = IVec2::new(10, 10);
         let slot = {
             let mut claims = app.world_mut().resource_mut::<DestinationClaims>();
             claims.sync(1, CLAIM_SEARCH_METERS);
             claims
-                .claim_slot(pawn, None, IVec2::new(10, 10), anywhere)
+                .claim_slot(pawn, None, tile, tile_center(tile), anywhere)
                 .expect("свободно")
                 .0
         };

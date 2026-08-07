@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::HUMAN_SPEED_SPREAD;
+use crate::settings::{HUMAN_BODY_RADIUS, HUMAN_SPEED_SPREAD};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -42,12 +42,24 @@ pub struct HumanStyle {
     /// Полуширина разброса личной скорости: множитель каждого человека лежит
     /// в 1 ± spread. На нуле вся толпа идёт с базовой скоростью.
     pub spread: f32,
+    /// Радиус «тела», м — сколько личного пространства человек держит вокруг
+    /// себя. Радиус демона не отдельная ручка: он всегда вдвое больше
+    /// (`separation::demon_radius`), как и спрайт.
+    ///
+    /// Живёт здесь, а не в `SeparationStyle`, хотя ползунок появился ради
+    /// расталкивания: это свойство ТЕЛА, и читателей у него двое. Второй —
+    /// слоты назначения (`movement::destination`), которые работают и тогда,
+    /// когда расталкивание выключено, в том числе в детерминированном режиме.
+    /// Пока величина лежала в настройках расталкивания, панель писала у него
+    /// `off`, а ручка продолжала менять геометрию слотов.
+    pub body_radius: f32,
 }
 
 impl Default for HumanStyle {
     fn default() -> Self {
         Self {
             spread: HUMAN_SPEED_SPREAD,
+            body_radius: HUMAN_BODY_RADIUS,
         }
     }
 }

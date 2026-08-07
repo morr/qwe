@@ -1327,7 +1327,11 @@ in `main.rs`.
   (`DestinationClaim`, reverse-indexed by the `DestinationClaims` resource); its goal is
   strictly the block's **centre** tile, so the goals of neighbouring slots sit exactly
   `k · navtile` apart — never less than the rest distance, for any combination of
-  `NavtileBase` and the `SeparationStyle::radius` slider. Without this, separation has no
+  `NavtileBase` and the `HumanStyle::body_radius` slider (Human panel, and the crowd demo).
+  The radius lives with the **human**, not with separation, precisely because slots read it
+  too and they run even when separation is toggled off — while it sat in `SeparationStyle`
+  the World panel printed `off` under determinism and the knob went on reshaping the slot
+  lattice. Without slots, separation has no
   way out at all: `move_moving_entities` only pops a waypoint when the tick's travel
   budget covers the remaining distance, and a pawn pressing into a taken point is pushed
   back exactly as far as it steps, so overlap parks on the equilibrium
@@ -1677,19 +1681,33 @@ in `main.rs`.
     time, so long frames weigh what they cost). `actual` is the only honest one: Bevy
     clips a frame's virtual delta at `max_delta`, so a stall eats simulated time behind
     the regulator's back. The panel and `is_throttled` read `actual`.
-  - **SimLoad — the cost of one tick.** `begin_sim_load` / `end_sim_load` bracket the
-    fixed loop (`RunFixedMainLoopSystems::BeforeFixedMainLoop` / `AfterFixedMainLoop`) and
-    divide the wall time of the frame's `FixedUpdate` run by the `SimTick` delta over the
-    same bracket, smoothed with `SIM_LOAD_SMOOTHING` (0.5 s of real time, so the filter
-    does not change with the frame rate). Published as the `sim/tick_ms` diagnostic and on
-    the panel's third line. **Tick cost is a property of the world, not of the speed** —
-    speed changes how many steps a frame runs, not what a step costs — which is what makes
-    it usable as a feed-forward input. `SimTick` zeroes on restart and city switch, so the
-    delta is a `saturating_sub` and a frame whose counter went backwards is skipped.
-  - **The regulator solves, it does not hunt.** A frame of length `d` carries
-    `d × S × 64` ticks; allowing the simulation `SIM_FRAME_SHARE` of any frame gives
-    `S = 1000 × SIM_FRAME_SHARE / (64 × tick_ms)` — `d` cancels, so the answer does not
-    depend on which frame just happened, on vsync quantisation, or on history.
+  - **SimLoad — what one tick costs, split in two.** `begin_sim_load` / `end_sim_load`
+    bracket the fixed loop (`RunFixedMainLoopSystems::BeforeFixedMainLoop` /
+    `AfterFixedMainLoop`) and divide the wall time of the frame's `FixedUpdate` run by the
+    `SimTick` delta over the same bracket, smoothed with `SIM_LOAD_SMOOTHING` (0.5 s of
+    real time, so the filter does not change with the frame rate). `SimTick` zeroes on
+    restart and city switch, so the delta is a `saturating_sub` and a frame whose counter
+    went backwards is skipped.
+    **The split is the point.** `tick_ms` is CPU work — a property of the world, not of
+    the speed, since speed changes how many steps a frame runs and not what a step costs.
+    `wait_ms` is the main thread standing in `block_on` waiting for the pathfinding pool
+    (`apply_pathfinding_results` reports it through `SimLoad::add_wait`), and that one
+    depends on the speed directly: the answer's deadline is measured in **ticks**
+    (`PATHFINDING_RETIRE_TICKS`), so faster ticks give the pool less real time for the
+    same work. Blending the two into one number closes the regulator on a quantity it
+    controls itself — measured live as tick cost swinging 2.9…7.6 ms with a 2–4 s period
+    and the speed following it 1.3…3.4×. Published as `sim/tick_ms` and `sim/wait_ms`,
+    both on the panel's third line (`tick 1.20 + 3.50 ms wait`).
+  - **The regulator solves, it does not hunt.** Two independent bounds, the smaller wins.
+    *By CPU*: a frame of length `d` carries `d × S × 64` ticks, so allowing the simulation
+    `SIM_FRAME_SHARE` of any frame gives `S = 1000 × share / (64 × tick_ms)` — `d`
+    cancels, so the answer does not depend on which frame just happened, on vsync
+    quantisation, or on history. *By pipeline*: the pool needs `W` real seconds per tick's
+    work, a tick lasts `1/(64 × S)`, so the stall is `W − 1/(64 × S)` and the same
+    "busy at most a share of the frame" gives `S = (1 + share) / (64 × (tick_ms + W))`.
+    `W` is measured, not tuned — `wait_ms + 1/(64 × S)` — and unlike either term alone it
+    does not depend on the speed. No stall measured, no pipeline bound: there is no
+    evidence one exists, and the climb is slew-limited anyway.
     `SIM_FRAME_SHARE` is derived, not tuned: `1 − SIM_RENDER_BUDGET × MIN_SIM_FPS`
     (13 ms per frame reserved for everything that is not simulation → 0.61). Frames then
     settle at `rest / (1 − share)` — a contraction with gain `share < 1`, stable by

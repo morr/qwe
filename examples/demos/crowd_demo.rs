@@ -78,7 +78,7 @@ use qwe::loading::{AppState, PlayPhase};
 use qwe::map::osm::MapData;
 use qwe::movement::{
     DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationStyle,
-    SimPosition, SlotSearch, slot_side,
+    SimPosition, SlotSearch, separation_cell, slot_side,
 };
 use qwe::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
@@ -434,9 +434,10 @@ fn spawn_camera(mut commands: Commands, config: Res<DemoConfig>) {
 /// Ползунки сцены — тот же кит строки-ползунка, что у панелей игры
 /// (`qwe::ui::slider`), чтобы обе величины подбирались глазом на живой толпе, а
 /// не пересборкой. Пишут прямо в ресурсы движения, откуда их берут и сама
-/// механика, и гизмо этой сцены: `SeparationStyle::radius` — «личное
+/// механика, и гизмо этой сцены: `HumanStyle::body_radius` — «личное
 /// пространство», `SlotSearch` — докуда искать свободный слот назначения.
-fn spawn_sliders(mut commands: Commands, style: Res<SeparationStyle>, search: Res<SlotSearch>) {
+/// Обе ручки есть и в панелях игры (`ui/stats.rs`) — эта сцена не заводит своих.
+fn spawn_sliders(mut commands: Commands, style: Res<HumanStyle>, search: Res<SlotSearch>) {
     let panel = commands
         .spawn((
             Node {
@@ -456,15 +457,15 @@ fn spawn_sliders(mut commands: Commands, style: Res<SeparationStyle>, search: Re
         panel,
         SliderRow {
             label: "Body radius",
-            value: style.radius,
-            value_text: format!("{:.2} m", style.radius),
+            value: style.body_radius,
+            value_text: format!("{:.2} m", style.body_radius),
             range: (RADIUS_MIN, RADIUS_MAX, RADIUS_STEP),
         },
         RadiusValueLabel,
         RadiusSlider,
         |change: On<ValueChange<f32>>,
          mut commands: Commands,
-         mut style: ResMut<SeparationStyle>,
+         mut style: ResMut<HumanStyle>,
          mut label: Query<&mut Text, With<RadiusValueLabel>>| {
             let stepped = quantize(change.value, RADIUS_MIN, RADIUS_MAX, RADIUS_STEP);
             // ползунок «управляемый»: он только сообщает о правке, а своё
@@ -472,7 +473,7 @@ fn spawn_sliders(mut commands: Commands, style: Res<SeparationStyle>, search: Re
             // месте, хотя значение уже изменилось (и следующая протяжка
             // считается от старого)
             commands.entity(change.source).insert(SliderValue(stepped));
-            style.radius = stepped;
+            style.body_radius = stepped;
             for mut text in &mut label {
                 text.0 = format!("{stepped:.2} m");
             }
@@ -774,7 +775,7 @@ fn clear_arena(navmesh: &ArcNavmesh, centre: Vec2) {
 fn drive_routes(
     mut commands: Commands,
     navmesh: Res<ArcNavmesh>,
-    style: Res<SeparationStyle>,
+    style: Res<HumanStyle>,
     search: Res<SlotSearch>,
     mut claims: ResMut<DestinationClaims>,
     mut pawns: Query<
@@ -788,7 +789,7 @@ fn drive_routes(
         Without<MovableStateMovingTag>,
     >,
 ) {
-    claims.sync(slot_side(style.human_radius() * 2.0), search.0);
+    claims.sync(slot_side(style.body_radius * 2.0), search.0);
     let navmesh = navmesh.read();
     for (entity, mut movable, mut route, position, claim) in &mut pawns {
         let leg = route.legs[route.next];
@@ -801,9 +802,13 @@ fn drive_routes(
             }
         }
         let desired = world_to_tile(leg);
-        let slot = claims.claim_slot(entity, claim.map(|claim| claim.0), desired, |tile| {
-            navmesh.is_passable(tile.x, tile.y)
-        });
+        let slot = claims.claim_slot(
+            entity,
+            claim.map(|claim| claim.0),
+            desired,
+            position.0,
+            |tile| navmesh.is_passable(tile.x, tile.y),
+        );
         let (target_tile, target) = match slot {
             Some((slot, tile)) => {
                 commands.entity(entity).insert(DestinationClaim(slot));
@@ -961,13 +966,13 @@ fn measure_overlaps(
     pawns: Query<&SimPosition, With<DemoPawn>>,
     camera: Query<&Transform, With<Camera2d>>,
     window: Query<&Window>,
-    style: Res<SeparationStyle>,
+    style: Res<HumanStyle>,
     mut overlaps: ResMut<Overlaps>,
 ) {
     let (Ok(camera), Ok(window)) = (camera.single(), window.single()) else {
         return;
     };
-    let cell = style.cell();
+    let cell = separation_cell(style.body_radius);
     let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x;
     let min = camera.translation.truncate() - half_view;
     let max = camera.translation.truncate() + half_view;
@@ -987,7 +992,7 @@ fn measure_overlaps(
             .push(index);
     }
 
-    let min_distance = style.radius * 2.0;
+    let min_distance = style.body_radius * 2.0;
     let mut pairs = 0usize;
     let mut worst = 0.0f32;
     let mut sum = 0.0f32;
@@ -1021,7 +1026,7 @@ fn measure_overlaps(
 
     overlaps.pawns = positions.len();
     overlaps.total = total;
-    overlaps.radius = style.radius;
+    overlaps.radius = style.body_radius;
     overlaps.pairs = pairs;
     overlaps.worst = worst;
     overlaps.mean = if pairs > 0 { sum / pairs as f32 } else { 0.0 };

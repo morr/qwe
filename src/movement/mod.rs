@@ -17,7 +17,7 @@ pub use self::components::{
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotSearch, assign_destination_slots, slot_side,
 };
-pub use self::separation::SeparationStyle;
+pub use self::separation::{SeparationStyle, demon_radius, separation_cell};
 pub use self::systems::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
 };
@@ -60,7 +60,12 @@ impl Plugin for MovementPlugin {
             .init_resource::<bevy::diagnostic::DiagnosticsStore>()
             // по той же причине: счётчик тиков стоит в цепочке этого плагина,
             // а плагин используется в тестах без `DeterminismPlugin`
-            .init_resource::<crate::determinism::SimTick>();
+            .init_resource::<crate::determinism::SimTick>()
+            // и по ней же — радиус тела: расталкивание и слоты берут его из
+            // настроек людей, а `HumanPlugin` в тестах и в демо-сценах может
+            // отсутствовать. `init_resource` идемпотентен, так что настоящий
+            // `HumanStyle` из `HumanPlugin` это не подменяет
+            .init_resource::<crate::human::HumanStyle>();
 
         app.register_type::<PathfindingRequest>()
             .register_type::<NeedsWanderTarget>()

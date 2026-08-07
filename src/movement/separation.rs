@@ -62,14 +62,6 @@ pub struct SeparationStyle {
     /// поломками — ниже слипание, выше карусель — и подбирается она только
     /// замером в толпе (`examples/demos/crowd_demo.rs`).
     pub sidestep: f32,
-    /// Радиус «тела» человека, м — дефолт [`HUMAN_BODY_RADIUS`]. Радиус демона
-    /// не отдельная ручка: он всегда вдвое больше ([`DEMON_RADIUS_RATIO`]),
-    /// как и спрайт.
-    ///
-    /// Ручка, а не константа, ровно по той же причине, что и `sidestep`:
-    /// «сколько личного пространства» — это вопрос вкуса, который решается
-    /// глазом на живой толпе, и в демо у него свой ползунок.
-    pub radius: f32,
     /// Какая доля продольного толчка доживает до применения (см.
     /// [`damp_along_heading`]). 1 — ничего не давим, и догоняющий в очереди
     /// заметно пятится; 0 — толчок строго поперечный, и толпа, идущая в одну
@@ -81,23 +73,19 @@ pub struct SeparationStyle {
 /// ([`DEMON_SIZE`] против [`HUMAN_SIZE`]).
 pub const DEMON_RADIUS_RATIO: f32 = DEMON_BODY_RADIUS / HUMAN_BODY_RADIUS;
 
-impl SeparationStyle {
-    pub fn human_radius(&self) -> f32 {
-        self.radius
-    }
+/// Радиус тела демона по радиусу тела человека — не отдельная ручка: он всегда
+/// вдвое больше, как и спрайт.
+pub fn demon_radius(human_radius: f32) -> f32 {
+    human_radius * DEMON_RADIUS_RATIO
+}
 
-    pub fn demon_radius(&self) -> f32 {
-        self.radius * DEMON_RADIUS_RATIO
-    }
-
-    /// Сторона одноразовой мелкой сетки соседей. Считается от радиуса, а не
-    /// берётся константой: ячейка ОБЯЗАНА быть не меньше максимальной суммы
-    /// радиусов (демон+демон), иначе перекрывшаяся пара не попадёт в общие
-    /// 3 × 3 ячейки и её не найдут. С ползунком радиуса константа рано или
-    /// поздно оказалась бы мала.
-    pub fn cell(&self) -> f32 {
-        (self.demon_radius() * 2.0).max(SEPARATION_CELL)
-    }
+/// Сторона одноразовой мелкой сетки соседей. Считается от радиуса, а не
+/// берётся константой: ячейка ОБЯЗАНА быть не меньше максимальной суммы
+/// радиусов (демон+демон), иначе перекрывшаяся пара не попадёт в общие
+/// 3 × 3 ячейки и её не найдут. С ручкой радиуса константа рано или поздно
+/// оказалась бы мала.
+pub fn separation_cell(human_radius: f32) -> f32 {
+    (demon_radius(human_radius) * 2.0).max(SEPARATION_CELL)
 }
 
 impl Default for SeparationStyle {
@@ -105,7 +93,6 @@ impl Default for SeparationStyle {
         Self {
             enabled: true,
             sidestep: SEPARATION_SIDESTEP,
-            radius: HUMAN_BODY_RADIUS,
             backstep: SEPARATION_BACKSTEP,
         }
     }
@@ -402,6 +389,10 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
 pub fn separate_pawns(
     mut diagnostics: bevy::diagnostic::Diagnostics,
     style: Res<SeparationStyle>,
+    // радиус тела живёт в настройках ЛЮДЕЙ, а не расталкивания: это свойство
+    // тела, а расталкивание — лишь один из его читателей (второй — слоты
+    // назначения, которые работают и когда расталкивание выключено)
+    human_style: Res<crate::human::HumanStyle>,
     frames: Res<FrameCount>,
     time: Res<Time>,
     navmesh: Res<crate::navigation::ArcNavmesh>,
@@ -445,8 +436,8 @@ pub fn separate_pawns(
     let min = camera_position - half_view;
     let max = camera_position + half_view;
 
-    let human_radius = style.human_radius();
-    let demon_radius = style.demon_radius();
+    let human_radius = human_style.body_radius;
+    let demon_radius = demon_radius(human_radius);
 
     state.pawns.clear();
     {
@@ -494,7 +485,7 @@ pub fn separate_pawns(
         Tuning {
             fraction,
             sidestep: style.sidestep,
-            cell: style.cell(),
+            cell: separation_cell(human_radius),
         },
     );
 

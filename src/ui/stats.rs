@@ -22,13 +22,14 @@ use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
-use crate::movement::SeparationStyle;
+use crate::movement::{SeparationStyle, SlotSearch};
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::settings::{
-    DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
-    DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
-    DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
-    DEMON_SPEED_FACTOR_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
+    CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, DEMON_CAP_MAX, DEMON_CAP_MIN,
+    DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN, DEMON_LUNGE_BOOST_STEP,
+    DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN, DEMON_SPAWN_INTERVAL_STEP,
+    DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN, DEMON_SPEED_FACTOR_STEP, HUMAN_BODY_RADIUS_MAX,
+    HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
     HUMAN_SPEED_SPREAD_STEP,
 };
 use crate::telemetry::Telemetry;
@@ -100,13 +101,27 @@ struct DeterminismValueLabel;
 #[derive(Component)]
 struct SeedField;
 
-/// Панель Human — одна строка, поэтому без enum'а строк: пара маркеров на
-/// текст значения и на сам бегунок. Появится вторая — заводить `HumanRow`.
+/// Панель Human: разброс скоростей и радиус тела. Строк пока две, поэтому без
+/// enum'а — по паре маркеров на строку; появится третья, заводить `HumanRow`.
 #[derive(Component)]
 struct SpreadValueLabel;
 
 #[derive(Component)]
 struct SpreadSlider;
+
+#[derive(Component)]
+struct BodyRadiusValueLabel;
+
+#[derive(Component)]
+struct BodyRadiusSlider;
+
+/// Строка радиуса поиска слота назначения — в панели World: механизм
+/// видо-независимый, как и расталкивание.
+#[derive(Component)]
+struct SlotSearchValueLabel;
+
+#[derive(Component)]
+struct SlotSearchSlider;
 
 pub struct UiStatsPlugin;
 
@@ -126,6 +141,7 @@ impl Plugin for UiStatsPlugin {
                 ),
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
+                sync_slot_search_value.run_if(resource_changed::<SlotSearch>),
                 // метка BRP стоит только в агентских запусках, и только тогда
                 // панели есть что обходить
                 offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
@@ -300,6 +316,7 @@ fn render_stats_panel(
     style: Res<DemonStyle>,
     human_style: Res<HumanStyle>,
     separation: Res<SeparationStyle>,
+    slot_search: Res<SlotSearch>,
     determinism: Res<Determinism>,
     seed: Res<WorldSeed>,
 ) {
@@ -560,6 +577,41 @@ fn render_stats_panel(
         SpreadSlider,
         on_spread_change,
     );
+
+    // радиус тела — здесь, а не в World рядом с тумблером расталкивания: это
+    // свойство человека, и читает его не только расталкивание, но и слоты
+    // назначения, которые работают даже когда тумблер выключен
+    spawn_slider_row(
+        &mut commands,
+        human_panel,
+        SliderRow {
+            label: "Body radius",
+            value: human_style.body_radius,
+            value_text: body_radius_value(&human_style),
+            range: (
+                HUMAN_BODY_RADIUS_MIN,
+                HUMAN_BODY_RADIUS_MAX,
+                HUMAN_BODY_RADIUS_STEP,
+            ),
+        },
+        BodyRadiusValueLabel,
+        BodyRadiusSlider,
+        on_body_radius_change,
+    );
+
+    spawn_slider_row(
+        &mut commands,
+        world_panel,
+        SliderRow {
+            label: "Slot search",
+            value: slot_search.0,
+            value_text: slot_search_value(&slot_search),
+            range: (CLAIM_SEARCH_MIN, CLAIM_SEARCH_MAX, CLAIM_SEARCH_STEP),
+        },
+        SlotSearchValueLabel,
+        SlotSearchSlider,
+        on_slot_search_change,
+    );
 }
 
 /// Счётчики панели. `Human` снимается с человека в момент смерти, а с трупа не
@@ -809,17 +861,90 @@ fn on_lunge_change(
 fn sync_human_values(
     style: Res<HumanStyle>,
     mut commands: Commands,
-    mut label: Query<&mut Text, With<SpreadValueLabel>>,
-    slider: Query<(Entity, &SliderValue), With<SpreadSlider>>,
+    mut spread_label: Query<&mut Text, (With<SpreadValueLabel>, Without<BodyRadiusValueLabel>)>,
+    spread_slider: Query<(Entity, &SliderValue), With<SpreadSlider>>,
+    mut radius_label: Query<&mut Text, (With<BodyRadiusValueLabel>, Without<SpreadValueLabel>)>,
+    radius_slider: Query<(Entity, &SliderValue), With<BodyRadiusSlider>>,
 ) {
-    for mut text in &mut label {
+    for mut text in &mut spread_label {
         text.0 = spread_value(&style);
     }
-    for (entity, value) in &slider {
+    for (entity, value) in &spread_slider {
         if (value.0 - style.spread).abs() > f32::EPSILON {
             commands.entity(entity).insert(SliderValue(style.spread));
         }
     }
+    for mut text in &mut radius_label {
+        text.0 = body_radius_value(&style);
+    }
+    for (entity, value) in &radius_slider {
+        if (value.0 - style.body_radius).abs() > f32::EPSILON {
+            commands
+                .entity(entity)
+                .insert(SliderValue(style.body_radius));
+        }
+    }
+}
+
+/// Подпись и бегунок радиуса поиска слота вслед за ресурсом.
+fn sync_slot_search_value(
+    search: Res<SlotSearch>,
+    mut commands: Commands,
+    mut label: Query<&mut Text, With<SlotSearchValueLabel>>,
+    slider: Query<(Entity, &SliderValue), With<SlotSearchSlider>>,
+) {
+    for mut text in &mut label {
+        text.0 = slot_search_value(&search);
+    }
+    for (entity, value) in &slider {
+        if (value.0 - search.0).abs() > f32::EPSILON {
+            commands.entity(entity).insert(SliderValue(search.0));
+        }
+    }
+}
+
+fn on_body_radius_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut style: ResMut<HumanStyle>,
+) {
+    let stepped = quantize(
+        change.value,
+        HUMAN_BODY_RADIUS_MIN,
+        HUMAN_BODY_RADIUS_MAX,
+        HUMAN_BODY_RADIUS_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (style.body_radius - stepped).abs() > f32::EPSILON {
+        style.body_radius = stepped;
+    }
+}
+
+fn on_slot_search_change(
+    change: On<ValueChange<f32>>,
+    mut commands: Commands,
+    mut search: ResMut<SlotSearch>,
+) {
+    let stepped = quantize(
+        change.value,
+        CLAIM_SEARCH_MIN,
+        CLAIM_SEARCH_MAX,
+        CLAIM_SEARCH_STEP,
+    );
+    commands.entity(change.source).insert(SliderValue(stepped));
+    if (search.0 - stepped).abs() > f32::EPSILON {
+        search.0 = stepped;
+    }
+}
+
+/// Значение строки радиуса тела. В метрах: «личное пространство» — это
+/// дистанция покоя, вдвое больше, и она читается по спрайту (1 м).
+fn body_radius_value(style: &HumanStyle) -> String {
+    format!("{:.2} m", style.body_radius)
+}
+
+fn slot_search_value(search: &SlotSearch) -> String {
+    format!("{:.0} m", search.0)
 }
 
 fn on_spread_change(
