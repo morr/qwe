@@ -1120,7 +1120,9 @@ in `main.rs`.
   `pos_of` closure every query takes. Storing `Vec2` in the cell would require a
   full rebuild every tick, or positions go stale by up to a cell size and chase/panic
   silently miss. `nearest_in_range_where` — nearest entity passing a filter;
-  `for_each_in_cells_around` — raw candidate walk, caller does the exact distance.
+  `for_each_in_cells_around` — raw candidate walk, caller does the exact distance;
+  `for_each_in_rect` — the same raw walk over cells overlapping a rect (the viewport,
+  for separation).
 - **The human grid is incremental, the demon grid is rebuilt.** Humans (~20 000):
   `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and death/despawn
   (`On<Remove>` fires on despawn too — escape, restart, city switch all funnel through
@@ -1130,6 +1132,32 @@ in `main.rs`.
   crossings, not with population or how many pawns the camera lets move. Demons (~100):
   full rebuild per tick in `rebuild_demon_grid` is cheaper than bookkeeping, and the
   lunge moves demon `SimPosition` outside the mover system anyway.
+- **Separation** (`movement/separation.rs`, toggle in the World panel, persisted) — soft
+  pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
+  0.45 m / `DEMON_BODY_RADIUS` 0.9 m) apart. Deliberately local and cosmetic, three
+  gates in order: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
+  right after `move_moving_entities` — the only point where the tick's positions are
+  final and the snapshot is already taken, so the push reaches the screen through
+  interpolation — but at 30x that schedule runs ~1920 ticks/s and even 0.03 ms per tick
+  would eat ~6% of a real second; ticks between runs only accumulate virtual dt); **zoom
+  below `SEPARATION_MAX_ZOOM`** (same 0.75 as the wander-dispatch cutoff — farther out a
+  pawn is 1–2 px and overlap does not read). Candidates come from both coarse grids via
+  `for_each_in_rect` over the viewport (`VIEW_MARGIN` slack), then a throwaway fine grid
+  (`SEPARATION_CELL` 2 m, head+next linked lists in `Local` buffers — no steady-state
+  allocations) resolves pairs: each pair sheds `SEPARATION_RATE` (8/s) of its overlap per
+  virtual second, clamped to `SEPARATION_MAX_STEP` (0.3 m) per run, split by mobility
+  (human 1.0, demon 0.25, devouring demon 0 — it pushes but never moves off its corpse).
+  Coincident positions split along a deterministic per-entity hash axis (the
+  `personal_spread` trick). A push into an impassable tile is dropped (`rescue_*` only
+  catches failed path searches, it would never find a pawn squeezed into a wall); a push
+  that crosses a 60 m cell boundary re-inserts the human into its grid. **Lunging demons
+  (`DemonLungeTag`) are exempt entirely** — the lunge writes `SimPosition` itself and
+  must close to `KILL_DISTANCE`, which is *smaller* than the demon+human radius sum;
+  separation fighting it would starve kills. Corpses are outside by construction (no
+  `SimPosition`). The sim is knowingly camera-dependent — the user's viewport-only
+  optimization accepts that; off-screen crowds still stack and pay nothing.
+  `sim/separation_ms` measures **per run** (~60/s), not per tick like its `sim/*_ms`
+  neighbours.
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
   walks, zero at spawn so nobody stands around after launch; then 80%
   head to a random building anywhere in the city — long routes, the real pathfinding

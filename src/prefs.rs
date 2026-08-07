@@ -26,7 +26,7 @@ use crate::city::City;
 use crate::demon::DemonStyle;
 use crate::human::HumanStyle;
 use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
-use crate::movement::DrawMovePaths;
+use crate::movement::{DrawMovePaths, SeparationStyle};
 use crate::navigation::{PathfindingAlgorithm, PolymeshDebug};
 use crate::settings::NavtileBase;
 use crate::ui::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
@@ -62,6 +62,7 @@ impl Plugin for PrefsPlugin {
                     .or_else(resource_changed::<RoadStyle>)
                     .or_else(resource_changed::<DemonStyle>)
                     .or_else(resource_changed::<HumanStyle>)
+                    .or_else(resource_changed::<SeparationStyle>)
                     // сам сохранённый вид камеры (`SavedCameraView`) пишется не
                     // отсюда, а из `camera::save_camera_view_on_exit`
                     .or_else(resource_changed::<CameraPositionMode>),

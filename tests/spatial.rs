@@ -111,6 +111,38 @@ fn incremental_insert_move_remove() {
     grid.remove(walker);
 }
 
+/// Обход прямоугольника отдаёт кандидатов из всех накрытых ячеек — и только
+/// из них; прямоугольник за краем карты прижимается, а не паникует.
+#[test]
+fn rect_walk_covers_exactly_the_overlapping_cells() {
+    let entries = [
+        // внутри прямоугольника
+        (entity(1), Vec2::new(100.0, 100.0)),
+        // вне прямоугольника, но в накрытой им ячейке — грубый охват отдаёт
+        (entity(2), Vec2::new(179.0, 100.0)),
+        // ячейка не накрыта
+        (entity(3), Vec2::new(500.0, 100.0)),
+    ];
+    let mut grid = SpatialGrid::<Demon>::default();
+    grid.rebuild(entries.into_iter());
+
+    let mut seen = Vec::new();
+    grid.for_each_in_rect(Vec2::new(90.0, 90.0), Vec2::new(150.0, 110.0), |e| {
+        seen.push(e)
+    });
+    // `Ord` у `Entity` идёт не по индексу — сортируем по нему явно
+    seen.sort_by_key(|e: &Entity| e.index());
+    assert_eq!(seen, vec![entity(1), entity(2)]);
+
+    // прямоугольник, вылезающий за юго-западный угол карты: край прижат,
+    // накрыты ячейки 0..1 — только entity(1)
+    let mut seen = 0;
+    grid.for_each_in_rect(Vec2::new(-100.0, -100.0), Vec2::new(110.0, 110.0), |_| {
+        seen += 1
+    });
+    assert_eq!(seen, 1);
+}
+
 #[test]
 fn insert_into_same_cell_keeps_single_entry() {
     let mut grid = SpatialGrid::<Demon>::default();

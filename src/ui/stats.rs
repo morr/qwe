@@ -6,14 +6,18 @@
 //! Счётчики до этого жили только в BRP (`count Human`, `res get Telemetry`), то
 //! есть смотреть на симуляцию без агентского клиента рядом было нечем.
 
+use bevy::color::Mix;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui_widgets::{SliderValue, ValueChange};
+use bevy::ui::Pressed;
+use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
 
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::slider::{SliderRow, quantize, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
 use crate::human::{Human, HumanStyle};
+use crate::movement::SeparationStyle;
 use crate::settings::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
     DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
@@ -29,6 +33,15 @@ const PANEL_WIDTH_PX: f32 = 210.0;
 /// (`slider.rs`, 0.75): те лежат на своей плотной подложке, а счётчики
 /// читаются на фоне карты, и на бежевой Туле серый на сером пропадал.
 const LABEL_COLOR: Color = Color::srgb(0.88, 0.91, 0.88);
+
+/// Подсветка строки-кнопки — как у панелей Buildings/Trees.
+const ROW_LIGHTEN: f32 = 0.0;
+const HOVER_LIGHTEN: f32 = 0.12;
+const PRESSED_LIGHTEN: f32 = 0.24;
+
+fn row_color(lighten: f32) -> Color {
+    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
+}
 
 /// Колонка обеих панелей: по ней система развода с меткой BRP правит `top`.
 /// Панели внутри неё стыкует обычный флекс — в отличие от нижних колонок
@@ -62,6 +75,14 @@ struct DemonValueLabel(DemonRow);
 #[derive(Component)]
 struct DemonSlider(DemonRow);
 
+/// Строка-кнопка тумблера расталкивания — адресует и подсветку, и подпись.
+#[derive(Component)]
+struct SeparationRow;
+
+/// Текст значения в строке тумблера.
+#[derive(Component)]
+struct SeparationValueLabel;
+
 /// Панель Human — одна строка, поэтому без enum'а строк: пара маркеров на
 /// текст значения и на сам бегунок. Появится вторая — заводить `HumanRow`.
 #[derive(Component)]
@@ -78,6 +99,8 @@ impl Plugin for UiStatsPlugin {
             Update,
             (
                 sync_world_counts,
+                highlight_separation_row,
+                sync_separation_value.run_if(resource_changed::<SeparationStyle>),
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
                 // метка BRP стоит только в агентских запусках, и только тогда
@@ -158,6 +181,7 @@ fn render_stats_panel(
     mut commands: Commands,
     style: Res<DemonStyle>,
     human_style: Res<HumanStyle>,
+    separation: Res<SeparationStyle>,
 ) {
     let column = commands
         .spawn((
@@ -177,39 +201,100 @@ fn render_stats_panel(
             GameUiRoot,
             Visibility::Hidden,
             Name::new("world_panels"),
-            children![(
-                panel_node(),
-                BackgroundColor(ui_color(UiOpacity::Medium)),
-                Name::new("world_stats_panel"),
-                children![
-                    panel_title("World"),
-                    // счётчики на своей плотной подложке, как строки-ползунки:
-                    // на полупрозрачном фоне панели поверх светлой карты они
-                    // читались заметно хуже соседних строк
-                    (
-                        Node {
-                            display: Display::Flex,
-                            flex_direction: FlexDirection::Column,
-                            row_gap: px(2.),
-                            padding: UiRect {
-                                top: px(4.),
-                                right: px(8.),
-                                bottom: px(6.),
-                                left: px(8.),
-                            },
-                            ..default()
-                        },
-                        BackgroundColor(ui_color(UiOpacity::Heavy)),
-                        children![
-                            count_row("Pawns", StatRow::Pawns),
-                            count_row("Demons", StatRow::Demons),
-                            count_row("Souls reaped", StatRow::Souls),
-                        ],
-                    ),
-                ],
-            )],
         ))
         .id();
+
+    // панель World отдельной сущностью по той же причине, что Demon ниже:
+    // строке-тумблеру нужен `.observe()`, а он вешается на готовую сущность
+    let world_panel = commands
+        .spawn((
+            panel_node(),
+            BackgroundColor(ui_color(UiOpacity::Medium)),
+            Name::new("world_stats_panel"),
+            children![
+                panel_title("World"),
+                // счётчики на своей плотной подложке, как строки-ползунки:
+                // на полупрозрачном фоне панели поверх светлой карты они
+                // читались заметно хуже соседних строк
+                (
+                    Node {
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(2.),
+                        padding: UiRect {
+                            top: px(4.),
+                            right: px(8.),
+                            bottom: px(6.),
+                            left: px(8.),
+                        },
+                        ..default()
+                    },
+                    BackgroundColor(ui_color(UiOpacity::Heavy)),
+                    children![
+                        count_row("Pawns", StatRow::Pawns),
+                        count_row("Demons", StatRow::Demons),
+                        count_row("Souls reaped", StatRow::Souls),
+                    ],
+                ),
+            ],
+        ))
+        .id();
+    commands.entity(column).add_child(world_panel);
+
+    // тумблер расталкивания пешек в кадре (`movement/separation.rs`) — в
+    // World, а не в Demon/Human: механизм видо-независимый
+    let separation_row = commands
+        .spawn((
+            Button,
+            SeparationRow,
+            Pickable::default(),
+            // `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны
+            Hovered::default(),
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6.),
+                padding: UiRect {
+                    top: px(4.),
+                    right: px(8.),
+                    bottom: px(4.),
+                    left: px(8.),
+                },
+                ..default()
+            },
+            BackgroundColor(row_color(ROW_LIGHTEN)),
+            children![
+                (
+                    Text::new("Separation"),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                    Node {
+                        flex_grow: 1.,
+                        ..default()
+                    },
+                ),
+                (
+                    SeparationValueLabel,
+                    Text::new(separation_value(&separation)),
+                    TextFont {
+                        font_size: FontSize::Px(12.),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ),
+            ],
+        ))
+        .observe(
+            |_activate: On<Activate>, mut style: ResMut<SeparationStyle>| {
+                style.enabled = !style.enabled;
+            },
+        )
+        .id();
+    commands.entity(world_panel).add_child(separation_row);
 
     // панель Demon отдельной сущностью, а не внутри `children!`:
     // `spawn_slider_row` берёт родителя сущностью, а там её ещё нет
@@ -337,6 +422,37 @@ fn sync_world_counts(
         };
         text.set_if_neq(Text(value.to_string()));
     }
+}
+
+/// Подсветка строки тумблера под курсором и при нажатии (как у Buildings).
+fn highlight_separation_row(
+    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<SeparationRow>>,
+) {
+    for (hovered, pressed, mut background) in &mut rows {
+        let lighten = if pressed {
+            PRESSED_LIGHTEN
+        } else if hovered.get() {
+            HOVER_LIGHTEN
+        } else {
+            ROW_LIGHTEN
+        };
+        background.0 = row_color(lighten);
+    }
+}
+
+/// Подпись тумблера вслед за ресурсом — клик, BRP или восстановленные
+/// настройки одинаково двигают текст.
+fn sync_separation_value(
+    style: Res<SeparationStyle>,
+    mut labels: Query<&mut Text, With<SeparationValueLabel>>,
+) {
+    for mut text in &mut labels {
+        text.0 = separation_value(&style);
+    }
+}
+
+fn separation_value(style: &SeparationStyle) -> String {
+    if style.enabled { "on" } else { "off" }.to_string()
 }
 
 /// Подписи и бегунки вслед за ресурсом — правка извне (BRP, восстановленные

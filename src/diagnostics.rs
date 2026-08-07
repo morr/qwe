@@ -49,6 +49,10 @@ pub const SIM_PANIC_MS: DiagnosticPath = DiagnosticPath::const_new("sim/panic_ms
 pub const SIM_FLEE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/flee_ms");
 pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms");
 pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms");
+/// Расталкивание меряется на **прогон**, а не на тик: оно гейтится «не чаще
+/// раза в кадр» (`movement/separation.rs`), так что прогонов ~60 в секунду
+/// против ~64 × time_scale тиков у остальных `sim/*_ms`.
+pub const SIM_SEPARATION_MS: DiagnosticPath = DiagnosticPath::const_new("sim/separation_ms");
 
 /// Записать длительность системы, начавшейся в `started`.
 pub fn measure_ms(
@@ -81,6 +85,7 @@ impl Plugin for GameDiagnosticsPlugin {
         .register_diagnostic(Diagnostic::new(SIM_FLEE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_SEPARATION_MS).with_suffix(" ms"))
         .add_plugins(EntityCountDiagnosticsPlugin::default())
         .add_systems(Update, measure_pathfinding_in_flight);
     }

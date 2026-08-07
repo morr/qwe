@@ -1,4 +1,5 @@
 mod components;
+mod separation;
 mod systems;
 #[cfg(test)]
 mod tests;
@@ -11,6 +12,7 @@ pub use self::components::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
     PathfindingRequest, PathfindingTask, PreviousSimPosition, SimPosition,
 };
+pub use self::separation::SeparationStyle;
 pub use self::systems::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
 };
@@ -34,6 +36,8 @@ impl Plugin for MovementPlugin {
             .register_type::<PreviousSimPosition>()
             .init_resource::<DrawMovePaths>()
             .register_type::<DrawMovePaths>()
+            .init_resource::<SeparationStyle>()
+            .register_type::<SeparationStyle>()
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется
             .init_resource::<bevy::diagnostic::DiagnosticsStore>();
@@ -80,6 +84,10 @@ impl Plugin for MovementPlugin {
                 (
                     snapshot_previous_sim_positions.before(SimSet::SpatialRebuild),
                     move_moving_entities.after(SimSet::HumanBehavior),
+                    // расталкивание — строго после шага движения: только там
+                    // позиции тика финальны, а снимок уже сделан, и толчок
+                    // доедет до экрана интерполяцией
+                    separation::separate_pawns.run_if(in_state(AppState::Playing)),
                 )
                     .chain(),
             )

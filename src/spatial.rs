@@ -126,6 +126,22 @@ impl<T: Send + Sync + 'static> SpatialGrid<T> {
         }
     }
 
+    /// Обойти всех кандидатов в ячейках, пересекающих прямоугольник
+    /// `[min, max]` (мировые метры). Грубый охват, как у
+    /// `for_each_in_cells_around`: точное попадание в прямоугольник меряет
+    /// вызывающий. Выходы за карту прижимаются к краю самим `cell_of`.
+    pub fn for_each_in_rect(&self, min: Vec2, max: Vec2, mut f: impl FnMut(Entity)) {
+        let lo = cell_of(min);
+        let hi = cell_of(max);
+        for x in lo.x..=hi.x {
+            for y in lo.y..=hi.y {
+                for &entity in &self.cells[flat_index(IVec2::new(x, y))] {
+                    f(entity);
+                }
+            }
+        }
+    }
+
     /// Ближайшая сущность не дальше `radius` от `pos`; позиция кандидата —
     /// из `pos_of` (живой `SimPosition`), `None` пропускает кандидата.
     pub fn nearest_in_range(
