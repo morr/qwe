@@ -1627,23 +1627,33 @@ in `main.rs`.
     `actual` is the only honest one: Bevy clips a frame's virtual delta at `max_delta`, so
     a stall eats simulated time behind the regulator's back. The panel and `is_throttled`
     read `actual`.
-  - **Speed ceiling** — Bevy hands `FixedUpdate` at most `Time<Virtual>::max_delta`
-    (`MAX_FRAME_DELTA` = 0.5 s, pinned explicitly at startup; was Bevy's default 0.25,
-    which put the ceiling at exactly 15x under 60 Hz vsync — zero margin, any fps jitter
-    knocked a requested 15x down) of virtual time per frame, so a speed of S is only
-    real if `S ≤ fps × MAX_FRAME_DELTA` — 30 at 60 fps, 20 at 40 fps. Above the ceiling the ticks pile into frames, `Update` (path dispatcher,
-    input, UI) starves, and humans that finish a route just stand there.
-    `throttle_speed_to_fps` closes the loop on measured fps and eases `effective` toward
-    the ceiling (`SPEED_SETTLE_RATE` up, the faster `SPEED_DROP_RATE` down). It throttles
-    **below 1× too** — under 4 fps even real time is unaffordable — down to
-    `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited, and
-    `1x → 0.42x` while something (the async northstar build, say) is starving the
-    frame.
+  - **The throttle defends a frame rate** — `MIN_SIM_FPS` (30). Speed `S` costs `64 × S`
+    ticks per real second, which lengthens frames; when frames drop below the target,
+    lowering `S` is the only knob that brings them back, and `throttle_speed_to_fps`
+    turns it: `affordable = effective × fps / MIN_SIM_FPS`, eased in
+    (`SPEED_SETTLE_RATE` up, the faster `SPEED_DROP_RATE` down), floored at
+    `MIN_SIM_SPEED` (0.1). **At or above the target it cannot throttle at all** —
+    `affordable ≥ effective` there, so the speed only ever climbs toward `requested`.
+    The button shows `15x → 8.6x` when limited.
+  - **`MAX_FRAME_DELTA` is not a speed ceiling**, and reading it as one is the mistake
+    this loop was built on for a while. `Time<Virtual>::max_delta` clamps the **raw**
+    frame delta, *before* the speed multiplies it
+    (`bevy_time/src/virt.rs::advance_with_raw_delta`) — it is "the longest real frame we
+    still count in full" (0.5 s here, against Bevy's default 0.25), and its only job is
+    to stop a freeze from becoming an avalanche of ticks. The old
+    `affordable = fps × MAX_FRAME_DELTA` therefore did not mean what it said: its
+    equilibrium `S = fps × 0.5` is `fps = 2 × S`, i.e. **the frame rate was assigned by
+    the speed** — a requested 10× that the machine could only run at 1.6× gave 3 fps, by
+    construction rather than by fault. Measured after the fix, same map and camera:
+    **1× holds 60 fps with `actual = 1.00`; a requested 10× settles around 30 fps** (it
+    still swings — the workload itself is uneven as demons spawn toward the cap).
+    A frame longer than `MAX_FRAME_DELTA` silently hands the simulation less time than
+    really passed, and the regulator cannot see that (it is closed on fps, not on
+    `actual`) — which is why the constant is generous rather than tight.
   - **Requested cap** — `MAX_SIM_SPEED` (30x, the top of `SPEED_LADDER`) is a hard
-    ceiling on `requested`, equal to the fps ceiling at a steady 60 fps: the ladder never
-    steps past it, and `throttle_speed_to_fps` clamps `requested` itself so a BRP write
-    cannot exceed it either. Asking for more than the hardware can hand `FixedUpdate`
-    only makes the panel display a number that never happens.
+    ceiling on `requested`: a deliberate product limit, not a hardware one. The ladder
+    never steps past it, and `throttle_speed_to_fps` clamps `requested` itself so a BRP
+    write cannot exceed it either.
   - Set the requested speed over BRP with `res set SimSpeed .requested N` (clamped to
     `MAX_SIM_SPEED`) — `brp speed` writes `Time<Virtual>` directly and the throttle
     overwrites it on the next frame.

@@ -12,8 +12,8 @@ use bevy::prelude::*;
 use crate::loading::PlayPhase;
 use crate::restart::RestartEvent;
 use crate::settings::{
-    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MAX_SIM_SPEED, MIN_SIM_SPEED, SPEED_DROP_RATE,
-    SPEED_LADDER, SPEED_SETTLE_RATE,
+    ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MAX_SIM_SPEED, MIN_SIM_FPS, MIN_SIM_SPEED,
+    SIM_FPS_HYSTERESIS, SPEED_DROP_RATE, SPEED_LADDER, SPEED_SETTLE_RATE,
 };
 
 /// Скорость симуляции: `requested` крутит пользователь лесенкой, `effective`
@@ -108,10 +108,9 @@ impl Plugin for SimTimePlugin {
     }
 }
 
-/// `Time<Virtual>::max_delta` — сколько виртуального времени отдаётся
-/// `FixedUpdate` за один кадр. Значение прибито явно: из него выведен потолок
-/// скорости в `throttle_speed_to_fps`, и молчаливая смена дефолта Bevy сломала
-/// бы расчёт.
+/// Самый длинный честный кадр — константа, и от скорости симуляции она не
+/// зависит (см. [`MAX_FRAME_DELTA`]). Прибита явно, чтобы молчаливая смена
+/// дефолта Bevy не поменяла поведение на фризах.
 fn pin_max_delta(mut time: ResMut<Time<Virtual>>) {
     time.set_max_delta(std::time::Duration::from_secs_f32(MAX_FRAME_DELTA));
 }
@@ -165,34 +164,49 @@ fn modify_time(
     }
 }
 
-/// Авто-замедление под fps.
+/// Авто-замедление под fps: **срабатывает только ниже [`MIN_SIM_FPS`]**, и
+/// тогда снижает скорость ровно настолько, чтобы кадры вернулись к этому
+/// числу.
 ///
-/// За один кадр Bevy отдаёт `FixedUpdate` не больше `max_delta` виртуального
-/// времени, то есть `max_delta × 64` тиков. Симуляция на скорости S требует
-/// `64 × S` тиков в секунду, значит `64 × S ≤ fps × max_delta × 64`, откуда
-/// **S ≤ fps × max_delta**. Выше этого потолка запрошенная скорость всё равно
-/// не выдаётся: тики упираются в кадры, `Update` (диспетчер путей, ввод, UI)
-/// начинает отставать от симуляции, и пешки, закончившие маршрут, стоят в
-/// ожидании следующего кадра. Так что скорость лучше честно снизить, чем
-/// делать вид, что идёт 15x.
+/// Симуляция на скорости `S` требует `64 × S` тиков в реальную секунду. Чем
+/// их больше, тем длиннее кадр; когда кадров становится меньше
+/// [`MIN_SIM_FPS`], скорость и есть та единственная ручка, которой это можно
+/// вернуть — вот регулятор её и крутит.
 ///
-/// Потолок не ограничен снизу единицей: на 2 fps посильна ровно 1x, а ниже
-/// симуляция не тянет и реальное время. Делать вид, что идёт 1x, там нельзя —
-/// Bevy всё равно обрежет кадровую дельту по `max_delta`, только молча; лучше
-/// честно снизить команду (до `MIN_SIM_SPEED`), тогда кадр считает меньше
-/// тиков и fps получает шанс подняться.
+/// **Причём тут `max_delta`: ни при чём.** Прежний порог считался как
+/// `fps × MAX_FRAME_DELTA` и опирался на прочтение «за кадр Bevy отдаёт не
+/// больше `max_delta` виртуального времени». Прочтение неверное: клампится
+/// сырая дельта, до умножения на скорость
+/// (`bevy_time/src/virt.rs::advance_with_raw_delta`). Скорости эта константа
+/// не ограничивает вовсе, а формула означала не то, чем выглядела: её
+/// равновесие `S = fps × 0.5` — это `fps = 2 × S`, кадры жёстко назначались
+/// скоростью.
 ///
-/// Регулятор замкнут по измеренному fps, поэтому идёт к цели плавно
-/// (`SPEED_SETTLE_RATE`): резкий скачок раскачал бы петлю fps → потолок → fps.
-/// Вниз — быстрее (`SPEED_DROP_RATE`), см. константу.
+/// У регулятора три зоны, а не две, и средняя обязательна:
+///
+/// - `fps < MIN_SIM_FPS` — режем пропорционально недобору (вдвое меньше
+///   кадров — вдвое меньше скорость);
+/// - `fps > MIN_SIM_FPS × SIM_FPS_HYSTERESIS` — разгоняем к запрошенной;
+/// - между — **не трогаем ничего**.
+///
+/// Полоса посредине — не вкусовщина, без неё петля автоколеблется; почему
+/// именно так и почему сглаживанием это не лечится, разобрано у
+/// [`SIM_FPS_HYSTERESIS`]. Внутри своих зон шаг всё равно плавный
+/// (`SPEED_SETTLE_RATE` вверх, более быстрый `SPEED_DROP_RATE` вниз).
 fn throttle_speed_to_fps(
     mut time: ResMut<Time<Virtual>>,
     mut speed: ResMut<SimSpeed>,
     diagnostics: Res<DiagnosticsStore>,
 ) {
+    // Сырое значение, а не `smoothed()`: сглаживание в петле должно быть
+    // ровно одно, и оно уже есть — `approach`. Экспоненциальное среднее
+    // диагностики (окно ~2 с) добавляло бы второе, причём с фазовым
+    // запаздыванием: команда считалась бы по fps, который принадлежит уже
+    // другой скорости. Замер это и показал — вместо ровных 30 кадры ходили
+    // 17…63. Собственный шум сырого fps съедает `approach` за ~20 кадров.
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|diagnostic| diagnostic.smoothed())
+        .and_then(|diagnostic| diagnostic.value())
         .unwrap_or_default() as f32;
     if fps <= 0.0 {
         return;
@@ -205,7 +219,7 @@ fn throttle_speed_to_fps(
         speed.requested = MAX_SIM_SPEED;
     }
 
-    let target = speed.requested.min(affordable_speed(fps));
+    let target = speed.requested.min(affordable_speed(speed.effective, fps));
     speed.effective = approach(speed.effective, target);
 
     if time.relative_speed() != speed.effective {
@@ -213,10 +227,24 @@ fn throttle_speed_to_fps(
     }
 }
 
-/// Скорость, посильная при таком fps: `S ≤ fps × MAX_FRAME_DELTA`, но не ниже
-/// `MIN_SIM_SPEED` — на нуле симуляция стоит, а не идёт медленно.
-fn affordable_speed(fps: f32) -> f32 {
-    (fps * MAX_FRAME_DELTA).max(MIN_SIM_SPEED)
+/// Скорость, посильную при таком fps, — от текущей, а не от нуля.
+///
+/// Ниже [`MIN_SIM_FPS`] — пропорциональный срез; выше полосы гистерезиса —
+/// потолка нет вовсе (пусть растёт к запрошенной); внутри полосы — ровно
+/// текущая, то есть «не трогать».
+///
+/// Замедление при `fps ≥ MIN_SIM_FPS` невозможно в принципе: возвращаемое
+/// значение там не меньше текущей скорости, а вызывающий берёт
+/// `min(requested, …)`. Пол `MIN_SIM_SPEED` не даёт петле схлопнуться в ноль,
+/// из которого умножением уже не выбраться.
+fn affordable_speed(effective: f32, fps: f32) -> f32 {
+    if fps < MIN_SIM_FPS {
+        return (effective * fps / MIN_SIM_FPS).max(MIN_SIM_SPEED);
+    }
+    if fps > MIN_SIM_FPS * SIM_FPS_HYSTERESIS {
+        return MAX_SIM_SPEED;
+    }
+    effective.max(MIN_SIM_SPEED)
 }
 
 /// Шаг регулятора к целевой скорости.
@@ -317,38 +345,94 @@ pub fn previous_time_scale(speed: f32) -> f32 {
 mod tests {
     use super::*;
 
+    /// То, ради чего регулятор переделан: пока кадров не меньше цели,
+    /// замедления нет вовсе, какой бы ни была скорость.
     #[test]
-    fn affordable_speed_falls_below_real_time() {
-        // 60 fps тянут 30x, 2 fps — ровно реальное время
-        assert_eq!(affordable_speed(60.0), 30.0);
-        assert_eq!(affordable_speed(2.0), 1.0);
-        // ниже 2 fps не тянется и 1x — замедляемся честно
-        assert_eq!(affordable_speed(1.0), 0.5);
-        assert_eq!(affordable_speed(0.1), MIN_SIM_SPEED);
+    fn nothing_is_throttled_at_or_above_the_target_fps() {
+        for effective in [MIN_SIM_SPEED, 1.0, 10.0, MAX_SIM_SPEED] {
+            for fps in [MIN_SIM_FPS, 60.0, 144.0] {
+                assert!(
+                    affordable_speed(effective, fps) >= effective,
+                    "{effective}x при {fps} fps не имеет права замедляться"
+                );
+            }
+        }
     }
 
+    /// Ниже цели срез пропорционален недобору кадров, а не абсолютен: вдвое
+    /// меньше кадров — вдвое меньше скорость.
     #[test]
-    fn ladder_stops_at_the_cap() {
-        assert_eq!(next_time_scale(20.0), MAX_SIM_SPEED);
-        assert_eq!(next_time_scale(MAX_SIM_SPEED), MAX_SIM_SPEED);
-        // сверху лесенка спускается обычными ступенями
-        assert_eq!(previous_time_scale(MAX_SIM_SPEED), 20.0);
-        assert_eq!(previous_time_scale(1.0), 1.0);
+    fn the_throttle_scales_with_the_fps_shortfall() {
+        assert_eq!(affordable_speed(10.0, MIN_SIM_FPS / 2.0), 5.0);
+        assert_eq!(affordable_speed(10.0, MIN_SIM_FPS / 10.0), 1.0);
+        // из нуля умножением уже не выбраться — отсюда пол
+        assert_eq!(affordable_speed(0.0, 0.0), MIN_SIM_SPEED);
     }
 
+    /// Полоса гистерезиса: внутри неё регулятор обязан отдавать ровно текущую
+    /// скорость, иначе он продолжает толкать систему и она автоколеблется.
     #[test]
-    fn ladder_snaps_arbitrary_values_to_steps() {
-        // по BRP `requested` пишут любым — лесенка прижимает к ступеням
-        assert_eq!(next_time_scale(7.0), 10.0);
-        assert_eq!(previous_time_scale(7.0), 5.0);
+    fn inside_the_hysteresis_band_the_speed_is_left_alone() {
+        let inside = MIN_SIM_FPS * (1.0 + SIM_FPS_HYSTERESIS) / 2.0;
+        for effective in [1.0, 5.0, 17.5] {
+            assert_eq!(affordable_speed(effective, inside), effective);
+        }
+        // на самой цели — тоже не трогаем
+        assert_eq!(affordable_speed(5.0, MIN_SIM_FPS), 5.0);
     }
 
+    /// Выше полосы потолка нет: скорость идёт к запрошенной, а не к нынешней,
+    /// умноженной на что-то.
     #[test]
-    fn cycle_wraps_at_the_top() {
-        assert_eq!(cycle_time_scale(1.0), 2.0);
-        assert_eq!(cycle_time_scale(20.0), MAX_SIM_SPEED);
-        // с верхней ступени — назад к реальному времени
-        assert_eq!(cycle_time_scale(MAX_SIM_SPEED), 1.0);
+    fn above_the_band_the_speed_climbs_to_the_request() {
+        assert_eq!(
+            affordable_speed(1.0, MIN_SIM_FPS * SIM_FPS_HYSTERESIS + 1.0),
+            MAX_SIM_SPEED
+        );
+    }
+
+    /// Петля обязана **прийти и встать**, а не бегать пилой между ступенями
+    /// vsync — это регрессия ровно на ту жалобу, ради которой заведён
+    /// [`SIM_FPS_HYSTERESIS`].
+    ///
+    /// Модель кадра честная: `max_delta` клампит **реальную** длительность, а
+    /// кадр несёт `длительность × скорость` виртуальных секунд.
+    #[test]
+    fn the_regulator_settles_inside_the_band_without_ringing() {
+        // машина осиливает 102.4 тика в секунду, то есть 1.6x по симуляции
+        let tick_cost = 1.0 / 102.4;
+        // и ещё 5 мс на кадр уходит мимо симуляции — отрисовка, UI, ввод
+        let render_cost = 1.0 / 200.0;
+        let requested = 10.0f32;
+
+        let mut effective = requested;
+        let mut fps = 60.0f32;
+        let mut tail = Vec::new();
+        for step in 0..4000 {
+            let carried = (1.0 / fps).min(MAX_FRAME_DELTA) * effective;
+            fps = 1.0 / (carried * 64.0 * tick_cost + render_cost);
+            effective = approach(effective, requested.min(affordable_speed(effective, fps)));
+            if step >= 3800 {
+                tail.push(fps);
+            }
+        }
+
+        let low = tail.iter().copied().fold(f32::MAX, f32::min);
+        let high = tail.iter().copied().fold(f32::MIN, f32::max);
+        assert!(
+            high - low < 0.5,
+            "петля не встала: кадры ходят {low}…{high}"
+        );
+        assert!(
+            (MIN_SIM_FPS..=MIN_SIM_FPS * SIM_FPS_HYSTERESIS).contains(&low),
+            "встали на {low} fps, мимо полосы {MIN_SIM_FPS}…{}",
+            MIN_SIM_FPS * SIM_FPS_HYSTERESIS
+        );
+        // и это не «замерли на месте»: скорость выросла от посильного минимума
+        assert!(
+            effective > 1.0 && effective < requested,
+            "скорость {effective} не похожа на посильную"
+        );
     }
 
     #[test]
