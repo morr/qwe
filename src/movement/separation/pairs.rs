@@ -5,6 +5,7 @@
 use bevy::prelude::*;
 
 use super::SeparationLab;
+use crate::rng::hash_fraction;
 
 /// Участник одного прогона: снятая позиция плюс всё, что нужно паре.
 #[derive(Clone, Copy)]
@@ -219,8 +220,7 @@ pub(super) fn side_of(pawn: &Pawn, left_share: f32) -> Vec2 {
 /// своим множителем: иначе сторона обхода и ось разведения были бы одним и тем
 /// же числом, и «левши» получали бы вдобавок одинаковую ось.
 fn lefty_fraction(pawn_id: u32) -> f32 {
-    let hash = pawn_id.wrapping_mul(2246822519) ^ 0x9e37_79b9;
-    (hash >> 8) as f32 / (u32::MAX >> 8) as f32
+    hash_fraction(pawn_id.wrapping_mul(2246822519) ^ 0x9e37_79b9)
 }
 
 /// Куда и насколько срочно `a` уклоняется от `b`: единичный вектор ПОПЕРЁК

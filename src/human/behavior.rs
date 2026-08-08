@@ -11,7 +11,7 @@ use crate::human::components::{
 };
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::{Pathfinder, find_passable_tile_near};
-use crate::rng::{PawnId, WanderIndex};
+use crate::rng::{PawnId, WanderIndex, hash_fraction};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
     RADIUS_HYSTERESIS,
@@ -36,7 +36,7 @@ const FLEE_SPREAD: f32 = 0.6;
 /// повтором при абсолютно одинаковом seed.
 fn personal_spread(pawn_id: u32) -> f32 {
     let hash = pawn_id.wrapping_mul(2654435761);
-    ((hash >> 8) as f32 / (u32::MAX >> 8) as f32 * 2.0 - 1.0) * FLEE_SPREAD
+    (hash_fraction(hash) * 2.0 - 1.0) * FLEE_SPREAD
 }
 
 /// Wander → Flee: демон в радиусе паники.

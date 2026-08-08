@@ -5,6 +5,8 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::SeparationLab;
+use crate::rng::hash_fraction;
+
 use super::pairs::{Pawn, anticipate, avoid_direction, shares, side_of, sidestep, yields};
 
 /// «Конец цепочки» в связных списках мелкой сетки.
@@ -71,8 +73,7 @@ pub(super) fn fine_cell(pos: Vec2, cell: f32) -> IVec2 {
 /// сущностей после рестарта переиспользуются в другом порядке.
 fn coincident_direction(pawn_id: u32) -> Vec2 {
     let hash = pawn_id.wrapping_mul(2654435761);
-    let angle = (hash >> 8) as f32 / (u32::MAX >> 8) as f32 * std::f32::consts::TAU;
-    Vec2::from_angle(angle)
+    Vec2::from_angle(hash_fraction(hash) * std::f32::consts::TAU)
 }
 
 /// Толчки всех пар текущего набора — чистая функция над буферами, без ECS
