@@ -1,4 +1,5 @@
 use super::*;
+use crate::map::osm::model::PolyArea;
 use crate::map::osm::model::{AreaKind, RoadClass, RoadLine, TreeCompose, TreeNode, TreeRow};
 use crate::settings::TREE_DENSITY_MIN;
 

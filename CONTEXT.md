@@ -473,7 +473,8 @@ in `main.rs`.
   (615 ms on Tula). Candidates now come from uniform cell grids over the same padded AABBs
   (`NearbyAreas`, and `NearbySegments` — roads and watercourses indexed **per segment**,
   because a river's AABB spans the map; the cell carries the ribbon width, since the two
-  sources index different vectors). Same idiom as `entrances/index.rs`; the precise tests behind the
+  sources index different vectors). They live in `planting/index.rs`, the same idiom as
+  `entrances/index.rs`; the precise tests behind the
   lookup are unchanged, so the planted set is identical.
 - **Rendering** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
