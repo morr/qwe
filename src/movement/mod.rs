@@ -16,7 +16,7 @@ pub use self::components::{
 };
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
-    assign_destination_slots, claim_batch, slot_side, slot_target,
+    assign_destination_slots, claim_batch, regroup_onto_slots, slot_side, slot_target,
 };
 pub use self::separation::{
     SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
@@ -186,6 +186,10 @@ impl Plugin for MovementPlugin {
                     separation::separate_pawns
                         .run_if(in_state(AppState::Playing))
                         .run_if(separation::separation_runs),
+                    // возврат на свой слот — сразу после расталкивания, которое
+                    // и есть источник схода: заявка, поданная этим тиком,
+                    // уезжает в диспетчер в конце того же тика
+                    self::destination::regroup_onto_slots.run_if(in_state(AppState::Playing)),
                     // слоты — в обоих режимах и в обеих цепочках: демоны
                     // выбирают цель всегда в `FixedUpdate`, люди — здесь же под
                     // детерминизмом. Повторный прогон над той же заявкой
