@@ -466,3 +466,60 @@ fn separation_never_runs_under_determinism() {
     assert_eq!(sim_position(&app, left), before.0, "левого не трогают");
     assert_eq!(sim_position(&app, right), before.1, "правого не трогают");
 }
+
+/// Придержанная пешка в дистанции покоя от цели — дошла.
+///
+/// Стоящий занял подход к цели; идущий упирается в него курсом, придерживается
+/// расталкиванием и, раз ближе его всё равно не пустят, засчитывает приход
+/// вместо вечного упора. Без придержки и допуска этот walker стоял бы в
+/// состоянии `Moving` до скончания века: точка пути снимается только когда шаг
+/// покрывает остаток дистанции, а расталкивание отбрасывает его назад ровно
+/// настолько, насколько он шагнул.
+#[test]
+fn a_held_pawn_within_rest_distance_arrives() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    let target_tile = IVec2::new(20, 20);
+    let target = tile_center(target_tile);
+    app.world_mut()
+        .spawn((bevy::window::Window::default(), bevy::window::PrimaryWindow));
+    app.world_mut().spawn((
+        Camera2d,
+        Transform::from_translation(target.extend(0.0)).with_scale(Vec3::splat(0.1)),
+    ));
+
+    // стоящий — ровно на цели: идущему остаётся упор, а не обход
+    app.world_mut().spawn((
+        qwe::human::Human,
+        qwe::rng::PawnId(1),
+        Movable::new(1.0),
+        Transform::from_translation(target.extend(0.0)),
+    ));
+    let walker = app
+        .world_mut()
+        .spawn((
+            qwe::human::Human,
+            qwe::rng::PawnId(2),
+            Movable {
+                speed: 1.0,
+                path: VecDeque::from([target]),
+                state: MovableState::Moving(target_tile),
+                last_direction: Vec2::X,
+            },
+            MovableStateMovingTag,
+            // в полутора метрах от цели — внутри дистанции покоя (1.8 м)
+            // и внутри перекрытия со стоящим
+            Transform::from_translation((target - Vec2::new(1.5, 0.0)).extend(0.0)),
+        ))
+        .id();
+
+    for _ in 0..30 {
+        app.update();
+    }
+
+    let movable = app.world().get::<Movable>(walker).expect("walker жив");
+    assert_eq!(
+        movable.state,
+        MovableState::Idle,
+        "придержанный у цели должен закончить путь, а не толкаться вечно"
+    );
+}

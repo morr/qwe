@@ -1301,7 +1301,25 @@ in `main.rs`.
   pawns walking straight at each other have their pair axis collinear with both
   velocities, so the plain correction has no lateral component at all and they lock
   together until an outside asymmetry frees them. With the across-heading rule this is
-  the *only* thing that resolves a head-on pair, so it must stay above zero.
+  the *only* thing that resolves a head-on pair, so it must stay above zero;
+  **a blocked pawn eases off** (`SeparationHolds`, share `SeparationStyle::hold`,
+  default `SEPARATION_HOLD` 0.2) — a *human* whose heading points into an overlapped
+  neighbour that is **standing or oncoming** (only there is pressing futile — holding on
+  any touch made whole same-way flows crawl at the hold fraction, companies of
+  co-travellers strangling themselves) walks at a fraction of its speed until the next
+  separation run, which
+  collapses the walk-vs-separation equilibrium overlap from `speed / SEPARATION_RATE`
+  (~0.35 m, a frozen jittering clump) to `hold ×` that (~0.07 m, invisible); 0 would be
+  a full stop and makes dense crossings move in stop-motion jerks. Demons are never
+  held (a chase must close in; the crowd flowing around a demon is already expressed
+  by mobility). The hold set is the one deliberate breach of "cosmetic": it feeds back
+  into `move_moving_entities`, which also grants a held pawn **arrival** when it is
+  within the rest distance of its goal — the blocking body will not let it any closer,
+  and without the grant it would shove at that body forever. (Arrival on an exhausted
+  path is likewise forgiven within the rest distance — separation may push a pawn off
+  its final tile at the last moment.) The set is rebuilt from scratch each run and
+  cleared by the toggle, the zoom gate and world entry, so under determinism it is
+  empty from tick 0 and movement never depends on it.
   Coincident positions split along a deterministic per-entity hash axis (the
   `personal_spread` trick). A push into an impassable tile is dropped (`rescue_*` only
   catches failed path searches, it would never find a pawn squeezed into a wall); a push

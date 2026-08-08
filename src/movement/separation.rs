@@ -16,6 +16,12 @@
 //!   но живёт доли секунды. Жёсткая релаксация до полного разведения в той же
 //!   давке разлеталась бы цепными толчками, как телепорт.
 //!
+//! Одно намеренное исключение из «косметического»: пешка, чей курс упирается в
+//! перекрытого соседа, до следующего прогона ходит ослабленным шагом
+//! ([`SeparationHolds`], читает `move_moving_entities`) — иначе ходьба и
+//! расталкивание гасят друг друга, и затор стоит вечно. В детерминированном
+//! режиме набор придержанных пуст вместе со всем механизмом.
+//!
 //! Толчок пишется в `SimPosition` после шага движения: снимок
 //! `PreviousSimPosition` сделан в начале тика, так что интерполяция доводит
 //! сдвиг до экрана плавно, а троттлимая перепрокладка путей (0.4–1.2 с) съедает
@@ -37,7 +43,7 @@ use crate::human::Human;
 use crate::movement::components::SimPosition;
 use crate::movement::systems::VIEW_MARGIN;
 use crate::settings::{
-    DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL,
+    DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL, SEPARATION_HOLD,
     SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM, SEPARATION_RATE, SEPARATION_SIDESTEP,
 };
 use crate::spatial::SpatialGrid;
@@ -67,6 +73,41 @@ pub struct SeparationStyle {
     /// заметно пятится; 0 — толчок строго поперечный, и толпа, идущая в одну
     /// точку, схлопывается в пятно и вращается вместо того, чтобы раздаться.
     pub backstep: f32,
+    /// Какая доля шага ходьбы остаётся у придержанной пешки (см.
+    /// [`SeparationHolds`]): 1 — придержки нет и ходьба давит в упор до
+    /// равновесия, 0 — полный стоп и рваное движение толпы. Дефолт и разбор
+    /// компромисса — [`SEPARATION_HOLD`].
+    pub hold: f32,
+}
+
+/// Пешки, упёршиеся курсом в перекрытого соседа, который СТОИТ или ИДЁТ
+/// НАВСТРЕЧУ: до следующего прогона их шаг ходьбы ослаблен долей
+/// [`SeparationStyle::hold`] (`systems::move_moving_entities`). Ровно эти два
+/// случая, а не любое касание: попутный и поперечный сосед проходятся полным
+/// шагом — их разводит само расталкивание, а придержка за касание заставляла
+/// ползти весь поток (группа попутчиков душила сама себя).
+///
+/// Это разрыв равновесия «ходьба против расталкивания» — источника сразу двух
+/// картинок: кучи, вставшей колом и дрожащей на месте (все давят внутрь, и
+/// толчки в точности гасят шаги), и пары, наматывающей круги друг вокруг
+/// друга (обоих везёт вперёд собственная ходьба, а боковой обход только
+/// вращает связку). Пешка, упёршаяся в тело, перестаёт с ним бороться — и
+/// расталкиванию хватает одного-двух прогонов развести затор.
+///
+/// Придерживаются только люди: демону в погоне смыкаться обязательно, а
+/// «толпа обтекает демона» уже выражено подвижностью.
+///
+/// Наполняется только прогоном расталкивания, то есть под его гейтами —
+/// вьюпорт, зум, недетерминированный режим; выключение и отзум чистят набор.
+/// В детерминированном прогоне набор пуст с входа в мир, и движение от него
+/// не зависит.
+#[derive(Resource, Default)]
+pub struct SeparationHolds(pub bevy::ecs::entity::EntityHashSet);
+
+/// Вход в мир начинается без придержанных: набор пережил бы смену города
+/// (сущности в нём уже мертвы) и рестарт с переключением режима.
+pub fn reset_separation_holds(mut holds: ResMut<SeparationHolds>) {
+    holds.0.clear();
 }
 
 /// Во столько раз радиус демона больше человеческого — как и спрайты
@@ -94,6 +135,7 @@ impl Default for SeparationStyle {
             enabled: true,
             sidestep: SEPARATION_SIDESTEP,
             backstep: SEPARATION_BACKSTEP,
+            hold: SEPARATION_HOLD,
         }
     }
 }
@@ -113,8 +155,10 @@ struct Pawn {
     /// [`DEMON_MOBILITY`], пожирающий 0.0 (толкает, но не двигается).
     mobility: f32,
     /// Куда пешка идёт прямо сейчас, единичный; `ZERO` у стоящей. Нужен
-    /// только для обхода встречного (см. [`sidestep`]).
+    /// обходу встречного (см. [`sidestep`]) и придержке ([`SeparationHolds`]).
     heading: Vec2,
+    /// Придерживают только людей, см. [`SeparationHolds`].
+    human: bool,
 }
 
 /// Обход встречного: боковая добавка к толчку, чтобы двое идущих ЛОБ В ЛОБ
@@ -256,6 +300,9 @@ pub(super) struct SeparationState {
     pairs: Vec<(u32, u32)>,
     /// Сколько перекрытий у каждой пешки в этом прогоне.
     contacts: Vec<u32>,
+    /// Кто в этом прогоне упирался курсом в перекрытого соседа — источник
+    /// [`SeparationHolds`].
+    held: Vec<bool>,
     pushes: Vec<Vec2>,
 }
 
@@ -299,6 +346,8 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     state.pairs.clear();
     state.contacts.clear();
     state.contacts.resize(state.pawns.len(), 0);
+    state.held.clear();
+    state.held.resize(state.pawns.len(), false);
     state.pushes.clear();
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
     for (i, pawn) in state.pawns.iter().enumerate() {
@@ -352,9 +401,23 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         let overlap = (min_distance - distance) * fraction;
         let correction = direction * overlap;
         let (share_a, share_b) = shares(&a, &b, direction);
+        let a_frontal = a.heading.dot(direction) > 0.0;
+        let b_frontal = b.heading.dot(-direction) > 0.0;
+        // Придержка — только упёршемуся в СТОЯЩЕГО или ВСТРЕЧНОГО: там напор
+        // бесполезен — ходьба давит ровно против коррекции этой же пары, и оба
+        // усилия взаимно гасятся навечно (см. [`SeparationHolds`]). Попутного
+        // и поперечного соседа это не касается: первый вариант правила
+        // придерживал за любое касание, и поток целиком полз на доле шага —
+        // группа попутчиков душила сама себя.
+        if a.human && a_frontal && (b.heading == Vec2::ZERO || b_frontal) {
+            state.held[i as usize] = true;
+        }
+        if b.human && b_frontal && (a.heading == Vec2::ZERO || a_frontal) {
+            state.held[j as usize] = true;
+        }
         // обход — только встречным: догоняющего сзади ничто не держит, а
         // боковая добавка расползлась бы по всей очереди, идущей в одну сторону
-        let opposed = a.heading.dot(direction) > 0.0 && b.heading.dot(-direction) > 0.0;
+        let opposed = a_frontal && b_frontal;
         // …и только паре, у которой нет других соседей. Обход разводит ДВОИХ,
         // симметрию которых больше сломать некому; в куче симметрию ломает сама
         // многотельная геометрия, а одинаковый разворот вправо у полусотни
@@ -400,6 +463,7 @@ pub fn separate_pawns(
     demons: Res<SpatialGrid<Demon>>,
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    mut holds: ResMut<SeparationHolds>,
     mut pawns: Query<
         (
             &mut SimPosition,
@@ -415,18 +479,23 @@ pub fn separate_pawns(
 ) {
     if !style.enabled {
         state.pending_dt = 0.0;
+        holds.0.clear();
         return;
     }
     state.pending_dt += time.delta_secs();
-    // не чаще раза в кадр: остальные тики того же кадра только копят dt
+    // не чаще раза в кадр: остальные тики того же кадра только копят dt, а
+    // придержанные остаются придержанными до следующего прогона
     if state.last_frame == Some(frames.0) {
         return;
     }
     state.last_frame = Some(frames.0);
     let fraction = (SEPARATION_RATE * state.pending_dt).min(1.0);
     state.pending_dt = 0.0;
-    // на таком отдалении пешка — 1–2 пикселя, перекрытие не читается
+    // на таком отдалении пешка — 1–2 пикселя, перекрытие не читается; вместе
+    // с расталкиванием выключается и придержка — иначе пешки, придержанные
+    // последним прогоном перед отзумом, остались бы придержанными навсегда
     if camera.scale.x >= SEPARATION_MAX_ZOOM {
+        holds.0.clear();
         return;
     }
 
@@ -474,6 +543,7 @@ pub fn separate_pawns(
                 } else {
                     Vec2::ZERO
                 },
+                human: !is_demon,
             });
         };
         humans.for_each_in_rect(min, max, &mut collect);
@@ -488,6 +558,15 @@ pub fn separate_pawns(
             cell: separation_cell(human_radius),
         },
     );
+
+    // придержанные — с чистого листа каждый прогон: ушедший из вьюпорта или
+    // разошедшийся с соседом освобождается сам, без отдельной уборки
+    holds.0.clear();
+    for (index, pawn) in state.pawns.iter().enumerate() {
+        if state.held[index] {
+            holds.0.insert(pawn.entity);
+        }
+    }
 
     let navmesh = navmesh.read();
     for i in 0..state.pawns.len() {
@@ -538,6 +617,7 @@ mod tests {
             radius,
             mobility,
             heading: Vec2::ZERO,
+            human: true,
         }
     }
 
@@ -684,6 +764,81 @@ mod tests {
         assert!(state.pushes[0].length() > 0.0);
         // и обход в сторону догоняющему тоже не полагается — он не встречный
         assert!(state.pushes[0].y.abs() < 1e-6, "{:?}", state.pushes[0]);
+    }
+
+    /// Придержан упёршийся в СТОЯЩЕГО: давить в того, кто не сдвинется с
+    /// места сам, бесполезно. Стоящего не придерживают — у него нет курса.
+    #[test]
+    fn a_pawn_walking_into_a_standing_neighbour_is_held() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            pawn(2, Vec2::new(10.5, 10.0), 0.45, 1.0),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(state.held[0], "упёршийся в стоящего придержан");
+        assert!(!state.held[1], "стоящий не придержан");
+    }
+
+    /// Попутчиков не придерживают: очередь, идущая в одну сторону, проходится
+    /// полным шагом — иначе поток целиком ползёт на доле скорости от любого
+    /// касания. Догоняющего осаживает не придержка, а доля коррекции
+    /// ([`shares`]: задний забирает её всю).
+    #[test]
+    fn a_queue_walking_the_same_way_is_not_held() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(10.5, 10.0), Vec2::X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(state.held.iter().all(|held| !held));
+    }
+
+    /// Лоб в лоб упираются оба — придержаны оба: без этого чей-то шаг
+    /// продолжает гасить коррекцию пары, и равновесие лишь сдвигается.
+    #[test]
+    fn both_of_a_head_on_pair_are_held() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(state.held[0] && state.held[1]);
+    }
+
+    /// Стоящих не придерживают (курса нет), разошедшихся — тоже: придержка
+    /// живёт ровно столько же, сколько само перекрытие.
+    #[test]
+    fn standing_and_settled_pawns_are_not_held() {
+        let mut state = state_with(vec![
+            pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
+            pawn(2, Vec2::new(10.5, 10.0), 0.45, 1.0),
+            walking(3, Vec2::new(20.0, 10.0), Vec2::X),
+            walking(4, Vec2::new(20.95, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(state.held.iter().all(|held| !held));
+    }
+
+    /// Демона не придерживают никогда: погоня обязана смыкаться, а «толпа
+    /// обтекает демона» уже выражено подвижностью. Человек навстречу демону
+    /// придержан как обычно.
+    #[test]
+    fn a_demon_is_never_held() {
+        let mut state = state_with(vec![
+            Pawn {
+                human: false,
+                ..walking(1, Vec2::new(10.0, 10.0), Vec2::X)
+            },
+            walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(!state.held[0], "демон прёт сквозь толпу");
+        assert!(state.held[1], "человек навстречу демону придержан");
     }
 
     /// Соседи через границу ячейки мелкой сетки видят друг друга: пара на

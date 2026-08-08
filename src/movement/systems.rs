@@ -601,11 +601,15 @@ pub fn snapshot_previous_sim_positions(
 /// пересекает ячейку раз в ~21 виртуальную секунду), так что стоимость не
 /// растёт ни от зум-аута, ни от населения. `Option` — плагин движения
 /// используется в тестах без `SpatialPlugin`.
+#[allow(clippy::too_many_arguments)]
 pub fn move_moving_entities(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     navmesh: Res<crate::navigation::ArcNavmesh>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    separation: Res<super::separation::SeparationStyle>,
+    holds: Res<super::separation::SeparationHolds>,
+    human_style: Res<crate::human::HumanStyle>,
     mut query: Query<
         (
             Entity,
@@ -619,14 +623,37 @@ pub fn move_moving_entities(
 ) {
     let started = std::time::Instant::now();
     let navmesh = navmesh.read();
+    // «дошёл» с допуском в дистанцию покоя: точнее неё пешки друг к другу не
+    // подпускает само расталкивание, так что требовать точный тайл — значит
+    // не засчитывать приход столкнутому с тайла в последний момент
+    let human_rest = 2.0 * human_style.body_radius;
+    let demon_rest = 2.0 * super::separation::demon_radius(human_style.body_radius);
     for (entity, mut movable, mut sim_position, is_human) in &mut query {
         let cell_before = crate::spatial::cell_of(sim_position.0);
+        let rest = if is_human { human_rest } else { demon_rest };
         let mut remaining_time = time.delta_secs();
+        // придержка (см. `separation::SeparationHolds`): упёршийся курсом в
+        // чужое тело не давит в него полным шагом. Придержанный в дистанции
+        // покоя от цели дошёл: ближе его не пустит то самое тело, а без
+        // засчитанного прихода он толкался бы с ним до скончания века
+        if !holds.0.is_empty() && holds.0.contains(&entity) {
+            if let MovableState::Moving(target) = movable.state
+                && (tile_center(target) - sim_position.0).length_squared() <= rest * rest
+            {
+                // событие прихода в `to_idle` гейтится пустым путём
+                movable.path.clear();
+                movable.to_idle(entity, &mut commands, true);
+                continue;
+            }
+            remaining_time *= separation.hold;
+        }
         loop {
             if movable.path.is_empty() {
                 match movable.state {
                     MovableState::Moving(target) => {
-                        let destination_reached = world_to_tile(sim_position.0) == target;
+                        let destination_reached = world_to_tile(sim_position.0) == target
+                            || (tile_center(target) - sim_position.0).length_squared()
+                                <= rest * rest;
                         movable.to_idle(entity, &mut commands, destination_reached);
                     }
                     // старый путь пройден раньше, чем посчитан новый — докат

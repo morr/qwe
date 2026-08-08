@@ -17,7 +17,7 @@ pub use self::components::{
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotSearch, assign_destination_slots, slot_side,
 };
-pub use self::separation::{SeparationStyle, demon_radius, separation_cell};
+pub use self::separation::{SeparationHolds, SeparationStyle, demon_radius, separation_cell};
 pub use self::systems::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
 };
@@ -44,6 +44,7 @@ impl Plugin for MovementPlugin {
             .register_type::<DrawMovePaths>()
             .init_resource::<SeparationStyle>()
             .register_type::<SeparationStyle>()
+            .init_resource::<SeparationHolds>()
             .init_resource::<DestinationClaims>()
             .register_type::<DestinationClaim>()
             .init_resource::<SlotSearch>()
@@ -53,7 +54,10 @@ impl Plugin for MovementPlugin {
             .add_observer(self::destination::on_destination_claim_removed)
             .add_systems(
                 OnEnter(AppState::Playing),
-                self::destination::reset_destination_claims,
+                (
+                    self::destination::reset_destination_claims,
+                    self::separation::reset_separation_holds,
+                ),
             )
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется

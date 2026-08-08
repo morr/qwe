@@ -77,8 +77,8 @@ use qwe::human::{
 use qwe::loading::{AppState, PlayPhase};
 use qwe::map::osm::MapData;
 use qwe::movement::{
-    DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationStyle,
-    SimPosition, SlotSearch, separation_cell, slot_side,
+    DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationHolds,
+    SeparationStyle, SimPosition, SlotSearch, separation_cell, slot_side,
 };
 use qwe::navigation::{ArcNavmesh, PathfindingAlgorithm};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
@@ -1058,12 +1058,14 @@ fn draw_bodies(mut gizmos: Gizmos, overlaps: Res<Overlaps>) {
 
 /// Та же сводка в stdout раз в две реальные секунды: сцену смотрят глазами, но
 /// числа надо ещё и приложить к отчёту, а из окна их не скопировать.
+#[allow(clippy::too_many_arguments)]
 fn report_to_stdout(
     real: Res<Time<Real>>,
     scenario: Res<Scenario>,
     style: Res<SeparationStyle>,
     speed: Res<DemoSpeed>,
     overlaps: Res<Overlaps>,
+    holds: Res<SeparationHolds>,
     counters: Res<RunCounters>,
     mut next_report: Local<f32>,
 ) {
@@ -1073,13 +1075,14 @@ fn report_to_stdout(
     }
     *next_report = now + 2.0;
     println!(
-        "{:<20} sep {:<3} {:>4.0}x  in view {:>4}  pairs {:>4}  involved {:>4}  worst {:>6.3}  mean {:>6.3}  ticks/run {:>5.1}",
+        "{:<20} sep {:<3} {:>4.0}x  in view {:>4}  pairs {:>4}  involved {:>4}  held {:>4}  worst {:>6.3}  mean {:>6.3}  ticks/run {:>5.1}",
         scenario.label(),
         if style.enabled { "on" } else { "off" },
         speed.0,
         overlaps.pawns,
         overlaps.pairs,
         overlaps.involved,
+        holds.0.len(),
         overlaps.worst,
         overlaps.mean,
         counters.ticks_per_run,
@@ -1092,6 +1095,7 @@ fn update_overlay(
     style: Res<SeparationStyle>,
     speed: Res<DemoSpeed>,
     overlaps: Res<Overlaps>,
+    holds: Res<SeparationHolds>,
     counters: Res<RunCounters>,
     time: Res<Time<Virtual>>,
     camera: Query<&Transform, With<Camera2d>>,
@@ -1107,7 +1111,7 @@ fn update_overlay(
 
     let text = format!(
         "{scenario}\n\
-         pawns in view {pawns} of {total}   overlapping pairs {pairs}   involved {involved} ({share:.0}%)\n\
+         pawns in view {pawns} of {total}   overlapping pairs {pairs}   involved {involved} ({share:.0}%)   held {held}\n\
          worst {worst:.3} m   mean {mean:.3} m   (rest distance {rest:.2} m, sprite {sprite:.2} m)\n\
          separation {separation}{gate}   speed {speed:.0}x{paused}   zoom {zoom:.3}\n\
          move ticks per separation run {per_run}   runs {runs}\n\
@@ -1119,6 +1123,7 @@ fn update_overlay(
         pairs = overlaps.pairs,
         involved = overlaps.involved,
         share = share,
+        held = holds.0.len(),
         worst = overlaps.worst,
         mean = overlaps.mean,
         rest = overlaps.radius * 2.0,
