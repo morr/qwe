@@ -898,8 +898,8 @@ in `main.rs`.
   from `PORTAL_DIAMETER`. The map-load thread snaps it between fill and prune (the flood
   starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
   the resource before switching to `Playing`.
-- **Poly navmesh** (`navigation/polymesh/` — `build.rs` builds the mesh, `seams.rs` stitches
-  the chunks, `path.rs` searches it; panel — `ui/navigation/`) — a *polygonal*
+- **Poly navmesh** (`navigation/polymesh/` — `build.rs` builds the mesh, `seams.rs` computes the shared
+  chunk borders, `stitch.rs` sews the layers together, `path.rs` searches the result; panel — `ui/navigation/`) — a *polygonal*
   polyanya mesh triangulated from the same vector sources the grid fill rasterizes,
   recovering the fidelity the 2 m grid loses (bridge curbs, narrow waterways). While the
   Polymesh panel is on and the mesh is built, **it is the pathfinding backend** — see

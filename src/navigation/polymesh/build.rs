@@ -9,9 +9,8 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 
-use super::seams::{
-    SeamPoints, chunk_outline, components_of, quantized, seam_points, stitch_chunks,
-};
+use super::seams::{SeamPoints, chunk_outline, quantized, seam_points};
+use super::stitch::{components_of, stitch_chunks};
 use super::{
     ChunkComponents, PolymeshBuild, PolymeshInput, SEARCH_DELTA, SEARCH_STEPS, chunk_grid,
 };

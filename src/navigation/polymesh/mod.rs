@@ -27,6 +27,7 @@ use crate::settings::{POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN};
 mod build;
 mod path;
 mod seams;
+mod stitch;
 
 // Приватные реэкспорты, а не `pub` в подмодулях: снаружи модуль виден ровно
 // тем же набором имён, что и до разрезания, а `use super::*` в `tests.rs`
