@@ -18,8 +18,8 @@ pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotSearch, assign_destination_slots, slot_side,
 };
 pub use self::separation::{
-    SeparationHolds, SeparationStyle, demon_radius, separation_allowed_by_mode, separation_cell,
-    separation_runs,
+    SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
+    demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
 pub use self::systems::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
@@ -48,6 +48,13 @@ impl Plugin for MovementPlugin {
             .init_resource::<SeparationStyle>()
             .register_type::<SeparationStyle>()
             .init_resource::<SeparationHolds>()
+            .init_resource::<SeparationSteer>()
+            // стенд замеров (`examples/demos/crowd_demo.rs`): дефолт равен
+            // константам, так что игра идёт по тем же веткам, что и раньше
+            .init_resource::<SeparationLab>()
+            .register_type::<SeparationLab>()
+            .init_resource::<SeparationStats>()
+            .register_type::<SeparationStats>()
             .init_resource::<DestinationClaims>()
             .register_type::<DestinationClaim>()
             .init_resource::<SlotSearch>()
@@ -60,6 +67,7 @@ impl Plugin for MovementPlugin {
                 (
                     self::destination::reset_destination_claims,
                     self::separation::reset_separation_holds,
+                    self::separation::reset_separation_steer,
                 ),
             )
             // придержки чистит сам прогон расталкивания (тумблер, отзум), но
@@ -68,9 +76,13 @@ impl Plugin for MovementPlugin {
             // то есть замедленными без причины
             .add_systems(
                 Update,
-                self::separation::reset_separation_holds
-                    .run_if(not(self::separation::separation_runs))
-                    .run_if(|holds: Res<SeparationHolds>| !holds.0.is_empty()),
+                (
+                    self::separation::reset_separation_holds
+                        .run_if(|holds: Res<SeparationHolds>| !holds.0.is_empty()),
+                    self::separation::reset_separation_steer
+                        .run_if(|steer: Res<SeparationSteer>| !steer.0.is_empty()),
+                )
+                    .run_if(not(self::separation::separation_runs)),
             )
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется

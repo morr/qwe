@@ -183,6 +183,141 @@ impl Default for SeparationStyle {
 
 impl Eq for SeparationStyle {}
 
+/// Экспериментальные ручки расталкивания — то, что в игре зафиксировано
+/// константами, а в замерах перебирается.
+///
+/// **Дефолт воспроизводит нынешнее поведение игры точь-в-точь**: `rate` и
+/// `max_step` равны своим константам, а всё остальное — нули, то есть
+/// выключено. Пока ресурс не тронут, `resolve_pushes` идёт ровно теми же
+/// ветками, что и до появления этого типа.
+///
+/// Намеренно НЕ [`SettingsGroup`], в отличие от [`SeparationStyle`]: это стенд
+/// для замеров (`examples/demos/crowd_demo.rs`), а не выбор пользователя, и
+/// уезжать в `settings.toml` ему незачем.
+#[derive(Resource, Reflect, Clone, Copy, PartialEq, Debug)]
+#[reflect(Resource, Default)]
+pub struct SeparationLab {
+    /// Какая доля перекрытия снимается за виртуальную секунду
+    /// ([`SEPARATION_RATE`]).
+    pub rate: f32,
+    /// Потолок сдвига за один прогон ([`SEPARATION_MAX_STEP`]).
+    ///
+    /// Обратите внимание, ЧТО он ограничивает на самом деле: прогон идёт раз в
+    /// кадр, так что 0.3 м на прогон при 60 fps — это 18 м/с, вшестеро быстрее
+    /// бега. Потолком он не работает почти никогда; настоящий предел задаёт
+    /// [`SeparationLab::max_speed`].
+    pub max_step: f32,
+    /// Потолок СКОРОСТИ расталкивания, м/с — в отличие от `max_step`, не
+    /// зависит от частоты кадров и сравним со скоростью ходьбы (2.8 м/с).
+    /// 0 — выключен, ограничивает только `max_step`, как сейчас.
+    ///
+    /// Ради чего. Толчок пары равен `перекрытие × rate`, а `rate` — 8/с: при
+    /// перекрытии в 0.9 м это 7.2 м/с, то есть в два с половиной раза быстрее
+    /// ходьбы. В плотном встречном потоке расталкивание не поправляет ходьбу,
+    /// а перебивает её: пешку швыряет назад быстрее, чем она идёт вперёд, она
+    /// доходит обратно, и так по кругу. Отсюда 24 км намотанного пути на 2.4 км
+    /// продвижения в базовом прогоне стенда.
+    pub max_speed: f32,
+    /// Горизонт упреждения, с: насколько вперёд смотреть на СБЛИЖАЮЩЕГОСЯ, но
+    /// ещё не перекрывшегося соседа. 0 — упреждения нет, механизм чисто
+    /// реактивный, как сейчас. См. [`anticipate`].
+    pub horizon: f32,
+    /// Сила упреждения, м/с бокового сноса.
+    pub anticipation: f32,
+    /// Во сколько радиусов считается «мимо»: предсказанный промах меньше
+    /// `anticipate_margin × (r_a + r_b)` — повод уклоняться.
+    pub anticipate_margin: f32,
+    /// Примесь правой нормали в направление уклонения (0…1). Лобовая встреча
+    /// вырождается — предсказанный контакт лежит на курсе, и «уклоняться»
+    /// некуда; примесь задаёт сторону, как у живых пешеходов.
+    pub lane_bias: f32,
+    /// На сколько ужимается радиус тела в давке (0 — не ужимается, 0.4 — на
+    /// 40% при полной загрузке). Толпа в узком месте сжимается, а не встаёт.
+    pub compress: f32,
+    /// Сколько одновременных перекрытий считается полной загрузкой для
+    /// [`SeparationLab::compress`].
+    pub compress_at: f32,
+    /// Доля обхода встречного, которая достаётся паре В КУЧЕ (у пары, которая
+    /// одна, обход работает всегда). 0 — нынешний гейт `alone`.
+    pub crowd_sidestep: f32,
+    /// Сила РУЛЕНИЯ, доли: насколько курс ходьбы отклоняется вбок от того, кто
+    /// стоит на дороге. 0 — руления нет, и `move_moving_entities` идёт ровно
+    /// тем кодом, что и раньше. См. [`SeparationSteer`].
+    pub steer: f32,
+    /// Ближе этого расстояния до waypoint'а руление выключается, м. Иначе
+    /// пешка, которую уводит вбок у самой точки, начинает наматывать вокруг
+    /// неё круги вместо того, чтобы её пройти: `move_moving_entities` снимает
+    /// waypoint только когда бюджет шага накрывает остаток, а отклонённый курс
+    /// этот остаток не сокращает.
+    pub steer_release: f32,
+}
+
+/// Куда пешке ОТВЕРНУТЬ на ходу — единичный вектор поперёк её курса, домноженный
+/// на [`SeparationLab::steer`]. Читает `move_moving_entities` и подмешивает в
+/// направление шага; наполняет прогон расталкивания, как и [`SeparationHolds`],
+/// и по тем же гейтам.
+///
+/// Зачем это отдельно от толчка. Толчок двигает ПОЗИЦИЮ, а ходьба тут же везёт
+/// пешку обратно к цели — две силы работают друг против друга, и весь результат
+/// уходит в намотанный путь (в замере стенда: 24 км пути на 2.4 км
+/// продвижения). Руление меняет НАПРАВЛЕНИЕ той же самой ходьбы: скорость
+/// сохраняется целиком, пешка обходит по дуге и никуда не «возвращается» —
+/// именно так расходятся живые пешеходы, и именно этого механизма в
+/// расталкивании не было.
+///
+/// Симметричный встречный поток без этого не расходится в принципе: у пары,
+/// идущей строго друг на друга, вектор между центрами коллинеарен обоим курсам,
+/// поперечной составляющей у коррекции нет ни у одной пары, и толпа остаётся
+/// строго одномерной (стенд меряет разброс ровно 0.00 м на любых значениях
+/// `rate`, `hold` и `sidestep`).
+#[derive(Resource, Default)]
+pub struct SeparationSteer(pub bevy::ecs::entity::EntityHashMap<Vec2>);
+
+/// Вход в мир начинается без рулящих — по той же причине, что и без
+/// придержанных (см. [`reset_separation_holds`]).
+pub fn reset_separation_steer(mut steer: ResMut<SeparationSteer>) {
+    steer.0.clear();
+}
+
+impl Default for SeparationLab {
+    fn default() -> Self {
+        Self {
+            rate: SEPARATION_RATE,
+            max_step: SEPARATION_MAX_STEP,
+            max_speed: 0.0,
+            horizon: 0.0,
+            anticipation: 0.0,
+            anticipate_margin: 1.0,
+            lane_bias: 0.0,
+            compress: 0.0,
+            compress_at: 4.0,
+            crowd_sidestep: 0.0,
+            steer: 0.0,
+            steer_release: 2.0,
+        }
+    }
+}
+
+impl Eq for SeparationLab {}
+
+/// Итоги последнего прогона — для стенда: сколько работы сделано и сколько
+/// движения ушло в толчки, а не в ходьбу. Пишется одной строкой в конце
+/// [`separate_pawns`]; в игре не читается никем.
+#[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Resource, Default)]
+pub struct SeparationStats {
+    pub runs: u64,
+    /// Пары, которым выдан толчок перекрытия.
+    pub overlapping_pairs: u64,
+    /// Пары, попавшие только в упреждение (сближаются, но ещё не перекрылись).
+    pub anticipated_pairs: u64,
+    /// Суммарная длина применённых толчков, м. Это движение, которое пешки
+    /// потратили НЕ на дорогу.
+    pub push_metres: f64,
+    /// Самый длинный одиночный толчок за всё время, м — детектор телепорта.
+    pub worst_push: f32,
+}
+
 /// Участник одного прогона: снятая позиция плюс всё, что нужно паре.
 #[derive(Clone, Copy)]
 struct Pawn {
@@ -198,6 +333,9 @@ struct Pawn {
     /// Куда пешка идёт прямо сейчас, единичный; `ZERO` у стоящей. Нужен
     /// обходу встречного (см. [`sidestep`]) и придержке ([`SeparationHolds`]).
     heading: Vec2,
+    /// Модуль скорости ходьбы, м/с — нужен упреждению ([`anticipate`]), чтобы
+    /// считать время до сближения. У стоящей не используется.
+    speed: f32,
     /// Придерживают только людей, см. [`SeparationHolds`].
     human: bool,
 }
@@ -322,6 +460,90 @@ fn damp_along_heading(push: Vec2, heading: Vec2, keep: f32) -> Vec2 {
     push - along * (1.0 - keep)
 }
 
+/// Уклонение ОТ ЕЩЁ НЕ СЛУЧИВШЕГОСЯ столкновения: боковой снос за `dt`, который
+/// пешка `a` даёт себе, увидев сближающегося `b`.
+///
+/// Реактивное расталкивание по построению опаздывает: оно включается, когда
+/// тела уже перекрылись, то есть когда обходить поздно и остаётся расталкивать.
+/// Отсюда и вся картинка «колонны»: встречные упираются, придерживаются,
+/// протискиваются по одному. Живой пешеход решает раньше — по тому, КУДА
+/// сосед идёт, а не где он стоит.
+///
+/// Считается классически (время до ближайшего сближения, оно же time to
+/// closest approach): относительная скорость `v = v_a − v_b`, вектор до соседа
+/// `rel`. Расходящихся (`rel · v ≤ 0`) пропускаем сразу — самый частый случай, и
+/// он же самый дешёвый. Момент максимального сближения `t = (rel · v)/|v|²`;
+/// дальше горизонта — не наше дело. Вектор `closest` — где сосед окажется
+/// относительно нас в этот момент; если его длина меньше суммы радиусов (с
+/// запасом [`SeparationLab::anticipate_margin`]), столкновение предсказано.
+///
+/// Уклоняемся **строго поперёк собственного курса**: продольная составляющая —
+/// это торможение, а тормозить сдвигом позиции нельзя, на экране это рывок
+/// назад (та же болезнь, ради которой существует [`damp_along_heading`]).
+/// Скорость гасит придержка, и это её работа, а не этой функции.
+///
+/// Лобовая встреча вырождается — `closest` почти коллинеарен курсу, и
+/// поперечной составляющей у него нет. Ровно ту же дыру у реактивной ветки
+/// затыкает [`sidestep`]; здесь её затыкает [`SeparationLab::lane_bias`],
+/// примешивая правую нормаль. Разница в том, что упреждение срабатывает за
+/// секунду-полторы до контакта, когда сдвинуться вбок ничего не стоит.
+///
+/// Величина падает с приближением горизонта (`urgency`): дальний сосед двигает
+/// слабо, ближний — сильно. Умножается на подвижность, так что пожирающий демон
+/// (0) не уклоняется ни от кого.
+fn anticipate(a: &Pawn, b: &Pawn, lab: &SeparationLab, dt: f32) -> Vec2 {
+    let Some((lateral, urgency)) = avoid_direction(a, b, lab) else {
+        return Vec2::ZERO;
+    };
+    lateral * (lab.anticipation * urgency * a.mobility * dt)
+}
+
+/// Правая нормаль к курсу — сторона, в которую пешка обходит. `perp` в bevy —
+/// поворот на +90° (влево), поэтому со знаком минус.
+fn right_of(heading: Vec2) -> Vec2 {
+    -heading.perp()
+}
+
+/// Куда и насколько срочно `a` уклоняется от `b`: единичный вектор ПОПЕРЁК
+/// курса `a` плюс срочность 0…1 (1 — контакт вот-вот). `None` — уклоняться не
+/// от чего. Ядро [`anticipate`], вынесенное отдельно, потому что тем же ответом
+/// пользуется руление ([`SeparationSteer`]), а оно не толчок и масштабируется
+/// иначе.
+fn avoid_direction(a: &Pawn, b: &Pawn, lab: &SeparationLab) -> Option<(Vec2, f32)> {
+    if a.heading == Vec2::ZERO || a.mobility <= 0.0 || lab.horizon <= 0.0 {
+        return None;
+    }
+    let rel = b.position - a.position;
+    let velocity = a.heading * a.speed - b.heading * b.speed;
+    let closing = rel.dot(velocity);
+    if closing <= 0.0 {
+        return None;
+    }
+    let speed_squared = velocity.length_squared();
+    if speed_squared < 1e-6 {
+        return None;
+    }
+    let time = closing / speed_squared;
+    if time > lab.horizon {
+        return None;
+    }
+    let closest = rel - velocity * time;
+    let miss = closest.length();
+    let clearance = (a.radius + b.radius) * lab.anticipate_margin;
+    if miss >= clearance {
+        return None;
+    }
+    let right = right_of(a.heading);
+    let away = if miss > 1e-3 { -closest / miss } else { right };
+    let biased = away + right * lab.lane_bias;
+    let lateral = biased - a.heading * biased.dot(a.heading);
+    let lateral = lateral.normalize_or_zero();
+    if lateral == Vec2::ZERO {
+        return None;
+    }
+    Some((lateral, 1.0 - time / lab.horizon))
+}
+
 /// Буферы прогона — в `Local`, чтобы steady state обходился без аллокаций.
 /// `pub(super)` — тип стоит в сигнатуре системы, которую регистрирует `mod.rs`.
 #[derive(Default)]
@@ -335,16 +557,23 @@ pub(super) struct SeparationState {
     /// индексам `pawns` — ни одного `Vec` на ячейку.
     heads: HashMap<IVec2, u32>,
     next: Vec<u32>,
-    /// Перекрывшиеся пары этого прогона, каждая по разу. Собираются отдельным
-    /// проходом, потому что толчок пары зависит от того, сколько соседей у её
-    /// участников (см. `contacts`), а это известно только когда найдены все.
-    pairs: Vec<(u32, u32)>,
+    /// Пары этого прогона, каждая по разу: индексы плюс признак «уже
+    /// перекрылись». Неперекрывшиеся сюда попадают только при включённом
+    /// упреждении ([`SeparationLab::horizon`]) и только те, что в пределах
+    /// горизонта. Собираются отдельным проходом, потому что толчок пары зависит
+    /// от того, сколько соседей у её участников (см. `contacts`), а это
+    /// известно только когда найдены все.
+    pairs: Vec<(u32, u32, bool)>,
     /// Сколько перекрытий у каждой пешки в этом прогоне.
     contacts: Vec<u32>,
     /// Кто в этом прогоне упирался курсом в перекрытого соседа — источник
     /// [`SeparationHolds`].
     held: Vec<bool>,
     pushes: Vec<Vec2>,
+    /// Сумма сторон обхода по всем соседям — источник [`SeparationSteer`].
+    /// Складывается ненормированной и нормируется один раз в конце: пешка,
+    /// зажатая с двух сторон, должна получить их сумму, а не последнюю.
+    steers: Vec<Vec2>,
 }
 
 fn fine_cell(pos: Vec2, cell: f32) -> IVec2 {
@@ -372,15 +601,41 @@ fn coincident_direction(pawn_id: u32) -> Vec2 {
 #[derive(Clone, Copy)]
 struct Tuning {
     fraction: f32,
+    /// Виртуальное время, прошедшее с прошлого прогона: упреждение считает снос
+    /// в м/с, а не в долях перекрытия.
+    dt: f32,
     sidestep: f32,
     cell: f32,
+    lab: SeparationLab,
+}
+
+/// Радиус тела с поправкой на давку: чем больше у пешки одновременных
+/// перекрытий, тем сильнее она «ужимается» ([`SeparationLab::compress`]).
+///
+/// Зачем. Дистанция покоя 1.8 м — это личное пространство свободно идущего
+/// человека, и в узком месте она физически недостижима: суммарной ширины
+/// не хватает, коррекции всех пар складываются в затор, и поток встаёт.
+/// Живая толпа в этом месте не встаёт, а прижимается. Ужимается ТОЛЬКО
+/// величина коррекции: набор пар и, значит, `contacts` считаются по полному
+/// радиусу — иначе загрузка зависела бы сама от себя.
+///
+/// При `compress = 0` возвращает радиус без изменений, то есть нынешнее
+/// поведение.
+fn squeezed_radius(radius: f32, contacts: u32, lab: &SeparationLab) -> f32 {
+    if lab.compress <= 0.0 || lab.compress_at <= 0.0 {
+        return radius;
+    }
+    let load = (contacts as f32 / lab.compress_at).min(1.0);
+    radius * (1.0 - lab.compress * load)
 }
 
 fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     let Tuning {
         fraction,
+        dt,
         sidestep: sidestep_strength,
         cell: cell_size,
+        lab,
     } = tuning;
     state.heads.clear();
     state.next.clear();
@@ -391,6 +646,31 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     state.held.resize(state.pawns.len(), false);
     state.pushes.clear();
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
+    state.steers.clear();
+    state.steers.resize(state.pawns.len(), Vec2::ZERO);
+
+    // Насколько далеко имеет смысл смотреть на ещё не перекрывшегося соседа: за
+    // горизонт `t` секунд самая быстрая пара сближается на сумму скоростей.
+    // 0 при выключенном упреждении — тогда проход ниже не берёт ни одной лишней
+    // пары и остаётся тем же, что был.
+    //
+    // Ячейка мелкой сетки от него РАСТЁТ: соседей ищут в 3 × 3 ячейках, и пара,
+    // разнесённая дальше ячейки, туда просто не попадёт. Это и есть цена
+    // упреждения — площадь просмотра растёт как квадрат горизонта (при 1.5 с и
+    // 3.5 м/с ячейка 10.5 м против нынешних 2.4 м, то есть ~19× кандидатов на
+    // пешку). Проверять этот счёт — работа стенда, а не догадки.
+    let lookahead = if lab.horizon > 0.0 && lab.anticipation > 0.0 {
+        let fastest = state
+            .pawns
+            .iter()
+            .map(|pawn| pawn.speed)
+            .fold(0.0f32, f32::max);
+        lab.horizon * 2.0 * fastest
+    } else {
+        0.0
+    };
+    let cell_size = cell_size.max(lookahead);
+
     for (i, pawn) in state.pawns.iter().enumerate() {
         let head = state
             .heads
@@ -398,7 +678,9 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         state.next.push(head.unwrap_or(NONE));
     }
 
-    // проход 1 — кто с кем перекрылся и сколько соседей у каждого
+    // проход 1 — кто с кем перекрылся, кто с кем сближается, и сколько соседей
+    // у каждого. `contacts` считает ТОЛЬКО перекрытия: он кормит гейт `alone` у
+    // обхода и загрузку у сжатия радиуса, и упреждающие пары там не при чём
     for i in 0..state.pawns.len() {
         let a = state.pawns[i];
         let cell = fine_cell(a.position, cell_size);
@@ -413,12 +695,16 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
                     if j > i as u32 {
                         let b = state.pawns[j as usize];
                         let min_distance = a.radius + b.radius;
-                        let overlapping = (b.position - a.position).length_squared()
-                            < min_distance * min_distance;
-                        if overlapping && a.mobility + b.mobility > 0.0 {
-                            state.pairs.push((i as u32, j));
-                            state.contacts[i] += 1;
-                            state.contacts[j as usize] += 1;
+                        let gap_squared = (b.position - a.position).length_squared();
+                        let overlapping = gap_squared < min_distance * min_distance;
+                        if a.mobility + b.mobility > 0.0 {
+                            if overlapping {
+                                state.pairs.push((i as u32, j, true));
+                                state.contacts[i] += 1;
+                                state.contacts[j as usize] += 1;
+                            } else if gap_squared < lookahead * lookahead {
+                                state.pairs.push((i as u32, j, false));
+                            }
                         }
                     }
                     j = state.next[j as usize];
@@ -429,9 +715,26 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
 
     // проход 2 — толчки
     for pair in 0..state.pairs.len() {
-        let (i, j) = state.pairs[pair];
+        let (i, j, overlapping) = state.pairs[pair];
         let (a, b) = (state.pawns[i as usize], state.pawns[j as usize]);
-        let min_distance = a.radius + b.radius;
+        // сближающиеся, но ещё не сомкнувшиеся: только уклонение, и каждый
+        // считает своё — доли пары тут ни при чём
+        if !overlapping {
+            state.pushes[i as usize] += anticipate(&a, &b, &lab, dt);
+            state.pushes[j as usize] += anticipate(&b, &a, &lab, dt);
+            if lab.steer > 0.0 {
+                // руление копит ту же сторону, но взвешенную срочностью, а не
+                // временем прогона: это доля курса, а не метры
+                for (pawn, other, index) in [(&a, &b, i), (&b, &a, j)] {
+                    if let Some((lateral, urgency)) = avoid_direction(pawn, other, &lab) {
+                        state.steers[index as usize] += lateral * urgency;
+                    }
+                }
+            }
+            continue;
+        }
+        let min_distance = squeezed_radius(a.radius, state.contacts[i as usize], &lab)
+            + squeezed_radius(b.radius, state.contacts[j as usize], &lab);
         let offset = b.position - a.position;
         let distance = offset.length();
         let direction = if distance > 1e-4 {
@@ -439,7 +742,10 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         } else {
             coincident_direction(a.pawn_id)
         };
-        let overlap = (min_distance - distance) * fraction;
+        // `max(0)` — из-за сжатия радиуса ([`squeezed_radius`]): в давке
+        // дистанция покоя падает ниже фактической, и без клампа пара, которую
+        // перекрытой посчитал проход 1, получила бы толчок ВНУТРЬ
+        let overlap = (min_distance - distance).max(0.0) * fraction;
         let correction = direction * overlap;
         let (share_a, share_b) = shares(&a, &b, direction);
         let a_frontal = a.heading.dot(direction) > 0.0;
@@ -450,11 +756,29 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // и поперечного соседа это не касается: первый вариант правила
         // придерживал за любое касание, и поток целиком полз на доле шага —
         // группа попутчиков душила сама себя.
-        if a.human && a_frontal && (b.heading == Vec2::ZERO || b_frontal) {
+        let a_blocked = a_frontal && (b.heading == Vec2::ZERO || b_frontal);
+        let b_blocked = b_frontal && (a.heading == Vec2::ZERO || a_frontal);
+        if a.human && a_blocked {
             state.held[i as usize] = true;
         }
-        if b.human && b_frontal && (a.heading == Vec2::ZERO || a_frontal) {
+        if b.human && b_blocked {
             state.held[j as usize] = true;
+        }
+        // Руление у СОМКНУВШЕЙСЯ пары. Условие то же, что у придержки, и это не
+        // совпадение: придержка — «упёрся, перестань давить», руление — «упёрся,
+        // возьми вбок». Упреждение здесь не помощник: тела уже соприкоснулись,
+        // и обходить по его расчёту поздно. Сторона — своя правая, как у живых
+        // пешеходов; ВСТРЕЧНЫМ она даёт противоположные стороны мира, то есть
+        // ровно расхождение, а не вращение (вращение получалось у ТОЛЧКА, где
+        // боковая добавка шла вместе с продольной коррекцией — здесь продольной
+        // составляющей нет вовсе, курс только доворачивается).
+        if lab.steer > 0.0 {
+            if a_blocked && a.mobility > 0.0 {
+                state.steers[i as usize] += right_of(a.heading);
+            }
+            if b_blocked && b.mobility > 0.0 {
+                state.steers[j as usize] += right_of(b.heading);
+            }
         }
         // обход — только встречным: догоняющего сзади ничто не держит, а
         // боковая добавка расползлась бы по всей очереди, идущей в одну сторону
@@ -464,18 +788,27 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // многотельная геометрия, а одинаковый разворот вправо у полусотни
         // перекрывшихся складывается в общее вращение — затор начинает крутиться
         // вместо того, чтобы рассасываться.
+        //
+        // [`SeparationLab::crowd_sidestep`] — ручка ровно на этот гейт: при 0
+        // всё как сейчас, при >0 куча тоже обходит, но ослабленной долей.
+        // Гипотеза, которую ей проверяют: боковой добавки в куче не хватает
+        // именно там, где встречный поток обязан расслоиться на полосы, а
+        // вращение — цена, которая, может быть, не наступает, пока добавка
+        // мала.
         let alone = state.contacts[i as usize] == 1 && state.contacts[j as usize] == 1;
-        let (side_a, side_b) = if opposed && alone {
+        let crowd = if alone { 1.0 } else { lab.crowd_sidestep };
+        let (side_a, side_b) = if opposed && crowd > 0.0 {
+            let strength = sidestep_strength * crowd;
             // уступает один: вправо уходят оба — и пара вращается, см. [`yields`]
             if yields(&a, &b) {
                 (
-                    sidestep(a.heading, direction, overlap * share_a, sidestep_strength),
+                    sidestep(a.heading, direction, overlap * share_a, strength),
                     Vec2::ZERO,
                 )
             } else {
                 (
                     Vec2::ZERO,
-                    sidestep(b.heading, -direction, overlap * share_b, sidestep_strength),
+                    sidestep(b.heading, -direction, overlap * share_b, strength),
                 )
             }
         } else {
@@ -497,6 +830,8 @@ pub fn separate_pawns(
     // тела, а расталкивание — лишь один из его читателей (второй — слоты
     // назначения, которые работают и когда расталкивание выключено)
     human_style: Res<crate::human::HumanStyle>,
+    lab: Res<SeparationLab>,
+    mut stats: ResMut<SeparationStats>,
     frames: Res<FrameCount>,
     time: Res<Time>,
     navmesh: Res<crate::navigation::ArcNavmesh>,
@@ -505,6 +840,7 @@ pub fn separate_pawns(
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut holds: ResMut<SeparationHolds>,
+    mut steer: ResMut<SeparationSteer>,
     mut pawns: Query<
         (
             &mut SimPosition,
@@ -521,6 +857,7 @@ pub fn separate_pawns(
     if !style.enabled {
         state.pending_dt = 0.0;
         holds.0.clear();
+        steer.0.clear();
         return;
     }
     state.pending_dt += time.delta_secs();
@@ -530,13 +867,15 @@ pub fn separate_pawns(
         return;
     }
     state.last_frame = Some(frames.0);
-    let fraction = (SEPARATION_RATE * state.pending_dt).min(1.0);
+    let dt = state.pending_dt;
+    let fraction = (lab.rate * dt).min(1.0);
     state.pending_dt = 0.0;
     // на таком отдалении пешка — 1–2 пикселя, перекрытие не читается; вместе
     // с расталкиванием выключается и придержка — иначе пешки, придержанные
     // последним прогоном перед отзумом, остались бы придержанными навсегда
     if camera.scale.x >= SEPARATION_MAX_ZOOM {
         holds.0.clear();
+        steer.0.clear();
         return;
     }
 
@@ -584,6 +923,7 @@ pub fn separate_pawns(
                 } else {
                     Vec2::ZERO
                 },
+                speed: movable.speed,
                 human: !is_demon,
             });
         };
@@ -595,17 +935,26 @@ pub fn separate_pawns(
         &mut state,
         Tuning {
             fraction,
+            dt,
             sidestep: style.sidestep,
             cell: separation_cell(human_radius),
+            lab: *lab,
         },
     );
 
     // придержанные — с чистого листа каждый прогон: ушедший из вьюпорта или
     // разошедшийся с соседом освобождается сам, без отдельной уборки
     holds.0.clear();
+    steer.0.clear();
     for (index, pawn) in state.pawns.iter().enumerate() {
         if state.held[index] {
             holds.0.insert(pawn.entity);
+        }
+        // нормируем один раз здесь: в буфере лежит СУММА сторон по всем
+        // соседям, и зажатая с двух сторон пешка получает их равнодействующую
+        let lateral = state.steers[index].normalize_or_zero();
+        if lateral != Vec2::ZERO {
+            steer.0.insert(pawn.entity, lateral * lab.steer);
         }
     }
 
@@ -616,7 +965,13 @@ pub fn separate_pawns(
         if push == Vec2::ZERO {
             continue;
         }
-        let target = pawn.position + push.clamp_length_max(SEPARATION_MAX_STEP);
+        let ceiling = if lab.max_speed > 0.0 {
+            lab.max_step.min(lab.max_speed * dt)
+        } else {
+            lab.max_step
+        };
+        let step = push.clamp_length_max(ceiling);
+        let target = pawn.position + step;
         let tile = world_to_tile(target);
         // толчок в непроходимое отбрасывается: спасение (`rescue_*`) ловит
         // только провал поиска пути, задавленную в стену пешку оно бы не нашло
@@ -627,10 +982,21 @@ pub fn separate_pawns(
             continue;
         };
         sim_position.0 = target;
+        let length = step.length();
+        stats.push_metres += length as f64;
+        stats.worst_push = stats.worst_push.max(length);
         // сетка людей инкрементальна; толчки мелкие, но стоячую пешку они
         // могут за много прогонов увести через границу 60-метровой ячейки
         if !is_demon && crate::spatial::cell_of(target) != crate::spatial::cell_of(pawn.position) {
             humans.insert(pawn.entity, target);
+        }
+    }
+    stats.runs += 1;
+    for (_, _, overlapping) in &state.pairs {
+        if *overlapping {
+            stats.overlapping_pairs += 1;
+        } else {
+            stats.anticipated_pairs += 1;
         }
     }
     crate::diagnostics::measure_ms(
@@ -658,6 +1024,7 @@ mod tests {
             radius,
             mobility,
             heading: Vec2::ZERO,
+            speed: 2.8,
             human: true,
         }
     }
@@ -673,8 +1040,28 @@ mod tests {
     fn tuning(fraction: f32) -> Tuning {
         Tuning {
             fraction,
+            dt: fraction / SEPARATION_RATE,
             sidestep: SEPARATION_SIDESTEP,
             cell: SEPARATION_CELL,
+            lab: SeparationLab::default(),
+        }
+    }
+
+    fn tuning_with(fraction: f32, lab: SeparationLab) -> Tuning {
+        Tuning {
+            lab,
+            ..tuning(fraction)
+        }
+    }
+
+    /// Упреждение, настроенное так, чтобы пара за несколько метров друг от
+    /// друга уже попадала в горизонт.
+    fn anticipating() -> SeparationLab {
+        SeparationLab {
+            horizon: 1.5,
+            anticipation: 2.0,
+            lane_bias: 0.5,
+            ..Default::default()
         }
     }
 
@@ -880,6 +1267,118 @@ mod tests {
 
         assert!(!state.held[0], "демон прёт сквозь толпу");
         assert!(state.held[1], "человек навстречу демону придержан");
+    }
+
+    /// По умолчанию упреждения нет: пара в шести метрах друг от друга — не
+    /// пара вообще, и лишней работы прогон не делает. Это тот самый гарант, что
+    /// стенд не меняет поведение игры, пока его ручки не тронуты.
+    #[test]
+    fn without_a_horizon_a_distant_pair_is_not_touched() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(16.0, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(state.pairs.is_empty());
+        assert_eq!(state.pushes[0], Vec2::ZERO);
+        assert_eq!(state.pushes[1], Vec2::ZERO);
+    }
+
+    /// С горизонтом та же пара расходится ЗАРАНЕЕ — каждый вправо от себя, то
+    /// есть в мировых координатах в разные стороны, и к моменту встречи зазор
+    /// уже набран. Толчок строго поперечный: тормозить сдвигом позиции нельзя.
+    #[test]
+    fn an_approaching_head_on_pair_steps_aside_before_touching() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(16.0, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut state, tuning_with(1.0, anticipating()));
+
+        assert_eq!(state.pairs.len(), 1, "пара попала в горизонт");
+        assert!(!state.pairs[0].2, "но перекрытием не считается");
+        // идущий на +X уходит вправо от себя, то есть в −Y; встречный — в +Y
+        assert!(state.pushes[0].y < 0.0, "{:?}", state.pushes[0]);
+        assert!(state.pushes[1].y > 0.0, "{:?}", state.pushes[1]);
+        assert!(
+            state.pushes[0].x.abs() < 1e-6,
+            "толчок только поперёк курса"
+        );
+        assert!(
+            state.pushes[1].x.abs() < 1e-6,
+            "толчок только поперёк курса"
+        );
+        // и никаких придержек: тела ещё не соприкоснулись
+        assert!(state.held.iter().all(|held| !held));
+    }
+
+    /// Расходящихся упреждение не трогает: сосед впереди, но уходит быстрее —
+    /// уклоняться не от чего, и самый частый случай не стоит ничего.
+    #[test]
+    fn a_pair_walking_away_is_not_anticipated() {
+        let mut state = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::NEG_X),
+            walking(2, Vec2::new(16.0, 10.0), Vec2::X),
+        ]);
+        resolve_pushes(&mut state, tuning_with(1.0, anticipating()));
+
+        assert_eq!(state.pushes[0], Vec2::ZERO);
+        assert_eq!(state.pushes[1], Vec2::ZERO);
+    }
+
+    /// Сжатие радиуса в давке: та же пара при том же расстоянии перестаёт
+    /// считаться требующей коррекции, потому что в толчее дистанция покоя
+    /// падает. Пары как таковой это не отменяет — считаются они по полному
+    /// радиусу, иначе загрузка зависела бы сама от себя.
+    #[test]
+    fn a_squeezed_pair_stops_pushing() {
+        let layout = || {
+            state_with(vec![
+                pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
+                pawn(2, Vec2::new(10.6, 10.0), 0.45, 1.0),
+            ])
+        };
+
+        let mut loose = layout();
+        resolve_pushes(&mut loose, tuning(1.0));
+        assert!(loose.pushes[0].length() > 0.0, "без сжатия пара расходится");
+
+        let squeezed = SeparationLab {
+            compress: 0.5,
+            compress_at: 1.0,
+            ..Default::default()
+        };
+        let mut tight = layout();
+        resolve_pushes(&mut tight, tuning_with(1.0, squeezed));
+        assert_eq!(tight.pairs.len(), 1, "пара всё ещё пара");
+        assert_eq!(tight.pushes[0], Vec2::ZERO);
+        assert_eq!(tight.pushes[1], Vec2::ZERO);
+    }
+
+    /// Обход в куче — под ручкой: по умолчанию его нет (гейт `alone`), с
+    /// ручкой встречные получают боковую добавку и в толпе тоже.
+    #[test]
+    fn a_crowd_sidesteps_only_when_the_knob_is_on() {
+        let layout = || {
+            state_with(vec![
+                walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+                walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+                walking(3, Vec2::new(11.2, 10.0), Vec2::NEG_X),
+            ])
+        };
+
+        let mut gated = layout();
+        resolve_pushes(&mut gated, tuning(1.0));
+        assert!(gated.pushes.iter().all(|push| push.y == 0.0));
+
+        let crowded = SeparationLab {
+            crowd_sidestep: 0.5,
+            ..Default::default()
+        };
+        let mut loose = layout();
+        resolve_pushes(&mut loose, tuning_with(1.0, crowded));
+        assert!(loose.pushes.iter().any(|push| push.y != 0.0));
     }
 
     /// Соседи через границу ячейки мелкой сетки видят друг друга: пара на

@@ -609,6 +609,8 @@ pub fn move_moving_entities(
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     separation: Res<super::separation::SeparationStyle>,
     holds: Res<super::separation::SeparationHolds>,
+    steer: Res<super::separation::SeparationSteer>,
+    lab: Res<super::separation::SeparationLab>,
     human_style: Res<crate::human::HumanStyle>,
     mut query: Query<
         (
@@ -647,6 +649,15 @@ pub fn move_moving_entities(
             }
             remaining_time *= separation.hold;
         }
+        // руление (см. `separation::SeparationSteer`): пешка, упёршаяся в чужое
+        // тело, не давит в него и не ждёт толчка, а доворачивает курс вбок и
+        // обходит на полной скорости. Пусто, пока ручка стенда не тронута, —
+        // проверка пустоты карты стоит одного сравнения на пешку
+        let aside = if steer.0.is_empty() {
+            Vec2::ZERO
+        } else {
+            steer.0.get(&entity).copied().unwrap_or(Vec2::ZERO)
+        };
         loop {
             if movable.path.is_empty() {
                 match movable.state {
@@ -686,8 +697,23 @@ pub fn move_moving_entities(
 
             if distance_to_move < distance {
                 let direction = to_target.normalize_or_zero();
+                // `last_direction` — ЖЕЛАЕМЫЙ курс, до отклонения. Записать сюда
+                // отклонённый нельзя: расталкивание берёт сторону обхода как
+                // правую нормаль к `last_direction`, и курс доворачивался бы
+                // вправо от уже довёрнутого — каждый кадр ещё на столько же.
+                // Пешка при этом не отходит вбок, а наматывает круги, и сила
+                // отклонения перестаёт на что-либо влиять (замер стенда:
+                // разброс 0.11 м одинаково при 0.3 и при 1.5)
                 movable.last_direction = direction;
-                sim_position.0 += direction * distance_to_move;
+                // …и не у самого waypoint'а: отклонённый шаг не сокращает
+                // остаток до точки, а снимается она только когда бюджет шага
+                // этот остаток накрывает
+                let step = if aside != Vec2::ZERO && distance > lab.steer_release {
+                    (direction + aside).normalize_or_zero()
+                } else {
+                    direction
+                };
+                sim_position.0 += step * distance_to_move;
                 break;
             }
 
