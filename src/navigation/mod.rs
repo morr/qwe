@@ -17,8 +17,41 @@ pub use self::polymesh::{
 };
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
-use crate::map::osm::model::MapData;
+use crate::map::osm::model::{MapData, distance_to_segment};
 use crate::settings::NavtileBase;
+
+/// Насколько близко точка одной ломаной должна лежать к другой ломаной,
+/// чтобы дороги считались примыкающими. Развязка в OSM — это общий узел,
+/// то есть буквально одна и та же точка в обеих ways; допуск покрывает лишь
+/// потерю точности проекции.
+const JOIN_EPSILON: f32 = 0.5;
+
+/// Минимальное расстояние от точки до ломаной — по всем её сегментам.
+fn distance_to_polyline(point: Vec2, points: &[Vec2]) -> f32 {
+    points
+        .windows(2)
+        .map(|segment| distance_to_segment(point, segment[0], segment[1]))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Примыкают ли две ломаные — у какой-нибудь точки одной есть сосед на другой
+/// ближе [`JOIN_EPSILON`].
+///
+/// Тест симметричен намеренно: общий узел может оказаться серединой одной из
+/// ways, и односторонняя проверка его пропустит.
+///
+/// Живёт здесь, у общего родителя, а не в каждом бэкенде: один и тот же вопрос
+/// задают и заливка сетки ([`navmesh`]), и постройка полигонального меша
+/// ([`polymesh`]), и ответы обязаны совпадать — разойдясь, они открыли бы
+/// бордюр моста в одном бэкенде и не открыли в другом.
+fn ways_joined(first: &[Vec2], second: &[Vec2]) -> bool {
+    first
+        .iter()
+        .any(|&point| distance_to_polyline(point, second) < JOIN_EPSILON)
+        || second
+            .iter()
+            .any(|&point| distance_to_polyline(point, first) < JOIN_EPSILON)
+}
 
 /// Ответ асинхронного поиска пути (снимается в
 /// `movement::listen_for_pathfinding_tasks`).
@@ -279,6 +312,25 @@ pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Общий узел посреди одной из ways ловится с любой стороны — ровно ради
+    /// этого случая предикат симметричен.
+    #[test]
+    fn a_way_ending_in_the_middle_of_another_still_joins_it() {
+        let through = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)];
+        let stub = [Vec2::new(50.0, 0.0), Vec2::new(50.0, 40.0)];
+        assert!(ways_joined(&through, &stub));
+        assert!(ways_joined(&stub, &through));
+    }
+
+    /// Тропа, прошедшая под пролётом, узла не делит: примыкание — это общая
+    /// точка, а не близость в плане.
+    #[test]
+    fn a_way_passing_by_does_not_join() {
+        let bridge = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)];
+        let under = [Vec2::new(0.0, 2.0), Vec2::new(100.0, 2.0)];
+        assert!(!ways_joined(&bridge, &under));
+    }
 
     /// Пустая сетка с одним свободным тайлом — так проверяется, какой именно
     /// тайл выберет кольцевой поиск.

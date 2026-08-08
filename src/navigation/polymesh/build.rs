@@ -15,13 +15,9 @@ use super::seams::{
 use super::{
     ChunkComponents, PolymeshBuild, PolymeshInput, SEARCH_DELTA, SEARCH_STEPS, chunk_grid,
 };
-use crate::map::osm::model::{RoadLine, distance_to_segment, signed_ring_area};
+use crate::map::osm::model::{RoadLine, signed_ring_area};
 use crate::map::{bridge_curb_width, miter_offsets};
 use crate::settings::{MAP_SIZE, PASSAGE_MAX_WIDTH};
-
-/// Близнец `navmesh.rs::JOIN_EPSILON`: примыкание — общий узел двух ways,
-/// допуск покрывает лишь потерю точности проекции.
-const JOIN_EPSILON: f32 = 0.5;
 
 /// Упрощение контуров препятствий (Visvalingam–Whyatt внутри polyanya),
 /// метры. Не косметика: boolean оставляет отрезки в доли миллиметра, CDT на
@@ -132,14 +128,9 @@ pub(super) fn build_polymesh(
     // береговая тропа в паре метров ПОД пролётом узла не делит и не
     // открывает ничего (тот же тест, что в заливке сетки)
     for road in input.roads.iter().filter(|road| !road.bridge) {
-        let joins = bridge_ways.iter().any(|way| {
-            road.points
-                .iter()
-                .any(|&point| distance_to_polyline(point, way) < JOIN_EPSILON)
-                || way
-                    .iter()
-                    .any(|&point| distance_to_polyline(point, &road.points) < JOIN_EPSILON)
-        });
+        let joins = bridge_ways
+            .iter()
+            .any(|way| crate::navigation::ways_joined(&road.points, way));
         if joins && let Some(ring) = ribbon_outline(&road.points, road.width) {
             push_contour(&mut carves, ring);
         }
@@ -426,13 +417,4 @@ fn ribbon_outline(path: &[Vec2], width: f32) -> Option<Vec<Vec2>> {
             .map(|(&point, &offset)| point - offset),
     );
     Some(ring)
-}
-
-/// Минимальное расстояние от точки до ломаной — близнец приватного хелпера
-/// заливки (`navmesh.rs::distance_to_polyline`).
-fn distance_to_polyline(point: Vec2, points: &[Vec2]) -> f32 {
-    points
-        .windows(2)
-        .map(|segment| distance_to_segment(point, segment[0], segment[1]))
-        .fold(f32::INFINITY, f32::min)
 }

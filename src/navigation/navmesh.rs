@@ -4,9 +4,10 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
+use super::distance_to_polyline;
 use crate::grid::world_to_tile;
 use crate::map::osm::model::{
-    MapData, PolyArea, distance_to_segment, ring_bounds, water_line_caps,
+    MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
 };
 use crate::map::{bridge_curb_width, miter_offsets};
 use crate::settings::{PASSAGE_MAX_WIDTH, navtile_size};
@@ -188,14 +189,9 @@ impl Navmesh {
         // пролётом, — не примыкание, открытый ею бордюр был бы сходом с
         // моста в реку
         for road in map.roads.iter().filter(|road| !road.bridge) {
-            let joins = bridge_ways.iter().any(|&(way, _)| {
-                road.points
-                    .iter()
-                    .any(|&point| distance_to_polyline(point, way) < JOIN_EPSILON)
-                    || way
-                        .iter()
-                        .any(|&point| distance_to_polyline(point, &road.points) < JOIN_EPSILON)
-            });
+            let joins = bridge_ways
+                .iter()
+                .any(|&(way, _)| super::ways_joined(&road.points, way));
             if !joins {
                 continue;
             }
@@ -535,12 +531,6 @@ impl Navmesh {
     }
 }
 
-/// Насколько близко точка одной ломаной должна лежать к другой ломаной,
-/// чтобы дороги считались примыкающими. Развязка в OSM — это общий узел,
-/// то есть буквально одна и та же точка в обеих ways; допуск покрывает лишь
-/// потерю точности проекции.
-const JOIN_EPSILON: f32 = 0.5;
-
 /// Бордюрный тайл на этапе заливки. Два слота владельцев хватает: физически
 /// на одном тайле встречаются бордюры максимум двух соседних лент (проезжая
 /// часть и её тротуар).
@@ -552,27 +542,12 @@ struct CurbTile {
     road: bool,
 }
 
-/// Минимальное расстояние от точки до ломаной — по всем её сегментам.
-fn distance_to_polyline(point: Vec2, points: &[Vec2]) -> f32 {
-    points
-        .windows(2)
-        .map(|segment| distance_to_segment(point, segment[0], segment[1]))
-        .fold(f32::INFINITY, f32::min)
-}
-
 /// Ближайшая к `point` точка ломаной.
 fn closest_point_on_polyline(point: Vec2, points: &[Vec2]) -> Vec2 {
     let mut best = points[0];
     let mut best_distance = f32::INFINITY;
     for segment in points.windows(2) {
-        let (from, to) = (segment[0], segment[1]);
-        let delta = to - from;
-        let length_squared = delta.length_squared();
-        let candidate = if length_squared == 0.0 {
-            from
-        } else {
-            from + delta * ((point - from).dot(delta) / length_squared).clamp(0.0, 1.0)
-        };
+        let candidate = closest_on_segment(point, segment[0], segment[1]);
         let distance = point.distance_squared(candidate);
         if distance < best_distance {
             best_distance = distance;
