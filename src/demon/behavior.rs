@@ -105,6 +105,8 @@ pub fn chase(
             &mut ChaseRepath,
             &mut Movable,
             Has<DemonLungeTag>,
+            Has<PathfindingTask>,
+            Has<PathfindingRequest>,
         ),
         (With<Demon>, With<DemonChaseTag>, Without<Human>),
     >,
@@ -118,11 +120,20 @@ pub fn chase(
         bevy::platform::collections::HashSet::default();
 
     let mut chasers: ChaserCounts = ChaserCounts::default();
-    for (_, _, chase_target, _, _, _) in &query {
+    for (_, _, chase_target, _, _, _, _, _) in &query {
         *chasers.entry(chase_target.0).or_insert(0) += 1;
     }
 
-    for (entity, mut sim_position, mut chase_target, mut repath, mut movable, lunging) in &mut query
+    for (
+        entity,
+        mut sim_position,
+        mut chase_target,
+        mut repath,
+        mut movable,
+        lunging,
+        has_task,
+        has_request,
+    ) in &mut query
     {
         // цель умерла (труп/despawn) — снова блуждание
         let Ok(target_position) = targets.get(chase_target.0) else {
@@ -182,6 +193,21 @@ pub fn chase(
         // цель разорвала дистанцию или ушла за угол — бросок отменён
         if lunging {
             commands.entity(entity).remove::<DemonLungeTag>();
+        }
+
+        // Первого пути ещё нет: путь пуст, доката нет (демон ни разу не
+        // шагал), а поиск уже в полёте. Перепрокладка отменила бы его —
+        // `to_pathfinding` роняет таск, — и пока конвейер отвечает медленнее,
+        // чем цель меняет тайл (постройка northstar на старте, высокая
+        // скорость), демон обрывал бы каждый ответ до прихода и стоял у
+        // портала вечно, отвисая только на паузе. Ждём ответ: он даст путь и
+        // `last_direction`, дальше промежутки перепрокладки прикрывает докат.
+        if (has_task || has_request)
+            && matches!(movable.state, MovableState::Pathfinding(_))
+            && movable.path.is_empty()
+            && movable.last_direction == Vec2::ZERO
+        {
+            continue;
         }
 
         // перепрокладка пути к цели — по таймеру, не каждый тик
@@ -391,5 +417,117 @@ pub fn pulse_devouring(
         let phase = devour_until.0.elapsed_secs() / DEVOUR_PULSE_PERIOD * TAU;
         let scale = 1.0 + (DEVOUR_PULSE_MAX_SCALE - 1.0) * 0.5 * (1.0 - phase.cos());
         transform.scale = Vec3::splat(scale);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+    use std::time::Duration;
+
+    use super::*;
+    use crate::navigation::{
+        ArcNavmesh, Navmesh, NorthstarGrid, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug,
+    };
+
+    /// Ресурсы, из которых собирается `chase`: пустая проходимая сетка,
+    /// полигонального меша и иерархии нет — как на старте мира.
+    fn app() -> App {
+        let mut app = App::new();
+        app.insert_resource(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))))
+            .init_resource::<NorthstarGrid>()
+            .init_resource::<PathfindingAlgorithm>()
+            .init_resource::<PolyNavmesh>()
+            .init_resource::<PolymeshDebug>()
+            .init_resource::<bevy::diagnostic::DiagnosticsStore>()
+            .init_resource::<SpatialGrid<Human>>()
+            .init_resource::<DemonStyle>()
+            .init_resource::<Time>()
+            .add_systems(Update, chase);
+        app
+    }
+
+    /// Демон в погоне с поиском в полёте: заявка подана к `pending_goal`,
+    /// пути ещё нет. `last_direction` задаёт, шагал ли он хоть раз.
+    fn spawn_chaser(app: &mut App, target: Entity, pending_goal: IVec2, walked: bool) -> Entity {
+        let position = Vec2::new(10.0, 10.0);
+        let mut movable = Movable::new(1.0);
+        movable.state = MovableState::Pathfinding(pending_goal);
+        if walked {
+            movable.last_direction = Vec2::X;
+        }
+        app.world_mut()
+            .spawn((
+                Demon,
+                DemonChaseTag,
+                ChaseTarget(target),
+                ChaseRepath::default(),
+                movable,
+                SimPosition(position),
+                PathfindingRequest {
+                    start_tile: world_to_tile(position),
+                    end_tile: pending_goal,
+                },
+            ))
+            .id()
+    }
+
+    /// Такт с дельтой больше периода `ChaseRepath` — перепрокладке пора.
+    fn run_repath_tick(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(1.0));
+        app.update();
+    }
+
+    #[test]
+    fn a_chaser_without_a_first_path_keeps_its_search_in_flight() {
+        let app = &mut app();
+        let human = app
+            .world_mut()
+            .spawn((Human, SimPosition(Vec2::new(30.0, 10.0))))
+            .id();
+        let pending_goal = IVec2::new(5, 5);
+        let demon = spawn_chaser(app, human, pending_goal, false);
+
+        run_repath_tick(app);
+
+        // заявка в полёте не тронута: без неё демону нечем идти — ни пути,
+        // ни доката, — и отмена замораживала бы его до конца погони
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("заявка обязана пережить такт перепрокладки");
+        assert_eq!(request.end_tile, pending_goal);
+        assert_eq!(
+            app.world().get::<Movable>(demon).expect("Movable").state,
+            MovableState::Pathfinding(pending_goal)
+        );
+    }
+
+    #[test]
+    fn a_chaser_that_has_walked_repaths_to_the_target() {
+        let app = &mut app();
+        let target_position = Vec2::new(30.0, 10.0);
+        let human = app
+            .world_mut()
+            .spawn((Human, SimPosition(target_position)))
+            .id();
+        let demon = spawn_chaser(app, human, IVec2::new(5, 5), true);
+
+        run_repath_tick(app);
+
+        // у шагавшего демона есть докат — устаревшую заявку штатно вытесняет
+        // перепрокладка к текущему тайлу цели
+        let target_tile = world_to_tile(target_position);
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("перепрокладка обязана подать новую заявку");
+        assert_eq!(request.end_tile, target_tile);
+        assert_eq!(
+            app.world().get::<Movable>(demon).expect("Movable").state,
+            MovableState::Pathfinding(target_tile)
+        );
     }
 }

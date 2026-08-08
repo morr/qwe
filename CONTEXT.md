@@ -1564,6 +1564,14 @@ in `main.rs`.
   makes the demon dither. The search radius is proportional to the current distance,
   which self-limits at both ends: 1.4 m when the demon is 2 m from its victim (it no
   longer turns aside), 47 m at the far end of the hysteresis (still a 3×3 cell walk).
+  A chaser that has **no first path yet** — empty path, zero `last_direction`, a search
+  in flight — skips the repath tick and waits for the answer: repathing would drop the
+  in-flight task (`to_pathfinding` removes `PathfindingTask`, cancelling the search),
+  and whenever the pipeline answers slower than the victim changes tiles (northstar
+  build at launch, high sim speed) the demon cancelled every answer before it landed
+  and stood frozen at the portal — thawing only on pause, when `FixedUpdate` stops
+  cancelling while the `Update` pipeline keeps delivering. Once the first path lands,
+  coasting covers the repath gaps and cancelling becomes safe.
   **Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with `line_of_sight` to the victim,
   the demon drops its path and steps `SimPosition` straight at the target, at its speed
   plus `DemonStyle::lunge`. Without it a chase never converts: a tile path aims at the
