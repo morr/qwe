@@ -22,20 +22,13 @@ use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
-use crate::movement::{
-    SeparationLab, SeparationStyle, SlotLab, SlotSearch, separation_allowed_by_mode,
-};
-use crate::navigation::PolymeshDebug;
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::settings::{
-    CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, DEMON_CAP_MAX, DEMON_CAP_MIN,
-    DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN, DEMON_LUNGE_BOOST_STEP,
-    DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN, DEMON_SPAWN_INTERVAL_STEP,
-    DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN, DEMON_SPEED_FACTOR_STEP, HUMAN_BODY_RADIUS_MAX,
-    HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
-    HUMAN_SPEED_SPREAD_STEP, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
-    SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE_MAX, SEPARATION_PASS_SQUEEZE_MIN,
-    SEPARATION_PASS_SQUEEZE_STEP, SLOT_REGROUP_MAX, SLOT_REGROUP_MIN, SLOT_REGROUP_STEP,
+    DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
+    DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
+    DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
+    DEMON_SPEED_FACTOR_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
+    HUMAN_SPEED_SPREAD_STEP,
 };
 use crate::telemetry::Telemetry;
 
@@ -87,14 +80,6 @@ struct DemonValueLabel(DemonRow);
 #[derive(Component)]
 struct DemonSlider(DemonRow);
 
-/// Строка-кнопка тумблера расталкивания — адресует и подсветку, и подпись.
-#[derive(Component)]
-struct SeparationRow;
-
-/// Текст значения в строке тумблера.
-#[derive(Component)]
-struct SeparationValueLabel;
-
 /// Строка-кнопка тумблера детерминированного режима.
 #[derive(Component)]
 struct DeterminismRow;
@@ -106,100 +91,16 @@ struct DeterminismValueLabel;
 #[derive(Component)]
 struct SeedField;
 
-/// Панель Human: разброс скоростей и радиус тела. Строк пока две, поэтому без
-/// enum'а — по паре маркеров на строку; появится третья, заводить `HumanRow`.
+/// Панель Human: разброс личных скоростей. Строка пока одна, поэтому без
+/// enum'а — пара маркеров; появится вторая, заводить `HumanRow`. Радиус тела
+/// стоял здесь же, но уехал в подвкладку Slots панели Navigation: ресурс у него
+/// человеческий (`HumanStyle::body_radius`), а подбирается он вместе с
+/// остальными ручками толпы.
 #[derive(Component)]
 struct SpreadValueLabel;
 
 #[derive(Component)]
 struct SpreadSlider;
-
-#[derive(Component)]
-struct BodyRadiusValueLabel;
-
-#[derive(Component)]
-struct BodyRadiusSlider;
-
-/// Строка радиуса поиска слота назначения — в панели World: механизм
-/// видо-независимый, как и расталкивание.
-#[derive(Component)]
-struct SlotSearchValueLabel;
-
-#[derive(Component)]
-struct SlotSearchSlider;
-
-/// Строки трёх механизмов, которые замер вывел в дефолты
-/// (`tools/crowd_tuning_lab/REPORT.md`): протискивание мимо стоящих, доля
-/// левшей и возврат на свой слот. Все три — свойства мира, а не вида, поэтому
-/// стоят в панели World рядом с тумблером расталкивания.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum CrowdRow {
-    PassSqueeze,
-    LeftShare,
-    Regroup,
-}
-
-/// Подпись значения такой строки.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-struct CrowdValueLabel(CrowdRow);
-
-/// Её ползунок.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-struct CrowdSlider(CrowdRow);
-
-impl CrowdRow {
-    const ALL: [Self; 3] = [Self::PassSqueeze, Self::LeftShare, Self::Regroup];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::PassSqueeze => "Pass squeeze",
-            Self::LeftShare => "Left share",
-            Self::Regroup => "Regroup",
-        }
-    }
-
-    /// `(min, max, шаг)` — из `settings.rs`, как у остальных ползунков.
-    fn range(self) -> (f32, f32, f32) {
-        match self {
-            Self::PassSqueeze => (
-                SEPARATION_PASS_SQUEEZE_MIN,
-                SEPARATION_PASS_SQUEEZE_MAX,
-                SEPARATION_PASS_SQUEEZE_STEP,
-            ),
-            Self::LeftShare => (
-                SEPARATION_LEFT_SHARE_MIN,
-                SEPARATION_LEFT_SHARE_MAX,
-                SEPARATION_LEFT_SHARE_STEP,
-            ),
-            Self::Regroup => (SLOT_REGROUP_MIN, SLOT_REGROUP_MAX, SLOT_REGROUP_STEP),
-        }
-    }
-
-    fn get(self, lab: &SeparationLab, slots: &SlotLab) -> f32 {
-        match self {
-            Self::PassSqueeze => lab.pass_squeeze,
-            Self::LeftShare => lab.left_share,
-            Self::Regroup => slots.regroup,
-        }
-    }
-
-    fn set(self, lab: &mut SeparationLab, slots: &mut SlotLab, value: f32) {
-        match self {
-            Self::PassSqueeze => lab.pass_squeeze = value,
-            Self::LeftShare => lab.left_share = value,
-            Self::Regroup => slots.regroup = value,
-        }
-    }
-
-    /// Единица измерения в подписи: у возврата это метры, у двух других — доля.
-    fn value_text(self, lab: &SeparationLab, slots: &SlotLab) -> String {
-        let value = self.get(lab, slots);
-        match self {
-            Self::Regroup => format!("{value:.2} m"),
-            _ => format!("{value:.2}"),
-        }
-    }
-}
 
 pub struct UiStatsPlugin;
 
@@ -209,22 +110,12 @@ impl Plugin for UiStatsPlugin {
             Update,
             (
                 sync_world_counts,
-                highlight_separation_row,
                 highlight_determinism_row,
                 apply_seed_on_enter,
                 sync_seed_field.run_if(resource_changed::<WorldSeed>),
                 sync_determinism_value.run_if(resource_changed::<Determinism>),
-                sync_separation_value.run_if(
-                    resource_changed::<SeparationStyle>
-                        .or_else(resource_changed::<Determinism>)
-                        // строка гаснет и от смены бэкенда навигации
-                        .or_else(resource_changed::<PolymeshDebug>),
-                ),
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
-                sync_slot_search_value.run_if(resource_changed::<SlotSearch>),
-                sync_crowd_values
-                    .run_if(resource_changed::<SeparationLab>.or_else(resource_changed::<SlotLab>)),
                 // метка BRP стоит только в агентских запусках, и только тогда
                 // панели есть что обходить
                 offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
@@ -394,17 +285,11 @@ fn panel_title(title: &str) -> impl Bundle {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_stats_panel(
     mut commands: Commands,
     style: Res<DemonStyle>,
     human_style: Res<HumanStyle>,
-    separation: Res<SeparationStyle>,
-    separation_lab: Res<SeparationLab>,
-    slot_lab: Res<SlotLab>,
-    slot_search: Res<SlotSearch>,
     determinism: Res<Determinism>,
-    polymesh: Res<PolymeshDebug>,
     seed: Res<WorldSeed>,
 ) {
     let column = commands
@@ -465,72 +350,10 @@ fn render_stats_panel(
         .id();
     commands.entity(column).add_child(world_panel);
 
-    // тумблер расталкивания пешек в кадре (`movement/separation.rs`) — в
-    // World, а не в Demon/Human: механизм видо-независимый
-    let separation_row = commands
-        .spawn((
-            Button,
-            SeparationRow,
-            Pickable::default(),
-            // `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                (
-                    Text::new("Separation"),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    SeparationValueLabel,
-                    Text::new(separation_value(&separation, &determinism, &polymesh)),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(separation_value_color(&determinism, &polymesh)),
-                ),
-            ],
-        ))
-        .observe(
-            |_activate: On<Activate>,
-             mut style: ResMut<SeparationStyle>,
-             determinism: Res<Determinism>,
-             polymesh: Res<PolymeshDebug>| {
-                // под детерминизмом и на сеточной навигации расталкивания нет
-                // вовсе — тумблер не должен молча переключать то, что всё
-                // равно не работает
-                if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
-                    return;
-                }
-                style.enabled = !style.enabled;
-            },
-        )
-        .id();
-    commands.entity(world_panel).add_child(separation_row);
-
-    // тумблер детерминированного режима и поле seed'а — под расталкиванием:
-    // это тоже свойства мира целиком, а не вида
+    // тумблер детерминированного режима и поле seed'а — свойства мира целиком,
+    // а не вида. Расталкивание и слоты стояли здесь по той же логике, но
+    // уехали в подвкладки панели Navigation: они про перемещение, и ручек у
+    // них столько, что World переставал читаться как сводка прогона
     let determinism_row = commands
         .spawn((
             Button,
@@ -666,90 +489,6 @@ fn render_stats_panel(
         SpreadSlider,
         on_spread_change,
     );
-
-    // радиус тела — здесь, а не в World рядом с тумблером расталкивания: это
-    // свойство человека, и читает его не только расталкивание, но и слоты
-    // назначения, которые работают даже когда тумблер выключен
-    spawn_slider_row(
-        &mut commands,
-        human_panel,
-        SliderRow {
-            label: "Body radius",
-            value: human_style.body_radius,
-            value_text: body_radius_value(&human_style),
-            range: (
-                HUMAN_BODY_RADIUS_MIN,
-                HUMAN_BODY_RADIUS_MAX,
-                HUMAN_BODY_RADIUS_STEP,
-            ),
-        },
-        BodyRadiusValueLabel,
-        BodyRadiusSlider,
-        on_body_radius_change,
-    );
-
-    spawn_slider_row(
-        &mut commands,
-        world_panel,
-        SliderRow {
-            label: "Slot search",
-            value: slot_search.0,
-            value_text: slot_search_value(&slot_search),
-            range: (CLAIM_SEARCH_MIN, CLAIM_SEARCH_MAX, CLAIM_SEARCH_STEP),
-        },
-        SlotSearchValueLabel,
-        SlotSearchSlider,
-        on_slot_search_change,
-    );
-
-    for row in CrowdRow::ALL {
-        spawn_slider_row(
-            &mut commands,
-            world_panel,
-            SliderRow {
-                label: row.label(),
-                value: row.get(&separation_lab, &slot_lab),
-                value_text: row.value_text(&separation_lab, &slot_lab),
-                range: row.range(),
-            },
-            CrowdValueLabel(row),
-            CrowdSlider(row),
-            move |change: On<ValueChange<f32>>,
-                  mut commands: Commands,
-                  mut lab: ResMut<SeparationLab>,
-                  mut slots: ResMut<SlotLab>| {
-                let (min, max, step) = row.range();
-                let stepped = quantize(change.value, min, max, step);
-                commands.entity(change.source).insert(SliderValue(stepped));
-                if (row.get(&lab, &slots) - stepped).abs() > f32::EPSILON {
-                    row.set(&mut lab, &mut slots, stepped);
-                }
-            },
-        );
-    }
-}
-
-/// Подтянуть строки механизмов к ресурсам — их правят не только эти ползунки
-/// (BRP, панель демо-сцены), а расходиться показанному и настоящему нельзя.
-fn sync_crowd_values(
-    mut commands: Commands,
-    lab: Res<SeparationLab>,
-    slots: Res<SlotLab>,
-    mut labels: Query<(&CrowdValueLabel, &mut Text)>,
-    sliders: Query<(Entity, &CrowdSlider, &SliderValue)>,
-) {
-    for (label, mut text) in &mut labels {
-        let next = label.0.value_text(&lab, &slots);
-        if text.0 != next {
-            text.0 = next;
-        }
-    }
-    for (entity, slider, value) in &sliders {
-        let next = slider.0.get(&lab, &slots);
-        if (value.0 - next).abs() > f32::EPSILON {
-            commands.entity(entity).insert(SliderValue(next));
-        }
-    }
 }
 
 /// Счётчики панели. `Human` снимается с человека в момент смерти, а с трупа не
@@ -779,25 +518,6 @@ fn sync_world_counts(
 /// Под детерминизмом и на сеточной навигации строка не подсвечивается вовсе:
 /// расталкивание там выключено расписанием (`movement/mod.rs`), нажимать
 /// нечего, и реакция на курсор обещала бы работающую кнопку.
-fn highlight_separation_row(
-    determinism: Res<Determinism>,
-    polymesh: Res<PolymeshDebug>,
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<SeparationRow>>,
-) {
-    for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
-            ROW_LIGHTEN
-        } else if pressed {
-            PRESSED_LIGHTEN
-        } else if hovered.get() {
-            HOVER_LIGHTEN
-        } else {
-            ROW_LIGHTEN
-        };
-        background.0 = row_color(lighten);
-    }
-}
-
 fn highlight_determinism_row(
     mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<DeterminismRow>>,
 ) {
@@ -878,48 +598,6 @@ fn sync_seed_field(
 
 /// Подпись тумблера вслед за ресурсом — клик, BRP или восстановленные
 /// настройки одинаково двигают текст.
-fn sync_separation_value(
-    style: Res<SeparationStyle>,
-    determinism: Res<Determinism>,
-    polymesh: Res<PolymeshDebug>,
-    mut labels: Query<(&mut Text, &mut TextColor), With<SeparationValueLabel>>,
-) {
-    for (mut text, mut color) in &mut labels {
-        text.0 = separation_value(&style, &determinism, &polymesh);
-        color.0 = separation_value_color(&determinism, &polymesh);
-    }
-}
-
-/// Подпись тумблера расталкивания.
-///
-/// Под детерминизмом и на сеточной навигации — всегда `off`, каким бы ни был
-/// `SeparationStyle`: система выключена run-условием
-/// (`movement::separation_runs` — расталкивание завязано на камеру, зум и
-/// `FrameCount`, то есть на всё, от чего повтор обязан не зависеть, а на
-/// сетке waypoint'ы стоят в центрах навтайлов и разводить пешки некуда).
-/// Собственное значение стиля при этом сохраняется — возврат режима вернёт
-/// панель к нему.
-fn separation_value(
-    style: &SeparationStyle,
-    determinism: &Determinism,
-    polymesh: &PolymeshDebug,
-) -> String {
-    if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
-        return "off".to_string();
-    }
-    if style.enabled { "on" } else { "off" }.to_string()
-}
-
-/// Приглушённая подпись — тем же способом, каким панели показывают
-/// неактивное: цветом, а не отдельной иконкой.
-fn separation_value_color(determinism: &Determinism, polymesh: &PolymeshDebug) -> Color {
-    if separation_allowed_by_mode(determinism.0, polymesh.enabled) {
-        Color::WHITE
-    } else {
-        Color::srgb(0.45, 0.45, 0.45)
-    }
-}
-
 /// Подписи и бегунки вслед за ресурсом — правка извне (BRP, восстановленные
 /// настройки) должна двигать ползунок, а не только менять поведение.
 fn sync_demon_values(
@@ -1007,10 +685,8 @@ fn on_lunge_change(
 fn sync_human_values(
     style: Res<HumanStyle>,
     mut commands: Commands,
-    mut spread_label: Query<&mut Text, (With<SpreadValueLabel>, Without<BodyRadiusValueLabel>)>,
+    mut spread_label: Query<&mut Text, With<SpreadValueLabel>>,
     spread_slider: Query<(Entity, &SliderValue), With<SpreadSlider>>,
-    mut radius_label: Query<&mut Text, (With<BodyRadiusValueLabel>, Without<SpreadValueLabel>)>,
-    radius_slider: Query<(Entity, &SliderValue), With<BodyRadiusSlider>>,
 ) {
     for mut text in &mut spread_label {
         text.0 = spread_value(&style);
@@ -1020,77 +696,6 @@ fn sync_human_values(
             commands.entity(entity).insert(SliderValue(style.spread));
         }
     }
-    for mut text in &mut radius_label {
-        text.0 = body_radius_value(&style);
-    }
-    for (entity, value) in &radius_slider {
-        if (value.0 - style.body_radius).abs() > f32::EPSILON {
-            commands
-                .entity(entity)
-                .insert(SliderValue(style.body_radius));
-        }
-    }
-}
-
-/// Подпись и бегунок радиуса поиска слота вслед за ресурсом.
-fn sync_slot_search_value(
-    search: Res<SlotSearch>,
-    mut commands: Commands,
-    mut label: Query<&mut Text, With<SlotSearchValueLabel>>,
-    slider: Query<(Entity, &SliderValue), With<SlotSearchSlider>>,
-) {
-    for mut text in &mut label {
-        text.0 = slot_search_value(&search);
-    }
-    for (entity, value) in &slider {
-        if (value.0 - search.0).abs() > f32::EPSILON {
-            commands.entity(entity).insert(SliderValue(search.0));
-        }
-    }
-}
-
-fn on_body_radius_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<HumanStyle>,
-) {
-    let stepped = quantize(
-        change.value,
-        HUMAN_BODY_RADIUS_MIN,
-        HUMAN_BODY_RADIUS_MAX,
-        HUMAN_BODY_RADIUS_STEP,
-    );
-    commands.entity(change.source).insert(SliderValue(stepped));
-    if (style.body_radius - stepped).abs() > f32::EPSILON {
-        style.body_radius = stepped;
-    }
-}
-
-fn on_slot_search_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut search: ResMut<SlotSearch>,
-) {
-    let stepped = quantize(
-        change.value,
-        CLAIM_SEARCH_MIN,
-        CLAIM_SEARCH_MAX,
-        CLAIM_SEARCH_STEP,
-    );
-    commands.entity(change.source).insert(SliderValue(stepped));
-    if (search.0 - stepped).abs() > f32::EPSILON {
-        search.0 = stepped;
-    }
-}
-
-/// Значение строки радиуса тела. В метрах: «личное пространство» — это
-/// дистанция покоя, вдвое больше, и она читается по спрайту (1 м).
-fn body_radius_value(style: &HumanStyle) -> String {
-    format!("{:.2} m", style.body_radius)
-}
-
-fn slot_search_value(search: &SlotSearch) -> String {
-    format!("{:.0} m", search.0)
 }
 
 fn on_spread_change(

@@ -11,8 +11,8 @@
 //!
 //! У этого выбора есть последствие за пределами поиска пути: на сеточном
 //! бэкенде не работает расталкивание (`movement::separation_runs` — waypoint'ы
-//! стоят в центрах навтайлов, разводить пешки некуда), и строка `Separation` в
-//! панели World гаснет так же, как под детерминизмом.
+//! стоят в центрах навтайлов, разводить пешки некуда), и строка `Separation`
+//! ниже гаснет так же, как под детерминизмом.
 //!
 //! Настройки каждой подсистемы живут под её строкой и **видны только пока она
 //! выбрана** (`Display::None`, левую колонку перестыкует
@@ -29,6 +29,37 @@
 //! кнопка `navtile:` стоит в ряду дебаг-кнопок и не гаснет вместе с этой
 //! секцией.
 //!
+//! # Группы Separation и Slots
+//!
+//! Нижняя половина панели — две группы ([`KnobGroup`]) про то, как пешки
+//! расходятся по дороге и как делят конечные точки: **Separation**
+//! (`movement/separation.rs`) и **Slots** (`movement/destination.rs`). Обе — про
+//! перемещение, поэтому живут здесь, а не в World: World отвечает за прогон
+//! целиком (seed, детерминизм, счётчики), и ручки толпы в нём стояли только
+//! потому, что механизм видо-независимый.
+//!
+//! Группы, а не подвкладки: ручки толпы подбираются вместе, и спрятанная
+//! половина заставляла бы щёлкать туда-сюда посреди подбора. Прятать имеет
+//! смысл не «вторую половину», а то, что при нынешних настройках ни на что не
+//! влияет, — так уходят настройки невыбранного бэкенда выше и ползунки
+//! выключенного расталкивания ниже.
+//!
+//! Заголовок `Separation` — сам тумблер, ровно как строка `Algo` выше:
+//! `on`/`off` справа, приглушённое и неоткликающееся под детерминизмом и на
+//! сетке. У слотов тумблера нет — они работают всегда и в обоих режимах, — так
+//! что `Slots` просто подпись группы, а не кнопка.
+//!
+//! Ползунки Separation прячутся, когда расталкивание не работает (детерминизм,
+//! сеточный бэкенд, свой `off`): настраивать нечего, пока механизм не
+//! запускается вовсе — та же логика, по которой уходят настройки невыбранного
+//! бэкенда. Заголовок при этом остаётся: он и есть тумблер, которым
+//! расталкивание возвращают.
+//!
+//! Радиус тела — в группе Slots, хотя ресурс у него человеческий
+//! (`HumanStyle::body_radius`): он задаёт и дистанцию покоя, и сторону слота,
+//! то есть при подборе толпы нужен рядом с остальными ручками, а не в панели
+//! Human через полэкрана.
+//!
 //! Оверлей polymesh рисует **все** рёбра полигонов построенного меша одним
 //! merged-мешем — по нему видно и контуры препятствий, и как polyanya разбила
 //! проходимое пространство.
@@ -44,11 +75,21 @@ use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
 
 use bevy::prelude::*;
 
+use crate::determinism::Determinism;
+use crate::human::HumanStyle;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::MeshBuilder;
+use crate::movement::{
+    SeparationLab, SeparationStyle, SlotLab, SlotSearch, separation_allowed_by_mode,
+};
 use crate::navigation::{PathfindingAlgorithm, PolyNavmesh, PolymeshDebug};
 use crate::settings::{
-    MAP_SIZE, POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
+    CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, HUMAN_BODY_RADIUS_MAX,
+    HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, MAP_SIZE, POLYMESH_AGENT_RADIUS_MAX,
+    POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP, SEPARATION_LEFT_SHARE_MAX,
+    SEPARATION_LEFT_SHARE_MIN, SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE_MAX,
+    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SLOT_REGROUP_MAX, SLOT_REGROUP_MIN,
+    SLOT_REGROUP_STEP,
 };
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
@@ -80,6 +121,9 @@ const POLYMESH_CHUNK_WIDTH: f32 = 0.4;
 const ROW_LIGHTEN: f32 = 0.0;
 const HOVER_LIGHTEN: f32 = 0.12;
 const PRESSED_LIGHTEN: f32 = 0.24;
+/// Приглушённая подпись — тем же способом, каким панели показывают неактивное:
+/// цветом, а не отдельной иконкой.
+const DIMMED_VALUE: Color = Color::srgb(0.45, 0.45, 0.45);
 /// Отступ слева у строк-настроек: настройка принадлежит подсистеме над ней, и
 /// лесенка говорит это раньше, чем читается подпись.
 const NESTED_ROW_INDENT_PX: f32 = 18.;
@@ -109,6 +153,152 @@ impl NavSection {
     }
 }
 
+/// Группа ручек толпы — только для того, чтобы разложить их по заголовкам.
+/// Ни ресурса, ни компонента: прятать группы незачем (см. док модуля).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KnobGroup {
+    Separation,
+    Slots,
+}
+
+/// Строка-тумблер расталкивания: собственная ветка в подсветке, потому что под
+/// детерминизмом и на сеточной навигации она не откликается вовсе.
+#[derive(Component)]
+struct SeparationToggleRow;
+
+/// Ползунок группы Separation — прячется, когда расталкивание не работает.
+#[derive(Component)]
+struct SeparationKnobRow;
+
+/// Числовая ручка толпы. Одним enum'ом на обе подвкладки, а не маркером на
+/// строку: спавн, синхронизация подписи и синхронизация бегунка — по разу на
+/// все пять, и новая ручка добавляется одной веткой.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Knob {
+    PassSqueeze,
+    LeftShare,
+    BodyRadius,
+    SlotSearch,
+    Regroup,
+}
+
+/// Подпись значения такой строки.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+struct KnobValueLabel(Knob);
+
+/// Её ползунок.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+struct KnobSlider(Knob);
+
+impl Knob {
+    const ALL: [Self; 5] = [
+        Self::PassSqueeze,
+        Self::LeftShare,
+        Self::BodyRadius,
+        Self::SlotSearch,
+        Self::Regroup,
+    ];
+
+    fn group(self) -> KnobGroup {
+        match self {
+            Self::PassSqueeze | Self::LeftShare => KnobGroup::Separation,
+            Self::BodyRadius | Self::SlotSearch | Self::Regroup => KnobGroup::Slots,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::PassSqueeze => "Pass squeeze",
+            Self::LeftShare => "Left share",
+            Self::BodyRadius => "Body radius",
+            Self::SlotSearch => "Slot search",
+            Self::Regroup => "Regroup",
+        }
+    }
+
+    /// `(min, max, шаг)` — из `settings.rs`, как у остальных ползунков.
+    fn range(self) -> (f32, f32, f32) {
+        match self {
+            Self::PassSqueeze => (
+                SEPARATION_PASS_SQUEEZE_MIN,
+                SEPARATION_PASS_SQUEEZE_MAX,
+                SEPARATION_PASS_SQUEEZE_STEP,
+            ),
+            Self::LeftShare => (
+                SEPARATION_LEFT_SHARE_MIN,
+                SEPARATION_LEFT_SHARE_MAX,
+                SEPARATION_LEFT_SHARE_STEP,
+            ),
+            Self::BodyRadius => (
+                HUMAN_BODY_RADIUS_MIN,
+                HUMAN_BODY_RADIUS_MAX,
+                HUMAN_BODY_RADIUS_STEP,
+            ),
+            Self::SlotSearch => (CLAIM_SEARCH_MIN, CLAIM_SEARCH_MAX, CLAIM_SEARCH_STEP),
+            Self::Regroup => (SLOT_REGROUP_MIN, SLOT_REGROUP_MAX, SLOT_REGROUP_STEP),
+        }
+    }
+
+    /// Значение ручки. По ссылкам на сами ресурсы, а не по `NavPanelValues`:
+    /// то же чтение нужно наблюдателю строки, а у него они `ResMut`.
+    fn get(
+        self,
+        lab: &SeparationLab,
+        slots: &SlotLab,
+        human: &HumanStyle,
+        search: &SlotSearch,
+    ) -> f32 {
+        match self {
+            Self::PassSqueeze => lab.pass_squeeze,
+            Self::LeftShare => lab.left_share,
+            Self::BodyRadius => human.body_radius,
+            Self::SlotSearch => search.0,
+            Self::Regroup => slots.regroup,
+        }
+    }
+
+    fn set(self, knobs: &mut KnobResources, value: f32) {
+        match self {
+            Self::PassSqueeze => knobs.separation_lab.pass_squeeze = value,
+            Self::LeftShare => knobs.separation_lab.left_share = value,
+            Self::BodyRadius => knobs.human.body_radius = value,
+            Self::SlotSearch => knobs.search.0 = value,
+            Self::Regroup => knobs.slot_lab.regroup = value,
+        }
+    }
+
+    /// Единица измерения в подписи: у радиусов и возврата это метры, у двух
+    /// долей — голое число.
+    fn value_text(self, value: f32) -> String {
+        match self {
+            Self::PassSqueeze | Self::LeftShare => format!("{value:.2}"),
+            Self::BodyRadius | Self::Regroup => format!("{value:.2} m"),
+            Self::SlotSearch => format!("{value:.0} m"),
+        }
+    }
+}
+
+/// Ресурсы, которые ползунки толпы правят. Отдельным `SystemParam`, чтобы
+/// наблюдатель строки брал их одним аргументом, а не четырьмя.
+#[derive(SystemParam)]
+struct KnobResources<'w> {
+    separation_lab: ResMut<'w, SeparationLab>,
+    slot_lab: ResMut<'w, SlotLab>,
+    human: ResMut<'w, HumanStyle>,
+    search: ResMut<'w, SlotSearch>,
+}
+
+impl KnobResources<'_> {
+    fn value(&self, knob: Knob) -> f32 {
+        knob.get(
+            &self.separation_lab,
+            &self.slot_lab,
+            &self.human,
+            &self.search,
+        )
+    }
+}
+
 /// Текст значения справа и то, что именно он показывает. Один компонент на
 /// все строки, а не маркер на каждую: отдельные `&mut Text`-запросы пришлось
 /// бы разводить `Without` каждый с каждым, и новая строка ломала бы все
@@ -121,6 +311,7 @@ enum NavValueLabel {
     PolymeshShow,
     PolymeshChunks,
     PolymeshRadius,
+    Separation,
 }
 
 impl NavValueLabel {
@@ -133,6 +324,21 @@ impl NavValueLabel {
             Self::PolymeshShow => enabled_text(poly.show),
             Self::PolymeshChunks => enabled_text(poly.chunks),
             Self::PolymeshRadius => radius_text(poly.radius()),
+            // под детерминизмом и на сеточной навигации расталкивания нет
+            // вовсе (`movement::separation_runs`), каким бы ни был
+            // `SeparationStyle`, — панель обязана показывать положение дел, а
+            // не намерение. Собственное значение стиля при этом сохраняется:
+            // возврат режима вернёт панель к нему
+            Self::Separation => enabled_text(values.separation_enabled()),
+        }
+    }
+
+    /// Цвет подписи, если он у строки не белый по умолчанию.
+    fn color(self, values: &NavPanelValues) -> Option<Color> {
+        match self {
+            Self::Separation if !values.separation_allowed() => Some(DIMMED_VALUE),
+            Self::Separation => Some(Color::WHITE),
+            _ => None,
         }
     }
 }
@@ -145,6 +351,34 @@ struct NavPanelValues<'w> {
     polymesh: Res<'w, PolymeshDebug>,
     navmesh_show: Res<'w, DebugNavmesh>,
     algorithm: Res<'w, PathfindingAlgorithm>,
+    separation: Res<'w, SeparationStyle>,
+    determinism: Res<'w, Determinism>,
+    separation_lab: Res<'w, SeparationLab>,
+    slot_lab: Res<'w, SlotLab>,
+    human: Res<'w, HumanStyle>,
+    search: Res<'w, SlotSearch>,
+}
+
+impl NavPanelValues<'_> {
+    fn knob(&self, knob: Knob) -> f32 {
+        knob.get(
+            &self.separation_lab,
+            &self.slot_lab,
+            &self.human,
+            &self.search,
+        )
+    }
+
+    /// Работает ли расталкивание при нынешнем режиме — см.
+    /// `movement::separation_allowed_by_mode`.
+    fn separation_allowed(&self) -> bool {
+        separation_allowed_by_mode(self.determinism.0, self.polymesh.enabled)
+    }
+
+    /// Работает ли оно на самом деле: и разрешено режимом, и включено.
+    fn separation_enabled(&self) -> bool {
+        self.separation_allowed() && self.separation.enabled
+    }
 }
 
 /// Выбранный бэкенд. Единственный источник истины — `PolymeshDebug::enabled`:
@@ -184,10 +418,24 @@ impl Plugin for UiNavigationPlugin {
                 Update,
                 (
                     highlight_rows,
-                    (sync_nav_values, sync_section_visibility).run_if(
-                        resource_changed::<PolymeshDebug>
-                            .or_else(resource_changed::<DebugNavmesh>)
-                            .or_else(resource_changed::<PathfindingAlgorithm>),
+                    (
+                        sync_nav_values,
+                        sync_section_visibility,
+                        sync_separation_knob_visibility,
+                    )
+                        .run_if(
+                            resource_changed::<PolymeshDebug>
+                                .or_else(resource_changed::<DebugNavmesh>)
+                                .or_else(resource_changed::<PathfindingAlgorithm>)
+                                // подпись расталкивания зависит и от режима
+                                .or_else(resource_changed::<SeparationStyle>)
+                                .or_else(resource_changed::<Determinism>),
+                        ),
+                    sync_knob_values.run_if(
+                        resource_changed::<SeparationLab>
+                            .or_else(resource_changed::<SlotLab>)
+                            .or_else(resource_changed::<HumanStyle>)
+                            .or_else(resource_changed::<SlotSearch>),
                     ),
                     // PolyNavmesh меняется ровно в момент снятия готового
                     // меша с таска — тогда оверлей и появляется
@@ -316,6 +564,133 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
         on_radius_change,
     );
     commands.entity(radius_row).insert(NavSection::Polymesh);
+    indent_slider_row(&mut commands, radius_row);
+
+    // --- группа Separation: её заголовок и есть тумблер, как строка `Algo` ---
+    let toggle_row = spawn_row(
+        &mut commands,
+        panel,
+        "Separation",
+        RowStyle::Backend,
+        NavValueLabel::Separation,
+        enabled_text(values.separation_enabled()),
+        |_activate: On<Activate>,
+         mut style: ResMut<SeparationStyle>,
+         determinism: Res<Determinism>,
+         polymesh: Res<PolymeshDebug>| {
+            // под детерминизмом и на сеточной навигации расталкивания нет
+            // вовсе — тумблер не должен молча переключать то, что всё равно
+            // не работает
+            if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
+                return;
+            }
+            style.enabled = !style.enabled;
+        },
+    );
+    commands.entity(toggle_row).insert(SeparationToggleRow);
+    spawn_knob_rows(&mut commands, panel, &values, KnobGroup::Separation);
+
+    // --- группа Slots: тумблера у них нет, заголовок просто подпись ---
+    spawn_group_label(&mut commands, panel, "Slots");
+    spawn_knob_rows(&mut commands, panel, &values, KnobGroup::Slots);
+}
+
+/// Подпись группы: та же полоса, что у строк-кнопок, но без `Button` и
+/// наблюдателя — нажимать в ней нечего.
+fn spawn_group_label(commands: &mut Commands, panel: Entity, label: &str) {
+    let row = commands
+        .spawn((
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                padding: UiRect {
+                    top: px(4.),
+                    right: px(8.),
+                    bottom: px(4.),
+                    left: px(8.),
+                },
+                ..default()
+            },
+            BackgroundColor(row_color(ROW_LIGHTEN)),
+            children![(
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.75, 0.78, 0.75)),
+            )],
+        ))
+        .id();
+    commands.entity(panel).add_child(row);
+}
+
+/// Ползунки одной группы, в порядке [`Knob::ALL`].
+fn spawn_knob_rows(
+    commands: &mut Commands,
+    panel: Entity,
+    values: &NavPanelValues,
+    group: KnobGroup,
+) {
+    for knob in Knob::ALL.into_iter().filter(|knob| knob.group() == group) {
+        let value = values.knob(knob);
+        let row = spawn_slider_row(
+            commands,
+            panel,
+            SliderRow {
+                label: knob.label(),
+                value,
+                value_text: knob.value_text(value),
+                range: knob.range(),
+            },
+            KnobValueLabel(knob),
+            KnobSlider(knob),
+            move |change: On<ValueChange<f32>>,
+                  mut commands: Commands,
+                  mut knobs: KnobResources| {
+                let (min, max, step) = knob.range();
+                let stepped = quantize(change.value, min, max, step);
+                commands.entity(change.source).insert(SliderValue(stepped));
+                // ресурс правится только на реальной смене шага: иначе каждый
+                // пиксель протяжки метил бы его изменённым
+                if (knobs.value(knob) - stepped).abs() > f32::EPSILON {
+                    knob.set(&mut knobs, stepped);
+                }
+            },
+        );
+        indent_slider_row(commands, row);
+        if group == KnobGroup::Separation {
+            // начальная видимость ставится здесь, а не оставляется системе:
+            // она ходит под `resource_changed`, а на первом кадре ресурсы уже
+            // не «изменённые» — при выключенном расталкивании ползунки так и
+            // висели бы до первого клика по чему-нибудь
+            let visible = values.separation_enabled();
+            commands
+                .entity(row)
+                .insert(SeparationKnobRow)
+                .entry::<Node>()
+                .and_modify(move |mut node| node.display = display_of(visible));
+        }
+    }
+}
+
+/// Отступ вложенной строки-ползунка. `spawn_slider_row` — общий кит панелей
+/// правой колонки и про лесенку этой панели не знает, поэтому padding правится
+/// здесь: без него ползунок секции стоял левее строк-кнопок той же секции.
+fn indent_slider_row(commands: &mut Commands, row: Entity) {
+    commands
+        .entity(row)
+        .entry::<Node>()
+        .and_modify(|mut node| node.padding.left = px(8. + NESTED_ROW_INDENT_PX));
+}
+
+fn display_of(visible: bool) -> Display {
+    if visible {
+        Display::Flex
+    } else {
+        Display::None
+    }
 }
 
 /// Строка выбора бэкенда или настройка одной из подсистем: настройка несёт
@@ -336,7 +711,7 @@ fn spawn_row<M>(
     value_marker: NavValueLabel,
     value: String,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
-) {
+) -> Entity {
     let left = match style {
         RowStyle::Backend => px(8.),
         RowStyle::Setting(_) => px(8. + NESTED_ROW_INDENT_PX),
@@ -392,6 +767,7 @@ fn spawn_row<M>(
         commands.entity(row).insert(section);
     }
     commands.entity(panel).add_child(row);
+    row
 }
 
 fn enabled_text(enabled: bool) -> String {
@@ -421,12 +797,30 @@ fn radius_text(radius: f32) -> String {
     format!("{radius:.1} m")
 }
 
-/// Осветление строки под курсором и при нажатии (как у панели Roads).
+/// Осветление строки под курсором и при нажатии (как у панели Roads), плюс два
+/// исключения этой панели. Одной системой, а не тремя: фон у строки один, и
+/// три системы, пишущие его по разным правилам, затирали бы друг друга в
+/// зависимости от порядка в расписании.
 fn highlight_rows(
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<NavPanelRow>>,
+    determinism: Res<Determinism>,
+    polymesh: Res<PolymeshDebug>,
+    mut rows: Query<
+        (
+            &Hovered,
+            Has<Pressed>,
+            Has<SeparationToggleRow>,
+            &mut BackgroundColor,
+        ),
+        With<NavPanelRow>,
+    >,
 ) {
-    for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if pressed {
+    let separation_allowed = separation_allowed_by_mode(determinism.0, polymesh.enabled);
+    for (hovered, pressed, separation_toggle, mut background) in &mut rows {
+        let lighten = if separation_toggle && !separation_allowed {
+            // тумблер не откликается вовсе — подсветка обещала бы, что клик
+            // что-то сделает
+            ROW_LIGHTEN
+        } else if pressed {
             PRESSED_LIGHTEN
         } else if hovered.get() {
             HOVER_LIGHTEN
@@ -437,16 +831,54 @@ fn highlight_rows(
     }
 }
 
+/// Подписи и бегунки ручек толпы вслед за ресурсами: их правят не только эти
+/// ползунки (BRP, панель демо-сцены, пресеты стенда), а расходиться показанному
+/// и настоящему нельзя.
+fn sync_knob_values(
+    values: NavPanelValues,
+    mut commands: Commands,
+    mut labels: Query<(&KnobValueLabel, &mut Text)>,
+    sliders: Query<(Entity, &KnobSlider, &SliderValue)>,
+) {
+    for (label, mut text) in &mut labels {
+        let next = label.0.value_text(values.knob(label.0));
+        if text.0 != next {
+            text.0 = next;
+        }
+    }
+    for (entity, slider, value) in &sliders {
+        let next = values.knob(slider.0);
+        if (value.0 - next).abs() > f32::EPSILON {
+            commands.entity(entity).insert(SliderValue(next));
+        }
+    }
+}
+
 /// Настройки невыбранной подсистемы уходят из раскладки целиком: они не
 /// «недоступны», они ни на что не влияют, пока ходят по другой.
 fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSection, &mut Node)>) {
     let active = active_section(&debug);
     for (section, mut node) in &mut rows {
-        let display = if *section == active {
-            Display::Flex
-        } else {
-            Display::None
-        };
+        let display = display_of(*section == active);
+        if node.display != display {
+            node.display = display;
+        }
+    }
+}
+
+/// Ползунки расталкивания — только пока оно работает. Их прячет то же, что
+/// гасит подпись группы: детерминизм, сеточный бэкенд и собственный тумблер.
+/// Настраивать нечего, пока механизм не запускается вовсе, — та же логика, по
+/// которой уходят настройки невыбранного бэкенда.
+///
+/// Строка-заголовок остаётся: она и есть тумблер, которым расталкивание
+/// возвращают, — спрятать её значило бы запереть себя снаружи.
+fn sync_separation_knob_visibility(
+    values: NavPanelValues,
+    mut rows: Query<&mut Node, With<SeparationKnobRow>>,
+) {
+    let display = display_of(values.separation_enabled());
+    for mut node in &mut rows {
         if node.display != display {
             node.display = display;
         }
@@ -457,12 +889,15 @@ fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSecti
 /// восстановленные настройки, хоткей N) — паттерн `sync_noise_values`.
 fn sync_nav_values(
     values: NavPanelValues,
-    mut labels: Query<(&mut Text, &NavValueLabel)>,
+    mut labels: Query<(&mut Text, &mut TextColor, &NavValueLabel)>,
     sliders: Query<(Entity, &SliderValue), With<PolymeshRadiusSlider>>,
     mut commands: Commands,
 ) {
-    for (mut text, label) in &mut labels {
+    for (mut text, mut color, label) in &mut labels {
         text.0 = label.text(&values);
+        if let Some(next) = label.color(&values) {
+            color.0 = next;
+        }
     }
     let radius = values.polymesh.radius();
     for (slider, value) in &sliders {

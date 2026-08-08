@@ -1128,7 +1128,7 @@ in `main.rs`.
   not the dice; the RNG work above is unconditional. Off: today's behavior. On: wander
   target picking runs in `FixedUpdate`, pathfinding answers land on a fixed tick, the
   dispatcher stops looking at the camera, the navigation backend is frozen, and pawn
-  separation is off — the World panel shows the `Separation` row as `off`, dimmed and
+  separation is off — the Navigation panel's `Separation` row reads `off`, dimmed and
   unclickable, rather than a toggle that flips a resource nothing reads. A run is
   deterministic or not from tick 0, so flipping the toggle (like changing the seed) orders
   a restart via `RestartPending` — and that restart carries `RestartEvent { to_portal:
@@ -1274,8 +1274,8 @@ in `main.rs`.
   crossings, not with population or how many pawns the camera lets move. Demons (~100):
   full rebuild per tick in `rebuild_demon_grid` is cheaper than bookkeeping, and the
   lunge moves demon `SimPosition` outside the mover system anyway.
-- **Separation** (`movement/separation.rs`, toggle in the World panel, persisted) — soft
-  pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
+- **Separation** (`movement/separation.rs`, toggle in the Navigation panel, persisted)
+  — soft pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
   0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart — deliberately **larger** than half the
   sprite, so a resting pair leaves a visible gap (1.17 m against a 1.0 m `HUMAN_SIZE`).
   At the earlier 0.45 m the rest distance was *narrower* than the sprite and a correctly
@@ -1287,8 +1287,8 @@ in `main.rs`.
   Personal space presupposes metric waypoints, i.e. the polygonal mesh. It is the
   *toggle*, not mesh readiness: while the mesh builds the grid serves the requests, but
   blinking separation over that transition is worse than half a second of the old
-  behavior. The World panel treats this exactly like determinism — the `Separation` row
-  reads `off`, dimmed and unclickable (`separation_allowed_by_mode`, the one rule shared
+  behavior. The panel treats this exactly like determinism — the `Enabled` row
+  reads `Off`, dimmed and unclickable (`separation_allowed_by_mode`, the one rule shared
   by the schedule and the panel), and `SeparationHolds` is cleared as soon as the mode
   turns the run off, or pawns held by the last run would stay slowed forever.
   Then: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
@@ -1416,10 +1416,11 @@ in `main.rs`.
   (`DestinationClaim`, reverse-indexed by the `DestinationClaims` resource); its goal is
   strictly the block's **centre** tile, so the goals of neighbouring slots sit exactly
   `k · navtile` apart — never less than the rest distance, for any combination of
-  `NavtileBase` and the `HumanStyle::body_radius` slider (Human panel, and the crowd demo).
+  `NavtileBase` and the `HumanStyle::body_radius` slider (the Navigation panel's `Slots`
+  group, and the crowd demo).
   The radius lives with the **human**, not with separation, precisely because slots read it
   too and they run even when separation is toggled off — while it sat in `SeparationStyle`
-  the World panel printed `off` under determinism and the knob went on reshaping the slot
+  the panel printed `off` under determinism and the knob went on reshaping the slot
   lattice. Without slots, separation has no
   way out at all: `move_moving_entities` only pops a waypoint when the tick's travel
   budget covers the remaining distance, and a pawn pressing into a taken point is pushed
@@ -1627,7 +1628,10 @@ in `main.rs`.
   ASCII `+/-`, not `±`: the built-in font (the `default_font` feature) is a narrow subset
   and draws anything outside ASCII as an empty box. One row means no
   row enum: a pair of marker components (`SpreadValueLabel` / `SpreadSlider`) addresses
-  it, and `HumanRow` gets written when a second row appears.
+  it, and `HumanRow` gets written when a second row appears. **Body radius** stood here
+  and the `Separation` toggle, `Slot search` and the three crowd knobs stood in World
+  until all six moved into the Navigation panel's crowd groups — they are about
+  movement, and World had stopped reading as a summary of the run.
   The counters use `iter().len()`, not
   `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so the
   length is a sum over archetypes rather than a walk over 20 000 entities every frame.
@@ -1661,8 +1665,8 @@ in `main.rs`.
   left, value right). The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always
   walk one of the two, so it is a choice, not two toggles that could both read `Off`
   while the grid quietly served every request. Its single source of truth is
-  `PolymeshDebug::enabled`, which defaults to `Polymesh` — and which the World panel's
-  `Separation` row follows, since separation does not run on the grid backend (see
+  `PolymeshDebug::enabled`, which defaults to `Polymesh` — and which the `Separation`
+  row below follows, since separation does not run on the grid backend (see
   **Separation**): picking `Navmesh` here greys that row out the way determinism does.
   Under it stand the settings **of the selected backend only** — the other set is
   `Display::None`d out of the layout (`sync_section_visibility`), because an agent radius
@@ -1692,6 +1696,35 @@ in `main.rs`.
   geometry, not another layer of world. They are drawn unconditionally from the built
   grid, which is 1×1 (no lines) for a flat mesh — the overlay states what the search
   actually walks, not what the toggle asks for.
+  Below the backend settings sit two **groups**, `Separation` and `Slots` (`KnobGroup` —
+  a plain enum, no resource and no component: it only sorts the knobs under their
+  headers), holding every knob about how pawns get past each other and how they divide up
+  end points. They live here rather than in World because both are about movement; World
+  is the run (seed, determinism, counters), and the crowd knobs only ever sat there
+  because the mechanism is species-independent. **Both groups are always expanded** —
+  crowd knobs are tuned together, and hiding half of them would mean clicking back and
+  forth mid-tuning; hiding is for what the current settings make irrelevant (the
+  unselected backend's rows above), and these two always run. The `Separation` header
+  *is* the toggle, exactly like `Algo`: `on`/`off` on the right, dimmed and inert (no
+  hover highlight either) under determinism and on the grid backend
+  (`separation_allowed_by_mode`), and its **knobs disappear** whenever separation is not
+  running — determinism, the grid backend, or its own `off` — since there is nothing to
+  tune while the mechanism never starts, the same rule that removes the unselected
+  backend's rows. The header row stays: it *is* the toggle that brings separation back,
+  and hiding it would lock you out. Their initial `Display` is set at spawn rather than
+  left to `sync_separation_knob_visibility`, which runs under `resource_changed` and so
+  does nothing on the first frame — with separation off at startup the sliders would have
+  hung there until something else changed.
+  Slots have no toggle — they run in both modes always —
+  so `Slots` is a plain label, spawned without `Button` or an observer. Under the headers:
+  **`Pass squeeze`**, **`Left share`** / **`Body radius`**, **`Slot search`**,
+  **`Regroup`**. Body radius is here despite living on `HumanStyle`: it sets both the rest
+  distance and the slot side, so tuning wants it beside the other crowd knobs, not half a
+  screen away in Human. All five are one `Knob` enum (spawn, label sync and thumb sync
+  each written once). Nested *slider* rows are indented by `indent_slider_row`, which
+  patches the padding the shared `ui/slider.rs` kit knows nothing about; without it a
+  section's slider sat left of that same section's button rows — `Agent radius` had been
+  sitting unindented since it was added.
   Cache key (build generation + radius bits) lives on the overlay marker, the
   conifer-overlay idiom; chunks are absent from it because flipping them moves the
   generation. The two overlays can no longer collide — two red fills over one map read as
