@@ -1,4 +1,9 @@
+use super::crown::{
+    CONE_BANDS, CORNER_MOUTH_FLOOR, Lcg, NOTCH_DEPTH_MIN, NOTCH_MOUTH_MIN, PALM_BANDS, bloat,
+    chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs, shaded_arcs, shadow_ring,
+};
 use super::*;
+use crate::map::SHADOW_DIR;
 use crate::settings::CONIFER_NOISE_WAVELENGTH;
 
 fn ring_area(ring: &[Vec2]) -> f32 {

@@ -612,7 +612,7 @@ in `main.rs`.
     "behind"; kremlin wall polylines (z 5.1) draw over nearby lifted roofs.
   - **2.5D+shadows+tint (ExtrusionShadowsTint)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
-- **Tree crowns** (`map/trees.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
+- **Tree crowns** (`map/trees/crown.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the
   light, and a **long shadow** — the crown silhouette stretched ×1.4 along the 30°
@@ -1083,7 +1083,7 @@ in `main.rs`.
 - **World seed** (`rng.rs::WorldSeed`, remembered by `prefs.rs`, panel row *Seed* in
   World) — the one number every simulation draw descends from. It governs the
   **simulation**, not the map: OSM is parsed from a cache file, and trees and entrances
-  are seeded by their own coordinates (`map/trees.rs::Lcg`,
+  are seeded by their own coordinates (`map/trees/crown.rs::Lcg`,
   `entrances::lcg_seeded_by`), so those are already reproducible without it. Capped at
   `i64::MAX` (`MAX_SEED`) — `toml` cannot store more, and the seed has to survive a
   restart of the app. The *new* button rolls a 9-digit one so it can be read off the
