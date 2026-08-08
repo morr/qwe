@@ -7,7 +7,8 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 
 use super::components::{Movable, MovableState, PathfindingTask, PreviousSimPosition, SimPosition};
-use super::systems::{listen_for_pathfinding_tasks, rescue_trapped_entities};
+use super::pathfinding::listen_for_pathfinding_tasks;
+use super::systems::rescue_trapped_entities;
 use crate::grid::{tile_center, world_to_tile};
 use crate::navigation::{
     ArcNavmesh, Navmesh, NorthstarGrid, PathfindingAlgorithm, PathfindingResult, PolyNavmesh,
@@ -264,7 +265,7 @@ fn a_successful_answer_is_taken_as_a_path() {
 // --- детерминированный диспетчер ---
 
 use super::components::{PathfindingRequest, RequestedAt};
-use super::systems::dispatch_pathfinding_requests_deterministic;
+use super::pathfinding::dispatch_pathfinding_requests_deterministic;
 use crate::determinism::{DeterministicRun, SimTick};
 use crate::settings::{
     PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK, PATHFINDING_WANDER_UNITS_PER_TICK,

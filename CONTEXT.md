@@ -860,7 +860,7 @@ in `main.rs`.
   wanderer counts as on screen — a pawn is a dot there, and "in view" would otherwise
   mean half the map, flooding the task pool and the per-frame sort with ~17k peaceful
   requests. Demons and fleeing humans are always dispatched at any zoom.
-  **Priority** (`priority::` in `movement/systems.rs`): demons and fleeing humans
+  **Priority** (`priority::` in `movement/pathfinding.rs`): demons and fleeing humans
   (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
   priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
   (512). The order only bites when the cap binds — in normal play in-flight sits
@@ -1015,7 +1015,7 @@ in `main.rs`.
   full `polygons.len() * 10` budget instead of failing at once on the island check.
 
 - **Polygonal routing** (`polymesh::find_path_polymesh`, dispatched in
-  `movement/systems.rs`) — with the Polymesh panel on, `dispatch_pathfinding_requests`
+  `movement/pathfinding.rs`) — with the Polymesh panel on, `dispatch_pathfinding_requests`
   routes through the polygonal mesh and the `PathfindingAlgorithm` cycler is bypassed.
   **While the mesh is still building** (5–20 s) `Pathfinder::polymesh_build()` is `None`
   and the grid serves the request — the same fallback shape HPA* uses while

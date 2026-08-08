@@ -1,5 +1,6 @@
 mod components;
 mod destination;
+mod pathfinding;
 mod separation;
 mod systems;
 #[cfg(test)]
@@ -18,23 +19,31 @@ pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
     assign_destination_slots, claim_batch, regroup_onto_slots, slot_side, slot_target,
 };
+pub use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
     SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
     demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
-pub use self::systems::{
-    DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
-};
+pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 use crate::loading::AppState;
 use crate::spatial::SimSet;
 
-use self::systems::{
+use self::pathfinding::{
     apply_pathfinding_results, dispatch_pathfinding_requests,
-    dispatch_pathfinding_requests_deterministic, draw_move_paths, interpolate_movable_transforms,
-    listen_for_pathfinding_tasks, move_moving_entities, on_movable_added_init_sim_position,
-    polymesh_rebuilt, rescue_trapped_entities, snapshot_previous_sim_positions,
-    stamp_pathfinding_requests, toggle_draw_move_paths,
+    dispatch_pathfinding_requests_deterministic, listen_for_pathfinding_tasks,
+    stamp_pathfinding_requests,
 };
+use self::systems::{
+    draw_move_paths, interpolate_movable_transforms, move_moving_entities,
+    on_movable_added_init_sim_position, polymesh_rebuilt, rescue_trapped_entities,
+    snapshot_previous_sim_positions, toggle_draw_move_paths,
+};
+
+/// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
+/// «замирали» при лёгком движении камеры. Один и тот же запас у диспетчера
+/// заявок (`pathfinding.rs`) и у расталкивания (`separation/`), поэтому живёт
+/// у их общего родителя.
+pub(crate) const VIEW_MARGIN: f32 = 1.2;
 
 pub struct MovementPlugin;
 

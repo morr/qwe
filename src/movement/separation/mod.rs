@@ -39,11 +39,11 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::window::PrimaryWindow;
 
+use super::VIEW_MARGIN;
 use crate::demon::{Demon, DemonDevourTag, DemonLungeTag};
 use crate::grid::world_to_tile;
 use crate::human::Human;
 use crate::movement::components::SimPosition;
-use crate::movement::systems::VIEW_MARGIN;
 use crate::settings::{
     DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL, SEPARATION_HOLD,
     SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM,
