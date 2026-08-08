@@ -169,6 +169,9 @@ Anything not in this list is invisible to `get` / `res get` until it gets
 
 ```bash
 $b count Human Demon CorpseTag              # the workhorse
+$b speed 30; $b delta 30 Telemetry Human CorpseTag DemonChaseTag
+                                            # "does it grow/drain/leak" in 30s flat
+$b run 300 --pause                          # 300 sim-secs, ≤60s wall, freeze after
 $b res get Telemetry                        # {"escaped": 0, "killed": 220}
 $b texts pathfinding                        # "pathfinding: 259 in flight, 19268 queued, 0.16 ms avg\nanswers:   31.0/frame,   1.4% failed\nentities: 23272"
 $b with Portal --ids

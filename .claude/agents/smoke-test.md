@@ -33,7 +33,10 @@ Procedure:
    only `screenshot.small.png`; crop the full-size png with `magick` first if
    you truly need pixels.
 5. Keep the live phase short — around 30 seconds of measurement unless the
-   checklist explicitly needs longer.
+   checklist explicitly needs longer. For "does this counter grow/drain/leak"
+   use `$b delta 30 <names>`; to cover simulated minutes, raise `$b speed`
+   and use `$b run <sim-secs>` (wall-capped at 60 s) — never wait minutes of
+   real time for simulated time.
 6. **Always stop your app task (`TaskStop`) before finishing**, even on
    failure. Never touch port 15702 (the user's own instance): no `brp quit`
    there, no `pkill`.
