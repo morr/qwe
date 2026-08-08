@@ -88,7 +88,7 @@ use crate::settings::{
     SLOT_REGROUP_STEP,
 };
 use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
-use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
+use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use crate::ui::{
     DebugNavmesh, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
     UiOpacity, UiPanelGapBelow, ui_color,
@@ -639,8 +639,7 @@ fn spawn_knob_rows(
                   mut commands: Commands,
                   mut knobs: KnobResources| {
                 let (min, max, step) = knob.range();
-                let stepped = quantize(change.value, min, max, step);
-                commands.entity(change.source).insert(SliderValue(stepped));
+                let stepped = apply_step(&change, &mut commands, (min, max, step));
                 // ресурс правится только на реальной смене шага: иначе каждый
                 // пиксель протяжки метил бы его изменённым
                 if (knobs.value(knob) - stepped).abs() > f32::EPSILON {
@@ -731,13 +730,15 @@ fn on_radius_change(
     mut commands: Commands,
     mut debug: ResMut<PolymeshDebug>,
 ) {
-    let stepped = quantize(
-        change.value,
-        POLYMESH_AGENT_RADIUS_MIN,
-        POLYMESH_AGENT_RADIUS_MAX,
-        POLYMESH_AGENT_RADIUS_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            POLYMESH_AGENT_RADIUS_MIN,
+            POLYMESH_AGENT_RADIUS_MAX,
+            POLYMESH_AGENT_RADIUS_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (debug.agent_radius - stepped).abs() > f32::EPSILON {
         debug.agent_radius = stepped;
     }
@@ -789,9 +790,7 @@ fn sync_knob_values(
     }
     for (entity, slider, value) in &sliders {
         let next = values.knob(slider.0);
-        if (value.0 - next).abs() > f32::EPSILON {
-            commands.entity(entity).insert(SliderValue(next));
-        }
+        retarget(&mut commands, entity, value.0, next);
     }
 }
 
@@ -842,9 +841,7 @@ fn sync_nav_values(
     }
     let radius = values.polymesh.radius();
     for (slider, value) in &sliders {
-        if (value.0 - radius).abs() > f32::EPSILON {
-            commands.entity(slider).insert(SliderValue(radius));
-        }
+        retarget(&mut commands, slider, value.0, radius);
     }
 }
 

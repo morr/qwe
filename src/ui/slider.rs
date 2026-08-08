@@ -180,6 +180,31 @@ pub fn quantize(value: f32, min: f32, max: f32, step: f32) -> f32 {
     ((value / step).round() * step).clamp(min, max)
 }
 
+/// Первая половина каждого наблюдателя протяжки: округлить до шага и вернуть
+/// бегунок на округлённое место. Возвращает шаг — правку своего ресурса
+/// вызывающий делает сам, потому что поля у всех разного типа (`f32`, `u32`,
+/// `usize`) и сравнивать их с `f32::EPSILON` можно только на месте.
+///
+/// `SliderValue` — immutable-компонент, меняется только вставкой.
+pub fn apply_step(
+    change: &On<ValueChange<f32>>,
+    commands: &mut Commands,
+    (min, max, step): (f32, f32, f32),
+) -> f32 {
+    let stepped = quantize(change.value, min, max, step);
+    commands.entity(change.source).insert(SliderValue(stepped));
+    stepped
+}
+
+/// Переставить бегунок под значение, пришедшее мимо него — по BRP, из
+/// сохранённых настроек, из пресета стенда. При протяжке значения уже
+/// совпадают, и вставка не делается.
+pub fn retarget(commands: &mut Commands, slider: Entity, current: f32, target: f32) {
+    if (current - target).abs() > f32::EPSILON {
+        commands.entity(slider).insert(SliderValue(target));
+    }
+}
+
 /// Позиция бегунка по значению плюс подсветка под курсором и при протяжке.
 pub fn sync_slider_thumbs(
     sliders: Query<
@@ -200,6 +225,34 @@ pub fn sync_slider_thumbs(
             } else {
                 SLIDER_THUMB_COLOR
             };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Округление и кламп — то, ради чего ползунок «дискретный»: ресурс
+    /// правится только на смене шага, и промежуточные значения протяжки
+    /// обязаны схлопываться в одно.
+    #[test]
+    fn quantize_rounds_to_the_step_and_clamps_to_the_range() {
+        // `3.0 * 0.1`, а не `0.3`: шаг умножается, и в f32 это разные числа
+        assert_eq!(quantize(0.34, 0.0, 1.0, 0.1), 3.0 * 0.1);
+        assert_eq!(quantize(0.36, 0.0, 1.0, 0.1), 4.0 * 0.1);
+        assert_eq!(quantize(-5.0, 0.2, 1.0, 0.1), 0.2);
+        assert_eq!(quantize(99.0, 0.2, 1.0, 0.1), 1.0);
+    }
+
+    /// Кламп идёт ПОСЛЕ округления: иначе шаг мог бы вынести значение за
+    /// границу, которую ползунок показывает как предел.
+    #[test]
+    fn quantize_never_leaves_the_range_after_rounding() {
+        let (min, max, step) = (0.0, 0.95, 0.1);
+        for raw in [0.94_f32, 0.951, 1.5] {
+            let stepped = quantize(raw, min, max, step);
+            assert!((min..=max).contains(&stepped), "{raw} -> {stepped}");
         }
     }
 }

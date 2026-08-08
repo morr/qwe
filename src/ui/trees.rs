@@ -14,7 +14,7 @@ use crate::settings::{
     TREE_DENSITY_STEP, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_STEP,
 };
 use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};
-use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
+use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
@@ -241,13 +241,11 @@ fn on_density_change(
     mut commands: Commands,
     mut style: ResMut<TreeStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        TREE_DENSITY_MIN,
-        TREE_DENSITY_MAX,
-        TREE_DENSITY_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.density - stepped).abs() > f32::EPSILON {
         style.density = stepped;
     }
@@ -260,13 +258,15 @@ fn on_conifer_share_change(
     mut commands: Commands,
     mut style: ResMut<TreeStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        TREE_CONIFER_SHARE_MIN,
-        TREE_CONIFER_SHARE_MAX,
-        TREE_CONIFER_SHARE_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            TREE_CONIFER_SHARE_MIN,
+            TREE_CONIFER_SHARE_MAX,
+            TREE_CONIFER_SHARE_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.conifer_share - stepped).abs() > f32::EPSILON {
         style.conifer_share = stepped;
     }
@@ -279,13 +279,11 @@ fn on_noise_mix_change(
     mut commands: Commands,
     mut style: ResMut<TreeStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        TREE_NOISE_MIX_MIN,
-        TREE_NOISE_MIX_MAX,
-        TREE_NOISE_MIX_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_STEP),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.noise_mix - stepped).abs() > f32::EPSILON {
         style.noise_mix = stepped;
     }
@@ -411,9 +409,7 @@ fn sync_row_values(
         let Some(target) = slider_value(row.0, &style) else {
             continue;
         };
-        if (value.0 - target).abs() > f32::EPSILON {
-            commands.entity(slider).insert(SliderValue(target));
-        }
+        retarget(&mut commands, slider, value.0, target);
     }
 }
 

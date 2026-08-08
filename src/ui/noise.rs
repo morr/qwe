@@ -16,7 +16,7 @@ use crate::settings::{
     CONIFER_NOISE_PERSISTENCE_MIN, CONIFER_NOISE_PERSISTENCE_STEP, CONIFER_NOISE_WAVELENGTH_MAX,
     CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_STEP,
 };
-use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
+use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use crate::ui::{
     DebugConiferNoise, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
     UiOpacity, ui_color,
@@ -178,13 +178,15 @@ fn on_wavelength_change(
     mut commands: Commands,
     mut noise: ResMut<ConiferNoiseStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        CONIFER_NOISE_WAVELENGTH_MIN,
-        CONIFER_NOISE_WAVELENGTH_MAX,
-        CONIFER_NOISE_WAVELENGTH_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            CONIFER_NOISE_WAVELENGTH_MIN,
+            CONIFER_NOISE_WAVELENGTH_MAX,
+            CONIFER_NOISE_WAVELENGTH_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (noise.wavelength - stepped).abs() > f32::EPSILON {
         noise.wavelength = stepped;
     }
@@ -195,13 +197,11 @@ fn on_octaves_change(
     mut commands: Commands,
     mut noise: ResMut<ConiferNoiseStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        CONIFER_NOISE_OCTAVES_MIN,
-        CONIFER_NOISE_OCTAVES_MAX,
-        1.0,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (CONIFER_NOISE_OCTAVES_MIN, CONIFER_NOISE_OCTAVES_MAX, 1.0),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if noise.octaves != stepped as u32 {
         noise.octaves = stepped as u32;
     }
@@ -212,13 +212,15 @@ fn on_lacunarity_change(
     mut commands: Commands,
     mut noise: ResMut<ConiferNoiseStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        CONIFER_NOISE_LACUNARITY_MIN,
-        CONIFER_NOISE_LACUNARITY_MAX,
-        CONIFER_NOISE_LACUNARITY_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            CONIFER_NOISE_LACUNARITY_MIN,
+            CONIFER_NOISE_LACUNARITY_MAX,
+            CONIFER_NOISE_LACUNARITY_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (noise.lacunarity - stepped).abs() > f32::EPSILON {
         noise.lacunarity = stepped;
     }
@@ -229,13 +231,15 @@ fn on_persistence_change(
     mut commands: Commands,
     mut noise: ResMut<ConiferNoiseStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        CONIFER_NOISE_PERSISTENCE_MIN,
-        CONIFER_NOISE_PERSISTENCE_MAX,
-        CONIFER_NOISE_PERSISTENCE_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            CONIFER_NOISE_PERSISTENCE_MIN,
+            CONIFER_NOISE_PERSISTENCE_MAX,
+            CONIFER_NOISE_PERSISTENCE_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (noise.persistence - stepped).abs() > f32::EPSILON {
         noise.persistence = stepped;
     }
@@ -274,9 +278,7 @@ fn sync_noise_values(
     }
     for (slider, row, value) in &sliders {
         let target = slider_value(row.0, &noise);
-        if (value.0 - target).abs() > f32::EPSILON {
-            commands.entity(slider).insert(SliderValue(target));
-        }
+        retarget(&mut commands, slider, value.0, target);
     }
 }
 

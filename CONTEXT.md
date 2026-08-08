@@ -1738,7 +1738,11 @@ in `main.rs`.
   `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
   pass their own marker bundles for the value label and the slider to address them in
-  their sync systems.
+  their sync systems. Two more helpers cover the halves every drag observer repeats:
+  `apply_step` (quantize + put the thumb back on the stepped value) and `retarget` (move
+  the thumb when the value arrived past it — over BRP, from saved settings, from a lab
+  preset). Writing the panel's own resource stays at the call site: the fields are `f32`,
+  `u32` and `usize`, and only the caller knows which.
 - **Value-row kit** (`ui/rows.rs`) — the sibling of the slider kit for the rows that are
   *buttons*: `spawn_value_row` (grey label left, white value right, click on an observer),
   `row_color`, `next_in`, `on_off`, and one `highlight_value_rows` for every panel (rows

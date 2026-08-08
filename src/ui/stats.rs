@@ -15,7 +15,7 @@ use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color, spawn_value_row};
-use super::slider::{SliderRow, quantize, spawn_slider_row};
+use super::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
@@ -565,9 +565,7 @@ fn sync_demon_values(
     }
     for (slider, row, value) in &sliders {
         let target = slider_value(row.0, &style);
-        if (value.0 - target).abs() > f32::EPSILON {
-            commands.entity(slider).insert(SliderValue(target));
-        }
+        retarget(&mut commands, slider, value.0, target);
     }
 }
 
@@ -577,8 +575,11 @@ fn on_cap_change(
     mut commands: Commands,
     mut style: ResMut<DemonStyle>,
 ) {
-    let stepped = quantize(change.value, DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP);
-    commands.entity(change.source).insert(SliderValue(stepped));
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP),
+    );
     if style.cap != stepped as usize {
         style.cap = stepped as usize;
     }
@@ -589,13 +590,15 @@ fn on_interval_change(
     mut commands: Commands,
     mut style: ResMut<DemonStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        DEMON_SPAWN_INTERVAL_MIN,
-        DEMON_SPAWN_INTERVAL_MAX,
-        DEMON_SPAWN_INTERVAL_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            DEMON_SPAWN_INTERVAL_MIN,
+            DEMON_SPAWN_INTERVAL_MAX,
+            DEMON_SPAWN_INTERVAL_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.interval - stepped).abs() > f32::EPSILON {
         style.interval = stepped;
     }
@@ -606,13 +609,15 @@ fn on_speed_change(
     mut commands: Commands,
     mut style: ResMut<DemonStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        DEMON_SPEED_FACTOR_MIN,
-        DEMON_SPEED_FACTOR_MAX,
-        DEMON_SPEED_FACTOR_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            DEMON_SPEED_FACTOR_MIN,
+            DEMON_SPEED_FACTOR_MAX,
+            DEMON_SPEED_FACTOR_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.speed - stepped).abs() > f32::EPSILON {
         style.speed = stepped;
     }
@@ -623,13 +628,15 @@ fn on_lunge_change(
     mut commands: Commands,
     mut style: ResMut<DemonStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        DEMON_LUNGE_BOOST_MIN,
-        DEMON_LUNGE_BOOST_MAX,
-        DEMON_LUNGE_BOOST_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            DEMON_LUNGE_BOOST_MIN,
+            DEMON_LUNGE_BOOST_MAX,
+            DEMON_LUNGE_BOOST_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.lunge - stepped).abs() > f32::EPSILON {
         style.lunge = stepped;
     }
@@ -646,9 +653,7 @@ fn sync_human_values(
         text.0 = spread_value(&style);
     }
     for (entity, value) in &spread_slider {
-        if (value.0 - style.spread).abs() > f32::EPSILON {
-            commands.entity(entity).insert(SliderValue(style.spread));
-        }
+        retarget(&mut commands, entity, value.0, style.spread);
     }
 }
 
@@ -657,13 +662,15 @@ fn on_spread_change(
     mut commands: Commands,
     mut style: ResMut<HumanStyle>,
 ) {
-    let stepped = quantize(
-        change.value,
-        HUMAN_SPEED_SPREAD_MIN,
-        HUMAN_SPEED_SPREAD_MAX,
-        HUMAN_SPEED_SPREAD_STEP,
+    let stepped = apply_step(
+        &change,
+        &mut commands,
+        (
+            HUMAN_SPEED_SPREAD_MIN,
+            HUMAN_SPEED_SPREAD_MAX,
+            HUMAN_SPEED_SPREAD_STEP,
+        ),
     );
-    commands.entity(change.source).insert(SliderValue(stepped));
     if (style.spread - stepped).abs() > f32::EPSILON {
         style.spread = stepped;
     }
