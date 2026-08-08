@@ -96,8 +96,9 @@ use qwe::loading::{AppState, PlayPhase};
 use qwe::map::osm::{MapData, WallLine};
 use qwe::movement::{
     DestinationClaim, DestinationClaims, Movable, MovableReachedDestinationEvent,
-    MovableStateMovingTag, SeparationHolds, SeparationLab, SeparationStats, SeparationStyle,
-    SimPosition, SlotSearch, separation_allowed_by_mode, separation_cell, slot_side,
+    MovableStateMovingTag, SeparationHolds, SeparationLab, SeparationStats, SeparationSteer,
+    SeparationStyle, SimPosition, SlotLab, SlotMatching, SlotSearch, separation_allowed_by_mode,
+    separation_cell, slot_side, slot_target,
 };
 use qwe::navigation::{
     ArcNavmesh, Pathfinder, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug, find_path_polymesh,
@@ -143,6 +144,14 @@ struct Args {
     /// проход насквозь) числами не ловятся до конца.
     shots: bool,
     radius: Option<f32>,
+    /// Радиус поиска свободного слота, м ([`SlotSearch`]). Ручка стенда наравне
+    /// с радиусом тела: у неё нет правильного значения, есть компромисс между
+    /// «хвост толпы остался без слотов» и «цель уехала слишком далеко».
+    search: Option<f32>,
+    /// Как пачка пешек, идущих в одну точку, разбирает слоты ([`SlotMatching`]).
+    matching: Option<SlotMatching>,
+    /// Лишние навтайлы к шагу решётки слотов ([`SlotLab::slack`]).
+    slot_slack: Option<i32>,
     hold: Option<f32>,
     sidestep: Option<f32>,
     backstep: Option<f32>,
@@ -152,7 +161,7 @@ struct Args {
 /// Ручки [`SeparationLab`], доступные с командной строки. Список здесь, а не
 /// `match` по строке в трёх местах: подпись в `RESULT`, разбор и справка обязаны
 /// перечислять одно и то же.
-const LAB_KNOBS: [&str; 11] = [
+const LAB_KNOBS: [&str; 14] = [
     "rate",
     "max-step",
     "max-speed",
@@ -164,6 +173,9 @@ const LAB_KNOBS: [&str; 11] = [
     "compress-at",
     "steer",
     "steer-release",
+    "idle-mobility",
+    "arrive-slack",
+    "slide",
 ];
 
 fn parse_args() -> Args {
@@ -187,6 +199,9 @@ fn parse_args() -> Args {
             "label" => args.label = Some(value()),
             "shots" => args.shots = true,
             "radius" => args.radius = Some(parse_number(&value())),
+            "search" => args.search = Some(parse_number(&value())),
+            "matching" => args.matching = Some(parse_matching(&value())),
+            "slot-slack" => args.slot_slack = Some(parse_number::<f32>(&value()) as i32),
             "hold" => args.hold = Some(parse_number(&value())),
             "sidestep" => args.sidestep = Some(parse_number(&value())),
             "backstep" => args.backstep = Some(parse_number(&value())),
@@ -208,6 +223,14 @@ fn parse_args() -> Args {
 fn parse_number<T: std::str::FromStr>(raw: &str) -> T {
     raw.parse()
         .unwrap_or_else(|_| panic!("{raw} is not a number"))
+}
+
+fn parse_matching(raw: &str) -> SlotMatching {
+    match raw {
+        "greedy" | "0" => SlotMatching::Greedy,
+        "batch" | "1" => SlotMatching::Batch,
+        other => panic!("unknown matching {other}; use greedy or batch"),
+    }
 }
 
 fn parse_scenario(raw: &str) -> Scenario {
@@ -237,6 +260,9 @@ fn apply_lab(lab: &mut SeparationLab, knobs: &[(String, f32)]) {
             "compress-at" => lab.compress_at = *value,
             "steer" => lab.steer = *value,
             "steer-release" => lab.steer_release = *value,
+            "idle-mobility" => lab.idle_mobility = *value,
+            "arrive-slack" => lab.arrive_slack = *value,
+            "slide" => lab.slide = *value,
             "crowd-sidestep" => lab.crowd_sidestep = *value,
             other => panic!("unknown lab knob {other}"),
         }
@@ -432,6 +458,12 @@ struct Overlaps {
     bodies: Vec<(Vec2, bool)>,
     #[reflect(ignore)]
     links: Vec<(Vec2, Vec2)>,
+    /// Кто именно перекрыт — не только сколько. Нужен четвёртому критерию
+    /// (`sep_share`): «пешка в состоянии расталкивания» это объединение трёх
+    /// множеств — придержанные, рулящие и перекрытые, — а сложить их можно
+    /// только по сущностям.
+    #[reflect(ignore)]
+    involved_set: bevy::ecs::entity::EntityHashSet,
 }
 
 /// Сколько тиков движения приходится на один прогон расталкивания. Прогоны
@@ -515,6 +547,24 @@ struct Trial {
     lane_order: f64,
     lane_samples: f64,
 
+    /// Пешко-секунды в СОСТОЯНИИ РАСТАЛКИВАНИЯ — четвёртый критерий. Состояние
+    /// это объединение трёх множеств, а не одно из них: придержанная
+    /// ([`SeparationHolds`]) идёт ослабленным шагом, рулящая
+    /// ([`SeparationSteer`]) идёт не туда, куда хотела, перекрытая платит и тем
+    /// и другим позже. Считать только придержку значило бы объявить победителем
+    /// вариант, который придержку отключил (`--hold 1`), ничего не починив.
+    sep_secs: f64,
+    /// Раздельно, чтобы было видно, из чего сложилось объединение.
+    steer_secs: f64,
+    /// Виртуальная секунда, на которой ВПЕРВЫЕ выполнились оба первых критерия
+    /// (все пешки на своих слотах, никто не идёт). `None` — за окно так и не
+    /// сошлось.
+    settled_at: Option<f64>,
+    /// Путь, намотанный пешками ВНЕ состояния «иду» — чистая дрожь осевшей
+    /// толпы. Второй критерий числом: «никто не двигается» это не только
+    /// «никто не идёт», но и «никого не колышет толчками».
+    idle_drift: f64,
+
     sep_ms: f64,
     sep_ms_samples: f64,
     /// Замер, по которому уже прибавили — тот же трюк, что у `RunCounters`.
@@ -527,6 +577,15 @@ struct Trial {
 /// картой в ресурсе: спавн и деспавн ведёт ECS, а не отдельная уборка.
 #[derive(Component)]
 struct LastSample(Vec2);
+
+/// Где пешка стояла в момент ОТКРЫТИЯ окна замера. База для нижней границы
+/// пути: сумма прямых «старт → куда в итоге встал» — это тот путь, который
+/// пешки прошли бы, если бы шли к своим слотам по прямой и никого не
+/// встретили. Отношение `travel` к ней (`detour`) и есть третий критерий в
+/// виде, не зависящем от того, насколько плотно упакованы слоты: чем плотнее
+/// толпа садится, тем БОЛЬШЕ ей идти, и голый `travel` за это наказывал бы.
+#[derive(Component)]
+struct WindowOrigin(Vec2);
 
 #[derive(Component)]
 struct OverlayText;
@@ -734,6 +793,15 @@ fn apply_args(app: &mut App, args: Args) {
     }
     if let Some(radius) = args.radius {
         world.resource_mut::<HumanStyle>().body_radius = radius;
+    }
+    if let Some(search) = args.search {
+        world.resource_mut::<SlotSearch>().0 = search;
+    }
+    if let Some(matching) = args.matching {
+        world.resource_mut::<SlotLab>().matching = matching;
+    }
+    if let Some(slack) = args.slot_slack {
+        world.resource_mut::<SlotLab>().slack = slack;
     }
     apply_lab(&mut world.resource_mut::<SeparationLab>(), &args.lab);
 }
@@ -1068,6 +1136,7 @@ fn spawn_pawn(
         PawnId(pawn_id),
         WanderIndex::ready(),
         LastSample(position),
+        WindowOrigin(position),
         ProgressSample::default(),
         Name::new("demo pawn"),
     ));
@@ -1169,11 +1238,13 @@ fn clear_arena(navmesh: &ArcNavmesh, centre: Vec2) {
 /// Отрезок идёт через тот же слот назначения, что и цели в игре
 /// (`movement::destination`): без этого «воронка» гоняла бы 200 пешек в одну
 /// точку — то есть проверяла бы не расталкивание, а очередь к одному тайлу.
+#[allow(clippy::too_many_arguments)]
 fn drive_routes(
     mut commands: Commands,
     pathfinder: Pathfinder,
     style: Res<HumanStyle>,
     search: Res<SlotSearch>,
+    lab: Res<SlotLab>,
     mut claims: ResMut<DestinationClaims>,
     mut misses: ResMut<PathMisses>,
     mut pawns: Query<
@@ -1186,21 +1257,42 @@ fn drive_routes(
         ),
         Without<MovableStateMovingTag>,
     >,
+    mut batch: Local<Vec<(Entity, Option<IVec2>, IVec2, Vec2)>>,
+    mut slots: Local<Vec<Option<(IVec2, IVec2)>>>,
 ) {
-    claims.sync(slot_side(style.body_radius * 2.0), search.0);
+    claims.sync(slot_side(style.body_radius * 2.0) + lab.slack, search.0);
     let polymesh = pathfinder.polymesh_build();
     let navmesh = pathfinder.navmesh.read();
-    for (entity, mut movable, mut route, position, claim) in &mut pawns {
-        let leg = route.legs[route.next];
-        let desired = world_to_tile(leg);
-        let slot = claims.claim_slot(
+
+    // заявки — всем пакетом и ДО прокладки путей, как в игре
+    // (`assign_destination_slots` идёт раньше диспетчера): пакетное назначение
+    // (`SlotMatching::Batch`) без пакета вырождается в жадное
+    batch.clear();
+    batch.extend(pawns.iter().map(|(entity, _, route, position, claim)| {
+        (
             entity,
             claim.map(|claim| claim.0),
-            desired,
+            world_to_tile(route.legs[route.next]),
             position.0,
-            |tile| navmesh.is_passable(tile.x, tile.y),
-        );
-        let (target_tile, target) = match slot {
+        )
+    }));
+    qwe::movement::claim_batch(
+        &mut claims,
+        lab.matching,
+        &batch,
+        |tile| navmesh.is_passable(tile.x, tile.y),
+        &mut slots,
+    );
+    let assigned: HashMap<Entity, Option<(IVec2, IVec2)>> = batch
+        .iter()
+        .zip(slots.iter())
+        .map(|((entity, ..), slot)| (*entity, *slot))
+        .collect();
+
+    for (entity, mut movable, mut route, position, _) in &mut pawns {
+        let leg = route.legs[route.next];
+        let desired = world_to_tile(leg);
+        let (target_tile, target) = match assigned.get(&entity).copied().flatten() {
             Some((slot, tile)) => {
                 commands.entity(entity).insert(DestinationClaim(slot));
                 (tile, tile_center(tile))
@@ -1383,7 +1475,7 @@ fn count_separation_runs(diagnostics: Res<DiagnosticsStore>, mut counters: ResMu
 /// расталкивания ([`SEPARATION_CELL`]), но считаем в лоб: пешек здесь сотни, и
 /// понятность важнее скорости.
 fn measure_overlaps(
-    pawns: Query<&SimPosition, With<DemoPawn>>,
+    pawns: Query<(Entity, &SimPosition), With<DemoPawn>>,
     camera: Query<&Transform, With<Camera2d>>,
     window: Query<&Window>,
     style: Res<HumanStyle>,
@@ -1398,11 +1490,12 @@ fn measure_overlaps(
     let max = camera.translation.truncate() + half_view;
 
     let total = pawns.iter().len();
-    let positions: Vec<Vec2> = pawns
+    let bodies: Vec<(Entity, Vec2)> = pawns
         .iter()
-        .map(|position| position.0)
-        .filter(|position| position.cmpge(min).all() && position.cmple(max).all())
+        .map(|(entity, position)| (entity, position.0))
+        .filter(|(_, position)| position.cmpge(min).all() && position.cmple(max).all())
         .collect();
+    let positions: Vec<Vec2> = bodies.iter().map(|(_, position)| *position).collect();
 
     let mut cells: HashMap<IVec2, Vec<usize>> = HashMap::new();
     for (index, position) in positions.iter().enumerate() {
@@ -1461,6 +1554,13 @@ fn measure_overlaps(
     overlaps.worst = worst;
     overlaps.mean = if pairs > 0 { sum / pairs as f32 } else { 0.0 };
     overlaps.involved = involved.iter().filter(|flag| **flag).count();
+    overlaps.involved_set.clear();
+    overlaps.involved_set.extend(
+        bodies
+            .iter()
+            .zip(&involved)
+            .filter_map(|((entity, _), flag)| flag.then_some(*entity)),
+    );
     overlaps.bodies = positions
         .iter()
         .zip(involved)
@@ -1499,9 +1599,12 @@ fn sample_trial(
     poly: Res<PolyNavmesh>,
     overlaps: Res<Overlaps>,
     holds: Res<SeparationHolds>,
+    steer: Res<SeparationSteer>,
     diagnostics: Res<DiagnosticsStore>,
     mut trial: ResMut<Trial>,
     pawns: Query<(&SimPosition, &Movable)>,
+    census: Query<(Has<MovableStateMovingTag>, Has<Route>), With<DemoPawn>>,
+    mut union: Local<bevy::ecs::entity::EntityHashSet>,
 ) {
     if trial.started.is_none() {
         if poly.build().is_none() {
@@ -1528,6 +1631,16 @@ fn sample_trial(
     trial.pawn_secs += overlaps.pawns as f64 * dt;
     trial.held_secs += holds.0.len() as f64 * dt;
     trial.overlap_secs += overlaps.involved as f64 * dt;
+    trial.steer_secs += steer.0.len() as f64 * dt;
+    // объединение трёх множеств, а не сумма трёх счётчиков: пешка бывает
+    // придержана, зарулена и перекрыта одновременно, и втрое считать её нельзя.
+    // Буфер в `Local` — множество строится каждый кадр, и своя аллокация на
+    // кадр была бы платой на ровном месте
+    union.clear();
+    union.extend(overlaps.involved_set.iter().copied());
+    union.extend(holds.0.iter().copied());
+    union.extend(steer.0.keys().copied());
+    trial.sep_secs += union.len() as f64 * dt;
     trial.worst_overlap = trial.worst_overlap.max(overlaps.worst);
     trial.deep_events += overlaps.deep as u64;
     trial.through_events += overlaps.through as u64;
@@ -1565,6 +1678,18 @@ fn sample_trial(
     trial.spread_samples += spread_counted;
     trial.lane_order += order;
     trial.lane_samples += counted;
+
+    // Критерии 1 и 2 одним числом: момент, когда толпа СОШЛАСЬ. «Сошлась» —
+    // это ни одной идущей пешки И ни одного невыданного отрезка маршрута:
+    // пешка, у которой `Route` ещё висит, не дошла, а стоит и каждый тик
+    // безуспешно просит путь (`PathMisses`), и по одному лишь «не идёт» она
+    // читалась бы как осевшая.
+    if trial.settled_at.is_none()
+        && census.iter().len() > 0
+        && census.iter().all(|(moving, pending)| !moving && !pending)
+    {
+        trial.settled_at = Some(trial.virtual_secs);
+    }
 }
 
 /// Путь и прогресс — ПОТИКОВО, в `FixedUpdate`.
@@ -1585,24 +1710,34 @@ fn sample_trial(
 /// приблизился к цели за окно», а цена обхода честно вычитается.
 fn sample_travel(
     mut trial: ResMut<Trial>,
-    mut pawns: Query<(&SimPosition, &Movable, &mut LastSample, &mut ProgressSample)>,
+    mut pawns: Query<(
+        &SimPosition,
+        &Movable,
+        &mut LastSample,
+        &mut ProgressSample,
+        &mut WindowOrigin,
+    )>,
 ) {
     if trial.started.is_none() {
         // окно ещё не открыто: базу всё равно освежаем, иначе первый тик окна
         // получил бы смещение за всю постройку меша разом
-        for (position, _, mut last, mut sample) in &mut pawns {
+        for (position, _, mut last, mut sample, mut origin) in &mut pawns {
             last.0 = position.0;
+            origin.0 = position.0;
             sample.target = None;
         }
         return;
     }
-    for (position, movable, mut last, mut sample) in &mut pawns {
+    for (position, movable, mut last, mut sample, _) in &mut pawns {
         let step = position.0.distance(last.0);
         last.0 = position.0;
         trial.travel += step as f64;
         trial.worst_tick_step = trial.worst_tick_step.max(step);
 
         let qwe::movement::MovableState::Moving(target) = movable.state else {
+            // не идёт, а сместилась — это её колышет расталкивание: дрожь
+            // осевшей толпы, второй критерий
+            trial.idle_drift += step as f64;
             sample.target = None;
             continue;
         };
@@ -1671,15 +1806,75 @@ fn finish_trial(
     stats: Res<SeparationStats>,
     misses: Res<PathMisses>,
     overlaps: Res<Overlaps>,
+    config: Res<DemoConfig>,
+    search: Res<SlotSearch>,
+    style: Res<HumanStyle>,
+    lab: Res<SlotLab>,
+    census: Query<
+        (
+            &SimPosition,
+            &WindowOrigin,
+            Option<&DestinationClaim>,
+            Has<MovableStateMovingTag>,
+            Has<Route>,
+        ),
+        With<DemoPawn>,
+    >,
     mut exit: MessageWriter<AppExit>,
 ) {
     if trial.window <= 0.0 || trial.started.is_none() || trial.real < trial.window {
         return;
     }
     let pawn_secs = trial.pawn_secs.max(1e-9);
+
+    // Финальная перепись — первые два критерия в лоб. «В центре» меряется
+    // радиусом поиска слота плюс запас в дистанцию покоя: дальше него слота
+    // пешке не выдавали, значит всё, что там стоит, — это либо осевшая толпа,
+    // либо застрявший хвост, и различать их надо, а не считать вместе.
+    let reach = search.0 + 2.0 * overlaps.radius;
+    let (mut settled, mut walking, mut pending, mut stranded) = (0u32, 0u32, 0u32, 0u32);
+    // Первый критерий в строгом виде: не «встала где-то в центре», а «стои́т
+    // НА СВОЁМ слоте». Разница принципиальна — толпа, осевшая сплошным
+    // перекрытием там, куда её вытолкнуло, по счётчику `settled` неотличима от
+    // толпы, разошедшейся по решётке, а на экране это две разные картинки.
+    // Допуск — половина шага решётки: дальше начинается чужой слот
+    let side = slot_side(style.body_radius * 2.0) + lab.slack;
+    let on_slot_tolerance = side as f32 * navtile_size() / 2.0;
+    let mut on_slot = 0u32;
+    let mut net = 0.0f64;
+    // След толпы: докуда от центра она в итоге растеклась. Без него третий
+    // критерий читается неверно — толпа, севшая просторнее, проходит МЕНЬШЕ
+    // (останавливается раньше), и «выигрыш в пути» оказывается платой площадью
+    let mut foot = 0.0f32;
+    for (position, origin, claim, moving, route) in &census {
+        if !moving
+            && !route
+            && let Some(claim) = claim
+            && position.0.distance(tile_center(slot_target(claim.0, side))) <= on_slot_tolerance
+        {
+            on_slot += 1;
+        }
+        net += position.0.distance(origin.0) as f64;
+        let home = position.0.distance(config.centre) <= reach;
+        if !moving && !route {
+            foot = foot.max(position.0.distance(config.centre));
+        }
+        match (moving, route, home) {
+            (true, ..) => walking += 1,
+            (false, true, _) => pending += 1,
+            (false, false, true) => settled += 1,
+            (false, false, false) => stranded += 1,
+        }
+    }
+
     println!(
         "RESULT label={label} real={real:.2} virtual={virtual_secs:.1} pawns={pawns} \
-         travel={travel:.0} progress={progress:.0} arrivals={arrivals} \
+         settled={settled} on_slot={on_slot} walking={walking} pending={pending} \
+         stranded={stranded} \
+         settled_at={settled_at:.1} idle_drift={idle_drift:.1} foot={foot:.1} \
+         travel={travel:.0} net={net:.0} detour={detour:.3} \
+         sep_share={sep_share:.4} steer_share={steer_share:.4} \
+         progress={progress:.0} arrivals={arrivals} \
          held_share={held:.4} overlap_share={overlap:.4} \
          push={push:.0} push_share={push_share:.4} \
          worst_overlap={worst:.3} deep={deep} through={through} worst_push={worst_push:.3} worst_step={worst_step:.3} \
@@ -1690,7 +1885,21 @@ fn finish_trial(
         real = trial.real,
         virtual_secs = trial.virtual_secs,
         pawns = overlaps.total,
+        settled = settled,
+        on_slot = on_slot,
+        walking = walking,
+        pending = pending,
+        stranded = stranded,
+        // −1, а не пусто: строку разбирают как `ключ=число`, и «не сошлось»
+        // обязано быть числом, отличимым от любой настоящей секунды
+        settled_at = trial.settled_at.unwrap_or(-1.0),
+        idle_drift = trial.idle_drift,
+        foot = foot,
         travel = trial.travel,
+        net = net,
+        detour = trial.travel / net.max(1e-9),
+        sep_share = trial.sep_secs / pawn_secs,
+        steer_share = trial.steer_secs / pawn_secs,
         progress = trial.progress,
         arrivals = trial.arrivals,
         held = trial.held_secs / pawn_secs,
