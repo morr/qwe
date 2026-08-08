@@ -17,7 +17,7 @@ use qwe::movement::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, MovementPlugin,
     PreviousSimPosition, SimPosition,
 };
-use qwe::navigation::{ArcNavmesh, NorthstarGrid, PathfindingAlgorithm};
+use qwe::navigation::{ArcNavmesh, NorthstarGrid, PathfindingAlgorithm, PolymeshDebug};
 use qwe::settings::DEFAULT_NAVTILE_SIZE;
 use qwe::spatial::SpatialPlugin;
 
@@ -56,6 +56,10 @@ fn test_app(frame_delta: f32, time_scale: f32) -> App {
     .init_resource::<ArcNavmesh>()
     .init_resource::<NorthstarGrid>()
     .init_resource::<PathfindingAlgorithm>()
+    // бэкенд навигации — им гейтится расталкивание
+    // (`movement::separation_runs`), и без ресурса оно молча не работает:
+    // дефолт полигональный, то есть тот, на котором оно и живёт
+    .init_resource::<PolymeshDebug>()
     .insert_resource(Time::<Fixed>::from_seconds(FIXED_STEP as f64))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         frame_delta,
@@ -452,6 +456,30 @@ fn separation_pushes_an_overlapping_pair_apart() {
 /// зависеть. Гейт стоит в расписании (`movement/mod.rs`), и этот тест
 /// стережёт именно его: система, случайно потерявшая `run_if`, собирается и
 /// проходит все остальные тесты.
+/// На сеточной навигации расталкивание не двигает НИКОГО.
+///
+/// Тот же сторож, что и для детерминизма, и по той же причине: гейт стоит
+/// в расписании (`movement::separation_runs`), а система, потерявшая его,
+/// собирается и проходит все остальные тесты. Смысл гейта — waypoint'ы сетки
+/// стоят в центрах навтайлов, и ходьба возвращает разведённую пару на них же.
+#[test]
+fn separation_never_runs_on_the_grid_backend() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    app.insert_resource(PolymeshDebug {
+        enabled: false,
+        ..default()
+    });
+    let (left, right) = spawn_overlapping_pair(&mut app);
+    let before = (sim_position(&app, left), sim_position(&app, right));
+
+    for _ in 0..5 {
+        app.update();
+    }
+
+    assert_eq!(sim_position(&app, left), before.0, "левого не трогают");
+    assert_eq!(sim_position(&app, right), before.1, "правого не трогают");
+}
+
 #[test]
 fn separation_never_runs_under_determinism() {
     let mut app = test_app(FIXED_STEP, 1.0);

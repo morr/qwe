@@ -44,7 +44,7 @@ use qwe::human::Human;
 use qwe::loading::{AppState, PlayPhase, WorldInitSet};
 use qwe::map::osm::{MapData, overpass, parse};
 use qwe::movement::{MovableState, SimPosition};
-use qwe::navigation::{ArcNavmesh, Navmesh, snap_portal_position};
+use qwe::navigation::{ArcNavmesh, Navmesh, PolymeshDebug, snap_portal_position};
 use qwe::portal::PortalPos;
 use qwe::restart::RestartEvent;
 use qwe::rng::{PawnId, WorldSeed};
@@ -192,7 +192,16 @@ fn build_app(json: &str, navmesh: &Navmesh, portal: Vec2, seed: u64) -> App {
         .insert_resource(parse_map(json))
         .insert_resource(PortalPos(portal))
         .insert_resource(WorldSeed(seed))
-        .insert_resource(Determinism(true));
+        .insert_resource(Determinism(true))
+        // бэкенд — сеточный, хотя в игре по умолчанию полигональный: в этом
+        // примере нет прогрева, который дожидается постройки меша
+        // (`NavigationBuildPending`), и меш, доехавший посреди прогона,
+        // менял бы пути на полпути — то есть ровно то, что проверка обязана
+        // исключить. Плоский A* готов с первого кадра
+        .insert_resource(PolymeshDebug {
+            enabled: false,
+            ..default()
+        });
 
     // navmesh — готовый: в игре его заливает поток загрузки, здесь это уже
     // сделано один раз на все четыре прогона

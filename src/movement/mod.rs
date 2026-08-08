@@ -17,7 +17,10 @@ pub use self::components::{
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotSearch, assign_destination_slots, slot_side,
 };
-pub use self::separation::{SeparationHolds, SeparationStyle, demon_radius, separation_cell};
+pub use self::separation::{
+    SeparationHolds, SeparationStyle, demon_radius, separation_allowed_by_mode, separation_cell,
+    separation_runs,
+};
 pub use self::systems::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, wanderers_dispatched_at_zoom,
 };
@@ -58,6 +61,16 @@ impl Plugin for MovementPlugin {
                     self::destination::reset_destination_claims,
                     self::separation::reset_separation_holds,
                 ),
+            )
+            // придержки чистит сам прогон расталкивания (тумблер, отзум), но
+            // режим выключает его целиком — и переключение навигации на сетку
+            // посреди игры оставило бы придержанных придержанными навсегда,
+            // то есть замедленными без причины
+            .add_systems(
+                Update,
+                self::separation::reset_separation_holds
+                    .run_if(not(self::separation::separation_runs))
+                    .run_if(|holds: Res<SeparationHolds>| !holds.0.is_empty()),
             )
             // системы плагина пишут диагностику; без стора их параметры
             // не валидируются и шаг движения молча не выполняется
@@ -147,14 +160,12 @@ impl Plugin for MovementPlugin {
                     move_moving_entities.after(SimSet::HumanBehavior),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
-                    // доедет до экрана интерполяцией
-                    // расталкивание выключено в детерминированном режиме: оно
-                    // косметическое, но при этом пишет `SimPosition` и
-                    // завязано на камеру, зум и `FrameCount` — то есть на
-                    // всё, от чего повтор прогона обязан не зависеть
+                    // доедет до экрана интерполяцией.
+                    // Режимы, в которых его нет вовсе (детерминизм, сеточная
+                    // навигация), — в `separation_runs`
                     separation::separate_pawns
                         .run_if(in_state(AppState::Playing))
-                        .run_if(not(crate::determinism::deterministic)),
+                        .run_if(separation::separation_runs),
                     // слоты — в обоих режимах и в обеих цепочках: демоны
                     // выбирают цель всегда в `FixedUpdate`, люди — здесь же под
                     // детерминизмом. Повторный прогон над той же заявкой

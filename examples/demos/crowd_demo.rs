@@ -20,6 +20,22 @@
 //! то, что в игре даёт поведение. Переписанная копия расталкивания ничего бы
 //! не доказала.
 //!
+//! **Навигация — полигональная, как в игре.** `PolymeshDebug::enabled` включён
+//! по умолчанию, и от него же зависит само расталкивание
+//! (`movement::separation_runs`): на сеточной навигации его нет вовсе, и мерить
+//! в этой сцене было бы нечего. Отсюда два следствия для раскладки:
+//! - отрезки маршрутов прокладывает `find_path_polymesh` — waypoint'ы
+//!   метрические, углами препятствий, а не центрами навтайлов. Пока меш
+//!   строится (первые доли секунды), путь идёт прямой по центрам тайлов, как
+//!   раньше: та же подмена, которой в игре сетка обслуживает запросы до
+//!   готовности меша;
+//! - стены «коридора» кладутся не только в сетку, но и в `MapData::walls` —
+//!   иначе полигональный поиск о них не знает и водит пешек сквозь стену.
+//!   Смена сценария поэтому пересобирает меш (`PolyNavmesh::clear`).
+//!
+//! Переключателя на сеточную навигацию здесь нет намеренно: на ней
+//! расталкивания не бывает, а эта сцена ровно про него.
+//!
 //! **Почему толпа выглядит слипшейся даже когда всё правильно.** Радиус тела
 //! [`HUMAN_BODY_RADIUS`] = 0.45 м, то есть разведённая пара стоит в 0.9 м, а
 //! спрайт — [`HUMAN_SIZE`] = 1.0 м. Спрайты в покое перекрываются на 10%
@@ -75,12 +91,15 @@ use qwe::human::{
     pick_wander_targets,
 };
 use qwe::loading::{AppState, PlayPhase};
-use qwe::map::osm::MapData;
+use qwe::map::osm::{MapData, WallLine};
 use qwe::movement::{
     DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationHolds,
-    SeparationStyle, SimPosition, SlotSearch, separation_cell, slot_side,
+    SeparationStyle, SimPosition, SlotSearch, separation_allowed_by_mode, separation_cell,
+    slot_side,
 };
-use qwe::navigation::{ArcNavmesh, PathfindingAlgorithm};
+use qwe::navigation::{
+    ArcNavmesh, Pathfinder, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug, find_path_polymesh,
+};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use qwe::settings::{
     HUMAN_SIZE, HUMAN_SPEED_SPREAD, HUMAN_WALK_SPEED, MAP_CENTER_PORTAL_POS, SEPARATION_MAX_ZOOM,
@@ -271,6 +290,17 @@ struct RunCounters {
     window_runs: u64,
 }
 
+/// Отрезки маршрута, которые полигональный поиск не смог проложить.
+///
+/// Не молчаливый откат на прямую: цель, выбранная по проходимости тайла, может
+/// лежать внутри раздутого на радиус агента контура — в игре это
+/// `PathfindingError` (см. `movement/systems.rs::apply_result`), и здесь пешка
+/// так же остаётся стоять до следующего тика. Прямая «в обход меша» провела бы
+/// её сквозь стену коридора и выглядела бы как работающий сценарий.
+#[derive(Resource, Reflect, Default)]
+#[reflect(Resource)]
+struct PathMisses(u64);
+
 #[derive(Component)]
 struct OverlayText;
 
@@ -344,10 +374,12 @@ fn main() {
     .init_resource::<DemoSpeed>()
     .init_resource::<Overlaps>()
     .init_resource::<RunCounters>()
+    .init_resource::<PathMisses>()
     .register_type::<Scenario>()
     .register_type::<DemoSpeed>()
     .register_type::<Overlaps>()
     .register_type::<RunCounters>()
+    .register_type::<PathMisses>()
     // свой порт: 15702 занимает игра пользователя, 15703 — её же
     // инспекция из `live-app`
     .add_plugins((
@@ -528,17 +560,32 @@ fn spawn_overlay(mut commands: Commands) {
 /// Раскладка сценария: снести прошлый, вернуть навмешу проходимость, поставить
 /// новый. Одна система на все пять — раскладки различаются только позициями и
 /// маршрутами.
+///
+/// Стены живут в двух местах сразу: тайлы сетки и `MapData::walls` для
+/// полигонального меша. Второе — не дубль ради дубля: меш строится из
+/// векторной геометрии карты и о правках сетки не знает вовсе, так что без
+/// записи в `MapData` пешки ходили бы сквозь стены коридора.
+#[allow(clippy::too_many_arguments)]
 fn respawn_scenario(
     mut commands: Commands,
     config: Res<DemoConfig>,
     scenario: Res<Scenario>,
     navmesh: Res<ArcNavmesh>,
+    mut map: ResMut<MapData>,
+    mut poly: ResMut<PolyNavmesh>,
+    mut polymesh: ResMut<PolymeshDebug>,
+    mut misses: ResMut<PathMisses>,
     old: Query<Entity, Or<(With<DemoPawn>, With<DemoWall>)>>,
 ) {
     for entity in &old {
         commands.entity(entity).despawn();
     }
     clear_arena(&navmesh, config.centre);
+    // геометрия прошлого сценария — из карты тоже; пересобрать меш придётся,
+    // если стены были или появятся
+    let rebuild_polymesh = !map.walls.is_empty() || matches!(*scenario, Scenario::Corridor);
+    map.walls.clear();
+    misses.0 = 0;
 
     let mut rng = stream(config.seed, RngDomain::Population, 0);
     let centre = config.centre;
@@ -617,8 +664,8 @@ fn respawn_scenario(
         Scenario::Corridor => {
             let half = config.corridor_length / 2.0;
             let gap = config.corridor_gap / 2.0;
-            spawn_wall(&mut commands, &navmesh, centre, half, gap, 1.0);
-            spawn_wall(&mut commands, &navmesh, centre, half, gap, -1.0);
+            spawn_wall(&mut commands, &navmesh, &mut map, centre, half, gap, 1.0);
+            spawn_wall(&mut commands, &navmesh, &mut map, centre, half, gap, -1.0);
 
             for index in 0..config.corridor {
                 let side = if index % 2 == 0 { -1.0 } else { 1.0 };
@@ -655,6 +702,15 @@ fn respawn_scenario(
                 );
             }
         }
+    }
+
+    // меш описывает геометрию прошлого сценария — под новую его надо
+    // построить заново. В игре ту же работу делает вход в `Playing` при смене
+    // города; здесь состояние не меняется, поэтому постройку будит правка
+    // тумблера, на которую подписан `sync_polymesh_build`
+    if rebuild_polymesh {
+        poly.clear();
+        polymesh.set_changed();
     }
 }
 
@@ -709,11 +765,17 @@ fn spawn_pawn(
     }
 }
 
-/// Полоса стены вдоль коридора: спрайт для глаза и заглушенные навтайлы для
-/// расталкивания и поиска пути.
+/// Полоса стены вдоль коридора: спрайт для глаза, заглушенные навтайлы для
+/// расталкивания и линия в `MapData::walls` для полигонального меша.
+///
+/// Записей две, потому что бэкендов два и читают они разное: расталкивание
+/// проверяет проходимость тайла (`separation.rs`), а меш строится из
+/// векторных контуров карты. Стена, забытая во втором, — дыра ровно в том
+/// сценарии, ради которого она поставлена.
 fn spawn_wall(
     commands: &mut Commands,
     navmesh: &ArcNavmesh,
+    map: &mut MapData,
     centre: Vec2,
     half_length: f32,
     gap: f32,
@@ -722,6 +784,16 @@ fn spawn_wall(
     let thickness = 6.0;
     let band = centre + Vec2::new(0.0, side * (gap + thickness / 2.0));
     let size = Vec2::new(half_length * 2.0 + thickness, thickness);
+
+    // осевая ленты — то же, чем стена задана в OSM: `ribbon_outline` раздует
+    // её обратно до `size` при постройке меша
+    map.walls.push(WallLine {
+        points: vec![
+            band - Vec2::new(size.x / 2.0, 0.0),
+            band + Vec2::new(size.x / 2.0, 0.0),
+        ],
+        width: thickness,
+    });
 
     {
         let mut navmesh = navmesh.write();
@@ -761,10 +833,15 @@ fn clear_arena(navmesh: &ArcNavmesh, centre: Vec2) {
 
 // ------------------------------------------------------------------ движение
 
-/// Выдать вставшей пешке следующий отрезок маршрута. Заменяет собой весь
-/// асинхронный поиск пути: путь строится прямой, но waypoint'ами по центрам
-/// навтайлов — ровно в таком виде его отдаёт сеточный A*, и без этого не
-/// проверить, стирает ли постановка на waypoint боковой сдвиг.
+/// Выдать вставшей пешке следующий отрезок маршрута. Заменяет собой очередь и
+/// асинхронность настоящего диспетчера, но не сам поиск: путь по готовому мешу
+/// считает `find_path_polymesh` — тот же вызов, что делает таск в игре, только
+/// синхронно (пешек здесь сотни, и то лишь в момент, когда отрезок кончился).
+///
+/// Пока меш строится, путь идёт прямой по центрам навтайлов — в такой форме
+/// его отдаёт сеточный A*, и это ровно то, чем в игре сетка обслуживает
+/// запросы до готовности меша.
+///
 /// Незамкнутый маршрут после последнего отрезка снимается: пешка выпадает из
 /// запроса этой системы и остаётся стоять. Заявку на слот (`DestinationClaim`)
 /// при этом не трогаем — пешка на нём стоит, и отпустить его значило бы отдать
@@ -774,10 +851,11 @@ fn clear_arena(navmesh: &ArcNavmesh, centre: Vec2) {
 /// точку — то есть проверяла бы не расталкивание, а очередь к одному тайлу.
 fn drive_routes(
     mut commands: Commands,
-    navmesh: Res<ArcNavmesh>,
+    pathfinder: Pathfinder,
     style: Res<HumanStyle>,
     search: Res<SlotSearch>,
     mut claims: ResMut<DestinationClaims>,
+    mut misses: ResMut<PathMisses>,
     mut pawns: Query<
         (
             Entity,
@@ -790,17 +868,10 @@ fn drive_routes(
     >,
 ) {
     claims.sync(slot_side(style.body_radius * 2.0), search.0);
-    let navmesh = navmesh.read();
+    let polymesh = pathfinder.polymesh_build();
+    let navmesh = pathfinder.navmesh.read();
     for (entity, mut movable, mut route, position, claim) in &mut pawns {
         let leg = route.legs[route.next];
-        route.next += 1;
-        if route.next == route.legs.len() {
-            if route.cycle {
-                route.next = 0;
-            } else {
-                commands.entity(entity).remove::<Route>();
-            }
-        }
         let desired = world_to_tile(leg);
         let slot = claims.claim_slot(
             entity,
@@ -816,7 +887,36 @@ fn drive_routes(
             }
             None => (desired, leg),
         };
-        let path = straight_path(position.0, target);
+
+        let path = match polymesh.as_deref() {
+            // путь включает стартовую точку — её и отбрасываем, как это
+            // делает приёмник ответа в игре
+            Some(build) => match find_path_polymesh(build, position.0, target) {
+                Some(points) => points.into_iter().skip(1).collect(),
+                None => {
+                    // цель не села на меш — пешка стоит и пробует снова на
+                    // следующем тике, отрезок не считается пройденным
+                    misses.0 += 1;
+                    continue;
+                }
+            },
+            None => straight_path(position.0, target),
+        };
+
+        route.next += 1;
+        if route.next == route.legs.len() {
+            if route.cycle {
+                route.next = 0;
+            } else {
+                commands.entity(entity).remove::<Route>();
+            }
+        }
+        // путь из одной точки означает «уже на месте» (тот же контракт, что у
+        // `apply_result`): отрезок засчитан, а вести пешку по пустому пути
+        // нельзя — `move_moving_entities` докатывал бы её по инерции
+        if path.is_empty() {
+            continue;
+        }
         movable.to_moving(target_tile, path, entity, &mut commands);
     }
 }
@@ -1067,6 +1167,7 @@ fn report_to_stdout(
     overlaps: Res<Overlaps>,
     holds: Res<SeparationHolds>,
     counters: Res<RunCounters>,
+    misses: Res<PathMisses>,
     mut next_report: Local<f32>,
 ) {
     let now = real.elapsed_secs();
@@ -1075,7 +1176,7 @@ fn report_to_stdout(
     }
     *next_report = now + 2.0;
     println!(
-        "{:<20} sep {:<3} {:>4.0}x  in view {:>4}  pairs {:>4}  involved {:>4}  held {:>4}  worst {:>6.3}  mean {:>6.3}  ticks/run {:>5.1}",
+        "{:<20} sep {:<3} {:>4.0}x  in view {:>4}  pairs {:>4}  involved {:>4}  held {:>4}  worst {:>6.3}  mean {:>6.3}  ticks/run {:>5.1}  path misses {:>4}",
         scenario.label(),
         if style.enabled { "on" } else { "off" },
         speed.0,
@@ -1086,6 +1187,7 @@ fn report_to_stdout(
         overlaps.worst,
         overlaps.mean,
         counters.ticks_per_run,
+        misses.0,
     );
 }
 
@@ -1097,12 +1199,27 @@ fn update_overlay(
     overlaps: Res<Overlaps>,
     holds: Res<SeparationHolds>,
     counters: Res<RunCounters>,
+    misses: Res<PathMisses>,
+    polymesh: Res<PolymeshDebug>,
+    poly: Res<PolyNavmesh>,
     time: Res<Time<Virtual>>,
     camera: Query<&Transform, With<Camera2d>>,
     mut overlay: Query<&mut Text, With<OverlayText>>,
 ) {
     let zoom = camera.single().map(|camera| camera.scale.x).unwrap_or(0.0);
     let gated = zoom >= SEPARATION_MAX_ZOOM;
+    // тот же вопрос, что решает `Pathfinder::polymesh_build`: тумблер плюс
+    // готовность меша
+    let navigation = match (polymesh.enabled, poly.build().is_some()) {
+        (true, true) => "polymesh",
+        (true, false) => "polymesh (building, walking the grid)",
+        (false, _) => "navmesh grid",
+    };
+    // клавиши переключить бэкенд здесь нет, но по BRP тумблер достижим — а на
+    // сеточной навигации расталкивания не бывает вовсе, и подпись обязана это
+    // говорить, а не показывать `ON` у выключенной системы.
+    // Детерминизма в этой сцене нет по построению (`Determinism` не вставлен)
+    let mode_off = !separation_allowed_by_mode(false, polymesh.enabled);
     let share = if overlaps.pawns > 0 {
         overlaps.involved as f32 / overlaps.pawns as f32 * 100.0
     } else {
@@ -1115,6 +1232,7 @@ fn update_overlay(
          worst {worst:.3} m   mean {mean:.3} m   (rest distance {rest:.2} m, sprite {sprite:.2} m)\n\
          separation {separation}{gate}   speed {speed:.0}x{paused}   zoom {zoom:.3}\n\
          move ticks per separation run {per_run}   runs {runs}\n\
+         navigation {navigation}   path misses {misses}\n\
          \n\
          1-5 scenario   R respawn   S separation   Space pause   -/= speed   wheel zoom",
         scenario = scenario.label(),
@@ -1128,8 +1246,18 @@ fn update_overlay(
         mean = overlaps.mean,
         rest = overlaps.radius * 2.0,
         sprite = HUMAN_SIZE,
-        separation = if style.enabled { "ON" } else { "OFF" },
-        gate = if gated { " (zoomed out: gated)" } else { "" },
+        separation = if style.enabled && !mode_off {
+            "ON"
+        } else {
+            "OFF"
+        },
+        gate = if mode_off {
+            " (grid nav: no separation)"
+        } else if gated {
+            " (zoomed out: gated)"
+        } else {
+            ""
+        },
         speed = speed.0,
         paused = if time.is_paused() { " PAUSED" } else { "" },
         zoom = zoom,
@@ -1139,6 +1267,8 @@ fn update_overlay(
             "-".to_string()
         },
         runs = counters.runs,
+        navigation = navigation,
+        misses = misses.0,
     );
 
     for mut overlay in &mut overlay {

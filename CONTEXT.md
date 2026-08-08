@@ -901,7 +901,11 @@ in `main.rs`.
   polyanya mesh triangulated from the same vector sources the grid fill rasterizes,
   recovering the fidelity the 2 m grid loses (bridge curbs, narrow waterways). While the
   Polymesh panel is on and the mesh is built, **it is the pathfinding backend** — see
-  **Polygonal routing** below. The whole fill order collapses into one boolean
+  **Polygonal routing** below. It is on **by default** (`PolymeshDebug::enabled`): the
+  polygonal search is the world's navigation, and the grid is the fallback (while the
+  mesh builds, and when the Navigation panel is switched back to `Navmesh` by hand).
+  `show` defaults to *off* for the same reason — a default-on backend with a default-on
+  overlay would bury a fresh install's city under polygon edges. The whole fill order collapses into one boolean
   (`i_overlay` difference):
   union(water ∪ non-culvert waterways ∪ bridge curb bands ∪ buildings ∪ walls) −
   union(bridge decks ∪ joining roads ∪ passages), clipped to the map rect **outset** by
@@ -922,8 +926,9 @@ in `main.rs`.
   bands **minus the full drawn bands of every other bridge way**. Covered by a
   neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer edge ⇒ blocks. N differences over
   a few dozen bridges cost less than the single building union.
-  **Lazy and async**: nothing builds until the Polymesh panel is enabled
-  (`PolymeshDebug`, persisted); the build runs on `AsyncComputeTaskPool`
+  **Conditional and async**: nothing builds while the Polymesh panel is off
+  (`PolymeshDebug`, persisted — on by default, so the usual path *is* a build on entering
+  the world); the build runs on `AsyncComputeTaskPool`
   (`PolyNavmesh` resource: `PolymeshBuild` + generation counter + in-flight task,
   cleared by `city.rs::reload_world` alongside `NorthstarGrid`). `PolymeshBuild`
   carries the obstacle contours next to the mesh on purpose: polyanya stores only
@@ -1274,8 +1279,19 @@ in `main.rs`.
   0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart — deliberately **larger** than half the
   sprite, so a resting pair leaves a visible gap (1.17 m against a 1.0 m `HUMAN_SIZE`).
   At the earlier 0.45 m the rest distance was *narrower* than the sprite and a correctly
-  separated crowd still drew as a solid mosaic. Deliberately local and cosmetic, three
-  gates in order: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
+  separated crowd still drew as a solid mosaic. Deliberately local and cosmetic, four
+  gates in order: **the mode** (`separation_runs`) — no separation under determinism, and
+  none on the grid backend either (`PolymeshDebug::enabled` off): grid waypoints sit in
+  navtile centers and the walk puts a pawn back on them every step, so a separated pair
+  is re-collapsed by the next tick and all the mechanism adds is jitter and holds.
+  Personal space presupposes metric waypoints, i.e. the polygonal mesh. It is the
+  *toggle*, not mesh readiness: while the mesh builds the grid serves the requests, but
+  blinking separation over that transition is worse than half a second of the old
+  behavior. The World panel treats this exactly like determinism — the `Separation` row
+  reads `off`, dimmed and unclickable (`separation_allowed_by_mode`, the one rule shared
+  by the schedule and the panel), and `SeparationHolds` is cleared as soon as the mode
+  turns the run off, or pawns held by the last run would stay slowed forever.
+  Then: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
   right after `move_moving_entities` — the only point where the tick's positions are
   final and the snapshot is already taken, so the push reaches the screen through
   interpolation — but at 30x that schedule runs ~1920 ticks/s and even 0.03 ms per tick
@@ -1334,8 +1350,15 @@ in `main.rs`.
   windowed scene running the real `separate_pawns` on an empty navmesh, with the crowd
   arranged into the cases that are otherwise waited for (a pile, a funnel, counter-flowing
   columns, a walled corridor, real wander AI), a body-radius gizmo per pawn and a live
-  count of overlapping pairs. Two traps that scene made visible and any measurement of
-  separation has to respect: **count only pawns inside the camera rect** (off-screen ones
+  count of overlapping pairs. It navigates the way the game does — `find_path_polymesh`
+  over an empty `MapData`, on the default-on polymesh backend, because separation only
+  exists there; the scenario's corridor walls are therefore written into `MapData::walls`
+  as well as into the grid, and switching scenarios rebuilds the mesh. A query that finds
+  no path leaves the pawn standing and ticks a `path misses` counter — falling back to a
+  straight line would walk it through the wall and read as a working scenario. There is
+  deliberately no key to switch the scene to the grid backend: separation does not run
+  there, and that is what the scene is for. Two traps that scene made visible and any
+  measurement of separation has to respect: **count only pawns inside the camera rect** (off-screen ones
   are never separated by design, and including them makes on/off indistinguishable), and
   **allow a millimetre tail** — the solver is soft, so a converged crowd still reports
   pairs a few mm inside the radius sum.
@@ -1590,7 +1613,9 @@ in `main.rs`.
   left, value right). The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always
   walk one of the two, so it is a choice, not two toggles that could both read `Off`
   while the grid quietly served every request. Its single source of truth is
-  `PolymeshDebug::enabled`.
+  `PolymeshDebug::enabled`, which defaults to `Polymesh` — and which the World panel's
+  `Separation` row follows, since separation does not run on the grid backend (see
+  **Separation**): picking `Navmesh` here greys that row out the way determinism does.
   Under it stand the settings **of the selected backend only** — the other set is
   `Display::None`d out of the layout (`sync_section_visibility`), because an agent radius
   means nothing while pawns walk tiles, and a grid search algorithm means nothing while

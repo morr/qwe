@@ -208,8 +208,10 @@ impl Plugin for NavigationPlugin {
                     poll_northstar_build,
                 ),
             )
-            // полигональный меш-прототип: ленив (ничего не строит, пока
-            // панель Polymesh не включат) и постройка асинхронна
+            // полигональный меш — основной бэкенд (`PolymeshDebug::enabled`
+            // включён по умолчанию), но постройка всё равно асинхронна и
+            // условна: выключенная панель не строит ничего, и до готовности
+            // меша запросы обслуживает сетка
             .register_type::<PolymeshDebug>()
             .init_resource::<PolymeshDebug>()
             .init_resource::<PolyNavmesh>()

@@ -22,7 +22,8 @@ use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
-use crate::movement::{SeparationStyle, SlotSearch};
+use crate::movement::{SeparationStyle, SlotSearch, separation_allowed_by_mode};
+use crate::navigation::PolymeshDebug;
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::settings::{
     CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, DEMON_CAP_MAX, DEMON_CAP_MIN,
@@ -137,7 +138,10 @@ impl Plugin for UiStatsPlugin {
                 sync_seed_field.run_if(resource_changed::<WorldSeed>),
                 sync_determinism_value.run_if(resource_changed::<Determinism>),
                 sync_separation_value.run_if(
-                    resource_changed::<SeparationStyle>.or_else(resource_changed::<Determinism>),
+                    resource_changed::<SeparationStyle>
+                        .or_else(resource_changed::<Determinism>)
+                        // строка гаснет и от смены бэкенда навигации
+                        .or_else(resource_changed::<PolymeshDebug>),
                 ),
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
@@ -311,6 +315,7 @@ fn panel_title(title: &str) -> impl Bundle {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_stats_panel(
     mut commands: Commands,
     style: Res<DemonStyle>,
@@ -318,6 +323,7 @@ fn render_stats_panel(
     separation: Res<SeparationStyle>,
     slot_search: Res<SlotSearch>,
     determinism: Res<Determinism>,
+    polymesh: Res<PolymeshDebug>,
     seed: Res<WorldSeed>,
 ) {
     let column = commands
@@ -416,22 +422,24 @@ fn render_stats_panel(
                 ),
                 (
                     SeparationValueLabel,
-                    Text::new(separation_value(&separation, &determinism)),
+                    Text::new(separation_value(&separation, &determinism, &polymesh)),
                     TextFont {
                         font_size: FontSize::Px(12.),
                         ..default()
                     },
-                    TextColor(separation_value_color(&determinism)),
+                    TextColor(separation_value_color(&determinism, &polymesh)),
                 ),
             ],
         ))
         .observe(
             |_activate: On<Activate>,
              mut style: ResMut<SeparationStyle>,
-             determinism: Res<Determinism>| {
-                // под детерминизмом расталкивания нет вовсе — тумблер не
-                // должен молча переключать то, что всё равно не работает
-                if determinism.0 {
+             determinism: Res<Determinism>,
+             polymesh: Res<PolymeshDebug>| {
+                // под детерминизмом и на сеточной навигации расталкивания нет
+                // вовсе — тумблер не должен молча переключать то, что всё
+                // равно не работает
+                if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
                     return;
                 }
                 style.enabled = !style.enabled;
@@ -638,15 +646,16 @@ fn sync_world_counts(
 
 /// Подсветка строки тумблера под курсором и при нажатии (как у Buildings).
 ///
-/// Под детерминизмом строка не подсвечивается вовсе: расталкивание там
-/// выключено расписанием (`movement/mod.rs`), нажимать нечего, и реакция на
-/// курсор обещала бы работающую кнопку.
+/// Под детерминизмом и на сеточной навигации строка не подсвечивается вовсе:
+/// расталкивание там выключено расписанием (`movement/mod.rs`), нажимать
+/// нечего, и реакция на курсор обещала бы работающую кнопку.
 fn highlight_separation_row(
     determinism: Res<Determinism>,
+    polymesh: Res<PolymeshDebug>,
     mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<SeparationRow>>,
 ) {
     for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if determinism.0 {
+        let lighten = if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
             ROW_LIGHTEN
         } else if pressed {
             PRESSED_LIGHTEN
@@ -742,23 +751,30 @@ fn sync_seed_field(
 fn sync_separation_value(
     style: Res<SeparationStyle>,
     determinism: Res<Determinism>,
+    polymesh: Res<PolymeshDebug>,
     mut labels: Query<(&mut Text, &mut TextColor), With<SeparationValueLabel>>,
 ) {
     for (mut text, mut color) in &mut labels {
-        text.0 = separation_value(&style, &determinism);
-        color.0 = separation_value_color(&determinism);
+        text.0 = separation_value(&style, &determinism, &polymesh);
+        color.0 = separation_value_color(&determinism, &polymesh);
     }
 }
 
 /// Подпись тумблера расталкивания.
 ///
-/// Под детерминизмом — всегда `off`, каким бы ни был `SeparationStyle`:
-/// система выключена run-условием (`movement/mod.rs`, расталкивание завязано
-/// на камеру, зум и `FrameCount`, то есть на всё, от чего повтор обязан не
-/// зависеть). Собственное значение стиля при этом сохраняется — выключение
-/// режима вернёт панель к нему.
-fn separation_value(style: &SeparationStyle, determinism: &Determinism) -> String {
-    if determinism.0 {
+/// Под детерминизмом и на сеточной навигации — всегда `off`, каким бы ни был
+/// `SeparationStyle`: система выключена run-условием
+/// (`movement::separation_runs` — расталкивание завязано на камеру, зум и
+/// `FrameCount`, то есть на всё, от чего повтор обязан не зависеть, а на
+/// сетке waypoint'ы стоят в центрах навтайлов и разводить пешки некуда).
+/// Собственное значение стиля при этом сохраняется — возврат режима вернёт
+/// панель к нему.
+fn separation_value(
+    style: &SeparationStyle,
+    determinism: &Determinism,
+    polymesh: &PolymeshDebug,
+) -> String {
+    if !separation_allowed_by_mode(determinism.0, polymesh.enabled) {
         return "off".to_string();
     }
     if style.enabled { "on" } else { "off" }.to_string()
@@ -766,11 +782,11 @@ fn separation_value(style: &SeparationStyle, determinism: &Determinism) -> Strin
 
 /// Приглушённая подпись — тем же способом, каким панели показывают
 /// неактивное: цветом, а не отдельной иконкой.
-fn separation_value_color(determinism: &Determinism) -> Color {
-    if determinism.0 {
-        Color::srgb(0.45, 0.45, 0.45)
-    } else {
+fn separation_value_color(determinism: &Determinism, polymesh: &PolymeshDebug) -> Color {
+    if separation_allowed_by_mode(determinism.0, polymesh.enabled) {
         Color::WHITE
+    } else {
+        Color::srgb(0.45, 0.45, 0.45)
     }
 }
 
