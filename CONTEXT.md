@@ -1076,7 +1076,9 @@ in `main.rs`.
   — the corridor branch included, via the vendored `Mesh::get_path_on_layers` (the polled
   search honoring blocked layers; the blocking `path_on_layers` is not used, its internal
   limit counts the whole mesh and cannot be interrupted). The external work budget scales
-  to the open polygon count (~10 pops each, min 4096 polls), a `NotFound` returns
+  to the open polygon count (40 pops each, min 4096 polls — 10 was measured on the flat
+  mesh and starved healthy long corridor routes, which converge at ×2; see
+  `examples/audit/polymesh_budget_repro`), a `NotFound` returns
   immediately instead of idling out the limit, and an exhausted budget is a **panic in
   every build**, with both endpoints in the message: a diverging search must kill the
   game so the geometry (or the degenerate start/goal that caused it) gets fixed, not
