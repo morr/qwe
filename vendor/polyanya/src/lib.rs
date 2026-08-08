@@ -365,12 +365,32 @@ impl Mesh {
     #[cfg(feature = "async")]
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn get_path(&self, from: Vec2, to: Vec2) -> FuturePath<'_> {
+        self.get_path_on_layers(from, to, HashSet::default())
+    }
+
+    /// Compute a path between two points, not entering the blocked layers.
+    ///
+    /// The polled counterpart of [`Self::path_on_layers`]: ends carrying a
+    /// polygon index found by an earlier mesh search are used as is, others are
+    /// located honoring the blocked layers.
+    ///
+    /// This method returns a `Future`, to get the path in a blocking way use
+    /// [`Self::path_on_layers`].
+    #[cfg(feature = "async")]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    pub fn get_path_on_layers(
+        &self,
+        from: impl Into<Coords>,
+        to: impl Into<Coords>,
+        blocked_layers: HashSet<u8>,
+    ) -> FuturePath<'_> {
         FuturePath {
-            from,
-            to,
+            from: from.into(),
+            to: to.into(),
             mesh: self,
             instance: None,
             ending_polygon: u32::MAX,
+            blocked_layers,
         }
     }
 

@@ -47,13 +47,7 @@ pub fn find_path_polymesh(build: &PolymeshBuild, from: Vec2, to: Vec2) -> Option
         build.blocked_outside(build.corridor(&chunks).into_iter())
     };
 
-    let path = if blocked.is_empty() {
-        // коридора нет (один слой — иерархия выключена): поиск идёт под
-        // внешним потолком, см. `bounded_path`
-        bounded_path(&build.mesh, start, goal, build.open_polygons(&blocked))?
-    } else {
-        build.mesh.path_on_layers(start, goal, blocked)?
-    };
+    let path = bounded_path(build, start, goal, blocked)?;
     let mut points = Vec::with_capacity(path.path.len() + 1);
     points.push(from);
     points.extend(path.path.into_iter().map(from_poly));
@@ -284,47 +278,56 @@ impl PolymeshBuild {
     }
 }
 
-/// Поиск под внешним потолком работы.
+/// Поиск под внешним потолком работы — единственная дверь к polyanya: и
+/// коридорный запрос, и запрос без иерархии идут здесь. Блокирующий
+/// `Mesh::path_on_layers` не годится ровно тем, что его не прервать: его
+/// внутренний предел считается по **всему** мешу (сотни тысяч извлечений), а
+/// вставки не ограничены вовсе — расходящийся поиск ел секунды процессора на
+/// поток и 6.65 ГБ памяти за 64 000 опросов на одном битом шве.
 ///
-/// `None` — пути нет **или** бюджет исчерпан. Второе означает расходящийся
-/// поиск, то есть дефект геометрии: воронка не сходится, очередь растёт без
-/// предела (замерено: 6.65 ГБ за 64 000 опросов на одном битом шве). В
-/// отладочной сборке это падение с внятным сообщением — чинить надо геометрию,
-/// а не поднимать потолок. В релизе — отказ, такой же как «цель недостижима»:
-/// `movement::listen_for_pathfinding_tasks` разберётся, пешка выберет другую
-/// цель, а мир не встанет и память не потечёт.
+/// `None` — пути нет. Исчерпанный бюджет — **паника всегда**, не только в
+/// debug: расходящаяся воронка означает дефект геометрии меша либо вырожденную
+/// точку старта/цели, и решение принято жёсткое — игра падает с координатами
+/// обоих концов, чтобы дефект чинился сразу, а не жил месяцами в виде тихо
+/// сжирающих пул «вечных» поисков (симптом: демоны замирают у портала,
+/// конвейер пуст, CPU 400%+). Чинить по панике надо геометрию или источник
+/// вырожденной точки — не поднимать потолок: запас и так 3.6× над худшим
+/// замеренным здоровым запросом.
 fn bounded_path(
-    mesh: &polyanya::Mesh,
+    build: &PolymeshBuild,
     from: polyanya::Coords,
     to: polyanya::Coords,
-    open_polygons: usize,
+    blocked: std::collections::HashSet<u8>,
 ) -> Option<polyanya::Path> {
     use std::future::Future;
     use std::task::{Context, Poll, Waker};
 
+    let open_polygons = build.open_polygons(&blocked);
     let budget = (open_polygons * SEARCH_POPS_PER_POLYGON)
         .div_ceil(SEARCH_STEPS_PER_POLL)
         .max(MIN_SEARCH_POLLS);
 
-    // `FuturePath` сажает концы на меш сам и допуска `search_delta` при этом не
-    // применяет — поэтому ему отдаются уже посаженные точки от `locate`
-    let mut future = std::pin::pin!(mesh.get_path(from.position(), to.position()));
+    // концы уже посажены `locate` и несут найденный полигон — `FuturePath`
+    // использует его и повторную посадку не делает
+    let blocked_chunks = blocked.len();
+    let mut future = std::pin::pin!(build.mesh.get_path_on_layers(from, to, blocked));
     let mut context = Context::from_waker(Waker::noop());
     for _ in 0..budget {
         if let Poll::Ready(path) = future.as_mut().poll(&mut context) {
             return path;
         }
     }
-    debug_assert!(
-        false,
+    panic!(
         "polymesh search diverged: {budget} polls ({} steps) spent on {open_polygons} open \
-         polygons without an answer, {:?} -> {:?}. The funnel is not converging, which means \
-         broken mesh geometry — fix the geometry, do not raise the budget",
+         polygons ({blocked_chunks} chunks blocked) without an answer, {:?} -> {:?} \
+         (tiles {:?} -> {:?}). The funnel is not converging: broken mesh geometry or a \
+         degenerate start/goal point — fix that, do not raise the budget",
         budget * SEARCH_STEPS_PER_POLL,
         from_poly(from.position()),
         from_poly(to.position()),
+        crate::grid::world_to_tile(from_poly(from.position())),
+        crate::grid::world_to_tile(from_poly(to.position())),
     );
-    None
 }
 
 /// Веса графа целочисленные (у `astar` из `pathfinding` порядок на стоимости);

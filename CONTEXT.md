@@ -1072,12 +1072,21 @@ in `main.rs`.
   `QWE:`): exact node repeats — same polygon, root and interval — are deduplicated,
   killing the cycle where a corner vertex on a seam's collinear edge chain spins
   equal-cost nodes around its polygon ring forever (root_history only drops strictly
-  worse nodes). Belt and braces on top: `bounded_path` polls `get_path` under an external
-  work budget scaled to the open polygon count (~10 pops each, min 4096 polls), a
-  `NotFound` returns immediately instead of idling out the limit, and in debug builds an
-  exhausted budget or a one-way seam (`verify_seams`) is a panic, because either means
-  broken mesh geometry. Measured after the fix: 2000 chunked queries, 0.7 % missed,
-  5.3 ms mean, 42 ms worst, flat memory.
+  worse nodes). Belt and braces on top: `bounded_path` is the **only door to polyanya**
+  — the corridor branch included, via the vendored `Mesh::get_path_on_layers` (the polled
+  search honoring blocked layers; the blocking `path_on_layers` is not used, its internal
+  limit counts the whole mesh and cannot be interrupted). The external work budget scales
+  to the open polygon count (~10 pops each, min 4096 polls), a `NotFound` returns
+  immediately instead of idling out the limit, and an exhausted budget is a **panic in
+  every build**, with both endpoints in the message: a diverging search must kill the
+  game so the geometry (or the degenerate start/goal that caused it) gets fixed, not
+  silently eat the async pool — live symptom of the silent version was demons frozen at
+  the portal, an idle-looking pipeline and 400 %+ CPU. A one-way seam (`verify_seams`)
+  panics in debug for the same reason. Third layer: `PathfindingTask` carries its spawn
+  time, and the receiver panics on a task older than `PATHFINDING_TASK_HANG_SECS` — a
+  search hung in any *new* way (a lock, a loop in another backend) surfaces as a crash,
+  never as pawns quietly standing still. Measured after the fix: 2000 chunked queries,
+  0.7 % missed, 5.3 ms mean, 42 ms worst, flat memory.
 
 ## Determinism
 
