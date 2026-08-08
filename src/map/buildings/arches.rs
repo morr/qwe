@@ -26,7 +26,9 @@ use super::height_or_default;
 use super::layers::silhouette_edges;
 use crate::map::SHADOW_COLOR;
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::{closest_on_segment, point_in_area, ring_bounds};
+use crate::map::osm::model::{
+    closest_on_segment, point_at_arc_length, point_in_area, polyline_length, ring_bounds,
+};
 use crate::map::osm::{PolyArea, RoadLine};
 use crate::settings::ARCH_HEIGHT;
 
@@ -245,24 +247,11 @@ pub(super) fn arches_by_building<'a>(
 /// Середина ломаной по длине — устойчивее к неравномерным сегментам, чем
 /// средняя точка списка.
 pub(super) fn passage_middle(passage: &RoadLine) -> Option<Vec2> {
-    let total: f32 = passage
-        .points
-        .windows(2)
-        .map(|segment| segment[0].distance(segment[1]))
-        .sum();
+    let total = polyline_length(&passage.points);
     if total <= 0.0 {
         return passage.points.first().copied();
     }
-    let mut walked = 0.0;
-    for segment in passage.points.windows(2) {
-        let length = segment[0].distance(segment[1]);
-        if walked + length >= total / 2.0 {
-            let t = (total / 2.0 - walked) / length;
-            return Some(segment[0].lerp(segment[1], t));
-        }
-        walked += length;
-    }
-    passage.points.last().copied()
+    Some(point_at_arc_length(&passage.points, total / 2.0))
 }
 
 /// Отрезок, протянутый вектором `sweep`, — прямоугольник проёма в стене.

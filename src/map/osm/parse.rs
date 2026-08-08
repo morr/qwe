@@ -13,7 +13,7 @@ use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, TreeCompose, TreeNode,
     TreeRow, TreeRowLayout, WallLine, WaterKind, WaterLine, point_in_area, point_in_polygon,
-    ring_bounds,
+    polyline_length, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -458,11 +458,7 @@ fn row_spacing(tags: &HashMap<String, String>, points: &[Vec2]) -> Option<f32> {
     if count < 2.0 {
         return None;
     }
-    let length: f32 = points
-        .windows(2)
-        .map(|segment| segment[0].distance(segment[1]))
-        .sum();
-    plausible(length / (count - 1.0))
+    plausible(polyline_length(points) / (count - 1.0))
 }
 
 /// Радиус кроны из `diameter_crown`, м. Тег документирован на `natural=tree`

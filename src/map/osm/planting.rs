@@ -8,7 +8,7 @@ use bevy::math::{IVec2, Vec2};
 
 use crate::map::osm::model::{
     MapData, PlantedTree, PolyArea, RowTrees, TreeRowLayout, TreeRowPlacement, distance_to_segment,
-    point_in_area, ring_area, ring_bounds,
+    point_at_arc_length, point_in_area, polyline_length, ring_area, ring_bounds,
 };
 use crate::map::roads::casing_width;
 use crate::settings::{MAP_SIZE, TREE_DENSITY_STEP};
@@ -531,34 +531,6 @@ fn plant_standalone(
         occupied.insert(pos);
     }
     planted
-}
-
-/// Длина полилинии, м.
-fn polyline_length(points: &[Vec2]) -> f32 {
-    points
-        .windows(2)
-        .map(|segment| segment[0].distance(segment[1]))
-        .sum()
-}
-
-/// Точка на полилинии в `distance` метрах от её начала. За концом — последняя
-/// точка: расставлять деревья дальше ряда нечем.
-fn point_at_arc_length(points: &[Vec2], distance: f32) -> Vec2 {
-    let mut walked = 0.0;
-    for segment in points.windows(2) {
-        let (from, to) = (segment[0], segment[1]);
-        let length = from.distance(to);
-        if length <= 0.0 {
-            continue;
-        }
-        if walked + length >= distance {
-            return from.lerp(to, (distance - walked) / length);
-        }
-        walked += length;
-    }
-    *points
-        .last()
-        .expect("вызывается только для points.len() >= 2")
 }
 
 /// Ранг каждого слота в порядке «обратных битов» (van der Corput).

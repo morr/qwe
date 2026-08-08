@@ -465,6 +465,38 @@ pub fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
     point.distance(closest_on_segment(point, from, to))
 }
 
+/// Длина ломаной — сумма её звеньев.
+pub fn polyline_length(points: &[Vec2]) -> f32 {
+    points
+        .windows(2)
+        .map(|segment| segment[0].distance(segment[1]))
+        .sum()
+}
+
+/// Точка на ломаной в `distance` метрах от начала. За концом — последняя точка:
+/// ставить что-либо дальше ломаной некуда, и обрыв на её конце — единственный
+/// разумный ответ (так расставляются деревья ряда и так ищется середина арки).
+///
+/// Звенья нулевой длины пропускаются: делить на них нечего, а в OSM-геометрии
+/// после округления координат они встречаются.
+pub fn point_at_arc_length(points: &[Vec2], distance: f32) -> Vec2 {
+    let mut walked = 0.0;
+    for segment in points.windows(2) {
+        let (from, to) = (segment[0], segment[1]);
+        let length = from.distance(to);
+        if length <= 0.0 {
+            continue;
+        }
+        if walked + length >= distance {
+            return from.lerp(to, (distance - walked) / length);
+        }
+        walked += length;
+    }
+    *points
+        .last()
+        .expect("вызывается только для points.len() >= 2")
+}
+
 /// Знаковая площадь кольца по формуле шнурования: положительная — обход
 /// против часовой стрелки. Знак нужен тени (свипы силуэта обязаны быть
 /// одинаково закручены) и генератору входов (от обхода зависит, куда смотрит
@@ -538,5 +570,35 @@ mod tests {
     #[test]
     fn ring_area_square() {
         assert!((ring_area(&square()) - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn polyline_length_sums_the_links() {
+        let path = [Vec2::ZERO, Vec2::new(3.0, 0.0), Vec2::new(3.0, 4.0)];
+        assert!((polyline_length(&path) - 7.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn point_at_arc_length_walks_across_a_corner() {
+        let path = [Vec2::ZERO, Vec2::new(3.0, 0.0), Vec2::new(3.0, 4.0)];
+        assert!(point_at_arc_length(&path, 1.5).distance(Vec2::new(1.5, 0.0)) < 1e-4);
+        // ровно на изломе и за ним — второе звено
+        assert!(point_at_arc_length(&path, 5.0).distance(Vec2::new(3.0, 2.0)) < 1e-4);
+    }
+
+    /// За концом обрыв, а не экстраполяция: расставлять что-либо дальше
+    /// ломаной некуда.
+    #[test]
+    fn point_at_arc_length_stops_at_the_end() {
+        let path = [Vec2::ZERO, Vec2::new(3.0, 0.0)];
+        assert_eq!(point_at_arc_length(&path, 99.0), Vec2::new(3.0, 0.0));
+    }
+
+    /// Звено нулевой длины пропускается, а не делит на ноль — в OSM-геометрии
+    /// после округления координат такие встречаются.
+    #[test]
+    fn point_at_arc_length_skips_a_zero_length_link() {
+        let path = [Vec2::ZERO, Vec2::ZERO, Vec2::new(4.0, 0.0)];
+        assert!(point_at_arc_length(&path, 2.0).distance(Vec2::new(2.0, 0.0)) < 1e-4);
     }
 }
