@@ -10,6 +10,7 @@ mod hotkeys;
 mod navigation;
 mod noise;
 mod roads;
+mod rows;
 // `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
 // нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
 // поднять не может — он тянет панели, карту и настройки
@@ -249,8 +250,15 @@ impl Plugin for UiPlugin {
             brp::UiBrpBadgePlugin,
         ))
         // бегунки всех панелей ведёт одна система — ползунки помечены общим
-        // `slider::UiSlider`
-        .add_systems(Update, (stack_bottom_columns, slider::sync_slider_thumbs))
+        // `slider::UiSlider`, строки — общим `rows::ValueRow`
+        .add_systems(
+            Update,
+            (
+                stack_bottom_columns,
+                slider::sync_slider_thumbs,
+                rows::highlight_value_rows,
+            ),
+        )
         .add_systems(
             Update,
             // `resource_changed` без `resource_exists` паникует до загрузки

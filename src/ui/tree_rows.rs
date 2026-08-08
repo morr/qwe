@@ -4,28 +4,16 @@
 //! листающая значение по кругу; правка `TreeRowStyle` пересобирает набор
 //! деревьев и подложку (`map::mod` — та же цепочка, что у `TreeStyle`).
 
-use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
-use bevy::picking::hover::Hovered;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button};
-
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 
 use crate::map::{RoadJoin, RoadSmoothing, TreeRowPlacement, TreeRowStyle};
+use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off, spawn_value_row};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
 };
-
-/// Строки — как у соседних панелей: плотный фон поверх полупрозрачной панели.
-const ROW_LIGHTEN: f32 = 0.0;
-const HOVER_LIGHTEN: f32 = 0.12;
-const PRESSED_LIGHTEN: f32 = 0.24;
-
-fn row_color(lighten: f32) -> Color {
-    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
-}
 
 /// Какое поле стиля листает кнопка — она же адресует подпись значения.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -49,11 +37,8 @@ impl Plugin for UiTreeRowStylePlugin {
         app.add_systems(Startup, render_tree_row_style_panel)
             .add_systems(
                 Update,
-                (
-                    highlight_rows,
-                    // и клик по кнопке, и правка по BRP
-                    sync_row_values.run_if(resource_changed::<TreeRowStyle>),
-                ),
+                // и клик по кнопке, и правка по BRP
+                sync_row_values.run_if(resource_changed::<TreeRowStyle>),
             );
     }
 }
@@ -149,15 +134,6 @@ fn render_tree_row_style_panel(mut commands: Commands, style: Res<TreeRowStyle>)
     );
 }
 
-/// Следующее значение по кругу; незнакомое откатывается к первому.
-fn next_in<T: Copy + PartialEq>(values: &[T], current: T) -> T {
-    let index = values
-        .iter()
-        .position(|value| *value == current)
-        .map_or(0, |index| (index + 1) % values.len());
-    values[index]
-}
-
 fn spawn_row<M>(
     commands: &mut Commands,
     panel: Entity,
@@ -166,81 +142,26 @@ fn spawn_row<M>(
     style: &TreeRowStyle,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
-    let button = commands
-        .spawn((
-            Button,
-            row,
-            Pickable::default(),
-            // `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                (
-                    Text::new(label),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    TreeRowStyleValueLabel(row),
-                    Text::new(row_value(row, style)),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(on_activate)
-        .id();
-    commands.entity(panel).add_child(button);
+    let button = spawn_value_row(
+        commands,
+        panel,
+        label,
+        ROW_LEFT_PX,
+        TreeRowStyleValueLabel(row),
+        row_value(row, style),
+        on_activate,
+    );
+    commands.entity(button).insert(row);
 }
 
 fn row_value(row: TreeRowStyleRow, style: &TreeRowStyle) -> String {
-    let on_off = |value: bool| (if value { "On" } else { "Off" }).to_string();
     match row {
-        TreeRowStyleRow::Enabled => on_off(style.enabled),
+        TreeRowStyleRow::Enabled => on_off(style.enabled).to_string(),
         TreeRowStyleRow::Placement => style.placement.label().to_string(),
         TreeRowStyleRow::Spacing => (if style.osm_spacing { "OSM" } else { "slider" }).to_string(),
         TreeRowStyleRow::Join => style.join.label().to_string(),
         TreeRowStyleRow::Smoothing => style.smoothing.label().to_string(),
-        TreeRowStyleRow::Casing => on_off(style.casing),
-    }
-}
-
-/// Подсветка строки под курсором и при нажатии (как у соседних панелей).
-fn highlight_rows(
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<TreeRowStyleRow>>,
-) {
-    for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if pressed {
-            PRESSED_LIGHTEN
-        } else if hovered.get() {
-            HOVER_LIGHTEN
-        } else {
-            ROW_LIGHTEN
-        };
-        background.0 = row_color(lighten);
+        TreeRowStyleRow::Casing => on_off(style.casing).to_string(),
     }
 }
 

@@ -1739,6 +1739,15 @@ in `main.rs`.
   (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
   pass their own marker bundles for the value label and the slider to address them in
   their sync systems.
+- **Value-row kit** (`ui/rows.rs`) — the sibling of the slider kit for the rows that are
+  *buttons*: `spawn_value_row` (grey label left, white value right, click on an observer),
+  `row_color`, `next_in`, `on_off`, and one `highlight_value_rows` for every panel (rows
+  carry the shared `ValueRow` marker; registered once in `UiPlugin`). A row whose click
+  currently does nothing gets `RowInert` from its panel and stops highlighting — promising
+  a reaction the click will not deliver is worse than not highlighting. The only carrier
+  today is the Separation toggle under **Deterministic** or grid navigation.
+  Highlighting writes through `set_if_neq`: the system runs every frame over every row of
+  every panel, and at most one of them — the one under the cursor — actually changes.
 - **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumnSlot` /
   `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
   left: debug toggles → Noise → Navigation; both bottom-up. The panels are absolute (`bevy_ui` does

@@ -6,17 +6,15 @@
 //! Счётчики до этого жили только в BRP (`count Human`, `res get Telemetry`), то
 //! есть смотреть на симуляцию без агентского клиента рядом было нечем.
 
-use bevy::color::Mix;
 use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
-use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle, TextEdit};
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
+use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
 use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
+use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color, spawn_value_row};
 use super::slider::{SliderRow, quantize, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
@@ -38,15 +36,6 @@ const PANEL_WIDTH_PX: f32 = 210.0;
 /// (`slider.rs`, 0.75): те лежат на своей плотной подложке, а счётчики
 /// читаются на фоне карты, и на бежевой Туле серый на сером пропадал.
 const LABEL_COLOR: Color = Color::srgb(0.88, 0.91, 0.88);
-
-/// Подсветка строки-кнопки — как у панелей Buildings/Trees.
-const ROW_LIGHTEN: f32 = 0.0;
-const HOVER_LIGHTEN: f32 = 0.12;
-const PRESSED_LIGHTEN: f32 = 0.24;
-
-fn row_color(lighten: f32) -> Color {
-    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
-}
 
 /// Колонка обеих панелей: по ней система развода с меткой BRP правит `top`.
 /// Панели внутри неё стыкует обычный флекс — в отличие от нижних колонок
@@ -110,7 +99,6 @@ impl Plugin for UiStatsPlugin {
             Update,
             (
                 sync_world_counts,
-                highlight_determinism_row,
                 apply_seed_on_enter,
                 sync_seed_field.run_if(resource_changed::<WorldSeed>),
                 sync_determinism_value.run_if(resource_changed::<Determinism>),
@@ -354,34 +342,20 @@ fn render_stats_panel(
     // а не вида. Расталкивание и слоты стояли здесь по той же логике, но
     // уехали в подвкладки панели Navigation: они про перемещение, и ручек у
     // них столько, что World переставал читаться как сводка прогона
-    let determinism_row = commands
-        .spawn((
-            Button,
-            DeterminismRow,
-            Pickable::default(),
-            Hovered::default(),
-            toggle_row_node(),
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                toggle_row_label("Deterministic"),
-                (
-                    DeterminismValueLabel,
-                    Text::new(on_off(determinism.0)),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(|_activate: On<Activate>, mut mode: ResMut<Determinism>| {
+    let determinism_row = spawn_value_row(
+        &mut commands,
+        world_panel,
+        "Deterministic",
+        ROW_LEFT_PX,
+        DeterminismValueLabel,
+        on_off(determinism.0).to_string(),
+        |_activate: On<Activate>, mut mode: ResMut<Determinism>| {
             // рестарт заказывает наблюдатель в `determinism.rs`: прогон
             // детерминирован или нет с тика 0, переключить его на ходу нельзя
             mode.0 = !mode.0;
-        })
-        .id();
-    commands.entity(world_panel).add_child(determinism_row);
+        },
+    );
+    commands.entity(determinism_row).insert(DeterminismRow);
     let seed_row = spawn_seed_row(&mut commands, seed.0);
     commands.entity(world_panel).add_child(seed_row);
 
@@ -510,26 +484,6 @@ fn sync_world_counts(
             StatRow::Souls => telemetry.killed,
         };
         text.set_if_neq(Text(value.to_string()));
-    }
-}
-
-/// Подсветка строки тумблера под курсором и при нажатии (как у Buildings).
-///
-/// Под детерминизмом и на сеточной навигации строка не подсвечивается вовсе:
-/// расталкивание там выключено расписанием (`movement/mod.rs`), нажимать
-/// нечего, и реакция на курсор обещала бы работающую кнопку.
-fn highlight_determinism_row(
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<DeterminismRow>>,
-) {
-    for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if pressed {
-            PRESSED_LIGHTEN
-        } else if hovered.get() {
-            HOVER_LIGHTEN
-        } else {
-            ROW_LIGHTEN
-        };
-        background.0 = row_color(lighten);
     }
 }
 

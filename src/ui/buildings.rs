@@ -2,31 +2,15 @@
 //! `BuildingHeightMode` по кругу (фасадная полоса → тени → тени+тон → 2.5D).
 //! Правка ресурса пересобирает зданиевые слои (`map::buildings::rebuild_buildings`).
 
-use bevy::color::Mix;
-use bevy::picking::hover::Hovered;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button};
-
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 
 use crate::map::BuildingHeightMode;
+use crate::ui::rows::{ROW_LEFT_PX, spawn_value_row};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
 };
-
-/// Строки — как у панели деревьев: плотный фон поверх полупрозрачной панели.
-const ROW_LIGHTEN: f32 = 0.0;
-const HOVER_LIGHTEN: f32 = 0.12;
-const PRESSED_LIGHTEN: f32 = 0.24;
-
-fn row_color(lighten: f32) -> Color {
-    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
-}
-
-/// Кнопка-строка режима высоты — адресует и подсветку, и подпись значения.
-#[derive(Component)]
-struct BuildingHeightRow;
 
 /// Текст значения в строке.
 #[derive(Component)]
@@ -39,11 +23,8 @@ impl Plugin for UiBuildingStylePlugin {
         app.add_systems(Startup, render_building_style_panel)
             .add_systems(
                 Update,
-                (
-                    highlight_rows,
-                    // и клик по кнопке, и правка по BRP
-                    sync_row_value.run_if(resource_changed::<BuildingHeightMode>),
-                ),
+                // и клик по кнопке, и правка по BRP
+                sync_row_value.run_if(resource_changed::<BuildingHeightMode>),
             );
     }
 }
@@ -72,74 +53,17 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
         ))
         .id();
 
-    let button = commands
-        .spawn((
-            Button,
-            BuildingHeightRow,
-            Pickable::default(),
-            // `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                (
-                    Text::new("Height"),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    BuildingHeightValueLabel,
-                    Text::new(mode.label()),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(
-            |_activate: On<Activate>, mut mode: ResMut<BuildingHeightMode>| {
-                *mode = mode.next();
-            },
-        )
-        .id();
-    commands.entity(panel).add_child(button);
-}
-
-/// Подсветка строки под курсором и при нажатии (как у панели деревьев).
-fn highlight_rows(
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<BuildingHeightRow>>,
-) {
-    for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if pressed {
-            PRESSED_LIGHTEN
-        } else if hovered.get() {
-            HOVER_LIGHTEN
-        } else {
-            ROW_LIGHTEN
-        };
-        background.0 = row_color(lighten);
-    }
+    spawn_value_row(
+        &mut commands,
+        panel,
+        "Height",
+        ROW_LEFT_PX,
+        BuildingHeightValueLabel,
+        mode.label().to_string(),
+        |_activate: On<Activate>, mut mode: ResMut<BuildingHeightMode>| {
+            *mode = mode.next();
+        },
+    );
 }
 
 /// Актуализация подписи после смены режима (кликом или по BRP).

@@ -4,19 +4,16 @@
 //! кнопка, листающая значение по кругу; правка `TreeStyle` пересобирает кроны
 //! (`map::trees::rebuild_trees`).
 
-use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
-use bevy::picking::hover::Hovered;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
-
 use bevy::prelude::*;
+use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
 
 use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::settings::{
     TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
     TREE_DENSITY_STEP, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_STEP,
 };
+use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
@@ -42,15 +39,6 @@ const DETAILS_PALETTE: [Color; 4] = [
 
 /// Ступени разброса яркости (`treeVariance`).
 const VARIANCE_STEPS: [f32; 5] = [0.0, 0.1, 0.2, 0.35, 0.5];
-
-/// Строки — как у дебаг-тумблеров: плотный фон поверх полупрозрачной панели.
-const ROW_LIGHTEN: f32 = 0.0;
-const HOVER_LIGHTEN: f32 = 0.12;
-const PRESSED_LIGHTEN: f32 = 0.24;
-
-fn row_color(lighten: f32) -> Color {
-    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
-}
 
 /// Какое поле стиля показывает строка — она же адресует подпись и свотч.
 /// `ConiferShare`, `NoiseMix` и `Density` — не кнопки, а ползунки, но подпись
@@ -94,7 +82,6 @@ impl Plugin for UiTreeStylePlugin {
             .add_systems(
                 Update,
                 (
-                    highlight_rows,
                     sync_row_values.run_if(resource_changed::<TreeStyle>),
                     // без run_if: строк две, а зависеть от того, попал ли
                     // первый кадр в окно `resource_changed`, тут ни к чему
@@ -321,80 +308,42 @@ fn spawn_row<M>(
     style: &TreeStyle,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
+    let button = spawn_value_row(
+        commands,
+        panel,
+        label,
+        ROW_LEFT_PX,
+        TreeStyleValueLabel(row),
+        row_value(row, style),
+        on_activate,
+    );
     // у нецветовых строк место под свотч остаётся (колонки не разъезжаются),
-    // но и заливка, и рамка прозрачны — пустая рамка читалась как недоделка
+    // но и заливка, и рамка прозрачны — пустая рамка читалась как недоделка.
+    // Третьим ребёнком, после значения: `with_child` дописывает в конец
     let swatch = swatch_color(row, style);
     let swatch_border = if swatch.is_some() {
         Color::srgba(1., 1., 1., 0.35)
     } else {
         Color::NONE
     };
-    let button = commands
-        .spawn((
-            Button,
-            row,
-            Pickable::default(),
-            // `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                (
-                    Text::new(label),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    TreeStyleValueLabel(row),
-                    Text::new(row_value(row, style)),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-                (
-                    TreeStyleSwatch(row),
-                    Node {
-                        width: px(14.),
-                        height: px(14.),
-                        border: UiRect::all(px(1.)),
-                        ..default()
-                    },
-                    BorderColor::all(swatch_border),
-                    BackgroundColor(swatch.unwrap_or(Color::NONE)),
-                ),
-            ],
-        ))
-        .observe(on_activate)
-        .id();
-    commands.entity(panel).add_child(button);
+    commands.entity(button).insert(row).with_child((
+        TreeStyleSwatch(row),
+        Node {
+            width: px(14.),
+            height: px(14.),
+            border: UiRect::all(px(1.)),
+            ..default()
+        },
+        BorderColor::all(swatch_border),
+        BackgroundColor(swatch.unwrap_or(Color::NONE)),
+    ));
 }
 
 /// Текст значения строки: имя формы, hex цвета или число разброса.
 fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
     match row {
-        TreeStyleRow::Woods => (if style.woods { "On" } else { "Off" }).to_string(),
-        TreeStyleRow::Standalone => (if style.standalone { "On" } else { "Off" }).to_string(),
+        TreeStyleRow::Woods => on_off(style.woods).to_string(),
+        TreeStyleRow::Standalone => on_off(style.standalone).to_string(),
         TreeStyleRow::Shape => style.shape.label().to_string(),
         TreeStyleRow::Foliage => hex(style.foliage),
         TreeStyleRow::Details => hex(style.details),
@@ -439,22 +388,6 @@ fn hex(color: Color) -> String {
         channel(srgba.green),
         channel(srgba.blue)
     )
-}
-
-/// Подсветка строки под курсором и при нажатии (как у дебаг-тумблеров).
-fn highlight_rows(
-    mut rows: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<TreeStyleRow>>,
-) {
-    for (hovered, pressed, mut background) in &mut rows {
-        let lighten = if pressed {
-            PRESSED_LIGHTEN
-        } else if hovered.get() {
-            HOVER_LIGHTEN
-        } else {
-            ROW_LIGHTEN
-        };
-        background.0 = row_color(lighten);
-    }
 }
 
 /// Актуализация подписей и свотчей после правки стиля (кликом или по BRP).

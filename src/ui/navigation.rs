@@ -66,14 +66,10 @@
 
 use std::collections::HashSet;
 
-use bevy::color::Mix;
 use bevy::ecs::system::{IntoObserverSystem, SystemParam};
-use bevy::picking::hover::Hovered;
-use bevy::sprite_render::AlphaMode2d;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button, SliderValue, ValueChange};
-
 use bevy::prelude::*;
+use bevy::sprite_render::AlphaMode2d;
+use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
 
 use crate::determinism::Determinism;
 use crate::human::HumanStyle;
@@ -91,6 +87,7 @@ use crate::settings::{
     SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SLOT_REGROUP_MAX, SLOT_REGROUP_MIN,
     SLOT_REGROUP_STEP,
 };
+use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
 use crate::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use crate::ui::{
     DebugNavmesh, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
@@ -116,25 +113,12 @@ const POLYMESH_BLOCKED_COLOR: Color = Color::srgba(0.9, 0.15, 0.15, 0.35);
 const POLYMESH_CHUNK_COLOR: Color = Color::srgba(0.05, 0.05, 0.08, 0.7);
 const POLYMESH_CHUNK_WIDTH: f32 = 0.4;
 
-/// Строки — как у панелей Roads и Trees: плотный фон поверх полупрозрачной
-/// панели, осветление под курсором и при нажатии.
-const ROW_LIGHTEN: f32 = 0.0;
-const HOVER_LIGHTEN: f32 = 0.12;
-const PRESSED_LIGHTEN: f32 = 0.24;
 /// Приглушённая подпись — тем же способом, каким панели показывают неактивное:
 /// цветом, а не отдельной иконкой.
 const DIMMED_VALUE: Color = Color::srgb(0.45, 0.45, 0.45);
 /// Отступ слева у строк-настроек: настройка принадлежит подсистеме над ней, и
 /// лесенка говорит это раньше, чем читается подпись.
 const NESTED_ROW_INDENT_PX: f32 = 18.;
-
-fn row_color(lighten: f32) -> Color {
-    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
-}
-
-/// Любая строка-кнопка панели — по ней система подсветки находит их все.
-#[derive(Component)]
-struct NavPanelRow;
 
 /// Какой подсистеме принадлежит строка-настройка. Строка `Algo` компонент не
 /// несёт: она видна всегда, она и выбирает подсистему.
@@ -417,7 +401,7 @@ impl Plugin for UiNavigationPlugin {
             .add_systems(
                 Update,
                 (
-                    highlight_rows,
+                    sync_separation_row_inert,
                     (
                         sync_nav_values,
                         sync_section_visibility,
@@ -588,6 +572,11 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
         },
     );
     commands.entity(toggle_row).insert(SeparationToggleRow);
+    // начальное состояние неотзывчивости: `sync_separation_row_inert` ходит по
+    // `resource_changed`, а на первом кадре ничего ещё не менялось
+    if !separation_allowed_by_mode(values.determinism.0, values.polymesh.enabled) {
+        commands.entity(toggle_row).insert(RowInert);
+    }
     spawn_knob_rows(&mut commands, panel, &values, KnobGroup::Separation);
 
     // --- группа Slots: тумблера у них нет, заголовок просто подпись ---
@@ -713,65 +702,26 @@ fn spawn_row<M>(
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) -> Entity {
     let left = match style {
-        RowStyle::Backend => px(8.),
-        RowStyle::Setting(_) => px(8. + NESTED_ROW_INDENT_PX),
+        RowStyle::Backend => ROW_LEFT_PX,
+        RowStyle::Setting(_) => ROW_LEFT_PX + NESTED_ROW_INDENT_PX,
     };
-    let row = commands
-        .spawn((
-            Button,
-            NavPanelRow,
-            Pickable::default(),
-            // `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left,
-                },
-                ..default()
-            },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                (
-                    Text::new(label),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    value_marker,
-                    Text::new(value),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(on_activate)
-        .id();
+    let row = spawn_value_row(
+        commands,
+        panel,
+        label,
+        left,
+        value_marker,
+        value,
+        on_activate,
+    );
     if let RowStyle::Setting(section) = style {
         commands.entity(row).insert(section);
     }
-    commands.entity(panel).add_child(row);
     row
 }
 
 fn enabled_text(enabled: bool) -> String {
-    if enabled { "On" } else { "Off" }.to_string()
+    on_off(enabled).to_string()
 }
 
 /// Ползунок дискретный: ресурс правится только на реальной смене шага —
@@ -797,37 +747,28 @@ fn radius_text(radius: f32) -> String {
     format!("{radius:.1} m")
 }
 
-/// Осветление строки под курсором и при нажатии (как у панели Roads), плюс два
-/// исключения этой панели. Одной системой, а не тремя: фон у строки один, и
-/// три системы, пишущие его по разным правилам, затирали бы друг друга в
-/// зависимости от порядка в расписании.
-fn highlight_rows(
+/// Единственная строка панелей, которая бывает неотзывчивой: под детерминизмом
+/// и на сеточной навигации расталкивания нет вовсе, и тумблер молча ничего не
+/// переключает. [`RowInert`] снимает с неё подсветку — обещать реакцию на
+/// курсор там, где клик ничего не сделает, хуже, чем не подсвечивать.
+///
+/// Метка, а не проверка внутри общей подсветки: та крутится по строкам всех
+/// панелей и про режимы мира знать не должна. Начальное состояние ставит
+/// [`render_navigation_panel`] — эта система ходит по `resource_changed`, а на
+/// первом кадре ни один ресурс ещё не «менялся».
+fn sync_separation_row_inert(
     determinism: Res<Determinism>,
     polymesh: Res<PolymeshDebug>,
-    mut rows: Query<
-        (
-            &Hovered,
-            Has<Pressed>,
-            Has<SeparationToggleRow>,
-            &mut BackgroundColor,
-        ),
-        With<NavPanelRow>,
-    >,
+    rows: Query<Entity, With<SeparationToggleRow>>,
+    mut commands: Commands,
 ) {
-    let separation_allowed = separation_allowed_by_mode(determinism.0, polymesh.enabled);
-    for (hovered, pressed, separation_toggle, mut background) in &mut rows {
-        let lighten = if separation_toggle && !separation_allowed {
-            // тумблер не откликается вовсе — подсветка обещала бы, что клик
-            // что-то сделает
-            ROW_LIGHTEN
-        } else if pressed {
-            PRESSED_LIGHTEN
-        } else if hovered.get() {
-            HOVER_LIGHTEN
+    let allowed = separation_allowed_by_mode(determinism.0, polymesh.enabled);
+    for row in &rows {
+        if allowed {
+            commands.entity(row).remove::<RowInert>();
         } else {
-            ROW_LIGHTEN
-        };
-        background.set_if_neq(BackgroundColor(row_color(lighten)));
+            commands.entity(row).insert(RowInert);
+        }
     }
 }
 
