@@ -152,6 +152,11 @@ struct Args {
     matching: Option<SlotMatching>,
     /// Лишние навтайлы к шагу решётки слотов ([`SlotLab::slack`]).
     slot_slack: Option<i32>,
+    /// Ближе какого расстояния до цели выдаётся слот ([`SlotLab::claim_at`]).
+    claim_at: Option<f32>,
+    /// На сколько метров можно столкнуть осевшую пешку, прежде чем она пойдёт
+    /// обратно на свой слот ([`SlotLab::regroup`]).
+    regroup: Option<f32>,
     hold: Option<f32>,
     sidestep: Option<f32>,
     backstep: Option<f32>,
@@ -161,7 +166,7 @@ struct Args {
 /// Ручки [`SeparationLab`], доступные с командной строки. Список здесь, а не
 /// `match` по строке в трёх местах: подпись в `RESULT`, разбор и справка обязаны
 /// перечислять одно и то же.
-const LAB_KNOBS: [&str; 14] = [
+const LAB_KNOBS: [&str; 21] = [
     "rate",
     "max-step",
     "max-speed",
@@ -176,6 +181,13 @@ const LAB_KNOBS: [&str; 14] = [
     "idle-mobility",
     "arrive-slack",
     "slide",
+    "pass-squeeze",
+    "left-share",
+    "stuck-compress",
+    "stuck-after",
+    "stuck-ramp",
+    "hard-core",
+    "slide-release",
 ];
 
 fn parse_args() -> Args {
@@ -202,6 +214,8 @@ fn parse_args() -> Args {
             "search" => args.search = Some(parse_number(&value())),
             "matching" => args.matching = Some(parse_matching(&value())),
             "slot-slack" => args.slot_slack = Some(parse_number::<f32>(&value()) as i32),
+            "claim-at" => args.claim_at = Some(parse_number(&value())),
+            "regroup" => args.regroup = Some(parse_number(&value())),
             "hold" => args.hold = Some(parse_number(&value())),
             "sidestep" => args.sidestep = Some(parse_number(&value())),
             "backstep" => args.backstep = Some(parse_number(&value())),
@@ -263,6 +277,13 @@ fn apply_lab(lab: &mut SeparationLab, knobs: &[(String, f32)]) {
             "idle-mobility" => lab.idle_mobility = *value,
             "arrive-slack" => lab.arrive_slack = *value,
             "slide" => lab.slide = *value,
+            "pass-squeeze" => lab.pass_squeeze = *value,
+            "left-share" => lab.left_share = *value,
+            "stuck-compress" => lab.stuck_compress = *value,
+            "stuck-after" => lab.stuck_after = *value,
+            "stuck-ramp" => lab.stuck_ramp = *value,
+            "hard-core" => lab.hard_core = *value,
+            "slide-release" => lab.slide_release = *value,
             "crowd-sidestep" => lab.crowd_sidestep = *value,
             other => panic!("unknown lab knob {other}"),
         }
@@ -578,6 +599,29 @@ struct Trial {
 #[derive(Component)]
 struct LastSample(Vec2);
 
+/// Личный счёт пешки за окно замера — то, из чего складываются МЕДИАННЫЕ
+/// критерии. Суммы по толпе (`Trial::travel`, `Trial::sep_secs`) прячут
+/// распределение: десяток застрявших в давке пешек тонет в двух сотнях
+/// дошедших, а медиана показывает судьбу ТИПИЧНОЙ пешки. Компонентом по той же
+/// причине, что [`LastSample`].
+#[derive(Component, Default)]
+struct PawnWindow {
+    /// Метры, намотанные этой пешкой за окно (потиково, как `Trial::travel`).
+    travel: f32,
+    /// Её секунды в состоянии расталкивания — то же объединение трёх множеств,
+    /// что у `Trial::sep_secs` (придержана, рулит или перекрыта).
+    sep_secs: f32,
+    /// Сколько метров она СБЛИЗИЛАСЬ со своими целями (то же, что `Trial::
+    /// progress`, но лично).
+    ///
+    /// Нужен потому, что медианный `travel` во встречном потоке обманывает в
+    /// СВОЮ сторону: он растёт и от дуг обхода, и от дрожи в толчее, так что
+    /// «прошла больше» и «продвинулась дальше» — разные вещи. На стенде это
+    /// видно прямо: вариант с `med_travel` 284 м доходил до цели втрое реже
+    /// варианта с `med_travel` 207 м.
+    progress: f32,
+}
+
 /// Где пешка стояла в момент ОТКРЫТИЯ окна замера. База для нижней границы
 /// пути: сумма прямых «старт → куда в итоге встал» — это тот путь, который
 /// пешки прошли бы, если бы шли к своим слотам по прямой и никого не
@@ -686,7 +730,15 @@ fn main() {
             .with_suffix(" ms")
             .with_max_history_length(1),
     )
-    .add_systems(Startup, (spawn_camera, spawn_overlay, spawn_sliders))
+    .add_systems(
+        Startup,
+        (
+            spawn_camera,
+            spawn_overlay,
+            spawn_sliders,
+            spawn_mechanism_panel,
+        ),
+    )
     .add_systems(
         Update,
         (
@@ -700,8 +752,9 @@ fn main() {
             toggle_separation.run_if(input_just_pressed(KeyCode::KeyS)),
             toggle_pause.run_if(input_just_pressed(KeyCode::Space)),
             zoom_camera,
-            // бегунок ведёт та же система, что и в игре
-            qwe::ui::slider::sync_slider_thumbs,
+            // бегунок ведёт та же система, что и в игре; `sync_knob_rows`
+            // подтягивает панель механизмов после нажатия пресета
+            (qwe::ui::slider::sync_slider_thumbs, sync_knob_rows),
             apply_speed.run_if(resource_changed::<DemoSpeed>),
             (
                 count_separation_runs,
@@ -718,7 +771,20 @@ fn main() {
                 .chain(),
         ),
     )
-    .add_systems(FixedUpdate, (count_ticks, drive_routes, sample_travel))
+    // порядок явный: прерывание подошедших — до выдачи отрезков, иначе слот
+    // они получат тиком позже (`interrupt_for_slot_claim` снимает тег
+    // движения командой, а её применяет точка синхронизации цепочки)
+    .add_systems(
+        FixedUpdate,
+        (
+            count_ticks,
+            interrupt_for_slot_claim,
+            drive_routes,
+            regroup_to_slot,
+            sample_travel,
+        )
+            .chain(),
+    )
     .add_observer(
         |_arrival: On<MovableReachedDestinationEvent>, mut trial: ResMut<Trial>| {
             trial.arrivals += 1;
@@ -803,6 +869,12 @@ fn apply_args(app: &mut App, args: Args) {
     if let Some(slack) = args.slot_slack {
         world.resource_mut::<SlotLab>().slack = slack;
     }
+    if let Some(claim_at) = args.claim_at {
+        world.resource_mut::<SlotLab>().claim_at = claim_at;
+    }
+    if let Some(regroup) = args.regroup {
+        world.resource_mut::<SlotLab>().regroup = regroup;
+    }
     apply_lab(&mut world.resource_mut::<SeparationLab>(), &args.lab);
 }
 
@@ -819,6 +891,309 @@ fn brp_port() -> u16 {
 /// часть систем навигации молча не работает.
 fn enter_live(mut next: ResMut<NextState<PlayPhase>>) {
     next.set(PlayPhase::Live);
+}
+
+// ------------------------------------------------- панель механизмов и пресеты
+
+/// Все ручки стенда, которые есть смысл крутить глазами, — одним списком.
+///
+/// Список, а не пятнадцать почти одинаковых функций: у каждой ручки одно и то же
+/// поведение (подпись, диапазон, чтение из ресурса, запись в ресурс), и
+/// расходиться этим копиям незачем. Тот же список кормит и панель, и её
+/// обновление после нажатия пресета.
+struct Knob {
+    label: &'static str,
+    /// `(min, max, шаг)`, как у ползунков игры.
+    range: (f32, f32, f32),
+    /// Сколько знаков после запятой в подписи значения.
+    digits: usize,
+    get: fn(&Tuning) -> f32,
+    set: fn(&mut Tuning, f32),
+}
+
+/// Ресурсы, которые крутит панель, — одним параметром: в системе их иначе
+/// набирается столько, что не остаётся места на запросы.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Tuning<'w> {
+    lab: ResMut<'w, SeparationLab>,
+    slots: ResMut<'w, SlotLab>,
+    style: ResMut<'w, SeparationStyle>,
+}
+
+const KNOBS: &[Knob] = &[
+    Knob {
+        label: "pass squeeze",
+        range: (0.3, 1.0, 0.05),
+        digits: 2,
+        get: |t| t.lab.pass_squeeze,
+        set: |t, value| t.lab.pass_squeeze = value,
+    },
+    Knob {
+        label: "left share",
+        range: (0.0, 0.5, 0.05),
+        digits: 2,
+        get: |t| t.lab.left_share,
+        set: |t, value| t.lab.left_share = value,
+    },
+    Knob {
+        label: "regroup",
+        range: (0.0, 4.0, 0.25),
+        digits: 2,
+        get: |t| t.slots.regroup,
+        set: |t, value| t.slots.regroup = value,
+    },
+    Knob {
+        label: "stuck compress",
+        range: (0.0, 0.8, 0.05),
+        digits: 2,
+        get: |t| t.lab.stuck_compress,
+        set: |t, value| t.lab.stuck_compress = value,
+    },
+    Knob {
+        label: "steer",
+        range: (0.0, 2.0, 0.1),
+        digits: 1,
+        get: |t| t.lab.steer,
+        set: |t, value| t.lab.steer = value,
+    },
+    Knob {
+        label: "hold",
+        range: (0.0, 1.0, 0.05),
+        digits: 2,
+        get: |t| t.style.hold,
+        set: |t, value| t.style.hold = value,
+    },
+    Knob {
+        label: "rate",
+        range: (1.0, 16.0, 1.0),
+        digits: 0,
+        get: |t| t.lab.rate,
+        set: |t, value| t.lab.rate = value,
+    },
+    Knob {
+        label: "max speed",
+        range: (0.0, 4.0, 0.1),
+        digits: 1,
+        get: |t| t.lab.max_speed,
+        set: |t, value| t.lab.max_speed = value,
+    },
+    Knob {
+        label: "slide",
+        range: (0.0, 1.0, 0.1),
+        digits: 1,
+        get: |t| t.lab.slide,
+        set: |t, value| t.lab.slide = value,
+    },
+    Knob {
+        label: "slide release",
+        range: (0.0, 3.0, 0.25),
+        digits: 2,
+        get: |t| t.lab.slide_release,
+        set: |t, value| t.lab.slide_release = value,
+    },
+    Knob {
+        label: "hard core",
+        range: (0.0, 0.7, 0.05),
+        digits: 2,
+        get: |t| t.lab.hard_core,
+        set: |t, value| t.lab.hard_core = value,
+    },
+    Knob {
+        label: "compress",
+        range: (0.0, 0.6, 0.05),
+        digits: 2,
+        get: |t| t.lab.compress,
+        set: |t, value| t.lab.compress = value,
+    },
+    Knob {
+        label: "claim at",
+        range: (0.0, 40.0, 2.0),
+        digits: 0,
+        get: |t| t.slots.claim_at,
+        set: |t, value| t.slots.claim_at = value,
+    },
+];
+
+/// Набор настроек целиком — кнопка в панели. Пресеты названы по тому, ЧТО они
+/// показывают, а не по номеру эксперимента: их смотрят глазами, переключая
+/// туда-сюда на живой толпе.
+struct Preset {
+    label: &'static str,
+    apply: fn(&mut Tuning),
+}
+
+const PRESETS: &[Preset] = &[
+    Preset {
+        label: "game",
+        apply: |t| {
+            *t.lab = SeparationLab::default();
+            *t.slots = SlotLab::default();
+            *t.style = SeparationStyle::default();
+        },
+    },
+    // прошлый визуальный фаворит — тот, с которого начался этот заход:
+    // постоянное сжатие радиуса, из-за которого толпа садится слипшейся
+    Preset {
+        label: "old",
+        apply: |t| {
+            *t.lab = SeparationLab {
+                rate: 4.0,
+                max_speed: 1.4,
+                steer: 1.0,
+                compress: 0.2,
+                ..SeparationLab::default()
+            };
+            *t.slots = SlotLab {
+                matching: SlotMatching::Batch,
+                ..SlotLab::default()
+            };
+            t.style.hold = 1.0;
+        },
+    },
+    // победитель воронки: протискивание мимо стоящих плюс возврат на свой слот
+    Preset {
+        label: "funnel",
+        apply: |t| {
+            *t.lab = SeparationLab {
+                rate: 4.0,
+                max_speed: 1.4,
+                steer: 1.0,
+                pass_squeeze: 0.6,
+                left_share: 0.2,
+                ..SeparationLab::default()
+            };
+            *t.slots = SlotLab {
+                matching: SlotMatching::Batch,
+                regroup: 1.0,
+                ..SlotLab::default()
+            };
+            t.style.hold = 1.0;
+        },
+    },
+    // победитель улицы: то же самое, но возврат на слот там не при делах
+    Preset {
+        label: "street",
+        apply: |t| {
+            *t.lab = SeparationLab {
+                rate: 4.0,
+                max_speed: 1.4,
+                steer: 1.0,
+                pass_squeeze: 0.6,
+                left_share: 0.2,
+                ..SeparationLab::default()
+            };
+            *t.slots = SlotLab {
+                matching: SlotMatching::Batch,
+                ..SlotLab::default()
+            };
+            t.style.hold = 1.0;
+        },
+    },
+];
+
+/// Ползунок ручки под этим номером в [`KNOBS`].
+#[derive(Component)]
+struct KnobSlider(usize);
+
+/// Подпись значения той же ручки.
+#[derive(Component)]
+struct KnobValueLabel(usize);
+
+/// Панель механизмов справа: кнопки пресетов сверху, под ними ползунок на
+/// каждую ручку.
+fn spawn_mechanism_panel(mut commands: Commands, tuning: Tuning) {
+    let panel = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(10.),
+                right: px(12.),
+                width: px(220.),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(2.),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0., 0., 0., 0.25)),
+        ))
+        .id();
+
+    let presets = commands
+        .spawn((
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: px(4.),
+                padding: UiRect::all(px(6.)),
+                ..default()
+            },
+            ChildOf(panel),
+        ))
+        .id();
+    for (index, preset) in PRESETS.iter().enumerate() {
+        qwe::ui::spawn_panel_button(
+            &mut commands,
+            presets,
+            PresetButton,
+            preset.label,
+            move |_activate: On<bevy::ui_widgets::Activate>, mut tuning: Tuning| {
+                (PRESETS[index].apply)(&mut tuning);
+            },
+        );
+    }
+
+    for (index, knob) in KNOBS.iter().enumerate() {
+        let value = (knob.get)(&tuning);
+        spawn_slider_row(
+            &mut commands,
+            panel,
+            SliderRow {
+                label: knob.label,
+                value,
+                value_text: format!("{value:.*}", knob.digits),
+                range: knob.range,
+            },
+            KnobValueLabel(index),
+            KnobSlider(index),
+            move |change: On<ValueChange<f32>>, mut commands: Commands, mut tuning: Tuning| {
+                let (min, max, step) = KNOBS[index].range;
+                let stepped = quantize(change.value, min, max, step);
+                commands.entity(change.source).insert(SliderValue(stepped));
+                (KNOBS[index].set)(&mut tuning, stepped);
+            },
+        );
+    }
+}
+
+/// Кнопка пресета — маркер, только чтобы её было по чему найти.
+#[derive(Component)]
+struct PresetButton;
+
+/// Подтянуть ползунки и подписи к ресурсам: пресет меняет по десятку ручек
+/// разом, и без этого панель показывала бы то, чего в ресурсах уже нет.
+fn sync_knob_rows(
+    mut commands: Commands,
+    tuning: Tuning,
+    sliders: Query<(Entity, &KnobSlider, &SliderValue)>,
+    mut labels: Query<(&KnobValueLabel, &mut Text)>,
+) {
+    if !tuning.lab.is_changed() && !tuning.slots.is_changed() && !tuning.style.is_changed() {
+        return;
+    }
+    // `SliderValue` неизменяемый компонент — ставится вставкой, как и в
+    // наблюдателях самих ползунков
+    for (entity, slider, current) in &sliders {
+        let next = (KNOBS[slider.0].get)(&tuning);
+        if current.0 != next {
+            commands.entity(entity).insert(SliderValue(next));
+        }
+    }
+    for (label, mut text) in &mut labels {
+        let knob = &KNOBS[label.0];
+        let next = format!("{:.*}", knob.digits, (knob.get)(&tuning));
+        if text.0 != next {
+            text.0 = next;
+        }
+    }
 }
 
 fn spawn_camera(mut commands: Commands, config: Res<DemoConfig>) {
@@ -1138,6 +1513,7 @@ fn spawn_pawn(
         LastSample(position),
         WindowOrigin(position),
         ProgressSample::default(),
+        PawnWindow::default(),
         Name::new("demo pawn"),
     ));
     if let Some(route) = route {
@@ -1268,14 +1644,24 @@ fn drive_routes(
     // (`assign_destination_slots` идёт раньше диспетчера): пакетное назначение
     // (`SlotMatching::Batch`) без пакета вырождается в жадное
     batch.clear();
-    batch.extend(pawns.iter().map(|(entity, _, route, position, claim)| {
-        (
-            entity,
-            claim.map(|claim| claim.0),
-            world_to_tile(route.legs[route.next]),
-            position.0,
-        )
-    }));
+    batch.extend(
+        pawns
+            .iter()
+            // отложенная выдача ([`SlotLab::claim_at`]): пока цель далеко,
+            // пешка в пакет не входит вовсе — слот занимать рано, и занятым в
+            // индексе он числиться не должен
+            .filter(|(_, _, route, position, _)| {
+                lab.claim_at <= 0.0 || position.0.distance(route.legs[route.next]) <= lab.claim_at
+            })
+            .map(|(entity, _, route, position, claim)| {
+                (
+                    entity,
+                    claim.map(|claim| claim.0),
+                    world_to_tile(route.legs[route.next]),
+                    position.0,
+                )
+            }),
+    );
     qwe::movement::claim_batch(
         &mut claims,
         lab.matching,
@@ -1292,6 +1678,10 @@ fn drive_routes(
     for (entity, mut movable, mut route, position, _) in &mut pawns {
         let leg = route.legs[route.next];
         let desired = world_to_tile(leg);
+        // не в пакете — значит цель ещё далеко и слот не выдан: пешка идёт в
+        // саму точку, а отрезок НЕ засчитывается пройденным. Подойдя, она
+        // остановится ([`interrupt_for_slot_claim`]) и получит слот здесь же
+        let approaching = !assigned.contains_key(&entity);
         let (target_tile, target) = match assigned.get(&entity).copied().flatten() {
             Some((slot, tile)) => {
                 commands.entity(entity).insert(DestinationClaim(slot));
@@ -1315,12 +1705,14 @@ fn drive_routes(
             None => straight_path(position.0, target),
         };
 
-        route.next += 1;
-        if route.next == route.legs.len() {
-            if route.cycle {
-                route.next = 0;
-            } else {
-                commands.entity(entity).remove::<Route>();
+        if !approaching {
+            route.next += 1;
+            if route.next == route.legs.len() {
+                if route.cycle {
+                    route.next = 0;
+                } else {
+                    commands.entity(entity).remove::<Route>();
+                }
             }
         }
         // путь из одной точки означает «уже на месте» (тот же контракт, что у
@@ -1330,6 +1722,75 @@ fn drive_routes(
             continue;
         }
         movable.to_moving(target_tile, path, entity, &mut commands);
+    }
+}
+
+/// Вернуть на свой слот пешку, которую с него столкнули ([`SlotLab::regroup`]).
+///
+/// Запрос — ровно тот же, что у переписи `finish_trial`: осевшая (не идёт и
+/// маршрута нет) со своей заявкой. Дальше — прямой отрезок к цели слота; путь
+/// короткий, поэтому прокладывается той же `find_path_polymesh`, что и всё
+/// остальное в этой сцене.
+fn regroup_to_slot(
+    mut commands: Commands,
+    pathfinder: Pathfinder,
+    style: Res<HumanStyle>,
+    lab: Res<SlotLab>,
+    mut pawns: Query<
+        (Entity, &mut Movable, &SimPosition, &DestinationClaim),
+        (Without<MovableStateMovingTag>, Without<Route>),
+    >,
+) {
+    if lab.regroup <= 0.0 {
+        return;
+    }
+    let side = slot_side(style.body_radius * 2.0) + lab.slack;
+    let polymesh = pathfinder.polymesh_build();
+    for (entity, mut movable, position, claim) in &mut pawns {
+        let home = slot_target(claim.0, side);
+        let target = tile_center(home);
+        if position.0.distance(target) <= lab.regroup {
+            continue;
+        }
+        let path: VecDeque<Vec2> = match polymesh.as_deref() {
+            Some(build) => match find_path_polymesh(build, position.0, target) {
+                Some(points) => points.into_iter().skip(1).collect(),
+                None => continue,
+            },
+            None => straight_path(position.0, target),
+        };
+        if path.is_empty() {
+            continue;
+        }
+        movable.to_moving(home, path, entity, &mut commands);
+    }
+}
+
+/// Остановить подошедшую к цели пешку, у которой слота ещё нет, — чтобы
+/// [`drive_routes`] выдал ей слот здесь и сейчас ([`SlotLab::claim_at`]).
+///
+/// Без остановки отложенная выдача не работает вовсе: пешка, идущая в саму
+/// точку, доберётся до неё только сквозь всех, кто там уже осел, — то есть
+/// ровно тем способом, ради избавления от которого выдача и откладывается.
+/// Прерывание — это и есть момент «дошёл до толпы»: дальше пешка выбирает
+/// ближайший к цели свободный слот, и все занятые лежат глубже неё.
+fn interrupt_for_slot_claim(
+    mut commands: Commands,
+    lab: Res<SlotLab>,
+    mut pawns: Query<
+        (Entity, &mut Movable, &Route, &SimPosition),
+        (With<MovableStateMovingTag>, Without<DestinationClaim>),
+    >,
+) {
+    if lab.claim_at <= 0.0 {
+        return;
+    }
+    for (entity, mut movable, route, position) in &mut pawns {
+        if position.0.distance(route.legs[route.next]) > lab.claim_at {
+            continue;
+        }
+        // не «дошла»: событие прибытия здесь было бы ложью, идти ей ещё в слот
+        movable.to_idle(entity, &mut commands, false);
     }
 }
 
@@ -1604,6 +2065,7 @@ fn sample_trial(
     mut trial: ResMut<Trial>,
     pawns: Query<(&SimPosition, &Movable)>,
     census: Query<(Has<MovableStateMovingTag>, Has<Route>), With<DemoPawn>>,
+    mut windows: Query<(Entity, &mut PawnWindow)>,
     mut union: Local<bevy::ecs::entity::EntityHashSet>,
 ) {
     if trial.started.is_none() {
@@ -1641,6 +2103,15 @@ fn sample_trial(
     union.extend(holds.0.iter().copied());
     union.extend(steer.0.keys().copied());
     trial.sep_secs += union.len() as f64 * dt;
+    // то же множество — в личный счёт каждой пешки: медианное время в
+    // расталкивании собирается из этих секунд в `finish_trial`
+    if !union.is_empty() {
+        for (entity, mut window) in &mut windows {
+            if union.contains(&entity) {
+                window.sep_secs += dt as f32;
+            }
+        }
+    }
     trial.worst_overlap = trial.worst_overlap.max(overlaps.worst);
     trial.deep_events += overlaps.deep as u64;
     trial.through_events += overlaps.through as u64;
@@ -1716,22 +2187,24 @@ fn sample_travel(
         &mut LastSample,
         &mut ProgressSample,
         &mut WindowOrigin,
+        &mut PawnWindow,
     )>,
 ) {
     if trial.started.is_none() {
         // окно ещё не открыто: базу всё равно освежаем, иначе первый тик окна
         // получил бы смещение за всю постройку меша разом
-        for (position, _, mut last, mut sample, mut origin) in &mut pawns {
+        for (position, _, mut last, mut sample, mut origin, _) in &mut pawns {
             last.0 = position.0;
             origin.0 = position.0;
             sample.target = None;
         }
         return;
     }
-    for (position, movable, mut last, mut sample, _) in &mut pawns {
+    for (position, movable, mut last, mut sample, _, mut window) in &mut pawns {
         let step = position.0.distance(last.0);
         last.0 = position.0;
         trial.travel += step as f64;
+        window.travel += step;
         trial.worst_tick_step = trial.worst_tick_step.max(step);
 
         let qwe::movement::MovableState::Moving(target) = movable.state else {
@@ -1745,6 +2218,7 @@ fn sample_travel(
         // цель сменилась — прошлое расстояние про другую точку, прогресса нет
         if sample.target == Some(target) {
             trial.progress += (sample.distance - distance) as f64;
+            window.progress += sample.distance - distance;
         }
         sample.target = Some(target);
         sample.distance = distance;
@@ -1784,6 +2258,21 @@ fn take_shots(mut commands: Commands, mut trial: ResMut<Trial>) {
         .observe(save_to_disk(path));
 }
 
+/// Медиана выборки; сортирует буфер на месте. Чётная длина — среднее двух
+/// центральных, пустая выборка — 0 (строка `RESULT` обязана остаться числом).
+fn median(values: &mut [f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_unstable_by(f32::total_cmp);
+    let mid = values.len() / 2;
+    if values.len() % 2 == 1 {
+        values[mid]
+    } else {
+        (values[mid - 1] + values[mid]) / 2.0
+    }
+}
+
 fn slug(label: &str) -> String {
     label
         .chars()
@@ -1814,6 +2303,7 @@ fn finish_trial(
         (
             &SimPosition,
             &WindowOrigin,
+            &PawnWindow,
             Option<&DestinationClaim>,
             Has<MovableStateMovingTag>,
             Has<Route>,
@@ -1846,7 +2336,14 @@ fn finish_trial(
     // критерий читается неверно — толпа, севшая просторнее, проходит МЕНЬШЕ
     // (останавливается раньше), и «выигрыш в пути» оказывается платой площадью
     let mut foot = 0.0f32;
-    for (position, origin, claim, moving, route) in &census {
+    // Личные счета — в медианы: типичная пешка вместо суммы по толпе
+    let mut travels: Vec<f32> = Vec::with_capacity(census.iter().len());
+    let mut sep_times: Vec<f32> = Vec::with_capacity(census.iter().len());
+    let mut progresses: Vec<f32> = Vec::with_capacity(census.iter().len());
+    for (position, origin, window, claim, moving, route) in &census {
+        travels.push(window.travel);
+        sep_times.push(window.sep_secs);
+        progresses.push(window.progress);
         if !moving
             && !route
             && let Some(claim) = claim
@@ -1873,6 +2370,8 @@ fn finish_trial(
          stranded={stranded} \
          settled_at={settled_at:.1} idle_drift={idle_drift:.1} foot={foot:.1} \
          travel={travel:.0} net={net:.0} detour={detour:.3} \
+         med_travel={med_travel:.1} med_progress={med_progress:.1} \
+         med_sep={med_sep:.2} med_sep_share={med_sep_share:.4} \
          sep_share={sep_share:.4} steer_share={steer_share:.4} \
          progress={progress:.0} arrivals={arrivals} \
          held_share={held:.4} overlap_share={overlap:.4} \
@@ -1898,6 +2397,10 @@ fn finish_trial(
         travel = trial.travel,
         net = net,
         detour = trial.travel / net.max(1e-9),
+        med_travel = median(&mut travels),
+        med_progress = median(&mut progresses),
+        med_sep = median(&mut sep_times),
+        med_sep_share = median(&mut sep_times) as f64 / trial.virtual_secs.max(1e-9),
         sep_share = trial.sep_secs / pawn_secs,
         steer_share = trial.steer_secs / pawn_secs,
         progress = trial.progress,
