@@ -64,28 +64,19 @@
 //! merged-мешем — по нему видно и контуры препятствий, и как polyanya разбила
 //! проходимое пространство.
 
-use std::collections::HashSet;
-
 use bevy::ecs::system::{IntoObserverSystem, SystemParam};
 use bevy::prelude::*;
-use bevy::sprite_render::AlphaMode2d;
 use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
 
 use crate::determinism::Determinism;
 use crate::human::HumanStyle;
 use crate::loading::{AppState, WorldInitSet};
-use crate::map::MeshBuilder;
 use crate::movement::{
     SeparationLab, SeparationStyle, SlotLab, SlotSearch, separation_allowed_by_mode,
 };
 use crate::navigation::{PathfindingAlgorithm, PolyNavmesh, PolymeshDebug};
 use crate::settings::{
-    CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, HUMAN_BODY_RADIUS_MAX,
-    HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, MAP_SIZE, POLYMESH_AGENT_RADIUS_MAX,
-    POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP, SEPARATION_LEFT_SHARE_MAX,
-    SEPARATION_LEFT_SHARE_MIN, SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE_MAX,
-    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SLOT_REGROUP_MAX, SLOT_REGROUP_MIN,
-    SLOT_REGROUP_STEP,
+    POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
 };
 use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
 use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
@@ -94,24 +85,16 @@ use crate::ui::{
     UiOpacity, UiPanelGapBelow, ui_color,
 };
 
-/// Над заливкой сеточного navmesh-оверлея (5.2), под юнитами.
-const POLYMESH_OVERLAY_Z: f32 = 5.3;
-/// Толщина ребра, метры мира: видна на городском зуме, не заливает экран.
-const POLYMESH_EDGE_WIDTH: f32 = 0.4;
-const POLYMESH_EDGE_COLOR: Color = Color::srgba(0.2, 0.85, 0.95, 0.6);
-/// Заливка непроходимого — **тот же** красный, что у сеточного оверлея
-/// (`debug.rs::sync_navmesh_overlay`): два слоя показывают одно и то же, и
-/// одинаковый цвет — единственное, что делает их точность сравнимой на глаз.
-const POLYMESH_BLOCKED_COLOR: Color = Color::srgba(0.9, 0.15, 0.15, 0.35);
+mod knobs;
+mod overlay;
 
-/// Границы чанков — верхний уровень иерархии, по которому выбирается коридор
-/// (`polymesh::find_path_polymesh`). Тёмные и полупрозрачные: они не часть
-/// геометрии, а разбиение поверх неё, и читаться должны как сетка на карте, а
-/// не как ещё один слой мира. Жёлтый пробовался и сливался с песком и дорогами.
-/// Штрих той же толщины, что и рёбра меша: сетка чанков рисуется всегда, и
-/// жирная линия перечёркивала бы геометрию, которую оверлей и показывает.
-const POLYMESH_CHUNK_COLOR: Color = Color::srgba(0.05, 0.05, 0.08, 0.7);
-const POLYMESH_CHUNK_WIDTH: f32 = 0.4;
+// Приватные реэкспорты: снаружи модуль виден тем же набором имён, что и до
+// разрезания.
+use self::knobs::{
+    Knob, KnobGroup, SeparationToggleRow, spawn_knob_rows, sync_knob_values,
+    sync_separation_knob_visibility, sync_separation_row_inert,
+};
+use self::overlay::sync_polymesh_overlay;
 
 /// Приглушённая подпись — тем же способом, каким панели показывают неактивное:
 /// цветом, а не отдельной иконкой.
@@ -134,152 +117,6 @@ impl NavSection {
             Self::Navmesh => "Navmesh",
             Self::Polymesh => "Polymesh",
         }
-    }
-}
-
-/// Группа ручек толпы — только для того, чтобы разложить их по заголовкам.
-/// Ни ресурса, ни компонента: прятать группы незачем (см. док модуля).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum KnobGroup {
-    Separation,
-    Slots,
-}
-
-/// Строка-тумблер расталкивания: собственная ветка в подсветке, потому что под
-/// детерминизмом и на сеточной навигации она не откликается вовсе.
-#[derive(Component)]
-struct SeparationToggleRow;
-
-/// Ползунок группы Separation — прячется, когда расталкивание не работает.
-#[derive(Component)]
-struct SeparationKnobRow;
-
-/// Числовая ручка толпы. Одним enum'ом на обе подвкладки, а не маркером на
-/// строку: спавн, синхронизация подписи и синхронизация бегунка — по разу на
-/// все пять, и новая ручка добавляется одной веткой.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum Knob {
-    PassSqueeze,
-    LeftShare,
-    BodyRadius,
-    SlotSearch,
-    Regroup,
-}
-
-/// Подпись значения такой строки.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-struct KnobValueLabel(Knob);
-
-/// Её ползунок.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-struct KnobSlider(Knob);
-
-impl Knob {
-    const ALL: [Self; 5] = [
-        Self::PassSqueeze,
-        Self::LeftShare,
-        Self::BodyRadius,
-        Self::SlotSearch,
-        Self::Regroup,
-    ];
-
-    fn group(self) -> KnobGroup {
-        match self {
-            Self::PassSqueeze | Self::LeftShare => KnobGroup::Separation,
-            Self::BodyRadius | Self::SlotSearch | Self::Regroup => KnobGroup::Slots,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::PassSqueeze => "Pass squeeze",
-            Self::LeftShare => "Left share",
-            Self::BodyRadius => "Body radius",
-            Self::SlotSearch => "Slot search",
-            Self::Regroup => "Regroup",
-        }
-    }
-
-    /// `(min, max, шаг)` — из `settings.rs`, как у остальных ползунков.
-    fn range(self) -> (f32, f32, f32) {
-        match self {
-            Self::PassSqueeze => (
-                SEPARATION_PASS_SQUEEZE_MIN,
-                SEPARATION_PASS_SQUEEZE_MAX,
-                SEPARATION_PASS_SQUEEZE_STEP,
-            ),
-            Self::LeftShare => (
-                SEPARATION_LEFT_SHARE_MIN,
-                SEPARATION_LEFT_SHARE_MAX,
-                SEPARATION_LEFT_SHARE_STEP,
-            ),
-            Self::BodyRadius => (
-                HUMAN_BODY_RADIUS_MIN,
-                HUMAN_BODY_RADIUS_MAX,
-                HUMAN_BODY_RADIUS_STEP,
-            ),
-            Self::SlotSearch => (CLAIM_SEARCH_MIN, CLAIM_SEARCH_MAX, CLAIM_SEARCH_STEP),
-            Self::Regroup => (SLOT_REGROUP_MIN, SLOT_REGROUP_MAX, SLOT_REGROUP_STEP),
-        }
-    }
-
-    /// Значение ручки. По ссылкам на сами ресурсы, а не по `NavPanelValues`:
-    /// то же чтение нужно наблюдателю строки, а у него они `ResMut`.
-    fn get(
-        self,
-        lab: &SeparationLab,
-        slots: &SlotLab,
-        human: &HumanStyle,
-        search: &SlotSearch,
-    ) -> f32 {
-        match self {
-            Self::PassSqueeze => lab.pass_squeeze,
-            Self::LeftShare => lab.left_share,
-            Self::BodyRadius => human.body_radius,
-            Self::SlotSearch => search.0,
-            Self::Regroup => slots.regroup,
-        }
-    }
-
-    fn set(self, knobs: &mut KnobResources, value: f32) {
-        match self {
-            Self::PassSqueeze => knobs.separation_lab.pass_squeeze = value,
-            Self::LeftShare => knobs.separation_lab.left_share = value,
-            Self::BodyRadius => knobs.human.body_radius = value,
-            Self::SlotSearch => knobs.search.0 = value,
-            Self::Regroup => knobs.slot_lab.regroup = value,
-        }
-    }
-
-    /// Единица измерения в подписи: у радиусов и возврата это метры, у двух
-    /// долей — голое число.
-    fn value_text(self, value: f32) -> String {
-        match self {
-            Self::PassSqueeze | Self::LeftShare => format!("{value:.2}"),
-            Self::BodyRadius | Self::Regroup => format!("{value:.2} m"),
-            Self::SlotSearch => format!("{value:.0} m"),
-        }
-    }
-}
-
-/// Ресурсы, которые ползунки толпы правят. Отдельным `SystemParam`, чтобы
-/// наблюдатель строки брал их одним аргументом, а не четырьмя.
-#[derive(SystemParam)]
-struct KnobResources<'w> {
-    separation_lab: ResMut<'w, SeparationLab>,
-    slot_lab: ResMut<'w, SlotLab>,
-    human: ResMut<'w, HumanStyle>,
-    search: ResMut<'w, SlotSearch>,
-}
-
-impl KnobResources<'_> {
-    fn value(&self, knob: Knob) -> f32 {
-        knob.get(
-            &self.separation_lab,
-            &self.slot_lab,
-            &self.human,
-            &self.search,
-        )
     }
 }
 
@@ -378,15 +215,6 @@ fn active_section(poly: &PolymeshDebug) -> NavSection {
 /// Ползунок радиуса.
 #[derive(Component)]
 struct PolymeshRadiusSlider;
-
-/// Что нарисовано: поколение постройки и радиус — пока те же, пересобирать
-/// слой незачем (идиома `ConiferNoiseOverlayMarker`). Чанков в ключе нет:
-/// их переключение перестраивает меш, то есть двигает поколение.
-#[derive(Component)]
-struct PolymeshOverlayMarker {
-    generation: u32,
-    radius_bits: u32,
-}
 
 pub struct UiNavigationPlugin;
 
@@ -614,55 +442,6 @@ fn spawn_group_label(commands: &mut Commands, panel: Entity, label: &str) {
         .id();
     commands.entity(panel).add_child(row);
 }
-
-/// Ползунки одной группы, в порядке [`Knob::ALL`].
-fn spawn_knob_rows(
-    commands: &mut Commands,
-    panel: Entity,
-    values: &NavPanelValues,
-    group: KnobGroup,
-) {
-    for knob in Knob::ALL.into_iter().filter(|knob| knob.group() == group) {
-        let value = values.knob(knob);
-        let row = spawn_slider_row(
-            commands,
-            panel,
-            SliderRow {
-                label: knob.label(),
-                value,
-                value_text: knob.value_text(value),
-                range: knob.range(),
-            },
-            KnobValueLabel(knob),
-            KnobSlider(knob),
-            move |change: On<ValueChange<f32>>,
-                  mut commands: Commands,
-                  mut knobs: KnobResources| {
-                let (min, max, step) = knob.range();
-                let stepped = apply_step(&change, &mut commands, (min, max, step));
-                // ресурс правится только на реальной смене шага: иначе каждый
-                // пиксель протяжки метил бы его изменённым
-                if (knobs.value(knob) - stepped).abs() > f32::EPSILON {
-                    knob.set(&mut knobs, stepped);
-                }
-            },
-        );
-        indent_slider_row(commands, row);
-        if group == KnobGroup::Separation {
-            // начальная видимость ставится здесь, а не оставляется системе:
-            // она ходит под `resource_changed`, а на первом кадре ресурсы уже
-            // не «изменённые» — при выключенном расталкивании ползунки так и
-            // висели бы до первого клика по чему-нибудь
-            let visible = values.separation_enabled();
-            commands
-                .entity(row)
-                .insert(SeparationKnobRow)
-                .entry::<Node>()
-                .and_modify(move |mut node| node.display = display_of(visible));
-        }
-    }
-}
-
 /// Отступ вложенной строки-ползунка. `spawn_slider_row` — общий кит панелей
 /// правой колонки и про лесенку этой панели не знает, поэтому padding правится
 /// здесь: без него ползунок секции стоял левее строк-кнопок той же секции.
@@ -747,53 +526,6 @@ fn on_radius_change(
 fn radius_text(radius: f32) -> String {
     format!("{radius:.1} m")
 }
-
-/// Единственная строка панелей, которая бывает неотзывчивой: под детерминизмом
-/// и на сеточной навигации расталкивания нет вовсе, и тумблер молча ничего не
-/// переключает. [`RowInert`] снимает с неё подсветку — обещать реакцию на
-/// курсор там, где клик ничего не сделает, хуже, чем не подсвечивать.
-///
-/// Метка, а не проверка внутри общей подсветки: та крутится по строкам всех
-/// панелей и про режимы мира знать не должна. Начальное состояние ставит
-/// [`render_navigation_panel`] — эта система ходит по `resource_changed`, а на
-/// первом кадре ни один ресурс ещё не «менялся».
-fn sync_separation_row_inert(
-    determinism: Res<Determinism>,
-    polymesh: Res<PolymeshDebug>,
-    rows: Query<Entity, With<SeparationToggleRow>>,
-    mut commands: Commands,
-) {
-    let allowed = separation_allowed_by_mode(determinism.0, polymesh.enabled);
-    for row in &rows {
-        if allowed {
-            commands.entity(row).remove::<RowInert>();
-        } else {
-            commands.entity(row).insert(RowInert);
-        }
-    }
-}
-
-/// Подписи и бегунки ручек толпы вслед за ресурсами: их правят не только эти
-/// ползунки (BRP, панель демо-сцены, пресеты стенда), а расходиться показанному
-/// и настоящему нельзя.
-fn sync_knob_values(
-    values: NavPanelValues,
-    mut commands: Commands,
-    mut labels: Query<(&KnobValueLabel, &mut Text)>,
-    sliders: Query<(Entity, &KnobSlider, &SliderValue)>,
-) {
-    for (label, mut text) in &mut labels {
-        let next = label.0.value_text(values.knob(label.0));
-        if text.0 != next {
-            text.0 = next;
-        }
-    }
-    for (entity, slider, value) in &sliders {
-        let next = values.knob(slider.0);
-        retarget(&mut commands, entity, value.0, next);
-    }
-}
-
 /// Настройки невыбранной подсистемы уходят из раскладки целиком: они не
 /// «недоступны», они ни на что не влияют, пока ходят по другой.
 fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSection, &mut Node)>) {
@@ -805,26 +537,6 @@ fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSecti
         }
     }
 }
-
-/// Ползунки расталкивания — только пока оно работает. Их прячет то же, что
-/// гасит подпись группы: детерминизм, сеточный бэкенд и собственный тумблер.
-/// Настраивать нечего, пока механизм не запускается вовсе, — та же логика, по
-/// которой уходят настройки невыбранного бэкенда.
-///
-/// Строка-заголовок остаётся: она и есть тумблер, которым расталкивание
-/// возвращают, — спрятать её значило бы запереть себя снаружи.
-fn sync_separation_knob_visibility(
-    values: NavPanelValues,
-    mut rows: Query<&mut Node, With<SeparationKnobRow>>,
-) {
-    let display = display_of(values.separation_enabled());
-    for mut node in &mut rows {
-        if node.display != display {
-            node.display = display;
-        }
-    }
-}
-
 /// Актуализация подписей и бегунка после правки ресурса извне (BRP,
 /// восстановленные настройки, хоткей N) — паттерн `sync_noise_values`.
 fn sync_nav_values(
@@ -843,119 +555,4 @@ fn sync_nav_values(
     for (slider, value) in &sliders {
         retarget(&mut commands, slider, value.0, radius);
     }
-}
-
-/// Оверлей построенного меша: заливка непроходимых контуров плюс рёбра
-/// полигонов, всё одним merged-мешем. Ключ кеша — на маркере: пересборка
-/// только когда постройка сменилась, а не на каждом тычке ресурса.
-fn sync_polymesh_overlay(
-    mut commands: Commands,
-    debug: Res<PolymeshDebug>,
-    poly: Res<PolyNavmesh>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    overlay: Query<(Entity, &PolymeshOverlayMarker)>,
-) {
-    let generation = poly.generation();
-    let radius_bits = poly.built_radius().to_bits();
-    let visible = debug.enabled && debug.show;
-    if visible
-        && overlay
-            .iter()
-            .any(|(_, drawn)| drawn.generation == generation && drawn.radius_bits == radius_bits)
-    {
-        return;
-    }
-    for (entity, _) in &overlay {
-        commands.entity(entity).despawn();
-    }
-    if !visible {
-        return;
-    }
-    let Some(built) = poly.build() else {
-        return;
-    };
-
-    let mut builder = MeshBuilder::default();
-    // сначала заливка — внутри одного меша порядок индексов и есть порядок
-    // растеризации, так что рёбра лягут поверх неё
-    let blocked = POLYMESH_BLOCKED_COLOR.to_linear();
-    for obstacle in &built.obstacles {
-        builder.push_polygon(obstacle, &[], blocked);
-    }
-    let color = POLYMESH_EDGE_COLOR.to_linear();
-    for layer in &built.mesh.layers {
-        // общее ребро соседних полигонов рисуется один раз — иначе на
-        // полупрозрачном штрихе каждый внутренний шов был бы вдвое темнее
-        let mut seen: HashSet<(u32, u32)> = HashSet::new();
-        for polygon in &layer.polygons {
-            let count = polygon.vertices.len();
-            for index in 0..count {
-                let a = polygon.vertices[index];
-                let b = polygon.vertices[(index + 1) % count];
-                if !seen.insert((a.min(b), a.max(b))) {
-                    continue;
-                }
-                // polyanya живёт на glam 0.30 — конверсия по полям. Координаты
-                // вершин локальные для слоя: чанк триангулирован от своего
-                // угла, мировая точка — плюс `offset`
-                let origin = Vec2::new(layer.offset.x, layer.offset.y);
-                let from = &layer.vertices[a as usize].coords;
-                let to = &layer.vertices[b as usize].coords;
-                builder.push_stroke(
-                    &[
-                        origin + Vec2::new(from.x, from.y),
-                        origin + Vec2::new(to.x, to.y),
-                    ],
-                    false,
-                    POLYMESH_EDGE_WIDTH,
-                    color,
-                );
-            }
-        }
-    }
-
-    // границы чанков — последними, чтобы легли поверх рёбер меша. Условия нет:
-    // сетка берётся из самой постройки, и у плоского меша она 1x1, то есть ни
-    // одной внутренней линии. Рисуется ровно то, по чему ходит поиск
-    {
-        let (grid, chunk_size) = built.chunks();
-        let chunk_color = POLYMESH_CHUNK_COLOR.to_linear();
-        for column in 1..grid.x {
-            let x = column as f32 * chunk_size.x;
-            builder.push_stroke(
-                &[Vec2::new(x, 0.0), Vec2::new(x, MAP_SIZE.y)],
-                false,
-                POLYMESH_CHUNK_WIDTH,
-                chunk_color,
-            );
-        }
-        for row in 1..grid.y {
-            let y = row as f32 * chunk_size.y;
-            builder.push_stroke(
-                &[Vec2::new(0.0, y), Vec2::new(MAP_SIZE.x, y)],
-                false,
-                POLYMESH_CHUNK_WIDTH,
-                chunk_color,
-            );
-        }
-    }
-
-    if builder.is_empty() {
-        return;
-    }
-    commands.spawn((
-        PolymeshOverlayMarker {
-            generation,
-            radius_bits,
-        },
-        Mesh2d(meshes.add(builder.build())),
-        MeshMaterial2d(materials.add(ColorMaterial {
-            alpha_mode: AlphaMode2d::Blend,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, 0.0, POLYMESH_OVERLAY_Z),
-        DespawnOnExit(AppState::Playing),
-        Name::new("polymesh_overlay"),
-    ));
 }

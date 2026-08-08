@@ -898,7 +898,7 @@ in `main.rs`.
   starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
   the resource before switching to `Playing`.
 - **Poly navmesh** (`navigation/polymesh/` — `build.rs` builds the mesh, `seams.rs` stitches
-  the chunks, `path.rs` searches it; panel — `ui/polynav.rs`) — a *polygonal*
+  the chunks, `path.rs` searches it; panel — `ui/navigation/`) — a *polygonal*
   polyanya mesh triangulated from the same vector sources the grid fill rasterizes,
   recovering the fidelity the 2 m grid loses (bridge curbs, narrow waterways). While the
   Polymesh panel is on and the mesh is built, **it is the pathfinding backend** — see
@@ -1661,7 +1661,8 @@ in `main.rs`.
   panels) and is `Display::None`ed while the `noise` debug toggle is off — tuning the
   field without the overlay showing it is pointless. Noise mix is deliberately *not*
   here: it is a gameplay look knob, so it sits in the Trees panel.
-- **Navigation panel** (`ui/navigation.rs`) — slot 2 of the left column, always visible,
+- **Navigation panel** (`ui/navigation/` — `mod.rs` the panel, `knobs.rs` the crowd
+  knobs, `overlay.rs` the polymesh overlay) — slot 2 of the left column, always visible,
   **one UI for both pathfinding backends** (the Roads/Trees row-button idiom — label
   left, value right). The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always
   walk one of the two, so it is a choice, not two toggles that could both read `Off`

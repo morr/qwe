@@ -21,7 +21,7 @@
 //!   перезагружает мир).
 //!
 //! Настройки бэкендов поиска пути — сеточный слой, алгоритм, радиус агента —
-//! стоят в панели Navigation (`ui/navigation.rs`) рядом друг с другом: они
+//! стоят в панели Navigation (`ui/navigation/`) рядом друг с другом: они
 //! взаимоисключающие, и видеть надо только настройки выбранного. Навтайл к ним
 //! не относится, хотя и жил там: в тайлах этого размера мир строится всегда —
 //! заливка проходимости, отсечение недостижимого, снап портала, генерация
@@ -63,7 +63,7 @@ use crate::ui::{
 pub struct DebugGrid(pub bool);
 
 /// Показывать ли заливку непроходимых тайлов — строка `Show` под `Navmesh` в
-/// панели Navigation (`ui/navigation.rs`). Слой рисуется, только пока сетка и
+/// панели Navigation (`ui/navigation/`). Слой рисуется, только пока сетка и
 /// есть бэкенд навигации: поверх меша, по которому ходят, он показывал бы не
 /// ту проходимость.
 #[derive(Resource, Reflect, SettingsGroup, Default)]
@@ -115,7 +115,7 @@ enum CyclerButton {
 
 /// Текст значения справа на листалке; та же метка, что на самой кнопке, —
 /// один компонент на все листалки, а не маркер на каждую (идиома
-/// `ui/navigation.rs::NavValueLabel`).
+/// `ui/navigation/mod.rs::NavValueLabel`).
 #[derive(Component, Clone, Copy)]
 struct CyclerValueLabel(CyclerButton);
 
@@ -380,7 +380,7 @@ fn spawn_cycler<M>(
 
 /// N — «показать слой навигации»: у сетки и у меша свои тумблеры показа, а
 /// клавиша одна, и жать её осмысленно только для той подсистемы, по которой
-/// сейчас ходят (панель Navigation, `ui/navigation.rs`).
+/// сейчас ходят (панель Navigation, `ui/navigation/`).
 fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>, mut polymesh: ResMut<PolymeshDebug>) {
     if polymesh.enabled {
         polymesh.show = !polymesh.show;
