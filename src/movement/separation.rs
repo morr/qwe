@@ -570,6 +570,9 @@ pub(super) struct SeparationState {
     /// [`SeparationHolds`].
     held: Vec<bool>,
     pushes: Vec<Vec2>,
+    /// Сколько пар этого прогона уже перекрылись — остальные попали только в
+    /// упреждение. Считается на месте, в проходе толчков.
+    overlapping: usize,
     /// Сумма сторон обхода по всем соседям — источник [`SeparationSteer`].
     /// Складывается ненормированной и нормируется один раз в конце: пешка,
     /// зажатая с двух сторон, должна получить их сумму, а не последнюю.
@@ -648,6 +651,7 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
     state.steers.clear();
     state.steers.resize(state.pawns.len(), Vec2::ZERO);
+    state.overlapping = 0;
 
     // Насколько далеко имеет смысл смотреть на ещё не перекрывшегося соседа: за
     // горизонт `t` секунд самая быстрая пара сближается на сумму скоростей.
@@ -733,6 +737,7 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
             }
             continue;
         }
+        state.overlapping += 1;
         let min_distance = squeezed_radius(a.radius, state.contacts[i as usize], &lab)
             + squeezed_radius(b.radius, state.contacts[j as usize], &lab);
         let offset = b.position - a.position;
@@ -992,13 +997,11 @@ pub fn separate_pawns(
         }
     }
     stats.runs += 1;
-    for (_, _, overlapping) in &state.pairs {
-        if *overlapping {
-            stats.overlapping_pairs += 1;
-        } else {
-            stats.anticipated_pairs += 1;
-        }
-    }
+    // счёт снят проходом толчков, а не отдельным обходом `pairs`: обход стоил бы
+    // столько же итераций, сколько сам решатель, ради числа, которое в игре не
+    // читает никто
+    stats.overlapping_pairs += state.overlapping as u64;
+    stats.anticipated_pairs += (state.pairs.len() - state.overlapping) as u64;
     crate::diagnostics::measure_ms(
         &mut diagnostics,
         &crate::diagnostics::SIM_SEPARATION_MS,

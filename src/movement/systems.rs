@@ -630,6 +630,11 @@ pub fn move_moving_entities(
     // не засчитывать приход столкнутому с тайла в последний момент
     let human_rest = 2.0 * human_style.body_radius;
     let demon_rest = 2.0 * super::separation::demon_radius(human_style.body_radius);
+    // один раз на систему, а не на пешку: цикл ниже обходит ВСЕХ движущихся
+    // (в игре это до 20 000 при ~1920 тиках в секунду на 30x), и проверка
+    // пустоты карты внутри него — единственная цена руления для тех, кто им не
+    // пользуется. Снаружи она стоит ровно ничего
+    let steering = !steer.0.is_empty();
     for (entity, mut movable, mut sim_position, is_human) in &mut query {
         let cell_before = crate::spatial::cell_of(sim_position.0);
         let rest = if is_human { human_rest } else { demon_rest };
@@ -651,12 +656,11 @@ pub fn move_moving_entities(
         }
         // руление (см. `separation::SeparationSteer`): пешка, упёршаяся в чужое
         // тело, не давит в него и не ждёт толчка, а доворачивает курс вбок и
-        // обходит на полной скорости. Пусто, пока ручка стенда не тронута, —
-        // проверка пустоты карты стоит одного сравнения на пешку
-        let aside = if steer.0.is_empty() {
-            Vec2::ZERO
-        } else {
+        // обходит на полной скорости
+        let aside = if steering {
             steer.0.get(&entity).copied().unwrap_or(Vec2::ZERO)
+        } else {
+            Vec2::ZERO
         };
         loop {
             if movable.path.is_empty() {
