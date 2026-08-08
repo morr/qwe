@@ -47,7 +47,8 @@ use crate::movement::components::SimPosition;
 use crate::movement::systems::VIEW_MARGIN;
 use crate::settings::{
     DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL, SEPARATION_HOLD,
-    SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM, SEPARATION_RATE, SEPARATION_SIDESTEP,
+    SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM,
+    SEPARATION_PASS_SQUEEZE, SEPARATION_RATE, SEPARATION_SIDESTEP, SEPARATION_STEER,
 };
 use crate::spatial::SpatialGrid;
 
@@ -287,6 +288,90 @@ pub struct SeparationLab {
     /// waypoint только когда бюджет шага накрывает остаток, а отклонённый курс
     /// этот остаток не сокращает.
     pub steer_release: f32,
+    /// Во сколько раз ужимается дистанция покоя в паре «ИДУЩАЯ + СТОЯЩАЯ»
+    /// (1 — не ужимается, как сейчас; 0.6 — 1.8 м покоя превращаются в 1.08 м
+    /// на время протискивания).
+    ///
+    /// Зачем это отдельно от [`SeparationLab::compress`]. Сжатие по числу
+    /// контактов ужимает пешку тем сильнее, чем больше рядом соседей, — то есть
+    /// ровно ТАМ, где толпа стоит: осевшая толпа садится на постоянно сжатой
+    /// дистанции, и радиус тела перестаёт работать как задумано (на стенде это
+    /// `sep_share` 0.81 против 0.43 без сжатия — равновесие толпы оказывается
+    /// перекрытым навсегда).
+    ///
+    /// Ужимать надо не толпу, а ПРОХОД сквозь неё. Шаг решётки слотов — 2.0 м,
+    /// а идущей пешке между двумя осевшими нужен просвет `2 × дистанции покоя`
+    /// = 3.6 м: внутренние слоты недостижимы в принципе (см.
+    /// `tools/separation_slots_lab/REPORT.md`, раздел 2.3). Стоящему при этом
+    /// хватает гораздо меньшего личного пространства, чем идущему, — у живых
+    /// людей это разные величины. Ужатие ровно этой пары даёт просвет 2 × 1.08 =
+    /// 2.16 м, то есть решётка становится проходимой, а дистанция «стоящий —
+    /// стоящий» и «идущий — идущий» остаётся полной: осевшая толпа не слипается,
+    /// поток не сходится в колонну.
+    pub pass_squeeze: f32,
+    /// Доля пешек, обходящих препятствие ВЛЕВО, а не вправо (0 — все вправо,
+    /// как сейчас; 0.2 — каждая пятая левша). Сторона личная и постоянная —
+    /// хэш [`crate::rng::PawnId`], тот же трюк, что у `coincident_direction`.
+    ///
+    /// Зачем. Одинаковая сторона у всех — это не только «предсказуемо, как у
+    /// живых пешеходов», но и источник двух картинок, которых в жизни не бывает:
+    /// попутный поток складывается в одну сплошную колонну (все уступают в одну
+    /// сторону и выстраиваются друг за другом), а недошедшие вокруг плотной
+    /// толпы едут одной каруселью — руление всем уводит вправо, и объехать они
+    /// пытаются по одной и той же дуге. Немного левшей ломает и то и другое, не
+    /// теряя предсказуемости на уровне пары.
+    pub left_share: f32,
+    /// На сколько ужимается дистанция покоя у пешки, которая уже
+    /// ЗАЛИПЛА, — доля (0 — не ужимается). В отличие от
+    /// [`SeparationLab::compress`], загрузку задаёт не число соседей, а ВРЕМЯ
+    /// непрерывного упора курсом в чужое тело: сжатие получает только тот, кто
+    /// действительно не может пройти, и ровно на то время, пока не прошёл.
+    ///
+    /// Это и есть «кратковременно ужать тело, чтобы пролезть через тупиковую
+    /// геометрию» — в отличие от постоянного сжатия рядом с соседями, из-за
+    /// которого толпа садится слипшейся.
+    pub stuck_compress: f32,
+    /// Сколько виртуальных секунд непрерывного упора считается залипанием:
+    /// раньше этого сжатия нет вовсе.
+    pub stuck_after: f32,
+    /// Ещё столько секунд упора — и сжатие выходит на полную
+    /// [`SeparationLab::stuck_compress`].
+    pub stuck_ramp: f32,
+    /// Доля дистанции покоя, которая считается ТВЁРДЫМ ЯДРОМ тела: ближе неё
+    /// перекрытие снимается целиком за один прогон, а не долей `rate · dt`
+    /// (0 — ядра нет, как сейчас).
+    ///
+    /// Зачем. Всё остальное в этом механизме мягкое, и это правильно: жёсткая
+    /// релаксация в давке разлеталась бы цепными толчками. Но у мягкости есть
+    /// цена, которую видно глазом: встречная пара сближается за кадр на 0.09 м,
+    /// а расталкивание снимает `rate · dt` ≈ 7 % перекрытия — то есть заведомо
+    /// меньше, и на полном ходу пешки въезжают друг в друга. Стенд считает это
+    /// как `through` (центры ближе половины спрайта), и чем свободнее
+    /// протискивание ([`SeparationLab::pass_squeeze`]), тем таких случаев
+    /// больше.
+    ///
+    /// Ядро разделяет две разные величины, которые до сих пор были одной:
+    /// личное пространство (мягкое, сжимаемое, торгуется за проходимость) и
+    /// собственно ТЕЛО (несжимаемое). При 0.5 ядро равно половине дистанции
+    /// покоя, то есть спрайты ровно касаются: ближе этого пешки не сходятся ни
+    /// при каком сжатии, а всё, что мягче, работает как работало.
+    pub hard_core: f32,
+    /// Сколько секунд непрерывного упора терпит СКОЛЬЖЕНИЕ
+    /// ([`SeparationLab::slide`]), прежде чем отпустить пешку (0 — не отпускает
+    /// никогда, как было).
+    ///
+    /// Зачем. Скольжение — единственный найденный способ гарантировать, что
+    /// пешки не входят друг в друга: из шага снимается составляющая, ведущая В
+    /// тело. Но в сходящейся толпе оно же и запирает — войти некуда, обойти
+    /// некуда, и на стенде это дедлок с каруселью (61 дошедшая из 200,
+    /// `tools/separation_slots_lab/REPORT.md`, 3.3).
+    ///
+    /// Отпускание разводит два случая, которые до сих пор были одним: пока у
+    /// пешки есть варианты, она обязана обходить, а не лезть в тело; а когда
+    /// вариантов нет и она стои́т в упоре секунду, запрет снимается — дальше
+    /// работает протискивание ([`SeparationLab::pass_squeeze`]). Ровно так
+    /// ведёт себя человек: сперва обходит, а в час пик протискивается.
+    pub slide_release: f32,
 }
 
 /// Куда пешке ОТВЕРНУТЬ на ходу — единичный вектор поперёк её курса, домноженный
@@ -370,7 +455,7 @@ impl Default for SeparationLab {
         Self {
             rate: SEPARATION_RATE,
             max_step: SEPARATION_MAX_STEP,
-            max_speed: 0.0,
+            max_speed: SEPARATION_MAX_SPEED,
             horizon: 0.0,
             anticipation: 0.0,
             anticipate_margin: 1.0,
@@ -378,11 +463,18 @@ impl Default for SeparationLab {
             compress: 0.0,
             compress_at: 4.0,
             crowd_sidestep: 0.0,
-            steer: 0.0,
+            steer: SEPARATION_STEER,
             idle_mobility: 1.0,
             arrive_slack: 1.0,
             slide: 0.0,
             steer_release: 2.0,
+            pass_squeeze: SEPARATION_PASS_SQUEEZE,
+            left_share: SEPARATION_LEFT_SHARE,
+            stuck_compress: 0.0,
+            stuck_after: 0.5,
+            stuck_ramp: 0.5,
+            hard_core: 0.0,
+            slide_release: 0.0,
         }
     }
 }
@@ -427,6 +519,9 @@ struct Pawn {
     speed: f32,
     /// Придерживают только людей, см. [`SeparationHolds`].
     human: bool,
+    /// Сколько виртуальных секунд подряд пешка упирается курсом в чужое тело —
+    /// источник кратковременного сжатия ([`SeparationLab::stuck_compress`]).
+    stuck: f32,
 }
 
 /// Обход встречного: боковая добавка к толчку, чтобы двое идущих ЛОБ В ЛОБ
@@ -452,13 +547,12 @@ struct Pawn {
 /// Кому она достаётся — решают [`yields`] и «пара одна» на месте вызова; оба
 /// ограничения существуют затем, чтобы обход не превращался во вращение, см.
 /// их доки.
-fn sidestep(heading: Vec2, to_other: Vec2, correction: f32, strength: f32) -> Vec2 {
-    let frontal = heading.dot(to_other);
+fn sidestep(pawn: &Pawn, to_other: Vec2, correction: f32, strength: f32, left_share: f32) -> Vec2 {
+    let frontal = pawn.heading.dot(to_other);
     if frontal <= 0.0 {
         return Vec2::ZERO;
     }
-    // правая нормаль к курсу: `perp` в bevy — поворот на +90° (влево)
-    -heading.perp() * (correction * strength * frontal)
+    side_of(pawn, left_share) * (correction * strength * frontal)
 }
 
 /// Кто из встречной пары обходит: обходит РОВНО ОДИН.
@@ -593,6 +687,29 @@ fn right_of(heading: Vec2) -> Vec2 {
     -heading.perp()
 }
 
+/// В какую сторону обходит ИМЕННО ЭТА пешка: правая нормаль к курсу, а у доли
+/// [`SeparationLab::left_share`] пешек — левая.
+///
+/// Сторона личная и постоянная, а не случайная на прогон: она берётся хэшем
+/// [`crate::rng::PawnId`], как ось разведения совпавших позиций
+/// ([`coincident_direction`]). Пешка, каждый кадр выбирающая сторону заново, не
+/// обходит, а дрожит — и на экране это хуже любой колонны.
+fn side_of(pawn: &Pawn, left_share: f32) -> Vec2 {
+    if left_share > 0.0 && lefty_fraction(pawn.pawn_id) < left_share {
+        pawn.heading.perp()
+    } else {
+        right_of(pawn.heading)
+    }
+}
+
+/// Место пешки в [0, 1) — тем же хэшем, что и [`coincident_direction`], но со
+/// своим множителем: иначе сторона обхода и ось разведения были бы одним и тем
+/// же числом, и «левши» получали бы вдобавок одинаковую ось.
+fn lefty_fraction(pawn_id: u32) -> f32 {
+    let hash = pawn_id.wrapping_mul(2246822519) ^ 0x9e37_79b9;
+    (hash >> 8) as f32 / (u32::MAX >> 8) as f32
+}
+
 /// Куда и насколько срочно `a` уклоняется от `b`: единичный вектор ПОПЕРЁК
 /// курса `a` плюс срочность 0…1 (1 — контакт вот-вот). `None` — уклоняться не
 /// от чего. Ядро [`anticipate`], вынесенное отдельно, потому что тем же ответом
@@ -622,9 +739,9 @@ fn avoid_direction(a: &Pawn, b: &Pawn, lab: &SeparationLab) -> Option<(Vec2, f32
     if miss >= clearance {
         return None;
     }
-    let right = right_of(a.heading);
-    let away = if miss > 1e-3 { -closest / miss } else { right };
-    let biased = away + right * lab.lane_bias;
+    let side = side_of(a, lab.left_share);
+    let away = if miss > 1e-3 { -closest / miss } else { side };
+    let biased = away + side * lab.lane_bias;
     let lateral = biased - a.heading * biased.dot(a.heading);
     let lateral = lateral.normalize_or_zero();
     if lateral == Vec2::ZERO {
@@ -659,6 +776,9 @@ pub(super) struct SeparationState {
     /// [`SeparationHolds`].
     held: Vec<bool>,
     pushes: Vec<Vec2>,
+    /// Толчки ТВЁРДОГО ЯДРА — отдельно от мягких, потому что ограничены они
+    /// по-разному ([`SeparationLab::hard_core`]).
+    core_pushes: Vec<Vec2>,
     /// Сколько пар этого прогона уже перекрылись — остальные попали только в
     /// упреждение. Считается на месте, в проходе толчков.
     overlapping: usize,
@@ -669,6 +789,13 @@ pub(super) struct SeparationState {
     /// Складывается ненормированной и нормируется один раз в конце: пешка,
     /// зажатая с двух сторон, должна получить их сумму, а не последнюю.
     steers: Vec<Vec2>,
+    /// Сколько виртуальных секунд подряд каждая пешка упирается курсом в чужое
+    /// тело — единственное, что живёт МЕЖДУ прогонами: залипание это именно
+    /// длительность. Пуста, пока [`SeparationLab::stuck_compress`] не тронут.
+    stuck: bevy::ecs::entity::EntityHashMap<f32>,
+    /// Та же карта, собранная заново этим прогоном: ушедший из вьюпорта или
+    /// прошедший затор выпадает из неё сам, без отдельной уборки.
+    stuck_next: bevy::ecs::entity::EntityHashMap<f32>,
 }
 
 fn fine_cell(pos: Vec2, cell: f32) -> IVec2 {
@@ -716,12 +843,57 @@ struct Tuning {
 ///
 /// При `compress = 0` возвращает радиус без изменений, то есть нынешнее
 /// поведение.
-fn squeezed_radius(radius: f32, contacts: u32, lab: &SeparationLab) -> f32 {
-    if lab.compress <= 0.0 || lab.compress_at <= 0.0 {
-        return radius;
+fn squeezed_radius(pawn: &Pawn, contacts: u32, lab: &SeparationLab) -> f32 {
+    let mut radius = pawn.radius;
+    if lab.compress > 0.0 && lab.compress_at > 0.0 {
+        let load = (contacts as f32 / lab.compress_at).min(1.0);
+        radius *= 1.0 - lab.compress * load;
     }
-    let load = (contacts as f32 / lab.compress_at).min(1.0);
-    radius * (1.0 - lab.compress * load)
+    radius * (1.0 - lab.stuck_compress * stuck_load(pawn.stuck, lab))
+}
+
+/// Насколько пешка «залипла» — 0…1 по времени непрерывного упора
+/// ([`SeparationLab::stuck_after`], [`SeparationLab::stuck_ramp`]).
+///
+/// Отдельно от числа контактов намеренно: сжатие по контактам получает вся
+/// плотная толпа, в том числе стоящая и никуда не идущая, и её равновесие
+/// оказывается перекрытым навсегда. Сжатие по времени упора получает только
+/// тот, кто уже несколько раз подряд ткнулся в чужое тело и не прошёл, —
+/// протискивание длится ровно столько, сколько длится тупик.
+fn stuck_load(stuck: f32, lab: &SeparationLab) -> f32 {
+    if lab.stuck_compress <= 0.0 {
+        return 0.0;
+    }
+    let over = stuck - lab.stuck_after;
+    if over <= 0.0 {
+        return 0.0;
+    }
+    if lab.stuck_ramp <= 0.0 {
+        return 1.0;
+    }
+    (over / lab.stuck_ramp).min(1.0)
+}
+
+/// Отпустило ли скольжение эту пешку: она упирается дольше, чем
+/// [`SeparationLab::slide_release`], и запрет «не лезь в тело» с неё снят.
+fn slide_released(pawn: &Pawn, lab: &SeparationLab) -> bool {
+    lab.slide_release > 0.0 && pawn.stuck >= lab.slide_release
+}
+
+/// Дистанция покоя пары с поправкой на то, КТО в ней идёт.
+///
+/// Идущая мимо стоящей ужимается до [`SeparationLab::pass_squeeze`] — это
+/// проход сквозь осевшую толпу, см. док ручки. Пара «оба стоят» и пара «оба
+/// идут» не трогаются: плотность осевшей толпы и ширина потока — это то, ради
+/// чего радиус тела вообще существует.
+fn rest_distance(a: &Pawn, b: &Pawn, contacts: (u32, u32), lab: &SeparationLab) -> f32 {
+    let full = squeezed_radius(a, contacts.0, lab) + squeezed_radius(b, contacts.1, lab);
+    let a_walking = a.heading != Vec2::ZERO;
+    let b_walking = b.heading != Vec2::ZERO;
+    if lab.pass_squeeze < 1.0 && (a_walking != b_walking) {
+        return full * lab.pass_squeeze;
+    }
+    full
 }
 
 fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
@@ -741,6 +913,8 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     state.held.resize(state.pawns.len(), false);
     state.pushes.clear();
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
+    state.core_pushes.clear();
+    state.core_pushes.resize(state.pawns.len(), Vec2::ZERO);
     state.steers.clear();
     state.steers.resize(state.pawns.len(), Vec2::ZERO);
     state.blocks.clear();
@@ -832,8 +1006,12 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
             continue;
         }
         state.overlapping += 1;
-        let min_distance = squeezed_radius(a.radius, state.contacts[i as usize], &lab)
-            + squeezed_radius(b.radius, state.contacts[j as usize], &lab);
+        let min_distance = rest_distance(
+            &a,
+            &b,
+            (state.contacts[i as usize], state.contacts[j as usize]),
+            &lab,
+        );
         let offset = b.position - a.position;
         let distance = offset.length();
         let direction = if distance > 1e-4 {
@@ -846,6 +1024,17 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // перекрытой посчитал проход 1, получила бы толчок ВНУТРЬ
         let overlap = (min_distance - distance).max(0.0) * fraction;
         let correction = direction * overlap;
+        // Твёрдое ядро — отдельным слагаемым, и это не педантизм: мягкая часть
+        // ограничена потолком скорости расталкивания (доли метра за прогон), а
+        // встречная пара на полном ходу сближается за тот же прогон на впятеро
+        // больше. Ядро, попавшее под общий потолок, работать не успевает — на
+        // стенде это видно как сотни пар, сошедшихся ближе половины спрайта,
+        // при формально включённом ядре. См. [`SeparationLab::hard_core`]
+        let core_overlap = if lab.hard_core > 0.0 {
+            ((a.radius + b.radius) * lab.hard_core - distance).max(0.0)
+        } else {
+            0.0
+        };
         let (share_a, share_b) = shares(&a, &b, direction);
         // не «да/нет», а НАСКОЛЬКО в лоб: косинус между курсом и осью пары.
         // Скольжению ([`SeparationBlock`]) нужна именно величина — сосед,
@@ -874,10 +1063,10 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // запрет копится по тому же условию, что придержка, и у ВСЕХ, а не
         // только у людей: демон в погоне тоже не обязан входить в чужое тело
         if lab.slide > 0.0 {
-            if a_blocked {
+            if a_blocked && !slide_released(&a, &lab) {
                 state.blocks[i as usize] += direction * a_facing;
             }
-            if b_blocked {
+            if b_blocked && !slide_released(&b, &lab) {
                 state.blocks[j as usize] -= direction * b_facing;
             }
         }
@@ -891,10 +1080,10 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // составляющей нет вовсе, курс только доворачивается).
         if lab.steer > 0.0 {
             if a_blocked && a.mobility > 0.0 {
-                state.steers[i as usize] += right_of(a.heading);
+                state.steers[i as usize] += side_of(&a, lab.left_share);
             }
             if b_blocked && b.mobility > 0.0 {
-                state.steers[j as usize] += right_of(b.heading);
+                state.steers[j as usize] += side_of(&b, lab.left_share);
             }
         }
         // обход — только встречным: догоняющего сзади ничто не держит, а
@@ -919,13 +1108,13 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
             // уступает один: вправо уходят оба — и пара вращается, см. [`yields`]
             if yields(&a, &b) {
                 (
-                    sidestep(a.heading, direction, overlap * share_a, strength),
+                    sidestep(&a, direction, overlap * share_a, strength, lab.left_share),
                     Vec2::ZERO,
                 )
             } else {
                 (
                     Vec2::ZERO,
-                    sidestep(b.heading, -direction, overlap * share_b, strength),
+                    sidestep(&b, -direction, overlap * share_b, strength, lab.left_share),
                 )
             }
         } else {
@@ -933,6 +1122,11 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         };
         state.pushes[i as usize] -= correction * share_a - side_a;
         state.pushes[j as usize] += correction * share_b + side_b;
+        if core_overlap > 0.0 {
+            let core = direction * core_overlap;
+            state.core_pushes[i as usize] -= core * share_a;
+            state.core_pushes[j as usize] += core * share_b;
+        }
     }
 }
 
@@ -1002,9 +1196,13 @@ pub fn separate_pawns(
     let human_radius = human_style.body_radius;
     let demon_radius = demon_radius(human_radius);
 
+    // разыменование ОДИН раз: через `Local` каждое обращение к полю заимствует
+    // весь ресурс, и «сложить в один буфер, читая соседний» не даст компилятор
+    let state = &mut *state;
     state.pawns.clear();
     {
         let pawn_buffer = &mut state.pawns;
+        let stuck_seen = &state.stuck;
         let mut collect = |entity: Entity| {
             // мимо запроса — бросок, труп, пешка чужого вида в чужой сетке
             let Ok((sim_position, pawn_id, movable, is_moving, is_demon, is_devouring)) =
@@ -1047,6 +1245,7 @@ pub fn separate_pawns(
                 },
                 speed: movable.speed,
                 human: !is_demon,
+                stuck: stuck_seen.get(&entity).copied().unwrap_or(0.0),
             });
         };
         humans.for_each_in_rect(min, max, &mut collect);
@@ -1054,7 +1253,7 @@ pub fn separate_pawns(
     }
 
     resolve_pushes(
-        &mut state,
+        state,
         Tuning {
             fraction,
             dt,
@@ -1063,6 +1262,26 @@ pub fn separate_pawns(
             lab: *lab,
         },
     );
+
+    // залипание — то же самое, но со временем: карта пересобирается прогоном
+    // целиком, и упор, прервавшийся хоть на прогон, начинает счёт заново.
+    // Пока ручка не тронута, обе карты пусты и цикл ниже в них не заглядывает
+    // карта залипания нужна двум механизмам сразу — сжатию и отпусканию
+    // скольжения; пока не тронут ни один, она пуста и не стоит ничего
+    if lab.stuck_compress > 0.0 || lab.slide_release > 0.0 {
+        // буфер вынимается из состояния целиком: заполнять его, читая рядом
+        // `state.pawns` и `state.held`, иначе не даст заимствование
+        let mut next = std::mem::take(&mut state.stuck_next);
+        next.clear();
+        for (index, pawn) in state.pawns.iter().enumerate() {
+            if state.held[index] {
+                next.insert(pawn.entity, pawn.stuck + dt);
+            }
+        }
+        state.stuck_next = std::mem::replace(&mut state.stuck, next);
+    } else if !state.stuck.is_empty() {
+        state.stuck.clear();
+    }
 
     // придержанные — с чистого листа каждый прогон: ушедший из вьюпорта или
     // разошедшийся с соседом освобождается сам, без отдельной уборки
@@ -1087,7 +1306,10 @@ pub fn separate_pawns(
     for i in 0..state.pawns.len() {
         let pawn = state.pawns[i];
         let push = damp_along_heading(state.pushes[i], pawn.heading, style.backstep);
-        if push == Vec2::ZERO {
+        // ядро не давится вдоль курса: придавливать выталкивание ИЗ ТЕЛА нечем,
+        // это не личное пространство, а геометрия
+        let core = state.core_pushes[i];
+        if push == Vec2::ZERO && core == Vec2::ZERO {
             continue;
         }
         let ceiling = if lab.max_speed > 0.0 {
@@ -1095,7 +1317,10 @@ pub fn separate_pawns(
         } else {
             lab.max_step
         };
-        let step = push.clamp_length_max(ceiling);
+        // ядро не ограничено потолком СКОРОСТИ (иначе оно не успевает за
+        // сближением и не работает вовсе), но общий сдвиг по-прежнему не больше
+        // `max_step`: это тот потолок, по которому считается «телепорта нет»
+        let step = (push.clamp_length_max(ceiling) + core).clamp_length_max(lab.max_step);
         let target = pawn.position + step;
         let tile = world_to_tile(target);
         // толчок в непроходимое отбрасывается: спасение (`rescue_*`) ловит
@@ -1149,6 +1374,7 @@ mod tests {
             heading: Vec2::ZERO,
             speed: 2.8,
             human: true,
+            stuck: 0.0,
         }
     }
 
@@ -1159,14 +1385,23 @@ mod tests {
         }
     }
 
-    /// Ручки по умолчанию: тесты меряют механику, а не подобранные значения.
+    /// Ручки по умолчанию, но с ОДНОЙ поправкой: доля левшей обнулена.
+    ///
+    /// Сторона обхода в дефолте игры личная ([`SEPARATION_LEFT_SHARE`]), то есть
+    /// зависит от `PawnId` конкретной пешки. Тест, который проверяет «уходит
+    /// вправо», после этого проверял бы не механику, а то, каким вышел хэш
+    /// номера, — и ломался бы от переименования пешек в соседнем тесте. Долю
+    /// левшей меряют два теста, и оба ставят её явно.
     fn tuning(fraction: f32) -> Tuning {
         Tuning {
             fraction,
             dt: fraction / SEPARATION_RATE,
             sidestep: SEPARATION_SIDESTEP,
             cell: SEPARATION_CELL,
-            lab: SeparationLab::default(),
+            lab: SeparationLab {
+                left_share: 0.0,
+                ..SeparationLab::default()
+            },
         }
     }
 
@@ -1184,6 +1419,9 @@ mod tests {
             horizon: 1.5,
             anticipation: 2.0,
             lane_bias: 0.5,
+            // сторона обхода фиксируется правой по той же причине, что и в
+            // [`tuning`]
+            left_share: 0.0,
             ..Default::default()
         }
     }
@@ -1477,6 +1715,187 @@ mod tests {
         assert_eq!(tight.pairs.len(), 1, "пара всё ещё пара");
         assert_eq!(tight.pushes[0], Vec2::ZERO);
         assert_eq!(tight.pushes[1], Vec2::ZERO);
+    }
+
+    /// Протискивание мимо стоящего ([`SeparationLab::pass_squeeze`]): пара
+    /// «идущая + стоящая» расходится на ужатую дистанцию, а пара стоящих рядом
+    /// — на полную. Ровно в этом смысл ручки: ужимается проход, а не толпа.
+    #[test]
+    fn only_a_walker_squeezes_past_a_standing_pawn() {
+        let squeeze = SeparationLab {
+            pass_squeeze: 0.5,
+            ..Default::default()
+        };
+        // 0.9 м между центрами при радиусе 0.45: полная дистанция покоя, то
+        // есть ужатая (0.45 м) уже выдержана
+        let mut passing = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            pawn(2, Vec2::new(10.6, 10.0), 0.45, 1.0),
+        ]);
+        resolve_pushes(&mut passing, tuning_with(1.0, squeeze));
+        assert_eq!(passing.pushes[0], Vec2::ZERO, "идущая протискивается");
+        assert_eq!(passing.pushes[1], Vec2::ZERO, "и стоящую не двигает");
+
+        let mut standing = state_with(vec![
+            pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
+            pawn(2, Vec2::new(10.6, 10.0), 0.45, 1.0),
+        ]);
+        resolve_pushes(&mut standing, tuning_with(1.0, squeeze));
+        assert!(
+            standing.pushes[0].length() > 0.0,
+            "двое стоящих держат полную дистанцию"
+        );
+
+        let mut walkers = state_with(vec![
+            walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+            walking(2, Vec2::new(10.6, 10.0), Vec2::NEG_X),
+        ]);
+        resolve_pushes(&mut walkers, tuning_with(1.0, squeeze));
+        assert!(
+            walkers.pushes[0].length() > 0.0,
+            "двое идущих — тоже полную: поток не обязан слипаться"
+        );
+    }
+
+    /// Кратковременное сжатие ([`SeparationLab::stuck_compress`]) достаётся
+    /// только тому, кто УЖЕ залип: та же пара при нулевом стаже упора
+    /// расталкивается как обычно.
+    #[test]
+    fn only_a_stuck_pawn_squeezes() {
+        let lab = SeparationLab {
+            stuck_compress: 0.5,
+            stuck_after: 0.0,
+            stuck_ramp: 0.0,
+            ..Default::default()
+        };
+        let layout = |stuck: f32| {
+            state_with(vec![
+                Pawn {
+                    stuck,
+                    ..walking(1, Vec2::new(10.0, 10.0), Vec2::X)
+                },
+                Pawn {
+                    stuck,
+                    ..walking(2, Vec2::new(10.6, 10.0), Vec2::NEG_X)
+                },
+            ])
+        };
+
+        let mut fresh = layout(0.0);
+        resolve_pushes(&mut fresh, tuning_with(1.0, lab));
+        assert!(fresh.pushes[0].length() > 0.0, "не залипшие расходятся");
+
+        let mut jammed = layout(1.0);
+        resolve_pushes(&mut jammed, tuning_with(1.0, lab));
+        assert_eq!(jammed.pushes[0], Vec2::ZERO, "залипшие протискиваются");
+    }
+
+    /// Твёрдое ядро ([`SeparationLab::hard_core`]) снимает наложение тел
+    /// ЦЕЛИКОМ, даже когда мягкая часть отдана долей: то, чем тела уже
+    /// пересеклись, не торгуется.
+    #[test]
+    fn the_hard_core_is_resolved_in_full() {
+        let lab = SeparationLab {
+            hard_core: 0.5,
+            ..Default::default()
+        };
+        // радиусы 0.45 + 0.45: покой 0.9, ядро 0.45, а стоят пешки в 0.3
+        let mut state = state_with(vec![
+            pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
+            pawn(2, Vec2::new(10.3, 10.0), 0.45, 1.0),
+        ]);
+        // мягкой части достаётся сотая доля перекрытия — ядру это не помеха
+        resolve_pushes(&mut state, tuning_with(0.01, lab));
+
+        // ядро 0.45 против расстояния 0.3: по 0.075 на каждого
+        assert!((state.core_pushes[0] - Vec2::new(-0.075, 0.0)).length() < 1e-4);
+        assert!((state.core_pushes[1] - Vec2::new(0.075, 0.0)).length() < 1e-4);
+        // и мягкая часть при этом осталась мягкой
+        assert!(state.pushes[0].length() < 0.01);
+    }
+
+    /// Без ручки ядра нет: буфер пуст, и толчок ровно тот же, что был.
+    #[test]
+    fn without_the_knob_there_is_no_core_push() {
+        let mut state = state_with(vec![
+            pawn(1, Vec2::new(10.0, 10.0), 0.45, 1.0),
+            pawn(2, Vec2::new(10.3, 10.0), 0.45, 1.0),
+        ]);
+        resolve_pushes(&mut state, tuning(1.0));
+
+        assert!(state.core_pushes.iter().all(|push| *push == Vec2::ZERO));
+    }
+
+    /// Скольжение отпускает залипшего ([`SeparationLab::slide_release`]):
+    /// свободной пешке запрет «не лезь в тело» выдаётся, простоявшей в упоре —
+    /// уже нет, иначе сходящаяся толпа встаёт колом.
+    #[test]
+    fn sliding_lets_go_of_a_pawn_that_has_been_stuck() {
+        let lab = SeparationLab {
+            slide: 1.0,
+            slide_release: 1.0,
+            ..Default::default()
+        };
+        let layout = |stuck: f32| {
+            state_with(vec![
+                Pawn {
+                    stuck,
+                    ..walking(1, Vec2::new(10.0, 10.0), Vec2::X)
+                },
+                pawn(2, Vec2::new(10.5, 10.0), 0.45, 1.0),
+            ])
+        };
+
+        let mut fresh = layout(0.0);
+        resolve_pushes(&mut fresh, tuning_with(1.0, lab));
+        assert!(fresh.blocks[0] != Vec2::ZERO, "свободной запрет выдан");
+
+        let mut jammed = layout(1.5);
+        resolve_pushes(&mut jammed, tuning_with(1.0, lab));
+        assert_eq!(jammed.blocks[0], Vec2::ZERO, "залипшую отпустили");
+    }
+
+    /// Доля левшей ([`SeparationLab::left_share`]): при 1.0 обход зеркалится
+    /// целиком, при 0 остаётся правым — то есть сторона действительно личная и
+    /// берётся из `PawnId`, а не жёстко зашита.
+    #[test]
+    fn a_share_of_pawns_steps_aside_to_the_left() {
+        let layout = || {
+            state_with(vec![
+                walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+                walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+            ])
+        };
+
+        let mut righties = layout();
+        resolve_pushes(&mut righties, tuning(1.0));
+        assert!(righties.pushes[1].y > 0.0, "идущий на −X уходит в +Y");
+
+        let lefties = SeparationLab {
+            left_share: 1.0,
+            ..Default::default()
+        };
+        let mut mirrored = layout();
+        resolve_pushes(&mut mirrored, tuning_with(1.0, lefties));
+        assert!(mirrored.pushes[1].y < 0.0, "у левши — ровно наоборот");
+    }
+
+    /// Стороны обхода не одинаковы у всех: при доле 0.3 в сотне пешек есть и
+    /// левши, и правши. Это то самое «немного разброса», ради которого ручка и
+    /// заведена, — и оно обязано быть УСТОЙЧИВЫМ (сторона зависит от `PawnId`,
+    /// а не от прогона).
+    #[test]
+    fn the_side_of_a_pawn_is_personal_and_stable() {
+        let side = |pawn_id: u32| {
+            let pawn = walking(pawn_id, Vec2::ZERO, Vec2::X);
+            side_of(&pawn, 0.3)
+        };
+        let lefties = (0..100).filter(|id| side(*id).y > 0.0).count();
+        assert!(
+            (15..45).contains(&lefties),
+            "левшей должно быть около трети, а не {lefties}"
+        );
+        assert_eq!(side(7), side(7), "сторона одной и той же пешки постоянна");
     }
 
     /// Обход в куче — под ручкой: по умолчанию его нет (гейт `alone`), с
