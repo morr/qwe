@@ -11,6 +11,7 @@ use crate::map::osm::model::{
     point_at_arc_length, point_in_area, polyline_length, ring_area, ring_bounds,
 };
 use crate::map::roads::casing_width;
+use crate::rng::lcg_seeded_by;
 use crate::settings::{MAP_SIZE, TREE_DENSITY_STEP};
 
 /// Плотность деревьев при `TreeStyle::density == 1`: одно дерево на столько м²
@@ -413,15 +414,7 @@ fn plant_woods(
         let area = ring_area(&wood.outer);
         let count = ((area * TREE_PLANTING_DENSITY / TREE_AREA_PER_TREE) as usize).max(3);
 
-        let first = wood.outer[0];
-        let mut state: u64 =
-            0x9E37_79B9_7F4A_7C15 ^ (first.x.to_bits() as u64) ^ ((first.y.to_bits() as u64) << 32);
-        let mut next = move || {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((state >> 33) as f32) / (u32::MAX >> 1) as f32
-        };
+        let mut next = lcg_seeded_by(wood.outer[0]);
 
         asked += count;
         let mut planted = 0;
@@ -516,12 +509,7 @@ fn plant_standalone(
         // затравкой от координат самой ноды — дерево детерминировано само по
         // себе, а не порядком нод в выгрузке
         let radius = node.radius.unwrap_or_else(|| {
-            let mut state: u64 =
-                0x9E37_79B9_7F4A_7C15 ^ (pos.x.to_bits() as u64) ^ ((pos.y.to_bits() as u64) << 32);
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            let roll = ((state >> 33) as f32) / (u32::MAX >> 1) as f32;
+            let roll = lcg_seeded_by(pos)();
             TREE_MIN_RADIUS + roll * (TREE_MAX_RADIUS - TREE_MIN_RADIUS)
         });
         if obstacles.solid(pos, radius) || obstacles.on_road(pos) || occupied.crowded(pos) {
@@ -595,15 +583,7 @@ fn plant_rows(
         // тот же LCG, что в лесу, с посевом по началу ряда: радиусы обязаны
         // совпадать между политиками, иначе переключение тумблера перетряхивает
         // весь ряд вместо того, чтобы подвинуть застрявшие деревья
-        let first = row.points[0];
-        let mut state: u64 =
-            0x9E37_79B9_7F4A_7C15 ^ (first.x.to_bits() as u64) ^ ((first.y.to_bits() as u64) << 32);
-        let mut next = move || {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((state >> 33) as f32) / (u32::MAX >> 1) as f32
-        };
+        let mut next = lcg_seeded_by(row.points[0]);
 
         for (slot, &rank) in ranks.iter().enumerate() {
             let radius = row

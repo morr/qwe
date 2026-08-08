@@ -39,6 +39,7 @@ use bevy::math::Vec2;
 use self::cohorts::{cohort_of, entrance_count, equivalent_length};
 use self::index::{FootprintIndex, RoadIndex, ring_is_ccw};
 use crate::map::osm::model::{AreaKind, MapData, PolyArea};
+use crate::rng::lcg_seeded_by;
 use crate::settings::navtile_size;
 
 /// Шаг расстановки входов вдоль одной грани, м — медиана зазора между
@@ -265,21 +266,6 @@ fn place_along(
         }
     }
     placed
-}
-
-/// Детерминированный LCG, засеянный координатами здания: одна и та же выгрузка
-/// даёт одни и те же двери при каждом запуске, и дом не зависит от того, какие
-/// здания разобрали до него. Тот же приём и то же семейство, что у посадки
-/// деревьев в `parse::plant_trees`.
-fn lcg_seeded_by(point: Vec2) -> impl FnMut() -> f32 {
-    let mut state: u64 =
-        0x9E37_79B9_7F4A_7C15 ^ (point.x.to_bits() as u64) ^ ((point.y.to_bits() as u64) << 32);
-    move || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((state >> 33) as f32) / (u32::MAX >> 1) as f32
-    }
 }
 
 #[cfg(test)]
