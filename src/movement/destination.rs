@@ -96,6 +96,57 @@ impl Default for SlotSearch {
     }
 }
 
+/// Экспериментальные ручки слотов — то же, чем [`SeparationLab`] служит
+/// расталкиванию: стенд (`examples/demos/crowd_demo.rs`) их перебирает, игра
+/// живёт на дефолте, и дефолт воспроизводит нынешнее поведение точь-в-точь.
+///
+/// [`SeparationLab`]: crate::movement::SeparationLab
+#[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Resource, Default)]
+pub struct SlotLab {
+    pub matching: SlotMatching,
+    /// Насколько НАВТАЙЛОВ шире дистанции покоя ставится шаг решётки слотов
+    /// (0 — как сейчас, вплотную).
+    ///
+    /// Зачем. Шаг решётки — ровно дистанция покоя, округлённая вверх до тайла:
+    /// осевшая толпа стоит впритык, и пешке, чей слот ещё внутри, физически
+    /// негде между осевшими пройти — её ширина 1.8 м, а просвет между двумя
+    /// соседями 2.0 м. Каждый входящий поэтому обязан протолкнуться, и то, что
+    /// толпа уже осела, ей не помогает.
+    ///
+    /// Лишний тайл разводит слоты на 4 м, и просвет становится проходимым. За
+    /// это платят площадью: та же толпа садится на вчетверо большее пятно —
+    /// то есть уходит от центра дальше. Что из этого дороже, решает замер, а не
+    /// рассуждение.
+    pub slack: i32,
+}
+
+/// Как пакет пешек, идущих в ОДНУ И ТУ ЖЕ точку, разбирает свободные слоты.
+///
+/// Ручка стенда, а не вкус пользователя: у обоих режимов один и тот же выход
+/// (каждому по своему слоту, толпа набивается от цели наружу) и разная цена в
+/// пройденном пути. Дефолт — [`SlotMatching::Greedy`], то есть сегодняшнее
+/// поведение байт-в-байт.
+#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SlotMatching {
+    /// Пешка за пешкой: каждая берёт ближайший к цели свободный слот, а при
+    /// равенстве — тот, что с её стороны ([`DestinationClaims::claim_slot`]).
+    #[default]
+    Greedy,
+    /// Слот за слотом, от КРАЯ пачки к центру: сначала собираются `n` ближайших
+    /// к цели свободных слотов (та же пачка, что раздал бы жадный), потом
+    /// каждый слот, начиная с самого дальнего, достаётся ближайшей к нему
+    /// пешке.
+    ///
+    /// Зачем от края. Цена промаха пропорциональна тому, насколько слот
+    /// удалён от цели: путь пешки с обода радиуса `R` до слота в `ρ` от центра
+    /// равен `R − ρ·cos(разность углов)`, то есть у центрального слота
+    /// (`ρ = 0`) угол не значит ничего, а у крайнего решает всё. Жадный по
+    /// пешкам раздаёт наоборот — сначала центр, а крайние слоты достаются тем,
+    /// кто остался, то есть ровно там, где промах дороже всего, выбора уже нет.
+    Batch,
+}
+
 /// Сторона слота в тайлах: `ceil(дистанция покоя / navtile_size())`, но не
 /// меньше одного тайла.
 pub fn slot_side(rest_distance: f32) -> i32 {
@@ -195,6 +246,83 @@ impl DestinationClaims {
         Some((slot, slot_target(slot, side)))
     }
 
+    /// Раздать слоты ПАКЕТУ пешек, идущих в одну и ту же точку
+    /// ([`SlotMatching::Batch`]). Ответ — по элементу на каждого члена пакета,
+    /// в том же порядке; `None` там же, где его вернул бы [`Self::claim_slot`],
+    /// то есть когда свободных слотов на всех не хватило.
+    ///
+    /// Раздаёт не пешкам, а СЛОТАМ, и начиная с самого дальнего от цели: см.
+    /// [`SlotMatching::Batch`] о том, почему порядок именно такой.
+    ///
+    /// Цена — `O(радиус² + n·m)` на пакет против `n` кольцевых поисков у
+    /// жадного. Оправдана она только когда в одну точку идёт целая пачка;
+    /// одиночку вызывающий обязан отдать [`Self::claim_slot`] (это же и
+    /// сохраняет дешёвым обычный случай игры, где у каждого блуждающего своя
+    /// цель).
+    pub fn claim_group(
+        &mut self,
+        desired: IVec2,
+        members: &[(Entity, Option<IVec2>, Vec2)],
+        passable: impl Fn(IVec2) -> bool,
+        out: &mut Vec<Option<(IVec2, IVec2)>>,
+    ) {
+        out.clear();
+        out.resize(members.len(), None);
+        // старые заявки — ДО сбора свободных, всем пакетом: иначе члены пакета
+        // обходили бы собственные прошлые слоты, и пачка уезжала бы от цели на
+        // ровном месте (та же причина, что в `claim_slot`)
+        for (entity, previous, _) in members {
+            if let Some(previous) = previous {
+                self.release(*previous, *entity);
+            }
+        }
+
+        let side = self.side;
+        let radius = ((self.search_meters / (side as f32 * navtile_size())).ceil() as i32).max(1);
+        let anchor = slot_of(desired, side);
+        let mut free: Vec<(i32, IVec2, IVec2)> = Vec::new();
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let slot = anchor + IVec2::new(dx, dy);
+                if self.by_slot.contains_key(&slot) {
+                    continue;
+                }
+                let target = slot_target(slot, side);
+                if !passable(target) {
+                    continue;
+                }
+                free.push((dx * dx + dy * dy, slot, target));
+            }
+        }
+        // пачка — те же `n` слотов, что раздал бы жадный: ближайшие к цели.
+        // Хвост ключа по координатам, а не порядок обхода: на равном расстоянии
+        // слотов бывает восемь, и выбор между ними обязан быть устойчивым
+        free.sort_unstable_by_key(|(distance, slot, _)| (*distance, slot.x, slot.y));
+        free.truncate(members.len());
+
+        let mut taken = vec![false; members.len()];
+        // от края пачки к центру, см. [`SlotMatching::Batch`]
+        for (_, slot, target) in free.iter().rev() {
+            let centre = tile_center(*target);
+            let mut best: Option<(f32, usize)> = None;
+            for (index, (_, _, from)) in members.iter().enumerate() {
+                if taken[index] {
+                    continue;
+                }
+                let cost = (centre - *from).length_squared();
+                if best.is_none_or(|(previous, _)| cost < previous) {
+                    best = Some((cost, index));
+                }
+            }
+            let Some((_, index)) = best else {
+                break;
+            };
+            taken[index] = true;
+            out[index] = Some((*slot, *target));
+            self.by_slot.insert(*slot, members[index].0);
+        }
+    }
+
     /// Свободный слот, ближайший к `desired`, а при равенстве — к `from`.
     ///
     /// Кольцевой поиск, как `navigation::nearest_tile_where`, но со вторым
@@ -263,6 +391,69 @@ impl DestinationClaims {
     }
 }
 
+/// Раздать слоты целому пакету пешек — единственная точка входа для обоих
+/// вызывающих (система ниже и `drive_routes` стенда).
+///
+/// Пакет обязан прийти УЖЕ в том порядке, в котором его хотят обработать:
+/// жадный режим раздаёт ровно по нему, пакетный — группирует по желаемой цели,
+/// сохраняя порядок первого члена каждой группы. Ответ — по элементу на
+/// каждого члена, в том же порядке; `None` значит «свободного слота нет, идти в
+/// общую точку без заявки».
+///
+/// Группа из одного члена уходит в [`DestinationClaims::claim_slot`] при любом
+/// режиме: пакетная раздача для неё вырождается в тот же ответ, а стоит
+/// заметно дороже. В игре, где у каждого блуждающего своя цель, из одиночек
+/// состоит почти весь пакет — то есть цена режима остаётся там, ради чего он и
+/// заведён: в толпе, идущей в одну точку.
+pub fn claim_batch(
+    claims: &mut DestinationClaims,
+    matching: SlotMatching,
+    batch: &[(Entity, Option<IVec2>, IVec2, Vec2)],
+    passable: impl Fn(IVec2) -> bool,
+    out: &mut Vec<Option<(IVec2, IVec2)>>,
+) {
+    out.clear();
+    out.resize(batch.len(), None);
+    if matching == SlotMatching::Greedy {
+        for (index, (entity, previous, desired, from)) in batch.iter().enumerate() {
+            out[index] = claims.claim_slot(*entity, *previous, *desired, *from, &passable);
+        }
+        return;
+    }
+
+    // группы «одна и та же желаемая цель», в порядке первого члена
+    let mut groups: Vec<(IVec2, Vec<usize>)> = Vec::new();
+    let mut by_target: HashMap<IVec2, usize> = HashMap::new();
+    for (index, (_, _, desired, _)) in batch.iter().enumerate() {
+        match by_target.get(desired) {
+            Some(group) => groups[*group].1.push(index),
+            None => {
+                by_target.insert(*desired, groups.len());
+                groups.push((*desired, vec![index]));
+            }
+        }
+    }
+
+    let mut members = Vec::new();
+    let mut answers = Vec::new();
+    for (desired, indices) in &groups {
+        if let [only] = indices[..] {
+            let (entity, previous, _, from) = batch[only];
+            out[only] = claims.claim_slot(entity, previous, *desired, from, &passable);
+            continue;
+        }
+        members.clear();
+        members.extend(indices.iter().map(|index| {
+            let (entity, previous, _, from) = batch[*index];
+            (entity, previous, from)
+        }));
+        claims.claim_group(*desired, &members, &passable, &mut answers);
+        for (slot, index) in answers.iter().zip(indices) {
+            out[*index] = *slot;
+        }
+    }
+}
+
 /// Развести свежие заявки на поиск пути по своим слотам.
 ///
 /// Врезка одна и не в системы поведения: так слоты покрывают блуждание людей,
@@ -271,11 +462,13 @@ impl DestinationClaims {
 /// Перезапись `movable.state` обязательна и обязана быть условной: фильтр
 /// устаревших ответов в `apply_result` сверяет `end_tile` ответа с целью в
 /// состоянии, и разъехавшись, они выбросили бы каждый найденный путь.
+#[allow(clippy::too_many_arguments)]
 pub fn assign_destination_slots(
     mut commands: Commands,
     navmesh: Res<ArcNavmesh>,
     style: Res<HumanStyle>,
     search: Res<SlotSearch>,
+    lab: Res<SlotLab>,
     mut claims: ResMut<DestinationClaims>,
     mut fresh: Query<
         (
@@ -294,8 +487,10 @@ pub fn assign_destination_slots(
         ),
     >,
     mut order: Local<Vec<(f32, u8, u32, Entity)>>,
+    mut batch: Local<Vec<(Entity, Option<IVec2>, IVec2, Vec2)>>,
+    mut slots: Local<Vec<Option<(IVec2, IVec2)>>>,
 ) {
-    claims.sync(slot_side(style.body_radius * 2.0), search.0);
+    claims.sync(slot_side(style.body_radius * 2.0) + lab.slack, search.0);
 
     // Пакет обрабатывается от ближних к своей цели к дальним: место у цели
     // должно достаться тому, кто рядом, а не тому, у кого меньше `PawnId`.
@@ -327,29 +522,41 @@ pub fn assign_destination_slots(
             .then_with(|| (left.1, left.2).cmp(&(right.1, right.2)))
     });
 
-    let navmesh = navmesh.read();
-    for (.., entity) in order.iter() {
-        let Ok((_, _, _, position, mut movable, mut request, claim)) = fresh.get_mut(*entity)
-        else {
-            continue;
-        };
-        let desired = request.end_tile;
-        let slot = claims.claim_slot(
+    batch.clear();
+    batch.extend(order.iter().filter_map(|(.., entity)| {
+        let (_, _, _, position, _, request, claim) = fresh.get(*entity).ok()?;
+        Some((
             *entity,
             claim.map(|claim| claim.0),
-            desired,
+            request.end_tile,
             position.0,
+        ))
+    }));
+
+    {
+        let navmesh = navmesh.read();
+        claim_batch(
+            &mut claims,
+            lab.matching,
+            &batch,
             |tile| navmesh.is_passable(tile.x, tile.y),
+            &mut slots,
         );
+    }
+
+    for ((entity, _, desired, _), slot) in batch.iter().zip(slots.iter()) {
+        let Ok((_, _, _, _, mut movable, mut request, _)) = fresh.get_mut(*entity) else {
+            continue;
+        };
         match slot {
             Some((slot, target)) => {
                 if target != desired {
-                    request.end_tile = target;
-                    if movable.state == MovableState::Pathfinding(desired) {
-                        movable.state = MovableState::Pathfinding(target);
+                    request.end_tile = *target;
+                    if movable.state == MovableState::Pathfinding(*desired) {
+                        movable.state = MovableState::Pathfinding(*target);
                     }
                 }
-                commands.entity(*entity).insert(DestinationClaim(slot));
+                commands.entity(*entity).insert(DestinationClaim(*slot));
             }
             // свободного слота нет — идём в общую точку, как раньше
             None => {
@@ -547,6 +754,105 @@ mod tests {
             None
         );
         assert_eq!(claims.len(), 0);
+    }
+
+    /// Пачка на общую цель: у каждого свой слот, ни один не повторился.
+    #[test]
+    fn a_batch_gives_every_member_its_own_slot() {
+        let mut claims = claims_with(1);
+        let desired = IVec2::new(10, 10);
+        let members: Vec<_> = ring(8, 40.0, desired);
+        let mut out = Vec::new();
+
+        claims.claim_group(desired, &members, anywhere, &mut out);
+
+        let slots: Vec<IVec2> = out.iter().map(|slot| slot.expect("место есть").0).collect();
+        assert_eq!(slots.len(), 8);
+        for (index, slot) in slots.iter().enumerate() {
+            assert!(
+                !slots[..index].contains(slot),
+                "слот {slot} выдан дважды: {slots:?}"
+            );
+        }
+        assert_eq!(claims.len(), 8);
+    }
+
+    /// То, ради чего пакетный режим и написан: суммарный путь пачки, идущей в
+    /// одну точку, не больше, чем у жадного. Двенадцати пешек на ободе хватает,
+    /// чтобы жадный начал раздавать крайние слоты тем, кто остался, — то есть
+    /// не глядя на то, с какой стороны пешка подходит.
+    #[test]
+    fn a_batch_never_walks_further_than_the_greedy() {
+        let desired = IVec2::new(10, 10);
+        let members = ring(12, 40.0, desired);
+
+        let cost = |matching| {
+            let mut claims = claims_with(1);
+            let batch: Vec<_> = members
+                .iter()
+                .map(|(entity, previous, from)| (*entity, *previous, desired, *from))
+                .collect();
+            let mut out = Vec::new();
+            claim_batch(&mut claims, matching, &batch, anywhere, &mut out);
+            out.iter()
+                .zip(&members)
+                .map(|(slot, (.., from))| {
+                    let (_, target) = slot.expect("место есть");
+                    (tile_center(target) - *from).length()
+                })
+                .sum::<f32>()
+        };
+
+        let greedy = cost(SlotMatching::Greedy);
+        let batch = cost(SlotMatching::Batch);
+        assert!(batch < greedy, "пакетный {batch} против жадного {greedy}");
+    }
+
+    /// Мест меньше, чем пешек, — хвост остаётся без слота и идёт в общую точку.
+    /// Тот же режим отказа, что у одиночного поиска.
+    #[test]
+    fn a_batch_short_of_slots_leaves_the_tail_without_one() {
+        let mut claims = claims_with(1);
+        let desired = IVec2::new(10, 10);
+        let members = ring(8, 40.0, desired);
+        let mut out = Vec::new();
+
+        // проходима ровно одна клетка — цель, и больше ничего
+        claims.claim_group(desired, &members, |tile| tile == desired, &mut out);
+
+        assert_eq!(out.iter().filter(|slot| slot.is_some()).count(), 1);
+    }
+
+    /// Пачка из одного — это обычный поиск: пакетный режим не должен менять
+    /// ответ там, где выбирать не из чего (в игре из таких почти весь пакет).
+    #[test]
+    fn a_lone_member_of_a_batch_gets_the_greedy_answer() {
+        let desired = IVec2::new(10, 10);
+        let from = tile_center(desired) - Vec2::new(40.0, 0.0);
+        let batch = [(entity(1), None, desired, from)];
+
+        let answer = |matching| {
+            let mut claims = claims_with(1);
+            let mut out = Vec::new();
+            claim_batch(&mut claims, matching, &batch, anywhere, &mut out);
+            out[0]
+        };
+
+        assert_eq!(answer(SlotMatching::Batch), answer(SlotMatching::Greedy));
+    }
+
+    /// Пешки, равномерно расставленные по ободу вокруг цели.
+    fn ring(count: u32, radius: f32, around: IVec2) -> Vec<(Entity, Option<IVec2>, Vec2)> {
+        (0..count)
+            .map(|index| {
+                let angle = std::f32::consts::TAU * index as f32 / count as f32;
+                (
+                    entity(index + 1),
+                    None,
+                    tile_center(around) + Vec2::from_angle(angle) * radius,
+                )
+            })
+            .collect()
     }
 
     /// Смена стороны слота выбрасывает индекс: ключи прошлой решётки не значат

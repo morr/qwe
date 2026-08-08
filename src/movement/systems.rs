@@ -610,6 +610,7 @@ pub fn move_moving_entities(
     separation: Res<super::separation::SeparationStyle>,
     holds: Res<super::separation::SeparationHolds>,
     steer: Res<super::separation::SeparationSteer>,
+    block: Res<super::separation::SeparationBlock>,
     lab: Res<super::separation::SeparationLab>,
     human_style: Res<crate::human::HumanStyle>,
     mut query: Query<
@@ -635,6 +636,10 @@ pub fn move_moving_entities(
     // пустоты карты внутри него — единственная цена руления для тех, кто им не
     // пользуется. Снаружи она стоит ровно ничего
     let steering = !steer.0.is_empty();
+    // та же экономия, что у руления: карта пуста почти всегда, и проверять её
+    // пустоту внутри цикла по 20 000 пешек значило бы платить за механизм тем,
+    // кто им не пользуется
+    let sliding = lab.slide > 0.0 && !block.0.is_empty();
     for (entity, mut movable, mut sim_position, is_human) in &mut query {
         let cell_before = crate::spatial::cell_of(sim_position.0);
         let rest = if is_human { human_rest } else { demon_rest };
@@ -644,8 +649,9 @@ pub fn move_moving_entities(
         // покоя от цели дошёл: ближе его не пустит то самое тело, а без
         // засчитанного прихода он толкался бы с ним до скончания века
         if !holds.0.is_empty() && holds.0.contains(&entity) {
+            let slack = rest * lab.arrive_slack;
             if let MovableState::Moving(target) = movable.state
-                && (tile_center(target) - sim_position.0).length_squared() <= rest * rest
+                && (tile_center(target) - sim_position.0).length_squared() <= slack * slack
             {
                 // событие прихода в `to_idle` гейтится пустым путём
                 movable.path.clear();
@@ -659,6 +665,12 @@ pub fn move_moving_entities(
         // обходит на полной скорости
         let aside = if steering {
             steer.0.get(&entity).copied().unwrap_or(Vec2::ZERO)
+        } else {
+            Vec2::ZERO
+        };
+        // куда идти нельзя (см. `separation::SeparationBlock`)
+        let barrier = if sliding {
+            block.0.get(&entity).copied().unwrap_or(Vec2::ZERO)
         } else {
             Vec2::ZERO
         };
@@ -716,6 +728,15 @@ pub fn move_moving_entities(
                     (direction + aside).normalize_or_zero()
                 } else {
                     direction
+                };
+                // скольжение по контакту: из шага снимается то, чем пешка лезет
+                // В тело, поперечное остаётся целиком. Длину НЕ восстанавливаем
+                // — иначе лобовая пешка, у которой поперечного почти нет,
+                // выстреливала бы вбок на полной скорости
+                let step = if barrier != Vec2::ZERO {
+                    step - barrier * (step.dot(barrier).max(0.0) * lab.slide)
+                } else {
+                    step
                 };
                 sim_position.0 += step * distance_to_move;
                 break;

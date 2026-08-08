@@ -244,6 +244,43 @@ pub struct SeparationLab {
     /// стоит на дороге. 0 — руления нет, и `move_moving_entities` идёт ровно
     /// тем кодом, что и раньше. См. [`SeparationSteer`].
     pub steer: f32,
+    /// Подвижность СТОЯЩЕЙ пешки в паре — доля коррекции, которая ей достаётся
+    /// (1 — как сейчас, наравне с идущей; 0 — стоящую не сдвинуть вовсе).
+    ///
+    /// Зачем. Пешка, дошедшая до своего слота, дошла ОКОНЧАТЕЛЬНО: её слот
+    /// заявлен, ничей больше путь в нём не кончается, и всё, что с ней может
+    /// случиться дальше, — это толчки от проходящих мимо. Каждый такой толчок
+    /// уводит её со слота, а вернуться ей нечем: маршрут кончился, новую цель
+    /// в этом сценарии никто не выдаёт. Толпа, которая должна была осесть,
+    /// вместо этого весь остаток окна расползается — второй критерий стенда
+    /// («никто не двигается») не выполняется никогда, а третий (пройденный
+    /// путь) растёт из ничего.
+    ///
+    /// Стоящий, которого не сдвинуть, — это ещё и то, как ведут себя живые
+    /// люди: протискивается тот, кто идёт, а не тот, кто стоит. Ровно этим
+    /// уже выражена «толпа обтекает демона» ([`DEMON_MOBILITY`]).
+    ///
+    /// Ноль брать опасно: в куче, где НИКТО не идёт (сценарий 1), стоят все, и
+    /// при нулевой подвижности она не разойдётся вовсе. Отсюда ручка, а не
+    /// правило.
+    pub idle_mobility: f32,
+    /// Во сколько раз дистанция покоя, на которой ПРИДЕРЖАННАЯ пешка
+    /// засчитывается дошедшей (`systems::move_moving_entities`), меньше
+    /// настоящей. 1 — как сейчас.
+    ///
+    /// Зачем ручка. Допуск существует ради затора: упёршуюся в чужое тело
+    /// пешку ближе к цели всё равно не пустят, и без засчитанного прихода она
+    /// толкалась бы вечно. Но допуск — це́лая дистанция покоя, а шаг решётки
+    /// слотов — ровно она же (1.8 м покоя при шаге 2 м): пешка, вставшая на
+    /// краю допуска, стоит почти В СОСЕДНЕМ слоте. Соседи после этого
+    /// перекрыты навсегда, толкают друг друга без надежды разойтись (обоим
+    /// «дойти» уже некуда) — и осевшая толпа не замирает, а тихо ползёт весь
+    /// остаток прогона.
+    pub arrive_slack: f32,
+    /// Какая доля составляющей шага, ведущей В перегородившее тело, снимается
+    /// (0 — не снимается ничего, как сейчас; 1 — в тело не идём вовсе).
+    /// См. [`SeparationBlock`].
+    pub slide: f32,
     /// Ближе этого расстояния до waypoint'а руление выключается, м. Иначе
     /// пешка, которую уводит вбок у самой точки, начинает наматывать вокруг
     /// неё круги вместо того, чтобы её пройти: `move_moving_entities` снимает
@@ -279,6 +316,55 @@ pub fn reset_separation_steer(mut steer: ResMut<SeparationSteer>) {
     steer.0.clear();
 }
 
+/// Куда пешке НЕЛЬЗЯ идти — единичный вектор на того, кто перегородил ей курс
+/// (равнодействующая, если перегородили несколько). Читает
+/// `move_moving_entities` и вычитает из шага составляющую ВДОЛЬ него
+/// ([`SeparationLab::slide`]); наполняет прогон расталкивания там же, где
+/// [`SeparationHolds`], и ровно по тому же условию.
+///
+/// Зачем это отдельно от придержки. Придержка режет ВЕСЬ шаг: и то движение,
+/// которым пешка лезет в чужое тело, и то, которым она из-под него
+/// выбирается. Отсюда её цена — поток, ползущий на доле скорости, — и отсюда
+/// же соблазн выключить её совсем (`hold = 1`), после чего пешки на полном
+/// ходу входят друг в друга: за кадр встречная пара сближается на 0.09 м, а
+/// расталкивание успевает снять `rate · dt` ≈ 7% перекрытия, то есть заведомо
+/// меньше. На стенде это видно как сотни пар, сошедшихся ближе половины
+/// спрайта.
+///
+/// Скольжение снимает ровно ту составляющую, которая ведёт В тело, и не
+/// трогает поперечную: лобовая пешка останавливается сама собой (весь её курс
+/// вдоль запрета), а идущая по касательной проходит на полной скорости. Это то
+/// же разделение, что у руления, но на шаге, а не на курсе: руление решает,
+/// КУДА свернуть, скольжение — не пускает туда, где тело.
+#[derive(Resource, Default)]
+pub struct SeparationBlock(pub bevy::ecs::entity::EntityHashMap<Vec2>);
+
+/// Вход в мир начинается без перегороженных, см. [`reset_separation_holds`].
+pub fn reset_separation_block(mut block: ResMut<SeparationBlock>) {
+    block.0.clear();
+}
+
+/// Всё, что прогон расталкивания ВЫДАЁТ шагу движения, одним параметром.
+///
+/// Группа, а не три отдельных `ResMut`: у `separate_pawns` и без них четырнадцать
+/// параметров, а потолок кортежа системы — шестнадцать. Заодно видно, что это
+/// один выход механизма, а не три независимых ресурса: наполняются они вместе,
+/// чистятся вместе и врозь не имеют смысла.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct SeparationOutput<'w> {
+    holds: ResMut<'w, SeparationHolds>,
+    steer: ResMut<'w, SeparationSteer>,
+    block: ResMut<'w, SeparationBlock>,
+}
+
+impl SeparationOutput<'_> {
+    fn clear(&mut self) {
+        self.holds.0.clear();
+        self.steer.0.clear();
+        self.block.0.clear();
+    }
+}
+
 impl Default for SeparationLab {
     fn default() -> Self {
         Self {
@@ -293,6 +379,9 @@ impl Default for SeparationLab {
             compress_at: 4.0,
             crowd_sidestep: 0.0,
             steer: 0.0,
+            idle_mobility: 1.0,
+            arrive_slack: 1.0,
+            slide: 0.0,
             steer_release: 2.0,
         }
     }
@@ -573,6 +662,9 @@ pub(super) struct SeparationState {
     /// Сколько пар этого прогона уже перекрылись — остальные попали только в
     /// упреждение. Считается на месте, в проходе толчков.
     overlapping: usize,
+    /// Сумма направлений на перегородивших — источник [`SeparationBlock`].
+    /// Копится ненормированной и нормируется в конце, как и `steers`.
+    blocks: Vec<Vec2>,
     /// Сумма сторон обхода по всем соседям — источник [`SeparationSteer`].
     /// Складывается ненормированной и нормируется один раз в конце: пешка,
     /// зажатая с двух сторон, должна получить их сумму, а не последнюю.
@@ -651,6 +743,8 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
     state.steers.clear();
     state.steers.resize(state.pawns.len(), Vec2::ZERO);
+    state.blocks.clear();
+    state.blocks.resize(state.pawns.len(), Vec2::ZERO);
     state.overlapping = 0;
 
     // Насколько далеко имеет смысл смотреть на ещё не перекрывшегося соседа: за
@@ -753,8 +847,16 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         let overlap = (min_distance - distance).max(0.0) * fraction;
         let correction = direction * overlap;
         let (share_a, share_b) = shares(&a, &b, direction);
-        let a_frontal = a.heading.dot(direction) > 0.0;
-        let b_frontal = b.heading.dot(-direction) > 0.0;
+        // не «да/нет», а НАСКОЛЬКО в лоб: косинус между курсом и осью пары.
+        // Скольжению ([`SeparationBlock`]) нужна именно величина — сосед,
+        // задевший плечом, запрещает идти вперёд не так же, как вставший
+        // ровно на пути, а сумма одинаковых «да» от полудюжины боковых даёт
+        // равнодействующую точно по курсу и останавливает пешку там, где
+        // прохода на самом деле никто не перекрывал
+        let a_facing = a.heading.dot(direction);
+        let b_facing = b.heading.dot(-direction);
+        let a_frontal = a_facing > 0.0;
+        let b_frontal = b_facing > 0.0;
         // Придержка — только упёршемуся в СТОЯЩЕГО или ВСТРЕЧНОГО: там напор
         // бесполезен — ходьба давит ровно против коррекции этой же пары, и оба
         // усилия взаимно гасятся навечно (см. [`SeparationHolds`]). Попутного
@@ -768,6 +870,16 @@ fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         }
         if b.human && b_blocked {
             state.held[j as usize] = true;
+        }
+        // запрет копится по тому же условию, что придержка, и у ВСЕХ, а не
+        // только у людей: демон в погоне тоже не обязан входить в чужое тело
+        if lab.slide > 0.0 {
+            if a_blocked {
+                state.blocks[i as usize] += direction * a_facing;
+            }
+            if b_blocked {
+                state.blocks[j as usize] -= direction * b_facing;
+            }
         }
         // Руление у СОМКНУВШЕЙСЯ пары. Условие то же, что у придержки, и это не
         // совпадение: придержка — «упёрся, перестань давить», руление — «упёрся,
@@ -844,8 +956,7 @@ pub fn separate_pawns(
     demons: Res<SpatialGrid<Demon>>,
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut holds: ResMut<SeparationHolds>,
-    mut steer: ResMut<SeparationSteer>,
+    mut out: SeparationOutput,
     mut pawns: Query<
         (
             &mut SimPosition,
@@ -861,8 +972,7 @@ pub fn separate_pawns(
 ) {
     if !style.enabled {
         state.pending_dt = 0.0;
-        holds.0.clear();
-        steer.0.clear();
+        out.clear();
         return;
     }
     state.pending_dt += time.delta_secs();
@@ -879,8 +989,7 @@ pub fn separate_pawns(
     // с расталкиванием выключается и придержка — иначе пешки, придержанные
     // последним прогоном перед отзумом, остались бы придержанными навсегда
     if camera.scale.x >= SEPARATION_MAX_ZOOM {
-        holds.0.clear();
-        steer.0.clear();
+        out.clear();
         return;
     }
 
@@ -914,6 +1023,14 @@ pub fn separate_pawns(
                 (demon_radius, DEMON_MOBILITY)
             } else {
                 (human_radius, 1.0)
+            };
+            // осевшая пешка упирается: см. [`SeparationLab::idle_mobility`].
+            // Множителем, а не заменой, — иначе ручка перебивала бы и
+            // подвижность демона, которая выражает совсем другое
+            let mobility = if is_moving {
+                mobility
+            } else {
+                mobility * lab.idle_mobility
             };
             pawn_buffer.push(Pawn {
                 entity,
@@ -949,17 +1066,20 @@ pub fn separate_pawns(
 
     // придержанные — с чистого листа каждый прогон: ушедший из вьюпорта или
     // разошедшийся с соседом освобождается сам, без отдельной уборки
-    holds.0.clear();
-    steer.0.clear();
+    out.clear();
     for (index, pawn) in state.pawns.iter().enumerate() {
         if state.held[index] {
-            holds.0.insert(pawn.entity);
+            out.holds.0.insert(pawn.entity);
+        }
+        let blocked = state.blocks[index].normalize_or_zero();
+        if blocked != Vec2::ZERO {
+            out.block.0.insert(pawn.entity, blocked);
         }
         // нормируем один раз здесь: в буфере лежит СУММА сторон по всем
         // соседям, и зажатая с двух сторон пешка получает их равнодействующую
         let lateral = state.steers[index].normalize_or_zero();
         if lateral != Vec2::ZERO {
-            steer.0.insert(pawn.entity, lateral * lab.steer);
+            out.steer.0.insert(pawn.entity, lateral * lab.steer);
         }
     }
 

@@ -15,7 +15,8 @@ pub use self::components::{
     RetireAt, SimPosition,
 };
 pub use self::destination::{
-    DestinationClaim, DestinationClaims, SlotSearch, assign_destination_slots, slot_side,
+    DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
+    assign_destination_slots, claim_batch, slot_side, slot_target,
 };
 pub use self::separation::{
     SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
@@ -49,6 +50,7 @@ impl Plugin for MovementPlugin {
             .register_type::<SeparationStyle>()
             .init_resource::<SeparationHolds>()
             .init_resource::<SeparationSteer>()
+            .init_resource::<self::separation::SeparationBlock>()
             // стенд замеров (`examples/demos/crowd_demo.rs`): дефолт равен
             // константам, так что игра идёт по тем же веткам, что и раньше
             .init_resource::<SeparationLab>()
@@ -59,6 +61,8 @@ impl Plugin for MovementPlugin {
             .register_type::<DestinationClaim>()
             .init_resource::<SlotSearch>()
             .register_type::<SlotSearch>()
+            .init_resource::<SlotLab>()
+            .register_type::<SlotLab>()
             // индекс заявок переживает сущности только через это снятие:
             // деспавн поднимает `Remove` на каждый компонент
             .add_observer(self::destination::on_destination_claim_removed)
@@ -68,6 +72,7 @@ impl Plugin for MovementPlugin {
                     self::destination::reset_destination_claims,
                     self::separation::reset_separation_holds,
                     self::separation::reset_separation_steer,
+                    self::separation::reset_separation_block,
                 ),
             )
             // придержки чистит сам прогон расталкивания (тумблер, отзум), но
@@ -81,6 +86,9 @@ impl Plugin for MovementPlugin {
                         .run_if(|holds: Res<SeparationHolds>| !holds.0.is_empty()),
                     self::separation::reset_separation_steer
                         .run_if(|steer: Res<SeparationSteer>| !steer.0.is_empty()),
+                    self::separation::reset_separation_block.run_if(
+                        |block: Res<self::separation::SeparationBlock>| !block.0.is_empty(),
+                    ),
                 )
                     .run_if(not(self::separation::separation_runs)),
             )
