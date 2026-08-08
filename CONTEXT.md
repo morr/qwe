@@ -1674,8 +1674,10 @@ in `main.rs`.
 - **sim_time.rs** — Space pauses, `=`/`-` walk the speed ladder (`SPEED_LADDER`:
   1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
-  - **SimSpeed** — `{requested, affordable, effective, actual}`. `requested` is what the
-    ladder says; `affordable` is what the regulator computed the machine can carry;
+  - **SimSpeed** — `{requested, pipeline, affordable, effective, actual}`. `requested` is
+    what the ladder says; `pipeline` is the pathfinding-pipeline ceiling, the one
+    regulator value with memory (see below); `affordable` is what the regulator computed
+    the machine can carry (already `min`-ed with `pipeline`);
     `effective` is its command, what reaches `Time<Virtual>`; `actual` is measured —
     virtual seconds per real second, averaged over `ACTUAL_SPEED_WINDOW` (0.5 s of *real*
     time, so long frames weigh what they cost). `actual` is the only honest one: Bevy
@@ -1690,24 +1692,35 @@ in `main.rs`.
     went backwards is skipped.
     **The split is the point.** `tick_ms` is CPU work — a property of the world, not of
     the speed, since speed changes how many steps a frame runs and not what a step costs.
-    `wait_ms` is the main thread standing in `block_on` waiting for the pathfinding pool
-    (`apply_pathfinding_results` reports it through `SimLoad::add_wait`), and that one
-    depends on the speed directly: the answer's deadline is measured in **ticks**
+    `wait_ms` is per-frame time inside the fixed loop that is not per-tick work — chiefly
+    the main thread standing in `block_on` waiting for the pathfinding pool
+    (`apply_pathfinding_results` reports it through `SimLoad::add_frame_cost`) — and that
+    one depends on the speed directly: the answer's deadline is measured in **ticks**
     (`PATHFINDING_RETIRE_TICKS`), so faster ticks give the pool less real time for the
     same work. Blending the two into one number closes the regulator on a quantity it
     controls itself — measured live as tick cost swinging 2.9…7.6 ms with a 2–4 s period
-    and the speed following it 1.3…3.4×. Published as `sim/tick_ms` and `sim/wait_ms`,
-    both on the panel's third line (`tick 1.20 + 3.50 ms wait`).
-  - **The regulator solves, it does not hunt.** Two independent bounds, the smaller wins.
-    *By CPU*: a frame of length `d` carries `d × S × 64` ticks, so allowing the simulation
-    `SIM_FRAME_SHARE` of any frame gives `S = 1000 × share / (64 × tick_ms)` — `d`
-    cancels, so the answer does not depend on which frame just happened, on vsync
-    quantisation, or on history. *By pipeline*: the pool needs `W` real seconds per tick's
-    work, a tick lasts `1/(64 × S)`, so the stall is `W − 1/(64 × S)` and the same
-    "busy at most a share of the frame" gives `S = (1 + share) / (64 × (tick_ms + W))`.
-    `W` is measured, not tuned — `wait_ms + 1/(64 × S)` — and unlike either term alone it
-    does not depend on the speed. No stall measured, no pipeline bound: there is no
-    evidence one exists, and the climb is slew-limited anyway.
+    and the speed following it 1.3…3.4×. `wait_peak_ms` is the **peak-hold** companion of
+    `wait_ms`: it jumps to any raw sample at once and decays toward the mean over
+    `SIM_LOAD_PEAK_DECAY` (3 s) — bursts arrive in packs seconds apart, and the mean
+    dilutes them before the pipeline ceiling can answer. Published as `sim/tick_ms`,
+    `sim/wait_ms` and `sim/wait_peak_ms`, all on the panel's third line
+    (`tick 1.20 + 3.50 ms wait (pk 8.10)`).
+  - **The regulator solves where it can, integrates where it cannot.** Two independent
+    bounds, the smaller wins.
+    *By CPU it solves*: a frame of length `d` carries `d × S × 64` ticks, so allowing the
+    simulation `SIM_FRAME_SHARE` of any frame gives `S = 1000 × share / (64 × tick_ms)` —
+    `d` cancels, so the answer does not depend on which frame just happened, on vsync
+    quantisation, or on history.
+    *By pipeline it integrates* (`pipeline_limit`, state in `SimSpeed::pipeline`): the
+    pathfinding pool is a queue, and near saturation the wait grows as `1/(1 − load)` —
+    unbounded gain, so any one-step formula overshoots (measured live: wait swinging
+    0.9…8.0 ms/tick with a ~1 s period over a flat CPU cost). Instead the ceiling steps
+    against the busy-per-tick ratio (`tick_ms + wait_peak_ms` vs the share's per-tick
+    allowance), **proportionally to the overrun** — 10 % over cuts 10 % per
+    `SPEED_BACKOFF_TIME` (1 s), double cuts half; a constant step keeps cutting while the
+    queue drains and makes its own sawtooth (measured: 1.1…1.8× with a ~2 s period).
+    Probing back up runs on `SPEED_PROBE_TIME` (6 s). Sizing to the **peak** wait, not
+    the mean, is a deliberate speed-for-smoothness trade.
     `SIM_FRAME_SHARE` is derived, not tuned: `1 − SIM_RENDER_BUDGET × MIN_SIM_FPS`
     (13 ms per frame reserved for everything that is not simulation → 0.61). Frames then
     settle at `rest / (1 − share)` — a contraction with gain `share < 1`, stable by
@@ -1715,7 +1728,22 @@ in `main.rs`.
     `SPEED_CLIMB_DOUBLE_TIME` (0.75 s)**, with a symmetric `SPEED_DEADBAND` (2 %). The
     climb limit is the one thing the solver cannot compute — tick cost lags the speed,
     because a speed-up spawns path requests whose cost lands a second or two later.
+    On top of the solved target, `frame_overrun` divides by how late the real frame ran
+    versus `1/MIN_SIM_FPS` — unity in normal operation, it breaks the "long frame carries
+    more ticks carries a longer frame" self-amplification during a dip.
     Floored at `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited.
+  - **The frame-budget guard** (`guard_frame_budget`, first system of `FixedUpdate`) is
+    the hard backstop behind all of the above: the regulator aims at `SIM_FRAME_BUDGET_MS`
+    (share × target frame ≈ 20 ms) from **smoothed** measurements, and a burst lands
+    before any filter learns of it. Once a frame's fixed-loop run has eaten the budget,
+    the guard strips the remaining `Time<Fixed>` overstep — the loop stops after the
+    current tick — and books it into **TickDebt**, which `begin_sim_load` returns to the
+    accumulator next frame (capped at `SIM_TICK_DEBT_CAP`, beyond which time is honestly
+    dropped, same philosophy as `max_delta`; held while paused; zeroed on restart and
+    city switch). Deferred ticks do not change game logic — how many ticks share a render
+    frame floats anyway — a burst shows as a brief `actual` dip instead of a visible
+    hitch. `TickDebt.deferred` (BRP-readable) counts everything ever deferred, so a live
+    check can see the guard actually firing.
   - **Why fps is not the feedback signal**, though the goal is stated in frames. The
     window is `PresentMode::AutoVsync`, so measured fps only takes values `refresh/n`:
     while a frame fits in 16.7 ms the reading is flat 60 and says nothing about the

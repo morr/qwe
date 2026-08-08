@@ -54,6 +54,23 @@ pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms")
 /// против ~64 × time_scale тиков у остальных `sim/*_ms`.
 pub const SIM_SEPARATION_MS: DiagnosticPath = DiagnosticPath::const_new("sim/separation_ms");
 
+/// Сглаженная цена **всего** тика — то, чем регулятор скорости объясняет своё
+/// решение (`sim_time::SimLoad`). Сумма `sim/*_ms` выше её не заменяет: она
+/// разрезана по системам и покрывает не весь `FixedUpdate`, а посильная
+/// скорость считается ровно из этого числа.
+pub const SIM_TICK_MS: DiagnosticPath = DiagnosticPath::const_new("sim/tick_ms");
+
+/// Сколько из тика главный поток простоял, ожидая чужую работу (`block_on` над
+/// поиском пути). Учитывается **отдельно** от `sim/tick_ms`: работа от скорости
+/// не зависит, а ожидание зависит прямо — срок ответа отмерен в тиках, значит
+/// на быстрых тиках пулу достаётся меньше реального времени.
+pub const SIM_WAIT_MS: DiagnosticPath = DiagnosticPath::const_new("sim/wait_ms");
+
+/// Пиковое ожидание на шаг (`sim_time::SimLoad::wait_peak_ms`) — то, по чему
+/// на самом деле держится потолок конвейера: по среднему `sim/wait_ms` всплеск
+/// размывается раньше, чем регулятор успевает ответить.
+pub const SIM_WAIT_PEAK_MS: DiagnosticPath = DiagnosticPath::const_new("sim/wait_peak_ms");
+
 /// Записать длительность системы, начавшейся в `started`.
 pub fn measure_ms(
     diagnostics: &mut Diagnostics,
@@ -86,6 +103,9 @@ impl Plugin for GameDiagnosticsPlugin {
         .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_SEPARATION_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_TICK_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_WAIT_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_WAIT_PEAK_MS).with_suffix(" ms"))
         .add_plugins(EntityCountDiagnosticsPlugin::default())
         .add_systems(Update, measure_pathfinding_in_flight);
     }

@@ -73,22 +73,31 @@ until grep -qE 'warmup: (pawns on screen routed|timed out)' $f; do sleep 2; done
 
 ## Time: `SimSpeed`, not `Time<Virtual>`
 
-`sim_time.rs::throttle_speed_to_fps` writes `Time<Virtual>::set_relative_speed` every
-frame from `SimSpeed.effective`, so a direct `Time<Virtual>` write survives one frame.
-`brp speed N` is wired through `.claude/live-app.json` to `SimSpeed.requested` and prints
-the resource back:
+`sim_time.rs::throttle_speed_to_frame_budget` writes `Time<Virtual>::set_relative_speed`
+every frame from `SimSpeed.effective`, so a direct `Time<Virtual>` write survives one
+frame. `brp speed N` is wired through `.claude/live-app.json` to `SimSpeed.requested` and
+prints the resource back:
 
 ```bash
 $b speed 15
 # ok: SimSpeed.requested = 15
-# {"actual": 7.41, "effective": 8.39, "requested": 15.0}
+# {"actual": 7.41, "affordable": 8.4, "effective": 8.39, "requested": 15.0}
 ```
 
-Three different numbers, all meaningful: `requested` is the ask, `effective` is what the
-governor allows (`fps × MAX_FRAME_DELTA` — 15x at 60 fps, less on a loaded map), `actual`
-is measured virtual-over-real. **Budget simulated time by `actual`**: 20 s of wall clock at
-`actual=7` is ~140 s of simulation, not 300. `brp time` shows the `Time<Virtual>` side of
-the same thing.
+Five numbers, all meaningful: `requested` is the ask, `pipeline` is the pathfinding
+ceiling (integral, sized to the **peak** wait), `affordable` is what the governor computed
+the machine can carry (already min-ed with `pipeline`), `effective` is its command,
+`actual` is measured virtual-over-real. **Budget simulated time by `actual`**: 20 s of
+wall clock at `actual=7` is ~140 s of simulation, not 300. `brp time` shows the
+`Time<Virtual>` side of the same thing.
+
+When `effective` sits well below `requested`, the reason is on the panel's third line
+(`tick 1.20 + 3.50 ms wait (pk 8.10)`) and in the `sim/tick_ms` / `sim/wait_ms` /
+`sim/wait_peak_ms` diagnostics: CPU cost bounds it as
+`1000 × SIM_FRAME_SHARE / (64 × tick_ms)`, the peak wait drives `pipeline` down.
+`TickDebt` (`brp res get TickDebt`) shows the frame-budget guard: `deferred` is the total
+virtual seconds ever pushed to later frames; if it grows during a run, bursts are being
+smoothed instead of stretching frames.
 
 `brp pause` / `resume` still work directly (the governor only writes speed).
 

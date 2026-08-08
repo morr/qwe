@@ -20,7 +20,7 @@ use bevy::window::PrimaryWindow;
 use crate::camera::cursor_offset;
 use crate::diagnostics::{
     PATHFINDING_ANSWERED, PATHFINDING_DURATION_MS, PATHFINDING_FAILED, PATHFINDING_IN_FLIGHT,
-    PATHFINDING_QUEUED,
+    PATHFINDING_QUEUED, SIM_TICK_MS, SIM_WAIT_MS, SIM_WAIT_PEAK_MS,
 };
 use crate::sim_time::{SimClock, SimSpeed, cycle_time_scale, previous_time_scale};
 use crate::ui::{
@@ -300,13 +300,31 @@ fn update_pathfinding_text(
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(|diagnostic| diagnostic.value())
         .unwrap_or_default();
+    // цена тика — то, из чего регулятор считает посильную скорость, так что
+    // «почему стоим на 4x» читается прямо с экрана
+    let tick_ms = diagnostics
+        .get(&SIM_TICK_MS)
+        .and_then(|diagnostic| diagnostic.value())
+        .unwrap_or_default();
+    // ожидание конвейера показано рядом с работой: это два разных диагноза —
+    // «мир дорогой» и «поиск пути не успевает к сроку»
+    let wait_ms = diagnostics
+        .get(&SIM_WAIT_MS)
+        .and_then(|diagnostic| diagnostic.value())
+        .unwrap_or_default();
+    // пик — то, по чему на самом деле держится потолок конвейера: скорость,
+    // стоящая ниже, чем обещает среднее ожидание, объясняется этим числом
+    let peak_ms = diagnostics
+        .get(&SIM_WAIT_PEAK_MS)
+        .and_then(|diagnostic| diagnostic.value())
+        .unwrap_or_default();
 
     // выравнивание цифр по правому краю, чтобы строка не «плясала»;
     // знаменатель доли отказов показан рядом с ней: «100 % отказов» на
     // ручейке в один ответ за кадр и на сотне ответов — разные новости, а
     // само число одинаковое
     text.into_inner().set_if_neq(Text(format!(
-        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nanswers: {answered:>6.1}/frame, {failed:>5.1}% failed\nentities: {entities:>6.0}"
+        "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nanswers: {answered:>6.1}/frame, {failed:>5.1}% failed\nentities: {entities:>6.0}, tick {tick_ms:>5.2} + {wait_ms:>5.2} ms wait (pk {peak_ms:>5.2})"
     )));
 }
 

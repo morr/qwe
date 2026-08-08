@@ -388,6 +388,7 @@ pub fn dispatch_pathfinding_requests_deterministic(
 ///
 /// Порядок обработки — по `PawnId`: обход запроса зависит от порядка спавна и
 /// смертей, а применение ответа шлёт команды и трогает сетку людей.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_pathfinding_results(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
@@ -396,6 +397,7 @@ pub fn apply_pathfinding_results(
     // проходимости под спасением застрявших
     run: Res<DeterministicRun>,
     arc_navmesh: Res<crate::navigation::ArcNavmesh>,
+    mut load: ResMut<crate::sim_time::SimLoad>,
     tick: Res<SimTick>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     mut tasks: Query<(
@@ -445,7 +447,12 @@ pub fn apply_pathfinding_results(
         else {
             continue;
         };
+        // простой главного потока замеряется отдельно от его работы: регулятор
+        // скорости обязан их различать — работа от скорости не зависит,
+        // а ожидание зависит прямо (см. `sim_time::SimLoad::observe`)
+        let waited = std::time::Instant::now();
         let result = bevy::tasks::block_on(&mut task.0);
+        load.add_frame_cost(waited.elapsed());
         commands
             .entity(entity)
             .remove::<(PathfindingTask, RetireAt)>();
