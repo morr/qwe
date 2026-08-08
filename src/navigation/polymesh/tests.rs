@@ -1,5 +1,6 @@
 use super::*;
 use crate::map::osm::model::{RoadClass, WaterKind};
+use crate::settings::MAP_SIZE;
 
 /// Сторона чанка для тестов иерархии: по умолчанию она больше карты
 /// (`CHUNK_TARGET_METERS`), то есть швов нет вовсе и проверять было бы
