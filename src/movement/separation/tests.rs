@@ -1,3 +1,4 @@
+use super::pairs::side_of;
 use super::*;
 
 fn entity(index: u32) -> Entity {

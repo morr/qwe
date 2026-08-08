@@ -37,7 +37,7 @@ const MAX_PATHFINDING_IN_FLIGHT: usize = 1024;
 const MAX_POLYMESH_PATHFINDING_IN_FLIGHT: usize = MAX_PATHFINDING_IN_FLIGHT;
 /// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
 /// «замирали» при лёгком движении камеры. Тем же запасом пользуется
-/// расталкивание (`separation.rs`).
+/// расталкивание (`separation/`).
 pub(crate) const VIEW_MARGIN: f32 = 1.2;
 
 /// Приоритет заявки в очереди диспетчера, по возрастанию: чем меньше, тем

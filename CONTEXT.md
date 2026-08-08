@@ -1275,7 +1275,7 @@ in `main.rs`.
   crossings, not with population or how many pawns the camera lets move. Demons (~100):
   full rebuild per tick in `rebuild_demon_grid` is cheaper than bookkeeping, and the
   lunge moves demon `SimPosition` outside the mover system anyway.
-- **Separation** (`movement/separation.rs`, toggle in the Navigation panel, persisted)
+- **Separation** (`movement/separation/`, toggle in the Navigation panel, persisted)
   — soft pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
   0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart — deliberately **larger** than half the
   sprite, so a resting pair leaves a visible gap (1.17 m against a 1.0 m `HUMAN_SIZE`).

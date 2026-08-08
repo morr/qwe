@@ -31,7 +31,7 @@ Examples are grouped by purpose. Names are unchanged by the grouping, so
 cargo run --example crowd_demo
 ```
 
-A crowd on an empty map, close up, with the real `movement/separation.rs` running on it —
+A crowd on an empty map, close up, with the real `movement/separation/` running on it —
 no OSM download, no UI panels. It exists because separation only works inside the
 viewport, below zoom `SEPARATION_MAX_ZOOM` and once per rendered frame, so the interesting
 cases (a funnel, counter-flowing columns, a walled corridor, high sim speed) otherwise

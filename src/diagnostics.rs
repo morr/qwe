@@ -50,7 +50,7 @@ pub const SIM_FLEE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/flee_ms")
 pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms");
 pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms");
 /// Расталкивание меряется на **прогон**, а не на тик: оно гейтится «не чаще
-/// раза в кадр» (`movement/separation.rs`), так что прогонов ~60 в секунду
+/// раза в кадр» (`movement/separation/`), так что прогонов ~60 в секунду
 /// против ~64 × time_scale тиков у остальных `sim/*_ms`.
 pub const SIM_SEPARATION_MS: DiagnosticPath = DiagnosticPath::const_new("sim/separation_ms");
 
