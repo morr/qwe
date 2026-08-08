@@ -119,15 +119,19 @@ cache); subsequent runs are offline. Deleting the cache file forces a re-downloa
 
 ## Verification After Each Task
 
-After completing any task, run these in parallel:
+After completing any task, run the whole suite as **one** background task:
 
 ```bash
-cargo build --verbose
-cargo test --verbose
-cargo clippy -- -D warnings
-# fmt only the files you changed
-RUSTFMT=~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustfmt cargo fmt -- src/changed_file.rs
+# build + test + clippy + fmt of exactly the files you changed
+Bash(command: "tools/check.sh src/changed_a.rs src/changed_b.rs", run_in_background: true)
 ```
+
+It stops at a broken build (test/clippy would just repeat the same errors),
+runs test and clippy even if the other fails, fmt-s only the files given
+(nightly rustfmt), and ends with one `check: OK` / `check: FAILED (…)` line —
+read the tail of the task output, not four separate outputs. The individual
+commands (`cargo build --verbose`, `cargo test --verbose`,
+`cargo clippy -- -D warnings`) are still fine when only one of them is needed.
 
 For changes that only manifest at runtime (behavior, rendering, UI), verify in the live
 app too — the `live-app` skill (BRP counts, telemetry, `TakeScreenshotEvent`) is the
