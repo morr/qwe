@@ -625,6 +625,15 @@ pub fn assign_destination_slots(
 /// (сцена `crowd_demo`, будущее «собраться у портала»), плюс всё, что придёт
 /// на смену. В сегодняшней игре, где блуждают все, система не срабатывает ни
 /// разу — и запрос у неё пуст, то есть стоит она ноль.
+///
+/// **`Without<PathfindingRequest>` / `Without<PathfindingTask>` — то, что
+/// делает предыдущий абзац правдой.** Пешка в состоянии `Pathfinding` стоит без
+/// `MovableStateMovingTag` и без `NeedsWanderTarget`, но она не «осевшая» — она
+/// уже идёт за целью, просто ответ ещё не пришёл. Без этих фильтров сюда
+/// попадала вся очередь диспетчера (на полном зум-ауте — все 20 000 пешек), и
+/// каждая дальше метра от своего слота перезаявлялась КАЖДЫЙ ТИК: десятки тысяч
+/// команд на тик, ~2.4 мс на применение, потолок скорости ~3.5x вместо 30x — и
+/// стартовая яма 0.2x, пока волна первых заявок стоит в очереди.
 pub fn regroup_onto_slots(
     mut commands: Commands,
     lab: Res<SlotLab>,
@@ -639,6 +648,8 @@ pub fn regroup_onto_slots(
         (
             Without<crate::movement::MovableStateMovingTag>,
             Without<crate::movement::NeedsWanderTarget>,
+            Without<PathfindingRequest>,
+            Without<crate::movement::PathfindingTask>,
         ),
     >,
 ) {
