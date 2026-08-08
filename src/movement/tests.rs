@@ -183,7 +183,7 @@ fn answer(app: &mut App, pawn: Entity, end_tile: IVec2, path: Option<Vec<Vec2>>)
     });
     let mut entity = app.world_mut().entity_mut(pawn);
     entity.get_mut::<Movable>().expect("Movable").state = MovableState::Pathfinding(end_tile);
-    entity.insert(PathfindingTask(task));
+    entity.insert(PathfindingTask::new(task));
 }
 
 /// Ответ считается в другом потоке: крутим кадры, пока приёмка его не снимет.

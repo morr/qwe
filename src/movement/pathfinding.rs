@@ -152,7 +152,7 @@ pub fn dispatch_pathfinding_requests(
         commands
             .entity(entity)
             .remove::<PathfindingRequest>()
-            .insert(PathfindingTask(task));
+            .insert(PathfindingTask::new(task));
     }
 }
 
@@ -374,7 +374,7 @@ pub fn dispatch_pathfinding_requests_deterministic(
         commands
             .entity(request.entity)
             .remove::<(PathfindingRequest, RequestedAt)>()
-            .insert((PathfindingTask(task), RetireAt(retire_at)));
+            .insert((PathfindingTask::new(task), RetireAt(retire_at)));
     }
 }
 
@@ -451,7 +451,7 @@ pub fn apply_pathfinding_results(
         // скорости обязан их различать — работа от скорости не зависит,
         // а ожидание зависит прямо (см. `sim_time::SimLoad::observe`)
         let waited = std::time::Instant::now();
-        let result = bevy::tasks::block_on(&mut task.0);
+        let result = bevy::tasks::block_on(&mut task.task);
         load.add_frame_cost(waited.elapsed());
         commands
             .entity(entity)
@@ -607,7 +607,22 @@ pub fn listen_for_pathfinding_tasks(
     // секунды держит на запись поток заливки
     let mut navmesh = None;
     for (entity, mut movable, mut sim_position, mut previous, mut task, is_human) in &mut tasks {
-        let Some(result) = check_ready(&mut task.0) else {
+        let Some(result) = check_ready(&mut task.task) else {
+            // Сторожок второго эшелона: бюджет внутри polymesh-поиска ловит
+            // расходящуюся воронку, а этот порог — любой другой способ
+            // зависнуть (лок, дедлок, бесконечный цикл в бэкенде). Живой
+            // поиск отвечает за миллисекунды; порог щедрый, потому что при
+            // насыщенном пуле здоровый таск может простоять в очереди
+            // исполнителя единицы секунд.
+            assert!(
+                task.spawned_at.elapsed().as_secs_f32()
+                    < crate::settings::PATHFINDING_TASK_HANG_SECS,
+                "pathfinding task hung: {entity} at {:?} has waited {:?} in state {:?} — \
+                 the search backend is stuck, not merely slow",
+                sim_position.0,
+                task.spawned_at.elapsed(),
+                movable.state,
+            );
             continue;
         };
         commands.entity(entity).remove::<PathfindingTask>();

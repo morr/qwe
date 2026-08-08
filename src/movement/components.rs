@@ -75,7 +75,25 @@ pub struct Movable {
 /// Асинхронный поиск пути этой сущности. Один таск на сущность: новый запрос
 /// вытесняет старый, а дроп `Task` его отменяет.
 #[derive(Component, Debug)]
-pub struct PathfindingTask(pub Task<PathfindingResult>);
+pub struct PathfindingTask {
+    pub task: Task<PathfindingResult>,
+    /// Момент запуска — сторожок зависших поисков
+    /// (`listen_for_pathfinding_tasks`): живой поиск отвечает за миллисекунды
+    /// и падает по внутреннему бюджету, если расходится, — таск старше
+    /// [`PATHFINDING_TASK_HANG_SECS`](crate::settings::PATHFINDING_TASK_HANG_SECS)
+    /// означает зависший каким-то новым способом бэкенд, и это паника,
+    /// а не тихое вечное ожидание.
+    pub spawned_at: std::time::Instant,
+}
+
+impl PathfindingTask {
+    pub fn new(task: Task<PathfindingResult>) -> Self {
+        Self {
+            task,
+            spawned_at: std::time::Instant::now(),
+        }
+    }
+}
 
 /// Запрос поиска пути, ждущий своей очереди: таски запускает
 /// `dispatch_pathfinding_requests` по приоритету близости к камере.
