@@ -76,11 +76,13 @@
 
 use std::collections::VecDeque;
 
+use bevy::app::AppExit;
 use bevy::diagnostic::{Diagnostic, DiagnosticsStore, RegisterDiagnostic};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::text::FontSize;
 
 use bevy::ui_widgets::{SliderValue, ValueChange};
@@ -93,9 +95,9 @@ use qwe::human::{
 use qwe::loading::{AppState, PlayPhase};
 use qwe::map::osm::{MapData, WallLine};
 use qwe::movement::{
-    DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SeparationHolds,
-    SeparationStyle, SimPosition, SlotSearch, separation_allowed_by_mode, separation_cell,
-    slot_side,
+    DestinationClaim, DestinationClaims, Movable, MovableReachedDestinationEvent,
+    MovableStateMovingTag, SeparationHolds, SeparationLab, SeparationStats, SeparationStyle,
+    SimPosition, SlotSearch, separation_allowed_by_mode, separation_cell, slot_side,
 };
 use qwe::navigation::{
     ArcNavmesh, Pathfinder, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug, find_path_polymesh,
@@ -107,6 +109,139 @@ use qwe::settings::{
 };
 use qwe::ui::slider::{SliderRow, quantize, spawn_slider_row};
 use rand::Rng;
+
+// ------------------------------------------------------------ командная строка
+
+/// Разобранная командная строка. Всё до единого — необязательное: без
+/// аргументов сцена запускается ровно так же, как до их появления.
+///
+/// Зачем аргументы, когда есть BRP. Замер — это серия из десятков прогонов, где
+/// от прогона к прогону меняется одна константа, и каждый обязан стартовать в
+/// одинаковых условиях. Через BRP сценарий и ручки ставятся ПОСЛЕ старта, то
+/// есть первые секунды толпа успевает пожить не в том режиме, который меряют, —
+/// а именно эти секунды и решают, расслоится поток или слипнется. Аргумент
+/// действует с нулевого кадра.
+#[derive(Clone, Debug, Default)]
+struct Args {
+    scenario: Option<Scenario>,
+    speed: Option<f32>,
+    /// Длина окна замера в РЕАЛЬНЫХ секундах. По истечении сцена печатает
+    /// строку `RESULT` и выходит сама — держать её живой нечем и незачем.
+    seconds: Option<f32>,
+    /// Пешек на сторону (`columns`/`corridor`) или всего (остальные).
+    pawns: Option<usize>,
+    /// Поперечный разброс колонн, м. 0 — обе колонны в одну линию, как было.
+    width: Option<f32>,
+    /// Шаг вдоль колонны, м — он же плотность стартовой раскладки.
+    spacing: Option<f32>,
+    zoom: Option<f32>,
+    seed: Option<u64>,
+    separation: Option<bool>,
+    /// Подпись прогона в строке `RESULT` — по ней отчёт и собирается.
+    label: Option<String>,
+    /// Снимать экран в начале, середине и конце окна: артефакты (телепорт,
+    /// проход насквозь) числами не ловятся до конца.
+    shots: bool,
+    radius: Option<f32>,
+    hold: Option<f32>,
+    sidestep: Option<f32>,
+    backstep: Option<f32>,
+    lab: Vec<(String, f32)>,
+}
+
+/// Ручки [`SeparationLab`], доступные с командной строки. Список здесь, а не
+/// `match` по строке в трёх местах: подпись в `RESULT`, разбор и справка обязаны
+/// перечислять одно и то же.
+const LAB_KNOBS: [&str; 11] = [
+    "rate",
+    "max-step",
+    "max-speed",
+    "horizon",
+    "anticipation",
+    "margin",
+    "lane-bias",
+    "compress",
+    "compress-at",
+    "steer",
+    "steer-release",
+];
+
+fn parse_args() -> Args {
+    let mut args = Args::default();
+    let mut argv = std::env::args().skip(1);
+    while let Some(flag) = argv.next() {
+        let mut value = || {
+            argv.next()
+                .unwrap_or_else(|| panic!("{flag} expects a value"))
+        };
+        match flag.trim_start_matches("--") {
+            "scenario" => args.scenario = Some(parse_scenario(&value())),
+            "speed" => args.speed = Some(parse_number(&value())),
+            "seconds" => args.seconds = Some(parse_number(&value())),
+            "pawns" => args.pawns = Some(parse_number::<f32>(&value()) as usize),
+            "width" => args.width = Some(parse_number(&value())),
+            "spacing" => args.spacing = Some(parse_number(&value())),
+            "zoom" => args.zoom = Some(parse_number(&value())),
+            "seed" => args.seed = Some(parse_number::<f32>(&value()) as u64),
+            "sep" => args.separation = Some(matches!(value().as_str(), "on" | "1" | "true")),
+            "label" => args.label = Some(value()),
+            "shots" => args.shots = true,
+            "radius" => args.radius = Some(parse_number(&value())),
+            "hold" => args.hold = Some(parse_number(&value())),
+            "sidestep" => args.sidestep = Some(parse_number(&value())),
+            "backstep" => args.backstep = Some(parse_number(&value())),
+            "crowd-sidestep" => args
+                .lab
+                .push(("crowd-sidestep".into(), parse_number(&value()))),
+            knob if LAB_KNOBS.contains(&knob) => {
+                let knob = knob.to_string();
+                args.lab.push((knob, parse_number(&value())));
+            }
+            other => panic!(
+                "unknown flag --{other}; known: {LAB_KNOBS:?} and the flags in the module header"
+            ),
+        }
+    }
+    args
+}
+
+fn parse_number<T: std::str::FromStr>(raw: &str) -> T {
+    raw.parse()
+        .unwrap_or_else(|_| panic!("{raw} is not a number"))
+}
+
+fn parse_scenario(raw: &str) -> Scenario {
+    match raw {
+        "1" | "pile" => Scenario::Pile,
+        "2" | "funnel" => Scenario::Funnel,
+        "3" | "columns" => Scenario::Columns,
+        "4" | "corridor" => Scenario::Corridor,
+        "5" | "wander" => Scenario::Wander,
+        other => panic!("unknown scenario {other}; use 1-5 or pile/funnel/columns/corridor/wander"),
+    }
+}
+
+/// Разложить `--rate 8 --horizon 1.5 …` по полям стенда. Отдельной функцией,
+/// потому что имена ручек приходят строками и обязаны совпадать с [`LAB_KNOBS`].
+fn apply_lab(lab: &mut SeparationLab, knobs: &[(String, f32)]) {
+    for (knob, value) in knobs {
+        match knob.as_str() {
+            "rate" => lab.rate = *value,
+            "max-step" => lab.max_step = *value,
+            "max-speed" => lab.max_speed = *value,
+            "horizon" => lab.horizon = *value,
+            "anticipation" => lab.anticipation = *value,
+            "margin" => lab.anticipate_margin = *value,
+            "lane-bias" => lab.lane_bias = *value,
+            "compress" => lab.compress = *value,
+            "compress-at" => lab.compress_at = *value,
+            "steer" => lab.steer = *value,
+            "steer-release" => lab.steer_release = *value,
+            "crowd-sidestep" => lab.crowd_sidestep = *value,
+            other => panic!("unknown lab knob {other}"),
+        }
+    }
+}
 
 // ---------------------------------------------------------------- конфиг демо
 
@@ -130,10 +265,22 @@ struct DemoConfig {
     funnel_radius: f32,
     column: usize,
     column_length: f32,
-    /// Шаг между пешками в колонне. Больше дистанции покоя 0.9 м намеренно:
+    /// Шаг между пешками в колонне. Больше дистанции покоя намеренно:
     /// стартовая раскладка обязана быть законной, иначе непонятно, кто создал
     /// перекрытие — поток или спавн.
+    ///
+    /// Держать его в согласии с [`HUMAN_BODY_RADIUS`] обязательно и вручную:
+    /// шаг 1.2 м пережил здесь смену радиуса тела с 0.45 на 0.9 (дистанция
+    /// покоя 0.9 → 1.8 м) и молча превратил «законную колонну» в стартовую
+    /// давку — 95% пешко-времени в перекрытии с нулевого кадра, то есть весь
+    /// замер мерил не поток, а разгребание спавна.
     column_spacing: f32,
+    /// Поперечная ширина колонны, м: пешки раскладываются по полосам внутри
+    /// неё. 0 — обе колонны в одну линию `y = centre.y`, самый злой лобовой
+    /// случай и исторический дефолт этой сцены. Больше нуля — «улица»: у потока
+    /// есть куда расслоиться ещё до первого касания, и видно, пользуется ли
+    /// механизм этой свободой или всё равно сводит всех в колонну.
+    column_width: f32,
     corridor: usize,
     corridor_gap: f32,
     corridor_length: f32,
@@ -157,7 +304,9 @@ impl Default for DemoConfig {
             funnel_radius: 45.0,
             column: 40,
             column_length: 40.0,
-            column_spacing: 1.2,
+            // 2 × HUMAN_BODY_RADIUS = 1.8 м дистанция покоя, плюс запас
+            column_spacing: 2.0,
+            column_width: 0.0,
             corridor: 120,
             corridor_gap: 4.0,
             corridor_length: 60.0,
@@ -268,6 +417,15 @@ struct Overlaps {
     mean: f32,
     /// Сколько пешек участвует хотя бы в одной перекрывшейся паре.
     involved: usize,
+    /// Пары, сошедшиеся ближе ОДНОГО радиуса тела: люди «плечом к плечу».
+    /// В живой толпе это норма, а не артефакт, — спрайты (1.0 м) при таком
+    /// расстоянии ещё только касаются.
+    deep: usize,
+    /// Пары, у которых центры ближе ПОЛОВИНЫ спрайта: тела наложились наполовину,
+    /// и на экране это уже проход насквозь. Вот это артефакт, и мерить его надо
+    /// отдельно от давки — первая версия считала артефактом любое `deep`, то есть
+    /// заодно и всякое законное прижатие в потоке.
+    through: usize,
     /// Позиции в кадре и признак перекрытия — чтобы гизмо рисовало ровно то,
     /// что посчитано, а не считало во второй раз.
     #[reflect(ignore)]
@@ -301,6 +459,75 @@ struct RunCounters {
 #[reflect(Resource)]
 struct PathMisses(u64);
 
+/// Окно замера и всё, что в нём накоплено.
+///
+/// Два критерия, ради которых сцена и меряется:
+/// 1. **пройденное расстояние** — чем меньше пешки толкаются, тем дальше
+///    уезжают за то же время. Меряется тремя способами сразу, потому что каждый
+///    по отдельности обманывается: `travel` (сумма модулей смещения) растёт и от
+///    дрожи на месте; `progress` (сближение с текущей целью) не видит обхода,
+///    который окупится через секунду; `arrivals` (сколько раз цель достигнута)
+///    честнее всех, но грубее — на коротком окне их единицы. Врать одновременно
+///    всем трём нечем;
+/// 2. **время в расталкивании** — `held_secs` (пешка идёт ослабленным шагом,
+///    [`SeparationHolds`]) и `overlap_secs` (пешка внутри чужого тела). Первое —
+///    буквально «состояние расталкивания», второе — его причина.
+///
+/// Плюс детекторы артефактов, которые глазом ловятся не сразу: `worst_push` —
+/// самый длинный одиночный толчок (телепорт), `deep_events` — пары, сошедшиеся
+/// ближе ОДНОГО радиуса, то есть прошедшие сквозь друг друга на экране.
+///
+/// И две числовые характеристики «поток или колонна»: `spread` (насколько
+/// толпа разъехалась поперёк) и `lane_order` (сложился ли правосторонний
+/// порядок — встречные по разные стороны оси).
+#[derive(Resource, Default)]
+struct Trial {
+    label: String,
+    /// Длина окна в реальных секундах; 0 — интерактивный запуск без замера.
+    window: f32,
+    shots: bool,
+    /// Реальное время открытия окна. `None`, пока сцена не готова: считать до
+    /// постройки полигонального меша значит мерить сеточную ходьбу
+    started: Option<f32>,
+    real: f32,
+    virtual_secs: f64,
+    frames: u64,
+
+    travel: f64,
+    progress: f64,
+    arrivals: u64,
+
+    held_secs: f64,
+    overlap_secs: f64,
+    /// Знаменатель для обоих: сколько «пешко-секунд» в кадре всего прожито.
+    pawn_secs: f64,
+
+    worst_overlap: f32,
+    deep_events: u64,
+    /// Настоящий артефакт: тела наложились наполовину (см. `Overlaps::through`).
+    through_events: u64,
+    /// Самое длинное смещение одной пешки за ОДИН ТИК, м — детектор
+    /// телепорта: потолок известен точно, см. [`sample_travel`].
+    worst_tick_step: f32,
+
+    spread: f64,
+    spread_samples: f64,
+    lane_order: f64,
+    lane_samples: f64,
+
+    sep_ms: f64,
+    sep_ms_samples: f64,
+    /// Замер, по которому уже прибавили — тот же трюк, что у `RunCounters`.
+    last_sep_ms: Option<std::time::Instant>,
+
+    shots_taken: u32,
+}
+
+/// Позиция пешки на прошлом кадре — база для `travel`. Компонентом, а не
+/// картой в ресурсе: спавн и деспавн ведёт ECS, а не отдельная уборка.
+#[derive(Component)]
+struct LastSample(Vec2);
+
 #[derive(Component)]
 struct OverlayText;
 
@@ -331,6 +558,7 @@ struct SearchSlider;
 struct SearchValueLabel;
 
 fn main() {
+    let args = parse_args();
     let mut app = App::new();
     // часть систем игры просит параметры, которых в этой сцене нет (`Gizmos`
     // до появления камеры, `MapData` у полимеша). В игре такое — ошибка, здесь
@@ -375,6 +603,7 @@ fn main() {
     .init_resource::<Overlaps>()
     .init_resource::<RunCounters>()
     .init_resource::<PathMisses>()
+    .init_resource::<Trial>()
     .register_type::<Scenario>()
     .register_type::<DemoSpeed>()
     .register_type::<Overlaps>()
@@ -421,17 +650,92 @@ fn main() {
                 draw_bodies,
                 update_overlay,
                 report_to_stdout,
+                // замер — последним в кадре и строго после `measure_overlaps`:
+                // он складывает ровно те числа, что тот посчитал
+                sample_trial,
+                take_shots,
+                finish_trial,
             )
                 .chain(),
         ),
     )
-    .add_systems(FixedUpdate, (count_ticks, drive_routes));
+    .add_systems(FixedUpdate, (count_ticks, drive_routes, sample_travel))
+    .add_observer(
+        |_arrival: On<MovableReachedDestinationEvent>, mut trial: ResMut<Trial>| {
+            trial.arrivals += 1;
+        },
+    );
+
+    apply_args(&mut app, args);
 
     app.world_mut()
         .resource_mut::<NextState<AppState>>()
         .set(AppState::Playing);
 
     app.run();
+}
+
+/// Разложить командную строку по ресурсам — ДО первого кадра, чтобы толпа с
+/// самого начала жила в том режиме, который меряют (см. [`Args`]).
+fn apply_args(app: &mut App, args: Args) {
+    let world = app.world_mut();
+    if let Some(seconds) = args.seconds {
+        // окно замера включает и печать `RESULT`, и выход: снаружи процесс
+        // убивать не нужно, а значит и гадать, успел ли он дописать строку
+        world.resource_mut::<Trial>().window = seconds;
+    }
+    {
+        let mut trial = world.resource_mut::<Trial>();
+        trial.shots = args.shots;
+        trial.label = args.label.clone().unwrap_or_else(|| "baseline".to_string());
+    }
+    if let Some(scenario) = args.scenario {
+        *world.resource_mut::<Scenario>() = scenario;
+    }
+    if let Some(speed) = args.speed {
+        world.resource_mut::<DemoSpeed>().0 = speed;
+    }
+    {
+        let mut config = world.resource_mut::<DemoConfig>();
+        if let Some(pawns) = args.pawns {
+            config.pile = pawns;
+            config.funnel = pawns;
+            config.column = pawns;
+            config.corridor = pawns;
+            config.wander = pawns;
+        }
+        if let Some(width) = args.width {
+            config.column_width = width;
+        }
+        if let Some(spacing) = args.spacing {
+            config.column_spacing = spacing;
+        }
+        if let Some(zoom) = args.zoom {
+            config.start_zoom = zoom;
+        }
+        if let Some(seed) = args.seed {
+            config.seed = seed;
+        }
+    }
+    {
+        let mut style = world.resource_mut::<SeparationStyle>();
+        if let Some(enabled) = args.separation {
+            style.enabled = enabled;
+        }
+        if let Some(hold) = args.hold {
+            style.hold = hold;
+        }
+        if let Some(sidestep) = args.sidestep {
+            style.sidestep = sidestep;
+        }
+        if let Some(backstep) = args.backstep {
+            style.backstep = backstep;
+        }
+    }
+    if let Some(radius) = args.radius {
+        world.resource_mut::<HumanStyle>().body_radius = radius;
+    }
+    apply_lab(&mut world.resource_mut::<SeparationLab>(), &args.lab);
 }
 
 /// Порт BRP этой сцены. По умолчанию 15704: 15702 держит игра пользователя,
@@ -629,12 +933,26 @@ fn respawn_scenario(
         }
         Scenario::Columns => {
             let half = config.column_length / 2.0;
+            // полос ровно столько, сколько влезает по шагу колонны: при ширине
+            // 0 полоса одна и раскладка та же, что была
+            let lanes = (config.column_width / config.column_spacing)
+                .floor()
+                .max(0.0) as usize
+                + 1;
             for index in 0..config.column {
-                let offset = index as f32 * config.column_spacing;
-                let left = centre + Vec2::new(-half - offset, 0.0);
-                let right = centre + Vec2::new(half + offset, 0.0);
-                // обе колонны идут по одной линии y = centre.y, то есть по
-                // одним и тем же центрам навтайлов
+                let lane = index % lanes;
+                let rank = index / lanes;
+                let across = if lanes > 1 {
+                    -config.column_width / 2.0
+                        + config.column_width * lane as f32 / (lanes - 1) as f32
+                } else {
+                    0.0
+                };
+                let offset = rank as f32 * config.column_spacing;
+                let left = centre + Vec2::new(-half - offset, across);
+                let right = centre + Vec2::new(half + offset, across);
+                // при нулевой ширине обе колонны идут по одной линии
+                // y = centre.y, то есть по одним и тем же центрам навтайлов
                 spawn_pawn(
                     &mut commands,
                     config.seed,
@@ -749,6 +1067,8 @@ fn spawn_pawn(
         pace,
         PawnId(pawn_id),
         WanderIndex::ready(),
+        LastSample(position),
+        ProgressSample::default(),
         Name::new("demo pawn"),
     ));
     if let Some(route) = route {
@@ -1094,6 +1414,8 @@ fn measure_overlaps(
 
     let min_distance = style.body_radius * 2.0;
     let mut pairs = 0usize;
+    let mut deep = 0usize;
+    let mut through = 0usize;
     let mut worst = 0.0f32;
     let mut sum = 0.0f32;
     let mut involved = vec![false; positions.len()];
@@ -1113,6 +1435,12 @@ fn measure_overlaps(
                     let overlap = min_distance - position.distance(positions[other]);
                     if overlap > OVERLAP_EPSILON {
                         pairs += 1;
+                        if overlap > style.body_radius {
+                            deep += 1;
+                        }
+                        if overlap > min_distance - HUMAN_SIZE / 2.0 {
+                            through += 1;
+                        }
                         sum += overlap;
                         worst = worst.max(overlap);
                         involved[index] = true;
@@ -1128,6 +1456,8 @@ fn measure_overlaps(
     overlaps.total = total;
     overlaps.radius = style.body_radius;
     overlaps.pairs = pairs;
+    overlaps.deep = deep;
+    overlaps.through = through;
     overlaps.worst = worst;
     overlaps.mean = if pairs > 0 { sum / pairs as f32 } else { 0.0 };
     overlaps.involved = involved.iter().filter(|flag| **flag).count();
@@ -1154,6 +1484,234 @@ fn draw_bodies(mut gizmos: Gizmos, overlaps: Res<Overlaps>) {
     for (from, to) in &overlaps.links {
         gizmos.line_2d(*from, *to, RED);
     }
+}
+
+/// Накопить кадр в окно замера. Считается ТО ЖЕ, что видит расталкивание, — по
+/// пешкам в кадре (`Overlaps` уже отфильтровал их прямоугольником камеры).
+///
+/// Окно открывается не на первом кадре, а когда полигональный меш построен:
+/// до этого пешки идут по сетке центрами навтайлов, а там расталкивания нет
+/// вовсе (`separation_runs`), и первые доли секунды мерили бы другую систему.
+#[allow(clippy::too_many_arguments)]
+fn sample_trial(
+    time: Res<Time<Virtual>>,
+    real: Res<Time<Real>>,
+    poly: Res<PolyNavmesh>,
+    overlaps: Res<Overlaps>,
+    holds: Res<SeparationHolds>,
+    diagnostics: Res<DiagnosticsStore>,
+    mut trial: ResMut<Trial>,
+    pawns: Query<(&SimPosition, &Movable)>,
+) {
+    if trial.started.is_none() {
+        if poly.build().is_none() {
+            return;
+        }
+        trial.started = Some(real.elapsed_secs());
+    }
+    let started = trial.started.expect("window is open");
+    trial.real = real.elapsed_secs() - started;
+    let dt = time.delta_secs_f64();
+    trial.virtual_secs += dt;
+    trial.frames += 1;
+
+    if let Some(measurement) = diagnostics
+        .get(&SIM_SEPARATION_MS)
+        .and_then(|diagnostic| diagnostic.measurement())
+        && Some(measurement.time) != trial.last_sep_ms
+    {
+        trial.last_sep_ms = Some(measurement.time);
+        trial.sep_ms += measurement.value;
+        trial.sep_ms_samples += 1.0;
+    }
+
+    trial.pawn_secs += overlaps.pawns as f64 * dt;
+    trial.held_secs += holds.0.len() as f64 * dt;
+    trial.overlap_secs += overlaps.involved as f64 * dt;
+    trial.worst_overlap = trial.worst_overlap.max(overlaps.worst);
+    trial.deep_events += overlaps.deep as u64;
+    trial.through_events += overlaps.through as u64;
+
+    // Ось потока — СРЕДНЕЕ положение толпы, а не центр карты. По центру карты
+    // обе величины выходили константами: цели пешек стоят в центрах навтайлов,
+    // вся колонна висит на одном и том же смещении от `centre`, и «разброс»
+    // читался как ровно 1.00 м во всех до единого прогонах — включая
+    // выключенное расталкивание. Расслоение — это разлёт ОТНОСИТЕЛЬНО СЕБЯ.
+    let mut axis = 0.0f64;
+    let mut population = 0.0f64;
+    for (position, _) in &pawns {
+        axis += position.0.y as f64;
+        population += 1.0;
+    }
+    let axis = (axis / population.max(1.0)) as f32;
+
+    let mut spread = 0.0f64;
+    let mut spread_counted = 0.0f64;
+    let mut order = 0.0f64;
+    let mut counted = 0.0f64;
+    for (position, movable) in &pawns {
+        let across = position.0.y - axis;
+        spread += across.abs() as f64;
+        spread_counted += 1.0;
+        // правосторонний порядок: идущий на +x обязан быть НИЖЕ оси, идущий на
+        // −x — выше. +1 — полосы сложились, 0 — перемешаны, −1 — левостороннее
+        let along = movable.last_direction.x;
+        if along.abs() > 0.5 && across.abs() > 0.05 {
+            order += -(along.signum() * across.signum()) as f64;
+            counted += 1.0;
+        }
+    }
+    trial.spread += spread;
+    trial.spread_samples += spread_counted;
+    trial.lane_order += order;
+    trial.lane_samples += counted;
+}
+
+/// Путь и прогресс — ПОТИКОВО, в `FixedUpdate`.
+///
+/// Почему не в кадре вместе с остальным. Толчок расталкивания приходит раз в
+/// кадр, а шагов ходьбы в кадре пять с лишним (5x, 64 Гц): на кадровой выборке
+/// они частично гасят друг друга внутри одного замера, и «пройденное
+/// расстояние» выходило меньше настоящего, а `push` — больше него, до
+/// невозможного отношения 1.67. Тик — тот шаг, на котором обе величины
+/// определены, и потолок смещения за тик известен точно (`speed / 64` плюс
+/// [`SeparationLab::max_step`]), так что тот же счётчик служит и детектором
+/// телепорта.
+///
+/// `progress` — СО ЗНАКОМ, а не выпрямленный. Выпрямленная сумма приращений
+/// растёт от одной дрожи на месте: пешка, которую качает толчками вперёд-назад,
+/// набирает «прогресс», никуда не уехав (первая версия так и намерила прогресс
+/// БОЛЬШЕ пути). Со знаком сумма телескопируется в честное «на сколько
+/// приблизился к цели за окно», а цена обхода честно вычитается.
+fn sample_travel(
+    mut trial: ResMut<Trial>,
+    mut pawns: Query<(&SimPosition, &Movable, &mut LastSample, &mut ProgressSample)>,
+) {
+    if trial.started.is_none() {
+        // окно ещё не открыто: базу всё равно освежаем, иначе первый тик окна
+        // получил бы смещение за всю постройку меша разом
+        for (position, _, mut last, mut sample) in &mut pawns {
+            last.0 = position.0;
+            sample.target = None;
+        }
+        return;
+    }
+    for (position, movable, mut last, mut sample) in &mut pawns {
+        let step = position.0.distance(last.0);
+        last.0 = position.0;
+        trial.travel += step as f64;
+        trial.worst_tick_step = trial.worst_tick_step.max(step);
+
+        let qwe::movement::MovableState::Moving(target) = movable.state else {
+            sample.target = None;
+            continue;
+        };
+        let distance = position.0.distance(tile_center(target));
+        // цель сменилась — прошлое расстояние про другую точку, прогресса нет
+        if sample.target == Some(target) {
+            trial.progress += (sample.distance - distance) as f64;
+        }
+        sample.target = Some(target);
+        sample.distance = distance;
+    }
+}
+
+/// Расстояние до текущей цели на прошлом тике, см. [`sample_travel`].
+#[derive(Component, Default)]
+struct ProgressSample {
+    target: Option<IVec2>,
+    distance: f32,
+}
+
+/// Снимок экрана в начале, середине и конце окна: телепорт и проход насквозь
+/// числами ловятся не полностью, и отчёт без картинок не проверить.
+fn take_shots(mut commands: Commands, mut trial: ResMut<Trial>) {
+    if !trial.shots || trial.window <= 0.0 || trial.started.is_none() {
+        return;
+    }
+    let due = match trial.shots_taken {
+        0 => 0.5,
+        1 => trial.window / 2.0,
+        2 => trial.window - 0.3,
+        _ => return,
+    };
+    if trial.real < due {
+        return;
+    }
+    // под `target/`: снимки — расходный материал замера, а не результат, и в
+    // репозитории им делать нечего (`target` уже в `.gitignore`)
+    const SHOTS: &str = "target/crowd-shots";
+    std::fs::create_dir_all(SHOTS).expect("cannot create the screenshot directory");
+    let path = format!("{SHOTS}/{}-{}.png", slug(&trial.label), trial.shots_taken);
+    trial.shots_taken += 1;
+    commands
+        .spawn(Screenshot::primary_window())
+        .observe(save_to_disk(path));
+}
+
+fn slug(label: &str) -> String {
+    label
+        .chars()
+        .map(|symbol| {
+            if symbol.is_alphanumeric() {
+                symbol
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Закрыть окно: одна строка `RESULT` в stdout и выход. Строка машинно
+/// читаемая (`ключ=значение`), потому что её собирают в таблицу отчёта, а не
+/// читают глазами.
+#[allow(clippy::too_many_arguments)]
+fn finish_trial(
+    trial: Res<Trial>,
+    stats: Res<SeparationStats>,
+    misses: Res<PathMisses>,
+    overlaps: Res<Overlaps>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if trial.window <= 0.0 || trial.started.is_none() || trial.real < trial.window {
+        return;
+    }
+    let pawn_secs = trial.pawn_secs.max(1e-9);
+    println!(
+        "RESULT label={label} real={real:.2} virtual={virtual_secs:.1} pawns={pawns} \
+         travel={travel:.0} progress={progress:.0} arrivals={arrivals} \
+         held_share={held:.4} overlap_share={overlap:.4} \
+         push={push:.0} push_share={push_share:.4} \
+         worst_overlap={worst:.3} deep={deep} through={through} worst_push={worst_push:.3} worst_step={worst_step:.3} \
+         spread={spread:.2} lane_order={lane_order:.3} \
+         sep_ms={sep_ms:.3} runs={runs} pairs={pairs} anticipated={anticipated} \
+         fps={fps:.1} misses={misses}",
+        label = trial.label,
+        real = trial.real,
+        virtual_secs = trial.virtual_secs,
+        pawns = overlaps.total,
+        travel = trial.travel,
+        progress = trial.progress,
+        arrivals = trial.arrivals,
+        held = trial.held_secs / pawn_secs,
+        overlap = trial.overlap_secs / pawn_secs,
+        push = stats.push_metres,
+        push_share = stats.push_metres / trial.travel.max(1e-9),
+        worst = trial.worst_overlap,
+        deep = trial.deep_events,
+        through = trial.through_events,
+        worst_push = stats.worst_push,
+        worst_step = trial.worst_tick_step,
+        spread = trial.spread / trial.spread_samples.max(1.0),
+        lane_order = trial.lane_order / trial.lane_samples.max(1.0),
+        sep_ms = trial.sep_ms / trial.sep_ms_samples.max(1.0),
+        runs = stats.runs,
+        pairs = stats.overlapping_pairs,
+        anticipated = stats.anticipated_pairs,
+        fps = trial.frames as f64 / trial.real.max(1e-9) as f64,
+        misses = misses.0,
+    );
+    exit.write(AppExit::Success);
 }
 
 /// Та же сводка в stdout раз в две реальные секунды: сцену смотрят глазами, но
