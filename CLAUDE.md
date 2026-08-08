@@ -175,7 +175,7 @@ Current third-party crates and why they exist:
 - `pathfinding` — A*/Dijkstra/Fringe/BFS over the navmesh grid
 - `bevy_northstar` — hierarchical HPA*/Theta* (its `Grid` is used directly, without the
   crate's plugin)
-- `polyanya` — polygonal navmesh (`navigation/polymesh.rs`): CDT + agent-radius
+- `polyanya` — polygonal navmesh (`navigation/polymesh/`): CDT + agent-radius
   inflation of vector obstacles; used directly, no bevy integration. `polyanya_glam` is a
   renamed `glam` 0.30 dep only to construct its `Vec2` (bevy 0.19 ships glam 0.32)
 - `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)
@@ -248,7 +248,7 @@ step when adding one):
 | road layers (alleys/roads/rails/walls + casings) | `map/roads.rs::spawn_roads` |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` |
-| tree crowns + shadows | `map/trees.rs::spawn_trees` |
+| tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
 | portal | `portal.rs` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | demons | `demon/systems.rs::spawn_demon` |
