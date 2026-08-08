@@ -12,8 +12,11 @@ use crate::navigation::ArcNavmesh;
 use crate::rng::WorldSeed;
 use crate::telemetry::Telemetry;
 
+// `Default` в reflect-регистрации — для BRP: `brp event RestartEvent` без
+// аргументов конструирует значение через `ReflectDefault`, и без него запрос
+// валит приложение паникой в `process_remote_requests`
 #[derive(Event, Reflect, Debug, Default)]
-#[reflect(Event)]
+#[reflect(Event, Default)]
 pub struct RestartEvent {
     /// Увезти камеру к порталу, как второе `R` подряд.
     ///
