@@ -1361,7 +1361,29 @@ in `main.rs`.
   measurement of separation has to respect: **count only pawns inside the camera rect** (off-screen ones
   are never separated by design, and including them makes on/off indistinguishable), and
   **allow a millimetre tail** — the solver is soft, so a converged crowd still reports
-  pairs a few mm inside the radius sum.
+  pairs a few mm inside the radius sum. Two more the scene added later, both of which
+  had silently voided every earlier comparison: **a scenario's spawn spacing has to be
+  re-checked against `HUMAN_BODY_RADIUS`** (the columns kept a 1.2 m step through the
+  0.45 → 0.9 m radius change and spawned already overlapping, so the run measured
+  recovery from the spawn, not flow), and **lateral spread must be measured against the
+  crowd's own mean, not the map centre** (goals sit in navtile centres, so a
+  centre-relative figure is a constant and reads the same with separation off).
+- **The separation lab** (`SeparationLab`, `SeparationStats`, `SeparationSteer`;
+  `tools/separation_lab/`, findings in its `REPORT.md`) — runtime knobs for the parts of
+  separation the game fixes in constants, so the crowd demo can sweep them.
+  Deliberately **not** a `SettingsGroup`: it is a measuring rig, not a user choice, and
+  its default reproduces the shipped behaviour exactly (`rate` / `max_step` equal to
+  their constants, everything else zero, i.e. the added branches do not execute). What
+  it made visible: in a symmetric head-on flow the pair correction is collinear with
+  both headings, `sidestep` is gated off by `alone`, and so **no lateral force exists at
+  all** — the crowd stays a strictly one-dimensional chain and no value of `rate`,
+  `hold` or `sidestep` changes anything. `SeparationSteer` is the answer that measured
+  best: instead of displacing a blocked pawn, the run hands it a lateral direction and
+  `move_moving_entities` bends the *walk* by it, so the pawn keeps full speed and rounds
+  the obstruction instead of fighting its own path. Its one trap is worth remembering —
+  `Movable::last_direction` must stay the **desired** heading, because the steer side is
+  the right normal *of that heading*, and writing the bent course back turns the pawn
+  further right every frame until it circles in place.
 - **Destination slot** (`movement/destination.rs`) — the reservation that stops two pawns
   from being aimed at the same point. A **slot** is a `k × k` block of navtiles,
   `k = ceil(rest distance / navtile_size())`, claimed by one pawn
