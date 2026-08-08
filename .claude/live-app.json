@@ -3,10 +3,18 @@
   "port": 15703,
   "shot": {
     "event": "TakeScreenshotEvent",
-    "path": "screenshot.png"
+    "path": "screenshot.png",
+    "small_px": 1568
   },
   "speed": {
     "resource": "SimSpeed",
     "path": ".requested"
+  },
+  "ready": {
+    "pattern": "warmup: (pawns on screen routed|timed out)"
+  },
+  "smoke": {
+    "types": ["Human", "Demon", "CorpseTag", "Portal"],
+    "speed": 10
   }
 }

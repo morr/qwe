@@ -20,8 +20,9 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# dev screenshot helper output (src/dev.rs)
+# dev screenshot helper output (src/dev.rs) + brp shot's downscaled copy
 screenshot.png
+screenshot.small.png
 
 # cached OpenStreetMap extract, downloaded at first app start
 assets/osm/

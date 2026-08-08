@@ -64,11 +64,13 @@ warmup: pawns on screen routed in 1.23s        # <- Playing/Live: the world is r
 ```
 
 `warmup: pawns on screen routed` (or `warmup timed out`) is the ready line — before it the
-simulation is deliberately paused behind the loader screen. Waiting for it beats any fixed
-sleep, especially after a city switch:
+simulation is deliberately paused behind the loader screen. `.claude/live-app.json` carries
+that regex as `ready.pattern`, so one blocking call does the whole wait (port, then marker,
+with a fail-fast on compile errors and panics):
 
 ```bash
-until grep -qE 'warmup: (pawns on screen routed|timed out)' $f; do sleep 2; done
+$b ready $f            # after a launch or a city switch
+$b smoke $f            # ready + resume/speed 10 + count Human/Demon/CorpseTag/Portal + shot
 ```
 
 ## Time: `SimSpeed`, not `Time<Virtual>`
@@ -109,9 +111,10 @@ $b shot                 # raise window, trigger TakeScreenshotEvent, wait for th
 ```
 
 `TakeScreenshotEvent` (also F12) is in `dev.rs`; the file is `screenshot.png` in the repo
-root, overwritten every time. The window **must be visible** — `shot` raises it, but a
-full-screen editor over it still wins; a black png means exactly that, not a broken
-renderer.
+root, overwritten every time, plus a `screenshot.small.png` copy downscaled to 1568 px —
+**Read the small one**; the 3840×2160 original is only for `magick -crop` zoom-ins. The
+window **must be visible** — `shot` raises it, but a full-screen editor over it still
+wins; a black png means exactly that, not a broken renderer.
 
 ## Camera
 
