@@ -22,7 +22,9 @@ use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
-use crate::movement::{SeparationStyle, SlotSearch, separation_allowed_by_mode};
+use crate::movement::{
+    SeparationLab, SeparationStyle, SlotLab, SlotSearch, separation_allowed_by_mode,
+};
 use crate::navigation::PolymeshDebug;
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::settings::{
@@ -31,7 +33,9 @@ use crate::settings::{
     DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN, DEMON_SPAWN_INTERVAL_STEP,
     DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN, DEMON_SPEED_FACTOR_STEP, HUMAN_BODY_RADIUS_MAX,
     HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
-    HUMAN_SPEED_SPREAD_STEP,
+    HUMAN_SPEED_SPREAD_STEP, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
+    SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE_MAX, SEPARATION_PASS_SQUEEZE_MIN,
+    SEPARATION_PASS_SQUEEZE_STEP, SLOT_REGROUP_MAX, SLOT_REGROUP_MIN, SLOT_REGROUP_STEP,
 };
 use crate::telemetry::Telemetry;
 
@@ -124,6 +128,79 @@ struct SlotSearchValueLabel;
 #[derive(Component)]
 struct SlotSearchSlider;
 
+/// Строки трёх механизмов, которые замер вывел в дефолты
+/// (`tools/crowd_tuning_lab/REPORT.md`): протискивание мимо стоящих, доля
+/// левшей и возврат на свой слот. Все три — свойства мира, а не вида, поэтому
+/// стоят в панели World рядом с тумблером расталкивания.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum CrowdRow {
+    PassSqueeze,
+    LeftShare,
+    Regroup,
+}
+
+/// Подпись значения такой строки.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+struct CrowdValueLabel(CrowdRow);
+
+/// Её ползунок.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+struct CrowdSlider(CrowdRow);
+
+impl CrowdRow {
+    const ALL: [Self; 3] = [Self::PassSqueeze, Self::LeftShare, Self::Regroup];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::PassSqueeze => "Pass squeeze",
+            Self::LeftShare => "Left share",
+            Self::Regroup => "Regroup",
+        }
+    }
+
+    /// `(min, max, шаг)` — из `settings.rs`, как у остальных ползунков.
+    fn range(self) -> (f32, f32, f32) {
+        match self {
+            Self::PassSqueeze => (
+                SEPARATION_PASS_SQUEEZE_MIN,
+                SEPARATION_PASS_SQUEEZE_MAX,
+                SEPARATION_PASS_SQUEEZE_STEP,
+            ),
+            Self::LeftShare => (
+                SEPARATION_LEFT_SHARE_MIN,
+                SEPARATION_LEFT_SHARE_MAX,
+                SEPARATION_LEFT_SHARE_STEP,
+            ),
+            Self::Regroup => (SLOT_REGROUP_MIN, SLOT_REGROUP_MAX, SLOT_REGROUP_STEP),
+        }
+    }
+
+    fn get(self, lab: &SeparationLab, slots: &SlotLab) -> f32 {
+        match self {
+            Self::PassSqueeze => lab.pass_squeeze,
+            Self::LeftShare => lab.left_share,
+            Self::Regroup => slots.regroup,
+        }
+    }
+
+    fn set(self, lab: &mut SeparationLab, slots: &mut SlotLab, value: f32) {
+        match self {
+            Self::PassSqueeze => lab.pass_squeeze = value,
+            Self::LeftShare => lab.left_share = value,
+            Self::Regroup => slots.regroup = value,
+        }
+    }
+
+    /// Единица измерения в подписи: у возврата это метры, у двух других — доля.
+    fn value_text(self, lab: &SeparationLab, slots: &SlotLab) -> String {
+        let value = self.get(lab, slots);
+        match self {
+            Self::Regroup => format!("{value:.2} m"),
+            _ => format!("{value:.2}"),
+        }
+    }
+}
+
 pub struct UiStatsPlugin;
 
 impl Plugin for UiStatsPlugin {
@@ -146,6 +223,8 @@ impl Plugin for UiStatsPlugin {
                 sync_demon_values.run_if(resource_changed::<DemonStyle>),
                 sync_human_values.run_if(resource_changed::<HumanStyle>),
                 sync_slot_search_value.run_if(resource_changed::<SlotSearch>),
+                sync_crowd_values
+                    .run_if(resource_changed::<SeparationLab>.or_else(resource_changed::<SlotLab>)),
                 // метка BRP стоит только в агентских запусках, и только тогда
                 // панели есть что обходить
                 offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
@@ -321,6 +400,8 @@ fn render_stats_panel(
     style: Res<DemonStyle>,
     human_style: Res<HumanStyle>,
     separation: Res<SeparationStyle>,
+    separation_lab: Res<SeparationLab>,
+    slot_lab: Res<SlotLab>,
     slot_search: Res<SlotSearch>,
     determinism: Res<Determinism>,
     polymesh: Res<PolymeshDebug>,
@@ -620,6 +701,55 @@ fn render_stats_panel(
         SlotSearchSlider,
         on_slot_search_change,
     );
+
+    for row in CrowdRow::ALL {
+        spawn_slider_row(
+            &mut commands,
+            world_panel,
+            SliderRow {
+                label: row.label(),
+                value: row.get(&separation_lab, &slot_lab),
+                value_text: row.value_text(&separation_lab, &slot_lab),
+                range: row.range(),
+            },
+            CrowdValueLabel(row),
+            CrowdSlider(row),
+            move |change: On<ValueChange<f32>>,
+                  mut commands: Commands,
+                  mut lab: ResMut<SeparationLab>,
+                  mut slots: ResMut<SlotLab>| {
+                let (min, max, step) = row.range();
+                let stepped = quantize(change.value, min, max, step);
+                commands.entity(change.source).insert(SliderValue(stepped));
+                if (row.get(&lab, &slots) - stepped).abs() > f32::EPSILON {
+                    row.set(&mut lab, &mut slots, stepped);
+                }
+            },
+        );
+    }
+}
+
+/// Подтянуть строки механизмов к ресурсам — их правят не только эти ползунки
+/// (BRP, панель демо-сцены), а расходиться показанному и настоящему нельзя.
+fn sync_crowd_values(
+    mut commands: Commands,
+    lab: Res<SeparationLab>,
+    slots: Res<SlotLab>,
+    mut labels: Query<(&CrowdValueLabel, &mut Text)>,
+    sliders: Query<(Entity, &CrowdSlider, &SliderValue)>,
+) {
+    for (label, mut text) in &mut labels {
+        let next = label.0.value_text(&lab, &slots);
+        if text.0 != next {
+            text.0 = next;
+        }
+    }
+    for (entity, slider, value) in &sliders {
+        let next = slider.0.get(&lab, &slots);
+        if (value.0 - next).abs() > f32::EPSILON {
+            commands.entity(entity).insert(SliderValue(next));
+        }
+    }
 }
 
 /// Счётчики панели. `Human` снимается с человека в момент смерти, а с трупа не

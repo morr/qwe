@@ -1313,13 +1313,39 @@ in `main.rs`.
   **the pawn behind gives way** (`shares`) — for a pair on roughly the same course the
   follower takes the entire correction and the leader none, instead of the leader being
   shoved in the back by someone who caught up;
+  **a walker squeezes past a stander** (`pass_squeeze`, `SEPARATION_PASS_SQUEEZE` 0.6) —
+  in a pair where exactly one is walking the rest distance shrinks to 60 % for as long as
+  the pass lasts; two standers and two walkers keep the full distance. This is what makes
+  the destination-slot lattice passable at all: its step is 2.0 m while a walker needs
+  `2 × rest` = 3.6 m of clearance between two settled pawns, so inner slots were
+  unreachable except *through* bodies. Squeezing the **pass**, not the crowd, is the whole
+  point — the earlier `compress` knob shrank by neighbour count, i.e. hardest exactly
+  where the crowd stands still, and a settled crowd ended up permanently overlapped (93 %
+  of a pawn's time inside another body on the lab's funnel);
+  **a fifth of pawns dodge left** (`left_share`, `SEPARATION_LEFT_SHARE` 0.2) — the side
+  is personal and stable (a `PawnId` hash, like the coincidence axis). One side for
+  everyone produces two pictures that do not occur in life: a same-way flow congealing
+  into a single column, and pawns that failed to reach a dense crowd orbiting it as one
+  carousel. Measured best on the lab's street: the lowest time-in-separation of anything
+  tried, and the only knob that actually widens the flow;
   **head-on pairs step right** (`sidestep`, strength `SeparationStyle::sidestep`) — two
   pawns walking straight at each other have their pair axis collinear with both
   velocities, so the plain correction has no lateral component at all and they lock
   together until an outside asymmetry frees them. With the across-heading rule this is
   the *only* thing that resolves a head-on pair, so it must stay above zero;
+  **a blocked pawn steers aside** (`SeparationSteer`, strength `SEPARATION_STEER` 1.0) —
+  the push moves a **position** while the walk immediately carries the pawn back toward
+  its goal, so the two forces cancel and the whole result goes into distance walked.
+  Steering turns the **heading** of that same walk instead: full speed kept, the pawn
+  arcs around and never "returns". A symmetric head-on flow does not disperse without it
+  at all — the pair axis is collinear with both courses, so no pair has any lateral
+  component (the lab measured a spread of exactly 0.00 m at every `rate`, `hold` and
+  `sidestep`). Its side is the same personal one as `left_share`, and it is released
+  within `steer_release` of a waypoint, or a pawn circles the point instead of passing it;
   **a blocked pawn eases off** (`SeparationHolds`, share `SeparationStyle::hold`,
-  default `SEPARATION_HOLD` 0.2) — a *human* whose heading points into an overlapped
+  default `SEPARATION_HOLD` **1.0 — i.e. no easing off at all**, since steering solves
+  the same problem better; every fraction below 1 measurably ruins convergence) — a
+  *human* whose heading points into an overlapped
   neighbour that is **standing or oncoming** (only there is pressing futile — holding on
   any touch made whole same-way flows crawl at the hold fraction, companies of
   co-travellers strangling themselves) walks at a fraction of its speed until the next
