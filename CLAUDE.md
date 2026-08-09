@@ -14,14 +14,6 @@ entry points at its skill. When a change introduces or retires a domain concept,
 `CONTEXT.md` *and* the matching skill in the same change — a stale glossary is worse
 than none.
 
-**`OSM.md` — load it before touching the OSM pipeline** (the Overpass query, `map/osm/*`,
-or anything that decides which map features get drawn). It is the coverage audit: which
-tags reach the map, which ones are downloaded and thrown away, which ones are never asked
-for at all, with per-city counts — so a feature that already exists does not get
-"added" twice, and the cheap gaps are visible. It also carries the two scripts in
-`tools/osm_audit/` that regenerate those numbers. Widening the query or adding a branch to
-`parse_way` means updating `OSM.md` in the same change.
-
 This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 
 ## Skills
@@ -36,7 +28,7 @@ Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's 
 
 **Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Load the one covering the code you are about to change; each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
-- **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Complements `OSM.md` (coverage audit), does not replace it.
+- **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
 - **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
 - **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `prefs.rs`): panel internals, the slider/row kits, column stacking, camera start view, persistence.

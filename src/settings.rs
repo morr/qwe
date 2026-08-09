@@ -701,7 +701,7 @@ pub const Z_TREE_SHADOW: f32 = 19.0;
 /// обязан их накрывать, иначе лес под ним не сопоставить с пятнами шума.
 pub const Z_CONIFER_NOISE_OVERLAY: f32 = 21.0;
 
-// --- Деревья (кроны в стиле Watabou, см. TREE_ALGO.md) ---
+// --- Деревья (кроны в стиле Watabou, см. .claude/skills/osm-map/references/tree-algo.md) ---
 /// Сколько уникальных геометрий крон переиспользуется на все деревья.
 pub const TREE_VARIANTS: usize = 12;
 /// Толщина чернильного контура кроны, доля радиуса (у watabou ~1/8 радиуса).

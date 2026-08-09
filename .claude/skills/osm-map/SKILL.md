@@ -5,17 +5,24 @@ description: Use when working on the OSM pipeline or map rendering in qwe — th
 
 # OSM map pipeline — deep detail
 
-This is the detail layer behind the **OSM map pipeline** summary in `CONTEXT.md`.
-`OSM.md` is a different document: the *coverage audit* (which tags reach the map, with
-per-city counts) — read it before widening the Overpass query. This skill is the
-*mechanics*: how the downloaded data becomes `MapData` and pixels.
+This is the detail layer behind the **OSM map pipeline** summary in `CONTEXT.md`:
+how the downloaded data becomes `MapData` and pixels.
 
-Two deep dives live next to this file and are read on demand:
+Four deep dives live next to this file and are read on demand:
 
+- `references/osm-coverage.md` — the **tag coverage audit** (in Russian): which OSM
+  tags reach the map, which are downloaded and thrown away, which are never asked for,
+  with per-city counts, and how to regenerate them (`tools/osm_audit/`). Read it
+  before widening the Overpass query — a feature that already exists must not get
+  "added" twice. Widening the query or adding a `parse_way` branch means updating it
+  in the same change.
 - `references/entrances.md` — the door generator: the measured statistics behind the
   cohort table, the pitch law, blocked walls, determinism.
 - `references/trees.md` — planting (woods, standalone, rows, density/thresholds) and
   rendering (crowns, TreeStyle/TreeRowStyle, conifer stands).
+- `references/tree-algo.md` — the watabou Village Generator crown algorithm (in
+  Russian), reverse-engineered from `Village.js`; the ground truth `map/trees/crown.rs`
+  is written against.
 
 When a change here introduces or retires a concept, update the matching summary bullet
 in `CONTEXT.md` and the detail here in the same change.

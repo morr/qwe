@@ -1,8 +1,8 @@
 # Trees — planting and rendering
 
 Detail behind `map/osm/planting.rs` and `map/trees/`. The crown drawing algorithm has
-its own write-up in `TREE_ALGO.md` (repo root); this file covers where trees stand,
-how density works, and which resources restyle them.
+its own write-up in `tree-algo.md` next to this file; this one covers where trees
+stand, how density works, and which resources restyle them.
 
 ## Planting
 
@@ -128,7 +128,8 @@ how density works, and which resources restyle them.
 
 ## Rendering & styles
 
-- **Tree crowns** (`map/trees/crown.rs`, algorithm write-up — `TREE_ALGO.md`) — Watabou-style
+- **Tree crowns** (`map/trees/crown.rs`, algorithm write-up — `tree-algo.md` next to
+  this file) — Watabou-style
   procedural trees: a jittered 12-gon **bloated** into a cloud outline (recursive
   outward midpoint extrusion), ink outline, dashed inner **bands** shaded away from the
   light, and a **long shadow** — the crown silhouette stretched ×1.4 along the 30°

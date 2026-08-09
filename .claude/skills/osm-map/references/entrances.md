@@ -1,7 +1,7 @@
 # Entrances — real doors and the generator
 
 Detail behind `map/osm/entrances/`. The summary lives in `CONTEXT.md`; the coverage
-counts per city live in `OSM.md`.
+counts per city live in `osm-coverage.md` next to this file.
 
 ## Real OSM doors
 

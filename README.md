@@ -11,7 +11,8 @@ The first run downloads the OSM extract from Overpass into `assets/osm/` (gitign
 cache); later runs are offline. Deleting the cache file forces a re-download.
 
 Domain glossary and invariants live in [`CONTEXT.md`](CONTEXT.md), the OSM coverage audit
-in [`OSM.md`](OSM.md), working conventions in [`CLAUDE.md`](CLAUDE.md).
+in [`.claude/skills/osm-map/references/osm-coverage.md`](.claude/skills/osm-map/references/osm-coverage.md),
+working conventions in [`CLAUDE.md`](CLAUDE.md).
 
 ## Examples
 

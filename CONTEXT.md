@@ -122,12 +122,14 @@ in `main.rs`.
 
 Summary; mechanics, measurements and rendering detail — **osm-map skill**
 (entrance statistics in its `references/entrances.md`, planting and crowns in
-`references/trees.md`). Tag coverage audit — `OSM.md`.
+`references/trees.md`, tag coverage audit in `references/osm-coverage.md`, crown
+algorithm in `references/tree-algo.md`).
 
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
   bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS`
   (`download.rs`) are tried in order; a mirror answer must start with `{`. What is
-  queried and what reaches the map — `OSM.md`. **Bump `QUERY_VERSION` in `overpass.rs`
+  queried and what reaches the map — the osm-map skill's `references/osm-coverage.md`.
+  **Bump `QUERY_VERSION` in `overpass.rs`
   whenever the query gains tags** (currently 7), or existing caches keep serving
   extracts that lack them.
 - **Cache** — `assets/osm/{slug}_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored);
@@ -597,8 +599,8 @@ skill**.
 - All tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates, z-layers,
   geo anchor).
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
-  `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill**; coverage audit — `OSM.md`;
-  crown algorithm — `TREE_ALGO.md`.
+  `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also
+  carry the tag coverage audit and the crown-algorithm write-up).
 - Navigation: `src/navigation/{navmesh,astar,northstar,polymesh}`;
   movement/interpolation: `src/movement/`. Detail — **navigation-deep skill**.
 - Speed & regulator: `src/sim_time.rs`. Detail — **sim-speed skill**.
