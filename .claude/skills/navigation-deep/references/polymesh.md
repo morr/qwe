@@ -130,6 +130,17 @@ un-baking). Baking is what makes the mesh queryable at scale: without it point l
 is a linear scan over every polygon, twice per query, and an unreachable goal burns the
 full `polygons.len() * 10` budget instead of failing at once on the island check.
 
+A chunk can come out **fully blocked** — a river, a solid block of buildings, and the
+layer has zero polygons. That is legal, and `polymesh chunked … N layers fully blocked`
+counts them: New York has 4 of 140, every other city of the panel has none. Such a layer
+is deliberately left *un-baked*: `BVH2d::build` (bvh2d 0.7, under
+`Layer::bake_polygon_finder`) has no recursion base for an empty shape list — it splits
+zero shapes into two empty halves forever and kills the process with a stack overflow in
+the `AsyncComputeTaskPool` worker, whatever the stack size. The guard lives in
+`vendor/polyanya/src/layers.rs`; every reader of `baked_polygons` already branches on
+`None` into the linear scan, which over zero polygons correctly answers "not on the
+mesh". Repro over all six cities: `examples/audit/polymesh_empty_layer_repro.rs`.
+
 ## Polygonal routing
 
 **Polygonal routing** (`polymesh::find_path_polymesh`, dispatched in
