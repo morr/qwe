@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::demon::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawnPause, DemonStyle, DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use crate::grid::world_to_tile;
 use crate::human::{
@@ -40,18 +40,14 @@ fn chasers_of(target: Entity, chasers: &ChaserCounts) -> usize {
 }
 
 /// Wander → Chase: ближайший человек в радиусе агро, у которого ещё нет
-/// `MAX_CHASERS_PER_TARGET` преследователей. Демон в паузе после спавна
-/// (`DemonSpawnPause`) агро не берёт: у портала люди ходят постоянно, и первая
-/// же жертва срывала бы паузу, ради которой она и заведена.
+/// `MAX_CHASERS_PER_TARGET` преследователей. Демон берёт агро с первого же
+/// тика после выхода из портала.
 pub fn acquire_targets(
     mut commands: Commands,
     humans: Res<SpatialGrid<Human>>,
     positions: Query<&SimPosition, With<Human>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
-    query: Query<
-        (Entity, &SimPosition),
-        (With<Demon>, With<DemonWanderTag>, Without<DemonSpawnPause>),
-    >,
+    query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
 ) {
     let mut chasers: ChaserCounts = ChaserCounts::default();
     for chase_target in &chasing {

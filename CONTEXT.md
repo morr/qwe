@@ -1556,15 +1556,12 @@ in `main.rs`.
   *out* of the state.
 - **CorpseTag** — a killed human: behavior/movement components removed, dark lying
   sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`).
-- **DemonSpawnPause** — a demon that just stepped out of the portal stands still for a
-  random **0.5–3 s** (`DEMON_SPAWN_PAUSE`), the initial burst included. The component
-  filters *both* `pick_wander_targets` and `acquire_targets` out with a plain
-  `Without<DemonSpawnPause>`, so the pause blocks aggro as well: humans walk past the
-  portal constantly, and a pause the first victim cancels is not a pause. `tick_spawn_pause`
-  (`Update`, so `Res<Time>` is `Time<Virtual>` — the pause scales with sim speed, like the
-  human `WanderPause`) removes the component when the timer finishes; nothing else reads
-  the timer. Without it the whole burst scattered inside one frame and a demon's arrival
-  on the map did not read at all.
+- **Demon spawn** — a demon acts from the first tick it exists: it steps out of the portal
+  already eligible for `pick_wander_targets` and `acquire_targets`, the initial burst
+  included. There was a `DemonSpawnPause` here — a random 0.5–3 s of standing still that
+  gated both queries — so that an arrival read as an arrival instead of the whole burst
+  scattering inside one frame; it was removed on request. Staging an entrance again means
+  a new component, not reviving that one.
 - **Demon** states (`demon/behavior.rs`): **Wander** (target biased away from portal) →
   **Chase** → **Devour** → Wander. Chase claims: **max 2 chasers per target**
   (`ChaserCounts`). Repath throttle 0.4 s, and on that same tick the demon may

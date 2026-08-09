@@ -7,11 +7,10 @@ use bevy::prelude::*;
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
 pub use self::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawnPause, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use self::systems::{
-    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawn_pause,
-    tick_spawner,
+    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
 };
 use crate::loading::AppState;
 use crate::spatial::SimSet;
@@ -28,7 +27,6 @@ impl Plugin for DemonPlugin {
             .register_type::<ChaseTarget>()
             .register_type::<ChaseRepath>()
             .register_type::<DevourUntil>()
-            .register_type::<DemonSpawnPause>()
             .register_type::<DemonStyle>()
             .init_resource::<DemonSpawner>()
             .init_resource::<DemonStyle>()
@@ -39,19 +37,13 @@ impl Plugin for DemonPlugin {
                     .chain()
                     .run_if(in_state(AppState::Playing)),
             )
-            // отсчёт стартовой паузы и выбор цели блуждания — в `FixedUpdate`,
-            // а не в `Update`: это решения симуляции, и в `Update` они шли по
-            // разу на кадр, то есть зависели от fps. Демонов сотни, лишних
-            // прогонов эта система не боится
+            // выбор цели блуждания — в `FixedUpdate`, а не в `Update`: это
+            // решение симуляции, и в `Update` оно шло по разу на кадр, то есть
+            // зависело от fps. Демонов сотни, лишних прогонов эта система не
+            // боится
             .add_systems(
                 FixedUpdate,
-                (
-                    tick_spawn_pause,
-                    pick_wander_targets,
-                    acquire_targets,
-                    chase,
-                    devour,
-                )
+                (pick_wander_targets, acquire_targets, chase, devour)
                     .chain()
                     .in_set(SimSet::DemonBehavior),
             )

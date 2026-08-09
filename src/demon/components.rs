@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::{
-    DEMON_CAP, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL, DEMON_SPAWN_PAUSE, DEMON_SPEED_FACTOR,
-};
+use crate::settings::{DEMON_CAP, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL, DEMON_SPEED_FACTOR};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -60,20 +58,6 @@ pub struct DevourUntil(pub Timer);
 impl Default for DevourUntil {
     fn default() -> Self {
         Self(Timer::from_seconds(1.5, TimerMode::Once))
-    }
-}
-
-/// Пауза сразу после выхода из портала: демон стоит на месте, пока тикает, —
-/// и не выбирает цель прогулки, и не берёт агро. Компонент снимает
-/// `tick_spawn_pause`, поэтому «не в паузе» проверяется одним
-/// `Without<DemonSpawnPause>` в фильтре запроса, без чтения таймера.
-#[derive(Component, Reflect)]
-#[reflect(Component)]
-pub struct DemonSpawnPause(pub Timer);
-
-impl Default for DemonSpawnPause {
-    fn default() -> Self {
-        Self(Timer::from_seconds(DEMON_SPAWN_PAUSE.0, TimerMode::Once))
     }
 }
 
