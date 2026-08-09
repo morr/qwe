@@ -264,7 +264,10 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **find_passable_tile_near** — target tile or its 8 neighbors only; callers tolerate
   `None`.
 - **Poly navmesh** (`navigation/polymesh/`) — a polygonal polyanya mesh from the same
-  vector sources the grid rasterizes; **the default pathfinding backend**
+  vector sources the grid rasterizes, ring **holes subtracted** as the grid subtracts
+  them and only a hole of the *resulting* union dropped (≙ `prune_unreachable`'s
+  unreachable pocket — an island opens when a bridge deck cuts its water ring);
+  **the default pathfinding backend**
   (`PolymeshDebug::enabled`), the grid serving as fallback while it builds (~5–20 s,
   async, cancellable). Chunked into stitched layers (400 m target) — builds 18× faster
   than flat and searches slightly faster; the level-1 route plus a **corner fill**

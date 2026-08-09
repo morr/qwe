@@ -18,14 +18,31 @@ bury a fresh install's city under polygon edges.
 
 The whole fill order collapses into one boolean (`i_overlay` difference):
 union(water ∪ non-culvert waterways ∪ bridge curb bands ∪ buildings ∪ walls) −
-union(bridge decks ∪ joining roads ∪ passages), clipped to the map rect **outset** by
+union(bridge decks ∪ joining roads ∪ passages), where the areas' **ring holes enter the
+union reversed** so NonZero subtracts them, clipped to the map rect **outset** by
 `MAP_EDGE_MARGIN` (an inset clip would leave a walkable sliver along the map edge for
 paths to sneak around a river; polyanya digests obstacles crossing its outer boundary —
 triangle walkability is a point-in-polygon test of the triangle center), then CDT via
 `polyanya::Triangulation` with agent-radius inflation.
 
-Deliberate deltas from the grid: obstacle **holes are dropped** (an unreachable pocket
-≙ what `prune_unreachable` kills), the **diagonal seal pass has no analogue** (patches
+**A ring hole is not an obstacle, but a hole of the *result* still is.** The input holes
+are subtracted the way the grid's `row_spans` subtracts them (reversed contour + NonZero,
+so a shed mapped inside a courtyard raises the winding back to +1 and stays solid); what
+is dropped is a hole the *union* still has after the carves — `shape.first()` keeps only
+outer contours, everywhere: the union output, the `obstacles` kept for the overlay, and
+the per-chunk clip. That is exactly `prune_unreachable`'s verdict — a courtyard with no
+arch is a pocket nothing reaches. The distinction is load-bearing for **islands**: Île de
+la Cité and Île Saint-Louis are inner rings of the `natural=water` multipolygon "La
+Seine", and Paris's portal hint (`MAP_CENTER_PORTAL_POS`) stands on the first of them.
+Dropping the input hole buried the whole island — `contains(portal) == false`, every
+street on it painted blocked by the overlay — while the grid walked it fine. Subtracting
+it instead makes the island a hole of the water region, and the bridge decks then cut the
+water ring open, so the island joins the outer contour. No bridge, no opening: an island
+nothing reaches stays a dropped hole, as it should. Pinned by
+`polymesh::tests::an_island_is_walkable_once_a_bridge_reaches_it`;
+`examples/audit/polymesh_start_area` checks every city's portal hint against the mesh.
+
+Deliberate deltas from the grid: the **diagonal seal pass has no analogue** (patches
 raster corner-contact only), and deck/joining widths are **verbatim** — the grid's
 `±tile·√2` corrections compensate wandering tile centers, which vectors don't have.
 The deck carve is therefore `road.width`, the carriageway the renderer fills, *not*

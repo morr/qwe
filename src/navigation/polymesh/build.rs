@@ -47,11 +47,23 @@ pub(super) fn build_polymesh(
     let is_cancelled = || cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed));
 
     let mut blockers: Vec<Vec<[f32; 2]>> = Vec::new();
-    // дыры колец отброшены сознательно: карман внутри препятствия (двор без
-    // арки, остров в пруду) недостижим снаружи — сеточный prune_unreachable
-    // убивает ровно такие полости
+    // дыры колец идут в объединение обратным обходом: NonZero вычитает их из
+    // внешнего кольца ровно так же, как сеточный `row_spans` вычитает их
+    // интервалы, а дом внутри дыры (сарай во дворе) снова даёт +1 и остаётся
+    // сплошным. Выбросить дыру нельзя: остров в реке — это inner-кольцо
+    // водного мультиполигона (Сите и Сен-Луи — дыры «La Seine»), и вся суша
+    // под ним оказывалась препятствием, включая точку старта Парижа.
+    //
+    // Недостижимую полость это не открывает: двор без арки остаётся дырой
+    // РЕЗУЛЬТАТА, а её ниже отбрасывает `shape.first()` — то же, что делает
+    // сеточный `prune_unreachable`. Дыру открывает только прорез: настил
+    // моста, ведущий на остров, разрезает водное кольцо, и остров вместе с
+    // прорезом становится частью внешнего контура.
     for area in input.buildings.iter().chain(&input.water) {
         push_contour(&mut blockers, area.outer.clone());
+        for hole in &area.holes {
+            push_hole(&mut blockers, hole.clone());
+        }
     }
     // трубы не блокируют — над культвертом земля (как в заливке сетки)
     for line in input.water_lines.iter().filter(|line| !line.tunnel) {
@@ -402,6 +414,18 @@ fn push_contour(target: &mut Vec<Vec<[f32; 2]>>, ring: Vec<Vec2>) {
         return;
     }
     target.push(oriented(ring));
+}
+
+/// Дыра кольца — тот же контур обратным обходом: при NonZero он гасит
+/// заливку внутреннего кармана, но не мешает вложенным контурам (дом во
+/// дворе снова поднимает обмотку до +1).
+fn push_hole(target: &mut Vec<Vec<[f32; 2]>>, ring: Vec<Vec2>) {
+    if ring.len() < 3 {
+        return;
+    }
+    let mut contour = oriented(ring);
+    contour.reverse();
+    target.push(contour);
 }
 
 /// Замкнутый контур ленты постоянной ширины вдоль открытой ломаной:

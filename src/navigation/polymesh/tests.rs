@@ -153,6 +153,82 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
     );
 }
 
+/// Остров в реке — это дыра водного мультиполигона (Сите и Сен-Луи в Париже
+/// суть inner-кольца «La Seine», и точка старта города стоит на первом из
+/// них). Дыра обязана вычитаться из препятствия, как её вычитает сеточный
+/// `row_spans`; открывает же остров прорез настила моста, разрезающий водное
+/// кольцо. Без моста остров остаётся дырой результата и отбрасывается —
+/// недостижимый карман, ровно то, что убивает сеточный `prune_unreachable`.
+#[test]
+fn an_island_is_walkable_once_a_bridge_reaches_it() {
+    // квадратное «русло» с островом-дырой и сараем во дворе острова
+    let river = PolyArea {
+        outer: vec![
+            Vec2::new(1000.0, 1000.0),
+            Vec2::new(1600.0, 1000.0),
+            Vec2::new(1600.0, 1600.0),
+            Vec2::new(1000.0, 1600.0),
+        ],
+        holes: vec![vec![
+            Vec2::new(1200.0, 1200.0),
+            Vec2::new(1400.0, 1200.0),
+            Vec2::new(1400.0, 1400.0),
+            Vec2::new(1200.0, 1400.0),
+        ]],
+        kind: crate::map::osm::model::AreaKind::Water,
+        height: None,
+        entrances: vec![],
+    };
+    let shed = PolyArea {
+        outer: vec![
+            Vec2::new(1240.0, 1240.0),
+            Vec2::new(1270.0, 1240.0),
+            Vec2::new(1270.0, 1270.0),
+            Vec2::new(1240.0, 1270.0),
+        ],
+        holes: vec![],
+        kind: crate::map::osm::model::AreaKind::Building,
+        height: None,
+        entrances: vec![],
+    };
+    let input = |roads: Vec<RoadLine>| PolymeshInput {
+        buildings: vec![shed.clone()],
+        water: vec![river.clone()],
+        water_lines: vec![],
+        walls: vec![],
+        roads,
+    };
+
+    let bank = Vec2::new(1300.0, 900.0);
+    let island = Vec2::new(1330.0, 1330.0);
+
+    let severed = build_polymesh(&input(vec![]), 0.4, None, None).expect("not cancelled");
+    assert!(
+        !severed.contains(island),
+        "остров без моста недостижим — дыра результата отбрасывается"
+    );
+
+    let bridge = RoadLine {
+        points: vec![Vec2::new(1300.0, 950.0), Vec2::new(1300.0, 1300.0)],
+        width: 20.0,
+        class: RoadClass::Street,
+        bridge: true,
+        passage: false,
+    };
+    let bridged = build_polymesh(&input(vec![bridge]), 0.4, None, None).expect("not cancelled");
+    assert!(
+        bridged.contains(island),
+        "остров под мостом обязан быть на меше"
+    );
+    assert!(
+        !bridged.contains(Vec2::new(1255.0, 1255.0)),
+        "сарай внутри дыры остаётся сплошным: NonZero поднимает обмотку обратно"
+    );
+    let path = find_path_polymesh(&bridged, bank, island).expect("мост обязан довести до острова");
+    assert_eq!(path.first(), Some(&bank));
+    assert!(path.last().expect("непустой путь").distance(island) < 1.0);
+}
+
 /// Чанк, целиком накрытый препятствием, даёт слой без единого полигона — на
 /// Нью-Йорке таких четыре (река, сплошная застройка). `Layer::bake` на нём
 /// уходил в бесконечную рекурсию `BVH2d::build`, и процесс умирал с `stack

@@ -52,6 +52,10 @@ path = "examples/audit/polymesh_budget_repro.rs"
 name = "polymesh_empty_layer_repro"
 path = "examples/audit/polymesh_empty_layer_repro.rs"
 
+[[example]]
+name = "polymesh_start_area"
+path = "examples/audit/polymesh_start_area.rs"
+
 [dependencies]
 bevy = { version = "0.19", default-features = false, features = [
     # instead of default ["2d", "3d", "ui", "audio"]: no 3d stack, no audio
