@@ -152,3 +152,48 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
         "в пяти метрах от стены"
     );
 }
+
+/// Чанк, целиком накрытый препятствием, даёт слой без единого полигона — на
+/// Нью-Йорке таких четыре (река, сплошная застройка). `Layer::bake` на нём
+/// уходил в бесконечную рекурсию `BVH2d::build`, и процесс умирал с `stack
+/// overflow` в воркере `AsyncComputeTaskPool` (см. `bake_polygon_finder` в
+/// `vendor/polyanya`). Провал этого теста выглядит не как assert, а как
+/// падение всего тестового бинаря — так и задумано.
+#[test]
+fn a_chunk_fully_covered_by_an_obstacle_builds_an_empty_layer() {
+    let blocked = PolyArea {
+        // с запасом за края чанка (0,0)-(400,400), чтобы после инфляции
+        // радиусом агента не осталось щели вдоль кромки
+        outer: vec![
+            Vec2::new(-50.0, -50.0),
+            Vec2::new(CHUNK_METERS + 50.0, -50.0),
+            Vec2::new(CHUNK_METERS + 50.0, CHUNK_METERS + 50.0),
+            Vec2::new(-50.0, CHUNK_METERS + 50.0),
+        ],
+        holes: vec![],
+        kind: crate::map::osm::model::AreaKind::Building,
+        height: None,
+        entrances: vec![],
+    };
+    let input = PolymeshInput {
+        buildings: vec![blocked],
+        water: vec![],
+        water_lines: vec![],
+        walls: vec![],
+        roads: vec![],
+    };
+    let mesh = build_polymesh(&input, 0.2, None, Some(CHUNK_METERS)).expect("not cancelled");
+
+    assert!(
+        mesh.mesh.layers[0].polygons.is_empty(),
+        "чанк под сплошным зданием не даёт свободных полигонов"
+    );
+    assert!(!mesh.contains(Vec2::new(200.0, 200.0)), "внутри перекрытия");
+    // остальная карта не пострадала: соседние чанки строятся и ходятся
+    let from = Vec2::new(1000.0, 1000.0);
+    let to = Vec2::new(1400.0, 1400.0);
+    assert!(
+        find_path_polymesh(&mesh, from, to).is_some(),
+        "пустой слой не должен ломать поиск в остальной карте"
+    );
+}

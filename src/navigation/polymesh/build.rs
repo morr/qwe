@@ -230,8 +230,16 @@ pub(super) fn build_polymesh(
         ));
     }
     let polygons: usize = layers.iter().map(|layer| layer.polygons.len()).sum();
+    // пустые слои считаются вслух: чанк, целиком накрытый препятствием (река,
+    // сплошная застройка), полигонов не даёт — это законно, но такой слой
+    // раньше убивал процесс в `Layer::bake`, и на Нью-Йорке их четыре
+    let empty = layers
+        .iter()
+        .filter(|layer| layer.polygons.is_empty())
+        .count();
     info!(
-        "polymesh chunked into {}x{} layers ({polygons} polygons) in {:?}",
+        "polymesh chunked into {}x{} layers ({polygons} polygons, {empty} layers fully blocked) \
+         in {:?}",
         grid.x,
         grid.y,
         chunking.elapsed()

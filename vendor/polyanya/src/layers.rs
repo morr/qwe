@@ -108,6 +108,18 @@ impl Layer {
     /// if a point is in the mesh.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn bake_polygon_finder(&mut self) {
+        // QWE: слой без полигонов оставляем небаженым. `BVH2d::build` на пустом
+        // входе не имеет базы рекурсии: список не делится, обе половины снова
+        // пусты, и вызов уходит в бесконечную рекурсию — процесс умирает с
+        // `stack overflow`. Пустой слой нормален для чанкованного меша: чанк,
+        // целиком накрытый препятствием (река, сплошная застройка), свободных
+        // полигонов не даёт. Все читатели `baked_polygons` уже умеют `None` —
+        // это ветка линейного скана, и по нулю полигонов она честно даёт «точки
+        // на меше нет».
+        if self.polygons.is_empty() {
+            self.baked_polygons = None;
+            return;
+        }
         let bounded_polygons = self
             .polygons
             .iter_mut()
