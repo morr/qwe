@@ -157,6 +157,12 @@ fn a_wait_burst_raises_the_peak_at_once_and_lets_go_slowly() {
     );
 }
 
+/// Прогон симуляции, который сам растягивает кадр до `dt`: всё, что не
+/// отведено отрисовке, занято шагами.
+fn sim_filling(dt: f32) -> f32 {
+    (dt * 1000.0 - SIM_RENDER_BUDGET * 1000.0).max(0.0)
+}
+
 /// Просевший кадр режет скорость сверх расчёта — и ровно на своё
 /// отставание. Это разрыв усиления: шагов в кадре тем больше, чем длиннее
 /// был предыдущий, так что без поправки одна просадка тянет следующую.
@@ -165,17 +171,78 @@ fn a_late_frame_cuts_the_speed_beyond_the_solver() {
     let target = 10.0;
     // кадр в цель уложился — поправки нет вовсе, ни на 60, ни ровно на 30
     for dt in [1.0 / 120.0, 1.0 / 60.0, 1.0 / MIN_SIM_FPS] {
-        assert_eq!(frame_overrun(dt), 1.0, "кадр {dt} получил поправку");
-        assert_eq!(advance_speed(target, target, dt), target);
+        let sim_ms = sim_filling(dt);
+        // на самой границе бюджета деление даёт 1.0000001 — сравниваем с
+        // допуском, а не побитово
+        let overrun = frame_overrun(sim_ms);
+        assert!((overrun - 1.0).abs() < 1e-5, "кадр {dt} получил поправку");
+        assert_eq!(advance_speed(target, target, dt, sim_ms), target);
     }
     // вдвое длиннее целевого — вдвое ниже скорость, и сразу, а не ползком
-    let halved = advance_speed(target, target, 2.0 / MIN_SIM_FPS);
+    let long = 2.0 / MIN_SIM_FPS;
+    let halved = advance_speed(target, target, long, sim_filling(long));
     assert!(
         (halved - target / 2.0).abs() < 1e-3,
         "на вдвое просевшем кадре скорость {halved}"
     );
     // и поправка временная: кадр вернулся в цель — цель снова прежняя
-    assert!(advance_speed(halved, target, 1.0 / 60.0) > halved);
+    let short = 1.0 / 60.0;
+    assert!(advance_speed(halved, target, short, sim_filling(short)) > halved);
+}
+
+/// Регрессия на просадку «0.1 → 0.5 → 1.0» в первые секунды мира: кадр,
+/// растянутый **не** симуляцией, скорость резать не имеет права. Числа —
+/// замеренные на старте: кадр 270 мс на разовой работе спавна и первой
+/// отрисовки города, шаги в нём — 19 мс, семь процентов кадра.
+#[test]
+fn a_long_frame_the_simulation_did_not_cause_leaves_the_speed_alone() {
+    let dt = 0.27;
+    let sim_ms = 19.0;
+    assert_eq!(
+        frame_overrun(sim_ms),
+        1.0,
+        "чужой кадр урезал скорость в {} раз",
+        frame_overrun(sim_ms)
+    );
+    // а поправка по длине кадра резала бы восьмикратно — вот цена вопроса
+    assert!(dt * MIN_SIM_FPS > 8.0);
+    // и на самой скорости это не сказывается: 1x остаётся 1x
+    assert_eq!(advance_speed(1.0, 1.0, dt, sim_ms), 1.0);
+
+    // но своя вина остаётся своей: тот же кадр, занятый шагами целиком,
+    // режется ровно по его длине
+    let guilty = frame_overrun(sim_filling(dt));
+    assert!(
+        (guilty - dt * MIN_SIM_FPS).abs() < 1e-3,
+        "кадр по вине симуляции получил поправку {guilty}"
+    );
+
+    // граница: пока прогон укладывается в свой бюджет, поправки нет, за ним —
+    // появляется. Бюджет и есть та черта, на которой обрывает `guard_frame_budget`
+    assert!((frame_overrun(SIM_FRAME_BUDGET_MS) - 1.0).abs() < 1e-5);
+    assert!(frame_overrun(SIM_FRAME_BUDGET_MS * 1.5) > 1.0);
+}
+
+/// Регулятор обязан **дойти** до запрошенного, а не встать в двух процентах
+/// под ним: симметричная мёртвая зона глушила последний шаг подъёма, и мир
+/// вечно шёл на 0.98x при запрошенном 1x.
+#[test]
+fn the_climb_reaches_the_request_exactly() {
+    let dt = 1.0 / 60.0;
+    let sim_ms = sim_filling(dt);
+    let mut speed = MIN_SIM_SPEED;
+    for _ in 0..(60.0 * SPEED_CLIMB_DOUBLE_TIME * 6.0) as usize {
+        speed = advance_speed(speed, 1.0, dt, sim_ms);
+    }
+    assert_eq!(speed, 1.0, "подъём встал на {speed} вместо запрошенного 1x");
+
+    // и полоса на месте там, где она нужна: дрожь замера вниз внутри неё
+    // скорость не роняет — иначе шум тянул бы её храповиком
+    let jitter = 1.0 - SPEED_DEADBAND / 2.0;
+    assert_eq!(advance_speed(1.0, jitter, dt, sim_ms), 1.0);
+    // а честная просадка проходит сразу
+    let real_drop = 1.0 - SPEED_DEADBAND * 2.0;
+    assert_eq!(advance_speed(1.0, real_drop, dt, sim_ms), real_drop);
 }
 
 /// Ответ не зависит от длительности кадра — в этом весь смысл перехода от
@@ -297,7 +364,7 @@ impl Plant {
 
             load.observe(sim * 1000.0, ticks, previous);
             let target = affordable_speed(load.tick_ms, HZ).min(requested);
-            speed = advance_speed(speed, target, previous);
+            speed = advance_speed(speed, target, previous, sim * 1000.0);
             peak = peak.max(speed);
 
             // нагрузка догоняет скорость не сразу

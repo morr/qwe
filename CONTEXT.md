@@ -1890,13 +1890,37 @@ in `main.rs`.
     (13 ms per frame reserved for everything that is not simulation → 0.61). Frames then
     settle at `rest / (1 − share)` — a contraction with gain `share < 1`, stable by
     construction. Applied asymmetrically: **down at once, up by doubling every
-    `SPEED_CLIMB_DOUBLE_TIME` (0.75 s)**, with a symmetric `SPEED_DEADBAND` (2 %). The
+    `SPEED_CLIMB_DOUBLE_TIME` (0.75 s)**, with a **down-only** `SPEED_DEADBAND` (2 %). The
     climb limit is the one thing the solver cannot compute — tick cost lags the speed,
-    because a speed-up spawns path requests whose cost lands a second or two later.
-    On top of the solved target, `frame_overrun` divides by how late the real frame ran
-    versus `1/MIN_SIM_FPS` — unity in normal operation, it breaks the "long frame carries
-    more ticks carries a longer frame" self-amplification during a dip.
+    because a speed-up spawns path requests whose cost lands a second or two later. The
+    band belongs on the down side alone, where the move is instantaneous and measurement
+    noise would otherwise ratchet the speed down; the climb is already rate-limited, so a
+    band there only stopped it 2 % short of the request — a world permanently running at
+    0.98x.
+    On top of the solved target, `frame_overrun` breaks the "long frame carries more ticks
+    carries a longer frame" self-amplification — but it measures the overrun on a frame
+    **reassembled from what the simulation is accountable for**: its own fixed-loop run
+    (`SimLoad::frame_sim_ms`, raw and unsmoothed) plus the reserved `SIM_RENDER_BUDGET`,
+    against `1/MIN_SIM_FPS`. Not on the real frame length: the loop's gain *is* the
+    simulation's share of the frame, so charging it for the whole frame charges it for
+    other people's work, and a frame it did not stretch does not get shorter by slowing
+    it. Unity while the run fits `SIM_FRAME_BUDGET_MS`; past that, exactly the factor the
+    frame length would have given had the simulation filled it. `dt` drops out of the
+    answer entirely, vsync quantisation with it — same property the solved branch has.
+    The cost of the old length-based version was measured at world start: the first frames
+    run 100–270 ms on one-off work (spawning 20 000 humans, uploading the merged city
+    meshes, first GPU pipeline compilation) while ticks take single-digit percent of them;
+    the regulator slammed `effective` onto the `MIN_SIM_SPEED` floor with `affordable`
+    sitting at 8–18x, and the world then crawled back up by doublings for ~3 s — the
+    "0.1 → 0.5 → 1.0" ramp visible on the speed button right after start. The correction
+    now fires rarely by design: the frame-budget guard below already cuts the run at
+    `SIM_FRAME_BUDGET_MS`, so the runaway is severed structurally and `frame_overrun` is
+    the second line, for the frame whose last tick carried it past the budget.
     Floored at `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited.
+    Entering `PlayPhase::Live` resets `effective` to `requested` (`resume_simulation`):
+    whatever the regulator computed over loading, spawn and warm-up frames describes a
+    simulation that was paused, and after a city switch belongs to the previous world.
+    Starting too high costs one frame — the down move is instantaneous.
   - **The frame-budget guard** (`guard_frame_budget`, first system of `FixedUpdate`) is
     the hard backstop behind all of the above: the regulator aims at `SIM_FRAME_BUDGET_MS`
     (share × target frame ≈ 20 ms) from **smoothed** measurements, and a burst lands
