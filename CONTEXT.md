@@ -1490,7 +1490,13 @@ in `main.rs`.
   crowd near demons, not the city population. **Flee fan** — a
   non-chased fleeing human rotates its away-vector by a deterministic per-entity angle
   (±0.6 rad) so crowds spread instead of forming a column; actively chased humans flee
-  straight. Calm-down at ×1.5 radius hysteresis. **Escape** — a fleeing human within
+  straight. Calm-down at ×1.5 radius hysteresis; the exact nearest-demon search runs
+  only on a fleeing human's decision ticks (repath timer / lost path) — on the ~50
+  ticks between them it only checks demon-grid *cell occupancy* around itself
+  (`any_in_cells_around`): an empty window calms it down immediately, an occupied one
+  defers calm-down to the next decision tick (≤ one repath period). The every-tick
+  exact search used to cost 40% of the sim tick (0.42 ms at ~1900 fleers, all
+  crowded exactly where the demons are). **Escape** — a fleeing human within
   `ESCAPE_MARGIN` of the map border despawns, `telemetry.escaped += 1`.
 - **WanderHeading** — the direction a human is walking, kept between walks. Every next
   target, near stroll or cross-city errand, is picked inside a `WANDER_CONE` (60°)

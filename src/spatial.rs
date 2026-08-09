@@ -126,6 +126,23 @@ impl<T: Send + Sync + 'static> SpatialGrid<T> {
         }
     }
 
+    /// Есть ли хоть один кандидат в ячейках, накрывающих круг `radius` вокруг
+    /// `pos`. Грубый охват, как у [`Self::for_each_in_cells_around`]: `true`
+    /// может означать кандидата и дальше `radius` (в пределах диагонали
+    /// ячейки), но `false` гарантирует, что в радиусе никого нет.
+    pub fn any_in_cells_around(&self, pos: Vec2, radius: f32) -> bool {
+        let center = cell_of(pos);
+        let cell_span = (radius / CELL_SIZE).ceil() as i32;
+        for x in (center.x - cell_span).max(0)..=(center.x + cell_span).min(GRID_WIDTH - 1) {
+            for y in (center.y - cell_span).max(0)..=(center.y + cell_span).min(GRID_HEIGHT - 1) {
+                if !self.cells[flat_index(IVec2::new(x, y))].is_empty() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Обойти всех кандидатов в ячейках, пересекающих прямоугольник
     /// `[min, max]` (мировые метры). Грубый охват, как у
     /// `for_each_in_cells_around`: точное попадание в прямоугольник меряет

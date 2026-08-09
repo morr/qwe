@@ -105,14 +105,25 @@ pub fn panic(
 /// Flee: бег от ближайшего демона с троттлингом перепрокладки;
 /// демоны отстали (×1.5 радиуса) — успокаивается.
 ///
+/// Точный поиск ближайшего демона — только на тиках решения (сработал таймер
+/// перепрокладки или потерян путь), то есть раз в 45–77 тиков на бегущего. На
+/// остальных тиках вместо него — проверка занятости ячеек демонской сетки,
+/// накрывающих радиус ([`SpatialGrid::any_in_cells_around`]): пустое окно
+/// гарантирует «в радиусе никого», и успокоение срабатывает как раньше;
+/// занятое окно у уже безопасного бегущего (демон завис в 90–150 м)
+/// откладывает успокоение до его тика решения — не дольше периода
+/// перепрокладки. До этого точный поиск бежал каждый тик у каждого бегущего
+/// и стоил 40% тика симуляции (0.42 мс при ~1900 бегущих: они толпятся
+/// именно там, где демоны, и каждый заново обходил одни и те же плотные
+/// ячейки, дёргая `Query::get` на каждого кандидата).
+///
 /// Курс (`WanderHeading`) переписывается вектором бегства на каждой
 /// перепрокладке: в ветке успокоения демона в радиусе уже нет — она и
-/// срабатывает потому, что `nearest_in_range` вернул `None`, — так что
-/// направление угрозы надо запомнить заранее. Расширять поиск ради одного
-/// тика успокоения нельзя: это больший обход ячеек для каждого бегущего
-/// каждый тик. Устаревание ограничено: период перепрокладки 0.7–1.2 с при
-/// скорости бегства 8 м/с — не больше 9.6 м пройденного пути против разрыва
-/// в 90 м, то есть ≲13° ошибки, что заведомо внутри ±45° запретного конуса.
+/// срабатывает потому, что поиск никого не нашёл, — так что направление
+/// угрозы надо запомнить заранее. Устаревание ограничено: период
+/// перепрокладки 0.7–1.2 с при скорости бегства 8 м/с — не больше 9.6 м
+/// пройденного пути против разрыва в 90 м, то есть ≲13° ошибки, что заведомо
+/// внутри ±45° запретного конуса.
 #[allow(clippy::too_many_arguments)]
 pub fn flee(
     mut commands: Commands,
@@ -157,6 +168,31 @@ pub fn flee(
         mut wander_index,
     ) in &mut query
     {
+        repath.0.tick(time.delta());
+        let needs_path = matches!(
+            movable.state,
+            MovableState::Idle | MovableState::PathfindingError(_)
+        );
+        // тик без решения — у подавляющего большинства бегущих: хватает
+        // грубой проверки занятости ячеек (см. док-комментарий системы)
+        if !repath.0.just_finished() && !needs_path {
+            if !demons.any_in_cells_around(sim_position.0, HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS) {
+                calm_down(
+                    entity,
+                    &mut commands,
+                    &style,
+                    seed.0,
+                    &mut movable,
+                    &mut pause,
+                    &heading,
+                    pace,
+                    pawn_id,
+                    &mut wander_index,
+                );
+            }
+            continue;
+        }
+
         // поток заводится в каждой из двух точек решения отдельно, а не разом
         // на итерацию: `next` сдвигает номер решения, и заведённый заранее
         // поток крутил бы счётчик каждый тик у каждого бегущего — в том числе
@@ -167,33 +203,20 @@ pub fn flee(
             |d| demon_positions.get(d).ok().map(|p| p.0),
         ) else {
             // демоны далеко — мирный режим, отдышаться перед новой прогулкой
-            movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
-            movable.to_idle(entity, &mut commands, false);
-            pause.0.set_duration(std::time::Duration::from_secs_f32(
-                wander_index
-                    .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
-                    .random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
-            ));
-            pause.0.reset();
-            // курс уже смотрит прочь от демона, обратный ему и есть центр
-            // запретного конуса. Он отклонён веером разбегания (±0.6 рад ≈
-            // 34°), то есть направление на самого демона всё равно внутри
-            // ±45° — а читается это как «не возвращайся тем же путём»
-            commands
-                .entity(entity)
-                .remove::<(HumanFleeTag, FleeRepath)>()
-                .insert((HumanWanderTag, PanicRecoil(-heading.0)));
+            calm_down(
+                entity,
+                &mut commands,
+                &style,
+                seed.0,
+                &mut movable,
+                &mut pause,
+                &heading,
+                pace,
+                pawn_id,
+                &mut wander_index,
+            );
             continue;
         };
-
-        repath.0.tick(time.delta());
-        let needs_path = matches!(
-            movable.state,
-            MovableState::Idle | MovableState::PathfindingError(_)
-        );
-        if !repath.0.just_finished() && !needs_path {
-            continue;
-        }
 
         let mut away = (sim_position.0 - demon_position).normalize_or(Vec2::X);
         // не преследуемые разбегаются веером — каждый под своим углом
@@ -220,6 +243,41 @@ pub fn flee(
         );
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_FLEE_MS, started);
+}
+
+/// Ветка успокоения [`flee`]: демоны отстали — мирный шаг, пауза
+/// «отдышаться» перед новой прогулкой и возврат в Wander. Вынесена, потому
+/// что вызывается из двух мест: по пустому окну ячеек на любом тике и по
+/// точному поиску, никого не нашедшему, на тике решения.
+#[allow(clippy::too_many_arguments)]
+fn calm_down(
+    entity: Entity,
+    commands: &mut Commands,
+    style: &HumanStyle,
+    seed: u64,
+    movable: &mut Movable,
+    pause: &mut WanderPause,
+    heading: &WanderHeading,
+    pace: &Pace,
+    pawn_id: &PawnId,
+    wander_index: &mut WanderIndex,
+) {
+    movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
+    movable.to_idle(entity, commands, false);
+    pause.0.set_duration(std::time::Duration::from_secs_f32(
+        wander_index
+            .next(seed, crate::rng::RngDomain::Human, pawn_id.0)
+            .random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
+    ));
+    pause.0.reset();
+    // курс уже смотрит прочь от демона, обратный ему и есть центр
+    // запретного конуса. Он отклонён веером разбегания (±0.6 рад ≈
+    // 34°), то есть направление на самого демона всё равно внутри
+    // ±45° — а читается это как «не возвращайся тем же путём»
+    commands
+        .entity(entity)
+        .remove::<(HumanFleeTag, FleeRepath)>()
+        .insert((HumanWanderTag, PanicRecoil(-heading.0)));
 }
 
 /// Паникующий пересёк границу карты — «спасся», despawn [Q12].
