@@ -8,8 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 domain glossary: what a navtile, flee fan, chase claim, bridge corridor, or prune pass
 *is*, which invariants hold (fill order, z-ranges, SimSet ordering, telemetry math), and
 where each concept lives. Use its terms verbatim in code, commits, and test names.
-When a change introduces or retires a domain concept, update `CONTEXT.md` in the same
-change — a stale glossary is worse than none.
+It is deliberately kept slim — terms and invariants only; the mechanisms and
+measurements behind them live in the four **domain skills** below, and each summary
+entry points at its skill. When a change introduces or retires a domain concept, update
+`CONTEXT.md` *and* the matching skill in the same change — a stale glossary is worse
+than none.
 
 **`OSM.md` — load it before touching the OSM pipeline** (the Overpass query, `map/osm/*`,
 or anything that decides which map features get drawn). It is the coverage audit: which
@@ -29,7 +32,14 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 - **`live-app` — before running the app** (`cargo run`, smoke-testing in the real app, querying the live world over BRP on port 15702). The skill is engine-level and shared with zxc; **this project's inventory lives in `.claude/live-app-project.md`** (ready markers, `SimSpeed` vs `Time<Virtual>`, screenshots, camera, registered types, toggles) and `.claude/live-app.json` configures the `brp` CLI for it. Read the appendix together with the skill.
 - **`bevy` — when writing or debugging Bevy code.** Bevy 0.19 API facts that pre-0.19 training data gets wrong.
 
-All three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
+Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
+
+**Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Load the one covering the code you are about to change; each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
+
+- **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Complements `OSM.md` (coverage audit), does not replace it.
+- **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
+- **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
+- **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `prefs.rs`): panel internals, the slider/row kits, column stacking, camera start view, persistence.
 
 **Caveat on the `bevy` skill:** it was written for zxc. Its "0.19 facts that get written wrong" section and `references/api_0_19.md` are engine-level and apply here verbatim. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
 
