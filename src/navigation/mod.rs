@@ -2,6 +2,8 @@ mod astar;
 mod backend;
 mod navmesh;
 mod northstar;
+#[cfg(test)]
+mod parity_tests;
 mod polymesh;
 
 use bevy::prelude::*;

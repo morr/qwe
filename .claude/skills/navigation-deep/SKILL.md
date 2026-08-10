@@ -252,6 +252,17 @@ in `CONTEXT.md` and the detail here in the same change.
   could not find anyone (measured live on Tula: zero rescued). No mesh exists at that
   moment either — its build is async and starts in the same `OnEnter`, and the previous
   city's mesh is dropped by `city::reload`.
+- **tiny_city / parity tests** (`map/osm/fixture.rs`, `navigation/parity_tests.rs`) —
+  one `MapData` fixture with a zone per fill-rule class (river + only bridge, culvert,
+  full-height wall building with an arch wider than `PASSAGE_MAX_WIDTH`, dry-span
+  bridge with curbs and a joining street sharing a node, water multipolygon with an
+  island hole opened by its bridge — the Paris start-area incident class). The parity
+  tests build BOTH fills from it and assert identical verdicts on reachability pairs
+  and single-point probes; the grid side runs fill + `prune_unreachable` from the
+  `portal` landmark because the mesh drops unreachable pockets at build time. Probes
+  stand farther from edges than one navtile and the agent-radius inflation, so the
+  tests compare fill rules, not discretisation. ~50 ms per test — they run in every
+  `cargo test`, unlike the offline audits that need a downloaded city.
 - **pathfinding_bench** (`examples/bench/pathfinding_bench.rs`) — offline comparison of all six
   algorithms without booting Bevy: reads the OSM cache, rebuilds the navmesh exactly as
   the map-load thread does (fill → `snap_portal_position` → prune), generates one

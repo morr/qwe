@@ -291,6 +291,13 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   fallback — watch `answers: N/frame, X % failed` on the speed panel. Endpoint
   tolerance is 1 m (half a navtile), which also sets the agent-radius slider ceiling
   (0.6 m). Coasting and lunge `line_of_sight` stay grid tests.
+- **tiny_city / parity tests** (`map/osm/fixture.rs`, `navigation/parity_tests.rs`) —
+  the shared `MapData` fixture (river bridge, culvert, arch over the cap, dry-span
+  curbs with a joining road, island hole) from which **both fills** are built and must
+  agree probe by probe: the executable form of "one rule for both fills". Grid side
+  mirrors the game pipeline (fill + prune from the portal landmark — the mesh drops
+  unreachable pockets itself). Run after touching either fill; new fill rules add a
+  zone here, not a hand-built `MapData`.
 - **pathfinding_bench** (`examples/bench/pathfinding_bench.rs`) — offline comparison of
   all six algorithms over a seeded wander-shaped task list. Run it after touching
   `successors`, costs, or the navmesh fill.
