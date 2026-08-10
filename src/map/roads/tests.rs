@@ -136,12 +136,8 @@ fn rail_dashes_are_narrower_than_the_bed_and_leave_gaps() {
 
 #[test]
 fn casing_is_wider_than_the_fill() {
-    // кант обязан торчать из-под заливки на всех классах дорог
-    for width in [3.5_f32, 5.0, 8.0, 16.0] {
-        assert!(casing_width(width) >= *CASING_RANGE.start());
-        assert!(casing_width(width) <= *CASING_RANGE.end());
-    }
-
+    // диапазоны самих ширин — тесты `map::footprint`; здесь — что кант
+    // геометрически торчит из-под заливки
     let points = [Vec2::ZERO, Vec2::new(20.0, 0.0)];
     let extent = |width: f32| {
         let mut builder = MeshBuilder::default();
@@ -160,17 +156,6 @@ fn casing_is_wider_than_the_fill() {
     };
     let fill = 3.5;
     assert!(extent(fill + 2.0 * casing_width(fill)) > extent(fill));
-}
-
-#[test]
-fn bridge_curb_is_thicker_than_a_casing() {
-    // бордюр обязан торчать из-под канта на любом классе — иначе при
-    // включённом канте мост неотличим от окантованной дороги
-    for width in [3.5_f32, 5.0, 8.0, 16.0] {
-        assert!(bridge_curb_width(width) > casing_width(width));
-        assert!(bridge_curb_width(width) >= *BRIDGE_CURB_RANGE.start());
-        assert!(bridge_curb_width(width) <= *BRIDGE_CURB_RANGE.end());
-    }
 }
 
 #[test]

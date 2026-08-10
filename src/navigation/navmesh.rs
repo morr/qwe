@@ -9,8 +9,7 @@ use crate::grid::world_to_tile;
 use crate::map::osm::model::{
     MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
 };
-use crate::map::{bridge_curb_width, miter_offsets};
-use crate::settings::{PASSAGE_MAX_WIDTH, navtile_size};
+use crate::settings::navtile_size;
 
 /// Стоимость шага между тайлами (для A*): прямой и диагональный.
 pub const COST_STRAIGHT: i32 = 100;
@@ -104,7 +103,7 @@ impl Navmesh {
     /// блокируют уже после, а арки прорезаются последними — их смысл именно в
     /// том, чтобы пробить только что заблокированный дом.
     ///
-    /// Бордюры мостов ([`bridge_curb_width`]) непроходимы: с моста не сходят
+    /// Бордюры мостов ([`RoadLine::curb_bands`]) непроходимы: с моста не сходят
     /// вбок через перила. Поверх воды это ничего не меняет (вода уже
     /// заблокирована), а на сухопутных пролётах — подходах и эстакадах —
     /// именно бордюр и мешает срезать путь через край настила. Торцы моста
@@ -134,12 +133,16 @@ impl Navmesh {
         for area in &map.water {
             self.set_area(area, false);
         }
-        for line in map.water_lines.iter().filter(|line| !line.tunnel) {
+        for line in &map.water_lines {
+            // трубы полосы не имеют — над кульвертом земля
+            let Some(band) = line.channel_band() else {
+                continue;
+            };
             // торец у входа в трубу срезан, а не скруглён: за порталом вода
             // уже под землёй, и капсульный полукруг глушил бы вход в культверт
             // на полуширину русла (`water_line_caps`, то же правило у отрисовки)
             let caps = water_line_caps(line, &map.water_lines);
-            self.set_polyline_capped(&line.points, line.width, false, caps);
+            self.set_polyline_capped(&band.line, band.width, false, caps);
         }
         // бордюры мостов. Тайл бордюра блокируется не безусловно: OSM режет
         // один физический мост на несколько ways (проезжая часть и тротуар —
@@ -152,26 +155,13 @@ impl Navmesh {
             .roads
             .iter()
             .filter(|road| road.bridge)
-            .map(|road| {
-                (
-                    road.points.as_slice(),
-                    road.width / 2.0 + bridge_curb_width(road.width),
-                )
-            })
+            .map(|road| (road.points.as_slice(), road.curb_reach()))
             .collect();
         let mut curb_tiles: HashMap<usize, CurbTile> = HashMap::new();
         for (index, road) in map.roads.iter().filter(|road| road.bridge).enumerate() {
             let id = index as u32 + 1;
-            let curb = bridge_curb_width(road.width);
-            let offsets = miter_offsets(&road.points, false, (road.width + curb) / 2.0);
-            for side in [-1.0, 1.0] {
-                let edge: Vec<Vec2> = road
-                    .points
-                    .iter()
-                    .zip(&offsets)
-                    .map(|(&point, &offset)| point + side * offset)
-                    .collect();
-                self.visit_polyline(&edge, curb, &mut |grid, x, y| {
+            for band in road.curb_bands() {
+                self.visit_polyline(&band.line, band.width, &mut |grid, x, y| {
                     if let Some(index) = grid.index(x, y) {
                         push_id(&mut curb_tiles.entry(index).or_default().owners, id);
                     }
@@ -245,9 +235,9 @@ impl Navmesh {
             // Урезание ровно на этот заход оставляет цепочку бордюра целой при
             // любом угле, а связность настила держит его собственная цепочка по
             // осевой — так же, как у тонких рек в set_polyline.
-            let curb = bridge_curb_width(road.width);
-            let deck = (road.width + curb - self.tile_size * SQRT_2).max(0.0);
-            self.set_polyline(&road.points, deck, true);
+            let band = road.deck_band();
+            let deck = (band.width + road.curb_width() - self.tile_size * SQRT_2).max(0.0);
+            self.set_polyline(&band.line, deck, true);
         }
         // после прорезок бордюрный барьер обязан остаться без диагональных
         // щелей. На узком мосту (аллея 3.5 м при тайле 2 м) цепочка настила
@@ -304,10 +294,12 @@ impl Navmesh {
             self.set_area(area, false);
         }
         for wall in &map.walls {
-            self.set_polyline(&wall.points, wall.width, false);
+            let band = wall.band();
+            self.set_polyline(&band.line, band.width, false);
         }
         for road in map.roads.iter().filter(|road| road.passage) {
-            self.set_polyline(&road.points, road.width.min(PASSAGE_MAX_WIDTH), true);
+            let band = road.passage_band();
+            self.set_polyline(&band.line, band.width, true);
         }
     }
 

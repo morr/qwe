@@ -14,9 +14,9 @@ use super::stitch::{components_of, stitch_chunks};
 use super::{
     ChunkComponents, PolymeshBuild, PolymeshInput, SEARCH_DELTA, SEARCH_STEPS, chunk_grid,
 };
+use crate::map::miter_offsets;
 use crate::map::osm::model::{RoadLine, signed_ring_area};
-use crate::map::{bridge_curb_width, miter_offsets};
-use crate::settings::{MAP_SIZE, PASSAGE_MAX_WIDTH};
+use crate::settings::MAP_SIZE;
 
 /// Упрощение контуров препятствий (Visvalingam–Whyatt внутри polyanya),
 /// метры. Не косметика: boolean оставляет отрезки в доли миллиметра, CDT на
@@ -65,20 +65,22 @@ pub(super) fn build_polymesh(
             push_hole(&mut blockers, hole.clone());
         }
     }
-    // трубы не блокируют — над культвертом земля (как в заливке сетки)
-    for line in input.water_lines.iter().filter(|line| !line.tunnel) {
-        if let Some(ring) = ribbon_outline(&line.points, line.width) {
+    // трубы полосы не имеют — над культвертом земля (как в заливке сетки)
+    for line in &input.water_lines {
+        if let Some(band) = line.channel_band()
+            && let Some(ring) = ribbon_outline(&band.line, band.width)
+        {
             push_contour(&mut blockers, ring);
         }
     }
     for wall in &input.walls {
-        if let Some(ring) = ribbon_outline(&wall.points, wall.width) {
+        let band = wall.band();
+        if let Some(ring) = ribbon_outline(&band.line, band.width) {
             push_contour(&mut blockers, ring);
         }
     }
-    // бордюры мостов — те же две полосы, что рисует рендер: от `width/2` до
-    // `width/2 + curb` по каждому борту (осевая полосы на `(width+curb)/2`,
-    // ширина `curb`), общие с заливкой сетки по `miter_offsets`.
+    // бордюры мостов — те же две полосы, что рисует рендер
+    // (`RoadLine::curb_bands`, общие с заливкой сетки).
     //
     // Блокирует не всякая полоса. OSM режет один физический мост на несколько
     // ways (проезжая часть и тротуар — параллельные ленты), и бордюр на
@@ -91,24 +93,13 @@ pub(super) fn build_polymesh(
     let bridges: Vec<&RoadLine> = input.roads.iter().filter(|road| road.bridge).collect();
     let bands: Vec<Vec<[f32; 2]>> = bridges
         .iter()
-        .filter_map(|road| {
-            let curb = bridge_curb_width(road.width);
-            ribbon_outline(&road.points, road.width + 2.0 * curb)
-        })
+        .filter_map(|road| ribbon_outline(&road.points, 2.0 * road.curb_reach()))
         .map(oriented)
         .collect();
     for (index, road) in bridges.iter().enumerate() {
-        let curb = bridge_curb_width(road.width);
-        let offsets = miter_offsets(&road.points, false, (road.width + curb) / 2.0);
         let mut sides: Vec<Vec<[f32; 2]>> = Vec::with_capacity(2);
-        for side in [-1.0, 1.0] {
-            let edge: Vec<Vec2> = road
-                .points
-                .iter()
-                .zip(&offsets)
-                .map(|(&point, &offset)| point + side * offset)
-                .collect();
-            if let Some(ring) = ribbon_outline(&edge, curb) {
+        for band in road.curb_bands() {
+            if let Some(ring) = ribbon_outline(&band.line, band.width) {
                 sides.push(oriented(ring));
             }
         }
@@ -126,12 +117,13 @@ pub(super) fn build_polymesh(
     let mut carves: Vec<Vec<[f32; 2]>> = Vec::new();
     let bridge_ways: Vec<&[Vec2]> = bridges.iter().map(|road| road.points.as_slice()).collect();
     for road in &bridges {
-        // настил — ровно проезжая часть, как её рисует рендер (`road.width`,
-        // бордюрная подложка шире на `curb` с каждой стороны). Сеточное
-        // `+curb − tile·√2` сюда не переносится: обе поправки компенсируют
-        // блуждание центров тайлов, а полная ширина вместе с бордюром съела бы
-        // половину полосы, которая обязана остаться барьером.
-        if let Some(ring) = ribbon_outline(&road.points, road.width) {
+        // настил — ровно проезжая часть, как её рисует рендер
+        // (`RoadLine::deck_band`). Сеточное `+curb − tile·√2` сюда не
+        // переносится: обе поправки компенсируют блуждание центров тайлов, а
+        // полная ширина вместе с бордюром съела бы половину полосы, которая
+        // обязана остаться барьером.
+        let band = road.deck_band();
+        if let Some(ring) = ribbon_outline(&band.line, band.width) {
             push_contour(&mut carves, ring);
         }
     }
@@ -147,7 +139,8 @@ pub(super) fn build_polymesh(
         }
     }
     for road in input.roads.iter().filter(|road| road.passage) {
-        if let Some(ring) = ribbon_outline(&road.points, road.width.min(PASSAGE_MAX_WIDTH)) {
+        let band = road.passage_band();
+        if let Some(ring) = ribbon_outline(&band.line, band.width) {
             push_contour(&mut carves, ring);
         }
     }

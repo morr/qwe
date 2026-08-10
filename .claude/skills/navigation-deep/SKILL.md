@@ -31,8 +31,9 @@ in `CONTEXT.md` and the detail here in the same change.
   passages carve back through them**. Without bridges the Упа river bisects the map and
   no cross-river path exists.
 - **Bridge curbs are impassable** — the same two bands the renderer draws
-  (`bridge_curb_width`, offset off the centerline by `miter_offsets`, shared with
-  `push_ribbon` so the blocked strip matches the drawn one by construction). Over water
+  (`RoadLine::curb_bands` in `map/footprint.rs`: edge centerlines from `miter_offsets` +
+  curb width, one construction for the grid fill, the mesh build and the renderer, so
+  the blocked strip matches the drawn one by construction). Over water
   this changes nothing (water already blocks); on dry spans — approaches, overpasses —
   the curb is what stops a pawn from stepping off the deck sideways. Only the two
   longitudinal edges block, the deck ends stay open. All curbs block *before* any deck

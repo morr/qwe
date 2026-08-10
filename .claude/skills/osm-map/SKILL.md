@@ -162,6 +162,20 @@ in `CONTEXT.md` and the detail here in the same change.
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
 
+## Footprint bands
+
+`map/footprint.rs` — the strips linear geometry occupies on the ground, one construction
+for every consumer: `Band { line, width, role }` built by `RoadLine::{deck_band,
+curb_bands, passage_band}`, `WaterLine::channel_band` (`None` for culverts) and
+`WallLine::band`. The width policy lives here too — `casing_width` (8%, 0.3–1 m) and
+`bridge_curb_width` (12%, 0.8–2 m; ranges deliberately disjoint so a curb always
+out-sticks a casing) — because a curb is not just paint: the same band blocks the
+navmesh, and the drawn strip must match the blocked one by construction. Bands carry
+the **centerline**, not a ready outline: the grid fill needs the centerline for its
+4-connected-chain rasterization guarantee, the mesh build turns it into an outline, and
+the renderer draws its own smoothed copy and takes only the widths (smoothing must not
+move what blocks).
+
 ## Rendering
 
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,

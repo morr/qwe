@@ -3,6 +3,8 @@ use crate::map::osm::model::{
 };
 
 use super::*;
+use crate::map::footprint::bridge_curb_width;
+use crate::settings::PASSAGE_MAX_WIDTH;
 
 /// Тайлы строки `y`, залитые построчной заливкой. Отрезки обрезаются по
 /// ширине проверяемой полосы — как `set_area` обрезает их по сетке.

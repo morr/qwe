@@ -196,7 +196,7 @@ pub fn tiny_city() -> TinyCity {
         20.0,
     ));
 
-    let curb = crate::map::roads::bridge_curb_width(8.0);
+    let curb = crate::map::footprint::bridge_curb_width(8.0);
     TinyCity {
         map,
         portal: Vec2::new(400.0, 1200.0),

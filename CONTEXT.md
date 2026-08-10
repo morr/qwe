@@ -178,7 +178,13 @@ algorithm in `references/tree-algo.md`).
   chosen. Health check — the `osm parse: N trees planted of M asked …` log line.
   Detail (row bands, placement policies, thresholds) — osm-map skill,
   `references/trees.md`.
-- **Rendering** — **one merged `Mesh2d` per layer** (`map/meshing.rs`, `map/spawn.rs`,
+- **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
+  ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
+  `passage_band` / `channel_band` / `wall.band()`) plus the width policy (`casing_width`,
+  `bridge_curb_width` — moved out of the renderer). One construction, three consumers:
+  the grid fill rasterizes the centerline (keeping the 4-connected chain guarantee), the
+  mesh build outlines it, the renderer draws its own smoothed copy and takes only the
+  widths. **A drawn band and a blocking band match by construction, not by discipline.**
   `map/roads.rs`, `map/buildings/`): earcut triangulation, per-vertex colors, one white
   `ColorMaterial`; ~7000 buildings cost a handful of entities. Trees stay individual
   entities; tree and building **shadows** are each one merged mesh. **Ribbon**

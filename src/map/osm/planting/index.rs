@@ -14,8 +14,8 @@ use super::{
     TREE_CROWN_REACH, TREE_KERB_CLEARANCE, TREE_MAX_RADIUS, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE,
     TREE_WALL_CLEARANCE,
 };
+use crate::map::footprint::casing_width;
 use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, point_in_area, ring_bounds};
-use crate::map::roads::casing_width;
 
 /// Сторона ячейки индексов близости, м. Того же порядка, что `FOOTPRINT_CELL`
 /// (30) у генератора входов: в ячейке должно лежать несколько кандидатов, а не

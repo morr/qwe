@@ -29,12 +29,12 @@
 
 use std::borrow::Cow;
 use std::f32::consts::PI;
-use std::ops::RangeInclusive;
 
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
+use crate::map::footprint::casing_width;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine, WallLine};
 use crate::settings::{
@@ -68,17 +68,10 @@ const RAIL_DASH_SCALE: f32 = 0.6;
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
 
-/// Толщина канта — доля ширины дороги. Границы: у аллеи (3.5 м) кант обязан
-/// быть виден, у магистрали (16 м) — не превратиться во вторую дорогу.
-const CASING_SCALE: f32 = 0.08;
-const CASING_RANGE: RangeInclusive<f32> = 0.3..=1.0;
-
 /// Бордюр моста — серый бетон, общий для улиц и пешеходных мостиков. Темнее
-/// канта (0.702) и толще его на любом классе (диапазоны не пересекаются) —
-/// иначе при включённом канте мост неотличим от окантованной дороги.
+/// канта (0.702); толщины (и почему их диапазоны не пересекаются) — в
+/// `map::footprint`.
 const BRIDGE_CURB_COLOR: Color = Color::srgb(0.6, 0.6, 0.6);
-const BRIDGE_CURB_SCALE: f32 = 0.12;
-const BRIDGE_CURB_RANGE: RangeInclusive<f32> = 0.8..=2.0;
 
 /// Изломы мельче Chaikin не срезает: прямые участки обязаны остаться точками
 /// OSM, иначе сглаживание съедает и без того редкую геометрию длинных улиц.
@@ -194,8 +187,12 @@ pub fn spawn_roads(
         let points = centerline(road, style.smoothing);
         if road.bridge {
             // бордюр — всегда, независимо от style.casing: он и есть мост
-            let width = road.width + 2.0 * bridge_curb_width(road.width);
-            push_bridge_curb(&mut bridge_casings, &points, width, style.join);
+            push_bridge_curb(
+                &mut bridge_casings,
+                &points,
+                2.0 * road.curb_reach(),
+                style.join,
+            );
             push_ribbon(
                 &mut bridge_fills,
                 &points,
@@ -321,19 +318,6 @@ pub fn rebuild_roads(
         &map.rails,
         &map.walls,
     );
-}
-
-/// Толщина канта для ленты такой ширины. Общая с подложкой аллей
-/// (`map::spawn`), чтобы кант везде на карте был одной толщины.
-pub fn casing_width(width: f32) -> f32 {
-    (width * CASING_SCALE).clamp(*CASING_RANGE.start(), *CASING_RANGE.end())
-}
-
-/// Толщина бордюра моста для дороги такой ширины. Общая с навмешем
-/// (`navigation::navmesh`): бордюр не только рисуется, но и блокирует
-/// проходимость, и обе полосы обязаны совпадать.
-pub fn bridge_curb_width(width: f32) -> f32 {
-    (width * BRIDGE_CURB_SCALE).clamp(*BRIDGE_CURB_RANGE.start(), *BRIDGE_CURB_RANGE.end())
 }
 
 /// Бордюр моста: торцы всегда [`RibbonCap::Butt`] — настил кончается ровным

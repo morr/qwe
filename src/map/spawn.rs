@@ -197,7 +197,8 @@ pub fn spawn_tree_row_band(
         // заметный угол, которого у лесного контура не бывает
         let path = roads::smooth_path(&row.points, TREE_ROW_BAND_WIDTH, style.smoothing);
         if style.casing {
-            let width = TREE_ROW_BAND_WIDTH + 2.0 * roads::casing_width(TREE_ROW_BAND_WIDTH);
+            let width = TREE_ROW_BAND_WIDTH
+                + 2.0 * crate::map::footprint::casing_width(TREE_ROW_BAND_WIDTH);
             roads::push_ribbon(
                 &mut casing,
                 &path,
