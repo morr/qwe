@@ -1,7 +1,12 @@
-//! Тестовый город: одна `MapData`, из которой строятся **оба** заполнения —
-//! сеточное и полигональное. Общая фикстура вместо ручной сборки карты в
-//! каждом тесте: инвариант «одно правило для двух заполнений» проверяется
-//! паритетными тестами (`navigation/parity_tests.rs`) именно на ней.
+//! Тестовая геометрия карты: билдеры элементов `MapData` и составной город
+//! `tiny_city`, из которого строятся **оба** заполнения — сеточное и
+//! полигональное. Общая фикстура вместо ручной сборки карты в каждом тесте:
+//! инвариант «одно правило для двух заполнений» проверяется паритетными
+//! тестами (`navigation/parity_tests.rs`) именно на ней.
+//!
+//! Модуль не спрятан за `#[cfg(test)]` намеренно: интеграционные тесты
+//! (`tests/navigation.rs`) собирают библиотеку без `cfg(test)` и иначе его не
+//! видят. В рантайме им никто не пользуется.
 //!
 //! Планировка — по классам реальных инцидентов и правил заливки:
 //! река через всю карту с единственным мостом; труба-кульверт, которая не
@@ -13,7 +18,8 @@
 use bevy::prelude::*;
 
 use super::model::{
-    AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine, WaterKind, WaterLine,
+    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, WaterKind,
+    WaterLine,
 };
 
 pub fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
@@ -37,6 +43,24 @@ pub fn water_area(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
         kind: AreaKind::Water,
         height: None,
         entrances: vec![],
+    }
+}
+
+pub fn wood(outer: Vec<Vec2>) -> PolyArea {
+    PolyArea {
+        outer,
+        holes: vec![],
+        kind: AreaKind::Wood,
+        height: None,
+        entrances: vec![],
+    }
+}
+
+pub fn rail(points: Vec<Vec2>, width: f32) -> RailLine {
+    RailLine {
+        points,
+        width,
+        kind: RailKind::Active,
     }
 }
 

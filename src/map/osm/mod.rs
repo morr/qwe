@@ -3,7 +3,6 @@
 
 pub mod download;
 pub mod entrances;
-#[cfg(test)]
 pub mod fixture;
 pub mod model;
 pub mod overpass;

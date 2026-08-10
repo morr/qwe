@@ -1,9 +1,8 @@
-use crate::map::osm::model::{
-    AreaKind, RoadClass, RoadLine, WaterKind, WaterLine, point_in_polygon,
-};
+use crate::map::osm::model::point_in_polygon;
 
 use super::*;
 use crate::map::footprint::bridge_curb_width;
+use crate::map::osm::fixture::{bridge, building, culvert, passage, rect, stream, street};
 use crate::settings::PASSAGE_MAX_WIDTH;
 
 /// Тайлы строки `y`, залитые построчной заливкой. Отрезки обрезаются по
@@ -37,10 +36,6 @@ fn assert_same_fill(outer: &[Vec2], holes: &[Vec<Vec2>], rows: i32, width: i32) 
             "row {y}"
         );
     }
-}
-
-fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
-    vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
 }
 
 #[test]
@@ -95,20 +90,14 @@ fn scanline_matches_point_test_for_a_diagonal_ring() {
 #[test]
 fn a_building_passage_carves_a_corridor_through_the_building() {
     let mut map = MapData::default();
-    map.buildings.push(PolyArea {
-        outer: rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0)),
-        holes: Vec::new(),
-        kind: AreaKind::Building,
-        height: None,
-        entrances: Vec::new(),
-    });
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(131.0, 90.0), Vec2::new(131.0, 140.0)],
-        width: 5.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage: true,
-    });
+    map.buildings.push(building(
+        rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0)),
+        vec![],
+    ));
+    map.roads.push(passage(
+        vec![Vec2::new(131.0, 90.0), Vec2::new(131.0, 140.0)],
+        5.0,
+    ));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -132,13 +121,10 @@ fn a_building_passage_carves_a_corridor_through_the_building() {
 #[test]
 fn bridge_curbs_block_the_deck_edges() {
     let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-    });
+    map.roads.push(bridge(
+        vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        8.0,
+    ));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -168,27 +154,19 @@ fn bridge_curbs_block_the_deck_edges() {
 #[test]
 fn a_joining_road_breaks_through_the_curb_but_not_through_water() {
     let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-    });
+    map.roads.push(bridge(
+        vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        8.0,
+    ));
     // примыкающая с внешней стороны дорога, общий узел на осевой моста
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(130.0, 140.0), Vec2::new(130.0, 100.0)],
-        width: 5.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage: false,
-    });
-    map.water_lines.push(WaterLine {
-        points: vec![Vec2::new(110.0, 126.0), Vec2::new(150.0, 126.0)],
-        width: 2.0,
-        kind: WaterKind::Stream,
-        tunnel: false,
-    });
+    map.roads.push(street(
+        vec![Vec2::new(130.0, 140.0), Vec2::new(130.0, 100.0)],
+        5.0,
+    ));
+    map.water_lines.push(stream(
+        vec![Vec2::new(110.0, 126.0), Vec2::new(150.0, 126.0)],
+        2.0,
+    ));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -222,13 +200,7 @@ fn a_joining_road_breaks_through_the_curb_but_not_through_water() {
 fn a_narrow_slanted_bridge_leaves_no_corner_slips() {
     let (from, to) = (Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0));
     let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        points: vec![from, to],
-        width: 3.5,
-        class: RoadClass::Alley,
-        bridge: true,
-        passage: false,
-    });
+    map.roads.push(bridge(vec![from, to], 3.5));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -259,20 +231,14 @@ fn a_narrow_slanted_bridge_leaves_no_corner_slips() {
 #[test]
 fn a_collinear_approach_road_does_not_lick_the_curb_open() {
     let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-    });
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(60.0, 100.0), Vec2::new(100.0, 100.0)],
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage: false,
-    });
+    map.roads.push(bridge(
+        vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        8.0,
+    ));
+    map.roads.push(street(
+        vec![Vec2::new(60.0, 100.0), Vec2::new(100.0, 100.0)],
+        8.0,
+    ));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -301,20 +267,14 @@ fn a_collinear_approach_road_does_not_lick_the_curb_open() {
 #[test]
 fn a_bridge_and_its_sidewalk_way_act_as_one_bridge() {
     let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-    });
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(100.0, 107.0), Vec2::new(160.0, 107.0)],
-        width: 3.5,
-        class: RoadClass::Alley,
-        bridge: true,
-        passage: false,
-    });
+    map.roads.push(bridge(
+        vec![Vec2::new(100.0, 100.0), Vec2::new(160.0, 100.0)],
+        8.0,
+    ));
+    map.roads.push(bridge(
+        vec![Vec2::new(100.0, 107.0), Vec2::new(160.0, 107.0)],
+        3.5,
+    ));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -353,13 +313,7 @@ fn a_bridge_and_its_sidewalk_way_act_as_one_bridge() {
 fn a_slanted_bridge_keeps_its_curbs_unbroken() {
     let (from, to) = (Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0));
     let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        points: vec![from, to],
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-    });
+    map.roads.push(bridge(vec![from, to], 8.0));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -392,13 +346,7 @@ fn a_bridge_junction_is_not_walled_by_the_other_ways_curb() {
         vec![Vec2::new(100.0, 100.0), Vec2::new(130.0, 100.0)],
         vec![Vec2::new(130.0, 100.0), Vec2::new(130.0, 140.0)],
     ] {
-        map.roads.push(RoadLine {
-            points,
-            width: 8.0,
-            class: RoadClass::Street,
-            bridge: true,
-            passage: false,
-        });
+        map.roads.push(bridge(points, 8.0));
     }
 
     let mut navmesh = Navmesh::default();
@@ -420,20 +368,14 @@ fn a_bridge_junction_is_not_walled_by_the_other_ways_curb() {
 #[test]
 fn a_passage_is_no_wider_than_the_cap() {
     let mut map = MapData::default();
-    map.buildings.push(PolyArea {
-        outer: rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0)),
-        holes: Vec::new(),
-        kind: AreaKind::Building,
-        height: None,
-        entrances: Vec::new(),
-    });
-    map.roads.push(RoadLine {
-        points: vec![Vec2::new(131.0, 90.0), Vec2::new(131.0, 140.0)],
-        width: 12.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage: true,
-    });
+    map.buildings.push(building(
+        rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 130.0)),
+        vec![],
+    ));
+    map.roads.push(passage(
+        vec![Vec2::new(131.0, 90.0), Vec2::new(131.0, 140.0)],
+        12.0,
+    ));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
@@ -460,18 +402,10 @@ fn a_culvert_portal_cuts_the_channel_flat() {
     let portal = Vec2::new(130.0, 100.0);
     let width = 8.0;
     let mut map = MapData::default();
-    map.water_lines.push(WaterLine {
-        points: vec![Vec2::new(100.0, 100.0), portal],
-        width,
-        kind: WaterKind::River,
-        tunnel: false,
-    });
-    map.water_lines.push(WaterLine {
-        points: vec![portal, Vec2::new(160.0, 100.0)],
-        width,
-        kind: WaterKind::River,
-        tunnel: true,
-    });
+    map.water_lines
+        .push(stream(vec![Vec2::new(100.0, 100.0), portal], width));
+    map.water_lines
+        .push(culvert(vec![portal, Vec2::new(160.0, 100.0)], width));
 
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);

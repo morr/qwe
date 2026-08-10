@@ -1,6 +1,7 @@
 use super::*;
+use crate::map::osm::fixture::{building, rect, street, wood};
 use crate::map::osm::model::PolyArea;
-use crate::map::osm::model::{AreaKind, RoadClass, RoadLine, TreeCompose, TreeNode, TreeRow};
+use crate::map::osm::model::{RoadLine, TreeCompose, TreeNode, TreeRow};
 use crate::settings::TREE_DENSITY_MIN;
 
 /// Прямой ряд длиной `length` вдоль оси X, на высоте 1000 — подальше от
@@ -170,18 +171,10 @@ fn data_spacing_ignores_the_density_slider() {
 }
 
 fn building_on_the_row() -> PolyArea {
-    PolyArea {
-        outer: vec![
-            Vec2::new(1040.0, 990.0),
-            Vec2::new(1060.0, 990.0),
-            Vec2::new(1060.0, 1010.0),
-            Vec2::new(1040.0, 1010.0),
-        ],
-        holes: Vec::new(),
-        kind: AreaKind::Building,
-        height: None,
-        entrances: Vec::new(),
-    }
+    building(
+        rect(Vec2::new(1040.0, 990.0), Vec2::new(1060.0, 1010.0)),
+        vec![],
+    )
 }
 
 /// `Keep` доверяет позиции из OSM, но не настолько, чтобы сажать дерево в
@@ -202,13 +195,10 @@ fn keep_still_drops_trees_inside_buildings() {
 }
 
 fn road_across_the_row() -> RoadLine {
-    RoadLine {
-        points: vec![Vec2::new(1050.0, 900.0), Vec2::new(1050.0, 1100.0)],
-        width: 12.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage: false,
-    }
+    street(
+        vec![Vec2::new(1050.0, 900.0), Vec2::new(1050.0, 1100.0)],
+        12.0,
+    )
 }
 
 /// Разница двух политик: `Keep` оставляет дерево на асфальте, `Slide`
@@ -305,18 +295,7 @@ fn node_at(x: f32, y: f32) -> TreeNode {
 }
 
 fn wood_square() -> PolyArea {
-    PolyArea {
-        outer: vec![
-            Vec2::new(1000.0, 1000.0),
-            Vec2::new(1100.0, 1000.0),
-            Vec2::new(1100.0, 1100.0),
-            Vec2::new(1000.0, 1100.0),
-        ],
-        holes: Vec::new(),
-        kind: AreaKind::Wood,
-        height: None,
-        entrances: Vec::new(),
-    }
+    wood(rect(Vec2::new(1000.0, 1000.0), Vec2::new(1100.0, 1100.0)))
 }
 
 fn plant_nodes(map: &MapData) -> Vec<PlantedTree> {

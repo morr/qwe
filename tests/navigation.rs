@@ -4,10 +4,8 @@
 use bevy::math::{IVec2, Vec2};
 
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::osm::{
-    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, WaterKind,
-    WaterLine,
-};
+use qwe::map::osm::MapData;
+use qwe::map::osm::fixture::{bridge, building, culvert, rail, rect, stream, wall, water_area};
 use qwe::navigation::{Navmesh, PathfindingAlgorithm, find_path, line_of_sight};
 
 fn astar_pathfinding(navmesh: &Navmesh, start: IVec2, end: IVec2) -> Option<Vec<IVec2>> {
@@ -23,10 +21,6 @@ fn navmesh_with_block(min: IVec2, max: IVec2) -> Navmesh {
         }
     }
     navmesh
-}
-
-fn rect_ring(min: Vec2, max: Vec2) -> Vec<Vec2> {
-    vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
 }
 
 #[test]
@@ -77,12 +71,7 @@ fn a_narrow_diagonal_waterway_leaves_no_corner_squeeze() {
     // вырождается в цепочку по углам
     let (origin, direction) = (Vec2::new(200.0, 200.0), Vec2::new(3000.0, 970.0));
     let map = MapData {
-        water_lines: vec![WaterLine {
-            points: vec![origin, origin + direction],
-            width: 2.5,
-            kind: WaterKind::Stream,
-            tunnel: false,
-        }],
+        water_lines: vec![stream(vec![origin, origin + direction], 2.5)],
         ..MapData::default()
     };
     let mut navmesh = Navmesh::default();
@@ -238,66 +227,33 @@ fn grid_roundtrip() {
 #[test]
 fn fill_from_mapdata_blocks_and_carves() {
     let map = MapData {
-        buildings: vec![PolyArea {
-            outer: rect_ring(Vec2::new(100.0, 100.0), Vec2::new(160.0, 160.0)),
-            holes: vec![rect_ring(Vec2::new(120.0, 120.0), Vec2::new(140.0, 140.0))],
-            kind: AreaKind::Building,
-            height: Some(15.0),
-            entrances: Vec::new(),
-        }],
-        water: vec![PolyArea {
-            outer: rect_ring(Vec2::new(300.0, 0.0), Vec2::new(340.0, 400.0)),
-            holes: Vec::new(),
-            kind: AreaKind::Water,
-            height: None,
-            entrances: Vec::new(),
-        }],
-        parks: Vec::new(),
-        woods: Vec::new(),
-        grass: Vec::new(),
-        sand: Vec::new(),
+        buildings: vec![building(
+            rect(Vec2::new(100.0, 100.0), Vec2::new(160.0, 160.0)),
+            vec![rect(Vec2::new(120.0, 120.0), Vec2::new(140.0, 140.0))],
+        )],
+        water: vec![water_area(
+            rect(Vec2::new(300.0, 0.0), Vec2::new(340.0, 400.0)),
+            vec![],
+        )],
         roads: vec![
-            RoadLine {
-                points: vec![Vec2::new(280.0, 200.0), Vec2::new(360.0, 200.0)],
-                width: 8.0,
-                class: RoadClass::Street,
-                bridge: true,
-                passage: false,
-            },
+            bridge(vec![Vec2::new(280.0, 200.0), Vec2::new(360.0, 200.0)], 8.0),
             // мост через линейное русло — прорезка обязана работать и по нему,
             // иначе ручей рассекал бы город без единого перехода
-            RoadLine {
-                points: vec![Vec2::new(680.0, 200.0), Vec2::new(720.0, 200.0)],
-                width: 8.0,
-                class: RoadClass::Street,
-                bridge: true,
-                passage: false,
-            },
+            bridge(vec![Vec2::new(680.0, 200.0), Vec2::new(720.0, 200.0)], 8.0),
         ],
-        rails: vec![RailLine {
-            points: vec![Vec2::new(600.0, 100.0), Vec2::new(600.0, 200.0)],
-            width: 5.0,
-            kind: RailKind::Active,
-        }],
-        walls: vec![WallLine {
-            points: vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],
-            width: 3.0,
-        }],
+        rails: vec![rail(
+            vec![Vec2::new(600.0, 100.0), Vec2::new(600.0, 200.0)],
+            5.0,
+        )],
+        walls: vec![wall(
+            vec![Vec2::new(500.0, 100.0), Vec2::new(500.0, 200.0)],
+            3.0,
+        )],
         water_lines: vec![
             // открытое русло — вода, как пруд: вброд не переходят
-            WaterLine {
-                points: vec![Vec2::new(700.0, 100.0), Vec2::new(700.0, 300.0)],
-                width: 6.0,
-                kind: WaterKind::Stream,
-                tunnel: false,
-            },
+            stream(vec![Vec2::new(700.0, 100.0), Vec2::new(700.0, 300.0)], 6.0),
             // тот же ручей в трубе — под землёй, значит поверху ходят
-            WaterLine {
-                points: vec![Vec2::new(800.0, 100.0), Vec2::new(800.0, 300.0)],
-                width: 6.0,
-                kind: WaterKind::Stream,
-                tunnel: true,
-            },
+            culvert(vec![Vec2::new(800.0, 100.0), Vec2::new(800.0, 300.0)], 6.0),
         ],
         // деревья навмеша не касаются — они и лесные, и аллейные чисто
         // визуальные, так что перечислять их поля тут нечего
