@@ -9,7 +9,7 @@ use crate::human::components::{
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
-use crate::navigation::{ArcNavmesh, Pathfinder, find_passable_tile_near};
+use crate::navigation::{ArcNavmesh, Pathfinder};
 use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
     HUMAN_COUNT, HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED,
@@ -256,7 +256,8 @@ pub fn pick_wander_targets(
         ),
     >,
 ) {
-    let navmesh = pathfinder.navmesh.read();
+    let backend = pathfinder.backend();
+    let walkable = backend.walkable();
 
     for (
         entity,
@@ -333,7 +334,7 @@ pub fn pick_wander_targets(
             point
         };
 
-        let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
+        let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
             continue;
         };
         // курс — по фактически выбранной цели, следующая пойдёт от него

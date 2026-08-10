@@ -10,7 +10,7 @@ use crate::human::components::{
     WanderPause,
 };
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::{Pathfinder, find_passable_tile_near};
+use crate::navigation::Pathfinder;
 use crate::rng::{PawnId, WanderIndex, hash_fraction};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
@@ -151,7 +151,8 @@ pub fn flee(
     >,
 ) {
     let started = std::time::Instant::now();
-    let navmesh = pathfinder.navmesh.read();
+    let backend = pathfinder.backend();
+    let walkable = backend.walkable();
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
     let chased: bevy::platform::collections::HashSet<Entity> =
         chasing.iter().map(|chase_target| chase_target.0).collect();
@@ -232,7 +233,7 @@ pub fn flee(
         // не клампим к «безопасной» зоне: цель у самой границы — путь к спасению
         let target = (sim_position.0 + away * step).clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);
 
-        let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
+        let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
             continue;
         };
         movable.to_pathfinding(

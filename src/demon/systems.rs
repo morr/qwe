@@ -11,7 +11,7 @@ use crate::loading::AppState;
 use crate::movement::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, MovableState, SimPosition,
 };
-use crate::navigation::{Pathfinder, find_passable_tile_near};
+use crate::navigation::Pathfinder;
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream};
 use crate::settings::{
@@ -170,7 +170,8 @@ pub fn pick_wander_targets(
         ),
     >,
 ) {
-    let navmesh = pathfinder.navmesh.read();
+    let backend = pathfinder.backend();
+    let walkable = backend.walkable();
 
     for (entity, sim_position, mut movable, pawn_id, mut wander_index) in &mut query {
         if !matches!(
@@ -193,7 +194,7 @@ pub fn pick_wander_targets(
         let target = (sim_position.0 + direction * distance)
             .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN);
 
-        let Some(target_tile) = find_passable_tile_near(&navmesh, world_to_tile(target)) else {
+        let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
             continue;
         };
 

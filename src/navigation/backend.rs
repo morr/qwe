@@ -6,8 +6,8 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 use bevy::prelude::*;
 
 use super::{
-    Navmesh, PathfindingAlgorithm, PathfindingResult, PolymeshBuild, find_path,
-    find_path_northstar, find_path_polymesh, nearest_tile_where,
+    Navmesh, PathfindingAlgorithm, PathfindingResult, PolymeshBuild, find_passable_tile_near,
+    find_path, find_path_northstar, find_path_polymesh, line_of_sight, nearest_tile_where,
 };
 use crate::grid::{tile_center, world_to_tile};
 use crate::settings::RESCUE_SEARCH_TILES;
@@ -152,6 +152,31 @@ impl Walkable<'_> {
         // сетка первой: индекс в `Vec` против запроса в BVH
         self.navmesh.is_passable(tile.x, tile.y)
             && self.mesh.is_none_or(|mesh| mesh.contains(point))
+    }
+
+    /// Есть ли прямая проходимая линия между двумя мировыми точками — для
+    /// сущности, идущей напрямую, минуя путь (бросок демона, фильтр смены
+    /// цели в погоне).
+    ///
+    /// Осознанно по сетке даже при меш-бэкенде: проверка стоит в горячих
+    /// циклах (решающие тики демонов перебирают кандидатов), и индекс в `Vec`
+    /// там уместнее запроса в BVH. Перевод на меш-строгий тест — одна правка
+    /// здесь, а не четырёх систем поведения.
+    pub fn line_of_sight(&self, from: Vec2, to: Vec2) -> bool {
+        line_of_sight(&self.navmesh, from, to)
+    }
+
+    /// Просеивание цели: проходимый тайл в точке или среди её 8 соседей —
+    /// иначе `None`. Точка, выбранная поведением (вершина контура дома, вход,
+    /// случайная точка блуждания), лежит на препятствии чаще, чем нет, а
+    /// нужен от неё лишь соседний свободный тайл.
+    ///
+    /// Тоже осознанно по сетке: цель в обоих бэкендах остаётся тайлом
+    /// (identity фильтра устаревших ответов и прихода), посадку старта в меш
+    /// даёт метровый допуск полимеш-поиска, а редкий промах цели мимо меша
+    /// выражается провалом поиска и ловится штатно.
+    pub fn sift_target(&self, tile: IVec2) -> Option<IVec2> {
+        find_passable_tile_near(&self.navmesh, tile)
     }
 
     /// Куда переставить застрявшего. Сперва — снап меша (метровый допуск): в

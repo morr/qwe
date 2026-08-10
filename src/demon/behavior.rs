@@ -15,7 +15,7 @@ use crate::movement::{
     Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
     PreviousSimPosition, SimPosition,
 };
-use crate::navigation::{Pathfinder, find_passable_tile_near, line_of_sight};
+use crate::navigation::Pathfinder;
 use crate::settings::{
     DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_RANGE, KILL_DISTANCE, RADIUS_HYSTERESIS,
     Z_CORPSE,
@@ -109,7 +109,8 @@ pub fn chase(
     targets: Query<&SimPosition, With<Human>>,
 ) {
     let started = std::time::Instant::now();
-    let navmesh = pathfinder.navmesh.read();
+    let backend = pathfinder.backend();
+    let walkable = backend.walkable();
     // один труп — одно убийство: дедупликация внутри тика, пока команды
     // (снятие `Human`) ещё не применились
     let mut killed_this_tick: bevy::platform::collections::HashSet<Entity> =
@@ -166,7 +167,7 @@ pub fn chase(
         // догоняет». Вблизи идём прямо на текущую позицию цели — но только
         // при прямой видимости: жертва, скрывшаяся за углом здания, снова
         // догоняется обычным путём, сквозь стены бросок не проходит.
-        if distance <= DEMON_LUNGE_RANGE && line_of_sight(&navmesh, sim_position.0, target_pos) {
+        if distance <= DEMON_LUNGE_RANGE && walkable.line_of_sight(sim_position.0, target_pos) {
             // путь больше не нужен: дальше демона ведёт бросок, а не
             // `move_moving_entities`
             if !matches!(movable.state, MovableState::Idle) {
@@ -246,7 +247,7 @@ pub fn chase(
             // прогнался бы по каждому кандидату в 3×3 клетках (при 20 000
             // человек это десятки), поэтому он здесь. Не прошёл — цель остаётся,
             // следующая попытка через такт перепрокладки.
-            .filter(|&(_, pos)| line_of_sight(&navmesh, sim_position.0, pos));
+            .filter(|&(_, pos)| walkable.line_of_sight(sim_position.0, pos));
         if let Some((new_target, new_pos)) = switch {
             *chasers.entry(chase_target.0).or_insert(1) -= 1;
             *chasers.entry(new_target).or_insert(0) += 1;
@@ -267,7 +268,7 @@ pub fn chase(
             continue;
         }
 
-        let Some(goal_tile) = find_passable_tile_near(&navmesh, target_tile) else {
+        let Some(goal_tile) = walkable.sift_target(target_tile) else {
             continue;
         };
         movable.to_pathfinding(
