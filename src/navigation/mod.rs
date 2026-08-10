@@ -1,4 +1,5 @@
 mod astar;
+mod backend;
 mod navmesh;
 mod northstar;
 mod polymesh;
@@ -6,6 +7,7 @@ mod polymesh;
 use bevy::prelude::*;
 
 pub use self::astar::{PathfindingAlgorithm, find_path};
+pub use self::backend::Backend;
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
 pub use self::northstar::{
     NorthstarGrid, build_from_navmesh, find_path_northstar, northstar_wanted, poll_northstar_build,
@@ -58,10 +60,9 @@ fn ways_joined(first: &[Vec2], second: &[Vec2]) -> bool {
 #[derive(Debug)]
 pub struct PathfindingResult {
     /// Waypoint'ы в мировых метрах, включая стартовую точку. Сеточные
-    /// алгоритмы отдают тайлы, и диспетчер переводит их `tile_center`;
+    /// алгоритмы отдают тайлы, и бэкенд переводит их `tile_center`;
     /// полигональный меш отдаёт мировые точки сразу.
     pub path: Option<Vec<Vec2>>,
-    pub start_tile: IVec2,
     pub end_tile: IVec2,
     /// Длительность самого поиска (без ожидания RwLock) — для диагностики.
     pub duration: std::time::Duration,
@@ -164,6 +165,18 @@ impl Pathfinder<'_> {
     /// `NorthstarGrid` обслуживается A*.
     pub fn polymesh_build(&self) -> Option<std::sync::Arc<PolymeshBuild>> {
         self.polymesh.enabled.then(|| self.poly.build()).flatten()
+    }
+
+    /// Живой снимок активного бэкенда — то, чем симуляция ищет пути и меряет
+    /// проходимость, не зная имён ресурсов за ним. Детерминированный режим
+    /// снимает его один раз на прогон (`determinism::DeterministicRun`).
+    pub fn backend(&self) -> Backend {
+        Backend::new(
+            self.navmesh.0.clone(),
+            *self.algorithm,
+            self.northstar.get(),
+            self.polymesh_build(),
+        )
     }
 }
 

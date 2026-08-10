@@ -9,15 +9,11 @@ use bevy::window::PrimaryWindow;
 use super::VIEW_MARGIN;
 use super::systems::{Walkable, rescue_from_impassable};
 use crate::determinism::{DeterministicRun, SimTick};
-use crate::grid::tile_center;
 use crate::movement::components::{
     Movable, MovableState, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
     RetireAt, SimPosition,
 };
-use crate::navigation::{
-    Pathfinder, PathfindingAlgorithm, PathfindingResult, find_path, find_path_northstar,
-    find_path_polymesh,
-};
+use crate::navigation::{Backend, Pathfinder, PathfindingResult};
 
 /// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
 /// и запускаются диспетчером по приоритету близости к камере.
@@ -27,18 +23,14 @@ use crate::navigation::{
 /// Диспетчер выдаёт до лимита за кадр; 512 при ~55 fps давали ~14k/с — и
 /// URGENT-заявки часами стояли в очереди, а пул (8 потоков × ~0.4 мс на
 /// поиск) при этом скучал.
-const MAX_PATHFINDING_IN_FLIGHT: usize = 1024;
-
-/// То же для поиска по полигональному мешу — вчетверо меньше.
 ///
-/// Меньше сеточного, потому что незавершённый полигональный поиск держит
-/// фронт (см. `polymesh/path.rs::SEARCH_POPS_PER_POLYGON`), а сеточный —
-/// ничего заметного. Но и не 32, как было в первой попытке удержать память
-/// лимитом: сам по себе лимит от разрастания не спасает (взрывается один
-/// запрос, а не их число), зато низкий намертво останавливает мир — пара
-/// тяжёлых поисков занимает почти все слоты, и диспетчер перестаёт выдавать
-/// заявки всем остальным. Память ограничена бюджетом шагов, слоты — здесь.
-const MAX_POLYMESH_PATHFINDING_IN_FLIGHT: usize = MAX_PATHFINDING_IN_FLIGHT;
+/// Один лимит на оба бэкенда. Отдельный низкий для полигонального меша был и
+/// не спас: от разрастания памяти лимит не защищает (взрывается один запрос,
+/// а не их число), зато намертво останавливал мир — пара тяжёлых поисков
+/// занимала почти все слоты, и диспетчер переставал выдавать заявки всем.
+/// Память меш-поиска ограничена его бюджетом шагов
+/// (`polymesh/path.rs::SEARCH_POPS_PER_POLYGON`), слоты — здесь.
+const MAX_PATHFINDING_IN_FLIGHT: usize = 1024;
 
 /// Приоритет заявки в очереди диспетчера, по возрастанию: чем меньше, тем
 /// раньше считается путь.
@@ -82,16 +74,8 @@ pub fn dispatch_pathfinding_requests(
     )>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
-    // включённая панель Polymesh перекрывает выбор алгоритма — но только
-    // когда меш уже построен; пока он строится (5–20 с), здесь `None`, и
-    // запросы обслуживает сетка
-    let polymesh = pathfinder.polymesh_build();
-    let limit = if polymesh.is_some() {
-        MAX_POLYMESH_PATHFINDING_IN_FLIGHT
-    } else {
-        MAX_PATHFINDING_IN_FLIGHT
-    };
-    let budget = limit.saturating_sub(tasks.iter().count());
+    let backend = pathfinder.backend();
+    let budget = MAX_PATHFINDING_IN_FLIGHT.saturating_sub(tasks.iter().count());
     if budget == 0 || requests.is_empty() {
         return;
     }
@@ -138,17 +122,8 @@ pub fn dispatch_pathfinding_requests(
         queue.truncate(budget);
     }
 
-    let algorithm = *pathfinder.algorithm;
     for (_, _, entity, start_world, start_tile, end_tile) in queue {
-        let task = spawn_path_task(
-            pathfinder.navmesh.0.clone(),
-            pathfinder.northstar.get(),
-            polymesh.clone(),
-            algorithm,
-            start_world,
-            start_tile,
-            end_tile,
-        );
+        let task = spawn_path_task(backend.clone(), start_world, start_tile, end_tile);
         commands
             .entity(entity)
             .remove::<PathfindingRequest>()
@@ -299,7 +274,6 @@ pub fn dispatch_pathfinding_requests_deterministic(
     mut commands: Commands,
     mut queues: Local<(Vec<QueuedRequest>, Vec<QueuedRequest>)>,
     run: Res<DeterministicRun>,
-    arc_navmesh: Res<crate::navigation::ArcNavmesh>,
     tick: Res<SimTick>,
     requests: Query<(
         Entity,
@@ -363,10 +337,7 @@ pub fn dispatch_pathfinding_requests_deterministic(
     let retire_at = tick.0 + crate::settings::PATHFINDING_RETIRE_TICKS;
     for request in urgent.iter().chain(wander.iter()) {
         let task = spawn_path_task(
-            arc_navmesh.0.clone(),
-            run.northstar.clone(),
-            run.polymesh.clone(),
-            run.algorithm,
+            run.0.clone(),
             request.start_world,
             request.start_tile,
             request.end_tile,
@@ -439,7 +410,7 @@ pub fn apply_pathfinding_results(
 
     let mut answered = 0u32;
     let mut failed = 0u32;
-    let polymesh = run.polymesh.clone();
+    let polymesh = run.0.mesh().cloned();
     let mut navmesh = None;
     for (_, _, entity) in due {
         let Ok((entity, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
@@ -483,87 +454,17 @@ pub fn apply_pathfinding_results(
     diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
 }
 
-/// Сам таск поиска пути — общий для обоих диспетчеров, чтобы режимы не
-/// разъехались в том, ЧТО именно считается.
-#[allow(clippy::too_many_arguments)]
+/// Сам таск поиска пути — общий для обоих диспетчеров. ЧТО именно считается,
+/// решает унесённый в таск снимок бэкенда ([`Backend::search`]) — режимы
+/// отличаются только тем, КОГДА снимается ответ.
 fn spawn_path_task(
-    navmesh: std::sync::Arc<std::sync::RwLock<crate::navigation::Navmesh>>,
-    northstar: Option<std::sync::Arc<bevy_northstar::prelude::OrdinalGrid>>,
-    polymesh: Option<std::sync::Arc<crate::navigation::PolymeshBuild>>,
-    algorithm: PathfindingAlgorithm,
+    backend: Backend,
     start_world: Vec2,
     start_tile: IVec2,
     end_tile: IVec2,
 ) -> bevy::tasks::Task<PathfindingResult> {
-    bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
-        let (path, started_at) = match polymesh {
-            Some(polymesh) => {
-                let started_at = std::time::Instant::now();
-                // цель осталась тайловой (её выбрало поведение по
-                // проходимости сетки) — на меше это её центр
-                let path = find_path_polymesh(&polymesh, start_world, tile_center(end_tile));
-                (path, started_at)
-            }
-            None => {
-                let (tiles, started_at) = grid_path(
-                    &navmesh,
-                    northstar.as_deref(),
-                    algorithm,
-                    start_tile,
-                    end_tile,
-                );
-                let path =
-                    tiles.map(|tiles| tiles.into_iter().map(tile_center).collect::<Vec<Vec2>>());
-                (path, started_at)
-            }
-        };
-        PathfindingResult {
-            start_tile,
-            end_tile,
-            path,
-            duration: started_at.elapsed(),
-        }
-    })
-}
-
-/// Сеточный поиск: иерархия northstar, если она построена, иначе плоский
-/// алгоритм. Возвращает путь в тайлах и момент старта самого поиска — метрика
-/// не должна включать ожидание `RwLock`.
-fn grid_path(
-    navmesh: &std::sync::RwLock<crate::navigation::Navmesh>,
-    northstar: Option<&bevy_northstar::prelude::OrdinalGrid>,
-    algorithm: PathfindingAlgorithm,
-    start_tile: IVec2,
-    end_tile: IVec2,
-) -> (Option<Vec<IVec2>>, std::time::Instant) {
-    let hierarchical = matches!(
-        algorithm,
-        PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar
-    );
-    if let Some(grid) = northstar.filter(|_| hierarchical) {
-        let started_at = std::time::Instant::now();
-        let path = find_path_northstar(
-            grid,
-            start_tile,
-            end_tile,
-            algorithm == PathfindingAlgorithm::ThetaStar,
-        );
-        return (path, started_at);
-    }
-    // сетка northstar ещё строится — до её готовности иерархические
-    // алгоритмы обслуживает A*
-    let algorithm = if hierarchical {
-        PathfindingAlgorithm::Astar
-    } else {
-        algorithm
-    };
-    let navmesh = navmesh.read().unwrap();
-    // после захвата лока: метрика — сам поиск, без RwLock
-    let started_at = std::time::Instant::now();
-    (
-        find_path(&navmesh, start_tile, end_tile, algorithm),
-        started_at,
-    )
+    bevy::tasks::AsyncComputeTaskPool::get()
+        .spawn(async move { backend.search(start_world, start_tile, end_tile) })
 }
 
 /// Сколько ведущих waypoint'ов нового пути можно срезать. Пока путь считался,

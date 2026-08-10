@@ -172,11 +172,9 @@ fn a_pawn_deeper_than_the_search_radius_is_left_alone() {
 /// Готовый ответ поиска для сущности: `None` — поиск не нашёл пути.
 fn answer(app: &mut App, pawn: Entity, end_tile: IVec2, path: Option<Vec<Vec2>>) {
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
-    let start_tile = world_to_tile(position_of(app, pawn));
     let task = AsyncComputeTaskPool::get().spawn(async move {
         PathfindingResult {
             path,
-            start_tile,
             end_tile,
             duration: Duration::ZERO,
         }

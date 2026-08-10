@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::{AppState, PlayPhase};
-use crate::navigation::{Pathfinder, PathfindingAlgorithm, PolymeshBuild};
+use crate::navigation::{Backend, Pathfinder};
 use crate::restart::{RestartEvent, RestartPending};
 use crate::rng::WorldSeed;
 
@@ -61,16 +61,13 @@ pub struct SimTick(pub u64);
 /// Замороженный на прогон бэкенд навигации.
 ///
 /// Постройка northstar и polymesh идёт в фоне и заканчивается в момент
-/// **реального** времени. Живой `Pathfinder` переключился бы на готовый
-/// бэкенд посреди прогона, и повтор того же seed'а переключился бы на другом
-/// тике — разные пути на одинаковых входах. Снимок берётся один раз на входе
-/// в мир и держится до конца прогона.
+/// **реального** времени. Живой снимок (`Pathfinder::backend`) переключился
+/// бы на готовый бэкенд посреди прогона, и повтор того же seed'а переключился
+/// бы на другом тике — разные пути на одинаковых входах. Снимок берётся один
+/// раз на входе в мир и держится до конца прогона; `Default` — заглушка
+/// пустого мира до первой заморозки.
 #[derive(Resource, Default)]
-pub struct DeterministicRun {
-    pub algorithm: PathfindingAlgorithm,
-    pub northstar: Option<std::sync::Arc<bevy_northstar::prelude::OrdinalGrid>>,
-    pub polymesh: Option<std::sync::Arc<PolymeshBuild>>,
-}
+pub struct DeterministicRun(pub Backend);
 
 pub struct DeterminismPlugin;
 
@@ -113,19 +110,11 @@ fn reset_on_restart(
     pathfinder: Pathfinder,
 ) {
     tick.0 = 0;
-    *run = snapshot(&pathfinder);
+    *run = DeterministicRun(pathfinder.backend());
 }
 
 fn freeze_navigation_backend(mut run: ResMut<DeterministicRun>, pathfinder: Pathfinder) {
-    *run = snapshot(&pathfinder);
-}
-
-fn snapshot(pathfinder: &Pathfinder) -> DeterministicRun {
-    DeterministicRun {
-        algorithm: *pathfinder.algorithm,
-        northstar: pathfinder.northstar.get(),
-        polymesh: pathfinder.polymesh_build(),
-    }
+    *run = DeterministicRun(pathfinder.backend());
 }
 
 /// Смена seed'а или режима — новый прогон, а значит рестарт.
