@@ -6,8 +6,8 @@ use crate::grid::{tile_center, world_to_tile};
 use crate::movement::components::{
     Movable, MovableState, MovableStateMovingTag, PreviousSimPosition, SimPosition,
 };
-use crate::navigation::{Pathfinder, nearest_tile_where};
-use crate::settings::{RESCUE_SEARCH_TILES, unit_z};
+use crate::navigation::{Pathfinder, Walkable};
+use crate::settings::unit_z;
 
 /// Снимок позиции на начало фиксированного шага — второй конец интерполяции.
 ///
@@ -207,41 +207,6 @@ pub fn move_moving_entities(
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
 }
 
-/// Чем меряется «свободно» при спасении — тем же бэкендом, по которому пешки
-/// ходят. Полигональный меш строже сетки: его контуры раздуты на радиус агента,
-/// и свободный тайл вплотную к стене на меше уже внутри препятствия. Пока меш
-/// строится или выключен, остаётся одна сетка.
-pub(super) struct Walkable<'a> {
-    pub(super) navmesh: &'a crate::navigation::Navmesh,
-    pub(super) polymesh: Option<&'a crate::navigation::PolymeshBuild>,
-}
-
-impl Walkable<'_> {
-    fn allows(&self, point: Vec2) -> bool {
-        let tile = world_to_tile(point);
-        // сетка первой: индекс в `Vec` против запроса в BVH
-        self.navmesh.is_passable(tile.x, tile.y)
-            && self.polymesh.is_none_or(|mesh| mesh.contains(point))
-    }
-
-    /// Куда переставить застрявшего. Сперва — снап меша (метровый допуск): в
-    /// инфляцию контура пешка попадает сантиметрами, и перебирать за неё тайлы
-    /// с запросом в BVH на каждый незачем. Не помог — значит она не у стены, а
-    /// внутри дома, и тогда работает кольцевой поиск по тайлам, тот же, что и
-    /// на голой сетке.
-    fn nearest_free_point(&self, point: Vec2) -> Option<Vec2> {
-        self.polymesh
-            .and_then(|mesh| mesh.nearest_free_point(point))
-            .filter(|&snapped| self.allows(snapped))
-            .or_else(|| {
-                nearest_tile_where(world_to_tile(point), RESCUE_SEARCH_TILES, |candidate| {
-                    self.allows(tile_center(candidate))
-                })
-                .map(tile_center)
-            })
-    }
-}
-
 /// Переезд одной сущности на ближайший свободный тайл, если она стоит в
 /// непроходимом. `true` — переехала.
 ///
@@ -306,12 +271,8 @@ pub fn rescue_trapped_entities(
         Has<crate::human::Human>,
     )>,
 ) {
-    let navmesh = pathfinder.navmesh.read();
-    let polymesh = pathfinder.polymesh_build();
-    let walkable = Walkable {
-        navmesh: &navmesh,
-        polymesh: polymesh.as_deref(),
-    };
+    let backend = pathfinder.backend();
+    let walkable = backend.walkable();
     let started = std::time::Instant::now();
     let mut rescued = 0;
     for (entity, mut sim_position, mut previous, mut movable, is_human) in &mut query {

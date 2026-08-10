@@ -7,7 +7,7 @@ mod polymesh;
 use bevy::prelude::*;
 
 pub use self::astar::{PathfindingAlgorithm, find_path};
-pub use self::backend::Backend;
+pub use self::backend::{Backend, Walkable};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
 pub use self::northstar::{
     NorthstarGrid, build_from_navmesh, find_path_northstar, northstar_wanted, poll_northstar_build,

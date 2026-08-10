@@ -7,13 +7,13 @@ use bevy::tasks::futures::check_ready;
 use bevy::window::PrimaryWindow;
 
 use super::VIEW_MARGIN;
-use super::systems::{Walkable, rescue_from_impassable};
+use super::systems::rescue_from_impassable;
 use crate::determinism::{DeterministicRun, SimTick};
 use crate::movement::components::{
     Movable, MovableState, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
     RetireAt, SimPosition,
 };
-use crate::navigation::{Backend, Pathfinder, PathfindingResult};
+use crate::navigation::{Backend, Pathfinder, PathfindingResult, Walkable};
 
 /// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
 /// и запускаются диспетчером по приоритету близости к камере.
@@ -367,7 +367,6 @@ pub fn apply_pathfinding_results(
     // достроившийся посреди прогона polymesh поменял бы проверку
     // проходимости под спасением застрявших
     run: Res<DeterministicRun>,
-    arc_navmesh: Res<crate::navigation::ArcNavmesh>,
     mut load: ResMut<crate::sim_time::SimLoad>,
     tick: Res<SimTick>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
@@ -410,8 +409,7 @@ pub fn apply_pathfinding_results(
 
     let mut answered = 0u32;
     let mut failed = 0u32;
-    let polymesh = run.0.mesh().cloned();
-    let mut navmesh = None;
+    let mut walkable = None;
     for (_, _, entity) in due {
         let Ok((entity, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
             tasks.get_mut(entity)
@@ -440,9 +438,8 @@ pub fn apply_pathfinding_results(
             &mut sim_position,
             &mut previous,
             is_human,
-            &mut navmesh,
-            &arc_navmesh,
-            polymesh.as_deref(),
+            &mut walkable,
+            &run.0,
             &mut human_grid,
             &mut commands,
         );
@@ -503,10 +500,10 @@ pub fn listen_for_pathfinding_tasks(
 ) {
     let mut answered = 0u32;
     let mut failed = 0u32;
-    let polymesh = pathfinder.polymesh_build();
-    // read-лок берётся лениво и только под спасение: во время загрузки его на
-    // секунды держит на запись поток заливки
-    let mut navmesh = None;
+    let backend = pathfinder.backend();
+    // взгляд на проходимость берётся лениво и только под спасение: его
+    // read-лок во время загрузки на секунды держит на запись поток заливки
+    let mut walkable = None;
     for (entity, mut movable, mut sim_position, mut previous, mut task, is_human) in &mut tasks {
         let Some(result) = check_ready(&mut task.task) else {
             // Сторожок второго эшелона: бюджет внутри polymesh-поиска ловит
@@ -540,9 +537,8 @@ pub fn listen_for_pathfinding_tasks(
             &mut sim_position,
             &mut previous,
             is_human,
-            &mut navmesh,
-            &pathfinder.navmesh,
-            polymesh.as_deref(),
+            &mut walkable,
+            &backend,
             &mut human_grid,
             &mut commands,
         );
@@ -564,19 +560,19 @@ pub fn listen_for_pathfinding_tasks(
 /// правке, и детерминированный режим начал бы вести себя иначе не потому, что
 /// он детерминированный.
 ///
-/// `navmesh_lock` — ленивый read-лок: во время загрузки его на секунды держит
-/// на запись поток заливки, а нужен он только под спасение застрявших.
+/// `walkable` — ленивый взгляд на проходимость бэкенда: его read-лок во время
+/// загрузки на секунды держит на запись поток заливки, а нужен он только под
+/// спасение застрявших.
 #[allow(clippy::too_many_arguments)]
-fn apply_result<'lock>(
+fn apply_result<'backend>(
     result: PathfindingResult,
     entity: Entity,
     movable: &mut Movable,
     sim_position: &mut SimPosition,
     previous: &mut PreviousSimPosition,
     is_human: bool,
-    navmesh_lock: &mut Option<std::sync::RwLockReadGuard<'lock, crate::navigation::Navmesh>>,
-    arc_navmesh: &'lock crate::navigation::ArcNavmesh,
-    polymesh: Option<&crate::navigation::PolymeshBuild>,
+    walkable: &mut Option<Walkable<'backend>>,
+    backend: &'backend Backend,
     human_grid: &mut Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     commands: &mut Commands,
 ) {
@@ -589,9 +585,8 @@ fn apply_result<'lock>(
     }
 
     let Some(path) = result.path else {
-        let navmesh = navmesh_lock.get_or_insert_with(|| arc_navmesh.read());
-        let walkable = Walkable { navmesh, polymesh };
-        if rescue_from_impassable(&walkable, entity, movable, sim_position, previous, commands) {
+        let walkable = walkable.get_or_insert_with(|| backend.walkable());
+        if rescue_from_impassable(walkable, entity, movable, sim_position, previous, commands) {
             if is_human && let Some(grid) = human_grid.as_mut() {
                 grid.insert(entity, sim_position.0);
             }

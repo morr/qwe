@@ -1,15 +1,16 @@
 //! Активный бэкенд навигации одним значением — снимок, который можно унести
 //! в async-таск поиска или заморозить на весь прогон.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use bevy::prelude::*;
 
 use super::{
     Navmesh, PathfindingAlgorithm, PathfindingResult, PolymeshBuild, find_path,
-    find_path_northstar, find_path_polymesh,
+    find_path_northstar, find_path_polymesh, nearest_tile_where,
 };
-use crate::grid::tile_center;
+use crate::grid::{tile_center, world_to_tile};
+use crate::settings::RESCUE_SEARCH_TILES;
 
 /// Снимок активного бэкенда навигации: сеточный navmesh с выбранным
 /// алгоритмом (и иерархией northstar, когда она построена) — либо
@@ -60,10 +61,14 @@ impl Backend {
         }
     }
 
-    /// Полигональный меш снимка, если бэкенд — он. Переходный доступ для
-    /// проверки проходимости под спасением застрявших (`movement::Walkable`).
-    pub fn mesh(&self) -> Option<&Arc<PolymeshBuild>> {
-        self.mesh.as_ref()
+    /// Взгляд на проходимость снимка. Read-лок сетки берётся здесь один раз
+    /// — вызывающая система держит значение весь свой прогон (или создаёт
+    /// лениво, если нужен не всегда), а не платит за лок на каждый вызов.
+    pub fn walkable(&self) -> Walkable<'_> {
+        Walkable {
+            navmesh: self.navmesh.read().unwrap(),
+            mesh: self.mesh.as_deref(),
+        }
     }
 
     /// Один поиск пути активным бэкендом — общее тело обоих диспетчеров,
@@ -129,5 +134,40 @@ impl Backend {
             find_path(&navmesh, start_tile, end_tile, algorithm),
             started_at,
         )
+    }
+}
+
+/// Чем меряется «свободно» — тем же бэкендом, по которому пешки ходят.
+/// Полигональный меш строже сетки: его контуры раздуты на радиус агента, и
+/// свободный тайл вплотную к стене на меше уже внутри препятствия. Пока меш
+/// строится или выключен, остаётся одна сетка.
+pub struct Walkable<'a> {
+    navmesh: RwLockReadGuard<'a, Navmesh>,
+    mesh: Option<&'a PolymeshBuild>,
+}
+
+impl Walkable<'_> {
+    pub fn allows(&self, point: Vec2) -> bool {
+        let tile = world_to_tile(point);
+        // сетка первой: индекс в `Vec` против запроса в BVH
+        self.navmesh.is_passable(tile.x, tile.y)
+            && self.mesh.is_none_or(|mesh| mesh.contains(point))
+    }
+
+    /// Куда переставить застрявшего. Сперва — снап меша (метровый допуск): в
+    /// инфляцию контура пешка попадает сантиметрами, и перебирать за неё тайлы
+    /// с запросом в BVH на каждый незачем. Не помог — значит она не у стены, а
+    /// внутри дома, и тогда работает кольцевой поиск по тайлам, тот же, что и
+    /// на голой сетке.
+    pub fn nearest_free_point(&self, point: Vec2) -> Option<Vec2> {
+        self.mesh
+            .and_then(|mesh| mesh.nearest_free_point(point))
+            .filter(|&snapped| self.allows(snapped))
+            .or_else(|| {
+                nearest_tile_where(world_to_tile(point), RESCUE_SEARCH_TILES, |candidate| {
+                    self.allows(tile_center(candidate))
+                })
+                .map(tile_center)
+            })
     }
 }
