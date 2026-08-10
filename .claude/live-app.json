@@ -11,7 +11,7 @@
     "path": ".requested"
   },
   "ready": {
-    "pattern": "warmup: (pawns on screen routed|timed out)"
+    "pattern": "warmup: (pawns on screen routed|timed out|skipped)"
   },
   "smoke": {
     "types": ["Human", "Demon", "CorpseTag", "Portal"],
