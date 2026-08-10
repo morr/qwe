@@ -185,6 +185,9 @@ algorithm in `references/tree-algo.md`).
   the grid fill rasterizes the centerline (keeping the 4-connected chain guarantee), the
   mesh build outlines it, the renderer draws its own smoothed copy and takes only the
   widths. **A drawn band and a blocking band match by construction, not by discipline.**
+  `CurbCoverage` shares the curb-decision *inputs* (bridges + joining roads, one
+  `ways_joined`); the decision itself stays two deliberate strategies (grid probe vs
+  mesh polygon difference) — a shared point test handles neither, see its doc.
   `map/roads.rs`, `map/buildings/`): earcut triangulation, per-vertex colors, one white
   `ColorMaterial`; ~7000 buildings cost a handful of entities. Trees stay individual
   entities; tree and building **shadows** are each one merged mesh. **Ribbon**

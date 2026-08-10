@@ -15,7 +15,7 @@ use super::{
     ChunkComponents, PolymeshBuild, PolymeshInput, SEARCH_DELTA, SEARCH_STEPS, chunk_grid,
 };
 use crate::map::miter_offsets;
-use crate::map::osm::model::{RoadLine, signed_ring_area};
+use crate::map::osm::model::signed_ring_area;
 use crate::settings::MAP_SIZE;
 
 /// Упрощение контуров препятствий (Visvalingam–Whyatt внутри polyanya),
@@ -90,7 +90,8 @@ pub(super) fn build_polymesh(
     // накрыто соседней лентой, и есть внутренний шов, остальное — внешняя
     // граница composite-моста. Мостов на карте десятки, так что N разностей
     // дешевле одного union зданий.
-    let bridges: Vec<&RoadLine> = input.roads.iter().filter(|road| road.bridge).collect();
+    let coverage = crate::map::footprint::CurbCoverage::build(&input.roads);
+    let bridges = coverage.bridges();
     let bands: Vec<Vec<[f32; 2]>> = bridges
         .iter()
         .filter_map(|road| ribbon_outline(&road.points, 2.0 * road.curb_reach()))
@@ -115,8 +116,7 @@ pub(super) fn build_polymesh(
     }
 
     let mut carves: Vec<Vec<[f32; 2]>> = Vec::new();
-    let bridge_ways: Vec<&[Vec2]> = bridges.iter().map(|road| road.points.as_slice()).collect();
-    for road in &bridges {
+    for road in bridges {
         // настил — ровно проезжая часть, как её рисует рендер
         // (`RoadLine::deck_band`). Сеточное `+curb − tile·√2` сюда не
         // переносится: обе поправки компенсируют блуждание центров тайлов, а
@@ -129,12 +129,9 @@ pub(super) fn build_polymesh(
     }
     // примыкающая дорога открывает бордюр, который накрывает её панель;
     // береговая тропа в паре метров ПОД пролётом узла не делит и не
-    // открывает ничего (тот же тест, что в заливке сетки)
-    for road in input.roads.iter().filter(|road| !road.bridge) {
-        let joins = bridge_ways
-            .iter()
-            .any(|way| crate::navigation::ways_joined(&road.points, way));
-        if joins && let Some(ring) = ribbon_outline(&road.points, road.width) {
+    // открывает ничего (список — общий с заливкой сетки, `CurbCoverage`)
+    for road in coverage.joining() {
+        if let Some(ring) = ribbon_outline(&road.points, road.width) {
             push_contour(&mut carves, ring);
         }
     }

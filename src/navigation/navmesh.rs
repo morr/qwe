@@ -4,8 +4,8 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
-use super::distance_to_polyline;
 use crate::grid::world_to_tile;
+use crate::map::footprint::distance_to_polyline;
 use crate::map::osm::model::{
     MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
 };
@@ -151,14 +151,14 @@ impl Navmesh {
         // дорогу. Поэтому сначала по каждому бордюрному тайлу собираются
         // владельцы (чей бордюр) и примыкания, а блокировка решается ниже
         // щупом «что снаружи»
-        let bridge_ways: Vec<(&[Vec2], f32)> = map
-            .roads
+        let coverage = crate::map::footprint::CurbCoverage::build(&map.roads);
+        let bridge_ways: Vec<(&[Vec2], f32)> = coverage
+            .bridges()
             .iter()
-            .filter(|road| road.bridge)
             .map(|road| (road.points.as_slice(), road.curb_reach()))
             .collect();
         let mut curb_tiles: HashMap<usize, CurbTile> = HashMap::new();
-        for (index, road) in map.roads.iter().filter(|road| road.bridge).enumerate() {
+        for (index, road) in coverage.bridges().iter().enumerate() {
             let id = index as u32 + 1;
             for band in road.curb_bands() {
                 self.visit_polyline(&band.line, band.width, &mut |grid, x, y| {
@@ -178,13 +178,7 @@ impl Navmesh {
         // осевой моста): береговая тропа, прошедшая в паре метров ПОД
         // пролётом, — не примыкание, открытый ею бордюр был бы сходом с
         // моста в реку
-        for road in map.roads.iter().filter(|road| !road.bridge) {
-            let joins = bridge_ways
-                .iter()
-                .any(|&(way, _)| super::ways_joined(&road.points, way));
-            if !joins {
-                continue;
-            }
+        for road in coverage.joining() {
             let width = road.width + self.tile_size * SQRT_2;
             self.visit_polyline_rect(&road.points, width, &mut |grid, x, y| {
                 if let Some(index) = grid.index(x, y)

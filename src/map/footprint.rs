@@ -19,8 +19,41 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use super::meshing::miter_offsets;
-use super::osm::model::{RoadLine, WallLine, WaterLine};
+use super::osm::model::{RoadLine, WallLine, WaterLine, distance_to_segment};
 use crate::settings::PASSAGE_MAX_WIDTH;
+
+/// Насколько близко точка одной ломаной должна лежать к другой ломаной,
+/// чтобы дороги считались примыкающими. Развязка в OSM — это общий узел,
+/// то есть буквально одна и та же точка в обеих ways; допуск покрывает лишь
+/// потерю точности проекции.
+const JOIN_EPSILON: f32 = 0.5;
+
+/// Минимальное расстояние от точки до ломаной — по всем её сегментам.
+pub fn distance_to_polyline(point: Vec2, points: &[Vec2]) -> f32 {
+    points
+        .windows(2)
+        .map(|segment| distance_to_segment(point, segment[0], segment[1]))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Примыкают ли две ломаные — у какой-нибудь точки одной есть сосед на другой
+/// ближе [`JOIN_EPSILON`].
+///
+/// Тест симметричен намеренно: общий узел может оказаться серединой одной из
+/// ways, и односторонняя проверка его пропустит.
+///
+/// Живёт у футпринта, а не в каждой заливке: один и тот же вопрос задают и
+/// заливка сетки, и постройка полигонального меша, и ответы обязаны совпадать
+/// — разойдясь, они открыли бы бордюр моста в одном бэкенде и не открыли в
+/// другом. Потребители берут его через [`CurbCoverage`].
+pub fn ways_joined(first: &[Vec2], second: &[Vec2]) -> bool {
+    first
+        .iter()
+        .any(|&point| distance_to_polyline(point, second) < JOIN_EPSILON)
+        || second
+            .iter()
+            .any(|&point| distance_to_polyline(point, first) < JOIN_EPSILON)
+}
 
 /// Кант — 8% ширины дороги в разумных пределах.
 const CASING_SCALE: f32 = 0.08;
@@ -146,9 +179,76 @@ impl WallLine {
     }
 }
 
+/// Входы решения «какая часть бордюра составного моста открыта»: мосты и
+/// примыкающие к ним не-мосты, отобранные одним предикатом ([`ways_joined`])
+/// для обеих заливок.
+///
+/// Общие здесь именно **входы**. Само решение у заливок осознанно разное, и
+/// это не долг, а два ответа на один случай-ловушку (номинальная ширина
+/// primary 16 м заглатывает свой параллельный тротуар целиком): сетка решает
+/// **направленным щупом** «есть ли лента снаружи от меня» (см.
+/// `navmesh::fill_from_mapdata`), меш — **полигональной разностью**, у которой
+/// от заглатывания выживают тонкие внешние обрезки-барьеры (см.
+/// `polymesh/build.rs`). Точечный тест покрытия, общий для обеих, не
+/// воспроизводит ни то, ни другое: с допуском он открывает внешний барьер, без
+/// допуска — крошит бордюрную цепочку в пунктир. Проверено анализом при
+/// попытке унификации; менять любую из стратегий — только через пин-тесты
+/// бордюров (`navmesh/tests.rs`) и паритетные (`navigation/parity_tests.rs`).
+pub struct CurbCoverage<'a> {
+    bridges: Vec<&'a RoadLine>,
+    joining: Vec<&'a RoadLine>,
+}
+
+impl<'a> CurbCoverage<'a> {
+    pub fn build(roads: &'a [RoadLine]) -> Self {
+        let bridges: Vec<&RoadLine> = roads.iter().filter(|road| road.bridge).collect();
+        let joining = roads
+            .iter()
+            .filter(|road| !road.bridge)
+            .filter(|road| {
+                bridges
+                    .iter()
+                    .any(|bridge| ways_joined(&road.points, &bridge.points))
+            })
+            .collect();
+        Self { bridges, joining }
+    }
+
+    /// Мосты в порядке обхода `roads` — обе заливки нумеруют владельцев
+    /// бордюров этим же порядком.
+    pub fn bridges(&self) -> &[&'a RoadLine] {
+        &self.bridges
+    }
+
+    /// Не-мосты, примыкающие хотя бы к одному мосту (общий узел, не близость
+    /// в плане): их полотно открывает бордюр, который накрывает.
+    pub fn joining(&self) -> &[&'a RoadLine] {
+        &self.joining
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Общий узел посреди одной из ways ловится с любой стороны — ровно ради
+    /// этого случая предикат симметричен.
+    #[test]
+    fn a_way_ending_in_the_middle_of_another_still_joins_it() {
+        let through = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)];
+        let stub = [Vec2::new(50.0, 0.0), Vec2::new(50.0, 40.0)];
+        assert!(ways_joined(&through, &stub));
+        assert!(ways_joined(&stub, &through));
+    }
+
+    /// Тропа, прошедшая под пролётом, узла не делит: примыкание — это общая
+    /// точка, а не близость в плане.
+    #[test]
+    fn a_way_passing_by_does_not_join() {
+        let bridge = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)];
+        let under = [Vec2::new(0.0, 2.0), Vec2::new(100.0, 2.0)];
+        assert!(!ways_joined(&bridge, &under));
+    }
 
     #[test]
     fn casing_stays_within_its_range_on_every_road_class() {

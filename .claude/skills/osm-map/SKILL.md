@@ -176,6 +176,16 @@ the **centerline**, not a ready outline: the grid fill needs the centerline for 
 the renderer draws its own smoothed copy and takes only the widths (smoothing must not
 move what blocks).
 
+`CurbCoverage` also lives here: the shared *inputs* of the composite-bridge curb
+decision — the bridge list and the joining-roads list, filtered by one `ways_joined`
+(moved from `navigation`). The decision itself is deliberately NOT unified: the grid
+blocks curb tiles by a directional outward probe, the mesh subtracts band polygons, and
+both survive the "primary's nominal 16 m swallows its parallel sidewalk" trap in their
+own way — a shared point-coverage test reproduces neither (with slack it opens the
+composite's outer barrier, without slack it crumbles the curb chain into dashes). This
+was analysed and rejected during the footprint extraction; re-attempting it means going
+through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
+
 ## Rendering
 
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
