@@ -44,6 +44,7 @@ use crate::demon::{Demon, DemonDevourTag, DemonLungeTag};
 use crate::grid::world_to_tile;
 use crate::human::Human;
 use crate::movement::components::SimPosition;
+use crate::navigation::ContinuousSpace;
 use crate::settings::{
     DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL, SEPARATION_HOLD,
     SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM,
@@ -124,28 +125,24 @@ pub fn reset_separation_holds(mut holds: ResMut<SeparationHolds>) {
 /// Два «нет», и оба не про вкус пользователя:
 /// - **детерминированный режим** — механизм завязан на камеру, зум и
 ///   `FrameCount`, то есть на всё, от чего повтор прогона обязан не зависеть;
-/// - **сеточная навигация** (панель Navmesh, `PolymeshDebug::enabled`
-///   выключен) — путь по сетке идёт центрами навтайлов, и `move_moving_entities`
-///   ставит пешку на waypoint каждый шаг: разведённая пара возвращается на те
-///   же два центра к следующему тику, а всё, что успело набежать, — это
-///   дрожь и придержки ([`SeparationHolds`]) на ровном месте. Личное
-///   пространство имеет смысл там, где waypoint'ы метрические, то есть на
-///   полигональном меше.
+/// - **тайловое пространство** ([`ContinuousSpace`] — панель Navmesh) — путь
+///   по сетке идёт центрами навтайлов, и `move_moving_entities` ставит пешку
+///   на waypoint каждый шаг: разведённая пара возвращается на те же два
+///   центра к следующему тику, а всё, что успело набежать, — это дрожь и
+///   придержки ([`SeparationHolds`]) на ровном месте. Личное пространство
+///   имеет смысл там, где waypoint'ы метрические; почему отвечает тумблер, а
+///   не готовность меша — док [`ContinuousSpace`].
 ///
-/// Тумблер, а не готовность меша: пока меш строится (0.3–20 с), запросы
-/// обслуживает сетка, но мигать расталкиванием на этом переходе хуже, чем
-/// доработать полсекунды по-старому.
-///
-/// `Option` у обоих ресурсов — та же причина, что у
+/// `Option` у `Determinism` — та же причина, что у
 /// [`deterministic`](crate::determinism::deterministic): `MovementPlugin`
 /// используется в тестах и демо-сценах без соседних плагинов.
 pub fn separation_runs(
     determinism: Option<Res<crate::determinism::Determinism>>,
-    polymesh: Option<Res<crate::navigation::PolymeshDebug>>,
+    space: ContinuousSpace,
 ) -> bool {
     separation_allowed_by_mode(
         determinism.is_some_and(|mode| mode.0),
-        polymesh.is_some_and(|polymesh| polymesh.enabled),
+        space.is_continuous(),
     )
 }
 

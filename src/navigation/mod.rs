@@ -202,6 +202,31 @@ impl NavigationBuildPending<'_> {
     }
 }
 
+/// «Пути активной навигации — метрические полилинии, а не центры тайлов» —
+/// свойство, которым гейтится расталкивание (`movement::separation_runs`):
+/// боковой толчок имеет смысл, только когда его не откатит следующий тайловый
+/// waypoint.
+///
+/// Отвечает **тумблер** полигонального меша, а не готовность постройки: пока
+/// меш строится (0.3–20 с), запросы обслуживает сетка, но мигать
+/// расталкиванием на этом переходе хуже, чем доработать полсекунды по-старому.
+///
+/// `Option` — потребители живут в `MovementPlugin`, который используется в
+/// тестах и демо-сценах без плагина навигации: нет ресурса — пространство
+/// тайловое.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ContinuousSpace<'w> {
+    polymesh: Option<Res<'w, PolymeshDebug>>,
+}
+
+impl ContinuousSpace<'_> {
+    pub fn is_continuous(&self) -> bool {
+        self.polymesh
+            .as_ref()
+            .is_some_and(|polymesh| polymesh.enabled)
+    }
+}
+
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {

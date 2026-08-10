@@ -48,7 +48,7 @@ pub fn snapshot_previous_sim_positions(
 pub fn move_moving_entities(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    navmesh: Res<crate::navigation::ArcNavmesh>,
+    pathfinder: Pathfinder,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     separation: Res<super::separation::SeparationStyle>,
     holds: Res<super::separation::SeparationHolds>,
@@ -68,7 +68,8 @@ pub fn move_moving_entities(
     time: Res<Time>,
 ) {
     let started = std::time::Instant::now();
-    let navmesh = navmesh.read();
+    let backend = pathfinder.backend();
+    let walkable = backend.walkable();
     // «дошёл» с допуском в дистанцию покоя: точнее неё пешки друг к другу не
     // подпускает само расталкивание, так что требовать точный тайл — значит
     // не засчитывать приход столкнутому с тайла в последний момент
@@ -130,11 +131,10 @@ pub fn move_moving_entities(
                     MovableState::Pathfinding(_) => {
                         let step = movable.last_direction * movable.speed * remaining_time;
                         let coasted = sim_position.0 + step;
-                        let tile = world_to_tile(coasted);
                         // стоять на месте (нулевой вектор) или упереться в
                         // непроходимое (за картой — непроходимо само по себе) —
                         // конец доката
-                        if step == Vec2::ZERO || !navmesh.is_passable(tile.x, tile.y) {
+                        if step == Vec2::ZERO || !walkable.coast_allows(coasted) {
                             commands.entity(entity).remove::<MovableStateMovingTag>();
                         } else {
                             sim_position.0 = coasted;

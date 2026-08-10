@@ -179,6 +179,17 @@ impl Walkable<'_> {
         find_passable_tile_near(&self.navmesh, tile)
     }
 
+    /// Точка доката: продолжать ли катиться за концом пути.
+    ///
+    /// Осознанно по сетке даже при меш-бэкенде: проверка стоит в цикле ходока
+    /// по всем движущимся каждый тик, а докат в раздутое радиусом агента
+    /// пространство — штатный вход спасения (`rescue_from_impassable`), как и
+    /// прочие прямые сдвиги `SimPosition`.
+    pub fn coast_allows(&self, point: Vec2) -> bool {
+        let tile = world_to_tile(point);
+        self.navmesh.is_passable(tile.x, tile.y)
+    }
+
     /// Куда переставить застрявшего. Сперва — снап меша (метровый допуск): в
     /// инфляцию контура пешка попадает сантиметрами, и перебирать за неё тайлы
     /// с запросом в BVH на каждый незачем. Не помог — значит она не у стены, а
@@ -194,5 +205,86 @@ impl Walkable<'_> {
                 })
                 .map(tile_center)
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Сеточный снимок с перечисленными заблокированными тайлами — интерфейс
+    /// тестируется тем же путём, каким его берут потребители: значение, а не
+    /// ресурсы.
+    fn grid_backend(blocked: &[IVec2]) -> Backend {
+        let mut navmesh = Navmesh::default();
+        for tile in blocked {
+            navmesh.set_passable(tile.x, tile.y, false);
+        }
+        Backend::new(
+            Arc::new(RwLock::new(navmesh)),
+            PathfindingAlgorithm::Astar,
+            None,
+            None,
+        )
+    }
+
+    /// Контракт пути един для обоих бэкендов: мировые точки, стартовая
+    /// включена (приёмка срезает её сама).
+    #[test]
+    fn a_grid_search_returns_world_waypoints_including_the_start() {
+        let backend = grid_backend(&[]);
+        let start = IVec2::new(10, 10);
+        let goal = IVec2::new(13, 10);
+        let result = backend.search(tile_center(start), start, goal);
+        let path = result.path.expect("прямой путь по пустой сетке");
+        assert_eq!(path.first().copied(), Some(tile_center(start)));
+        assert_eq!(path.last().copied(), Some(tile_center(goal)));
+        assert_eq!(result.end_tile, goal);
+    }
+
+    #[test]
+    fn a_search_to_an_impassable_goal_fails() {
+        let goal = IVec2::new(13, 10);
+        let backend = grid_backend(&[goal]);
+        let start = IVec2::new(10, 10);
+        let result = backend.search(tile_center(start), start, goal);
+        assert!(result.path.is_none());
+    }
+
+    /// Без меша строгая проверка совпадает с сеточной — и обе видят
+    /// заблокированный тайл.
+    #[test]
+    fn the_walkable_view_answers_by_the_grid_when_there_is_no_mesh() {
+        let blocked = IVec2::new(11, 10);
+        let backend = grid_backend(&[blocked]);
+        let walkable = backend.walkable();
+        assert!(!walkable.allows(tile_center(blocked)));
+        assert!(!walkable.coast_allows(tile_center(blocked)));
+        assert!(walkable.allows(tile_center(IVec2::new(10, 10))));
+    }
+
+    /// Просеивание отдаёт сам тайл, когда он проходим, и соседа — когда нет.
+    #[test]
+    fn sift_target_shifts_a_blocked_tile_to_a_free_neighbour() {
+        let blocked = IVec2::new(11, 10);
+        let backend = grid_backend(&[blocked]);
+        let walkable = backend.walkable();
+        assert_eq!(
+            walkable.sift_target(IVec2::new(10, 10)),
+            Some(IVec2::new(10, 10))
+        );
+        let shifted = walkable.sift_target(blocked).expect("сосед свободен");
+        assert_ne!(shifted, blocked);
+        assert!((shifted - blocked).abs().max_element() <= 1);
+    }
+
+    #[test]
+    fn line_of_sight_is_blocked_by_a_tile_between_the_points() {
+        let backend = grid_backend(&[IVec2::new(11, 10)]);
+        let walkable = backend.walkable();
+        let from = tile_center(IVec2::new(10, 10));
+        let to = tile_center(IVec2::new(12, 10));
+        assert!(!walkable.line_of_sight(from, to));
+        assert!(walkable.line_of_sight(from, from));
     }
 }

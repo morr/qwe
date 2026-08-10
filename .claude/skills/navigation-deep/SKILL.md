@@ -165,6 +165,23 @@ in `CONTEXT.md` and the detail here in the same change.
   `northstar grid built` line at all). Switching `Algo` back to `Navmesh` or cycling
   `Pathfind` to HPA* starts the build right then — the same lazy shape the polygonal mesh
   has, run from `Update` on a resource change.
+- **Backend** (`navigation/backend.rs`) — the active backend as one cloneable `Send`
+  snapshot: the grid navmesh Arc + the selected algorithm (+ the northstar hierarchy once
+  built), or the polymesh overriding all of it. `Pathfinder::backend()` takes the live
+  snapshot; `DeterministicRun` freezes one per run; `spawn_path_task` moves it into the
+  async task, so both dispatchers share `Backend::search` and the modes can only differ
+  in WHEN an answer is collected, never in what is computed. `Backend::walkable()`
+  returns the passability view `Walkable` (read lock taken once per system run — lazily
+  in the collectors, where it is only needed under rescue): `allows` /
+  `nearest_free_point` are backend-strict (grid first as the cheap test, then the
+  agent-radius-inflated mesh), while `sift_target`, `line_of_sight` and `coast_allows`
+  are deliberately grid-only — hot-loop cost, documented on the methods; switching one to
+  the mesh-strict test is a one-line edit there, not a sweep over four behavior systems.
+  Boundary invariant: outside `navigation/` and `ui/`, the names `PolymeshBuild` /
+  `PolymeshDebug` / `PathfindingAlgorithm` do not appear. `ContinuousSpace` is the
+  separation gate's question ("are paths metric polylines?") answered by the polymesh
+  *toggle*, not build readiness — blinking separation off during the 0.3–20 s build was
+  judged worse than finishing the transition on the grid.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
@@ -219,7 +236,7 @@ in `CONTEXT.md` and the detail here in the same change.
   (~45 a frame on Tula at 31 % failures), and the ring search runs only for those
   actually walled in. A periodic scan over all 20 000 pawns would do the same work
   thousands of times over for nothing.
-  **What counts as free is the active backend** (`Walkable`): the grid tile first (an
+  **What counts as free is the active backend** (`Backend::walkable()`): the grid tile first (an
   index into a `Vec`), and — while the polygonal mesh is built and selected —
   `PolymeshBuild::contains`, a layer-hinted `point_in_mesh`. The mesh is the stricter of
   the two: its contours are inflated by the agent radius, so a tile that clears the grid

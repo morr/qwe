@@ -247,6 +247,15 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
   lazily (~12 s) on `AsyncComputeTaskPool` **only when a northstar algorithm is
   selected**; until it lands the dispatcher falls back to flat A*.
+- **Backend / Walkable** (`navigation/backend.rs`) — the active backend as one
+  cheap-clone `Send` snapshot: `Pathfinder::backend()` takes it live, `DeterministicRun`
+  freezes it per run, async tasks carry it whole — both dispatchers share
+  `Backend::search`. `walkable()` is the passability view (one read lock per system run):
+  `allows`/`nearest_free_point` are backend-strict (grid AND mesh), while `sift_target` /
+  `line_of_sight` / `coast_allows` stay deliberately grid-only — the policy lives on the
+  methods. **Invariant: outside `navigation/` and `ui/`, the names `PolymeshBuild` /
+  `PolymeshDebug` / `PathfindingAlgorithm` do not appear.** `ContinuousSpace` answers the
+  separation gate — the polymesh *toggle*, not build readiness.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) — requests become
   async tasks with **visibility gating** (peaceful wanderers off-screen or at zoom ≥
   `WANDER_DISPATCH_MAX_ZOOM` wait; demons and fleeing humans always dispatch) and
@@ -371,10 +380,10 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   A small rate plus this FIFO *is* the deterministic replacement for the camera gate:
   distant pawns still wait longer, but reproducibly rather than because the player looked
   away. The camera does not appear in it at all.
-- **DeterministicRun** (`determinism.rs`) — the navigation backend frozen for the run
-  (algorithm + northstar grid + polymesh), snapshotted on entering `Live` and on every
-  `RestartEvent`. northstar and polymesh finish building at some moment of *real* time; a
-  live `Pathfinder` would switch backends mid-run, and a replay would switch on a
+- **DeterministicRun** (`determinism.rs`) — the navigation backend frozen for the run (a
+  `Backend` snapshot), taken on entering `Live` and on every `RestartEvent`. northstar
+  and polymesh finish building at some moment of *real* time; a live
+  `Pathfinder::backend()` would switch backends mid-run, and a replay would switch on a
   different tick. In this mode warmup waits for the wanted backend instead
   (`NavigationBuildPending`, `loading.rs::poll_warmup`), which costs ~11–14 s on first
   entry into a city on HPA — deliberately. Restarts do not pay it.

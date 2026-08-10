@@ -17,7 +17,9 @@ use qwe::movement::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, MovementPlugin,
     PreviousSimPosition, SimPosition,
 };
-use qwe::navigation::{ArcNavmesh, NorthstarGrid, PathfindingAlgorithm, PolymeshDebug};
+use qwe::navigation::{
+    ArcNavmesh, NorthstarGrid, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug,
+};
 use qwe::settings::DEFAULT_NAVTILE_SIZE;
 use qwe::spatial::SpatialPlugin;
 
@@ -60,6 +62,7 @@ fn test_app(frame_delta: f32, time_scale: f32) -> App {
     // (`movement::separation_runs`), и без ресурса оно молча не работает:
     // дефолт полигональный, то есть тот, на котором оно и живёт
     .init_resource::<PolymeshDebug>()
+    .init_resource::<PolyNavmesh>()
     .insert_resource(Time::<Fixed>::from_seconds(FIXED_STEP as f64))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         frame_delta,
