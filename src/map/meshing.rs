@@ -213,7 +213,10 @@ impl MeshBuilder {
                     current.push(cursor);
                     self.push_ribbon(&current, false, width, color, join, RibbonCap::Butt);
                 }
-                current = vec![cursor];
+                // буфер один на весь путь: своя `Vec` на каждый штрих ж/д
+                // развязки — это аллокация на каждые несколько метров пути
+                current.clear();
+                current.push(cursor);
                 drawing = !drawing;
                 left = if drawing { dash } else { gap };
             }
