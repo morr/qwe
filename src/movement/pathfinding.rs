@@ -406,13 +406,12 @@ pub fn apply_pathfinding_results(
             )
         })
         .collect();
-    if due.is_empty() {
-        return;
-    }
     due.sort_unstable();
 
-    let mut answered = 0u32;
-    let mut failed = 0u32;
+    // счётчики заводятся ДО обхода и пишутся его `Drop`'ом: тик, на котором
+    // ничего не подошло к сроку, обязан записать нули, иначе панель застынет
+    // на последнем значении (см. [`AnswerTally`])
+    let mut tally = AnswerTally::new(&mut diagnostics);
     let mut walkable = None;
     for (_, _, entity) in due {
         let Ok((entity, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
@@ -429,14 +428,9 @@ pub fn apply_pathfinding_results(
         commands
             .entity(entity)
             .remove::<(PathfindingTask, RetireAt)>();
-        diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
-            result.duration.as_secs_f64() * 1000.0
-        });
-        answered += 1;
-        failed += u32::from(result.path.is_none());
-
-        apply_result(
+        accept_answer(
             result,
+            &mut tally,
             entity,
             &mut movable,
             &mut sim_position,
@@ -448,11 +442,6 @@ pub fn apply_pathfinding_results(
             &mut commands,
         );
     }
-
-    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_ANSWERED, || {
-        answered as f64
-    });
-    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
 }
 
 /// Сам таск поиска пути — общий для обоих диспетчеров. ЧТО именно считается,
@@ -502,8 +491,7 @@ pub fn listen_for_pathfinding_tasks(
         Has<crate::human::Human>,
     )>,
 ) {
-    let mut answered = 0u32;
-    let mut failed = 0u32;
+    let mut tally = AnswerTally::new(&mut diagnostics);
     // взгляд на проходимость берётся лениво и только под спасение: его
     // read-лок во время загрузки на секунды держит на запись поток заливки
     let mut walkable = None;
@@ -527,14 +515,9 @@ pub fn listen_for_pathfinding_tasks(
             continue;
         };
         commands.entity(entity).remove::<PathfindingTask>();
-        diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
-            result.duration.as_secs_f64() * 1000.0
-        });
-        answered += 1;
-        failed += u32::from(result.path.is_none());
-
-        apply_result(
+        accept_answer(
             result,
+            &mut tally,
             entity,
             &mut movable,
             &mut sim_position,
@@ -546,29 +529,77 @@ pub fn listen_for_pathfinding_tasks(
             &mut commands,
         );
     }
-
-    // оба счётчика пишутся каждый кадр, в том числе нулями: доля считается в
-    // UI как отношение средних, и это верно только пока обе истории одной
-    // длины (см. `diagnostics::PATHFINDING_ANSWERED`)
-    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_ANSWERED, || {
-        answered as f64
-    });
-    diagnostics.add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
 }
 
-/// Применение ОДНОГО ответа поиска пути — общее тело обоих приёмников.
+/// Счётчики приёмки за один прогон системы: замер длительности поиска и пара
+/// «ответов / отказов».
+///
+/// Пишутся в [`Drop`], а не в конце системы, и это единственная причина, по
+/// которой тип существует. Инвариант панели — **оба счётчика каждый прогон, в
+/// том числе нулями**: доля считается как отношение средних по двум историям,
+/// и верно это, только пока истории одной длины (см.
+/// [`crate::diagnostics::PATHFINDING_ANSWERED`]). Дисциплиной он уже не
+/// удержался дважды: сперва замер писали только в кадрах с ответами и панель
+/// застывала на последнем значении, потом ранний выход
+/// `if due.is_empty() { return; }` вернул ровно то же в детерминированном
+/// приёмнике. `Drop` делает нарушение невыразимым — из системы нельзя выйти
+/// мимо него.
+struct AnswerTally<'a, 'w, 's> {
+    diagnostics: &'a mut bevy::diagnostic::Diagnostics<'w, 's>,
+    answered: u32,
+    failed: u32,
+}
+
+impl<'a, 'w, 's> AnswerTally<'a, 'w, 's> {
+    fn new(diagnostics: &'a mut bevy::diagnostic::Diagnostics<'w, 's>) -> Self {
+        Self {
+            diagnostics,
+            answered: 0,
+            failed: 0,
+        }
+    }
+
+    /// Учесть один снятый ответ — чем бы он ни кончился дальше: устаревший и
+    /// недостижимый ответы тоже посчитаны, они стоили поиска.
+    fn record(&mut self, result: &PathfindingResult) {
+        self.diagnostics
+            .add_measurement(&crate::diagnostics::PATHFINDING_DURATION_MS, || {
+                result.duration.as_secs_f64() * 1000.0
+            });
+        self.answered += 1;
+        self.failed += u32::from(result.path.is_none());
+    }
+}
+
+impl Drop for AnswerTally<'_, '_, '_> {
+    fn drop(&mut self) {
+        let (answered, failed) = (self.answered, self.failed);
+        self.diagnostics
+            .add_measurement(&crate::diagnostics::PATHFINDING_ANSWERED, || {
+                answered as f64
+            });
+        self.diagnostics
+            .add_measurement(&crate::diagnostics::PATHFINDING_FAILED, || failed as f64);
+    }
+}
+
+/// Приёмка ОДНОГО ответа поиска пути — общее тело обоих приёмников: учёт в
+/// счётчиках и применение к пешке.
 ///
 /// Вынесено намеренно: режимы отличаются только тем, КОГДА ответ снимается, а
 /// не тем, что с ним делают. Две копии этой логики разъехались бы на первой же
 /// правке, и детерминированный режим начал бы вести себя иначе не потому, что
-/// он детерминированный.
+/// он детерминированный. Что у режимов и правда своё — способ добыть ответ
+/// (`check_ready` со сторожком зависания против `block_on` со счётом простоя в
+/// `SimLoad`) и порядок обхода; всё остальное живёт здесь.
 ///
 /// `walkable` — ленивый взгляд на проходимость бэкенда: его read-лок во время
 /// загрузки на секунды держит на запись поток заливки, а нужен он только под
 /// спасение застрявших.
 #[allow(clippy::too_many_arguments)]
-fn apply_result<'backend>(
+fn accept_answer<'backend>(
     result: PathfindingResult,
+    tally: &mut AnswerTally<'_, '_, '_>,
     entity: Entity,
     movable: &mut Movable,
     sim_position: &mut SimPosition,
@@ -579,6 +610,8 @@ fn apply_result<'backend>(
     human_grid: &mut Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     commands: &mut Commands,
 ) {
+    tally.record(&result);
+
     let MovableState::Pathfinding(end_tile) = movable.state else {
         return;
     };

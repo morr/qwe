@@ -173,7 +173,16 @@ in `CONTEXT.md` and the detail here in the same change.
   mode writes it once on `WorldStarted` and freezes it for the run, while the live mode
   re-takes it every frame in `PreUpdate` (`refresh_backend`); `spawn_path_task` moves it into the
   async task, so both dispatchers share `Backend::search` and the modes can only differ
-  in WHEN an answer is collected, never in what is computed. `Backend::walkable()`
+  in WHEN an answer is collected, never in what is computed. The collecting side is
+  shared the same way: both receivers call one `accept_answer` (tally + apply), so what
+  is genuinely per-mode shrinks to *how the answer is obtained* — `check_ready` with the
+  hang watchdog in the live path, `block_on` charged to `SimLoad` in the deterministic
+  one — plus the traversal order. The `answered`/`failed` pair is written by
+  `AnswerTally`'s **`Drop`**, not at the end of the system: "both counters every run,
+  including zeros" is what makes the panel's ratio-of-means valid, and discipline lost it
+  twice (measurements only on frames with answers, then an `if due.is_empty() { return; }`
+  in the deterministic receiver — both left the panel frozen on its last value).
+  Pinned by `movement/tests.rs`, one test per receiver. `Backend::walkable()`
   returns the passability view `Walkable` (read lock taken once per system run — lazily
   in the collectors, where it is only needed under rescue): `allows` /
   `nearest_free_point` are backend-strict (grid first as the cheap test, then the

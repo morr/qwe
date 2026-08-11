@@ -254,6 +254,74 @@ fn a_successful_answer_is_taken_as_a_path() {
     assert_eq!(movable.path.len(), 2);
 }
 
+// --- счётчики приёмки ---
+
+/// Приложение с зарегистрированной диагностикой: без регистрации
+/// `add_measurement` — no-op, и проверять было бы нечего.
+fn app_with_pathfinding_diagnostics() -> App {
+    use bevy::diagnostic::{Diagnostic, RegisterDiagnostic};
+
+    let mut app = app_with(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))));
+    app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
+        .register_diagnostic(Diagnostic::new(crate::diagnostics::PATHFINDING_ANSWERED))
+        .register_diagnostic(Diagnostic::new(crate::diagnostics::PATHFINDING_FAILED));
+    app
+}
+
+fn average(app: &App, path: &bevy::diagnostic::DiagnosticPath) -> Option<f64> {
+    app.world()
+        .resource::<bevy::diagnostic::DiagnosticsStore>()
+        .get(path)
+        .expect("диагностика зарегистрирована")
+        .average()
+}
+
+/// Обе истории написаны и равны нулю — то есть прогон, которому нечего было
+/// снимать, всё равно отчитался.
+fn assert_reported_zeros(app: &App) {
+    assert_eq!(
+        average(app, &crate::diagnostics::PATHFINDING_ANSWERED),
+        Some(0.0),
+        "ответов не было — но счётчик обязан быть записан нулём"
+    );
+    assert_eq!(
+        average(app, &crate::diagnostics::PATHFINDING_FAILED),
+        Some(0.0),
+        "отказов не было — но счётчик обязан быть записан нулём"
+    );
+}
+
+/// Инвариант панели: приёмник пишет ОБА счётчика на каждом прогоне, в том
+/// числе нулями, когда снимать нечего.
+///
+/// Доля отказов считается как отношение средних по двум историям, и прогон,
+/// смолчавший про свой ноль, оставляет на панели последнее значение навсегда.
+/// Класс уже проходил дважды: сперва замер писали только в кадрах с ответами,
+/// потом его вернул ранний выход `if due.is_empty()` в детерминированном
+/// приёмнике. Проверяются оба приёмника — ради этого у них и общий
+/// `AnswerTally`.
+#[test]
+fn the_live_receiver_reports_zeros_when_there_is_nothing_to_take() {
+    let app = &mut app_with_pathfinding_diagnostics();
+    app.add_systems(Update, listen_for_pathfinding_tasks);
+
+    app.update();
+
+    assert_reported_zeros(app);
+}
+
+#[test]
+fn the_deterministic_receiver_reports_zeros_on_a_tick_with_nothing_due() {
+    let app = &mut app_with_pathfinding_diagnostics();
+    app.init_resource::<crate::determinism::SimTick>()
+        .init_resource::<crate::sim_time::SimLoad>()
+        .add_systems(Update, super::pathfinding::apply_pathfinding_results);
+
+    app.update();
+
+    assert_reported_zeros(app);
+}
+
 // --- детерминированный диспетчер ---
 
 use super::components::{PathfindingRequest, RequestedAt};
