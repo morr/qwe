@@ -200,6 +200,17 @@ fn sync_cycle_values<R: Knobbed>(
     }
 }
 
+/// Типы, чьи ручки уже зарегистрированы, — чтобы [`AddKnobsExt::add_knobs`]
+/// сдержал своё обещание «по разу на ресурс».
+///
+/// Ресурс правят ручки **разных** панелей (`HumanStyle` — и разброс скоростей
+/// в Human, и радиус тела в Navigation; `PolymeshDebug` — радиус агента), и
+/// каждая панель обязана регистрировать то, чем пользуется: полагаться на то,
+/// что сосед уже позвал, — то самое зеркало списка, от которого уходим. Без
+/// этой памяти вторая регистрация просто добавила бы вторую копию систем.
+#[derive(Resource, Default)]
+struct RegisteredKnobs(std::collections::HashSet<std::any::TypeId>);
+
 /// Регистрация ручек ресурса — по разу на ресурс, независимо от того, сколько
 /// у него ручек и по скольким панелям они разложены.
 pub trait AddKnobsExt {
@@ -208,6 +219,14 @@ pub trait AddKnobsExt {
 
 impl AddKnobsExt for App {
     fn add_knobs<R: Knobbed>(&mut self) -> &mut Self {
+        if !self
+            .world_mut()
+            .get_resource_or_insert_with(RegisteredKnobs::default)
+            .0
+            .insert(std::any::TypeId::of::<R>())
+        {
+            return self;
+        }
         self.add_systems(
             Update,
             (sync_knob_values::<R>, sync_cycle_values::<R>)

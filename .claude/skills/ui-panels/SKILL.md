@@ -148,7 +148,12 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   `Conifer share`). `Knobbed` is just an alias for `Resource<Mutability = Mutable>` —
   `ResMut` needs it and repeating the bound in six signatures reads worse.
   `SliderBinding` implements `Clone`/`Copy` by hand: `derive` would demand `R: Copy`,
-  which no resource is.
+  which no resource is. `add_knobs::<R>()` is **idempotent** (it remembers registered
+  `TypeId`s in `RegisteredKnobs`): one resource is knobbed from two panels at once —
+  `HumanStyle` is `Speed spread` in Human *and* `Body radius` in Navigation — and each
+  panel must register what it uses rather than assume its neighbour did, which is the
+  mirror-of-a-list habit this whole change removes. Without the memo the second call
+  would simply add a second copy of both systems.
 - **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one the crowd
   demo (`examples/demos/crowd_demo.rs`) still calls directly, since its sliders drive
   demo-local state rather than a resource: `spawn_slider_row` (label + value text +

@@ -224,7 +224,8 @@ pub struct UiNavigationPlugin;
 impl Plugin for UiNavigationPlugin {
     fn build(&self, app: &mut App) {
         // ручки этой панели правят четыре разных ресурса, и радиус агента —
-        // пятый; `HumanStyle` регистрирует ещё и панель Human
+        // пятый; `HumanStyle` регистрирует ещё и панель Human, повторный
+        // вызов кит отбрасывает сам
         app.add_knobs::<SeparationLab>()
             .add_knobs::<SlotLab>()
             .add_knobs::<SlotSearch>()

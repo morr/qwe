@@ -64,9 +64,9 @@ pub struct UiStatsPlugin;
 
 impl Plugin for UiStatsPlugin {
     fn build(&self, app: &mut App) {
-        // ручки панелей Demon и Human — их подписи и бегунки ведёт кит;
-        // `HumanStyle` регистрирует ещё и панель Navigation (радиус тела), а
-        // регистрация идемпотентна по смыслу: система одна на ресурс
+        // ручки панелей World, Demon и Human — их подписи и бегунки ведёт кит.
+        // `HumanStyle` регистрирует ещё и панель Navigation (радиус тела);
+        // повторный вызов кит отбрасывает сам
         app.add_knobs::<DemonStyle>()
             .add_knobs::<HumanStyle>()
             .add_knobs::<Determinism>()
