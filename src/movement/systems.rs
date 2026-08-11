@@ -2,9 +2,8 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::window::PrimaryWindow;
 
-use crate::grid::{tile_center, world_to_tile};
 use crate::movement::components::{
-    Movable, MovableState, MovableStateMovingTag, PreviousSimPosition, SimPosition,
+    Movable, MovableStateMovingTag, PreviousSimPosition, SimPosition,
 };
 use crate::navigation::{Backend, Walkable};
 use crate::settings::unit_z;
@@ -51,9 +50,7 @@ pub fn move_moving_entities(
     backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     separation: Res<super::separation::SeparationStyle>,
-    holds: Res<super::separation::SeparationHolds>,
-    steer: Res<super::separation::SeparationSteer>,
-    block: Res<super::separation::SeparationBlock>,
+    pushes: super::separation::SeparationInput,
     lab: Res<super::separation::SeparationLab>,
     human_style: Res<crate::human::HumanStyle>,
     mut query: Query<
@@ -72,127 +69,42 @@ pub fn move_moving_entities(
     // «дошёл» с допуском в дистанцию покоя: точнее неё пешки друг к другу не
     // подпускает само расталкивание, так что требовать точный тайл — значит
     // не засчитывать приход столкнутому с тайла в последний момент
-    let human_rest = 2.0 * human_style.body_radius;
-    let demon_rest = 2.0 * super::separation::demon_radius(human_style.body_radius);
-    // один раз на систему, а не на пешку: цикл ниже обходит ВСЕХ движущихся
-    // (в игре это до 20 000 при ~1920 тиках в секунду на 30x), и проверка
-    // пустоты карты внутри него — единственная цена руления для тех, кто им не
-    // пользуется. Снаружи она стоит ровно ничего
-    let steering = !steer.0.is_empty();
-    // та же экономия, что у руления: карта пуста почти всегда, и проверять её
-    // пустоту внутри цикла по 20 000 пешек значило бы платить за механизм тем,
-    // кто им не пользуется
-    let sliding = lab.slide > 0.0 && !block.0.is_empty();
+    let tuning_for = |rest| super::step::StepTuning {
+        rest,
+        arrive_slack: lab.arrive_slack,
+        steer_release: lab.steer_release,
+        slide: lab.slide,
+    };
+    let human_tuning = tuning_for(2.0 * human_style.body_radius);
+    let demon_tuning = tuning_for(2.0 * super::separation::demon_radius(human_style.body_radius));
+    let pushes = pushes.reader(separation.hold, lab.slide);
+    let dt = time.delta_secs();
+
     for (entity, mut movable, mut sim_position, is_human) in &mut query {
         let cell_before = crate::spatial::cell_of(sim_position.0);
-        let rest = if is_human { human_rest } else { demon_rest };
-        let mut remaining_time = time.delta_secs();
-        // придержка (см. `separation::SeparationHolds`): упёршийся курсом в
-        // чужое тело не давит в него полным шагом. Придержанный в дистанции
-        // покоя от цели дошёл: ближе его не пустит то самое тело, а без
-        // засчитанного прихода он толкался бы с ним до скончания века
-        if !holds.0.is_empty() && holds.0.contains(&entity) {
-            let slack = rest * lab.arrive_slack;
-            if let MovableState::Moving(target) = movable.state
-                && (tile_center(target) - sim_position.0).length_squared() <= slack * slack
-            {
-                // событие прихода в `to_idle` гейтится пустым путём
-                movable.path.clear();
-                movable.to_idle(entity, &mut commands, true);
-                continue;
-            }
-            remaining_time *= separation.hold;
+        // позиция пишется обратно только если шаг её и правда сдвинул:
+        // `snapshot_previous_sim_positions` фильтрует по `Changed<SimPosition>`,
+        // и безусловная запись расширила бы ему выборку на всех стоящих в
+        // приходе и в упёршемся докате
+        let mut position = sim_position.0;
+        let outcome = super::step::step_along_path(
+            &mut movable,
+            &mut position,
+            dt,
+            pushes.modifiers_for(entity),
+            if is_human { human_tuning } else { demon_tuning },
+            &walkable,
+        );
+        if position != sim_position.0 {
+            sim_position.0 = position;
         }
-        // руление (см. `separation::SeparationSteer`): пешка, упёршаяся в чужое
-        // тело, не давит в него и не ждёт толчка, а доворачивает курс вбок и
-        // обходит на полной скорости
-        let aside = if steering {
-            steer.0.get(&entity).copied().unwrap_or(Vec2::ZERO)
-        } else {
-            Vec2::ZERO
-        };
-        // куда идти нельзя (см. `separation::SeparationBlock`)
-        let barrier = if sliding {
-            block.0.get(&entity).copied().unwrap_or(Vec2::ZERO)
-        } else {
-            Vec2::ZERO
-        };
-        loop {
-            if movable.path.is_empty() {
-                match movable.state {
-                    MovableState::Moving(target) => {
-                        let destination_reached = world_to_tile(sim_position.0) == target
-                            || (tile_center(target) - sim_position.0).length_squared()
-                                <= rest * rest;
-                        movable.to_idle(entity, &mut commands, destination_reached);
-                    }
-                    // старый путь пройден раньше, чем посчитан новый — докат
-                    MovableState::Pathfinding(_) => {
-                        let step = movable.last_direction * movable.speed * remaining_time;
-                        let coasted = sim_position.0 + step;
-                        // стоять на месте (нулевой вектор) или упереться в
-                        // непроходимое (за картой — непроходимо само по себе) —
-                        // конец доката
-                        if step == Vec2::ZERO || !walkable.coast_allows(coasted) {
-                            commands.entity(entity).remove::<MovableStateMovingTag>();
-                        } else {
-                            sim_position.0 = coasted;
-                        }
-                    }
-                    // ошибка поиска или явная остановка — поведение выберет
-                    // новую цель, докатывать некуда
-                    _ => {
-                        commands.entity(entity).remove::<MovableStateMovingTag>();
-                    }
-                }
-                break;
-            }
-
-            let target = *movable.path.front().expect("path is non-empty");
-            let to_target = target - sim_position.0;
-            let distance = to_target.length();
-            let distance_to_move = movable.speed * remaining_time;
-
-            if distance_to_move < distance {
-                let direction = to_target.normalize_or_zero();
-                // `last_direction` — ЖЕЛАЕМЫЙ курс, до отклонения. Записать сюда
-                // отклонённый нельзя: расталкивание берёт сторону обхода как
-                // правую нормаль к `last_direction`, и курс доворачивался бы
-                // вправо от уже довёрнутого — каждый кадр ещё на столько же.
-                // Пешка при этом не отходит вбок, а наматывает круги, и сила
-                // отклонения перестаёт на что-либо влиять (замер стенда:
-                // разброс 0.11 м одинаково при 0.3 и при 1.5)
-                movable.last_direction = direction;
-                // …и не у самого waypoint'а: отклонённый шаг не сокращает
-                // остаток до точки, а снимается она только когда бюджет шага
-                // этот остаток накрывает
-                let step = if aside != Vec2::ZERO && distance > lab.steer_release {
-                    (direction + aside).normalize_or_zero()
-                } else {
-                    direction
-                };
-                // скольжение по контакту: из шага снимается то, чем пешка лезет
-                // В тело, поперечное остаётся целиком. Длину НЕ восстанавливаем
-                // — иначе лобовая пешка, у которой поперечного почти нет,
-                // выстреливала бы вбок на полной скорости
-                let step = if barrier != Vec2::ZERO {
-                    step - barrier * (step.dot(barrier).max(0.0) * lab.slide)
-                } else {
-                    step
-                };
-                sim_position.0 += step * distance_to_move;
-                break;
-            }
-
-            // дошли до waypoint'а — встаём на него и тратим остаток времени
-            if distance > 0.0 {
-                movable.last_direction = to_target / distance;
-            }
-            sim_position.0 = target;
-            movable.path.pop_front();
-            remaining_time -= distance / movable.speed;
-            if remaining_time <= 0.0 {
-                break;
+        match outcome {
+            super::step::StepOutcome::Moved => {}
+            super::step::StepOutcome::Arrived {
+                destination_reached,
+            } => movable.to_idle(entity, &mut commands, destination_reached),
+            super::step::StepOutcome::Halted => {
+                commands.entity(entity).remove::<MovableStateMovingTag>();
             }
         }
 

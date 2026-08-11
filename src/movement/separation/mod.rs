@@ -450,6 +450,65 @@ impl SeparationOutput<'_> {
     }
 }
 
+/// Та же группа со стороны ЧТЕНИЯ — всё, что расталкивание навязало шагу
+/// движения, одним параметром.
+///
+/// Пишутся эти три карты вместе ([`SeparationOutput`]) и врозь не имеют
+/// смысла, поэтому и читаются вместе: шаг брал их тремя отдельными `Res` и
+/// сам снимал с каждой проверку пустоты.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct SeparationInput<'w> {
+    holds: Res<'w, SeparationHolds>,
+    steer: Res<'w, SeparationSteer>,
+    block: Res<'w, SeparationBlock>,
+}
+
+impl SeparationInput<'_> {
+    /// Снять проверки пустоты РАЗ на прогон системы, а не на пешку.
+    ///
+    /// Это не микрооптимизация: шаг обходит всех движущихся (в игре до 20 000
+    /// при ~1920 тиках в секунду на 30×), и проверка пустоты карты внутри
+    /// цикла — единственная цена механизма для тех, кто им не пользуется.
+    /// Снаружи цикла она стоит ровно ничего.
+    pub fn reader(&self, hold: f32, slide: f32) -> SeparationReader<'_> {
+        SeparationReader {
+            hold,
+            holds: (!self.holds.0.is_empty()).then_some(&self.holds.0),
+            steer: (!self.steer.0.is_empty()).then_some(&self.steer.0),
+            // скольжение выключено — карта перегородивших шагу не нужна вовсе
+            block: (slide > 0.0 && !self.block.0.is_empty()).then_some(&self.block.0),
+        }
+    }
+}
+
+/// Выдача расталкивания с уже снятыми проверками пустоты: остаётся спросить
+/// долю конкретной пешки.
+pub struct SeparationReader<'a> {
+    hold: f32,
+    holds: Option<&'a bevy::ecs::entity::EntityHashSet>,
+    steer: Option<&'a bevy::ecs::entity::EntityHashMap<Vec2>>,
+    block: Option<&'a bevy::ecs::entity::EntityHashMap<Vec2>>,
+}
+
+impl SeparationReader<'_> {
+    pub fn modifiers_for(&self, entity: Entity) -> crate::movement::step::StepModifiers {
+        crate::movement::step::StepModifiers {
+            hold: self
+                .holds
+                .filter(|holds| holds.contains(&entity))
+                .map(|_| self.hold),
+            aside: self
+                .steer
+                .and_then(|steer| steer.get(&entity).copied())
+                .unwrap_or(Vec2::ZERO),
+            barrier: self
+                .block
+                .and_then(|block| block.get(&entity).copied())
+                .unwrap_or(Vec2::ZERO),
+        }
+    }
+}
+
 impl Default for SeparationLab {
     fn default() -> Self {
         Self {

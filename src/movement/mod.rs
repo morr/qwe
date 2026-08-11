@@ -2,6 +2,7 @@ mod components;
 mod destination;
 mod pathfinding;
 mod separation;
+mod step;
 mod systems;
 #[cfg(test)]
 mod tests;

@@ -215,7 +215,17 @@ in `CONTEXT.md` and the detail here in the same change.
   costs 2–3 frames — and a frame carries `speed × 1/fps` virtual seconds, so at 30×
   the reply lags by 1–1.5 virtual seconds while a fleeing human repaths every ~1 s:
   the old path routinely runs out before the reply lands.
-- **Coasting** (`move_moving_entities`) — an entity whose path is exhausted while the
+- **The step itself** (`movement/step.rs::step_along_path`) — all five rules of one
+  pawn-step (arrive, coast, hold, steer, slide) as one function over plain values:
+  `&mut Movable`, a position, `dt`, the pawn's `StepModifiers` (its share of the
+  separation output), the species' `StepTuning`, and a `Walkable`. It returns a
+  `StepOutcome` (`Moved` / `Arrived { destination_reached }` / `Halted`) and touches no
+  `Entity`, `Commands` or query — the same shape as `human::decide` / `demon::decide`.
+  `move_moving_entities` is the plumbing around it: query, commands, the human grid.
+  Tested by value in `movement/step/tests.rs`, which is how `slide` and `steer_release`
+  got covered at all — both are lab knobs, off by default, so a whole-`App` test could
+  not reach them.
+- **Coasting** (`step_along_path`) — an entity whose path is exhausted while the
   state is still `Pathfinding` keeps moving along `Movable::last_direction` (the
   direction of its last step) as long as the tile ahead is passable; a zero vector,
   a wall or the map edge ends the coast (tag removed, as before). Arrival is not
