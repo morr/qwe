@@ -516,7 +516,22 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   system over `Added<PathfindingRequest>`; **chase and flee are excluded** by design.
   Runs in **both** modes — it is simulation, not cosmetics, hence no camera gate. Detail
   and the failure modes it fixes — navigation-deep skill, `references/crowd.md`.
-- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s *between*
+- **Decision ladder** (`human/decide.rs`, `demon/decide.rs`) — a species' rules live in a
+  pure `decide(&…Sense, …) -> …Action`: plain values in, one enum variant out, no
+  `Entity`, no `Commands`, no queries, tested without an `App`. `behavior.rs` only
+  applies the answer — swap tags, queue a path request, trigger the kill event — so the
+  *order* of the rungs, which is half of what these rules are, is readable in one place
+  instead of spread over `continue`s. Two things deliberately stay outside. **Expensive
+  senses** are asked lazily through a closure, at most once: the demon's `line_of_sight`
+  only once the distance already permits a lunge, the human's threat through the
+  `ThreatProbe` the ladder itself picks (exact nearest-demon search on decision ticks,
+  cell occupancy between them). **Anything that touches the world** stays in the system,
+  but its *terms* come out of `decide` — the target-switch search is run by `chase`, its
+  radius and chaser limit are a `SwitchRule` the ladder returned. RNG rolls stay in
+  `behavior.rs` for a third reason: the decision stream must advance on exactly the ticks
+  it advanced on before (see **Decision stream**).
+- **Human** states (`human/behavior.rs`, rules in `human/decide.rs`): **Wander**
+  (`WanderPause` 2–10 s *between*
   walks, zero at spawn; then 80% head to a random building anywhere in the city — long
   routes, the real pathfinding load — and 20% stroll 20–40 m nearby; the one exception
   is the first target after calming down from panic — see **PanicRecoil**) ⇄
@@ -565,7 +580,8 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **Demon spawn** — a demon acts from the first tick it exists, the initial burst
   included. A `DemonSpawnPause` (0.5–3 s staging) existed and was removed on request;
   staging an entrance again means a new component, not reviving that one.
-- **Demon** states (`demon/behavior.rs`): **Wander** (target biased away from portal) →
+- **Demon** states (`demon/behavior.rs`, rules in `demon/decide.rs`): **Wander** (target
+  biased away from portal) →
   **Chase** → **Devour** → Wander. Chase claims: **max 2 chasers per target**
   (`ChaserCounts`). Repath throttle 0.4 s, and on that same tick the demon may
   **switch** target: sharing its target, it takes any *unclaimed* human no farther than

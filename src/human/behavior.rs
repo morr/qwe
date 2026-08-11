@@ -9,35 +9,17 @@ use crate::human::components::{
     FleeRepath, Human, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil, WanderHeading,
     WanderPause,
 };
+use crate::human::decide::{
+    FLEE_STEP, FleeAction, FleeSense, Threat, ThreatProbe, decide, escaped, flee_target,
+};
 use crate::movement::{Movable, MovableState, SimPosition};
 use crate::navigation::Pathfinder;
-use crate::rng::{PawnId, WanderIndex, hash_fraction};
+use crate::rng::{PawnId, WanderIndex};
 use crate::settings::{
-    HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, MAP_SIZE,
-    RADIUS_HYSTERESIS,
+    HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, RADIUS_HYSTERESIS,
 };
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
-
-/// Шаг бегства: насколько далеко от себя прокладывается точка «от демона», м.
-const FLEE_STEP: (f32, f32) = (40.0, 60.0);
-/// Зона у границы карты, попадание в которую при бегстве — «спасся», м.
-const ESCAPE_MARGIN: f32 = 2.0;
-/// Веер разбегания: максимальное отклонение от вектора «прочь от демона»,
-/// радианы (±≈34°). Толпа без него выстраивается в колонну.
-const FLEE_SPREAD: f32 = 0.6;
-
-/// Персональный угол веера: детерминирован по [`PawnId`], чтобы человек между
-/// перепрокладками держал свою сторону, а не зигзагами метался.
-///
-/// Именно `PawnId`, а не `Entity`: индексы сущностей после рестарта
-/// переиспользуются в другом порядке (свободный список зависит от того, кого
-/// съели в прошлом прогоне), и веер разъехался бы между прогоном и его
-/// повтором при абсолютно одинаковом seed.
-fn personal_spread(pawn_id: u32) -> f32 {
-    let hash = pawn_id.wrapping_mul(2654435761);
-    (hash_fraction(hash) * 2.0 - 1.0) * FLEE_SPREAD
-}
 
 /// Wander → Flee: демон в радиусе паники.
 ///
@@ -105,17 +87,15 @@ pub fn panic(
 /// Flee: бег от ближайшего демона с троттлингом перепрокладки;
 /// демоны отстали (×1.5 радиуса) — успокаивается.
 ///
-/// Точный поиск ближайшего демона — только на тиках решения (сработал таймер
-/// перепрокладки или потерян путь), то есть раз в 45–77 тиков на бегущего. На
-/// остальных тиках вместо него — проверка занятости ячеек демонской сетки,
-/// накрывающих радиус ([`SpatialGrid::any_in_cells_around`]): пустое окно
-/// гарантирует «в радиусе никого», и успокоение срабатывает как раньше;
-/// занятое окно у уже безопасного бегущего (демон завис в 90–150 м)
-/// откладывает успокоение до его тика решения — не дольше периода
-/// перепрокладки. До этого точный поиск бежал каждый тик у каждого бегущего
-/// и стоил 40% тика симуляции (0.42 мс при ~1900 бегущих: они толпятся
-/// именно там, где демоны, и каждый заново обходил одни и те же плотные
-/// ячейки, дёргая `Query::get` на каждого кандидата).
+/// Здесь только применение: какой ступенью обернулся тик, решает чистая
+/// [`decide`](crate::human::decide::decide) — она же выбирает, каким вопросом
+/// спросить про угрозу. Точный поиск ближайшего демона идёт только на тиках
+/// решения (раз в 45–77 тиков на бегущего), на остальных его заменяет
+/// проверка занятости ячеек ([`SpatialGrid::any_in_cells_around`]): до этого
+/// точный поиск бежал каждый тик у каждого бегущего и стоил 40% тика
+/// симуляции (0.42 мс при ~1900 бегущих: они толпятся именно там, где демоны,
+/// и каждый заново обходил одни и те же плотные ячейки, дёргая `Query::get`
+/// на каждого кандидата).
 ///
 /// Курс (`WanderHeading`) переписывается вектором бегства на каждой
 /// перепрокладке: в ветке успокоения демона в радиусе уже нет — она и
@@ -156,6 +136,7 @@ pub fn flee(
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
     let chased: bevy::platform::collections::HashSet<Entity> =
         chasing.iter().map(|chase_target| chase_target.0).collect();
+    let radius = HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS;
 
     for (
         entity,
@@ -170,68 +151,66 @@ pub fn flee(
     ) in &mut query
     {
         repath.0.tick(time.delta());
-        let needs_path = matches!(
-            movable.state,
-            MovableState::Idle | MovableState::PathfindingError(_)
-        );
-        // тик без решения — у подавляющего большинства бегущих: хватает
-        // грубой проверки занятости ячеек (см. док-комментарий системы)
-        if !repath.0.just_finished() && !needs_path {
-            if !demons.any_in_cells_around(sim_position.0, HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS) {
-                calm_down(
-                    entity,
-                    &mut commands,
-                    &style,
-                    seed.0,
-                    &mut movable,
-                    &mut pause,
-                    &heading,
-                    pace,
-                    pawn_id,
-                    &mut wander_index,
-                );
+        let sense = FleeSense {
+            position: sim_position.0,
+            pawn_id: pawn_id.0,
+            chased: chased.contains(&entity),
+            repath_due: repath.0.just_finished(),
+            needs_path: matches!(
+                movable.state,
+                MovableState::Idle | MovableState::PathfindingError(_)
+            ),
+        };
+        let action = decide(&sense, |probe| match probe {
+            ThreatProbe::Cells => {
+                if demons.any_in_cells_around(sim_position.0, radius) {
+                    Threat::Near
+                } else {
+                    Threat::None
+                }
             }
-            continue;
-        }
+            ThreatProbe::Nearest => demons
+                .nearest_in_range(sim_position.0, radius, |demon| {
+                    demon_positions.get(demon).ok().map(|position| position.0)
+                })
+                .map_or(Threat::None, |(_, position)| Threat::At(position)),
+        });
 
-        // поток заводится в каждой из двух точек решения отдельно, а не разом
-        // на итерацию: `next` сдвигает номер решения, и заведённый заранее
-        // поток крутил бы счётчик каждый тик у каждого бегущего — в том числе
-        // на тиках, где решения нет вовсе (таймер перепрокладки не сработал)
-        let Some((_, demon_position)) = demons.nearest_in_range(
-            sim_position.0,
-            HUMAN_PANIC_RADIUS * RADIUS_HYSTERESIS,
-            |d| demon_positions.get(d).ok().map(|p| p.0),
-        ) else {
-            // демоны далеко — мирный режим, отдышаться перед новой прогулкой
-            calm_down(
-                entity,
-                &mut commands,
-                &style,
-                seed.0,
-                &mut movable,
-                &mut pause,
-                &heading,
-                pace,
-                pawn_id,
-                &mut wander_index,
-            );
-            continue;
+        let away = match action {
+            FleeAction::CalmDown => {
+                movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
+                movable.to_idle(entity, &mut commands, false);
+                pause.0.set_duration(std::time::Duration::from_secs_f32(
+                    wander_index
+                        .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
+                        .random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
+                ));
+                pause.0.reset();
+                // курс уже смотрит прочь от демона, обратный ему и есть центр
+                // запретного конуса. Он отклонён веером разбегания (±0.6 рад ≈
+                // 34°), то есть направление на самого демона всё равно внутри
+                // ±45° — а читается это как «не возвращайся тем же путём»
+                commands
+                    .entity(entity)
+                    .remove::<(HumanFleeTag, FleeRepath)>()
+                    .insert((HumanWanderTag, PanicRecoil(-heading.0)));
+                continue;
+            }
+            FleeAction::Hold => continue,
+            FleeAction::Flee { away } => away,
         };
 
-        let mut away = (sim_position.0 - demon_position).normalize_or(Vec2::X);
-        // не преследуемые разбегаются веером — каждый под своим углом
-        if !chased.contains(&entity) {
-            away = Vec2::from_angle(personal_spread(pawn_id.0)).rotate(away);
-        }
         // память о направлении угрозы — пишется до отсева непроходимой цели,
         // иначе неудачный кадр оставил бы курс от прошлой перепрокладки
         heading.0 = away;
+        // поток заводится здесь, а не заранее на итерацию: `next` сдвигает
+        // номер решения, и заведённый заранее поток крутил бы счётчик каждый
+        // тик у каждого бегущего — в том числе на тиках, где решения нет
+        // вовсе. По той же причине своё `next` у ветки успокоения
         let step = wander_index
             .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
             .random_range(FLEE_STEP.0..FLEE_STEP.1);
-        // не клампим к «безопасной» зоне: цель у самой границы — путь к спасению
-        let target = (sim_position.0 + away * step).clamp(Vec2::splat(1.0), MAP_SIZE - 1.0);
+        let target = flee_target(sim_position.0, away, step);
 
         let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
             continue;
@@ -246,41 +225,6 @@ pub fn flee(
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_FLEE_MS, started);
 }
 
-/// Ветка успокоения [`flee`]: демоны отстали — мирный шаг, пауза
-/// «отдышаться» перед новой прогулкой и возврат в Wander. Вынесена, потому
-/// что вызывается из двух мест: по пустому окну ячеек на любом тике и по
-/// точному поиску, никого не нашедшему, на тике решения.
-#[allow(clippy::too_many_arguments)]
-fn calm_down(
-    entity: Entity,
-    commands: &mut Commands,
-    style: &HumanStyle,
-    seed: u64,
-    movable: &mut Movable,
-    pause: &mut WanderPause,
-    heading: &WanderHeading,
-    pace: &Pace,
-    pawn_id: &PawnId,
-    wander_index: &mut WanderIndex,
-) {
-    movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
-    movable.to_idle(entity, commands, false);
-    pause.0.set_duration(std::time::Duration::from_secs_f32(
-        wander_index
-            .next(seed, crate::rng::RngDomain::Human, pawn_id.0)
-            .random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
-    ));
-    pause.0.reset();
-    // курс уже смотрит прочь от демона, обратный ему и есть центр
-    // запретного конуса. Он отклонён веером разбегания (±0.6 рад ≈
-    // 34°), то есть направление на самого демона всё равно внутри
-    // ±45° — а читается это как «не возвращайся тем же путём»
-    commands
-        .entity(entity)
-        .remove::<(HumanFleeTag, FleeRepath)>()
-        .insert((HumanWanderTag, PanicRecoil(-heading.0)));
-}
-
 /// Паникующий пересёк границу карты — «спасся», despawn [Q12].
 pub fn escape(
     mut commands: Commands,
@@ -288,12 +232,7 @@ pub fn escape(
     query: Query<(Entity, &SimPosition), (With<Human>, With<HumanFleeTag>)>,
 ) {
     for (entity, sim_position) in &query {
-        let pos = sim_position.0;
-        if pos.x <= ESCAPE_MARGIN
-            || pos.y <= ESCAPE_MARGIN
-            || pos.x >= MAP_SIZE.x - ESCAPE_MARGIN
-            || pos.y >= MAP_SIZE.y - ESCAPE_MARGIN
-        {
+        if escaped(sim_position.0) {
             commands.entity(entity).despawn();
             telemetry.escaped += 1;
             debug!("human {entity} escaped (total {})", telemetry.escaped);

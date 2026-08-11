@@ -1,5 +1,6 @@
 mod behavior;
 mod components;
+mod decide;
 mod systems;
 
 use bevy::prelude::*;
