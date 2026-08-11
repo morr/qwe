@@ -10,7 +10,7 @@
 //! | выбор целей блуждания | `Update`, то есть раз в кадр | `FixedUpdate`, раз в тик |
 //! | ответ поиска пути | применяется в тот кадр, когда посчитался | ровно на тике `T + PATHFINDING_RETIRE_TICKS` |
 //! | приоритет диспетчера | по удалённости от центра кадра, мирные вне экрана не считаются вовсе | FIFO по тику заявки, камера не участвует |
-//! | бэкенд навигации | живой: достроился northstar — переключились на ходу | заморожен снимком на весь прогон ([`DeterministicRun`]) |
+//! | бэкенд навигации | ресурс `Backend` переснимается каждый кадр: достроился northstar — переключились на ходу | тот же ресурс, но записан один раз на `WorldStarted` и заморожен на весь прогон |
 //! | постройка иерархии | стартует после прогрева, чтобы не отбирать ядра | стартует до прогрева: прогон обязан целиком пройти на одном бэкенде |
 //! | разброс скоростей (ползунок) | применяется в кадре правки | на ближайшем тике |
 //! | расталкивание пешек | работает | выключено (косметика, завязанная на камеру и `FrameCount`) |
@@ -38,7 +38,7 @@ pub mod replay;
 use bevy::ecs::schedule::ScheduleLabel;
 
 use crate::loading::{AppState, PlayPhase, WorldStarted};
-use crate::navigation::{Backend, Pathfinder};
+use crate::navigation::Pathfinder;
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::restart::RestartPending;
 use crate::rng::WorldSeed;
@@ -102,17 +102,6 @@ fn gate_pipelines<S: ScheduleLabel>(app: &mut App, schedule: S) {
 #[reflect(Resource, Default)]
 pub struct SimTick(pub u64);
 
-/// Замороженный на прогон бэкенд навигации.
-///
-/// Постройка northstar и polymesh идёт в фоне и заканчивается в момент
-/// **реального** времени. Живой снимок (`Pathfinder::backend`) переключился
-/// бы на готовый бэкенд посреди прогона, и повтор того же seed'а переключился
-/// бы на другом тике — разные пути на одинаковых входах. Снимок берётся один
-/// раз на входе в мир и держится до конца прогона; `Default` — заглушка
-/// пустого мира до первой заморозки.
-#[derive(Resource, Default)]
-pub struct DeterministicRun(pub Backend);
-
 pub struct DeterminismPlugin;
 
 impl Plugin for DeterminismPlugin {
@@ -122,7 +111,6 @@ impl Plugin for DeterminismPlugin {
             .init_resource::<Determinism>()
             .track_pref::<Determinism>()
             .init_resource::<SimTick>()
-            .init_resource::<DeterministicRun>()
             // просит `request_restart_on_config_change`, а живёт в
             // `RestartPlugin`, которого в тестах и демо-сценах может не быть:
             // без ресурса система не прошла бы валидацию параметров.
@@ -135,44 +123,52 @@ impl Plugin for DeterminismPlugin {
         // `OnEnter` тоже здесь: постройка иерархии стартует в разных фазах
         // (`Live` — после прогрева, `Deterministic` — до него), и это ровно
         // такой же выбор ветки, как и всё остальное в таблице
+        gate_pipelines(app, PreUpdate);
         gate_pipelines(app, Update);
         gate_pipelines(app, FixedUpdate);
         gate_pipelines(app, OnEnter(PlayPhase::Live));
         gate_pipelines(app, OnEnter(PlayPhase::Warmup));
 
-        app
-            // снимок держит Arc'и навмеша, иерархии и меша — оставить его на
-            // смену города значит продержать геометрию старого мира в памяти
-            // всю загрузку нового; свежий снимок возьмёт `WorldStarted`
-            .add_systems(OnExit(AppState::Playing), drop_frozen_backend)
-            .add_systems(
-                Update,
-                request_restart_on_config_change
-                    .run_if(in_state(AppState::Playing))
-                    // `retuned` отсекает восстановление настроек на сборке
-                    // `App`: по голому `resource_changed` первый же кадр мира
-                    // просил бы рестарт сам себе
-                    .run_if(retuned::<WorldSeed>.or_else(retuned::<Determinism>)),
-            );
+        app.add_systems(
+            Update,
+            request_restart_on_config_change
+                .run_if(in_state(AppState::Playing))
+                // `retuned` отсекает восстановление настроек на сборке
+                // `App`: по голому `resource_changed` первый же кадр мира
+                // просил бы рестарт сам себе
+                .run_if(retuned::<WorldSeed>.or_else(retuned::<Determinism>)),
+        );
     }
 }
 
-/// Новый прогон: тики с нуля, бэкенд — свежим снимком. На входе в `Live`
-/// нужный бэкенд уже построен (в детерминированном режиме прогрев его
-/// дожидается, см. `loading.rs::poll_warmup`), а на рестарте по R снимок
-/// просто берётся заново с той же карты.
+/// Новый прогон: тики с нуля, бэкенд — свежим снимком.
+///
+/// Это и есть **детерминированная политика** ресурса
+/// [`Backend`](crate::navigation::Backend): постройка
+/// northstar и polymesh идёт в фоне и заканчивается в момент **реального**
+/// времени, поэтому переснимать снимок по ходу прогона нельзя — повтор того
+/// же seed'а переключился бы на другом тике, то есть на разных путях при
+/// одинаковых входах. Снимок берётся один раз на входе в мир и держится до
+/// конца прогона: в этом режиме `refresh_backend` не запускается.
+///
+/// Пишется в обоих режимах, и в живом это не лишнее, а страховка: там снимок
+/// поверх кладёт `refresh_backend` в том же кадре. На входе в `Live` нужный
+/// бэкенд уже построен (в детерминированном режиме прогрев его дожидается,
+/// см. `loading.rs::poll_warmup`), а на рестарте по R снимок просто берётся
+/// заново с той же карты.
+/// Ресурс вставляется командой, а не пишется через `ResMut`: объявить старт
+/// мира можно и до того, как он появился (`replay.rs` объявляет его раньше
+/// входа в `Playing`), а `ResMut` на отсутствующий ресурс завалил бы
+/// валидацию параметров — наблюдатель молча не отработал бы весь, вместе со
+/// сбросом тиков.
 fn on_world_started(
     _event: On<WorldStarted>,
+    mut commands: Commands,
     mut tick: ResMut<SimTick>,
-    mut run: ResMut<DeterministicRun>,
     pathfinder: Pathfinder,
 ) {
     tick.0 = 0;
-    *run = DeterministicRun(pathfinder.backend());
-}
-
-fn drop_frozen_backend(mut run: ResMut<DeterministicRun>) {
-    *run = DeterministicRun::default();
+    commands.insert_resource(pathfinder.backend());
 }
 
 /// Смена seed'а или режима — новый прогон, а значит рестарт.

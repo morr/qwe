@@ -140,7 +140,8 @@ impl Plugin for MovementPlugin {
                     .run_if(in_state(AppState::Playing))
                     .run_if(polymesh_rebuilt)
                     // в детерминированном режиме бэкенд заморожен на весь
-                    // прогон (`DeterministicRun`), проходимость под стоящими
+                    // прогон (ресурс `Backend` пишется раз на `WorldStarted`),
+                    // проходимость под стоящими
                     // пешками посреди прогона не меняется — спасать не от чего
                     .in_set(SimPipeline::Live),
             )

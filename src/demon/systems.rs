@@ -11,7 +11,7 @@ use crate::loading::AppState;
 use crate::movement::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, MovableState, SimPosition,
 };
-use crate::navigation::Pathfinder;
+use crate::navigation::Backend;
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream};
 use crate::settings::{
@@ -152,7 +152,7 @@ pub fn sync_demon_speed(style: Res<DemonStyle>, mut demons: Query<&mut Movable, 
 /// внутрь из-за клампа цели в границы.
 pub fn pick_wander_targets(
     mut commands: Commands,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     portal_pos: Res<PortalPos>,
     seed: Res<WorldSeed>,
     mut query: Query<
@@ -170,7 +170,6 @@ pub fn pick_wander_targets(
         ),
     >,
 ) {
-    let backend = pathfinder.backend();
     let walkable = backend.walkable();
 
     for (entity, sim_position, mut movable, pawn_id, mut wander_index) in &mut query {

@@ -19,10 +19,21 @@ use crate::settings::RESCUE_SEARCH_TILES;
 /// Одно значение вместо россыпи ресурсов: потребители симуляции не ветвятся
 /// «какой бэкенд включён» — они спрашивают путь, а выбор сделан здесь один
 /// раз, при снятии снимка ([`Pathfinder::backend`](super::Pathfinder::backend)).
-/// Клон дешёвый (одни `Arc`), значение `Send`: его уносят async-таски поиска,
-/// а детерминированный режим замораживает на прогон
-/// (`determinism::DeterministicRun`).
-#[derive(Clone)]
+/// Клон дешёвый (одни `Arc`), значение `Send`: его уносят async-таски поиска.
+///
+/// Он же — **ресурс**, который читает вся симуляция. Живой режим и
+/// детерминированный различаются не типом, а тем, КТО его пишет: в живом
+/// [`refresh_backend`](super::refresh_backend) переснимает его каждый кадр в
+/// `PreUpdate`, в детерминированном он пишется один раз на `WorldStarted` и
+/// держится до конца прогона. Потребителю выбирать не из чего — он берёт
+/// `Res<Backend>`.
+///
+/// **`Default` намеренно нет.** Заглушкой была пустая всюду-проходимая сетка,
+/// и однажды она уже стоила прогона, который целиком прошёл сквозь дома
+/// (`determinism/replay.rs`, не объявленный `WorldStarted`). Ресурс либо
+/// собран из настоящего мира, либо его нет — и тогда системы не запускаются,
+/// что видно, в отличие от молча неверной геометрии.
+#[derive(Clone, Resource)]
 pub struct Backend {
     /// Тот же `Arc`, что в `ArcNavmesh`: заливка нового города сбрасывает
     /// сетку на месте, поэтому снимок не отстаёт от мира.
@@ -32,21 +43,19 @@ pub struct Backend {
     mesh: Option<Arc<PolymeshBuild>>,
 }
 
-/// Пустой мир: сетка по умолчанию, плоский алгоритм, ни иерархии, ни меша.
-/// Нужен только как заглушка `DeterministicRun` до первой заморозки — сам
-/// детерминированный конвейер раньше `OnEnter(Live)` не работает.
-impl Default for Backend {
-    fn default() -> Self {
+impl Backend {
+    /// Снимок одной сетки: плоский алгоритм, ни иерархии, ни меша. Ровно то,
+    /// что нужно тестам и демо-сценам, — одно значение вместо пяти ресурсов,
+    /// из которых собирался `Pathfinder`.
+    pub fn from_grid(navmesh: Arc<RwLock<Navmesh>>) -> Self {
         Self {
-            navmesh: Arc::default(),
-            algorithm: PathfindingAlgorithm::default(),
+            navmesh,
+            algorithm: PathfindingAlgorithm::Astar,
             northstar: None,
             mesh: None,
         }
     }
-}
 
-impl Backend {
     pub(super) fn new(
         navmesh: Arc<RwLock<Navmesh>>,
         algorithm: PathfindingAlgorithm,
@@ -220,12 +229,7 @@ mod tests {
         for tile in blocked {
             navmesh.set_passable(tile.x, tile.y, false);
         }
-        Backend::new(
-            Arc::new(RwLock::new(navmesh)),
-            PathfindingAlgorithm::Astar,
-            None,
-            None,
-        )
+        Backend::from_grid(Arc::new(RwLock::new(navmesh)))
     }
 
     /// Контракт пути един для обоих бэкендов: мировые точки, стартовая

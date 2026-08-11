@@ -9,7 +9,7 @@ use crate::human::components::{
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
-use crate::navigation::{ArcNavmesh, Pathfinder};
+use crate::navigation::{ArcNavmesh, Backend};
 use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
@@ -239,7 +239,7 @@ fn roll_wander_pause(rng: &mut impl Rng) -> std::time::Duration {
 pub fn pick_wander_targets(
     mut commands: Commands,
     time: Res<Time>,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     map: Res<MapData>,
     seed: Res<WorldSeed>,
     mut query: Query<
@@ -263,7 +263,6 @@ pub fn pick_wander_targets(
         ),
     >,
 ) {
-    let backend = pathfinder.backend();
     let walkable = backend.walkable();
 
     for (

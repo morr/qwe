@@ -13,7 +13,7 @@ use crate::human::decide::{
     FLEE_STEP, FleeAction, FleeSense, Threat, ThreatProbe, decide, escaped, flee_target,
 };
 use crate::movement::{Movable, MovableState, SimPosition};
-use crate::navigation::Pathfinder;
+use crate::navigation::Backend;
 use crate::rng::{PawnId, WanderIndex};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, RADIUS_HYSTERESIS,
@@ -109,7 +109,7 @@ pub fn flee(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     demons: Res<SpatialGrid<Demon>>,
     demon_positions: Query<&SimPosition, With<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
@@ -131,7 +131,6 @@ pub fn flee(
     >,
 ) {
     let started = std::time::Instant::now();
-    let backend = pathfinder.backend();
     let walkable = backend.walkable();
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
     let chased: bevy::platform::collections::HashSet<Entity> =

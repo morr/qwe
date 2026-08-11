@@ -26,9 +26,9 @@
 
 use bevy::prelude::*;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
-use qwe::grid::world_to_tile;
+use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::fixture::crowded_yard;
-use qwe::navigation::Navmesh;
+use qwe::navigation::{Backend, Navmesh};
 use qwe::restart::RestartEvent;
 
 /// Полторы виртуальные секунды: демон из портала (интервал спавна — секунда)
@@ -60,6 +60,42 @@ fn run(seed: u64, pattern: &[u32]) -> Fingerprint {
         "мир стоит на месте — сравнивать нечего: {print:?}"
     );
     print
+}
+
+/// Прогон идёт по НАСТОЯЩЕЙ геометрии, а не по пустой всюду проходимой сетке.
+///
+/// Тот самый класс дефекта, на котором `a_restart_replays_the_run` сработал
+/// впервые: мир не объявляли начавшимся, бэкенд оставался заглушкой, и весь
+/// прогон честно и воспроизводимо шёл сквозь дома. Отпечатки при этом
+/// совпадали — сравнивать два одинаково неверных мира тесту нечем.
+///
+/// `Default` у `Backend` больше нет, так что заглушку не собрать; осталось
+/// проверить, что ресурс вообще доехал до прогона (без него системы поиска
+/// пути молча не запускаются) и что он видит непроходимое непроходимым.
+#[test]
+fn the_run_gets_a_real_backend_not_an_empty_grid() {
+    let yard = crowded_yard();
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&yard.map);
+    navmesh.prune_unreachable(world_to_tile(yard.portal));
+
+    // во дворе есть здания и стены, так что непроходимое обязано найтись —
+    // иначе сама фикстура перестала быть сценой с препятствиями
+    let blocked = (0..navmesh.grid_size.x)
+        .flat_map(|x| (0..navmesh.grid_size.y).map(move |y| IVec2::new(x, y)))
+        .find(|tile| !navmesh.is_passable(tile.x, tile.y))
+        .expect("во дворе нет ни одного непроходимого тайла");
+
+    let app = app(1);
+    let backend = app
+        .world()
+        .get_resource::<Backend>()
+        .expect("прогон остался без ресурса Backend — системы поиска пути молча не работали бы");
+    assert!(
+        !backend.walkable().allows(tile_center(blocked)),
+        "бэкенд считает проходимым тайл {blocked}, непроходимый в навмеше двора — \
+         прогон идёт не по той геометрии"
+    );
 }
 
 #[test]

@@ -10,10 +10,7 @@ use super::components::{Movable, MovableState, PathfindingTask, PreviousSimPosit
 use super::pathfinding::listen_for_pathfinding_tasks;
 use super::systems::rescue_trapped_entities;
 use crate::grid::{tile_center, world_to_tile};
-use crate::navigation::{
-    ArcNavmesh, Navmesh, NorthstarGrid, PathfindingAlgorithm, PathfindingResult, PolyNavmesh,
-    PolymeshDebug,
-};
+use crate::navigation::{ArcNavmesh, Backend, Navmesh, PathfindingResult};
 use crate::settings::RESCUE_SEARCH_TILES;
 
 /// Квартал непроходимых тайлов `[min, max]` (включительно) на пустой сетке.
@@ -27,16 +24,13 @@ fn navmesh_with_block(min: IVec2, max: IVec2) -> ArcNavmesh {
     ArcNavmesh(Arc::new(RwLock::new(navmesh)))
 }
 
-/// Приложение с непроходимым кварталом в центре карты. Ресурсы — те, из
-/// которых собирается `Pathfinder`: полигонального меша в тестах нет, так что
-/// «свободно» здесь меряется одной сеткой.
+/// Приложение с непроходимым кварталом в центре карты. Бэкенд — сеточный
+/// снимок той же сетки: полигонального меша в тестах нет, так что «свободно»
+/// здесь меряется одной сеткой.
 fn app_with(navmesh: ArcNavmesh) -> App {
     let mut app = App::new();
-    app.insert_resource(navmesh)
-        .init_resource::<PathfindingAlgorithm>()
-        .init_resource::<NorthstarGrid>()
-        .init_resource::<PolyNavmesh>()
-        .init_resource::<PolymeshDebug>();
+    app.insert_resource(Backend::from_grid(navmesh.0.clone()))
+        .insert_resource(navmesh);
     app
 }
 
@@ -264,7 +258,7 @@ fn a_successful_answer_is_taken_as_a_path() {
 
 use super::components::{PathfindingRequest, RequestedAt};
 use super::pathfinding::dispatch_pathfinding_requests_deterministic;
-use crate::determinism::{DeterministicRun, SimTick};
+use crate::determinism::SimTick;
 use crate::settings::{
     PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK, PATHFINDING_WANDER_UNITS_PER_TICK,
 };
@@ -274,8 +268,7 @@ use crate::settings::{
 fn app_with_deterministic_dispatcher() -> App {
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
     let mut app = app_with(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))));
-    app.init_resource::<DeterministicRun>()
-        .init_resource::<SimTick>()
+    app.init_resource::<SimTick>()
         .add_systems(Update, dispatch_pathfinding_requests_deterministic);
     app
 }

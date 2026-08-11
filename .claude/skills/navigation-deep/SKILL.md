@@ -169,7 +169,9 @@ in `CONTEXT.md` and the detail here in the same change.
 - **Backend** (`navigation/backend.rs`) — the active backend as one cloneable `Send`
   snapshot: the grid navmesh Arc + the selected algorithm (+ the northstar hierarchy once
   built), or the polymesh overriding all of it. `Pathfinder::backend()` takes the live
-  snapshot; `DeterministicRun` freezes one per run; `spawn_path_task` moves it into the
+  snapshot, handed to the simulation as the `Res<Backend>` resource; the deterministic
+  mode writes it once on `WorldStarted` and freezes it for the run, while the live mode
+  re-takes it every frame in `PreUpdate` (`refresh_backend`); `spawn_path_task` moves it into the
   async task, so both dispatchers share `Backend::search` and the modes can only differ
   in WHEN an answer is collected, never in what is computed. `Backend::walkable()`
   returns the passability view `Walkable` (read lock taken once per system run — lazily

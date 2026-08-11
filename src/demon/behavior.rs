@@ -16,7 +16,7 @@ use crate::movement::{
     Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
     PreviousSimPosition, SimPosition,
 };
-use crate::navigation::Pathfinder;
+use crate::navigation::Backend;
 use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, Z_CORPSE};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
@@ -83,7 +83,7 @@ pub fn chase(
     mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
     style: Res<DemonStyle>,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     humans: Res<SpatialGrid<Human>>,
     mut query: Query<
         (
@@ -101,7 +101,6 @@ pub fn chase(
     targets: Query<&SimPosition, With<Human>>,
 ) {
     let started = std::time::Instant::now();
-    let backend = pathfinder.backend();
     let walkable = backend.walkable();
     // один труп — одно убийство: дедупликация внутри тика, пока команды
     // (снятие `Human`) ещё не применились
@@ -390,19 +389,15 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::navigation::{
-        ArcNavmesh, Navmesh, NorthstarGrid, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug,
-    };
+    use crate::navigation::{ArcNavmesh, Backend, Navmesh};
 
-    /// Ресурсы, из которых собирается `chase`: пустая проходимая сетка,
-    /// полигонального меша и иерархии нет — как на старте мира.
+    /// Бэкенд, которым ищет `chase`: пустая проходимая сетка, ни меша, ни
+    /// иерархии — как на старте мира.
     fn app() -> App {
         let mut app = App::new();
-        app.insert_resource(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))))
-            .init_resource::<NorthstarGrid>()
-            .init_resource::<PathfindingAlgorithm>()
-            .init_resource::<PolyNavmesh>()
-            .init_resource::<PolymeshDebug>()
+        let navmesh = Arc::new(RwLock::new(Navmesh::default()));
+        app.insert_resource(Backend::from_grid(navmesh.clone()))
+            .insert_resource(ArcNavmesh(navmesh))
             .init_resource::<bevy::diagnostic::DiagnosticsStore>()
             .init_resource::<SpatialGrid<Human>>()
             .init_resource::<DemonStyle>()

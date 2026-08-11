@@ -17,9 +17,7 @@ use qwe::movement::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, MovementPlugin,
     PreviousSimPosition, SimPosition,
 };
-use qwe::navigation::{
-    ArcNavmesh, NorthstarGrid, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug,
-};
+use qwe::navigation::{ArcNavmesh, Backend, PolymeshDebug};
 use qwe::settings::DEFAULT_NAVTILE_SIZE;
 use qwe::spatial::SpatialPlugin;
 
@@ -37,6 +35,7 @@ const ONE_TILE_PER_STEP: f32 = DEFAULT_NAVTILE_SIZE / FIXED_STEP;
 /// не проявится.
 fn test_app(frame_delta: f32, time_scale: f32) -> App {
     let mut app = App::new();
+    let navmesh = ArcNavmesh::default();
     // `SpatialPlugin` нужен не ради сеток, а ради порядка `SimSet`
     // (`SpatialRebuild → DemonBehavior → HumanBehavior`): движение
     // упорядочено относительно этих сетов, и без них снимок прошлой позиции
@@ -53,16 +52,15 @@ fn test_app(frame_delta: f32, time_scale: f32) -> App {
     // без рендера у `draw_move_paths` не резолвится `Gizmos`, а падать из-за
     // отладочной отрисовки тест не должен — проверяется симуляция
     .set_error_handler(bevy::ecs::error::warn)
-    // ресурсы pathfinding-диспетчера: сам он всё равно не проходит
-    // валидацию без камеры и окна, но параметры должны резолвиться
-    .init_resource::<ArcNavmesh>()
-    .init_resource::<NorthstarGrid>()
-    .init_resource::<PathfindingAlgorithm>()
-    // бэкенд навигации — им гейтится расталкивание
-    // (`movement::separation_runs`), и без ресурса оно молча не работает:
-    // дефолт полигональный, то есть тот, на котором оно и живёт
+    // бэкенд навигации одним снимком — пустая проходимая сетка, ни меша, ни
+    // иерархии. Без ресурса шаг по пути молча не проходит валидацию
+    // параметров, и пешки просто стоят
+    .insert_resource(Backend::from_grid(navmesh.0.clone()))
+    // ту же сетку читают напрямую расталкивание и слоты назначения
+    .insert_resource(navmesh)
+    // тумблер полимеша: им гейтится расталкивание
+    // (`movement::separation_runs`)
     .init_resource::<PolymeshDebug>()
-    .init_resource::<PolyNavmesh>()
     .insert_resource(Time::<Fixed>::from_seconds(FIXED_STEP as f64))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         frame_delta,

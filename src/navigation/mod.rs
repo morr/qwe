@@ -138,8 +138,12 @@ impl Pathfinder<'_> {
     }
 
     /// Живой снимок активного бэкенда — то, чем симуляция ищет пути и меряет
-    /// проходимость, не зная имён ресурсов за ним. Детерминированный режим
-    /// снимает его один раз на прогон (`determinism::DeterministicRun`).
+    /// проходимость, не зная имён ресурсов за ним.
+    ///
+    /// Симуляции он больше не нужен: она читает готовый снимок ресурсом
+    /// [`Backend`], а этот параметр — то, чем снимок собирается (см.
+    /// [`refresh_backend`]). Снаружи остаётся только у демо-сцен, которые
+    /// строят свой мир сами и лезут к ресурсам навигации напрямую.
     pub fn backend(&self) -> Backend {
         Backend::new(
             self.navmesh.0.clone(),
@@ -197,6 +201,38 @@ impl ContinuousSpace<'_> {
     }
 }
 
+/// Посеять ресурс [`Backend`] на входе в мир — до первого кадра, в котором
+/// его кто-нибудь спросит.
+///
+/// Отдельно от [`refresh_backend`], потому что нужен обоим режимам и раньше
+/// их: живой диспетчер работает уже в прогреве, а `WorldStarted`, которым
+/// пишет детерминированная ветка, случается только на входе в `Live`. Без
+/// посева первый кадр мира прошёл бы без ресурса — то есть с молча
+/// пропущенными системами.
+///
+/// Меша здесь заведомо нет: его постройка асинхронна и стартует в этом же
+/// `OnEnter`. Снимок сеточный, дальше его переснимет живая ветка.
+fn insert_backend(mut commands: Commands, pathfinder: Pathfinder) {
+    commands.insert_resource(pathfinder.backend());
+}
+
+/// Живая политика ресурса [`Backend`]: переснимать каждый кадр — достроилась
+/// иерархия northstar, доехал или отменился полигональный меш, сменился
+/// алгоритм.
+///
+/// `PreUpdate`, а не `Update`: `FixedUpdate` крутится в `RunFixedMainLoop`
+/// раньше `Update`, и снимок, обновлённый в `Update`, доставался бы
+/// поведению и ходоку кадром позже.
+fn refresh_backend(mut backend: ResMut<Backend>, pathfinder: Pathfinder) {
+    *backend = pathfinder.backend();
+}
+
+/// Смена города: снимок держит `Arc`'и навмеша, иерархии и меша — оставить
+/// его значит продержать геометрию старого мира всю загрузку нового.
+fn drop_backend(mut commands: Commands) {
+    commands.remove_resource::<Backend>();
+}
+
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
@@ -206,6 +242,24 @@ impl Plugin for NavigationPlugin {
         if !app.is_plugin_added::<crate::determinism::DeterminismPlugin>() {
             app.add_plugins(crate::determinism::DeterminismPlugin);
         }
+
+        app
+            // снимок активного бэкенда одним ресурсом: посев на входе в мир,
+            // живое переснятие каждый кадр, снос на выходе. В
+            // детерминированном режиме `refresh_backend` не запускается —
+            // там ресурс пишет `WorldStarted` и держит весь прогон
+            // (`determinism::on_world_started`)
+            .add_systems(
+                OnEnter(AppState::Playing),
+                insert_backend.in_set(WorldInitSet::Navmesh),
+            )
+            .add_systems(
+                PreUpdate,
+                refresh_backend
+                    .run_if(in_state(AppState::Playing))
+                    .in_set(crate::determinism::SimPipeline::Live),
+            )
+            .add_systems(OnExit(AppState::Playing), drop_backend);
 
         app.init_resource::<ArcNavmesh>()
             .register_type::<PathfindingAlgorithm>()

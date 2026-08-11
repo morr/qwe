@@ -8,12 +8,12 @@ use bevy::window::PrimaryWindow;
 
 use super::VIEW_MARGIN;
 use super::systems::rescue_from_impassable;
-use crate::determinism::{DeterministicRun, SimTick};
+use crate::determinism::SimTick;
 use crate::movement::components::{
     Movable, MovableState, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
     RetireAt, SimPosition,
 };
-use crate::navigation::{Backend, Pathfinder, PathfindingResult, Walkable};
+use crate::navigation::{Backend, PathfindingResult, Walkable};
 
 /// Лимит одновременных pathfinding-тасков; остальные запросы ждут в очереди
 /// и запускаются диспетчером по приоритету близости к камере.
@@ -62,7 +62,7 @@ pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
 /// кадра.
 pub fn dispatch_pathfinding_requests(
     mut commands: Commands,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     requests: Query<(
@@ -74,7 +74,6 @@ pub fn dispatch_pathfinding_requests(
     )>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
-    let backend = pathfinder.backend();
     let budget = MAX_PATHFINDING_IN_FLIGHT.saturating_sub(tasks.iter().count());
     if budget == 0 || requests.is_empty() {
         return;
@@ -123,7 +122,7 @@ pub fn dispatch_pathfinding_requests(
     }
 
     for (_, _, entity, start_world, start_tile, end_tile) in queue {
-        let task = spawn_path_task(backend.clone(), start_world, start_tile, end_tile);
+        let task = spawn_path_task((*backend).clone(), start_world, start_tile, end_tile);
         commands
             .entity(entity)
             .remove::<PathfindingRequest>()
@@ -278,7 +277,7 @@ fn take_within_budget(queue: &mut Vec<QueuedRequest>, budget: u32) {
 pub fn dispatch_pathfinding_requests_deterministic(
     mut commands: Commands,
     mut queues: Local<(Vec<QueuedRequest>, Vec<QueuedRequest>)>,
-    run: Res<DeterministicRun>,
+    backend: Res<Backend>,
     tick: Res<SimTick>,
     requests: Query<(
         Entity,
@@ -342,7 +341,7 @@ pub fn dispatch_pathfinding_requests_deterministic(
     let retire_at = tick.0 + crate::settings::PATHFINDING_RETIRE_TICKS;
     for request in urgent.iter().chain(wander.iter()) {
         let task = spawn_path_task(
-            run.0.clone(),
+            (*backend).clone(),
             request.start_world,
             request.start_tile,
             request.end_tile,
@@ -368,10 +367,10 @@ pub fn dispatch_pathfinding_requests_deterministic(
 pub fn apply_pathfinding_results(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    // бэкенд — из замороженного снимка, а не из живого `Pathfinder`: иначе
-    // достроившийся посреди прогона polymesh поменял бы проверку
-    // проходимости под спасением застрявших
-    run: Res<DeterministicRun>,
+    // в этом режиме ресурс заморожен на весь прогон (записан один раз на
+    // `WorldStarted`): иначе достроившийся посреди прогона polymesh
+    // поменял бы проверку проходимости под спасением застрявших
+    backend: Res<Backend>,
     mut load: ResMut<crate::sim_time::SimLoad>,
     tick: Res<SimTick>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
@@ -444,7 +443,7 @@ pub fn apply_pathfinding_results(
             &mut previous,
             is_human,
             &mut walkable,
-            &run.0,
+            &backend,
             &mut human_grid,
             &mut commands,
         );
@@ -492,7 +491,7 @@ const REPATH_TRIM_LIMIT: usize = 4;
 pub fn listen_for_pathfinding_tasks(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     mut tasks: Query<(
         Entity,
@@ -505,7 +504,6 @@ pub fn listen_for_pathfinding_tasks(
 ) {
     let mut answered = 0u32;
     let mut failed = 0u32;
-    let backend = pathfinder.backend();
     // взгляд на проходимость берётся лениво и только под спасение: его
     // read-лок во время загрузки на секунды держит на запись поток заливки
     let mut walkable = None;

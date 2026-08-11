@@ -6,7 +6,7 @@ use crate::grid::{tile_center, world_to_tile};
 use crate::movement::components::{
     Movable, MovableState, MovableStateMovingTag, PreviousSimPosition, SimPosition,
 };
-use crate::navigation::{Pathfinder, Walkable};
+use crate::navigation::{Backend, Walkable};
 use crate::settings::unit_z;
 
 /// Снимок позиции на начало фиксированного шага — второй конец интерполяции.
@@ -48,7 +48,7 @@ pub fn snapshot_previous_sim_positions(
 pub fn move_moving_entities(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     separation: Res<super::separation::SeparationStyle>,
     holds: Res<super::separation::SeparationHolds>,
@@ -68,7 +68,6 @@ pub fn move_moving_entities(
     time: Res<Time>,
 ) {
     let started = std::time::Instant::now();
-    let backend = pathfinder.backend();
     let walkable = backend.walkable();
     // «дошёл» с допуском в дистанцию покоя: точнее неё пешки друг к другу не
     // подпускает само расталкивание, так что требовать точный тайл — значит
@@ -261,7 +260,7 @@ pub(super) fn rescue_from_impassable(
 /// повторяется ни разу за жизнь города.
 pub fn rescue_trapped_entities(
     mut commands: Commands,
-    pathfinder: Pathfinder,
+    backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
     mut query: Query<(
         Entity,
@@ -271,7 +270,6 @@ pub fn rescue_trapped_entities(
         Has<crate::human::Human>,
     )>,
 ) {
-    let backend = pathfinder.backend();
     let walkable = backend.walkable();
     let started = std::time::Instant::now();
     let mut rescued = 0;

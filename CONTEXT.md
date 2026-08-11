@@ -91,7 +91,7 @@ in `main.rs`.
   both lifecycle paths share. Fired from exactly two places: entering `PlayPhase::Live`
   (first launch, city switch) and every restart (`on_restart` — it passes through no
   state, so `OnEnter` never refires for it). All run state — `SimClock` + `TickDebt`,
-  `SimTick` + `DeterministicRun`, `Telemetry`, `DemonSpawner` — is reset by observers of
+  `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner` — is reset by observers of
   this event, each living in its owning module; the full list is
   `grep "On<WorldStarted>"`. Map-derived state (`NorthstarGrid`, `PolyNavmesh`) is *not*
   run state and is cleared by the city switch alone — a restart keeps the map, and with
@@ -274,9 +274,18 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   lazily (~12 s) on `AsyncComputeTaskPool` **only when a northstar algorithm is
   selected**; until it lands the dispatcher falls back to flat A*.
 - **Backend / Walkable** (`navigation/backend.rs`) — the active backend as one
-  cheap-clone `Send` snapshot: `Pathfinder::backend()` takes it live, `DeterministicRun`
-  freezes it per run, async tasks carry it whole — both dispatchers share
-  `Backend::search`. `walkable()` is the passability view (one read lock per system run):
+  cheap-clone `Send` snapshot, and **the resource the whole simulation reads**
+  (`Res<Backend>`); async tasks carry it whole, both dispatchers share `Backend::search`.
+  The two modes differ not in type but in **who writes it**: `refresh_backend` re-takes it
+  every frame in `PreUpdate` (`SimPipeline::Live`), while under determinism it is written
+  once on **WorldStarted** and frozen for the run. Seeded by `insert_backend` on
+  `OnEnter(Playing)` — the live dispatcher already runs during warmup, before any
+  `WorldStarted` — and dropped on `OnExit(Playing)` so the old city's `Arc`s go with it.
+  **It has no `Default` on purpose**: the placeholder used to be an empty
+  everywhere-passable grid, and a run once went through buildings on it
+  (`determinism/replay.rs`). Absent resource means systems do not run, which is visible;
+  a silently wrong geometry is not.
+  `walkable()` is the passability view (one read lock per system run):
   `allows`/`nearest_free_point` are backend-strict (grid AND mesh), while `sift_target` /
   `line_of_sight` / `coast_allows` stay deliberately grid-only — the policy lives on the
   methods. **Invariant: outside `navigation/` and `ui/`, the names `PolymeshBuild` /
@@ -439,11 +448,13 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   A small rate plus this FIFO *is* the deterministic replacement for the camera gate:
   distant pawns still wait longer, but reproducibly rather than because the player looked
   away. The camera does not appear in it at all.
-- **DeterministicRun** (`determinism.rs`) — the navigation backend frozen for the run (a
-  `Backend` snapshot), taken on every **WorldStarted**. northstar
-  and polymesh finish building at some moment of *real* time; a live
-  `Pathfinder::backend()` would switch backends mid-run, and a replay would switch on a
-  different tick. In this mode warmup waits for the wanted backend instead
+- **Frozen backend** (`determinism/mod.rs::on_world_started`) — in this mode the
+  `Backend` resource is written once, on every **WorldStarted**, and never refreshed:
+  `refresh_backend` is `SimPipeline::Live` only. northstar and polymesh finish building at
+  some moment of *real* time; a re-taken snapshot would switch backends mid-run, and a
+  replay would switch on a different tick. (This is the whole of what the retired
+  `DeterministicRun` resource used to be — one resource with two update policies replaced
+  two types for one concept.) In this mode warmup waits for the wanted backend instead
   (`NavigationBuildPending`, `loading.rs::poll_warmup`), which costs ~11–14 s on first
   entry into a city on HPA — deliberately. Restarts do not pay it.
 - **No pawn warmup** — once the backend is built, this mode enters `Live` immediately:
@@ -463,8 +474,9 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   half in the *same* `App`, which is what makes it catch state outliving the reset; the
   other checks build a fresh app each time and cannot. Both defects it first caught were
   in how the replay app was assembled, not in the reset: it never announced
-  `WorldStarted` (so `DeterministicRun` stayed the placeholder `Backend` — an empty,
-  everywhere-passable grid, and the whole run pathed through buildings), and it left the
+  `WorldStarted` (so the run kept the placeholder `Backend` — an empty,
+  everywhere-passable grid, and the whole run pathed through buildings; that placeholder
+  is now gone, `Backend` has no `Default`), and it left the
   algorithm at the default HPA* while relying on the hierarchy "not being ready in time"
   (a restart re-freezes the backend, and by then it was). A replay app must therefore
   **announce the world start before its first tick** — the demon burst goes out on tick 1,
