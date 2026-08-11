@@ -25,6 +25,7 @@ pub use self::separation::{
     demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
+use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::AppState;
 use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
@@ -50,6 +51,14 @@ pub struct MovementPlugin;
 
 impl Plugin for MovementPlugin {
     fn build(&self, app: &mut App) {
+        // Ветки конвейера (`SimPipeline`) гейтит `DeterminismPlugin`, и без
+        // него **обе** работали бы разом: незасетапленное множество ничего не
+        // выключает. Плагин движения поднимают отдельно — тесты, демо-сцены,
+        // стенды, — так что зависимость объявляется здесь, а не в `main.rs`
+        if !app.is_plugin_added::<DeterminismPlugin>() {
+            app.add_plugins(DeterminismPlugin);
+        }
+
         app.register_type::<Movable>()
             .register_type::<MovableStateMovingTag>()
             .register_type::<SimPosition>()
@@ -133,7 +142,7 @@ impl Plugin for MovementPlugin {
                     // в детерминированном режиме бэкенд заморожен на весь
                     // прогон (`DeterministicRun`), проходимость под стоящими
                     // пешками посреди прогона не меняется — спасать не от чего
-                    .run_if(not(crate::determinism::deterministic)),
+                    .in_set(SimPipeline::Live),
             )
             .add_systems(
                 Update,
@@ -156,7 +165,7 @@ impl Plugin for MovementPlugin {
                     // в детерминированном режиме этот конвейер заменён
                     // тик-локованным ниже: здесь ответ применяется в тот кадр,
                     // когда посчитался, а приоритет считается от камеры
-                    .run_if(not(crate::determinism::deterministic)),
+                    .in_set(SimPipeline::Live),
             )
             .add_systems(
                 Update,
@@ -188,7 +197,7 @@ impl Plugin for MovementPlugin {
                     apply_pathfinding_results
                         .before(SimSet::SpatialRebuild)
                         .run_if(in_state(AppState::Playing))
-                        .run_if(crate::determinism::deterministic),
+                        .in_set(SimPipeline::Locked),
                     move_moving_entities.after(SimSet::HumanBehavior),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
@@ -212,7 +221,7 @@ impl Plugin for MovementPlugin {
                     // индекс), на 30x — до ~30 сканов за кадр впустую
                     assign_destination_slots
                         .run_if(in_state(AppState::Playing))
-                        .run_if(crate::determinism::deterministic),
+                        .in_set(SimPipeline::Locked),
                     // диспетчер — в самом конце тика: заявки, поданные
                     // поведением этого шага, командами применяются на точках
                     // синхронизации цепочки и уезжают в тот же тик
@@ -222,7 +231,7 @@ impl Plugin for MovementPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing))
-                        .run_if(crate::determinism::deterministic),
+                        .in_set(SimPipeline::Locked),
                 )
                     .chain(),
             )

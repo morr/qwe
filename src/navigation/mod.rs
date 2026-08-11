@@ -201,6 +201,12 @@ pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {
     fn build(&self, app: &mut App) {
+        // без гейта веток обе точки старта иерархии сработали бы разом, см.
+        // `MovementPlugin`
+        if !app.is_plugin_added::<crate::determinism::DeterminismPlugin>() {
+            app.add_plugins(crate::determinism::DeterminismPlugin);
+        }
+
         app.init_resource::<ArcNavmesh>()
             .register_type::<PathfindingAlgorithm>()
             .init_resource::<PathfindingAlgorithm>()
@@ -224,7 +230,7 @@ impl Plugin for NavigationPlugin {
                 OnEnter(PlayPhase::Live),
                 start_northstar_build
                     .run_if(northstar_wanted)
-                    .run_if(not(crate::determinism::deterministic)),
+                    .in_set(crate::determinism::SimPipeline::Live),
             )
             // в детерминированном режиме — наоборот, на входе в ПРОГРЕВ:
             // прогон обязан целиком пройти на одном бэкенде, а достроившаяся
@@ -236,7 +242,7 @@ impl Plugin for NavigationPlugin {
                 OnEnter(PlayPhase::Warmup),
                 start_northstar_build
                     .run_if(northstar_wanted)
-                    .run_if(crate::determinism::deterministic),
+                    .in_set(crate::determinism::SimPipeline::Locked),
             )
             .add_systems(
                 Update,

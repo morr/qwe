@@ -133,17 +133,16 @@ pub fn reset_separation_holds(mut holds: ResMut<SeparationHolds>) {
 ///   имеет смысл там, где waypoint'ы метрические; почему отвечает тумблер, а
 ///   не готовность меша — док [`ContinuousSpace`].
 ///
-/// `Option` у `Determinism` — та же причина, что у
-/// [`deterministic`](crate::determinism::deterministic): `MovementPlugin`
-/// используется в тестах и демо-сценах без соседних плагинов.
+/// Единственное место, где режим читается не множеством
+/// [`SimPipeline`](crate::determinism::SimPipeline): условие нужно и в
+/// **отрицании** — «расталкивания нет, почисти его следы», — а отрицать
+/// множество нельзя. Обе стороны правила поэтому сведены сюда, а не разложены
+/// по двум веткам конвейера.
 pub fn separation_runs(
-    determinism: Option<Res<crate::determinism::Determinism>>,
+    determinism: Res<crate::determinism::Determinism>,
     space: ContinuousSpace,
 ) -> bool {
-    separation_allowed_by_mode(
-        determinism.is_some_and(|mode| mode.0),
-        space.is_continuous(),
-    )
+    separation_allowed_by_mode(determinism.0, space.is_continuous())
 }
 
 /// То же правило в чистом виде — для панели World: строка тумблера гаснет
