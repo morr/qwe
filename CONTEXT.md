@@ -623,8 +623,12 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   staging an entrance again means a new component, not reviving that one.
 - **Demon** states (`demon/behavior.rs`, rules in `demon/decide.rs`): **Wander** (target
   biased away from portal) →
-  **Chase** → **Devour** → Wander. Chase claims: **max 2 chasers per target**
-  (`ChaserCounts`). Repath throttle 0.4 s, and on that same tick the demon may
+  **Chase** → **Devour** → Wander. **Chase claims** — **max 2 chasers per target**,
+  counted by `ChaseClaims` (`demon/claims.rs`), a value rebuilt each tick from the
+  `ChaseTarget`s of the demons in the query; there is no standing claim between ticks.
+  Which exits from a chase free a slot is `ChaseAction::releases_claim`, and the rule is
+  asymmetric: only **GaveUp** releases, because after `Kill` and `LostTarget` the victim
+  is gone and nobody will claim it anyway. Repath throttle 0.4 s, and on that same tick the demon may
   **switch** target: sharing its target, it takes any *unclaimed* human no farther than
   ×1.5 its current distance (the pincer breaks up); otherwise whoever is nearer than
   **×0.7** of the current target — the anti-flip-flop margin (near-equidistant victims
