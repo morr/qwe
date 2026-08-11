@@ -104,6 +104,22 @@ impl ChaseAction {
     pub fn cancels_lunge(&self) -> bool {
         matches!(self, Self::WaitForPath | Self::Hold | Self::Repath { .. })
     }
+
+    /// Демон уходит от ЖИВОЙ цели — место в очереди на неё
+    /// ([`ChaseClaims`](super::claims::ChaseClaims)) пора освободить.
+    ///
+    /// Правило асимметрично, и в этом вся суть: `Kill` и `LostTarget` места не
+    /// освобождают, потому что цели после них уже нет — мёртвую никто не
+    /// выберет, а лишнее вычитание уводило бы счётчик под ноль. Раньше это
+    /// решал доккомментарий у одной из веток применения; здесь match
+    /// исчерпывающий, так что новый выход из погони не пройдёт мимо вопроса.
+    pub fn releases_claim(&self) -> bool {
+        match self {
+            Self::GaveUp => true,
+            Self::Kill | Self::LostTarget => false,
+            Self::Lunge { .. } | Self::WaitForPath | Self::Hold | Self::Repath { .. } => false,
+        }
+    }
 }
 
 /// Лестница погони. `line_of_sight` спрашивается не больше одного раза и
@@ -368,5 +384,35 @@ mod tests {
                 max_chasers: MAX_CHASERS_PER_TARGET,
             }
         );
+    }
+
+    /// Место в очереди на жертву освобождает ровно один выход — тот, после
+    /// которого жертва остаётся живой и достаётся кому-то ещё.
+    #[test]
+    fn only_giving_up_frees_the_slot_on_the_victim() {
+        assert!(ChaseAction::GaveUp.releases_claim());
+        assert!(!ChaseAction::LostTarget.releases_claim());
+        assert!(!ChaseAction::Kill.releases_claim());
+    }
+
+    /// Погоня продолжается — место остаётся занятым. Смена жертвы в такт
+    /// перепрокладки места тоже не освобождает: там их сразу два, старое и
+    /// новое, и ведёт их применение (`behavior::chase`), а не эта ступень.
+    #[test]
+    fn staying_in_the_chase_keeps_the_slot() {
+        for action in [
+            ChaseAction::Lunge { advance: Vec2::X },
+            ChaseAction::WaitForPath,
+            ChaseAction::Hold,
+            ChaseAction::Repath {
+                target: Vec2::X,
+                switch: SwitchRule {
+                    radius: 1.0,
+                    max_chasers: MAX_CHASERS_PER_TARGET,
+                },
+            },
+        ] {
+            assert!(!action.releases_claim(), "{action:?} держит своё место");
+        }
     }
 }

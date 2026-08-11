@@ -1,4 +1,5 @@
 mod behavior;
+mod claims;
 mod components;
 mod decide;
 mod systems;

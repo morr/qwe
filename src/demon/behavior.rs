@@ -3,11 +3,12 @@
 use bevy::prelude::*;
 use rand::Rng;
 
+use crate::demon::claims::ChaseClaims;
 use crate::demon::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
 };
-use crate::demon::decide::{ChaseAction, ChaseSense, MAX_CHASERS_PER_TARGET, decide};
+use crate::demon::decide::{ChaseAction, ChaseSense, decide};
 use crate::grid::world_to_tile;
 use crate::human::{
     CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, PanicRecoil, WanderPause,
@@ -21,12 +22,6 @@ use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, Z_CORPSE};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
-type ChaserCounts = bevy::platform::collections::HashMap<Entity, usize>;
-
-fn chasers_of(target: Entity, chasers: &ChaserCounts) -> usize {
-    chasers.get(&target).copied().unwrap_or(0)
-}
-
 /// Wander → Chase: ближайший человек в радиусе агро, у которого ещё нет
 /// `MAX_CHASERS_PER_TARGET` преследователей. Демон берёт агро с первого же
 /// тика после выхода из портала.
@@ -37,21 +32,18 @@ pub fn acquire_targets(
     chasing: Query<&ChaseTarget, With<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
 ) {
-    let mut chasers: ChaserCounts = ChaserCounts::default();
-    for chase_target in &chasing {
-        *chasers.entry(chase_target.0).or_insert(0) += 1;
-    }
+    let mut claims = ChaseClaims::of(chasing.iter().map(|chase_target| chase_target.0));
 
     for (entity, sim_position) in &query {
         let Some((human, _)) = humans.nearest_in_range_where(
             sim_position.0,
             DEMON_AGGRO_RADIUS,
             |candidate| positions.get(candidate).ok().map(|p| p.0),
-            |candidate| chasers_of(candidate, &chasers) < MAX_CHASERS_PER_TARGET,
+            |candidate| !claims.is_full(candidate),
         ) else {
             continue;
         };
-        *chasers.entry(human).or_insert(0) += 1;
+        claims.claim(human);
 
         // скорость здесь не трогаем: она одна на все состояния демона и живёт
         // в `Movable::speed` со спавна (`sync_demon_speed` ведёт её дальше)
@@ -107,10 +99,7 @@ pub fn chase(
     let mut killed_this_tick: bevy::platform::collections::HashSet<Entity> =
         bevy::platform::collections::HashSet::default();
 
-    let mut chasers: ChaserCounts = ChaserCounts::default();
-    for (_, _, chase_target, _, _, _, _, _) in &query {
-        *chasers.entry(chase_target.0).or_insert(0) += 1;
-    }
+    let mut claims = ChaseClaims::of(query.iter().map(|(_, _, chase_target, ..)| chase_target.0));
 
     for (
         entity,
@@ -142,7 +131,7 @@ pub fn chase(
             // тех ступенях, до которых лестница дошла, — бросок и ожидание
             // первого пути его замораживают
             repath_due: repath.0.remaining() <= time.delta(),
-            shared_target: chasers_of(chase_target.0, &chasers) >= MAX_CHASERS_PER_TARGET,
+            shared_target: claims.is_full(chase_target.0),
         };
         let action = decide(&sense, || {
             target.is_some_and(|position| walkable.line_of_sight(sim_position.0, position))
@@ -152,14 +141,16 @@ pub fn chase(
         if lunging && action.cancels_lunge() {
             commands.entity(entity).remove::<DemonLungeTag>();
         }
+        // какие выходы из погони освобождают место в очереди на жертву —
+        // правило `ChaseAction`, не этой лестницы
+        if action.releases_claim() {
+            claims.release(chase_target.0);
+        }
 
         let (mut target_pos, switch_rule) = match action {
-            ChaseAction::LostTarget => {
-                back_to_wander(&mut commands, entity);
-                continue;
-            }
-            ChaseAction::GaveUp => {
-                *chasers.entry(chase_target.0).or_insert(1) -= 1;
+            // выходы из погони отличались только тем, освобождает ли выход
+            // место в очереди на жертву, — а это теперь спрошено выше
+            ChaseAction::LostTarget | ChaseAction::GaveUp => {
                 back_to_wander(&mut commands, entity);
                 continue;
             }
@@ -204,7 +195,7 @@ pub fn chase(
                 |candidate| {
                     candidate != chase_target.0
                         && !killed_this_tick.contains(&candidate)
-                        && chasers_of(candidate, &chasers) < switch_rule.max_chasers
+                        && claims.has_room_for(candidate, switch_rule.max_chasers)
                 },
             )
             // Прямая видимость — только у победителя поиска: близкий по евклиду,
@@ -215,8 +206,8 @@ pub fn chase(
             // следующая попытка через такт перепрокладки.
             .filter(|&(_, pos)| walkable.line_of_sight(sim_position.0, pos));
         if let Some((new_target, new_pos)) = switch {
-            *chasers.entry(chase_target.0).or_insert(1) -= 1;
-            *chasers.entry(new_target).or_insert(0) += 1;
+            claims.release(chase_target.0);
+            claims.claim(new_target);
             debug!(
                 "demon {entity} switches chase {} => {new_target}",
                 chase_target.0
