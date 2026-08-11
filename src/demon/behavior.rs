@@ -7,6 +7,7 @@ use crate::demon::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
 };
+use crate::demon::decide::{ChaseAction, ChaseSense, MAX_CHASERS_PER_TARGET, decide};
 use crate::grid::world_to_tile;
 use crate::human::{
     CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, PanicRecoil, WanderPause,
@@ -16,24 +17,11 @@ use crate::movement::{
     PreviousSimPosition, SimPosition,
 };
 use crate::navigation::Pathfinder;
-use crate::settings::{
-    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_RANGE, KILL_DISTANCE, RADIUS_HYSTERESIS,
-    Z_CORPSE,
-};
+use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, Z_CORPSE};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
 type ChaserCounts = bevy::platform::collections::HashMap<Entity, usize>;
-
-/// Лимит демонов на одну цель — «клещи» из двух допустимы, толпа — нет.
-const MAX_CHASERS_PER_TARGET: usize = 2;
-/// Переключение на свободного человека, если он не дальше ×1.5 текущей цели.
-const SWITCH_DISTANCE_FACTOR: f32 = 1.5;
-/// Переключение на заметно более близкого человека: новая цель должна быть
-/// ближе текущей минимум на треть — иначе две почти равноудалённые жертвы
-/// перекидывают демона каждый такт перепрокладки, а каждое переключение
-/// стоит нового запроса пути.
-const CLOSER_SWITCH_FACTOR: f32 = 0.7;
 
 fn chasers_of(target: Entity, chasers: &ChaserCounts) -> usize {
     chasers.get(&target).copied().unwrap_or(0)
@@ -82,6 +70,10 @@ pub fn acquire_targets(
 /// дальше ×1.5 текущей дистанции, иначе — на любого, кто ближе ×0.7 её.
 /// В обоих случаях только при прямой видимости. Вблизи — бросок напрямую
 /// (см. `DEMON_LUNGE_RANGE`).
+///
+/// Здесь только применение: какая ступень лестницы сработала, решает чистая
+/// [`decide`] — там же лежат все пороги и их обоснования, там же они и
+/// проверяются, без `App` и навмеша.
 ///
 /// `Without<Human>` в фильтре обязателен: обе выборки трогают `SimPosition`,
 /// и без него планировщик видит конфликт доступа.
@@ -132,113 +124,88 @@ pub fn chase(
         has_request,
     ) in &mut query
     {
-        // цель умерла (труп/despawn) — снова блуждание
-        let Ok(target_position) = targets.get(chase_target.0) else {
-            back_to_wander(&mut commands, entity);
-            continue;
+        let target = targets
+            .get(chase_target.0)
+            .ok()
+            .map(|position| position.0)
+            .filter(|_| !killed_this_tick.contains(&chase_target.0));
+        let sense = ChaseSense {
+            position: sim_position.0,
+            target,
+            speed: movable.speed,
+            lunge_bonus: style.lunge,
+            delta_secs: time.delta_secs(),
+            state: movable.state.clone(),
+            has_path: !movable.path.is_empty(),
+            walked: movable.last_direction != Vec2::ZERO,
+            search_in_flight: has_task || has_request,
+            // спрашиваем таймер, а не крутим его: тикать он обязан только на
+            // тех ступенях, до которых лестница дошла, — бросок и ожидание
+            // первого пути его замораживают
+            repath_due: repath.0.remaining() <= time.delta(),
+            shared_target: chasers_of(chase_target.0, &chasers) >= MAX_CHASERS_PER_TARGET,
         };
-        if killed_this_tick.contains(&chase_target.0) {
-            back_to_wander(&mut commands, entity);
-            continue;
-        }
-
-        let mut target_pos = target_position.0;
-        let distance = sim_position.0.distance(target_pos);
-
-        // гистерезис выхода из погони
-        if distance > DEMON_AGGRO_RADIUS * RADIUS_HYSTERESIS {
-            *chasers.entry(chase_target.0).or_insert(1) -= 1;
-            back_to_wander(&mut commands, entity);
-            continue;
-        }
-
-        if distance < KILL_DISTANCE {
-            killed_this_tick.insert(chase_target.0);
-            commands.trigger(DemonCaughtHumanEvent {
-                demon: entity,
-                human: chase_target.0,
-            });
-            continue;
-        }
-
-        // Финальный бросок. Тайловый путь ведёт к ЦЕНТРУ тайла жертвы, а та
-        // внутри тайла продолжает двигаться: остаток до полутора метров
-        // тайловой навигацией не покрывается, и демон бесконечно «почти
-        // догоняет». Вблизи идём прямо на текущую позицию цели — но только
-        // при прямой видимости: жертва, скрывшаяся за углом здания, снова
-        // догоняется обычным путём, сквозь стены бросок не проходит.
-        if distance <= DEMON_LUNGE_RANGE && walkable.line_of_sight(sim_position.0, target_pos) {
-            // путь больше не нужен: дальше демона ведёт бросок, а не
-            // `move_moving_entities`
-            if !matches!(movable.state, MovableState::Idle) {
-                movable.to_idle(entity, &mut commands, false);
-            }
-            if !lunging {
-                commands.entity(entity).insert(DemonLungeTag);
-            }
-            // Надбавка на бросок применяется прямо здесь, а не через
-            // `Movable::speed`: в этой фазе путь снят, демона двигает эта
-            // строка, а не `move_moving_entities`, — и снимать надбавку с
-            // выходом из броска не нужно, её просто некому унести.
-            let speed = movable.speed * (1.0 + style.lunge);
-            let step = (speed * time.delta_secs()).min(distance);
-            let lunge = (target_pos - sim_position.0).normalize_or_zero() * step;
-            sim_position.0 += lunge;
-            continue;
-        }
+        let action = decide(&sense, || {
+            target.is_some_and(|position| walkable.line_of_sight(sim_position.0, position))
+        });
 
         // цель разорвала дистанцию или ушла за угол — бросок отменён
-        if lunging {
+        if lunging && action.cancels_lunge() {
             commands.entity(entity).remove::<DemonLungeTag>();
         }
 
-        // Первого пути ещё нет: путь пуст, доката нет (демон ни разу не
-        // шагал), а поиск уже в полёте. Перепрокладка отменила бы его —
-        // `to_pathfinding` роняет таск, — и пока конвейер отвечает медленнее,
-        // чем цель меняет тайл (постройка northstar на старте, высокая
-        // скорость), демон обрывал бы каждый ответ до прихода и стоял у
-        // портала вечно, отвисая только на паузе. Ждём ответ: он даст путь и
-        // `last_direction`, дальше промежутки перепрокладки прикрывает докат.
-        if (has_task || has_request)
-            && matches!(movable.state, MovableState::Pathfinding(_))
-            && movable.path.is_empty()
-            && movable.last_direction == Vec2::ZERO
-        {
-            continue;
-        }
-
-        // перепрокладка пути к цели — по таймеру, не каждый тик
-        repath.0.tick(time.delta());
-        let needs_first_path = matches!(
-            movable.state,
-            MovableState::Idle | MovableState::PathfindingError(_)
-        );
-        if !repath.0.just_finished() && !needs_first_path {
-            continue;
-        }
-
-        // Смена цели, два случая. Цель делим с другим демоном — берём любого
-        // никем не занятого человека не дальше ×1.5 текущей дистанции («клещи»
-        // распадаются). Цель своя — берём человека, оказавшегося заметно ближе
-        // неё, иначе демон пробегает сквозь толпу мимо доступной добычи.
-        // Радиус пропорционален текущей дистанции, и это ровно то, что нужно:
-        // вплотную к жертве (2 м) он 1.4 м — демон уже никуда не сворачивает;
-        // в хвосте гистерезиса (67.5 м) — 47 м, обход сетки остаётся 3×3.
-        let shared = chasers_of(chase_target.0, &chasers) >= MAX_CHASERS_PER_TARGET;
-        let (switch_radius, chaser_limit) = if shared {
-            (distance * SWITCH_DISTANCE_FACTOR, 1)
-        } else {
-            (distance * CLOSER_SWITCH_FACTOR, MAX_CHASERS_PER_TARGET)
+        let (mut target_pos, switch_rule) = match action {
+            ChaseAction::LostTarget => {
+                back_to_wander(&mut commands, entity);
+                continue;
+            }
+            ChaseAction::GaveUp => {
+                *chasers.entry(chase_target.0).or_insert(1) -= 1;
+                back_to_wander(&mut commands, entity);
+                continue;
+            }
+            ChaseAction::Kill => {
+                killed_this_tick.insert(chase_target.0);
+                commands.trigger(DemonCaughtHumanEvent {
+                    demon: entity,
+                    human: chase_target.0,
+                });
+                continue;
+            }
+            ChaseAction::Lunge { advance } => {
+                // путь больше не нужен: дальше демона ведёт бросок, а не
+                // `move_moving_entities`. Надбавка к скорости живёт внутри
+                // `advance`, а не в `Movable::speed`, — снимать её с выходом
+                // из броска не нужно, её просто некому унести.
+                if !matches!(movable.state, MovableState::Idle) {
+                    movable.to_idle(entity, &mut commands, false);
+                }
+                if !lunging {
+                    commands.entity(entity).insert(DemonLungeTag);
+                }
+                sim_position.0 += advance;
+                continue;
+            }
+            ChaseAction::WaitForPath => continue,
+            ChaseAction::Hold => {
+                repath.0.tick(time.delta());
+                continue;
+            }
+            ChaseAction::Repath { target, switch } => {
+                repath.0.tick(time.delta());
+                (target, switch)
+            }
         };
+
         let switch = humans
             .nearest_in_range_where(
                 sim_position.0,
-                switch_radius,
+                switch_rule.radius,
                 |candidate| targets.get(candidate).ok().map(|p| p.0),
                 |candidate| {
                     candidate != chase_target.0
                         && !killed_this_tick.contains(&candidate)
-                        && chasers_of(candidate, &chasers) < chaser_limit
+                        && chasers_of(candidate, &chasers) < switch_rule.max_chasers
                 },
             )
             // Прямая видимость — только у победителя поиска: близкий по евклиду,
