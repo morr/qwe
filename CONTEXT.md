@@ -458,12 +458,18 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **The replay contract** — 1:1 holds only while `DemonStyle` / `HumanStyle` /
   `SeparationStyle` / the algorithm / the navtile size are left alone mid-run. Sliders are
   simulation input. Not enforced by code.
-- **Known broken: restart does not replay.** With the replay check finally running a
-  moving world, the acceptance example fails its first claim on Tula — a run to tick N,
-  `RestartEvent`, and a second run to N produce different fingerprints (same seed, same
-  kill count, different positions). The ragged-frame and different-seed claims pass, so
-  the run itself is reproducible; what is not is the *reset*. Something outliving
-  `on_restart` still feeds the new run. Not diagnosed yet.
+- **Restart replays the run** (`tests/determinism.rs::a_restart_replays_the_run`) — a run
+  to tick N, `RestartEvent`, a second run to N, identical fingerprints. It runs the second
+  half in the *same* `App`, which is what makes it catch state outliving the reset; the
+  other checks build a fresh app each time and cannot. Both defects it first caught were
+  in how the replay app was assembled, not in the reset: it never announced
+  `WorldStarted` (so `DeterministicRun` stayed the placeholder `Backend` — an empty,
+  everywhere-passable grid, and the whole run pathed through buildings), and it left the
+  algorithm at the default HPA* while relying on the hierarchy "not being ready in time"
+  (a restart re-freezes the backend, and by then it was). A replay app must therefore
+  **announce the world start before its first tick** — the demon burst goes out on tick 1,
+  and a spawner reset after it hands the second burst the same `PawnId`s — and **pin the
+  algorithm** to one that needs no build.
 - **Not claimed**: float reproducibility across machines or compilers; replaying a run
   made with the toggle *off*. `bevy_northstar` builds its grid with rayon, so cross-process
   HPA replay is unaudited — within one session the grid outlives R, so restarts are safe.

@@ -15,12 +15,21 @@
 //! броске демона, — а для них толпа и портал должны стоять друг на друге
 //! (`fixture::crowded_yard`).
 //!
+//! Второй по важности — [`a_restart_replays_the_run`]: он гоняет второй прогон
+//! в ТОМ ЖЕ `App` и потому ловит состояние, пережившее сброс. Оба дефекта, на
+//! которых он впервые сработал, были в самой сборке приложения повтора: мир не
+//! объявляли начавшимся (и бэкенд оставался пустой всюду проходимой сеткой), а
+//! алгоритм не задавали явно (и достроившаяся иерархия попадала в рестартовую
+//! заморозку) — см. `determinism::replay`.
+//!
 //! Сравнение только по `SimTick`, не по кадрам и не по настенным часам.
 
+use bevy::prelude::*;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
 use qwe::grid::world_to_tile;
 use qwe::map::osm::fixture::crowded_yard;
 use qwe::navigation::Navmesh;
+use qwe::restart::RestartEvent;
 
 /// Полторы виртуальные секунды: демон из портала (интервал спавна — секунда)
 /// успевает появиться и погнаться, а блуждающие — выбрать цель и пойти.
@@ -35,13 +44,16 @@ const POPULATION: usize = 64;
 /// полсекунды.
 const RAGGED: [u32; 12] = [1, 7, 3, 12, 1, 30, 2, 5, 19, 1, 9, 4];
 
-fn run(seed: u64, pattern: &[u32]) -> Fingerprint {
+fn app(seed: u64) -> App {
     let yard = crowded_yard();
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&yard.map);
     navmesh.prune_unreachable(world_to_tile(yard.portal));
+    replay_app(yard.map, navmesh, yard.portal, seed, POPULATION)
+}
 
-    let mut app = replay_app(yard.map, navmesh, yard.portal, seed, POPULATION);
+fn run(seed: u64, pattern: &[u32]) -> Fingerprint {
+    let mut app = app(seed);
     let print = run_to_tick(&mut app, TICKS, pattern, Progress::Silent);
     assert!(
         print.moving > 0,
@@ -67,4 +79,20 @@ fn frame_rate_does_not_change_the_run() {
 #[test]
 fn a_different_seed_gives_a_different_run() {
     assert_ne!(run(1, &[1]), run(2, &[1]));
+}
+
+/// «Нажал R — и всё повторилось»: прогон до тика N, `RestartEvent`, снова до
+/// N. Отличается от [`the_same_seed_replays_tick_for_tick`] тем, что второй
+/// прогон идёт в ТОМ ЖЕ `App`, и потому ловит состояние, пережившее сброс.
+#[test]
+fn a_restart_replays_the_run() {
+    let mut app = app(1);
+    let first = run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
+
+    app.world_mut().trigger(RestartEvent::default());
+    // рестарт живёт в обсервере — даём кадр на применение команд
+    app.update();
+    let second = run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
+
+    assert_eq!(first, second);
 }

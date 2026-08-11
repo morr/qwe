@@ -229,7 +229,12 @@ fn take_within_budget(queue: &mut Vec<QueuedRequest>, budget: u32) {
     queue.sort_unstable_by_key(QueuedRequest::key);
     debug_assert!(
         queue.windows(2).all(|pair| pair[0].key() < pair[1].key()),
-        "ключ очереди обязан быть уникален, иначе частичная выборка недетерминирована"
+        "ключ очереди обязан быть уникален, иначе частичная выборка недетерминирована; \
+         столкнулись {:?}",
+        queue
+            .windows(2)
+            .find(|pair| pair[0].key() >= pair[1].key())
+            .map(|pair| (pair[0].key(), pair[1].key()))
     );
 
     let mut spent = 0;
