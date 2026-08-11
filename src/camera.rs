@@ -427,12 +427,19 @@ impl Viewport {
     }
 
     /// Точка в кадре. Кромка считается своей.
+    ///
+    /// `#[inline]`: спрашивают из циклов по всем дверям карты (под десять
+    /// тысяч за кадр) и по всем идущим пешкам, а профиль `dev` собирает нас на
+    /// `opt-level = 1` с раздельными codegen-unit'ами — без атрибута на месте
+    /// прежней арифметики оказался бы вызов через границу модуля.
+    #[inline]
     pub fn contains(&self, point: Vec2) -> bool {
         let offset = (point - self.centre).abs();
         offset.x <= self.half_extent.x && offset.y <= self.half_extent.y
     }
 
     /// Квадрат расстояния до центра кадра — ключ «ближе к центру раньше».
+    #[inline]
     pub fn distance_from_centre_squared(&self, point: Vec2) -> f32 {
         (point - self.centre).length_squared()
     }
