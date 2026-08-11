@@ -20,14 +20,17 @@
 //! которых он впервые сработал, были в самой сборке приложения повтора: мир не
 //! объявляли начавшимся (и бэкенд оставался пустой всюду проходимой сеткой), а
 //! алгоритм не задавали явно (и достроившаяся иерархия попадала в рестартовую
-//! заморозку) — см. `determinism::replay`.
+//! заморозку). Первый класс закрыт с корнем: последовательность запуска мира
+//! теперь одна на игру и на повтор (`loading::SimBootPlugin`), и объявить старт
+//! забыть нельзя. Второй остаётся намеренным расхождением — повтор пинит
+//! плоский A*, см. `determinism::replay`.
 //!
 //! Сравнение только по `SimTick`, не по кадрам и не по настенным часам.
 
 use bevy::prelude::*;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::osm::fixture::crowded_yard;
+use qwe::map::osm::fixture::{Yard, crowded_yard};
 use qwe::navigation::{Backend, Navmesh};
 use qwe::restart::RestartEvent;
 
@@ -44,11 +47,18 @@ const POPULATION: usize = 64;
 /// полсекунды.
 const RAGGED: [u32; 12] = [1, 7, 3, 12, 1, 30, 2, 5, 19, 1, 9, 4];
 
-fn app(seed: u64) -> App {
-    let yard = crowded_yard();
+/// Навмеш двора — тот же рецепт, что у потока загрузки в игре: заливка по
+/// `MapData`, затем прунинг недостижимого от портала.
+fn yard_navmesh(yard: &Yard) -> Navmesh {
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&yard.map);
     navmesh.prune_unreachable(world_to_tile(yard.portal));
+    navmesh
+}
+
+fn app(seed: u64) -> App {
+    let yard = crowded_yard();
+    let navmesh = yard_navmesh(&yard);
     replay_app(yard.map, navmesh, yard.portal, seed, POPULATION)
 }
 
@@ -74,10 +84,7 @@ fn run(seed: u64, pattern: &[u32]) -> Fingerprint {
 /// пути молча не запускаются) и что он видит непроходимое непроходимым.
 #[test]
 fn the_run_gets_a_real_backend_not_an_empty_grid() {
-    let yard = crowded_yard();
-    let mut navmesh = Navmesh::default();
-    navmesh.fill_from_mapdata(&yard.map);
-    navmesh.prune_unreachable(world_to_tile(yard.portal));
+    let navmesh = yard_navmesh(&crowded_yard());
 
     // во дворе есть здания и стены, так что непроходимое обязано найтись —
     // иначе сама фикстура перестала быть сценой с препятствиями

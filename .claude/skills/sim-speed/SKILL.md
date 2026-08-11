@@ -99,7 +99,8 @@ top speed.
   `SIM_FRAME_BUDGET_MS`, so the runaway is severed structurally and `frame_overrun` is
   the second line, for the frame whose last tick carried it past the budget.
   Floored at `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited.
-  Entering `PlayPhase::Live` resets `effective` to `requested` (`resume_simulation`):
+  Entering `PlayPhase::Live` resets `effective` to `requested` (the `WorldStarted`
+  observer of that same transition; the unpause itself is `loading::SimBootPlugin`):
   whatever the regulator computed over loading, spawn and warm-up frames describes a
   simulation that was paused, and after a city switch belongs to the previous world.
   Starting too high costs one frame — the down move is instantaneous.

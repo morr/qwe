@@ -70,17 +70,67 @@ struct LoaderText;
 #[derive(Component)]
 struct RetryButton;
 
-pub struct LoadingPlugin;
+/// Как заводится мир — одной реализацией на игру и на приложение повтора.
+///
+/// Всё, что здесь лежит, — не «загрузка», а **жизненный цикл прогона**:
+/// состояния и их порядок, порядок инициализации мира и границы прогрева.
+/// Сцена повтора (`determinism::replay`) собирает всё остальное сама (своя
+/// карта, свой seed, ни окна, ни экрана загрузки), но заводиться обязана так
+/// же — иначе получается «мир едет, просто не тот», а молчаливого «мы забыли»
+/// в нём не видно. Раньше она пересобирала эту последовательность руками, и
+/// оба дефекта, на которых сработал `a_restart_replays_the_run`, были именно
+/// в той пересборке.
+///
+/// **Прогрев идёт на паузе.** Мир уже собран, но за экраном загрузки ему
+/// двигаться незачем: пусть пешки сначала получат пути. Пауза живёт здесь, а
+/// не в `SimTimePlugin`, хотя крутит она `Time<Virtual>`: это свойство фазы, а
+/// не регулятора скорости, — и повтор регулятор брать не может (тот меряет
+/// настенные часы), из-за чего до переноса тикал в прогреве, а игра не тикала.
+pub struct SimBootPlugin;
 
-impl Plugin for LoadingPlugin {
+impl Plugin for SimBootPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
             .add_sub_state::<PlayPhase>()
-            .init_resource::<WarmupProgress>()
             .configure_sets(
                 OnEnter(AppState::Playing),
                 (WorldInitSet::Navmesh, WorldInitSet::Spawn).chain(),
             )
+            .add_systems(OnEnter(PlayPhase::Warmup), pause_world)
+            // объявление — ПЕРЕД снятием паузы и, что важнее, до первого тика:
+            // на первом тике спавнер выпускает залп демонов, а сброс спавнера
+            // после этого раздал бы второму залпу те же `PawnId`. `OnEnter`
+            // идёт в `StateTransition`, то есть раньше `RunFixedMainLoop`, и
+            // команды этого расписания применяются в его же конце — так что
+            // обсерверы `WorldStarted` успевают до первого шага
+            .add_systems(
+                OnEnter(PlayPhase::Live),
+                (announce_world_start, resume_world).chain(),
+            );
+    }
+}
+
+/// Прогрев: мир стоит. Заявки на путь при этом идут — их подача и
+/// диспетчеризация живут в `Update`, а стоит только `FixedUpdate`. В
+/// детерминированном режиме заявки на паузе не идут (там весь конвейер в
+/// `FixedUpdate`), поэтому пешечного прогрева в нём нет вовсе — см.
+/// [`poll_warmup`]; паузу это не отменяет.
+fn pause_world(mut time: ResMut<Time<Virtual>>) {
+    time.pause();
+}
+
+/// Прогрев кончился — мир поехал. Скорость нового прогона выставляет обсервер
+/// `WorldStarted` того же перехода.
+fn resume_world(mut time: ResMut<Time<Virtual>>) {
+    time.unpause();
+}
+
+pub struct LoadingPlugin;
+
+impl Plugin for LoadingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(SimBootPlugin)
+            .init_resource::<WarmupProgress>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -99,11 +149,10 @@ impl Plugin for LoadingPlugin {
                 ),
             )
             // экран загрузки живёт до конца прогрева, а не до выхода из
-            // `Loading`: мир строится раньше, чем по нему можно ходить
-            .add_systems(
-                OnEnter(PlayPhase::Live),
-                (despawn_loader_ui, announce_world_start),
-            );
+            // `Loading`: мир строится раньше, чем по нему можно ходить.
+            // Само объявление старта мира — в `SimBootPlugin`: оно нужно и
+            // сцене повтора, у которой этого экрана нет
+            .add_systems(OnEnter(PlayPhase::Live), despawn_loader_ui);
     }
 }
 
@@ -490,5 +539,106 @@ fn announce_world_start(mut commands: Commands) {
 fn despawn_loader_ui(mut commands: Commands, roots: Query<Entity, With<LoaderUiRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Сколько фиксированных шагов прошло — счётчик вместо всей симуляции.
+    #[derive(Resource, Default)]
+    struct Ticks(u32);
+
+    fn boot_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .add_plugins(SimBootPlugin)
+            .init_resource::<Ticks>()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f32(1.0),
+            ))
+            .add_systems(FixedUpdate, |mut ticks: ResMut<Ticks>| ticks.0 += 1);
+        app
+    }
+
+    fn enter(app: &mut App, state: AppState) {
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(state);
+        app.update();
+    }
+
+    /// «Мир за экраном загрузки не двигается» — инвариант фазы, а не
+    /// регулятора скорости.
+    ///
+    /// Держался он раньше на `SimTimePlugin`, которого сцена повтора брать не
+    /// может (её регулятор мерил бы настенные часы), — и та тикала в прогреве,
+    /// в отличие от игры. Из-за этого ей приходилось объявлять старт мира
+    /// руками, до первого кадра.
+    #[test]
+    fn the_world_does_not_move_during_warmup() {
+        let app = &mut boot_app();
+
+        enter(app, AppState::Playing);
+
+        assert_eq!(
+            app.world().resource::<Ticks>().0,
+            0,
+            "прогрев обязан идти на паузе"
+        );
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+    }
+
+    /// …и трогается ровно на входе в `Live`.
+    #[test]
+    fn entering_live_starts_the_world() {
+        let app = &mut boot_app();
+        enter(app, AppState::Playing);
+
+        app.world_mut()
+            .resource_mut::<NextState<PlayPhase>>()
+            .set(PlayPhase::Live);
+        app.update();
+
+        assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+        assert_eq!(
+            app.world().resource::<Ticks>().0,
+            0,
+            "снятие паузы в `StateTransition` действует со СЛЕДУЮЩЕГО кадра: \
+             виртуальное время текущего посчитано раньше, в `First`"
+        );
+
+        app.update();
+
+        assert!(app.world().resource::<Ticks>().0 > 0, "а дальше мир едет");
+    }
+
+    /// Старт мира объявляется до первого шага симуляции: на первом тике
+    /// спавнер выпускает залп демонов, и сброс спавнера после него раздал бы
+    /// второму залпу те же `PawnId`.
+    #[test]
+    fn the_world_start_is_announced_before_the_first_tick() {
+        #[derive(Resource, Default)]
+        struct AnnouncedAt(Option<u32>);
+
+        let app = &mut boot_app();
+        app.init_resource::<AnnouncedAt>().add_observer(
+            |_: On<WorldStarted>, ticks: Res<Ticks>, mut at: ResMut<AnnouncedAt>| {
+                at.0 = Some(ticks.0);
+            },
+        );
+        enter(app, AppState::Playing);
+
+        app.world_mut()
+            .resource_mut::<NextState<PlayPhase>>()
+            .set(PlayPhase::Live);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<AnnouncedAt>().0,
+            Some(0),
+            "объявление обязано случиться раньше первого фиксированного шага"
+        );
     }
 }

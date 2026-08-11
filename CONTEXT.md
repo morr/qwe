@@ -75,6 +75,16 @@ in `main.rs`.
   reveals the game UI (`GameUiRoot`).
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. Navmesh must
   be filled before population spawns, or humans land in the river.
+- **SimBootPlugin** (`loading.rs`) — how a world is brought up, one implementation for
+  the game and for the replay app: the two states, the `WorldInitSet` chain, the warmup
+  pause, and the **WorldStarted** announcement on entering `Live` (chained before the
+  unpause). The pause lives here rather than in `SimTimePlugin` even though it drives
+  `Time<Virtual>`: it is a property of the phase, not of the speed regulator — and the
+  replay app cannot take the regulator (it measures wall clock), so before the move it
+  ticked during warmup while the game did not, and had to announce the world start by
+  hand to stay ahead of that tick. Unpausing in `StateTransition` takes effect from the
+  **next** frame: this frame's `Time<Virtual>` was already advanced in `First`.
+  Pinned by `loading.rs`'s own tests.
 - **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` that
   prepares everything not needing ECS: `Connecting{attempt} →
   Downloading{bytes,total,bytes_per_sec} → Parsing → BuildingNavmesh → Pruning →

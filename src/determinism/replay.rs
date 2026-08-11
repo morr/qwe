@@ -40,7 +40,7 @@ use bevy::time::TimeUpdateStrategy;
 use super::{Determinism, SimTick};
 use crate::demon::Demon;
 use crate::human::{Human, PopulationSize};
-use crate::loading::{AppState, PlayPhase, WorldInitSet, WorldStarted};
+use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
 use crate::movement::{MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Navmesh, PathfindingAlgorithm, PolymeshDebug};
@@ -101,13 +101,11 @@ pub fn replay_app(
         // кадре задавали бы настенные часы, и «рваный» прогон было бы не
         // отличить от случайного
         .insert_resource(TimeUpdateStrategy::ManualDuration(TICK))
-        .init_state::<AppState>()
-        .add_sub_state::<PlayPhase>()
-        .configure_sets(
-            OnEnter(AppState::Playing),
-            (WorldInitSet::Navmesh, WorldInitSet::Spawn).chain(),
-        )
         .add_plugins((
+            // как заводится мир — той же одной реализацией, что и в игре:
+            // состояния, порядок инициализации, пауза прогрева и объявление
+            // старта. Всё остальное здесь своё
+            crate::loading::SimBootPlugin,
             crate::rng::RngPlugin,
             super::DeterminismPlugin,
             crate::navigation::NavigationPlugin,
@@ -154,28 +152,19 @@ pub fn replay_app(
         .resource_mut::<Time<Virtual>>()
         .set_max_delta(Duration::from_secs(10));
 
-    // То же, что делает `LoadingPlugin` на входе в `Live`
-    // (`announce_world_start`), и по той же причине: этим событием прогон
-    // забирает себе бэкенд (ресурс `Backend`, замороженный на прогон),
-    // обнуляет тики, телеметрию, часы и спавнер демонов. Плагина здесь нет,
-    // поэтому объявляем сами.
+    // Дальше — те же две фазы, что проходит игра. Мир объявляет свой старт
+    // сам, на входе в `Live` (`SimBootPlugin`): этим событием прогон забирает
+    // себе бэкенд, обнуляет тики, телеметрию, часы и спавнер демонов.
     //
-    // Раньше без объявления замороженным оставался `Backend::default()` —
-    // ПУСТАЯ всюду проходимая сетка, и весь прогон искал пути сквозь дома;
-    // рестарт же объявление делает, и повтор расходился с прогоном именно на
-    // этом. Теперь `Default` у бэкенда нет вовсе: не объявив старт, прогон не
-    // получит бэкенда ни на чём — и это видно, в отличие от пустой сетки.
-    //
-    // И обязательно ДО первого кадра: на первом тике спавнер выпускает залп
-    // демонов, а сброс спавнера после этого раздал бы второму залпу те же
-    // `PawnId` — то есть тот же поток ГПСЧ и совпадающие ключи очереди.
-    app.world_mut().trigger(WorldStarted);
+    // Прогрев проходится насквозь: ждать здесь нечего (бэкенд — плоский A*,
+    // готов сразу, а `poll_warmup` живёт в `LoadingPlugin`, которого здесь
+    // нет), но пройти его надо — на нём мир стои́т на паузе, и первый тик
+    // случается уже после объявления старта. Раньше эта сцена прогрева не
+    // знала, тикала в нём и потому объявляла старт руками, до первого кадра.
     app.world_mut()
         .resource_mut::<NextState<AppState>>()
         .set(AppState::Playing);
     app.update();
-    // прогрев здесь ждать нечего: бэкенд — плоский A*, он готов сразу, а
-    // `poll_warmup` живёт в `LoadingPlugin`, которого здесь нет
     app.world_mut()
         .resource_mut::<NextState<PlayPhase>>()
         .set(PlayPhase::Live);

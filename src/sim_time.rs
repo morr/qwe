@@ -221,10 +221,6 @@ impl Plugin for SimTimePlugin {
             // новый прогон — часы и долг тиков с нуля (и по R, и по смене
             // города: оба пути триггерят `WorldStarted`)
             .add_observer(on_world_started)
-            // прогрев идёт на паузе: мир уже собран, но за экраном загрузки
-            // ему двигаться незачем — пусть пешки сначала получат пути
-            .add_systems(OnEnter(PlayPhase::Warmup), pause_simulation)
-            .add_systems(OnEnter(PlayPhase::Live), resume_simulation)
             .add_systems(
                 Update,
                 (
@@ -244,24 +240,6 @@ impl Plugin for SimTimePlugin {
 /// дефолта Bevy не поменяла поведение на фризах.
 fn pin_max_delta(mut time: ResMut<Time<Virtual>>) {
     time.set_max_delta(std::time::Duration::from_secs_f32(MAX_FRAME_DELTA));
-}
-
-/// Пауза на время прогрева. Заявки на путь при этом идут: их подача и
-/// диспетчеризация живут в `Update`, а стоит только `FixedUpdate`.
-///
-/// В **детерминированном** режиме заявки на паузе не идут: там весь конвейер —
-/// и `pick_wander_targets`, и диспетчер, и приёмка — живёт в `FixedUpdate`.
-/// Пешечного прогрева в этом режиме поэтому нет вовсе, см.
-/// `loading::poll_warmup`; паузу это не отменяет — мир за экраном загрузки не
-/// двигается ни в одном из режимов.
-fn pause_simulation(mut time: ResMut<Time<Virtual>>) {
-    time.pause();
-}
-
-/// Прогрев кончился — мир поехал. Скорость нового прогона выставляет обсервер
-/// `WorldStarted` того же перехода.
-fn resume_simulation(mut time: ResMut<Time<Virtual>>) {
-    time.unpause();
 }
 
 /// Новый прогон начинается с чистых часов и чистого регулятора.
