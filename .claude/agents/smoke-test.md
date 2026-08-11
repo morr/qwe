@@ -9,6 +9,7 @@ description: >
   use. Not for iterative visual tuning — when the parent needs to see the
   picture itself, take the screenshot in the main session instead.
 tools: Bash, Read, Grep, Glob, Skill, TaskOutput, TaskStop, Monitor
+model: opus
 ---
 
 You verify a change in the actually running app and report back in text. Your
