@@ -400,7 +400,16 @@ mod tests {
     /// Демон в погоне с поиском в полёте: заявка подана к `pending_goal`,
     /// пути ещё нет. `last_direction` задаёт, шагал ли он хоть раз.
     fn spawn_chaser(app: &mut App, target: Entity, pending_goal: IVec2, walked: bool) -> Entity {
-        let position = Vec2::new(10.0, 10.0);
+        spawn_chaser_at(app, Vec2::new(10.0, 10.0), target, pending_goal, walked)
+    }
+
+    fn spawn_chaser_at(
+        app: &mut App,
+        position: Vec2,
+        target: Entity,
+        pending_goal: IVec2,
+        walked: bool,
+    ) -> Entity {
         let mut movable = Movable::new(1.0);
         movable.state = MovableState::Pathfinding(pending_goal);
         if walked {
@@ -478,6 +487,45 @@ mod tests {
         assert_eq!(
             app.world().get::<Movable>(demon).expect("Movable").state,
             MovableState::Pathfinding(target_tile)
+        );
+    }
+
+    fn spawn_human(app: &mut App, position: Vec2) -> Entity {
+        let human = app.world_mut().spawn((Human, SimPosition(position))).id();
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Human>>()
+            .insert(human, position);
+        human
+    }
+
+    /// Место, освобождённое отставшим демоном, видит тот, кто делил с ним
+    /// жертву, — и перестаёт вести себя как половина «клещей».
+    ///
+    /// Единственное наблюдаемое следствие освобождения заявки внутри тика:
+    /// раскрываются «клещи» — демон в них ищет замену вдвое шире (×1.5 против
+    /// ×0.7 дистанции) и берёт только никем не занятого. Ушедший напарник
+    /// снимает это правило, и свободная жертва посередине между двумя
+    /// радиусами перестаёт быть кандидатом.
+    #[test]
+    fn a_partner_giving_up_takes_the_shared_target_rule_with_him() {
+        let app = &mut app();
+        // 100 м от отставшего — дальше гистерезиса (45 × 1.5 = 67.5): он сдаётся
+        let shared = spawn_human(app, Vec2::new(100.0, 10.0));
+        // 45 м от остающегося: дальше ×0.7 его дистанции (28 м), но ближе ×1.5 (60 м)
+        let free = spawn_human(app, Vec2::new(60.0, 55.0));
+        // порядок спавна — порядок обхода: сдающийся обязан пройти первым
+        spawn_chaser_at(app, Vec2::ZERO, shared, IVec2::new(5, 5), true);
+        let stays = spawn_chaser_at(app, Vec2::new(60.0, 10.0), shared, IVec2::new(5, 5), true);
+
+        run_repath_tick(app);
+
+        assert_eq!(
+            app.world()
+                .get::<ChaseTarget>(stays)
+                .expect("ChaseTarget")
+                .0,
+            shared,
+            "жертва больше не делится — свободная в {free} слишком далеко для смены цели"
         );
     }
 }
