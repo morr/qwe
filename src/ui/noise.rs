@@ -16,8 +16,7 @@ use crate::settings::{
 };
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::{
-    DebugConiferNoise, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
-    UiOpacity, ui_color,
+    DebugConiferNoise, GameUiRoot, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity, left_panel, ui_color,
 };
 
 /// Корень панели — по нему видимость следует за тумблером `noise`.
@@ -44,30 +43,22 @@ fn render_noise_panel(
     noise: Res<ConiferNoiseStyle>,
     enabled: Res<DebugConiferNoise>,
 ) {
+    // левая колонка: правая панелями стилей забита до самого верха
+    let (mut node, slot) = left_panel(UiLeftColumn::Noise);
+    // тумблер восстановлен из настроек до Startup — панель сразу спавнится в
+    // согласии с ним, без мигания на первом кадре
+    node.display = if enabled.0 {
+        Display::Flex
+    } else {
+        Display::None
+    };
+
     let panel = commands
         .spawn((
             ConiferNoisePanel,
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-                // левый нижний угол, над рядом дебаг-тумблеров: правая колонка
-                // панелями стилей уже забита до самого верха
-                left: px(UI_SCREEN_EDGE_PX_OFFSET),
-                // тумблер восстановлен из настроек до Startup — панель сразу
-                // спавнится в согласии с ним, без мигания на первом кадре
-                display: if enabled.0 {
-                    Display::Flex
-                } else {
-                    Display::None
-                },
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                padding: UiRect::all(px(10.)),
-                width: px(210.),
-                ..default()
-            },
+            node,
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiLeftColumnSlot(1),
+            slot,
             GameUiRoot,
             Visibility::Hidden,
             Name::new("conifer_noise_panel"),

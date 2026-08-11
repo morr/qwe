@@ -8,8 +8,7 @@ use crate::map::BuildingHeightMode;
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::ROW_LEFT_PX;
 use crate::ui::{
-    GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
-    ui_color,
+    GameUiRoot, PanelCount, UiOpacity, UiRightColumn, panel_header, right_panel, ui_color,
 };
 
 pub struct UiBuildingStylePlugin;
@@ -25,20 +24,8 @@ impl Plugin for UiBuildingStylePlugin {
 fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightMode>) {
     let panel = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                // `bottom` доедет от stack_right_column по высоте панели Trees
-                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-                right: px(UI_SCREEN_EDGE_PX_OFFSET),
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                padding: UiRect::all(px(10.)),
-                width: px(210.),
-                ..default()
-            },
+            right_panel(UiRightColumn::Buildings),
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(2),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("building_style_panel"),

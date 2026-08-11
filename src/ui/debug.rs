@@ -54,7 +54,7 @@ use crate::prefs::TrackPrefExt;
 use crate::settings::{MAP_SIZE, NavtileBase, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumnSlot, UiOpacity, spawn_panel_button, ui_color,
+    UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity, spawn_panel_button, ui_color,
 };
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
@@ -255,7 +255,7 @@ fn render_debug_toggles(
             },
             BackgroundColor(ui_color(UiOpacity::Medium)),
             // низ левой колонки: панель Noise стыкуется прямо над этим рядом
-            UiLeftColumnSlot(0),
+            UiLeftColumn::DebugToggles,
             GameUiRoot,
             Visibility::Hidden,
             Name::new("debug_toggles"),

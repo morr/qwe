@@ -15,7 +15,7 @@ use bevy::prelude::*;
 
 use crate::ui::{
     GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiPanelGapBelow,
-    UiRightColumnSlot, ui_color,
+    UiRightColumn, ui_color,
 };
 
 /// Мелкий шрифт: справку читают один раз, места она занимать не должна.
@@ -60,7 +60,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
             BackgroundColor(ui_color(UiOpacity::Medium)),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
-            UiRightColumnSlot(4),
+            UiRightColumn::Hotkeys,
             // справка — не настройка карты: от блока панелей OSM её отделяет
             // зазор в отступ от края экрана
             UiPanelGapBelow,

@@ -14,8 +14,7 @@ use crate::settings::{
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::{
-    GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
-    ui_color,
+    GameUiRoot, PanelCount, UiOpacity, UiRightColumn, panel_header, right_panel, ui_color,
 };
 
 /// Палитра листвы: зелень watabou плюс осенние и хвойные оттенки.
@@ -70,19 +69,8 @@ impl Plugin for UiTreeStylePlugin {
 fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
     let panel = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-                right: px(UI_SCREEN_EDGE_PX_OFFSET),
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                padding: UiRect::all(px(10.)),
-                width: px(210.),
-                ..default()
-            },
+            right_panel(UiRightColumn::Trees),
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            UiRightColumnSlot(1),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("tree_style_panel"),

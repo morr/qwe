@@ -81,8 +81,8 @@ use crate::settings::{
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
 use crate::ui::{
-    DebugNavmesh, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
-    UiOpacity, UiPanelGapBelow, ui_color,
+    DebugNavmesh, GameUiRoot, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity, UiPanelGapBelow, left_panel,
+    ui_color,
 };
 
 mod knobs;
@@ -270,20 +270,8 @@ impl Plugin for UiNavigationPlugin {
 fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
     let panel = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-                left: px(UI_SCREEN_EDGE_PX_OFFSET),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                padding: UiRect::all(px(10.)),
-                width: px(210.),
-                ..default()
-            },
+            left_panel(UiLeftColumn::Navigation),
             BackgroundColor(ui_color(UiOpacity::Medium)),
-            // 0 — дебаг-тумблеры, 1 — Noise; левую колонку перестыкует
-            // `ui::stack_bottom_columns`
-            UiLeftColumnSlot(2),
             // ряд кнопок под панелью — другой род UI, вплотную он читался как
             // её первая строка
             UiPanelGapBelow,
