@@ -206,8 +206,13 @@ in `CONTEXT.md` and the detail here in the same change.
   **Priority** (`priority::` in `movement/pathfinding.rs`): demons and fleeing humans
   (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
   priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
-  (512). The order only bites when the cap binds — in normal play in-flight sits
-  around 100 of 512. The speed panel shows in-flight / queued / avg ms.
+  (1024 — sized for the 30× repath rate, see the constant's doc). The order only bites
+  when the cap binds — in normal play in-flight sits around 100. The speed panel shows
+  in-flight / queued / avg ms. Gate and priority together are one pure function,
+  `pathfinding.rs::queue_key(&Viewport, position, is_human, is_fleeing) -> Option<(u8,
+  f32)>` — the whole rule as a value, so the four branches (urgent off-screen,
+  wanderer in frame, wanderer off-screen, wide zoom) are tested without a camera or a
+  window; the system around it is only queue assembly and the budget truncation.
 - **Repath on the move** — `to_pathfinding` keeps the current path and the
   `MovableStateMovingTag`, so an entity walks its old path while the new one is
   computed; `MovableStateMovingTag` therefore means "has a path **or is coasting**",

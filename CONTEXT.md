@@ -42,6 +42,16 @@ in `main.rs`.
   meters (25 tiles at 2 m, 50 at 1 m) — with the tile-25 chunk a 1 m build explodes from
   ~14 s to ~140 s. Cost of 1 m: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU,
   +1.6 GB RSS. `grid.rs`: `world_to_tile` / `tile_center`.
+- **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
+  `half_extent` (margin already applied) and `zoom` (world meters per logical pixel).
+  `Viewport::of(window, camera_transform, screens)` is the single place that computes
+  `window/2 · zoom · screens`; `contains` (**the edge counts as inside**), `min`/`max`
+  and `distance_from_centre_squared` are what a visibility gate asks it. Five gates use
+  it and **each keeps its own margin**, because each asks a different question: warmup
+  counts what the player can actually see (1.0 screens — `loading.rs`), the pathfinding
+  dispatcher and separation take `VIEW_MARGIN` = 1.2 so pawns at the edge don't stall on
+  a small camera move (`movement/mod.rs`), movepath gizmos 3.0 and door gizmos 1.5. Not
+  a Bevy `Camera::viewport` — that one is in pixels.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
