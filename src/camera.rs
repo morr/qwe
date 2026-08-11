@@ -383,6 +383,61 @@ pub fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
     (cursor - window.size() / 2.0) * Vec2::new(1.0, -1.0)
 }
 
+/// Кусок мира в кадре — то, чем всякий гейт видимости отвечает на «стоит ли
+/// этим заниматься»: диспетчер заявок, расталкивание, прогрев и обе отсечки
+/// гизмо. Значение, а не пара `Single<&Transform, With<Camera2d>>` +
+/// `Single<&Window>`: правило «окно пополам, умножить на зум» писалось на
+/// каждом из этих мест заново, и ни одно из них не проверялось тестом, потому
+/// что для проверки требовалась живая камера с окном.
+///
+/// Не `Camera::viewport` из bevy — тот в пикселях.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Viewport {
+    /// Центр кадра, мировые метры.
+    pub centre: Vec2,
+    /// Полуразмер кадра с уже учтённым запасом.
+    pub half_extent: Vec2,
+    /// Мировых метров на логический пиксель — масштаб трансформа камеры.
+    pub zoom: f32,
+}
+
+impl Viewport {
+    /// `screens` — сколько экранов в стороны считать «в кадре»: `1.0` — ровно
+    /// то, что видно, больше — запас за кромкой. Запас у каждого гейта свой и
+    /// живёт рядом с ним, потому что вопрос у каждого свой: у прогрева
+    /// запаса нет («видит ли пешку игрок»), у диспетчера и расталкивания —
+    /// [`VIEW_MARGIN`](crate::movement::VIEW_MARGIN), у гизмо — свои экраны.
+    pub fn of(window: &Window, camera: &Transform, screens: f32) -> Self {
+        let zoom = camera.scale.x;
+        Self {
+            centre: camera.translation.truncate(),
+            half_extent: window.size() / 2.0 * zoom * screens,
+            zoom,
+        }
+    }
+
+    /// Юго-западный угол кадра.
+    pub fn min(&self) -> Vec2 {
+        self.centre - self.half_extent
+    }
+
+    /// Северо-восточный угол кадра.
+    pub fn max(&self) -> Vec2 {
+        self.centre + self.half_extent
+    }
+
+    /// Точка в кадре. Кромка считается своей.
+    pub fn contains(&self, point: Vec2) -> bool {
+        let offset = (point - self.centre).abs();
+        offset.x <= self.half_extent.x && offset.y <= self.half_extent.y
+    }
+
+    /// Квадрат расстояния до центра кадра — ключ «ближе к центру раньше».
+    pub fn distance_from_centre_squared(&self, point: Vec2) -> f32 {
+        (point - self.centre).length_squared()
+    }
+}
+
 /// Зум колесом к точке под курсором: мировая точка под курсором остаётся
 /// на месте, а не уезжает к центру экрана.
 fn zoom_to_cursor(
@@ -511,4 +566,79 @@ fn drag_pan(
     let delta = (cursor - last) * Vec2::new(1.0, -1.0) * controller.zoom_factor;
     transform.translation -= delta.extend(0.0);
     *drag = DragPan::Dragging(cursor);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Окно 1000×600 с камерой в (100, 100): полуразмер — 500×300 мировых
+    /// метров на зуме 1.0.
+    fn viewport(zoom: f32, screens: f32) -> Viewport {
+        let mut window = Window::default();
+        window.resolution.set(1000.0, 600.0);
+        let camera = Transform::from_xyz(100.0, 100.0, 0.0).with_scale(Vec3::splat(zoom));
+        Viewport::of(&window, &camera, screens)
+    }
+
+    #[test]
+    fn the_frame_is_half_the_window_in_world_metres() {
+        let view = viewport(1.0, 1.0);
+        assert_eq!(view.centre, Vec2::new(100.0, 100.0));
+        assert_eq!(view.half_extent, Vec2::new(500.0, 300.0));
+        assert_eq!(view.zoom, 1.0);
+    }
+
+    /// Зум — метров на пиксель, поэтому на общем плане в кадр влезает больше
+    /// мира, а не меньше.
+    #[test]
+    fn zooming_out_widens_the_frame() {
+        assert_eq!(viewport(2.0, 1.0).half_extent, Vec2::new(1000.0, 600.0));
+        assert_eq!(viewport(0.5, 1.0).half_extent, Vec2::new(250.0, 150.0));
+    }
+
+    #[test]
+    fn the_margin_multiplies_the_frame() {
+        assert_eq!(viewport(1.0, 1.2).half_extent, Vec2::new(600.0, 360.0));
+    }
+
+    /// Углы кадра — то, чем расталкивание спрашивает сетку соседей, и они
+    /// обязаны согласоваться с [`Viewport::contains`], иначе выборка по
+    /// прямоугольнику и отсев по точке разошлись бы на кромке.
+    #[test]
+    fn the_corners_agree_with_the_frame() {
+        let view = viewport(1.0, 1.0);
+        assert_eq!(view.min(), Vec2::new(-400.0, -200.0));
+        assert_eq!(view.max(), Vec2::new(600.0, 400.0));
+        assert!(view.contains(view.min()));
+        assert!(view.contains(view.max()));
+    }
+
+    /// Кромка — своя: гейты писались через `<=`, и точка ровно на границе
+    /// кадра обязана остаться внутри.
+    #[test]
+    fn the_edge_of_the_frame_counts_as_inside() {
+        let view = viewport(1.0, 1.0);
+        assert!(view.contains(Vec2::new(600.0, 400.0)));
+        assert!(view.contains(Vec2::new(-400.0, -200.0)));
+        assert!(!view.contains(Vec2::new(600.1, 100.0)));
+        assert!(!view.contains(Vec2::new(100.0, 400.1)));
+    }
+
+    /// Кадр прямоугольный, а не круглый: угловой отступ по обеим осям меньше
+    /// полуразмера — точка внутри, хотя до центра дальше, чем до кромки по x.
+    #[test]
+    fn the_frame_is_a_rectangle_not_a_circle() {
+        let view = viewport(1.0, 1.0);
+        assert!(view.contains(Vec2::new(590.0, 390.0)));
+    }
+
+    #[test]
+    fn distance_is_measured_from_the_centre_of_the_frame() {
+        let view = viewport(1.0, 1.0);
+        assert_eq!(
+            view.distance_from_centre_squared(Vec2::new(103.0, 104.0)),
+            25.0
+        );
+    }
 }

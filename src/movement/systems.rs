@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::window::PrimaryWindow;
 
+use crate::camera::Viewport;
 use crate::movement::components::{
     Movable, MovableStateMovingTag, PreviousSimPosition, SimPosition,
 };
@@ -283,15 +284,12 @@ pub fn draw_move_paths(
         return;
     }
 
-    let camera_position = camera.translation.truncate();
-    let half_view =
-        Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * MOVEPATH_VIEW_SCREENS;
+    let view = Viewport::of(&window, &camera, MOVEPATH_VIEW_SCREENS);
 
     for (sim_position, movable) in &query {
         // на всю карту это десятки тысяч линий за кадр; за соседним экраном
         // путь всё равно не увидеть
-        let offset = (sim_position.0 - camera_position).abs();
-        if offset.x > half_view.x || offset.y > half_view.y {
+        if !view.contains(sim_position.0) {
             continue;
         }
         // как в zxc: промежуточные сегменты — линии, последний — стрелка

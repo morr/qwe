@@ -40,6 +40,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::window::PrimaryWindow;
 
 use super::VIEW_MARGIN;
+use crate::camera::Viewport;
 use crate::demon::{Demon, DemonDevourTag, DemonLungeTag};
 use crate::grid::world_to_tile;
 use crate::human::Human;
@@ -616,10 +617,7 @@ pub fn separate_pawns(
     }
 
     let started = std::time::Instant::now();
-    let camera_position = camera.translation.truncate();
-    let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * VIEW_MARGIN;
-    let min = camera_position - half_view;
-    let max = camera_position + half_view;
+    let view = Viewport::of(&window, &camera, VIEW_MARGIN);
 
     let human_radius = human_style.body_radius;
     let demon_radius = demon_radius(human_radius);
@@ -639,8 +637,7 @@ pub fn separate_pawns(
                 return;
             };
             let position = sim_position.0;
-            if position.x < min.x || position.x > max.x || position.y < min.y || position.y > max.y
-            {
+            if !view.contains(position) {
                 return;
             }
             let (radius, mobility) = if is_devouring {
@@ -676,8 +673,8 @@ pub fn separate_pawns(
                 stuck: stuck_seen.get(&entity).copied().unwrap_or(0.0),
             });
         };
-        humans.for_each_in_rect(min, max, &mut collect);
-        demons.for_each_in_rect(min, max, &mut collect);
+        humans.for_each_in_rect(view.min(), view.max(), &mut collect);
+        demons.for_each_in_rect(view.min(), view.max(), &mut collect);
     }
 
     resolve_pushes(

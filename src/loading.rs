@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 use bevy::window::PrimaryWindow;
 
+use crate::camera::Viewport;
 use crate::city::City;
 use crate::human::{Human, HumanFleeTag};
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
@@ -462,9 +463,11 @@ fn poll_warmup(
     } = &mut *progress;
     *elapsed += time.delta_secs();
 
-    let camera_position = camera.translation.truncate();
-    let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x;
-    let wanderers_dispatched = wanderers_dispatched_at_zoom(camera.scale.x);
+    // ровно один экран, без запаса диспетчера: вопрос прогрева — «видит ли
+    // игрок стоящую пешку», а не «возьмёт ли её диспетчер»; заявки в полосе
+    // запаса он выдаст сам, пока игрок смотрит на середину кадра
+    let view = Viewport::of(&window, &camera, 1.0);
+    let wanderers_dispatched = wanderers_dispatched_at_zoom(view.zoom);
     let waiting = pending
         .iter()
         .filter(|(sim_position, is_human, is_fleeing)| {
@@ -472,8 +475,7 @@ fn poll_warmup(
             if *is_human && !*is_fleeing && !wanderers_dispatched {
                 return false;
             }
-            let offset = (sim_position.0 - camera_position).abs();
-            offset.x <= half_view.x && offset.y <= half_view.y
+            view.contains(sim_position.0)
         })
         .count();
     *seen_requests |= waiting > 0;

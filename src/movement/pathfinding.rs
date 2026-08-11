@@ -8,6 +8,7 @@ use bevy::window::PrimaryWindow;
 
 use super::VIEW_MARGIN;
 use super::systems::rescue_from_impassable;
+use crate::camera::Viewport;
 use crate::determinism::SimTick;
 use crate::movement::components::{
     Movable, MovableState, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
@@ -55,6 +56,27 @@ pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
     camera_scale < crate::settings::WANDER_DISPATCH_MAX_ZOOM
 }
 
+/// Место заявки в очереди: приоритет, затем удалённость от центра кадра.
+/// `None` — заявку не брать вовсе: мирный гуляющий вне кадра ждёт камеру.
+///
+/// Отдельно от системы, потому что это всё правило видимости целиком, а
+/// система вокруг него — только сборка очереди и её усечение под бюджет.
+fn queue_key(
+    view: &Viewport,
+    position: Vec2,
+    is_human: bool,
+    is_fleeing: bool,
+) -> Option<(u8, f32)> {
+    let distance = view.distance_from_centre_squared(position);
+    if !is_human || is_fleeing {
+        return Some((priority::URGENT, distance));
+    }
+    if !wanderers_dispatched_at_zoom(view.zoom) || !view.contains(position) {
+        return None;
+    }
+    Some((priority::WANDER_ON_SCREEN, distance))
+}
+
 /// Запуск тасков поиска пути из очереди запросов. МИРНО гуляющие люди вне
 /// экрана путь НЕ получают вовсе — их заявки ждут, пока камера не приедет;
 /// демоны и убегающие люди обсчитываются всегда (иначе инвазия и паника за
@@ -79,27 +101,15 @@ pub fn dispatch_pathfinding_requests(
         return;
     }
 
-    let camera_position = camera.translation.truncate();
-    // масштаб камеры = мировых метров на логический пиксель
-    let half_view = Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * VIEW_MARGIN;
-    let wanderers_visible_at_this_zoom = wanderers_dispatched_at_zoom(camera.scale.x);
+    let view = Viewport::of(&window, &camera, VIEW_MARGIN);
 
     let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = requests
         .iter()
         .filter_map(|(entity, sim_position, request, is_human, is_fleeing)| {
-            let offset = (sim_position.0 - camera_position).abs();
-            let on_screen = wanderers_visible_at_this_zoom
-                && offset.x <= half_view.x
-                && offset.y <= half_view.y;
-            let priority = match (is_human && !is_fleeing, on_screen) {
-                (false, _) => priority::URGENT,
-                (true, true) => priority::WANDER_ON_SCREEN,
-                // мирный за кадром — заявка ждёт камеру
-                (true, false) => return None,
-            };
+            let (priority, distance) = queue_key(&view, sim_position.0, is_human, is_fleeing)?;
             (
                 priority,
-                offset.length_squared(),
+                distance,
                 entity,
                 // полигональный поиск стартует из реальной позиции пешки, а
                 // не из центра её тайла: снап старта к центру — ровно та
@@ -639,4 +649,93 @@ fn accept_answer<'backend>(
         trimmed += 1;
     }
     movable.to_moving(end_tile, path, entity, commands);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::WANDER_DISPATCH_MAX_ZOOM;
+
+    /// Кадр 1000×600 логических пикселей вокруг начала координат: на зуме 0.1
+    /// это ±50×30 метров, на зуме общего плана — на порядок больше.
+    fn view(zoom: f32) -> Viewport {
+        let mut window = Window::default();
+        window.resolution.set(1000.0, 600.0);
+        Viewport::of(
+            &window,
+            &Transform::from_scale(Vec3::splat(zoom)),
+            VIEW_MARGIN,
+        )
+    }
+
+    const CLOSE: f32 = 0.1;
+    const NEAR_ZOOM: f32 = 0.1;
+    /// Достаточно далеко, чтобы не попасть в кадр ни на каком из зумов ниже.
+    const OFF_SCREEN: Vec2 = Vec2::new(100_000.0, 0.0);
+
+    fn demon(view: &Viewport, position: Vec2) -> Option<(u8, f32)> {
+        queue_key(view, position, false, false)
+    }
+    fn wanderer(view: &Viewport, position: Vec2) -> Option<(u8, f32)> {
+        queue_key(view, position, true, false)
+    }
+    fn fleeing(view: &Viewport, position: Vec2) -> Option<(u8, f32)> {
+        queue_key(view, position, true, true)
+    }
+
+    /// Заявка мирного гуляющего вне кадра не выбрасывается, а ждёт камеру, —
+    /// и это единственный случай, когда диспетчер вообще проходит мимо.
+    #[test]
+    fn a_peaceful_wanderer_off_screen_waits_for_the_camera() {
+        let view = view(NEAR_ZOOM);
+        assert_eq!(wanderer(&view, OFF_SCREEN), None);
+        assert_eq!(
+            wanderer(&view, Vec2::new(CLOSE, CLOSE)).map(|(priority, _)| priority),
+            Some(priority::WANDER_ON_SCREEN)
+        );
+    }
+
+    /// Демон и паникующий человек считаются везде: без пути они стоят, и
+    /// стоят рядом с демоном — инвазия за кадром обязана идти.
+    #[test]
+    fn demons_and_fleeing_humans_dispatch_off_screen_too() {
+        let view = view(NEAR_ZOOM);
+        assert_eq!(
+            demon(&view, OFF_SCREEN).map(|(priority, _)| priority),
+            Some(priority::URGENT)
+        );
+        assert_eq!(
+            fleeing(&view, OFF_SCREEN).map(|(priority, _)| priority),
+            Some(priority::URGENT)
+        );
+    }
+
+    /// Срочные идут раньше мирных в кадре, даже когда стоят дальше от центра.
+    #[test]
+    fn the_urgent_outrank_a_wanderer_standing_nearer_the_centre() {
+        let view = view(NEAR_ZOOM);
+        let far_demon = demon(&view, Vec2::new(10.0, 0.0)).unwrap();
+        let near_wanderer = wanderer(&view, Vec2::new(CLOSE, 0.0)).unwrap();
+        assert!(far_demon < near_wanderer);
+    }
+
+    /// Внутри приоритета — ближе к центру кадра раньше.
+    #[test]
+    fn within_a_priority_the_nearer_to_the_centre_goes_first() {
+        let view = view(NEAR_ZOOM);
+        assert!(demon(&view, Vec2::new(1.0, 0.0)) < demon(&view, Vec2::new(2.0, 0.0)));
+        assert!(wanderer(&view, Vec2::new(1.0, 0.0)) < wanderer(&view, Vec2::new(2.0, 0.0)));
+    }
+
+    /// На общем плане мирные не берутся вовсе — даже стоящие в самом центре
+    /// кадра: пешка там точка, а «в кадре» — полкарты.
+    #[test]
+    fn no_wanderer_is_dispatched_at_the_wide_zoom() {
+        let wide = view(WANDER_DISPATCH_MAX_ZOOM);
+        assert_eq!(wanderer(&wide, Vec2::new(CLOSE, CLOSE)), None);
+        assert_eq!(
+            demon(&wide, Vec2::new(CLOSE, CLOSE)).map(|(priority, _)| priority),
+            Some(priority::URGENT)
+        );
+    }
 }

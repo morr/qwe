@@ -42,7 +42,7 @@ use bevy::window::PrimaryWindow;
 
 use bevy::prelude::*;
 
-use crate::camera::CameraPositionMode;
+use crate::camera::{CameraPositionMode, Viewport};
 use crate::grid::tile_center;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::ConiferField;
@@ -518,14 +518,11 @@ fn render_doors(
     window: Single<&Window, With<PrimaryWindow>>,
     mut gizmos: Gizmos,
 ) {
-    let camera_position = camera.translation.truncate();
-    let half_view =
-        Vec2::new(window.width(), window.height()) / 2.0 * camera.scale.x * DOORS_VIEW_SCREENS;
+    let view = Viewport::of(&window, &camera, DOORS_VIEW_SCREENS);
 
     for building in &map.buildings {
         for &door in &building.entrances {
-            let offset = (door - camera_position).abs();
-            if offset.x > half_view.x || offset.y > half_view.y {
+            if !view.contains(door) {
                 continue;
             }
             gizmos.circle_2d(door, DOOR_MARKER_RADIUS, DOOR_COLOR);
