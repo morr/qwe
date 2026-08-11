@@ -66,7 +66,7 @@
 
 use bevy::ecs::system::{IntoObserverSystem, SystemParam};
 use bevy::prelude::*;
-use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
+use bevy::ui_widgets::Activate;
 
 use crate::determinism::Determinism;
 use crate::human::HumanStyle;
@@ -78,8 +78,8 @@ use crate::navigation::{PathfindingAlgorithm, PolyNavmesh, PolymeshDebug};
 use crate::settings::{
     POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
 };
+use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
-use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use crate::ui::{
     DebugNavmesh, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
     UiOpacity, UiPanelGapBelow, ui_color,
@@ -91,8 +91,8 @@ mod overlay;
 // Приватные реэкспорты: снаружи модуль виден тем же набором имён, что и до
 // разрезания.
 use self::knobs::{
-    Knob, KnobGroup, SeparationToggleRow, spawn_knob_rows, sync_knob_values,
-    sync_separation_knob_visibility, sync_separation_row_inert,
+    KnobGroup, SeparationToggleRow, spawn_knob_rows, sync_separation_knob_visibility,
+    sync_separation_row_inert,
 };
 use self::overlay::sync_polymesh_overlay;
 
@@ -131,7 +131,6 @@ enum NavValueLabel {
     NavmeshShow,
     PolymeshShow,
     PolymeshChunks,
-    PolymeshRadius,
     Separation,
 }
 
@@ -144,7 +143,6 @@ impl NavValueLabel {
             Self::NavmeshShow => enabled_text(values.navmesh_show.0),
             Self::PolymeshShow => enabled_text(poly.show),
             Self::PolymeshChunks => enabled_text(poly.chunks),
-            Self::PolymeshRadius => radius_text(poly.radius()),
             // под детерминизмом и на сеточной навигации расталкивания нет
             // вовсе (`movement::separation_runs`), каким бы ни был
             // `SeparationStyle`, — панель обязана показывать положение дел, а
@@ -181,13 +179,22 @@ struct NavPanelValues<'w> {
 }
 
 impl NavPanelValues<'_> {
-    fn knob(&self, knob: Knob) -> f32 {
-        knob.get(
-            &self.separation_lab,
-            &self.slot_lab,
-            &self.human,
-            &self.search,
-        )
+    // ручки читают свои ресурсы поодиночке: привязка каждой знает только тот
+    // ресурс, который правит (`knobs.rs`)
+    pub(super) fn separation_lab(&self) -> &SeparationLab {
+        &self.separation_lab
+    }
+
+    pub(super) fn slot_lab(&self) -> &SlotLab {
+        &self.slot_lab
+    }
+
+    pub(super) fn human(&self) -> &HumanStyle {
+        &self.human
+    }
+
+    pub(super) fn search(&self) -> &SlotSearch {
+        &self.search
     }
 
     /// Работает ли расталкивание при нынешнем режиме — см.
@@ -212,15 +219,18 @@ fn active_section(poly: &PolymeshDebug) -> NavSection {
     }
 }
 
-/// Ползунок радиуса.
-#[derive(Component)]
-struct PolymeshRadiusSlider;
-
 pub struct UiNavigationPlugin;
 
 impl Plugin for UiNavigationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_navigation_panel)
+        // ручки этой панели правят четыре разных ресурса, и радиус агента —
+        // пятый; `HumanStyle` регистрирует ещё и панель Human
+        app.add_knobs::<SeparationLab>()
+            .add_knobs::<SlotLab>()
+            .add_knobs::<SlotSearch>()
+            .add_knobs::<HumanStyle>()
+            .add_knobs::<PolymeshDebug>()
+            .add_systems(Startup, render_navigation_panel)
             // после смены города: оверлей умер с DespawnOnExit, ресурсы живы
             .add_systems(
                 OnEnter(AppState::Playing),
@@ -243,12 +253,6 @@ impl Plugin for UiNavigationPlugin {
                                 .or_else(resource_changed::<SeparationStyle>)
                                 .or_else(resource_changed::<Determinism>),
                         ),
-                    sync_knob_values.run_if(
-                        resource_changed::<SeparationLab>
-                            .or_else(resource_changed::<SlotLab>)
-                            .or_else(resource_changed::<HumanStyle>)
-                            .or_else(resource_changed::<SlotSearch>),
-                    ),
                     // PolyNavmesh меняется ровно в момент снятия готового
                     // меша с таска — тогда оверлей и появляется
                     sync_polymesh_overlay
@@ -357,23 +361,21 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
         },
     );
 
-    let radius = values.polymesh.radius();
-    let radius_row = spawn_slider_row(
+    let radius_row = spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Agent radius",
-            value: radius,
-            value_text: radius_text(radius),
+        "Agent radius",
+        &*values.polymesh,
+        SliderBinding::<PolymeshDebug> {
+            get: |debug| debug.radius(),
+            set: |debug, value| debug.agent_radius = value,
             range: (
                 POLYMESH_AGENT_RADIUS_MIN,
                 POLYMESH_AGENT_RADIUS_MAX,
                 POLYMESH_AGENT_RADIUS_STEP,
             ),
+            text: |value| format!("{value:.1} m"),
         },
-        NavValueLabel::PolymeshRadius,
-        PolymeshRadiusSlider,
-        on_radius_change,
     );
     commands.entity(radius_row).insert(NavSection::Polymesh);
     indent_slider_row(&mut commands, radius_row);
@@ -502,30 +504,6 @@ fn enabled_text(enabled: bool) -> String {
     on_off(enabled).to_string()
 }
 
-/// Ползунок дискретный: ресурс правится только на реальной смене шага —
-/// каждый шаг перезапускает постройку меша.
-fn on_radius_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut debug: ResMut<PolymeshDebug>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            POLYMESH_AGENT_RADIUS_MIN,
-            POLYMESH_AGENT_RADIUS_MAX,
-            POLYMESH_AGENT_RADIUS_STEP,
-        ),
-    );
-    if (debug.agent_radius - stepped).abs() > f32::EPSILON {
-        debug.agent_radius = stepped;
-    }
-}
-
-fn radius_text(radius: f32) -> String {
-    format!("{radius:.1} m")
-}
 /// Настройки невыбранной подсистемы уходят из раскладки целиком: они не
 /// «недоступны», они ни на что не влияют, пока ходят по другой.
 fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSection, &mut Node)>) {
@@ -542,17 +520,11 @@ fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSecti
 fn sync_nav_values(
     values: NavPanelValues,
     mut labels: Query<(&mut Text, &mut TextColor, &NavValueLabel)>,
-    sliders: Query<(Entity, &SliderValue), With<PolymeshRadiusSlider>>,
-    mut commands: Commands,
 ) {
     for (mut text, mut color, label) in &mut labels {
         text.0 = label.text(&values);
         if let Some(next) = label.color(&values) {
             color.0 = next;
         }
-    }
-    let radius = values.polymesh.radius();
-    for (slider, value) in &sliders {
-        retarget(&mut commands, slider, value.0, radius);
     }
 }

@@ -19,16 +19,14 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   **World** holds three live counters — **Pawns** (`With<Human>`, i.e. alive: the
   component is stripped on death), **Demons**, **Souls reaped** (`Telemetry::killed`), on
   their own `Heavy` backing the way slider rows have one. **Demon** holds the four
-  `DemonStyle` slider rows from the same `ui/slider.rs` kit as Trees and Noise —
+  `DemonStyle` knob rows from the same `ui/knob.rs` kit as Trees and Noise —
   **Max demons** (0…500, step 5), **Spawn every** (0.1…10 s, step 0.1), **Speed**
   (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows print as
   percent, a bare `1.3` on the panel says nothing. **Human** holds the single
   `HumanStyle` row, **Speed spread** (0…35%, step 5) — printed with a sign because it is
   a half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the
   ASCII `+/-`, not `±`: the built-in font (the `default_font` feature) is a narrow subset
-  and draws anything outside ASCII as an empty box. One row means no
-  row enum: a pair of marker components (`SpreadValueLabel` / `SpreadSlider`) addresses
-  it, and `HumanRow` gets written when a second row appears. **Body radius** stood here
+  and draws anything outside ASCII as an empty box. **Body radius** stood here
   and the `Separation` toggle, `Slot search` and the three crowd knobs stood in World
   until all six moved into the Navigation panel's crowd groups — they are about
   movement, and World had stopped reading as a summary of the run.
@@ -46,16 +44,16 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 - **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
   color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
   text input, so hex fields became cycles), plus **slider rows** built by the shared
-  `ui/slider.rs::spawn_slider_row` kit — **density** over `TREE_DENSITY_MIN..MAX`,
+  `ui/knob.rs::spawn_knob` kit — **density** over `TREE_DENSITY_MIN..MAX`,
   **conifer share** over `TREE_CONIFER_SHARE_MIN..MAX` and **noise mix** over
-  `TREE_NOISE_MIX_MIN..MAX`. Each `ValueChange` observer quantizes to its step and writes
+  `TREE_NOISE_MIX_MIN..MAX`. The kit's drag observer quantizes to the step and writes
   `TreeStyle` only when the step actually changes, so one drag rebuilds the crowns
   a handful of times, not once per pixel. The conifer-share and mix rows are
   `Display::None`ed outside `TreeShape::Mixed` (`sync_mixed_row_visibility`) — they mean
   nothing for the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the
   change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
 - **Noise panel** (`ui/noise.rs`) — the conifer-field fbm knobs (`ConiferNoiseStyle`:
-  wavelength / octaves / lacunarity / persistence), same slider kit; sits bottom-left
+  wavelength / octaves / lacunarity / persistence), same knob kit; sits bottom-left
   **above the debug-toggles row** (the right column is already packed with style
   panels) and is `Display::None`ed while the `noise` debug toggle is off — tuning the
   field without the overlay showing it is pointless. Noise mix is deliberately *not*
@@ -121,8 +119,10 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   **`Pass squeeze`**, **`Left share`** / **`Body radius`**, **`Slot search`**,
   **`Regroup`**. Body radius is here despite living on `HumanStyle`: it sets both the rest
   distance and the slot side, so tuning wants it beside the other crowd knobs, not half a
-  screen away in Human. All five are one `Knob` enum (spawn, label sync and thumb sync
-  each written once). Nested *slider* rows are indented by `indent_slider_row`, which
+  screen away in Human. All five are knob-kit rows, and each binds its **own** resource
+  (`SeparationLab`, `SlotLab`, `HumanStyle`, `SlotSearch`) — the `Knob` enum that used to
+  cover the group had to carry all four in one `SystemParam` for every drag.
+  Nested *slider* rows are indented by `indent_slider_row`, which
   patches the padding the shared `ui/slider.rs` kit knows nothing about; without it a
   section's slider sat left of that same section's button rows — `Agent radius` had been
   sitting unindented since it was added.
@@ -135,15 +135,27 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 
 ## Shared kits & layout
 
-- **Slider kit** (`ui/slider.rs`) — `spawn_slider_row` (label + value text + discrete
-  `bevy_ui_widgets::Slider`), `quantize`, and one `sync_slider_thumbs` for all panels
-  (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`). Callers
-  pass their own marker bundles for the value label and the slider to address them in
-  their sync systems. Two more helpers cover the halves every drag observer repeats:
-  `apply_step` (quantize + put the thumb back on the stepped value) and `retarget` (move
-  the thumb when the value arrived past it — over BRP, from saved settings, from a lab
-  preset). Writing the panel's own resource stays at the call site: the fields are `f32`,
-  `u32` and `usize`, and only the caller knows which.
+- **Knob kit** (`ui/knob.rs`) — what panels actually call. A knob is a slider row bound
+  to one field of one resource: `spawn_knob(commands, panel, label, &*resource, binding)`
+  where `SliderBinding<R> { get, set, range, text }` is four function pointers, and
+  `app.add_knobs::<R>()` registers the sync **once per resource** — not per knob, per
+  panel or per field. Every panel used to hand-write the same drag observer (quantize,
+  compare, write the field) and the same sync system (labels + `retarget` the thumbs):
+  thirteen observers and eight systems that differed only in which field of which
+  resource they touched. Two shapes worth knowing: an integer knob is `get: |r| r.n as
+  f32` / `set: |r, v| r.n = v as u32` with an integer step (`Max demons`, `Octaves`), and
+  a percent knob keeps the resource in 0..1 while `text` multiplies by 100 (`Speed`,
+  `Conifer share`). `Knobbed` is just an alias for `Resource<Mutability = Mutable>` —
+  `ResMut` needs it and repeating the bound in six signatures reads worse.
+  `SliderBinding` implements `Clone`/`Copy` by hand: `derive` would demand `R: Copy`,
+  which no resource is.
+- **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one the crowd
+  demo (`examples/demos/crowd_demo.rs`) still calls directly, since its sliders drive
+  demo-local state rather than a resource: `spawn_slider_row` (label + value text +
+  discrete `bevy_ui_widgets::Slider`), `quantize`, `apply_step` (quantize + put the thumb
+  back on the stepped value), `retarget` (move the thumb when the value arrived past it —
+  over BRP, from saved settings, from a lab preset), and one `sync_slider_thumbs` for all
+  panels (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`).
 - **Value-row kit** (`ui/rows.rs`) — the sibling of the slider kit for the rows that are
   *buttons*: `spawn_value_row` (grey label left, white value right, click on an observer),
   `row_color`, `next_in`, `on_off`, and one `highlight_value_rows` for every panel (rows

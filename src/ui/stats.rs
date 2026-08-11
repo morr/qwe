@@ -10,12 +10,12 @@ use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle, TextEdit};
-use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
+use bevy::ui_widgets::Activate;
 use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
+use super::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color, spawn_value_row};
-use super::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
@@ -52,23 +52,6 @@ enum StatRow {
     Souls,
 }
 
-/// Какое поле `DemonStyle` крутит строка-ползунок.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum DemonRow {
-    Cap,
-    Interval,
-    Speed,
-    Lunge,
-}
-
-/// Текст значения в строке-ползунке.
-#[derive(Component)]
-struct DemonValueLabel(DemonRow);
-
-/// Ползунок строки.
-#[derive(Component)]
-struct DemonSlider(DemonRow);
-
 /// Строка-кнопка тумблера детерминированного режима.
 #[derive(Component)]
 struct DeterminismRow;
@@ -80,40 +63,33 @@ struct DeterminismValueLabel;
 #[derive(Component)]
 struct SeedField;
 
-/// Панель Human: разброс личных скоростей. Строка пока одна, поэтому без
-/// enum'а — пара маркеров; появится вторая, заводить `HumanRow`. Радиус тела
-/// стоял здесь же, но уехал в подвкладку Slots панели Navigation: ресурс у него
-/// человеческий (`HumanStyle::body_radius`), а подбирается он вместе с
-/// остальными ручками толпы.
-#[derive(Component)]
-struct SpreadValueLabel;
-
-#[derive(Component)]
-struct SpreadSlider;
-
 pub struct UiStatsPlugin;
 
 impl Plugin for UiStatsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_stats_panel).add_systems(
-            Update,
-            (
-                sync_world_counts,
-                apply_seed_on_enter,
-                sync_seed_field.run_if(resource_changed::<WorldSeed>),
-                sync_determinism_value.run_if(resource_changed::<Determinism>),
-                sync_demon_values.run_if(resource_changed::<DemonStyle>),
-                sync_human_values.run_if(resource_changed::<HumanStyle>),
-                // метка BRP стоит только в агентских запусках, и только тогда
-                // панели есть что обходить
-                offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
-            ),
-        );
+        // ручки панелей Demon и Human — их подписи и бегунки ведёт кит;
+        // `HumanStyle` регистрирует ещё и панель Navigation (радиус тела), а
+        // регистрация идемпотентна по смыслу: система одна на ресурс
+        app.add_knobs::<DemonStyle>()
+            .add_knobs::<HumanStyle>()
+            .add_systems(Startup, render_stats_panel)
+            .add_systems(
+                Update,
+                (
+                    sync_world_counts,
+                    apply_seed_on_enter,
+                    sync_seed_field.run_if(resource_changed::<WorldSeed>),
+                    sync_determinism_value.run_if(resource_changed::<Determinism>),
+                    // метка BRP стоит только в агентских запусках, и только
+                    // тогда панели есть что обходить
+                    offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
+                ),
+            );
     }
 }
 
 /// Строка-счётчик: подпись слева, белое число справа — та же разметка,
-/// что у шапки строки-ползунка (`slider::spawn_slider_row`).
+/// что у шапки строки-ползунка (`ui::knob::spawn_knob`).
 fn count_row(label: &str, row: StatRow) -> impl Bundle {
     (
         Node {
@@ -360,7 +336,7 @@ fn render_stats_panel(
     commands.entity(world_panel).add_child(seed_row);
 
     // панель Demon отдельной сущностью, а не внутри `children!`:
-    // `spawn_slider_row` берёт родителя сущностью, а там её ещё нет
+    // `spawn_knob` берёт родителя сущностью, а там её ещё нет
     let panel = commands
         .spawn((
             panel_node(),
@@ -371,69 +347,69 @@ fn render_stats_panel(
         .id();
     commands.entity(column).add_child(panel);
 
-    spawn_slider_row(
+    // кап — единственная целочисленная ручка панелей: шаг целый, и текст без
+    // дробной части, так что округление ползунка и есть само значение
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Max demons",
-            value: slider_value(DemonRow::Cap, &style),
-            value_text: row_value(DemonRow::Cap, &style),
+        "Max demons",
+        &*style,
+        SliderBinding {
+            get: |style| style.cap as f32,
+            set: |style, value| style.cap = value as usize,
             range: (DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP),
+            text: |value| format!("{value:.0}"),
         },
-        DemonValueLabel(DemonRow::Cap),
-        DemonSlider(DemonRow::Cap),
-        on_cap_change,
     );
-    spawn_slider_row(
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Spawn every",
-            value: slider_value(DemonRow::Interval, &style),
-            value_text: row_value(DemonRow::Interval, &style),
+        "Spawn every",
+        &*style,
+        SliderBinding {
+            get: |style| style.interval,
+            set: |style, value| style.interval = value,
             range: (
                 DEMON_SPAWN_INTERVAL_MIN,
                 DEMON_SPAWN_INTERVAL_MAX,
                 DEMON_SPAWN_INTERVAL_STEP,
             ),
+            text: |value| format!("{value:.1} s"),
         },
-        DemonValueLabel(DemonRow::Interval),
-        DemonSlider(DemonRow::Interval),
-        on_interval_change,
     );
-    spawn_slider_row(
+    // скорость и бросок — проценты: множитель «1.3» на панели ничего не
+    // сообщает, «130%» и «+30%» читаются сразу
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Speed",
-            value: slider_value(DemonRow::Speed, &style),
-            value_text: row_value(DemonRow::Speed, &style),
+        "Speed",
+        &*style,
+        SliderBinding {
+            get: |style| style.speed,
+            set: |style, value| style.speed = value,
             range: (
                 DEMON_SPEED_FACTOR_MIN,
                 DEMON_SPEED_FACTOR_MAX,
                 DEMON_SPEED_FACTOR_STEP,
             ),
+            text: |value| format!("{:.0}%", value * 100.0),
         },
-        DemonValueLabel(DemonRow::Speed),
-        DemonSlider(DemonRow::Speed),
-        on_speed_change,
     );
-    spawn_slider_row(
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Lunge boost",
-            value: slider_value(DemonRow::Lunge, &style),
-            value_text: row_value(DemonRow::Lunge, &style),
+        "Lunge boost",
+        &*style,
+        SliderBinding {
+            get: |style| style.lunge,
+            set: |style, value| style.lunge = value,
             range: (
                 DEMON_LUNGE_BOOST_MIN,
                 DEMON_LUNGE_BOOST_MAX,
                 DEMON_LUNGE_BOOST_STEP,
             ),
+            text: |value| format!("+{:.0}%", value * 100.0),
         },
-        DemonValueLabel(DemonRow::Lunge),
-        DemonSlider(DemonRow::Lunge),
-        on_lunge_change,
     );
 
     let human_panel = commands
@@ -446,22 +422,24 @@ fn render_stats_panel(
         .id();
     commands.entity(column).add_child(human_panel);
 
-    spawn_slider_row(
+    // со знаком, потому что это полуширина: «15%» читалось бы как «все на 15%
+    // быстрее». Знак — ASCII `+/-`, а не «±»: встроенный шрифт (фича
+    // `default_font`) — узкая подвыборка, и всё вне ASCII рисуется квадратом
+    spawn_knob(
         &mut commands,
         human_panel,
-        SliderRow {
-            label: "Speed spread",
-            value: human_style.spread,
-            value_text: spread_value(&human_style),
+        "Speed spread",
+        &*human_style,
+        SliderBinding {
+            get: |style| style.spread,
+            set: |style, value| style.spread = value,
             range: (
                 HUMAN_SPEED_SPREAD_MIN,
                 HUMAN_SPEED_SPREAD_MAX,
                 HUMAN_SPEED_SPREAD_STEP,
             ),
+            text: |value| format!("+/-{:.0}%", value * 100.0),
         },
-        SpreadValueLabel,
-        SpreadSlider,
-        on_spread_change,
     );
 }
 
@@ -487,6 +465,8 @@ fn sync_world_counts(
     }
 }
 
+/// Подпись тумблера вслед за ресурсом — клик, BRP или восстановленные
+/// настройки одинаково двигают текст.
 fn sync_determinism_value(
     mode: Res<Determinism>,
     mut labels: Query<&mut Text, With<DeterminismValueLabel>>,
@@ -547,161 +527,6 @@ fn sync_seed_field(
             continue;
         }
         set_field_text(&mut field, seed.0);
-    }
-}
-
-/// Подпись тумблера вслед за ресурсом — клик, BRP или восстановленные
-/// настройки одинаково двигают текст.
-/// Подписи и бегунки вслед за ресурсом — правка извне (BRP, восстановленные
-/// настройки) должна двигать ползунок, а не только менять поведение.
-fn sync_demon_values(
-    style: Res<DemonStyle>,
-    mut commands: Commands,
-    mut labels: Query<(&DemonValueLabel, &mut Text)>,
-    sliders: Query<(Entity, &DemonSlider, &SliderValue)>,
-) {
-    for (label, mut text) in &mut labels {
-        text.0 = row_value(label.0, &style);
-    }
-    for (slider, row, value) in &sliders {
-        let target = slider_value(row.0, &style);
-        retarget(&mut commands, slider, value.0, target);
-    }
-}
-
-/// Ползунки дискретные: ресурс правится только на реальной смене шага.
-fn on_cap_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<DemonStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP),
-    );
-    if style.cap != stepped as usize {
-        style.cap = stepped as usize;
-    }
-}
-
-fn on_interval_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<DemonStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            DEMON_SPAWN_INTERVAL_MIN,
-            DEMON_SPAWN_INTERVAL_MAX,
-            DEMON_SPAWN_INTERVAL_STEP,
-        ),
-    );
-    if (style.interval - stepped).abs() > f32::EPSILON {
-        style.interval = stepped;
-    }
-}
-
-fn on_speed_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<DemonStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            DEMON_SPEED_FACTOR_MIN,
-            DEMON_SPEED_FACTOR_MAX,
-            DEMON_SPEED_FACTOR_STEP,
-        ),
-    );
-    if (style.speed - stepped).abs() > f32::EPSILON {
-        style.speed = stepped;
-    }
-}
-
-fn on_lunge_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<DemonStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            DEMON_LUNGE_BOOST_MIN,
-            DEMON_LUNGE_BOOST_MAX,
-            DEMON_LUNGE_BOOST_STEP,
-        ),
-    );
-    if (style.lunge - stepped).abs() > f32::EPSILON {
-        style.lunge = stepped;
-    }
-}
-
-/// То же для панели Human: подпись и бегунок вслед за ресурсом.
-fn sync_human_values(
-    style: Res<HumanStyle>,
-    mut commands: Commands,
-    mut spread_label: Query<&mut Text, With<SpreadValueLabel>>,
-    spread_slider: Query<(Entity, &SliderValue), With<SpreadSlider>>,
-) {
-    for mut text in &mut spread_label {
-        text.0 = spread_value(&style);
-    }
-    for (entity, value) in &spread_slider {
-        retarget(&mut commands, entity, value.0, style.spread);
-    }
-}
-
-fn on_spread_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<HumanStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            HUMAN_SPEED_SPREAD_MIN,
-            HUMAN_SPEED_SPREAD_MAX,
-            HUMAN_SPEED_SPREAD_STEP,
-        ),
-    );
-    if (style.spread - stepped).abs() > f32::EPSILON {
-        style.spread = stepped;
-    }
-}
-
-/// Значение строки разброса. Со знаком, потому что это полуширина: «15%»
-/// читалось бы как «все на 15% быстрее». Знак пишется как ASCII `+/-`, а не
-/// «±»: встроенный шрифт (фича `default_font`) — узкая подвыборка, и всё за
-/// пределами ASCII рисуется на панели пустым квадратом.
-fn spread_value(style: &HumanStyle) -> String {
-    format!("+/-{:.0}%", style.spread * 100.0)
-}
-
-/// Текст значения строки-ползунка. Скорость и бросок — проценты: множитель
-/// «1.3» на панели ничего не сообщает, «130%» и «+30%» читаются сразу.
-fn row_value(row: DemonRow, style: &DemonStyle) -> String {
-    match row {
-        DemonRow::Cap => style.cap.to_string(),
-        DemonRow::Interval => format!("{:.1} s", style.interval),
-        DemonRow::Speed => format!("{:.0}%", style.speed * 100.0),
-        DemonRow::Lunge => format!("+{:.0}%", style.lunge * 100.0),
-    }
-}
-
-/// Значение ползунка строки.
-fn slider_value(row: DemonRow, style: &DemonStyle) -> f32 {
-    match row {
-        DemonRow::Cap => style.cap as f32,
-        DemonRow::Interval => style.interval,
-        DemonRow::Speed => style.speed,
-        DemonRow::Lunge => style.lunge,
     }
 }
 

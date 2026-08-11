@@ -6,15 +6,15 @@
 
 use bevy::ecs::system::IntoObserverSystem;
 use bevy::prelude::*;
-use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
+use bevy::ui_widgets::Activate;
 
 use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::settings::{
     TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
     TREE_DENSITY_STEP, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_STEP,
 };
+use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};
-use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
@@ -40,9 +40,9 @@ const DETAILS_PALETTE: [Color; 4] = [
 /// Ступени разброса яркости (`treeVariance`).
 const VARIANCE_STEPS: [f32; 5] = [0.0, 0.1, 0.2, 0.35, 0.5];
 
-/// Какое поле стиля показывает строка — она же адресует подпись и свотч.
-/// `ConiferShare`, `NoiseMix` и `Density` — не кнопки, а ползунки, но подпись
-/// значения у них общая с остальными строками.
+/// Какое поле стиля показывает строка-кнопка — она же адресует подпись и
+/// свотч. Ползунки панели (доля хвои, примесь, плотность) сюда не входят:
+/// их подписи ведёт кит ручек по своей привязке.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum TreeStyleRow {
     Woods,
@@ -51,9 +51,6 @@ enum TreeStyleRow {
     Foliage,
     Details,
     Variance,
-    ConiferShare,
-    NoiseMix,
-    Density,
 }
 
 /// Текст значения в строке.
@@ -63,10 +60,6 @@ struct TreeStyleValueLabel(TreeStyleRow);
 /// Квадрат-образец цвета в строке (пустой для нецветовых полей).
 #[derive(Component)]
 struct TreeStyleSwatch(TreeStyleRow);
-
-/// Ползунок строки.
-#[derive(Component)]
-struct TreeStyleSlider(TreeStyleRow);
 
 /// Блок строки, живущей только у формы `Mixed` (доля хвои и примесь): вне неё
 /// строка убирается из раскладки целиком (`Display::None`), а не гасится, —
@@ -78,7 +71,8 @@ pub struct UiTreeStylePlugin;
 
 impl Plugin for UiTreeStylePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_tree_style_panel)
+        app.add_knobs::<TreeStyle>()
+            .add_systems(Startup, render_tree_style_panel)
             .add_systems(
                 Update,
                 (
@@ -152,36 +146,34 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
     );
     // сразу под формой: доля и примесь уточняют именно её и только при
     // `Mixed` видны
-    let share_row = spawn_slider_row(
+    let share_row = spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Conifer share",
-            value: style.conifer_share,
-            value_text: row_value(TreeStyleRow::ConiferShare, &style),
+        "Conifer share",
+        &*style,
+        SliderBinding {
+            get: |style| style.conifer_share,
+            set: |style, value| style.conifer_share = value,
             range: (
                 TREE_CONIFER_SHARE_MIN,
                 TREE_CONIFER_SHARE_MAX,
                 TREE_CONIFER_SHARE_STEP,
             ),
+            text: |value| format!("{:.0}%", value * 100.),
         },
-        TreeStyleValueLabel(TreeStyleRow::ConiferShare),
-        TreeStyleSlider(TreeStyleRow::ConiferShare),
-        on_conifer_share_change,
     );
     commands.entity(share_row).insert(MixedOnlyRow);
-    let mix_row = spawn_slider_row(
+    let mix_row = spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Noise mix",
-            value: style.noise_mix,
-            value_text: row_value(TreeStyleRow::NoiseMix, &style),
+        "Noise mix",
+        &*style,
+        SliderBinding {
+            get: |style| style.noise_mix,
+            set: |style, value| style.noise_mix = value,
             range: (TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_STEP),
+            text: |value| format!("{:.0}%", value * 100.),
         },
-        TreeStyleValueLabel(TreeStyleRow::NoiseMix),
-        TreeStyleSlider(TreeStyleRow::NoiseMix),
-        on_noise_mix_change,
     );
     commands.entity(mix_row).insert(MixedOnlyRow);
     spawn_row(
@@ -218,75 +210,18 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
             style.variance = VARIANCE_STEPS[current];
         },
     );
-    spawn_slider_row(
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Density",
-            value: style.density,
-            value_text: row_value(TreeStyleRow::Density, &style),
+        "Density",
+        &*style,
+        SliderBinding {
+            get: |style| style.density,
+            set: |style, value| style.density = value,
             range: (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
+            text: |value| format!("{value:.2}x"),
         },
-        TreeStyleValueLabel(TreeStyleRow::Density),
-        TreeStyleSlider(TreeStyleRow::Density),
-        on_density_change,
     );
-}
-
-/// Ползунок ведёт себя дискретно: значение с драга округляется до шага, и
-/// стиль правится только когда шаг действительно сменился — иначе каждый
-/// пиксель протяжки пересобирал бы все кроны.
-fn on_density_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<TreeStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (TREE_DENSITY_MIN, TREE_DENSITY_MAX, TREE_DENSITY_STEP),
-    );
-    if (style.density - stepped).abs() > f32::EPSILON {
-        style.density = stepped;
-    }
-}
-
-/// То же для доли хвои: шаг ползунка меняет породу у целых массивов, так что
-/// пересборка на каждый пиксель протяжки тем более не нужна.
-fn on_conifer_share_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<TreeStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            TREE_CONIFER_SHARE_MIN,
-            TREE_CONIFER_SHARE_MAX,
-            TREE_CONIFER_SHARE_STEP,
-        ),
-    );
-    if (style.conifer_share - stepped).abs() > f32::EPSILON {
-        style.conifer_share = stepped;
-    }
-}
-
-/// Примесь пород: тот же дискретный шаг — каждый шаг пересемплирует поле хвои
-/// и пересобирает кроны.
-fn on_noise_mix_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut style: ResMut<TreeStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_STEP),
-    );
-    if (style.noise_mix - stepped).abs() > f32::EPSILON {
-        style.noise_mix = stepped;
-    }
 }
 
 /// Следующий цвет палитры за текущим; незнакомый цвет откатывается к первому.
@@ -346,25 +281,6 @@ fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
         TreeStyleRow::Foliage => hex(style.foliage),
         TreeStyleRow::Details => hex(style.details),
         TreeStyleRow::Variance => format!("{:.2}", style.variance),
-        TreeStyleRow::ConiferShare => format!("{:.0}%", style.conifer_share * 100.),
-        TreeStyleRow::NoiseMix => format!("{:.0}%", style.noise_mix * 100.),
-        TreeStyleRow::Density => format!("{:.2}x", style.density),
-    }
-}
-
-/// Значение ползунка строки — только у строк-ползунков; у строк-кнопок
-/// ползунка нет, и `None` рвёт их синхронизацию по значению.
-fn slider_value(row: TreeStyleRow, style: &TreeStyle) -> Option<f32> {
-    match row {
-        TreeStyleRow::ConiferShare => Some(style.conifer_share),
-        TreeStyleRow::NoiseMix => Some(style.noise_mix),
-        TreeStyleRow::Density => Some(style.density),
-        TreeStyleRow::Woods
-        | TreeStyleRow::Standalone
-        | TreeStyleRow::Shape
-        | TreeStyleRow::Foliage
-        | TreeStyleRow::Details
-        | TreeStyleRow::Variance => None,
     }
 }
 
@@ -388,28 +304,18 @@ fn hex(color: Color) -> String {
     )
 }
 
-/// Актуализация подписей и свотчей после правки стиля (кликом или по BRP).
+/// Актуализация подписей и свотчей строк-кнопок после правки стиля (кликом
+/// или по BRP). Подписи и бегунки ползунков ведёт кит ручек.
 fn sync_row_values(
     style: Res<TreeStyle>,
     mut labels: Query<(&TreeStyleValueLabel, &mut Text)>,
     mut swatches: Query<(&TreeStyleSwatch, &mut BackgroundColor)>,
-    sliders: Query<(Entity, &TreeStyleSlider, &SliderValue)>,
-    mut commands: Commands,
 ) {
     for (label, mut text) in &mut labels {
         text.0 = row_value(label.0, &style);
     }
     for (swatch, mut background) in &mut swatches {
         background.0 = swatch_color(swatch.0, &style).unwrap_or(Color::NONE);
-    }
-    // стиль правится и мимо ползунков (по BRP, из сохранённых настроек) —
-    // бегунок обязан переехать; при протяжке значения уже совпадают.
-    // `SliderValue` — immutable-компонент, меняется только вставкой
-    for (slider, row, value) in &sliders {
-        let Some(target) = slider_value(row.0, &style) else {
-            continue;
-        };
-        retarget(&mut commands, slider, value.0, target);
     }
 }
 

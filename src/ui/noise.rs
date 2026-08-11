@@ -5,8 +5,6 @@
 //! (`Mix`) — не здесь, а в панели Trees: она игровая ручка вида леса, а не
 //! отладочная.
 
-use bevy::ui_widgets::{SliderValue, ValueChange};
-
 use bevy::prelude::*;
 
 use crate::map::ConiferNoiseStyle;
@@ -16,7 +14,7 @@ use crate::settings::{
     CONIFER_NOISE_PERSISTENCE_MIN, CONIFER_NOISE_PERSISTENCE_STEP, CONIFER_NOISE_WAVELENGTH_MAX,
     CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_STEP,
 };
-use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
+use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::{
     DebugConiferNoise, GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiLeftColumnSlot,
     UiOpacity, ui_color,
@@ -26,36 +24,18 @@ use crate::ui::{
 #[derive(Component)]
 struct ConiferNoisePanel;
 
-/// Какой параметр шума показывает строка.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum NoiseRow {
-    Wavelength,
-    Octaves,
-    Lacunarity,
-    Persistence,
-}
-
-/// Текст значения в строке.
-#[derive(Component)]
-struct NoiseValueLabel(NoiseRow);
-
-/// Ползунок строки.
-#[derive(Component)]
-struct NoiseSlider(NoiseRow);
-
 pub struct UiConiferNoisePlugin;
 
 impl Plugin for UiConiferNoisePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_noise_panel).add_systems(
-            Update,
-            (
-                sync_noise_values.run_if(resource_changed::<ConiferNoiseStyle>),
+        app.add_knobs::<ConiferNoiseStyle>()
+            .add_systems(Startup, render_noise_panel)
+            .add_systems(
+                Update,
                 // без run_if: одна query и сравнение — дешевле, чем следить за
                 // окном `resource_changed` на первом кадре
                 sync_noise_panel_visibility,
-            ),
-        );
+            );
     }
 }
 
@@ -105,181 +85,68 @@ fn render_noise_panel(
         ))
         .id();
 
-    spawn_slider_row(
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Wavelength",
-            value: noise.wavelength,
-            value_text: row_value(NoiseRow::Wavelength, &noise),
+        "Wavelength",
+        &*noise,
+        SliderBinding {
+            get: |noise| noise.wavelength,
+            set: |noise, value| noise.wavelength = value,
             range: (
                 CONIFER_NOISE_WAVELENGTH_MIN,
                 CONIFER_NOISE_WAVELENGTH_MAX,
                 CONIFER_NOISE_WAVELENGTH_STEP,
             ),
+            text: |value| format!("{value:.0} m"),
         },
-        NoiseValueLabel(NoiseRow::Wavelength),
-        NoiseSlider(NoiseRow::Wavelength),
-        on_wavelength_change,
     );
-    spawn_slider_row(
+    // единственная целочисленная ручка панели: и шаг, и текст без дробной
+    // части, так что округление ползунка и есть само значение
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Octaves",
-            value: noise.octaves as f32,
-            value_text: row_value(NoiseRow::Octaves, &noise),
+        "Octaves",
+        &*noise,
+        SliderBinding {
+            get: |noise| noise.octaves as f32,
+            set: |noise, value| noise.octaves = value as u32,
             range: (CONIFER_NOISE_OCTAVES_MIN, CONIFER_NOISE_OCTAVES_MAX, 1.0),
+            text: |value| format!("{value:.0}"),
         },
-        NoiseValueLabel(NoiseRow::Octaves),
-        NoiseSlider(NoiseRow::Octaves),
-        on_octaves_change,
     );
-    spawn_slider_row(
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Lacunarity",
-            value: noise.lacunarity,
-            value_text: row_value(NoiseRow::Lacunarity, &noise),
+        "Lacunarity",
+        &*noise,
+        SliderBinding {
+            get: |noise| noise.lacunarity,
+            set: |noise, value| noise.lacunarity = value,
             range: (
                 CONIFER_NOISE_LACUNARITY_MIN,
                 CONIFER_NOISE_LACUNARITY_MAX,
                 CONIFER_NOISE_LACUNARITY_STEP,
             ),
+            text: |value| format!("{value:.1}"),
         },
-        NoiseValueLabel(NoiseRow::Lacunarity),
-        NoiseSlider(NoiseRow::Lacunarity),
-        on_lacunarity_change,
     );
-    spawn_slider_row(
+    spawn_knob(
         &mut commands,
         panel,
-        SliderRow {
-            label: "Persistence",
-            value: noise.persistence,
-            value_text: row_value(NoiseRow::Persistence, &noise),
+        "Persistence",
+        &*noise,
+        SliderBinding {
+            get: |noise| noise.persistence,
+            set: |noise, value| noise.persistence = value,
             range: (
                 CONIFER_NOISE_PERSISTENCE_MIN,
                 CONIFER_NOISE_PERSISTENCE_MAX,
                 CONIFER_NOISE_PERSISTENCE_STEP,
             ),
+            text: |value| format!("{value:.2}"),
         },
-        NoiseValueLabel(NoiseRow::Persistence),
-        NoiseSlider(NoiseRow::Persistence),
-        on_persistence_change,
     );
-}
-
-/// Ползунки дискретные, как в панели Trees: ресурс правится только на реальной
-/// смене шага — каждый шаг пересемплирует поле и пересобирает кроны.
-fn on_wavelength_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut noise: ResMut<ConiferNoiseStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            CONIFER_NOISE_WAVELENGTH_MIN,
-            CONIFER_NOISE_WAVELENGTH_MAX,
-            CONIFER_NOISE_WAVELENGTH_STEP,
-        ),
-    );
-    if (noise.wavelength - stepped).abs() > f32::EPSILON {
-        noise.wavelength = stepped;
-    }
-}
-
-fn on_octaves_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut noise: ResMut<ConiferNoiseStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (CONIFER_NOISE_OCTAVES_MIN, CONIFER_NOISE_OCTAVES_MAX, 1.0),
-    );
-    if noise.octaves != stepped as u32 {
-        noise.octaves = stepped as u32;
-    }
-}
-
-fn on_lacunarity_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut noise: ResMut<ConiferNoiseStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            CONIFER_NOISE_LACUNARITY_MIN,
-            CONIFER_NOISE_LACUNARITY_MAX,
-            CONIFER_NOISE_LACUNARITY_STEP,
-        ),
-    );
-    if (noise.lacunarity - stepped).abs() > f32::EPSILON {
-        noise.lacunarity = stepped;
-    }
-}
-
-fn on_persistence_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    mut noise: ResMut<ConiferNoiseStyle>,
-) {
-    let stepped = apply_step(
-        &change,
-        &mut commands,
-        (
-            CONIFER_NOISE_PERSISTENCE_MIN,
-            CONIFER_NOISE_PERSISTENCE_MAX,
-            CONIFER_NOISE_PERSISTENCE_STEP,
-        ),
-    );
-    if (noise.persistence - stepped).abs() > f32::EPSILON {
-        noise.persistence = stepped;
-    }
-}
-
-/// Текст значения строки.
-fn row_value(row: NoiseRow, noise: &ConiferNoiseStyle) -> String {
-    match row {
-        NoiseRow::Wavelength => format!("{:.0} m", noise.wavelength),
-        NoiseRow::Octaves => noise.octaves.to_string(),
-        NoiseRow::Lacunarity => format!("{:.1}", noise.lacunarity),
-        NoiseRow::Persistence => format!("{:.2}", noise.persistence),
-    }
-}
-
-/// Значение ползунка строки.
-fn slider_value(row: NoiseRow, noise: &ConiferNoiseStyle) -> f32 {
-    match row {
-        NoiseRow::Wavelength => noise.wavelength,
-        NoiseRow::Octaves => noise.octaves as f32,
-        NoiseRow::Lacunarity => noise.lacunarity,
-        NoiseRow::Persistence => noise.persistence,
-    }
-}
-
-/// Актуализация подписей и бегунков после правки ресурса (ползунком или по
-/// BRP). `SliderValue` — immutable-компонент, меняется только вставкой.
-fn sync_noise_values(
-    noise: Res<ConiferNoiseStyle>,
-    mut labels: Query<(&NoiseValueLabel, &mut Text)>,
-    sliders: Query<(Entity, &NoiseSlider, &SliderValue)>,
-    mut commands: Commands,
-) {
-    for (label, mut text) in &mut labels {
-        text.0 = row_value(label.0, &noise);
-    }
-    for (slider, row, value) in &sliders {
-        let target = slider_value(row.0, &noise);
-        retarget(&mut commands, slider, value.0, target);
-    }
 }
 
 /// Панель живёт при включённом дебаг-слое `noise` и уходит из раскладки вместе

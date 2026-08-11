@@ -7,6 +7,9 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
+// `pub` по той же причине, что и `slider`: демо-сцена расталкивания ставит
+// свои ручки тем же китом
+pub mod knob;
 mod navigation;
 mod noise;
 mod roads;
