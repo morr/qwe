@@ -605,8 +605,11 @@ skill**.
   and `guard_frame_budget` (first system of `FixedUpdate`) hard-stops a frame's fixed
   loop at `SIM_FRAME_BUDGET_MS`, booking stripped ticks into **TickDebt**. `actual` is
   the only honest reading — the panel and `is_throttled` use it. Set speed over BRP with
-  `res set SimSpeed .requested N`, never `brp speed`. **SimClock** — virtual seconds of
-  the current world, zeroed on entering `Live`; compare states by `SimTick`, not by it.
+  `res set SimSpeed .requested N`, never `brp speed`. The regulator's memory (`pipeline`
+  backoff, `SimLoad`'s smoothed tick cost) is reset by **WorldStarted** — a new run
+  never starts throttled by the previous world's measurements. **SimClock** — virtual
+  seconds of the current world, zeroed by the same observer; compare states by
+  `SimTick`, not by it.
   Per-tick cost is ~0.1 ms (`sim/*_ms` diagnostics). The whole control loop — sim-speed
   skill.
 - **Remembered UI options** (`prefs.rs`) — every UI-settable resource is a

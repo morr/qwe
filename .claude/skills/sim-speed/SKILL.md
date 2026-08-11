@@ -14,7 +14,15 @@ top speed.
   (1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
 - **SimSpeed** — `{requested, pipeline, affordable, effective, actual}`. `requested` is
-  what the ladder says; `pipeline` is the pathfinding-pipeline ceiling, the one
+  what the ladder says and is the only field a new run keeps: the `WorldStarted`
+  observer (`on_world_started`) resets `pipeline`/`affordable` to `MAX_SIM_SPEED`,
+  `effective` to `requested` and `SimLoad` to unmeasured on every restart and city
+  switch — the backoff and the smoothed tick cost belong to the previous run (after a
+  city switch, to a different world entirely), and inheriting them started the new
+  world throttled by measurements taken about the old one. Starting too high is safe:
+  the regulator steps down instantly and `guard_frame_budget` caps the frame
+  structurally. Pinned by `a_new_run_inherits_no_clock_and_no_regulator_memory`.
+  `pipeline` is the pathfinding-pipeline ceiling, the one
   regulator value with memory (see below); `affordable` is what the regulator computed
   the machine can carry (already `min`-ed with `pipeline`);
   `effective` is its command, what reaches `Time<Virtual>`; `actual` is measured —

@@ -258,27 +258,35 @@ fn pause_simulation(mut time: ResMut<Time<Virtual>>) {
     time.pause();
 }
 
-/// Новый мир начинается с запрошенной скорости. То, что регулятор насчитал на
-/// кадрах загрузки, спавна и прогрева, к нему отношения не имеет: симуляция там
-/// стояла, а после смены города унаследованное значение и вовсе принадлежит
-/// прошлому миру. Взять старт слишком высоко ничем не грозит — вниз регулятор
-/// ходит мгновенно, за один кадр.
-fn resume_simulation(mut time: ResMut<Time<Virtual>>, mut speed: ResMut<SimSpeed>) {
-    speed.effective = speed.requested;
-    time.set_relative_speed(speed.effective);
+/// Прогрев кончился — мир поехал. Скорость нового прогона выставляет обсервер
+/// `WorldStarted` того же перехода.
+fn resume_simulation(mut time: ResMut<Time<Virtual>>) {
     time.unpause();
 }
 
-/// Долг тиков сбрасывается вместе с часами: он принадлежит прошлому миру,
-/// и вливать его тики в свежепостроенный — значит начать новый мир рывком.
+/// Новый прогон начинается с чистых часов и чистого регулятора.
+///
+/// Долг тиков принадлежит прошлому миру: вливать его тики в свежепостроенный —
+/// значит начать новый мир рывком. Замер нагрузки и бэкофф конвейера — тоже
+/// его: после смены города унаследованный потолок насчитан вовсе про другой
+/// мир, и новый стартовал бы придушенным без единого своего замера. Взять
+/// старт слишком высоко ничем не грозит — вниз регулятор ходит мгновенно, а
+/// кадр держит предохранитель бюджета ([`guard_frame_budget`]).
 fn on_world_started(
     _event: On<WorldStarted>,
     mut clock: ResMut<SimClock>,
     mut debt: ResMut<TickDebt>,
-    time: Res<Time<Virtual>>,
+    mut speed: ResMut<SimSpeed>,
+    mut load: ResMut<SimLoad>,
+    mut time: ResMut<Time<Virtual>>,
 ) {
     clock.restart(time.elapsed_secs_f64());
     debt.owed = 0.0;
+    *load = SimLoad::default();
+    speed.pipeline = MAX_SIM_SPEED;
+    speed.affordable = MAX_SIM_SPEED;
+    speed.effective = speed.requested;
+    time.set_relative_speed(speed.effective);
 }
 
 /// На паузе виртуальная дельта нулевая, поэтому часы сами стоят.

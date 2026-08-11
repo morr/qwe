@@ -397,3 +397,40 @@ impl Plant {
         speed
     }
 }
+
+/// Пин списка сбросов `WorldStarted`: новый прогон не наследует ни часы, ни
+/// долг, ни память регулятора — и по R, и по смене города путь один и тот же
+/// (оба триггерят одно событие).
+#[test]
+fn a_new_run_inherits_no_clock_and_no_regulator_memory() {
+    let mut world = World::new();
+    world.init_resource::<Time<Virtual>>();
+    world.init_resource::<SimClock>();
+    world.init_resource::<TickDebt>();
+    world.init_resource::<SimSpeed>();
+    world.init_resource::<SimLoad>();
+    world.add_observer(on_world_started);
+
+    // прогон пожил: часы натикали, предохранитель напереносил, регулятор
+    // замерил нагрузку и отступил потолком
+    world.resource_mut::<SimClock>().elapsed = 120.0;
+    world.resource_mut::<TickDebt>().owed = 0.4;
+    world.resource_mut::<SimLoad>().tick_ms = 3.0;
+    let mut speed = world.resource_mut::<SimSpeed>();
+    speed.requested = 10.0;
+    speed.pipeline = 2.0;
+    speed.affordable = 2.0;
+    speed.effective = 2.0;
+
+    world.trigger(crate::loading::WorldStarted);
+
+    assert_eq!(world.resource::<SimClock>().elapsed, 0.0);
+    assert_eq!(world.resource::<TickDebt>().owed, 0.0);
+    assert_eq!(world.resource::<SimLoad>().tick_ms, 0.0);
+    let speed = world.resource::<SimSpeed>();
+    assert_eq!(speed.pipeline, MAX_SIM_SPEED);
+    assert_eq!(speed.affordable, MAX_SIM_SPEED);
+    // стартуем с запрошенной: вниз регулятор сойдёт сам после первого замера
+    assert_eq!(speed.effective, 10.0);
+    assert_eq!(world.resource::<Time<Virtual>>().relative_speed(), 10.0);
+}
