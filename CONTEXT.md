@@ -621,6 +621,14 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **Demon spawn** — a demon acts from the first tick it exists, the initial burst
   included. A `DemonSpawnPause` (0.5–3 s staging) existed and was removed on request;
   staging an entrance again means a new component, not reviving that one.
+  **The spawner runs only in `PlayPhase::Live`**, and that is an invariant, not a
+  detail: it hands out `PawnId`s from a counter that `WorldStarted` — announced on
+  entering `Live` — resets to zero, so a burst fired before the announcement gets its
+  numbers dealt a second time. Two demons then share a `PawnId`, which breaks both the
+  pawn's RNG stream and the deterministic dispatcher's queue key (it died on a duplicate
+  key ~30 ticks in). Relying on "warmup keeps the world paused" was not enough — that
+  pause belongs to `sim_time` and space unpauses it. Matching precondition on the reset:
+  **no demon may be alive when a run starts** (`demon::on_world_started` says so).
 - **Demon** states (`demon/behavior.rs`, rules in `demon/decide.rs`): **Wander** (target
   biased away from portal) →
   **Chase** → **Devour** → Wander. **Chase claims** — **max 2 chasers per target**,
