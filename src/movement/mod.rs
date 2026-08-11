@@ -163,6 +163,12 @@ impl Plugin for MovementPlugin {
                     dispatch_pathfinding_requests,
                 )
                     .chain()
+                    // вне мира бэкенда не существует (`Backend` живёт от
+                    // `OnEnter(Playing)` до `OnExit`), а `SimPipeline` выбирает
+                    // лишь ветку режима и от состояния не гейтит: без этого
+                    // условия цепочка работала бы в `Loading` и валилась на
+                    // валидации `Res<Backend>` — что и случилось
+                    .run_if(in_state(AppState::Playing))
                     // в детерминированном режиме этот конвейер заменён
                     // тик-локованным ниже: здесь ответ применяется в тот кадр,
                     // когда посчитался, а приоритет считается от камеры
@@ -199,7 +205,13 @@ impl Plugin for MovementPlugin {
                         .before(SimSet::SpatialRebuild)
                         .run_if(in_state(AppState::Playing))
                         .in_set(SimPipeline::Deterministic),
-                    move_moving_entities.after(SimSet::HumanBehavior),
+                    // гейт на мир по той же причине, что и у живой цепочки
+                    // выше: шаг берёт `Res<Backend>`, а вне `Playing` ресурса
+                    // нет. Множествами это не закрыть — шаг идёт в обоих
+                    // режимах и ни в одном `SimPipeline` не состоит
+                    move_moving_entities
+                        .after(SimSet::HumanBehavior)
+                        .run_if(in_state(AppState::Playing)),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
                     // доедет до экрана интерполяцией.
