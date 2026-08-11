@@ -180,15 +180,23 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   today is the Separation toggle under **Deterministic** or grid navigation.
   Highlighting writes through `set_if_neq`: the system runs every frame over every row of
   every panel, and at most one of them — the one under the cursor — actually changes.
-- **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumnSlot` /
-  `UiLeftColumnSlot`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
-  left: debug toggles → Noise → Navigation; both bottom-up. The panels are absolute (`bevy_ui` does
+- **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumn` /
+  `UiLeftColumn`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
+  left: debug toggles → Noise → Navigation; both bottom-up. **The order is the enum's
+  declaration order**, not a number each panel writes for itself — with integers spread
+  over seven files nothing caught two panels claiming one slot, or a gap. A settings
+  panel takes its `Node` and its slot together from `right_panel` / `left_panel`; the
+  debug-toggle row and the hotkey help keep their own nodes (a row, not a column, and
+  their own paddings). The panels are absolute (`bevy_ui` does
   not stack them), and the columns change height at runtime (Trees grows two rows on
   `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is the
   summed **measured** height of those below it instead of a hardcoded constant;
   `Display::None` panels are skipped by their `Node.display`, not their last-frame
   `ComputedNode`. `ComputedNode::size` is in *physical* pixels — multiply by
-  `inverse_scale_factor` or every offset doubles on a retina screen.
+  `inverse_scale_factor` or every offset doubles on a retina screen. The arithmetic
+  itself is `column_bottom`, a pure function over the visible panels — the four tests
+  on it (bottom panel at the edge, clearing everything below, a hidden panel leaving no
+  hole, a marked panel pushing itself *and everything above it* up) need no `App`.
   Panels sit flush by default — a column of map-style panels reads as one block. A
   **`UiPanelGapBelow`** marker inserts one gap under a panel, and the gap is
   `UI_SCREEN_EDGE_PX_OFFSET`, the same distance the UI keeps from the screen edge, so
