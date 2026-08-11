@@ -263,6 +263,12 @@ impl Plugin for NavigationPlugin {
                     .run_if(|debug: Res<PolymeshDebug>| debug.enabled)
                     .in_set(WorldInitSet::Spawn),
             )
+            // смена города: оба бэкенда описывают геометрию старого мира
+            // (иерархия повела бы прогрев новой карты путями сквозь дома,
+            // летящая постройка меша — тем более), чистка здесь, у владельца,
+            // а не в `city.rs`; `ArcNavmesh` не в счёт — его перезаливает сам
+            // поток загрузки
+            .add_systems(OnExit(AppState::Playing), clear_map_backends)
             .add_systems(
                 Update,
                 (
@@ -277,6 +283,11 @@ impl Plugin for NavigationPlugin {
                 ),
             );
     }
+}
+
+fn clear_map_backends(mut northstar: ResMut<NorthstarGrid>, mut polymesh: ResMut<PolyNavmesh>) {
+    northstar.clear();
+    polymesh.clear();
 }
 
 /// Предел спирального поиска места для портала, метры мира.

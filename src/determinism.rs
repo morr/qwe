@@ -79,6 +79,10 @@ impl Plugin for DeterminismPlugin {
             .init_resource::<SimTick>()
             .init_resource::<DeterministicRun>()
             .add_observer(on_world_started)
+            // снимок держит Arc'и навмеша, иерархии и меша — оставить его на
+            // смену города значит продержать геометрию старого мира в памяти
+            // всю загрузку нового; свежий снимок возьмёт `WorldStarted`
+            .add_systems(OnExit(AppState::Playing), drop_frozen_backend)
             .add_systems(
                 Update,
                 request_restart_on_config_change
@@ -109,6 +113,10 @@ fn on_world_started(
 ) {
     tick.0 = 0;
     *run = DeterministicRun(pathfinder.backend());
+}
+
+fn drop_frozen_backend(mut run: ResMut<DeterministicRun>) {
+    *run = DeterministicRun::default();
 }
 
 /// Смена seed'а или режима — новый прогон, а значит рестарт.

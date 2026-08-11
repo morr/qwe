@@ -12,7 +12,6 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
-use crate::navigation::{NorthstarGrid, PolyNavmesh};
 use crate::settings::{
     BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
     NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
@@ -118,26 +117,14 @@ impl Plugin for CityPlugin {
 /// navtile по BRP во время `Loading` по той же причине не подхватывается на
 /// лету: мир доедет консистентным на старом размере, атомик и ресурс
 /// сойдутся на следующей перезагрузке.
-fn reload_world(
-    city: Res<City>,
-    navtile: Res<NavtileBase>,
-    mut next: ResMut<NextState<AppState>>,
-    mut northstar: ResMut<NorthstarGrid>,
-    mut polymesh: ResMut<PolyNavmesh>,
-) {
+fn reload_world(city: Res<City>, navtile: Res<NavtileBase>, mut next: ResMut<NextState<AppState>>) {
     info!(
         "world reload: city {:?}, navtile {}",
         *city,
         navtile.label()
     );
-    // состояние прогона (спавнер, счётчики, часы) сбросят обсерверы
-    // `WorldStarted` на входе нового мира в `Live`; здесь чистится только
-    // производное от карты
-    //
-    // иначе прогрев новой карты пойдёт по иерархии старой — пути сквозь дома
-    northstar.clear();
-    // полигональный меш описывает геометрию старого города, летящая
-    // постройка — тем более; включённая панель перестроит его на входе в мир
-    polymesh.clear();
+    // сбросы — не здесь: состояние прогона (спавнер, счётчики, часы) чистят
+    // обсерверы `WorldStarted` на входе нового мира в `Live`, производное от
+    // карты — его владельцы на `OnExit(Playing)` (`navigation`, `determinism`)
     next.set(AppState::Loading);
 }
