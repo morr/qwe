@@ -381,10 +381,36 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   a restart via `RestartPending` — and that restart carries `RestartEvent { to_portal:
   true }`: a changed seed or a flipped toggle is a *different world*, and without the
   camera move the setting reads as having done nothing.
+- **SimPipeline** (`determinism/mod.rs`) — the toggle in the schedule: two system sets,
+  `Live` and `Deterministic`, gated once in `DeterminismPlugin` for every schedule they
+  appear in (`Update`, `FixedUpdate`, both `OnEnter` phases). A system declares its branch
+  with `.in_set(..)` and never reads the mode; a forgotten `run_if` is no longer a way to
+  break replay, and a system with no set is visible by running in both modes. The one
+  place the mode is still read directly is `separation_runs`, which needs it **negated**
+  ("separation is off — clear its leftovers"), and a set cannot be negated.
+  `MovementPlugin` / `HumanPlugin` / `NavigationPlugin` add `DeterminismPlugin` if absent:
+  an unconfigured set gates nothing, so both branches would run at once.
 - **Frame rate does not matter.** `Time<Fixed>`'s step is constant regardless of fps and
   of `SimSpeed`; the answer to a path query waits for its tick; and everything left in
   `Update` only draws. A slow machine therefore replays the same run more slowly — it does
   not replay a different one.
+- **Replay check** (`determinism/replay.rs`, `tests/determinism.rs`,
+  `examples/acceptance/determinism_replay.rs`) — same machinery, two scales: the test runs
+  a synthetic yard (`fixture::crowded_yard`, dozens of pawns, 96 ticks, ~1 s in
+  `cargo test`), the example runs Tula with 20 000 pawns for minutes. Three claims: the
+  same seed replays tick for tick, a ragged frame rate does not change the run, a
+  different seed does. Two things make it bite, both learned the hard way:
+  - **the world must actually move.** `apply_pathfinding_results` needs `SimLoad`, which
+    lives in `SimTimePlugin` — absent from the replay app, the system failed parameter
+    validation and was skipped in silence, so no path was ever applied and the check
+    compared two equally frozen worlds. `replay_app` inserts the resource;
+    `Fingerprint::moving` fails the test if a run has nobody moving, so the same class of
+    vacuous pass cannot come back.
+  - **the scene must be crowded.** Spread over the map, pawns only walk their paths, and
+    walking is linear in time — nothing diverges. Divergence is born at thresholds: panic
+    radius, demon lunge. Hence the yard, where the whole population and the portal share
+    120 m. Verified by mutation: moving `move_moving_entities` into `Update` fails the
+    ragged-frame test on the yard and passes on a scattered map.
 - **Retire tick** (`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`) — a request issued on tick
   `T` is applied on exactly `T + 8`, whether or not the search finished; if it did not,
   `apply_pathfinding_results` waits on it (`block_on`). That wait *is* the mechanism: it
@@ -432,6 +458,12 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **The replay contract** — 1:1 holds only while `DemonStyle` / `HumanStyle` /
   `SeparationStyle` / the algorithm / the navtile size are left alone mid-run. Sliders are
   simulation input. Not enforced by code.
+- **Known broken: restart does not replay.** With the replay check finally running a
+  moving world, the acceptance example fails its first claim on Tula — a run to tick N,
+  `RestartEvent`, and a second run to N produce different fingerprints (same seed, same
+  kill count, different positions). The ragged-frame and different-seed claims pass, so
+  the run itself is reproducible; what is not is the *reset*. Something outliving
+  `on_restart` still feeds the new run. Not diagnosed yet.
 - **Not claimed**: float reproducibility across machines or compilers; replaying a run
   made with the toggle *off*. `bevy_northstar` builds its grid with rayon, so cross-process
   HPA replay is unaudited — within one session the grid outlives R, so restarts are safe.

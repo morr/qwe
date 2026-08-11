@@ -197,7 +197,7 @@ impl Plugin for MovementPlugin {
                     apply_pathfinding_results
                         .before(SimSet::SpatialRebuild)
                         .run_if(in_state(AppState::Playing))
-                        .in_set(SimPipeline::Locked),
+                        .in_set(SimPipeline::Deterministic),
                     move_moving_entities.after(SimSet::HumanBehavior),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
@@ -221,7 +221,7 @@ impl Plugin for MovementPlugin {
                     // индекс), на 30x — до ~30 сканов за кадр впустую
                     assign_destination_slots
                         .run_if(in_state(AppState::Playing))
-                        .in_set(SimPipeline::Locked),
+                        .in_set(SimPipeline::Deterministic),
                     // диспетчер — в самом конце тика: заявки, поданные
                     // поведением этого шага, командами применяются на точках
                     // синхронизации цепочки и уезжают в тот же тик
@@ -231,7 +231,7 @@ impl Plugin for MovementPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing))
-                        .in_set(SimPipeline::Locked),
+                        .in_set(SimPipeline::Deterministic),
                 )
                     .chain(),
             )

@@ -12,9 +12,8 @@ use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
 use crate::navigation::{ArcNavmesh, Pathfinder};
 use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
-    HUMAN_COUNT, HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED,
-    HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, RADIUS_HYSTERESIS,
-    unit_z,
+    HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
+    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, RADIUS_HYSTERESIS, unit_z,
 };
 
 /// Отступ целей блуждания от края карты, м.
@@ -50,8 +49,15 @@ pub fn spawn_humans(
     arc_navmesh: Res<ArcNavmesh>,
     style: Res<HumanStyle>,
     seed: Res<WorldSeed>,
+    size: Res<crate::human::PopulationSize>,
 ) {
-    spawn_population(&mut commands, &arc_navmesh.read(), style.spread, seed.0);
+    spawn_population(
+        &mut commands,
+        &arc_navmesh.read(),
+        style.spread,
+        seed.0,
+        size.0,
+    );
 }
 
 /// Спавн населения; вызывается на старте и при рестарте сцены.
@@ -67,10 +73,11 @@ pub fn spawn_population(
     navmesh: &crate::navigation::Navmesh,
     spread: f32,
     world_seed: u64,
+    count: usize,
 ) {
     let mut placement = stream(world_seed, RngDomain::Population, 0);
 
-    for index in 0..HUMAN_COUNT {
+    for index in 0..count {
         let pawn_id = index as u32;
         let mut rng = decision_stream(world_seed, RngDomain::Human, pawn_id, WanderIndex::SPAWN);
 
@@ -395,7 +402,13 @@ mod tests {
     fn population_fingerprint(seed: u64) -> Vec<(u32, u32, u32, u32, u32, u32)> {
         let mut world = World::new();
         let navmesh = crate::navigation::Navmesh::default();
-        spawn_population(&mut world.commands(), &navmesh, 0.3, seed);
+        spawn_population(
+            &mut world.commands(),
+            &navmesh,
+            0.3,
+            seed,
+            crate::settings::HUMAN_COUNT,
+        );
         world.flush();
 
         let mut query = world.query::<(&PawnId, &Transform, &Pace, &WanderHeading)>();

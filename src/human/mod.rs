@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use self::behavior::{escape, flee, panic};
 pub use self::components::{
     CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
-    Pace, PanicRecoil, WanderHeading, WanderPause,
+    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause,
 };
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
@@ -43,6 +43,7 @@ impl Plugin for HumanPlugin {
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()
             .track_pref::<HumanStyle>()
+            .init_resource::<PopulationSize>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),
@@ -65,13 +66,13 @@ impl Plugin for HumanPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    pick_wander_targets.in_set(SimPipeline::Locked),
+                    pick_wander_targets.in_set(SimPipeline::Deterministic),
                     // ползунок разброса — на тике, а не в кадре: скорости
                     // пешек входят в состояние прогона, и правка, применённая
                     // в кадре, легла бы между разными тиками при разном fps
                     sync_human_pace
                         .run_if(resource_changed::<HumanStyle>)
-                        .in_set(SimPipeline::Locked),
+                        .in_set(SimPipeline::Deterministic),
                     panic,
                     flee,
                     escape,

@@ -32,6 +32,19 @@ impl Pace {
     }
 }
 
+/// Сколько людей расселяет спавн. Ручки нет и в настройках не живёт: в игре
+/// это всегда [`HUMAN_COUNT`](crate::settings::HUMAN_COUNT), а параметром
+/// сделано ради сцен, которым толпа не нужна, — реплей-теста
+/// (`tests/determinism.rs`) и демо-стендов.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PopulationSize(pub usize);
+
+impl Default for PopulationSize {
+    fn default() -> Self {
+        Self(crate::settings::HUMAN_COUNT)
+    }
+}
+
 /// Настройки людей, крутятся ползунками панели Human и сохраняются между
 /// запусками — тот же контракт, что у `DemonStyle`: это выбор пользователя, а
 /// не состояние мира, и рестарт он переживает.

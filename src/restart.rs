@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use crate::demon::Demon;
 use crate::dev::TestWalker;
-use crate::human::{CorpseTag, Human, HumanStyle, spawn_population};
+use crate::human::{CorpseTag, Human, HumanStyle, PopulationSize, spawn_population};
 use crate::loading::{AppState, WorldStarted};
 use crate::navigation::ArcNavmesh;
 use crate::rng::WorldSeed;
@@ -96,6 +96,7 @@ fn on_restart(
     arc_navmesh: Res<ArcNavmesh>,
     style: Res<HumanStyle>,
     seed: Res<WorldSeed>,
+    size: Res<PopulationSize>,
     scene_entities: Query<
         Entity,
         Or<(With<Human>, With<CorpseTag>, With<Demon>, With<TestWalker>)>,
@@ -117,5 +118,11 @@ fn on_restart(
     // состояние ГПСЧ сбрасывать нечего: все потоки выводятся из `WorldSeed` и
     // `PawnId`, а `spawned = 0` у сброшенного спавнера возвращает демонам те
     // же номера — значит, и те же потоки (см. `src/rng.rs`)
-    spawn_population(&mut commands, &arc_navmesh.read(), style.spread, seed.0);
+    spawn_population(
+        &mut commands,
+        &arc_navmesh.read(),
+        style.spread,
+        seed.0,
+        size.0,
+    );
 }

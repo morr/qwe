@@ -15,10 +15,10 @@
 //! | разброс скоростей (ползунок) | применяется в кадре правки | на ближайшем тике |
 //! | расталкивание пешек | работает | выключено (косметика, завязанная на камеру и `FrameCount`) |
 //!
-//! В расписании эта таблица записана двумя множествами — [`SimPipeline::Live`]
-//! и [`SimPipeline::Locked`]; система объявляет свою ветку, а гейтятся ветки
-//! один раз здесь. Единственное исключение — `separation_runs`, которому режим
-//! нужен и в отрицании (док у самого условия).
+//! В расписании эта таблица записана двумя множествами —
+//! [`SimPipeline::Live`] и [`SimPipeline::Deterministic`]; система объявляет
+//! свою ветку, а гейтятся ветки один раз здесь. Единственное исключение —
+//! `separation_runs`, которому режим нужен и в отрицании (док у условия).
 //!
 //! Единица повтора — **тик**, а не кадр. Частота кадров меняет лишь то,
 //! сколько тиков успевает пройти за кадр: шаг `Time<Fixed>` постоянен, ответ
@@ -32,6 +32,8 @@
 
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
+
+pub mod replay;
 
 use bevy::ecs::schedule::ScheduleLabel;
 
@@ -73,8 +75,8 @@ pub fn deterministic(mode: Res<Determinism>) -> bool {
 pub enum SimPipeline {
     /// Обычный прогон: покадровый ритм, живой бэкенд, приоритет от камеры.
     Live,
-    /// Детерминированный: всё по тикам, бэкенд заморожен, очередь FIFO.
-    Locked,
+    /// Повторяемый: всё по тикам, бэкенд заморожен, очередь FIFO.
+    Deterministic,
 }
 
 /// Обе ветки разом — для одного расписания. Условие считается по разу на
@@ -85,7 +87,7 @@ fn gate_pipelines<S: ScheduleLabel>(app: &mut App, schedule: S) {
         schedule,
         (
             SimPipeline::Live.run_if(not(deterministic)),
-            SimPipeline::Locked.run_if(deterministic),
+            SimPipeline::Deterministic.run_if(deterministic),
         ),
     );
 }
@@ -131,8 +133,8 @@ impl Plugin for DeterminismPlugin {
         // Каждое расписание, где ветки встречаются, гейтится отдельно —
         // конфигурация множества принадлежит расписанию, а не приложению.
         // `OnEnter` тоже здесь: постройка иерархии стартует в разных фазах
-        // (`Live` — после прогрева, `Locked` — до него), и это ровно такой же
-        // выбор ветки, как и всё остальное в таблице
+        // (`Live` — после прогрева, `Deterministic` — до него), и это ровно
+        // такой же выбор ветки, как и всё остальное в таблице
         gate_pipelines(app, Update);
         gate_pipelines(app, FixedUpdate);
         gate_pipelines(app, OnEnter(PlayPhase::Live));

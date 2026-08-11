@@ -242,7 +242,7 @@ impl Plugin for NavigationPlugin {
                 OnEnter(PlayPhase::Warmup),
                 start_northstar_build
                     .run_if(northstar_wanted)
-                    .in_set(crate::determinism::SimPipeline::Locked),
+                    .in_set(crate::determinism::SimPipeline::Deterministic),
             )
             .add_systems(
                 Update,
