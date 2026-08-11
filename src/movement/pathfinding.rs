@@ -145,22 +145,14 @@ pub fn stamp_pathfinding_requests(
 
 /// Заявка в очереди детерминированного диспетчера.
 ///
-/// Ключ отбора — `(requested_at, species, pawn_id)`, и он **уникален**.
-///
-/// Вид в ключе обязателен: `PawnId` — порядковый номер спавна **в пределах
-/// вида**, поэтому демон №5 и человек №5 существуют одновременно, а срочная
-/// очередь смешивает демонов с убегающими людьми. Без вида их ключи совпали
-/// бы, и порядок между ними задавала бы нестабильная сортировка, то есть
-/// порядок обхода запроса — ровно то, от чего режим обязан не зависеть.
-/// `u32::MAX` достаётся одному только тестовому ходоку из `dev.rs`, демонов с
-/// таким номером не бывает.
+/// Ключ отбора — тик заявки, а ничью на нём разрывает
+/// [`pawn_key`](super::order::pawn_key); ключ целиком **уникален**.
 ///
 /// На уникальности держится детерминизм частичной выборки (см.
 /// `take_within_budget`), поэтому она проверяется `debug_assert`.
 pub struct QueuedRequest {
     requested_at: u64,
-    species: u8,
-    pawn_id: u32,
+    pawn: (u8, u32),
     units: u32,
     entity: Entity,
     start_world: Vec2,
@@ -170,7 +162,7 @@ pub struct QueuedRequest {
 
 impl QueuedRequest {
     fn key(&self) -> (u64, u8, u32) {
-        (self.requested_at, self.species, self.pawn_id)
+        (self.requested_at, self.pawn.0, self.pawn.1)
     }
 }
 
@@ -309,8 +301,7 @@ pub fn dispatch_pathfinding_requests_deterministic(
     for (entity, sim_position, request, requested_at, pawn_id, is_human, is_fleeing) in &requests {
         let queued = QueuedRequest {
             requested_at: requested_at.0,
-            species: u8::from(is_human),
-            pawn_id: pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
+            pawn: super::order::pawn_key(is_human, pawn_id),
             units: request_units(request.start_tile, request.end_tile),
             entity,
             // полигональный поиск стартует из реальной позиции пешки, а не из
@@ -391,19 +382,14 @@ pub fn apply_pathfinding_results(
     // слот навсегда ушёл из бюджета. На детерминизм это не влияет: срок
     // вычисляется детерминированно, и подстраховка срабатывает только там,
     // где штатного хода уже не было
-    // Вид перед номером — по той же причине, что и в очереди диспетчера:
-    // `PawnId` уникален лишь внутри вида, а срок настаёт разом и у демонов, и
-    // у людей. Без вида ничью разрешал бы `Entity`, а индексы сущностей
-    // переиспользуются после смертей и рестарта в другом порядке.
+    // срок настаёт разом у демонов и у людей, так что порядок держит общий
+    // ключ пешки (`order::pawn_key`), а не обход запроса
     let mut due: Vec<(u8, u32, Entity)> = tasks
         .iter()
         .filter(|(.., retire_at, _)| retire_at.0 <= tick.0)
         .map(|(entity, pawn_id, .., is_human)| {
-            (
-                u8::from(is_human),
-                pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
-                entity,
-            )
+            let (species, number) = super::order::pawn_key(is_human, pawn_id);
+            (species, number, entity)
         })
         .collect();
     due.sort_unstable();

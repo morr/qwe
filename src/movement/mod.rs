@@ -1,5 +1,6 @@
 mod components;
 mod destination;
+mod order;
 mod pathfinding;
 mod separation;
 mod step;

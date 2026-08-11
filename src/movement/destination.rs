@@ -541,18 +541,19 @@ pub fn assign_destination_slots(
     // Иначе пешка с дальнего края забирает середину, а стоящая вплотную уезжает
     // наружу — лишний крюк обоим и встречный поток между ними.
     //
-    // Хвост ключа — вид и номер пешки: сам по себе порядок обхода архетипов
-    // ничего не гарантирует, а равные расстояния в толпе обычное дело. Тот же
-    // ключ, что у детерминированного диспетчера.
+    // Хвост ключа — общий ключ пешки (`order::pawn_key`): сам по себе порядок
+    // обхода архетипов ничего не гарантирует, а равные расстояния в толпе
+    // обычное дело. Тот же ключ, что у детерминированного диспетчера.
     order.clear();
     order.extend(
         fresh
             .iter()
             .map(|(entity, pawn_id, is_human, position, _, request, _)| {
+                let (species, number) = super::order::pawn_key(is_human, pawn_id);
                 (
                     (tile_center(request.end_tile) - position.0).length_squared(),
-                    u8::from(is_human),
-                    pawn_id.map_or(u32::MAX, |pawn_id| pawn_id.0),
+                    species,
+                    number,
                     entity,
                 )
             }),
