@@ -17,6 +17,7 @@ pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, 
 use bevy::prelude::*;
 
 use crate::loading::{AppState, WorldInitSet};
+use crate::prefs::{TrackPrefExt, retuned};
 
 /// Направление тени на всей карте: 30° вниз-вправо, нормировано. Один
 /// источник света и на дома, и на кроны — держится здесь, у общего родителя
@@ -44,6 +45,11 @@ impl Plugin for MapPlugin {
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
             .register_type::<RoadStyle>()
+            .track_pref::<TreeStyle>()
+            .track_pref::<TreeRowStyle>()
+            .track_pref::<ConiferNoiseStyle>()
+            .track_pref::<BuildingHeightMode>()
+            .track_pref::<RoadStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -81,37 +87,26 @@ impl Plugin for MapPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing))
-                        // ресурс «изменён» и в кадре, где он появился, — там
-                        // кроны ещё не спавнены и пересобирать нечего
+                        // `retuned`, а не `resource_changed`: в кадре, где
+                        // настройки легли на ресурс, кроны ещё не спавнены и
+                        // пересобирать нечего
                         .run_if(
-                            resource_changed::<TreeStyle>
-                                .and_then(not(resource_added::<TreeStyle>))
-                                .or_else(
-                                    resource_changed::<TreeRowStyle>
-                                        .and_then(not(resource_added::<TreeRowStyle>)),
-                                )
-                                .or_else(
-                                    resource_changed::<ConiferNoiseStyle>
-                                        .and_then(not(resource_added::<ConiferNoiseStyle>)),
-                                ),
+                            retuned::<TreeStyle>
+                                .or_else(retuned::<TreeRowStyle>)
+                                .or_else(retuned::<ConiferNoiseStyle>),
                         ),
                     buildings::rebuild_buildings
                         .run_if(in_state(AppState::Playing))
-                        .run_if(resource_changed::<BuildingHeightMode>)
-                        .run_if(not(resource_added::<BuildingHeightMode>)),
+                        .run_if(retuned::<BuildingHeightMode>),
                     roads::rebuild_roads
                         .run_if(in_state(AppState::Playing))
-                        .run_if(resource_changed::<RoadStyle>)
-                        .run_if(not(resource_added::<RoadStyle>)),
+                        .run_if(retuned::<RoadStyle>),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку трамвая запускает только её
                     // фактическая смена
                     (
                         tram::update_tram_zoom_bucket,
-                        tram::rebuild_tram.run_if(
-                            resource_changed::<tram::TramZoomBucket>
-                                .and_then(not(resource_added::<tram::TramZoomBucket>)),
-                        ),
+                        tram::rebuild_tram.run_if(retuned::<tram::TramZoomBucket>),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

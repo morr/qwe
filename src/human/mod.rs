@@ -17,6 +17,7 @@ pub use self::systems::{pick_wander_targets, spawn_population};
 use self::systems::{spawn_humans, sync_human_pace};
 use crate::determinism::deterministic;
 use crate::loading::{AppState, WorldInitSet};
+use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
 
 pub struct HumanPlugin;
@@ -35,6 +36,7 @@ impl Plugin for HumanPlugin {
             .register_type::<Pace>()
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()
+            .track_pref::<HumanStyle>()
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),

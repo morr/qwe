@@ -41,6 +41,8 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use rand::SeedableRng;
 
+use crate::prefs::TrackPrefExt;
+
 /// ГПСЧ симуляции. Единственное место, где он выбирается: xoshiro256++ —
 /// 32 байта состояния (важно при 20 000 людей) и заметно быстрее
 /// криптографического thread-local генератора `rand::rng()`.
@@ -230,7 +232,8 @@ impl Plugin for RngPlugin {
         app.register_type::<WorldSeed>()
             .register_type::<PawnId>()
             .register_type::<WanderIndex>()
-            .init_resource::<WorldSeed>();
+            .init_resource::<WorldSeed>()
+            .track_pref::<WorldSeed>();
     }
 }
 

@@ -50,6 +50,7 @@ use crate::map::osm::MapData;
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
+use crate::prefs::TrackPrefExt;
 use crate::settings::{MAP_SIZE, NavtileBase, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
 use crate::ui::{
     GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
@@ -172,6 +173,10 @@ impl Plugin for UiDebugTogglesPlugin {
             .register_type::<DebugNavmesh>()
             .register_type::<DebugDoors>()
             .register_type::<DebugConiferNoise>()
+            .track_pref::<DebugGrid>()
+            .track_pref::<DebugNavmesh>()
+            .track_pref::<DebugDoors>()
+            .track_pref::<DebugConiferNoise>()
             .add_systems(Startup, render_debug_toggles)
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё

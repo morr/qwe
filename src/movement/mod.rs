@@ -26,6 +26,7 @@ pub use self::separation::{
 };
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 use crate::loading::AppState;
+use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
 
 use self::pathfinding::{
@@ -55,8 +56,10 @@ impl Plugin for MovementPlugin {
             .register_type::<PreviousSimPosition>()
             .init_resource::<DrawMovePaths>()
             .register_type::<DrawMovePaths>()
+            .track_pref::<DrawMovePaths>()
             .init_resource::<SeparationStyle>()
             .register_type::<SeparationStyle>()
+            .track_pref::<SeparationStyle>()
             .init_resource::<SeparationHolds>()
             .init_resource::<SeparationSteer>()
             .init_resource::<self::separation::SeparationBlock>()

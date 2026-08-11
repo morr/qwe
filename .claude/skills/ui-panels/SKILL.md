@@ -224,8 +224,25 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   `settings.toml` from the OS settings dir (macOS:
   `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being
   built, before any schedule; `PrefsPlugin` is registered **last** because that scan needs
-  the other plugins' `register_type` calls to have run. Any change to those resources —
-  click, key P, BRP — triggers `SaveSettingsSync::IfChanged`. Delete the file to reset.
+  the other plugins' `register_type` calls to have run. Delete the file to reset.
+
+  **Persisting is a registration, not a list**: `app.track_pref::<T>()` next to the
+  resource's own `init_resource` adds a one-line system that queues
+  `SaveSettingsSync::IfChanged` when `T` changes. It replaced a 20-branch `or_else`
+  chain inside `prefs.rs` — a mirror of a list maintained elsewhere, and it had lost
+  `RoadStyle`, whose edits only reached the disk if some *other* tracked resource
+  happened to change in the same frame. Deliberately untracked: `SavedCameraView`
+  (changes every frame of a camera drag; `camera::track_camera_view` debounces it and
+  saves by hand). `IfChanged` re-checks the whole file's change ticks itself, so two
+  resources changing in one frame still cost one write.
+
+  **`retuned::<T>`** (same module) is the matching run condition — `changed && !added`.
+  Settings are applied to resources while the `App` is built, so on the world's first
+  frame every tunable reads as *changed*; a rebuild fired by that is at best redundant
+  (the world was just built from those values) and at worst a panic — there is nothing
+  spawned to despawn yet. Every `rebuild_*` in `map/mod.rs`, the city reload and the
+  determinism restart request use it; do not hand-roll
+  `resource_changed::<T>.and_then(not(resource_added::<T>))` again.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`

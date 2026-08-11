@@ -9,6 +9,7 @@ use bevy::window::PrimaryWindow;
 use crate::city::City;
 use crate::loading::{AppState, WorldInitSet};
 use crate::portal::PortalPos;
+use crate::prefs::TrackPrefExt;
 use crate::restart::RestartEvent;
 
 /// Зум = масштаб трансформа камеры: мировых метров на экранный пиксель.
@@ -113,6 +114,10 @@ impl Plugin for CameraPlugin {
             .init_resource::<SavedCameraView>()
             .register_type::<CameraPositionMode>()
             .register_type::<SavedCameraView>()
+            // `SavedCameraView` не отслеживается: он меняется каждый кадр
+            // протяжки, и запись по изменению перезаписывала бы файл на кадр —
+            // у него свой дебаунс (`track_camera_view`)
+            .track_pref::<CameraPositionMode>()
             .add_systems(Startup, spawn_camera)
             // карта нового города лежит в тех же координатах, но портал
             // переезжает — камеру возвращаем к нему на каждой загрузке

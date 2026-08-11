@@ -612,11 +612,17 @@ skill**.
   `SimTick`, not by it.
   Per-tick cost is ~0.1 ms (`sim/*_ms` diagnostics). The whole control loop — sim-speed
   skill.
-- **Remembered UI options** (`prefs.rs`) — every UI-settable resource is a
-  `bevy::settings::SettingsGroup` persisted in `settings.toml` (macOS:
-  `~/Library/Preferences/com.github.morr.qwe/`); any change — click, key P, BRP —
-  saves via `SaveSettingsSync::IfChanged`. `PrefsPlugin` is registered **last** (needs
-  every `register_type`). Delete the file to reset.
+- **Tunable resource** (`prefs.rs`) — a resource the user retunes: a panel, a hotkey or a
+  BRP write. Two things are asked of one, and both live in `prefs.rs`:
+  **`app.track_pref::<T>()`** persists it (a `bevy::settings::SettingsGroup` in
+  `settings.toml`, macOS `~/Library/Preferences/com.github.morr.qwe/`, saved via
+  `SaveSettingsSync::IfChanged`), and the run condition **`retuned::<T>`** —
+  `changed && !added` — gates whatever rebuilds on it. Registration sits with the
+  resource's own plugin, next to its `init_resource`; the hand-kept mirror it replaced
+  had lost `RoadStyle`. `SavedCameraView` is deliberately *not* tracked — it changes on
+  every camera-drag frame and has its own debounce (`camera::track_camera_view`).
+  `PrefsPlugin` is registered **last** (the settings scan needs every `register_type`).
+  Delete the file to reset.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`

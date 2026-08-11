@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
+use crate::prefs::{TrackPrefExt, retuned};
 use crate::settings::{
     BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
     NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
@@ -93,20 +94,14 @@ impl Plugin for CityPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<City>()
             .register_type::<City>()
+            .track_pref::<City>()
             .add_systems(
                 Update,
                 reload_world
                     .run_if(in_state(AppState::Playing))
-                    // ресурс «изменён» и в кадре, где его вставили настройки —
-                    // guard по-ресурсный, внутри каждой ветки
-                    .run_if(
-                        resource_changed::<City>
-                            .and_then(not(resource_added::<City>))
-                            .or_else(
-                                resource_changed::<NavtileBase>
-                                    .and_then(not(resource_added::<NavtileBase>)),
-                            ),
-                    ),
+                    // `retuned` по каждому: ресурс числится изменённым и в
+                    // кадре, где его вставили настройки
+                    .run_if(retuned::<City>.or_else(retuned::<NavtileBase>)),
             );
     }
 }

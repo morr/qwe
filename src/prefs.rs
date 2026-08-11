@@ -1,6 +1,11 @@
-//! Запоминание выбранных в UI опций между запусками: выбранный город,
-//! дебаг-тумблеры (grid / navmesh / movepath), алгоритм поиска пути, размер
-//! навтайла, режим стартовой позиции камеры и панель стиля деревьев.
+//! Настраиваемые ресурсы: их запоминание между запусками и общее условие
+//! «пользователь покрутил ручку».
+//!
+//! Ресурс считается настраиваемым, если его правит UI-панель, хоткей или
+//! запись по BRP: город, дебаг-тумблеры, алгоритм поиска пути, размер
+//! навтайла, стили карты, режим стартовой позиции камеры. Про такой ресурс
+//! спрашивают ровно две вещи — «сохранить его выбор» и «его только что
+//! покрутили, пора пересобирать», — и обе живут здесь.
 //!
 //! Поверх первопартийного `bevy::settings` (см. upstream-пример
 //! `window/persisting_window_settings.rs`): сами ресурсы помечены
@@ -13,25 +18,13 @@
 //! реестр типов на своей сборке, и `register_type` остальных плагинов должны
 //! к этому моменту уже отработать.
 //!
-//! Запись — `save_prefs` на любое изменение этих ресурсов, откуда бы оно ни
+//! Запись — на любое изменение отслеживаемого ресурса, откуда бы оно ни
 //! пришло: клик по кнопке, хоткей, правка через BRP. Пишем синхронно, а не
 //! `SaveSettingsDeferred`: кликов мало, а отложенная запись теряется, если
 //! выйти из игры в ту же секунду.
 
 use bevy::prelude::*;
 use bevy::settings::{SaveSettingsSync, SettingsPlugin};
-
-use crate::camera::CameraPositionMode;
-use crate::city::City;
-use crate::demon::DemonStyle;
-use crate::determinism::Determinism;
-use crate::human::HumanStyle;
-use crate::map::{BuildingHeightMode, ConiferNoiseStyle, RoadStyle, TreeRowStyle, TreeStyle};
-use crate::movement::{DrawMovePaths, SeparationStyle};
-use crate::navigation::{PathfindingAlgorithm, PolymeshDebug};
-use crate::rng::WorldSeed;
-use crate::settings::NavtileBase;
-use crate::ui::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 
 /// Обратное доменное имя из URL репозитория — как просит документация
 /// `SettingsPlugin`. Определяет папку: на macOS
@@ -42,39 +35,49 @@ pub struct PrefsPlugin;
 
 impl Plugin for PrefsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(SettingsPlugin::new(APP_NAME)).add_systems(
-            Update,
-            save_prefs.run_if(
-                resource_changed::<City>
-                    .or_else(resource_changed::<WorldSeed>)
-                    .or_else(resource_changed::<Determinism>)
-                    .or_else(resource_changed::<DebugGrid>)
-                    .or_else(resource_changed::<DebugNavmesh>)
-                    .or_else(resource_changed::<DebugDoors>)
-                    .or_else(resource_changed::<DebugConiferNoise>)
-                    .or_else(resource_changed::<DrawMovePaths>)
-                    .or_else(resource_changed::<PathfindingAlgorithm>)
-                    .or_else(resource_changed::<PolymeshDebug>)
-                    .or_else(resource_changed::<NavtileBase>)
-                    .or_else(resource_changed::<TreeStyle>)
-                    .or_else(resource_changed::<TreeRowStyle>)
-                    .or_else(resource_changed::<ConiferNoiseStyle>)
-                    .or_else(resource_changed::<BuildingHeightMode>)
-                    // RoadStyle здесь не хватало с самого начала: его правки
-                    // сохранялись, только если в тот же кадр менялся другой
-                    // отслеживаемый ресурс
-                    .or_else(resource_changed::<RoadStyle>)
-                    .or_else(resource_changed::<DemonStyle>)
-                    .or_else(resource_changed::<HumanStyle>)
-                    .or_else(resource_changed::<SeparationStyle>)
-                    // сам сохранённый вид камеры (`SavedCameraView`) пишется не
-                    // отсюда, а из `camera::save_camera_view_on_exit`
-                    .or_else(resource_changed::<CameraPositionMode>),
-            ),
-        );
+        app.add_plugins(SettingsPlugin::new(APP_NAME));
+    }
+}
+
+/// Регистрация настраиваемого ресурса: его правки уезжают в `settings.toml`.
+///
+/// Вызывается **у владельца ресурса**, рядом с его `init_resource` — список
+/// сохраняемого собирается из тех же плагинов, что заводят сами ресурсы, а не
+/// повторяется отдельным перечнем в этом модуле. Ручное зеркало здесь и стояло,
+/// и ровно свой класс ошибок и давало: `RoadStyle` в нём не хватало с самого
+/// начала, так что его правки сохранялись, только если в тот же кадр менялся
+/// какой-нибудь другой отслеживаемый ресурс.
+///
+/// Сохранение решает `SaveSettingsSync::IfChanged` — сюда попадает *весь*
+/// файл, если хоть одна его группа поменялась, поэтому лишний вызов ничего не
+/// пишет и команды нескольких ресурсов в одном кадре не складываются в
+/// несколько записей.
+///
+/// Регистрировать надо не всё сохраняемое: `SavedCameraView` меняется каждый
+/// кадр протяжки камеры, и запись по изменению означала бы перезапись файла на
+/// кадр. У него свой дебаунс — `camera::track_camera_view`.
+pub trait TrackPrefExt {
+    fn track_pref<T: Resource>(&mut self) -> &mut Self;
+}
+
+impl TrackPrefExt for App {
+    fn track_pref<T: Resource>(&mut self) -> &mut Self {
+        self.add_systems(Update, save_prefs.run_if(resource_changed::<T>))
     }
 }
 
 fn save_prefs(mut commands: Commands) {
     commands.queue(SaveSettingsSync::IfChanged);
+}
+
+/// «Ручку покрутили»: ресурс изменён, и это не тот кадр, в котором он
+/// появился.
+///
+/// Настройки накладываются на ресурсы при сборке `App`, поэтому в первом кадре
+/// мира каждый настраиваемый ресурс числится и добавленным, и изменённым.
+/// Пересборка по такому «изменению» в лучшем случае лишняя (мир только что
+/// собран из этих же значений), в худшем — падает: деспавнить и пересобирать
+/// ещё нечего.
+pub fn retuned<T: Resource>(res: Option<Res<T>>) -> bool {
+    res.is_some_and(|res| res.is_changed() && !res.is_added())
 }

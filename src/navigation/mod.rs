@@ -22,6 +22,7 @@ pub use self::polymesh::{
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
 use crate::map::osm::model::MapData;
+use crate::prefs::TrackPrefExt;
 use crate::settings::NavtileBase;
 
 /// Ответ асинхронного поиска пути (снимается в
@@ -203,8 +204,10 @@ impl Plugin for NavigationPlugin {
         app.init_resource::<ArcNavmesh>()
             .register_type::<PathfindingAlgorithm>()
             .init_resource::<PathfindingAlgorithm>()
+            .track_pref::<PathfindingAlgorithm>()
             .register_type::<NavtileBase>()
             .init_resource::<NavtileBase>()
+            .track_pref::<NavtileBase>()
             .init_resource::<NorthstarGrid>()
             // navmesh заполняется и прореживается фоновым потоком загрузки
             // (`map/osm/download.rs`) — здесь остаётся только иерархия,
@@ -254,6 +257,7 @@ impl Plugin for NavigationPlugin {
             // меша запросы обслуживает сетка
             .register_type::<PolymeshDebug>()
             .init_resource::<PolymeshDebug>()
+            .track_pref::<PolymeshDebug>()
             .init_resource::<PolyNavmesh>()
             // восстановленный из настроек enabled: перестройка на входе в
             // мир, когда MapData нового города уже вставлена

@@ -28,6 +28,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::{AppState, WorldStarted};
 use crate::navigation::{Backend, Pathfinder};
+use crate::prefs::{TrackPrefExt, retuned};
 use crate::restart::RestartPending;
 use crate::rng::WorldSeed;
 
@@ -76,6 +77,7 @@ impl Plugin for DeterminismPlugin {
         app.register_type::<Determinism>()
             .register_type::<SimTick>()
             .init_resource::<Determinism>()
+            .track_pref::<Determinism>()
             .init_resource::<SimTick>()
             .init_resource::<DeterministicRun>()
             .add_observer(on_world_started)
@@ -87,16 +89,10 @@ impl Plugin for DeterminismPlugin {
                 Update,
                 request_restart_on_config_change
                     .run_if(in_state(AppState::Playing))
-                    .run_if(
-                        // `resource_added` отсекает восстановление настроек на
-                        // сборке `App`: без него первый же кадр мира просил бы
-                        // рестарт сам себе
-                        (resource_changed::<WorldSeed>.and_then(not(resource_added::<WorldSeed>)))
-                            .or_else(
-                                resource_changed::<Determinism>
-                                    .and_then(not(resource_added::<Determinism>)),
-                            ),
-                    ),
+                    // `retuned` отсекает восстановление настроек на сборке
+                    // `App`: по голому `resource_changed` первый же кадр мира
+                    // просил бы рестарт сам себе
+                    .run_if(retuned::<WorldSeed>.or_else(retuned::<Determinism>)),
             );
     }
 }

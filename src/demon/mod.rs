@@ -13,6 +13,7 @@ use self::systems::{
     draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
 };
 use crate::loading::{AppState, WorldStarted};
+use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
 
 pub struct DemonPlugin;
@@ -30,6 +31,7 @@ impl Plugin for DemonPlugin {
             .register_type::<DemonStyle>()
             .init_resource::<DemonSpawner>()
             .init_resource::<DemonStyle>()
+            .track_pref::<DemonStyle>()
             .add_observer(on_demon_caught_human)
             .add_observer(on_world_started)
             .add_systems(
