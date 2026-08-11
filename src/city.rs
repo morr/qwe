@@ -11,14 +11,12 @@ use bevy::math::DVec2;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::demon::DemonSpawner;
 use crate::loading::AppState;
 use crate::navigation::{NorthstarGrid, PolyNavmesh};
 use crate::settings::{
     BERLIN_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS, NY_GEO_CENTER, NY_PORTAL_POS,
     NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER, TULA_PORTAL_POS,
 };
-use crate::telemetry::Telemetry;
 
 /// Город, по которому строится карта.
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -124,8 +122,6 @@ fn reload_world(
     city: Res<City>,
     navtile: Res<NavtileBase>,
     mut next: ResMut<NextState<AppState>>,
-    mut spawner: ResMut<DemonSpawner>,
-    mut telemetry: ResMut<Telemetry>,
     mut northstar: ResMut<NorthstarGrid>,
     mut polymesh: ResMut<PolyNavmesh>,
 ) {
@@ -134,8 +130,10 @@ fn reload_world(
         *city,
         navtile.label()
     );
-    *spawner = DemonSpawner::default();
-    *telemetry = Telemetry::default();
+    // состояние прогона (спавнер, счётчики, часы) сбросят обсерверы
+    // `WorldStarted` на входе нового мира в `Live`; здесь чистится только
+    // производное от карты
+    //
     // иначе прогрев новой карты пойдёт по иерархии старой — пути сквозь дома
     northstar.clear();
     // полигональный меш описывает геометрию старого города, летящая

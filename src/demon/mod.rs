@@ -12,7 +12,7 @@ pub use self::components::{
 use self::systems::{
     draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
 };
-use crate::loading::AppState;
+use crate::loading::{AppState, WorldStarted};
 use crate::spatial::SimSet;
 
 pub struct DemonPlugin;
@@ -31,6 +31,7 @@ impl Plugin for DemonPlugin {
             .init_resource::<DemonSpawner>()
             .init_resource::<DemonStyle>()
             .add_observer(on_demon_caught_human)
+            .add_observer(on_world_started)
             .add_systems(
                 FixedUpdate,
                 (spawn_initial_burst, tick_spawner)
@@ -59,4 +60,10 @@ impl Plugin for DemonPlugin {
                     .run_if(in_state(AppState::Playing)),
             );
     }
+}
+
+/// Новый прогон мира — спавнер с нуля: `spawned = 0` возвращает демонам те же
+/// номера, а значит и те же потоки ГПСЧ (см. `src/rng.rs`).
+fn on_world_started(_event: On<WorldStarted>, mut spawner: ResMut<DemonSpawner>) {
+    *spawner = DemonSpawner::default();
 }

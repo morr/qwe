@@ -136,9 +136,11 @@ top speed.
 - Set the requested speed over BRP with `res set SimSpeed .requested N` (clamped to
   `MAX_SIM_SPEED`) — `brp speed` writes `Time<Virtual>` directly and the throttle
   overwrites it on the next frame.
-- **SimClock** — `elapsed`, virtual seconds the *current world* has lived, zeroed on
-  entering `PlayPhase::Live` (so map load and warmup don't count, and a city switch
-  restarts it). Not wall-clock: it stops on pause and runs `actual`× faster on speedup.
+- **SimClock** — `elapsed`, virtual seconds the *current world* has lived, zeroed
+  (together with `TickDebt.owed`) by the `WorldStarted` observer — i.e. on `Live` entry
+  and on every restart, one system for both paths (so map load and warmup don't count,
+  and a city switch restarts it). Not wall-clock: it stops on pause and runs `actual`×
+  faster on speedup.
   The panel's first line shows it as plain seconds (`T+8130`), and it is readable
   over BRP as `SimClock`.
 - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): with the

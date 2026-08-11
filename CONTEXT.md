@@ -87,10 +87,19 @@ in `main.rs`.
   navmesh through the `ArcNavmesh` handle and returns the snapped portal position.
   **Rule: heavy init belongs in this thread, not in `OnEnter(Playing)`** — no frame is
   drawn inside a schedule, so work there freezes the loader on its last message.
+- **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
+  both lifecycle paths share. Fired from exactly two places: entering `PlayPhase::Live`
+  (first launch, city switch) and every restart (`on_restart` — it passes through no
+  state, so `OnEnter` never refires for it). All run state — `SimClock` + `TickDebt`,
+  `SimTick` + `DeterministicRun`, `Telemetry`, `DemonSpawner` — is reset by observers of
+  this event, each living in its owning module; the full list is
+  `grep "On<WorldStarted>"`. Map-derived state (`NorthstarGrid`, `PolyNavmesh`) is *not*
+  run state and is cleared by the city switch alone — a restart keeps the map, and with
+  it the 12 s northstar hierarchy.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans/corpses/demons/walkers,
-  resets `DemonSpawner` + `Telemetry` + `SimTick` + `DeterministicRun`, respawns
-  population. The navmesh persists — it is filled once per city. Under **Deterministic**
-  (see "Determinism") this replays the previous run tick for tick.
+  fires **WorldStarted**, respawns population. The navmesh persists — it is filled once
+  per city. Under **Deterministic** (see "Determinism") this replays the previous run
+  tick for tick.
 - **RestartPending** (`restart.rs`, resource) — "a restart was ordered". The only way to
   ask for one from anywhere but the R key: changing the **world seed** or flipping
   **Deterministic**, whether from the panel or over BRP. `trigger_pending_restart`
@@ -109,10 +118,11 @@ in `main.rs`.
   to `AppState::Loading`: leaving `Playing` despawns the scene, the load thread downloads
   / re-parses the new extract, refills the same navmesh (`fill_from_mapdata` resets it
   first), re-snaps the portal, and `OnEnter(Playing)` rebuilds map and population and
-  resets the camera (`camera.rs::place_camera_on_world_ready`). `DemonSpawner`,
-  `Telemetry`, `NorthstarGrid` and `WarmupProgress` are reset on the way. The switch is
-  gated on `in_state(Playing)` — restarting a load on top of a running one would put two
-  threads into one navmesh.
+  resets the camera (`camera.rs::place_camera_on_world_ready`). `NorthstarGrid`,
+  `PolyNavmesh` and `WarmupProgress` are reset on the way; run state waits for
+  **WorldStarted** on the new world's `Live` entry. The switch is gated on
+  `in_state(Playing)` — restarting a load on top of a running one would put two threads
+  into one navmesh.
 - **`DespawnOnExit(AppState::Playing)`** — the *only* thing that clears the old city.
   Every world entity must carry it; the list of spawn sites and the rule live in
   `CLAUDE.md` ("World entities"), and `loading.rs::warn_leftover_world_entities` warns on
@@ -397,7 +407,7 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   distant pawns still wait longer, but reproducibly rather than because the player looked
   away. The camera does not appear in it at all.
 - **DeterministicRun** (`determinism.rs`) — the navigation backend frozen for the run (a
-  `Backend` snapshot), taken on entering `Live` and on every `RestartEvent`. northstar
+  `Backend` snapshot), taken on every **WorldStarted**. northstar
   and polymesh finish building at some moment of *real* time; a live
   `Pathfinder::backend()` would switch backends mid-run, and a replay would switch on a
   different tick. In this mode warmup waits for the wanted backend instead

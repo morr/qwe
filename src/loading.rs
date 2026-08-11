@@ -35,6 +35,16 @@ pub enum PlayPhase {
     Live,
 }
 
+/// Мир начал новый прогон: сцена собрана, симуляция сейчас поедет.
+///
+/// Триггерится ровно из двух мест: вход в `PlayPhase::Live` (первый запуск и
+/// смена города) и рестарт по R (`restart.rs::on_restart` — тот состояний не
+/// проходит и потому в `OnEnter` не попадает). Всё состояние прогона — часы,
+/// тики, счётчики, замороженный бэкенд — сбрасывают обсерверы этого события,
+/// каждый в своём модуле; полный список — `grep "On<WorldStarted>"`.
+#[derive(Event, Debug)]
+pub struct WorldStarted;
+
 /// Потолок ожидания прогрева, сек: экран загрузки не должен зависнуть
 /// навсегда, если пути почему-то не сходятся.
 const WARMUP_TIMEOUT: f32 = 10.0;
@@ -90,7 +100,10 @@ impl Plugin for LoadingPlugin {
             )
             // экран загрузки живёт до конца прогрева, а не до выхода из
             // `Loading`: мир строится раньше, чем по нему можно ходить
-            .add_systems(OnEnter(PlayPhase::Live), despawn_loader_ui);
+            .add_systems(
+                OnEnter(PlayPhase::Live),
+                (despawn_loader_ui, announce_world_start),
+            );
     }
 }
 
@@ -468,6 +481,10 @@ fn warn_leftover_world_entities(
     warn!(
         "world reload: {total} scene entities survived Playing (missing DespawnOnExit): {sample:?}"
     );
+}
+
+fn announce_world_start(mut commands: Commands) {
+    commands.trigger(WorldStarted);
 }
 
 fn despawn_loader_ui(mut commands: Commands, roots: Query<Entity, With<LoaderUiRoot>>) {

@@ -4,13 +4,12 @@
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 
-use crate::demon::{Demon, DemonSpawner};
+use crate::demon::Demon;
 use crate::dev::TestWalker;
 use crate::human::{CorpseTag, Human, HumanStyle, spawn_population};
-use crate::loading::AppState;
+use crate::loading::{AppState, WorldStarted};
 use crate::navigation::ArcNavmesh;
 use crate::rng::WorldSeed;
-use crate::telemetry::Telemetry;
 
 // `Default` в reflect-регистрации — для BRP: `brp event RestartEvent` без
 // аргументов конструирует значение через `ReflectDefault`, и без него запрос
@@ -91,12 +90,9 @@ fn trigger_pending_restart(mut commands: Commands, mut pending: ResMut<RestartPe
     commands.trigger(RestartEvent { to_portal: true });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn on_restart(
     _event: On<RestartEvent>,
     mut commands: Commands,
-    mut spawner: ResMut<DemonSpawner>,
-    mut telemetry: ResMut<Telemetry>,
     arc_navmesh: Res<ArcNavmesh>,
     style: Res<HumanStyle>,
     seed: Res<WorldSeed>,
@@ -112,9 +108,11 @@ fn on_restart(
         commands.entity(entity).despawn();
     }
 
-    *spawner = DemonSpawner::default();
-    *telemetry = Telemetry::default();
-    // часы симуляции сбрасывает свой обсервер в `sim_time`
+    // всё состояние прогона — спавнер, счётчики, часы, тики, замороженный
+    // бэкенд — сбрасывают обсерверы `WorldStarted`, каждый в своём модуле;
+    // триггер стоит до `spawn_population`, так что сбросы применяются раньше,
+    // чем лягут команды спавна
+    commands.trigger(WorldStarted);
 
     // состояние ГПСЧ сбрасывать нечего: все потоки выводятся из `WorldSeed` и
     // `PawnId`, а `spawned = 0` у сброшенного спавнера возвращает демонам те

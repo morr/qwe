@@ -26,9 +26,9 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::loading::{AppState, PlayPhase};
+use crate::loading::{AppState, WorldStarted};
 use crate::navigation::{Backend, Pathfinder};
-use crate::restart::{RestartEvent, RestartPending};
+use crate::restart::RestartPending;
 use crate::rng::WorldSeed;
 
 /// Тумблер `Deterministic` в панели World.
@@ -78,9 +78,7 @@ impl Plugin for DeterminismPlugin {
             .init_resource::<Determinism>()
             .init_resource::<SimTick>()
             .init_resource::<DeterministicRun>()
-            .add_observer(reset_on_restart)
-            .add_systems(OnEnter(AppState::Playing), reset_sim_tick)
-            .add_systems(OnEnter(PlayPhase::Live), freeze_navigation_backend)
+            .add_observer(on_world_started)
             .add_systems(
                 Update,
                 request_restart_on_config_change
@@ -99,21 +97,17 @@ impl Plugin for DeterminismPlugin {
     }
 }
 
-fn reset_sim_tick(mut tick: ResMut<SimTick>) {
-    tick.0 = 0;
-}
-
-fn reset_on_restart(
-    _event: On<RestartEvent>,
+/// Новый прогон: тики с нуля, бэкенд — свежим снимком. На входе в `Live`
+/// нужный бэкенд уже построен (в детерминированном режиме прогрев его
+/// дожидается, см. `loading.rs::poll_warmup`), а на рестарте по R снимок
+/// просто берётся заново с той же карты.
+fn on_world_started(
+    _event: On<WorldStarted>,
     mut tick: ResMut<SimTick>,
     mut run: ResMut<DeterministicRun>,
     pathfinder: Pathfinder,
 ) {
     tick.0 = 0;
-    *run = DeterministicRun(pathfinder.backend());
-}
-
-fn freeze_navigation_backend(mut run: ResMut<DeterministicRun>, pathfinder: Pathfinder) {
     *run = DeterministicRun(pathfinder.backend());
 }
 

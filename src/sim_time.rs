@@ -10,8 +10,7 @@ use bevy::app::RunFixedMainLoopSystems;
 use bevy::prelude::*;
 
 use crate::determinism::SimTick;
-use crate::loading::PlayPhase;
-use crate::restart::RestartEvent;
+use crate::loading::{PlayPhase, WorldStarted};
 use crate::settings::{
     ACTUAL_SPEED_WINDOW, MAX_FRAME_DELTA, MAX_SIM_SPEED, MIN_SIM_SPEED, SIM_FRAME_BUDGET_MS,
     SIM_FRAME_SHARE, SIM_LOAD_PEAK_DECAY, SIM_LOAD_SMOOTHING, SIM_TICK_DEBT_CAP,
@@ -219,15 +218,13 @@ impl Plugin for SimTimePlugin {
                 guard_frame_budget.before(crate::spatial::SimSet::SpatialRebuild),
             )
             .add_systems(Startup, pin_max_delta)
-            // рестарт по R отстраивает мир заново — часам тоже начинать с нуля
-            .add_observer(restart_sim_clock)
+            // новый прогон — часы и долг тиков с нуля (и по R, и по смене
+            // города: оба пути триггерят `WorldStarted`)
+            .add_observer(on_world_started)
             // прогрев идёт на паузе: мир уже собран, но за экраном загрузки
             // ему двигаться незачем — пусть пешки сначала получат пути
             .add_systems(OnEnter(PlayPhase::Warmup), pause_simulation)
-            .add_systems(
-                OnEnter(PlayPhase::Live),
-                (resume_simulation, start_sim_clock),
-            )
+            .add_systems(OnEnter(PlayPhase::Live), resume_simulation)
             .add_systems(
                 Update,
                 (
@@ -274,17 +271,8 @@ fn resume_simulation(mut time: ResMut<Time<Virtual>>, mut speed: ResMut<SimSpeed
 
 /// Долг тиков сбрасывается вместе с часами: он принадлежит прошлому миру,
 /// и вливать его тики в свежепостроенный — значит начать новый мир рывком.
-fn start_sim_clock(
-    mut clock: ResMut<SimClock>,
-    mut debt: ResMut<TickDebt>,
-    time: Res<Time<Virtual>>,
-) {
-    clock.restart(time.elapsed_secs_f64());
-    debt.owed = 0.0;
-}
-
-fn restart_sim_clock(
-    _event: On<RestartEvent>,
+fn on_world_started(
+    _event: On<WorldStarted>,
     mut clock: ResMut<SimClock>,
     mut debt: ResMut<TickDebt>,
     time: Res<Time<Virtual>>,
