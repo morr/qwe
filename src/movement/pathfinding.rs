@@ -228,6 +228,9 @@ fn take_within_budget(queue: &mut Vec<QueuedRequest>, budget: u32) {
         queue.truncate(cap);
     }
     queue.sort_unstable_by_key(QueuedRequest::key);
+    // сущности в сообщении обязательны: ключ называет вид и номер, но не
+    // говорит, КТО их занял, — а чинить столкновение двух демонов и
+    // столкновение демона с не-демоном нужно в разных местах
     debug_assert!(
         queue.windows(2).all(|pair| pair[0].key() < pair[1].key()),
         "ключ очереди обязан быть уникален, иначе частичная выборка недетерминирована; \
@@ -235,7 +238,10 @@ fn take_within_budget(queue: &mut Vec<QueuedRequest>, budget: u32) {
         queue
             .windows(2)
             .find(|pair| pair[0].key() >= pair[1].key())
-            .map(|pair| (pair[0].key(), pair[1].key()))
+            .map(|pair| (
+                (pair[0].entity, pair[0].key()),
+                (pair[1].entity, pair[1].key())
+            ))
     );
 
     let mut spent = 0;
