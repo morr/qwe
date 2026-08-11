@@ -162,6 +162,39 @@ in `CONTEXT.md` and the detail here in the same change.
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
 
+## Testing the parse
+
+`parse/tests.rs` is where a tag rule is pinned, and the fixture it uses is
+`fixture.rs::Overpass` — a scene stated in **map metres**, turned into an Overpass
+response, fed through the real `parse`:
+
+```rust
+let map = Overpass::new(CITY)
+    .way(&[("railway", "rail")], vec![sw, ne])
+    .way(&[("railway", "platform")], vec![sw, ne])       // dropped: whitelist
+    .area(&[("natural", "wood")], square(CENTER, 110.0)) // area = closed way
+    .node(&[("entrance", "main")], sw)
+    .relation(&[("natural", "water")], &[("outer", …), ("inner", …)])
+    .parse();
+```
+
+Four things about it worth knowing before writing a case:
+
+- **Metres, not degrees.** Points are unprojected with `GeoBounds::unproject`, so a test
+  builds its scene in the same numbers it asserts on (`CENTER`, `corners(half)`); the
+  round trip is pinned by `unproject_returns_the_point_project_started_from`.
+- **It goes through the JSON text**, not around it: deserialization of the Overpass DTO
+  is part of what these tests cover. That is why the builder emits a string rather than
+  handing `Element`s to an inner function.
+- **`area` closes the ring, `way` does not, `relation` members are left as given** —
+  OSM cuts an outer ring into several open ways, and assembling one from the pieces is
+  itself under test.
+- **Scenes are shared** where they repeat: `wood_scene()` (planting rules are checked as
+  subtractions from a full wood), `tree_row(tags)`, `fixture()`.
+
+A new tag reaching the map means a case here — a builder line and an assertion, not a
+new JSON literal. Coverage of tags overall is the audit in `references/osm-coverage.md`.
+
 ## Footprint bands
 
 `map/footprint.rs` — the strips linear geometry occupies on the ground, one construction

@@ -1,6 +1,7 @@
 use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
+use crate::map::osm::fixture::{Overpass, closed, rect, square};
 use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -10,47 +11,55 @@ use crate::settings::MAP_SIZE;
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
 const CITY: City = City::Tula;
 
+/// Центр карты: сцены собираются вокруг него, и в тех же метрах пишутся
+/// проверки — фикстуре незачем говорить в градусах.
+const CENTER: Vec2 = Vec2::new(MAP_SIZE.x / 2.0, MAP_SIZE.y / 2.0);
+
+/// Половина стороны обычной сцены: дом, пруд, отрезок дороги.
+const HALF: f32 = 55.0;
+/// Половина стороны лесной сцены — посадке нужно место.
+const WOOD_HALF: f32 = 110.0;
+
+/// Углы квадратной сцены вокруг центра карты: юго-западный, юго-восточный,
+/// северо-восточный, северо-западный.
+fn corners(half: f32) -> (Vec2, Vec2, Vec2, Vec2) {
+    let (min, max) = (CENTER - Vec2::splat(half), CENTER + Vec2::splat(half));
+    (min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y))
+}
+
 /// Мини-ответ Overpass: way-здание, дорога-мост, relation-вода из двух
 /// половинок с дыркой-островом.
-fn fixture() -> String {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005; // ~55 м по широте
-    format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 1, "tags": {{"building": "yes"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "way", "id": 2, "tags": {{"highway": "secondary", "bridge": "yes"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 3, "tags": {{"highway": "proposed"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "relation", "id": 4, "tags": {{"natural": "water"}},
-    "members": [
-      {{"type": "way", "role": "outer", "geometry": [
-        {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {c}}}]}},
-      {{"type": "way", "role": "outer", "geometry": [
-        {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}, {{"lat": {a}, "lon": {b}}}]}},
-      {{"type": "way", "role": "inner", "geometry": [
-        {{"lat": {i1}, "lon": {j1}}}, {{"lat": {i1}, "lon": {j2}}},
-        {{"lat": {i2}, "lon": {j2}}}, {{"lat": {i2}, "lon": {j1}}},
-        {{"lat": {i1}, "lon": {j1}}}]}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-        i1 = lat - d / 4.0,
-        i2 = lat + d / 4.0,
-        j1 = lon - d / 4.0,
-        j2 = lon + d / 4.0,
-    )
+fn fixture() -> Overpass {
+    let (sw, se, ne, nw) = corners(HALF);
+    Overpass::new(CITY)
+        .area(&[("building", "yes")], square(CENTER, HALF))
+        .way(&[("highway", "secondary"), ("bridge", "yes")], vec![sw, ne])
+        .way(&[("highway", "proposed")], vec![sw, ne])
+        .relation(
+            &[("natural", "water")],
+            &[
+                ("outer", vec![sw, se, ne]),
+                ("outer", vec![ne, nw, sw]),
+                ("inner", closed(square(CENTER, HALF / 4.0))),
+            ],
+        )
+}
+
+/// Лес во всю сцену — фон тестов посадки: деревья растут только в лесных
+/// полигонах, поэтому каждое правило проверяется как вычитание из него.
+fn wood_scene() -> Overpass {
+    Overpass::new(CITY).area(&[("natural", "wood")], square(CENTER, WOOD_HALF))
+}
+
+/// Ряд деревьев поперёк сцены — общее начало тестов `natural=tree_row`.
+fn tree_row(tags: &[(&str, &str)]) -> MapData {
+    let (sw, se, ..) = corners(HALF);
+    Overpass::new(CITY).way(tags, vec![sw, se]).parse()
 }
 
 #[test]
 fn parses_building_road_and_multipolygon() {
-    let map = parse(&fixture(), CITY).unwrap();
+    let map = fixture().parse();
 
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.buildings[0].outer.len(), 4);
@@ -64,35 +73,24 @@ fn parses_building_road_and_multipolygon() {
     let water = &map.water[0];
     assert_eq!(water.holes.len(), 1);
     // центр — в дырке-острове: суша
-    assert!(!point_in_area(MAP_SIZE / 2.0, water));
+    assert!(!point_in_area(CENTER, water));
     // точка между границей и островом — вода
-    let near_edge = MAP_SIZE / 2.0 + Vec2::new(0.0, 40.0);
-    assert!(point_in_area(near_edge, water));
+    assert!(point_in_area(CENTER + Vec2::new(0.0, 40.0), water));
 }
 
 #[test]
 fn parses_rails_and_drops_station_furniture() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
+    let (sw, se, ne, nw) = corners(HALF);
     // путь, платформа (отбрасывается), заброшенная ветка и трамвай на улице
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 20, "tags": {{"railway": "rail"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 21, "tags": {{"railway": "platform"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 22, "tags": {{"railway": "abandoned"}},
-    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}},
-  {{"type": "way", "id": 23, "tags": {{"railway": "tram", "highway": "residential"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
-
-    let map = parse(&json, CITY).unwrap();
+    let map = Overpass::new(CITY)
+        .way(&[("railway", "rail")], vec![sw, ne])
+        .way(&[("railway", "platform")], vec![sw, ne])
+        .way(&[("railway", "abandoned")], vec![se, nw])
+        .way(
+            &[("railway", "tram"), ("highway", "residential")],
+            vec![sw, se],
+        )
+        .parse();
 
     assert_eq!(map.rails.len(), 3, "platform must not become a rail");
     assert_eq!(map.rails[0].width, 5.0);
@@ -114,29 +112,18 @@ fn parses_rails_and_drops_station_furniture() {
 
 #[test]
 fn underground_tracks_are_not_drawn() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
+    let (sw, se, ne, nw) = corners(HALF);
     // подземные размечены по-разному: тоннелем, отрицательным слоем или обоими
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 30, "tags": {{"railway": "subway", "tunnel": "yes", "layer": "-1"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 31, "tags": {{"railway": "rail", "layer": "-1"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 32, "tags": {{"railway": "rail", "tunnel": "yes"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 33, "tags": {{"railway": "subway", "layer": "1"}},
-    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}},
-  {{"type": "way", "id": 34, "tags": {{"railway": "rail", "tunnel": "no"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
-
-    let map = parse(&json, CITY).unwrap();
+    let map = Overpass::new(CITY)
+        .way(
+            &[("railway", "subway"), ("tunnel", "yes"), ("layer", "-1")],
+            vec![sw, ne],
+        )
+        .way(&[("railway", "rail"), ("layer", "-1")], vec![sw, ne])
+        .way(&[("railway", "rail"), ("tunnel", "yes")], vec![sw, ne])
+        .way(&[("railway", "subway"), ("layer", "1")], vec![se, nw])
+        .way(&[("railway", "rail"), ("tunnel", "no")], vec![sw, se])
+        .parse();
 
     // остаются только надземные: эстакадное метро и путь с явным `tunnel=no`
     assert_eq!(map.rails.len(), 2);
@@ -146,36 +133,24 @@ fn underground_tracks_are_not_drawn() {
 
 #[test]
 fn parses_linear_waterways_and_keeps_riverbank_an_area() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
-    // русло, ручей с ширинои из тегов, канава, замкнутый riverbank (площадь),
+    let (sw, se, ne, nw) = corners(HALF);
+    // русло, ручей с шириной из тегов, канава, замкнутый riverbank (площадь),
     // плотина (не линия) и ручей под улицей в трубе
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 40, "tags": {{"waterway": "river"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 41, "tags": {{"waterway": "stream", "width": "3,5"}},
-    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}},
-  {{"type": "way", "id": 42, "tags": {{"waterway": "ditch"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}},
-  {{"type": "way", "id": 43, "tags": {{"waterway": "riverbank"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "way", "id": 44, "tags": {{"waterway": "dam"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 45,
-    "tags": {{"waterway": "stream", "tunnel": "culvert", "highway": "residential"}},
-    "geometry": [{{"lat": {e}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
-
-    let map = parse(&json, CITY).unwrap();
+    let map = Overpass::new(CITY)
+        .way(&[("waterway", "river")], vec![sw, ne])
+        .way(&[("waterway", "stream"), ("width", "3,5")], vec![se, nw])
+        .way(&[("waterway", "ditch")], vec![sw, se])
+        .area(&[("waterway", "riverbank")], square(CENTER, HALF))
+        .way(&[("waterway", "dam")], vec![sw, ne])
+        .way(
+            &[
+                ("waterway", "stream"),
+                ("tunnel", "culvert"),
+                ("highway", "residential"),
+            ],
+            vec![nw, ne],
+        )
+        .parse();
 
     // `dam` линией не становится — белый список, а не «всё, что waterway»
     assert_eq!(map.water_lines.len(), 4);
@@ -201,24 +176,13 @@ fn parses_linear_waterways_and_keeps_riverbank_an_area() {
 
 #[test]
 fn implausible_waterway_width_falls_back_to_the_class_default() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
+    let (sw, se, ne, nw) = corners(HALF);
     // `width=200` на ручье — это пойма или опечатка; лента такой ширины, раз
     // водотоки блокируют навмеш, отрезала бы полгорода
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 50, "tags": {{"waterway": "stream", "width": "200"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}},
-  {{"type": "way", "id": 51, "tags": {{"waterway": "canal", "width": "0.1"}},
-    "geometry": [{{"lat": {a}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
-
-    let map = parse(&json, CITY).unwrap();
+    let map = Overpass::new(CITY)
+        .way(&[("waterway", "stream"), ("width", "200")], vec![sw, ne])
+        .way(&[("waterway", "canal"), ("width", "0.1")], vec![se, nw])
+        .parse();
 
     assert_eq!(map.water_lines.len(), 2);
     assert_eq!(map.water_lines[0].width, 2.5);
@@ -227,24 +191,10 @@ fn implausible_waterway_width_falls_back_to_the_class_default() {
 
 #[test]
 fn trees_are_deterministic_and_inside_the_wood() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.001;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let scene = wood_scene();
+    let first = scene.parse();
+    let second = scene.parse();
 
-    let first = parse(&json, CITY).unwrap();
-    let second = parse(&json, CITY).unwrap();
     assert!(!first.trees.is_empty());
     assert_eq!(first.trees, second.trees);
     for &(pos, radius) in &first.trees {
@@ -263,29 +213,12 @@ fn trees_are_deterministic_and_inside_the_wood() {
 
 #[test]
 fn trees_avoid_a_pond_inside_the_wood() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.001;
+    let (.., ne, _) = corners(WOOD_HALF);
     // пруд занимает северо-восточную четверть массива
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "way", "id": 11, "tags": {{"natural": "water"}},
-    "geometry": [
-      {{"lat": {lat}, "lon": {lon}}}, {{"lat": {lat}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {lon}}},
-      {{"lat": {lat}, "lon": {lon}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let map = wood_scene()
+        .area(&[("natural", "water")], rect(CENTER, ne))
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.water.len(), 1);
     assert!(!map.trees.is_empty());
     let pond = &map.water[0];
@@ -302,38 +235,22 @@ fn trees_avoid_a_pond_inside_the_wood() {
 /// остаётся (пирс, набережная).
 #[test]
 fn buildings_standing_in_water_are_dropped() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.001;
     // пруд — квадрат вокруг центра; первый дом внутри него, второй сидит на
     // южном берегу и заходит в воду только верхней парой углов
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"natural": "water"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "way", "id": 11, "tags": {{"building": "yes"}},
-    "geometry": [
-      {{"lat": {lat}, "lon": {lon}}}, {{"lat": {lat}, "lon": {h}}},
-      {{"lat": {g}, "lon": {h}}}, {{"lat": {g}, "lon": {lon}}},
-      {{"lat": {lat}, "lon": {lon}}}]}},
-  {{"type": "way", "id": 12, "tags": {{"building": "yes"}},
-    "geometry": [
-      {{"lat": {f}, "lon": {lon}}}, {{"lat": {f}, "lon": {h}}},
-      {{"lat": {g}, "lon": {h}}}, {{"lat": {g}, "lon": {lon}}},
-      {{"lat": {f}, "lon": {lon}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-        f = lat - d * 2.0,
-        g = lat - d * 0.5,
-        h = lon + d * 0.5,
-    );
+    let north_east = CENTER + Vec2::new(HALF, 0.0);
+    let south_east = CENTER + Vec2::new(HALF, -HALF);
+    let map = Overpass::new(CITY)
+        .area(&[("natural", "water")], square(CENTER, WOOD_HALF))
+        .area(
+            &[("building", "yes")],
+            rect(CENTER - Vec2::new(0.0, HALF), north_east),
+        )
+        .area(
+            &[("building", "yes")],
+            rect(CENTER - Vec2::new(0.0, WOOD_HALF * 2.0), south_east),
+        )
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.water.len(), 1);
     assert_eq!(map.buildings.len(), 1, "only the shore building survives");
     // у выжившего есть угол вне воды
@@ -348,34 +265,19 @@ fn buildings_standing_in_water_are_dropped() {
 
 #[test]
 fn trees_avoid_grass_and_sand_inside_the_wood() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.001;
+    let (sw, _, ne, nw) = corners(WOOD_HALF);
     // луг — восточная половина массива, песок — северо-западная четверть
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "way", "id": 11, "tags": {{"landuse": "meadow"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {lon}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {lon}}},
-      {{"lat": {a}, "lon": {lon}}}]}},
-  {{"type": "way", "id": 12, "tags": {{"natural": "beach"}},
-    "geometry": [
-      {{"lat": {lat}, "lon": {b}}}, {{"lat": {lat}, "lon": {lon}}},
-      {{"lat": {e}, "lon": {lon}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {lat}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let map = wood_scene()
+        .area(
+            &[("landuse", "meadow")],
+            rect(Vec2::new(CENTER.x, sw.y), ne),
+        )
+        .area(
+            &[("natural", "beach")],
+            rect(Vec2::new(nw.x, CENTER.y), Vec2::new(CENTER.x, ne.y)),
+        )
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.woods.len(), 1);
     assert_eq!(map.grass.len(), 1);
     assert_eq!(map.sand.len(), 1);
@@ -394,35 +296,13 @@ fn trees_avoid_grass_and_sand_inside_the_wood() {
 /// впритык к фасаду (Тула, павильон в парке).
 #[test]
 fn trees_keep_the_crown_off_walls_and_kerbs() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.001;
+    let (sw, _, ne, _) = corners(WOOD_HALF);
     // дом — центральная четверть массива, дорожка режет массив по диагонали
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"natural": "wood"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "way", "id": 11, "tags": {{"building": "yes"}},
-    "geometry": [
-      {{"lat": {h1}, "lon": {k1}}}, {{"lat": {h1}, "lon": {k2}}},
-      {{"lat": {h2}, "lon": {k2}}}, {{"lat": {h2}, "lon": {k1}}},
-      {{"lat": {h1}, "lon": {k1}}}]}},
-  {{"type": "way", "id": 12, "tags": {{"highway": "footway"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {e}, "lon": {c}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-        h1 = lat - d / 4.0,
-        h2 = lat + d / 4.0,
-        k1 = lon - d / 4.0,
-        k2 = lon + d / 4.0,
-    );
+    let map = wood_scene()
+        .area(&[("building", "yes")], square(CENTER, WOOD_HALF / 4.0))
+        .way(&[("highway", "footway")], vec![sw, ne])
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.roads.len(), 1);
     assert!(!map.trees.is_empty());
@@ -451,23 +331,10 @@ fn trees_keep_the_crown_off_walls_and_kerbs() {
 /// парк без `natural=wood` остаётся пустым.
 #[test]
 fn a_park_without_wood_grows_no_trees() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.001;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 10, "tags": {{"leisure": "park"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let map = Overpass::new(CITY)
+        .area(&[("leisure", "park")], square(CENTER, WOOD_HALF))
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.parks.len(), 1);
     assert!(map.woods.is_empty());
     assert!(map.trees.is_empty());
@@ -552,33 +419,22 @@ fn implausible_heights_are_treated_as_missing() {
 /// Высота доезжает до `MapData` и из way, и из relation, а на воде её нет.
 #[test]
 fn parsed_areas_carry_building_height_only() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 1, "tags": {{"building": "yes", "building:levels": "9"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}},
-  {{"type": "relation", "id": 2, "tags": {{"building": "yes", "height": "42 m"}},
-    "members": [
-      {{"type": "way", "role": "outer", "geometry": [
-        {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-        {{"lat": {e}, "lon": {c}}}, {{"lat": {a}, "lon": {b}}}]}}]}},
-  {{"type": "way", "id": 3, "tags": {{"natural": "water", "height": "5"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let (sw, se, ne, _) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .area(
+            &[("building", "yes"), ("building:levels", "9")],
+            square(CENTER, HALF),
+        )
+        .relation(
+            &[("building", "yes"), ("height", "42 m")],
+            &[("outer", closed(vec![sw, se, ne]))],
+        )
+        .area(
+            &[("natural", "water"), ("height", "5")],
+            square(CENTER, HALF),
+        )
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.buildings.len(), 2);
     let heights: Vec<Option<f32>> = map
         .buildings
@@ -595,28 +451,16 @@ fn parsed_areas_carry_building_height_only() {
 /// гаража отбрасываются, а вход в стороне от домов остаётся сиротой.
 #[test]
 fn entrances_attach_to_the_building_whose_outline_they_sit_on() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "node", "id": 100, "lat": {a}, "lon": {b}, "tags": {{"entrance": "main"}}}},
-  {{"type": "node", "id": 101, "lat": {a}, "lon": {c}, "tags": {{"entrance": "staircase"}}}},
-  {{"type": "node", "id": 102, "lat": {e}, "lon": {c}, "tags": {{"entrance": "no"}}}},
-  {{"type": "node", "id": 103, "lat": {e}, "lon": {b}, "tags": {{"entrance": "garage"}}}},
-  {{"type": "node", "id": 104, "lat": {lat}, "lon": {lon}, "tags": {{"entrance": "yes"}}}},
-  {{"type": "way", "id": 1, "tags": {{"building": "yes"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let (sw, se, ne, nw) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .node(&[("entrance", "main")], sw)
+        .node(&[("entrance", "staircase")], se)
+        .node(&[("entrance", "no")], ne)
+        .node(&[("entrance", "garage")], nw)
+        .node(&[("entrance", "yes")], CENTER)
+        .area(&[("building", "yes")], square(CENTER, HALF))
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.buildings.len(), 1);
     // main и staircase — на контуре; no и garage отброшены как значения,
     // а «yes» в центре квартала ни одной вершине не соответствует
@@ -637,25 +481,13 @@ fn entrances_attach_to_the_building_whose_outline_they_sit_on() {
 /// они обязаны стать одной дверью, а не двумя одинаковыми целями.
 #[test]
 fn entrances_at_the_same_point_collapse_into_one() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "node", "id": 100, "lat": {a}, "lon": {b}, "tags": {{"entrance": "main"}}}},
-  {{"type": "node", "id": 101, "lat": {a}, "lon": {b}, "tags": {{"entrance": "yes"}}}},
-  {{"type": "way", "id": 1, "tags": {{"building": "yes"}},
-    "geometry": [
-      {{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}},
-      {{"lat": {e}, "lon": {c}}}, {{"lat": {e}, "lon": {b}}},
-      {{"lat": {a}, "lon": {b}}}]}}
-]}}"#,
-        a = lat - d,
-        e = lat + d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let (sw, ..) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .node(&[("entrance", "main")], sw)
+        .node(&[("entrance", "yes")], sw)
+        .area(&[("building", "yes")], square(CENTER, HALF))
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.buildings[0].entrances.len(), 1);
 }
 
@@ -664,7 +496,7 @@ fn entrances_at_the_same_point_collapse_into_one() {
 /// 0.9% домов, целей у населения почти не было бы.
 #[test]
 fn a_building_without_osm_entrances_gets_generated_ones() {
-    let map = parse(&fixture(), CITY).unwrap();
+    let map = fixture().parse();
     assert_eq!(map.buildings.len(), 1);
     let building = &map.buildings[0];
     assert!(!building.entrances.is_empty());
@@ -683,23 +515,17 @@ fn a_building_without_osm_entrances_gets_generated_ones() {
     }
 }
 
+/// Кремлёвские постройки — те же здания, но своего вида: их красят иначе.
 #[test]
 fn kremlin_buildings_classified_by_historic_tag() {
-    let element = Element {
-        kind: "way".into(),
-        id: 1,
-        tags: [
-            ("building".to_string(), "yes".to_string()),
-            ("historic".to_string(), "citywalls".to_string()),
-        ]
-        .into_iter()
-        .collect(),
-        lat: None,
-        lon: None,
-        geometry: None,
-        members: None,
-    };
-    assert_eq!(area_kind(&element), Some(AreaKind::Kremlin));
+    let map = Overpass::new(CITY)
+        .area(
+            &[("building", "yes"), ("historic", "citywalls")],
+            square(CENTER, HALF),
+        )
+        .parse();
+
+    assert_eq!(map.buildings[0].kind, AreaKind::Kremlin);
 }
 
 /// `natural=tree_row` доезжает до `MapData::tree_rows` и даёт деревья вдоль
@@ -707,19 +533,8 @@ fn kremlin_buildings_classified_by_historic_tag() {
 /// как открытая полилиния, а не как площадь.
 #[test]
 fn parses_tree_rows_and_plants_along_them() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 1, "tags": {{"natural": "tree_row"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
-]}}"#,
-        a = lat - d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let map = tree_row(&[("natural", "tree_row")]);
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.tree_rows.len(), 1);
     // шага в тегах нет — плотность берётся из ползунка, порог ненулевой
     assert!(map.tree_rows[0].spacing.is_none());
@@ -742,19 +557,8 @@ fn parses_tree_rows_and_plants_along_them() {
 /// прореживает — порог нулевой у всех его деревьев.
 #[test]
 fn tree_row_count_tag_fixes_the_spacing() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "way", "id": 1, "tags": {{"natural": "tree_row", "count": "5"}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
-]}}"#,
-        a = lat - d,
-        b = lon - d,
-        c = lon + d,
-    );
+    let map = tree_row(&[("natural", "tree_row"), ("count", "5")]);
 
-    let map = parse(&json, CITY).unwrap();
     let row = &map.tree_rows[0];
     let length = row.points[0].distance(row.points[1]);
     let spacing = row.spacing.expect("count даёт шаг");
@@ -769,25 +573,14 @@ fn tree_row_count_tag_fixes_the_spacing() {
 /// смыкает кроны в сплошную кляксу, `count=1` не задаёт шага вовсе.
 #[test]
 fn implausible_tree_row_tags_fall_back_to_the_slider() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let d = 0.0005;
     for tags in [
-        r#""natural": "tree_row", "spacing": "0.1""#,
-        r#""natural": "tree_row", "count": "1""#,
-        r#""natural": "tree_row", "diameter_crown": "50""#,
+        &[("natural", "tree_row"), ("spacing", "0.1")],
+        &[("natural", "tree_row"), ("count", "1")],
+        &[("natural", "tree_row"), ("diameter_crown", "50")],
     ] {
-        let json = format!(
-            r#"{{"elements": [
-  {{"type": "way", "id": 1, "tags": {{{tags}}},
-    "geometry": [{{"lat": {a}, "lon": {b}}}, {{"lat": {a}, "lon": {c}}}]}}
-]}}"#,
-            a = lat - d,
-            b = lon - d,
-            c = lon + d,
-        );
-        let map = parse(&json, CITY).unwrap();
-        assert!(map.tree_rows[0].spacing.is_none(), "{tags}");
-        assert!(map.tree_rows[0].radius.is_none(), "{tags}");
+        let map = tree_row(tags);
+        assert!(map.tree_rows[0].spacing.is_none(), "{tags:?}");
+        assert!(map.tree_rows[0].radius.is_none(), "{tags:?}");
     }
 }
 
@@ -796,15 +589,10 @@ fn implausible_tree_row_tags_fall_back_to_the_slider() {
 /// нулевой — дерево из данных видно на любой плотности.
 #[test]
 fn parses_standalone_tree_nodes() {
-    let (lat, lon) = (CITY.geo_center().x, CITY.geo_center().y);
-    let json = format!(
-        r#"{{"elements": [
-  {{"type": "node", "id": 1, "tags": {{"natural": "tree", "diameter_crown": "10"}},
-    "lat": {lat}, "lon": {lon}}}
-]}}"#
-    );
+    let map = Overpass::new(CITY)
+        .node(&[("natural", "tree"), ("diameter_crown", "10")], CENTER)
+        .parse();
 
-    let map = parse(&json, CITY).unwrap();
     assert_eq!(map.tree_nodes.len(), 1);
     assert_eq!(map.tree_nodes[0].radius, Some(5.0));
     assert_eq!(map.trees.len(), 1);

@@ -146,6 +146,13 @@ algorithm in `references/tree-algo.md`).
   parameters live in the file name, so changing them invalidates it. Written only after
   successful parse; second launch never touches the network. `prune_stale_caches()`
   keeps exactly one current file per city.
+- **Overpass fixture** (`map/osm/fixture.rs::Overpass`) — a scene given in **map metres**
+  (`way` / `area` / `node` / `relation` + tags), turned into an Overpass response and fed
+  through the real `parse`. Geometry is unprojected via `GeoBounds::unproject`, so a test
+  states its scene in the same numbers it later asserts on, and the response format lives
+  in one place instead of a hand-escaped `format!` per test. Parse tests go through the
+  JSON text on purpose — deserialization is part of what they cover. Add a tag case here,
+  not another literal.
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open (no repeated last point).
     `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand`; **only Wood
