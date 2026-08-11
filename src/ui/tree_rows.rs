@@ -4,42 +4,23 @@
 //! листающая значение по кругу; правка `TreeRowStyle` пересобирает набор
 //! деревьев и подложку (`map::mod` — та же цепочка, что у `TreeStyle`).
 
-use bevy::ecs::system::IntoObserverSystem;
 use bevy::prelude::*;
-use bevy::ui_widgets::Activate;
 
 use crate::map::{RoadJoin, RoadSmoothing, TreeRowPlacement, TreeRowStyle};
-use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off, spawn_value_row};
+use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
+use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
 };
 
-/// Какое поле стиля листает кнопка — она же адресует подпись значения.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum TreeRowStyleRow {
-    Enabled,
-    Placement,
-    Spacing,
-    Join,
-    Smoothing,
-    Casing,
-}
-
-/// Текст значения в строке.
-#[derive(Component)]
-struct TreeRowStyleValueLabel(TreeRowStyleRow);
-
 pub struct UiTreeRowStylePlugin;
 
 impl Plugin for UiTreeRowStylePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, render_tree_row_style_panel)
-            .add_systems(
-                Update,
-                // и клик по кнопке, и правка по BRP
-                sync_row_values.run_if(resource_changed::<TreeRowStyle>),
-            );
+        // подписи вслед за ресурсом — и на клик по кнопке, и на правку по BRP
+        app.add_knobs::<TreeRowStyle>()
+            .add_systems(Startup, render_tree_row_style_panel);
     }
 }
 
@@ -66,111 +47,76 @@ fn render_tree_row_style_panel(mut commands: Commands, style: Res<TreeRowStyle>)
         ))
         .id();
 
-    spawn_row(
+    spawn_cycle_row(
         &mut commands,
         panel,
-        TreeRowStyleRow::Enabled,
         "Rows",
-        &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
-            style.enabled = !style.enabled;
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.enabled = !style.enabled,
+            text: |style| on_off(style.enabled).to_string(),
         },
     );
-    spawn_row(
+    spawn_cycle_row(
         &mut commands,
         panel,
-        TreeRowStyleRow::Placement,
         "Placement",
-        &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
-            style.placement = next_in(&TreeRowPlacement::ALL, style.placement);
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.placement = next_in(&TreeRowPlacement::ALL, style.placement),
+            text: |style| style.placement.label().to_string(),
         },
     );
     // откуда берётся шаг посадки ряда. `OSM` — из тегов `spacing`/`count`, и
     // такой ряд ползунок плотности не трогает; `slider` — теги игнорируются, и
     // ряд подчиняется ползунку наравне с лесом
-    spawn_row(
+    spawn_cycle_row(
         &mut commands,
         panel,
-        TreeRowStyleRow::Spacing,
         "Spacing",
-        &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
-            style.osm_spacing = !style.osm_spacing;
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.osm_spacing = !style.osm_spacing,
+            text: |style| (if style.osm_spacing { "OSM" } else { "slider" }).to_string(),
         },
     );
     // те же три ручки, что у панели Roads, но **свои**: ломаная аллеи и ломаная
     // улицы приходят из разных данных, и подложка обязана выглядеть лесом даже
     // там, где дороги оставлены нетронутыми
-    spawn_row(
+    spawn_cycle_row(
         &mut commands,
         panel,
-        TreeRowStyleRow::Join,
         "Joins",
-        &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
-            style.join = next_in(&RoadJoin::ALL, style.join);
-        },
-    );
-    spawn_row(
-        &mut commands,
-        panel,
-        TreeRowStyleRow::Smoothing,
-        "Smoothing",
-        &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
-            style.smoothing = next_in(&RoadSmoothing::ALL, style.smoothing);
-        },
-    );
-    spawn_row(
-        &mut commands,
-        panel,
-        TreeRowStyleRow::Casing,
-        "Casing",
-        &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeRowStyle>| {
-            style.casing = !style.casing;
-        },
-    );
-}
-
-fn spawn_row<M>(
-    commands: &mut Commands,
-    panel: Entity,
-    row: TreeRowStyleRow,
-    label: &str,
-    style: &TreeRowStyle,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
-) {
-    let button = spawn_value_row(
-        commands,
-        panel,
-        label,
         ROW_LEFT_PX,
-        TreeRowStyleValueLabel(row),
-        row_value(row, style),
-        on_activate,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.join = next_in(&RoadJoin::ALL, style.join),
+            text: |style| style.join.label().to_string(),
+        },
     );
-    commands.entity(button).insert(row);
-}
-
-fn row_value(row: TreeRowStyleRow, style: &TreeRowStyle) -> String {
-    match row {
-        TreeRowStyleRow::Enabled => on_off(style.enabled).to_string(),
-        TreeRowStyleRow::Placement => style.placement.label().to_string(),
-        TreeRowStyleRow::Spacing => (if style.osm_spacing { "OSM" } else { "slider" }).to_string(),
-        TreeRowStyleRow::Join => style.join.label().to_string(),
-        TreeRowStyleRow::Smoothing => style.smoothing.label().to_string(),
-        TreeRowStyleRow::Casing => on_off(style.casing).to_string(),
-    }
-}
-
-/// Актуализация подписей после смены стиля (кликом или по BRP).
-fn sync_row_values(
-    style: Res<TreeRowStyle>,
-    mut labels: Query<(&TreeRowStyleValueLabel, &mut Text)>,
-) {
-    for (label, mut text) in &mut labels {
-        text.0 = row_value(label.0, &style);
-    }
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Smoothing",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.smoothing = next_in(&RoadSmoothing::ALL, style.smoothing),
+            text: |style| style.smoothing.label().to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Casing",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.casing = !style.casing,
+            text: |style| on_off(style.casing).to_string(),
+        },
+    );
 }

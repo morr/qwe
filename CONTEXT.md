@@ -583,13 +583,15 @@ skill**.
   the selected backend's settings only, and the `Separation` / `Slots` crowd-knob
   groups). Columns are stacked by **measured** heights (`stack_bottom_columns`;
   `ComputedNode::size` is *physical* px — multiply by `inverse_scale_factor`).
-- **Knob** (`ui/knob.rs`) — a slider row **bound to one field of one resource**:
-  `spawn_knob(.., binding)` where `SliderBinding<R> { get, set, range, text }` is four
-  function pointers, and `app.add_knobs::<R>()` registers the drag observer and the
+- **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
+  shapes: `spawn_knob` (slider, `SliderBinding<R> { get, set, range, text }`) and
+  `spawn_cycle_row` (button that cycles a value, `CycleBinding<R> { cycle, text }`) — all
+  of them function pointers. `app.add_knobs::<R>()` registers the drag observer and the
   label/thumb sync **once per resource**, however many knobs it has and across however
   many panels. Panels used to write both by hand — thirteen observers and eight sync
-  systems differing only in which field they touched. Use it for any numeric panel row;
-  hand-rolling one is the thing this replaced.
+  systems differing only in which field they touched. Use it for any panel row driven by
+  a resource; the Navigation panel's rows are the deliberate exception, since their text
+  is computed from several resources at once.
 - **Shared kits** — `ui/slider.rs` (`spawn_slider_row`, `quantize`, `apply_step`,
   `retarget`, one `sync_slider_thumbs` for all panels — the layer under the knob kit,
   called directly only by the crowd demo, whose sliders drive demo-local state rather

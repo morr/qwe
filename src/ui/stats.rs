@@ -14,8 +14,8 @@ use bevy::ui_widgets::Activate;
 use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
-use super::knob::{AddKnobsExt, SliderBinding, spawn_knob};
-use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color, spawn_value_row};
+use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
+use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color};
 use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
@@ -56,9 +56,6 @@ enum StatRow {
 #[derive(Component)]
 struct DeterminismRow;
 
-#[derive(Component)]
-struct DeterminismValueLabel;
-
 /// Поле ввода seed'а мира.
 #[derive(Component)]
 struct SeedField;
@@ -72,6 +69,7 @@ impl Plugin for UiStatsPlugin {
         // регистрация идемпотентна по смыслу: система одна на ресурс
         app.add_knobs::<DemonStyle>()
             .add_knobs::<HumanStyle>()
+            .add_knobs::<Determinism>()
             .add_systems(Startup, render_stats_panel)
             .add_systems(
                 Update,
@@ -79,7 +77,6 @@ impl Plugin for UiStatsPlugin {
                     sync_world_counts,
                     apply_seed_on_enter,
                     sync_seed_field.run_if(resource_changed::<WorldSeed>),
-                    sync_determinism_value.run_if(resource_changed::<Determinism>),
                     // метка BRP стоит только в агентских запусках, и только
                     // тогда панели есть что обходить
                     offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
@@ -318,17 +315,17 @@ fn render_stats_panel(
     // а не вида. Расталкивание и слоты стояли здесь по той же логике, но
     // уехали в подвкладки панели Navigation: они про перемещение, и ручек у
     // них столько, что World переставал читаться как сводка прогона
-    let determinism_row = spawn_value_row(
+    let determinism_row = spawn_cycle_row(
         &mut commands,
         world_panel,
         "Deterministic",
         ROW_LEFT_PX,
-        DeterminismValueLabel,
-        on_off(determinism.0).to_string(),
-        |_activate: On<Activate>, mut mode: ResMut<Determinism>| {
+        &*determinism,
+        CycleBinding {
             // рестарт заказывает наблюдатель в `determinism.rs`: прогон
             // детерминирован или нет с тика 0, переключить его на ходу нельзя
-            mode.0 = !mode.0;
+            cycle: |mode| mode.0 = !mode.0,
+            text: |mode| on_off(mode.0).to_string(),
         },
     );
     commands.entity(determinism_row).insert(DeterminismRow);
@@ -462,17 +459,6 @@ fn sync_world_counts(
             StatRow::Souls => telemetry.killed,
         };
         text.set_if_neq(Text(value.to_string()));
-    }
-}
-
-/// Подпись тумблера вслед за ресурсом — клик, BRP или восстановленные
-/// настройки одинаково двигают текст.
-fn sync_determinism_value(
-    mode: Res<Determinism>,
-    mut labels: Query<&mut Text, With<DeterminismValueLabel>>,
-) {
-    for mut text in &mut labels {
-        text.0 = on_off(mode.0).to_string();
     }
 }
 

@@ -156,8 +156,18 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   back on the stepped value), `retarget` (move the thumb when the value arrived past it —
   over BRP, from saved settings, from a lab preset), and one `sync_slider_thumbs` for all
   panels (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`).
-- **Value-row kit** (`ui/rows.rs`) — the sibling of the slider kit for the rows that are
-  *buttons*: `spawn_value_row` (grey label left, white value right, click on an observer),
+- **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
+  field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
+  field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain
+  bools, colour palettes and step tables alike, and forcing them through one list would
+  need a type per kind. Registered by the same `add_knobs::<R>()` as the sliders.
+  `CycleBinding` is *not* a component — the click observer captures it, and the sync only
+  needs it on the label. The rows that stay hand-written are the Navigation panel's
+  (`NavValueLabel`): their text is computed from **several** resources at once (`Backend`
+  from `PolymeshDebug`, `Separation` from determinism + backend + style), which a binding
+  to one resource cannot express — that enum is the right tool there, not a leftover.
+- **Value-row kit** (`ui/rows.rs`) — the layer under cycle rows, and what the Navigation
+  panel calls directly: `spawn_value_row` (grey label left, white value right, click on an observer),
   `row_color`, `next_in`, `on_off`, and one `highlight_value_rows` for every panel (rows
   carry the shared `ValueRow` marker; registered once in `UiPlugin`). A row whose click
   currently does nothing gets `RowInert` from its panel and stops highlighting — promising

@@ -19,8 +19,9 @@
 
 use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
-use bevy::ui_widgets::{SliderValue, ValueChange};
+use bevy::ui_widgets::{Activate, SliderValue, ValueChange};
 
+use crate::ui::rows::spawn_value_row;
 use crate::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 
 /// Ресурс, у которого бывают ручки. Псевдоним одного длинного набора границ:
@@ -131,6 +132,74 @@ fn sync_knob_values<R: Knobbed>(
     }
 }
 
+/// Привязка строки-**кнопки** к полю ресурса: полей ввода в `bevy_ui` нет,
+/// поэтому нечисловая ручка — кнопка, листающая значение по кругу.
+///
+/// `cycle` листает сам (а не «следующий из списка `ALL`»): по кругу ходят и
+/// перечисления, и тумблеры, и палитры цветов, и ступени числового ряда, и
+/// свести их к одному списку значило бы завести ещё один тип на каждую.
+///
+/// Не компонент, в отличие от [`SliderBinding`]: наблюдатель клика забирает
+/// привязку замыканием, а синхронизации хватает подписи.
+pub struct CycleBinding<R: Knobbed> {
+    pub cycle: fn(&mut R),
+    pub text: fn(&R) -> String,
+}
+
+impl<R: Knobbed> Clone for CycleBinding<R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<R: Knobbed> Copy for CycleBinding<R> {}
+
+/// Строка-кнопка, привязанная к полю ресурса. Возвращает строку — панель
+/// довешивает на неё свои метки (свотч цвета, секция, видимость).
+pub fn spawn_cycle_row<R: Knobbed>(
+    commands: &mut Commands,
+    panel: Entity,
+    label: &str,
+    left_px: f32,
+    resource: &R,
+    binding: CycleBinding<R>,
+) -> Entity {
+    spawn_value_row(
+        commands,
+        panel,
+        label,
+        left_px,
+        CycleValueLabel(binding),
+        (binding.text)(resource),
+        move |_activate: On<Activate>, mut resource: ResMut<R>| (binding.cycle)(&mut resource),
+    )
+}
+
+/// Подпись строки-кнопки: по ней синхронизация находит текст, который надо
+/// перечитать из ресурса.
+#[derive(Component)]
+pub struct CycleValueLabel<R: Knobbed>(pub CycleBinding<R>);
+
+impl<R: Knobbed> Clone for CycleValueLabel<R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<R: Knobbed> Copy for CycleValueLabel<R> {}
+
+fn sync_cycle_values<R: Knobbed>(
+    resource: Res<R>,
+    mut labels: Query<(&CycleValueLabel<R>, &mut Text)>,
+) {
+    for (label, mut text) in &mut labels {
+        let next = (label.0.text)(&resource);
+        if text.0 != next {
+            text.0 = next;
+        }
+    }
+}
+
 /// Регистрация ручек ресурса — по разу на ресурс, независимо от того, сколько
 /// у него ручек и по скольким панелям они разложены.
 pub trait AddKnobsExt {
@@ -141,7 +210,8 @@ impl AddKnobsExt for App {
     fn add_knobs<R: Knobbed>(&mut self) -> &mut Self {
         self.add_systems(
             Update,
-            sync_knob_values::<R>.run_if(resource_exists_and_changed::<R>),
+            (sync_knob_values::<R>, sync_cycle_values::<R>)
+                .run_if(resource_exists_and_changed::<R>),
         )
     }
 }

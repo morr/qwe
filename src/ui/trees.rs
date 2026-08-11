@@ -4,17 +4,15 @@
 //! кнопка, листающая значение по кругу; правка `TreeStyle` пересобирает кроны
 //! (`map::trees::rebuild_trees`).
 
-use bevy::ecs::system::IntoObserverSystem;
 use bevy::prelude::*;
-use bevy::ui_widgets::Activate;
 
 use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::settings::{
     TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
     TREE_DENSITY_STEP, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_STEP,
 };
-use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
-use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};
+use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
+use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::{
     GameUiRoot, PanelCount, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, UiRightColumnSlot, panel_header,
     ui_color,
@@ -40,26 +38,10 @@ const DETAILS_PALETTE: [Color; 4] = [
 /// Ступени разброса яркости (`treeVariance`).
 const VARIANCE_STEPS: [f32; 5] = [0.0, 0.1, 0.2, 0.35, 0.5];
 
-/// Какое поле стиля показывает строка-кнопка — она же адресует подпись и
-/// свотч. Ползунки панели (доля хвои, примесь, плотность) сюда не входят:
-/// их подписи ведёт кит ручек по своей привязке.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum TreeStyleRow {
-    Woods,
-    Standalone,
-    Shape,
-    Foliage,
-    Details,
-    Variance,
-}
-
-/// Текст значения в строке.
+/// Квадрат-образец цвета в строке — на строках, которые цвет и правят;
+/// у остальных свотч есть, но прозрачный, и этого компонента не несёт.
 #[derive(Component)]
-struct TreeStyleValueLabel(TreeStyleRow);
-
-/// Квадрат-образец цвета в строке (пустой для нецветовых полей).
-#[derive(Component)]
-struct TreeStyleSwatch(TreeStyleRow);
+struct TreeStyleSwatch(fn(&TreeStyle) -> Color);
 
 /// Блок строки, живущей только у формы `Mixed` (доля хвои и примесь): вне неё
 /// строка убирается из раскладки целиком (`Display::None`), а не гасится, —
@@ -76,7 +58,7 @@ impl Plugin for UiTreeStylePlugin {
             .add_systems(
                 Update,
                 (
-                    sync_row_values.run_if(resource_changed::<TreeStyle>),
+                    sync_swatches.run_if(resource_changed::<TreeStyle>),
                     // без run_if: строк две, а зависеть от того, попал ли
                     // первый кадр в окно `resource_changed`, тут ни к чему
                     sync_mixed_row_visibility,
@@ -113,35 +95,34 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
     spawn_row(
         &mut commands,
         panel,
-        TreeStyleRow::Woods,
+        None,
         "Woods",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
-            style.woods = !style.woods;
+        CycleBinding {
+            cycle: |style| style.woods = !style.woods,
+            text: |style| on_off(style.woods).to_string(),
         },
     );
     spawn_row(
         &mut commands,
         panel,
-        TreeStyleRow::Standalone,
+        None,
         "Individual",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
-            style.standalone = !style.standalone;
+        CycleBinding {
+            cycle: |style| style.standalone = !style.standalone,
+            text: |style| on_off(style.standalone).to_string(),
         },
     );
     spawn_row(
         &mut commands,
         panel,
-        TreeStyleRow::Shape,
+        None,
         "Shape",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
-            let next = TreeShape::ALL
-                .iter()
-                .position(|&shape| shape == style.shape)
-                .map_or(0, |index| (index + 1) % TreeShape::ALL.len());
-            style.shape = TreeShape::ALL[next];
+        CycleBinding {
+            cycle: |style| style.shape = next_in(&TreeShape::ALL, style.shape),
+            text: |style| style.shape.label().to_string(),
         },
     );
     // сразу под формой: доля и примесь уточняют именно её и только при
@@ -179,35 +160,42 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
     spawn_row(
         &mut commands,
         panel,
-        TreeStyleRow::Foliage,
+        Some(|style: &TreeStyle| style.foliage),
         "Foliage",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
-            style.foliage = next_in(&FOLIAGE_PALETTE, style.foliage);
+        CycleBinding {
+            cycle: |style| style.foliage = next_color(&FOLIAGE_PALETTE, style.foliage),
+            text: |style| hex(style.foliage),
         },
     );
     spawn_row(
         &mut commands,
         panel,
-        TreeStyleRow::Details,
+        Some(|style: &TreeStyle| style.details),
         "Crown details",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
-            style.details = next_in(&DETAILS_PALETTE, style.details);
+        CycleBinding {
+            cycle: |style| style.details = next_color(&DETAILS_PALETTE, style.details),
+            text: |style| hex(style.details),
         },
     );
     spawn_row(
         &mut commands,
         panel,
-        TreeStyleRow::Variance,
+        None,
         "Color variance",
         &style,
-        |_activate: On<Activate>, mut style: ResMut<TreeStyle>| {
-            let current = VARIANCE_STEPS
-                .iter()
-                .position(|step| (step - style.variance).abs() < 1e-3)
-                .map_or(0, |index| (index + 1) % VARIANCE_STEPS.len());
-            style.variance = VARIANCE_STEPS[current];
+        CycleBinding {
+            // ступени сравниваются с допуском: значение приходит и из
+            // сохранённых настроек, где оно уже прошло через toml
+            cycle: |style| {
+                let next = VARIANCE_STEPS
+                    .iter()
+                    .position(|step| (step - style.variance).abs() < 1e-3)
+                    .map_or(0, |index| (index + 1) % VARIANCE_STEPS.len());
+                style.variance = VARIANCE_STEPS[next];
+            },
+            text: |style| format!("{:.2}", style.variance),
         },
     );
     spawn_knob(
@@ -225,7 +213,9 @@ fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
 }
 
 /// Следующий цвет палитры за текущим; незнакомый цвет откатывается к первому.
-fn next_in(palette: &[Color], current: Color) -> Color {
+/// Свой, а не общий `rows::next_in`: цвета сравниваются в линейном
+/// пространстве, иначе тот же оттенок из настроек не нашёлся бы в палитре.
+fn next_color(palette: &[Color], current: Color) -> Color {
     let index = palette
         .iter()
         .position(|color| color.to_linear() == current.to_linear())
@@ -233,64 +223,42 @@ fn next_in(palette: &[Color], current: Color) -> Color {
     palette[index]
 }
 
-fn spawn_row<M>(
+/// Строка-кнопка панели: ручка кита плюс квадрат-образец цвета у тех строк,
+/// что цвет и правят. Свотч адресуется той же функцией-геттером, что и сам
+/// цвет, — своего перечисления строк панели больше нет.
+fn spawn_row(
     commands: &mut Commands,
     panel: Entity,
-    row: TreeStyleRow,
+    swatch: Option<fn(&TreeStyle) -> Color>,
     label: &str,
     style: &TreeStyle,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
+    binding: CycleBinding<TreeStyle>,
 ) {
-    let button = spawn_value_row(
-        commands,
-        panel,
-        label,
-        ROW_LEFT_PX,
-        TreeStyleValueLabel(row),
-        row_value(row, style),
-        on_activate,
-    );
+    let button = spawn_cycle_row(commands, panel, label, ROW_LEFT_PX, style, binding);
     // у нецветовых строк место под свотч остаётся (колонки не разъезжаются),
     // но и заливка, и рамка прозрачны — пустая рамка читалась как недоделка.
     // Третьим ребёнком, после значения: `with_child` дописывает в конец
-    let swatch = swatch_color(row, style);
-    let swatch_border = if swatch.is_some() {
+    let color = swatch.map(|get| get(style));
+    let border = if color.is_some() {
         Color::srgba(1., 1., 1., 0.35)
     } else {
         Color::NONE
     };
-    commands.entity(button).insert(row).with_child((
-        TreeStyleSwatch(row),
+    let mut swatch_entity = commands.spawn((
         Node {
             width: px(14.),
             height: px(14.),
             border: UiRect::all(px(1.)),
             ..default()
         },
-        BorderColor::all(swatch_border),
-        BackgroundColor(swatch.unwrap_or(Color::NONE)),
+        BorderColor::all(border),
+        BackgroundColor(color.unwrap_or(Color::NONE)),
     ));
-}
-
-/// Текст значения строки: имя формы, hex цвета или число разброса.
-fn row_value(row: TreeStyleRow, style: &TreeStyle) -> String {
-    match row {
-        TreeStyleRow::Woods => on_off(style.woods).to_string(),
-        TreeStyleRow::Standalone => on_off(style.standalone).to_string(),
-        TreeStyleRow::Shape => style.shape.label().to_string(),
-        TreeStyleRow::Foliage => hex(style.foliage),
-        TreeStyleRow::Details => hex(style.details),
-        TreeStyleRow::Variance => format!("{:.2}", style.variance),
+    if let Some(get) = swatch {
+        swatch_entity.insert(TreeStyleSwatch(get));
     }
-}
-
-/// Цвет свотча; у нецветовых строк свотча нет.
-fn swatch_color(row: TreeStyleRow, style: &TreeStyle) -> Option<Color> {
-    match row {
-        TreeStyleRow::Foliage => Some(style.foliage),
-        TreeStyleRow::Details => Some(style.details),
-        _ => None,
-    }
+    let swatch_entity = swatch_entity.id();
+    commands.entity(button).add_child(swatch_entity);
 }
 
 fn hex(color: Color) -> String {
@@ -304,18 +272,13 @@ fn hex(color: Color) -> String {
     )
 }
 
-/// Актуализация подписей и свотчей строк-кнопок после правки стиля (кликом
-/// или по BRP). Подписи и бегунки ползунков ведёт кит ручек.
-fn sync_row_values(
+/// Свотчи вслед за стилем (клик или правка по BRP); подписи строк ведёт кит.
+fn sync_swatches(
     style: Res<TreeStyle>,
-    mut labels: Query<(&TreeStyleValueLabel, &mut Text)>,
     mut swatches: Query<(&TreeStyleSwatch, &mut BackgroundColor)>,
 ) {
-    for (label, mut text) in &mut labels {
-        text.0 = row_value(label.0, &style);
-    }
     for (swatch, mut background) in &mut swatches {
-        background.0 = swatch_color(swatch.0, &style).unwrap_or(Color::NONE);
+        background.0 = (swatch.0)(&style);
     }
 }
 
