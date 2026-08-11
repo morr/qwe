@@ -1,8 +1,17 @@
-//! Тестовая геометрия карты: билдеры элементов `MapData` и составной город
+//! Тестовая геометрия карты — на двух уровнях конвейера.
+//!
+//! **После разбора**: билдеры элементов `MapData` и составной город
 //! `tiny_city`, из которого строятся **оба** заполнения — сеточное и
 //! полигональное. Общая фикстура вместо ручной сборки карты в каждом тесте:
 //! инвариант «одно правило для двух заполнений» проверяется паритетными
 //! тестами (`navigation/parity_tests.rs`) именно на ней.
+//!
+//! **До разбора**: [`Overpass`] — ответ выгрузки, собранный из сцены в метрах
+//! карты. Тесты разбора (`parse/tests.rs`) проверяют правила «такой тег с
+//! такой геометрией даёт вот это», и формат ответа в них — адаптер, а не
+//! предмет: раньше каждый писал свой `format!` с экранированными скобками и
+//! своей четвёркой `lat±d`/`lon±d`. Теперь формат живёт здесь в одном
+//! экземпляре, а тест говорит тегами и точками.
 //!
 //! Модуль не спрятан за `#[cfg(test)]` намеренно: интеграционные тесты
 //! (`tests/navigation.rs`) собирают библиотеку без `cfg(test)` и иначе его не
@@ -16,14 +25,145 @@
 //! чтобы правила не накладывались друг на друга.
 
 use bevy::prelude::*;
+use serde_json::{Value, json};
 
 use super::model::{
     AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, WaterKind,
     WaterLine,
 };
+use super::overpass::GeoBounds;
+use crate::city::City;
 
 pub fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
     vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
+}
+
+/// Квадрат со стороной `2 · half` вокруг точки — самая частая фигура фикстур
+/// разбора: массив леса, пруд, дом.
+pub fn square(center: Vec2, half: f32) -> Vec<Vec2> {
+    rect(center - Vec2::splat(half), center + Vec2::splat(half))
+}
+
+/// Кольцо в виде way: OSM замыкает площадь повторением первой точки, и
+/// разбор отличает площадь от линии именно по этому повтору.
+pub fn closed(mut ring: Vec<Vec2>) -> Vec<Vec2> {
+    if let Some(&first) = ring.first() {
+        ring.push(first);
+    }
+    ring
+}
+
+/// Ответ Overpass, собранный из сцены в метрах карты.
+///
+/// Точки задаются в том же пространстве, в котором тест потом проверяет
+/// результат (`MAP_SIZE / 2.0` — центр карты), и переводятся в гео-координаты
+/// на выходе — [`GeoBounds::unproject`]. Идентификаторы элементов раздаются
+/// по порядку: разбору они безразличны, но в настоящей выгрузке они есть.
+pub struct Overpass {
+    city: City,
+    bounds: GeoBounds,
+    elements: Vec<Value>,
+}
+
+impl Overpass {
+    pub fn new(city: City) -> Self {
+        Self {
+            city,
+            bounds: GeoBounds::for_city(city),
+            elements: vec![],
+        }
+    }
+
+    /// Линия: дорога, путь, водоток, ряд деревьев.
+    pub fn way(mut self, tags: &[(&str, &str)], points: Vec<Vec2>) -> Self {
+        let element = json!({
+            "type": "way",
+            "id": self.next_id(),
+            "tags": Self::tags(tags),
+            "geometry": self.geometry(&points),
+        });
+        self.elements.push(element);
+        self
+    }
+
+    /// Площадь: тот же way, но замкнутый.
+    pub fn area(self, tags: &[(&str, &str)], ring: Vec<Vec2>) -> Self {
+        self.way(tags, closed(ring))
+    }
+
+    /// Нода: вход в здание, одиночное дерево. Координаты у неё лежат прямо в
+    /// элементе, а не в `geometry`.
+    pub fn node(mut self, tags: &[(&str, &str)], point: Vec2) -> Self {
+        let geo = self.bounds.unproject(point);
+        let element = json!({
+            "type": "node",
+            "id": self.next_id(),
+            "tags": Self::tags(tags),
+            "lat": geo.lat,
+            "lon": geo.lon,
+        });
+        self.elements.push(element);
+        self
+    }
+
+    /// Мультиполигон: члены с ролями `outer` / `inner`. Куски контура тут не
+    /// замыкаются — в OSM внешнее кольцо часто разрезано на несколько way, и
+    /// сборка колец из обрывков как раз проверяется.
+    pub fn relation(mut self, tags: &[(&str, &str)], members: &[(&str, Vec<Vec2>)]) -> Self {
+        let members: Vec<Value> = members
+            .iter()
+            .map(|(role, points)| {
+                json!({
+                    "type": "way",
+                    "role": role,
+                    "geometry": self.geometry(points),
+                })
+            })
+            .collect();
+        let element = json!({
+            "type": "relation",
+            "id": self.next_id(),
+            "tags": Self::tags(tags),
+            "members": members,
+        });
+        self.elements.push(element);
+        self
+    }
+
+    pub fn json(&self) -> String {
+        json!({ "elements": self.elements }).to_string()
+    }
+
+    /// Разобранная карта. Идёт через текст, а не мимо него: десериализация
+    /// ответа — часть того, что проверяют тесты разбора.
+    pub fn parse(&self) -> MapData {
+        super::parse::parse(&self.json(), self.city).expect("fixture must parse")
+    }
+
+    fn next_id(&self) -> u64 {
+        self.elements.len() as u64 + 1
+    }
+
+    fn tags(pairs: &[(&str, &str)]) -> Value {
+        Value::Object(
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), Value::from(*value)))
+                .collect(),
+        )
+    }
+
+    fn geometry(&self, points: &[Vec2]) -> Value {
+        Value::Array(
+            points
+                .iter()
+                .map(|&point| {
+                    let geo = self.bounds.unproject(point);
+                    json!({ "lat": geo.lat, "lon": geo.lon })
+                })
+                .collect(),
+        )
+    }
 }
 
 pub fn building(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {

@@ -45,6 +45,18 @@ impl GeoBounds {
             ((lat - self.south) * METERS_PER_DEG_LAT) as f32,
         )
     }
+
+    /// Обратная к [`project`](Self::project): метры карты — в гео-координаты.
+    /// Настоящей выгрузке она не нужна (Overpass отдаёт гео, мы их только
+    /// проецируем), а фикстурам разбора — да: сцену задают в тех же метрах, в
+    /// которых потом проверяют результат, а ответ Overpass строят уже из них
+    /// (`fixture::Overpass`).
+    pub fn unproject(&self, point: Vec2) -> LatLon {
+        LatLon {
+            lat: self.south + point.y as f64 / METERS_PER_DEG_LAT,
+            lon: self.west + point.x as f64 / self.lon_scale,
+        }
+    }
 }
 
 /// Версия запроса в имени кеша: расширили набор тегов — старая выгрузка
@@ -208,6 +220,24 @@ mod tests {
                 (center - MAP_SIZE / 2.0).length() < 1.0,
                 "{city:?} {center:?}"
             );
+        }
+    }
+
+    /// Фикстуры разбора задают сцену в метрах и полагаются на то, что после
+    /// круга через гео-координаты точка вернётся туда же: они сравнивают
+    /// разобранную геометрию с исходной с допуском в сантиметры.
+    #[test]
+    fn unproject_returns_the_point_project_started_from() {
+        for city in City::ALL {
+            let bounds = GeoBounds::for_city(city);
+            for point in [Vec2::ZERO, MAP_SIZE / 2.0, MAP_SIZE, Vec2::new(137.0, 42.0)] {
+                let geo = bounds.unproject(point);
+                let back = bounds.project(geo.lat, geo.lon);
+                assert!(
+                    (back - point).length() < 0.01,
+                    "{city:?} {point:?} {back:?}"
+                );
+            }
         }
     }
 
