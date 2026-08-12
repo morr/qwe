@@ -336,13 +336,14 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   `MovementPlugin` is raised in tests without navigation at all.
 - **NavMode** (`navigation/mode.rs`) — which backend is active **right now**, as one
   value: `Grid(Flat | HierarchyPending{wanted} | Hierarchy(g))` and `Mesh(Pending |
-  Ready(b))`. Five states answer all four questions that used to be re-derived from four
-  resources in seventeen places: `is_continuous` (separation, panel sections),
-  `is_building` (loader), `northstar_wanted` (build scheduling), `mesh`/`hierarchy` (the
-  `Backend` snapshot). **`Mesh(Pending)` is the state that did not exist**: `polymesh_build()`
+  Ready(b))`. Five states answer the questions that used to be re-derived from four
+  resources in seventeen places: `is_building` (loader), `northstar_wanted` (build
+  scheduling), `mesh`/`hierarchy` (the `Backend` snapshot). The "is the mesh *toggled
+  on*" question is deliberately not a table method — its consumers read the toggle
+  itself (`ContinuousSpace` for the separation gate, the panel sections directly). **`Mesh(Pending)` is the state that did not exist**: `polymesh_build()`
   returned one `None` for both "off" and "still building", so consumers needing the
   difference rebuilt the question by hand. A *value*, not a resource, and taken fresh by
-  each consumer — the loader and separation gates must see the live situation even in a
+  each consumer — the loader gate must see the live situation even in a
   deterministic run, where `Backend` is frozen for the whole run. Computed in exactly one
   place, `Pathfinder::mode`.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) — requests become

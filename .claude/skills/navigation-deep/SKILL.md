@@ -201,9 +201,13 @@ in `CONTEXT.md` and the detail here in the same change.
   judged worse than finishing the transition on the grid.
 - **NavMode** (`navigation/mode.rs`) — the backend question as a value, and the only place
   the four resources are combined (`Pathfinder::mode`). `Grid(Flat | HierarchyPending {
-  wanted } | Hierarchy(g))` × `Mesh(Pending | Ready(b))`; the methods are the four
-  questions that used to be asked separately — `is_continuous`, `is_building`,
-  `northstar_wanted`, `mesh`/`hierarchy`. The truth table is pinned by two tests in the
+  wanted } | Hierarchy(g))` × `Mesh(Pending | Ready(b))`; the methods are the questions
+  that used to be asked separately — `is_building`, `northstar_wanted`,
+  `mesh`/`hierarchy`. The "is the mesh toggled on" question is deliberately not a table
+  method: its consumers read the toggle itself (`ContinuousSpace` above for the
+  separation gate — `MovementPlugin` is raised in tests without navigation, so it cannot
+  see a `NavMode` — and the panel sections directly, inside the `PolymeshDebug`
+  visibility boundary). The truth table is pinned by two tests in the
   module, which is the point: before, each column was assembled in a different file from a
   different combination of resources, and there was nowhere to compare them.
   `HierarchyPending { wanted }` is what keeps `northstar_wanted` honest — `wanted` is
@@ -212,7 +216,7 @@ in `CONTEXT.md` and the detail here in the same change.
   was expensive: `polymesh_build()` collapsed "off" and "building" into one `None`, so a
   consumer needing the difference — `crowd_demo`'s overlay label — rebuilt the question
   from raw resources, with a comment admitting it. A value rather than a resource on
-  purpose: the loader and separation gates must read the live situation even in a
+  purpose: the loader gate must read the live situation even in a
   deterministic run, where the `Backend` snapshot is deliberately frozen.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;

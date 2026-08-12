@@ -14,16 +14,20 @@
 //! делает это с комментарием, прямо признающим, что переспрашивает то, на что
 //! метод уже отвечает.
 //!
-//! Здесь состояние названо целиком. Таблица замкнута: пять вариантов
-//! отвечают на все четыре вопроса, и ни один потребитель больше не обращается
-//! к [`PolymeshDebug`](super::PolymeshDebug),
+//! Здесь состояние названо целиком: пять вариантов, и ни один потребитель
+//! снимка больше не собирает ответ из
 //! [`PathfindingAlgorithm`](super::PathfindingAlgorithm),
-//! [`NorthstarGrid`](super::NorthstarGrid) или [`PolyNavmesh`](super::PolyNavmesh)
-//! ради ветвления.
+//! [`NorthstarGrid`](super::NorthstarGrid) и [`PolyNavmesh`](super::PolyNavmesh)
+//! вручную. Первый смысл — «меш включён?» — таблице не принадлежит: это вопрос
+//! про **тумблер**, и его потребители читают
+//! [`PolymeshDebug`](super::PolymeshDebug) сами — гейт расталкивания через
+//! [`ContinuousSpace`](super::ContinuousSpace), потому что живёт в
+//! `MovementPlugin` без плагина навигации, секции панели — напрямую, по праву
+//! границы «`PolymeshDebug` виден в `navigation/` и `ui/`».
 //!
 //! **Значение, а не ресурс.** Каждый потребитель снимает его сам, в свой
-//! момент: гейт загрузки и гейт расталкивания обязаны видеть живое положение
-//! дел даже в детерминированном прогоне, где снимок поиска
+//! момент: гейт загрузки обязан видеть живое положение дел даже в
+//! детерминированном прогоне, где снимок поиска
 //! ([`Backend`](super::Backend)) намеренно заморожен на весь прогон.
 
 use std::sync::Arc;
@@ -85,16 +89,6 @@ impl std::fmt::Debug for NavMode {
 }
 
 impl NavMode {
-    /// Пути — метрические полилинии, а не центры тайлов.
-    ///
-    /// Отвечает **включённость**, а не готовность: пока меш строится, запросы
-    /// обслуживает сетка, но мигать расталкиванием на этом переходе хуже, чем
-    /// доработать полсекунды по-старому. Поэтому `Mesh(Pending)` — уже
-    /// «непрерывно».
-    pub fn is_continuous(&self) -> bool {
-        matches!(self, Self::Mesh(_))
-    }
-
     /// Ждать ли выбранный бэкенд. Спрашивается только про **выбранный**:
     /// иерархия northstar не нужна ни включённому мешу, ни плоскому A*, и
     /// ждать её в этих случаях значило бы держать экран загрузки зря.
@@ -145,13 +139,12 @@ mod tests {
         let building = NavMode::Grid(GridMode::HierarchyPending { wanted: false });
         let pending = NavMode::Mesh(MeshMode::Pending);
 
-        for (mode, continuous, is_building, northstar) in [
-            (&flat, false, false, false),
-            (&wanted, false, true, true),
-            (&building, false, true, false),
-            (&pending, true, true, false),
+        for (mode, is_building, northstar) in [
+            (&flat, false, false),
+            (&wanted, true, true),
+            (&building, true, false),
+            (&pending, true, false),
         ] {
-            assert_eq!(mode.is_continuous(), continuous, "{mode:?}");
             assert_eq!(mode.is_building(), is_building, "{mode:?}");
             assert_eq!(mode.northstar_wanted(), northstar, "{mode:?}");
         }
@@ -166,8 +159,8 @@ mod tests {
 
         assert!(off.mesh().is_none());
         assert!(pending.mesh().is_none());
-        // …и при этом они различимы:
-        assert!(!off.is_continuous());
-        assert!(pending.is_continuous());
+        // …и при этом они различимы: строящийся меш держит экран загрузки
+        assert!(!off.is_building());
+        assert!(pending.is_building());
     }
 }

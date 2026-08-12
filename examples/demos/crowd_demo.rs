@@ -2491,8 +2491,10 @@ fn update_overlay(
     // клавиши переключить бэкенд здесь нет, но по BRP тумблер достижим — а на
     // сеточной навигации расталкивания не бывает вовсе, и подпись обязана это
     // говорить, а не показывать `ON` у выключенной системы.
-    // Детерминизма в этой сцене нет по построению (`Determinism` не вставлен)
-    let mode_off = !separation_allowed_by_mode(false, mode.is_continuous());
+    // Детерминизма в этой сцене нет по построению (`Determinism` не вставлен).
+    // «Непрерывно» — тумблер меша, не готовность: и строящийся меш
+    // непрерывен (см. `navigation::ContinuousSpace`)
+    let mode_off = !separation_allowed_by_mode(false, matches!(mode, NavMode::Mesh(_)));
     let share = if overlaps.pawns > 0 {
         overlaps.involved as f32 / overlaps.pawns as f32 * 100.0
     } else {
