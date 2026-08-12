@@ -617,7 +617,16 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   fastest humans outrun the slowest demon setting. `sync_human_pace` applies slider
   moves (`resource_changed`), picking the base off `Has<HumanFleeTag>`.
 - **CorpseTag** — a killed human: behavior/movement components removed, dark lying
-  sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`).
+  sprite at `Z_CORPSE`. Not in the human spatial grid (grid filters on `Human`). The
+  transition is **`human::to_corpse`**, one entry point, and it is where a corpse is
+  defined — the kill observer in `demon/` only reports that it happened. Each module
+  takes back its own components: `to_corpse` drops the human behaviour and calls
+  **`movement::strip_movement`**, which drops the movement footprint via
+  `remove_with_requires::<Movable>` (so `Movable`'s `#[require]` stays the single record
+  of what a movable entity drags along) plus the runtime pieces `#[require]` cannot
+  reach — request, tick stamp, retire deadline, destination claim. Deliberately kept on
+  the body: `PawnId` / `WanderIndex` (a pawn's identity, useful in debug) and
+  `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
 - **Demon spawn** — a demon acts from the first tick it exists, the initial burst
   included. A `DemonSpawnPause` (0.5–3 s staging) existed and was removed on request;
   staging an entrance again means a new component, not reviving that one.
