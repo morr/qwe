@@ -97,13 +97,15 @@ pub fn panic(
 /// и каждый заново обходил одни и те же плотные ячейки, дёргая `Query::get`
 /// на каждого кандидата).
 ///
-/// Курс (`WanderHeading`) переписывается вектором бегства на каждой
-/// перепрокладке: в ветке успокоения демона в радиусе уже нет — она и
-/// срабатывает потому, что поиск никого не нашёл, — так что направление
-/// угрозы надо запомнить заранее. Устаревание ограничено: период
-/// перепрокладки 0.7–1.2 с при скорости бегства 8 м/с — не больше 9.6 м
-/// пройденного пути против разрыва в 90 м, то есть ≲13° ошибки, что заведомо
-/// внутри ±45° запретного конуса.
+/// На каждой перепрокладке запоминаются **две** величины, и обе — потому, что
+/// в ветке успокоения демона в радиусе уже нет: курс прогулки
+/// (`WanderHeading`, вектор бегства с личным веером) и запрет
+/// (`PanicRecoil`, чистый вектор на демона — [`FleeAction::Flee::ban`]).
+/// Устаревание запрета ограничено: период перепрокладки 0.7–1.2 с при
+/// скорости бегства 8 м/с — не больше 9.6 м пройденного пути против разрыва в
+/// 90 м, и ещё столько же на ход самого демона, то есть ≲13° ошибки при
+/// запретном конусе ±45°. Это единственная погрешность, которая в него
+/// заложена: веер разбегания в запрет не попадает вовсе, см. `ban`.
 #[allow(clippy::too_many_arguments)]
 pub fn flee(
     mut commands: Commands,
@@ -185,18 +187,24 @@ pub fn flee(
                         .random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1),
                 ));
                 pause.0.reset();
-                // курс уже смотрит прочь от демона, обратный ему и есть центр
-                // запретного конуса. Он отклонён веером разбегания (±0.6 рад ≈
-                // 34°), то есть направление на самого демона всё равно внутри
-                // ±45° — а читается это как «не возвращайся тем же путём»
+                // `PanicRecoil` здесь НЕ ставится: он уже лежит на человеке с
+                // последней перепрокладки, где демона было ещё видно. Здесь
+                // его взять неоткуда — ветка и срабатывает потому, что поиск
+                // никого не нашёл
                 commands
                     .entity(entity)
                     .remove::<(HumanFleeTag, FleeRepath)>()
-                    .insert((HumanWanderTag, PanicRecoil(-heading.0)));
+                    .insert(HumanWanderTag);
                 continue;
             }
             FleeAction::Hold => continue,
-            FleeAction::Flee { away } => away,
+            FleeAction::Flee { away, ban } => {
+                // память о направлении угрозы — до отсева непроходимой цели,
+                // иначе неудачный кадр оставил бы запрет от прошлой
+                // перепрокладки, а то и вовсе без запрета
+                commands.entity(entity).insert(PanicRecoil(ban));
+                away
+            }
         };
 
         // память о направлении угрозы — пишется до отсева непроходимой цели,
@@ -236,5 +244,114 @@ pub fn escape(
             telemetry.escaped += 1;
             debug!("human {entity} escaped (total {})", telemetry.escaped);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+    use std::time::Duration;
+
+    use super::*;
+    use crate::navigation::{ArcNavmesh, Backend, Navmesh};
+    use crate::rng::WorldSeed;
+
+    /// Мир бегства: пустая проходимая сетка, ни меша, ни иерархии.
+    fn app() -> App {
+        let mut app = App::new();
+        let navmesh = Arc::new(RwLock::new(Navmesh::default()));
+        app.insert_resource(Backend::from_grid(navmesh.clone()))
+            .insert_resource(ArcNavmesh(navmesh))
+            .init_resource::<bevy::diagnostic::DiagnosticsStore>()
+            .init_resource::<SpatialGrid<Demon>>()
+            .init_resource::<HumanStyle>()
+            .init_resource::<WorldSeed>()
+            .init_resource::<Time>()
+            .add_systems(Update, flee);
+        app
+    }
+
+    /// Демон, попадающий и в запрос позиций, и в сетку, — иначе точный поиск
+    /// его не найдёт и лестница уйдёт в успокоение.
+    fn spawn_demon(app: &mut App, position: Vec2) -> Entity {
+        let demon = app.world_mut().spawn((Demon, SimPosition(position))).id();
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Demon>>()
+            .insert(demon, position);
+        demon
+    }
+
+    /// Бегущий с досчитавшим таймером перепрокладки: тик решения, точный
+    /// поиск. `heading` — курс с прошлой перепрокладки.
+    fn spawn_runner(app: &mut App, position: Vec2, heading: Vec2) -> Entity {
+        let mut repath = FleeRepath::default();
+        // таймер обязан досчитать на первом же тике, иначе решения не будет
+        repath.0.tick(Duration::from_secs(2));
+        app.world_mut()
+            .spawn((
+                Human,
+                HumanFleeTag,
+                SimPosition(position),
+                repath,
+                WanderPause(Timer::from_seconds(1.0, TimerMode::Once)),
+                Movable::new(1.0),
+                WanderHeading(heading),
+                Pace(1.0),
+                PawnId(3),
+                crate::rng::WanderIndex::default(),
+            ))
+            .id()
+    }
+
+    fn recoil(app: &App, entity: Entity) -> Option<Vec2> {
+        app.world()
+            .get::<PanicRecoil>(entity)
+            .map(|recoil| recoil.0)
+    }
+
+    /// Проводка того, что решает [`decide`]: запрет, снятый с чистого вектора
+    /// на демона, обязан доехать до компонента.
+    ///
+    /// Курс здесь заведомо «неправильный» — смотрит вбок, а не от демона.
+    /// Синтез запрета из курса (`-WanderHeading`), как было раньше, дал бы
+    /// ровно его, и тест это отличает.
+    #[test]
+    fn a_repath_remembers_where_the_demon_was_not_where_the_runner_looks() {
+        let app = &mut app();
+        let position = Vec2::new(100.0, 100.0);
+        spawn_demon(app, position - Vec2::X * 20.0);
+        let runner = spawn_runner(app, position, Vec2::Y);
+
+        app.update();
+
+        let ban = recoil(app, runner).expect("перепрокладка обязана запомнить угрозу");
+        assert!(
+            (ban - Vec2::NEG_X).length() < 1e-3,
+            "запрет {ban:?} смотрит не на демона"
+        );
+    }
+
+    /// Успокоение НЕ трогает запрет: демона в радиусе нет, взять новый
+    /// неоткуда, а прежний — единственное, что о нём известно.
+    #[test]
+    fn calming_down_keeps_the_ban_the_last_repath_left() {
+        let app = &mut app();
+        // демонов в мире нет вовсе — первый же тик успокаивает
+        let runner = spawn_runner(app, Vec2::new(100.0, 100.0), Vec2::Y);
+        app.world_mut()
+            .entity_mut(runner)
+            .insert(PanicRecoil(Vec2::NEG_X));
+
+        app.update();
+
+        assert!(
+            app.world().get::<HumanWanderTag>(runner).is_some(),
+            "демонов нет — человек обязан успокоиться"
+        );
+        assert_eq!(
+            recoil(app, runner),
+            Some(Vec2::NEG_X),
+            "успокоение переписало запрет курсом прогулки"
+        );
     }
 }

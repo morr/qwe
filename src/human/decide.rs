@@ -74,9 +74,25 @@ pub enum FleeAction {
     CalmDown,
     /// Угроза рядом, но решать нечего — бежим дальше по тому, что есть.
     Hold,
-    /// Прокладываем новый путь бегства; `away` — единичный курс прочь от
-    /// демона, уже с личным углом веера.
-    Flee { away: Vec2 },
+    /// Прокладываем новый путь бегства.
+    Flee {
+        /// Единичный курс прочь от демона, уже с личным углом веера.
+        away: Vec2,
+        /// Единичный вектор **на демона** — то, что запоминается в
+        /// [`PanicRecoil`](crate::human::PanicRecoil) и запрещает первую цель
+        /// после успокоения.
+        ///
+        /// Рождается здесь, а не в момент успокоения, по единственной
+        /// причине: успокоение срабатывает **потому**, что демона в радиусе
+        /// уже нет, — спрашивать там некого. Раньше его синтезировали из
+        /// сохранённого курса бегства (`-WanderHeading`), и вместе с курсом он
+        /// наследовал личный веер: до ±0.6 рад (34°) в конусе запрета шириной
+        /// ±45°, плюс до 13° устаревания — в сумме больше конуса. Веер —
+        /// свойство разбегания толпы, к направлению угрозы отношения не
+        /// имеющее; здесь он просто не применяется, и арифметике «влезает ли
+        /// веер в конус» больше неоткуда взяться.
+        ban: Vec2,
+    },
 }
 
 /// Лестница бегства. `threat` спрашивается ровно один раз — тем вопросом,
@@ -93,11 +109,13 @@ pub fn decide(sense: &FleeSense, threat: impl FnOnce(ThreatProbe) -> Threat) -> 
         Threat::Near => FleeAction::Hold,
         Threat::At(demon) => {
             let mut away = (sense.position - demon).normalize_or(Vec2::X);
+            // запрет снимается с ЧИСТОГО вектора, до веера
+            let ban = -away;
             // не преследуемые разбегаются веером — каждый под своим углом
             if !sense.chased {
                 away = Vec2::from_angle(personal_spread(sense.pawn_id)).rotate(away);
             }
-            FleeAction::Flee { away }
+            FleeAction::Flee { away, ban }
         }
     }
 }
@@ -207,7 +225,7 @@ mod tests {
         let mut sense = sense();
         sense.chased = true;
         let demon = sense.position - Vec2::X * 10.0;
-        let FleeAction::Flee { away } = decide(&sense, |_| Threat::At(demon)) else {
+        let FleeAction::Flee { away, .. } = decide(&sense, |_| Threat::At(demon)) else {
             panic!("демон рядом — бежим");
         };
         assert!((away - Vec2::X).length() < 1e-5);
@@ -220,7 +238,7 @@ mod tests {
         for pawn_id in 0..64 {
             let mut sense = sense();
             sense.pawn_id = pawn_id;
-            let FleeAction::Flee { away } = decide(&sense, |_| Threat::At(demon)) else {
+            let FleeAction::Flee { away, .. } = decide(&sense, |_| Threat::At(demon)) else {
                 panic!("демон рядом — бежим");
             };
             let angle = away.to_angle();
@@ -248,10 +266,56 @@ mod tests {
     fn a_human_standing_on_the_demon_still_gets_a_course() {
         let mut sense = sense();
         sense.chased = true;
-        let FleeAction::Flee { away } = decide(&sense, |_| Threat::At(sense.position)) else {
+        let FleeAction::Flee { away, ban } = decide(&sense, |_| Threat::At(sense.position)) else {
             panic!("демон рядом — бежим");
         };
         assert_eq!(away, Vec2::X);
+        assert_eq!(ban, Vec2::NEG_X, "запрет тоже обязан быть каким-то");
+    }
+
+    /// Запрет смотрит на демона, а не туда, куда веер отправил бегущего.
+    ///
+    /// Ровно тот инвариант, который раньше был арифметикой в комментарии
+    /// («±0.6 рад веера всё равно внутри ±45° конуса») и разъехался бы молча,
+    /// расширь кто-нибудь веер: теперь веер в запрет не входит вовсе, и
+    /// проверяется это на всём разбросе `PawnId`.
+    #[test]
+    fn the_ban_points_at_the_demon_whatever_the_fan_did() {
+        let demon = sense().position - Vec2::X * 10.0;
+        let mut fanned = 0;
+        for pawn_id in 0..64 {
+            let mut sense = sense();
+            sense.pawn_id = pawn_id;
+            let FleeAction::Flee { away, ban } = decide(&sense, |_| Threat::At(demon)) else {
+                panic!("демон рядом — бежим");
+            };
+            assert!(
+                (ban - Vec2::NEG_X).length() < 1e-5,
+                "запрет {ban:?} смотрит не на демона"
+            );
+            if (away - Vec2::X).length() > 1e-3 {
+                fanned += 1;
+            }
+        }
+        // иначе тест прошёл бы и на выключенном веере, где доказывать нечего
+        assert!(fanned > 32, "веер почти никого не отклонил: {fanned} из 64");
+    }
+
+    /// У преследуемого веера нет — и запрет от курса тогда неотличим;
+    /// проверяем, что он всё равно тот же самый.
+    #[test]
+    fn the_chased_get_the_same_ban_as_everyone() {
+        let mut sense = sense();
+        sense.chased = true;
+        let demon = sense.position + Vec2::Y * 10.0;
+        let FleeAction::Flee { away, ban } = decide(&sense, |_| Threat::At(demon)) else {
+            panic!("демон рядом — бежим");
+        };
+        assert!((ban - Vec2::Y).length() < 1e-5);
+        assert!(
+            (away + ban).length() < 1e-5,
+            "курс — это ровно минус запрет"
+        );
     }
 
     #[test]
