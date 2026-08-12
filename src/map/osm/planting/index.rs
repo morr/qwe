@@ -21,7 +21,7 @@ use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, point_in_ar
 /// (30) у генератора входов: в ячейке должно лежать несколько кандидатов, а не
 /// полквартала и не одна стена.
 const NEARBY_CELL: f32 = 32.0;
-pub(super) fn nearby_cell(pos: Vec2) -> IVec2 {
+fn nearby_cell(pos: Vec2) -> IVec2 {
     (pos / NEARBY_CELL).floor().as_ivec2()
 }
 
