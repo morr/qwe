@@ -458,11 +458,18 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   a restart via `RestartPending` — and that restart carries `RestartEvent { to_portal:
   true }`: a changed seed or a flipped toggle is a *different world*, and without the
   camera move the setting reads as having done nothing.
-- **SimPipeline** (`determinism/mod.rs`) — the toggle in the schedule: two system sets,
-  `Live` and `Deterministic`, gated once in `DeterminismPlugin` for every schedule they
-  appear in (`Update`, `FixedUpdate`, both `OnEnter` phases). A system declares its branch
-  with `.in_set(..)` and never reads the mode; a forgotten `run_if` is no longer a way to
-  break replay, and a system with no set is visible by running in both modes. The one
+- **SimPipeline** (`determinism/mod.rs`) — the toggle in the schedule: **three** system
+  sets — `Live`, `Deterministic` and `BothModes` — gated once in `DeterminismPlugin` for
+  every schedule they appear in (`Update`, `FixedUpdate`, both `OnEnter` phases). A system
+  declares its branch with `.in_set(..)` and never reads the mode; a forgotten `run_if` is
+  no longer a way to break replay. **The sets also carry the world gate** (`in_world`):
+  world resources exist only between `OnEnter(Playing)` and `OnExit`, and a simulation
+  system running in `Loading` dies on parameter validation — which crashed a launch once.
+  That gate used to be twenty-five hand-written `in_state(Playing)`, nine of them on one
+  `FixedUpdate` chain. `BothModes` exists so a system running in both modes has somewhere
+  to say so and still get the gate; the cost is that "no set" no longer reads as "both
+  modes" but as "lives outside the world". `in_world` takes an `Option<Res<State<_>>>`
+  because `MovementPlugin` and its neighbours are raised in tests with no states at all. The one
   place the mode is still read directly is `separation_runs`, which needs it **negated**
   ("separation is off — clear its leftovers"), and a set cannot be negated.
   `MovementPlugin` / `HumanPlugin` / `NavigationPlugin` add `DeterminismPlugin` if absent:
@@ -471,6 +478,13 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   of `SimSpeed`; the answer to a path query waits for its tick; and everything left in
   `Update` only draws. A slow machine therefore replays the same run more slowly — it does
   not replay a different one.
+- **Two yards, and they are not duplicates.** `sim_yard::behavior_yard` (test-only) is the
+  four resources a species' behaviour stand needs — backend, grid, diagnostics store,
+  clock — and answers "did this rung fire". `replay_app` is the run yard and answers "does
+  the whole run replay". **The list of plugins `replay_app` deliberately leaves out lives
+  next to the list it includes**, with a reason per line: that boundary is exactly what
+  `a_restart_replays_the_run` can and cannot see (10 of the game's 19 plugins), and it was
+  previously invisible from `loading.rs`, where the claim about it is written.
 - **Replay check** (`determinism/replay.rs`, `tests/determinism.rs`,
   `examples/acceptance/determinism_replay.rs`) — same machinery, two scales: the test runs
   a synthetic yard (`fixture::crowded_yard`, dozens of pawns, 96 ticks, ~1 s in
@@ -610,7 +624,9 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   and the failure modes it fixes — navigation-deep skill, `references/crowd.md`.
 - **Decision ladder** (`human/decide.rs`, `demon/decide.rs`) — a species' rules live in a
   pure `decide(&…Sense, …) -> …Action`: plain values in, one enum variant out, no
-  `Entity`, no `Commands`, no queries, tested without an `App`. `behavior.rs` only
+  `Commands`, no queries, tested without an `App`. (`Entity` appears in exactly one place —
+  `demon::decide::Victim`, so the ladder can *name* the victim it picked; the rule's point,
+  no world and no queries, is intact.) `behavior.rs` only
   applies the answer — swap tags, queue a path request, trigger the kill event — so the
   *order* of the rungs, which is half of what these rules are, is readable in one place
   instead of spread over `continue`s. Two things deliberately stay outside. **Expensive
@@ -638,6 +654,15 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   them it only checks demon-grid *cell occupancy* (`any_in_cells_around`); the
   every-tick exact search used to cost 40% of the sim tick. **Escape** — a fleeing
   human within `ESCAPE_MARGIN` of the map border despawns, `telemetry.escaped += 1`.
+- **Wander skeleton** (`movement/wander.rs`) — the *order* of one target-picking step,
+  shared by both species: `ready_to_pick` (the state guard) → the species' own policy →
+  `point_in_cone` / `clamp_to_map` → `request_wander_path` (sift + `to_pathfinding`) →
+  `heading_towards`. Only **where** a pawn wants to go is per-species; the rest was
+  written twice, and the sift-then-request tail four times. The skeleton deliberately does
+  **not** open the `SimRng` — the species does, in its own place, or the decision stream
+  would advance on pawns that took no decision this tick (see **Decision stream**).
+  `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`; it used to be declared in
+  both species files.
 - **WanderHeading** — the direction a human is walking, kept between walks. Every next
   target is picked inside a `WANDER_CONE` (60°) cone around it — a building errand
   samples `WANDER_BUILDING_TRIES` (8) random buildings and takes the first inside the
@@ -704,8 +729,13 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   `ChaseTarget`s of the demons in the query; there is no standing claim between ticks.
   Which exits from a chase free a slot is `ChaseAction::releases_claim`, and the rule is
   asymmetric: only **GaveUp** releases, because after `Kill` and `LostTarget` the victim
-  is gone and nobody will claim it anyway. Repath throttle 0.4 s, and on that same tick the demon may
-  **switch** target: sharing its target, it takes any *unclaimed* human no farther than
+  is gone and nobody will claim it anyway — a **switch** moves one slot instead, with
+  `ChaseClaims::transfer`, the operation that replaced the `release` + `claim` pair the
+  exhaustive match could not see.
+  Repath throttle 0.4 s, and on that same tick the demon may
+  **switch** target — **a rung of the ladder, not a tail after it**: the search is a lazy
+  sense (`better_victim`) that `decide` asks only on the repath rung, and the answer is
+  `ChaseAction::Switch { to: Victim }`. Sharing its target, it takes any *unclaimed* human no farther than
   ×1.5 its current distance (the pincer breaks up); otherwise whoever is nearer than
   **×0.7** of the current target — the anti-flip-flop margin (near-equidistant victims
   would trade the demon back and forth every repath tick). Both cases require

@@ -16,6 +16,8 @@ pub mod restart;
 pub mod rng;
 pub mod settings;
 pub mod sim_time;
+#[cfg(test)]
+pub mod sim_yard;
 pub mod spatial;
 pub mod telemetry;
 pub mod ui;

@@ -346,23 +346,16 @@ pub fn pulse_devouring(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, RwLock};
     use std::time::Duration;
 
     use super::*;
-    use crate::navigation::{ArcNavmesh, Backend, Navmesh};
 
-    /// Бэкенд, которым ищет `chase`: пустая проходимая сетка, ни меша, ни
-    /// иерархии — как на старте мира.
+    /// Мир погони: общий двор плюс то, что нужно именно демонам — сетка людей,
+    /// за которыми гонятся, и их стиль.
     fn app() -> App {
-        let mut app = App::new();
-        let navmesh = Arc::new(RwLock::new(Navmesh::default()));
-        app.insert_resource(Backend::from_grid(navmesh.clone()))
-            .insert_resource(ArcNavmesh(navmesh))
-            .init_resource::<bevy::diagnostic::DiagnosticsStore>()
-            .init_resource::<SpatialGrid<Human>>()
+        let mut app = crate::sim_yard::behavior_yard();
+        app.init_resource::<SpatialGrid<Human>>()
             .init_resource::<DemonStyle>()
-            .init_resource::<Time>()
             .add_systems(Update, chase);
         app
     }

@@ -255,24 +255,18 @@ pub fn escape(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, RwLock};
     use std::time::Duration;
 
     use super::*;
-    use crate::navigation::{ArcNavmesh, Backend, Navmesh};
     use crate::rng::WorldSeed;
 
-    /// Мир бегства: пустая проходимая сетка, ни меша, ни иерархии.
+    /// Мир бегства: общий двор плюс то, что нужно именно людям — сетка
+    /// демонов, от которых бегут, их стиль и жребий.
     fn app() -> App {
-        let mut app = App::new();
-        let navmesh = Arc::new(RwLock::new(Navmesh::default()));
-        app.insert_resource(Backend::from_grid(navmesh.clone()))
-            .insert_resource(ArcNavmesh(navmesh))
-            .init_resource::<bevy::diagnostic::DiagnosticsStore>()
-            .init_resource::<SpatialGrid<Demon>>()
+        let mut app = crate::sim_yard::behavior_yard();
+        app.init_resource::<SpatialGrid<Demon>>()
             .init_resource::<HumanStyle>()
             .init_resource::<WorldSeed>()
-            .init_resource::<Time>()
             .add_systems(Update, flee);
         app
     }
