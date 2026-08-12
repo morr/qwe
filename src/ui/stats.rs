@@ -52,10 +52,6 @@ enum StatRow {
     Souls,
 }
 
-/// Строка-кнопка тумблера детерминированного режима.
-#[derive(Component)]
-struct DeterminismRow;
-
 /// Поле ввода seed'а мира.
 #[derive(Component)]
 struct SeedField;
@@ -315,7 +311,7 @@ fn render_stats_panel(
     // а не вида. Расталкивание и слоты стояли здесь по той же логике, но
     // уехали в подвкладки панели Navigation: они про перемещение, и ручек у
     // них столько, что World переставал читаться как сводка прогона
-    let determinism_row = spawn_cycle_row(
+    spawn_cycle_row(
         &mut commands,
         world_panel,
         "Deterministic",
@@ -328,7 +324,6 @@ fn render_stats_panel(
             text: |mode| on_off(mode.0).to_string(),
         },
     );
-    commands.entity(determinism_row).insert(DeterminismRow);
     let seed_row = spawn_seed_row(&mut commands, seed.0);
     commands.entity(world_panel).add_child(seed_row);
 
