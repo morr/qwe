@@ -349,7 +349,7 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) — requests become
   async tasks with **visibility gating** (peaceful wanderers off-screen or at zoom ≥
   `WANDER_DISPATCH_MAX_ZOOM` wait; **`UrgentPath` always dispatches**) and
-  **priority** (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 512).
+  **priority** (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 1024).
 - **UrgentPath** (`movement/components.rs`) — "this pawn may not wait for the camera".
   The species own it: a demon and the test walker carry it always, a human only while
   panicking (it comes and goes with `HumanFleeTag`), and `strip_movement` takes it off a
