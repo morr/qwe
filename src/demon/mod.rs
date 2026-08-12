@@ -66,7 +66,19 @@ impl Plugin for DemonPlugin {
             // боится
             .add_systems(
                 FixedUpdate,
-                (pick_wander_targets, acquire_targets, chase, devour)
+                (
+                    // ползунок скорости — на тике по той же причине, что и
+                    // разброс людей: `Movable::speed` входит в состояние
+                    // прогона, и правка, применённая в кадре, легла бы между
+                    // разными тиками при разном fps
+                    sync_demon_speed
+                        .run_if(resource_changed::<DemonStyle>)
+                        .in_set(SimPipeline::Deterministic),
+                    pick_wander_targets,
+                    acquire_targets,
+                    chase,
+                    devour,
+                )
                     .chain()
                     .in_set(SimSet::DemonBehavior),
             )
@@ -77,11 +89,18 @@ impl Plugin for DemonPlugin {
                     // траектории броска — на симуляцию не влияют
                     pulse_devouring,
                     draw_lunge_paths,
-                    sync_demon_speed.run_if(resource_changed::<DemonStyle>),
                 )
                     // косметика идёт в обоих режимах, но только внутри мира —
                     // и то и другое теперь сказано одним множеством
                     .in_set(SimPipeline::BothModes),
+            )
+            // в обычном режиме ползунок обязан отзываться и на паузе
+            // симуляции — как разброс людей
+            .add_systems(
+                Update,
+                sync_demon_speed
+                    .run_if(resource_changed::<DemonStyle>)
+                    .in_set(SimPipeline::Live),
             );
     }
 }
