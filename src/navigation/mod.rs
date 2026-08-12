@@ -285,9 +285,8 @@ impl Plugin for NavigationPlugin {
             )
             .add_systems(
                 PreUpdate,
-                refresh_backend
-                    .run_if(in_state(AppState::Playing))
-                    .in_set(crate::determinism::SimPipeline::Live),
+                // гейт на мир приезжает с множеством (`gate_pipelines`)
+                refresh_backend.in_set(crate::determinism::SimPipeline::Live),
             )
             .add_systems(OnExit(AppState::Playing), drop_backend);
 

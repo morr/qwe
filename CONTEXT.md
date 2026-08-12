@@ -321,9 +321,9 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   everywhere-passable grid, and a run once went through buildings on it
   (`determinism/replay.rs`). An absent resource is loud — param validation fails and the
   default Bevy error handler panics (tests and the replay scene set `warn`) — unlike a
-  silently wrong geometry. **The cost: every system taking `Res<Backend>` must be gated on
-  `in_state(Playing)`** — `SimPipeline` picks the mode branch only and does not gate on
-  state, and the live pathfinding chain running in `Loading` crashed the app once.
+  silently wrong geometry. **The cost: every system taking `Res<Backend>` must sit in a
+  `SimPipeline` set** — the sets carry the world gate (`in_world`) along with the mode
+  branch, and the live pathfinding chain running in `Loading` crashed the app once.
   `walkable()` is the passability view (one read lock per system run):
   `allows`/`nearest_free_point` are backend-strict (grid AND mesh), while `sift_target` /
   `line_of_sight` / `coast_allows` stay deliberately grid-only — the policy lives on the
