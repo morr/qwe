@@ -254,6 +254,7 @@ impl Plugin for RngPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<WorldSeed>()
             .register_type::<PawnId>()
+            .register_type::<Species>()
             .register_type::<WanderIndex>()
             .init_resource::<WorldSeed>()
             .track_pref::<WorldSeed>();
