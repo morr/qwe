@@ -844,6 +844,64 @@ pub const POLYMESH_AGENT_RADIUS_MIN: f32 = 0.2;
 pub const POLYMESH_AGENT_RADIUS_MAX: f32 = 0.6;
 pub const POLYMESH_AGENT_RADIUS_STEP: f32 = 0.1;
 
+// Умолчание ползунка обязано лежать внутри его же диапазона.
+//
+// Пара «умолчание» + «MIN/MAX/STEP» — это одна ручка, разложенная на четыре
+// константы, которые лежат в сотнях строк друг от друга и читаются разными
+// модулями: умолчание — своим ресурсом, границы — только панелью. Связи между
+// ними не было никакой, и умолчание вне диапазона обнаружилось бы лишь тем, что
+// бегунок при первом же касании прыгает к границе, меняя настройку, которую
+// никто не трогал.
+//
+// Проверяются те двенадцать, у которых умолчание названо здесь же; у остальных
+// шести оно живёт в `impl Default` своего ресурса (`SlotSearch`, `SlotLab`,
+// `TreeStyle`, `PolymeshDebug`), и константы умолчания в этом файле нет.
+const _: () = {
+    assert!(DEMON_CAP as f32 >= DEMON_CAP_MIN && DEMON_CAP as f32 <= DEMON_CAP_MAX);
+    assert!(
+        DEMON_SPAWN_INTERVAL >= DEMON_SPAWN_INTERVAL_MIN
+            && DEMON_SPAWN_INTERVAL <= DEMON_SPAWN_INTERVAL_MAX
+    );
+    assert!(
+        DEMON_SPEED_FACTOR >= DEMON_SPEED_FACTOR_MIN
+            && DEMON_SPEED_FACTOR <= DEMON_SPEED_FACTOR_MAX
+    );
+    assert!(
+        DEMON_LUNGE_BOOST >= DEMON_LUNGE_BOOST_MIN && DEMON_LUNGE_BOOST <= DEMON_LUNGE_BOOST_MAX
+    );
+    assert!(
+        HUMAN_SPEED_SPREAD >= HUMAN_SPEED_SPREAD_MIN
+            && HUMAN_SPEED_SPREAD <= HUMAN_SPEED_SPREAD_MAX
+    );
+    assert!(
+        HUMAN_BODY_RADIUS >= HUMAN_BODY_RADIUS_MIN && HUMAN_BODY_RADIUS <= HUMAN_BODY_RADIUS_MAX
+    );
+    assert!(
+        SEPARATION_PASS_SQUEEZE >= SEPARATION_PASS_SQUEEZE_MIN
+            && SEPARATION_PASS_SQUEEZE <= SEPARATION_PASS_SQUEEZE_MAX
+    );
+    assert!(
+        SEPARATION_LEFT_SHARE >= SEPARATION_LEFT_SHARE_MIN
+            && SEPARATION_LEFT_SHARE <= SEPARATION_LEFT_SHARE_MAX
+    );
+    assert!(
+        CONIFER_NOISE_WAVELENGTH >= CONIFER_NOISE_WAVELENGTH_MIN
+            && CONIFER_NOISE_WAVELENGTH <= CONIFER_NOISE_WAVELENGTH_MAX
+    );
+    assert!(
+        CONIFER_NOISE_OCTAVES as f32 >= CONIFER_NOISE_OCTAVES_MIN
+            && CONIFER_NOISE_OCTAVES as f32 <= CONIFER_NOISE_OCTAVES_MAX
+    );
+    assert!(
+        CONIFER_NOISE_LACUNARITY >= CONIFER_NOISE_LACUNARITY_MIN
+            && CONIFER_NOISE_LACUNARITY <= CONIFER_NOISE_LACUNARITY_MAX
+    );
+    assert!(
+        CONIFER_NOISE_PERSISTENCE >= CONIFER_NOISE_PERSISTENCE_MIN
+            && CONIFER_NOISE_PERSISTENCE <= CONIFER_NOISE_PERSISTENCE_MAX
+    );
+};
+
 /// Z юнита по его мировой y-координате.
 pub fn unit_z(y: f32) -> f32 {
     Z_UNIT_BASE - y * Y_SORT_FACTOR
