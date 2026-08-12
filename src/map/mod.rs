@@ -8,7 +8,6 @@ mod tram;
 pub mod trees;
 
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
-pub use self::footprint::bridge_curb_width;
 pub use self::meshing::{MeshBuilder, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};

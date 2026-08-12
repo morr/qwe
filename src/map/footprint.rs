@@ -76,28 +76,14 @@ pub fn bridge_curb_width(width: f32) -> f32 {
     (width * BRIDGE_CURB_SCALE).clamp(*BRIDGE_CURB_RANGE.start(), *BRIDGE_CURB_RANGE.end())
 }
 
-/// Чем полоса является на земле.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BandRole {
-    /// Проезжая часть моста — прорезается проходимой.
-    Deck,
-    /// Бордюр моста — блокирует сход с настила вбок.
-    Curb,
-    /// Русло линейного водотока — блокирует (трубы полосы не имеют).
-    Channel,
-    /// Городская стена — блокирует.
-    Wall,
-    /// Арка сквозь здание — прорезается проходимой, ширина капнута.
-    Passage,
-}
-
-/// Полоса: осевая + ширина + роль. Осевая, а не готовый контур, намеренно —
+/// Полоса: осевая + ширина. Осевая, а не готовый контур, намеренно —
 /// сетке нужна именно осевая, чтобы растеризация осталась 4-связной цепочкой
 /// (тонкая косая полоса из одного контура рассыпалась бы в шахматку).
+/// Что полоса значит на земле — блокирует или прорезает — решает потребитель
+/// порядком заливки, самой полосе роль не нужна.
 pub struct Band {
     pub line: Vec<Vec2>,
     pub width: f32,
-    pub role: BandRole,
 }
 
 impl RoadLine {
@@ -120,7 +106,6 @@ impl RoadLine {
         Band {
             line: self.points.clone(),
             width: self.width,
-            role: BandRole::Deck,
         }
     }
 
@@ -139,7 +124,6 @@ impl RoadLine {
                 .map(|(&point, &offset)| point + side * offset)
                 .collect(),
             width: curb,
-            role: BandRole::Curb,
         })
     }
 
@@ -150,7 +134,6 @@ impl RoadLine {
         Band {
             line: self.points.clone(),
             width: self.width.min(PASSAGE_MAX_WIDTH),
-            role: BandRole::Passage,
         }
     }
 }
@@ -164,7 +147,6 @@ impl WaterLine {
         (!self.tunnel).then(|| Band {
             line: self.points.clone(),
             width: self.width,
-            role: BandRole::Channel,
         })
     }
 }
@@ -174,7 +156,6 @@ impl WallLine {
         Band {
             line: self.points.clone(),
             width: self.width,
-            role: BandRole::Wall,
         }
     }
 }
