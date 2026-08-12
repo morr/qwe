@@ -29,7 +29,6 @@
 //! вместе с настройками сетки значило бы называть глобальное частным.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
 use bevy::image::{Image, ImageSampler};
 use bevy::input::common_conditions::input_just_pressed;
@@ -53,8 +52,8 @@ use crate::navigation::{ArcNavmesh, PolymeshDebug};
 use crate::prefs::TrackPrefExt;
 use crate::settings::{MAP_SIZE, NavtileBase, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
 use crate::ui::{
-    GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity, spawn_panel_button, ui_color,
+    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity,
+    button_background, spawn_panel_button, ui_color,
 };
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
@@ -357,7 +356,7 @@ fn spawn_cycler<M>(
                 ..default()
             },
             kind,
-            BackgroundColor(cycler_background(is_default, false, false)),
+            BackgroundColor(button_background(is_default, false, false)),
             children![
                 (
                     Text::new(label),
@@ -365,7 +364,7 @@ fn spawn_cycler<M>(
                         font_size: FontSize::Px(12.),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                    TextColor(ROW_LABEL_COLOR),
                 ),
                 (
                     CyclerValueLabel(kind),
@@ -403,24 +402,6 @@ fn toggle_gizmos(mut doors: ResMut<DebugDoors>, mut movepaths: ResMut<DrawMovePa
     movepaths.0 = on;
 }
 
-/// Фон кнопки ряда: зелёный, когда значение «активно» (тумблер включён,
-/// листалка стоит на умолчании), плюс осветление под курсором и под нажатием.
-fn cycler_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Color {
-    let base = if is_active {
-        TOGGLE_ACTIVE_COLOR
-    } else {
-        ui_color(UiOpacity::Heavy)
-    };
-    let lighten = if is_pressed {
-        TOGGLE_PRESSED_LIGHTEN
-    } else if is_hovered {
-        TOGGLE_HOVER_LIGHTEN
-    } else {
-        0.0
-    };
-    base.mix(&Color::WHITE, lighten)
-}
-
 /// Зелёный на листалках держится, пока выбрано значение по умолчанию.
 fn update_cycler_buttons(
     position_mode: Res<CameraPositionMode>,
@@ -429,7 +410,7 @@ fn update_cycler_buttons(
 ) {
     for (cycler, hovered, is_pressed, mut background) in &mut buttons {
         let (_, is_default) = cycler_state(*cycler, &position_mode, &navtile);
-        background.set_if_neq(BackgroundColor(cycler_background(
+        background.set_if_neq(BackgroundColor(button_background(
             is_default,
             is_pressed,
             hovered.get(),
@@ -479,7 +460,7 @@ fn update_toggle_buttons(
             DebugToggleButton::Movepath => movepaths.0,
             DebugToggleButton::ConiferNoise => conifer_noise.0,
         };
-        background.set_if_neq(BackgroundColor(cycler_background(
+        background.set_if_neq(BackgroundColor(button_background(
             is_active,
             is_pressed,
             hovered.get(),

@@ -8,7 +8,6 @@
 //! показывает `SimSpeed`, но и крутит лесенку кликом.
 
 use bevy::camera_controller::pan_camera::PanCamera;
-use bevy::color::Mix;
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin};
 use bevy::picking::hover::Hovered;
 use bevy::picking::pointer::PointerButton;
@@ -24,8 +23,8 @@ use crate::diagnostics::{
 };
 use crate::sim_time::{SimClock, SimSpeed, cycle_time_scale, previous_time_scale};
 use crate::ui::{
-    GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color,
+    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity,
+    button_background, ui_color,
 };
 
 /// Ширина панели телеметрии; от неё же отсчитывается место кнопки скорости.
@@ -37,8 +36,6 @@ const SPEED_BUTTON_GAP_PX: f32 = 6.0;
 /// FiraMono на 14 px — это 12 × 8.4 ≈ 101 px, плюс подпись `Speed:` (6 × 8.4 ≈
 /// 50), зазор 8 и горизонтальные отступы 16: 175 px, откуда и запас до 190.
 const SPEED_BUTTON_WIDTH_PX: f32 = 190.0;
-/// Тусклая подпись поля — как в строках панелей Buildings и Trees.
-const SPEED_LABEL_COLOR: Color = Color::srgb(0.75, 0.78, 0.75);
 
 #[derive(Component, Default)]
 struct ClockTextMarker;
@@ -202,7 +199,7 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
                         font_size: FontSize::Px(14.),
                         ..default()
                     },
-                    TextColor(SPEED_LABEL_COLOR),
+                    TextColor(ROW_LABEL_COLOR),
                     Node {
                         flex_grow: 1.,
                         ..default()
@@ -244,19 +241,11 @@ fn update_speed_button(
 ) {
     let (hovered, is_pressed, mut background) = button.into_inner();
 
-    let base = if time.is_paused() {
-        TOGGLE_ACTIVE_COLOR
-    } else {
-        ui_color(UiOpacity::Heavy)
-    };
-    let lighten = if is_pressed {
-        TOGGLE_PRESSED_LIGHTEN
-    } else if hovered.get() {
-        TOGGLE_HOVER_LIGHTEN
-    } else {
-        0.0
-    };
-    background.set_if_neq(BackgroundColor(base.mix(&Color::WHITE, lighten)));
+    background.set_if_neq(BackgroundColor(button_background(
+        time.is_paused(),
+        is_pressed,
+        hovered.get(),
+    )));
 
     value
         .into_inner()

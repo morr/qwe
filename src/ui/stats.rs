@@ -16,7 +16,9 @@ use rand::Rng;
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color};
-use super::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color};
+use super::{
+    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color,
+};
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
@@ -147,7 +149,7 @@ fn toggle_row_label(text: &str) -> impl Bundle {
             font_size: FontSize::Px(12.),
             ..default()
         },
-        TextColor(Color::srgb(0.75, 0.78, 0.75)),
+        TextColor(ROW_LABEL_COLOR),
         Node {
             flex_grow: 1.,
             ..default()

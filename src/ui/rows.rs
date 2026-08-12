@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button};
 
-use super::{TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN, UiOpacity, ui_color};
+use super::{ROW_LABEL_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN, UiOpacity, ui_color};
 
 /// Фон строки в покое: плотный, поверх полупрозрачной панели.
 pub(super) const ROW_LIGHTEN: f32 = 0.0;
@@ -89,7 +89,7 @@ pub(super) fn spawn_value_row<M>(
                         font_size: FontSize::Px(12.),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                    TextColor(ROW_LABEL_COLOR),
                     Node {
                         flex_grow: 1.,
                         ..default()

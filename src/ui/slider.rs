@@ -10,7 +10,7 @@ use bevy::ui_widgets::{
 
 use bevy::prelude::*;
 
-use crate::ui::{UiOpacity, ui_color};
+use crate::ui::{ROW_LABEL_COLOR, UiOpacity, ui_color};
 
 /// Дорожка и бегунок; высота бегунка задаёт и высоту строки.
 const SLIDER_HEIGHT_PX: f32 = 12.0;
@@ -89,7 +89,7 @@ pub fn spawn_slider_row<M>(
                             font_size: FontSize::Px(12.),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                        TextColor(ROW_LABEL_COLOR),
                         Node {
                             flex_grow: 1.,
                             ..default()

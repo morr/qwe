@@ -2,7 +2,6 @@
 //! текущего. Клик пишет ресурс `City`, а перезагрузку мира делает
 //! `city::reload_world_on_city_change`.
 
-use bevy::color::Mix;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
@@ -10,8 +9,8 @@ use bevy::ui_widgets::Activate;
 
 use crate::city::City;
 use crate::ui::{
-    GameUiRoot, TOGGLE_ACTIVE_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN,
-    UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, spawn_panel_button, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, button_background, spawn_panel_button,
+    ui_color,
 };
 
 /// Какой город выбирает кнопка.
@@ -71,18 +70,10 @@ fn update_city_buttons(
     mut buttons: Query<(&CityButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
 ) {
     for (button, hovered, is_pressed, mut background) in &mut buttons {
-        let base = if button.0 == *city {
-            TOGGLE_ACTIVE_COLOR
-        } else {
-            ui_color(UiOpacity::Heavy)
-        };
-        let lighten = if is_pressed {
-            TOGGLE_PRESSED_LIGHTEN
-        } else if hovered.get() {
-            TOGGLE_HOVER_LIGHTEN
-        } else {
-            0.0
-        };
-        background.set_if_neq(BackgroundColor(base.mix(&Color::WHITE, lighten)));
+        background.set_if_neq(BackgroundColor(button_background(
+            button.0 == *city,
+            is_pressed,
+            hovered.get(),
+        )));
     }
 }

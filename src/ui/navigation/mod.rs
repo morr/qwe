@@ -79,8 +79,8 @@ use crate::settings::{
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
 use crate::ui::{
-    DebugNavmesh, GameUiRoot, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity, UiPanelGapBelow, left_panel,
-    ui_color,
+    DebugNavmesh, GameUiRoot, ROW_LABEL_COLOR, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity,
+    UiPanelGapBelow, left_panel, ui_color,
 };
 
 mod knobs;
@@ -423,7 +423,7 @@ fn spawn_group_label(commands: &mut Commands, panel: Entity, label: &str) {
                     font_size: FontSize::Px(12.),
                     ..default()
                 },
-                TextColor(Color::srgb(0.75, 0.78, 0.75)),
+                TextColor(ROW_LABEL_COLOR),
             )],
         ))
         .id();

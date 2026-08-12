@@ -185,6 +185,32 @@ pub const TOGGLE_ACTIVE_COLOR: Color = Color::srgba(0.16, 0.5, 0.2, 0.9);
 pub const TOGGLE_HOVER_LIGHTEN: f32 = 0.12;
 pub const TOGGLE_PRESSED_LIGHTEN: f32 = 0.24;
 
+/// Фон кнопки панели по её состоянию. «Активно» у каждой кнопки своё — тумблер
+/// включён, листалка стоит на умолчании, город выбран, время на паузе, — но
+/// цвет один, и осветление под курсором и под нажатием одно.
+///
+/// Формула жила в трёх экземплярах (`debug`, `city`, `speed`); держать её здесь
+/// дешевле, чем следить, чтобы три копии осветлялись одинаково.
+fn button_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Color {
+    let base = if is_active {
+        TOGGLE_ACTIVE_COLOR
+    } else {
+        ui_color(UiOpacity::Heavy)
+    };
+    let lighten = if is_pressed {
+        TOGGLE_PRESSED_LIGHTEN
+    } else if is_hovered {
+        TOGGLE_HOVER_LIGHTEN
+    } else {
+        0.0
+    };
+    base.mix(&Color::WHITE, lighten)
+}
+
+/// Приглушённый серый подписи в строке панели — рядом с белым значением.
+/// Один на все панели: строки значений, слайдеры, листалки, телеметрию.
+const ROW_LABEL_COLOR: Color = Color::srgb(0.75, 0.78, 0.75);
+
 const UI_COLOR: Color = Color::srgb(0.094, 0.102, 0.11);
 
 /// Тень под белым текстом панелей: фон у них полупрозрачный, и поверх светлой
@@ -441,6 +467,27 @@ fn hide_game_ui(mut roots: Query<&mut Visibility, With<GameUiRoot>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Три кнопки на трёх панелях звали три копии этой формулы; тест держит
+    /// порядок «нажата светлее наведённой светлее покоя» и обе базы.
+    #[test]
+    fn the_button_background_lightens_from_rest_to_hover_to_press() {
+        let luminance = |color: Color| color.to_linear().luminance();
+
+        assert_eq!(
+            button_background(false, false, false),
+            ui_color(UiOpacity::Heavy)
+        );
+        assert_eq!(button_background(true, false, false), TOGGLE_ACTIVE_COLOR);
+
+        for active in [false, true] {
+            let rest = luminance(button_background(active, false, false));
+            let hovered = luminance(button_background(active, false, true));
+            let pressed = luminance(button_background(active, true, true));
+            assert!(rest < hovered, "наведение не осветлило (active={active})");
+            assert!(hovered < pressed, "нажатие не осветлило (active={active})");
+        }
+    }
 
     fn panel(slot: u8, height: f32) -> Stacked {
         Stacked {
