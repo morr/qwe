@@ -600,10 +600,18 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   cone. Without the heading each pick was uniformly random and pawns wobbled in place.
   `flee` rewrites it to the away-vector on every repath, so a calmed human resumes
   facing away from the demon rather than on its stale pre-panic course.
-- **PanicRecoil** — inserted on the Flee → Wander calm-down, a unit vector *toward* the
-  demon (the negated `WanderHeading`; remembered during flee, never queried live —
-  `pick_wander_targets` must stay off the demon grid, and at calm-down the demon is
-  already >90 m away). While it is on, the next target must be an errand clearing two
+- **PanicRecoil** — a unit vector *toward* the demon, written on **every flee repath**
+  (`FleeAction::Flee { ban }`) and never queried live: `pick_wander_targets` must stay off
+  the demon grid, and by calm-down the demon is already >90 m away. It is born in
+  `human::decide`, where the demon's position is an input — the calm-down branch fires
+  *because* the search found nobody, so it has nothing to build a ban from and leaves the
+  stored one alone. It used to be synthesised there as the negated `WanderHeading`, which
+  dragged the **flee fan** in with it: ±0.6 rad (34°) of the ±45° cone spent before the
+  ~13° of staleness, over budget on the comments' own numbers, and silently broken by any
+  widening of the fan. Taking the ban before the fan is applied removes the coupling
+  outright — the two angles no longer have to be compared at all. A human who panics and
+  calms down before the first repath now carries no ban (the old one pointed along a stale
+  stroll course, at nothing). While it is on, the next target must be an errand clearing two
   filters in `pick_building_ahead`: not within `RECOIL_CONE` (±45°) of the recoil
   vector, and not closer than `RECOIL_MIN_ERRAND` (90 m — a nearby building just outside
   the cone reproduces the short walk being ruled out). Rejected candidates are dropped
