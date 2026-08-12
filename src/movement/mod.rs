@@ -92,6 +92,11 @@ impl Plugin for MovementPlugin {
             .register_type::<SlotSearch>()
             .init_resource::<SlotLab>()
             .register_type::<SlotLab>()
+            // просит `separate_pawns` (учёт покадровой цены), а живёт в
+            // `sim_time`, которого в демо и на стендах может не быть: без
+            // ресурса система не прошла бы валидацию параметров.
+            // `init_resource` идемпотентен — настоящий ресурс это не подменяет
+            .init_resource::<crate::sim_time::SimLoad>()
             // индекс заявок переживает сущности только через это снятие:
             // деспавн поднимает `Remove` на каждый компонент
             .add_observer(self::destination::on_destination_claim_removed)

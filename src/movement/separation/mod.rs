@@ -571,6 +571,7 @@ pub fn separate_pawns(
     // назначения, которые работают и когда расталкивание выключено)
     human_style: Res<crate::human::HumanStyle>,
     lab: Res<SeparationLab>,
+    mut load: ResMut<crate::sim_time::SimLoad>,
     mut stats: ResMut<SeparationStats>,
     frames: Res<FrameCount>,
     time: Res<Time>,
@@ -777,6 +778,10 @@ pub fn separate_pawns(
         &crate::diagnostics::SIM_SEPARATION_MS,
         started,
     );
+    // покадровая работа внутри `FixedUpdate`: делить её на число шагов нельзя
+    // (см. `SimLoad::add_frame_cost`), иначе при просадке кадра она выглядела
+    // бы дешевеющей
+    load.add_frame_cost(started.elapsed());
 }
 
 #[cfg(test)]
