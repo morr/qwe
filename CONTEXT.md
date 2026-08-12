@@ -186,6 +186,13 @@ algorithm in `references/tree-algo.md`).
     carries trees**. Buildings carry `height: Option<f32>` and `entrances: Vec<Vec2>`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them).
+    Underground road is dropped (`is_road_underground`) — the same rule rails and
+    watercourses have always had, and it was missing here: subway concourses and stairs
+    were drawn as ordinary alleys (Tokyo 1053 of 12 859 ways, 8.2%; London 1808). A
+    **separate** predicate from `is_underground`, because the risk is asymmetric — an
+    extra ribbon is cosmetic, an extra deletion is a hole in the navmesh. It stands down
+    for a `bridge`, for an arch, and for `tunnel=culvert` (which describes the *stream*
+    on the shared way, not the street above it) — see the osm-map skill.
   - **RailLine** — `railway=*` centerline; `RailKind: Active | Tram | Disused` *is* the
     drawing style. `rail_class` is a whitelist; underground track is dropped
     (`is_underground`). The rail branch of `parse_way` runs before `highway` and falls

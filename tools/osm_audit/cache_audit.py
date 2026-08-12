@@ -49,14 +49,38 @@ def area_kind(tags):
     return None
 
 
+def below_zero(tags):
+    try:
+        return float(tags.get("layer", "0")) < 0.0
+    except ValueError:
+        return False
+
+
 def underground(tags):
     """parse.rs::is_underground — `tunnel` кроме `no`/`building_passage`, либо `layer<0`."""
     tunnel = tags.get("tunnel") not in (None, "no", "building_passage")
-    try:
-        below = float(tags.get("layer", "0")) < 0.0
-    except ValueError:
-        below = False
-    return tunnel or below
+    return tunnel or below_zero(tags)
+
+
+def building_passage(tags):
+    """parse.rs::is_building_passage — арка, проезд сквозь дом."""
+    return tags.get("tunnel") == "building_passage" or tags.get("covered") in (
+        "yes",
+        "building_passage",
+    )
+
+
+def road_underground(tags):
+    """parse.rs::is_road_underground.
+
+    Мост и арка правилу не подчиняются (обе роли — на уровне ходьбы, и обе
+    режут навмеш), а `tunnel=culvert` описывает ручей, а не улицу над ним.
+    """
+    if tags.get("bridge") not in (None, "no") or building_passage(tags):
+        return False
+    if tags.get("tunnel") == "culvert":
+        return below_zero(tags)
+    return underground(tags)
 
 
 def analyse(path):
@@ -112,10 +136,12 @@ def analyse(path):
 
             highway = tags.get("highway")
             if highway is not None:
-                if highway in ROAD_OK:
-                    kept["road"] += 1
-                else:
+                if highway not in ROAD_OK:
                     dropped[f"way highway={highway}"] += 1
+                elif road_underground(tags):
+                    dropped[f"way highway={highway} (под землёй)"] += 1
+                else:
+                    kept["road"] += 1
                 continue
             if claimed:
                 continue

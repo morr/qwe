@@ -78,6 +78,20 @@ in `CONTEXT.md` and the detail here in the same change.
   z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below).
+  **Underground road is dropped** (`parse::is_road_underground`) — the same rule rails
+  and watercourses have always had, and it was simply missing on the highway branch:
+  metro concourses and stairs came out as ordinary alleys drawn over the city (Tokyo
+  1053 of 12 859 ways — 8.2%; London 1808, Paris 1343, Berlin 787, Tula 34; counts in
+  `references/osm-coverage.md`). It is a **separate predicate** from `is_underground`,
+  and the reason is that **the risk is asymmetric here**: an extra ribbon is cosmetic,
+  an extra deletion is a hole in the navmesh, because roads are exactly what carves it.
+  So the rule stands down wherever the tag may not be describing the road — a `bridge`
+  or an arch (`is_building_passage`), both of which exist at walking level by the very
+  role that carves the navmesh, and `tunnel=culvert`, which belongs to the *stream*
+  piped under the street (and for that stream it must keep meaning "underground", or the
+  pipe walls off the navmesh). All three exclusions are pinned by tests; the blunt
+  version cost Tokyo 331 arches and 17 bridges, London 177 arches. Verified live on
+  Tula: `navmesh: pruned 9898` before and after — the navmesh did not move.
 - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
   `narrow_gauge` / `subway` 4 → `tram` 1.2). `RailKind: Active | Tram | Disused` — the
   kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
