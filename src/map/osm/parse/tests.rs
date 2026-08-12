@@ -381,6 +381,137 @@ fn arches_are_recognised_by_tunnel_and_covered_but_not_by_a_real_tunnel() {
     assert!(!is_building_passage(&tags(&[])));
 }
 
+/// Один way — три фичи. Ровно то, что в `parse_way` закодировано
+/// **расположением** `return`'ов: рельсы, аллея и водоток разбираются до дорог
+/// и не прерывают разбор, а `highway` прерывает. Конвенция держалась на трёх
+/// комментариях; здесь она перестаёт быть конвенцией.
+///
+/// Сцена не выдуманная: трамвайные пути в OSM сплошь висят на том же way, что
+/// и улица, а водоток вдоль неё размечен на нём же.
+#[test]
+fn one_way_becomes_a_street_a_tramway_and_a_watercourse_at_once() {
+    let (sw, se, ..) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[
+                ("highway", "secondary"),
+                ("railway", "tram"),
+                ("waterway", "ditch"),
+                ("natural", "tree_row"),
+            ],
+            vec![sw, se],
+        )
+        .parse();
+
+    assert_eq!(map.roads.len(), 1, "улица");
+    assert_eq!(map.rails.len(), 1, "трамвайный путь");
+    assert_eq!(map.water_lines.len(), 1, "водоток");
+    assert_eq!(map.tree_rows.len(), 1, "аллея");
+}
+
+/// `tunnel=culvert` на общем way описывает ручей, а не улицу над ним.
+///
+/// Труба — обычный способ пустить ручей под дорогой, куда более частый, чем
+/// мост; распространив правило подземного на дороги «в лоб», эту улицу с
+/// карты сносило (поймано существующим
+/// [`parses_linear_waterways_and_keeps_riverbank_an_area`]). Для водотока при
+/// этом `culvert` обязан остаться подземным: незапомненная труба перегородит
+/// навмеш и отрежет квартал.
+#[test]
+fn a_culvert_hides_the_stream_and_leaves_the_street_above_it() {
+    let (sw, se, ..) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[
+                ("highway", "residential"),
+                ("waterway", "stream"),
+                ("tunnel", "culvert"),
+            ],
+            vec![sw, se],
+        )
+        .parse();
+
+    assert_eq!(map.roads.len(), 1, "улица над трубой — на поверхности");
+    assert!(map.water_lines[0].tunnel, "а ручей в ней — под землёй");
+
+    // труба, которая И правда под землёй, помечена явно — тогда улицы нет
+    let deep = Overpass::new(CITY)
+        .way(
+            &[
+                ("highway", "residential"),
+                ("waterway", "stream"),
+                ("tunnel", "culvert"),
+                ("layer", "-1"),
+            ],
+            vec![sw, se],
+        )
+        .parse();
+    assert_eq!(deep.roads.len(), 0);
+}
+
+/// Подземное не выходит на поверхность — и у дороги тоже.
+///
+/// Правило было применено к рельсам и водотокам, но не к `highway`, и
+/// подземный переход рисовался обычной дорожкой: в Токио 1399 way из 12 859.
+#[test]
+fn an_underground_road_never_reaches_the_map() {
+    let (sw, se, ..) = corners(HALF);
+    let surface = |tags: &[(&str, &str)]| {
+        Overpass::new(CITY)
+            .way(tags, vec![sw, se])
+            .parse()
+            .roads
+            .len()
+    };
+
+    assert_eq!(surface(&[("highway", "footway")]), 1, "обычная дорожка");
+    assert_eq!(surface(&[("highway", "footway"), ("tunnel", "yes")]), 0);
+    assert_eq!(surface(&[("highway", "footway"), ("layer", "-1")]), 0);
+    // `layer` выше нуля — эстакада, она как раз видна
+    assert_eq!(surface(&[("highway", "footway"), ("layer", "1")]), 1);
+    assert_eq!(surface(&[("highway", "footway"), ("tunnel", "no")]), 1);
+}
+
+/// Мост и арка правилу подземного не подчиняются: обе роли существуют на
+/// уровне ходьбы по определению, а `layer` у них говорит «ниже того, что
+/// сверху пересекает».
+///
+/// Риск здесь несимметричен, и это главное. Лишняя лента — косметика; лишний
+/// снос — дыра в навмеше: аркой закрывается двор, в который другого входа нет,
+/// а мостом — единственная переправа через реку. Правило «в лоб» уносило в
+/// Токио 331 арку и 17 мостов, в Лондоне 177 арок.
+#[test]
+fn a_bridge_and_an_arch_outrank_the_underground_rule() {
+    let (sw, se, ..) = corners(HALF);
+    let road = |tags: &[(&str, &str)]| Overpass::new(CITY).way(tags, vec![sw, se]).parse().roads;
+
+    // арка обоих начертаний, вместе с `layer=-1` — проезд под домом
+    for arch in [
+        &[("tunnel", "building_passage")][..],
+        &[("covered", "yes"), ("layer", "-1")][..],
+    ] {
+        let tags: Vec<(&str, &str)> = [("highway", "service")]
+            .into_iter()
+            .chain(arch.iter().copied())
+            .collect();
+        let roads = road(&tags);
+        assert_eq!(roads.len(), 1, "арка {arch:?} обязана дожить до карты");
+        assert!(roads[0].passage, "и остаться проездом сквозь дом");
+    }
+
+    // мост с противоречивой разметкой: сносить переправу нельзя
+    let roads = road(&[
+        ("highway", "residential"),
+        ("bridge", "yes"),
+        ("layer", "-1"),
+    ]);
+    assert_eq!(roads.len(), 1, "мост обязан дожить до карты");
+    assert!(
+        roads[0].bridge,
+        "и остаться мостом — по нему режется навмеш"
+    );
+}
+
 #[test]
 fn height_prefers_the_metric_tag_then_falls_back_to_levels() {
     // ветка Нью-Йорка: метры из LiDAR-импорта
