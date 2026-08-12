@@ -74,6 +74,19 @@ pub struct SwitchRule {
     pub max_chasers: usize,
 }
 
+/// Жертва, которую нашёл поиск замены.
+///
+/// `Entity` в чистой лестнице — сознательное послабление к правилу «никаких
+/// `Entity` в `decide`»: без него лестница не может *назвать* выбранную жертву,
+/// и решение «сменить цель» пришлось бы собирать в применении по остаточным
+/// признакам. Смысл правила при этом цел — ни мира, ни запросов здесь нет, и
+/// тесты по-прежнему строятся на `Entity::from_raw_u32` без `App`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Victim {
+    pub entity: Entity,
+    pub position: Vec2,
+}
+
 /// Что демон делает на этом тике.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChaseAction {
@@ -92,9 +105,11 @@ pub enum ChaseAction {
     WaitForPath,
     /// Идём по тому, что есть: такт перепрокладки не настал.
     Hold,
-    /// Такт перепрокладки: сперва попытка сменить жертву на условиях
-    /// `switch`, затем путь к цели (`target` — позиция текущей).
-    Repath { target: Vec2, switch: SwitchRule },
+    /// Такт перепрокладки: путь к текущей цели (`target` — её позиция).
+    Repath { target: Vec2 },
+    /// Такт перепрокладки, и поиск нашёл цель получше: место переезжает с
+    /// прежней жертвы на новую (`ChaseClaims::transfer`), путь — к ней.
+    Switch { to: Victim },
 }
 
 impl ChaseAction {
@@ -102,7 +117,10 @@ impl ChaseAction {
     /// снять. На выходах из погони (`LostTarget`, `GaveUp`, `Kill`) тег
     /// уносят `back_to_wander` и обсервер убийства, поэтому их здесь нет.
     pub fn cancels_lunge(&self) -> bool {
-        matches!(self, Self::WaitForPath | Self::Hold | Self::Repath { .. })
+        matches!(
+            self,
+            Self::WaitForPath | Self::Hold | Self::Repath { .. } | Self::Switch { .. }
+        )
     }
 
     /// Демон уходит от ЖИВОЙ цели — место в очереди на неё
@@ -117,14 +135,27 @@ impl ChaseAction {
         match self {
             Self::GaveUp => true,
             Self::Kill | Self::LostTarget => false,
+            // смена жертвы место не освобождает, а перевозит: обе половины
+            // делает `ChaseClaims::transfer` одним вызовом
+            Self::Switch { .. } => false,
             Self::Lunge { .. } | Self::WaitForPath | Self::Hold | Self::Repath { .. } => false,
         }
     }
 }
 
-/// Лестница погони. `line_of_sight` спрашивается не больше одного раза и
-/// только вблизи цели — см. шапку модуля.
-pub fn decide(sense: &ChaseSense, line_of_sight: impl FnOnce() -> bool) -> ChaseAction {
+/// Лестница погони.
+///
+/// Оба дорогих чувства спрашиваются лениво и не больше одного раза каждое:
+/// `line_of_sight` — только когда дистанция уже позволяет бросок,
+/// `better_victim` — только на такте перепрокладки, до которого лестница ещё
+/// должна дойти. Поиск замены — обход пространственной сетки с проверкой
+/// видимости победителя, десятки кандидатов; спрашивать его на каждом тике
+/// каждого демона было бы вдесятеро дороже самой лестницы.
+pub fn decide(
+    sense: &ChaseSense,
+    line_of_sight: impl FnOnce() -> bool,
+    better_victim: impl FnOnce(SwitchRule) -> Option<Victim>,
+) -> ChaseAction {
     // цель умерла (труп/despawn/её только что съел сосед) — снова блуждание
     let Some(target) = sense.target else {
         return ChaseAction::LostTarget;
@@ -199,7 +230,10 @@ pub fn decide(sense: &ChaseSense, line_of_sight: impl FnOnce() -> bool) -> Chase
             max_chasers: MAX_CHASERS_PER_TARGET,
         }
     };
-    ChaseAction::Repath { target, switch }
+    match better_victim(switch) {
+        Some(victim) => ChaseAction::Switch { to: victim },
+        None => ChaseAction::Repath { target },
+    }
 }
 
 #[cfg(test)]
@@ -244,15 +278,21 @@ mod tests {
     fn a_dead_target_ends_the_chase() {
         let mut sense = sense(10.0);
         sense.target = None;
-        assert_eq!(decide(&sense, || true), ChaseAction::LostTarget);
+        assert_eq!(decide(&sense, || true, |_| None), ChaseAction::LostTarget);
     }
 
     #[test]
     fn the_chase_ends_only_past_the_hysteresis_ring() {
         let ring = DEMON_AGGRO_RADIUS * RADIUS_HYSTERESIS;
         // внутри кольца демон не сдаётся, хотя радиус агро давно позади
-        assert_ne!(decide(&sense(ring - 1.0), || false), ChaseAction::GaveUp);
-        assert_eq!(decide(&sense(ring + 1.0), || false), ChaseAction::GaveUp);
+        assert_ne!(
+            decide(&sense(ring - 1.0), || false, |_| None),
+            ChaseAction::GaveUp
+        );
+        assert_eq!(
+            decide(&sense(ring + 1.0), || false, |_| None),
+            ChaseAction::GaveUp
+        );
     }
 
     #[test]
@@ -262,17 +302,20 @@ mod tests {
         let distance = KILL_DISTANCE / 2.0;
         assert!(distance <= DEMON_LUNGE_RANGE);
         let (los, asked) = spy(true);
-        assert_eq!(decide(&sense(distance), los), ChaseAction::Kill);
+        assert_eq!(decide(&sense(distance), los, |_| None), ChaseAction::Kill);
         assert!(!asked.get(), "луч видимости на убийстве не нужен");
     }
 
     #[test]
     fn the_lunge_needs_line_of_sight() {
         let close = sense(DEMON_LUNGE_RANGE - 1.0);
-        assert!(matches!(decide(&close, || true), ChaseAction::Lunge { .. }));
+        assert!(matches!(
+            decide(&close, || true, |_| None),
+            ChaseAction::Lunge { .. }
+        ));
         // жертва за углом дома догоняется обычным путём
         assert!(!matches!(
-            decide(&close, || false),
+            decide(&close, || false, |_| None),
             ChaseAction::Lunge { .. }
         ));
     }
@@ -280,7 +323,7 @@ mod tests {
     #[test]
     fn a_distant_target_is_never_asked_for_line_of_sight() {
         let (los, asked) = spy(true);
-        decide(&sense(DEMON_LUNGE_RANGE + 1.0), los);
+        decide(&sense(DEMON_LUNGE_RANGE + 1.0), los, |_| None);
         assert!(!asked.get(), "луч не считается вдали от цели");
     }
 
@@ -290,7 +333,7 @@ mod tests {
         let mut sense = sense(distance);
         // за тик демон прошёл бы много больше остатка
         sense.speed = 1000.0;
-        let ChaseAction::Lunge { advance } = decide(&sense, || true) else {
+        let ChaseAction::Lunge { advance } = decide(&sense, || true, |_| None) else {
             panic!("вблизи и при видимости — бросок");
         };
         assert!((advance.length() - distance).abs() < 1e-3);
@@ -299,7 +342,7 @@ mod tests {
     #[test]
     fn the_lunge_carries_its_speed_bonus() {
         let sense = sense(DEMON_LUNGE_RANGE - 1.0);
-        let ChaseAction::Lunge { advance } = decide(&sense, || true) else {
+        let ChaseAction::Lunge { advance } = decide(&sense, || true, |_| None) else {
             panic!("вблизи и при видимости — бросок");
         };
         let expected = sense.speed * (1.0 + sense.lunge_bonus) * sense.delta_secs;
@@ -313,7 +356,7 @@ mod tests {
         sense.search_in_flight = true;
         sense.has_path = false;
         sense.walked = false;
-        assert_eq!(decide(&sense, || false), ChaseAction::WaitForPath);
+        assert_eq!(decide(&sense, || false, |_| None), ChaseAction::WaitForPath);
     }
 
     #[test]
@@ -324,15 +367,18 @@ mod tests {
         sense.has_path = false;
         sense.walked = true;
         // докат несёт его дальше, ответа ждать незачем
-        assert_eq!(decide(&sense, || false), ChaseAction::Hold);
+        assert_eq!(decide(&sense, || false, |_| None), ChaseAction::Hold);
     }
 
     #[test]
     fn the_repath_timer_gates_the_chase() {
-        assert_eq!(decide(&sense(20.0), || false), ChaseAction::Hold);
+        assert_eq!(decide(&sense(20.0), || false, |_| None), ChaseAction::Hold);
         let mut due = sense(20.0);
         due.repath_due = true;
-        assert!(matches!(decide(&due, || false), ChaseAction::Repath { .. }));
+        assert!(matches!(
+            decide(&due, || false, |_| None),
+            ChaseAction::Repath { .. }
+        ));
     }
 
     #[test]
@@ -345,10 +391,28 @@ mod tests {
             sense.state = state.clone();
             sense.has_path = false;
             assert!(
-                matches!(decide(&sense, || false), ChaseAction::Repath { .. }),
+                matches!(
+                    decide(&sense, || false, |_| None),
+                    ChaseAction::Repath { .. }
+                ),
                 "{state:?} — путь потерян, ждать такта нечего"
             );
         }
+    }
+
+    /// Правило поиска — то, с чем лестница зовёт замену; ловим его прямо из
+    /// замыкания, потому что именно так его теперь и получает применение.
+    fn asked_rule(sense: &ChaseSense) -> SwitchRule {
+        let seen = std::cell::Cell::new(None);
+        decide(
+            sense,
+            || false,
+            |rule| {
+                seen.set(Some(rule));
+                None
+            },
+        );
+        seen.get().expect("лестница не дошла до поиска замены")
     }
 
     #[test]
@@ -356,12 +420,9 @@ mod tests {
         let mut sense = sense(20.0);
         sense.repath_due = true;
         sense.shared_target = true;
-        let ChaseAction::Repath { switch, .. } = decide(&sense, || false) else {
-            panic!("такт перепрокладки");
-        };
         // ищем шире текущей дистанции, но только никем не занятых
         assert_eq!(
-            switch,
+            asked_rule(&sense),
             SwitchRule {
                 radius: 30.0,
                 max_chasers: 1,
@@ -373,17 +434,58 @@ mod tests {
     fn an_own_target_is_swapped_only_for_a_much_closer_one() {
         let mut sense = sense(20.0);
         sense.repath_due = true;
-        let ChaseAction::Repath { switch, .. } = decide(&sense, || false) else {
-            panic!("такт перепрокладки");
-        };
         // ближе текущей цели на треть, зато делить кандидата с соседом можно
         assert_eq!(
-            switch,
+            asked_rule(&sense),
             SwitchRule {
                 radius: 14.0,
                 max_chasers: MAX_CHASERS_PER_TARGET,
             }
         );
+    }
+
+    /// Ступень, которой раньше не было в лестнице вовсе: нашёлся кандидат —
+    /// решение называет его само, а не оставляет применению доискиваться.
+    #[test]
+    fn a_found_candidate_becomes_the_new_target() {
+        let mut sense = sense(20.0);
+        sense.repath_due = true;
+        let victim = Victim {
+            entity: Entity::from_raw_u32(7).expect("entity"),
+            position: Vec2::new(5.0, 0.0),
+        };
+
+        assert_eq!(
+            decide(&sense, || false, |_| Some(victim)),
+            ChaseAction::Switch { to: victim }
+        );
+    }
+
+    /// Поиск дорог, и лестница обязана не звать его на ступенях, до которых
+    /// сама не дошла: бросок, ожидание первого пути, выход из погони.
+    #[test]
+    fn the_search_is_not_asked_before_the_repath_rung() {
+        let asked = std::cell::Cell::new(false);
+        let ask = |sense: &ChaseSense| {
+            asked.set(false);
+            decide(
+                sense,
+                || true,
+                |_| {
+                    asked.set(true);
+                    None
+                },
+            );
+            asked.get()
+        };
+
+        assert!(!ask(&sense(1.0)), "убийство");
+        assert!(!ask(&sense(DEMON_LUNGE_RANGE - 1.0)), "бросок");
+        assert!(!ask(&sense(20.0)), "такт не настал");
+
+        let mut due = sense(20.0);
+        due.repath_due = true;
+        assert!(ask(&due), "такт перепрокладки — здесь поиск обязан быть");
     }
 
     /// Место в очереди на жертву освобождает ровно один выход — тот, после
@@ -404,11 +506,13 @@ mod tests {
             ChaseAction::Lunge { advance: Vec2::X },
             ChaseAction::WaitForPath,
             ChaseAction::Hold,
-            ChaseAction::Repath {
-                target: Vec2::X,
-                switch: SwitchRule {
-                    radius: 1.0,
-                    max_chasers: MAX_CHASERS_PER_TARGET,
+            ChaseAction::Repath { target: Vec2::X },
+            // смена — тоже «остался в погоне»: место не освобождается, а
+            // переезжает одним `ChaseClaims::transfer`
+            ChaseAction::Switch {
+                to: Victim {
+                    entity: Entity::from_raw_u32(1).expect("entity"),
+                    position: Vec2::X,
                 },
             },
         ] {

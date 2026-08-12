@@ -8,7 +8,7 @@ use crate::demon::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
 };
-use crate::demon::decide::{ChaseAction, ChaseSense, decide};
+use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
 use crate::grid::world_to_tile;
 use crate::human::Human;
 use crate::movement::{Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition};
@@ -129,9 +129,32 @@ pub fn chase(
             repath_due: repath.0.remaining() <= time.delta(),
             shared_target: claims.is_full(chase_target.0),
         };
-        let action = decide(&sense, || {
-            target.is_some_and(|position| walkable.line_of_sight(sim_position.0, position))
-        });
+        let action = decide(
+            &sense,
+            || target.is_some_and(|position| walkable.line_of_sight(sim_position.0, position)),
+            // Поиск замены — чувство, а не хвост применения: лестница зовёт его
+            // сама и ровно на своей ступени. Прямая видимость проверяется
+            // только у победителя поиска: близкий по евклиду, но отрезанный
+            // домом или рекой человек недостижим, а гонять `line_of_sight` по
+            // каждому кандидату в 3×3 клетках (при 20 000 человек это десятки)
+            // — совсем другие деньги.
+            |rule| {
+                humans
+                    .nearest_in_range_where(
+                        sim_position.0,
+                        rule.radius,
+                        |candidate| crate::spatial::pawn_position(&targets, candidate),
+                        |candidate| crate::spatial::pawn_order(&targets, candidate),
+                        |candidate| {
+                            candidate != chase_target.0
+                                && !killed_this_tick.contains(&candidate)
+                                && claims.has_room_for(candidate, rule.max_chasers)
+                        },
+                    )
+                    .filter(|&(_, position)| walkable.line_of_sight(sim_position.0, position))
+                    .map(|(entity, position)| Victim { entity, position })
+            },
+        );
 
         // цель разорвала дистанцию или ушла за угол — бросок отменён
         if lunging && action.cancels_lunge() {
@@ -143,7 +166,7 @@ pub fn chase(
             claims.release(chase_target.0);
         }
 
-        let (mut target_pos, switch_rule) = match action {
+        let target_pos = match action {
             // выходы из погони отличались только тем, освобождает ли выход
             // место в очереди на жертву, — а это теперь спрошено выше
             ChaseAction::LostTarget | ChaseAction::GaveUp => {
@@ -177,41 +200,24 @@ pub fn chase(
                 repath.0.tick(time.delta());
                 continue;
             }
-            ChaseAction::Repath { target, switch } => {
+            ChaseAction::Repath { target } => {
                 repath.0.tick(time.delta());
-                (target, switch)
+                target
+            }
+            ChaseAction::Switch { to } => {
+                repath.0.tick(time.delta());
+                // место переезжает одной операцией: раньше это была пара
+                // `release` + `claim`, четвёртый сайт правки счёта и
+                // единственный, мимо которого шёл исчерпывающий `match`
+                claims.transfer(chase_target.0, to.entity);
+                debug!(
+                    "demon {entity} switches chase {} => {}",
+                    chase_target.0, to.entity
+                );
+                chase_target.0 = to.entity;
+                to.position
             }
         };
-
-        let switch = humans
-            .nearest_in_range_where(
-                sim_position.0,
-                switch_rule.radius,
-                |candidate| crate::spatial::pawn_position(&targets, candidate),
-                |candidate| crate::spatial::pawn_order(&targets, candidate),
-                |candidate| {
-                    candidate != chase_target.0
-                        && !killed_this_tick.contains(&candidate)
-                        && claims.has_room_for(candidate, switch_rule.max_chasers)
-                },
-            )
-            // Прямая видимость — только у победителя поиска: близкий по евклиду,
-            // но отрезанный домом или рекой человек недостижим, и демон топтался
-            // бы, перекидывая цель туда-обратно. В фильтре выше `line_of_sight`
-            // прогнался бы по каждому кандидату в 3×3 клетках (при 20 000
-            // человек это десятки), поэтому он здесь. Не прошёл — цель остаётся,
-            // следующая попытка через такт перепрокладки.
-            .filter(|&(_, pos)| walkable.line_of_sight(sim_position.0, pos));
-        if let Some((new_target, new_pos)) = switch {
-            claims.release(chase_target.0);
-            claims.claim(new_target);
-            debug!(
-                "demon {entity} switches chase {} => {new_target}",
-                chase_target.0
-            );
-            chase_target.0 = new_target;
-            target_pos = new_pos;
-        }
 
         let target_tile = world_to_tile(target_pos);
         let current_goal = match movable.state {

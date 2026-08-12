@@ -47,6 +47,19 @@ impl ChaseClaims {
         *taken = taken.saturating_sub(1);
     }
 
+    /// Демон сменил жертву: место у прежней освободилось, у новой — занято.
+    ///
+    /// Одна операция, а не пара `release` + `claim`, по той же причине, по
+    /// которой у выходов из погони есть
+    /// [`releases_claim`](super::decide::ChaseAction::releases_claim): смена
+    /// была **четвёртым** местом, где счёт правится, и единственным, мимо
+    /// которого проходил исчерпывающий `match` по выходам. Заметить, что новая
+    /// ветка применения забыла половину пары, было негде.
+    pub fn transfer(&mut self, from: Entity, to: Entity) {
+        self.release(from);
+        self.claim(to);
+    }
+
     /// Мест больше нет: цель делят [`MAX_CHASERS_PER_TARGET`] демонов.
     pub fn is_full(&self, target: Entity) -> bool {
         !self.has_room_for(target, MAX_CHASERS_PER_TARGET)
@@ -126,5 +139,23 @@ mod tests {
     fn releasing_a_slot_nobody_took_is_caught() {
         let mut claims = ChaseClaims::default();
         claims.release(target(1));
+    }
+
+    /// Смена жертвы двигает ровно одно место и не теряет его по дороге.
+    #[test]
+    fn a_transfer_moves_one_slot_and_keeps_the_count() {
+        let mut claims = ChaseClaims::of([target(1), target(1)].into_iter());
+        assert!(claims.is_full(target(1)));
+
+        claims.transfer(target(1), target(2));
+
+        assert!(
+            !claims.is_full(target(1)),
+            "место у прежней не освободилось"
+        );
+        assert!(
+            !claims.has_room_for(target(2), 1),
+            "место у новой не занято"
+        );
     }
 }
