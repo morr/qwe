@@ -434,3 +434,29 @@ fn a_new_run_inherits_no_clock_and_no_regulator_memory() {
     assert_eq!(speed.effective, 10.0);
     assert_eq!(world.resource::<Time<Virtual>>().relative_speed(), 10.0);
 }
+
+/// Лесенка скоростей — кнопка Speed, хоткеи `=`/`-` и прижатие произвольных
+/// BRP-значений к ступеням.
+#[test]
+fn ladder_stops_at_the_cap() {
+    assert_eq!(next_time_scale(20.0), MAX_SIM_SPEED);
+    assert_eq!(next_time_scale(MAX_SIM_SPEED), MAX_SIM_SPEED);
+    // сверху лесенка спускается обычными ступенями
+    assert_eq!(previous_time_scale(MAX_SIM_SPEED), 20.0);
+    assert_eq!(previous_time_scale(1.0), 1.0);
+}
+
+#[test]
+fn ladder_snaps_arbitrary_values_to_steps() {
+    // по BRP `requested` пишут любым — лесенка прижимает к ступеням
+    assert_eq!(next_time_scale(7.0), 10.0);
+    assert_eq!(previous_time_scale(7.0), 5.0);
+}
+
+#[test]
+fn cycle_wraps_at_the_top() {
+    assert_eq!(cycle_time_scale(1.0), 2.0);
+    assert_eq!(cycle_time_scale(20.0), MAX_SIM_SPEED);
+    // с верхней ступени — назад к реальному времени
+    assert_eq!(cycle_time_scale(MAX_SIM_SPEED), 1.0);
+}
