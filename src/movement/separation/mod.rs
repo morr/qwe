@@ -762,8 +762,8 @@ pub fn separate_pawns(
         stats.worst_push = stats.worst_push.max(length);
         // сетка людей инкрементальна; толчки мелкие, но стоячую пешку они
         // могут за много прогонов увести через границу 60-метровой ячейки
-        if !is_demon && crate::spatial::cell_of(target) != crate::spatial::cell_of(pawn.position) {
-            humans.insert(pawn.entity, target);
+        if !is_demon {
+            humans.moved(pawn.entity, pawn.position, target);
         }
     }
     stats.runs += 1;

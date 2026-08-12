@@ -39,11 +39,9 @@ pub fn snapshot_previous_sim_positions(
 /// видимое «бежит — замер — бежит» исчезает. Пришедший ответ (`to_moving`)
 /// или `PathfindingError` завершают докат штатно.
 ///
-/// Заодно ведёт сетку людей: пересёк границу 60-метровой ячейки — переезд.
-/// Сравнение ячеек — арифметика без hash, само событие редкое (гуляющий
-/// пересекает ячейку раз в ~21 виртуальную секунду), так что стоимость не
-/// растёт ни от зум-аута, ни от населения. `Option` — плагин движения
-/// используется в тестах без `SpatialPlugin`.
+/// Заодно ведёт сетку людей: где именно проходит граница «сдвинулся» и
+/// «переехал», решает `SpatialGrid::moved`, а не эта система. `Option` —
+/// плагин движения используется в тестах без `SpatialPlugin`.
 #[allow(clippy::too_many_arguments)]
 pub fn move_moving_entities(
     mut commands: Commands,
@@ -82,7 +80,7 @@ pub fn move_moving_entities(
     let dt = time.delta_secs();
 
     for (entity, mut movable, mut sim_position, is_human) in &mut query {
-        let cell_before = crate::spatial::cell_of(sim_position.0);
+        let was_at = sim_position.0;
         // позиция пишется обратно только если шаг её и правда сдвинул:
         // `snapshot_previous_sim_positions` фильтрует по `Changed<SimPosition>`,
         // и безусловная запись расширила бы ему выборку на всех стоящих в
@@ -109,11 +107,8 @@ pub fn move_moving_entities(
             }
         }
 
-        if is_human
-            && crate::spatial::cell_of(sim_position.0) != cell_before
-            && let Some(grid) = human_grid.as_mut()
-        {
-            grid.insert(entity, sim_position.0);
+        if is_human && let Some(grid) = human_grid.as_mut() {
+            grid.moved(entity, was_at, sim_position.0);
         }
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);

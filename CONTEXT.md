@@ -544,11 +544,17 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   **entities only** — a candidate's position is read live from `SimPosition` through the
   `pos_of` closure every query takes; storing `Vec2` in cells would go stale by up to a
   cell size. `nearest_in_range_where` / `for_each_in_cells_around` / `for_each_in_rect`.
+  **A tie in distance is broken by `PawnId`, not by traversal order** — `order_of`, a
+  second closure the search calls *only* on exact equality, so the key never costs
+  anything on the common path. Ties are rare (5 in 3.84 M searches over five simulated
+  minutes on Tula) but the alternative rule is "whoever the cell walk reached last", i.e.
+  the history of spawns and deaths; the ordering doctrine is `movement/order.rs`.
 - **The human grid is incremental, the demon grid is rebuilt.** Humans (~20 000):
-  `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and death/despawn, and
-  `move_moving_entities` moves an entity between cells on a 60 m boundary crossing — the
-  cost scales with crossings, not population. Demons (~100): full rebuild per tick
-  (`rebuild_demon_grid`) is cheaper than bookkeeping, and the lunge moves demon
+  `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and death/despawn, and a
+  step or a separation push reports itself through `SpatialGrid::moved`, which relocates
+  only across a 60 m cell boundary — the cost scales with crossings, not population, and
+  the rule lives in the grid rather than in each mover. Demons (~100): full rebuild per
+  tick (`rebuild_demon_grid`) is cheaper than bookkeeping, and the lunge moves demon
   `SimPosition` outside the mover system anyway.
 - **Separation** (`movement/separation/`, Navigation panel, persisted) — soft pairwise
   anti-overlap, **on-screen only, cosmetic by charter**: pawns keep their body radii
