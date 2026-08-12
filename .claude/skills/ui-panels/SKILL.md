@@ -206,7 +206,7 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   every space in the layout is the same width. Two panels carry it, both where the
   *kind* of UI changes: Navigation (the button row below it is not a panel) and the
   hotkey help (the panels below it are map settings).
-- **Debug toggles** (`ui/debug.rs`) — grid / doors / movepath / noise buttons
+- **Debug toggles** (`ui/debug/`) — grid / doors / movepath / noise buttons
   (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
   navmesh overlay it still owns is **one merged mesh** — per-tile entities once cost 330 k
   entities; the noise overlay is one sprite with a CPU-built texture (see the osm-map

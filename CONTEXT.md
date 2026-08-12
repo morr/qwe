@@ -804,7 +804,7 @@ skill**.
   called directly only by the crowd demo, whose sliders drive demo-local state rather
   than a resource) and `ui/rows.rs` (`spawn_value_row` button rows, `RowInert` for rows
   whose click currently does nothing). Use these, don't hand-roll a panel row.
-- **Debug toggles** (`ui/debug.rs`) — grid / doors / movepath / noise buttons, plus the
+- **Debug toggles** (`ui/debug/`) — grid / doors / movepath / noise buttons, plus the
   `camera:` and `navtile:` cyclers (global settings, deliberately not under a backend
   section). The navmesh overlay is **one merged mesh** (per-tile entities once cost
   330 k); the noise overlay is one CPU-built texture sprite. A cycler goes green while

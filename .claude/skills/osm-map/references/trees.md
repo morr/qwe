@@ -210,7 +210,7 @@ stand, how density works, and which resources restyle them.
     trees while the density slider spawns a prefix of them (`visible_count`), and that
     prefix is a spatially uniform subsample, so the share among spawned trees holds and a
     tree does not change species as the slider is dragged.
-  - The **noise** debug toggle (`ui/debug.rs::sync_conifer_noise_overlay`) shows the
+  - The **noise** debug toggle (`ui/debug/overlays.rs::sync_conifer_noise_overlay`) shows the
     field as one CPU-built 512² texture sprite over the whole map on
     `Z_CONIFER_NOISE_OVERLAY`: grey ramp = field value, green = at or above the current
     threshold, i.e. the stands the current share will produce. Green also covers built-up
