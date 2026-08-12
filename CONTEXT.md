@@ -112,8 +112,15 @@ in `main.rs`.
   (first launch, city switch) and every restart (`on_restart` — it passes through no
   state, so `OnEnter` never refires for it). All run state — `SimClock` + `TickDebt`,
   `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner` — is reset by observers of
-  this event, each living in its owning module; the full list is
-  `grep "On<WorldStarted>"`. Map-derived state (`NorthstarGrid`, `PolyNavmesh`) is *not*
+  this event, each living in its owning module; `grep "On<WorldStarted>"` enumerates them.
+  **Membership is not kept by hand** — it is held from the outside by
+  `a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares
+  fingerprints, so a forgotten reset diverges whether or not anyone wrote it down.
+  What that test cannot see is state invisible to both the simulation and the outcome
+  counters; such a reset needs its own pin next to its observer (the regulator has one in
+  `sim_time`, the frozen `Backend` one in `determinism` — the replay yard pins flat A*, so
+  the seeded and the announced snapshots coincide there by construction).
+  Map-derived state (`NorthstarGrid`, `PolyNavmesh`) is *not*
   run state and is cleared by the city switch alone — a restart keeps the map, and with
   it the 12 s northstar hierarchy.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans/corpses/demons/walkers,
