@@ -71,8 +71,11 @@ pub(super) fn fine_cell(pos: Vec2, cell: f32) -> IVec2 {
 ///
 /// По `PawnId`, а не по `Entity`, по той же причине, что и там: индексы
 /// сущностей после рестарта переиспользуются в другом порядке.
+///
+/// Множитель — свой (xxHash PRIME32_3), не тот, что у веера бегства: с общим
+/// множителем оба жребия пешки были бы одним числом — см. док `hash_fraction`.
 fn coincident_direction(pawn_id: u32) -> Vec2 {
-    let hash = pawn_id.wrapping_mul(2654435761);
+    let hash = pawn_id.wrapping_mul(3266489917);
     Vec2::from_angle(hash_fraction(hash) * std::f32::consts::TAU)
 }
 
