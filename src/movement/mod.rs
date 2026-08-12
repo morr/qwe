@@ -1,6 +1,8 @@
 mod components;
 mod destination;
-mod order;
+/// Порядковый ключ пешки нужен уже и за пределами движения: им разрывает
+/// ничью поиск ближайшего в `SpatialGrid`.
+pub(crate) mod order;
 mod pathfinding;
 mod separation;
 mod step;

@@ -113,7 +113,7 @@ pub fn flee(
     time: Res<Time>,
     backend: Res<Backend>,
     demons: Res<SpatialGrid<Demon>>,
-    demon_positions: Query<&SimPosition, With<Demon>>,
+    demon_positions: Query<(&SimPosition, Option<&PawnId>), With<Demon>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     style: Res<HumanStyle>,
     seed: Res<crate::rng::WorldSeed>,
@@ -171,9 +171,12 @@ pub fn flee(
                 }
             }
             ThreatProbe::Nearest => demons
-                .nearest_in_range(sim_position.0, radius, |demon| {
-                    demon_positions.get(demon).ok().map(|position| position.0)
-                })
+                .nearest_in_range(
+                    sim_position.0,
+                    radius,
+                    |demon| crate::spatial::pawn_position(&demon_positions, demon),
+                    |demon| crate::spatial::pawn_order(&demon_positions, demon),
+                )
                 .map_or(Threat::None, |(_, position)| Threat::At(position)),
         });
 

@@ -26,10 +26,17 @@ const NO_PAWN_ID: u32 = u32::MAX;
 /// Разрешить ничью `Entity` нельзя: индексы сущностей переиспользуются после
 /// смертей и рестарта, и в другом порядке.
 pub fn pawn_key(is_human: bool, pawn_id: Option<&PawnId>) -> (u8, u32) {
-    (
-        u8::from(is_human),
-        pawn_id.map_or(NO_PAWN_ID, |pawn_id| pawn_id.0),
-    )
+    (u8::from(is_human), pawn_number(pawn_id))
+}
+
+/// Только номер, без вида, — ключ там, где вид известен по построению и
+/// смешаться не может: поиск в `SpatialGrid<T>` типизирован маркером вида, все
+/// кандидаты одного вида (см. `SpatialGrid::nearest_in_range_where`).
+///
+/// Отдельная функция ради одного: `NO_PAWN_ID` остаётся в единственном месте,
+/// и пешка без номера уезжает в хвост одинаково в обоих ключах.
+pub fn pawn_number(pawn_id: Option<&PawnId>) -> u32 {
+    pawn_id.map_or(NO_PAWN_ID, |pawn_id| pawn_id.0)
 }
 
 #[cfg(test)]

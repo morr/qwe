@@ -23,7 +23,7 @@ use crate::telemetry::Telemetry;
 pub fn acquire_targets(
     mut commands: Commands,
     humans: Res<SpatialGrid<Human>>,
-    positions: Query<&SimPosition, With<Human>>,
+    positions: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
 ) {
@@ -33,7 +33,8 @@ pub fn acquire_targets(
         let Some((human, _)) = humans.nearest_in_range_where(
             sim_position.0,
             DEMON_AGGRO_RADIUS,
-            |candidate| positions.get(candidate).ok().map(|p| p.0),
+            |candidate| crate::spatial::pawn_position(&positions, candidate),
+            |candidate| crate::spatial::pawn_order(&positions, candidate),
             |candidate| !claims.is_full(candidate),
         ) else {
             continue;
@@ -85,7 +86,7 @@ pub fn chase(
         ),
         (With<Demon>, With<DemonChaseTag>, Without<Human>),
     >,
-    targets: Query<&SimPosition, With<Human>>,
+    targets: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
 ) {
     let started = std::time::Instant::now();
     let walkable = backend.walkable();
@@ -110,7 +111,7 @@ pub fn chase(
         let target = targets
             .get(chase_target.0)
             .ok()
-            .map(|position| position.0)
+            .map(|(position, _)| position.0)
             .filter(|_| !killed_this_tick.contains(&chase_target.0));
         let sense = ChaseSense {
             position: sim_position.0,
@@ -186,7 +187,8 @@ pub fn chase(
             .nearest_in_range_where(
                 sim_position.0,
                 switch_rule.radius,
-                |candidate| targets.get(candidate).ok().map(|p| p.0),
+                |candidate| crate::spatial::pawn_position(&targets, candidate),
+                |candidate| crate::spatial::pawn_order(&targets, candidate),
                 |candidate| {
                     candidate != chase_target.0
                         && !killed_this_tick.contains(&candidate)

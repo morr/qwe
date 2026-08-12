@@ -8,10 +8,11 @@
 //! до размера ячейки, и погоня/паника промахивались бы молча.
 //!
 //! Сетка людей ведётся инкрементально: спавн и смерть — observers на
-//! `Human`, переезд между ячейками — из `move_moving_entities` при
-//! пересечении границы (редкое событие: гуляющий пересекает 60-метровую
-//! ячейку раз в ~21 виртуальную секунду). Сетка демонов пересобирается
-//! целиком — их ~100, пересборка дешевле бухгалтерии.
+//! `Human`, сдвиг — из шага движения и из расталкивания, оба через
+//! [`SpatialGrid::moved`], который и решает, что считать переездом (редкое
+//! событие: гуляющий пересекает 60-метровую ячейку раз в ~21 виртуальную
+//! секунду). Сетка демонов пересобирается целиком — их ~100, пересборка
+//! дешевле бухгалтерии.
 
 use std::marker::PhantomData;
 
@@ -29,7 +30,9 @@ const GRID_WIDTH: i32 = (MAP_SIZE.x / CELL_SIZE) as i32 + 1;
 const GRID_HEIGHT: i32 = (MAP_SIZE.y / CELL_SIZE) as i32 + 1;
 
 /// Ячейка сетки по мировой позиции; выходы за карту прижимаются к краю.
-pub fn cell_of(pos: Vec2) -> IVec2 {
+/// Наружу не выставлена намеренно: единственное, ради чего её спрашивали со
+/// стороны, — «пересечена ли граница», и это теперь [`SpatialGrid::moved`].
+fn cell_of(pos: Vec2) -> IVec2 {
     IVec2::new(
         ((pos.x / CELL_SIZE) as i32).clamp(0, GRID_WIDTH - 1),
         ((pos.y / CELL_SIZE) as i32).clamp(0, GRID_HEIGHT - 1),
@@ -83,6 +86,24 @@ impl<T: Send + Sync + 'static> SpatialGrid<T> {
         }
         self.cells[cell].push(entity);
         self.index.insert(entity, cell);
+    }
+
+    /// Сущность сдвинулась из `from` в `to`: переезд, только если пересечена
+    /// граница ячейки.
+    ///
+    /// Отдельный вход, а не голый [`Self::insert`], потому что сравнение ячеек
+    /// — арифметика без hash, а `insert` начинается с поиска в `index`. Пешка
+    /// двигается каждый тик, а границу 60-метровой ячейки пересекает раз в ~21
+    /// виртуальную секунду, так что дешёвая проверка снимает почти все
+    /// обращения к таблице; стоимость не растёт ни от зум-аута, ни от
+    /// населения.
+    ///
+    /// Правило живёт здесь, а не у вызывающих: копий было две — шаг движения и
+    /// расталкивание, — и разъехаться им было нечем помешать.
+    pub fn moved(&mut self, entity: Entity, from: Vec2, to: Vec2) {
+        if cell_of(to) != cell_of(from) {
+            self.insert(entity, to);
+        }
     }
 
     /// Убрать сущность из сетки; отсутствующая — no-op.
@@ -159,41 +180,104 @@ impl<T: Send + Sync + 'static> SpatialGrid<T> {
         }
     }
 
-    /// Ближайшая сущность не дальше `radius` от `pos`; позиция кандидата —
-    /// из `pos_of` (живой `SimPosition`), `None` пропускает кандидата.
+    /// Ближайшая сущность не дальше `radius` от `pos`; позиция кандидата — из
+    /// `pos_of` (живой `SimPosition`), `None` пропускает кандидата, ничья
+    /// разрешается `order_of` (см. [`Self::nearest_in_range_where`]).
     pub fn nearest_in_range(
         &self,
         pos: Vec2,
         radius: f32,
         pos_of: impl Fn(Entity) -> Option<Vec2>,
+        order_of: impl Fn(Entity) -> u32,
     ) -> Option<(Entity, Vec2)> {
-        self.nearest_in_range_where(pos, radius, pos_of, |_| true)
+        self.nearest_in_range_where(pos, radius, pos_of, order_of, |_| true)
     }
 
     /// Ближайшая сущность не дальше `radius`, проходящая фильтр
     /// (например, «её ещё никто не преследует»).
+    ///
+    /// `order_of` — **порядковый номер** пешки
+    /// (`movement::order::pawn_number`), которым разрывается ничья по
+    /// расстоянию: из равноудалённых побеждает меньший номер. Вид в ключ не
+    /// входит, в отличие от `pawn_key`: сетка типизирована маркером `T`, так
+    /// что все кандидаты одного вида по построению.
+    ///
+    /// Ничья редка — на Туле **5 случаев на 3.84 млн поисков** за пять
+    /// симулированных минут, — и ровно поэтому номер спрашивается **только**
+    /// при точном равенстве расстояний, отдельным замыканием, а не приезжает
+    /// вместе с позицией: поиск обходит десятки кандидатов и зовётся миллионы
+    /// раз за прогон, и лишнее чтение колонки `PawnId` на каждого кандидата
+    /// стоило бы куда дороже того, что оно решает.
+    ///
+    /// Редкость — не повод оставить ничью обходу. Иначе победителя выбирает
+    /// порядок внутри ячейки, то есть история спавнов и смертей (`swap_remove`
+    /// перекладывает хвост на место удалённого), — ровно то, от чего симуляция
+    /// обязана не зависеть; правило записано в `movement/order.rs`, а это было
+    /// последнее место, где его не применили.
     pub fn nearest_in_range_where(
         &self,
         pos: Vec2,
         radius: f32,
         pos_of: impl Fn(Entity) -> Option<Vec2>,
+        order_of: impl Fn(Entity) -> u32,
         mut filter: impl FnMut(Entity) -> bool,
     ) -> Option<(Entity, Vec2)> {
-        let mut best: Option<(Entity, Vec2)> = None;
+        // граница радиуса включительна («не дальше `radius`») и это НЕ то же
+        // сравнение, что «ближе найденного»: их совмещение и отдавало ничью
+        // порядку обхода
         let mut best_distance_squared = radius * radius;
+        let mut best: Option<(Entity, Vec2)> = None;
+        // номер лидера считается лениво и сбрасывается со сменой лидера: без
+        // ничьей его не спрашивают ни разу
+        let mut best_order: Option<u32> = None;
 
         self.for_each_in_cells_around(pos, radius, |entity| {
             let Some(entry_pos) = pos_of(entity) else {
                 return;
             };
             let distance_squared = pos.distance_squared(entry_pos);
-            if distance_squared <= best_distance_squared && filter(entity) {
-                best_distance_squared = distance_squared;
-                best = Some((entity, entry_pos));
+            if distance_squared > best_distance_squared {
+                return;
             }
+            if distance_squared == best_distance_squared
+                && let Some((leader, _)) = best
+                && order_of(entity) > *best_order.get_or_insert_with(|| order_of(leader))
+            {
+                return;
+            }
+            if !filter(entity) {
+                return;
+            }
+            best_distance_squared = distance_squared;
+            best = Some((entity, entry_pos));
+            best_order = None;
         });
         best
     }
+}
+
+/// Позиция кандидата поиска — живой `SimPosition`. Читается для каждого
+/// кандидата, поэтому берёт из выборки только её.
+pub fn pawn_position<F: bevy::ecs::query::QueryFilter>(
+    query: &Query<(&SimPosition, Option<&crate::rng::PawnId>), F>,
+    candidate: Entity,
+) -> Option<Vec2> {
+    query.get(candidate).ok().map(|(position, _)| position.0)
+}
+
+/// Номер кандидата — ключ, которым [`SpatialGrid::nearest_in_range_where`]
+/// разрывает ничью; зовётся только на ничьей.
+///
+/// Заведён рядом с [`pawn_position`], чтобы обе половины контракта поиска
+/// брались из одной выборки и не собирались руками в каждом вызове: ровно так
+/// ключ порядка и разъезжался по копиям раньше (`movement/order.rs`).
+/// `Option<&PawnId>` — пешка без номера (отладочный ходок) уезжает в хвост
+/// порядка, а не выпадает из поиска молча.
+pub fn pawn_order<F: bevy::ecs::query::QueryFilter>(
+    query: &Query<(&SimPosition, Option<&crate::rng::PawnId>), F>,
+    candidate: Entity,
+) -> u32 {
+    crate::movement::order::pawn_number(query.get(candidate).ok().and_then(|(_, pawn_id)| pawn_id))
 }
 
 pub struct SpatialPlugin;
@@ -255,4 +339,142 @@ fn on_human_added(
 /// escape, рестарт по R, смену города.
 fn on_human_removed(event: On<Remove, Human>, mut grid: ResMut<SpatialGrid<Human>>) {
     grid.remove(event.entity);
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+    use crate::rng::PawnId;
+
+    /// Мир проводки: сами observers и пересборка демонов, без состояний и
+    /// расписания игры.
+    fn app() -> App {
+        let mut app = App::new();
+        app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
+            .init_resource::<SpatialGrid<Human>>()
+            .init_resource::<SpatialGrid<Demon>>()
+            .add_observer(on_human_added)
+            .add_observer(on_human_removed)
+            .add_systems(Update, rebuild_demon_grid);
+        app
+    }
+
+    fn found_near<T: Send + Sync + 'static>(app: &App, pos: Vec2) -> Vec<Entity> {
+        let mut seen = Vec::new();
+        app.world()
+            .resource::<SpatialGrid<T>>()
+            .for_each_in_cells_around(pos, 0.0, |entity| seen.push(entity));
+        seen
+    }
+
+    /// Позиция берётся из `Transform`, а не из `SimPosition`: в момент
+    /// срабатывания observer'а тот ещё дефолтный (нулевой), и человек ушёл бы
+    /// в угол карты — там его бы и искали демоны.
+    #[test]
+    fn a_spawned_human_enters_the_grid_where_his_transform_stands() {
+        let app = &mut app();
+        let at = Vec2::new(400.0, 400.0);
+        let human = app
+            .world_mut()
+            .spawn((Human, Transform::from_translation(at.extend(0.0))))
+            .id();
+
+        assert_eq!(found_near::<Human>(app, at), vec![human]);
+        assert!(found_near::<Human>(app, Vec2::ZERO).is_empty());
+    }
+
+    /// Одна пара observers покрывает весь жизненный цикл: смерть — это снятие
+    /// `Human` с живой сущности, escape и смена города — despawn. `On<Remove>`
+    /// обязан отработать в обоих случаях, иначе труп остаётся кандидатом в
+    /// жертвы.
+    #[test]
+    fn a_human_leaves_the_grid_both_by_losing_the_tag_and_by_despawn() {
+        let app = &mut app();
+        let at = Vec2::new(400.0, 400.0);
+        let spawn = |app: &mut App| {
+            app.world_mut()
+                .spawn((Human, Transform::from_translation(at.extend(0.0))))
+                .id()
+        };
+
+        let corpse = spawn(app);
+        app.world_mut().entity_mut(corpse).remove::<Human>();
+        assert!(
+            found_near::<Human>(app, at).is_empty(),
+            "труп остался в сетке"
+        );
+
+        let escaped = spawn(app);
+        app.world_mut().entity_mut(escaped).despawn();
+        assert!(
+            found_near::<Human>(app, at).is_empty(),
+            "despawn прошёл мимо сетки"
+        );
+    }
+
+    /// Сетка демонов не ведётся инкрементально вовсе: бросок двигает
+    /// `SimPosition` мимо системы движения, и единственное, что держит её в
+    /// согласии с миром, — полная пересборка каждый тик.
+    #[test]
+    fn the_demon_grid_follows_a_position_written_past_the_movement_system() {
+        let app = &mut app();
+        let from = Vec2::new(100.0, 100.0);
+        let to = Vec2::new(400.0, 400.0);
+        let demon = app.world_mut().spawn((Demon, SimPosition(from))).id();
+
+        app.update();
+        assert_eq!(found_near::<Demon>(app, from), vec![demon]);
+
+        // ровно то, что делает бросок: запись в `SimPosition` напрямую
+        app.world_mut().entity_mut(demon).insert(SimPosition(to));
+        app.update();
+
+        assert!(found_near::<Demon>(app, from).is_empty());
+        assert_eq!(found_near::<Demon>(app, to), vec![demon]);
+    }
+
+    /// Проводка ключа порядка от компонента до разрешения ничьи: два
+    /// равноудалённых демона, и побеждает меньший `PawnId`, а не тот, кого
+    /// пересборка положила в ячейку последним.
+    #[test]
+    fn the_search_breaks_a_tie_by_the_pawn_id_the_entity_carries() {
+        let app = &mut app();
+        let middle = Vec2::new(100.0, 100.0);
+        // меньший номер спавнится ПЕРВЫМ, и это не безразлично: пересборка
+        // укладывает демонов в ячейку в порядке выборки, так что при разрешении
+        // ничьи обходом победил бы как раз старший
+        let junior = app
+            .world_mut()
+            .spawn((Demon, SimPosition(middle - Vec2::X * 10.0), PawnId(2)))
+            .id();
+        let senior = app
+            .world_mut()
+            .spawn((Demon, SimPosition(middle + Vec2::X * 10.0), PawnId(9)))
+            .id();
+        app.update();
+
+        // поиск прогоняется настоящей системой: проверяется в том числе то,
+        // что `probe_pawn` доходит до `PawnId` через обычную выборку
+        fn nearest(
+            grid: Res<SpatialGrid<Demon>>,
+            demons: Query<(&SimPosition, Option<&PawnId>), With<Demon>>,
+        ) -> Option<Entity> {
+            grid.nearest_in_range(
+                Vec2::new(100.0, 100.0),
+                60.0,
+                |candidate| pawn_position(&demons, candidate),
+                |candidate| pawn_order(&demons, candidate),
+            )
+            .map(|(entity, _)| entity)
+        }
+        let found = app
+            .world_mut()
+            .run_system_once(nearest)
+            .expect("система поиска прогоняется");
+
+        assert_eq!(found, Some(junior), "ничью разрешил не `PawnId`");
+        assert_ne!(found, Some(senior));
+    }
 }
