@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Прогон серии замеров «слоты + расталкивание» на сценарии ВОРОНКА
-# (`examples/demos/crowd_demo.rs`, сценарий 2).
+# (`examples/demos/crowd_demo/`, сценарий 2).
 #
 #   tools/separation_slots_lab/run.sh <файл-результатов> <подпись> [аргументы демо…]
 #

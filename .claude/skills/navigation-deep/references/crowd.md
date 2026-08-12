@@ -109,7 +109,7 @@ optimization accepts that; off-screen crowds still stack and pay nothing.
 neighbours.
 
 **The crowd demo** — reproduced and measured on demand by
-`examples/demos/crowd_demo.rs` — a windowed scene running the real `separate_pawns` on
+`examples/demos/crowd_demo/` — a windowed scene running the real `separate_pawns` on
 an empty navmesh, with the crowd arranged into the cases that are otherwise waited for
 (a pile, a funnel, counter-flowing columns, a walled corridor, real wander AI), a
 body-radius gizmo per pawn and a live count of overlapping pairs. It navigates the way

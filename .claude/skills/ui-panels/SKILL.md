@@ -158,7 +158,7 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   mirror-of-a-list habit this whole change removes. Without the memo the second call
   would simply add a second copy of both systems.
 - **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one the crowd
-  demo (`examples/demos/crowd_demo.rs`) still calls directly, since its sliders drive
+  demo (`examples/demos/crowd_demo/`) still calls directly, since its sliders drive
   demo-local state rather than a resource: `spawn_slider_row` (label + value text +
   discrete `bevy_ui_widgets::Slider`), `quantize`, `apply_step` (quantize + put the thumb
   back on the stepped value), `retarget` (move the thumb when the value arrived past it —

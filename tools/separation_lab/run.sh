@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Прогон серии замеров расталкивания на `examples/demos/crowd_demo.rs`.
+# Прогон серии замеров расталкивания на `examples/demos/crowd_demo/`.
 #
 #   tools/separation_lab/run.sh <файл-результатов> <подпись> [аргументы демо…]
 #

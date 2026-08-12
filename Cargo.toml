@@ -11,7 +11,7 @@ autoexamples = false
 # demos — оконные, для человека: запустил и смотришь
 [[example]]
 name = "crowd_demo"
-path = "examples/demos/crowd_demo.rs"
+path = "examples/demos/crowd_demo/main.rs"
 
 # acceptance — headless-приёмка: печатает OK/FAILED и код возврата
 [[example]]

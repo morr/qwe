@@ -612,7 +612,7 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   dodge left; head-on pairs sidestep; a blocked pawn **steers** (bends its walk heading)
   rather than stopping. Lunging demons are exempt; the one deliberate breach of
   "cosmetic" is `SeparationHolds` + rest-distance arrival forgiveness in
-  `move_moving_entities`. Measured on demand by `examples/demos/crowd_demo.rs`; every
+  `move_moving_entities`. Measured on demand by `examples/demos/crowd_demo/`; every
   rule's measured reason and the lab — navigation-deep skill, `references/crowd.md`.
 - **Destination slot** (`movement/destination.rs`) — the reservation that stops two pawns
   from being aimed at the same point: a `k × k` navtile block per claimed goal
