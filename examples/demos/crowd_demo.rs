@@ -101,7 +101,8 @@ use qwe::movement::{
     separation_cell, slot_side, slot_target,
 };
 use qwe::navigation::{
-    ArcNavmesh, Pathfinder, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug, find_path_polymesh,
+    ArcNavmesh, MeshMode, NavMode, Pathfinder, PathfindingAlgorithm, PolyNavmesh, PolymeshDebug,
+    find_path_polymesh,
 };
 use qwe::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
 use qwe::settings::{
@@ -1637,7 +1638,7 @@ fn drive_routes(
     mut slots: Local<Vec<Option<(IVec2, IVec2)>>>,
 ) {
     claims.sync(slot_side(style.body_radius * 2.0) + lab.slack, search.0);
-    let polymesh = pathfinder.polymesh_build();
+    let polymesh = pathfinder.mode().mesh();
     let navmesh = pathfinder.navmesh.read();
 
     // заявки — всем пакетом и ДО прокладки путей, как в игре
@@ -1745,7 +1746,7 @@ fn regroup_to_slot(
         return;
     }
     let side = slot_side(style.body_radius * 2.0) + lab.slack;
-    let polymesh = pathfinder.polymesh_build();
+    let polymesh = pathfinder.mode().mesh();
     for (entity, mut movable, position, claim) in &mut pawns {
         let home = slot_target(claim.0, side);
         let target = tile_center(home);
@@ -2470,26 +2471,28 @@ fn update_overlay(
     holds: Res<SeparationHolds>,
     counters: Res<RunCounters>,
     misses: Res<PathMisses>,
-    polymesh: Res<PolymeshDebug>,
-    poly: Res<PolyNavmesh>,
+    pathfinder: Pathfinder,
     time: Res<Time<Virtual>>,
     camera: Query<&Transform, With<Camera2d>>,
     mut overlay: Query<&mut Text, With<OverlayText>>,
 ) {
     let zoom = camera.single().map(|camera| camera.scale.x).unwrap_or(0.0);
     let gated = zoom >= SEPARATION_MAX_ZOOM;
-    // тот же вопрос, что решает `Pathfinder::polymesh_build`: тумблер плюс
-    // готовность меша
-    let navigation = match (polymesh.enabled, poly.build().is_some()) {
-        (true, true) => "polymesh",
-        (true, false) => "polymesh (building, walking the grid)",
-        (false, _) => "navmesh grid",
+    // подпись читает то же значение, что и симуляция. Раньше здесь стоял свой
+    // `match` по паре сырых ресурсов — потому что `polymesh_build()` отдавал
+    // один `None` и на «выключен», и на «ещё строится», а подписи их надо
+    // различать. `NavMode` их различает сам
+    let mode = pathfinder.mode();
+    let navigation = match &mode {
+        NavMode::Mesh(MeshMode::Ready(_)) => "polymesh",
+        NavMode::Mesh(MeshMode::Pending) => "polymesh (building, walking the grid)",
+        NavMode::Grid(_) => "navmesh grid",
     };
     // клавиши переключить бэкенд здесь нет, но по BRP тумблер достижим — а на
     // сеточной навигации расталкивания не бывает вовсе, и подпись обязана это
     // говорить, а не показывать `ON` у выключенной системы.
     // Детерминизма в этой сцене нет по построению (`Determinism` не вставлен)
-    let mode_off = !separation_allowed_by_mode(false, polymesh.enabled);
+    let mode_off = !separation_allowed_by_mode(false, mode.is_continuous());
     let share = if overlaps.pawns > 0 {
         overlaps.involved as f32 / overlaps.pawns as f32 * 100.0
     } else {

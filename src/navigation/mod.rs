@@ -1,5 +1,6 @@
 mod astar;
 mod backend;
+mod mode;
 mod navmesh;
 mod northstar;
 #[cfg(test)]
@@ -10,9 +11,10 @@ use bevy::prelude::*;
 
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::backend::{Backend, Walkable};
+pub use self::mode::{GridMode, MeshMode, NavMode};
 pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
 pub use self::northstar::{
-    NorthstarGrid, build_from_navmesh, find_path_northstar, northstar_wanted, poll_northstar_build,
+    NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
     start_northstar_build,
 };
 pub use self::polymesh::{
@@ -129,12 +131,27 @@ pub struct Pathfinder<'w> {
 }
 
 impl Pathfinder<'_> {
-    /// Полигональный меш, если панель включена и он уже построен. `None`
-    /// означает «ищем по сетке» — и пока панель выключена, и пока постройка
-    /// идёт (5–20 с): тот же приём, которым HPA* до готовности
-    /// `NorthstarGrid` обслуживается A*.
-    pub fn polymesh_build(&self) -> Option<std::sync::Arc<PolymeshBuild>> {
-        self.polymesh.enabled.then(|| self.poly.build()).flatten()
+    /// По чему пешки ходят прямо сейчас — [`NavMode`], одно значение вместо
+    /// четырёх ресурсов и четырёх разных способов их скомбинировать.
+    ///
+    /// Единственное место, где эта комбинация вычисляется. Всё, что раньше
+    /// ветвилось на `PolymeshDebug::enabled`, спрашивает варианты отсюда.
+    pub fn mode(&self) -> NavMode {
+        if self.polymesh.enabled {
+            return match self.poly.build() {
+                Some(mesh) => NavMode::Mesh(MeshMode::Ready(mesh)),
+                None => NavMode::Mesh(MeshMode::Pending),
+            };
+        }
+        if !self.algorithm.needs_northstar() {
+            return NavMode::Grid(GridMode::Flat);
+        }
+        match self.northstar.get() {
+            Some(grid) => NavMode::Grid(GridMode::Hierarchy(grid)),
+            None => NavMode::Grid(GridMode::HierarchyPending {
+                wanted: self.northstar.is_missing(),
+            }),
+        }
     }
 
     /// Живой снимок активного бэкенда — то, чем симуляция ищет пути и меряет
@@ -145,35 +162,47 @@ impl Pathfinder<'_> {
     /// [`refresh_backend`]). Снаружи остаётся только у демо-сцен, которые
     /// строят свой мир сами и лезут к ресурсам навигации напрямую.
     pub fn backend(&self) -> Backend {
+        let mode = self.mode();
         Backend::new(
             self.navmesh.0.clone(),
             *self.algorithm,
-            self.northstar.get(),
-            self.polymesh_build(),
+            mode.hierarchy(),
+            mode.mesh(),
         )
     }
 }
 
-/// «Выбранный бэкенд ещё строится» — один system-параметр вместо четырёх
-/// ресурсов в сигнатуре прогрева (`loading.rs::poll_warmup`).
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct NavigationBuildPending<'w> {
-    pub northstar: Res<'w, NorthstarGrid>,
-    pub algorithm: Res<'w, PathfindingAlgorithm>,
-    pub poly: Res<'w, PolyNavmesh>,
-    pub polymesh: Res<'w, PolymeshDebug>,
+/// Запускать ли постройку иерархии northstar сейчас. Условие расписания;
+/// решение целиком принадлежит [`NavMode`].
+pub fn northstar_wanted(pathfinder: Pathfinder) -> bool {
+    pathfinder.mode().northstar_wanted()
 }
 
-impl NavigationBuildPending<'_> {
-    /// Ждать ли ещё. Спрашивается только про **выбранный** бэкенд: сетка
-    /// northstar не нужна ни при включённой панели Polymesh, ни плоскому A*,
-    /// и ждать её в этих случаях значило бы держать экран загрузки зря.
-    pub fn is_building(&self) -> bool {
-        if self.polymesh.enabled {
-            return self.poly.build().is_none();
-        }
-        self.algorithm.needs_northstar() && self.northstar.get().is_none()
-    }
+/// Прогонять этот `App` по плоской сетке: ни меша, ни иерархии.
+///
+/// Одно имя вместо двух внутренних ресурсов навигации. Так это и должно
+/// выглядеть снаружи: «по чему ходим» — понятие навигации, а
+/// [`PolymeshDebug`] и [`PathfindingAlgorithm`] — её внутренности, которые по
+/// инварианту `CONTEXT.md` не должны встречаться вне `navigation/` и `ui/`.
+/// Инвариант этот был нарушен, причём в неигровом, но вполне рабочем коде:
+/// `determinism::replay::replay_app` называл оба ресурса поимённо, потому что
+/// сказать то же самое было больше нечем.
+///
+/// Сеет и те два ресурса, которые сами по себе ничего не выбирают, но нужны
+/// [`Pathfinder`] для валидации параметров: без них обсервер, берущий снимок,
+/// падает на ровном месте. Именно из-за них стенды `determinism` перечисляли
+/// по четыре имени навигации на тест.
+///
+/// Берёт `World`, а не `App`: половина вызывающих — тесты на голом мире.
+/// Для контекстов вообще без ECS тот же смысл несёт [`Backend::from_grid`].
+pub fn use_flat_grid(world: &mut World) {
+    world.insert_resource(PathfindingAlgorithm::Astar);
+    world.insert_resource(PolymeshDebug {
+        enabled: false,
+        ..default()
+    });
+    world.init_resource::<NorthstarGrid>();
+    world.init_resource::<PolyNavmesh>();
 }
 
 /// «Пути активной навигации — метрические полилинии, а не центры тайлов» —
@@ -181,13 +210,16 @@ impl NavigationBuildPending<'_> {
 /// боковой толчок имеет смысл, только когда его не откатит следующий тайловый
 /// waypoint.
 ///
+/// Тот же вопрос, на который отвечает [`NavMode::is_continuous`], и ответ
+/// обязан совпадать. Отдельный параметр существует по одной причине: его
+/// потребители живут в `MovementPlugin`, который поднимают **без** плагина
+/// навигации — в тестах и на стендах, — поэтому собрать полный [`NavMode`] тут
+/// не из чего. Отсюда `Option`: нет ресурса — пространство тайловое.
+///
 /// Отвечает **тумблер** полигонального меша, а не готовность постройки: пока
 /// меш строится (0.3–20 с), запросы обслуживает сетка, но мигать
 /// расталкиванием на этом переходе хуже, чем доработать полсекунды по-старому.
-///
-/// `Option` — потребители живут в `MovementPlugin`, который используется в
-/// тестах и демо-сценах без плагина навигации: нет ресурса — пространство
-/// тайловое.
+/// В таблице [`NavMode`] это `Mesh(Pending)` — уже «непрерывно».
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ContinuousSpace<'w> {
     polymesh: Option<Res<'w, PolymeshDebug>>,

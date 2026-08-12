@@ -43,7 +43,7 @@ use crate::human::{Human, PopulationSize};
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
 use crate::movement::{MovableState, SimPosition};
-use crate::navigation::{ArcNavmesh, Navmesh, PathfindingAlgorithm, PolymeshDebug};
+use crate::navigation::{ArcNavmesh, Navmesh};
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, WorldSeed};
 use crate::telemetry::Telemetry;
@@ -74,7 +74,8 @@ pub enum Progress {
 /// Приложение для повтора: симуляция целиком, без окна, рендера и UI.
 ///
 /// Бэкенд — сеточный плоский A*, и он **задан явно**
-/// ([`PathfindingAlgorithm::Astar`]), а не выбран умолчанием. В игре по
+/// ([`navigation::use_flat_grid`](crate::navigation::use_flat_grid)), а не
+/// выбран умолчанием. В игре по
 /// умолчанию HPA*, чью иерархию (и полигональный меш при своей настройке)
 /// дожидается прогрев; здесь прогрева нет, и постройка, доехавшая посреди
 /// прогона, меняла бы пути на полпути — то есть ровно то, что проверка обязана
@@ -127,16 +128,12 @@ pub fn replay_app(
         // `Time<Virtual>` по замеренной нагрузке, а это настенные часы в
         // содержимом тика
         .init_resource::<crate::sim_time::SimLoad>()
-        .insert_resource(PathfindingAlgorithm::Astar)
         .insert_resource(map)
         .insert_resource(PortalPos(portal))
         .insert_resource(WorldSeed(seed))
         .insert_resource(PopulationSize(population))
-        .insert_resource(Determinism(true))
-        .insert_resource(PolymeshDebug {
-            enabled: false,
-            ..default()
-        });
+        .insert_resource(Determinism(true));
+    crate::navigation::use_flat_grid(app.world_mut());
 
     // navmesh — готовый: в игре его заливает поток загрузки
     *app.world_mut()

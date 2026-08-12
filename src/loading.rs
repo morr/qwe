@@ -13,7 +13,7 @@ use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread}
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
 };
-use crate::navigation::{ArcNavmesh, NavigationBuildPending};
+use crate::navigation::{ArcNavmesh, Pathfinder};
 use crate::portal::PortalPos;
 use crate::ui::{UiOpacity, ui_color};
 
@@ -442,7 +442,7 @@ fn poll_warmup(
     mut texts: Query<&mut Text, With<LoaderText>>,
     mut next: ResMut<NextState<PlayPhase>>,
     determinism: Option<Res<crate::determinism::Determinism>>,
-    navigation_pending: NavigationBuildPending,
+    pathfinder: Pathfinder,
 ) {
     if determinism.is_some_and(|mode| mode.0) {
         // Детерминированный прогон идёт на одном бэкенде от начала до конца
@@ -450,7 +450,7 @@ fn poll_warmup(
         // ждёт, пока выбранный бэкенд построится. Счётчик `elapsed` при этом
         // стоит: постройка иерархии занимает ~11–14 с, и `WARMUP_TIMEOUT` (10 с)
         // оборвал бы её на полпути — ровно то, чего ждём.
-        if navigation_pending.is_building() {
+        if pathfinder.mode().is_building() {
             for mut text in &mut texts {
                 text.set_if_neq(Text("Building navigation...".to_string()));
             }

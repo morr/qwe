@@ -195,10 +195,7 @@ mod tests {
 
     use super::*;
     use crate::grid::tile_center;
-    use crate::navigation::{
-        ArcNavmesh, Backend, Navmesh, NorthstarGrid, PathfindingAlgorithm, PolyNavmesh,
-        PolymeshDebug,
-    };
+    use crate::navigation::{ArcNavmesh, Backend, Navmesh, use_flat_grid};
 
     /// Тайл, по которому видно, ЧЕЙ снимок лежит ресурсом.
     const PROBE: IVec2 = IVec2::ZERO;
@@ -227,10 +224,9 @@ mod tests {
     fn the_frozen_backend_is_snapped_at_the_announcement_not_at_world_entry() {
         let mut world = World::new();
         world.init_resource::<SimTick>();
-        world.init_resource::<NorthstarGrid>();
-        world.init_resource::<PathfindingAlgorithm>();
-        world.init_resource::<PolyNavmesh>();
-        world.init_resource::<PolymeshDebug>();
+        // бэкенд здесь неважен, важно ЧЕЙ мир под ним; ресурсы навигации нужны
+        // лишь чтобы снимок вообще собрался
+        use_flat_grid(&mut world);
         world.add_observer(on_world_started);
 
         // посев на входе в мир: проба проходима
@@ -257,10 +253,7 @@ mod tests {
     fn a_new_run_counts_ticks_from_zero() {
         let mut world = World::new();
         world.init_resource::<SimTick>();
-        world.init_resource::<NorthstarGrid>();
-        world.init_resource::<PathfindingAlgorithm>();
-        world.init_resource::<PolyNavmesh>();
-        world.init_resource::<PolymeshDebug>();
+        use_flat_grid(&mut world);
         world.insert_resource(ArcNavmesh(navmesh_with_probe(true)));
         world.add_observer(on_world_started);
 
