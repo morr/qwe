@@ -37,7 +37,7 @@ pub mod replay;
 
 use bevy::ecs::schedule::ScheduleLabel;
 
-use crate::loading::{AppState, PlayPhase, WorldStarted};
+use crate::loading::{AppState, PlayPhase, WorldStarted, in_world};
 use crate::navigation::Pathfinder;
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::restart::RestartPending;
@@ -77,18 +77,36 @@ pub enum SimPipeline {
     Live,
     /// Повторяемый: всё по тикам, бэкенд заморожен, очередь FIFO.
     Deterministic,
+    /// Работает в обоих режимах. Существует ради **гейта на мир**: множества
+    /// гейтятся здесь разом, и система, состоящая в любом из трёх, сама
+    /// `in_state` больше не пишет.
+    ///
+    /// Размен, который стоит знать: раньше «система без множества» читалась как
+    /// «идёт в обоих режимах», и это был полезный сигнал. Теперь без множества
+    /// остаются только системы, живущие **вне** мира, — а «в обоих режимах»
+    /// приходится объявлять явно. Взамен исчезает целый класс отказов: гейт на
+    /// мир нельзя забыть, потому что его никто и не пишет.
+    BothModes,
 }
 
-/// Обе ветки разом — для одного расписания. Условие считается по разу на
-/// множество за прогон расписания, а не по разу на систему, как считался
-/// прежний `run_if` на каждой точке.
+/// Все три ветки разом — для одного расписания.
+///
+/// Два условия, и оба считаются по разу на множество за прогон расписания, а не
+/// по разу на систему:
+///
+/// * **режим** — ветка таблицы, своя у `Live` и `Deterministic`;
+/// * **мир** — [`in_world`], общий на все три. Вне мира нет ресурсов мира, и
+///   система симуляции валится на валидации параметров; это уже роняло запуск,
+///   когда живая цепочка поиска пути отработала в `Loading`.
 fn gate_pipelines<S: ScheduleLabel>(app: &mut App, schedule: S) {
     app.configure_sets(
         schedule,
         (
             SimPipeline::Live.run_if(not(deterministic)),
             SimPipeline::Deterministic.run_if(deterministic),
-        ),
+            SimPipeline::BothModes,
+        )
+            .run_if(in_world),
     );
 }
 

@@ -14,7 +14,8 @@ pub use self::components::{
 use self::systems::{
     draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
 };
-use crate::loading::{AppState, PlayPhase, WorldStarted};
+use crate::determinism::{DeterminismPlugin, SimPipeline};
+use crate::loading::{PlayPhase, WorldStarted};
 use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
 
@@ -22,6 +23,14 @@ pub struct DemonPlugin;
 
 impl Plugin for DemonPlugin {
     fn build(&self, app: &mut App) {
+        // Множества конвейера гейтит `DeterminismPlugin`, и без него
+        // незасетапленное множество не гейтит **ничего** — включая гейт на мир.
+        // Та же зависимость, что у плагинов движения, людей и навигации, и
+        // объявляется так же здесь: демонов поднимают и отдельно, в тестах
+        if !app.is_plugin_added::<DeterminismPlugin>() {
+            app.add_plugins(DeterminismPlugin);
+        }
+
         app.register_type::<Demon>()
             .register_type::<DemonWanderTag>()
             .register_type::<DemonChaseTag>()
@@ -70,7 +79,9 @@ impl Plugin for DemonPlugin {
                     draw_lunge_paths,
                     sync_demon_speed.run_if(resource_changed::<DemonStyle>),
                 )
-                    .run_if(in_state(AppState::Playing)),
+                    // косметика идёт в обоих режимах, но только внутри мира —
+                    // и то и другое теперь сказано одним множеством
+                    .in_set(SimPipeline::BothModes),
             );
     }
 }
@@ -106,6 +117,7 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
 
     use super::*;
+    use crate::loading::AppState;
     use crate::navigation::{ArcNavmesh, Backend, Navmesh};
     use crate::portal::PortalPos;
     use crate::rng::PawnId;

@@ -146,7 +146,6 @@ impl Plugin for MovementPlugin {
             .add_systems(
                 Update,
                 rescue_trapped_entities
-                    .run_if(in_state(AppState::Playing))
                     .run_if(polymesh_rebuilt)
                     // в детерминированном режиме бэкенд заморожен на весь
                     // прогон (ресурс `Backend` пишется раз на `WorldStarted`),
@@ -172,15 +171,11 @@ impl Plugin for MovementPlugin {
                     dispatch_pathfinding_requests,
                 )
                     .chain()
-                    // вне мира бэкенда не существует (`Backend` живёт от
-                    // `OnEnter(Playing)` до `OnExit`), а `SimPipeline` выбирает
-                    // лишь ветку режима и от состояния не гейтит: без этого
-                    // условия цепочка работала бы в `Loading` и валилась на
-                    // валидации `Res<Backend>` — что и случилось
-                    .run_if(in_state(AppState::Playing))
                     // в детерминированном режиме этот конвейер заменён
                     // тик-локованным ниже: здесь ответ применяется в тот кадр,
-                    // когда посчитался, а приоритет считается от камеры
+                    // когда посчитался, а приоритет считается от камеры.
+                    // Гейт на мир приезжает вместе с множеством: вне `Playing`
+                    // нет `Backend`, и эта цепочка однажды на этом и упала
                     .in_set(SimPipeline::Live),
             )
             .add_systems(
@@ -206,33 +201,33 @@ impl Plugin for MovementPlugin {
                 (
                     // счётчик тиков — голова цепочки: всё, что решает этот
                     // шаг, ссылается на один и тот же номер
-                    crate::determinism::advance_sim_tick.run_if(in_state(AppState::Playing)),
-                    snapshot_previous_sim_positions.before(SimSet::SpatialRebuild),
+                    crate::determinism::advance_sim_tick.in_set(SimPipeline::BothModes),
+                    snapshot_previous_sim_positions
+                        .before(SimSet::SpatialRebuild)
+                        .in_set(SimPipeline::BothModes),
                     // ответы — до поведения: путь, приземлившийся на этом
                     // тике, на нём же и идётся
                     apply_pathfinding_results
                         .before(SimSet::SpatialRebuild)
-                        .run_if(in_state(AppState::Playing))
                         .in_set(SimPipeline::Deterministic),
-                    // гейт на мир по той же причине, что и у живой цепочки
-                    // выше: шаг берёт `Res<Backend>`, а вне `Playing` ресурса
-                    // нет. Множествами это не закрыть — шаг идёт в обоих
-                    // режимах и ни в одном `SimPipeline` не состоит
+                    // шаг идёт в обоих режимах — значит объявляет это явно, а
+                    // гейт на мир (`Res<Backend>` вне `Playing` не существует)
+                    // приезжает вместе с множеством
                     move_moving_entities
                         .after(SimSet::HumanBehavior)
-                        .run_if(in_state(AppState::Playing)),
+                        .in_set(SimPipeline::BothModes),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
                     // доедет до экрана интерполяцией.
                     // Режимы, в которых его нет вовсе (детерминизм, сеточная
                     // навигация), — в `separation_runs`
                     separation::separate_pawns
-                        .run_if(in_state(AppState::Playing))
+                        .in_set(SimPipeline::BothModes)
                         .run_if(separation::separation_runs),
                     // возврат на свой слот — сразу после расталкивания, которое
                     // и есть источник схода: заявка, поданная этим тиком,
                     // уезжает в диспетчер в конце того же тика
-                    self::destination::regroup_onto_slots.run_if(in_state(AppState::Playing)),
+                    self::destination::regroup_onto_slots.in_set(SimPipeline::BothModes),
                     // слоты — только под детерминизмом: в обычном режиме любую
                     // заявку этого тика (и демонскую из `FixedUpdate`) до
                     // диспетчера успевает развести Update-копия выше —
@@ -241,9 +236,7 @@ impl Plugin for MovementPlugin {
                     // здесь платила бы `Added`-скан по архетипу из ~20k заявок
                     // на каждый тик (Added — проверка тиков по всем строкам, не
                     // индекс), на 30x — до ~30 сканов за кадр впустую
-                    assign_destination_slots
-                        .run_if(in_state(AppState::Playing))
-                        .in_set(SimPipeline::Deterministic),
+                    assign_destination_slots.in_set(SimPipeline::Deterministic),
                     // диспетчер — в самом конце тика: заявки, поданные
                     // поведением этого шага, командами применяются на точках
                     // синхронизации цепочки и уезжают в тот же тик
@@ -252,7 +245,6 @@ impl Plugin for MovementPlugin {
                         dispatch_pathfinding_requests_deterministic,
                     )
                         .chain()
-                        .run_if(in_state(AppState::Playing))
                         .in_set(SimPipeline::Deterministic),
                 )
                     .chain(),

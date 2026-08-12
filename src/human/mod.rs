@@ -89,7 +89,8 @@ impl Plugin for HumanPlugin {
                     // ресурса, проход по всей популяции каждый кадр не нужен
                     sync_human_pace.run_if(resource_changed::<HumanStyle>),
                 )
-                    .run_if(in_state(AppState::Playing))
+                    // гейт на мир приезжает с множеством: `pick_wander_targets`
+                    // берёт `Res<Backend>`, которого вне `Playing` нет
                     .in_set(SimPipeline::Live),
             );
     }
