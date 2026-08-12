@@ -188,3 +188,85 @@ fn request_restart_on_config_change(mut pending: ResMut<RestartPending>) {
 pub fn advance_sim_tick(mut tick: ResMut<SimTick>) {
     tick.0 += 1;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use super::*;
+    use crate::grid::tile_center;
+    use crate::navigation::{
+        ArcNavmesh, Backend, Navmesh, NorthstarGrid, PathfindingAlgorithm, PolyNavmesh,
+        PolymeshDebug,
+    };
+
+    /// Тайл, по которому видно, ЧЕЙ снимок лежит ресурсом.
+    const PROBE: IVec2 = IVec2::ZERO;
+
+    fn navmesh_with_probe(passable: bool) -> Arc<RwLock<Navmesh>> {
+        let mut navmesh = Navmesh::default();
+        navmesh.set_passable(PROBE.x, PROBE.y, passable);
+        Arc::new(RwLock::new(navmesh))
+    }
+
+    /// Замороженный снимок берётся **объявлением старта**, а не входом в мир.
+    ///
+    /// Разница не теоретическая: `navigation::insert_backend` сеет снимок на
+    /// `OnEnter(Playing)`, когда ни иерархии northstar, ни полигонального меша
+    /// ещё нет — их постройка стартует в том же `OnEnter`. К объявлению они
+    /// готовы (прогрев их дожидается), а на рестарте по R — тем более. Прогон,
+    /// донёсший до конца посевной снимок, шёл бы не тем бэкендом, что
+    /// показывает панель; ровно этот класс дефекта уже случался (см. заголовок
+    /// `tests/determinism.rs`).
+    ///
+    /// Мир под снимком здесь подменяется целиком, а не алгоритм: снимок
+    /// собирается одним вызовом `Pathfinder::backend`, поэтому «пересняли» —
+    /// свойство наблюдаемое по любому его полю, а проходимость видна снаружи
+    /// без новых геттеров.
+    #[test]
+    fn the_frozen_backend_is_snapped_at_the_announcement_not_at_world_entry() {
+        let mut world = World::new();
+        world.init_resource::<SimTick>();
+        world.init_resource::<NorthstarGrid>();
+        world.init_resource::<PathfindingAlgorithm>();
+        world.init_resource::<PolyNavmesh>();
+        world.init_resource::<PolymeshDebug>();
+        world.add_observer(on_world_started);
+
+        // посев на входе в мир: проба проходима
+        world.insert_resource(Backend::from_grid(navmesh_with_probe(true)));
+        // к объявлению мир уже другой
+        world.insert_resource(ArcNavmesh(navmesh_with_probe(false)));
+
+        world.trigger(WorldStarted);
+        world.flush();
+
+        assert!(
+            !world
+                .resource::<Backend>()
+                .walkable()
+                .allows(tile_center(PROBE)),
+            "прогон унёс посевной снимок вместо снятого на объявлении"
+        );
+    }
+
+    /// Вторая половина того же обсервера — и она уже закреплена снаружи
+    /// (`tests/determinism.rs::a_restart_replays_the_run`); здесь — вблизи, на
+    /// том же стенде, чтобы обе половины падали адресно.
+    #[test]
+    fn a_new_run_counts_ticks_from_zero() {
+        let mut world = World::new();
+        world.init_resource::<SimTick>();
+        world.init_resource::<NorthstarGrid>();
+        world.init_resource::<PathfindingAlgorithm>();
+        world.init_resource::<PolyNavmesh>();
+        world.init_resource::<PolymeshDebug>();
+        world.insert_resource(ArcNavmesh(navmesh_with_probe(true)));
+        world.add_observer(on_world_started);
+
+        world.resource_mut::<SimTick>().0 = 4096;
+        world.trigger(WorldStarted);
+
+        assert_eq!(world.resource::<SimTick>().0, 0);
+    }
+}
