@@ -22,7 +22,7 @@ pub use self::components::{
 };
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
-    assign_destination_slots, claim_batch, regroup_onto_slots, slot_side, slot_target,
+    assign_destination_slots, claim_batch, slot_side, slot_target,
 };
 pub use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
@@ -229,10 +229,6 @@ impl Plugin for MovementPlugin {
                     separation::separate_pawns
                         .in_set(SimPipeline::BothModes)
                         .run_if(separation::separation_runs),
-                    // возврат на свой слот — сразу после расталкивания, которое
-                    // и есть источник схода: заявка, поданная этим тиком,
-                    // уезжает в диспетчер в конце того же тика
-                    self::destination::regroup_onto_slots.in_set(SimPipeline::BothModes),
                     // слоты — только под детерминизмом: в обычном режиме любую
                     // заявку этого тика (и демонскую из `FixedUpdate`) до
                     // диспетчера успевает развести Update-копия выше —

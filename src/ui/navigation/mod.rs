@@ -71,9 +71,7 @@ use bevy::ui_widgets::Activate;
 use crate::determinism::Determinism;
 use crate::human::HumanStyle;
 use crate::loading::{AppState, WorldInitSet};
-use crate::movement::{
-    SeparationLab, SeparationStyle, SlotLab, SlotSearch, separation_allowed_by_mode,
-};
+use crate::movement::{SeparationLab, SeparationStyle, SlotSearch, separation_allowed_by_mode};
 use crate::navigation::{PathfindingAlgorithm, PolyNavmesh, PolymeshDebug};
 use crate::settings::{
     POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
@@ -173,7 +171,6 @@ struct NavPanelValues<'w> {
     separation: Res<'w, SeparationStyle>,
     determinism: Res<'w, Determinism>,
     separation_lab: Res<'w, SeparationLab>,
-    slot_lab: Res<'w, SlotLab>,
     human: Res<'w, HumanStyle>,
     search: Res<'w, SlotSearch>,
 }
@@ -183,10 +180,6 @@ impl NavPanelValues<'_> {
     // ресурс, который правит (`knobs.rs`)
     pub(super) fn separation_lab(&self) -> &SeparationLab {
         &self.separation_lab
-    }
-
-    pub(super) fn slot_lab(&self) -> &SlotLab {
-        &self.slot_lab
     }
 
     pub(super) fn human(&self) -> &HumanStyle {
@@ -223,11 +216,10 @@ pub struct UiNavigationPlugin;
 
 impl Plugin for UiNavigationPlugin {
     fn build(&self, app: &mut App) {
-        // ручки этой панели правят четыре разных ресурса, и радиус агента —
-        // пятый; `HumanStyle` регистрирует ещё и панель Human, повторный
+        // ручки этой панели правят три разных ресурса, и радиус агента —
+        // четвёртый; `HumanStyle` регистрирует ещё и панель Human, повторный
         // вызов кит отбрасывает сам
         app.add_knobs::<SeparationLab>()
-            .add_knobs::<SlotLab>()
             .add_knobs::<SlotSearch>()
             .add_knobs::<HumanStyle>()
             .add_knobs::<PolymeshDebug>()

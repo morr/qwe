@@ -116,12 +116,15 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   hung there until something else changed.
   Slots have no toggle — they run in both modes always —
   so `Slots` is a plain label, spawned without `Button` or an observer. Under the headers:
-  **`Pass squeeze`**, **`Left share`** / **`Body radius`**, **`Slot search`**,
-  **`Regroup`**. Body radius is here despite living on `HumanStyle`: it sets both the rest
+  **`Pass squeeze`**, **`Left share`** / **`Body radius`**, **`Slot search`**.
+  Body radius is here despite living on `HumanStyle`: it sets both the rest
   distance and the slot side, so tuning wants it beside the other crowd knobs, not half a
-  screen away in Human. All five are knob-kit rows, and each binds its **own** resource
-  (`SeparationLab`, `SlotLab`, `HumanStyle`, `SlotSearch`) — the `Knob` enum that used to
-  cover the group had to carry all four in one `SystemParam` for every drag.
+  screen away in Human. All four are knob-kit rows, and each binds its **own** resource
+  (`SeparationLab`, `HumanStyle`, `SlotSearch`) — the `Knob` enum that used to
+  cover the group had to carry them all in one `SystemParam` for every drag.
+  (`SlotLab` stays a demo-stand resource: the `Regroup` row that bound it was dropped
+  together with the game-side `regroup_onto_slots`, which the wander invariant —
+  every settled pawn carries `NeedsWanderTarget` — made unreachable in the game.)
   Nested *slider* rows are indented by `indent_slider_row`, which
   patches the padding the shared `ui/slider.rs` kit knows nothing about; without it a
   section's slider sat left of that same section's button rows — `Agent radius` had been

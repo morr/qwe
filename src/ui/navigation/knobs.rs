@@ -9,14 +9,13 @@ use bevy::prelude::*;
 use super::{NavPanelValues, display_of, indent_slider_row};
 use crate::determinism::Determinism;
 use crate::human::HumanStyle;
-use crate::movement::{SeparationLab, SlotLab, SlotSearch, separation_allowed_by_mode};
+use crate::movement::{SeparationLab, SlotSearch, separation_allowed_by_mode};
 use crate::navigation::PolymeshDebug;
 use crate::settings::{
     CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, HUMAN_BODY_RADIUS_MAX,
     HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, SEPARATION_LEFT_SHARE_MAX,
     SEPARATION_LEFT_SHARE_MIN, SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE_MAX,
-    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SLOT_REGROUP_MAX, SLOT_REGROUP_MIN,
-    SLOT_REGROUP_STEP,
+    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP,
 };
 use crate::ui::knob::{SliderBinding, spawn_knob};
 use crate::ui::rows::RowInert;
@@ -110,18 +109,6 @@ pub(super) fn spawn_knob_rows(
                     set: |search, value| search.0 = value,
                     range: (CLAIM_SEARCH_MIN, CLAIM_SEARCH_MAX, CLAIM_SEARCH_STEP),
                     text: |value| format!("{value:.0} m"),
-                },
-            ),
-            spawn_knob(
-                commands,
-                panel,
-                "Regroup",
-                values.slot_lab(),
-                SliderBinding::<SlotLab> {
-                    get: |slots| slots.regroup,
-                    set: |slots, value| slots.regroup = value,
-                    range: (SLOT_REGROUP_MIN, SLOT_REGROUP_MAX, SLOT_REGROUP_STEP),
-                    text: |value| format!("{value:.2} m"),
                 },
             ),
         ],

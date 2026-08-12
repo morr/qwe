@@ -611,67 +611,6 @@ pub fn assign_destination_slots(
     }
 }
 
-/// Вернуть на свой слот того, кого с него столкнули ([`SlotLab::regroup`]).
-///
-/// Кого это касается: пешка стои́т (`Idle`, то есть без
-/// `MovableStateMovingTag`), её слот за ней числится, а сама она дальше
-/// `regroup` метров от его целевого тайла. Заявка подаётся обычная, как из
-/// поведения, — дальше работает тот же конвейер поиска пути.
-///
-/// **`Without<NeedsWanderTarget>` — не оптимизация, а граница ответственности.**
-/// Тег висит ровно на тех, кому цель СЕЙЧАС выдаст поведение (`Idle` и
-/// `PathfindingError`), и перебивать его возвратом нельзя: человек, дошедший до
-/// цели, обязан пойти гулять дальше, а не топтаться на слоте. Возврат — для тех,
-/// у кого источника целей нет: толпа, собранная у точки и оставленная стоять
-/// (сцена `crowd_demo`, будущее «собраться у портала»), плюс всё, что придёт
-/// на смену. В сегодняшней игре, где блуждают все, система не срабатывает ни
-/// разу — и запрос у неё пуст, то есть стоит она ноль.
-///
-/// **`Without<PathfindingRequest>` / `Without<PathfindingTask>` — то, что
-/// делает предыдущий абзац правдой.** Пешка в состоянии `Pathfinding` стоит без
-/// `MovableStateMovingTag` и без `NeedsWanderTarget`, но она не «осевшая» — она
-/// уже идёт за целью, просто ответ ещё не пришёл. Без этих фильтров сюда
-/// попадала вся очередь диспетчера (на полном зум-ауте — все 20 000 пешек), и
-/// каждая дальше метра от своего слота перезаявлялась КАЖДЫЙ ТИК: десятки тысяч
-/// команд на тик, ~2.4 мс на применение, потолок скорости ~3.5x вместо 30x — и
-/// стартовая яма 0.2x, пока волна первых заявок стоит в очереди.
-pub fn regroup_onto_slots(
-    mut commands: Commands,
-    lab: Res<SlotLab>,
-    style: Res<HumanStyle>,
-    mut settled: Query<
-        (
-            Entity,
-            &mut Movable,
-            &crate::movement::SimPosition,
-            &DestinationClaim,
-        ),
-        (
-            Without<crate::movement::MovableStateMovingTag>,
-            Without<crate::movement::NeedsWanderTarget>,
-            Without<PathfindingRequest>,
-            Without<crate::movement::PathfindingTask>,
-        ),
-    >,
-) {
-    if lab.regroup <= 0.0 {
-        return;
-    }
-    let side = slot_side(style.body_radius * 2.0) + lab.slack;
-    for (entity, mut movable, position, claim) in &mut settled {
-        let home = slot_target(claim.0, side);
-        if position.0.distance(tile_center(home)) <= lab.regroup {
-            continue;
-        }
-        movable.to_pathfinding(
-            entity,
-            crate::grid::world_to_tile(position.0),
-            home,
-            &mut commands,
-        );
-    }
-}
-
 /// Снятие компонента — единственный путь освобождения индекса при сносе
 /// сущности: деспавн поднимает `Remove` на каждый её компонент, и обсервер
 /// успевает прочитать заявку, пока она ещё видна.
