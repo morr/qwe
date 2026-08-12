@@ -10,15 +10,10 @@ use crate::demon::components::{
 };
 use crate::demon::decide::{ChaseAction, ChaseSense, decide};
 use crate::grid::world_to_tile;
-use crate::human::{
-    CorpseTag, FleeRepath, Human, HumanFleeTag, HumanWanderTag, PanicRecoil, WanderPause,
-};
-use crate::movement::{
-    Movable, MovableState, MovableStateMovingTag, PathfindingRequest, PathfindingTask,
-    PreviousSimPosition, SimPosition,
-};
+use crate::human::Human;
+use crate::movement::{Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition};
 use crate::navigation::Backend;
-use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, Z_CORPSE};
+use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
@@ -252,7 +247,6 @@ pub fn on_demon_caught_human(
     mut commands: Commands,
     mut telemetry: ResMut<Telemetry>,
     humans: Query<(), With<Human>>,
-    mut sprites: Query<(&mut Sprite, &mut Transform)>,
     seed: Res<crate::rng::WorldSeed>,
     mut movables: Query<(
         &mut Movable,
@@ -267,41 +261,9 @@ pub fn on_demon_caught_human(
         return;
     }
 
-    // человек → труп: поведение и движение снимаются, спрайт «лежит»
-    commands
-        .entity(human)
-        .remove::<(
-            Human,
-            HumanWanderTag,
-            HumanFleeTag,
-            WanderPause,
-            FleeRepath,
-            PanicRecoil,
-            Movable,
-            MovableStateMovingTag,
-            PathfindingTask,
-            PathfindingRequest,
-            // метки тиков живут вместе со своей заявкой/таском — на трупе
-            // они означали бы срок, который никогда не наступит
-            crate::movement::RequestedAt,
-            crate::movement::RetireAt,
-            crate::movement::NeedsWanderTarget,
-            // группой, а не в плоском списке: полей стало 16, а `Bundle`
-            // кончается на 15
-            (
-                SimPosition,
-                PreviousSimPosition,
-                // труп никуда не идёт — держать за ним слот назначения значило
-                // бы навсегда вычесть место из живой толпы
-                crate::movement::DestinationClaim,
-            ),
-        )>()
-        .insert(CorpseTag);
-    if let Ok((mut sprite, mut transform)) = sprites.get_mut(human) {
-        sprite.color = Color::srgb(0.35, 0.16, 0.14);
-        sprite.custom_size = Some(Vec2::new(1.6, 0.8));
-        transform.translation.z = Z_CORPSE;
-    }
+    // из чего состоит человек и что таскает за собой движение — знают человек
+    // и движение; отсюда видно только, что случилось
+    crate::human::to_corpse(&mut commands, human);
     telemetry.killed += 1;
 
     // демон → Devour; пауза — из личного потока демона, а не общего: убийства

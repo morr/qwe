@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use self::behavior::{escape, flee, panic};
 pub use self::components::{
     CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
-    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause,
+    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
 };
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а

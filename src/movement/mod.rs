@@ -15,7 +15,7 @@ use bevy::prelude::*;
 pub use self::components::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
     NeedsWanderTarget, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
-    RetireAt, SimPosition,
+    RetireAt, SimPosition, strip_movement,
 };
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,

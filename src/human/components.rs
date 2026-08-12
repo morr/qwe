@@ -134,6 +134,46 @@ impl Default for WanderPause {
 #[reflect(Component)]
 pub struct CorpseTag;
 
+/// Цвет и размер лежащего тела — вид трупа принадлежит человеку, а не тому,
+/// кто его убил.
+const CORPSE_COLOR: Color = Color::srgb(0.35, 0.16, 0.14);
+const CORPSE_SIZE: Vec2 = Vec2::new(1.6, 0.8);
+
+/// Человек становится трупом: поведение и движение снимаются, тело ложится.
+///
+/// Одна точка на весь переход, и живёт она у человека — не у демона. Обсервер
+/// убийства (`demon::behavior::on_demon_caught_human`) перечислял шестнадцать
+/// типов из двух чужих модулей; теперь он говорит, ЧТО случилось, а из чего
+/// состоит человек и что таскает за собой движение, знают те, кому это
+/// принадлежит.
+///
+/// Что остаётся на теле намеренно: [`PawnId`](crate::rng::PawnId) и
+/// `WanderIndex` — паспорт пешки, по нему труп опознаётся в отладке; `Pace` и
+/// [`WanderHeading`] — жребий, разыгранный при спавне, читать его без
+/// `Movable` некому.
+pub fn to_corpse(commands: &mut Commands, entity: Entity) {
+    crate::movement::strip_movement(commands, entity);
+    let mut corpse = commands.entity(entity);
+    corpse
+        .remove::<(
+            Human,
+            HumanWanderTag,
+            HumanFleeTag,
+            HumanFirstWanderTag,
+            WanderPause,
+            FleeRepath,
+            PanicRecoil,
+        )>()
+        .insert(CorpseTag);
+    corpse.entry::<Sprite>().and_modify(|mut sprite| {
+        sprite.color = CORPSE_COLOR;
+        sprite.custom_size = Some(CORPSE_SIZE);
+    });
+    corpse.entry::<Transform>().and_modify(|mut transform| {
+        transform.translation.z = crate::settings::Z_CORPSE;
+    });
+}
+
 /// Троттлинг перепрокладки пути при бегстве.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -142,5 +182,117 @@ pub struct FleeRepath(pub Timer);
 impl Default for FleeRepath {
     fn default() -> Self {
         Self(Timer::from_seconds(1.0, TimerMode::Repeating))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::movement::{
+        DestinationClaim, Movable, MovableStateMovingTag, NeedsWanderTarget, PathfindingRequest,
+        PreviousSimPosition, RequestedAt, RetireAt, SimPosition,
+    };
+
+    /// Человек в разгар паники, с полным набором рантайм-компонент: бежит по
+    /// пути, держит слот назначения и ждёт ответа на новую заявку. Труп из
+    /// такого — самый нагруженный из возможных.
+    fn spawn_fleeing_human(app: &mut App) -> Entity {
+        app.world_mut()
+            .spawn((
+                Sprite::default(),
+                Transform::default(),
+                Human,
+                HumanFleeTag,
+                HumanFirstWanderTag,
+                FleeRepath::default(),
+                PanicRecoil(Vec2::X),
+                WanderPause(Timer::from_seconds(1.0, TimerMode::Once)),
+                Movable::new(1.0),
+                MovableStateMovingTag,
+                PathfindingRequest {
+                    start_tile: IVec2::ZERO,
+                    end_tile: IVec2::ONE,
+                },
+                RequestedAt(1),
+                RetireAt(2),
+                DestinationClaim(IVec2::ONE),
+            ))
+            .id()
+    }
+
+    /// То, ради чего у перехода одна точка входа: на теле не остаётся ничего,
+    /// чем симуляция могла бы его повести.
+    ///
+    /// Перечисление здесь — спецификация, а не копия списка из [`to_corpse`]:
+    /// оно называет то, чего быть НЕ должно, и потому не сходится с ним
+    /// построчно. `RetireAt` в нём не случайно — «труп, держащий срок снятия
+    /// таска, который никогда не настанет» уже был багом.
+    #[test]
+    fn a_corpse_keeps_nothing_the_simulation_could_move_it_by() {
+        let mut app = App::new();
+        let human = spawn_fleeing_human(&mut app);
+        app.world_mut().commands().queue(move |world: &mut World| {
+            let mut commands = world.commands();
+            to_corpse(&mut commands, human);
+        });
+        app.world_mut().flush();
+
+        let corpse = app.world().entity(human);
+        assert!(corpse.contains::<CorpseTag>(), "тело обязано стать трупом");
+        for (name, present) in [
+            ("Human", corpse.contains::<Human>()),
+            ("HumanFleeTag", corpse.contains::<HumanFleeTag>()),
+            (
+                "HumanFirstWanderTag",
+                corpse.contains::<HumanFirstWanderTag>(),
+            ),
+            ("FleeRepath", corpse.contains::<FleeRepath>()),
+            ("PanicRecoil", corpse.contains::<PanicRecoil>()),
+            ("WanderPause", corpse.contains::<WanderPause>()),
+            ("Movable", corpse.contains::<Movable>()),
+            (
+                "MovableStateMovingTag",
+                corpse.contains::<MovableStateMovingTag>(),
+            ),
+            (
+                "PathfindingRequest",
+                corpse.contains::<PathfindingRequest>(),
+            ),
+            ("RequestedAt", corpse.contains::<RequestedAt>()),
+            ("RetireAt", corpse.contains::<RetireAt>()),
+            ("DestinationClaim", corpse.contains::<DestinationClaim>()),
+            // затянуты `#[require]` у `Movable` — и сняться обязаны вместе с ним
+            ("SimPosition", corpse.contains::<SimPosition>()),
+            (
+                "PreviousSimPosition",
+                corpse.contains::<PreviousSimPosition>(),
+            ),
+            ("NeedsWanderTarget", corpse.contains::<NeedsWanderTarget>()),
+        ] {
+            assert!(!present, "на трупе остался {name}");
+        }
+    }
+
+    /// Тело лежит: вид трупа принадлежит человеку, и переход его меняет.
+    #[test]
+    fn a_corpse_lies_down_under_everything_that_walks() {
+        let mut app = App::new();
+        let human = spawn_fleeing_human(&mut app);
+        app.world_mut().commands().queue(move |world: &mut World| {
+            let mut commands = world.commands();
+            to_corpse(&mut commands, human);
+        });
+        app.world_mut().flush();
+
+        let corpse = app.world().entity(human);
+        assert_eq!(corpse.get::<Sprite>().expect("Sprite").color, CORPSE_COLOR);
+        assert_eq!(
+            corpse.get::<Sprite>().expect("Sprite").custom_size,
+            Some(CORPSE_SIZE)
+        );
+        assert_eq!(
+            corpse.get::<Transform>().expect("Transform").translation.z,
+            crate::settings::Z_CORPSE
+        );
     }
 }
