@@ -240,7 +240,11 @@ impl Plugin for UiNavigationPlugin {
             .add_systems(
                 Update,
                 (
-                    sync_separation_row_inert,
+                    // именно `resource_changed`: начальное состояние метки
+                    // ставит спавн панели, а первый кадр смены не видит
+                    sync_separation_row_inert.run_if(
+                        resource_changed::<Determinism>.or_else(resource_changed::<PolymeshDebug>),
+                    ),
                     (
                         sync_nav_values,
                         sync_section_visibility,
