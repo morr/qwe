@@ -1,23 +1,24 @@
 use bevy::prelude::*;
 use rand::Rng;
 
-use crate::grid::{tile_center, world_to_tile};
+use crate::grid::tile_center;
 use crate::human::components::{
     Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
     WanderHeading, WanderPause,
 };
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
-use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
+use crate::movement::{
+    Movable, NeedsWanderTarget, SimPosition, heading_towards, point_in_cone, ready_to_pick,
+    request_wander_path,
+};
 use crate::navigation::{ArcNavmesh, Backend};
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
-    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, RADIUS_HYSTERESIS, unit_z,
+    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, RADIUS_HYSTERESIS, unit_z,
 };
 
-/// Отступ целей блуждания от края карты, м.
-const MAP_MARGIN: f32 = 4.0;
 /// Доля пеших целей «к случайному зданию» (длинные маршруты через город);
 /// остальные гуляют поблизости.
 const WANDER_TO_BUILDING_SHARE: f32 = 0.8;
@@ -279,10 +280,7 @@ pub fn pick_wander_targets(
         is_first_wander,
     ) in &mut query
     {
-        if !matches!(
-            movable.state,
-            MovableState::Idle | MovableState::PathfindingError(_)
-        ) {
+        if !ready_to_pick(&movable.state) {
             continue;
         }
 
@@ -323,11 +321,13 @@ pub fn pick_wander_targets(
             point
         } else {
             // прогулка поблизости — в конусе вокруг курса
-            let turn = rng.random_range(-WANDER_CONE..WANDER_CONE);
-            let direction = Vec2::from_angle(turn).rotate(heading.0);
-            let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
-            let point = (sim_position.0 + direction * distance)
-                .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN);
+            let point = point_in_cone(
+                rng,
+                sim_position.0,
+                heading.0,
+                WANDER_CONE,
+                HUMAN_WANDER_RANGE,
+            );
             // под запретом сюда попадают только жители города без зданий:
             // дальнего маршрута там не существует, и прогулка с проверкой
             // конуса — лучшее доступное поведение. Проверять надо после
@@ -342,20 +342,21 @@ pub fn pick_wander_targets(
             point
         };
 
-        let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
+        let Some(target_tile) = request_wander_path(
+            &mut commands,
+            &walkable,
+            entity,
+            &mut movable,
+            sim_position.0,
+            target,
+        ) else {
             continue;
         };
         // курс — по фактически выбранной цели, следующая пойдёт от него
-        if let Some(direction) = (tile_center(target_tile) - sim_position.0).try_normalize() {
+        if let Some(direction) = heading_towards(sim_position.0, target_tile) {
             heading.0 = direction;
         }
 
-        movable.to_pathfinding(
-            entity,
-            world_to_tile(sim_position.0),
-            target_tile,
-            &mut commands,
-        );
         if is_first_wander {
             commands.entity(entity).remove::<HumanFirstWanderTag>();
         }

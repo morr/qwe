@@ -6,24 +6,20 @@ use rand::Rng;
 use crate::demon::components::{
     ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
 };
-use crate::grid::world_to_tile;
 use crate::loading::AppState;
 use crate::movement::{
-    DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, MovableState, SimPosition,
+    DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, SimPosition, point_in_cone,
+    ready_to_pick, request_wander_path,
 };
 use crate::navigation::Backend;
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream};
-use crate::settings::{
-    DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, unit_z,
-};
+use crate::settings::{DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, PORTAL_DIAMETER, unit_z};
 
 /// Блуждание: дистанция до следующей случайной точки, м.
 const WANDER_DISTANCE: (f32, f32) = (40.0, 120.0);
 /// Разброс направления «от портала», радианы.
 const WANDER_SPREAD: f32 = 1.3;
-/// Отступ целей блуждания от края карты, м.
-const MAP_MARGIN: f32 = 4.0;
 
 /// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены
 /// сброшенный спавнер выпускает залп заново без отдельного кода.
@@ -179,10 +175,7 @@ pub fn pick_wander_targets(
     let walkable = backend.walkable();
 
     for (entity, sim_position, mut movable, pawn_id, mut wander_index) in &mut query {
-        if !matches!(
-            movable.state,
-            MovableState::Idle | MovableState::PathfindingError(_)
-        ) {
+        if !ready_to_pick(&movable.state) {
             continue;
         }
 
@@ -190,24 +183,19 @@ pub fn pick_wander_targets(
         // заранее поток крутил бы его вхолостую на каждом кадре
         let rng = &mut wander_index.next(seed.0, RngDomain::Demon, pawn_id.0);
 
+        // «от портала» — вся видовая политика демона и есть; остальное общее
         let away = (sim_position.0 - portal_pos.0).normalize_or(Vec2::from_angle(
             rng.random_range(0.0..std::f32::consts::TAU),
         ));
-        let direction =
-            Vec2::from_angle(rng.random_range(-WANDER_SPREAD..WANDER_SPREAD)).rotate(away);
-        let distance = rng.random_range(WANDER_DISTANCE.0..WANDER_DISTANCE.1);
-        let target = (sim_position.0 + direction * distance)
-            .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN);
+        let target = point_in_cone(rng, sim_position.0, away, WANDER_SPREAD, WANDER_DISTANCE);
 
-        let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
-            continue;
-        };
-
-        movable.to_pathfinding(
-            entity,
-            world_to_tile(sim_position.0),
-            target_tile,
+        request_wander_path(
             &mut commands,
+            &walkable,
+            entity,
+            &mut movable,
+            sim_position.0,
+            target,
         );
     }
 }
