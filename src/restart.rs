@@ -47,7 +47,12 @@ impl Plugin for RestartPlugin {
         app.register_type::<RestartEvent>()
             .register_type::<RestartPending>()
             .init_resource::<RestartPending>()
-            .add_observer(on_restart)
+            // гейт на самом обсервере, а не только на триггерах: голый
+            // `brp event RestartEvent` минует оба и, придя в `Loading`, спавнил
+            // бы население поверх навмеша, который ещё заполняет поток
+            // загрузки, — а `OnEnter(Playing)` затем расселил бы второе.
+            // Событие вне `Playing` просто отбрасывается
+            .add_observer(on_restart.run_if(in_state(AppState::Playing)))
             // `PreUpdate`, а не `Update`: рестарт сносит сцену прямо в
             // обсервере, и из середины `Update` он убивал сущности, на которые
             // уже собраны, но ещё не применены команды соседних систем того же
