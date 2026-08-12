@@ -9,10 +9,9 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::city::City;
-use crate::human::{Human, HumanFleeTag};
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 use crate::movement::{
-    PathfindingRequest, PathfindingTask, SimPosition, wanderers_dispatched_at_zoom,
+    PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
 };
 use crate::navigation::{ArcNavmesh, NavigationBuildPending};
 use crate::portal::PortalPos;
@@ -437,7 +436,7 @@ fn poll_warmup(
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     pending: Query<
-        (&SimPosition, Has<Human>, Has<HumanFleeTag>),
+        (&SimPosition, Has<UrgentPath>),
         Or<(With<PathfindingRequest>, With<PathfindingTask>)>,
     >,
     mut texts: Query<&mut Text, With<LoaderText>>,
@@ -493,9 +492,11 @@ fn poll_warmup(
     let wanderers_dispatched = wanderers_dispatched_at_zoom(view.zoom);
     let waiting = pending
         .iter()
-        .filter(|(sim_position, is_human, is_fleeing)| {
-            // мирного гуляющего на общем плане диспетчер не возьмёт
-            if *is_human && !*is_fleeing && !wanderers_dispatched {
+        .filter(|(sim_position, urgent)| {
+            // мирного гуляющего на общем плане диспетчер не возьмёт. Срочность
+            // — тот же признак, по которому её решает сам диспетчер
+            // (`movement::UrgentPath`), а не третья копия его правила
+            if !*urgent && !wanderers_dispatched {
                 return false;
             }
             view.contains(sim_position.0)

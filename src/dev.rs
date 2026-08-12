@@ -62,6 +62,10 @@ fn on_spawn_test_walker(event: On<SpawnTestWalkerEvent>, mut commands: Commands)
             },
             Transform::from_translation(event.from.extend(unit_z(event.from.y))),
             TestWalker,
+            // ходок срочен: он и раньше им был — правило `!is_human` считало
+            // срочным всё, что не человек, а вида у ходока нет вовсе. Без
+            // маркера его заявка попала бы в очередь гуляющих и ждала камеру
+            crate::movement::UrgentPath,
             DespawnOnExit(AppState::Playing),
             Name::new("test_walker"),
         ))

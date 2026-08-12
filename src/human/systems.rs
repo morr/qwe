@@ -10,7 +10,7 @@ use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{Movable, MovableState, NeedsWanderTarget, SimPosition};
 use crate::navigation::{ArcNavmesh, Backend};
-use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream, stream};
+use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
     HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, MAP_SIZE, RADIUS_HYSTERESIS, unit_z,
@@ -124,6 +124,8 @@ pub fn spawn_population(
             WanderPause(pause),
             heading,
             PawnId(pawn_id),
+            // номер уникален только внутри вида, поэтому вид едет рядом с ним
+            Species::Human,
             WanderIndex::ready(),
             DespawnOnExit(AppState::Playing),
             Name::new("human"),

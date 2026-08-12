@@ -61,14 +61,9 @@ pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
 ///
 /// Отдельно от системы, потому что это всё правило видимости целиком, а
 /// система вокруг него — только сборка очереди и её усечение под бюджет.
-fn queue_key(
-    view: &Viewport,
-    position: Vec2,
-    is_human: bool,
-    is_fleeing: bool,
-) -> Option<(u8, f32)> {
+fn queue_key(view: &Viewport, position: Vec2, urgent: bool) -> Option<(u8, f32)> {
     let distance = view.distance_from_centre_squared(position);
-    if !is_human || is_fleeing {
+    if urgent {
         return Some((priority::URGENT, distance));
     }
     if !wanderers_dispatched_at_zoom(view.zoom) || !view.contains(position) {
@@ -91,8 +86,7 @@ pub fn dispatch_pathfinding_requests(
         Entity,
         &SimPosition,
         &PathfindingRequest,
-        Has<crate::human::Human>,
-        Has<crate::human::HumanFleeTag>,
+        Has<super::components::UrgentPath>,
     )>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
@@ -105,8 +99,8 @@ pub fn dispatch_pathfinding_requests(
 
     let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = requests
         .iter()
-        .filter_map(|(entity, sim_position, request, is_human, is_fleeing)| {
-            let (priority, distance) = queue_key(&view, sim_position.0, is_human, is_fleeing)?;
+        .filter_map(|(entity, sim_position, request, urgent)| {
+            let (priority, distance) = queue_key(&view, sim_position.0, urgent)?;
             (
                 priority,
                 distance,
@@ -296,8 +290,8 @@ pub fn dispatch_pathfinding_requests_deterministic(
         // ходока из `dev.rs`. Без `Option` его заявка молча не диспетчилась
         // бы вовсе, и он бы застыл — а так он просто последний в очереди
         Option<&crate::rng::PawnId>,
-        Has<crate::human::Human>,
-        Has<crate::human::HumanFleeTag>,
+        Option<&crate::rng::Species>,
+        Has<super::components::UrgentPath>,
     )>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
@@ -308,16 +302,16 @@ pub fn dispatch_pathfinding_requests_deterministic(
         return;
     }
 
-    let (urgent, wander) = &mut *queues;
+    let (urgent_queue, wander) = &mut *queues;
     // буферы переиспользуются между тиками: при длинной очереди (штатное
     // состояние этого режима) аллокация на каждый тик была бы заметнее самой
     // выборки
-    urgent.clear();
+    urgent_queue.clear();
     wander.clear();
-    for (entity, sim_position, request, requested_at, pawn_id, is_human, is_fleeing) in &requests {
+    for (entity, sim_position, request, requested_at, pawn_id, species, urgent) in &requests {
         let queued = QueuedRequest {
             requested_at: requested_at.0,
-            pawn: super::order::pawn_key(is_human, pawn_id),
+            pawn: super::order::pawn_key(species, pawn_id),
             units: request_units(request.start_tile, request.end_tile),
             entity,
             // полигональный поиск стартует из реальной позиции пешки, а не из
@@ -327,26 +321,29 @@ pub fn dispatch_pathfinding_requests_deterministic(
             start_tile: request.start_tile,
             end_tile: request.end_tile,
         };
-        if is_human && !is_fleeing {
+        if urgent {
+            push_within_budget(
+                urgent_queue,
+                queued,
+                crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK,
+            );
+        } else {
             push_within_budget(
                 wander,
                 queued,
                 crate::settings::PATHFINDING_WANDER_UNITS_PER_TICK,
             );
-        } else {
-            push_within_budget(
-                urgent,
-                queued,
-                crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK,
-            );
         }
     }
 
-    take_within_budget(urgent, crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK);
+    take_within_budget(
+        urgent_queue,
+        crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK,
+    );
     take_within_budget(wander, crate::settings::PATHFINDING_WANDER_UNITS_PER_TICK);
 
     let retire_at = tick.0 + crate::settings::PATHFINDING_RETIRE_TICKS;
-    for request in urgent.iter().chain(wander.iter()) {
+    for request in urgent_queue.iter().chain(wander.iter()) {
         let task = spawn_path_task(
             (*backend).clone(),
             request.start_world,
@@ -384,6 +381,9 @@ pub fn apply_pathfinding_results(
     mut tasks: Query<(
         Entity,
         Option<&crate::rng::PawnId>,
+        // вид — для ключа порядка; `Has<Human>` ниже — совсем про другое: про
+        // то, надо ли поправить человеческую пространственную сетку
+        Option<&crate::rng::Species>,
         &mut Movable,
         &mut SimPosition,
         &mut PreviousSimPosition,
@@ -403,8 +403,8 @@ pub fn apply_pathfinding_results(
     let mut due: Vec<(u8, u32, Entity)> = tasks
         .iter()
         .filter(|(.., retire_at, _)| retire_at.0 <= tick.0)
-        .map(|(entity, pawn_id, .., is_human)| {
-            let (species, number) = super::order::pawn_key(is_human, pawn_id);
+        .map(|(entity, pawn_id, pawn_species, ..)| {
+            let (species, number) = super::order::pawn_key(pawn_species, pawn_id);
             (species, number, entity)
         })
         .collect();
@@ -416,7 +416,7 @@ pub fn apply_pathfinding_results(
     let mut tally = AnswerTally::new(&mut diagnostics);
     let mut walkable = None;
     for (_, _, entity) in due {
-        let Ok((entity, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
+        let Ok((entity, _, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
             tasks.get_mut(entity)
         else {
             continue;
@@ -679,14 +679,18 @@ mod tests {
     /// Достаточно далеко, чтобы не попасть в кадр ни на каком из зумов ниже.
     const OFF_SCREEN: Vec2 = Vec2::new(100_000.0, 0.0);
 
+    // Демон и убегающий человек подают диспетчеру **одно и то же** — оба
+    // носят `UrgentPath`, и в этом всё содержание правки: раньше диспетчер
+    // выводил их срочность сам, из пары видовых тегов. Имена оставлены
+    // раздельными, потому что проверки читаются ими, а не булевым литералом.
     fn demon(view: &Viewport, position: Vec2) -> Option<(u8, f32)> {
-        queue_key(view, position, false, false)
+        queue_key(view, position, true)
     }
     fn wanderer(view: &Viewport, position: Vec2) -> Option<(u8, f32)> {
-        queue_key(view, position, true, false)
+        queue_key(view, position, false)
     }
     fn fleeing(view: &Viewport, position: Vec2) -> Option<(u8, f32)> {
-        queue_key(view, position, true, true)
+        queue_key(view, position, true)
     }
 
     /// Заявка мирного гуляющего вне кадра не выбрасывается, а ждёт камеру, —

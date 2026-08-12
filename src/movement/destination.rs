@@ -518,7 +518,7 @@ pub fn assign_destination_slots(
         (
             Entity,
             Option<&crate::rng::PawnId>,
-            Has<crate::human::Human>,
+            Option<&crate::rng::Species>,
             &crate::movement::SimPosition,
             &mut Movable,
             &mut PathfindingRequest,
@@ -548,8 +548,8 @@ pub fn assign_destination_slots(
     order.extend(
         fresh
             .iter()
-            .map(|(entity, pawn_id, is_human, position, _, request, _)| {
-                let (species, number) = super::order::pawn_key(is_human, pawn_id);
+            .map(|(entity, pawn_id, pawn_species, position, _, request, _)| {
+                let (species, number) = super::order::pawn_key(pawn_species, pawn_id);
                 (
                     (tile_center(request.end_tile) - position.0).length_squared(),
                     species,

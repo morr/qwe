@@ -79,7 +79,10 @@ pub fn panic(
         commands
             .entity(entity)
             .remove::<HumanWanderTag>()
-            .insert((HumanFleeTag, repath));
+            // срочность заявки — вместе с паникой: убегающего диспетчер обязан
+            // взять и за кадром, иначе паника вне экрана встанет. Маркер живёт
+            // ровно столько же, сколько `HumanFleeTag`, и снимается вместе с ним
+            .insert((HumanFleeTag, repath, crate::movement::UrgentPath));
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_PANIC_MS, started);
 }
@@ -196,7 +199,7 @@ pub fn flee(
                 // никого не нашёл
                 commands
                     .entity(entity)
-                    .remove::<(HumanFleeTag, FleeRepath)>()
+                    .remove::<(HumanFleeTag, FleeRepath, crate::movement::UrgentPath)>()
                     .insert(HumanWanderTag);
                 continue;
             }

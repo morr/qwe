@@ -17,7 +17,7 @@ use bevy::prelude::*;
 pub use self::components::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
     NeedsWanderTarget, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
-    RetireAt, SimPosition, strip_movement,
+    RetireAt, SimPosition, UrgentPath, strip_movement,
 };
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
@@ -130,6 +130,7 @@ impl Plugin for MovementPlugin {
             .init_resource::<crate::human::HumanStyle>();
 
         app.register_type::<PathfindingRequest>()
+            .register_type::<UrgentPath>()
             .register_type::<NeedsWanderTarget>()
             .register_type::<self::components::RequestedAt>()
             .register_type::<self::components::RetireAt>();

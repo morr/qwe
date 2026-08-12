@@ -358,7 +358,9 @@ fn spawn_request(app: &mut App, pawn_id: u32, requested_at: u64, wander: bool, t
         },
     ));
     if wander {
-        entity.insert(crate::human::Human);
+        entity.insert(crate::rng::Species::Human);
+    } else {
+        entity.insert((crate::rng::Species::Demon, crate::movement::UrgentPath));
     }
 }
 
@@ -511,8 +513,8 @@ fn a_demon_and_a_human_may_share_a_pawn_id() {
                 start_tile,
                 end_tile: start_tile,
             },
-            crate::human::Human,
-            crate::human::HumanFleeTag,
+            crate::rng::Species::Human,
+            crate::movement::UrgentPath,
         ));
     }
 

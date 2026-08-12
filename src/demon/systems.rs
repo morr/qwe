@@ -13,7 +13,7 @@ use crate::movement::{
 };
 use crate::navigation::Backend;
 use crate::portal::PortalPos;
-use crate::rng::{PawnId, RngDomain, WanderIndex, WorldSeed, decision_stream};
+use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream};
 use crate::settings::{
     DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, MAP_SIZE, PORTAL_DIAMETER, unit_z,
 };
@@ -129,6 +129,12 @@ fn spawn_demon(
         DemonWanderTag,
         Movable::new(speed),
         PawnId(index as u32),
+        // номер уникален только внутри вида, поэтому вид едет рядом с ним
+        Species::Demon,
+        // демон срочен всегда: инвазия за кадром не должна вставать, и снимать
+        // маркер с него нечему — в отличие от человека, у которого он приходит
+        // и уходит вместе с паникой
+        crate::movement::UrgentPath,
         WanderIndex::ready(),
         DespawnOnExit(AppState::Playing),
         Name::new("demon"),

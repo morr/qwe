@@ -7,11 +7,17 @@
 //! мест будет расти — сортировка появляется всюду, где обход запроса влияет на
 //! исход, — и каждая новая копия несла бы шанс уронить из ключа вид.
 
-use crate::rng::PawnId;
+use crate::rng::{PawnId, Species};
 
 /// Номер тестового ходока из `dev.rs` — единственной пешки без [`PawnId`].
 /// В конце любого порядка, и это ровно то, чего от отладочной сущности ждут.
 const NO_PAWN_ID: u32 = u32::MAX;
+
+/// Вид пешки, у которой его нет, — тот же отладочный ходок. Считается демоном,
+/// потому что прежний ключ строился как `u8::from(is_human)` и ходок, не будучи
+/// человеком, получал ноль. Менять нельзя по той же причине, что и порядок
+/// вариантов [`Species`].
+const NO_SPECIES: u8 = Species::Demon as u8;
 
 /// `(вид, номер спавна)` — ключ, устойчивый к перестановкам обхода запроса.
 ///
@@ -25,8 +31,14 @@ const NO_PAWN_ID: u32 = u32::MAX;
 ///
 /// Разрешить ничью `Entity` нельзя: индексы сущностей переиспользуются после
 /// смертей и рестарта, и в другом порядке.
-pub fn pawn_key(is_human: bool, pawn_id: Option<&PawnId>) -> (u8, u32) {
-    (u8::from(is_human), pawn_number(pawn_id))
+///
+/// Вид приходит компонентом [`Species`], а не `Has<Human>` из запроса: ключ —
+/// общий для всех видов, и знать имя одного из них ему незачем.
+pub fn pawn_key(species: Option<&Species>, pawn_id: Option<&PawnId>) -> (u8, u32) {
+    (
+        species.map_or(NO_SPECIES, |species| *species as u8),
+        pawn_number(pawn_id),
+    )
 }
 
 /// Только номер, без вида, — ключ там, где вид известен по построению и
@@ -47,27 +59,47 @@ mod tests {
     /// — штатное положение дел, а не редкость.
     #[test]
     fn the_same_pawn_id_of_two_species_gives_two_keys() {
-        let human = pawn_key(true, Some(&PawnId(5)));
-        let demon = pawn_key(false, Some(&PawnId(5)));
+        let human = pawn_key(Some(&Species::Human), Some(&PawnId(5)));
+        let demon = pawn_key(Some(&Species::Demon), Some(&PawnId(5)));
         assert_ne!(human, demon);
     }
 
-    /// Порядок между видами при этом сам по себе безразличен — важно лишь, что
-    /// он есть и не зависит от обхода запроса.
+    /// Порядок между видами сам по себе безразличен, но менять его нельзя:
+    /// он достался от прежнего ключа `u8::from(is_human)` и входит в содержимое
+    /// тика через очередь детерминированного диспетчера.
     #[test]
     fn demons_sort_before_humans_of_the_same_number() {
-        assert!(pawn_key(false, Some(&PawnId(5))) < pawn_key(true, Some(&PawnId(5))));
+        assert!(
+            pawn_key(Some(&Species::Demon), Some(&PawnId(5)))
+                < pawn_key(Some(&Species::Human), Some(&PawnId(5)))
+        );
     }
 
     #[test]
     fn within_a_species_the_spawn_number_orders() {
-        assert!(pawn_key(true, Some(&PawnId(1))) < pawn_key(true, Some(&PawnId(2))));
+        assert!(
+            pawn_key(Some(&Species::Human), Some(&PawnId(1)))
+                < pawn_key(Some(&Species::Human), Some(&PawnId(2)))
+        );
     }
 
     /// Пешка без номера — только тестовый ходок; он уезжает в хвост и не
     /// сталкивается с настоящими номерами.
     #[test]
     fn a_pawn_without_a_number_goes_last() {
-        assert!(pawn_key(true, Some(&PawnId(u32::MAX - 1))) < pawn_key(true, None));
+        assert!(
+            pawn_key(Some(&Species::Human), Some(&PawnId(u32::MAX - 1)))
+                < pawn_key(Some(&Species::Human), None)
+        );
+    }
+
+    /// Ходок без вида занимает то же место, что занимал до появления
+    /// [`Species`]: тогда `is_human` у него был `false`.
+    #[test]
+    fn a_pawn_without_a_species_sorts_as_a_demon() {
+        assert_eq!(
+            pawn_key(None, Some(&PawnId(7))),
+            pawn_key(Some(&Species::Demon), Some(&PawnId(7)))
+        );
     }
 }
