@@ -77,9 +77,11 @@ in `main.rs`.
   "Routing pawns... N left"; `poll_warmup` counts pawns *inside the camera view* that
   still hold a `PathfindingRequest`/`PathfindingTask` and flips to `Live` when none are
   left (or after `WARMUP_TIMEOUT` = 10 s, logged as a warning). It counts only what the
-  dispatcher will actually serve (`wanderers_dispatched_at_zoom`, the same cutoff
-  `dispatch_pathfinding_requests` uses); `WARMUP_GRACE` = 0.5 s keeps "no requests yet"
-  from meaning "done". Reason for the hold: all 20 000 humans queue a path in the same
+  dispatcher will actually serve — `wanderers_dispatched_at_zoom` for the zoom half and
+  **`UrgentPath` for the species half**, both the dispatcher's own; its margin (1.0
+  screens) stays its own on purpose. Until `UrgentPath` existed it re-derived the species
+  half by hand, and "the same cutoff" was only half true. `WARMUP_GRACE` = 0.5 s keeps
+  "no requests yet" from meaning "done". Reason for the hold: all 20 000 humans queue a path in the same
   frame, and without it the visible ones stood still for the first seconds. Typical
   warmup **~0.15 s** — see `HumanFirstWanderTag`. `Live` is what despawns the loader and
   reveals the game UI (`GameUiRoot`).
@@ -326,12 +328,34 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   `allows`/`nearest_free_point` are backend-strict (grid AND mesh), while `sift_target` /
   `line_of_sight` / `coast_allows` stay deliberately grid-only — the policy lives on the
   methods. **Invariant: outside `navigation/` and `ui/`, the names `PolymeshBuild` /
-  `PolymeshDebug` / `PathfindingAlgorithm` do not appear.** `ContinuousSpace` answers the
-  separation gate — the polymesh *toggle*, not build readiness.
+  `PolymeshDebug` / `PathfindingAlgorithm` do not appear.** The door for "run this world
+  on the flat grid" is **`navigation::use_flat_grid(&mut World)`** (`Backend::from_grid`
+  where there is no ECS at all); `determinism/replay.rs` breached the invariant for want
+  of it. `ContinuousSpace` answers the separation gate — the polymesh *toggle*, not build
+  readiness — and is the one consumer that cannot see a `NavMode`, because
+  `MovementPlugin` is raised in tests without navigation at all.
+- **NavMode** (`navigation/mode.rs`) — which backend is active **right now**, as one
+  value: `Grid(Flat | HierarchyPending{wanted} | Hierarchy(g))` and `Mesh(Pending |
+  Ready(b))`. Five states answer all four questions that used to be re-derived from four
+  resources in seventeen places: `is_continuous` (separation, panel sections),
+  `is_building` (loader), `northstar_wanted` (build scheduling), `mesh`/`hierarchy` (the
+  `Backend` snapshot). **`Mesh(Pending)` is the state that did not exist**: `polymesh_build()`
+  returned one `None` for both "off" and "still building", so consumers needing the
+  difference rebuilt the question by hand. A *value*, not a resource, and taken fresh by
+  each consumer — the loader and separation gates must see the live situation even in a
+  deterministic run, where `Backend` is frozen for the whole run. Computed in exactly one
+  place, `Pathfinder::mode`.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) — requests become
   async tasks with **visibility gating** (peaceful wanderers off-screen or at zoom ≥
-  `WANDER_DISPATCH_MAX_ZOOM` wait; demons and fleeing humans always dispatch) and
+  `WANDER_DISPATCH_MAX_ZOOM` wait; **`UrgentPath` always dispatches**) and
   **priority** (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 512).
+- **UrgentPath** (`movement/components.rs`) — "this pawn may not wait for the camera".
+  The species own it: a demon and the test walker carry it always, a human only while
+  panicking (it comes and goes with `HumanFleeTag`), and `strip_movement` takes it off a
+  corpse. Movement asks `Has<UrgentPath>` and **names no species at all**. Before it, the
+  rule lived as three copies in three modules and three polarities — `!is_human ||
+  is_fleeing` in the live dispatcher, `is_human && !is_fleeing` in the deterministic one,
+  and a third in `poll_warmup` — which is exactly how the warmup copy came to differ.
 - **Repath on the move** — `to_pathfinding` keeps the current path; a pawn walks the old
   path while the new one is computed. `MovableStateMovingTag` means "has a path **or is
   coasting**". **Coasting** — a pawn whose path ran out mid-repath keeps walking
@@ -405,6 +429,13 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
   and every trajectory of one on a finite set eventually closes into a cycle — within
   minutes each human would pace a fixed loop forever. The decision number only ever
   grows.
+- **Species** (`rng.rs`, component) — the other half of a pawn's personal number, riding
+  next to `PawnId` in the same spawn bundle. `PawnId` is unique only *within* a species,
+  so every mixed ordering (`movement::order::pawn_key`) puts species first. **Variant
+  order is part of the replay contract**: `Demon` is declared first because the key used
+  to be `u8::from(is_human)`, and a pawn with no `Species` (the test walker) still sorts
+  as a demon. A component rather than a field of `PawnId`: that type crosses BRP and the
+  replay fingerprint, and the RNG seed key must stay `(domain, ordinal)` bit-for-bit.
 - **PawnId** (`rng.rs`) — a pawn's spawn ordinal within its species and run (humans
   `0..HUMAN_COUNT`, demons `DemonSpawner::spawned`). Used wherever a stable "personal
   number" is needed — the RNG seed key, the flee-fan angle (`personal_spread`), the

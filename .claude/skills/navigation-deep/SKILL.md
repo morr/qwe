@@ -190,10 +190,30 @@ in `CONTEXT.md` and the detail here in the same change.
   are deliberately grid-only — hot-loop cost, documented on the methods; switching one to
   the mesh-strict test is a one-line edit there, not a sweep over four behavior systems.
   Boundary invariant: outside `navigation/` and `ui/`, the names `PolymeshBuild` /
-  `PolymeshDebug` / `PathfindingAlgorithm` do not appear. `ContinuousSpace` is the
+  `PolymeshDebug` / `PathfindingAlgorithm` do not appear. It was breached for two years'
+  worth of commits by `determinism/replay.rs`, which had to name both resources to say
+  "run on the flat grid"; the door for that is now `use_flat_grid(&mut World)`, which also
+  seeds the two resources `Pathfinder` merely needs to validate — the reason the
+  `determinism` test benches used to list four navigation names apiece.
+  `ContinuousSpace` is the
   separation gate's question ("are paths metric polylines?") answered by the polymesh
   *toggle*, not build readiness — blinking separation off during the 0.3–20 s build was
   judged worse than finishing the transition on the grid.
+- **NavMode** (`navigation/mode.rs`) — the backend question as a value, and the only place
+  the four resources are combined (`Pathfinder::mode`). `Grid(Flat | HierarchyPending {
+  wanted } | Hierarchy(g))` × `Mesh(Pending | Ready(b))`; the methods are the four
+  questions that used to be asked separately — `is_continuous`, `is_building`,
+  `northstar_wanted`, `mesh`/`hierarchy`. The truth table is pinned by two tests in the
+  module, which is the point: before, each column was assembled in a different file from a
+  different combination of resources, and there was nowhere to compare them.
+  `HierarchyPending { wanted }` is what keeps `northstar_wanted` honest — `wanted` is
+  "not started yet" (`NorthstarGrid::is_missing`), so the 12-second build is still ordered
+  exactly once. **`Mesh(Pending)` is the state that did not exist before**, and its absence
+  was expensive: `polymesh_build()` collapsed "off" and "building" into one `None`, so a
+  consumer needing the difference — `crowd_demo`'s overlay label — rebuilt the question
+  from raw resources, with a comment admitting it. A value rather than a resource on
+  purpose: the loader and separation gates must read the live situation even in a
+  deterministic run, where the `Backend` snapshot is deliberately frozen.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks
@@ -209,10 +229,15 @@ in `CONTEXT.md` and the detail here in the same change.
   (1024 — sized for the 30× repath rate, see the constant's doc). The order only bites
   when the cap binds — in normal play in-flight sits around 100. The speed panel shows
   in-flight / queued / avg ms. Gate and priority together are one pure function,
-  `pathfinding.rs::queue_key(&Viewport, position, is_human, is_fleeing) -> Option<(u8,
+  `pathfinding.rs::queue_key(&Viewport, position, urgent) -> Option<(u8,
   f32)>` — the whole rule as a value, so the four branches (urgent off-screen,
   wanderer in frame, wanderer off-screen, wide zoom) are tested without a camera or a
   window; the system around it is only queue assembly and the budget truncation.
+  **Who is urgent is not this module's business**: the species write
+  `movement::UrgentPath` and the dispatcher asks `Has<UrgentPath>`. It used to derive
+  urgency from `Has<Human>` + `Has<HumanFleeTag>`, which put one species' name in seven
+  movement queries and spread the rule over three modules in three polarities — and the
+  third copy, in `loading::poll_warmup`, had already drifted to its own view margin.
 - **Repath on the move** — `to_pathfinding` keeps the current path and the
   `MovableStateMovingTag`, so an entity walks its old path while the new one is
   computed; `MovableStateMovingTag` therefore means "has a path **or is coasting**",
