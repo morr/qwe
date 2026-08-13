@@ -26,14 +26,14 @@ use qwe::map::osm::MapData;
 use qwe::navigation::{
     Navmesh, PolymeshBuild, build_polymesh_from_map, find_passable_tile_near, find_path_polymesh,
 };
-use qwe::settings::{HUMAN_WANDER_RANGE, MAP_SIZE};
+use qwe::settings::{
+    HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
+};
 
 const CITY: City = City::Tula;
 /// Тот же сид, что у `polymesh_bench`: наборы запросов совпадают, и промах
 /// здесь — это промах там же, под тем же номером.
 const SEED: u64 = 0xC0FFEE;
-const WANDER_TO_BUILDING_SHARE: f32 = 0.8;
-const MAP_MARGIN: f32 = 4.0;
 const JITTER: f32 = 1.0;
 
 /// Куда точка попала относительно меша.
@@ -168,8 +168,8 @@ fn generate_queries(map: &MapData, navmesh: &Navmesh, count: usize) -> Vec<(Vec2
             }
         };
 
-        let to_building =
-            rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE && !map.buildings.is_empty();
+        let to_building = rng.random_range(0.0..1.0) < HUMAN_WANDER_TO_BUILDING_SHARE
+            && !map.buildings.is_empty();
         let target = if to_building {
             let building = &map.buildings[rng.random_range(0..map.buildings.len())];
             building.outer[rng.random_range(0..building.outer.len())]
@@ -177,7 +177,7 @@ fn generate_queries(map: &MapData, navmesh: &Navmesh, count: usize) -> Vec<(Vec2
             let direction = Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU));
             let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
             (tile_center(start) + direction * distance)
-                .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN)
+                .clamp(Vec2::splat(WANDER_MAP_MARGIN), MAP_SIZE - WANDER_MAP_MARGIN)
         };
 
         let Some(end) = find_passable_tile_near(navmesh, world_to_tile(target)) else {

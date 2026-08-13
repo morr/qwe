@@ -32,7 +32,9 @@ use qwe::navigation::{
     Navmesh, PathfindingAlgorithm, build_from_navmesh, find_passable_tile_near, find_path,
     find_path_northstar, snap_portal_position,
 };
-use qwe::settings::{HUMAN_COUNT, HUMAN_WANDER_RANGE, MAP_SIZE};
+use qwe::settings::{
+    HUMAN_COUNT, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
+};
 
 /// Бенч гоняется по карте города по умолчанию — той же, что видит игра при
 /// первом запуске.
@@ -40,10 +42,6 @@ const CITY: City = City::Tula;
 
 /// Сид генератора задач: один и тот же набор при каждом запуске.
 const SEED: u64 = 0xC0FFEE;
-/// Доля целей «к случайному зданию» — как в `human::pick_wander_targets`.
-const WANDER_TO_BUILDING_SHARE: f32 = 0.8;
-/// Отступ целей блуждания от края карты, м.
-const MAP_MARGIN: f32 = 4.0;
 
 const ALL_ALGORITHMS: [PathfindingAlgorithm; 6] = [
     PathfindingAlgorithm::Astar,
@@ -202,8 +200,8 @@ fn generate_tasks(map: &MapData, navmesh: &Navmesh, count: usize) -> Vec<Task> {
             }
         };
 
-        let to_building =
-            rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE && !map.buildings.is_empty();
+        let to_building = rng.random_range(0.0..1.0) < HUMAN_WANDER_TO_BUILDING_SHARE
+            && !map.buildings.is_empty();
         let target = if to_building {
             let building = &map.buildings[rng.random_range(0..map.buildings.len())];
             building.outer[rng.random_range(0..building.outer.len())]
@@ -211,7 +209,7 @@ fn generate_tasks(map: &MapData, navmesh: &Navmesh, count: usize) -> Vec<Task> {
             let direction = Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU));
             let distance = rng.random_range(HUMAN_WANDER_RANGE.0..HUMAN_WANDER_RANGE.1);
             (tile_center(start) + direction * distance)
-                .clamp(Vec2::splat(MAP_MARGIN), MAP_SIZE - MAP_MARGIN)
+                .clamp(Vec2::splat(WANDER_MAP_MARGIN), MAP_SIZE - WANDER_MAP_MARGIN)
         };
 
         let Some(end) = find_passable_tile_near(navmesh, world_to_tile(target)) else {

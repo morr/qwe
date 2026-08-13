@@ -23,7 +23,7 @@ use crate::navigation::{Navmesh, snap_portal_position};
 ///
 /// Первое — российское зеркало VK/Mail.ru: полная планета, свежий срез, и
 /// ближайший канал отсюда, пока европейские инстансы залипают в 504.
-const OVERPASS_URLS: [&str; 4] = [
+pub const OVERPASS_URLS: [&str; 4] = [
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",

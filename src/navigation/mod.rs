@@ -18,8 +18,8 @@ pub use self::northstar::{
     start_northstar_build,
 };
 pub use self::polymesh::{
-    PolyNavmesh, PolymeshBuild, PolymeshDebug, build_polymesh_from_map, find_path_polymesh,
-    poll_polymesh_build, sync_polymesh_build,
+    PolyNavmesh, PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
+    find_path_polymesh, poll_polymesh_build, sync_polymesh_build,
 };
 use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, PlayPhase, WorldInitSet};

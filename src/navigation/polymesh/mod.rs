@@ -34,6 +34,11 @@ mod stitch;
 // продолжает доставать `build_polymesh` и соседей.
 use self::build::build_polymesh;
 pub use self::path::find_path_polymesh;
+// Пороги шва — наружу ради аудита (`examples/audit/polymesh_seam_audit.rs`):
+// он проверяет ровно ту сшивку, что делает сборка, и своей копией проверял бы
+// не её.
+pub use self::seams::SEAM_QUANTUM;
+pub use self::stitch::SEAM_EPSILON;
 
 /// polyanya живёт на glam 0.30, bevy — на 0.32: типы не связаны ничем, и
 /// конверсия возможна только по полям.

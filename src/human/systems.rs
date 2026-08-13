@@ -16,12 +16,10 @@ use crate::navigation::{ArcNavmesh, Backend};
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream, stream};
 use crate::settings::{
     HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE,
-    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, RADIUS_HYSTERESIS, unit_z,
+    HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE,
+    RADIUS_HYSTERESIS, unit_z,
 };
 
-/// Доля пеших целей «к случайному зданию» (длинные маршруты через город);
-/// остальные гуляют поблизости.
-const WANDER_TO_BUILDING_SHARE: f32 = 0.8;
 /// Полураствор конуса вокруг текущего курса, в котором выбирается следующая
 /// цель прогулки, рад (60°). Без него пешка на каждом шаге разворачивалась в
 /// случайную сторону и топталась на месте.
@@ -306,7 +304,8 @@ pub fn pick_wander_targets(
         // достаёт лишь толпу в 60 м от портала, и успокаиваются те вразнобой
         let to_building = !map.buildings.is_empty()
             && (recoil.is_some()
-                || (!is_first_wander && rng.random_range(0.0..1.0) < WANDER_TO_BUILDING_SHARE));
+                || (!is_first_wander
+                    && rng.random_range(0.0..1.0) < HUMAN_WANDER_TO_BUILDING_SHARE));
         let target = if to_building {
             // «по делам»: вершина контура здания, лежащего по курсу — иначе
             // маршрут через весь город разворачивает пешку назад

@@ -11,15 +11,9 @@
 //! ```
 
 use qwe::city::City;
+use qwe::map::osm::download::OVERPASS_URLS;
 use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::build_polymesh_from_map;
-
-const OVERPASS_URLS: [&str; 4] = [
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-];
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

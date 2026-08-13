@@ -15,10 +15,9 @@ mod common;
 
 use bevy::math::{UVec2, Vec2};
 use qwe::city::City;
-use qwe::navigation::build_polymesh_from_map;
+use qwe::navigation::{SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map};
 
 const CITY: City = City::Tula;
-const SEAM_EPSILON: f32 = 1e-3;
 
 fn main() {
     let radii: Vec<f32> = {
@@ -222,8 +221,6 @@ fn shared_polygon(layer: &polyanya::Layer, layer_index: u32, first: usize, secon
         polygon != u32::MAX && polygon >> 24 == layer_index && others.contains(&polygon)
     })
 }
-
-const SEAM_QUANTUM: f32 = 0.01;
 
 fn quantized(value: f32) -> f32 {
     (value / SEAM_QUANTUM).round() * SEAM_QUANTUM

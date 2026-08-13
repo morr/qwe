@@ -31,7 +31,7 @@ const SEAM_STEP_METERS: f32 = 20.0;
 /// предела, процесс умирает от OOM. Округление на общую сетку убирает
 /// расхождение в источнике; сантиметр — на два порядка меньше упрощения
 /// (`SIMPLIFY_EPSILON`) и на порядок больше разрешения f32 на краю карты.
-const SEAM_QUANTUM: f32 = 0.01;
+pub const SEAM_QUANTUM: f32 = 0.01;
 
 pub(super) fn quantized(value: f32) -> f32 {
     (value / SEAM_QUANTUM).round() * SEAM_QUANTUM
