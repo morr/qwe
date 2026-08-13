@@ -114,7 +114,7 @@ in `CONTEXT.md` and the detail here in the same change.
   portal. Pawns cross the tracks as if they were ground.
 - **Building passage** (арка) — a road that runs *through* a building: OSM
   `tunnel=building_passage`, or `covered=building_passage|yes` (both tag styles occur;
-  `tunnel=yes` is an underground tunnel and is **not** one). `parse::is_building_passage`
+  `tunnel=yes` is an underground tunnel and is **not** one). `parse/tags.rs::is_building_passage`
   sets `RoadLine::passage`; the navmesh carves those centerlines passable **last**, after
   buildings and walls, since the whole point is to punch through a block that was just
   filled. Carve width is `min(road width, PASSAGE_MAX_WIDTH)` — the way is usually tagged

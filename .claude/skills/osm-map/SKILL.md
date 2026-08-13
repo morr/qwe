@@ -78,7 +78,7 @@ in `CONTEXT.md` and the detail here in the same change.
   z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below).
-  **Underground road is dropped** (`parse::is_road_underground`) — the same rule rails
+  **Underground road is dropped** (`parse/tags.rs::is_road_underground`) — the same rule rails
   and watercourses have always had, and it was simply missing on the highway branch:
   metro concourses and stairs came out as ordinary alleys drawn over the city (Tokyo
   1053 of 12 859 ways — 8.2%; London 1808, Paris 1343, Berlin 787, Tula 34; counts in
@@ -99,12 +99,12 @@ in `CONTEXT.md` and the detail here in the same change.
   **Disused** (`abandoned` / `disused` / `razed` / `dismantled`)
   is the `Active` ribbon washed out. A tram runs *on* the carriageway, so a
   gauge-wide ribbon would cover its own street.
-  `parse::rail_class` is a
+  `parse/tags.rs::rail_class` is a
   **whitelist**, so the station vocabulary (`platform`, `station`, `switch`, `signal`,
   `construction`, …) never becomes a line. The rail branch in `parse_way` runs *before*
   the highway branch and deliberately **falls through**: an OSM way is routinely tagged
   both `railway=tram` and `highway=*`, and such a way is both a street and a track.
-  **Underground track is dropped** (`parse::is_underground`) — a metro tunnel or a
+  **Underground track is dropped** (`parse/tags.rs::is_underground`) — a metro tunnel or a
   sunken through-line is invisible from above. Both markers are needed, neither alone
   suffices: of Tula's three underground ways two carry `tunnel=yes` *and* `layer=-1`,
   the third only `layer=-1`. `tunnel=no` is an explicit no, and elevated track
@@ -117,12 +117,12 @@ in `CONTEXT.md` and the detail here in the same change.
   `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
   too narrow for a polygon, so a `river` line is narrower than the Упа (which is an
   area). A plausible `width` tag (`WATER_WIDTH_RANGE`, 0.5..50 m) overrides the class
-  default. `parse::water_class` is a **whitelist** for the same reason `rail_class` is:
+  default. `parse/tags.rs::water_class` is a **whitelist** for the same reason `rail_class` is:
   `waterway=*` also carries `riverbank` (that one is an area, and `area_kind` claims
   it), `dam`, `dock`, `lock_gate`, `waterfall`. Like the rail and tree-row branches,
   the waterway branch in `parse_way` runs before `highway` and **falls through** — a
   culverted stream under a street shares its way with `highway=*`.
-  **`tunnel: bool`** (`parse::is_underground`, the same test that drops subway track)
+  **`tunnel: bool`** (`parse/tags.rs::is_underground`, the same test that drops subway track)
   marks a piped section: it is **not drawn at all** and, alone among
   watercourses, **does not block the navmesh** — the water runs under the ground and a
   pawn walks over it, so there is nothing to see and nothing to cross. Everything else
@@ -156,7 +156,7 @@ in `CONTEXT.md` and the detail here in the same change.
 
 ## Parsing details
 
-- **Building height** (`parse.rs::building_height`) — metres, from two *independent*
+- **Building height** (`parse/tags.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
   LiDAR import) or else `building:levels` + `roof:levels` × `METERS_PER_LEVEL` (3 m)
   (Paris 64%, Berlin 59%, London 50%, Tula 31%, **Tokyo 5%**). `parse_measure` handles

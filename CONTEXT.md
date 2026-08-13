@@ -209,7 +209,7 @@ algorithm in `references/tree-algo.md`).
     `natural=tree` trees, with optional `spacing`/`radius` from tags.
   - **trees / tree_appears_at** — what the renderer reads; `compose_trees` merges
     forest + avenues of the selected layout, `composed_for` caches which.
-- **Building height** (`parse.rs::building_height`) — metres from `height` or
+- **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal — every
   consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m). Coverage varies wildly by
   city (NY 97% … Tokyo 5%) and is logged on load.
