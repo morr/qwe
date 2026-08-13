@@ -6,11 +6,13 @@
 //! cargo run --release --example polymesh_merge_audit -- [agent_radius]
 //! ```
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use std::collections::HashSet;
 
 use bevy::math::Vec2;
 use qwe::city::City;
-use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::build_polymesh_from_map;
 
 const CITY: City = City::Tula;
@@ -21,7 +23,7 @@ fn main() {
         .map(|value| value.parse().expect("radius must be a number"))
         .unwrap_or(0.2);
 
-    let map = load_map();
+    let map = common::load_map(CITY);
     let build = build_polymesh_from_map(&map, radius).expect("build was not cancelled");
     let (grid, chunk_size) = build.chunks();
     let polygons: usize = build.mesh.layers.iter().map(|l| l.polygons.len()).sum();
@@ -277,15 +279,4 @@ fn worst_turn(ring: &[Vec2]) -> (f32, Vec2) {
         }
     }
     worst
-}
-
-fn load_map() -> MapData {
-    let path = overpass::cache_path(CITY);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    });
-    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
 }

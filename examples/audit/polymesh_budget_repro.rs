@@ -14,14 +14,15 @@
 //! (или дивергенция настоящая) — сначала гляньте, сходится ли запрос при
 //! увеличенном `SEARCH_POPS_PER_POLYGON`, и только потом вините геометрию.
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use std::time::Instant;
 
 use bevy::math::Vec2;
 
 use qwe::city::City;
-use qwe::grid::world_to_tile;
-use qwe::map::osm::{MapData, overpass, parse};
-use qwe::navigation::{Navmesh, build_polymesh_from_map, find_path_polymesh, snap_portal_position};
+use qwe::navigation::{build_polymesh_from_map, find_path_polymesh};
 
 const CITY: City = City::Tula;
 /// Радиус агента, на котором жила игра в момент паник.
@@ -34,8 +35,8 @@ const FAILURES: [(Vec2, Vec2); 2] = [
 ];
 
 fn main() {
-    let map = load_map();
-    let _navmesh = build_navmesh(&map);
+    let map = common::load_map(CITY);
+    let _navmesh = common::build_navmesh(&map, CITY);
     let started = Instant::now();
     let build = build_polymesh_from_map(&map, RADIUS).expect("build was not cancelled");
     println!("polymesh built in {:?}", started.elapsed());
@@ -51,24 +52,4 @@ fn main() {
             path.as_ref().map(Vec::len).unwrap_or(0),
         );
     }
-}
-
-fn load_map() -> MapData {
-    let path = overpass::cache_path(CITY);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    });
-    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
-}
-
-fn build_navmesh(map: &MapData) -> Navmesh {
-    let mut navmesh = Navmesh::default();
-    navmesh.fill_from_mapdata(map);
-    let portal =
-        snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
-    navmesh.prune_unreachable(world_to_tile(portal));
-    navmesh
 }

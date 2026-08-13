@@ -10,9 +10,11 @@
 //! Без аргументов проходит все девять радиусов слайдера. На Туле: от 0 до 9
 //! непарных вершин на карту и ни одной опасной.
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use bevy::math::{UVec2, Vec2};
 use qwe::city::City;
-use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::build_polymesh_from_map;
 
 const CITY: City = City::Tula;
@@ -28,7 +30,7 @@ fn main() {
         }
     };
 
-    let map = load_map();
+    let map = common::load_map(CITY);
     for radius in radii {
         let build = build_polymesh_from_map(&map, radius).expect("not cancelled");
         let (grid, chunk_size) = build.chunks();
@@ -233,15 +235,4 @@ fn to_poly(point: Vec2) -> polyanya_glam::Vec2 {
 
 fn from_poly(point: polyanya_glam::Vec2) -> Vec2 {
     Vec2::new(point.x, point.y)
-}
-
-fn load_map() -> MapData {
-    let path = overpass::cache_path(CITY);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    });
-    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
 }

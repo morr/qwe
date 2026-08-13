@@ -13,16 +13,18 @@
 //! QWE_POLYMESH_CHUNK_M=99000 cargo run --release --example polymesh_corner_audit
 //! ```
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use bevy::math::{IVec2, Vec2};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use qwe::city::City;
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::osm::{MapData, overpass, parse};
+use qwe::map::osm::MapData;
 use qwe::navigation::{
     Navmesh, build_polymesh_from_map, find_passable_tile_near, find_path_polymesh,
-    snap_portal_position,
 };
 use qwe::settings::{HUMAN_WANDER_RANGE, MAP_SIZE};
 
@@ -44,8 +46,8 @@ fn main() {
         .map(|value| value.parse().expect("radius must be a number"))
         .unwrap_or(0.4);
 
-    let map = load_map();
-    let navmesh = build_navmesh(&map);
+    let map = common::load_map(CITY);
+    let navmesh = common::build_navmesh(&map, CITY);
     let build = build_polymesh_from_map(&map, radius).expect("build was not cancelled");
     let (grid, chunk_size) = build.chunks();
     println!(
@@ -196,26 +198,6 @@ fn main() {
             *node_y as f32 * chunk_size.y
         );
     }
-}
-
-fn load_map() -> MapData {
-    let path = overpass::cache_path(CITY);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    });
-    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
-}
-
-fn build_navmesh(map: &MapData) -> Navmesh {
-    let mut navmesh = Navmesh::default();
-    navmesh.fill_from_mapdata(map);
-    let portal =
-        snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
-    navmesh.prune_unreachable(world_to_tile(portal));
-    navmesh
 }
 
 /// Тот же набор, что у `polymesh_bench`: 80% — к случайному зданию.

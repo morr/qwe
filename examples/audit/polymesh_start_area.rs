@@ -9,11 +9,13 @@
 //! cargo run --release --example polymesh_start_area -- [radius] [city ...]
 //! ```
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use std::time::Instant;
 
 use bevy::math::Vec2;
 use qwe::city::City;
-use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::{build_polymesh_from_map, find_path_polymesh};
 
 /// Пробы вокруг портала: за мостом с каждой стороны, если портал на острове.
@@ -45,7 +47,7 @@ fn main() {
     };
 
     for city in cities {
-        let map = load_map(city);
+        let map = common::load_map(city);
         let holes: usize = map
             .buildings
             .iter()
@@ -90,10 +92,4 @@ fn main() {
             println!("   probe {target:?}: {verdict}");
         }
     }
-}
-
-fn load_map(city: City) -> MapData {
-    let path = overpass::cache_path(city);
-    let json = std::fs::read_to_string(&path).expect("read OSM cache");
-    parse::parse(&json, city).expect("failed to parse cached OSM json")
 }

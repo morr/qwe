@@ -13,6 +13,9 @@
 //! cargo run --example pathfinding_bench -- 1000 8 astar,hpa
 //! ```
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -24,7 +27,7 @@ use rand::{Rng, SeedableRng};
 
 use qwe::city::City;
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::osm::{MapData, overpass, parse};
+use qwe::map::osm::MapData;
 use qwe::navigation::{
     Navmesh, PathfindingAlgorithm, build_from_navmesh, find_passable_tile_near, find_path,
     find_path_northstar, snap_portal_position,
@@ -95,7 +98,7 @@ fn main() {
         None => ALL_ALGORITHMS.to_vec(),
     };
 
-    let map = load_map();
+    let map = common::load_map(CITY);
     println!(
         "map: {} buildings, {} roads, {} water, {} parks",
         map.buildings.len(),
@@ -151,18 +154,6 @@ fn is_hierarchical(algorithm: PathfindingAlgorithm) -> bool {
         algorithm,
         PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar
     )
-}
-
-/// Карта — только из кеша: бенч не ходит в сеть, кеш наполняет обычный запуск.
-fn load_map() -> MapData {
-    let path = overpass::cache_path(CITY);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    });
-    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
 }
 
 /// Та же последовательность, что и в `NavigationPlugin`: заливка, снап портала,

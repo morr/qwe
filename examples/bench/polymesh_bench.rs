@@ -16,6 +16,9 @@
 //! Зависший запрос виден как строка `START` без парной `END`: пример не
 //! завершится, и последняя пара координат в логе и есть виновник.
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use std::time::Instant;
 
 use bevy::math::{IVec2, Vec2};
@@ -24,10 +27,9 @@ use rand::{Rng, SeedableRng};
 
 use qwe::city::City;
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::map::osm::{MapData, overpass, parse};
+use qwe::map::osm::MapData;
 use qwe::navigation::{
     Navmesh, build_polymesh_from_map, find_passable_tile_near, find_path_polymesh,
-    snap_portal_position,
 };
 use qwe::settings::{HUMAN_WANDER_RANGE, MAP_SIZE};
 
@@ -54,8 +56,8 @@ fn main() {
         .unwrap_or(0.2);
 
     println!("rss at start: {}", rss());
-    let map = load_map();
-    let navmesh = build_navmesh(&map);
+    let map = common::load_map(CITY);
+    let navmesh = common::build_navmesh(&map, CITY);
     println!("rss after navmesh: {}", rss());
 
     let started = Instant::now();
@@ -136,29 +138,6 @@ fn rss() -> String {
         }
         Err(_) => "n/a".to_string(),
     }
-}
-
-/// Карта — только из кеша, как у `pathfinding_bench`.
-fn load_map() -> MapData {
-    let path = overpass::cache_path(CITY);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    });
-    parse::parse(&json, CITY).expect("failed to parse cached OSM json")
-}
-
-/// Сеточный navmesh нужен только затем, чтобы цели выбирались ровно так же,
-/// как в игре: `find_passable_tile_near` по прорезанной от портала сетке.
-fn build_navmesh(map: &MapData) -> Navmesh {
-    let mut navmesh = Navmesh::default();
-    navmesh.fill_from_mapdata(map);
-    let portal =
-        snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
-    navmesh.prune_unreachable(world_to_tile(portal));
-    navmesh
 }
 
 /// Тот же профиль нагрузки, что у мирного блуждания: 80% — случайное здание
