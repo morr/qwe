@@ -35,11 +35,10 @@
 //! вместе с настройками сетки значило бы называть глобальное частным.
 
 use bevy::ecs::system::IntoObserverSystem;
+use bevy::feathers::controls::ButtonVariant;
 use bevy::input::common_conditions::input_just_pressed;
-use bevy::picking::hover::Hovered;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button};
+use bevy::ui_widgets::Activate;
 
 use bevy::prelude::*;
 
@@ -51,8 +50,8 @@ use crate::navigation::PolymeshDebug;
 use crate::prefs::{ResetSettings, TrackPrefExt};
 use crate::settings::NavtileBase;
 use crate::ui::{
-    ActionButton, GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity,
-    button_background, spawn_panel_button, ui_color,
+    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity, button_variant,
+    spawn_panel_button, ui_color,
 };
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
@@ -159,8 +158,8 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_systems(
                 Update,
                 (
-                    update_toggle_buttons,
-                    update_cycler_buttons,
+                    sync_toggle_buttons,
+                    sync_cycler_buttons,
                     render_grid.run_if(|grid: Res<DebugGrid>| grid.0),
                     // MapData появляется только под Playing
                     render_doors
@@ -206,6 +205,10 @@ fn render_debug_toggles(
     mut commands: Commands,
     position_mode: Res<CameraPositionMode>,
     navtile: Res<NavtileBase>,
+    grid: Res<DebugGrid>,
+    doors: Res<DebugDoors>,
+    movepaths: Res<DrawMovePaths>,
+    conifer_noise: Res<DebugConiferNoise>,
 ) {
     let row = commands
         .spawn((
@@ -233,6 +236,7 @@ fn render_debug_toggles(
         row,
         "grid",
         DebugToggleButton::Grid,
+        grid.0,
         |_activate: On<Activate>, mut grid: ResMut<DebugGrid>| {
             grid.0 = !grid.0;
         },
@@ -242,6 +246,7 @@ fn render_debug_toggles(
         row,
         "doors",
         DebugToggleButton::Doors,
+        doors.0,
         |_activate: On<Activate>, mut doors: ResMut<DebugDoors>| {
             doors.0 = !doors.0;
         },
@@ -251,6 +256,7 @@ fn render_debug_toggles(
         row,
         "movepath",
         DebugToggleButton::Movepath,
+        movepaths.0,
         |_activate: On<Activate>, mut movepaths: ResMut<DrawMovePaths>| {
             movepaths.0 = !movepaths.0;
         },
@@ -260,6 +266,7 @@ fn render_debug_toggles(
         row,
         "noise",
         DebugToggleButton::ConiferNoise,
+        conifer_noise.0,
         |_activate: On<Activate>, mut noise: ResMut<DebugConiferNoise>| {
             noise.0 = !noise.0;
         },
@@ -295,12 +302,14 @@ fn render_debug_toggles(
     // сброс всех настроек на умолчания. Кнопка-действие, а не тумблер и не
     // листалка: зелёный в этом ряду значит «этот ресурс стоит на умолчании», и
     // тем же цветом на кнопке, которая говорит о ЧУЖИХ ресурсах, читалось бы
-    // другое утверждение — поэтому у неё только подсветка курсора
+    // другое утверждение — поэтому она всегда обычная (`is_active: false`), а
+    // подсветку под курсором ей даёт feathers, как всякой кнопке
     spawn_panel_button(
         &mut commands,
         row,
-        ActionButton,
+        (),
         "reset",
+        false,
         |_activate: On<Activate>, mut commands: Commands| {
             commands.queue(ResetSettings);
         },
@@ -318,49 +327,38 @@ fn spawn_cycler<M>(
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
     let (value, is_default) = cycler_state(kind, position_mode, navtile);
-    let button = commands
-        .spawn((
-            Button,
-            Pickable::default(),
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
+    // подпись и значение — в своей строке-обёртке: узел самой кнопки приходит
+    // из сцены feathers, и переписывать его целиком ради одного `column_gap`
+    // значило бы потерять всё остальное, что она в нём задала
+    let caption = (
+        Node {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: px(6.),
+            ..default()
+        },
+        children![
+            (
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
                 },
-                ..default()
-            },
-            kind,
-            BackgroundColor(button_background(is_default, false, false)),
-            children![
-                (
-                    Text::new(label),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(ROW_LABEL_COLOR),
-                ),
-                (
-                    CyclerValueLabel(kind),
-                    Text::new(value),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
-        .observe(on_activate)
-        .id();
-    commands.entity(row).add_child(button);
+                TextColor(ROW_LABEL_COLOR),
+            ),
+            (
+                CyclerValueLabel(kind),
+                Text::new(value),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ),
+        ],
+    );
+    super::spawn_panel_button_with(commands, row, kind, caption, is_default, on_activate);
 }
 
 /// N — «показать слой навигации»: у сетки и у меша свои тумблеры показа, а
@@ -384,18 +382,14 @@ fn toggle_gizmos(mut doors: ResMut<DebugDoors>, mut movepaths: ResMut<DrawMovePa
 }
 
 /// Зелёный на листалках держится, пока выбрано значение по умолчанию.
-fn update_cycler_buttons(
+fn sync_cycler_buttons(
     position_mode: Res<CameraPositionMode>,
     navtile: Res<NavtileBase>,
-    mut buttons: Query<(&CyclerButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
+    mut buttons: Query<(&CyclerButton, &mut ButtonVariant)>,
 ) {
-    for (cycler, hovered, is_pressed, mut background) in &mut buttons {
+    for (cycler, mut variant) in &mut buttons {
         let (_, is_default) = cycler_state(*cycler, &position_mode, &navtile);
-        background.set_if_neq(BackgroundColor(button_background(
-            is_default,
-            is_pressed,
-            hovered.get(),
-        )));
+        variant.set_if_neq(button_variant(is_default));
     }
 }
 
@@ -417,34 +411,28 @@ fn spawn_toggle<M>(
     row: Entity,
     label: &str,
     kind: DebugToggleButton,
+    is_active: bool,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) {
-    spawn_panel_button(commands, row, kind, label, on_activate);
+    spawn_panel_button(commands, row, kind, label, is_active, on_activate);
 }
 
-fn update_toggle_buttons(
+/// Зелёный на тумблерах держится, пока слой включён. Наведение и нажатие ведёт
+/// feathers сама — здесь остаётся только «активность».
+fn sync_toggle_buttons(
     grid: Res<DebugGrid>,
     doors: Res<DebugDoors>,
     movepaths: Res<DrawMovePaths>,
     conifer_noise: Res<DebugConiferNoise>,
-    mut buttons: Query<(
-        &DebugToggleButton,
-        &Hovered,
-        Has<Pressed>,
-        &mut BackgroundColor,
-    )>,
+    mut buttons: Query<(&DebugToggleButton, &mut ButtonVariant)>,
 ) {
-    for (toggle, hovered, is_pressed, mut background) in &mut buttons {
+    for (toggle, mut variant) in &mut buttons {
         let is_active = match toggle {
             DebugToggleButton::Grid => grid.0,
             DebugToggleButton::Doors => doors.0,
             DebugToggleButton::Movepath => movepaths.0,
             DebugToggleButton::ConiferNoise => conifer_noise.0,
         };
-        background.set_if_neq(BackgroundColor(button_background(
-            is_active,
-            is_pressed,
-            hovered.get(),
-        )));
+        variant.set_if_neq(button_variant(is_active));
     }
 }

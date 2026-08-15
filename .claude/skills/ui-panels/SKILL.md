@@ -138,6 +138,33 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 
 ## Shared kits & layout
 
+- **Widgets and theme** (`ui/theme.rs`) — the panels' buttons are first-party
+  `bevy_feathers` controls, not hand-rolled nodes. **`PanelWidgetsPlugin`** installs
+  `FeathersCorePlugin` plus `UiTheme(create_qwe_theme())`; it is a plugin of its own rather
+  than two lines in `UiPlugin` because the crowd demo calls the same kits and cannot bring
+  up `UiPlugin`. Three things about it are decisions, not detail:
+  - **`FeathersCorePlugin`, never the `FeathersPlugins` group.** The group also adds
+    `TabNavigationPlugin`, and with it Tab focuses any panel widget (every control carries
+    `TabIndex(0)`), after which Space both "presses" the focused button *and* pauses the
+    simulation — the "UI input must not reach the game world" rule, and
+    `typing_in_text_input` does not catch it because the focus is not on a text field.
+    Without the plugin `TabIndex` / `FocusIndicator` simply do nothing.
+  - **The look stays qwe's.** feathers colours its controls through *design tokens*
+    (`ThemeBackgroundColor(tokens::BUTTON_BG)`), so its editor palette is replaceable
+    without touching a widget: `create_qwe_theme` is `create_dark_theme` with the button
+    tokens overwritten. The values are not written out a second time — they are computed by
+    the same `ui::button_background` the hand-rolled buttons used, so the formula cannot
+    drift into two versions.
+  - **"Active" is `ButtonVariant::Primary`.** Toggle on, cycler at its default, city
+    selected, time paused — one green, and now one variant. Panels no longer paint
+    backgrounds; they write `ButtonVariant` (`button_variant(is_active)`) and feathers does
+    hover, press and disabled itself, in a `Changed`-filtered `PreUpdate` system.
+  `spawn_panel_button(commands, parent, marker, label, is_active, on_activate)` is the kit;
+  `spawn_panel_button_with` takes the caption as a bundle instead of a string, for the
+  two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
+  `@caption` because it comes from runtime strings, and it deliberately carries no
+  `ThemedText` — size and colour are the panels' own, and without that marker feathers
+  leaves the text alone.
 - **Knob kit** (`ui/knob.rs`) — what panels actually call. A knob is a slider row bound
   to one field of one resource: `spawn_knob(commands, panel, label, &*resource, binding)`
   where `SliderBinding<R> { get, set, range, text }` is four function pointers, and
@@ -230,11 +257,11 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   already answer half of "how far have I drifted from the baseline?". It is an **action**
   button, not a toggle and not a cycler: green in this row means "*this* resource is at its
   default", and the same green on a button that speaks about *other* resources would be a
-  different claim — so it carries `ui::ActionButton` and only lights up under the cursor.
-  That marker (and its one `highlight_action_buttons` in `UiPlugin`, the
-  `sync_slider_thumbs` idiom) exists because `spawn_panel_button` paints the background
-  once and every highlight system picks its buttons **by marker** — an unmarked button is
-  inert under the cursor, which is what the World panel's `new` (seed reroll) had been.
+  different claim — so it is spawned permanently `Normal` (`is_active: false`) while still
+  lighting up under the cursor like every other button. The `ui::ActionButton` marker and
+  its `highlight_action_buttons` system are gone with the hand-rolled highlighting: an
+  unmarked button used to be inert under the cursor (which is what the World panel's `new`
+  seed reroll had been), and feathers highlights every button whether it is marked or not.
 
 ## Camera start view
 

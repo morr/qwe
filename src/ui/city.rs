@@ -2,15 +2,13 @@
 //! текущего. Клик пишет ресурс `City`, а перезагрузку мира делает
 //! `city::reload_world_on_city_change`.
 
-use bevy::picking::hover::Hovered;
+use bevy::feathers::controls::ButtonVariant;
 use bevy::prelude::*;
-use bevy::ui::Pressed;
 use bevy::ui_widgets::Activate;
 
 use crate::city::City;
 use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, button_background, spawn_panel_button,
-    ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiOpacity, button_variant, spawn_panel_button, ui_color,
 };
 
 /// Какой город выбирает кнопка.
@@ -22,11 +20,11 @@ pub struct UiCityPlugin;
 impl Plugin for UiCityPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, render_city_panel)
-            .add_systems(Update, update_city_buttons);
+            .add_systems(Update, sync_city_buttons.run_if(resource_changed::<City>));
     }
 }
 
-fn render_city_panel(mut commands: Commands) {
+fn render_city_panel(mut commands: Commands, current: Res<City>) {
     let row = commands
         .spawn((
             Node {
@@ -55,6 +53,7 @@ fn render_city_panel(mut commands: Commands) {
             row,
             CityButton(city),
             city.label(),
+            city == *current,
             move |_activate: On<Activate>, mut current: ResMut<City>| {
                 // set_if_neq: повторный клик по текущему городу не должен
                 // перезагружать мир
@@ -64,16 +63,11 @@ fn render_city_panel(mut commands: Commands) {
     }
 }
 
-/// Подсветка: активен город из ресурса, плюс hover/press как у тумблеров.
-fn update_city_buttons(
-    city: Res<City>,
-    mut buttons: Query<(&CityButton, &Hovered, Has<Pressed>, &mut BackgroundColor)>,
-) {
-    for (button, hovered, is_pressed, mut background) in &mut buttons {
-        background.set_if_neq(BackgroundColor(button_background(
-            button.0 == *city,
-            is_pressed,
-            hovered.get(),
-        )));
+/// Зелёной стоит кнопка текущего города. Наведение и нажатие ведёт feathers
+/// сама — здесь остаётся только «активность», и та меняется лишь вместе с
+/// ресурсом.
+fn sync_city_buttons(city: Res<City>, mut buttons: Query<(&CityButton, &mut ButtonVariant)>) {
+    for (button, mut variant) in &mut buttons {
+        variant.set_if_neq(button_variant(button.0 == *city));
     }
 }

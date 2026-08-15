@@ -69,6 +69,9 @@ bevy = { version = "0.19", default-features = false, features = [
     "default_font",
     # выбранные в UI опции переживают перезапуск (src/prefs.rs)
     "bevy_settings",
+    # первопартийные виджеты панелей (src/ui/theme.rs): кнопки, ползунки,
+    # текстовое поле. Тянет только UI-стек — ни 3d, ни звука не добавляет
+    "bevy_feathers",
 ] }
 bevy_northstar = "0.7"
 earcutr = "0.5"

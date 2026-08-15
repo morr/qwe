@@ -286,6 +286,7 @@ pub(crate) fn spawn_mechanism_panel(mut commands: Commands, tuning: Tuning) {
             presets,
             PresetButton,
             preset.label,
+            false,
             move |_activate: On<bevy::ui_widgets::Activate>, mut tuning: Tuning| {
                 (PRESETS[index].apply)(&mut tuning);
             },

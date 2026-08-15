@@ -226,6 +226,9 @@ fn main() {
         qwe::navigation::NavigationPlugin,
         qwe::spatial::SpatialPlugin,
         qwe::movement::MovementPlugin,
+        // киты панелей игры (кнопки, ползунки) — первопартийные виджеты
+        // feathers: без их плагина и темы кнопки демо остались бы без фона
+        qwe::ui::PanelWidgetsPlugin,
     ))
     .init_state::<AppState>()
     .add_sub_state::<PlayPhase>()

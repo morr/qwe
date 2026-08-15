@@ -18,17 +18,20 @@ mod rows;
 pub mod slider;
 mod speed;
 mod stats;
+mod theme;
 mod tree_rows;
 mod trees;
 
 use bevy::ecs::system::IntoObserverSystem;
-use bevy::picking::hover::Hovered;
+use bevy::feathers::controls::{ButtonVariant, FeathersButton};
 use bevy::prelude::*;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button};
+use bevy::ui_widgets::Activate;
 
 pub use self::brp::AgentBrpSession;
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
+// `pub` по той же причине, что и `slider`: демо расталкивания зовёт киты
+// панелей и потому обязано поднять их виджеты само
+pub use self::theme::PanelWidgetsPlugin;
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
 use crate::map::trees::visible_count;
@@ -208,30 +211,6 @@ fn button_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Col
     base.mix(&Color::WHITE, lighten)
 }
 
-/// Кнопка-**действие**: клик что-то делает, а не переключает состояние. Такой
-/// нечего показывать «включена», но реагировать на курсор она обязана, а
-/// подсветку в этом UI ведут системы, выбирающие кнопки по маркеру
-/// (`DebugToggleButton`, `CyclerButton`, `CityButton`) — без него кнопка просто
-/// не отзывается на наведение. Носители: `reset` в ряду тумблеров и `new`
-/// (перебор seed'а) в панели World.
-#[derive(Component)]
-pub struct ActionButton;
-
-/// Подсветка кнопок-действий: «активной» такая не бывает, остаётся наведение и
-/// нажатие. Одна система на все панели — идиома `sync_slider_thumbs` и
-/// `highlight_value_rows`, зарегистрирована в [`UiPlugin`].
-fn highlight_action_buttons(
-    mut buttons: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<ActionButton>>,
-) {
-    for (hovered, is_pressed, mut background) in &mut buttons {
-        background.set_if_neq(BackgroundColor(button_background(
-            false,
-            is_pressed,
-            hovered.get(),
-        )));
-    }
-}
-
 /// Приглушённый серый подписи в строке панели — рядом с белым значением.
 /// Один на все панели: строки значений, слайдеры, листалки, телеметрию.
 const ROW_LABEL_COLOR: Color = Color::srgb(0.75, 0.78, 0.75);
@@ -262,48 +241,84 @@ pub fn ui_color(opacity: UiOpacity) -> Color {
     })
 }
 
-/// Кнопка панели: тёмный прямоугольник с подписью 12 px, подсвечиваемый по
-/// наведению и нажатию. `marker` — компонент, по которому система подсветки
-/// находит эту кнопку среди прочих (`DebugToggleButton`, `CityButton`, …).
+/// Вариант кнопки по признаку «активна». «Активно» у каждой кнопки своё —
+/// тумблер включён, листалка стоит на умолчании, город выбран, время на паузе, —
+/// но выглядит это одинаково, и feathers называет такую кнопку `Primary`
+/// (цвета обоих вариантов задаёт [`theme::create_qwe_theme`]).
+pub fn button_variant(is_active: bool) -> ButtonVariant {
+    if is_active {
+        ButtonVariant::Primary
+    } else {
+        ButtonVariant::Normal
+    }
+}
+
+/// Кнопка панели на первопартийном виджете: тёмный прямоугольник, наведение и
+/// нажатие красит feathers сама по токенам темы (`ui/theme.rs`). `marker` —
+/// компонент, по которому система панели находит эту кнопку, чтобы вести её
+/// [`ButtonVariant`]; `caption` — её содержимое одним ребёнком.
 ///
-/// `Hovered` кормит UI-picking-бэкенд, `Pressed` вставляет
-/// `bevy_ui_widgets::Button` — для подсветки нужны оба.
+/// Подпись спавнится ребёнком, а не приходит через `@caption` в сцену:
+/// у листалок её две, и обе строятся из строк времени выполнения.
+/// `ThemedText` подписи не носят — кегль и цвет у панелей свои, а без этой
+/// метки feathers к тексту и не притрагивается.
+pub fn spawn_panel_button_with<M>(
+    commands: &mut Commands,
+    parent: Entity,
+    marker: impl Bundle,
+    caption: impl Bundle,
+    is_active: bool,
+    on_activate: impl IntoObserverSystem<Activate, (), M>,
+) -> Entity {
+    let variant = button_variant(is_active);
+    let button = commands
+        .spawn_scene(bsn! {
+            @FeathersButton { @variant: {variant} }
+            // высота по содержимому вместо feathers-овских 24 px и прямые
+            // углы вместо скруглённых: панели qwe — плотные прямоугольники
+            Node {
+                height: Val::Auto,
+                padding: UiRect::axes(px(8.), px(4.)),
+                border_radius: BorderRadius::ZERO,
+            }
+        })
+        .insert(marker)
+        .observe(on_activate)
+        .with_child(caption)
+        .id();
+    commands.entity(parent).add_child(button);
+    button
+}
+
+/// Подпись кнопки панели: белая, 12 px.
+pub fn panel_button_label(label: &str) -> impl Bundle {
+    (
+        Text::new(label),
+        TextFont {
+            font_size: FontSize::Px(12.),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+    )
+}
+
+/// Кнопка панели с одной подписью — обычный случай.
 pub fn spawn_panel_button<M>(
     commands: &mut Commands,
     parent: Entity,
     marker: impl Bundle,
     label: &str,
+    is_active: bool,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) -> Entity {
-    let button = commands
-        .spawn((
-            Button,
-            marker,
-            Pickable::default(),
-            Hovered::default(),
-            Node {
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
-                },
-                ..default()
-            },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
-            children![(
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            )],
-        ))
-        .observe(on_activate)
-        .id();
-    commands.entity(parent).add_child(button);
-    button
+    spawn_panel_button_with(
+        commands,
+        parent,
+        marker,
+        panel_button_label(label),
+        is_active,
+        on_activate,
+    )
 }
 
 /// «Курсор стоит в текстовом поле» — условие расписания для КАЖДОГО хоткея.
@@ -337,6 +352,8 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            // первопартийные виджеты панелей и тема под облик qwe
+            theme::PanelWidgetsPlugin,
             speed::UiSpeedPlugin,
             stats::UiStatsPlugin,
             debug::UiDebugTogglesPlugin,
@@ -351,15 +368,13 @@ impl Plugin for UiPlugin {
             brp::UiBrpBadgePlugin,
         ))
         // бегунки всех панелей ведёт одна система — ползунки помечены общим
-        // `slider::UiSlider`, строки — общим `rows::ValueRow`, кнопки-действия —
-        // общим `ActionButton`
+        // `slider::UiSlider`, строки — общим `rows::ValueRow`
         .add_systems(
             Update,
             (
                 stack_bottom_columns,
                 slider::sync_slider_thumbs,
                 rows::highlight_value_rows,
-                highlight_action_buttons,
             ),
         )
         .add_systems(

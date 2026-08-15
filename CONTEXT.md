@@ -799,6 +799,13 @@ skill**.
   systems differing only in which field they touched. Use it for any panel row driven by
   a resource; the Navigation panel's rows are the deliberate exception, since their text
   is computed from several resources at once.
+- **Widgets & theme** (`ui/theme.rs`) — panel buttons are first-party **`bevy_feathers`**
+  controls. `PanelWidgetsPlugin` installs `FeathersCorePlugin` (**not** the `FeathersPlugins`
+  group — `TabNavigationPlugin` would let Tab+Space both press a button and pause the sim)
+  plus `UiTheme(create_qwe_theme())`, feathers' dark theme with the button design tokens
+  repainted in qwe's colours. **"Active" is `ButtonVariant::Primary`**: panels write the
+  variant, feathers does hover / press / disabled. Kit: `spawn_panel_button`
+  (`spawn_panel_button_with` for two-text cycler rows). Detail — the **ui-panels** skill.
 - **Shared kits** — `ui/slider.rs` (`spawn_slider_row`, `quantize`, `apply_step`,
   `retarget`, one `sync_slider_thumbs` for all panels — the layer under the knob kit,
   called directly only by the crowd demo, whose sliders drive demo-local state rather
@@ -810,8 +817,8 @@ skill**.
   world settings included, so the map reloads when they were off-baseline). The navmesh
   overlay is **one merged mesh** (per-tile entities once cost 330 k); the noise overlay is
   one CPU-built texture sprite. A cycler goes green while its resource equals
-  `Default::default()`; `reset` is an **action** button (`ui::ActionButton`, hover/press
-  only) — green there would claim something about other resources.
+  `Default::default()`; `reset` is an **action** button (always `Normal`, hover/press only)
+  — green there would claim something about other resources.
 - **Camera start view** (`camera.rs`) — `CameraPositionMode` (`reset | save`, default
   `save`, persisted): where the camera stands when the world comes up. `save` writes
   `SavedCameraView` on exit (a `Last` system after `bevy::window::ExitSystems`) and

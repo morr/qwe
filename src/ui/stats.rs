@@ -206,8 +206,9 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
     super::spawn_panel_button(
         commands,
         row,
-        super::ActionButton,
+        (),
         "new",
+        false,
         |_activate: On<Activate>, mut seed: ResMut<WorldSeed>| {
             // единственное место, где ещё нужна системная энтропия: сам
             // жребий нового мира. Диапазон девятизначный — seed должен
