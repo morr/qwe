@@ -139,7 +139,7 @@ in `main.rs`.
   `RestartEvent { to_portal: true }`: a changed world setting means a *different* world,
   and leaving the camera where it was makes the restart invisible.
 - **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built
-  from: `Tula | NewYork | Paris | Berlin | London | Tokyo`. Each carries its **geo center**
+  from: `Tula | NewYork | Paris | Berlin | London | Tokyo | DevilsLake`. Each carries its **geo center**
   (bbox center of the Overpass extract), its **portal hint** and its **cache slug**;
   `MAP_SIZE` and therefore `GRID_SIZE` are shared, so switching city never resizes the
   navmesh. Panel — bottom centre (`ui/city.rs`), the current city's button is highlighted.
