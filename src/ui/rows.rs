@@ -10,16 +10,23 @@
 //! Копии успели разъехаться в мелочах, и одна из них была не косметической:
 //! пять систем из шести писали `BackgroundColor` **безусловно, каждый кадр**,
 //! то есть помечали изменившимися все строки всех панелей независимо от того,
-//! двигалась мышь или нет. Здесь система одна и пишет через `set_if_neq`.
+//! двигалась мышь или нет. Сегодня подсветки здесь нет вовсе: строка — это
+//! первопартийная кнопка feathers, и цвет по наведению и нажатию ведёт она
+//! сама, системой с фильтром `Changed` (см. `ui/theme.rs`).
+//!
+//! Строка, клик по которой сейчас ничего не делает, получает от своей панели
+//! `bevy::ui::InteractionDisabled`: feathers перестаёт её подсвечивать и не шлёт
+//! `Activate` — обещать реакцию на курсор там, где клик ничего не сделает, хуже,
+//! чем не подсвечивать. Единственный носитель на сегодня — тумблер расталкивания
+//! в панели Navigation.
 
 use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
-use bevy::picking::hover::Hovered;
+use bevy::feathers::controls::FeathersButton;
 use bevy::prelude::*;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button};
+use bevy::ui_widgets::Activate;
 
-use super::{ROW_LABEL_COLOR, TOGGLE_HOVER_LIGHTEN, TOGGLE_PRESSED_LIGHTEN, UiOpacity, ui_color};
+use super::{ROW_LABEL_COLOR, UiOpacity, ui_color};
 
 /// Фон строки в покое: плотный, поверх полупрозрачной панели.
 pub(super) const ROW_LIGHTEN: f32 = 0.0;
@@ -32,27 +39,14 @@ pub(super) fn row_color(lighten: f32) -> Color {
     ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
 }
 
-/// Строка, которую подсвечивает [`highlight_value_rows`]. Своя метка строки у
-/// панели остаётся — она адресует значение при синхронизации; эта отвечает
-/// только за подсветку и потому общая.
-#[derive(Component)]
-pub(super) struct ValueRow;
-
-/// Строка, клик по которой сейчас ничего не делает: подсвечивать её нельзя —
-/// подсветка обещала бы, что клик что-то сделает.
-///
-/// Ставится и снимается панелью (единственный носитель на сегодня — тумблер
-/// расталкивания в Navigation, недоступный в детерминированном режиме и на
-/// сеточной навигации). Метка, а не проверка ресурсов внутри подсветки:
-/// иначе общая система знала бы про режимы мира, до которых ей нет дела.
-#[derive(Component)]
-pub(super) struct RowInert;
-
 /// Кнопка-строка: серая подпись слева, белое значение справа, клик — на
 /// `on_activate`. Возвращает строку, чтобы вызывающая панель довесила свои
 /// метки и, если надо, свотч.
 ///
-/// `Hovered` кормит UI-picking, `Pressed` ставит виджет — оба нужны.
+/// Своя сцена, а не общий `super::spawn_panel_button_with`: у строки другая
+/// геометрия — она во всю ширину панели, с отступом слева по вложенности, и
+/// подпись растягивается, отжимая значение вправо. Общего у них ровно цвет, и
+/// он приходит из темы (`ui/theme.rs`), а не отсюда.
 pub(super) fn spawn_value_row<M>(
     commands: &mut Commands,
     panel: Entity,
@@ -62,76 +56,50 @@ pub(super) fn spawn_value_row<M>(
     value: String,
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) -> Entity {
+    let padding = UiRect {
+        top: px(4.),
+        right: px(8.),
+        bottom: px(4.),
+        left: px(left_px),
+    };
     let row = commands
-        .spawn((
-            Button,
-            ValueRow,
-            Pickable::default(),
-            Hovered::default(),
+        .spawn_scene(bsn! {
+            @FeathersButton
             Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(6.),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(left_px),
-                },
+                height: Val::Auto,
+                justify_content: JustifyContent::FlexStart,
+                column_gap: px(6),
+                padding: {padding},
+                border_radius: BorderRadius::ZERO,
+            }
+        })
+        .observe(on_activate)
+        .with_child((
+            Text::new(label),
+            TextFont {
+                font_size: FontSize::Px(12.),
                 ..default()
             },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![
-                (
-                    Text::new(label),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(ROW_LABEL_COLOR),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    value_marker,
-                    Text::new(value),
-                    TextFont {
-                        font_size: FontSize::Px(12.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
+            TextColor(ROW_LABEL_COLOR),
+            // распорка: подпись забирает всю свободную ширину, значение
+            // прижимается к правому краю строки
+            Node {
+                flex_grow: 1.,
+                ..default()
+            },
         ))
-        .observe(on_activate)
+        .with_child((
+            value_marker,
+            Text::new(value),
+            TextFont {
+                font_size: FontSize::Px(12.),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ))
         .id();
     commands.entity(panel).add_child(row);
     row
-}
-
-/// Осветление строки под курсором и при нажатии — одна система на все панели.
-///
-/// `set_if_neq`, а не присваивание: система крутится каждый кадр по всем
-/// строкам всех панелей, а меняется из них максимум одна — та, что под
-/// курсором.
-pub(super) fn highlight_value_rows(
-    mut rows: Query<(&Hovered, Has<Pressed>, Has<RowInert>, &mut BackgroundColor), With<ValueRow>>,
-) {
-    for (hovered, pressed, inert, mut background) in &mut rows {
-        let lighten = if inert {
-            ROW_LIGHTEN
-        } else if pressed {
-            TOGGLE_PRESSED_LIGHTEN
-        } else if hovered.get() {
-            TOGGLE_HOVER_LIGHTEN
-        } else {
-            ROW_LIGHTEN
-        };
-        background.set_if_neq(BackgroundColor(row_color(lighten)));
-    }
 }
 
 /// Следующее значение по кругу; незнакомое откатывается к первому.

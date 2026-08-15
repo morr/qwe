@@ -5,6 +5,7 @@
 //! и гаснут вслед за режимом мира.
 
 use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
 
 use super::{NavPanelValues, display_of, indent_slider_row};
 use crate::determinism::Determinism;
@@ -18,7 +19,6 @@ use crate::settings::{
     SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP,
 };
 use crate::ui::knob::{SliderBinding, spawn_knob};
-use crate::ui::rows::RowInert;
 
 /// Группа ручек толпы — только для того, чтобы разложить их по заголовкам.
 /// Ни ресурса, ни компонента: прятать группы незачем (см. док модуля).
@@ -133,11 +133,11 @@ pub(super) fn spawn_knob_rows(
 
 /// Единственная строка панелей, которая бывает неотзывчивой: под детерминизмом
 /// и на сеточной навигации расталкивания нет вовсе, и тумблер молча ничего не
-/// переключает. [`RowInert`] снимает с неё подсветку — обещать реакцию на
-/// курсор там, где клик ничего не сделает, хуже, чем не подсвечивать.
+/// переключает. `InteractionDisabled` снимает с неё подсветку и глушит
+/// `Activate` — обещать реакцию на курсор там, где клик ничего не сделает, хуже,
+/// чем не подсвечивать.
 ///
-/// Метка, а не проверка внутри общей подсветки: та крутится по строкам всех
-/// панелей и про режимы мира знать не должна. Начальное состояние ставит
+/// Начальное состояние ставит
 /// [`render_navigation_panel`](super::render_navigation_panel) — эта система
 /// ходит по `resource_changed`, а на первом кадре ни один ресурс ещё не
 /// «менялся».
@@ -150,9 +150,9 @@ pub(super) fn sync_separation_row_inert(
     let allowed = separation_allowed_by_mode(determinism.0, polymesh.enabled);
     for row in &rows {
         if allowed {
-            commands.entity(row).remove::<RowInert>();
+            commands.entity(row).remove::<InteractionDisabled>();
         } else {
-            commands.entity(row).insert(RowInert);
+            commands.entity(row).insert(InteractionDisabled);
         }
     }
 }

@@ -368,15 +368,8 @@ impl Plugin for UiPlugin {
             brp::UiBrpBadgePlugin,
         ))
         // бегунки всех панелей ведёт одна система — ползунки помечены общим
-        // `slider::UiSlider`, строки — общим `rows::ValueRow`
-        .add_systems(
-            Update,
-            (
-                stack_bottom_columns,
-                slider::sync_slider_thumbs,
-                rows::highlight_value_rows,
-            ),
-        )
+        // `slider::UiSlider`
+        .add_systems(Update, (stack_bottom_columns, slider::sync_slider_thumbs))
         .add_systems(
             Update,
             // `resource_changed` без `resource_exists` паникует до загрузки

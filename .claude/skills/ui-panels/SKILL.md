@@ -202,14 +202,17 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   from `PolymeshDebug`, `Separation` from determinism + backend + style), which a binding
   to one resource cannot express — that enum is the right tool there, not a leftover.
 - **Value-row kit** (`ui/rows.rs`) — the layer under cycle rows, and what the Navigation
-  panel calls directly: `spawn_value_row` (grey label left, white value right, click on an observer),
-  `row_color`, `next_in`, `on_off`, and one `highlight_value_rows` for every panel (rows
-  carry the shared `ValueRow` marker; registered once in `UiPlugin`). A row whose click
-  currently does nothing gets `RowInert` from its panel and stops highlighting — promising
-  a reaction the click will not deliver is worse than not highlighting. The only carrier
+  panel calls directly: `spawn_value_row` (grey label left, white value right, click on an
+  observer), `row_color`, `next_in`, `on_off`. A row is a `FeathersButton` too, but with its
+  own scene rather than `spawn_panel_button_with`'s: it spans the panel, its left padding
+  carries the nesting indent, and its label stretches to push the value right. What the two
+  share is the colour, and that comes from the theme. There is no highlight system left —
+  feathers paints hover and press itself. A row whose click currently does nothing gets
+  first-party **`bevy::ui::InteractionDisabled`** from its panel, which both stops the
+  highlight and swallows `Activate` — promising a reaction the click will not deliver is
+  worse than not highlighting. `BUTTON_BG_DISABLED` is deliberately the *resting* colour,
+  not a dimmed one: an inert row should look ordinary and merely not react. The only carrier
   today is the Separation toggle under **Deterministic** or grid navigation.
-  Highlighting writes through `set_if_neq`: the system runs every frame over every row of
-  every panel, and at most one of them — the one under the cursor — actually changes.
 - **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumn` /
   `UiLeftColumn`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
   left: debug toggles → Noise → Navigation; both bottom-up. **The order is the enum's

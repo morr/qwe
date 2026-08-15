@@ -77,7 +77,7 @@ use crate::settings::{
     POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
 };
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
-use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, RowInert, on_off, row_color, spawn_value_row};
+use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, on_off, row_color, spawn_value_row};
 use crate::ui::{
     DebugNavmesh, GameUiRoot, ROW_LABEL_COLOR, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity,
     UiPanelGapBelow, left_panel, ui_color,
@@ -390,7 +390,9 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
     // начальное состояние неотзывчивости: `sync_separation_row_inert` ходит по
     // `resource_changed`, а на первом кадре ничего ещё не менялось
     if !separation_allowed_by_mode(values.determinism.0, values.polymesh.enabled) {
-        commands.entity(toggle_row).insert(RowInert);
+        commands
+            .entity(toggle_row)
+            .insert(bevy::ui::InteractionDisabled);
     }
     spawn_knob_rows(&mut commands, panel, &values, KnobGroup::Separation);
 

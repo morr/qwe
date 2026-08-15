@@ -809,8 +809,9 @@ skill**.
 - **Shared kits** — `ui/slider.rs` (`spawn_slider_row`, `quantize`, `apply_step`,
   `retarget`, one `sync_slider_thumbs` for all panels — the layer under the knob kit,
   called directly only by the crowd demo, whose sliders drive demo-local state rather
-  than a resource) and `ui/rows.rs` (`spawn_value_row` button rows, `RowInert` for rows
-  whose click currently does nothing). Use these, don't hand-roll a panel row.
+  than a resource) and `ui/rows.rs` (`spawn_value_row` button rows; a row whose click
+  currently does nothing gets `bevy::ui::InteractionDisabled`, which stops the highlight and
+  swallows `Activate`). Use these, don't hand-roll a panel row.
 - **Debug toggles** (`ui/debug/`) — grid / doors / movepath / noise buttons, plus the
   `camera:` and `navtile:` cyclers (global settings, deliberately not under a backend
   section) and **`reset`** (`prefs::ResetSettings` — every setting back to its default,
