@@ -224,6 +224,17 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   visible at a glance; the check is against the `Default` impl, not a hardcoded variant, so
   moving `#[default]` moves the highlight with it. Label text and green-ness come from one
   `cycler_state` used by both the spawn and the sync system, so they cannot drift apart.
+  The row closes with **`reset`** (`prefs::ResetSettings`) — every settings group back to
+  its `Default`, world settings included, so an off-baseline city / seed / navtile /
+  determinism reloads the map on the click. It sits here because the two cyclers beside it
+  already answer half of "how far have I drifted from the baseline?". It is an **action**
+  button, not a toggle and not a cycler: green in this row means "*this* resource is at its
+  default", and the same green on a button that speaks about *other* resources would be a
+  different claim — so it carries `ui::ActionButton` and only lights up under the cursor.
+  That marker (and its one `highlight_action_buttons` in `UiPlugin`, the
+  `sync_slider_thumbs` idiom) exists because `spawn_panel_button` paints the background
+  once and every highlight system picks its buttons **by marker** — an unmarked button is
+  inert under the cursor, which is what the World panel's `new` (seed reroll) had been.
 
 ## Camera start view
 
@@ -262,7 +273,21 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   `settings.toml` from the OS settings dir (macOS:
   `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being
   built, before any schedule; `PrefsPlugin` is registered **last** because that scan needs
-  the other plugins' `register_type` calls to have run. Delete the file to reset.
+  the other plugins' `register_type` calls to have run. Delete the file to reset — or press
+  **`reset`** in the toggles row, which is the same thing from inside the game.
+
+  **`prefs::ResetSettings`** is a `Command`, and it too is a registration rather than a
+  list: it walks the type registry, keeps whatever carries `ReflectSettingsGroup`, and
+  writes back that type's `ReflectDefault` — both of which every group already registers
+  through `#[reflect(Resource, SettingsGroup, Default)]`. A new tunable is therefore
+  resettable the day it is declared, and there is no second place to forget it. Two details
+  that are correctness, not polish: a group **already at its default is skipped**, because
+  merely taking a `Mut` marks the resource changed and `retuned` would then order a crown /
+  road / building / polymesh rebuild for nothing; and the command queues
+  `SaveSettingsSync::IfChanged` **itself** instead of trusting that something among the
+  reset groups happened to be `track_pref`ed (`SavedCameraView` is not). `SavedCameraView`
+  is reset like everything else and then immediately re-recorded by `track_camera_view` in
+  `save` mode — right, since the setting is the *mode*, not where you happen to be looking.
 
   **Persisting is a registration, not a list**: `app.track_pref::<T>()` next to the
   resource's own `init_resource` adds a one-line system that queues

@@ -806,9 +806,12 @@ skill**.
   whose click currently does nothing). Use these, don't hand-roll a panel row.
 - **Debug toggles** (`ui/debug/`) — grid / doors / movepath / noise buttons, plus the
   `camera:` and `navtile:` cyclers (global settings, deliberately not under a backend
-  section). The navmesh overlay is **one merged mesh** (per-tile entities once cost
-  330 k); the noise overlay is one CPU-built texture sprite. A cycler goes green while
-  its resource equals `Default::default()`.
+  section) and **`reset`** (`prefs::ResetSettings` — every setting back to its default,
+  world settings included, so the map reloads when they were off-baseline). The navmesh
+  overlay is **one merged mesh** (per-tile entities once cost 330 k); the noise overlay is
+  one CPU-built texture sprite. A cycler goes green while its resource equals
+  `Default::default()`; `reset` is an **action** button (`ui::ActionButton`, hover/press
+  only) — green there would claim something about other resources.
 - **Camera start view** (`camera.rs`) — `CameraPositionMode` (`reset | save`, default
   `save`, persisted): where the camera stands when the world comes up. `save` writes
   `SavedCameraView` on exit (a `Last` system after `bevy::window::ExitSystems`) and
@@ -839,7 +842,11 @@ skill**.
   had lost `RoadStyle`. `SavedCameraView` is deliberately *not* tracked — it changes on
   every camera-drag frame and has its own debounce (`camera::track_camera_view`).
   `PrefsPlugin` is registered **last** (the settings scan needs every `register_type`).
-  Delete the file to reset.
+  **`ResetSettings`** (the `reset` button) puts every group back to its `Default` — found
+  through the type registry by `ReflectSettingsGroup` + `ReflectDefault`, never a list, so
+  a new tunable is covered the day it is declared. It skips groups already at their
+  default: taking a `Mut` marks a resource changed, and that alone would order a crown /
+  road / building / polymesh rebuild. Deleting `settings.toml` still works.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`

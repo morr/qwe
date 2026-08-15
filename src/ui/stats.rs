@@ -203,10 +203,10 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
         .id();
     commands.entity(row).add_child(field);
 
-    let reroll = super::spawn_panel_button(
+    super::spawn_panel_button(
         commands,
         row,
-        (),
+        super::ActionButton,
         "new",
         |_activate: On<Activate>, mut seed: ResMut<WorldSeed>| {
             // единственное место, где ещё нужна системная энтропия: сам
@@ -215,7 +215,6 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
             seed.0 = rand::rng().random_range(0..SEED_ROLL_RANGE);
         },
     );
-    let _ = reroll;
     row
 }
 

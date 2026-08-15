@@ -75,8 +75,21 @@ impl Plugin for RestartPlugin {
                         .run_if(|pending: Res<RestartPending>| pending.0),
                 )
                     .after(bevy::input::InputSystems),
-            );
+            )
+            .add_systems(OnExit(AppState::Playing), drop_pending_restart);
     }
+}
+
+/// Перезагрузка мира поглощает отложенный рестарт: она сильнее — новый мир и
+/// так строится с нуля.
+///
+/// Иначе флаг переживает `Loading` (гейт `in_state(Playing)` не пускает
+/// `trigger_pending_restart` в кадре перехода, а снимается флаг только в нём
+/// самом) и выстреливает лишним рестартом уже в новом мире. Сойтись в одном
+/// кадре смене города и смене seed'а есть чем: `prefs::ResetSettings` правит
+/// обе настройки разом, и то же самое делает пакетная запись по BRP.
+fn drop_pending_restart(mut pending: ResMut<RestartPending>) {
+    pending.0 = false;
 }
 
 fn trigger_restart(mut commands: Commands) {

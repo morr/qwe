@@ -20,6 +20,12 @@
 //! - `navtile:` — сторона ячейки навигации (`settings::NavtileBase`, смена
 //!   перезагружает мир).
 //!
+//! Замыкает ряд `reset` — кнопка-действие, возвращающая ВСЕ настройки к
+//! умолчаниям (`prefs::ResetSettings`), включая мировые: если уведены город,
+//! seed, детерминизм или навтайл, клик перезагружает мир. Ряд для неё — верное
+//! место: тут же стоят две листалки, зелёные ровно тогда, когда их настройка на
+//! умолчании, то есть половина ответа на вопрос «а я далеко ушёл от базовых?».
+//!
 //! Настройки бэкендов поиска пути — сеточный слой, алгоритм, радиус агента —
 //! стоят в панели Navigation (`ui/navigation/`) рядом друг с другом: они
 //! взаимоисключающие, и видеть надо только настройки выбранного. Навтайл к ним
@@ -42,10 +48,10 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
-use crate::prefs::TrackPrefExt;
+use crate::prefs::{ResetSettings, TrackPrefExt};
 use crate::settings::NavtileBase;
 use crate::ui::{
-    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity,
+    ActionButton, GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity,
     button_background, spawn_panel_button, ui_color,
 };
 
@@ -283,6 +289,20 @@ fn render_debug_toggles(
         &navtile,
         |_activate: On<Activate>, mut navtile: ResMut<NavtileBase>| {
             *navtile = navtile.next();
+        },
+    );
+
+    // сброс всех настроек на умолчания. Кнопка-действие, а не тумблер и не
+    // листалка: зелёный в этом ряду значит «этот ресурс стоит на умолчании», и
+    // тем же цветом на кнопке, которая говорит о ЧУЖИХ ресурсах, читалось бы
+    // другое утверждение — поэтому у неё только подсветка курсора
+    spawn_panel_button(
+        &mut commands,
+        row,
+        ActionButton,
+        "reset",
+        |_activate: On<Activate>, mut commands: Commands| {
+            commands.queue(ResetSettings);
         },
     );
 }

@@ -24,6 +24,7 @@ mod trees;
 use bevy::ecs::system::IntoObserverSystem;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button};
 
 pub use self::brp::AgentBrpSession;
@@ -207,6 +208,30 @@ fn button_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Col
     base.mix(&Color::WHITE, lighten)
 }
 
+/// Кнопка-**действие**: клик что-то делает, а не переключает состояние. Такой
+/// нечего показывать «включена», но реагировать на курсор она обязана, а
+/// подсветку в этом UI ведут системы, выбирающие кнопки по маркеру
+/// (`DebugToggleButton`, `CyclerButton`, `CityButton`) — без него кнопка просто
+/// не отзывается на наведение. Носители: `reset` в ряду тумблеров и `new`
+/// (перебор seed'а) в панели World.
+#[derive(Component)]
+pub struct ActionButton;
+
+/// Подсветка кнопок-действий: «активной» такая не бывает, остаётся наведение и
+/// нажатие. Одна система на все панели — идиома `sync_slider_thumbs` и
+/// `highlight_value_rows`, зарегистрирована в [`UiPlugin`].
+fn highlight_action_buttons(
+    mut buttons: Query<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<ActionButton>>,
+) {
+    for (hovered, is_pressed, mut background) in &mut buttons {
+        background.set_if_neq(BackgroundColor(button_background(
+            false,
+            is_pressed,
+            hovered.get(),
+        )));
+    }
+}
+
 /// Приглушённый серый подписи в строке панели — рядом с белым значением.
 /// Один на все панели: строки значений, слайдеры, листалки, телеметрию.
 const ROW_LABEL_COLOR: Color = Color::srgb(0.75, 0.78, 0.75);
@@ -326,13 +351,15 @@ impl Plugin for UiPlugin {
             brp::UiBrpBadgePlugin,
         ))
         // бегунки всех панелей ведёт одна система — ползунки помечены общим
-        // `slider::UiSlider`, строки — общим `rows::ValueRow`
+        // `slider::UiSlider`, строки — общим `rows::ValueRow`, кнопки-действия —
+        // общим `ActionButton`
         .add_systems(
             Update,
             (
                 stack_bottom_columns,
                 slider::sync_slider_thumbs,
                 rows::highlight_value_rows,
+                highlight_action_buttons,
             ),
         )
         .add_systems(
