@@ -1,8 +1,7 @@
 //! Справка по хоткеям: неинтерактивный блок в правом нижнем углу, над панелью
-//! Buildings. Фон — общий `UiOpacity::Medium`, как у рабочих панелей: на
-//! `Light` (0.25) контраста поверх бежевой карты не хватало даже с тенью под
-//! буквами, и справка читалась хуже всего на экране. Тень (`UI_TEXT_SHADOW`)
-//! остаётся — панель узкая, и её край нередко приходится на светлое пятно.
+//! Buildings. Плашка — та же, что у рабочих панелей (`panel_background`), и по
+//! той же причине: сквозь что-то более прозрачное бежевая карта пробивала текст
+//! даже с тенью, и справка читалась хуже всего на экране.
 //!
 //! Список — единственное место, где хоткеи перечислены целиком; клавиши сами
 //! живут в своих плагинах (`restart`, `ui::debug`, `movement`). Добавил
@@ -13,18 +12,15 @@
 
 use bevy::prelude::*;
 
+use bevy::feathers::theme::ThemeTextColor;
+use bevy::feathers::tokens;
+
 use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, UiPanelGapBelow,
-    UiRightColumn, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiPanelGapBelow, UiRightColumn, panel_background,
 };
 
-/// Мелкий шрифт: справку читают один раз, места она занимать не должна.
-const FONT_PX: f32 = 11.0;
 /// Ширина колонки с клавишей — все подписи в один символ.
-const KEY_COLUMN_PX: f32 = 12.0;
-
-const KEY_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
-const ACTION_COLOR: Color = Color::srgb(0.92, 0.94, 0.92);
+const KEY_COLUMN_PX: f32 = 14.0;
 
 /// `(клавиша, что делает)`.
 const HOTKEYS: &[(&str, &str)] = &[
@@ -57,7 +53,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
                 padding: UiRect::all(px(8.)),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            panel_background(),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
             UiRightColumn::Hotkeys,
@@ -79,29 +75,17 @@ fn render_hotkeys_panel(mut commands: Commands) {
                     column_gap: px(6.),
                     ..default()
                 },
+                crate::ui::text_container(),
                 children![
                     (
                         Text::new(*key),
-                        TextFont {
-                            font_size: FontSize::Px(FONT_PX),
-                            ..default()
-                        },
-                        TextColor(KEY_COLOR),
-                        UI_TEXT_SHADOW,
+                        ThemeTextColor(tokens::TEXT_MAIN),
                         Node {
                             width: px(KEY_COLUMN_PX),
                             ..default()
                         },
                     ),
-                    (
-                        Text::new(*action),
-                        TextFont {
-                            font_size: FontSize::Px(FONT_PX),
-                            ..default()
-                        },
-                        TextColor(ACTION_COLOR),
-                        UI_TEXT_SHADOW,
-                    ),
+                    (Text::new(*action), ThemeTextColor(tokens::TEXT_DIM)),
                 ],
             ))
             .id();

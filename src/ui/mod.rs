@@ -1,6 +1,8 @@
-//! Игровой UI (порт идиом из `zxc/src/ui`): панель скорости симуляции и
-//! дебаг-тумблеры. Обычные `bevy_ui`-ноды + первопартийный
-//! `bevy_ui_widgets::Button`.
+//! Игровой UI: панели настроек, дебаг-тумблеры, телеметрия. Виджеты —
+//! первопартийные, из `bevy_feathers`; вид у панелей её же, тема принята как
+//! есть (`ui/theme.rs`). Всё, что виджетом не является (плашки панелей,
+//! заголовки, подписи строк), красится **токенами** той же темы, а не своими
+//! цветами: иначе смена темы перекрасила бы половину экрана и оставила вторую.
 
 mod brp;
 mod buildings;
@@ -23,8 +25,13 @@ mod tree_rows;
 mod trees;
 
 use bevy::ecs::system::IntoObserverSystem;
+use bevy::feathers::constants::{fonts, size};
 use bevy::feathers::controls::{ButtonVariant, FeathersButton};
+use bevy::feathers::font_styles::InheritableFont;
+use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor, ThemedText};
+use bevy::feathers::tokens;
 use bevy::prelude::*;
+use bevy::text::FontWeight;
 use bevy::ui_widgets::Activate;
 
 pub use self::brp::AgentBrpSession;
@@ -72,8 +79,13 @@ pub enum UiLeftColumn {
     Navigation,
 }
 
+/// Ширина панели настроек. Была 210 px, пока строка-ползунок занимала два
+/// этажа: подпись над полосой. Теперь она в одну строку, как все остальные, и
+/// подписи вроде «Conifer share» делят ширину с полосой.
+pub const PANEL_WIDTH_PX: f32 = 240.0;
+
 /// Узел панели настроек в колонке: абсолютная, у своего края экрана, колонка
-/// строк в 210 px. `bottom` — заглушка на один кадр, его перестыкует
+/// строк. `bottom` — заглушка на один кадр, его перестыкует
 /// [`stack_bottom_columns`] по замеренным высотам.
 ///
 /// Ряд дебаг-тумблеров и справка по хоткеям сюда не входят: у них своя форма
@@ -88,20 +100,40 @@ fn panel_node(left: Val, right: Val) -> Node {
         display: Display::Flex,
         flex_direction: FlexDirection::Column,
         row_gap: px(4.),
-        padding: UiRect::all(px(10.)),
-        width: px(210.),
+        padding: UiRect::all(px(8.)),
+        width: px(PANEL_WIDTH_PX),
         ..default()
     }
 }
 
+/// Плашка панели — тело редакторской панели темы. Токен, а не цвет: тема
+/// перекрашивает виджеты панели, и подложка под ними обязана ехать вместе с
+/// ними.
+pub fn panel_background() -> ThemeBackgroundColor {
+    ThemeBackgroundColor(tokens::PANE_BODY_BG)
+}
+
+/// Подложка блока внутри панели — строка-счётчик, блок ползунка, шапка группы.
+pub fn panel_block_background() -> ThemeBackgroundColor {
+    ThemeBackgroundColor(tokens::GROUP_BODY_BG)
+}
+
 /// Панель настроек правой колонки: её узел и её место в колонке.
-pub fn right_panel(slot: UiRightColumn) -> (Node, UiRightColumn) {
-    (panel_node(Val::Auto, px(UI_SCREEN_EDGE_PX_OFFSET)), slot)
+pub fn right_panel(slot: UiRightColumn) -> (Node, UiRightColumn, ThemeBackgroundColor) {
+    (
+        panel_node(Val::Auto, px(UI_SCREEN_EDGE_PX_OFFSET)),
+        slot,
+        panel_background(),
+    )
 }
 
 /// Панель настроек левой колонки: её узел и её место в колонке.
-pub fn left_panel(slot: UiLeftColumn) -> (Node, UiLeftColumn) {
-    (panel_node(px(UI_SCREEN_EDGE_PX_OFFSET), Val::Auto), slot)
+pub fn left_panel(slot: UiLeftColumn) -> (Node, UiLeftColumn, ThemeBackgroundColor) {
+    (
+        panel_node(px(UI_SCREEN_EDGE_PX_OFFSET), Val::Auto),
+        slot,
+        panel_background(),
+    )
 }
 
 /// «Оставить зазор под этой панелью». Колонка по умолчанию стоит вплотную —
@@ -134,15 +166,12 @@ pub fn panel_header(title: &str, count: PanelCount) -> impl Bundle {
             column_gap: px(6.),
             ..default()
         },
+        // см. `text_container`: без метки шрифт панели не дойдёт до подписей
+        text_container(),
         children![
             (
                 Text::new(title),
-                TextFont {
-                    font_size: FontSize::Px(14.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
+                ThemeTextColor(tokens::PANE_HEADER_TEXT),
                 // распорка: заголовок забирает всю ширину, число прижимается
                 // к правому краю блока
                 Node {
@@ -150,16 +179,7 @@ pub fn panel_header(title: &str, count: PanelCount) -> impl Bundle {
                     ..default()
                 },
             ),
-            (
-                count,
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(10.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
-            ),
+            (count, Text::new(""), ThemeTextColor(tokens::TEXT_DIM)),
         ],
     )
 }
@@ -183,68 +203,18 @@ fn sync_panel_counts(
     }
 }
 
-/// Подсветка «кнопка активна» и осветление под курсором / при нажатии —
-/// общие для тумблеров и панели городов.
-pub const TOGGLE_ACTIVE_COLOR: Color = Color::srgba(0.16, 0.5, 0.2, 0.9);
-pub const TOGGLE_HOVER_LIGHTEN: f32 = 0.12;
-pub const TOGGLE_PRESSED_LIGHTEN: f32 = 0.24;
-
-/// Фон кнопки панели по её состоянию. «Активно» у каждой кнопки своё — тумблер
-/// включён, листалка стоит на умолчании, город выбран, время на паузе, — но
-/// цвет один, и осветление под курсором и под нажатием одно.
-///
-/// Формула жила в трёх экземплярах (`debug`, `city`, `speed`); держать её здесь
-/// дешевле, чем следить, чтобы три копии осветлялись одинаково.
-fn button_background(is_active: bool, is_pressed: bool, is_hovered: bool) -> Color {
-    let base = if is_active {
-        TOGGLE_ACTIVE_COLOR
-    } else {
-        ui_color(UiOpacity::Heavy)
-    };
-    let lighten = if is_pressed {
-        TOGGLE_PRESSED_LIGHTEN
-    } else if is_hovered {
-        TOGGLE_HOVER_LIGHTEN
-    } else {
-        0.0
-    };
-    base.mix(&Color::WHITE, lighten)
-}
-
-/// Приглушённый серый подписи в строке панели — рядом с белым значением.
-/// Один на все панели: строки значений, слайдеры, листалки, телеметрию.
-const ROW_LABEL_COLOR: Color = Color::srgb(0.75, 0.78, 0.75);
-
-const UI_COLOR: Color = Color::srgb(0.094, 0.102, 0.11);
-
-/// Тень под белым текстом панелей: фон у них полупрозрачный, и поверх светлой
-/// карты буквы без тени сливаются с ней. Смещение в пиксель — дефолтные четыре
-/// на 11–20 px шрифте читаются как вторая строка текста.
+/// Тень под текстом панелей. Осталась там, где текст лежит **на карте**, а не
+/// на плашке панели (значок BRP, справка по хоткеям): на светлой карте буквы
+/// без тени с ней сливаются. Смещение в пиксель — дефолтные четыре на 11–20 px
+/// шрифте читаются как вторая строка текста.
 pub const UI_TEXT_SHADOW: TextShadow = TextShadow {
     offset: Vec2::splat(1.0),
     color: Color::srgba(0.0, 0.0, 0.0, 0.85),
 };
 
-pub enum UiOpacity {
-    Light,
-    /// Фон панелей: сквозь `Light` просвечивали пешки и кроны, `Heavy` глушит
-    /// карту под панелью.
-    Medium,
-    Heavy,
-}
-
-pub fn ui_color(opacity: UiOpacity) -> Color {
-    UI_COLOR.with_alpha(match opacity {
-        UiOpacity::Light => 0.25,
-        UiOpacity::Medium => 0.55,
-        UiOpacity::Heavy => 0.85,
-    })
-}
-
 /// Вариант кнопки по признаку «активна». «Активно» у каждой кнопки своё —
 /// тумблер включён, листалка стоит на умолчании, город выбран, время на паузе, —
-/// но выглядит это одинаково, и feathers называет такую кнопку `Primary`
-/// (цвета обоих вариантов задаёт [`theme::create_qwe_theme`]).
+/// но выглядит это одинаково, и feathers называет такую кнопку `Primary`.
 pub fn button_variant(is_active: bool) -> ButtonVariant {
     if is_active {
         ButtonVariant::Primary
@@ -253,15 +223,15 @@ pub fn button_variant(is_active: bool) -> ButtonVariant {
     }
 }
 
-/// Кнопка панели на первопартийном виджете: тёмный прямоугольник, наведение и
-/// нажатие красит feathers сама по токенам темы (`ui/theme.rs`). `marker` —
-/// компонент, по которому система панели находит эту кнопку, чтобы вести её
-/// [`ButtonVariant`]; `caption` — её содержимое одним ребёнком.
+/// Кнопка панели — первопартийный виджет feathers целиком, без правок узла:
+/// её рост, скругление, отступы, курсор, наведение и нажатие приходят из сцены
+/// и темы. `marker` — компонент, по которому система панели находит эту кнопку,
+/// чтобы вести её [`ButtonVariant`]; `caption` — её содержимое одним ребёнком.
 ///
 /// Подпись спавнится ребёнком, а не приходит через `@caption` в сцену:
-/// у листалок её две, и обе строятся из строк времени выполнения.
-/// `ThemedText` подписи не носят — кегль и цвет у панелей свои, а без этой
-/// метки feathers к тексту и не притрагивается.
+/// у листалок её две, и обе строятся из строк времени выполнения. Ребёнку
+/// хватает `ThemedText` — шрифт и цвет к нему спускает `InheritableFont` и
+/// `InheritableThemeTextColor` с самой кнопки.
 pub fn spawn_panel_button_with<M>(
     commands: &mut Commands,
     parent: Entity,
@@ -274,13 +244,9 @@ pub fn spawn_panel_button_with<M>(
     let button = commands
         .spawn_scene(bsn! {
             @FeathersButton { @variant: {variant} }
-            // высота по содержимому вместо feathers-овских 24 px и прямые
-            // углы вместо скруглённых: панели qwe — плотные прямоугольники
-            Node {
-                height: Val::Auto,
-                padding: UiRect::axes(px(8.), px(4.)),
-                border_radius: BorderRadius::ZERO,
-            }
+            // виджет несёт свой `InheritableFont` и перекрыл бы им шрифт
+            // панели — патчим только кегль, шрифт и вес остаются его
+            InheritableFont { font_size: {PANEL_FONT} }
         })
         .insert(marker)
         .observe(on_activate)
@@ -290,16 +256,67 @@ pub fn spawn_panel_button_with<M>(
     button
 }
 
-/// Подпись кнопки панели: белая, 12 px.
+/// Подпись кнопки панели: шрифт и цвет спускает сама кнопка.
 pub fn panel_button_label(label: &str) -> impl Bundle {
-    (
-        Text::new(label),
-        TextFont {
-            font_size: FontSize::Px(12.),
-            ..default()
-        },
-        TextColor(Color::WHITE),
-    )
+    (Text::new(label), ThemedText)
+}
+
+/// Метка на узел-контейнер, через который шрифт панели должен пройти к
+/// подписям под ним.
+///
+/// Распространение `InheritableFont` идёт **только по цепочке сущностей с
+/// `ThemedText`** (`HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`): на
+/// первом же узле без метки обход прекращается, и все подписи ниже остаются с
+/// дефолтным шрифтом в 20 px. У feathers подписи — прямые дети виджета, а у
+/// панелей между корнем и текстом стоят строки-обёртки, и метку надо ставить им
+/// руками.
+pub fn text_container() -> ThemedText {
+    ThemedText
+}
+
+/// Подпись слева в строке панели — приглушённая, как `label_dim` в галерее
+/// feathers.
+///
+/// `ThemeTextColor`, а не `TextColor`: он тянет за собой `ThemedText` (шрифт
+/// спустится сверху) и `PropagateOver<TextColor>` — то есть цвет строки-кнопки
+/// на подпись не пойдёт, и она останется приглушённой на любом варианте кнопки.
+pub fn row_label(label: &str) -> impl Bundle {
+    (Text::new(label), ThemeTextColor(tokens::TEXT_DIM))
+}
+
+/// Значение справа в строке панели — основным цветом темы.
+pub fn row_value(value: impl Into<String>) -> impl Bundle {
+    (Text::new(value.into()), ThemeTextColor(tokens::TEXT_MAIN))
+}
+
+/// Кегль подписей панелей. Редакторские 14 px (`size::MEDIUM_FONT`) — для
+/// полноэкранного инспектора; здесь панели лежат поверх карты и стоят колонками
+/// от края до края экрана, и на 14 px левая колонка переставала помещаться по
+/// высоте, наезжая сама на себя.
+pub const PANEL_FONT: FontSize = size::SMALL_FONT;
+
+/// Шрифт всех подписей панели: одна вставка на корень, а не `TextFont` на
+/// каждый текст.
+///
+/// `InheritableFont` спускает шрифт всем потомкам с `ThemedText`. Виджеты
+/// внутри несут свой такой же компонент и перекрыли бы его для своего
+/// поддерева — поэтому киты (`spawn_panel_button_with`, `spawn_value_row`)
+/// патчат его тем же [`PANEL_FONT`].
+///
+/// Системой по `Added`, а не параметром в десяти функциях спавна: шрифт —
+/// свойство всего игрового UI, и панели про `AssetServer` знать не должны.
+fn apply_panel_font(
+    roots: Query<Entity, Added<GameUiRoot>>,
+    assets: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    for root in &roots {
+        commands.entity(root).insert(InheritableFont {
+            font: assets.load(fonts::REGULAR),
+            font_size: PANEL_FONT,
+            weight: FontWeight::NORMAL,
+        });
+    }
 }
 
 /// Кнопка панели с одной подписью — обычный случай.
@@ -367,9 +384,7 @@ impl Plugin for UiPlugin {
             hotkeys::UiHotkeysPlugin,
             brp::UiBrpBadgePlugin,
         ))
-        // бегунки всех панелей ведёт одна система — ползунки помечены общим
-        // `slider::UiSlider`
-        .add_systems(Update, (stack_bottom_columns, slider::sync_slider_thumbs))
+        .add_systems(Update, (apply_panel_font, stack_bottom_columns))
         .add_systems(
             Update,
             // `resource_changed` без `resource_exists` паникует до загрузки
@@ -503,25 +518,12 @@ fn hide_game_ui(mut roots: Query<&mut Visibility, With<GameUiRoot>>) {
 mod tests {
     use super::*;
 
-    /// Три кнопки на трёх панелях звали три копии этой формулы; тест держит
-    /// порядок «нажата светлее наведённой светлее покоя» и обе базы.
+    /// «Активна» — это один вариант кнопки, а не свой цвет у каждой панели:
+    /// цвета обоих вариантов держит тема feathers (`ui/theme.rs`).
     #[test]
-    fn the_button_background_lightens_from_rest_to_hover_to_press() {
-        let luminance = |color: Color| color.to_linear().luminance();
-
-        assert_eq!(
-            button_background(false, false, false),
-            ui_color(UiOpacity::Heavy)
-        );
-        assert_eq!(button_background(true, false, false), TOGGLE_ACTIVE_COLOR);
-
-        for active in [false, true] {
-            let rest = luminance(button_background(active, false, false));
-            let hovered = luminance(button_background(active, false, true));
-            let pressed = luminance(button_background(active, true, true));
-            assert!(rest < hovered, "наведение не осветлило (active={active})");
-            assert!(hovered < pressed, "нажатие не осветлило (active={active})");
-        }
+    fn the_active_button_is_the_primary_variant() {
+        assert_eq!(button_variant(true), ButtonVariant::Primary);
+        assert_eq!(button_variant(false), ButtonVariant::Normal);
     }
 
     fn panel(slot: u8, height: f32) -> Stacked {

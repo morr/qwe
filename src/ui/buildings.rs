@@ -7,9 +7,7 @@ use bevy::prelude::*;
 use crate::map::BuildingHeightMode;
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::ROW_LEFT_PX;
-use crate::ui::{
-    GameUiRoot, PanelCount, UiOpacity, UiRightColumn, panel_header, right_panel, ui_color,
-};
+use crate::ui::{GameUiRoot, PanelCount, UiRightColumn, panel_header, right_panel};
 
 pub struct UiBuildingStylePlugin;
 
@@ -25,7 +23,6 @@ fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightM
     let panel = commands
         .spawn((
             right_panel(UiRightColumn::Buildings),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("building_style_panel"),

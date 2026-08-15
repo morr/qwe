@@ -6,6 +6,8 @@
 //! Счётчики до этого жили только в BRP (`count Human`, `res get Telemetry`), то
 //! есть смотреть на симуляцию без агентского клиента рядом было нечем.
 
+use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor};
+use bevy::feathers::tokens;
 use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
@@ -15,9 +17,10 @@ use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
-use super::rows::{ROW_LEFT_PX, ROW_LIGHTEN, row_color};
+use super::rows::ROW_LEFT_PX;
 use super::{
-    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background, row_label,
+    row_value,
 };
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
@@ -33,11 +36,7 @@ use crate::settings::{
 use crate::telemetry::Telemetry;
 
 /// Ширина панелей — как у остальных панелей с ползунками.
-const PANEL_WIDTH_PX: f32 = 210.0;
-/// Подпись счётчика. Светлее тусклой подписи строк-ползунков
-/// (`slider.rs`, 0.75): те лежат на своей плотной подложке, а счётчики
-/// читаются на фоне карты, и на бежевой Туле серый на сером пропадал.
-const LABEL_COLOR: Color = Color::srgb(0.88, 0.91, 0.88);
+const PANEL_WIDTH_PX: f32 = super::PANEL_WIDTH_PX;
 
 /// Колонка обеих панелей: по ней система развода с меткой BRP правит `top`.
 /// Панели внутри неё стыкует обычный флекс — в отличие от нижних колонок
@@ -94,15 +93,10 @@ fn count_row(label: &str, row: StatRow) -> impl Bundle {
             column_gap: px(6.),
             ..default()
         },
+        super::text_container(),
         children![
             (
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(LABEL_COLOR),
-                UI_TEXT_SHADOW,
+                row_label(label),
                 // распорка: подпись забирает всю ширину, число прижимается
                 // к правому краю строки
                 Node {
@@ -110,16 +104,7 @@ fn count_row(label: &str, row: StatRow) -> impl Bundle {
                     ..default()
                 },
             ),
-            (
-                row,
-                Text::new("0"),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
-            ),
+            (row, row_value("0")),
         ],
     )
 }
@@ -144,12 +129,7 @@ fn toggle_row_node() -> Node {
 /// Подпись строки-тумблера — распорка, прижимающая значение к правому краю.
 fn toggle_row_label(text: &str) -> impl Bundle {
     (
-        Text::new(text),
-        TextFont {
-            font_size: FontSize::Px(12.),
-            ..default()
-        },
-        TextColor(ROW_LABEL_COLOR),
+        row_label(text),
         Node {
             flex_grow: 1.,
             ..default()
@@ -177,27 +157,25 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
                 ..EditableText::new(seed.to_string())
             },
             TextLayout::no_wrap(),
-            TextFont {
-                font_size: FontSize::Px(12.),
-                ..default()
-            },
+            ThemeTextColor(tokens::TEXT_INPUT_TEXT),
             TextCursorStyle::default(),
             TabIndex(0),
             Node {
                 // ширина прибита, а не `flex_grow`: растущее поле выпихивало
-                // кнопку перегенерации за правый край панели (панель — 210 px)
-                width: px(90.),
+                // кнопку перегенерации за правый край панели
+                width: px(110.),
                 padding: UiRect::all(px(2.)),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            ThemeBackgroundColor(tokens::TEXT_INPUT_BG),
         ))
         .id();
 
     let row = commands
         .spawn((
             toggle_row_node(),
-            BackgroundColor(row_color(ROW_LIGHTEN)),
+            panel_block_background(),
+            super::text_container(),
             children![toggle_row_label("Seed")],
         ))
         .id();
@@ -225,7 +203,7 @@ fn panel_node() -> Node {
         display: Display::Flex,
         flex_direction: FlexDirection::Column,
         row_gap: px(4.),
-        padding: UiRect::all(px(10.)),
+        padding: UiRect::all(px(8.)),
         ..default()
     }
 }
@@ -233,15 +211,7 @@ fn panel_node() -> Node {
 /// Заголовок панели. Не `super::panel_header`: тот считает объекты карты по
 /// `MapData`, а этим панелям считать в заголовке нечего.
 fn panel_title(title: &str) -> impl Bundle {
-    (
-        Text::new(title),
-        TextFont {
-            font_size: FontSize::Px(14.),
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        UI_TEXT_SHADOW,
-    )
+    (Text::new(title), ThemeTextColor(tokens::PANE_HEADER_TEXT))
 }
 
 fn render_stats_panel(
@@ -277,7 +247,8 @@ fn render_stats_panel(
     let world_panel = commands
         .spawn((
             panel_node(),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            panel_background(),
+            super::text_container(),
             Name::new("world_stats_panel"),
             children![
                 panel_title("World"),
@@ -297,7 +268,7 @@ fn render_stats_panel(
                         },
                         ..default()
                     },
-                    BackgroundColor(ui_color(UiOpacity::Heavy)),
+                    panel_block_background(),
                     children![
                         count_row("Pawns", StatRow::Pawns),
                         count_row("Demons", StatRow::Demons),
@@ -334,7 +305,8 @@ fn render_stats_panel(
     let panel = commands
         .spawn((
             panel_node(),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            panel_background(),
+            super::text_container(),
             Name::new("demon_style_panel"),
             children![panel_title("Demon")],
         ))
@@ -409,7 +381,8 @@ fn render_stats_panel(
     let human_panel = commands
         .spawn((
             panel_node(),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            panel_background(),
+            super::text_container(),
             Name::new("human_style_panel"),
             children![panel_title("Human")],
         ))

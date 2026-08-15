@@ -5,6 +5,8 @@
 //! (`Mix`) — не здесь, а в панели Trees: она игровая ручка вида леса, а не
 //! отладочная.
 
+use bevy::feathers::theme::ThemeTextColor;
+use bevy::feathers::tokens;
 use bevy::prelude::*;
 
 use crate::map::ConiferNoiseStyle;
@@ -15,9 +17,7 @@ use crate::settings::{
     CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_STEP,
 };
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
-use crate::ui::{
-    DebugConiferNoise, GameUiRoot, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity, left_panel, ui_color,
-};
+use crate::ui::{DebugConiferNoise, GameUiRoot, UiLeftColumn, left_panel};
 
 /// Корень панели — по нему видимость следует за тумблером `noise`.
 #[derive(Component)]
@@ -44,7 +44,7 @@ fn render_noise_panel(
     enabled: Res<DebugConiferNoise>,
 ) {
     // левая колонка: правая панелями стилей забита до самого верха
-    let (mut node, slot) = left_panel(UiLeftColumn::Noise);
+    let (mut node, slot, background) = left_panel(UiLeftColumn::Noise);
     // тумблер восстановлен из настроек до Startup — панель сразу спавнится в
     // согласии с ним, без мигания на первом кадре
     node.display = if enabled.0 {
@@ -57,22 +57,14 @@ fn render_noise_panel(
         .spawn((
             ConiferNoisePanel,
             node,
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            background,
             slot,
             GameUiRoot,
             Visibility::Hidden,
             Name::new("conifer_noise_panel"),
             // без счётчика объектов (`panel_header`): поле определено на всей
             // карте, считать нечего
-            children![(
-                Text::new("Noise"),
-                TextFont {
-                    font_size: FontSize::Px(14.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
-            )],
+            children![(Text::new("Noise"), ThemeTextColor(tokens::PANE_HEADER_TEXT),)],
         ))
         .id();
 

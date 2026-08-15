@@ -8,9 +8,7 @@ use bevy::prelude::*;
 use crate::map::{RoadJoin, RoadSmoothing, RoadStyle};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
-use crate::ui::{
-    GameUiRoot, PanelCount, UiOpacity, UiRightColumn, panel_header, right_panel, ui_color,
-};
+use crate::ui::{GameUiRoot, PanelCount, UiRightColumn, panel_header, right_panel};
 
 pub struct UiRoadStylePlugin;
 
@@ -26,7 +24,6 @@ fn render_road_style_panel(mut commands: Commands, style: Res<RoadStyle>) {
     let panel = commands
         .spawn((
             right_panel(UiRightColumn::Roads),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("road_style_panel"),

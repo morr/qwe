@@ -290,7 +290,7 @@ fn main() {
             zoom_camera,
             // бегунок ведёт та же система, что и в игре; `sync_knob_rows`
             // подтягивает панель механизмов после нажатия пресета
-            (qwe::ui::slider::sync_slider_thumbs, sync_knob_rows),
+            sync_knob_rows,
             apply_speed.run_if(resource_changed::<DemoSpeed>),
             (
                 count_separation_runs,

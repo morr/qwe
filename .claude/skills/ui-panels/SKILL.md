@@ -138,33 +138,48 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 
 ## Shared kits & layout
 
-- **Widgets and theme** (`ui/theme.rs`) — the panels' buttons are first-party
-  `bevy_feathers` controls, not hand-rolled nodes. **`PanelWidgetsPlugin`** installs
-  `FeathersCorePlugin` plus `UiTheme(create_qwe_theme())`; it is a plugin of its own rather
-  than two lines in `UiPlugin` because the crowd demo calls the same kits and cannot bring
-  up `UiPlugin`. Three things about it are decisions, not detail:
+- **Widgets and theme** (`ui/theme.rs`) — the panels are first-party `bevy_feathers`
+  controls, and they wear feathers' **own look**: `create_dark_theme()` as-is, grey buttons,
+  blue `Primary`, 4 px rounded corners, FiraSans. **`PanelWidgetsPlugin`** installs
+  `FeathersCorePlugin` plus `UiTheme`; it is a plugin of its own rather than two lines in
+  `UiPlugin` because the crowd demo calls the same kits and cannot bring up `UiPlugin`.
+  Five things about it are decisions, not detail:
   - **`FeathersCorePlugin`, never the `FeathersPlugins` group.** The group also adds
     `TabNavigationPlugin`, and with it Tab focuses any panel widget (every control carries
     `TabIndex(0)`), after which Space both "presses" the focused button *and* pauses the
     simulation — the "UI input must not reach the game world" rule, and
     `typing_in_text_input` does not catch it because the focus is not on a text field.
     Without the plugin `TabIndex` / `FocusIndicator` simply do nothing.
-  - **The look stays qwe's.** feathers colours its controls through *design tokens*
-    (`ThemeBackgroundColor(tokens::BUTTON_BG)`), so its editor palette is replaceable
-    without touching a widget: `create_qwe_theme` is `create_dark_theme` with the button
-    tokens overwritten. The values are not written out a second time — they are computed by
-    the same `ui::button_background` the hand-rolled buttons used, so the formula cannot
-    drift into two versions.
+  - **Everything that is not a widget is coloured by the same tokens.** Panel backings are
+    `panel_background()` (`tokens::PANE_BODY_BG`) and `panel_block_background()`
+    (`GROUP_BODY_BG`), labels are `row_label` (`TEXT_DIM`) and `row_value` (`TEXT_MAIN`),
+    titles `PANE_HEADER_TEXT`. Hand-written colours (`ui_color`, `UiOpacity`,
+    `TOGGLE_ACTIVE_COLOR`, `ROW_LABEL_COLOR`, `DIMMED_VALUE`) are gone: half the screen
+    following the theme and half not is worse than either.
   - **"Active" is `ButtonVariant::Primary`.** Toggle on, cycler at its default, city
-    selected, time paused — one green, and now one variant. Panels no longer paint
-    backgrounds; they write `ButtonVariant` (`button_variant(is_active)`) and feathers does
-    hover, press and disabled itself, in a `Changed`-filtered `PreUpdate` system.
+    selected, time paused — one blue, one variant. Panels no longer paint backgrounds; they
+    write `ButtonVariant` (`button_variant(is_active)`) and feathers does hover, press and
+    disabled itself, in a `Changed`-filtered `PreUpdate` system.
+  - **The font is 12 px (`PANEL_FONT` = `size::SMALL_FONT`), not feathers' 14.** These
+    panels stand in columns from screen edge to screen edge over the map; at 14 px the left
+    column stopped fitting vertically and grew into itself. One `apply_panel_font` system
+    puts `InheritableFont` on every `GameUiRoot`, and the kits patch the same size onto the
+    widgets (which carry an `InheritableFont` of their own and would otherwise win).
+  - **`text_container()` is a real requirement, not decoration.** Font propagation runs
+    `HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`, and the traversal *stops* at
+    the first entity without `ThemedText` — every wrapper row between a panel root and its
+    labels must carry it or everything below stays at the default 20 px. feathers never hits
+    this because its captions are direct children of the widget.
   `spawn_panel_button(commands, parent, marker, label, is_active, on_activate)` is the kit;
   `spawn_panel_button_with` takes the caption as a bundle instead of a string, for the
   two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
-  `@caption` because it comes from runtime strings, and it deliberately carries no
-  `ThemedText` — size and colour are the panels' own, and without that marker feathers
-  leaves the text alone.
+  `@caption` because it comes from runtime strings.
+- **City select** (`ui/city.rs`) — one `FeathersMenu` (button + `FeathersMenuPopup` +
+  `FeathersMenuItem` per city), not a button per city: there are seven of them, the row took
+  a third of the bottom edge and grew with each new city, and exactly one is ever chosen —
+  that is a select. The popup flips itself above the button when there is no room below.
+  `sync_city_label` keeps the button caption on the `City` resource, which `reset` and BRP
+  also write.
 - **Knob kit** (`ui/knob.rs`) — what panels actually call. A knob is a slider row bound
   to one field of one resource: `spawn_knob(commands, panel, label, &*resource, binding)`
   where `SliderBinding<R> { get, set, range, text }` is four function pointers, and

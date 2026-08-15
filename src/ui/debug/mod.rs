@@ -50,8 +50,8 @@ use crate::navigation::PolymeshDebug;
 use crate::prefs::{ResetSettings, TrackPrefExt};
 use crate::settings::NavtileBase;
 use crate::ui::{
-    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, UiOpacity, button_variant,
-    spawn_panel_button, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, button_variant, panel_background,
+    panel_button_label, row_label, spawn_panel_button,
 };
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
@@ -222,7 +222,7 @@ fn render_debug_toggles(
                 padding: UiRect::all(px(10.)),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            panel_background(),
             // низ левой колонки: панель Noise стыкуется прямо над этим рядом
             UiLeftColumn::DebugToggles,
             GameUiRoot,
@@ -338,24 +338,10 @@ fn spawn_cycler<M>(
             column_gap: px(6.),
             ..default()
         },
+        crate::ui::text_container(),
         children![
-            (
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(ROW_LABEL_COLOR),
-            ),
-            (
-                CyclerValueLabel(kind),
-                Text::new(value),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ),
+            row_label(label),
+            (CyclerValueLabel(kind), panel_button_label(&value)),
         ],
     );
     super::spawn_panel_button_with(commands, row, kind, caption, is_default, on_activate);

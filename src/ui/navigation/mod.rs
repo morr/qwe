@@ -65,6 +65,8 @@
 //! проходимое пространство.
 
 use bevy::ecs::system::{IntoObserverSystem, SystemParam};
+use bevy::feathers::theme::{ThemeTextColor, ThemeToken, UiTheme};
+use bevy::feathers::tokens;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
@@ -77,10 +79,10 @@ use crate::settings::{
     POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
 };
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
-use crate::ui::rows::{ROW_LEFT_PX, ROW_LIGHTEN, on_off, row_color, spawn_value_row};
+use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};
 use crate::ui::{
-    DebugNavmesh, GameUiRoot, ROW_LABEL_COLOR, UI_TEXT_SHADOW, UiLeftColumn, UiOpacity,
-    UiPanelGapBelow, left_panel, ui_color,
+    DebugNavmesh, GameUiRoot, UiLeftColumn, UiPanelGapBelow, left_panel, panel_block_background,
+    row_label,
 };
 
 mod knobs;
@@ -94,9 +96,6 @@ use self::knobs::{
 };
 use self::overlay::sync_polymesh_overlay;
 
-/// Приглушённая подпись — тем же способом, каким панели показывают неактивное:
-/// цветом, а не отдельной иконкой.
-const DIMMED_VALUE: Color = Color::srgb(0.45, 0.45, 0.45);
 /// Отступ слева у строк-настроек: настройка принадлежит подсистеме над ней, и
 /// лесенка говорит это раньше, чем читается подпись.
 const NESTED_ROW_INDENT_PX: f32 = 18.;
@@ -150,11 +149,11 @@ impl NavValueLabel {
         }
     }
 
-    /// Цвет подписи, если он у строки не белый по умолчанию.
-    fn color(self, values: &NavPanelValues) -> Option<Color> {
+    /// Токен цвета подписи, если он у строки не основной по умолчанию.
+    fn color(self, values: &NavPanelValues) -> Option<ThemeToken> {
         match self {
-            Self::Separation if !values.separation_allowed() => Some(DIMMED_VALUE),
-            Self::Separation => Some(Color::WHITE),
+            Self::Separation if !values.separation_allowed() => Some(tokens::TEXT_DIM),
+            Self::Separation => Some(tokens::TEXT_MAIN),
             _ => None,
         }
     }
@@ -267,7 +266,6 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
     let panel = commands
         .spawn((
             left_panel(UiLeftColumn::Navigation),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
             // ряд кнопок под панелью — другой род UI, вплотную он читался как
             // её первая строка
             UiPanelGapBelow,
@@ -276,12 +274,7 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
             Name::new("navigation_panel"),
             children![(
                 Text::new("Navigation"),
-                TextFont {
-                    font_size: FontSize::Px(14.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
+                ThemeTextColor(tokens::PANE_HEADER_TEXT),
             )],
         ))
         .id();
@@ -418,15 +411,9 @@ fn spawn_group_label(commands: &mut Commands, panel: Entity, label: &str) {
                 },
                 ..default()
             },
-            BackgroundColor(row_color(ROW_LIGHTEN)),
-            children![(
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(ROW_LABEL_COLOR),
-            )],
+            panel_block_background(),
+            crate::ui::text_container(),
+            children![row_label(label)],
         ))
         .id();
     commands.entity(panel).add_child(row);
@@ -506,12 +493,16 @@ fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSecti
 /// восстановленные настройки, хоткей N) — паттерн `sync_noise_values`.
 fn sync_nav_values(
     values: NavPanelValues,
+    theme: Res<UiTheme>,
     mut labels: Query<(&mut Text, &mut TextColor, &NavValueLabel)>,
 ) {
     for (mut text, mut color, label) in &mut labels {
         text.0 = label.text(&values);
+        // цвет пишется в `TextColor`, а не в `ThemeTextColor`: тот immutable и
+        // менялся бы вставкой на каждый кадр смены режима, а тема здесь — лишь
+        // источник двух цветов, и оба берутся из неё же
         if let Some(next) = label.color(&values) {
-            color.0 = next;
+            color.0 = theme.color(&next);
         }
     }
 }

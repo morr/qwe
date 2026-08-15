@@ -142,8 +142,9 @@ in `main.rs`.
   from: `Tula | NewYork | Paris | Berlin | London | Tokyo | DevilsLake`. Each carries its **geo center**
   (bbox center of the Overpass extract), its **portal hint** and its **cache slug**;
   `MAP_SIZE` and therefore `GRID_SIZE` are shared, so switching city never resizes the
-  navmesh. Panel — bottom centre (`ui/city.rs`), the current city's button is highlighted.
-- **City switch = full world reload.** Writing `City` (button or BRP) sends the app back
+  navmesh. UI — a **select** at bottom centre (`ui/city.rs`): one `FeathersMenu` whose
+  button carries the current city and whose popup lists all seven.
+- **City switch = full world reload.** Writing `City` (the select or BRP) sends the app back
   to `AppState::Loading`: leaving `Playing` despawns the scene, the load thread downloads
   / re-parses the new extract, refills the same navmesh (`fill_from_mapdata` resets it
   first), re-snaps the portal, and `OnEnter(Playing)` rebuilds map and population and
@@ -784,7 +785,7 @@ skill**.
   the idiom — CLAUDE.md.
 - **Panel map** — top-right: telemetry + **Speed button** (`ui/speed.rs`); top-left:
   **World / Demon / Human** (`ui/stats.rs` — run counters, `DemonStyle` and `HumanStyle`
-  sliders); bottom centre: **City** (`ui/city.rs`); right column bottom-up: Tree rows →
+  sliders); bottom centre: the **City** select (`ui/city.rs`); right column bottom-up: Tree rows →
   Trees → Buildings → Roads → hotkey help; left column bottom-up: debug toggles →
   Noise → **Navigation** (`ui/navigation/` — backend cycler `Algo: Navmesh ⇄ Polymesh`,
   the selected backend's settings only, and the `Separation` / `Slots` crowd-knob
@@ -799,13 +800,18 @@ skill**.
   systems differing only in which field they touched. Use it for any panel row driven by
   a resource; the Navigation panel's rows are the deliberate exception, since their text
   is computed from several resources at once.
-- **Widgets & theme** (`ui/theme.rs`) — panel buttons are first-party **`bevy_feathers`**
-  controls. `PanelWidgetsPlugin` installs `FeathersCorePlugin` (**not** the `FeathersPlugins`
-  group — `TabNavigationPlugin` would let Tab+Space both press a button and pause the sim)
-  plus `UiTheme(create_qwe_theme())`, feathers' dark theme with the button design tokens
-  repainted in qwe's colours. **"Active" is `ButtonVariant::Primary`**: panels write the
-  variant, feathers does hover / press / disabled. Kit: `spawn_panel_button`
-  (`spawn_panel_button_with` for two-text cycler rows). Detail — the **ui-panels** skill.
+- **Widgets & theme** (`ui/theme.rs`) — the panels are first-party **`bevy_feathers`**
+  controls wearing feathers' own look: `create_dark_theme()` as-is, grey buttons, blue
+  `Primary`, rounded corners, FiraSans at `PANEL_FONT` (12 px, not feathers' 14 — at 14 the
+  left column stopped fitting the screen). `PanelWidgetsPlugin` installs `FeathersCorePlugin`
+  (**not** the `FeathersPlugins` group — `TabNavigationPlugin` would let Tab+Space both press
+  a button and pause the sim) plus `UiTheme`. Everything that is not a widget is coloured by
+  the same **design tokens** (`panel_background`, `panel_block_background`, `row_label`,
+  `row_value`) — no hand-written UI colours are left. **"Active" is
+  `ButtonVariant::Primary`**: panels write the variant, feathers does hover / press /
+  disabled. Kit: `spawn_panel_button` (`spawn_panel_button_with` for two-text cycler rows);
+  a wrapper node between a panel root and its labels needs `text_container()` or the font
+  propagation stops at it. Detail — the **ui-panels** skill.
 - **Shared kits** — `ui/slider.rs` (`spawn_slider_row`, `quantize`, `apply_step`,
   `retarget`, one `sync_slider_thumbs` for all panels — the layer under the knob kit,
   called directly only by the crowd demo, whose sliders drive demo-local state rather
@@ -819,7 +825,7 @@ skill**.
   overlay is **one merged mesh** (per-tile entities once cost 330 k); the noise overlay is
   one CPU-built texture sprite. A cycler goes green while its resource equals
   `Default::default()`; `reset` is an **action** button (always `Normal`, hover/press only)
-  — green there would claim something about other resources.
+  — the accent colour there would claim something about other resources.
 - **Camera start view** (`camera.rs`) — `CameraPositionMode` (`reset | save`, default
   `save`, persisted): where the camera stands when the world comes up. `save` writes
   `SavedCameraView` on exit (a `Last` system after `bevy::window::ExitSystems`) and

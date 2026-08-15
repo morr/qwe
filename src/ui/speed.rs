@@ -7,13 +7,18 @@
 //! Скорость времени вынесена левее панели в отдельную кнопку: она не только
 //! показывает `SimSpeed`, но и крутит лесенку кликом.
 
+use bevy::app::PropagateOver;
 use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin};
-use bevy::picking::hover::Hovered;
+use bevy::feathers::constants::{fonts, size};
+use bevy::feathers::controls::ButtonVariant;
+use bevy::feathers::font_styles::InheritableFont;
+use bevy::feathers::theme::ThemeTextColor;
+use bevy::feathers::tokens;
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
-use bevy::ui::Pressed;
-use bevy::ui_widgets::Button;
+use bevy::text::FontWeight;
+use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::cursor_offset;
@@ -23,8 +28,8 @@ use crate::diagnostics::{
 };
 use crate::sim_time::{SimClock, SimSpeed, cycle_time_scale, previous_time_scale};
 use crate::ui::{
-    GameUiRoot, ROW_LABEL_COLOR, UI_SCREEN_EDGE_PX_OFFSET, UI_TEXT_SHADOW, UiOpacity,
-    button_background, ui_color,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, button_variant, panel_background, panel_button_label,
+    row_label, spawn_panel_button_with,
 };
 
 /// Ширина панели телеметрии; от неё же отсчитывается место кнопки скорости.
@@ -71,7 +76,8 @@ impl Plugin for UiSpeedPlugin {
     }
 }
 
-fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>) {
+fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<AssetServer>) {
+    let mono: Handle<Font> = assets.load(fonts::MONO);
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -94,39 +100,40 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>) {
             },
             ..default()
         },
-        BackgroundColor(ui_color(UiOpacity::Medium)),
+        panel_background(),
         GameUiRoot,
         Visibility::Hidden,
         Name::new("speed_ui"),
+        // моноширинный и покрупнее: часы и счётчики меняются каждый кадр, и на
+        // пропорциональном шрифте цифры под собой пляшут
+        InheritableFont {
+            font: mono.clone(),
+            font_size: size::SMALL_FONT,
+            weight: FontWeight::NORMAL,
+        },
         children![
             (
                 Text(format_sim_clock(clock.elapsed)),
+                // часы крупнее остальной телеметрии. `PropagateOver` — чтобы
+                // свой кегль пережил шрифт панели: без него `InheritableFont`
+                // сверху перезаписал бы `TextFont` целиком
                 TextFont {
+                    font: mono.clone().into(),
                     font_size: FontSize::Px(20.),
                     ..default()
                 },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
+                PropagateOver::<TextFont>::default(),
+                ThemeTextColor(tokens::TEXT_MAIN),
                 ClockTextMarker,
             ),
             (
                 Text::default(),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
+                ThemeTextColor(tokens::TEXT_DIM),
                 PathfindingTextMarker,
             ),
             (
                 Text::default(),
-                TextFont {
-                    font_size: FontSize::Px(12.),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                UI_TEXT_SHADOW,
+                ThemeTextColor(tokens::TEXT_DIM),
                 CameraTextMarker,
             ),
         ],
@@ -146,10 +153,10 @@ fn update_clock_text(text: Single<&mut Text, With<ClockTextMarker>>, clock: Res<
 /// Клик крутит лесенку скоростей (`cycle_time_scale`), правый клик — назад
 /// (`previous_time_scale`); хоткеи `=`/`-` и Space продолжают работать.
 ///
-/// Кнопка не берёт `bevy_ui_widgets::Button`-событие `Activate`: оно
-/// приходит на любую кнопку мыши, и правый клик срабатывал бы дважды — вперёд
-/// и назад. Сам `Button` оставлен ради `Pressed` для подсветки, а решение
-/// принимается в своём наблюдателе по `PointerButton`.
+/// Кнопка не берёт событие `Activate` кита: оно приходит на любую кнопку мыши,
+/// и правый клик срабатывал бы дважды — вперёд и назад. Виджет остаётся ради
+/// подсветки и `ButtonVariant`, а решение принимается в своём наблюдателе по
+/// `PointerButton`.
 fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: Res<SimSpeed>) {
     let panel = commands
         .spawn((
@@ -162,90 +169,73 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
                 padding: UiRect::all(px(10.)),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Medium)),
+            panel_background(),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("speed_panel"),
         ))
         .id();
 
-    let button = commands
-        .spawn((
-            Button,
-            SpeedButton,
-            Pickable::default(),
-            Hovered::default(),
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(8.),
-                // ширина фиксирована: значение меняется с «1x» на «15x → 8.4x»,
-                // и по авто-ширине кнопка прыгала бы при каждом клике
-                width: px(SPEED_BUTTON_WIDTH_PX),
-                padding: UiRect {
-                    top: px(4.),
-                    right: px(8.),
-                    bottom: px(4.),
-                    left: px(8.),
+    let caption = (
+        crate::ui::text_container(),
+        Node {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: px(8.),
+            // ширина фиксирована: значение меняется с «1x» на «15x → 8.4x»,
+            // и по авто-ширине кнопка прыгала бы при каждом клике
+            width: px(SPEED_BUTTON_WIDTH_PX),
+            ..default()
+        },
+        children![
+            (
+                row_label("Speed:"),
+                Node {
+                    flex_grow: 1.,
+                    ..default()
                 },
-                ..default()
-            },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
-            children![
-                (
-                    Text::new("Speed:"),
-                    TextFont {
-                        font_size: FontSize::Px(14.),
-                        ..default()
-                    },
-                    TextColor(ROW_LABEL_COLOR),
-                    Node {
-                        flex_grow: 1.,
-                        ..default()
-                    },
-                ),
-                (
-                    SpeedValueLabel,
-                    Text(format_speed_label(&time, &speed)),
-                    // значение живёт в строке кнопки фиксированной ширины: без
-                    // запрета переноса `Paused (30x)` ломается по пробелу на две
-                    // строки и кнопка вырастает вдвое
-                    TextLayout::no_wrap(),
-                    TextFont {
-                        font_size: FontSize::Px(14.),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ),
-            ],
-        ))
+            ),
+            (
+                SpeedValueLabel,
+                panel_button_label(&format_speed_label(&time, &speed)),
+                // значение живёт в строке кнопки фиксированной ширины: без
+                // запрета переноса `Paused (30x)` ломается по пробелу на две
+                // строки и кнопка вырастает вдвое
+                TextLayout::no_wrap(),
+            ),
+        ],
+    );
+    // `Activate` намеренно пустой — см. док функции; шаг лесенки решает
+    // наблюдатель `Pointer<Click>` ниже, он один знает, какая кнопка нажата
+    let button = spawn_panel_button_with(
+        &mut commands,
+        panel,
+        SpeedButton,
+        caption,
+        time.is_paused(),
+        |_activate: On<Activate>| {},
+    );
+    commands
+        .entity(button)
         .observe(
             |click: On<Pointer<Click>>, mut speed: ResMut<SimSpeed>| match click.button {
                 PointerButton::Primary => speed.requested = cycle_time_scale(speed.requested),
                 PointerButton::Secondary => speed.requested = previous_time_scale(speed.requested),
                 PointerButton::Middle => {}
             },
-        )
-        .id();
-    commands.entity(panel).add_child(button);
+        );
 }
 
 /// Подпись и подсветка кнопки. На паузе кнопка горит зелёным, как активный
 /// тумблер: пауза — состояние, а не мгновенное действие.
 fn update_speed_button(
-    button: Single<(&Hovered, Has<Pressed>, &mut BackgroundColor), With<SpeedButton>>,
+    mut variant: Single<&mut ButtonVariant, With<SpeedButton>>,
     value: Single<&mut Text, With<SpeedValueLabel>>,
     time: Res<Time<Virtual>>,
     speed: Res<SimSpeed>,
 ) {
-    let (hovered, is_pressed, mut background) = button.into_inner();
-
-    background.set_if_neq(BackgroundColor(button_background(
-        time.is_paused(),
-        is_pressed,
-        hovered.get(),
-    )));
+    variant.set_if_neq(button_variant(time.is_paused()));
 
     value
         .into_inner()

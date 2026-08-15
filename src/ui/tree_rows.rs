@@ -9,9 +9,7 @@ use bevy::prelude::*;
 use crate::map::{RoadJoin, RoadSmoothing, TreeRowPlacement, TreeRowStyle};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
-use crate::ui::{
-    GameUiRoot, PanelCount, UiOpacity, UiRightColumn, panel_header, right_panel, ui_color,
-};
+use crate::ui::{GameUiRoot, PanelCount, UiRightColumn, panel_header, right_panel};
 
 pub struct UiTreeRowStylePlugin;
 
@@ -27,7 +25,6 @@ fn render_tree_row_style_panel(mut commands: Commands, style: Res<TreeRowStyle>)
     let panel = commands
         .spawn((
             right_panel(UiRightColumn::TreeRows),
-            BackgroundColor(ui_color(UiOpacity::Medium)),
             GameUiRoot,
             Visibility::Hidden,
             Name::new("tree_row_style_panel"),

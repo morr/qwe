@@ -1,15 +1,16 @@
-//! Тема первопартийных виджетов (`bevy_feathers`) под облик панелей qwe.
+//! Первопартийные виджеты панелей (`bevy_feathers`) и их тема.
 //!
-//! Feathers красит свои контролы не константами, а **дизайн-токенами**: виджет
-//! носит `ThemeBackgroundColor(tokens::BUTTON_BG)`, а какой это цвет — решает
-//! ресурс `UiTheme`. Поэтому перевести панели на первопартийные кнопки и
-//! ползунки можно, не принимая редакторский вид feathers: берём её тёмную тему
-//! и переопределяем те токены, что панели видно.
+//! Тема принята **как есть** — `create_dark_theme()` библиотеки, с одним
+//! погашенным токеном (см. [`create_panel_theme`]). Панели поэтому выглядят так
+//! же, как галерея feathers: серые кнопки со скруглением 4 px, синий у
+//! «активных» (`ButtonVariant::Primary`), FiraSans 14 px, строка ростом
+//! `size::ROW_HEIGHT`.
 //!
-//! Значения не выписаны заново, а посчитаны тем же
-//! [`super::button_background`], которым красились самодельные кнопки, — иначе
-//! у формулы «активная зелёная, под курсором светлее, под нажатием ещё светлее»
-//! появилась бы вторая копия, и разъехаться они могли бы молча.
+//! Цвет виджету задаёт не константа, а **дизайн-токен**: контрол носит
+//! `ThemeBackgroundColor(tokens::BUTTON_BG)`, а какой это цвет — решает ресурс
+//! `UiTheme`. Значит и собственные плашки панелей красятся токенами
+//! (`tokens::PANE_BODY_BG`, `tokens::GROUP_BODY_BG`), а не своими цветами: иначе
+//! смена темы перекрасила бы половину экрана и оставила вторую.
 //!
 //! Соответствие состояний:
 //!
@@ -17,14 +18,28 @@
 //! |---|---|
 //! | кнопка в покое | `ButtonVariant::Normal` |
 //! | «активна» (тумблер включён, город выбран, пауза) | `ButtonVariant::Primary` |
-//! | инертная строка (`RowInert`) | `InteractionDisabled` |
+//! | инертная строка | `InteractionDisabled` |
 
 use bevy::feathers::dark_theme::create_dark_theme;
-use bevy::feathers::theme::{ThemeProps, ThemeToken, UiTheme};
+use bevy::feathers::theme::{ThemeProps, UiTheme};
 use bevy::feathers::{FeathersCorePlugin, tokens};
 use bevy::prelude::*;
 
-use super::{UiOpacity, button_background, ui_color};
+/// Тёмная тема feathers с одной поправкой (см. [`PanelWidgetsPlugin`]).
+fn create_panel_theme() -> ThemeProps {
+    let mut props = create_dark_theme();
+    // Ползунок рисует своё значение внутри полосы — голым числом, без единиц.
+    // «0.9» вместо «0.90 m» и «0.1» вместо «10%» на панели не сообщают ничего,
+    // поэтому число там пишет кит (`ui/slider.rs`), а собственное feathers
+    // гасится прозрачным цветом. Это единственный токен, который мы у темы
+    // отбираем: погасить текст можно только его цветом — маркер `SliderValueText`
+    // приватный, а формат зашит в `update_slider_pos`.
+    props.color.insert(tokens::SLIDER_TEXT, Color::NONE);
+    props
+        .color
+        .insert(tokens::SLIDER_TEXT_DISABLED, Color::NONE);
+    props
+}
 
 /// Первопартийные виджеты панелей вместе с их темой — всё, что нужно, чтобы
 /// кит кнопок и кит ползунков выглядели как в игре.
@@ -45,141 +60,6 @@ pub struct PanelWidgetsPlugin;
 impl Plugin for PanelWidgetsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FeathersCorePlugin)
-            .insert_resource(UiTheme(create_qwe_theme()));
-    }
-}
-
-/// Фон панели настроек — сквозь него видно карту.
-pub const PANEL_BG: ThemeToken = ThemeToken::new_static("qwe.panel.bg");
-
-/// Фон подложки внутри панели (строка-счётчик, ползунок): глушит карту сильнее.
-pub const PANEL_BG_HEAVY: ThemeToken = ThemeToken::new_static("qwe.panel.bg.heavy");
-
-/// Тёмная тема feathers с цветами панелей qwe поверх неё.
-pub fn create_qwe_theme() -> ThemeProps {
-    let mut props = create_dark_theme();
-    let color = &mut props.color;
-
-    // Обычная кнопка — тёмный прямоугольник панели.
-    color.insert(tokens::BUTTON_BG, button_background(false, false, false));
-    color.insert(
-        tokens::BUTTON_BG_HOVER,
-        button_background(false, false, true),
-    );
-    color.insert(
-        tokens::BUTTON_BG_PRESSED,
-        button_background(false, true, true),
-    );
-    // «Выключенная» — это покой, а не тусклость: инертная строка панели
-    // перестаёт подсвечиваться под курсором, но выглядит как обычная.
-    color.insert(
-        tokens::BUTTON_BG_DISABLED,
-        button_background(false, false, false),
-    );
-
-    // «Активная» кнопка — зелёная: тумблер включён, город выбран, пауза.
-    color.insert(
-        tokens::BUTTON_PRIMARY_BG,
-        button_background(true, false, false),
-    );
-    color.insert(
-        tokens::BUTTON_PRIMARY_BG_HOVER,
-        button_background(true, false, true),
-    );
-    color.insert(
-        tokens::BUTTON_PRIMARY_BG_PRESSED,
-        button_background(true, true, true),
-    );
-    color.insert(
-        tokens::BUTTON_PRIMARY_BG_DISABLED,
-        button_background(true, false, false),
-    );
-
-    color.insert(PANEL_BG, ui_color(UiOpacity::Medium));
-    color.insert(PANEL_BG_HEAVY, ui_color(UiOpacity::Heavy));
-
-    props
-}
-
-#[cfg(test)]
-mod tests {
-    use bevy::color::Luminance;
-
-    use super::*;
-
-    /// Незнакомый токен feathers не роняет, а красит виджет в фуксию и пишет
-    /// `warn_once` — то есть опечатка в теме видна только глазами на запущенной
-    /// игре. Тест перечисляет всё, что панели у темы спрашивают.
-    #[test]
-    fn the_theme_answers_every_token_the_panels_ask_for() {
-        let theme = create_qwe_theme();
-        for token in [
-            tokens::BUTTON_BG,
-            tokens::BUTTON_BG_HOVER,
-            tokens::BUTTON_BG_PRESSED,
-            tokens::BUTTON_BG_DISABLED,
-            tokens::BUTTON_TEXT,
-            tokens::BUTTON_TEXT_DISABLED,
-            tokens::BUTTON_PRIMARY_BG,
-            tokens::BUTTON_PRIMARY_BG_HOVER,
-            tokens::BUTTON_PRIMARY_BG_PRESSED,
-            tokens::BUTTON_PRIMARY_BG_DISABLED,
-            tokens::BUTTON_PRIMARY_TEXT,
-            tokens::BUTTON_PRIMARY_TEXT_DISABLED,
-            PANEL_BG,
-            PANEL_BG_HEAVY,
-        ] {
-            assert!(
-                theme.color.contains_key(&token),
-                "в теме нет токена {token}"
-            );
-        }
-    }
-
-    /// Тот же инвариант, что у самодельных кнопок, но уже на токенах: наведение
-    /// светлее покоя, нажатие светлее наведения — и у обычной кнопки, и у
-    /// зелёной.
-    #[test]
-    fn the_button_tokens_lighten_from_rest_to_hover_to_press() {
-        let theme = create_qwe_theme();
-        let luminance = |token: &ThemeToken| theme.color[token].to_linear().luminance();
-
-        for (rest, hover, pressed) in [
-            (
-                tokens::BUTTON_BG,
-                tokens::BUTTON_BG_HOVER,
-                tokens::BUTTON_BG_PRESSED,
-            ),
-            (
-                tokens::BUTTON_PRIMARY_BG,
-                tokens::BUTTON_PRIMARY_BG_HOVER,
-                tokens::BUTTON_PRIMARY_BG_PRESSED,
-            ),
-        ] {
-            assert!(
-                luminance(&rest) < luminance(&hover),
-                "наведение не осветлило {rest}"
-            );
-            assert!(
-                luminance(&hover) < luminance(&pressed),
-                "нажатие не осветлило {hover}"
-            );
-        }
-    }
-
-    /// Зелёная кнопка отличается от обычной не яркостью, а цветом: сравнивать
-    /// их светимостями бессмысленно, а вот перепутать местами — легко.
-    #[test]
-    fn the_primary_button_is_the_toggle_green() {
-        let theme = create_qwe_theme();
-        assert_eq!(
-            theme.color[&tokens::BUTTON_PRIMARY_BG],
-            super::super::TOGGLE_ACTIVE_COLOR
-        );
-        assert_eq!(
-            theme.color[&tokens::BUTTON_BG],
-            ui_color(UiOpacity::Heavy),
-            "обычная кнопка — фон панели"
-        );
+            .insert_resource(UiTheme(create_panel_theme()));
     }
 }

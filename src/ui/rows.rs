@@ -20,33 +20,26 @@
 //! чем не подсвечивать. Единственный носитель на сегодня — тумблер расталкивания
 //! в панели Navigation.
 
-use bevy::color::Mix;
 use bevy::ecs::system::IntoObserverSystem;
 use bevy::feathers::controls::FeathersButton;
+use bevy::feathers::font_styles::InheritableFont;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
-use super::{ROW_LABEL_COLOR, UiOpacity, ui_color};
-
-/// Фон строки в покое: плотный, поверх полупрозрачной панели.
-pub(super) const ROW_LIGHTEN: f32 = 0.0;
+use super::{row_label, row_value};
 
 /// Отступ слева у обычной строки. Вложенная (панель Navigation) прибавляет к
 /// нему свой `NESTED_ROW_INDENT_PX`.
 pub(super) const ROW_LEFT_PX: f32 = 8.0;
 
-pub(super) fn row_color(lighten: f32) -> Color {
-    ui_color(UiOpacity::Heavy).mix(&Color::WHITE, lighten)
-}
-
-/// Кнопка-строка: серая подпись слева, белое значение справа, клик — на
+/// Кнопка-строка: приглушённая подпись слева, значение справа, клик — на
 /// `on_activate`. Возвращает строку, чтобы вызывающая панель довесила свои
 /// метки и, если надо, свотч.
 ///
 /// Своя сцена, а не общий `super::spawn_panel_button_with`: у строки другая
 /// геометрия — она во всю ширину панели, с отступом слева по вложенности, и
-/// подпись растягивается, отжимая значение вправо. Общего у них ровно цвет, и
-/// он приходит из темы (`ui/theme.rs`), а не отсюда.
+/// подпись растягивается, отжимая значение вправо. Всё остальное — рост,
+/// скругление, цвета, курсор — приходит из сцены кнопки и темы.
 pub(super) fn spawn_value_row<M>(
     commands: &mut Commands,
     panel: Entity,
@@ -57,30 +50,23 @@ pub(super) fn spawn_value_row<M>(
     on_activate: impl IntoObserverSystem<Activate, (), M>,
 ) -> Entity {
     let padding = UiRect {
-        top: px(4.),
         right: px(8.),
-        bottom: px(4.),
         left: px(left_px),
+        ..default()
     };
     let row = commands
         .spawn_scene(bsn! {
             @FeathersButton
             Node {
-                height: Val::Auto,
                 justify_content: JustifyContent::FlexStart,
                 column_gap: px(6),
                 padding: {padding},
-                border_radius: BorderRadius::ZERO,
             }
+            InheritableFont { font_size: {super::PANEL_FONT} }
         })
         .observe(on_activate)
         .with_child((
-            Text::new(label),
-            TextFont {
-                font_size: FontSize::Px(12.),
-                ..default()
-            },
-            TextColor(ROW_LABEL_COLOR),
+            row_label(label),
             // распорка: подпись забирает всю свободную ширину, значение
             // прижимается к правому краю строки
             Node {
@@ -88,15 +74,7 @@ pub(super) fn spawn_value_row<M>(
                 ..default()
             },
         ))
-        .with_child((
-            value_marker,
-            Text::new(value),
-            TextFont {
-                font_size: FontSize::Px(12.),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-        ))
+        .with_child((value_marker, row_value(value)))
         .id();
     commands.entity(panel).add_child(row);
     row

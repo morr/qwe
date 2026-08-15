@@ -15,7 +15,8 @@ use crate::movement::{
 };
 use crate::navigation::{ArcNavmesh, Pathfinder};
 use crate::portal::PortalPos;
-use crate::ui::{UiOpacity, ui_color};
+use bevy::feathers::theme::ThemeBackgroundColor;
+use bevy::feathers::tokens;
 
 #[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AppState {
@@ -225,7 +226,7 @@ fn spawn_loader_ui(mut commands: Commands) {
                 row_gap: px(16.),
                 ..default()
             },
-            BackgroundColor(ui_color(UiOpacity::Heavy)),
+            ThemeBackgroundColor(tokens::WINDOW_BG),
             Name::new("loader"),
             children![(
                 LoaderText,
