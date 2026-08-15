@@ -108,8 +108,10 @@ impl RoadJoin {
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RoadSmoothing {
     /// Осевая ровно по данным OSM — как в самом OSM, где углы остаются острыми.
-    #[default]
     Off,
+    /// Один проход: улица на повороте перестаёт ломаться под углом, а рисунок
+    /// сети ещё держится там, где OSM ставил узлы.
+    #[default]
     Light,
     Strong,
 }

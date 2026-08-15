@@ -28,7 +28,6 @@ use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHAD
 #[reflect(Resource)]
 pub enum TreeShape {
     /// `zb.cloud`: облачный контур (`Bloater`), кольца `BALL_BANDS2`.
-    #[default]
     Cotton,
     /// `zb.pine`: колючий контур (`Spiker::simple`), кольца `CONE_BANDS3`.
     Conifer,
@@ -36,7 +35,9 @@ pub enum TreeShape {
     Palm,
     /// Смешанный лес: хвойные массивы среди облачных крон. Собственной
     /// геометрии не имеет — форму каждого дерева разрешает `resolve` по полю
-    /// хвои (`conifer::ConiferField`).
+    /// хвои (`conifer::ConiferField`). Один вид кроны на весь город читается
+    /// как узор обоев; массивы хвои разбивают его, ничего не стоя на карте.
+    #[default]
     Mixed,
 }
 
@@ -97,11 +98,11 @@ impl Default for TreeStyle {
         Self {
             foliage: CROWN_COLOR,
             details: INK_COLOR,
-            variance: 0.2,
+            variance: 0.35,
             shape: TreeShape::default(),
             conifer_share: 0.1,
             noise_mix: TREE_NOISE_MIX_DEFAULT,
-            density: 1.0,
+            density: 4.0,
             woods: true,
             standalone: true,
         }
@@ -141,9 +142,9 @@ impl Default for TreeRowStyle {
             placement: TreeRowPlacement::default(),
             osm_spacing: TreeRowLayout::default().osm_spacing,
             join: RoadJoin::default(),
-            // не `Off`, как у дорог: улица углом на повороте выглядит улицей, а
-            // лес — никогда. Полоса без сглаживания читается как нарисованная
-            // линия, а не как заросшая обочина
+            // задано явно, а не через `default()`: у дорог сглаживание — вкус, а
+            // здесь требование. Полоса без него читается как нарисованная линия,
+            // а не как заросшая обочина, и `Off` в этом поле — всегда ошибка
             smoothing: RoadSmoothing::Light,
             // у дороги кант отделяет полотно от фона, у зарослей отделять нечего:
             // подложка и так темнее газона, а второй зелёный контур читается как

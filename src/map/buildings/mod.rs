@@ -52,8 +52,7 @@ const EXTRUDE_RANGE: RangeInclusive<f32> = 2.5..=30.0;
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "buildings", key = "height_mode")]
 pub enum BuildingHeightMode {
-    /// Статус-кво: тёмная полоса фасада, сдвинутая вниз на долю высоты.
-    #[default]
+    /// Тёмная полоса фасада, сдвинутая вниз на долю высоты.
     Facade,
     /// Полоса фасада + длинная тень, длина пропорциональна высоте.
     Shadows,
@@ -61,7 +60,9 @@ pub enum BuildingHeightMode {
     ShadowsTint,
     /// 2.5D: крыша поднята на долю высоты, между контуром и крышей — стены.
     Extrusion,
-    /// Всё разом: 2.5D-экструзия + тонировка крыш + длинные тени.
+    /// Всё разом: 2.5D-экструзия + тонировка крыш + длинные тени: город с
+    /// объёмом читается как город, а плоский фасад — как чертёж.
+    #[default]
     ExtrusionShadowsTint,
 }
 
