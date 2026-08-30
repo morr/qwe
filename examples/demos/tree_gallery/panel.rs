@@ -101,7 +101,7 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         &mut commands,
         panel,
         ResetButton,
-        "Сброс к игре",
+        "Сброс",
         false,
         |_: On<Activate>, mut tuning: ResMut<Tuning>| *tuning = Tuning::default(),
     );
@@ -165,7 +165,8 @@ fn write_value(
     }
 }
 
-/// Кнопка сброса подсвечивается, пока настройка отличается от игровой.
+/// Кнопка сброса подсвечивается, пока настройка отличается от дефолта витрины —
+/// это игра по геометрии, но `variance` = 0, см. `Tuning::default`.
 pub(crate) fn sync_reset_button(
     tuning: Res<Tuning>,
     mut button: Query<&mut ButtonVariant, With<ResetButton>>,

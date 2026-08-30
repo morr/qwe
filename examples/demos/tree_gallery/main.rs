@@ -5,9 +5,10 @@
 //! варианта** (`0..TREE_VARIANTS`). Форм с собственной геометрией три —
 //! `Cotton`, `Conifer`, `Palm`; четвёртая, `Mixed`, своей геометрии не имеет и
 //! разрешается в `Cotton`/`Conifer` по полю хвои ещё до сборки меша. Вариантов
-//! `TREE_VARIANTS` на форму, и вариант задан целиком своим номером: крона и её
-//! тень разыгрываются из одного потока `variant_rng(variant)` подряд. Отсюда
-//! вся сетка — 3 × [`TREE_VARIANTS`] клеток, и это исчерпывающий список: в
+//! `TREE_VARIANTS` на форму, и вариант задан своим номером и сидом набора
+//! (ручка `Seed` в панели): крона и её тень разыгрываются из одного потока
+//! `variant_rng(variant, params)` подряд. Отсюда вся сетка —
+//! 3 × [`TREE_VARIANTS`] клеток, и это исчерпывающий список: в
 //! игре не бывает кроны, которой здесь нет.
 //!
 //! **Геометрия здесь та же, что в игре, а не её копия.** Клетку собирает
@@ -18,10 +19,16 @@
 //! **Панель слева — ручки самой генерации** (`CrownParams`, разбор — в
 //! `params.rs`): число вершин базы, джиттер радиуса, крупность выступов,
 //! кольца штриховки, толщины линий, геометрия тени, сид. Дефолт каждой равен
-//! константе, на которой нарисован город, поэтому «Сброс к игре» возвращает
-//! витрину ровно к тому, что видно в игре, а отклонение ручки читается как
-//! «на столько мы от игры отошли». В самой игре этих ручек нет: город
+//! константе, на которой нарисован город, поэтому отклонение ручки читается
+//! как «на столько мы от игры отошли». В самой игре этих ручек нет: город
 //! рисуется дефолтом.
+//!
+//! Единственная ручка не из `CrownParams` — «Variance» в группе «Цвет»
+//! (`TreeStyle::variance`) — и единственная, чей дефолт витрины расходится с
+//! игрой: ноль вместо игровых 0.35, потому что одинаковая зелень у всех клеток
+//! честнее показывает форму. Отсюда и подпись кнопки: «Сброс», а не «Сброс к
+//! игре», — она возвращает витрину к её дефолту, то есть к игровой геометрии
+//! с плоским цветом.
 //!
 //! Что видно в каждой клетке:
 //!
@@ -34,7 +41,10 @@
 //!   штампованным.
 //!
 //! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin`, ни
-//! `CameraPlugin` — читать и писать `settings.toml` тут нечему.
+//! `CameraPlugin` — читать и писать `settings.toml` тут нечему. Колесо при
+//! этом крутит игровая `camera::zoom_to_cursor` под своим гейтом
+//! `not(hovering_ui)`: из модуля взяты две функции, плагин с его настройками —
+//! нет.
 //!
 //! ```text
 //! cargo run --example tree_gallery
@@ -54,11 +64,10 @@ mod params;
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
 use bevy::input::common_conditions::input_just_pressed;
-use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::window::PrimaryWindow;
-use qwe::camera::cursor_offset;
+use qwe::camera::{hovering_ui, zoom_to_cursor};
 use qwe::map::trees::crown_variant;
 use qwe::map::{
     GROUND_COLOR, MeshBuilder, PARK_COLOR, SHADOW_COLOR, TreeShape, TreeStyle, WOOD_COLOR,
@@ -92,11 +101,6 @@ const CAPTION_FONT: f32 = 20.0;
 const ROW_LABEL_FONT: f32 = 30.0;
 /// Подписи темнее чернил кроны не нужны — это тот же карандаш.
 const LABEL_COLOR: Color = Color::srgb(0.14, 0.16, 0.20);
-/// Множитель зума на щелчок колеса — как в игре (`camera.rs::ZOOM_STEP`).
-/// **Мультипликативный, а не линейный**: у `PanCamera` зум прибавляется
-/// (`zoom_factor -= lines·zoom_speed`), и на крупном плане, где сам
-/// `zoom_factor` мельче шага, один щелчок швыряет камеру от упора до упора.
-const ZOOM_STEP: f32 = 1.12;
 /// Поля вокруг сетки при стартовом зуме, доля её ширины. Слева в них встаёт
 /// название ряда.
 const VIEW_MARGIN: f32 = 1.25;
@@ -195,7 +199,10 @@ fn main() {
                 cycle_ground.run_if(input_just_pressed(KeyCode::KeyG)),
                 toggle_shadows.run_if(input_just_pressed(KeyCode::KeyH)),
                 toggle_captions.run_if(input_just_pressed(KeyCode::KeyL)),
-                zoom_to_cursor,
+                // колесо над панелью витрине панели и принадлежит: тот же
+                // гейт, что у игры (`camera.rs`), — ввод, адресованный UI, в
+                // мир не идёт
+                zoom_to_cursor.run_if(not(hovering_ui)),
                 // сетка строится здесь же, а не в `Startup`: на первом кадре
                 // ресурс считается только что добавленным, и условие пускает
                 // ту же сборку, что потом идёт на каждую правку ручки
@@ -221,16 +228,29 @@ fn panel_span() -> f32 {
     PANEL_WIDTH_PX + 2.0 * UI_SCREEN_EDGE_PX_OFFSET
 }
 
-/// Экранная ширина, оставшаяся витрине от панели.
-fn viewport_width() -> f32 {
-    WINDOW_WIDTH - panel_span()
+/// Экранная ширина, оставшаяся витрине от панели, — по живому окну, а не по
+/// `WINDOW_WIDTH`: константа только **просит** размер у ОС, а выдаёт его ОС.
+/// На дисплее уже 1500 логических точек окно открывается ужатым, и зум,
+/// посчитанный по константе, кадрирует витрину под окно шире настоящего —
+/// первая колонка вместе с названиями рядов уходит под панель, ровно то, что
+/// чинил `9798c30`.
+fn viewport_width(window: &Window) -> f32 {
+    window.width() - panel_span()
 }
 
-fn spawn_camera(mut commands: Commands) {
+fn spawn_camera(mut commands: Commands, window: Single<&Window, With<PrimaryWindow>>) {
     let size = grid_size();
-    // масштаб = мировых единиц на пиксель, считается по свободной от панели
-    // части окна: иначе левые колонки витрины стоят под панелью
-    let zoom = size.x * VIEW_MARGIN / viewport_width();
+    // масштаб = мировых единиц на логический пиксель (`ScalingMode::WindowSize`
+    // меряет проекцию по логическому вьюпорту, в тех же единицах, что и
+    // `PANEL_WIDTH_PX`), считается по свободной от панели части окна: иначе
+    // левые колонки витрины стоят под панелью.
+    //
+    // Кадрирование стартовое и единственное: дальше камера принадлежит
+    // пользователю — колесо, перетаскивание, `WASD`. Поэтому на `WindowResized`
+    // витрина намеренно не перекадрируется: это отобрало бы разглядываемую
+    // крону, а «сетка мимо панели» и так не инвариант каждого кадра — её не
+    // держит ни зум к курсору, ни панорама.
+    let zoom = size.x * VIEW_MARGIN / viewport_width(&window);
     let grid_centre = Vec2::new(size.x / 2.0 - CELL_X / 2.0, -size.y / 2.0 + CELL_Y / 2.0);
     // Свободная часть окна лежит правее центра экрана ровно на полширины
     // занятой панелью полосы — значит камера едет ВЛЕВО на столько же, и мир
@@ -251,8 +271,8 @@ fn spawn_camera(mut commands: Commands) {
             zoom_factor: zoom,
             min_zoom: zoom / 20.0,
             max_zoom: zoom * 4.0,
-            // колесо ведёт `zoom_to_cursor`: линейный зум самого PanCamera на
-            // крупном плане неуправляем
+            // колесо ведёт `camera::zoom_to_cursor`: линейный зум самого
+            // PanCamera на крупном плане неуправляем
             zoom_speed: 0.0,
             key_zoom_in: None,
             key_zoom_out: None,
@@ -321,7 +341,8 @@ fn rebuild_crowns(
         variance: tuning.variance,
         ..default()
     };
-    let tints: Vec<Handle<ColorMaterial>> = tint_factors(tuning.variance)
+    let tints: Vec<Handle<ColorMaterial>> = style
+        .tint_factors()
         .iter()
         .map(|&factor| materials.add(Color::srgb(factor, factor, factor)))
         .collect();
@@ -335,8 +356,10 @@ fn rebuild_crowns(
             commands.spawn((
                 CrownTag,
                 Mesh2d(meshes.add(built.crown)),
-                // тот же выбор оттенка, что в игре: по индексу дерева
-                MeshMaterial2d(tints[(variant * 7) % tints.len()].clone()),
+                // тот же выбор оттенка, что в игре (`TreeStyle::tint_slot`): там
+                // его аргумент — номер дерева, здесь номер клетки в ряду, то
+                // есть клетка `#n` красится как дерево номер `n`
+                MeshMaterial2d(tints[TreeStyle::tint_slot(variant)].clone()),
                 Transform::from_translation(position.extend(1.0)),
                 Name::new(format!("{} #{variant}", shape.label())),
             ));
@@ -354,13 +377,6 @@ fn rebuild_crowns(
     ));
 }
 
-/// Квантованные множители яркости — копия `TreeStyle::tint_factors`, которая в
-/// игре приватна. При `variance == 0` все пять равны единице, и витрина стоит
-/// одинаково зелёной.
-fn tint_factors(variance: f32) -> [f32; 5] {
-    [-1.0, -0.5, 0.0, 0.5, 1.0].map(|bell: f32| 2.0_f32.powf(variance * bell))
-}
-
 /// Подпись шрифтом панелей игры: во встроенном шрифте bevy кириллицы нет.
 fn label_font(font: &Handle<Font>, size: f32) -> TextFont {
     TextFont {
@@ -376,38 +392,6 @@ fn visibility(shown: bool) -> Visibility {
     } else {
         Visibility::Hidden
     }
-}
-
-/// Зум колесом к точке под курсором — перенос `camera.rs::zoom_to_cursor`:
-/// шаг **умножает** масштаб, поэтому на любом приближении щелчок колеса
-/// меняет картинку одинаково, и мировая точка под курсором остаётся на месте.
-fn zoom_to_cursor(
-    window: Single<&Window, With<PrimaryWindow>>,
-    scroll: Res<AccumulatedMouseScroll>,
-    camera: Single<(&mut Transform, &mut PanCamera), With<Camera2d>>,
-) {
-    let lines = match scroll.unit {
-        MouseScrollUnit::Line => scroll.delta.y,
-        MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
-    };
-    if lines == 0.0 {
-        return;
-    }
-    let (mut transform, mut controller) = camera.into_inner();
-    let old_zoom = controller.zoom_factor;
-    let new_zoom =
-        (old_zoom * ZOOM_STEP.powf(-lines)).clamp(controller.min_zoom, controller.max_zoom);
-    if new_zoom == old_zoom {
-        return;
-    }
-    if let Some(cursor) = window.cursor_position() {
-        let offset = cursor_offset(&window, cursor);
-        let world_under_cursor = transform.translation.truncate() + offset * old_zoom;
-        transform.translation =
-            (world_under_cursor - offset * new_zoom).extend(transform.translation.z);
-    }
-    controller.zoom_factor = new_zoom;
-    transform.scale = Vec3::splat(new_zoom);
 }
 
 fn cycle_ground(mut ground: ResMut<Ground>, mut clear: ResMut<ClearColor>) {

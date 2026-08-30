@@ -155,9 +155,24 @@ impl Default for TreeRowStyle {
 }
 
 impl TreeStyle {
+    /// Точки колокола, по которым квантована яркость листвы: пять оттенков —
+    /// пять материалов на весь лес вместо материала на дерево.
+    const TINT_BELL: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
+
     /// Квантованные множители яркости: `2^(variance·bell)` для bell от −1 до 1.
-    fn tint_factors(&self) -> [f32; 5] {
-        [-1.0, -0.5, 0.0, 0.5, 1.0].map(|bell: f32| 2.0_f32.powf(self.variance * bell))
+    /// При `variance == 0` все пять равны единице, и лес стоит одноцветным.
+    ///
+    /// Публичной сделана по той же причине, что [`crown_variant`]: витрина
+    /// `tree_gallery` показывает игровые оттенки, а не свою копию формулы.
+    pub fn tint_factors(&self) -> [f32; 5] {
+        Self::TINT_BELL.map(|bell| 2.0_f32.powf(self.variance * bell))
+    }
+
+    /// Слот в пуле [`TreeStyle::tint_factors`] для дерева номер `index`. Шаг 7
+    /// взаимно прост с числом оттенков, поэтому пять подряд стоящих деревьев
+    /// получают пять разных оттенков, а не идут полосами по яркости.
+    pub fn tint_slot(index: usize) -> usize {
+        (index * 7) % Self::TINT_BELL.len()
     }
 }
 
@@ -279,7 +294,7 @@ pub fn spawn_trees(
         commands.spawn((
             TreeTag,
             Mesh2d(crown.clone()),
-            MeshMaterial2d(tints[(index * 7) % tints.len()].clone()),
+            MeshMaterial2d(tints[TreeStyle::tint_slot(index)].clone()),
             Transform::from_translation(position.extend(z)).with_scale(Vec3::splat(radius)),
             DespawnOnExit(AppState::Playing),
             Name::new("tree"),

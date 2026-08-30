@@ -20,7 +20,10 @@ const MAX_ZOOM: f32 = 4.5;
 /// Публичный: от него считается стартовая ступень зум-LOD трамвая
 /// (`map::tram::TramZoomBucket`).
 pub const START_ZOOM: f32 = 0.4;
-/// Множитель зума на один щелчок колеса.
+/// Множитель зума на один щелчок колеса. **Мультипликативный, а не линейный**:
+/// у `PanCamera` зум прибавляется (`zoom_factor -= lines·zoom_speed`), и на
+/// крупном плане, где сам `zoom_factor` мельче шага, один щелчок швыряет
+/// камеру от упора до упора.
 const ZOOM_STEP: f32 = 1.12;
 /// Скорость WASD-пана в *экранных* логических пикселях в секунду — как у
 /// `drag_pan`, поэтому на любом масштабе карта уезжает одинаково быстро.
@@ -42,8 +45,9 @@ const VIEW_SAVE_THROTTLE: f32 = 10.0;
 /// одинаковым, отсюда `Time<Real>`.
 const RESTART_DOUBLE_PRESS: f32 = 0.5;
 
-/// Откуда камера начинает — кнопка `position` в ряду тумблеров
-/// (`ui/debug.rs`), выбор запоминается между запусками (`prefs.rs`).
+/// Откуда камера начинает — листалка `Camera start` в секции World build
+/// вкладки Debug (`ui/debug/mod.rs`), выбор запоминается между запусками
+/// (`prefs.rs`).
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "camera", key = "position_mode")]
@@ -450,7 +454,12 @@ impl Viewport {
 
 /// Зум колесом к точке под курсором: мировая точка под курсором остаётся
 /// на месте, а не уезжает к центру экрана.
-fn zoom_to_cursor(
+///
+/// Публичная: тем же колесом крутится витрина крон
+/// (`examples/demos/tree_gallery`) — не копией, а этой самой системой и её
+/// гейтом [`hovering_ui`]. Границы зума берутся из `PanCamera` сущности, а не
+/// из констант модуля, поэтому у витрины свой диапазон.
+pub fn zoom_to_cursor(
     window: Single<&Window, With<PrimaryWindow>>,
     scroll: Res<AccumulatedMouseScroll>,
     mut query: Query<(&mut Transform, &mut PanCamera), With<Camera>>,
@@ -534,7 +543,11 @@ enum DragPan {
 /// То же условием расписания — для систем, которым решение нужно на каждом
 /// кадре целиком (зум колесом). Протяжка так не может: она решает один раз, в
 /// кадре нажатия, и держит решение до отпускания.
-fn hovering_ui(hover_map: Res<HoverMap>, ui_nodes: Query<(), With<Node>>) -> bool {
+///
+/// `pub` ради витрины крон (`examples/demos/tree_gallery`): у неё своя панель
+/// поверх сцены, и гейт у них с игрой обязан быть один — форк идиомы разошёлся
+/// бы с игрой на первой же правке.
+pub fn hovering_ui(hover_map: Res<HoverMap>, ui_nodes: Query<(), With<Node>>) -> bool {
     pointer_over_ui(&hover_map, &ui_nodes)
 }
 
@@ -657,5 +670,37 @@ mod tests {
             view.distance_from_centre_squared(Vec2::new(103.0, 104.0)),
             25.0
         );
+    }
+
+    /// Гейт колеса: курсор над узлом `bevy_ui` — зум мира не идёт, курсор над
+    /// сценой — идёт. Условие общее у игры и у витрины крон, поэтому оно
+    /// `pub` и проверяется здесь.
+    #[test]
+    fn the_wheel_is_blocked_while_the_pointer_is_over_a_ui_node() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::picking::backend::HitData;
+        use bevy::picking::pointer::PointerId;
+
+        fn hovering(over_ui: bool) -> bool {
+            let mut world = World::new();
+            let camera = world.spawn_empty().id();
+            let hovered = if over_ui {
+                world.spawn(Node::default()).id()
+            } else {
+                world.spawn(Transform::default()).id()
+            };
+            let mut hover_map = HoverMap::default();
+            hover_map
+                .entry(PointerId::Mouse)
+                .or_default()
+                .insert(hovered, HitData::new(camera, 0.0, None, None));
+            world.insert_resource(hover_map);
+            world
+                .run_system_once(hovering_ui)
+                .expect("гейт прогоняется")
+        }
+
+        assert!(hovering(true));
+        assert!(!hovering(false));
     }
 }
