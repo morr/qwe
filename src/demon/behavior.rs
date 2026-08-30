@@ -5,15 +5,19 @@ use rand::Rng;
 
 use crate::demon::claims::ChaseClaims;
 use crate::demon::components::{
-    ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
+    ChaseComponents, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
+    DemonDevourTag, DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
 use crate::grid::world_to_tile;
 use crate::human::Human;
-use crate::movement::{Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition};
+use crate::movement::{
+    Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition, request_wander_path,
+};
 use crate::navigation::Backend;
-use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE};
+use crate::settings::{
+    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEVOUR_PULSE_MAX_SCALE, DEVOUR_PULSE_PERIOD,
+};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
@@ -228,23 +232,34 @@ pub fn chase(
             continue;
         }
 
-        let Some(goal_tile) = walkable.sift_target(target_tile) else {
-            continue;
-        };
-        movable.to_pathfinding(
-            entity,
-            world_to_tile(sim_position.0),
-            goal_tile,
+        // хвост скелета прогулки: просев цели и подача заявки — один и тот же
+        // шаг независимо от того, кто выбрал цель. Возврат (фактически
+        // выбранный тайл) здесь не нужен: курса у демона нет, его ведёт цель
+        // погони, а не память о направлении.
+        request_wander_path(
             &mut commands,
+            &walkable,
+            entity,
+            &mut movable,
+            sim_position.0,
+            target_pos,
         );
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_CHASE_MS, started);
 }
 
+/// Выход из погони без убийства: снимается набор погони — и только он.
+///
+/// `Movable` здесь не трогается вовсе, и поэтому заявка/таск поиска обязаны
+/// остаться в полёте: демон дойдёт по ним до последнего известного места
+/// жертвы, там `to_idle` вернёт ему `NeedsWanderTarget`, и блуждание выберет
+/// новую цель. Снятая здесь заявка оставила бы его в
+/// `MovableState::Pathfinding` без заявки и без метки — то есть навсегда
+/// (`pick_wander_targets` требует `ready_to_pick`).
 fn back_to_wander(commands: &mut Commands, entity: Entity) {
     commands
         .entity(entity)
-        .remove::<(DemonChaseTag, ChaseTarget, ChaseRepath, DemonLungeTag)>()
+        .remove::<ChaseComponents>()
         .insert(DemonWanderTag);
     debug!("demon {entity} Chase => Wander");
 }
@@ -275,7 +290,11 @@ pub fn on_demon_caught_human(
     telemetry.killed += 1;
 
     // демон → Devour; пауза — из личного потока демона, а не общего: убийства
-    // прилетают обсерверами, и их порядок в тике задан порядком команд
+    // прилетают обсерверами, и их порядок в тике задан порядком команд.
+    // **Убийство стоит демону одного номера решения** — единственный сдвиг
+    // `WanderIndex` не из лестницы решений; обсервер зовётся со сброса команд
+    // `chase`, то есть внутри того же тика `FixedUpdate`, и сдвиг входит в
+    // контракт повтора (пин — `a_kill_spends_the_demons_next_decision_number`)
     let mut pause = DEMON_DEVOUR_PAUSE.0;
     if let Ok((mut movable, pawn_id, mut wander_index)) = movables.get_mut(demon) {
         movable.to_idle(demon, &mut commands, false);
@@ -283,16 +302,15 @@ pub fn on_demon_caught_human(
             .next(seed.0, crate::rng::RngDomain::Demon, pawn_id.0)
             .random_range(DEMON_DEVOUR_PAUSE.0..DEMON_DEVOUR_PAUSE.1);
     }
+    // сверх набора погони — заявка и таск поиска: ответ, прилетевший в
+    // Devour, прошёл бы через `accept_answer` → `Movable::to_moving` и
+    // увёл бы демона с трупа посреди паузы. Снять их можно ровно потому,
+    // что `to_idle` выше уже перевёл `Movable` в `Idle` и вернул
+    // `NeedsWanderTarget`; в `back_to_wander`, где `Movable` не трогают,
+    // то же снятие заморозило бы демона навсегда
     commands
         .entity(demon)
-        .remove::<(
-            DemonChaseTag,
-            ChaseTarget,
-            ChaseRepath,
-            DemonLungeTag,
-            PathfindingTask,
-            PathfindingRequest,
-        )>()
+        .remove::<(ChaseComponents, PathfindingTask, PathfindingRequest)>()
         .insert((
             DemonDevourTag,
             DevourUntil(Timer::from_seconds(pause, TimerMode::Once)),
@@ -326,11 +344,6 @@ pub fn devour(
     }
 }
 
-/// Период пульсации пожирающего демона, сек.
-const DEVOUR_PULSE_PERIOD: f32 = 0.5;
-/// Амплитуда пульсации: от ×1 до ×1.5 размера.
-const DEVOUR_PULSE_MAX_SCALE: f32 = 1.5;
-
 /// Пожирающий демон пульсирует: размер ходит по синусоиде ×1 → ×1.5 → ×1.
 pub fn pulse_devouring(
     mut query: Query<(&DevourUntil, &mut Transform), (With<Demon>, With<DemonDevourTag>)>,
@@ -349,6 +362,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::navigation::ArcNavmesh;
 
     /// Мир погони: общий двор плюс то, что нужно именно демонам — сетка людей,
     /// за которыми гонятся, и их стиль.
@@ -392,6 +406,17 @@ mod tests {
                 },
             ))
             .id()
+    }
+
+    /// Заткнуть тайл и всех восьмерых соседей — ровно ту окрестность, в
+    /// которой ищет `Walkable::sift_target`.
+    fn block_3x3(app: &mut App, tile: IVec2) {
+        let mut navmesh = app.world().resource::<ArcNavmesh>().write();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                navmesh.set_passable(tile.x + dx, tile.y + dy, false);
+            }
+        }
     }
 
     /// Такт с дельтой больше периода `ChaseRepath` — перепрокладке пора.
@@ -453,6 +478,36 @@ mod tests {
         );
     }
 
+    /// Цель непроходима и рядом ничего нет: перепрокладка молча пропускает
+    /// демона, а старая заявка доживает такт — отменять её нечем, новой нет.
+    ///
+    /// Это та самая ветка, которая после перевода хвоста на
+    /// `request_wander_path` выражается его `?`, а не собственным `else`.
+    #[test]
+    fn a_chaser_whose_target_has_no_passable_tile_keeps_its_request() {
+        let app = &mut app();
+        let target_position = Vec2::new(30.0, 10.0);
+        let human = app
+            .world_mut()
+            .spawn((Human, SimPosition(target_position)))
+            .id();
+        let pending_goal = IVec2::new(5, 5);
+        let demon = spawn_chaser(app, human, pending_goal, true);
+        block_3x3(app, world_to_tile(target_position));
+
+        run_repath_tick(app);
+
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("старая заявка обязана пережить неудачный просев");
+        assert_eq!(request.end_tile, pending_goal);
+        assert_eq!(
+            app.world().get::<Movable>(demon).expect("Movable").state,
+            MovableState::Pathfinding(pending_goal)
+        );
+    }
+
     fn spawn_human(app: &mut App, position: Vec2) -> Entity {
         let human = app.world_mut().spawn((Human, SimPosition(position))).id();
         app.world_mut()
@@ -489,6 +544,160 @@ mod tests {
                 .0,
             shared,
             "жертва больше не делится — свободная в {free} слишком далеко для смены цели"
+        );
+    }
+
+    /// Выход из погони без убийства снимает набор погони — и **только** его.
+    ///
+    /// Заявка поиска остаётся в полёте намеренно: `back_to_wander` не трогает
+    /// `Movable`, и снятая здесь заявка оставила бы демона в
+    /// `MovableState::Pathfinding` без заявки и без `NeedsWanderTarget` —
+    /// `pick_wander_targets` такого не поднимет никогда.
+    #[test]
+    fn a_demon_giving_up_the_chase_keeps_its_search_in_flight() {
+        let app = &mut app();
+        // 100 м — дальше гистерезиса (45 × 1.5 = 67.5): демон сдаётся
+        let human = spawn_human(app, Vec2::new(100.0, 10.0));
+        let pending_goal = IVec2::new(5, 5);
+        let demon = spawn_chaser_at(app, Vec2::ZERO, human, pending_goal, true);
+        // бросок в наборе погони есть, а `GaveUp` его не отменяет
+        // (`ChaseAction::cancels_lunge`) — унести его обязан выход из погони
+        app.world_mut().entity_mut(demon).insert(DemonLungeTag);
+
+        run_repath_tick(app);
+
+        assert!(app.world().get::<DemonWanderTag>(demon).is_some());
+        for absent in [
+            app.world().get::<DemonChaseTag>(demon).is_some(),
+            app.world().get::<ChaseTarget>(demon).is_some(),
+            app.world().get::<ChaseRepath>(demon).is_some(),
+            app.world().get::<DemonLungeTag>(demon).is_some(),
+        ] {
+            assert!(!absent, "набор погони обязан сняться целиком");
+        }
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("заявка обязана пережить выход из погони");
+        assert_eq!(request.end_tile, pending_goal);
+        assert_eq!(
+            app.world().get::<Movable>(demon).expect("Movable").state,
+            MovableState::Pathfinding(pending_goal)
+        );
+    }
+
+    /// Двор убийства: к погоне добавлены обсервер убийства и то, что он читает.
+    fn kill_app() -> App {
+        let mut app = app();
+        app.init_resource::<Telemetry>()
+            .insert_resource(crate::rng::WorldSeed(42))
+            .add_observer(on_demon_caught_human);
+        app
+    }
+
+    /// Убийство тратит **один** номер решения демона и берёт паузу из его
+    /// личного потока — тот же номер, который иначе достался бы следующему
+    /// выбору цели. Поток пешки сдвигается здесь вне лестницы решений, и это
+    /// часть контракта повтора: сдвиг обязан случаться на тех же тиках.
+    #[test]
+    fn a_kill_spends_the_demons_next_decision_number() {
+        let app = &mut kill_app();
+        // ближе KILL_DISTANCE (1 м) — лестница отвечает Kill до всех прочих ступеней
+        let human = spawn_human(app, Vec2::new(10.5, 10.0));
+        let demon = spawn_chaser(app, human, IVec2::new(5, 5), true);
+        app.world_mut()
+            .entity_mut(demon)
+            .insert((crate::rng::PawnId(7), crate::rng::WanderIndex::ready()));
+
+        app.update();
+
+        let expected = crate::rng::decision_stream(
+            42,
+            crate::rng::RngDomain::Demon,
+            7,
+            crate::rng::WanderIndex::ready().0,
+        )
+        .random_range(DEMON_DEVOUR_PAUSE.0..DEMON_DEVOUR_PAUSE.1);
+        let devour = app.world().get::<DevourUntil>(demon).expect("DevourUntil");
+        assert_eq!(
+            devour.0.duration(),
+            Duration::from_secs_f32(expected),
+            "пауза пожирания взята не из личного потока демона"
+        );
+        assert_eq!(
+            app.world()
+                .get::<crate::rng::WanderIndex>(demon)
+                .expect("WanderIndex")
+                .0,
+            crate::rng::WanderIndex::ready().0 + 1,
+            "убийство обязано стоить ровно один номер решения"
+        );
+    }
+
+    /// Стенд убийства: от двора нужны только часы, а сверх него — счётчики,
+    /// зерно (пауза пожирания тянется из потока демона) и сам обсервер.
+    fn devour_app() -> App {
+        let mut app = crate::sim_yard::behavior_yard();
+        app.insert_resource(crate::rng::WorldSeed(1))
+            .init_resource::<crate::telemetry::Telemetry>()
+            .add_observer(on_demon_caught_human);
+        app
+    }
+
+    /// Обсервер убийства снимает сверх набора погони заявку и таск поиска:
+    /// ответ, прилетевший в Devour, увёл бы демона с трупа. Законно это лишь
+    /// вместе с `to_idle` — поэтому тест проверяет обе половины сразу.
+    #[test]
+    fn a_demon_starting_to_devour_drops_its_search_and_parks_its_movable() {
+        let app = &mut devour_app();
+        let human = app.world_mut().spawn((Human, SimPosition(Vec2::ZERO))).id();
+        let pending_goal = IVec2::new(5, 5);
+        let mut movable = Movable::new(1.0);
+        movable.state = MovableState::Pathfinding(pending_goal);
+        let demon = app
+            .world_mut()
+            .spawn((
+                Demon,
+                DemonChaseTag,
+                ChaseTarget(human),
+                ChaseRepath::default(),
+                DemonLungeTag,
+                movable,
+                SimPosition(Vec2::ZERO),
+                crate::rng::PawnId(0),
+                crate::rng::WanderIndex::ready(),
+                PathfindingRequest {
+                    start_tile: IVec2::ZERO,
+                    end_tile: pending_goal,
+                },
+            ))
+            .id();
+        // как у настоящего преследователя: метку снял `to_pathfinding`
+        app.world_mut()
+            .entity_mut(demon)
+            .remove::<crate::movement::NeedsWanderTarget>();
+
+        app.world_mut()
+            .trigger(DemonCaughtHumanEvent { demon, human });
+        app.world_mut().flush();
+
+        assert!(app.world().get::<DemonDevourTag>(demon).is_some());
+        assert!(app.world().get::<DemonChaseTag>(demon).is_none());
+        assert!(
+            app.world().get::<PathfindingRequest>(demon).is_none(),
+            "ответ поиска увёл бы демона с трупа посреди пожирания"
+        );
+        assert!(app.world().get::<PathfindingTask>(demon).is_none());
+        // то, что делает снятие заявки безопасным
+        assert_eq!(
+            app.world().get::<Movable>(demon).expect("Movable").state,
+            MovableState::Idle
+        );
+        assert!(
+            app.world()
+                .get::<crate::movement::NeedsWanderTarget>(demon)
+                .is_some(),
+            "без метки демон не поднимется в блуждание после паузы"
         );
     }
 }

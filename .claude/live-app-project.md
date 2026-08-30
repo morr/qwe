@@ -147,7 +147,7 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `PawnId`, `WanderIndex`, `NeedsWanderTarget`, `RequestedAt`, `RetireAt`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
-`DemonStyle`, `HumanStyle`, `SeparationStyle`,
+`DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`,

@@ -60,6 +60,26 @@ Each rejected alternative has bitten:
 stream must advance on exactly the ticks it advanced on before, i.e. only on the pawns that
 actually took a decision this tick (see the `species-behavior` skill).
 
+**Where the stream actually advances** — six `WanderIndex::next` sites, and not all of them
+are a wander decision: `human/systems.rs::pick_wander_targets` (target),
+`human/behavior.rs::panic` (flee repath period), `human/behavior.rs::flee` (flee step, and
+the wander pause on the calm-down rung), `demon/systems.rs::pick_wander_targets` (target),
+and **`demon/behavior.rs::on_demon_caught_human` — an observer**: a kill costs the killer
+one decision number, drawn for the devour pause.
+
+That observer is still "on a tick": it is triggered only from `chase`
+(`SimSet::DemonBehavior`, `FixedUpdate`) and runs on that system's command flush, inside
+the same tick — the flush is a schedule position, not wall clock. Its *order* among several
+kills in one tick does not reach the dice either, because the stream is seeded from
+`(PawnId, decision number)`; what the replay contract needs is only that a given demon
+advances on the same ticks, and a demon can kill at most once per tick
+(`killed_this_tick` in `chase` dedupes the rest). Pinned by
+`demon::behavior::tests::a_kill_spends_the_demons_next_decision_number`.
+
+**A new `next` outside a `decide`-driven system belongs in this list.** The site that is
+easy to get wrong is not the roll but the schedule it hangs off: an observer reached from
+`Update`, or a roll behind an `if let Ok(..)` whose condition is not itself deterministic.
+
 ## Pawn identity
 
 **`PawnId`** (`rng.rs`) — a pawn's spawn ordinal within its species and run (humans
@@ -99,11 +119,19 @@ RNG work above is unconditional.
 
 | | off (default) | on |
 |---|---|---|
-| wander target picking | `Update` | `FixedUpdate` |
+| human wander target picking | `Update` | `FixedUpdate` |
 | pathfinding answers | when the task lands | on a fixed tick (`RetireAt`) |
 | dispatcher | camera-gated, priority by distance | FIFO by `(requested_at, species, pawn_id)` |
 | navigation backend | re-taken every frame | frozen for the run |
 | pawn separation | on (polymesh, on-screen) | off — the Nav tab's `Separation` row reads `off`, dimmed and unclickable, rather than a toggle that flips a resource nothing reads |
+
+**Only the humans' picking moves.** `demon::systems::pick_wander_targets` is registered once,
+in `FixedUpdate` inside `SimSet::DemonBehavior`, and runs there in **both** modes
+(`src/demon/mod.rs`): in `Update` the choice ran once per frame, i.e. depended on fps, and
+demons are a few hundred, so the extra tick runs cost nothing. The humans' copy is the one
+registered twice (`src/human/mod.rs`), and it stays in `Update` in the live branch because the
+warmup hangs on it — `loading.rs::poll_warmup` waits for wander requests, and `FixedUpdate`
+does not run while the warmup holds the sim paused.
 
 A run is deterministic or not from tick 0, so flipping the toggle (like changing the seed)
 orders a restart via `RestartPending` — and that restart carries `RestartEvent { to_portal:
@@ -129,8 +157,14 @@ hand-written `in_state(Playing)`, nine of them on one `FixedUpdate` chain.
   are raised in tests with no states at all.
 - The one place the mode is still read directly is `separation_runs`, which needs it
   **negated** ("separation is off — clear its leftovers"), and a set cannot be negated.
-- `MovementPlugin` / `HumanPlugin` / `NavigationPlugin` add `DeterminismPlugin` if absent:
-  an unconfigured set gates nothing, so both branches would run at once.
+- `MovementPlugin` / `HumanPlugin` / `NavigationPlugin` / `DemonPlugin` add
+  `DeterminismPlugin` if absent: an unconfigured set gates nothing, so both branches would
+  run at once — and, since the sets carry `in_world`, the world gate would go with them.
+- `SimSet::SpatialRebuild → DemonBehavior → HumanBehavior` (`spatial.rs`) is an **ordering**
+  spine, not a second world gate. It does carry `run_if(in_state(Playing))`, but that gate
+  belongs to `SpatialPlugin` and is simply absent wherever that plugin is not raised, so a
+  behaviour system inside it declares its `SimPipeline` branch anyway. The demon chain does
+  (`BothModes`); **`human::flee` still does not** — a known, deliberate leftover.
 
 **Every system taking `Res<Backend>` must sit in a `SimPipeline` set** — that is what
 carries the world gate along with the mode branch.

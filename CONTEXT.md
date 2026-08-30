@@ -295,7 +295,9 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   pawn's observable identity plus which choice this is, never the history of a stream. So
   draws do not depend on query iteration order, on neighbours, or on how many draws the
   previous decision consumed. **Position is deliberately not an input** — it would close
-  every pawn's trajectory into a cycle.
+  every pawn's trajectory into a cycle. It also advances on **transitions**, not only on
+  ladder rungs — a kill costs the demon one decision number, rolled for the devour pause in
+  the kill observer (the sites are listed in the determinism skill).
 - **Species** (`rng.rs`, component) — the other half of a pawn's personal number. `PawnId` is
   unique only *within* a species, so every mixed ordering (`movement::order::pawn_key`) puts
   species first. **Variant order is part of the replay contract** — `Demon` is declared
@@ -309,8 +311,9 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   settings, SimTick)`. Not `SimClock`, which counts virtual seconds and loses whatever
   `max_delta` discarded. **Compare states by tick, never by wall clock.**
 - **Deterministic** (`determinism.rs::Determinism`, panel toggle) — gates *scheduling*, not
-  the dice. On: target picking moves to `FixedUpdate`, answers land on a fixed tick, the
-  dispatcher stops looking at the camera, the backend is frozen, separation is off. A run is
+  the dice. On: *human* target picking moves to `FixedUpdate` (the demons' already runs there
+  in both modes), answers land on a fixed tick, the dispatcher stops looking at the camera,
+  the backend is frozen, separation is off. A run is
   deterministic or not from tick 0, so flipping it (like changing the seed) orders a restart
   via `RestartPending`, `to_portal: true`.
 - **SimPipeline** (`determinism/mod.rs`) — the toggle in the schedule: **three** system sets
@@ -359,11 +362,13 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop`. Systems mutate `SimPosition`, **never
   `Transform.translation.xy`**. `snapshot_previous_sim_positions` runs **before**
-  `SimSet::SpatialRebuild` and `move_moving_entities` **after** `SimSet::HumanBehavior`,
-  because behavior may move `SimPosition` itself (the demon lunge).
+  `SimSet::SpatialRebuild` (as does the demon spawner) and `move_moving_entities` **after**
+  `SimSet::HumanBehavior`, because behavior may move `SimPosition` itself (the demon lunge).
 - **Movable** — `{speed, path: VecDeque<IVec2>, state}` with `MovableState: Idle |
   Pathfinding(goal) | Moving(goal) | PathfindingError`. `to_pathfinding` queues the search
-  and keeps the current path; **`to_idle` is the only transition that stops movement**.
+  and keeps the current path; **`to_idle` is the only transition that stops movement** —
+  and it stops it whole: path, `MovableStateMovingTag`, and a `PathfindingRequest` that has
+  not been dispatched yet, with its `RequestedAt`.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells (≥ the
   largest search radius, so a radius query is a 3×3 cell walk). Cells hold **entities
   only** — positions are read live through the `pos_of` closure. **A tie in distance is
@@ -410,15 +415,22 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   entry point; the kill observer in `demon/` only reports that it happened. It calls
   **`movement::strip_movement`**, so `Movable`'s `#[require]` stays the single record of
   what a movable entity drags along.
-- **Demon** states (`demon/behavior.rs`): **Wander** (biased away from the portal) →
-  **Chase** → **Devour** → Wander. **Chase claims** — **max 2 chasers per target**
+- **Demon** states (`demon/behavior.rs`): **Wander** (a point in the `DEMON_WANDER_CONE`
+  (1.3 rad half-angle) around the away-from-portal vector, `DEMON_WANDER_RANGE` 40–120 m;
+  no `WanderPause` analogue and no stored `WanderHeading` — the next target is picked the
+  same frame the demon goes idle) → **Chase** (nearest human within `DEMON_AGGRO_RADIUS`
+  45 m with a free claim slot; give-up at ×1.5 radius hysteresis, 67.5 m) → **Devour** →
+  Wander. **Chase claims** —
+  **max 2 chasers per target**
   (`ChaseClaims`, `demon/claims.rs`), a value rebuilt each tick; there is no standing claim
   between ticks, only **GaveUp** releases a slot, and a switch *transfers* one. Repath
-  throttle 0.4 s, and on that tick the demon may **switch** target — **a rung of the ladder,
+  throttle 0.4 s (`DEMON_CHASE_REPATH`), and on that tick the demon may **switch** target — **a rung of the ladder,
   not a tail after it**. **Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with
   `line_of_sight`, the demon drops its path and steps `SimPosition` straight at the target;
   without it a chase never converts. Kill at `KILL_DISTANCE` triggers
-  `DemonCaughtHumanEvent`. **Devour** — pause 1.5–2 s with a sine pulse ×1 → ×1.5.
+  `DemonCaughtHumanEvent`. **Devour** — pause 1.5–2 s with a sine pulse ×1 → ×1.5; the pause
+  is rolled in the kill observer from the demon's **decision stream**, so a kill advances its
+  `WanderIndex`.
 - **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`. **Do not
   reintroduce per-state demon speeds**: the only multipliers are the two user ones,
   `DemonStyle::speed` and `DemonStyle::lunge`.
@@ -427,10 +439,16 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   only its `Default`. Lowering the cap never despawns demons already out. **The spawner runs
   only in `PlayPhase::Live`, and that is an invariant**: it hands out `PawnId`s from a
   counter `WorldStarted` resets, so a burst fired before the announcement deals the same
-  numbers twice. Matching precondition: **no demon may be alive when a run starts**.
+  numbers twice. Matching precondition: **no demon may be alive when a run starts**. It runs
+  **before `SimSet::SpatialRebuild`**, so a demon enters the demon grid and acts on the tick
+  it is born on.
 - **Separation** (`movement/separation/`, Nav tab, persisted) — soft pairwise
   anti-overlap, **on-screen only, cosmetic by charter**: pawns keep their body radii
-  (`HUMAN_BODY_RADIUS` 0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart. Runs **only on the
+  apart (a resting human pair at 1.8 m, against a 1.0 m `HUMAN_SIZE`). The radius is a
+  knob — **`HumanStyle::body_radius`**, and `HUMAN_BODY_RADIUS` 0.9 m is only its
+  `Default`; the demon's is never a separate knob, always `2 ×` it
+  (`separation::demon_radius`, `DEMON_RADIUS_RATIO`, default `DEMON_BODY_RADIUS` 1.8 m).
+  Runs **only on the
   polymesh backend and never under determinism** (grid waypoints re-collapse any push), once
   per rendered frame, below `SEPARATION_MAX_ZOOM`. Lunging demons are exempt; the one
   deliberate breach of "cosmetic" is `SeparationHolds` + rest-distance arrival forgiveness.
@@ -530,7 +548,11 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 ## Cross-references
 
 - All tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates, z-layers,
-  geo anchor).
+  geo anchor). Not there: a number that *is* a rule of a decision ladder rather than a knob
+  over it stays beside its `decide.rs` — `MAX_CHASERS_PER_TARGET` and the ×1.5/×0.7 switch
+  factors in `demon/decide.rs`, `FLEE_STEP`/`FLEE_SPREAD`/`ESCAPE_MARGIN` in
+  `human/decide.rs`. A constant both species declare moves to `settings.rs`
+  (`WANDER_MAP_MARGIN`). Detail — **species-behavior skill**.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
   `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry
   the tag coverage audit and the crown-algorithm write-up).

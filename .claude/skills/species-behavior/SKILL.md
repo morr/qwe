@@ -30,6 +30,10 @@ interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems 
 Fixed-step order is explicit and load-bearing:
 
 - `snapshot_previous_sim_positions` **before** `SimSet::SpatialRebuild`;
+- the demon spawner (`spawn_initial_burst`, `tick_spawner`) **before**
+  `SimSet::SpatialRebuild` — the edge is what puts a sync point between the spawn commands
+  and the grid rebuild, so a demon is in the grid on the tick it is born. With no edge the
+  flush landed on either side of the rebuild depending on the executor;
 - `move_moving_entities` **after** `SimSet::HumanBehavior` — behavior may move `SimPosition`
   itself (the demon lunge), and a snapshot taken after that would flatten one tick of
   interpolation.
@@ -88,7 +92,10 @@ Three things deliberately stay outside `decide`:
   `decide`: the target-switch search is run by `chase`, while its radius and chaser limit are
   a `SwitchRule` the ladder returned.
 - **RNG rolls** stay in `behavior.rs` — the decision stream must advance on exactly the ticks
-  it advanced on before (`determinism`).
+  it advanced on before (`determinism`). Not every roll hangs off a rung: the flee repath
+  period (`human::panic`) and the devour pause (`demon::on_demon_caught_human`, an
+  **observer**) are rolled on a *transition*, and each still costs the pawn one decision
+  number.
 
 ## The wander skeleton
 
@@ -98,7 +105,9 @@ Three things deliberately stay outside `decide`:
 `clamp_to_map` → `request_wander_path` (sift + `to_pathfinding`) → `heading_towards`.
 
 Only **where** a pawn wants to go is per-species; the rest was written twice, and the
-sift-then-request tail four times. The skeleton deliberately does **not** open the `SimRng`
+sift-then-request tail four times. The chase repath (`demon/behavior.rs`) now goes through
+`request_wander_path` too; the flee repath (`human/behavior.rs`) is the one hand-written copy
+left. The skeleton deliberately does **not** open the `SimRng`
 — the species does, in its own place, or the decision stream would advance on pawns that
 took no decision this tick. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`; it
 used to be declared in both species files.
@@ -217,6 +226,49 @@ and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
 States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target biased away
 from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always.
 
+### Wander
+
+**A point in the `DEMON_WANDER_CONE` (1.3 rad half-angle, ≈75°) around the away-from-portal
+vector, `DEMON_WANDER_RANGE` (40–120 m) out** — `pick_wander_targets` (`demon/systems.rs`)
+builds the course as `(sim_position − portal_pos).normalize_or(<random angle>)` and hands it
+to `point_in_cone`. "Away from the portal" is the whole of the species' policy; everything
+around it is the shared skeleton. At the map edge `clamp_to_map` turns the direction inward —
+that is all the system's comment about the border means; there is no separate border rule.
+
+Against the human's stroll (60° half-angle, 20–40 m): a wider cone and a walk two to three
+times longer, and **no errand branch at all** — a demon never picks a building, so the 80/20
+roll and `pick_building_ahead` are human-only.
+
+**No `WanderPause` analogue and no `WanderHeading`.** The demon takes its next target on the
+very tick `Movable::to_idle` hands `NeedsWanderTarget` back, so it never stands between
+walks; and its course is recomputed from the portal on every pick instead of being kept, so
+`heading_towards` — the skeleton's last step — is never called for a demon.
+`WanderIndex::ready()` at spawn puts the first target on the demon's first tick.
+
+**Three draws from the decision stream on every pick, in this order: fallback angle → cone
+rotation → distance.** The first is the argument of `normalize_or`, which takes a *value*,
+not a closure — it is rolled even when the demon is far from the portal and the fallback is
+thrown away. Making it lazy would drop a draw on nearly every pick and desynchronise every
+recorded replay (`determinism`): if it ever changes, it changes as a replay-breaking change,
+not as a tidy-up.
+
+### Acquisition and give-up
+
+**Enter when the nearest human within `DEMON_AGGRO_RADIUS` (45 m) still has a free claim
+slot** — `acquire_targets` walks the *human* grid (`nearest_in_range_where` with the
+`ChaseClaims::is_full` filter), so a victim that already has its two chasers is skipped, not
+queued behind them. A demon takes aggro on the first tick it exists, the initial burst
+included.
+
+**Give up past ×1.5 that radius (67.5 m)** — `RADIUS_HYSTERESIS`, the same enter/exit pattern
+as the human's calm-down. It is the **first rung of `decide`** after the dead-target check:
+checked before the kill, the lunge and the repath gate, so a demon dragged out of the ring
+leaves on that same tick, and `GaveUp` is the one exit that frees its claim slot.
+
+The two species' radii are not symmetric, and the ordering is worth holding: a human panics
+at `HUMAN_PANIC_RADIUS` (60 m), a demon acquires at 45 m, so the demon almost always starts
+its chase on an already-fleeing target.
+
 ### Chase claims
 
 **Max 2 chasers per target**, counted by `ChaseClaims` (`demon/claims.rs`) — a value rebuilt
@@ -231,7 +283,7 @@ exhaustive match could not see.
 
 ### Repath and the switch rung
 
-Repath throttle 0.4 s, and on that same tick the demon may **switch** target — **a rung of
+Repath throttle 0.4 s (`DEMON_CHASE_REPATH`), and on that same tick the demon may **switch** target — **a rung of
 the ladder, not a tail after it**: the search is a lazy sense (`better_victim`) that `decide`
 asks only on the repath rung, and the answer is `ChaseAction::Switch { to: Victim }`.
 
@@ -242,10 +294,32 @@ asks only on the repath rung, and the answer is `ChaseAction::Switch { to: Victi
   tick.
 - Both cases require **`line_of_sight`** to the candidate, checked on the search winner only.
 
+**These three live in `demon/decide.rs`, not `settings.rs`, on purpose.**
+`MAX_CHASERS_PER_TARGET`, `SWITCH_DISTANCE_FACTOR`, `CLOSER_SWITCH_FACTOR` are rules of the
+ladder — same placement as `FLEE_STEP`/`FLEE_SPREAD` in `human/decide.rs`, while the metres the
+ladder consumes (`DEMON_AGGRO_RADIUS`, `DEMON_LUNGE_RANGE`, `KILL_DISTANCE`,
+`RADIUS_HYSTERESIS`) do come from `settings.rs`. What moves to `settings.rs` is a knob or a
+constant both species declare (`WANDER_MAP_MARGIN`, commit `432eabf`). Don't relocate them to
+"comply" with the tuning-constants rule.
+
 **A chaser with no first path yet skips the repath tick and waits.** Repathing cancels the
 in-flight search, and whenever the pipeline answers slower than the victim changes tiles the
 demon cancelled every answer and stood frozen at the portal. Once the first path lands,
 coasting covers the repath gaps and cancelling becomes safe.
+
+**The throttle clock runs only on the rungs the ladder reaches.** `chase` *asks*
+`ChaseRepath` (`remaining() <= time.delta()`) and ticks it on `Hold`, `Repath` and `Switch`
+only — `Lunge` and the wait freeze it, and nothing else in the code ticks it. For the wait
+that is the point: the timer is inserted fresh at Wander → Chase, so the first path gets a
+whole throttle period of walking instead of being repathed away the tick after it lands.
+After a **lunge** the freeze delays nothing — the lunge's `to_idle` empties the path and an
+answer arriving meanwhile is dropped (`accept_answer` accepts only in `Pathfinding`), so on
+the tick the lunge is cancelled the demon is `Idle`, `needs_first_path` holds, and the
+repath/switch rung fires whatever the timer says. What survives is the throttle's *phase*:
+that repath advances the frozen remainder rather than a fresh period, so the **next** repath —
+and with it the next chance to switch victim — may come one tick later instead of
+`DEMON_CHASE_REPATH` later. The throttle is a floor between *timer-driven* repaths, not
+between repaths.
 
 ### Lunge, kill, devour
 
@@ -259,8 +333,23 @@ victim's live position. Lunging demons are exempt from separation.
 **Kill** at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); a `killed_this_tick`
 HashSet dedupes double kills within one command flush.
 
-**Devour** — pause 1.5–2 s with a sine **pulse** ×1 → ×1.5 (0.5 s period), scale reset on
-exit.
+**What each exit from a chase strips is one list plus one exception.** The list is
+`ChaseComponents` (`demon/components.rs`) — the four chase components, removed whole by
+both exits. The kill observer removes `PathfindingTask` / `PathfindingRequest` on top,
+because an answer landing in Devour would `to_moving` the demon off the corpse; it may,
+because it calls `Movable::to_idle` first. `back_to_wander` touches no `Movable`, so it
+must **not** cancel the search: a demon left in `MovableState::Pathfinding` with no
+request and no `NeedsWanderTarget` never wanders again.
+
+**Devour** — pause `DEMON_DEVOUR_PAUSE` (1.5–2 s) with a sine **pulse** ×1 →
+`DEVOUR_PULSE_MAX_SCALE` (1.5) over `DEVOUR_PULSE_PERIOD` (0.5 s), scale reset on exit.
+All four numbers live in `settings.rs`, none inline in `demon/behavior.rs`.
+
+The pause is rolled **in the kill observer, from the demon's own decision stream** — so a
+kill advances the killer's `WanderIndex` by one, the only such advance outside a
+decide-driven system. It stays deterministic because the observer is reached from `chase`'s
+command flush inside the same `FixedUpdate` tick; moving the trigger to `Update`, or rolling
+the pause from a shared generator, breaks replay (`determinism`).
 
 ### Speed
 
@@ -285,7 +374,9 @@ persisted); `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are only its `Default`.
 - The timer's period is re-synced inside `tick_spawner`, because restart and city switch
   rebuild `DemonSpawner` whole.
 
-**A demon acts from the first tick it exists**, the initial burst included. A
+**A demon acts from the first tick it exists**, the initial burst included — held by the
+schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in
+`SimPipeline::BothModes` (`demon/mod.rs`). A
 `DemonSpawnPause` (0.5–3 s staging) existed and was removed on request; staging an entrance
 again means a new component, not reviving that one.
 

@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::{DEMON_CAP, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL, DEMON_SPEED_FACTOR};
+use crate::settings::{
+    DEMON_CAP, DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL,
+    DEMON_SPEED_FACTOR,
+};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -20,16 +23,13 @@ pub struct DemonChaseTag;
 #[reflect(Component)]
 pub struct DemonDevourTag;
 
-/// Цель погони.
+/// Цель погони. Компонент есть ⇔ демон кого-то гонит: ставится в `acquire_targets`
+/// вместе с `DemonChaseTag`, снимается вместе с ним в `back_to_wander` и в
+/// `on_demon_caught_human`. `Default` намеренно нет — «цели по умолчанию» не бывает,
+/// её отсутствие выражается отсутствием компонента, а не битым `Entity`.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 pub struct ChaseTarget(pub Entity);
-
-impl Default for ChaseTarget {
-    fn default() -> Self {
-        Self(Entity::PLACEHOLDER)
-    }
-}
 
 /// Финальный бросок: демон идёт напрямую на текущую позицию жертвы, минуя
 /// тайловый путь, и с надбавкой к скорости (`DemonStyle::lunge`). Ставится и
@@ -46,18 +46,35 @@ pub struct ChaseRepath(pub Timer);
 
 impl Default for ChaseRepath {
     fn default() -> Self {
-        Self(Timer::from_seconds(0.4, TimerMode::Repeating))
+        Self(Timer::from_seconds(
+            DEMON_CHASE_REPATH,
+            TimerMode::Repeating,
+        ))
     }
 }
 
+/// Из чего состоит погоня: набор снимается **целиком** на любом выходе из
+/// Chase — и в блуждание (`back_to_wander`), и в Devour (обсервер убийства).
+/// Одно имя вместо двух списков: новая компонента погони дописывается сюда, и
+/// оба выхода узнают о ней сами.
+///
+/// Заявки и таска поиска здесь нет намеренно — они принадлежат движению, и
+/// снимать их вправе только тот выход, который заодно паркует `Movable`
+/// (см. `demon::behavior::on_demon_caught_human`).
+pub type ChaseComponents = (DemonChaseTag, ChaseTarget, ChaseRepath, DemonLungeTag);
+
 /// Пауза «пожирания» над трупом.
+///
+/// Дефолт — только нижняя граница `DEMON_DEVOUR_PAUSE`: живой таймер собирает
+/// `on_demon_caught_human`, разыгрывая длительность по всему диапазону из
+/// личного потока демона.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 pub struct DevourUntil(pub Timer);
 
 impl Default for DevourUntil {
     fn default() -> Self {
-        Self(Timer::from_seconds(1.5, TimerMode::Once))
+        Self(Timer::from_seconds(DEMON_DEVOUR_PAUSE.0, TimerMode::Once))
     }
 }
 
@@ -102,7 +119,15 @@ impl Default for DemonStyle {
 }
 
 /// Спавнер демонов: стартовый залп, затем по таймеру до капа.
-#[derive(Resource)]
+///
+/// Состояние мира, а не настройка: `WorldStarted` пересобирает его целиком
+/// (`demon::on_world_started`). В реестре типов — ради живого осмотра по BRP,
+/// рядом с остальным состоянием прогона (`Telemetry`, `SimTick`, `TickDebt`).
+/// Регистрация даёт и запись: правка `spawned` руками по BRP раздаст уже
+/// выданные `PawnId` второй раз, а на их уникальности стоят и поток ГПСЧ
+/// пешки, и ключ очереди диспетчера.
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
 pub struct DemonSpawner {
     pub timer: Timer,
     pub spawned: usize,
