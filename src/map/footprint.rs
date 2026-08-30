@@ -19,7 +19,7 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use super::meshing::miter_offsets;
-use super::osm::model::{RoadLine, WallLine, WaterLine, distance_to_segment};
+use super::osm::model::{RoadLine, WallLine, WaterLine, distance_to_segment, ring_bounds};
 use crate::settings::PASSAGE_MAX_WIDTH;
 
 /// Насколько близко точка одной ломаной должна лежать к другой ломаной,
@@ -53,6 +53,19 @@ pub fn ways_joined(first: &[Vec2], second: &[Vec2]) -> bool {
         || second
             .iter()
             .any(|&point| distance_to_polyline(point, first) < JOIN_EPSILON)
+}
+
+/// Могут ли ломаные с такими AABB примыкать — коробки пересекаются с запасом
+/// [`JOIN_EPSILON`].
+///
+/// Префильтр к [`ways_joined`], а не замена ему: `true` не утверждает ничего,
+/// `false` — утверждает. Отрезок лежит внутри своей коробки, значит расстояние
+/// до отрезка не меньше расстояния до коробки; разошлись коробки больше чем на
+/// эпсилон — разошлись и точки. Запас обязателен: примыкание в OSM — общий
+/// узел, но проекция теряет точность, и стык в 0.4 м от торца моста коробок уже
+/// не пересекает.
+fn boxes_may_join(first: (Vec2, Vec2), second: (Vec2, Vec2)) -> bool {
+    (first.0 - JOIN_EPSILON).cmple(second.1).all() && (second.0 - JOIN_EPSILON).cmple(first.1).all()
 }
 
 /// Кант — 8% ширины дороги в разумных пределах.
@@ -183,13 +196,29 @@ pub struct CurbCoverage<'a> {
 impl<'a> CurbCoverage<'a> {
     pub fn build(roads: &'a [RoadLine]) -> Self {
         let bridges: Vec<&RoadLine> = roads.iter().filter(|road| road.bridge).collect();
+        // AABB-прекомпьют по мостам — тем же приёмом, что у
+        // `parse::drop_buildings_in_water`. Дорог на карте десятки тысяч
+        // (Лондон 43 000), мостов сотни, а примыкает ~1%, и короткое замыкание
+        // `.any()` срабатывает ровно у этого процента: остальные честно мерили
+        // расстояние до каждого моста, точка за отрезком. Лондон — 1.00 с на
+        // вызов против 19 мс, и вызова два, оба на загрузке (заливка сетки и
+        // постройка полигонального меша)
+        let bridge_boxes: Vec<(Vec2, Vec2)> = bridges
+            .iter()
+            .map(|bridge| ring_bounds(&bridge.points))
+            .collect();
         let joining = roads
             .iter()
             .filter(|road| !road.bridge)
             .filter(|road| {
+                let road_bounds = ring_bounds(&road.points);
                 bridges
                     .iter()
-                    .any(|bridge| ways_joined(&road.points, &bridge.points))
+                    .zip(&bridge_boxes)
+                    .any(|(bridge, &bridge_bounds)| {
+                        boxes_may_join(road_bounds, bridge_bounds)
+                            && ways_joined(&road.points, &bridge.points)
+                    })
             })
             .collect();
         Self { bridges, joining }
@@ -211,6 +240,7 @@ impl<'a> CurbCoverage<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::osm::fixture;
 
     /// Общий узел посреди одной из ways ловится с любой стороны — ровно ради
     /// этого случая предикат симметричен.
@@ -229,6 +259,35 @@ mod tests {
         let bridge = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)];
         let under = [Vec2::new(0.0, 2.0), Vec2::new(100.0, 2.0)];
         assert!(!ways_joined(&bridge, &under));
+    }
+
+    /// Отбор примыкающих: общий узел — да; проход ПОД пролётом — нет, хотя
+    /// коробки у него и у моста совпадают (решает по-прежнему `ways_joined`,
+    /// а не префильтр); дальняя дорога — нет.
+    #[test]
+    fn coverage_takes_only_ways_sharing_a_node_with_a_bridge() {
+        let roads = vec![
+            fixture::bridge(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
+            fixture::street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 60.0)], 8.0),
+            fixture::street(vec![Vec2::new(0.0, 2.0), Vec2::new(100.0, 2.0)], 3.5),
+            fixture::street(vec![Vec2::new(500.0, 500.0), Vec2::new(600.0, 500.0)], 8.0),
+        ];
+        let coverage = CurbCoverage::build(&roads);
+        assert_eq!(coverage.bridges().len(), 1);
+        assert_eq!(coverage.joining().len(), 1);
+        assert_eq!(coverage.joining()[0].points[0], Vec2::new(100.0, 0.0));
+    }
+
+    /// Отбор идёт с запасом [`JOIN_EPSILON`] на обеих сторонах: дорога,
+    /// начинающаяся в 0.4 м от торца моста, примыкает — хотя её коробка
+    /// коробку моста не пересекает, и любой отбор по голому AABB её потеряет.
+    #[test]
+    fn a_way_ending_just_short_of_a_bridge_still_joins_it() {
+        let roads = vec![
+            fixture::bridge(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
+            fixture::street(vec![Vec2::new(100.4, 0.0), Vec2::new(200.0, 0.0)], 8.0),
+        ];
+        assert_eq!(CurbCoverage::build(&roads).joining().len(), 1);
     }
 
     #[test]

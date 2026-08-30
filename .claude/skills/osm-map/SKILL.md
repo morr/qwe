@@ -225,7 +225,12 @@ move what blocks).
 
 `CurbCoverage` also lives here: the shared *inputs* of the composite-bridge curb
 decision — the bridge list and the joining-roads list, filtered by one `ways_joined`
-(moved from `navigation`). The decision itself is deliberately NOT unified: the grid
+(moved from `navigation`). `ways_joined` is reached only through an AABB prefilter
+(`boxes_may_join`, bridge boxes precomputed once, both inflated by `JOIN_EPSILON`):
+roads are tens of thousands and bridges hundreds, ~1% of them join, so the unfiltered
+product cost 1.00 s per call on London (Paris 0.78 s, Tokyo 0.39 s) against 19 ms with
+it — and `build` runs twice per load, once for the grid fill and once for the mesh
+build. The decision itself is deliberately NOT unified: the grid
 blocks curb tiles by a directional outward probe, the mesh subtracts band polygons, and
 both survive the "primary's nominal 16 m swallows its parallel sidewalk" trap in their
 own way — a shared point-coverage test reproduces neither (with slack it opens the
