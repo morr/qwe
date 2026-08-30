@@ -70,13 +70,13 @@ pub fn move_moving_entities(
     // не засчитывать приход столкнутому с тайла в последний момент
     let tuning_for = |rest| super::step::StepTuning {
         rest,
-        arrive_slack: lab.arrive_slack,
+        arrive_slack: lab.experiments.arrive_slack,
         steer_release: lab.steer_release,
-        slide: lab.slide,
+        slide: lab.experiments.slide,
     };
     let human_tuning = tuning_for(2.0 * human_style.body_radius);
     let demon_tuning = tuning_for(2.0 * super::separation::demon_radius(human_style.body_radius));
-    let pushes = pushes.reader(separation.hold, lab.slide);
+    let pushes = pushes.reader(separation.hold, lab.experiments.slide);
     let dt = time.delta_secs();
 
     for (entity, mut movable, mut sim_position, is_human) in &mut query {

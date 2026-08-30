@@ -26,8 +26,8 @@ pub use self::destination::{
 };
 pub use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
-    SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
-    demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
+    SeparationExperiments, SeparationHolds, SeparationLab, SeparationStats, SeparationSteer,
+    SeparationStyle, demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 pub use self::wander::{
@@ -80,10 +80,12 @@ impl Plugin for MovementPlugin {
             .init_resource::<SeparationHolds>()
             .init_resource::<SeparationSteer>()
             .init_resource::<self::separation::SeparationBlock>()
-            // стенд замеров (`examples/demos/crowd_demo.rs`): дефолт равен
-            // константам, так что игра идёт по тем же веткам, что и раньше
+            // числовые ручки расталкивания: сам `SeparationLab` действует в
+            // игре (константы + два ползунка Nav), а его `experiments` —
+            // выключенная поверхность стенда (`examples/demos/crowd_demo.rs`)
             .init_resource::<SeparationLab>()
             .register_type::<SeparationLab>()
+            .register_type::<SeparationExperiments>()
             .init_resource::<SeparationStats>()
             .register_type::<SeparationStats>()
             .init_resource::<DestinationClaims>()

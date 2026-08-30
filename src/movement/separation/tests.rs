@@ -59,9 +59,12 @@ fn tuning_with(fraction: f32, lab: SeparationLab) -> Tuning {
 /// друга уже попадала в горизонт.
 fn anticipating() -> SeparationLab {
     SeparationLab {
-        horizon: 1.5,
-        anticipation: 2.0,
-        lane_bias: 0.5,
+        experiments: SeparationExperiments {
+            horizon: 1.5,
+            anticipation: 2.0,
+            lane_bias: 0.5,
+            ..Default::default()
+        },
         // сторона обхода фиксируется правой по той же причине, что и в
         // [`tuning`]
         left_share: 0.0,
@@ -432,8 +435,11 @@ fn a_squeezed_pair_stops_pushing() {
     assert!(loose.pushes[0].length() > 0.0, "без сжатия пара расходится");
 
     let squeezed = SeparationLab {
-        compress: 0.5,
-        compress_at: 1.0,
+        experiments: SeparationExperiments {
+            compress: 0.5,
+            compress_at: 1.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let mut tight = layout();
@@ -483,15 +489,18 @@ fn only_a_walker_squeezes_past_a_standing_pawn() {
     );
 }
 
-/// Кратковременное сжатие ([`SeparationLab::stuck_compress`]) достаётся
+/// Кратковременное сжатие ([`SeparationExperiments::stuck_compress`]) достаётся
 /// только тому, кто УЖЕ залип: та же пара при нулевом стаже упора
 /// расталкивается как обычно.
 #[test]
 fn only_a_stuck_pawn_squeezes() {
     let lab = SeparationLab {
-        stuck_compress: 0.5,
-        stuck_after: 0.0,
-        stuck_ramp: 0.0,
+        experiments: SeparationExperiments {
+            stuck_compress: 0.5,
+            stuck_after: 0.0,
+            stuck_ramp: 0.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let layout = |stuck: f32| {
@@ -516,13 +525,16 @@ fn only_a_stuck_pawn_squeezes() {
     assert_eq!(jammed.pushes[0], Vec2::ZERO, "залипшие протискиваются");
 }
 
-/// Твёрдое ядро ([`SeparationLab::hard_core`]) снимает наложение тел
+/// Твёрдое ядро ([`SeparationExperiments::hard_core`]) снимает наложение тел
 /// ЦЕЛИКОМ, даже когда мягкая часть отдана долей: то, чем тела уже
 /// пересеклись, не торгуется.
 #[test]
 fn the_hard_core_is_resolved_in_full() {
     let lab = SeparationLab {
-        hard_core: 0.5,
+        experiments: SeparationExperiments {
+            hard_core: 0.5,
+            ..Default::default()
+        },
         ..Default::default()
     };
     // радиусы 0.45 + 0.45: покой 0.9, ядро 0.45, а стоят пешки в 0.3
@@ -552,14 +564,17 @@ fn without_the_knob_there_is_no_core_push() {
     assert!(state.core_pushes.iter().all(|push| *push == Vec2::ZERO));
 }
 
-/// Скольжение отпускает залипшего ([`SeparationLab::slide_release`]):
+/// Скольжение отпускает залипшего ([`SeparationExperiments::slide_release`]):
 /// свободной пешке запрет «не лезь в тело» выдаётся, простоявшей в упоре —
 /// уже нет, иначе сходящаяся толпа встаёт колом.
 #[test]
 fn sliding_lets_go_of_a_pawn_that_has_been_stuck() {
     let lab = SeparationLab {
-        slide: 1.0,
-        slide_release: 1.0,
+        experiments: SeparationExperiments {
+            slide: 1.0,
+            slide_release: 1.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let layout = |stuck: f32| {
@@ -582,13 +597,16 @@ fn sliding_lets_go_of_a_pawn_that_has_been_stuck() {
 }
 
 /// Счётчик залипания копится и у демона: [`advance_stuck`] считает по упору
-/// (`braced`), а не по придержке, — иначе клапан [`SeparationLab::slide_release`]
+/// (`braced`), а не по придержке, — иначе клапан [`SeparationExperiments::slide_release`]
 /// у демона не срабатывает никогда.
 #[test]
 fn the_stuck_clock_counts_a_demons_bracing() {
     let lab = SeparationLab {
-        slide: 1.0,
-        slide_release: 1.0,
+        experiments: SeparationExperiments {
+            slide: 1.0,
+            slide_release: 1.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let mut state = state_with(vec![
@@ -679,7 +697,10 @@ fn a_crowd_sidesteps_only_when_the_knob_is_on() {
     assert!(gated.pushes.iter().all(|push| push.y == 0.0));
 
     let crowded = SeparationLab {
-        crowd_sidestep: 0.5,
+        experiments: SeparationExperiments {
+            crowd_sidestep: 0.5,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let mut loose = layout();
@@ -699,4 +720,155 @@ fn a_pair_across_a_fine_cell_boundary_is_still_resolved() {
 
     assert!(state.pushes[0].x < 0.0);
     assert!(state.pushes[1].x > 0.0);
+}
+
+/// Один прогон над стоящей парой: толчки → кламп → применение. Чистый
+/// аналог цикла применения из `separate_pawns` (без `damp_along_heading` —
+/// у стоящих пешек курса нет, и гашение вдоль курса не участвует).
+fn run_pair(positions: [Vec2; 2], radius: f32, dt: f32) -> [Vec2; 2] {
+    let lab = SeparationLab {
+        left_share: 0.0,
+        ..SeparationLab::default()
+    };
+    let mut state = state_with(vec![
+        pawn(1, positions[0], radius, 1.0),
+        pawn(2, positions[1], radius, 1.0),
+    ]);
+    resolve_pushes(
+        &mut state,
+        Tuning {
+            fraction: relaxation_fraction(lab.rate, dt),
+            dt,
+            sidestep: SEPARATION_SIDESTEP,
+            cell: SEPARATION_CELL,
+            lab,
+        },
+    );
+    [
+        positions[0] + clamped_step(state.pushes[0], state.core_pushes[0], &lab, dt),
+        positions[1] + clamped_step(state.pushes[1], state.core_pushes[1], &lab, dt),
+    ]
+}
+
+/// Главный инвариант: один прогон с большим dt и N прогонов с dt/N дают одну
+/// и ту же итоговую дистанцию — расталкивание одинаково на всех скоростях
+/// симуляции. T = 0.5 с — кадр на 30× при 60 fps; 32 прогона по T/32 — те же
+/// полсекунды кадрами 1×. Допуск 0.01 м покрывает единственный прогон, в
+/// котором потолок скорости перестаёт быть связанным (ошибка перехода фаз).
+#[test]
+fn one_long_run_matches_many_short_ones() {
+    // дистанция покоя 0.9 м, стартовый зазор 0.5 м → перекрытие 0.4 м
+    let start = [Vec2::new(0.0, 1.0), Vec2::new(0.5, 1.0)];
+    let total = 0.5;
+    let big = run_pair(start, 0.45, total);
+    let mut small = start;
+    for _ in 0..32 {
+        small = run_pair(small, 0.45, total / 32.0);
+    }
+    let big_gap = (big[1] - big[0]).length();
+    let small_gap = (small[1] - small[0]).length();
+    assert!(
+        (big_gap - small_gap).abs() < 0.01,
+        "one run: {big_gap}, 32 runs: {small_gap}"
+    );
+}
+
+/// Экспонента не насыщается на игровых dt: на кадре 30× (0.5 с) доля всё ещё
+/// меньше единицы — «мягкость» не исчезает (линейная `rate · dt` насыщалась
+/// уже при dt > 1/8 с, т.е. с ~7.5×). На малых dt совпадает с линейной.
+/// Ассерт нарочно на dt кадра 30×, а не на «любом dt»: при dt >> 1/rate
+/// f32-доля легитимно округляется ровно до 1.0 (снять больше перекрытия, чем
+/// есть, она всё равно не может).
+#[test]
+fn the_relaxation_fraction_never_saturates() {
+    assert!(relaxation_fraction(SEPARATION_RATE, 0.5) < 1.0);
+    let dt = 1.0 / 240.0;
+    let linear = SEPARATION_RATE * dt;
+    assert!((relaxation_fraction(SEPARATION_RATE, dt) - linear).abs() / linear < 0.02);
+}
+
+/// На большом dt потолок — `max_speed · dt`, а не `max_step`: эффективная
+/// скорость расталкивания не падает с ростом скорости симуляции (раньше выше
+/// ~13× связывался `max_step`, и скорость падала до `max_step / dt`).
+#[test]
+fn the_ceiling_scales_with_dt_instead_of_max_step() {
+    let lab = SeparationLab::default();
+    let dt = 0.5; // кадр на 30×
+    let step = clamped_step(Vec2::new(5.0, 0.0), Vec2::ZERO, &lab, dt);
+    assert!((step.length() - lab.max_speed * dt).abs() < 1e-4);
+    assert!(step.length() > lab.max_step);
+}
+
+/// На 1× страховка от телепорта работает как раньше: толчок твёрдого ядра, у
+/// которого потолка скорости нет, всё равно не длиннее `max_step`.
+#[test]
+fn max_step_still_guards_the_core_at_normal_speed() {
+    let lab = SeparationLab::default();
+    let step = clamped_step(Vec2::ZERO, Vec2::new(5.0, 0.0), &lab, 1.0 / 60.0);
+    assert!((step.length() - lab.max_step).abs() < 1e-4);
+}
+
+/// Что в игре ДЕЙСТВУЕТ, а что лежит выключенным ради стенда, — пин, а не
+/// обещание в доке: оба типа разбираются ЦЕЛИКОМ, поэтому новое поле ломает
+/// компиляцию теста и заставляет решить, в какую группу оно идёт. Ровно на
+/// этом месте разъехались док типа и `references/crowd.md`.
+#[test]
+fn game_defaults_keep_every_experiment_off() {
+    let SeparationLab {
+        rate,
+        max_step,
+        max_speed,
+        steer,
+        steer_release,
+        pass_squeeze,
+        left_share,
+        experiments,
+    } = SeparationLab::default();
+    assert_eq!(rate, SEPARATION_RATE);
+    assert_eq!(max_step, SEPARATION_MAX_STEP);
+    assert_eq!(max_speed, SEPARATION_MAX_SPEED);
+    assert_eq!(steer, SEPARATION_STEER);
+    assert_eq!(steer_release, 2.0);
+    assert_eq!(pass_squeeze, SEPARATION_PASS_SQUEEZE);
+    assert_eq!(left_share, SEPARATION_LEFT_SHARE);
+
+    let SeparationExperiments {
+        horizon,
+        anticipation,
+        anticipate_margin,
+        lane_bias,
+        compress,
+        compress_at,
+        crowd_sidestep,
+        idle_mobility,
+        arrive_slack,
+        slide,
+        stuck_compress,
+        stuck_after,
+        stuck_ramp,
+        hard_core,
+        slide_release,
+    } = experiments;
+    // гейты: ноль — это «ветка решателя не исполняется»
+    for (name, gate) in [
+        ("horizon", horizon),
+        ("anticipation", anticipation),
+        ("lane_bias", lane_bias),
+        ("compress", compress),
+        ("crowd_sidestep", crowd_sidestep),
+        ("slide", slide),
+        ("stuck_compress", stuck_compress),
+        ("hard_core", hard_core),
+        ("slide_release", slide_release),
+    ] {
+        assert_eq!(gate, 0.0, "{name} в игре обязан быть выключен");
+    }
+    // нейтральные множители: ветка исполняется, но ничего не меняет
+    assert_eq!(idle_mobility, 1.0);
+    assert_eq!(arrive_slack, 1.0);
+    assert_eq!(anticipate_margin, 1.0);
+    // вторичные параметры выключенных механизмов — инертны, пока гейт ноль
+    assert_eq!(compress_at, 4.0);
+    assert_eq!(stuck_after, 0.5);
+    assert_eq!(stuck_ramp, 0.5);
 }

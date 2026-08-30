@@ -20,8 +20,8 @@ use bevy::text::FontWeight;
 use bevy::ui_widgets::{SliderValue, ValueChange};
 use qwe::human::HumanStyle;
 use qwe::movement::{
-    SeparationHolds, SeparationLab, SeparationStyle, SlotLab, SlotMatching, SlotSearch,
-    separation_allowed_by_mode,
+    SeparationExperiments, SeparationHolds, SeparationLab, SeparationStyle, SlotLab, SlotMatching,
+    SlotSearch, separation_allowed_by_mode,
 };
 use qwe::navigation::{MeshMode, NavMode, Pathfinder};
 use qwe::settings::{HUMAN_SIZE, SEPARATION_MAX_ZOOM};
@@ -115,8 +115,8 @@ pub(crate) const KNOBS: &[Knob] = &[
         label: "stuck compress",
         range: (0.0, 0.8, 0.05),
         digits: 2,
-        get: |t| t.lab.stuck_compress,
-        set: |t, value| t.lab.stuck_compress = value,
+        get: |t| t.lab.experiments.stuck_compress,
+        set: |t, value| t.lab.experiments.stuck_compress = value,
     },
     Knob {
         label: "steer",
@@ -150,29 +150,29 @@ pub(crate) const KNOBS: &[Knob] = &[
         label: "slide",
         range: (0.0, 1.0, 0.1),
         digits: 1,
-        get: |t| t.lab.slide,
-        set: |t, value| t.lab.slide = value,
+        get: |t| t.lab.experiments.slide,
+        set: |t, value| t.lab.experiments.slide = value,
     },
     Knob {
         label: "slide release",
         range: (0.0, 3.0, 0.25),
         digits: 2,
-        get: |t| t.lab.slide_release,
-        set: |t, value| t.lab.slide_release = value,
+        get: |t| t.lab.experiments.slide_release,
+        set: |t, value| t.lab.experiments.slide_release = value,
     },
     Knob {
         label: "hard core",
         range: (0.0, 0.7, 0.05),
         digits: 2,
-        get: |t| t.lab.hard_core,
-        set: |t, value| t.lab.hard_core = value,
+        get: |t| t.lab.experiments.hard_core,
+        set: |t, value| t.lab.experiments.hard_core = value,
     },
     Knob {
         label: "compress",
         range: (0.0, 0.6, 0.05),
         digits: 2,
-        get: |t| t.lab.compress,
-        set: |t, value| t.lab.compress = value,
+        get: |t| t.lab.experiments.compress,
+        set: |t, value| t.lab.experiments.compress = value,
     },
     Knob {
         label: "claim at",
@@ -209,7 +209,10 @@ pub(crate) const PRESETS: &[Preset] = &[
                 rate: 4.0,
                 max_speed: 1.4,
                 steer: 1.0,
-                compress: 0.2,
+                experiments: SeparationExperiments {
+                    compress: 0.2,
+                    ..SeparationExperiments::default()
+                },
                 ..SeparationLab::default()
             };
             *t.slots = SlotLab {

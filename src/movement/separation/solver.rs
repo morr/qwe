@@ -4,7 +4,7 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::SeparationLab;
+use super::{SeparationExperiments, SeparationLab};
 use crate::rng::hash_fraction;
 
 use super::pairs::{Pawn, anticipate, avoid_direction, shares, side_of, sidestep, yields};
@@ -28,7 +28,7 @@ pub(in crate::movement) struct SeparationState {
     pub(super) next: Vec<u32>,
     /// Пары этого прогона, каждая по разу: индексы плюс признак «уже
     /// перекрылись». Неперекрывшиеся сюда попадают только при включённом
-    /// упреждении ([`SeparationLab::horizon`]) и только те, что в пределах
+    /// упреждении ([`SeparationExperiments::horizon`]) и только те, что в пределах
     /// горизонта. Собираются отдельным проходом, потому что толчок пары зависит
     /// от того, сколько соседей у её участников (см. `contacts`), а это
     /// известно только когда найдены все.
@@ -42,13 +42,13 @@ pub(in crate::movement) struct SeparationState {
     /// Тот же упор, но БЕЗ гейта по виду — источник счётчика залипания
     /// [`SeparationState::stuck`]. Отдельно от `held`, потому что придержка
     /// человеческая, а залипание нет: демону, которому скольжение
-    /// ([`SeparationLab::slide`]) запретило лезть в тело, нужен тот же клапан
+    /// ([`SeparationExperiments::slide`]) запретило лезть в тело, нужен тот же клапан
     /// по времени ([`slide_released`]), иначе запрет с него не снимается
     /// никогда — а это тот самый дедлок, ради которого клапан заведён.
     pub(super) braced: Vec<bool>,
     pub(super) pushes: Vec<Vec2>,
     /// Толчки ТВЁРДОГО ЯДРА — отдельно от мягких, потому что ограничены они
-    /// по-разному ([`SeparationLab::hard_core`]).
+    /// по-разному ([`SeparationExperiments::hard_core`]).
     pub(super) core_pushes: Vec<Vec2>,
     /// Сколько пар этого прогона уже перекрылись — остальные попали только в
     /// упреждение. Считается на месте, в проходе толчков.
@@ -62,7 +62,7 @@ pub(in crate::movement) struct SeparationState {
     pub(super) steers: Vec<Vec2>,
     /// Сколько виртуальных секунд подряд каждая пешка упирается курсом в чужое
     /// тело — единственное, что живёт МЕЖДУ прогонами: залипание это именно
-    /// длительность. Пуста, пока [`SeparationLab::stuck_compress`] не тронут.
+    /// длительность. Пуста, пока [`SeparationExperiments::stuck_compress`] не тронут.
     pub(super) stuck: bevy::ecs::entity::EntityHashMap<f32>,
     /// Та же карта, собранная заново этим прогоном: ушедший из вьюпорта или
     /// прошедший затор выпадает из неё сам, без отдельной уборки.
@@ -105,7 +105,7 @@ pub(super) struct Tuning {
 }
 
 /// Радиус тела с поправкой на давку: чем больше у пешки одновременных
-/// перекрытий, тем сильнее она «ужимается» ([`SeparationLab::compress`]).
+/// перекрытий, тем сильнее она «ужимается» ([`SeparationExperiments::compress`]).
 ///
 /// Зачем. Дистанция покоя 1.8 м — это личное пространство свободно идущего
 /// человека, и в узком месте она физически недостижима: суммарной ширины
@@ -116,7 +116,7 @@ pub(super) struct Tuning {
 ///
 /// При `compress = 0` возвращает радиус без изменений, то есть нынешнее
 /// поведение.
-fn squeezed_radius(pawn: &Pawn, contacts: u32, lab: &SeparationLab) -> f32 {
+fn squeezed_radius(pawn: &Pawn, contacts: u32, lab: &SeparationExperiments) -> f32 {
     let mut radius = pawn.radius;
     if lab.compress > 0.0 && lab.compress_at > 0.0 {
         let load = (contacts as f32 / lab.compress_at).min(1.0);
@@ -126,14 +126,14 @@ fn squeezed_radius(pawn: &Pawn, contacts: u32, lab: &SeparationLab) -> f32 {
 }
 
 /// Насколько пешка «залипла» — 0…1 по времени непрерывного упора
-/// ([`SeparationLab::stuck_after`], [`SeparationLab::stuck_ramp`]).
+/// ([`SeparationExperiments::stuck_after`], [`SeparationExperiments::stuck_ramp`]).
 ///
 /// Отдельно от числа контактов намеренно: сжатие по контактам получает вся
 /// плотная толпа, в том числе стоящая и никуда не идущая, и её равновесие
 /// оказывается перекрытым навсегда. Сжатие по времени упора получает только
 /// тот, кто уже несколько раз подряд ткнулся в чужое тело и не прошёл, —
 /// протискивание длится ровно столько, сколько длится тупик.
-fn stuck_load(stuck: f32, lab: &SeparationLab) -> f32 {
+fn stuck_load(stuck: f32, lab: &SeparationExperiments) -> f32 {
     if lab.stuck_compress <= 0.0 {
         return 0.0;
     }
@@ -148,8 +148,8 @@ fn stuck_load(stuck: f32, lab: &SeparationLab) -> f32 {
 }
 
 /// Отпустило ли скольжение эту пешку: она упирается дольше, чем
-/// [`SeparationLab::slide_release`], и запрет «не лезь в тело» с неё снят.
-fn slide_released(pawn: &Pawn, lab: &SeparationLab) -> bool {
+/// [`SeparationExperiments::slide_release`], и запрет «не лезь в тело» с неё снят.
+fn slide_released(pawn: &Pawn, lab: &SeparationExperiments) -> bool {
     lab.slide_release > 0.0 && pawn.stuck >= lab.slide_release
 }
 
@@ -160,7 +160,8 @@ fn slide_released(pawn: &Pawn, lab: &SeparationLab) -> bool {
 /// идут» не трогаются: плотность осевшей толпы и ширина потока — это то, ради
 /// чего радиус тела вообще существует.
 fn rest_distance(a: &Pawn, b: &Pawn, contacts: (u32, u32), lab: &SeparationLab) -> f32 {
-    let full = squeezed_radius(a, contacts.0, lab) + squeezed_radius(b, contacts.1, lab);
+    let full = squeezed_radius(a, contacts.0, &lab.experiments)
+        + squeezed_radius(b, contacts.1, &lab.experiments);
     let a_walking = a.heading != Vec2::ZERO;
     let b_walking = b.heading != Vec2::ZERO;
     if lab.pass_squeeze < 1.0 && (a_walking != b_walking) {
@@ -206,13 +207,13 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     // упреждения — площадь просмотра растёт как квадрат горизонта (при 1.5 с и
     // 3.5 м/с ячейка 10.5 м против нынешних 2.4 м, то есть ~19× кандидатов на
     // пешку). Проверять этот счёт — работа стенда, а не догадки.
-    let lookahead = if lab.horizon > 0.0 && lab.anticipation > 0.0 {
+    let lookahead = if lab.experiments.horizon > 0.0 && lab.experiments.anticipation > 0.0 {
         let fastest = state
             .pawns
             .iter()
             .map(|pawn| pawn.speed)
             .fold(0.0f32, f32::max);
-        lab.horizon * 2.0 * fastest
+        lab.experiments.horizon * 2.0 * fastest
     } else {
         0.0
     };
@@ -304,9 +305,9 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // встречная пара на полном ходу сближается за тот же прогон на впятеро
         // больше. Ядро, попавшее под общий потолок, работать не успевает — на
         // стенде это видно как сотни пар, сошедшихся ближе половины спрайта,
-        // при формально включённом ядре. См. [`SeparationLab::hard_core`]
-        let core_overlap = if lab.hard_core > 0.0 {
-            ((a.radius + b.radius) * lab.hard_core - distance).max(0.0)
+        // при формально включённом ядре. См. [`SeparationExperiments::hard_core`]
+        let core_overlap = if lab.experiments.hard_core > 0.0 {
+            ((a.radius + b.radius) * lab.experiments.hard_core - distance).max(0.0)
         } else {
             0.0
         };
@@ -347,11 +348,11 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // только у людей: демон в погоне тоже не обязан входить в чужое тело.
         // Отпускает его тот же счётчик залипания — и он считает по `braced`,
         // а не по `held`, иначе демон остался бы под запретом навсегда
-        if lab.slide > 0.0 {
-            if a_blocked && !slide_released(&a, &lab) {
+        if lab.experiments.slide > 0.0 {
+            if a_blocked && !slide_released(&a, &lab.experiments) {
                 state.blocks[i as usize] += direction * a_facing;
             }
-            if b_blocked && !slide_released(&b, &lab) {
+            if b_blocked && !slide_released(&b, &lab.experiments) {
                 state.blocks[j as usize] -= direction * b_facing;
             }
         }
@@ -380,14 +381,18 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // перекрывшихся складывается в общее вращение — затор начинает крутиться
         // вместо того, чтобы рассасываться.
         //
-        // [`SeparationLab::crowd_sidestep`] — ручка ровно на этот гейт: при 0
+        // [`SeparationExperiments::crowd_sidestep`] — ручка ровно на этот гейт: при 0
         // всё как сейчас, при >0 куча тоже обходит, но ослабленной долей.
         // Гипотеза, которую ей проверяют: боковой добавки в куче не хватает
         // именно там, где встречный поток обязан расслоиться на полосы, а
         // вращение — цена, которая, может быть, не наступает, пока добавка
         // мала.
         let alone = state.contacts[i as usize] == 1 && state.contacts[j as usize] == 1;
-        let crowd = if alone { 1.0 } else { lab.crowd_sidestep };
+        let crowd = if alone {
+            1.0
+        } else {
+            lab.experiments.crowd_sidestep
+        };
         let (side_a, side_b) = if opposed && crowd > 0.0 {
             let strength = sidestep_strength * crowd;
             // уступает один: вправо уходят оба — и пара вращается, см. [`yields`]
@@ -421,14 +426,14 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
 /// Карта пересобирается прогоном целиком, поэтому упор, прервавшийся хоть на
 /// прогон, начинает счёт заново, а ушедший из вьюпорта выпадает сам, без
 /// отдельной уборки. Карта нужна двум механизмам сразу — сжатию
-/// ([`SeparationLab::stuck_compress`]) и отпусканию скольжения
-/// ([`SeparationLab::slide_release`]); пока не тронут ни один, она пуста и не
+/// ([`SeparationExperiments::stuck_compress`]) и отпусканию скольжения
+/// ([`SeparationExperiments::slide_release`]); пока не тронут ни один, она пуста и не
 /// стоит ничего.
 ///
 /// Считается по `braced`, а не по `held`: придержку получают только люди, а
 /// оба читателя счётчика ([`squeezed_radius`], [`slide_released`]) — все.
 pub(super) fn advance_stuck(state: &mut SeparationState, dt: f32, lab: &SeparationLab) {
-    if lab.stuck_compress <= 0.0 && lab.slide_release <= 0.0 {
+    if lab.experiments.stuck_compress <= 0.0 && lab.experiments.slide_release <= 0.0 {
         if !state.stuck.is_empty() {
             state.stuck.clear();
         }
@@ -444,4 +449,40 @@ pub(super) fn advance_stuck(state: &mut SeparationState, dt: f32, lab: &Separati
         }
     }
     state.stuck_next = std::mem::replace(&mut state.stuck, next);
+}
+
+/// Доля перекрытия, снимаемая прогоном длиной `dt`, — экспоненциальная
+/// релаксация вместо линейной доли `rate · dt`.
+///
+/// Ровно эта форма делает прогон инвариантным к нарезке виртуального
+/// времени: перекрытие затухает как `exp(-rate · t)`, и один прогон с `dt`
+/// равен N прогонам с `dt/N` точно, а не в пределе. Линейная доля насыщалась
+/// на 1.0 уже при `dt > 1/rate` (~7.5× при 60 fps), и «мягкость» из шапки
+/// модуля исчезала: перекрытие снималось целиком за один прогон.
+pub(super) fn relaxation_fraction(rate: f32, dt: f32) -> f32 {
+    1.0 - (-rate * dt).exp()
+}
+
+/// Кламп готового толчка одной пешки: потолок — СКОРОСТЬ, пропорциональная
+/// `dt`; `max_step` — только страховка от телепорта.
+///
+/// Потолок мягкой части — `max_speed · dt`: скорость расталкивания одна на
+/// всех скоростях симуляции. Прежний `max_step.min(max_speed · dt)` выше
+/// ~13× связывал `max_step`, и эффективная скорость падала до
+/// `max_step / dt`, тогда как ходьба в том же кадре везла пешку на
+/// `2.8 · dt`. Итоговый кламп — `max_step.max(max_speed · dt)`: на 1× это
+/// прежние 0.3 м на прогон (страховка для твёрдого ядра, у которого потолка
+/// скорости нет намеренно), на больших `dt` он растёт вместе с потолком и
+/// легитимный толчок не режет.
+///
+/// `max_speed == 0` (ручка стенда, в игре недостижима — дефолт 1.4) —
+/// прежняя ветка: только `max_step`; к нарезке `dt` она НЕ инвариантна.
+pub(super) fn clamped_step(push: Vec2, core: Vec2, lab: &SeparationLab, dt: f32) -> Vec2 {
+    let (ceiling, guard) = if lab.max_speed > 0.0 {
+        let ceiling = lab.max_speed * dt;
+        (ceiling, lab.max_step.max(ceiling))
+    } else {
+        (lab.max_step, lab.max_step)
+    };
+    (push.clamp_length_max(ceiling) + core).clamp_length_max(guard)
 }

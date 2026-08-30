@@ -57,7 +57,7 @@ pub struct StepTuning {
     /// подпускает, поэтому приход засчитывается с этим допуском.
     pub rest: f32,
     /// Во сколько дистанций покоя обходится допуск прихода придержанному
-    /// ([`separation::SeparationLab::arrive_slack`](crate::movement::separation::SeparationLab)).
+    /// ([`separation::SeparationExperiments::arrive_slack`](crate::movement::separation::SeparationExperiments)).
     pub arrive_slack: f32,
     /// Ближе этого остатка до waypoint'а курс не доворачивается: отклонённый
     /// шаг не сокращает остаток до точки, а снимается она только когда бюджет

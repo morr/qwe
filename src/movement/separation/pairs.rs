@@ -28,7 +28,7 @@ pub(super) struct Pawn {
     /// Придерживают только людей, см. `SeparationHolds`.
     pub(super) human: bool,
     /// Сколько виртуальных секунд подряд пешка упирается курсом в чужое тело —
-    /// источник кратковременного сжатия ([`SeparationLab::stuck_compress`]).
+    /// источник кратковременного сжатия ([`SeparationExperiments::stuck_compress`]).
     pub(super) stuck: f32,
 }
 
@@ -193,7 +193,7 @@ pub(super) fn damp_along_heading(push: Vec2, heading: Vec2, keep: f32) -> Vec2 {
 /// он же самый дешёвый. Момент максимального сближения `t = (rel · v)/|v|²`;
 /// дальше горизонта — не наше дело. Вектор `closest` — где сосед окажется
 /// относительно нас в этот момент; если его длина меньше суммы радиусов (с
-/// запасом [`SeparationLab::anticipate_margin`]), столкновение предсказано.
+/// запасом [`SeparationExperiments::anticipate_margin`]), столкновение предсказано.
 ///
 /// Уклоняемся **строго поперёк собственного курса**: продольная составляющая —
 /// это торможение, а тормозить сдвигом позиции нельзя, на экране это рывок
@@ -202,7 +202,7 @@ pub(super) fn damp_along_heading(push: Vec2, heading: Vec2, keep: f32) -> Vec2 {
 ///
 /// Лобовая встреча вырождается — `closest` почти коллинеарен курсу, и
 /// поперечной составляющей у него нет. Ровно ту же дыру у реактивной ветки
-/// затыкает [`sidestep`]; здесь её затыкает [`SeparationLab::lane_bias`],
+/// затыкает [`sidestep`]; здесь её затыкает [`SeparationExperiments::lane_bias`],
 /// примешивая правую нормаль. Разница в том, что упреждение срабатывает за
 /// секунду-полторы до контакта, когда сдвинуться вбок ничего не стоит.
 ///
@@ -213,7 +213,7 @@ pub(super) fn anticipate(a: &Pawn, b: &Pawn, lab: &SeparationLab, dt: f32) -> Ve
     let Some((lateral, urgency)) = avoid_direction(a, b, lab) else {
         return Vec2::ZERO;
     };
-    lateral * (lab.anticipation * urgency * a.mobility * dt)
+    lateral * (lab.experiments.anticipation * urgency * a.mobility * dt)
 }
 
 /// Правая нормаль к курсу — сторона, в которую пешка обходит. `perp` в bevy —
@@ -250,7 +250,7 @@ fn lefty_fraction(pawn_id: u32) -> f32 {
 /// пользуется руление ([`SeparationSteer`]), а оно не толчок и масштабируется
 /// иначе.
 pub(super) fn avoid_direction(a: &Pawn, b: &Pawn, lab: &SeparationLab) -> Option<(Vec2, f32)> {
-    if a.heading == Vec2::ZERO || a.mobility <= 0.0 || lab.horizon <= 0.0 {
+    if a.heading == Vec2::ZERO || a.mobility <= 0.0 || lab.experiments.horizon <= 0.0 {
         return None;
     }
     let rel = b.position - a.position;
@@ -264,22 +264,22 @@ pub(super) fn avoid_direction(a: &Pawn, b: &Pawn, lab: &SeparationLab) -> Option
         return None;
     }
     let time = closing / speed_squared;
-    if time > lab.horizon {
+    if time > lab.experiments.horizon {
         return None;
     }
     let closest = rel - velocity * time;
     let miss = closest.length();
-    let clearance = (a.radius + b.radius) * lab.anticipate_margin;
+    let clearance = (a.radius + b.radius) * lab.experiments.anticipate_margin;
     if miss >= clearance {
         return None;
     }
     let side = side_of(a, lab.left_share);
     let away = if miss > 1e-3 { -closest / miss } else { side };
-    let biased = away + side * lab.lane_bias;
+    let biased = away + side * lab.experiments.lane_bias;
     let lateral = biased - a.heading * biased.dot(a.heading);
     let lateral = lateral.normalize_or_zero();
     if lateral == Vec2::ZERO {
         return None;
     }
-    Some((lateral, 1.0 - time / lab.horizon))
+    Some((lateral, 1.0 - time / lab.experiments.horizon))
 }

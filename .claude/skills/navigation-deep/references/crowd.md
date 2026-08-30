@@ -30,7 +30,10 @@ Then: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
 right after `move_moving_entities` — the only point where the tick's positions are
 final and the snapshot is already taken, so the push reaches the screen through
 interpolation — but at 30x that schedule runs ~1920 ticks/s and even 0.03 ms per tick
-would eat ~6% of a real second; ticks between runs only accumulate virtual dt); **zoom
+would eat ~6% of a real second; ticks between runs only accumulate virtual dt, and the
+run's outputs — holds, steer, block — serve every tick until the next run: freshness is
+per-frame by charter, the one residual speed dependence, bounded at one frame of
+staleness and released per tick against fresh positions); **zoom
 below `SEPARATION_MAX_ZOOM`** (same 0.75 as the wander-dispatch cutoff — farther out a
 pawn is 1–2 px and overlap does not read). Candidates come from both coarse grids via
 `for_each_in_rect` over the viewport (`VIEW_MARGIN` slack), then a throwaway fine grid
@@ -39,8 +42,12 @@ pawn is 1–2 px and overlap does not read). Candidates come from both coarse gr
 demon+demon or an overlapping pair falls outside the 3 × 3 scan, and with the radius on a
 slider a plain constant would sooner or later be too small; head+next linked lists in
 `Local` buffers — no steady-state
-allocations) resolves pairs: each pair sheds `SEPARATION_RATE` (8/s) of its overlap per
-virtual second, clamped to `SEPARATION_MAX_STEP` (0.3 m) per run, split by mobility
+allocations) resolves pairs: each pair's overlap decays as `exp(-SEPARATION_RATE · t)`
+(8/s) of virtual time, capped at `SEPARATION_MAX_SPEED · dt` per run, with
+`SEPARATION_MAX_STEP` (0.3 m) as the teleport-guard floor of the final clamp
+(`max_step.max(max_speed · dt)`) — the run is **dt-invariant**: one long dt equals N
+short ones, so separation behaves the same at every sim speed. The correction is split
+by mobility
 (human 1.0, demon 0.25, devouring demon 0 — it pushes but never moves off its corpse).
 
 Rules that keep the push from fighting the walk it is correcting, each fixing a
@@ -49,9 +56,14 @@ symptom that was visible on screen:
 - **only across the heading** (`across_heading`) — a moving pawn is never displaced along
   its own path, because the longitudinal part read as a follower reversing for a step,
   and summed into a whole jam rotating like a carousel;
-- **the pawn behind gives way** (`shares`) — for a pair on roughly the same course the
+- **the pawn behind gives way** (`shares`) — for a pair on roughly the same course
+  (courses less than 90° apart) where **exactly one** has the other in front, the
   follower takes the entire correction and the leader none, instead of the leader being
-  shoved in the back by someone who caught up;
+  shoved in the back by someone who caught up. When each has the other in front the pair
+  is converging, not queueing — the solver's `opposed` — and the split stays by mobility:
+  the sidestep is scaled by the *yielder's* share, and `yields` picks the yielder by
+  `PawnId`, so a converging pair treated as a queue had its sidestep multiplied by zero
+  half the time;
 - **a walker squeezes past a stander** (`pass_squeeze`, `SEPARATION_PASS_SQUEEZE` 0.6) —
   in a pair where exactly one is walking the rest distance shrinks to 60 % for as long as
   the pass lasts; two standers and two walkers keep the full distance. This is what makes
@@ -80,7 +92,13 @@ symptom that was visible on screen:
   at all — the pair axis is collinear with both courses, so no pair has any lateral
   component (the lab measured a spread of exactly 0.00 m at every `rate`, `hold` and
   `sidestep`). Its side is the same personal one as `left_share`, and it is released
-  within `steer_release` of a waypoint, or a pawn circles the point instead of passing it;
+  within `steer_release` of a waypoint, or a pawn circles the point instead of passing it.
+  It is also **dropped for the tick whose deflected step would land in an impassable
+  tile** (`Walkable::coast_allows`, grid-only like coasting): the bend reaches ~45° of a
+  full step and carries the pawn *off its path*, and a pawn steered into a building is
+  neither pushed back out (a push into an impassable tile is dropped by the same rule)
+  nor rescued (state `Moving`, path valid). The refusal walks the plain course, it does
+  not halt;
 - **a blocked pawn eases off** (`SeparationHolds`, share `SeparationStyle::hold`,
   default `SEPARATION_HOLD` **1.0 — i.e. no easing off at all**, since steering solves
   the same problem better; every fraction below 1 measurably ruins convergence) — a
@@ -93,7 +111,11 @@ symptom that was visible on screen:
   (~0.35 m, a frozen jittering clump) to `hold ×` that (~0.07 m, invisible); 0 would be
   a full stop and makes dense crossings move in stop-motion jerks. Demons are never
   held (a chase must close in; the crowd flowing around a demon is already expressed
-  by mobility). The hold set is the one deliberate breach of "cosmetic": it feeds back
+  by mobility) — but *bracing* is counted for everyone: the run's stuck clock
+  (`SeparationState::braced` → `stuck`, read by `stuck_compress` and `slide_release`,
+  both lab-only and zero in the game) ticks for a demon too, or the sliding ban
+  (`SeparationBlock`), which it does get on the same condition, would never be
+  released. The hold set is the one deliberate breach of "cosmetic": it feeds back
   into `move_moving_entities`, which also grants a held pawn **arrival** when it is
   within the rest distance of its goal — the blocking body will not let it any closer,
   and without the grant it would shove at that body forever. (Arrival on an exhausted
@@ -139,11 +161,19 @@ in navtile centres, so a centre-relative figure is a constant and reads the same
 separation off).
 
 **The separation lab** (`SeparationLab`, `SeparationStats`, `SeparationSteer`;
-`tools/separation_lab/`, findings in its `REPORT.md`) — runtime knobs for the parts of
-separation the game fixes in constants, so the crowd demo can sweep them.
-Deliberately **not** a `SettingsGroup`: it is a measuring rig, not a user choice, and
-its default reproduces the shipped behaviour exactly (`rate` / `max_step` equal to
-their constants, everything else zero, i.e. the added branches do not execute). What
+`tools/separation_lab/`, findings in its `REPORT.md`) — the numeric knobs of separation,
+split in two by type. `SeparationLab`'s own seven fields **are live in the game**:
+`rate`, `max_step`, `max_speed`, `steer`, `steer_release` come from `settings.rs`
+constants, and `pass_squeeze` / `left_share` are on top of that the Nav tab's two
+sliders. Everything the game does *not* run sits in `SeparationLab::experiments`
+(`SeparationExperiments`) — `horizon`, `anticipation`, `anticipate_margin`, `lane_bias`,
+`compress`, `compress_at`, `crowd_sidestep`, `idle_mobility`, `arrive_slack`, `slide`,
+`stuck_compress`, `stuck_after`, `stuck_ramp`, `hard_core`, `slide_release` — every one
+off by default, so those branches of the solver never execute in a game build, and a
+`lab.experiments.…` read is the marker that says so. Promoting a knob to the game means
+**moving the field**, which `game_defaults_keep_every_experiment_off` forces you to
+notice. Deliberately **not** a `SettingsGroup` either way: values are measured on the
+crowd demo, not chosen by the user. What
 it made visible: in a symmetric head-on flow the pair correction is collinear with
 both headings, `sidestep` is gated off by `alone`, and so **no lateral force exists at
 all** — the crowd stays a strictly one-dimensional chain and no value of `rate`,
@@ -159,12 +189,15 @@ further right every frame until it circles in place.
 
 **Destination slot** (`movement/destination.rs`) — the reservation that stops two pawns
 from being aimed at the same point. A **slot** is a `k × k` block of navtiles,
-`k = ceil(rest distance / navtile_size())`, claimed by one pawn
+`k = max(1, ceil(rest distance / navtile_size()) + SlotLab::slack)`, claimed by one pawn
 (`DestinationClaim`, reverse-indexed by the `DestinationClaims` resource); its goal is
 strictly the block's **centre** tile, so the goals of neighbouring slots sit exactly
 `k · navtile` apart — never less than the rest distance, for any combination of
 `NavtileBase` and the `HumanStyle::body_radius` slider (the Nav tab's `Slots`
-group, and the crowd demo).
+group, and the crowd demo). The floor of one tile belongs to the **sum** and lives in
+`slot_side_with_slack` — the only place the demo's `slack` may be added to
+`slot_side`, because a zero side makes `slot_of` divide by zero and a negative one
+turns the lattice inside out.
 
 The radius lives with the **human**, not with separation, precisely because slots read it
 too and they run even when separation is toggled off — while it sat in `SeparationStyle`
@@ -205,7 +238,9 @@ the corpse strip in `demon/behavior.rs`. Hook point is a single system,
 dispatcher chains — human wander, demon wander and the test walker are all covered
 without touching their behaviour systems; the `Update` registration needs an explicit
 `.after(human::pick_wander_targets)`, or the request reaches the dispatcher unslotted
-every so often. **Chase is excluded** (a shared goal is the pincer, by design) and so is
+every so often. The `Added` filter is why `Movable::to_pathfinding` removes the old request before
+inserting a new one — an in-place overwrite would arm only `Changed` and the re-targeted
+pawn would silently keep its previous slot. **Chase is excluded** (a shared goal is the pincer, by design) and so is
 **flee** (targets churn every 0.7–1.2 s and point off-map — so a panicking crowd is not
 covered by slots). Unlike separation this runs in **both** modes: it is simulation, not
 cosmetics, which is also why there is no camera gate — unslotted clumps would pile up
