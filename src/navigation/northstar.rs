@@ -62,6 +62,13 @@ impl NorthstarGrid {
     pub(super) fn is_missing(&self) -> bool {
         self.grid.is_none() && self.task.is_none()
     }
+
+    /// Постройка летит прямо сейчас. Условие расписания для
+    /// [`poll_northstar_build`]: опрашивать таск, которого нет, незачем
+    /// (образец — `PolyNavmesh::is_building`).
+    pub(super) fn is_building(&self) -> bool {
+        self.task.is_some()
+    }
 }
 
 /// Постройка стартует по входу в `Playing` — navmesh к этому моменту
@@ -85,10 +92,9 @@ pub fn start_northstar_build(arc_navmesh: Res<ArcNavmesh>, mut grid: ResMut<Nort
 }
 
 /// Снятие готовой сетки с таска; до этого HPA*/Theta* работают как A*.
+/// Гейт «постройка летит» — в расписании (`NorthstarGrid::is_building`),
+/// а не ранним выходом здесь.
 pub fn poll_northstar_build(mut grid: ResMut<NorthstarGrid>) {
-    if grid.task.is_none() {
-        return;
-    }
     let Some(built) = grid.task.as_mut().and_then(check_ready) else {
         return;
     };
@@ -139,6 +145,25 @@ fn build_checked(navmesh: &Navmesh, cancelled: Option<&AtomicBool>) -> Option<Or
     Some(grid)
 }
 
+/// Тайл как точка сетки northstar; `None` — тайл вне сетки.
+///
+/// Проверяются обе границы, а не только нижняя: `OrdinalGrid::pathfind` на
+/// выходе за верхнюю не паникует, но пишет `log::error!` на каждый вызов, и
+/// пешка, ушедшая за край карты, спамит лог с частотой диспетчера. Тихий
+/// `None` — то же, чем на такой запрос отвечает сеточный A*.
+///
+/// Размер спрашивается у самой сетки, а не у `settings::grid_size()`: сетка
+/// строится из снапшота navmesh и переживает смену размера навтайла (см.
+/// [`build_checked`]), поэтому её собственные размеры — единственные, по
+/// которым её индексируют.
+fn grid_point(grid: &OrdinalGrid, tile: IVec2) -> Option<UVec3> {
+    if tile.min_element() < 0 {
+        return None;
+    }
+    let point = UVec3::new(tile.x as u32, tile.y as u32, 0);
+    grid.in_bounds(point).then_some(point)
+}
+
 /// Путь через иерархию: `refined` (HPA* с трассировкой) либо Theta*
 /// (any-angle, точки пути не обязаны быть соседними тайлами — движение
 /// идёт к центрам точек по очереди, смежность ему не нужна).
@@ -148,13 +173,7 @@ pub fn find_path_northstar(
     end: IVec2,
     any_angle: bool,
 ) -> Option<Vec<IVec2>> {
-    if start.min_element() < 0 || end.min_element() < 0 {
-        return None;
-    }
-    let mut args = PathfindArgs::new(
-        UVec3::new(start.x as u32, start.y as u32, 0),
-        UVec3::new(end.x as u32, end.y as u32, 0),
-    );
+    let mut args = PathfindArgs::new(grid_point(grid, start)?, grid_point(grid, end)?);
     args = if any_angle {
         args.thetastar()
     } else {
@@ -167,4 +186,81 @@ pub fn find_path_northstar(
             .map(|point| IVec2::new(point.x as i32, point.y as i32))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Пустая всюду проходимая сетка 8×8: минимальный размер, который
+    /// принимает `GridSettingsBuilder`, и мгновенная постройка.
+    fn tiny_grid() -> OrdinalGrid {
+        let settings = GridSettingsBuilder::new_2d(8, 8).chunk_size(4).build();
+        let mut grid = OrdinalGrid::new(&settings);
+        grid.build();
+        grid
+    }
+
+    #[test]
+    fn a_tile_past_the_far_edge_is_not_a_grid_point() {
+        let grid = tiny_grid();
+        assert_eq!(grid_point(&grid, IVec2::new(8, 0)), None);
+        assert_eq!(grid_point(&grid, IVec2::new(0, 8)), None);
+        assert_eq!(grid_point(&grid, IVec2::new(-1, 0)), None);
+    }
+
+    /// Верхняя граница исключающая: последний тайл 8×8 — седьмой, и он внутри.
+    #[test]
+    fn the_far_corner_tile_is_still_inside() {
+        let grid = tiny_grid();
+        assert_eq!(
+            grid_point(&grid, IVec2::new(7, 7)),
+            Some(UVec3::new(7, 7, 0))
+        );
+    }
+
+    #[test]
+    fn a_search_out_of_bounds_fails_quietly() {
+        let grid = tiny_grid();
+        assert!(find_path_northstar(&grid, IVec2::new(0, 0), IVec2::new(8, 0), false).is_none());
+        assert!(find_path_northstar(&grid, IVec2::new(8, 0), IVec2::new(0, 0), true).is_none());
+    }
+
+    /// Гвард не съедает законный запрос до дальнего угла.
+    #[test]
+    fn a_search_inside_the_grid_still_finds_a_path() {
+        let grid = tiny_grid();
+        let path = find_path_northstar(&grid, IVec2::new(0, 0), IVec2::new(7, 7), true)
+            .expect("путь по пустой сетке");
+        assert_eq!(path.last().copied(), Some(IVec2::new(7, 7)));
+    }
+
+    /// Предикат гейта расписания: пока таск не заведён — опрашивать нечего,
+    /// после `clear()` — тем более.
+    #[test]
+    fn is_building_follows_the_in_flight_task() {
+        use bevy::tasks::TaskPool;
+
+        AsyncComputeTaskPool::get_or_init(TaskPool::default);
+        let mut grid = NorthstarGrid::default();
+        assert!(!grid.is_building());
+        grid.task = Some(AsyncComputeTaskPool::get().spawn(async { None }));
+        assert!(grid.is_building());
+        grid.clear();
+        assert!(!grid.is_building());
+    }
+
+    /// Снятый ранний выход ничего не сторожил: без летящего таска система —
+    /// no-op, а не паника (стенды поднимают её и без гейта).
+    #[test]
+    fn polling_without_a_task_is_a_no_op() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut world = World::new();
+        world.init_resource::<NorthstarGrid>();
+        world
+            .run_system_once(poll_northstar_build)
+            .expect("система обязана отработать");
+        assert!(world.resource::<NorthstarGrid>().is_missing());
+    }
 }

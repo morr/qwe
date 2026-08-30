@@ -81,8 +81,16 @@ impl PathfindingAlgorithm {
     }
 }
 
-/// Поиск пути выбранным алгоритмом. Возвращает путь, включая стартовый тайл,
-/// либо `None`, если цель непроходима или недостижима.
+/// Поиск пути по плоской сетке выбранным алгоритмом. Возвращает путь, включая
+/// стартовый тайл, либо `None` в трёх случаях: цель непроходима, цель
+/// недостижима — и алгоритм иерархический, то есть плоской сеткой не
+/// обслуживается в принципе ([`PathfindingAlgorithm::needs_northstar`]).
+///
+/// Третий случай — не «пути нет», а «спрошено не то»: такой запрос идёт в
+/// `find_path_northstar`, и спросить `needs_northstar` обязан вызывающий, до
+/// вызова. Оба вызывающих так и делают — `Backend::grid_path`
+/// (`backend.rs`) подставляет A*, пока иерархия не построена, бенч
+/// (`examples/bench/pathfinding_bench.rs`) ветвит прогон.
 pub fn find_path(
     navmesh: &Navmesh,
     start: IVec2,
@@ -125,7 +133,28 @@ pub fn find_path(
             success,
         ),
         // иерархические алгоритмы идут не через navmesh, а через
-        // `NorthstarGrid` — маршрутизация в `Movable::to_pathfinding`
+        // `NorthstarGrid`; выбор делает `Backend::grid_path`, а до готовности
+        // иерархии он подставляет сюда же A*
         PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Третий случай `None` из контракта `find_path`: цель проходима и
+    /// достижима, но алгоритм иерархический — плоской сеткой он не
+    /// обслуживается, и вызывающий обязан спросить `needs_northstar` заранее.
+    #[test]
+    fn a_hierarchical_algorithm_is_not_served_by_the_flat_grid() {
+        let navmesh = Navmesh::default();
+        let start = IVec2::new(10, 10);
+        let goal = IVec2::new(13, 10);
+        assert!(find_path(&navmesh, start, goal, PathfindingAlgorithm::Astar).is_some());
+        for algorithm in [PathfindingAlgorithm::Hpa, PathfindingAlgorithm::ThetaStar] {
+            assert!(algorithm.needs_northstar());
+            assert!(find_path(&navmesh, start, goal, algorithm).is_none());
+        }
     }
 }

@@ -12,7 +12,7 @@ use bevy::prelude::*;
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::backend::{Backend, Walkable};
 pub use self::mode::{GridMode, MeshMode, NavMode};
-pub use self::navmesh::{ArcNavmesh, COST_DIAGONAL, COST_MULTIPLIER, COST_STRAIGHT, Navmesh};
+pub use self::navmesh::{ArcNavmesh, COST_MULTIPLIER, Navmesh};
 pub use self::northstar::{
     NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
     start_northstar_build,
@@ -21,7 +21,6 @@ pub use self::polymesh::{
     PolyNavmesh, PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
     find_path_polymesh, poll_polymesh_build, sync_polymesh_build,
 };
-use crate::grid::{tile_center, world_to_tile};
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
 use crate::map::osm::model::MapData;
 use crate::prefs::TrackPrefExt;
@@ -56,7 +55,7 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
 /// кольце `r + 1` может стоять сосед по прямой на `r + 1`, что ближе уже при
 /// `r ≥ 3`. Поиск идёт, пока лучшее найденное дальше внутренней границы
 /// следующего кольца.
-pub fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) -> Option<IVec2> {
+fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) -> Option<IVec2> {
     nearest_tile_where(tile, max_radius, |candidate| {
         navmesh.is_passable(candidate.x, candidate.y)
     })
@@ -113,7 +112,7 @@ pub fn line_of_sight(navmesh: &Navmesh, from: Vec2, to: Vec2) -> bool {
     let steps = (delta.length() / (navmesh.tile_size / 4.0)).ceil() as i32;
     (0..=steps).all(|step| {
         let point = from + delta * (step as f32 / steps.max(1) as f32);
-        let tile = world_to_tile(point);
+        let tile = navmesh.to_tile(point);
         navmesh.is_passable(tile.x, tile.y)
     })
 }
@@ -337,7 +336,7 @@ impl Plugin for NavigationPlugin {
                             resource_changed::<PathfindingAlgorithm>
                                 .or_else(resource_changed::<PolymeshDebug>),
                         ),
-                    poll_northstar_build,
+                    poll_northstar_build.run_if(|grid: Res<NorthstarGrid>| grid.is_building()),
                 ),
             )
             // полигональный меш — основной бэкенд (`PolymeshDebug::enabled`
@@ -383,16 +382,18 @@ fn clear_map_backends(mut northstar: ResMut<NorthstarGrid>, mut polymesh: ResMut
     polymesh.clear();
 }
 
-/// Предел спирального поиска места для портала, метры мира.
-const PORTAL_SEARCH_METERS: f32 = 400.0;
-
 /// Ближайший к `position` центр тайла, вокруг которого хватает свободного
 /// места для портала. Хинт `PORTAL_POS` мог попасть в здание OSM-карты;
 /// снап делает поток загрузки (`map/osm/download.rs`) сразу после заливки
 /// navmesh, той же функцией пользуется офлайн-бенч
 /// (`examples/bench/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
+///
+/// Кольца обходит [`nearest_tile_where`], а не свой цикл: «ближайший» здесь
+/// евклидов, а первое кольцо с попаданием — чебышёвское, и его угол на `r·√2`
+/// проигрывает прямому тайлу следующего кольца. Промах сдвигал бы и старт
+/// BFS `prune_unreachable`, и точку спавна демонов.
 pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
-    let start = world_to_tile(position);
+    let start = navmesh.to_tile(position);
 
     // радиус, в котором вокруг кандидата всё должно быть проходимо
     // (диаметр портала + спавн демонов по кромке), тайлы
@@ -403,26 +404,14 @@ pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
         })
     };
 
-    let search_tiles = (PORTAL_SEARCH_METERS / navmesh.tile_size) as i32;
-    for radius in 0..=search_tiles {
-        for dx in -radius..=radius {
-            for dy in -radius..=radius {
-                if dx.abs() != radius && dy.abs() != radius {
-                    continue;
-                }
-                let tile = start + IVec2::new(dx, dy);
-                if is_clear(tile) {
-                    return Some(tile_center(tile));
-                }
-            }
-        }
-    }
-    None
+    let search_tiles = (crate::settings::PORTAL_SEARCH_METERS / navmesh.tile_size) as i32;
+    nearest_tile_where(start, search_tiles, is_clear).map(|tile| navmesh.tile_center(tile))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grid::tile_center;
 
     /// Пустая сетка с одним свободным тайлом — так проверяется, какой именно
     /// тайл выберет кольцевой поиск.
@@ -437,6 +426,23 @@ mod tests {
             navmesh.set_passable(tile.x, tile.y, true);
         }
         navmesh
+    }
+
+    /// Полностью закрытая сетка с «полянами» `2*clearance + 1` вокруг каждого
+    /// центра: `is_clear` из `snap_portal_position` проходит ровно в центрах, а
+    /// поляны разнесены так, что их объединение не даёт лишнего центра.
+    fn navmesh_with_portal_spots(centers: &[IVec2]) -> Navmesh {
+        let clearance =
+            (crate::settings::PORTAL_DIAMETER / 2.0 / crate::settings::navtile_size()) as i32 + 1;
+        let free: Vec<IVec2> = centers
+            .iter()
+            .flat_map(|centre| {
+                (-clearance..=clearance).flat_map(move |dx| {
+                    (-clearance..=clearance).map(move |dy| *centre + IVec2::new(dx, dy))
+                })
+            })
+            .collect();
+        navmesh_with_only(&free)
     }
 
     #[test]
@@ -465,5 +471,32 @@ mod tests {
     fn nothing_within_the_radius_means_none() {
         let navmesh = navmesh_with_only(&[IVec2::new(30, 10)]);
         assert_eq!(nearest_passable_tile(&navmesh, IVec2::new(10, 10), 8), None);
+    }
+
+    /// Снап портала — тот же евклидов ответ на чебышёвских кольцах: угол
+    /// кольца 22 (расстояние 31.11) обязан проиграть прямому тайлу кольца 30
+    /// (расстояние 30.0), хотя кольцо 22 просматривается раньше.
+    #[test]
+    fn the_portal_snaps_past_a_corner_to_a_nearer_straight_spot() {
+        let start = IVec2::new(500, 500);
+        let corner = start + IVec2::new(22, 22);
+        let straight = start + IVec2::new(30, 0);
+        let navmesh = navmesh_with_portal_spots(&[corner, straight]);
+        assert_eq!(
+            snap_portal_position(&navmesh, tile_center(start)),
+            Some(tile_center(straight))
+        );
+    }
+
+    /// Кольцо 0 никуда не делось: подсказка, вокруг которой уже есть клиренс,
+    /// не сдвигается.
+    #[test]
+    fn the_portal_hint_stays_when_it_already_has_clearance() {
+        let start = IVec2::new(500, 500);
+        let navmesh = navmesh_with_portal_spots(&[start, start + IVec2::new(40, 0)]);
+        assert_eq!(
+            snap_portal_position(&navmesh, tile_center(start)),
+            Some(tile_center(start))
+        );
     }
 }

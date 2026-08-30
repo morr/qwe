@@ -117,7 +117,7 @@ fn main() {
     // стартовая цена, в замер прогона она не входит
     let grid = algorithms
         .iter()
-        .any(|algorithm| is_hierarchical(*algorithm))
+        .any(|algorithm| algorithm.needs_northstar())
         .then(|| {
             let started = Instant::now();
             let grid = Arc::new(build_from_navmesh(&navmesh));
@@ -145,13 +145,6 @@ fn parse_algorithm(name: &str) -> PathfindingAlgorithm {
         "theta" | "thetastar" | "theta*" => PathfindingAlgorithm::ThetaStar,
         other => panic!("unknown algorithm: {other}"),
     }
-}
-
-fn is_hierarchical(algorithm: PathfindingAlgorithm) -> bool {
-    matches!(
-        algorithm,
-        PathfindingAlgorithm::Hpa | PathfindingAlgorithm::ThetaStar
-    )
 }
 
 /// Та же последовательность, что и в `NavigationPlugin`: заливка, снап портала,
@@ -249,7 +242,7 @@ fn run(
                             break;
                         };
                         let started = Instant::now();
-                        let path = if is_hierarchical(algorithm) {
+                        let path = if algorithm.needs_northstar() {
                             find_path_northstar(
                                 grid.expect("hierarchical run without a grid"),
                                 task.start,
