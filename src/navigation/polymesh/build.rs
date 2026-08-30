@@ -11,7 +11,7 @@ use i_overlay::float::single::SingleFloatOverlay;
 
 use super::seams::{SeamPoints, chunk_outline, node_world, quantized, seam_points};
 use super::stitch::{components_of, stitch_chunks};
-use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid, to_poly};
+use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid};
 use crate::map::footprint::CurbCoverage;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::{merge_close_points, miter_offsets};
@@ -382,7 +382,7 @@ fn chunk_layer(
         triangulation.add_obstacle(
             contour
                 .iter()
-                .map(|&[x, y]| to_poly(Vec2::new(quantized(x), quantized(y)))),
+                .map(|&[x, y]| Vec2::new(quantized(x), quantized(y))),
         );
     }
     // а вот упрощение обязательно, и это проверено: без него те же 300

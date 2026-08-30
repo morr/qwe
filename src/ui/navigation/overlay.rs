@@ -91,17 +91,13 @@ pub(super) fn sync_polymesh_overlay(
                 if !seen.insert((a.min(b), a.max(b))) {
                     continue;
                 }
-                // polyanya живёт на glam 0.30 — конверсия по полям. Координаты
-                // вершин локальные для слоя: чанк триангулирован от своего
-                // угла, мировая точка — плюс `offset`
-                let origin = Vec2::new(layer.offset.x, layer.offset.y);
-                let from = &layer.vertices[a as usize].coords;
-                let to = &layer.vertices[b as usize].coords;
+                // координаты вершин локальные для слоя: чанк триангулирован
+                // от своего угла, мировая точка — плюс `offset`
+                let origin = layer.offset;
+                let from = layer.vertices[a as usize].coords;
+                let to = layer.vertices[b as usize].coords;
                 builder.push_stroke(
-                    &[
-                        origin + Vec2::new(from.x, from.y),
-                        origin + Vec2::new(to.x, to.y),
-                    ],
+                    &[origin + from, origin + to],
                     false,
                     POLYMESH_EDGE_WIDTH,
                     color,

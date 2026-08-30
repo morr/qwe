@@ -11,8 +11,6 @@
 
 use bevy::prelude::*;
 
-use super::to_poly;
-
 /// Шаг подразбиения кромки чанка, метры.
 ///
 /// Без подразбиения на шве совпадают только углы чанка: CDT ставит вершины на
@@ -169,11 +167,7 @@ fn side_points(node: u32, span: f32, steps: u32, crossings: &[f32]) -> Vec<f32> 
 /// считается в каноническом направлении (по возрастанию координаты) и при
 /// необходимости разворачивается — иначе у двух соседей одна и та же кромка
 /// вышла бы разными числами.
-pub(super) fn chunk_outline(
-    cell: UVec2,
-    chunk_size: Vec2,
-    seams: &SeamPoints,
-) -> Vec<polyanya_glam::Vec2> {
+pub(super) fn chunk_outline(cell: UVec2, chunk_size: Vec2, seams: &SeamPoints) -> Vec<Vec2> {
     let (steps_x, steps_y) = (seam_steps(chunk_size.x), seam_steps(chunk_size.y));
     let xs = |node_y: u32| {
         side_points(
@@ -221,7 +215,7 @@ pub(super) fn chunk_outline(
             .rev()
             .map(|y| Vec2::new(corner(low_x, 0).x, y)),
     );
-    outline.into_iter().map(to_poly).collect()
+    outline
 }
 
 #[cfg(test)]

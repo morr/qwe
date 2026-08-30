@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 
 use super::seams::node_world;
-use super::{ChunkComponents, ChunkGraph, GraphNode, from_poly, to_poly};
+use super::{ChunkComponents, ChunkGraph, GraphNode};
 
 /// Компоненты связности слоя: flood fill по соседству полигонов через общие
 /// вершины. Считать можно только **до** сшивки — она метит индексы в
@@ -41,7 +41,7 @@ pub(super) fn components_of(layer: &polyanya::Layer) -> ChunkComponents {
                 let Some(vertex) = layer.vertices.get(first) else {
                     continue;
                 };
-                center += from_poly(vertex.coords);
+                center += vertex.coords;
                 corners += 1.0;
                 // сосед — только через РЕБРО: polyanya переносит поиск через
                 // общее ребро, и два полигона, соприкоснувшиеся одной
@@ -189,12 +189,9 @@ fn unstitchable(
     lonely: &[(Vec2, usize)],
 ) -> Unstitched {
     let at_corner = |layer: usize, list: &[usize], corner: Vec2| -> Option<usize> {
-        list.iter().copied().find(|&vertex| {
-            same_point(
-                from_poly(mesh.layers[layer].vertices[vertex].coords),
-                corner,
-            )
-        })
+        list.iter()
+            .copied()
+            .find(|&vertex| same_point(mesh.layers[layer].vertices[vertex].coords, corner))
     };
     let corner_pair = |corner: Vec2| -> Option<(usize, usize)> {
         Some((
@@ -227,8 +224,8 @@ fn unstitchable(
                 return false;
             };
             strictly_inside(
-                from_poly(mesh.layers[chunk].vertices[*first].coords),
-                from_poly(mesh.layers[chunk].vertices[*second].coords),
+                mesh.layers[chunk].vertices[*first].coords,
+                mesh.layers[chunk].vertices[*second].coords,
                 point,
             )
         });
@@ -295,7 +292,7 @@ fn graph_nodes(
     let mut node_of: Vec<Vec<u32>> = Vec::with_capacity(components.len());
     let mut nodes: Vec<GraphNode> = Vec::new();
     for (chunk, chunk_components) in components.iter().enumerate() {
-        let offset = from_poly(mesh.layers[chunk].offset);
+        let offset = mesh.layers[chunk].offset;
         let ids = chunk_components
             .centers
             .iter()
@@ -369,9 +366,8 @@ pub(super) fn stitch_chunks(
                     (node(x, y + 1), node(x + 1, y + 1))
                 };
 
-                let here = mesh.layers[chunk].get_vertices_on_segment(to_poly(start), to_poly(end));
-                let there =
-                    mesh.layers[neighbour].get_vertices_on_segment(to_poly(start), to_poly(end));
+                let here = mesh.layers[chunk].get_vertices_on_segment(start, end);
+                let there = mesh.layers[neighbour].get_vertices_on_segment(start, end);
                 if here.is_empty() || there.is_empty() {
                     continue;
                 }
@@ -389,15 +385,12 @@ pub(super) fn stitch_chunks(
                 // вершину, шву безразлично
                 let mut lonely: Vec<(Vec2, usize)> = Vec::new();
                 for &vertex in &here {
-                    let world = from_poly(mesh.layers[chunk].vertices[vertex].coords);
+                    let world = mesh.layers[chunk].vertices[vertex].coords;
                     if on_corner(world) {
                         continue;
                     }
                     let matched = there.iter().find(|&&other| {
-                        same_point(
-                            from_poly(mesh.layers[neighbour].vertices[other].coords),
-                            world,
-                        )
+                        same_point(mesh.layers[neighbour].vertices[other].coords, world)
                     });
                     let Some(&other) = matched else {
                         lonely.push((world, neighbour));
@@ -414,7 +407,7 @@ pub(super) fn stitch_chunks(
                 // спаренные вершины соседа теперь побитово равны нашим, так что
                 // непарные у него ищутся простым «нет в парах»
                 for &vertex in &there {
-                    let world = from_poly(mesh.layers[neighbour].vertices[vertex].coords);
+                    let world = mesh.layers[neighbour].vertices[vertex].coords;
                     if !on_corner(world) && !pairs.iter().any(|&(_, other)| other == vertex) {
                         lonely.push((world, chunk));
                     }
@@ -514,10 +507,10 @@ pub(super) fn stitch_chunks(
                 let found = mesh.layers[chunk]
                     .vertices
                     .iter()
-                    .position(|vertex| same_point(from_poly(vertex.coords), world));
+                    .position(|vertex| same_point(vertex.coords, world));
                 if let Some(vertex) = found {
                     // та же побитовая привязка, что и на самом шве
-                    mesh.layers[chunk].vertices[vertex].coords = to_poly(world);
+                    mesh.layers[chunk].vertices[vertex].coords = world;
                     sharing.push((chunk as u8, vertex));
                 }
             }
@@ -673,8 +666,8 @@ fn verify_seams(mesh: &polyanya::Mesh) {
                     "polymesh seam is one-way: edge {:?}-{:?} of polygon {number} in layer {index} \
                      leads into polygon {} of layer {}, which has no matching edge — the two \
                      chunks cut their shared border differently (see SEAM_QUANTUM, seam_points)",
-                    from_poly(here.coords),
-                    from_poly(next.coords),
+                    here.coords,
+                    next.coords,
                     polygon_of(across),
                     layer_of(across),
                 );
@@ -708,7 +701,7 @@ mod tests {
         ];
         let vertices = corners
             .iter()
-            .map(|&point| polyanya::Vertex::new(to_poly(point), vec![0, u32::MAX]))
+            .map(|&point| polyanya::Vertex::new(point, vec![0, u32::MAX]))
             .collect();
         let ring = (0..corners.len() as u32).collect();
         let layer = polyanya::Layer::new(vertices, vec![polyanya::Polygon::new(ring, false)])

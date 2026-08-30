@@ -46,16 +46,6 @@ pub use self::path::find_path_polymesh;
 pub use self::seams::SEAM_QUANTUM;
 pub use self::stitch::SEAM_EPSILON;
 
-/// polyanya живёт на glam 0.30, bevy — на 0.32: типы не связаны ничем, и
-/// конверсия возможна только по полям.
-fn to_poly(point: Vec2) -> polyanya_glam::Vec2 {
-    polyanya_glam::Vec2::new(point.x, point.y)
-}
-
-fn from_poly(point: polyanya_glam::Vec2) -> Vec2 {
-    Vec2::new(point.x, point.y)
-}
-
 /// Панель Polymesh: тумблер и радиус агента (инфляция препятствий).
 /// Персистится, как остальные панели; восстановленный `enabled` означает
 /// «кнопка уже нажата» — постройка стартует на входе в мир.
@@ -198,7 +188,8 @@ struct GraphNode {
 
 /// Граф уровня 1: компоненты чанков и свободные смежности между ними через
 /// швы. Он же отвечает за достижимость — у polyanya проверка островов
-/// отключена, как только слоёв больше одного (`lib.rs:418`, там `TODO`).
+/// отключена, как только слоёв больше одного (`lib.rs`, гейт
+/// `layers.len() == 1`, там `TODO`).
 struct ChunkGraph {
     /// Глобальный номер узла по (слой, компонента).
     node_of: Vec<Vec<u32>>,
@@ -446,8 +437,8 @@ impl PolymeshBuild {
     pub fn contains(&self, point: Vec2) -> bool {
         let chunk = self.chunk_at(point);
         self.mesh
-            .point_in_mesh(polyanya::Coords::on_layer(to_poly(point), chunk as u8))
-            || self.mesh.point_in_mesh(to_poly(point))
+            .point_in_mesh(polyanya::Coords::on_layer(point, chunk as u8))
+            || self.mesh.point_in_mesh(point)
     }
 
     /// Ближайшая точка на меше в пределах допуска локализации (0.75 м) — тем же
@@ -462,9 +453,9 @@ impl PolymeshBuild {
     pub fn nearest_free_point(&self, point: Vec2) -> Option<Vec2> {
         let chunk = self.chunk_at(point);
         self.mesh
-            .get_closest_point(polyanya::Coords::on_layer(to_poly(point), chunk as u8))
-            .or_else(|| self.mesh.get_closest_point(to_poly(point)))
-            .map(|coords| from_poly(coords.position()))
+            .get_closest_point(polyanya::Coords::on_layer(point, chunk as u8))
+            .or_else(|| self.mesh.get_closest_point(point))
+            .map(|coords| coords.position())
     }
 
     /// Точка на меше и её узел графа. Слой подсказывается явно
@@ -480,8 +471,8 @@ impl PolymeshBuild {
         let chunk = self.chunk_at(point);
         let coords = self
             .mesh
-            .get_closest_point(polyanya::Coords::on_layer(to_poly(point), chunk as u8))
-            .or_else(|| self.mesh.get_closest_point(to_poly(point)))
+            .get_closest_point(polyanya::Coords::on_layer(point, chunk as u8))
+            .or_else(|| self.mesh.get_closest_point(point))
             // круговой допуск (0.75 м) не достал — идём от точки по прямой к
             // напарнику запроса шагами по `SEARCH_DELTA`: цель у стены здания
             // оказывается внутри раздутого контура, и ближайшее свободное место
@@ -489,10 +480,7 @@ impl PolymeshBuild {
             // проходкой не проверяется — для старта это значит «шагнуть к цели
             // сквозь то, что между нами», и держится только тем, что дальше
             // посадка входит в путь своей точкой
-            .or_else(|| {
-                self.mesh
-                    .get_closest_point_towards(to_poly(point), to_poly(towards))
-            })?;
+            .or_else(|| self.mesh.get_closest_point_towards(point, towards))?;
         let layer = coords.layer()? as usize;
         let polygon = polygon_of(coords.polygon());
         let component = *self.components.get(layer)?.of_polygon.get(polygon)?;

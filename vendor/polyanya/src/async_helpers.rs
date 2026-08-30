@@ -3,7 +3,7 @@ use std::time::Instant;
 use std::{collections::HashSet, fmt, future::Future, task::Poll};
 
 use crate::{
-    instance::{InstanceStep, SearchInstance},
+    instance::{InstanceStep, SearchInstance, U32Layer},
     Coords, Mesh, Path,
 };
 
@@ -17,8 +17,10 @@ pub struct FuturePath<'m> {
     pub(crate) mesh: &'m Mesh,
     pub(crate) instance: Option<SearchInstance<'m>>,
     pub(crate) ending_polygon: u32,
-    /// Layers the search is not allowed to enter; the counterpart of
-    /// [`Mesh::path_on_layers`] for the polled search.
+    // QWE: слои, куда поиску нельзя, — аналог `Mesh::path_on_layers` для
+    // опрашиваемого поиска. Концы при этом `Coords`: посадка, найденная
+    // прежним запросом к мешу, несёт свой полигон, и повторная локализация
+    // не делается.
     pub(crate) blocked_layers: HashSet<u8>,
 }
 
@@ -28,24 +30,6 @@ impl fmt::Debug for FuturePath<'_> {
             .field("from", &self.from.position())
             .field("to", &self.to.position())
             .finish()
-    }
-}
-
-impl FuturePath<'_> {
-    /// Polygon for one end of the search: the one already found by a previous
-    /// mesh search if the [`Coords`] carries it, otherwise located the same way
-    /// [`Mesh::path_on_layers`] does — honoring the blocked layers, which plain
-    /// [`Mesh::get_point_location`] knows nothing about.
-    fn end_polygon(&self, point: &Coords) -> u32 {
-        if point.polygon_index != u32::MAX {
-            return point.polygon_index;
-        }
-        if self.blocked_layers.is_empty() {
-            return self.mesh.get_point_location(point.pos);
-        }
-        self.mesh
-            .get_closest_point_on_layers(*point, self.blocked_layers.clone())
-            .map_or(u32::MAX, |located| located.polygon_index)
     }
 }
 
@@ -70,29 +54,46 @@ impl Future for FuturePath<'_> {
             #[cfg(feature = "stats")]
             let start = Instant::now();
 
-            let starting_polygon_index = self.end_polygon(&self.from);
-            if starting_polygon_index == u32::MAX {
+            // A point over overlapping polygons has more than one reading, and every one of
+            // them is searched: see `Mesh::path_on_layers`.
+            //
+            // QWE: локализация чтит закрытые слои — `candidate_polygons` сам
+            // пропускает и их, и повторный поиск полигона у `Coords`, который
+            // его уже несёт.
+            let starting_polygons = self
+                .mesh
+                .candidate_polygons(self.from, &self.blocked_layers);
+            if starting_polygons.is_empty() {
                 return Poll::Ready(None);
             }
-            let ending_polygon = self.end_polygon(&self.to);
-            if ending_polygon == u32::MAX {
+            let ending_polygons = self
+                .mesh
+                .candidate_polygons(self.to, &self.blocked_layers);
+            if ending_polygons.is_empty() {
                 return Poll::Ready(None);
             }
-            // Islands are per layer; on a multi-layer mesh a same-layer pair may
-            // still be connected through another layer — same gate as
-            // `Mesh::path_on_layers`.
+
             if self.mesh.layers.len() == 1 {
                 if let Some(islands) = self.mesh.layers[0].islands.as_ref() {
-                    let start_island = islands.get(starting_polygon_index as usize);
-                    let end_island = islands.get(ending_polygon as usize);
-                    if start_island.is_some() && end_island.is_some() && start_island != end_island
-                    {
+                    let connected = starting_polygons.iter().any(|starting_polygon| {
+                        ending_polygons.iter().any(|ending_polygon| {
+                            let start_island = islands.get(starting_polygon.polygon() as usize);
+                            let end_island = islands.get(ending_polygon.polygon() as usize);
+                            start_island.is_none()
+                                || end_island.is_none()
+                                || start_island == end_island
+                        })
+                    });
+                    if !connected {
                         return Poll::Ready(None);
                     }
                 }
             }
 
-            if starting_polygon_index == ending_polygon {
+            if let Some(ending_polygon) = starting_polygons
+                .iter()
+                .find(|starting_polygon| ending_polygons.contains(starting_polygon))
+            {
                 #[cfg(feature = "stats")]
                 {
                     if self.mesh.scenarios.get() == 0 {
@@ -104,30 +105,31 @@ impl Future for FuturePath<'_> {
                         "{};{};0;0;0;0;0;{}",
                         self.mesh.scenarios.get(),
                         start.elapsed().as_secs_f32() * 1_000_000.0,
-                        self.from.pos.distance(self.to.pos),
+                        self.from.position().distance(self.to.position()),
                     );
                     self.mesh.scenarios.set(self.mesh.scenarios.get() + 1);
                 }
                 return Poll::Ready(Some(Path {
-                    length: self.from.pos.distance(self.to.pos),
-                    path: vec![self.to.pos],
+                    length: self.from.position().distance(self.to.position()),
+                    path: vec![self.to.position()],
                     #[cfg(feature = "detailed-layers")]
                     #[cfg_attr(docsrs, doc(cfg(feature = "detailed-layers")))]
-                    path_with_layers: vec![(self.to.pos, crate::instance::U32Layer::layer(&ending_polygon))],
-                    path_through_polygons: vec![ending_polygon],
+                    path_with_layers: vec![(self.to.position(), ending_polygon.layer())],
+                    path_through_polygons: vec![*ending_polygon],
                 }));
             }
 
+            self.ending_polygon = ending_polygons[0];
+            // QWE: закрытые слои уходят и в сам поиск, не только в локализацию
             let blocked_layers = self.blocked_layers.clone();
             self.instance = Some(SearchInstance::setup(
                 self.mesh,
-                (self.from.pos, starting_polygon_index),
-                (self.to.pos, ending_polygon),
+                (self.from.position(), &starting_polygons),
+                (self.to.position(), &ending_polygons),
                 blocked_layers,
                 #[cfg(feature = "stats")]
                 start,
             ));
-            self.ending_polygon = ending_polygon;
             cx.waker().wake_by_ref();
             Poll::Pending
         }

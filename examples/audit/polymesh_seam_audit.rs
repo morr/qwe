@@ -57,10 +57,8 @@ fn main() {
                     } else {
                         (node(x, y + 1), node(x + 1, y + 1))
                     };
-                    let here =
-                        mesh.layers[chunk].get_vertices_on_segment(to_poly(start), to_poly(end));
-                    let there = mesh.layers[neighbour]
-                        .get_vertices_on_segment(to_poly(start), to_poly(end));
+                    let here = mesh.layers[chunk].get_vertices_on_segment(start, end);
+                    let there = mesh.layers[neighbour].get_vertices_on_segment(start, end);
                     if here.is_empty() || there.is_empty() {
                         continue;
                     }
@@ -71,7 +69,7 @@ fn main() {
                         (&there, &here, neighbour, chunk),
                     ] {
                         for (at, &vertex) in mine.iter().enumerate() {
-                            let world = from_poly(mesh.layers[from].vertices[vertex].coords);
+                            let world = mesh.layers[from].vertices[vertex].coords;
                             if [start, end]
                                 .iter()
                                 .any(|c| c.distance_squared(world) <= SEAM_EPSILON * SEAM_EPSILON)
@@ -79,8 +77,7 @@ fn main() {
                                 continue;
                             }
                             let matched = other.iter().any(|&o| {
-                                from_poly(mesh.layers[to].vertices[o].coords)
-                                    .distance_squared(world)
+                                mesh.layers[to].vertices[o].coords.distance_squared(world)
                                     <= SEAM_EPSILON * SEAM_EPSILON
                             });
                             if !matched {
@@ -121,7 +118,7 @@ fn main() {
                 let mut near: Vec<f32> = mesh.layers[layer]
                     .vertices
                     .iter()
-                    .map(|v| from_poly(v.coords))
+                    .map(|v| v.coords)
                     .filter(|p| p.distance(*point) < 2.0)
                     .map(|p| if vertical { p.y } else { p.x })
                     .collect();
@@ -178,9 +175,11 @@ fn splits_a_whole_edge(
         return false;
     };
     let partner = |vertex: usize| -> Option<usize> {
-        let point = from_poly(mesh.layers[rich].vertices[vertex].coords);
+        let point = mesh.layers[rich].vertices[vertex].coords;
         other.iter().copied().find(|&candidate| {
-            from_poly(mesh.layers[blind].vertices[candidate].coords).distance_squared(point)
+            mesh.layers[blind].vertices[candidate]
+                .coords
+                .distance_squared(point)
                 <= SEAM_EPSILON * SEAM_EPSILON
         })
     };
@@ -224,12 +223,4 @@ fn shared_polygon(layer: &polyanya::Layer, layer_index: u32, first: usize, secon
 
 fn quantized(value: f32) -> f32 {
     (value / SEAM_QUANTUM).round() * SEAM_QUANTUM
-}
-
-fn to_poly(point: Vec2) -> polyanya_glam::Vec2 {
-    polyanya_glam::Vec2::new(point.x, point.y)
-}
-
-fn from_poly(point: polyanya_glam::Vec2) -> Vec2 {
-    Vec2::new(point.x, point.y)
 }

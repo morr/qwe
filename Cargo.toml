@@ -83,20 +83,22 @@ i_overlay = "7"
 # симплекс-шум под поле хвойных массивов (src/map/trees/conifer.rs)
 noise = "0.9"
 pathfinding = "4"
-# полигональный navmesh: CDT + инфляция препятствий радиусом агента (navigation/polymesh/)
-polyanya = "0.16"
-# polyanya говорит на glam 0.30 (bevy 0.19 несёт 0.32) — отдельный инстанс
-# только чтобы конструировать её Vec2 на входе триангуляции
-polyanya_glam = { package = "glam", version = "0.30" }
+# полигональный navmesh: CDT + инфляция препятствий радиусом агента
+# (navigation/polymesh/). С 0.17 живёт на glam 0.32, как и bevy 0.19, — типы
+# общие, отдельный инстанс glam больше не нужен. recast (импорт из rerecast)
+# не используется — выключен вместе с дефолтами
+polyanya = { version = "0.17", default-features = false, features = ["async"] }
 rand = { version = "0.9", features = ["small_rng"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = "3"
 
-# вендоренная копия polyanya 0.16.1: воронка теряла существующий путь на
-# сшитых по швам слоях-чанках (см. navigation/polymesh/stitch.rs), а чинить и
-# диагностировать это можно только внутри крейта. Отличия от crates.io
-# помечены комментарием `QWE:` в исходниках
+# вендоренная копия polyanya с master после v0.17.1 (vleue/polyanya@e317e05):
+# нужен опрашиваемый поиск с закрытыми слоями (`Mesh::get_path_on_layers` —
+# им ходит коридорный запрос, см. navigation/polymesh/path.rs::bounded_path),
+# которого в апстриме нет. Патчи помечены комментарием `QWE:` в исходниках;
+# остальные наши правки (дедупликация узлов, ранний NotFound, пустой слой без
+# bake) влиты в апстрим PR #150–#152 и приезжают самим master
 [patch.crates-io]
 polyanya = { path = "vendor/polyanya" }
 

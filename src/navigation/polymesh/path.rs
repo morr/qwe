@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use super::{PolymeshBuild, from_poly, layer_of, polygon_of, to_poly};
+use super::{PolymeshBuild, layer_of, polygon_of};
 
 /// Путь по полигональному мешу от точки к точке, **включая стартовую** —
 /// таков контракт `movement::listen_for_pathfinding_tasks`, унаследованный от
@@ -61,10 +61,10 @@ pub fn find_path_polymesh(build: &PolymeshBuild, from: Vec2, to: Vec2) -> Option
     let path = bounded_path(build, start, goal, blocked)?;
     // полилиния строится от посадки: сглаживание обязано якориться на точке,
     // про которую `segment_clear` может сказать правду
-    let snapped = from_poly(start.position());
+    let snapped = start.position();
     let mut points = Vec::with_capacity(path.path.len() + 1);
     points.push(snapped);
-    points.extend(path.path.into_iter().map(from_poly));
+    points.extend(path.path);
     let mut points = smoothed(&build.mesh, points);
     if snapped.distance_squared(from) > WALK_EPSILON * WALK_EPSILON {
         points.insert(0, from);
@@ -139,7 +139,7 @@ fn inside(layer: &polyanya::Layer, polygon: &polyanya::Polygon, point: Vec2) -> 
             layer.vertices.get(second as usize),
         ) {
             (Some(start), Some(end)) => {
-                let (start, end) = (from_poly(start.coords), from_poly(end.coords));
+                let (start, end) = (start.coords, end.coords);
                 (end - start).perp_dot(point - start) >= -WALK_EPSILON
             }
             _ => false,
@@ -173,7 +173,7 @@ fn segment_clear(mesh: &polyanya::Mesh, from: Vec2, to: Vec2) -> bool {
     // кварталы, один — на 3.2 км через полгорода.
     let step = (WALK_PROBE / length).min(0.5);
     let Some(mut current) = mesh
-        .get_point_layer(to_poly(from.lerp(to, step)))
+        .get_point_layer(from.lerp(to, step))
         .first()
         .map(polyanya::Coords::polygon)
     else {
@@ -202,7 +202,7 @@ fn segment_clear(mesh: &polyanya::Mesh, from: Vec2, to: Vec2) -> bool {
             ) else {
                 return false;
             };
-            let (start, end) = (from_poly(start.coords), from_poly(end.coords));
+            let (start, end) = (start.coords, end.coords);
             let edge = end - start;
             let denominator = direction.perp_dot(edge);
             if denominator.abs() < WALK_EPSILON {
@@ -351,10 +351,10 @@ fn bounded_path(
          (tiles {:?} -> {:?}). The funnel is not converging: broken mesh geometry or a \
          degenerate start/goal point — fix that, do not raise the budget",
         budget * SEARCH_STEPS_PER_POLL,
-        from_poly(from.position()),
-        from_poly(to.position()),
-        crate::grid::world_to_tile(from_poly(from.position())),
-        crate::grid::world_to_tile(from_poly(to.position())),
+        from.position(),
+        to.position(),
+        crate::grid::world_to_tile(from.position()),
+        crate::grid::world_to_tile(to.position()),
     );
 }
 
