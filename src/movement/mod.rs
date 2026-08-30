@@ -22,7 +22,7 @@ pub use self::components::{
 };
 pub use self::destination::{
     DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
-    assign_destination_slots, claim_batch, slot_side, slot_target,
+    assign_destination_slots, claim_batch, slot_side, slot_side_with_slack, slot_target,
 };
 pub use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
@@ -144,20 +144,6 @@ impl Plugin for MovementPlugin {
             .register_type::<self::components::RequestedAt>()
             .register_type::<self::components::RetireAt>();
         app.add_observer(on_movable_added_init_sim_position)
-            // единственный полный скан — на готовую постройку полигонального
-            // меша: только там проходимость меняется под уже стоящими пешками
-            // (раздутые на радиус агента контуры). Скана на входе в мир нет
-            // намеренно, см. `rescue_trapped_entities`
-            .add_systems(
-                Update,
-                rescue_trapped_entities
-                    .run_if(polymesh_rebuilt)
-                    // в детерминированном режиме бэкенд заморожен на весь
-                    // прогон (ресурс `Backend` пишется раз на `WorldStarted`),
-                    // проходимость под стоящими
-                    // пешками посреди прогона не меняется — спасать не от чего
-                    .in_set(SimPipeline::Live),
-            )
             .add_systems(
                 Update,
                 // приёмка ДО диспетчера: снятые готовые таски освобождают
@@ -166,6 +152,28 @@ impl Plugin for MovementPlugin {
                 // выдавал вдвое меньше новых — на 30x диспетчер хронически
                 // голодал (156 из 258 стоящих бегущих ждали в очереди)
                 (
+                    // спасение — голова цепочки, и обе его связи обязаны быть
+                    // явными ровно по той же причине, что у слота ниже:
+                    // переезд переписывает `SimPosition` и роняет пешку в
+                    // `Idle`, то есть пишет ровно то, что в этом же кадре
+                    // читают выбор цели и диспетчер. Попав раньше переезда,
+                    // диспетчер платит полный A* от до-телепортного
+                    // `start_tile`, а ответ на него приёмка выбрасывает первой
+                    // же проверкой состояния — слот бюджета уходит впустую, и
+                    // именно на том единственном кадре, где спасённых сотни.
+                    //
+                    // Единственный полный скан — на готовую постройку
+                    // полигонального меша: только там проходимость меняется
+                    // под уже стоящими пешками (раздутые на радиус агента
+                    // контуры). Скана на входе в мир нет намеренно, см.
+                    // `rescue_trapped_entities`. В детерминированном режиме
+                    // бэкенд заморожен на весь прогон (`Backend` пишется раз
+                    // на `WorldStarted`), проходимость под стоящими пешками
+                    // посреди прогона не меняется — спасать не от чего, и
+                    // ветку задаёт множество всей цепочки
+                    rescue_trapped_entities
+                        .run_if(polymesh_rebuilt)
+                        .before(crate::human::pick_wander_targets),
                     listen_for_pathfinding_tasks,
                     // слот — ДО диспетчера и ПОСЛЕ выбора цели. Обе связи
                     // обязаны быть явными: `pick_wander_targets` людей живёт в

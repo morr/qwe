@@ -105,7 +105,16 @@ pub(crate) fn parse_args() -> Args {
             "radius" => args.radius = Some(parse_number(&value())),
             "search" => args.search = Some(parse_number(&value())),
             "matching" => args.matching = Some(parse_matching(&value())),
-            "slot-slack" => args.slot_slack = Some(parse_number::<f32>(&value()) as i32),
+            "slot-slack" => {
+                // прогон под подписью `slack -3`, молча равный `slack 0`, — это
+                // строка `RESULT`, по которой потом собирается отчёт
+                let slack = parse_number::<f32>(&value()) as i32;
+                assert!(
+                    slack >= 0,
+                    "--slot-slack expects a non-negative value, got {slack}"
+                );
+                args.slot_slack = Some(slack);
+            }
             "claim-at" => args.claim_at = Some(parse_number(&value())),
             "regroup" => args.regroup = Some(parse_number(&value())),
             "hold" => args.hold = Some(parse_number(&value())),

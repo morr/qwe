@@ -12,7 +12,7 @@ use qwe::human::{
 use qwe::map::osm::{MapData, WallLine};
 use qwe::movement::{
     DestinationClaim, DestinationClaims, Movable, MovableStateMovingTag, SimPosition, SlotLab,
-    SlotSearch, slot_side, slot_target,
+    SlotSearch, slot_side_with_slack, slot_target,
 };
 use qwe::navigation::{ArcNavmesh, Pathfinder, PolyNavmesh, PolymeshDebug, find_path_polymesh};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, decision_stream, stream};
@@ -411,7 +411,10 @@ pub(crate) fn drive_routes(
     mut batch: Local<Vec<(Entity, Option<IVec2>, IVec2, Vec2)>>,
     mut slots: Local<Vec<Option<(IVec2, IVec2)>>>,
 ) {
-    claims.sync(slot_side(style.body_radius * 2.0) + lab.slack, search.0);
+    claims.sync(
+        slot_side_with_slack(style.body_radius * 2.0, lab.slack),
+        search.0,
+    );
     let polymesh = pathfinder.mode().mesh();
     let navmesh = pathfinder.navmesh.read();
 
@@ -519,7 +522,7 @@ pub(crate) fn regroup_to_slot(
     if lab.regroup <= 0.0 {
         return;
     }
-    let side = slot_side(style.body_radius * 2.0) + lab.slack;
+    let side = slot_side_with_slack(style.body_radius * 2.0, lab.slack);
     let polymesh = pathfinder.mode().mesh();
     for (entity, mut movable, position, claim) in &mut pawns {
         let home = slot_target(claim.0, side);

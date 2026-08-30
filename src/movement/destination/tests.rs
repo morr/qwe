@@ -27,6 +27,35 @@ fn the_slot_side_covers_the_rest_distance() {
     assert_eq!(slot_side(0.1), 1);
 }
 
+/// Поправка стенда пола не отменяет: `slack` прибавляется ПОСЛЕ округления, и
+/// без клампа суммы `slack = -1` давал сторону 0, а `slack <= -2` —
+/// отрицательную решётку.
+#[test]
+fn slack_never_pushes_the_slot_side_below_a_tile() {
+    // навтайл 2 м: покой 1.8 — это сторона 1, и минус тайл её не роняет
+    assert_eq!(slot_side_with_slack(1.8, -1), 1);
+    assert_eq!(slot_side_with_slack(2.4, -5), 1);
+    // положительная поправка работает ровно как раньше
+    assert_eq!(slot_side_with_slack(1.8, 0), slot_side(1.8));
+    assert_eq!(slot_side_with_slack(1.8, 2), 3);
+    // ручку правят и через BRP: переполнение суммы недопустимо
+    assert_eq!(slot_side_with_slack(1.8, i32::MAX), i32::MAX);
+}
+
+/// Та же вырожденная настройка — уже через настоящий путь заявки: сторона 0
+/// роняла `slot_of` на `div_euclid(0)` в `claim_slot`.
+#[test]
+fn a_negative_slack_still_hands_out_a_slot() {
+    let mut claims = claims_with(slot_side_with_slack(1.8, -1));
+    let desired = IVec2::new(10, 10);
+
+    assert!(
+        claims
+            .claim_slot(entity(1), None, desired, tile_center(desired), anywhere)
+            .is_some()
+    );
+}
+
 /// Цели соседних слотов отстоят ровно на сторону слота — это и есть та
 /// гарантия, ради которой слот перестал быть одним тайлом.
 #[test]

@@ -10,8 +10,8 @@ use qwe::grid::tile_center;
 use qwe::human::HumanStyle;
 use qwe::movement::{
     DestinationClaim, Movable, MovableStateMovingTag, SeparationHolds, SeparationStats,
-    SeparationSteer, SeparationStyle, SimPosition, SlotLab, SlotSearch, separation_cell, slot_side,
-    slot_target,
+    SeparationSteer, SeparationStyle, SimPosition, SlotLab, SlotSearch, separation_cell,
+    slot_side_with_slack, slot_target,
 };
 use qwe::navigation::PolyNavmesh;
 use qwe::settings::{HUMAN_SIZE, navtile_size};
@@ -642,7 +642,7 @@ pub(crate) fn finish_trial(
     // перекрытием там, куда её вытолкнуло, по счётчику `settled` неотличима от
     // толпы, разошедшейся по решётке, а на экране это две разные картинки.
     // Допуск — половина шага решётки: дальше начинается чужой слот
-    let side = slot_side(style.body_radius * 2.0) + lab.slack;
+    let side = slot_side_with_slack(style.body_radius * 2.0, lab.slack);
     let on_slot_tolerance = side as f32 * navtile_size() / 2.0;
     let mut on_slot = 0u32;
     let mut net = 0.0f64;
