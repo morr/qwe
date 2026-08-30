@@ -342,6 +342,38 @@ fn steering_releases_near_the_waypoint() {
     assert_eq!(position, Vec2::new(1.0, 0.0), "шаг не отклонён");
 }
 
+/// Доворот в непроходимое отбрасывается: пешка идёт ровно по пути. Иначе она
+/// уезжает внутрь здания, откуда её не вытолкнет расталкивание (толчок в
+/// непроходимое отбрасывается тем же правилом) и не достанет спасение —
+/// состояние `Moving`, путь валиден.
+#[test]
+fn steering_into_an_impassable_tile_is_dropped() {
+    let start = Vec2::new(20.0, 21.5);
+    let aside = Vec2::new(0.0, 1.0);
+    let straight = start + Vec2::new(1.0, 0.0);
+    let deflected = start + (Vec2::new(1.0, 0.0) + aside).normalize() * 1.0;
+    assert_ne!(
+        world_to_tile(deflected),
+        world_to_tile(straight),
+        "фикстура: отклонённый шаг обязан уходить в соседний тайл"
+    );
+    let backend = backend(&[world_to_tile(deflected)]);
+    let mut movable = walker(&[Vec2::new(120.0, 21.5)], IVec2::new(60, 10));
+    let mut position = start;
+
+    let outcome = step_along_path(
+        &mut movable,
+        &mut position,
+        1.0,
+        StepModifiers { aside, ..default() },
+        tuning(),
+        &backend.walkable(),
+    );
+
+    assert_eq!(outcome, StepOutcome::Moved);
+    assert_eq!(position, straight, "шаг идёт по пути, без доворота");
+}
+
 // --- скольжение по контакту ---
 
 /// Лобовой контакт при полном скольжении съедает шаг целиком: пешка упирается,
@@ -423,4 +455,59 @@ fn a_barrier_does_nothing_while_sliding_is_off() {
     );
 
     assert_eq!(position, Vec2::new(1.0, 0.0));
+}
+
+// --- вырожденная скорость ---
+
+/// Нулевая скорость на waypoint'е, под которым пешка уже стоит, давала
+/// `0 / 0 = NaN`: сравнение `NaN <= 0.0` ложно, цикл съедал весь путь за один
+/// вызов и ставил пешку на его последнюю точку. В игре скорость снизу
+/// ограничена, но контракт значения обязан быть тотальным.
+#[test]
+fn a_motionless_pawn_on_its_waypoint_does_not_devour_the_path() {
+    let backend = backend(&[]);
+    let path = [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(20.0, 0.0)];
+    let mut movable = walker(&path, IVec2::new(10, 0));
+    movable.speed = 0.0;
+    let mut position = Vec2::ZERO;
+
+    let outcome = step_along_path(
+        &mut movable,
+        &mut position,
+        1.0,
+        StepModifiers::default(),
+        tuning(),
+        &backend.walkable(),
+    );
+
+    assert_eq!(outcome, StepOutcome::Moved);
+    assert_eq!(position, Vec2::ZERO, "неподвижная никуда не уехала");
+    assert_eq!(
+        movable.path.len(),
+        2,
+        "снят только waypoint, на котором она и стояла"
+    );
+}
+
+/// Обратная сторона того же: у ИДУЩЕЙ пешки waypoint под ногами не должен
+/// съедать бюджет шага — остаток целиком уходит на следующую точку.
+#[test]
+fn a_waypoint_underfoot_costs_no_time() {
+    let backend = backend(&[]);
+    let path = [Vec2::ZERO, Vec2::new(10.0, 0.0)];
+    let mut movable = walker(&path, IVec2::new(5, 0));
+    let mut position = Vec2::ZERO;
+
+    let outcome = step_along_path(
+        &mut movable,
+        &mut position,
+        1.0,
+        StepModifiers::default(),
+        tuning(),
+        &backend.walkable(),
+    );
+
+    assert_eq!(outcome, StepOutcome::Moved);
+    assert_eq!(position, Vec2::new(1.0, 0.0), "шаг пройден целиком");
+    assert_eq!(movable.path.len(), 1);
 }

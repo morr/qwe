@@ -72,6 +72,11 @@ pub struct StepTuning {
 /// Двигает `position` и подъедает `movable.path`; `movable.last_direction`
 /// пишется ЖЕЛАЕМЫМ курсом, до отклонения (см. ниже — иначе доворот
 /// накапливается сам на себя).
+///
+/// Нулевая скорость никуда не двигает и путь не жуёт: снимется разве что
+/// waypoint, на котором пешка уже стоит, и вернётся `Moved`. В игре такая
+/// скорость недостижима (ползунки ограничены снизу), но функция считается
+/// значениями и обязана быть тотальной.
 pub fn step_along_path(
     movable: &mut Movable,
     position: &mut Vec2,
@@ -139,7 +144,18 @@ pub fn step_along_path(
             movable.last_direction = direction;
             // …и не у самого waypoint'а, см. `StepTuning::steer_release`
             let step = if modifiers.aside != Vec2::ZERO && distance > tuning.steer_release {
-                (direction + modifiers.aside).normalize_or_zero()
+                let steered = (direction + modifiers.aside).normalize_or_zero();
+                // доворот доходит до ~45° на полную длину шага и уводит С
+                // ПУТИ — значит проверяется на проходимость, как докат и как
+                // толчок расталкивания (`separation::separate_pawns`). Уехавшую
+                // в здание пешку оттуда не вытолкнет ни то, ни другое (тот же
+                // гейт), а спасение её не увидит: состояние `Moving`, путь
+                // валиден. Отказ — шаг ровно по пути, а не остановка
+                if walkable.coast_allows(*position + steered * distance_to_move) {
+                    steered
+                } else {
+                    direction
+                }
             } else {
                 direction
             };
@@ -161,7 +177,15 @@ pub fn step_along_path(
         }
         *position = target;
         movable.path.pop_front();
-        remaining_time -= distance / movable.speed;
+        // при нулевой скорости стоящая ровно НА waypoint'е (distance == 0)
+        // делила бы ноль на ноль: NaN, сравнение `NaN <= 0.0` ложно, и цикл
+        // съедал весь путь за один вызов, ставя пешку на последнюю его точку.
+        // Неподвижной остатка нет по определению
+        remaining_time = if movable.speed > 0.0 {
+            remaining_time - distance / movable.speed
+        } else {
+            0.0
+        };
         if remaining_time <= 0.0 {
             return StepOutcome::Moved;
         }
