@@ -76,11 +76,11 @@ fn build_noise_section(
         },
     );
 
-    let row = spawn_knob(
+    spawn_noise_knob(
         &mut commands,
         panel,
         "Wavelength",
-        &*noise,
+        &noise,
         SliderBinding {
             get: |noise| noise.wavelength,
             set: |noise, value| noise.wavelength = value,
@@ -92,14 +92,13 @@ fn build_noise_section(
             text: |value| format!("{value:.0} m"),
         },
     );
-    commands.entity(row).insert(ConiferNoiseKnobRow);
     // единственная целочисленная ручка панели: и шаг, и текст без дробной
     // части, так что округление ползунка и есть само значение
-    let row = spawn_knob(
+    spawn_noise_knob(
         &mut commands,
         panel,
         "Octaves",
-        &*noise,
+        &noise,
         SliderBinding {
             get: |noise| noise.octaves as f32,
             set: |noise, value| noise.octaves = value as u32,
@@ -107,12 +106,11 @@ fn build_noise_section(
             text: |value| format!("{value:.0}"),
         },
     );
-    commands.entity(row).insert(ConiferNoiseKnobRow);
-    let row = spawn_knob(
+    spawn_noise_knob(
         &mut commands,
         panel,
         "Lacunarity",
-        &*noise,
+        &noise,
         SliderBinding {
             get: |noise| noise.lacunarity,
             set: |noise, value| noise.lacunarity = value,
@@ -124,12 +122,11 @@ fn build_noise_section(
             text: |value| format!("{value:.1}"),
         },
     );
-    commands.entity(row).insert(ConiferNoiseKnobRow);
-    let row = spawn_knob(
+    spawn_noise_knob(
         &mut commands,
         panel,
         "Persistence",
-        &*noise,
+        &noise,
         SliderBinding {
             get: |noise| noise.persistence,
             set: |noise, value| noise.persistence = value,
@@ -141,6 +138,21 @@ fn build_noise_section(
             text: |value| format!("{value:.2}"),
         },
     );
+}
+
+/// Ползунок секции: ручка кита плюс метка видимости. Кит возвращает блок
+/// строки, чтобы метки вешала панель, — но здесь их носят **все** ручки
+/// секции без исключения, и вешать её у каждого вызова значит четыре раза
+/// написать одно и то же. Та же роль, что у `ui/trees.rs::spawn_row`,
+/// довешивающего свотч.
+fn spawn_noise_knob(
+    commands: &mut Commands,
+    panel: Entity,
+    label: &str,
+    noise: &ConiferNoiseStyle,
+    binding: SliderBinding<ConiferNoiseStyle>,
+) {
+    let row = spawn_knob(commands, panel, label, noise, binding);
     commands.entity(row).insert(ConiferNoiseKnobRow);
 }
 

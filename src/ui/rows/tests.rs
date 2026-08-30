@@ -27,3 +27,11 @@ fn on_off_reads_as_the_panels_expect() {
     assert_eq!(on_off(true), "On");
     assert_eq!(on_off(false), "Off");
 }
+
+/// Строка-значение в покое прозрачна. Константой, а не «как получится в
+/// сцене»: панель из десятка серых кирпичей — то, ради ухода от чего строки
+/// и переведены на `Plain`.
+#[test]
+fn the_value_row_rests_transparent() {
+    assert_eq!(VALUE_ROW_VARIANT, ButtonVariant::Plain);
+}
