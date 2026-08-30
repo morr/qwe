@@ -85,6 +85,7 @@ use bevy::diagnostic::{Diagnostic, RegisterDiagnostic};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use qwe::camera::hovering_ui;
 use qwe::diagnostics::SIM_SEPARATION_MS;
 use qwe::human::{HumanStyle, pick_wander_targets};
 use qwe::loading::{AppState, PlayPhase};
@@ -101,9 +102,7 @@ use crate::metrics::{
     Overlaps, PathMisses, RunCounters, Trial, count_separation_runs, count_ticks, draw_bodies,
     finish_trial, measure_overlaps, report_to_stdout, sample_travel, sample_trial, take_shots,
 };
-use crate::panel::{
-    spawn_mechanism_panel, spawn_overlay, spawn_sliders, sync_knob_rows, update_overlay,
-};
+use crate::panel::{spawn_left_column, spawn_mechanism_panel, sync_knob_rows, update_overlay};
 use crate::scenario::{
     Scenario, drive_routes, interrupt_for_slot_claim, regroup_to_slot, respawn_scenario,
 };
@@ -270,12 +269,7 @@ fn main() {
     )
     .add_systems(
         Startup,
-        (
-            spawn_camera,
-            spawn_overlay,
-            spawn_sliders,
-            spawn_mechanism_panel,
-        ),
+        (spawn_camera, spawn_left_column, spawn_mechanism_panel),
     )
     .add_systems(
         Update,
@@ -289,7 +283,8 @@ fn main() {
             pick_scenario,
             toggle_separation.run_if(input_just_pressed(KeyCode::KeyS)),
             toggle_pause.run_if(input_just_pressed(KeyCode::Space)),
-            zoom_camera,
+            step_speed_keys,
+            zoom_camera.run_if(not(hovering_ui)),
             // бегунок ведёт та же система, что и в игре; `sync_knob_rows`
             // подтягивает панель механизмов после нажатия пресета
             sync_knob_rows,
@@ -511,21 +506,29 @@ pub(crate) fn apply_speed(speed: Res<DemoSpeed>, mut time: ResMut<Time<Virtual>>
     time.set_relative_speed(speed.0);
 }
 
-/// Зум колесом. Панорамирования нет намеренно: панелей в сцене нет, но правило
-/// «мышь над UI не двигает мир» проще соблюсти, не заводя перетаскивание.
-pub(crate) fn zoom_camera(
+/// Ступень скорости с клавиатуры. Отдельной системой от зума: у зума гейт
+/// «курсор над панелью», а клавишам он ни к чему — панель клавиатуру не читает.
+pub(crate) fn step_speed_keys(
     keys: Res<ButtonInput<KeyCode>>,
     config: Res<DemoConfig>,
-    scroll: Res<AccumulatedMouseScroll>,
     mut speed: ResMut<DemoSpeed>,
-    mut camera: Query<&mut Transform, With<Camera2d>>,
 ) {
     // `bypass_change_detection` — чтобы чтение текущей ступени не считалось
     // изменением: иначе `DemoSpeed` менялся бы каждый кадр
     if let Some(next) = step_speed(&keys, &config, speed.bypass_change_detection().0) {
         speed.0 = next;
     }
+}
 
+/// Зум колесом — под тем же `not(hovering_ui)`, что и `zoom_to_cursor` в игре:
+/// колесо над плашкой принадлежит панели, а не карте. Панорамирования нет
+/// намеренно: правило «мышь над UI не двигает мир» проще соблюсти, не заводя
+/// перетаскивание.
+pub(crate) fn zoom_camera(
+    config: Res<DemoConfig>,
+    scroll: Res<AccumulatedMouseScroll>,
+    mut camera: Query<&mut Transform, With<Camera2d>>,
+) {
     let lines = match scroll.unit {
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,

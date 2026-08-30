@@ -280,6 +280,19 @@ did not fit 1080 px and ran off the top of the screen.
   `add_knobs::<R>()` once per resource, from each panel's own plugin, it `retarget`s every
   entity carrying `SliderBinding<R>`. A caller that drives demo-local state instead of a
   resource writes that loop itself.
+- **A demo scene that calls the kits brings the theme *and* the font itself.**
+  `PanelWidgetsPlugin` exists for the first half (it is a plugin of its own precisely so an
+  example can raise it without `UiPlugin`), but it installs only feathers and the theme:
+  `apply_panel_font` lives in `UiPlugin`, which no example can raise. Without an
+  `InheritableFont` on the scene's own plaque every label falls back to bevy's default
+  20 px face, the slider rows grow out of the panel and the value text wraps — which is
+  exactly what `crowd_demo` looked like after the feathers port. So a demo plaque is
+  `ui_node(…)` + `panel_background()` + its own `InheritableFont { fonts::REGULAR,
+  PANEL_FONT }` (`crowd_demo/panel.rs::panel_font`, `tree_gallery/panel.rs::spawn_panel`),
+  its group headers `panel_block_background()` + `panel_title`, its labels `row_label` /
+  `row_value`, and its plaques hang in a `Pickable::IGNORE` column anchored to both screen
+  edges — the shell's own shape. No colour of its own anywhere: a scene painted past the
+  theme stops being a preview of the game's panel, which is the only reason to look at it.
 - **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
   field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
   field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain

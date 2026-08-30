@@ -1,8 +1,22 @@
 //! Панель механизмов: ручки расталкивания ползунками, пресеты кнопками и
-//! текстовый оверлей с числами прогона.
+//! плашка с числами прогона.
+//!
+//! **Оформление — игровое, целиком.** Плашки красит `panel_background()` (тот
+//! же полупрозрачный токен темы, что и панели игры), подписи — `row_label` /
+//! `row_value`, кнопки и ползунки приходят китами из `qwe::ui`. Своих цветов
+//! сцена не заводит: панель, покрашенная мимо темы, врёт про то, как это
+//! выглядит в игре, а смотрят на неё ровно за этим.
+//!
+//! **Шрифт плашки ставят себе сами.** В игре его вешает `apply_panel_font` по
+//! `Added<GameUiRoot>`, но эта система живёт в `UiPlugin`, которого здесь нет —
+//! а без `InheritableFont` подписи достаются дефолтному шрифту bevy в 20 px, и
+//! строки-ползунки вылезают за край плашки (ровно этим сцена и выглядела после
+//! переезда на feathers).
 
+use bevy::feathers::constants::{fonts, size};
+use bevy::feathers::font_styles::InheritableFont;
 use bevy::prelude::*;
-use bevy::text::FontSize;
+use bevy::text::FontWeight;
 use bevy::ui_widgets::{SliderValue, ValueChange};
 use qwe::human::HumanStyle;
 use qwe::movement::{
@@ -12,6 +26,10 @@ use qwe::movement::{
 use qwe::navigation::{MeshMode, NavMode, Pathfinder};
 use qwe::settings::{HUMAN_SIZE, SEPARATION_MAX_ZOOM};
 use qwe::ui::slider::{SliderRow, quantize, spawn_slider_row};
+use qwe::ui::{
+    PANEL_FONT, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background,
+    panel_title, row_label, row_value, ui_node, ui_row,
+};
 
 use crate::DemoSpeed;
 use crate::metrics::{Overlaps, PathMisses, RunCounters};
@@ -250,38 +268,106 @@ pub(crate) struct KnobSlider(pub(crate) usize);
 #[derive(Component)]
 pub(crate) struct KnobValueLabel(pub(crate) usize);
 
+/// Отступ содержимого от края плашки и зазор между строками — как в теле
+/// панели настроек игры (`ui/shell.rs`).
+const PLAQUE_PAD_PX: f32 = 6.0;
+const ROW_GAP_PX: f32 = 4.0;
+
+/// Отступ заголовка группы — по отступу строки-значения, чтобы подписи
+/// заголовка и строк стояли в одну вертикаль.
+const GROUP_HEADER_PAD_PX: f32 = 8.0;
+
+/// Шрифт плашки — игровой [`PANEL_FONT`]; ставится вручную, см. шапку модуля.
+fn panel_font(assets: &AssetServer) -> InheritableFont {
+    InheritableFont {
+        font: assets.load(fonts::REGULAR),
+        font_size: PANEL_FONT,
+        weight: FontWeight::NORMAL,
+    }
+}
+
+/// Прозрачная колонка у края экрана — форма панели игры: тянется до низа, чтобы
+/// плашке в ней было куда упереться и от чего ужиматься, но сама ничего не
+/// красит и кликов не ловит (она выше своего содержимого, и невидимая её часть
+/// не должна отбирать у карты протяжки).
+fn column_node(node: Node) -> impl Bundle {
+    (
+        ui_node(Node {
+            position_type: PositionType::Absolute,
+            top: px(UI_SCREEN_EDGE_PX_OFFSET),
+            bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            row_gap: px(UI_SCREEN_EDGE_PX_OFFSET),
+            ..node
+        }),
+        Pickable::IGNORE,
+    )
+}
+
+/// Плашка в колонке: полупрозрачное тело панели игры, ужимающееся под высоту
+/// колонки. `min_height: 0` — разрешение флексу это сделать.
+fn plaque_node(node: Node) -> Node {
+    Node {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        row_gap: px(ROW_GAP_PX),
+        padding: UiRect::all(px(PLAQUE_PAD_PX)),
+        overflow: Overflow::scroll_y(),
+        flex_shrink: 1.,
+        min_height: px(0),
+        ..node
+    }
+}
+
+/// Заголовок группы строк — плашка потемнее с названием, как заголовок секции
+/// в панели настроек игры.
+fn group_header(title: &'static str) -> impl Bundle {
+    (
+        ui_node(Node {
+            padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2.)),
+            ..default()
+        }),
+        panel_block_background(),
+        children![panel_title(title)],
+    )
+}
+
 /// Панель механизмов справа: кнопки пресетов сверху, под ними ползунок на
 /// каждую ручку.
-pub(crate) fn spawn_mechanism_panel(mut commands: Commands, tuning: Tuning) {
-    let panel = commands
+pub(crate) fn spawn_mechanism_panel(
+    mut commands: Commands,
+    assets: Res<AssetServer>,
+    tuning: Tuning,
+) {
+    let column = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: px(10.),
-                right: px(12.),
-                width: px(220.),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(2.),
+            column_node(Node {
+                right: px(UI_SCREEN_EDGE_PX_OFFSET),
+                align_items: AlignItems::FlexEnd,
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0., 0., 0., 0.25)),
+            }),
+            Name::new("demo_right_column"),
         ))
         .id();
 
-    let presets = commands
+    let panel = commands
         .spawn((
-            Node {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                column_gap: px(4.),
-                padding: UiRect::all(px(6.)),
+            ui_node(plaque_node(Node {
+                width: px(PANEL_WIDTH_PX),
                 ..default()
-            },
-            ChildOf(panel),
+            })),
+            panel_background(),
+            panel_font(&assets),
+            Name::new("mechanism_panel"),
+            ChildOf(column),
+            children![group_header("Presets")],
         ))
         .id();
+
+    let presets = commands.spawn((ui_row(ROW_GAP_PX), ChildOf(panel))).id();
     for (index, preset) in PRESETS.iter().enumerate() {
-        qwe::ui::spawn_panel_button(
+        let button = qwe::ui::spawn_panel_button(
             &mut commands,
             presets,
             PresetButton,
@@ -291,6 +377,17 @@ pub(crate) fn spawn_mechanism_panel(mut commands: Commands, tuning: Tuning) {
                 (PRESETS[index].apply)(&mut tuning);
             },
         );
+        // кнопки делят ширину строки поровну — как вкладки в полоске панели
+        // игры: по содержимому четыре пресета встают в 260 px впритык, и
+        // «funnel» уезжал бы за край плашки
+        commands
+            .entity(button)
+            .entry::<Node>()
+            .and_modify(|mut node| {
+                node.flex_grow = 1.;
+                node.flex_basis = px(0.);
+                node.padding = UiRect::horizontal(px(4.));
+            });
     }
 
     for (index, knob) in KNOBS.iter().enumerate() {
@@ -348,28 +445,68 @@ pub(crate) fn sync_knob_rows(
     }
 }
 
-/// Ползунки сцены — тот же кит строки-ползунка, что у панелей игры
+/// Клавиши сцены — подпись под числами прогона, приглушённая, как справка по
+/// хоткеям в игре.
+const HOTKEYS: &str =
+    "1-5 scenario   R respawn   S separation   Space pause   -/= speed   wheel zoom";
+
+/// Левая колонка сцены: плашка с числами прогона, под ней две ручки.
+///
+/// Одной системой и одной колонкой, а не двумя плашками с посчитанным вручную
+/// `top`: числа занимают то шесть строк, то семь, и разъезжающиеся плашки — это
+/// ровно то, чем сцена выглядела до перехода на игровые стили. Колонка ставит
+/// их друг под друга сама.
+///
+/// Ползунки — тот же кит строки-ползунка, что у панелей игры
 /// (`qwe::ui::slider`), чтобы обе величины подбирались глазом на живой толпе, а
 /// не пересборкой. Пишут прямо в ресурсы движения, откуда их берут и сама
 /// механика, и гизмо этой сцены: `HumanStyle::body_radius` — «личное
 /// пространство», `SlotSearch` — докуда искать свободный слот назначения.
-/// Обе ручки есть и в панелях игры (`ui/stats.rs`) — эта сцена не заводит своих.
-pub(crate) fn spawn_sliders(
+/// Обе ручки есть и в панелях игры (`ui/navigation`) — эта сцена не заводит своих.
+pub(crate) fn spawn_left_column(
     mut commands: Commands,
+    assets: Res<AssetServer>,
     style: Res<HumanStyle>,
     search: Res<SlotSearch>,
 ) {
+    let column = commands
+        .spawn((
+            column_node(Node {
+                left: px(UI_SCREEN_EDGE_PX_OFFSET),
+                align_items: AlignItems::FlexStart,
+                ..default()
+            }),
+            Name::new("demo_left_column"),
+        ))
+        .id();
+
+    commands.spawn((
+        ui_node(plaque_node(Node::default())),
+        panel_background(),
+        // моноширинный и помельче — как панель телеметрии игры: числа
+        // перекрытий меняются каждый кадр, и на пропорциональном шрифте цифры
+        // под собой пляшут
+        InheritableFont {
+            font: assets.load(fonts::MONO),
+            font_size: size::SMALL_FONT,
+            weight: FontWeight::NORMAL,
+        },
+        Name::new("demo_metrics"),
+        ChildOf(column),
+        children![(OverlayText, row_value("")), row_label(HOTKEYS)],
+    ));
+
     let panel = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: px(150.),
-                left: px(12.),
-                width: px(240.),
-                flex_direction: FlexDirection::Column,
+            ui_node(plaque_node(Node {
+                width: px(PANEL_WIDTH_PX),
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0., 0., 0., 0.25)),
+            })),
+            panel_background(),
+            panel_font(&assets),
+            Name::new("demo_crowd_knobs"),
+            ChildOf(column),
+            children![group_header("Crowd")],
         ))
         .id();
 
@@ -426,24 +563,6 @@ pub(crate) fn spawn_sliders(
     );
 }
 
-pub(crate) fn spawn_overlay(mut commands: Commands) {
-    commands.spawn((
-        OverlayText,
-        Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(13.),
-            ..default()
-        },
-        TextColor(Color::srgb(0.1, 0.1, 0.12)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(10.),
-            left: px(12.),
-            ..default()
-        },
-    ));
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_overlay(
     scenario: Res<Scenario>,
@@ -489,9 +608,7 @@ pub(crate) fn update_overlay(
          worst {worst:.3} m   mean {mean:.3} m   (rest distance {rest:.2} m, sprite {sprite:.2} m)\n\
          separation {separation}{gate}   speed {speed:.0}x{paused}   zoom {zoom:.3}\n\
          move ticks per separation run {per_run}   runs {runs}\n\
-         navigation {navigation}   path misses {misses}\n\
-         \n\
-         1-5 scenario   R respawn   S separation   Space pause   -/= speed   wheel zoom",
+         navigation {navigation}   path misses {misses}",
         scenario = scenario.label(),
         pawns = overlaps.pawns,
         total = overlaps.total,
