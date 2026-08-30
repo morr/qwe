@@ -60,22 +60,37 @@ pub fn panic(
     }
 
     for &entity in &panicked {
+        // промах запроса здесь невозможен: сущность пришла из `wanderers`, а
+        // `HumanWanderTag` ставится ровно в двух местах — при спавне
+        // (`systems.rs::spawn_population`) и при успокоении (`flee`), и оба
+        // дают эти четыре компонента. Молчаливый дефолт вместо падения означал
+        // бы человека с `HumanFleeTag`, но на прогулочной скорости и с
+        // периодом, взятым не из его потока решений
+        let (mut movable, pace, pawn_id, mut wander_index) = movables
+            .get_mut(entity)
+            .expect("у гуляющего нет Movable/Pace/PawnId/WanderIndex");
+        movable.speed = pace.speed(HUMAN_FLEE_SPEED, style.spread);
         // период — из личного потока паникующего, и это не косметика:
         // `panicked` — хэш-множество, его порядок обхода зависит от битов
         // `Entity`, а те после рестарта другие. Общий генератор раздал бы
         // тем же людям другие периоды при том же seed.
-        let mut period = 1.0;
-        if let Ok((mut movable, pace, pawn_id, mut wander_index)) = movables.get_mut(entity) {
-            movable.speed = pace.speed(HUMAN_FLEE_SPEED, style.spread);
-            period = wander_index
-                .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
-                .random_range(0.7..1.2);
-        }
+        let period = wander_index
+            .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
+            .random_range(0.7..1.2);
         let mut repath = FleeRepath::default();
-        // первый путь — сразу, дальше по таймеру со случайным периодом
+        // первый путь — сразу, дальше по таймеру со случайным периодом.
+        // Порядок обязателен: `almost_finish` отмеряет остаток от УЖЕ
+        // выставленной длительности и оставляет 1 нс, поэтому ближайший
+        // `tick` в `flee` (тот же тик — системы в одном `chain`) досчитывает
+        // таймер, а остаток дельты переносится в следующий период: «сразу»
+        // у периода ничего не отнимает. Без этого `elapsed` стартовал с нуля,
+        // и гуляющий в `Moving` (а это почти любой) не давал ни `repath_due`,
+        // ни `needs_path` — лестница возвращала `Hold`, и человек до 1.2 с бежал
+        // по старому прогулочному пути, в том числе на демона
         repath
             .0
             .set_duration(std::time::Duration::from_secs_f32(period));
+        repath.0.almost_finish();
         commands
             .entity(entity)
             .remove::<HumanWanderTag>()
@@ -186,6 +201,9 @@ pub fn flee(
         let away = match action {
             FleeAction::CalmDown => {
                 movable.speed = pace.speed(HUMAN_WALK_SPEED, style.spread);
+                // `to_idle` уносит и заявку бегства, если та ещё не уехала в
+                // таск: пауза ниже 2–10 с, и перезаписать заявку новой целью
+                // некому — а посчитанный по ней путь выбросит приёмка
                 movable.to_idle(entity, &mut commands, false);
                 pause.0.set_duration(std::time::Duration::from_secs_f32(
                     wander_index
@@ -258,6 +276,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::movement::{PathfindingRequest, RequestedAt};
     use crate::rng::WorldSeed;
 
     /// Мир бегства: общий двор плюс то, что нужно именно людям — сетка
@@ -268,6 +287,18 @@ mod tests {
             .init_resource::<HumanStyle>()
             .init_resource::<WorldSeed>()
             .add_systems(Update, flee);
+        app
+    }
+
+    /// Двор перехода: обе системы в одном `chain`, как в игре, плюс сетка
+    /// людей, из которой `panic` собирает соседей демона.
+    fn panic_app() -> App {
+        let mut app = crate::sim_yard::behavior_yard();
+        app.init_resource::<SpatialGrid<Demon>>()
+            .init_resource::<SpatialGrid<Human>>()
+            .init_resource::<HumanStyle>()
+            .init_resource::<WorldSeed>()
+            .add_systems(Update, (panic, flee).chain());
         app
     }
 
@@ -285,8 +316,10 @@ mod tests {
     /// поиск. `heading` — курс с прошлой перепрокладки.
     fn spawn_runner(app: &mut App, position: Vec2, heading: Vec2) -> Entity {
         let mut repath = FleeRepath::default();
-        // таймер обязан досчитать на первом же тике, иначе решения не будет
-        repath.0.tick(Duration::from_secs(2));
+        // таймер здесь тик решения НЕ даёт: `Time` во дворе не идёт, дельта
+        // нулевая, и `just_finished` после `tick(0)` уже ложно. Решение
+        // поднимает `needs_path` — `Movable::new` встаёт в `Idle`
+        repath.0.almost_finish();
         app.world_mut()
             .spawn((
                 Human,
@@ -303,10 +336,92 @@ mod tests {
             .id()
     }
 
+    /// Гуляющий на ходу: `Moving` — то состояние, в котором `needs_path`
+    /// ложно, и решение бегства может поднять только таймер.
+    fn spawn_walker(app: &mut App, position: Vec2) -> Entity {
+        let mut movable = Movable::new(1.0);
+        movable.state = MovableState::Moving(IVec2::new(5, 5));
+        let walker = app
+            .world_mut()
+            .spawn((
+                Human,
+                HumanWanderTag,
+                SimPosition(position),
+                movable,
+                WanderHeading(Vec2::Y),
+                WanderPause(Timer::from_seconds(1.0, TimerMode::Once)),
+                Pace(0.0),
+                PawnId(3),
+                crate::rng::WanderIndex::ready(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Human>>()
+            .insert(walker, position);
+        walker
+    }
+
+    /// Ставит человека в состояние ожидания ответа: `Movable::state =
+    /// MovableState::Pathfinding(goal)`, вставляет `PathfindingRequest` и её
+    /// метку `RequestedAt(0)`.
+    fn file_flee_request(app: &mut App, runner: Entity, goal: IVec2) {
+        let start_tile = IVec2::new(100, 100);
+        let mut runner = app.world_mut().entity_mut(runner);
+        runner.insert((
+            PathfindingRequest {
+                start_tile,
+                end_tile: goal,
+            },
+            RequestedAt(0),
+        ));
+        // `MovableState` — поле `Movable`, а не компонент
+        runner.get_mut::<Movable>().expect("Movable").state = MovableState::Pathfinding(goal);
+    }
+
     fn recoil(app: &App, entity: Entity) -> Option<Vec2> {
         app.world()
             .get::<PanicRecoil>(entity)
             .map(|recoil| recoil.0)
+    }
+
+    /// Двор паники без системы в расписании — тестовая система запускается
+    /// через [`bevy::ecs::system::RunSystemOnce::run_system_once`].
+    fn panic_yard() -> App {
+        let mut app = crate::sim_yard::behavior_yard();
+        // сетка людей — та, по которой `panic` собирает соседей демона
+        app.init_resource::<SpatialGrid<Human>>()
+            .init_resource::<SpatialGrid<Demon>>()
+            .init_resource::<HumanStyle>()
+            .init_resource::<WorldSeed>();
+        app
+    }
+
+    /// Гуляющий с полным набором компонентов: [`Human`], [`HumanWanderTag`],
+    /// [`SimPosition`], [`Movable`], [`Pace`], [`PawnId`], [`crate::rng::WanderIndex`].
+    /// Вставляется в [`SpatialGrid<Human>`], иначе система его не найдёт.
+    fn spawn_wanderer(app: &mut App, position: Vec2, pawn_id: u32) -> Entity {
+        let wanderer = app
+            .world_mut()
+            .spawn((
+                Human,
+                HumanWanderTag,
+                SimPosition(position),
+                Movable::new(HUMAN_WALK_SPEED),
+                Pace(1.0),
+                PawnId(pawn_id),
+                crate::rng::WanderIndex::ready(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Human>>()
+            .insert(wanderer, position);
+        wanderer
+    }
+
+    /// Демон для теста паники — не вставляется в сетку, так как система
+    /// читает демонов запросом `Query<&SimPosition, With<Demon>>`.
+    fn spawn_demon_entity(app: &mut App, position: Vec2) -> Entity {
+        app.world_mut().spawn((Demon, SimPosition(position))).id()
     }
 
     /// Проводка того, что решает [`decide`]: запрет, снятый с чистого вектора
@@ -353,5 +468,154 @@ mod tests {
             Some(Vec2::NEG_X),
             "успокоение переписало запрет курсом прогулки"
         );
+    }
+
+    /// Заявку бегства, если та не уехала в таск, снимает только `to_idle`.
+    /// Оставленная — это полный A*, чей ответ выбросит приёмка. На волне
+    /// успокоения (пауза 2–10 с, перезаписать заявку новой целью некому) это
+    /// сотни выброшенных поисков за тик.
+    #[test]
+    fn calming_down_cancels_the_flee_search_that_never_left_the_queue() {
+        let app = &mut app();
+        let runner = spawn_runner(app, Vec2::new(100.0, 100.0), Vec2::Y);
+        file_flee_request(app, runner, IVec2::new(50, 50));
+
+        app.update();
+
+        assert!(
+            app.world().get::<HumanWanderTag>(runner).is_some(),
+            "человек обязан успокоиться"
+        );
+        assert!(
+            app.world().get::<PathfindingRequest>(runner).is_none(),
+            "успокоение обязано снять заявку"
+        );
+        assert!(
+            app.world().get::<RequestedAt>(runner).is_none(),
+            "успокоение обязано снять метку тика"
+        );
+        assert!(matches!(
+            app.world().get::<Movable>(runner).expect("Movable").state,
+            MovableState::Idle
+        ));
+    }
+
+    /// Паника обязана дать курс бегства НА ТОМ ЖЕ ТИКЕ. Пока таймер
+    /// перепрокладки вставлялся с нуля, идущий гуляющий не давал ни
+    /// `repath_due`, ни `needs_path`, лестница возвращала `Hold`, и человек
+    /// до 1.2 с бежал по старому прогулочному пути — в том числе на демона.
+    #[test]
+    fn a_fresh_panic_repaths_on_the_very_tick_it_starts() {
+        let app = &mut panic_app();
+        let position = Vec2::new(100.0, 100.0);
+        spawn_demon(app, position - Vec2::X * 20.0);
+        let walker = spawn_walker(app, position);
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(1.0 / 64.0));
+        app.update();
+
+        assert!(app.world().get::<HumanFleeTag>(walker).is_some());
+        // запрос ставится только на ступени `Flee` — его наличие и есть
+        // доказательство, что решение случилось, а не `Hold`
+        let ban = recoil(app, walker).expect("первая же перепрокладка обязана быть на этом тике");
+        assert!(
+            (ban - Vec2::NEG_X).length() < 1e-3,
+            "запрет {ban:?} смотрит не на демона"
+        );
+        assert!(matches!(
+            app.world().get::<Movable>(walker).expect("Movable").state,
+            MovableState::Pathfinding(_)
+        ));
+        // «сразу» не съело период: следующая перепрокладка снова по жребию
+        let period = app
+            .world()
+            .get::<FleeRepath>(walker)
+            .expect("FleeRepath")
+            .0
+            .duration()
+            .as_secs_f32();
+        assert!(
+            (0.7..1.2).contains(&period),
+            "период перепрокладки {period}"
+        );
+    }
+
+    /// Паника обязана дать каждому гуляющему период из его собственного потока
+    /// жребия. Молчаливый дефолт 1.0 вместо `expect` означал бы два человека с
+    /// одинаковыми периодами — тот факт, что обе пешки вызывают `WanderIndex::next`,
+    /// но период не зависит от результата, иначе бы и не был одинаковым.
+    #[test]
+    fn panic_gives_each_runner_a_period_from_its_own_stream() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let app = &mut panic_yard();
+        let position = Vec2::new(100.0, 100.0);
+        spawn_demon_entity(app, position);
+        let runner_a = spawn_wanderer(app, Vec2::new(110.0, 100.0), 3);
+        let runner_b = spawn_wanderer(app, Vec2::new(112.0, 100.0), 4);
+
+        app.world_mut().run_system_once(panic).expect("паника");
+
+        // оба переведены в бегство
+        assert!(app.world().get::<HumanFleeTag>(runner_a).is_some());
+        assert!(app.world().get::<HumanFleeTag>(runner_b).is_some());
+        assert!(app.world().get::<HumanWanderTag>(runner_a).is_none());
+        assert!(app.world().get::<HumanWanderTag>(runner_b).is_none());
+
+        // скорость каждого равна скорости бегства, а не молчаливому дефолту
+        let speed_a = app.world().get::<Movable>(runner_a).expect("Movable").speed;
+        let speed_b = app.world().get::<Movable>(runner_b).expect("Movable").speed;
+        let pace = Pace(1.0);
+        let style = HumanStyle::default();
+        let expected_speed = pace.speed(HUMAN_FLEE_SPEED, style.spread);
+        assert!((speed_a - expected_speed).abs() < 1e-5);
+        assert!((speed_b - expected_speed).abs() < 1e-5);
+
+        // периоды лежат в допустимом диапазоне и различаются
+        let period_a = app
+            .world()
+            .get::<FleeRepath>(runner_a)
+            .expect("FleeRepath")
+            .0
+            .duration()
+            .as_secs_f32();
+        let period_b = app
+            .world()
+            .get::<FleeRepath>(runner_b)
+            .expect("FleeRepath")
+            .0
+            .duration()
+            .as_secs_f32();
+        assert!((0.7..1.2).contains(&period_a));
+        assert!((0.7..1.2).contains(&period_b));
+        assert!(
+            (period_a - period_b).abs() > 1e-3,
+            "период не из потока решений пешки"
+        );
+    }
+
+    /// Спека нового контракта: неполный гуляющий — это баг, а не повод
+    /// для молчаливого дефолта.
+    #[test]
+    #[should_panic(expected = "Movable/Pace/PawnId/WanderIndex")]
+    fn a_wanderer_without_a_decision_stream_is_a_bug_not_a_default() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let app = &mut panic_yard();
+        spawn_demon_entity(app, Vec2::new(100.0, 100.0));
+        // неполный гуляющий: нет Movable, Pace, PawnId, WanderIndex
+        let position = Vec2::new(110.0, 100.0);
+        let incomplete = app
+            .world_mut()
+            .spawn((Human, HumanWanderTag, SimPosition(position)))
+            .id();
+        // вставим в сетку, иначе система его не найдёт
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Human>>()
+            .insert(incomplete, position);
+
+        app.world_mut().run_system_once(panic).expect("паника");
     }
 }

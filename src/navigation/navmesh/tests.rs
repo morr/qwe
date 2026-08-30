@@ -431,3 +431,38 @@ fn a_culvert_portal_cuts_the_channel_flat() {
         "торец русла без трубы обязан остаться круглым"
     );
 }
+
+#[test]
+fn passable_from_reports_a_fully_blocked_grid() {
+    let mut map = MapData::default();
+    map.buildings
+        .push(building(rect(Vec2::ZERO, MAP_SIZE), vec![]));
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    assert!(navmesh.passable_from(IVec2::ZERO).is_none());
+}
+
+#[test]
+fn passable_from_wraps_past_the_start() {
+    let mut map = MapData::default();
+    let hole_center = MAP_SIZE * 0.25;
+    let hole_tile_size = navtile_size();
+    let hole_rect = rect(hole_center, hole_center + hole_tile_size);
+    map.buildings
+        .push(building(rect(Vec2::ZERO, MAP_SIZE), vec![hole_rect]));
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let hole_tile = world_to_tile(hole_center);
+    let from_after_hole = IVec2::new(hole_tile.x + 1, hole_tile.y);
+    assert_eq!(
+        navmesh.passable_from(from_after_hole),
+        Some(hole_tile),
+        "скан после дырки обязан вернуть саму дырку"
+    );
+    assert_eq!(
+        navmesh.passable_from(IVec2::ZERO),
+        Some(hole_tile),
+        "скан от нуля вернёт тот же тайл"
+    );
+}
+

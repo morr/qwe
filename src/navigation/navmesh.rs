@@ -678,3 +678,30 @@ impl ArcNavmesh {
 
 #[cfg(test)]
 mod tests;
+
+    /// Первый проходимый тайл, начиная с `from` по внутренней индексации
+    /// (`x * grid_size.y + y`) и с заворотом через конец сетки; `None` —
+    /// проходимых тайлов нет вовсе (в том числе когда сетка пуста).
+    ///
+    /// Нужен размещению населения (`human::spawn_population`) в двух ролях:
+    /// дешёвая проверка «сетка вообще не пустая» (скан обрывается на первом
+    /// же открытом тайле) и детерминированный запасной выбор, когда бюджет
+    /// случайных выборок исчерпан. Заворот — чтобы запасной выбор зависел от
+    /// последней выборки и не сваливал всё население в один тайл.
+    pub fn passable_from(&self, from: IVec2) -> Option<IVec2> {
+        let len = self.passable.len();
+        if len == 0 {
+            return None;
+        }
+        let start = self.index(from.x, from.y).unwrap_or(0);
+        (0..len).find_map(|step| {
+            let index = (start + step) % len;
+            self.passable[index].then(|| {
+                IVec2::new(
+                    index as i32 / self.grid_size.y,
+                    index as i32 % self.grid_size.y,
+                )
+            })
+        })
+    }
+
