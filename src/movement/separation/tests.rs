@@ -198,6 +198,68 @@ fn in_a_queue_only_the_pawn_behind_gives_way() {
     assert!(state.pushes[0].y.abs() < 1e-6, "{:?}", state.pushes[0]);
 }
 
+/// Сходящаяся пара — не очередь. Курсы расходятся всего на 80°, то есть
+/// «примерно один курс» по порогу, но сосед впереди У ОБОИХ: никто никого не
+/// догнал, и коррекция делится по подвижности, а не достаётся целиком тому,
+/// кто в паре оказался первым.
+#[test]
+fn a_converging_pair_is_not_a_queue() {
+    let heading_b = Vec2::from_angle(-80f32.to_radians());
+    let offset = Vec2::from_angle(60f32.to_radians()) * 0.5;
+    let mut state = state_with(vec![
+        walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+        walking(2, Vec2::new(10.0, 10.0) + offset, heading_b),
+    ]);
+    // обход выключен: тест меряет доли, а не боковую добавку
+    let quiet = Tuning {
+        sidestep: 0.0,
+        ..tuning(1.0)
+    };
+    resolve_pushes(&mut state, quiet);
+
+    let direction = offset.normalize();
+    assert!(
+        state.pushes[0].dot(direction) < 0.0,
+        "{:?}",
+        state.pushes[0]
+    );
+    assert!(
+        state.pushes[1].dot(direction) > 0.0,
+        "{:?}",
+        state.pushes[1]
+    );
+    assert!(
+        (state.pushes[0].length() - state.pushes[1].length()).abs() < 1e-6,
+        "{:?} / {:?}",
+        state.pushes[0],
+        state.pushes[1]
+    );
+}
+
+/// …и поэтому обход у неё не умножается на ноль. Уступающего выбирает
+/// [`yields`] по `PawnId`; пока сходящаяся пара считалась очередью, доля
+/// уступающего в половине пар была нулевой, и боковой добавки не возникало
+/// вовсе — при том, что для сходящихся она единственный способ разойтись.
+#[test]
+fn a_converging_pair_still_steps_aside() {
+    let heading_b = Vec2::from_angle(-80f32.to_radians());
+    let offset = Vec2::from_angle(60f32.to_radians()) * 0.5;
+    let mut state = state_with(vec![
+        walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+        walking(2, Vec2::new(10.0, 10.0) + offset, heading_b),
+    ]);
+    resolve_pushes(&mut state, tuning(1.0));
+
+    // всё, что поперёк оси пары, — это обход: продольная коррекция и твёрдое
+    // ядро идут строго вдоль `direction`
+    let direction = offset.normalize();
+    assert!(
+        state.pushes[1].perp_dot(direction).abs() > 1e-4,
+        "{:?}",
+        state.pushes[1]
+    );
+}
+
 /// Придержан упёршийся в СТОЯЩЕГО: давить в того, кто не сдвинется с
 /// места сам, бесполезно. Стоящего не придерживают — у него нет курса.
 #[test]
@@ -271,6 +333,27 @@ fn a_demon_is_never_held() {
 
     assert!(!state.held[0], "демон прёт сквозь толпу");
     assert!(state.held[1], "человек навстречу демону придержан");
+}
+
+/// …но упор ему засчитывают: придержка человеческая (`SeparationHolds`), а
+/// залипание — общее, иначе запрет скольжения с демона не снимется никогда.
+#[test]
+fn a_demon_braces_even_though_it_is_never_held() {
+    let mut state = state_with(vec![
+        Pawn {
+            human: false,
+            ..walking(1, Vec2::new(10.0, 10.0), Vec2::X)
+        },
+        walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+    ]);
+    resolve_pushes(&mut state, tuning(1.0));
+
+    assert!(!state.held[0], "демон не придержан");
+    assert!(state.braced[0], "но в чужое тело он упёрся");
+    assert!(
+        state.braced[1] && state.held[1],
+        "человек и упёрся, и придержан"
+    );
 }
 
 /// По умолчанию упреждения нет: пара в шести метрах друг от друга — не
@@ -496,6 +579,44 @@ fn sliding_lets_go_of_a_pawn_that_has_been_stuck() {
     let mut jammed = layout(1.5);
     resolve_pushes(&mut jammed, tuning_with(1.0, lab));
     assert_eq!(jammed.blocks[0], Vec2::ZERO, "залипшую отпустили");
+}
+
+/// Счётчик залипания копится и у демона: [`advance_stuck`] считает по упору
+/// (`braced`), а не по придержке, — иначе клапан [`SeparationLab::slide_release`]
+/// у демона не срабатывает никогда.
+#[test]
+fn the_stuck_clock_counts_a_demons_bracing() {
+    let lab = SeparationLab {
+        slide: 1.0,
+        slide_release: 1.0,
+        ..Default::default()
+    };
+    let mut state = state_with(vec![
+        Pawn {
+            human: false,
+            ..walking(1, Vec2::new(10.0, 10.0), Vec2::X)
+        },
+        walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+    ]);
+    resolve_pushes(&mut state, tuning_with(1.0, lab));
+    advance_stuck(&mut state, 0.25, &lab);
+
+    assert_eq!(state.stuck.get(&entity(1)).copied(), Some(0.25), "демон");
+    assert_eq!(state.stuck.get(&entity(2)).copied(), Some(0.25), "человек");
+}
+
+/// Пока обе ручки залипания на нуле, карта не собирается вовсе: это тот же
+/// гарант «стенд не меняет игру», что и у остальных ручек.
+#[test]
+fn the_stuck_clock_stays_empty_while_its_knobs_are_untouched() {
+    let mut state = state_with(vec![
+        walking(1, Vec2::new(10.0, 10.0), Vec2::X),
+        walking(2, Vec2::new(10.5, 10.0), Vec2::NEG_X),
+    ]);
+    resolve_pushes(&mut state, tuning(1.0));
+    advance_stuck(&mut state, 0.25, &SeparationLab::default());
+
+    assert!(state.stuck.is_empty());
 }
 
 /// Доля левшей ([`SeparationLab::left_share`]): при 1.0 обход зеркалится

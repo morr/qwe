@@ -35,9 +35,17 @@ pub(in crate::movement) struct SeparationState {
     pub(super) pairs: Vec<(u32, u32, bool)>,
     /// Сколько перекрытий у каждой пешки в этом прогоне.
     pub(super) contacts: Vec<u32>,
-    /// Кто в этом прогоне упирался курсом в перекрытого соседа — источник
-    /// [`SeparationHolds`].
+    /// Кто в этом прогоне упирался курсом в перекрытого соседа И ПРИ ЭТОМ
+    /// ЧЕЛОВЕК — источник [`SeparationHolds`]: демона не придерживают никогда
+    /// (см. `resolve_pushes`).
     pub(super) held: Vec<bool>,
+    /// Тот же упор, но БЕЗ гейта по виду — источник счётчика залипания
+    /// [`SeparationState::stuck`]. Отдельно от `held`, потому что придержка
+    /// человеческая, а залипание нет: демону, которому скольжение
+    /// ([`SeparationLab::slide`]) запретило лезть в тело, нужен тот же клапан
+    /// по времени ([`slide_released`]), иначе запрет с него не снимается
+    /// никогда — а это тот самый дедлок, ради которого клапан заведён.
+    pub(super) braced: Vec<bool>,
     pub(super) pushes: Vec<Vec2>,
     /// Толчки ТВЁРДОГО ЯДРА — отдельно от мягких, потому что ограничены они
     /// по-разному ([`SeparationLab::hard_core`]).
@@ -176,6 +184,8 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
     state.contacts.resize(state.pawns.len(), 0);
     state.held.clear();
     state.held.resize(state.pawns.len(), false);
+    state.braced.clear();
+    state.braced.resize(state.pawns.len(), false);
     state.pushes.clear();
     state.pushes.resize(state.pawns.len(), Vec2::ZERO);
     state.core_pushes.clear();
@@ -319,14 +329,24 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
         // группа попутчиков душила сама себя.
         let a_blocked = a_frontal && (b.heading == Vec2::ZERO || b_frontal);
         let b_blocked = b_frontal && (a.heading == Vec2::ZERO || a_frontal);
-        if a.human && a_blocked {
-            state.held[i as usize] = true;
+        // упор — у обоих участников любой такой пары; придержка из него —
+        // только человеку (`held`), см. доки обоих буферов
+        if a_blocked {
+            state.braced[i as usize] = true;
+            if a.human {
+                state.held[i as usize] = true;
+            }
         }
-        if b.human && b_blocked {
-            state.held[j as usize] = true;
+        if b_blocked {
+            state.braced[j as usize] = true;
+            if b.human {
+                state.held[j as usize] = true;
+            }
         }
-        // запрет копится по тому же условию, что придержка, и у ВСЕХ, а не
-        // только у людей: демон в погоне тоже не обязан входить в чужое тело
+        // запрет копится по тому же упору, что и придержка, и у ВСЕХ, а не
+        // только у людей: демон в погоне тоже не обязан входить в чужое тело.
+        // Отпускает его тот же счётчик залипания — и он считает по `braced`,
+        // а не по `held`, иначе демон остался бы под запретом навсегда
         if lab.slide > 0.0 {
             if a_blocked && !slide_released(&a, &lab) {
                 state.blocks[i as usize] += direction * a_facing;
@@ -393,4 +413,35 @@ pub(super) fn resolve_pushes(state: &mut SeparationState, tuning: Tuning) {
             state.core_pushes[j as usize] += core * share_b;
         }
     }
+}
+
+/// Счётчик залипания на прогон: упиравшемуся в этом прогоне — плюс `dt`,
+/// остальным — забвение.
+///
+/// Карта пересобирается прогоном целиком, поэтому упор, прервавшийся хоть на
+/// прогон, начинает счёт заново, а ушедший из вьюпорта выпадает сам, без
+/// отдельной уборки. Карта нужна двум механизмам сразу — сжатию
+/// ([`SeparationLab::stuck_compress`]) и отпусканию скольжения
+/// ([`SeparationLab::slide_release`]); пока не тронут ни один, она пуста и не
+/// стоит ничего.
+///
+/// Считается по `braced`, а не по `held`: придержку получают только люди, а
+/// оба читателя счётчика ([`squeezed_radius`], [`slide_released`]) — все.
+pub(super) fn advance_stuck(state: &mut SeparationState, dt: f32, lab: &SeparationLab) {
+    if lab.stuck_compress <= 0.0 && lab.slide_release <= 0.0 {
+        if !state.stuck.is_empty() {
+            state.stuck.clear();
+        }
+        return;
+    }
+    // буфер вынимается из состояния целиком: заполнять его, читая рядом
+    // `state.pawns` и `state.braced`, иначе не даст заимствование
+    let mut next = std::mem::take(&mut state.stuck_next);
+    next.clear();
+    for (index, pawn) in state.pawns.iter().enumerate() {
+        if state.braced[index] {
+            next.insert(pawn.entity, pawn.stuck + dt);
+        }
+    }
+    state.stuck_next = std::mem::replace(&mut state.stuck, next);
 }

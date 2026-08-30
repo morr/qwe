@@ -59,7 +59,7 @@ mod solver;
 // Приватные реэкспорты: набор имён снаружи тот же, что до разрезания, а
 // `use super::*` в `tests.rs` продолжает доставать `Pawn` и `resolve_pushes`.
 use self::pairs::{Pawn, damp_along_heading};
-use self::solver::{SeparationState, Tuning, resolve_pushes};
+use self::solver::{SeparationState, Tuning, advance_stuck, resolve_pushes};
 
 /// Подвижность демона относительно человека: в паре человек забирает 4/5
 /// коррекции — толпа обтекает демона, а не демон толпу.
@@ -691,25 +691,8 @@ pub fn separate_pawns(
         },
     );
 
-    // залипание — то же самое, но со временем: карта пересобирается прогоном
-    // целиком, и упор, прервавшийся хоть на прогон, начинает счёт заново.
-    // Пока ручка не тронута, обе карты пусты и цикл ниже в них не заглядывает
-    // карта залипания нужна двум механизмам сразу — сжатию и отпусканию
-    // скольжения; пока не тронут ни один, она пуста и не стоит ничего
-    if lab.stuck_compress > 0.0 || lab.slide_release > 0.0 {
-        // буфер вынимается из состояния целиком: заполнять его, читая рядом
-        // `state.pawns` и `state.held`, иначе не даст заимствование
-        let mut next = std::mem::take(&mut state.stuck_next);
-        next.clear();
-        for (index, pawn) in state.pawns.iter().enumerate() {
-            if state.held[index] {
-                next.insert(pawn.entity, pawn.stuck + dt);
-            }
-        }
-        state.stuck_next = std::mem::replace(&mut state.stuck, next);
-    } else if !state.stuck.is_empty() {
-        state.stuck.clear();
-    }
+    // залипание — тот же упор, но со временем; весь учёт в [`advance_stuck`]
+    advance_stuck(state, dt, &lab);
 
     // придержанные — с чистого листа каждый прогон: ушедший из вьюпорта или
     // разошедшийся с соседом освобождается сам, без отдельной уборки
