@@ -23,7 +23,7 @@
 //! `SaveSettingsDeferred`: кликов мало, а отложенная запись теряется, если
 //! выйти из игры в ту же секунду.
 //!
-//! Обратный ход — [`ResetSettings`], кнопка `reset` в ряду дебаг-тумблеров:
+//! Обратный ход — [`ResetSettings`], кнопка `reset` во вкладке Debug:
 //! все группы настроек разом возвращаются к своим `Default`.
 
 use bevy::ecs::reflect::ReflectComponent;
@@ -76,7 +76,7 @@ fn save_prefs(mut commands: Commands) {
     commands.queue(SaveSettingsSync::IfChanged);
 }
 
-/// Сброс всех настроек на умолчания — кнопка `reset` в ряду дебаг-тумблеров
+/// Сброс всех настроек на умолчания — кнопка `reset` во вкладке Debug
 /// (`ui/debug/mod.rs`). До неё вернуться к базовым значениям можно было только
 /// удалив `settings.toml` руками.
 ///

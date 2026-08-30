@@ -12,7 +12,8 @@
 //! то есть помечали изменившимися все строки всех панелей независимо от того,
 //! двигалась мышь или нет. Сегодня подсветки здесь нет вовсе: строка — это
 //! первопартийная кнопка feathers, и цвет по наведению и нажатию ведёт она
-//! сама, системой с фильтром `Changed` (см. `ui/theme.rs`).
+//! сама, системой с фильтром `Changed` (см. `ui/theme.rs`). В покое строка
+//! **прозрачна** — см. [`VALUE_ROW_VARIANT`].
 //!
 //! Строка, клик по которой сейчас ничего не делает, получает от своей панели
 //! `bevy::ui::InteractionDisabled`: feathers перестаёт её подсвечивать и не шлёт
@@ -21,7 +22,7 @@
 //! в панели Navigation.
 
 use bevy::ecs::system::IntoObserverSystem;
-use bevy::feathers::controls::FeathersButton;
+use bevy::feathers::controls::{ButtonVariant, FeathersButton};
 use bevy::feathers::font_styles::InheritableFont;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
@@ -31,6 +32,20 @@ use super::{row_label, row_value};
 /// Отступ слева у обычной строки. Вложенная (панель Navigation) прибавляет к
 /// нему свой `NESTED_ROW_INDENT_PX`.
 pub(super) const ROW_LEFT_PX: f32 = 8.0;
+
+/// Вид строки-значения в покое — **прозрачный** (`BUTTON_PLAIN_BG` = `Color::NONE`).
+///
+/// Панель — это десяток строк подряд, и `Normal` красил каждую в свою серую
+/// плашку: панель читалась стеной одинаковых кирпичей, в которой значение искать
+/// приходилось глазами. `Plain` оставляет на плашке панели один текст, а плашку
+/// кнопки показывает под курсором — то есть ровно тогда, когда она отвечает на
+/// вопрос «на что я сейчас нажму».
+///
+/// Состояние строки от этого не теряется: строка-значение говорит его **словом**
+/// справа (`On`/`Off`, `Round`, `Polymesh`), а не цветом, — цветом
+/// (`ButtonVariant::Primary`) говорят отдельные кнопки, у которых подписи-значения
+/// нет: тумблеры дебаг-ряда, кнопка города, пауза.
+pub(super) const VALUE_ROW_VARIANT: ButtonVariant = ButtonVariant::Plain;
 
 /// Кнопка-строка: приглушённая подпись слева, значение справа, клик — на
 /// `on_activate`. Возвращает строку, чтобы вызывающая панель довесила свои
@@ -56,7 +71,7 @@ pub(super) fn spawn_value_row<M>(
     };
     let row = commands
         .spawn_scene(bsn! {
-            @FeathersButton
+            @FeathersButton { @variant: {VALUE_ROW_VARIANT} }
             Node {
                 justify_content: JustifyContent::FlexStart,
                 column_gap: px(6),
@@ -89,12 +104,25 @@ pub(super) fn next_in<T: Copy + PartialEq>(values: &[T], current: T) -> T {
     values[index]
 }
 
-/// Значение тумблера в строке. С заглавной — как во всех панелях стиля;
-/// строчное `on`/`off` панели Stats к ней не относится, там это часть строки
-/// состояния, а не значение тумблера.
+/// Значение тумблера в строке — одно на все вкладки. Панель Stats держала свою
+/// копию со строчными `on`/`off`, и в общей панели два написания одного и того
+/// же состояния стояли через две строки друг от друга.
 pub(super) fn on_off(enabled: bool) -> &'static str {
     if enabled { "On" } else { "Off" }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+
+    /// Строка-значение в покое прозрачна. Константой, а не «как получится в
+    /// сцене»: панель из десятка серых кирпичей — то, ради ухода от чего строки
+    /// и переведены на `Plain`.
+    #[test]
+    fn the_value_row_rests_transparent() {
+        assert_eq!(VALUE_ROW_VARIANT, ButtonVariant::Plain);
+    }
+}

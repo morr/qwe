@@ -1,8 +1,20 @@
-//! Игровой UI: панели настроек, дебаг-тумблеры, телеметрия. Виджеты —
-//! первопартийные, из `bevy_feathers`; вид у панелей её же, тема принята как
-//! есть (`ui/theme.rs`). Всё, что виджетом не является (плашки панелей,
-//! заголовки, подписи строк), красится **токенами** той же темы, а не своими
-//! цветами: иначе смена темы перекрасила бы половину экрана и оставила вторую.
+//! Игровой UI: два слоя поверх карты.
+//!
+//! **HUD** — то, на что смотрят, не отрываясь от города: счётчики прогона
+//! (`ui/stats.rs`), телеметрия и кнопка скорости (`ui/speed.rs`), выбор города
+//! (`ui/city.rs`), справка по хоткеям (`ui/hotkeys.rs`), метка агентского
+//! запуска (`ui/brp.rs`).
+//!
+//! **Панель настроек** — одна, со вкладками Map / Nav / Sim / Debug
+//! (`ui/shell.rs`); каждая панель кладёт в свою вкладку секцию и наполняет её
+//! строками из китов (`ui/knob.rs`, `ui/rows.rs`, `ui/slider.rs`). Панель
+//! сворачивается по `Tab`, и что открыто — помнится между запусками.
+//!
+//! Виджеты первопартийные, из `bevy_feathers`. Всё, что виджетом не является
+//! (плашки, заголовки, подписи строк), красится **токенами** той же темы, а не
+//! своими цветами: иначе смена темы перекрасила бы половину экрана и оставила
+//! вторую. Тема — `ui/theme.rs`, и плашки в ней полупрозрачные: панель лежит на
+//! карте, а не вместо неё.
 
 mod brp;
 mod buildings;
@@ -14,6 +26,7 @@ mod navigation;
 mod noise;
 mod roads;
 mod rows;
+mod shell;
 // `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
 // нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
 // поднять не может — он тянет панели, карту и настройки
@@ -46,65 +59,10 @@ use crate::map::{TreeRowStyle, TreeStyle};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
 
-/// Место панели в правой колонке — **порядок объявления снизу вверх**, от
-/// края экрана.
-///
-/// Перечислением, а не числом: слот прописывается в файле своей панели, и
-/// номерами два соседних файла легко ставили одну панель поверх другой или
-/// оставляли дыру в колонке. Порядок здесь читается целиком в одном месте, а
-/// коллизия и пропуск стали невыразимы.
-///
-/// Панели абсолютные, `bevy_ui` их не стыкует, поэтому `bottom` каждой считает
-/// [`stack_bottom_columns`] по **замеренным** высотам тех, что под ней: высота
-/// панели Trees меняется на ходу (строки доли хвои и примеси появляются только
-/// у формы `Mixed`), — прошитые константы высот такую колонку уронили бы
-/// панелями друг на друга.
-#[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum UiRightColumn {
-    TreeRows,
-    Trees,
-    Buildings,
-    Roads,
-    /// Справка по хоткеям — не настройка карты, поэтому с зазором под собой.
-    Hotkeys,
-}
-
-/// То же для левой колонки, снизу вверх.
-#[derive(Component, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum UiLeftColumn {
-    /// Ряд дебаг-тумблеров у края экрана.
-    DebugToggles,
-    /// Панель Noise — целиком живёт при включённом дебаг-слое `noise`.
-    Noise,
-    Navigation,
-}
-
 /// Ширина панели настроек. Была 210 px, пока строка-ползунок занимала два
-/// этажа: подпись над полосой. Теперь она в одну строку, как все остальные, и
-/// подписи вроде «Conifer share» делят ширину с полосой.
-pub const PANEL_WIDTH_PX: f32 = 240.0;
-
-/// Узел панели настроек в колонке: абсолютная, у своего края экрана, колонка
-/// строк. `bottom` — заглушка на один кадр, его перестыкует
-/// [`stack_bottom_columns`] по замеренным высотам.
-///
-/// Ряд дебаг-тумблеров и справка по хоткеям сюда не входят: у них своя форма
-/// (строка вместо колонки, свои отступы) — общий узел пришлось бы
-/// параметризовать ровно тем, чем они и отличаются.
-fn panel_node(left: Val, right: Val) -> Node {
-    Node {
-        position_type: PositionType::Absolute,
-        bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-        left,
-        right,
-        display: Display::Flex,
-        flex_direction: FlexDirection::Column,
-        row_gap: px(4.),
-        padding: UiRect::all(px(8.)),
-        width: px(PANEL_WIDTH_PX),
-        ..default()
-    }
-}
+/// этажа: подпись над полосой; 240 — пока подписи были 12-пиксельными. На
+/// [`PANEL_FONT`] в 14 px «Conifer share» рядом с полосой перестало помещаться.
+pub const PANEL_WIDTH_PX: f32 = 260.0;
 
 /// Плашка панели — тело редакторской панели темы. Токен, а не цвет: тема
 /// перекрашивает виджеты панели, и подложка под ними обязана ехать вместе с
@@ -117,32 +75,6 @@ pub fn panel_background() -> ThemeBackgroundColor {
 pub fn panel_block_background() -> ThemeBackgroundColor {
     ThemeBackgroundColor(tokens::GROUP_BODY_BG)
 }
-
-/// Панель настроек правой колонки: её узел и её место в колонке.
-pub fn right_panel(slot: UiRightColumn) -> (Node, UiRightColumn, ThemeBackgroundColor) {
-    (
-        panel_node(Val::Auto, px(UI_SCREEN_EDGE_PX_OFFSET)),
-        slot,
-        panel_background(),
-    )
-}
-
-/// Панель настроек левой колонки: её узел и её место в колонке.
-pub fn left_panel(slot: UiLeftColumn) -> (Node, UiLeftColumn, ThemeBackgroundColor) {
-    (
-        panel_node(px(UI_SCREEN_EDGE_PX_OFFSET), Val::Auto),
-        slot,
-        panel_background(),
-    )
-}
-
-/// «Оставить зазор под этой панелью». Колонка по умолчанию стоит вплотную —
-/// панели настроек карты читаются как один блок, и щели между ними лишние.
-/// Зазор нужен там, где над блоком начинается **другой род** UI: ряд кнопок
-/// под панелью Navigation, справка по хоткеям над панелями OSM. Зазор один на
-/// всё и равен отступу от края экрана ([`UI_SCREEN_EDGE_PX_OFFSET`]).
-#[derive(Component)]
-pub struct UiPanelGapBelow;
 
 /// Тип объектов мира, чьё число стоит в заголовке панели (см.
 /// [`panel_header`]); компонент висит на тексте счётчика.
@@ -159,15 +91,15 @@ pub enum PanelCount {
 /// и дальше ведёт [`sync_panel_counts`].
 pub fn panel_header(title: &str, count: PanelCount) -> impl Bundle {
     (
-        Node {
+        ui_node(Node {
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
+            // по базовой линии, а не по центру: у названия и у числа разный
+            // кегль, и центрированные они «плавают» друг относительно друга
             align_items: AlignItems::Baseline,
             column_gap: px(6.),
             ..default()
-        },
-        // см. `text_container`: без метки шрифт панели не дойдёт до подписей
-        text_container(),
+        }),
         children![
             (
                 Text::new(title),
@@ -182,6 +114,12 @@ pub fn panel_header(title: &str, count: PanelCount) -> impl Bundle {
             (count, Text::new(""), ThemeTextColor(tokens::TEXT_DIM)),
         ],
     )
+}
+
+/// Заголовок секции без счётчика — там, где считать в мире нечего (Demon,
+/// Human, слои отладки).
+pub fn panel_title(title: &str) -> impl Bundle {
+    (Text::new(title), ThemeTextColor(tokens::PANE_HEADER_TEXT))
 }
 
 /// Счётчики в заголовках панелей: сколько объектов этого типа сейчас в мире.
@@ -261,17 +199,40 @@ pub fn panel_button_label(label: &str) -> impl Bundle {
     (Text::new(label), ThemedText)
 }
 
-/// Метка на узел-контейнер, через который шрифт панели должен пройти к
-/// подписям под ним.
+/// Узел-контейнер игрового UI: любой узел, под которым стоит текст.
 ///
-/// Распространение `InheritableFont` идёт **только по цепочке сущностей с
-/// `ThemedText`** (`HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`): на
+/// **Единственный способ завести контейнер в `src/ui/`** — и это не стиль, а
+/// защита. Распространение `InheritableFont` идёт только по цепочке сущностей с
+/// `ThemedText` (`HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`): на
 /// первом же узле без метки обход прекращается, и все подписи ниже остаются с
-/// дефолтным шрифтом в 20 px. У feathers подписи — прямые дети виджета, а у
-/// панелей между корнем и текстом стоят строки-обёртки, и метку надо ставить им
-/// руками.
-pub fn text_container() -> ThemedText {
-    ThemedText
+/// дефолтным шрифтом в 20 px. У feathers подписи — прямые дети виджета, и она с
+/// этим не сталкивается; у панелей между корнем и текстом стоят строки-обёртки.
+/// Метка, которую надо было помнить на каждой из них, стоила панели World
+/// двадцатипиксельных счётчиков — поэтому её больше не ставят руками, её
+/// приносит конструктор. Забытую всё же метку ловит `warn_broken_font_chain`.
+pub fn ui_node(node: Node) -> (Node, ThemedText) {
+    (node, ThemedText)
+}
+
+/// Контейнер-строка: дети в ряд, по центру, с зазором `gap`.
+pub fn ui_row(gap: f32) -> (Node, ThemedText) {
+    ui_node(Node {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        column_gap: px(gap),
+        ..default()
+    })
+}
+
+/// Контейнер-колонка: дети друг под другом с зазором `gap`.
+pub fn ui_column(gap: f32) -> (Node, ThemedText) {
+    ui_node(Node {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        row_gap: px(gap),
+        ..default()
+    })
 }
 
 /// Подпись слева в строке панели — приглушённая, как `label_dim` в галерее
@@ -289,11 +250,14 @@ pub fn row_value(value: impl Into<String>) -> impl Bundle {
     (Text::new(value.into()), ThemeTextColor(tokens::TEXT_MAIN))
 }
 
-/// Кегль подписей панелей. Редакторские 14 px (`size::MEDIUM_FONT`) — для
-/// полноэкранного инспектора; здесь панели лежат поверх карты и стоят колонками
-/// от края до края экрана, и на 14 px левая колонка переставала помещаться по
-/// высоте, наезжая сама на себя.
-pub const PANEL_FONT: FontSize = size::SMALL_FONT;
+/// Кегль подписей панелей — редакторские 14 px feathers.
+///
+/// Двенадцать здесь стояли, пока панели занимали обе нижние колонки от края до
+/// края экрана: на 14 px левая колонка переставала помещаться по высоте. Колонок
+/// больше нет, настройки лежат в одной панели со вкладками, и мельчить незачем —
+/// кнопка, подпись которой приходится разглядывать, хуже кнопки, которая
+/// занимает на два пикселя больше.
+pub const PANEL_FONT: FontSize = size::MEDIUM_FONT;
 
 /// Шрифт всех подписей панели: одна вставка на корень, а не `TextFont` на
 /// каждый текст.
@@ -305,8 +269,13 @@ pub const PANEL_FONT: FontSize = size::SMALL_FONT;
 ///
 /// Системой по `Added`, а не параметром в десяти функциях спавна: шрифт —
 /// свойство всего игрового UI, и панели про `AssetServer` знать не должны.
+///
+/// `Without<InheritableFont>` — корень, принёсший **свой** шрифт, оставляем ему.
+/// Панель телеметрии спавнится с моноширинным FiraMono (её числа выровнены по
+/// колонкам форматом `{:>5.2}`), и безусловная вставка перетирала его FiraSans'ом
+/// в первом же кадре: колонки дрожали, а причина была в чужом файле.
 fn apply_panel_font(
-    roots: Query<Entity, Added<GameUiRoot>>,
+    roots: Query<Entity, (Added<GameUiRoot>, Without<InheritableFont>)>,
     assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
@@ -316,6 +285,51 @@ fn apply_panel_font(
             font_size: PANEL_FONT,
             weight: FontWeight::NORMAL,
         });
+    }
+}
+
+/// «Между этим текстом и его шрифтом стоит узел без `ThemedText`» — в лог, на
+/// первом же кадре, с именем виноватого узла.
+///
+/// Единственный способ заметить обрыв иначе — увидеть на экране подпись не того
+/// размера и опознать в ней дефолтные 20 px; счётчики панели World простояли так
+/// не один день. Проверка ходит по `Added<Text>`, то есть по одному разу на
+/// текст, и только в отладочной сборке — в релизе панели уже собраны верно.
+///
+/// Молчит, когда источника шрифта над текстом нет вовсе (экран загрузки, метка
+/// BRP): там дефолтный шрифт — не поломка, а решение.
+#[cfg(debug_assertions)]
+fn warn_broken_font_chain(
+    texts: Query<Entity, Added<Text>>,
+    chain: Query<(
+        Option<&ChildOf>,
+        Has<ThemedText>,
+        Has<InheritableFont>,
+        Option<&Name>,
+    )>,
+) {
+    for text in &texts {
+        let mut entity = text;
+        let mut broken: Option<Entity> = None;
+        while let Ok((parent, themed, is_source, name)) = chain.get(entity) {
+            if is_source {
+                // источник шрифта найден; если по дороге к нему был узел без
+                // метки — до текста шрифт не дошёл
+                if let Some(broken) = broken {
+                    let name = name.map_or_else(|| "<unnamed>".to_owned(), Name::to_string);
+                    warn!(
+                        "UI font chain broken: text {text} under {name} — node {broken} \
+                         has no ThemedText, so the font stops there (use ui_node/ui_row/ui_column)"
+                    );
+                }
+                break;
+            }
+            if !themed && broken.is_none() {
+                broken = Some(entity);
+            }
+            let Some(parent) = parent else { break };
+            entity = parent.parent();
+        }
     }
 }
 
@@ -364,13 +378,42 @@ pub fn typing_in_text_input(
 #[derive(Component)]
 pub struct GameUiRoot;
 
+/// Колонка левого края: HUD-счётчики, под ними панель настроек. По ней метка
+/// BRP (`ui/brp.rs`) двигает вниз всё разом — маркер поэтому здесь, а не в
+/// файле того, кто колонку спавнит (`ui/shell.rs`) или того, кто её двигает
+/// (`ui/stats.rs`).
+#[derive(Component)]
+pub(super) struct TopLeftColumn;
+
+/// Порядок сборки UI в `Startup`: сначала оболочка со вкладками, потом секции
+/// панелей в них.
+///
+/// Множеством, а не одной цепочкой в `UiPlugin`: секций восемь, они живут в
+/// своих плагинах, и цепочка из восьми имён здесь была бы вторым списком
+/// панелей — ровно тем, что этот файл уже однажды завёл слотами колонок.
+#[derive(SystemSet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum UiBuildSet {
+    /// Колонка, полоска вкладок и пустые контейнеры вкладок.
+    Shell,
+    /// Секции панелей внутри вкладок.
+    Sections,
+    /// Расстановка секций по местам: спавнят их разные плагины, порядок
+    /// запуска систем внутри набора не определён.
+    Sort,
+}
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
+        app.configure_sets(
+            Startup,
+            (UiBuildSet::Shell, UiBuildSet::Sections, UiBuildSet::Sort).chain(),
+        )
+        .add_plugins((
             // первопартийные виджеты панелей и тема под облик qwe
             theme::PanelWidgetsPlugin,
+            shell::UiShellPlugin,
             speed::UiSpeedPlugin,
             stats::UiStatsPlugin,
             debug::UiDebugTogglesPlugin,
@@ -384,7 +427,7 @@ impl Plugin for UiPlugin {
             hotkeys::UiHotkeysPlugin,
             brp::UiBrpBadgePlugin,
         ))
-        .add_systems(Update, (apply_panel_font, stack_bottom_columns))
+        .add_systems(Update, apply_panel_font)
         .add_systems(
             Update,
             // `resource_changed` без `resource_exists` паникует до загрузки
@@ -401,105 +444,12 @@ impl Plugin for UiPlugin {
         // смена города возвращает приложение на экран загрузки — панели
         // прячутся до конца следующего прогрева
         .add_systems(OnExit(AppState::Playing), hide_game_ui);
+
+        // строго после вставки шрифта: до неё у корня ещё нет источника, и
+        // проверка сочла бы, что шрифту неоткуда идти
+        #[cfg(debug_assertions)]
+        app.add_systems(Update, warn_broken_font_chain.after(apply_panel_font));
     }
-}
-
-/// Отступ снизу у каждой панели обеих нижних колонок — сумма высот панелей под
-/// ней (см. [`UiRightColumn`] / [`UiLeftColumn`]) плюс зазор за каждую
-/// помеченную [`UiPanelGapBelow`] панель на её уровне и ниже.
-///
-/// `ComputedNode::size` — **физические** пиксели, а `Node::bottom` — логические:
-/// без `inverse_scale_factor` на retina-экране каждая высота удваивалась и между
-/// панелями зияла дыра в их собственный размер.
-///
-/// `bottom` пишется только когда он реально поехал: `Node` — не
-/// `set_if_neq`-компонент, и безусловная запись метила бы его изменённым каждый
-/// кадр, заставляя `bevy_ui` пересчитывать раскладку на пустом месте. Высота
-/// читается из `ComputedNode`, то есть с прошлого кадра: панель, у которой
-/// появилась строка, доезжает на кадр позже — заметить это можно только на
-/// смене формы кроны.
-fn stack_bottom_columns(
-    mut right: Query<
-        (
-            &UiRightColumn,
-            &ComputedNode,
-            &mut Node,
-            Has<UiPanelGapBelow>,
-        ),
-        Without<UiLeftColumn>,
-    >,
-    mut left: Query<
-        (
-            &UiLeftColumn,
-            &ComputedNode,
-            &mut Node,
-            Has<UiPanelGapBelow>,
-        ),
-        Without<UiRightColumn>,
-    >,
-) {
-    stack_column(
-        right
-            .iter_mut()
-            .map(|(slot, computed, node, gap)| (*slot as u8, computed, node, gap)),
-    );
-    stack_column(
-        left.iter_mut()
-            .map(|(slot, computed, node, gap)| (*slot as u8, computed, node, gap)),
-    );
-}
-
-fn stack_column<'a>(panels: impl Iterator<Item = (u8, &'a ComputedNode, Mut<'a, Node>, bool)>) {
-    let mut panels: Vec<_> = panels.collect();
-    // спрятанная панель (Noise при выключенном тумблере) не занимает места —
-    // и не по `ComputedNode` с прошлого кадра, а по самому `Display`
-    let visible: Vec<Stacked> = panels
-        .iter()
-        .filter(|(_, _, node, _)| node.display != Display::None)
-        .map(|&(slot, computed, _, gap)| Stacked {
-            slot,
-            height: computed.size.y * computed.inverse_scale_factor,
-            gap_below: gap,
-        })
-        .collect();
-
-    for (slot, _, node, _) in panels.iter_mut() {
-        let bottom = px(column_bottom(*slot, &visible));
-        if node.bottom != bottom {
-            node.bottom = bottom;
-        }
-    }
-}
-
-/// Видимая панель колонки глазами раскладки: только то, из чего считается чужой
-/// отступ.
-#[derive(Clone, Copy, Debug)]
-struct Stacked {
-    slot: u8,
-    /// Логические пиксели — см. `inverse_scale_factor` у [`stack_bottom_columns`].
-    height: f32,
-    gap_below: bool,
-}
-
-/// Отступ снизу у панели с местом `slot`: отступ от края экрана, высоты видимых
-/// панелей под ней и по зазору за каждую помеченную на её уровне и ниже.
-///
-/// Отдельной функцией от `Mut<Node>`: арифметика колонки — единственное, что
-/// здесь можно перепутать, и проверять её через целое приложение с честной
-/// раскладкой `bevy_ui` пришлось бы ради трёх сложений.
-fn column_bottom(slot: u8, visible: &[Stacked]) -> f32 {
-    let below: f32 = visible
-        .iter()
-        .filter(|other| other.slot < slot)
-        .map(|other| other.height)
-        .sum();
-    // зазор считается по панелям на своём уровне и ниже: помеченная
-    // отодвигается от того, что под ней, вместе со всеми над ней
-    let gaps = visible
-        .iter()
-        .filter(|other| other.gap_below && other.slot <= slot)
-        .count() as f32;
-    UI_SCREEN_EDGE_PX_OFFSET * (1. + gaps) + below
 }
 
 fn show_game_ui(mut roots: Query<&mut Visibility, With<GameUiRoot>>) {
@@ -524,57 +474,5 @@ mod tests {
     fn the_active_button_is_the_primary_variant() {
         assert_eq!(button_variant(true), ButtonVariant::Primary);
         assert_eq!(button_variant(false), ButtonVariant::Normal);
-    }
-
-    fn panel(slot: u8, height: f32) -> Stacked {
-        Stacked {
-            slot,
-            height,
-            gap_below: false,
-        }
-    }
-
-    #[test]
-    fn the_bottom_panel_sits_at_the_screen_edge() {
-        let column = [panel(0, 100.), panel(1, 40.)];
-        assert_eq!(column_bottom(0, &column), UI_SCREEN_EDGE_PX_OFFSET);
-    }
-
-    #[test]
-    fn a_panel_clears_everything_below_it() {
-        let column = [panel(0, 100.), panel(1, 40.), panel(2, 30.)];
-        assert_eq!(column_bottom(2, &column), UI_SCREEN_EDGE_PX_OFFSET + 140.);
-    }
-
-    /// Панель Noise при выключенном тумблере не попадает в `visible` — и всё,
-    /// что над ней, съезжает вниз на её место, а не висит над дырой.
-    #[test]
-    fn a_hidden_panel_leaves_no_hole() {
-        let column = [panel(0, 100.), panel(2, 30.)];
-        assert_eq!(column_bottom(2, &column), UI_SCREEN_EDGE_PX_OFFSET + 100.);
-    }
-
-    /// Зазор помеченной панели достаётся всем над ней, а не ей самой: он
-    /// отделяет её от того, что под ней.
-    #[test]
-    fn a_marked_panel_pushes_itself_and_everything_above_it_up() {
-        let column = [
-            panel(0, 100.),
-            Stacked {
-                slot: 1,
-                height: 40.,
-                gap_below: true,
-            },
-            panel(2, 30.),
-        ];
-        assert_eq!(column_bottom(0, &column), UI_SCREEN_EDGE_PX_OFFSET);
-        assert_eq!(
-            column_bottom(1, &column),
-            UI_SCREEN_EDGE_PX_OFFSET * 2. + 100.
-        );
-        assert_eq!(
-            column_bottom(2, &column),
-            UI_SCREEN_EDGE_PX_OFFSET * 2. + 140.
-        );
     }
 }

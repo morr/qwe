@@ -1,6 +1,6 @@
 ---
 name: ui-panels
-description: Use when working on qwe's UI — panels (World/Demon/Human, Navigation, Trees, Noise, speed/telemetry), the slider and value-row kits, bottom column stacking, debug toggles, the camera start view, prefs persistence. Deep detail behind CONTEXT.md's UI summary.
+description: Use when working on qwe's UI — the tabbed settings panel (Map / Nav / Sim / Debug) and its shell, the HUD (counters, telemetry, speed, city, hotkeys), the knob / slider / value-row kits, the feathers theme and its translucent plaques, the camera start view, prefs persistence. Deep detail behind CONTEXT.md's UI summary.
 ---
 
 # UI & debug panels — deep detail
@@ -9,68 +9,101 @@ Detail behind `src/ui/` and `camera.rs`. The panel inventory and the UI-input ru
 in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 `CLAUDE.md` and is non-negotiable.
 
+## Layout
+
+The UI is two layers over the map: a **HUD** that is always on screen, and **one settings
+panel** with four tabs (`ui/shell.rs`). Before this there were eight panels stacked into two
+bottom columns whose `bottom` had to be computed from measured heights; the right column
+did not fit 1080 px and ran off the top of the screen.
+
+- **`ui/shell.rs`** — the shell. `SettingsTab { Map, Nav, Sim, Debug }` — **declaration
+  order is strip order**; `UiShellState { tab, collapsed }` is a persisted settings group
+  (`group = "ui"`), so the open tab survives a restart and `ResetSettings` puts it back to
+  `Map`, expanded. `SettingsPanes` hands every panel the entity of its tab (`pane`) and the
+  left column (`column`, for HUD blocks above the panel).
+  Three ways to collapse to the bare tab strip: the `-`/`+` button, a click on the open tab
+  (`on_tab_click`, a pure function with tests), and **`Tab`** — free precisely because
+  `TabNavigationPlugin` is deliberately not installed (see the theme note below), and gated
+  on `typing_in_text_input` like every other hotkey.
+  The left column is `top`/`bottom`-anchored so the body has a ceiling to scroll against,
+  and carries **`Pickable::IGNORE`**: it is taller than its content, and an invisible
+  260 px strip eating the map's clicks would be exactly what "UI input never reaches the
+  world" forbids. Its children stay pickable.
+  Wheel over the panel scrolls the body (`Overflow::scroll_y` + a `Scroll` entity event
+  ported from bevy's `scroll_and_overflow` example; `clamp_scroll` is the tested part) —
+  and `camera.rs::zoom_to_cursor` now runs under `not(hovering_ui)`, so it no longer zooms
+  the map through the panel. That gate is a fix in its own right: it was missing before the
+  panel could scroll at all.
+- **Sections.** A panel asks for `spawn_section(commands, pane, slot, header, name)` — a
+  column with a header band — or `spawn_block` for one without a header (the Nav tab, whose
+  headers *are* rows: `Algo`, the `Separation` toggle, the `Slots` label). The returned
+  entity is the parent it hands to the kits, so panel bodies did not change when they moved
+  into tabs. **`SectionSlot`'s declaration order is the order inside a tab**
+  (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by eight
+  systems in eight plugins, and system order inside `UiBuildSet::Sections` is unspecified —
+  without the enum the Map tab came out shuffled on every run. `UiBuildSet` chains
+  `Shell → Sections → Sort`.
+
 ## Panels
 
+- **HUD counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
+  stripped on death), Demons, Souls reaped (`Telemetry::killed`), first in the left column,
+  **outside** the tabs: they are watched continuously, and putting them behind a tab choice
+  would mean watching the simulation through a keyhole. The counters use `iter().len()`,
+  not `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so
+  the length is a sum over archetypes rather than a walk over 20 000 entities every frame.
+  In agent runs the red **BRP badge** owns that corner, and `offset_below_brp_badge`
+  measures it and pushes the whole column below — `ComputedNode::size` is in *physical* px,
+  so multiply by `inverse_scale_factor` or the offset doubles on a retina screen.
 - **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
-  avg ms, entity count, camera. Fixed width + right-padded digits (no jitter).
-- **World, Demon and Human panels** (`ui/stats.rs`) — top-left, the only corner the other panels
-  leave free, one under the other in a plain flex column (it grows *downward* from the
-  screen edge, so unlike `stack_bottom_columns` nothing has to measure heights).
-  **World** holds three live counters — **Pawns** (`With<Human>`, i.e. alive: the
-  component is stripped on death), **Demons**, **Souls reaped** (`Telemetry::killed`), on
-  their own `Heavy` backing the way slider rows have one. **Demon** holds the four
-  `DemonStyle` knob rows from the same `ui/knob.rs` kit as Trees and Noise —
-  **Max demons** (0…500, step 5), **Spawn every** (0.1…10 s, step 0.1), **Speed**
-  (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows print as
-  percent, a bare `1.3` on the panel says nothing. **Human** holds the single
-  `HumanStyle` row, **Speed spread** (0…35%, step 5) — printed with a sign because it is
-  a half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the
-  ASCII `+/-`, not `±`: the built-in font (the `default_font` feature) is a narrow subset
-  and draws anything outside ASCII as an empty box. **Body radius** stood here
-  and the `Separation` toggle, `Slot search` and the three crowd knobs stood in World
-  until all six moved into the Navigation panel's crowd groups — they are about
-  movement, and World had stopped reading as a summary of the run.
-  The counters use `iter().len()`, not
-  `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so the
-  length is a sum over archetypes rather than a walk over 20 000 entities every frame.
-  In agent runs the red **BRP badge** owns that same corner, and `offset_below_brp_badge`
-  measures it and pushes the column below — the `ComputedNode` physical-vs-logical px trap
-  is the same one `stack_bottom_columns` documents.
-- **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button in
-  the Buildings-panel style. Left click walks the ladder up and wraps to 1x from its
-  top step (`MAX_SIM_SPEED`), right click steps down; green while
-  paused. It reads `Pointer<Click>` itself instead of `Activate`, which fires for *any*
-  mouse button and would make one right click move both ways.
-- **Tree style panel** (`ui/trees.rs`) — bottom-right: shape / foliage / crown details /
-  color variance, one button per row cycling through a fixed palette (`bevy_ui` has no
-  text input, so hex fields became cycles), plus **slider rows** built by the shared
-  `ui/knob.rs::spawn_knob` kit — **density** over `TREE_DENSITY_MIN..MAX`,
-  **conifer share** over `TREE_CONIFER_SHARE_MIN..MAX` and **noise mix** over
-  `TREE_NOISE_MIX_MIN..MAX`. The kit's drag observer quantizes to the step and writes
-  `TreeStyle` only when the step actually changes, so one drag rebuilds the crowns
-  a handful of times, not once per pixel. The conifer-share and mix rows are
-  `Display::None`ed outside `TreeShape::Mixed` (`sync_mixed_row_visibility`) — they mean
-  nothing for the other shapes. Writes `TreeStyle`; `map::trees::rebuild_trees` picks the
-  change up. Also settable over BRP: `res set TreeStyle .shape '"Conifer"'`.
-- **Noise panel** (`ui/noise.rs`) — the conifer-field fbm knobs (`ConiferNoiseStyle`:
-  wavelength / octaves / lacunarity / persistence), same knob kit; sits bottom-left
-  **above the debug-toggles row** (the right column is already packed with style
-  panels) and is `Display::None`ed while the `noise` debug toggle is off — tuning the
-  field without the overlay showing it is pointless. Noise mix is deliberately *not*
-  here: it is a gameplay look knob, so it sits in the Trees panel.
-- **Navigation panel** (`ui/navigation/` — `mod.rs` the panel, `knobs.rs` the crowd
-  knobs, `overlay.rs` the polymesh overlay) — slot 2 of the left column, always visible,
-  **one UI for both pathfinding backends** (the Roads/Trees row-button idiom — label
-  left, value right). The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always
-  walk one of the two, so it is a choice, not two toggles that could both read `Off`
-  while the grid quietly served every request. Its single source of truth is
-  `PolymeshDebug::enabled`, which defaults to `Polymesh` — and which the `Separation`
-  row below follows, since separation does not run on the grid backend (see the
-  navigation-deep skill): picking `Navmesh` here greys that row out the way determinism
-  does. Under it stand the settings **of the selected backend only** — the other set is
-  `Display::None`d out of the layout (`sync_section_visibility`), because an agent radius
-  means nothing while pawns walk tiles, and a grid search algorithm means nothing while
-  they walk the mesh:
+  avg ms, entity count, camera. Fixed width + right-padded digits (no jitter) — which only
+  works in a monospace face, so this root brings its **own** `InheritableFont` (FiraMono).
+  `apply_panel_font` therefore skips roots that already have one (`Without<InheritableFont>`);
+  without that filter it overwrote FiraMono with FiraSans on the first frame and the columns
+  wobbled.
+- **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button.
+  Left click walks the ladder up and wraps to 1x from its top step (`MAX_SIM_SPEED`), right
+  click steps down; `Primary` while paused. It reads `Pointer<Click>` itself instead of
+  `Activate`, which fires for *any* mouse button and would make one right click move both
+  ways.
+- **Sim tab** (`ui/stats.rs`) — three sections. **World**: `Deterministic` and the `Seed`
+  field + `new`. **Demon**: the four `DemonStyle` knobs — **Max demons** (0…500, step 5),
+  **Spawn every** (0.1…10 s, step 0.1), **Speed** (100…200%, step 5) and **Lunge boost**
+  (+0…+100%, step 5); both percent rows print as percent, a bare `1.3` on the panel says
+  nothing. **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a
+  half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the ASCII
+  `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
+  an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
+  into the Nav tab's crowd groups — they are about movement.
+- **Map tab** — Trees → Tree rows → Buildings → Roads → Noise.
+  **Trees** (`ui/trees.rs`): shape / foliage / crown details / color variance, one button
+  per row cycling through a fixed palette (`bevy_ui` has no text input, so hex fields became
+  cycles), plus **slider rows** — **density** over `TREE_DENSITY_MIN..MAX`, **conifer share**
+  over `TREE_CONIFER_SHARE_MIN..MAX` and **noise mix** over `TREE_NOISE_MIX_MIN..MAX`. The
+  kit's drag observer quantizes to the step and writes `TreeStyle` only when the step
+  actually changes, so one drag rebuilds the crowns a handful of times, not once per pixel.
+  The conifer-share and mix rows are `Display::None`d outside `TreeShape::Mixed`
+  (`sync_mixed_row_visibility`) — they mean nothing for the other shapes. Also settable over
+  BRP: `res set TreeStyle .shape '"Conifer"'`.
+  **Noise** (`ui/noise.rs`): the conifer-field fbm knobs (`ConiferNoiseStyle`: wavelength /
+  octaves / lacunarity / persistence). In the Map tab, not Debug: the field decides where
+  conifer stands land, so it is the look of the map, tuned next to Trees whose conifer share
+  it distributes. Its first row is `Show` — the **same** `DebugConiferNoise` the Debug tab's
+  overlay row carries, because tuning the field without the overlay is blind and sending the
+  user to another tab for the switch would leave the section without one. The knobs (not the
+  section) are `Display::None`d while the overlay is off. Noise *mix* is deliberately not
+  here: it is a gameplay look knob, so it sits in Trees.
+- **Nav tab** (`ui/navigation/` — `mod.rs` the rows, `knobs.rs` the crowd knobs,
+  `overlay.rs` the polymesh overlay) — one block, **one UI for both pathfinding backends**.
+  The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always walk one of the two, so
+  it is a choice, not two toggles that could both read `Off` while the grid quietly served
+  every request. Its single source of truth is `PolymeshDebug::enabled`, which defaults to
+  `Polymesh` — and which the `Separation` row below follows, since separation does not run
+  on the grid backend (see the navigation-deep skill): picking `Navmesh` here greys that row
+  out the way determinism does. Under it stand the settings **of the selected backend only**
+  — the other set is `Display::None`d out of the layout (`sync_section_visibility`), because
+  an agent radius means nothing while pawns walk tiles, and a grid search algorithm means
+  nothing while they walk the mesh:
   - `Navmesh` → **`Pathfind`** (`PathfindingAlgorithm`, cycles A*/Dijkstra/Fringe/BFS/
     HPA*/Theta*), **`Show`** (the grid fill overlay, `DebugNavmesh`);
   - `Polymesh` → **`Show`** (mesh overlay, draws nothing else), **`Chunks`** (default on)
@@ -138,12 +171,12 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 
 ## Shared kits & layout
 
-- **Widgets and theme** (`ui/theme.rs`) — the panels are first-party `bevy_feathers`
-  controls, and they wear feathers' **own look**: `create_dark_theme()` as-is, grey buttons,
-  blue `Primary`, 4 px rounded corners, FiraSans. **`PanelWidgetsPlugin`** installs
+- **Widgets and theme** (`ui/theme.rs`) — the controls are first-party `bevy_feathers`
+  (grey buttons, blue `Primary`, 4 px rounded corners, FiraSans); the theme is
+  `create_dark_theme()` with **colour overrides only**. **`PanelWidgetsPlugin`** installs
   `FeathersCorePlugin` plus `UiTheme`; it is a plugin of its own rather than two lines in
   `UiPlugin` because the crowd demo calls the same kits and cannot bring up `UiPlugin`.
-  Five things about it are decisions, not detail:
+  Six things about it are decisions, not detail:
   - **`FeathersCorePlugin`, never the `FeathersPlugins` group.** The group also adds
     `TabNavigationPlugin`, and with it Tab focuses any panel widget (every control carries
     `TabIndex(0)`), after which Space both "presses" the focused button *and* pauses the
@@ -156,20 +189,35 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
     titles `PANE_HEADER_TEXT`. Hand-written colours (`ui_color`, `UiOpacity`,
     `TOGGLE_ACTIVE_COLOR`, `ROW_LABEL_COLOR`, `DIMMED_VALUE`) are gone: half the screen
     following the theme and half not is worse than either.
-  - **"Active" is `ButtonVariant::Primary`.** Toggle on, cycler at its default, city
-    selected, time paused — one blue, one variant. Panels no longer paint backgrounds; they
-    write `ButtonVariant` (`button_variant(is_active)`) and feathers does hover, press and
+  - **The plaques are translucent, and the text carries the legibility.** One near-black
+    `UI_COLOR` at three alphas — `PANEL_ALPHA` .72 (pane body), .85 (header strip), .50
+    (nested block) — so the city stays visible under the panel; `TEXT_MAIN` is white and
+    `TEXT_DIM` is oklch L .90 (`TEXT_BRIGHT`), both well above feathers' own. The library's
+    values assume an opaque inspector plaque; over a bright map they read as grey on grey.
+    Raising the alpha instead would have been the wrong knob: the panel is supposed to lie
+    *on* the map, not replace it.
+  - **A value row rests transparent, a button goes blue.** Rows are
+    `ButtonVariant::Plain` (`rows::VALUE_ROW_VARIANT`, `BUTTON_PLAIN_BG` = `Color::NONE`):
+    a panel is ten rows in a stack, and `Normal` gave each its own grey brick. A row says
+    its state in **words** on the right (`On`/`Off`, `Round`, `Polymesh`); `Primary`
+    (`button_variant(is_active)`) is for the buttons that have no value text — the open tab,
+    the selected city, pause. Panels never paint backgrounds; feathers does hover, press and
     disabled itself, in a `Changed`-filtered `PreUpdate` system.
-  - **The font is 12 px (`PANEL_FONT` = `size::SMALL_FONT`), not feathers' 14.** These
-    panels stand in columns from screen edge to screen edge over the map; at 14 px the left
-    column stopped fitting vertically and grew into itself. One `apply_panel_font` system
-    puts `InheritableFont` on every `GameUiRoot`, and the kits patch the same size onto the
+  - **The font is feathers' 14 px** (`PANEL_FONT` = `size::MEDIUM_FONT`). It was 12 while
+    the panels stood in two columns from screen edge to screen edge; with one tabbed panel
+    the reason is gone, and a caption you have to peer at is worse than two extra pixels.
+    One `apply_panel_font` system puts `InheritableFont` on every `GameUiRoot` — except
+    roots that brought their own (`Without<InheritableFont>`, i.e. the monospace telemetry),
+    which it used to overwrite on the first frame. The kits patch the same size onto the
     widgets (which carry an `InheritableFont` of their own and would otherwise win).
-  - **`text_container()` is a real requirement, not decoration.** Font propagation runs
-    `HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`, and the traversal *stops* at
-    the first entity without `ThemedText` — every wrapper row between a panel root and its
-    labels must carry it or everything below stays at the default 20 px. feathers never hits
-    this because its captions are direct children of the widget.
+  - **Containers come from `ui_node` / `ui_row` / `ui_column`, never from a bare `Node`.**
+    Font propagation runs `HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`, and the
+    traversal *stops* at the first entity without `ThemedText` — a wrapper between a root
+    and its labels that lacks the marker leaves everything below at the default 20 px. That
+    was not hypothetical: the World counters sat at 20 px in a different face for days,
+    because the marker was something to remember rather than something a constructor
+    brought. `warn_broken_font_chain` (debug builds, `Added<Text>`, after
+    `apply_panel_font`) walks the chain and names the offending node in the log.
   `spawn_panel_button(commands, parent, marker, label, is_active, on_activate)` is the kit;
   `spawn_panel_button_with` takes the caption as a bundle instead of a string, for the
   two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
@@ -228,63 +276,37 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
   worse than not highlighting. `BUTTON_BG_DISABLED` is deliberately the *resting* colour,
   not a dimmed one: an inert row should look ordinary and merely not react. The only carrier
   today is the Separation toggle under **Deterministic** or grid navigation.
-- **Bottom UI columns** (`ui/mod.rs::stack_bottom_columns`, `UiRightColumn` /
-  `UiLeftColumn`) — right: Tree rows → Trees → Buildings → Roads → hotkey help;
-  left: debug toggles → Noise → Navigation; both bottom-up. **The order is the enum's
-  declaration order**, not a number each panel writes for itself — with integers spread
-  over seven files nothing caught two panels claiming one slot, or a gap. A settings
-  panel takes its `Node` and its slot together from `right_panel` / `left_panel`; the
-  debug-toggle row and the hotkey help keep their own nodes (a row, not a column, and
-  their own paddings). The panels are absolute (`bevy_ui` does
-  not stack them), and the columns change height at runtime (Trees grows two rows on
-  `Mixed`, Noise exists only with the `noise` toggle), so each panel's `bottom` is the
-  summed **measured** height of those below it instead of a hardcoded constant;
-  `Display::None` panels are skipped by their `Node.display`, not their last-frame
-  `ComputedNode`. `ComputedNode::size` is in *physical* pixels — multiply by
-  `inverse_scale_factor` or every offset doubles on a retina screen. The arithmetic
-  itself is `column_bottom`, a pure function over the visible panels — the four tests
-  on it (bottom panel at the edge, clearing everything below, a hidden panel leaving no
-  hole, a marked panel pushing itself *and everything above it* up) need no `App`.
-  Panels sit flush by default — a column of map-style panels reads as one block. A
-  **`UiPanelGapBelow`** marker inserts one gap under a panel, and the gap is
-  `UI_SCREEN_EDGE_PX_OFFSET`, the same distance the UI keeps from the screen edge, so
-  every space in the layout is the same width. Two panels carry it, both where the
-  *kind* of UI changes: Navigation (the button row below it is not a panel) and the
-  hotkey help (the panels below it are map settings).
-- **Debug toggles** (`ui/debug/`) — grid / doors / movepath / noise buttons
-  (`bevy_ui_widgets::Button` + `Activate` observers, `Hovered`/`Pressed` highlight). The
-  navmesh overlay it still owns is **one merged mesh** — per-tile entities once cost 330 k
-  entities; the noise overlay is one sprite with a CPU-built texture (see the osm-map
-  skill's `references/trees.md`, Conifer stands). The
-  *backend* settings — the grid overlay toggle, `pathfind:`, the agent radius — moved
-  into the **Navigation panel** above, next to the other backend's settings; the row keeps
-  the cycling buttons that are not about one backend's layer: **`camera:`** (start view)
-  and **`navtile:`** (`NavtileBase`, 2 m ⇄ 1 m, reloads the world). Navtile is here and
-  not under `Navmesh` because the world is *always* built in tiles of that size — the
-  passability fill, the unreachable prune, the portal snap, the entrance generation —
-  whichever backend the pawns then walk; hiding it with the grid settings would call a
-  global setting a local one. A cycler goes green
-  (`TOGGLE_ACTIVE_COLOR`, the same "on" colour as a toggle) while its resource equals
-  `Default::default()` — `save`, `2m` — so a setting steered away from the baseline is
-  visible at a glance; the check is against the `Default` impl, not a hardcoded variant, so
-  moving `#[default]` moves the highlight with it. Label text and green-ness come from one
-  `cycler_state` used by both the spawn and the sync system, so they cannot drift apart.
-  The row closes with **`reset`** (`prefs::ResetSettings`) — every settings group back to
-  its `Default`, world settings included, so an off-baseline city / seed / navtile /
-  determinism reloads the map on the click. It sits here because the two cyclers beside it
-  already answer half of "how far have I drifted from the baseline?". It is an **action**
-  button, not a toggle and not a cycler: green in this row means "*this* resource is at its
-  default", and the same green on a button that speaks about *other* resources would be a
-  different claim — so it is spawned permanently `Normal` (`is_active: false`) while still
-  lighting up under the cursor like every other button. The `ui::ActionButton` marker and
-  its `highlight_action_buttons` system are gone with the hand-rolled highlighting: an
-  unmarked button used to be inert under the cursor (which is what the World panel's `new`
-  seed reroll had been), and feathers highlights every button whether it is marked or not.
+- **The bottom columns are gone.** `stack_bottom_columns`, `column_bottom`, `Stacked`,
+  `UiRightColumn` / `UiLeftColumn` / `UiPanelGapBelow`, `panel_node`, `right_panel` /
+  `left_panel` and the four column-arithmetic tests were deleted with the tabs: inside a
+  tab ordinary flex stacks the sections, and a section that hides itself
+  (`Display::None`) is collapsed by the same flex. Only two absolute nodes are left, both
+  HUD: the hotkey help (bottom right) and the city select (bottom centre). What survived
+  the deletion is the retina trap — `ComputedNode::size` is in *physical* pixels, and
+  `offset_below_brp_badge` still multiplies by `inverse_scale_factor`.
+- **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field),
+  the `Camera start` and `Navtile` cyclers, and `reset`. All of them are knob-kit rows
+  (`spawn_cycle_row` + `add_knobs::<R>()`) now, which is why `DebugToggleButton`,
+  `CyclerButton`, `cycler_state`, `sync_toggle_buttons`, `sync_cycler_buttons` and
+  `sync_cycler_labels` are gone: the kit already keeps a label on its resource. The old row
+  of bare buttons (`grid`, `doors`, `camera:`) had no value text at all, so it needed a
+  green fill to say "on" and "at its default" — a row that prints `Off` or `save` says it
+  outright, and the colour became a second, weaker channel for the same claim.
+  **`reset`** (`prefs::ResetSettings`) stays an action **button**, not a row: it has no state
+  of its own to print — every settings group goes back to its `Default`, world settings
+  included, so an off-baseline city / seed / navtile / determinism reloads the map on the
+  click. Navtile is in this tab and not under `Navmesh` because the world is *always* built
+  in tiles of that size — the passability fill, the unreachable prune, the portal snap, the
+  entrance generation — whichever backend the pawns then walk; hiding it with the grid
+  settings would call a global setting a local one. The navmesh overlay this module still
+  owns is **one merged mesh** — per-tile entities once cost 330 k entities; the noise overlay
+  is one sprite with a CPU-built texture (see the osm-map skill's `references/trees.md`,
+  Conifer stands).
 
 ## Camera start view
 
 - **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, default
-  `save`, the `camera:` button, persisted) decides where the camera stands when the world comes up:
+  `save`, the `Camera start` row of the Debug tab, persisted) decides where the camera stands when the world comes up:
   `reset` — the snapped portal at `START_ZOOM`; `save` — the x/y/zoom written into
   **`SavedCameraView`** (persisted, same `camera` settings group) by
   `save_camera_view_on_exit`, a `Last` system that fires on `AppExit` and saves

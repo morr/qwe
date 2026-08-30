@@ -34,8 +34,7 @@
 //! входов в здания, — по какому бы бэкенду ни ходили пешки, и прятать его
 //! вместе с настройками сетки значило бы называть глобальное частным.
 
-use bevy::ecs::system::IntoObserverSystem;
-use bevy::feathers::controls::ButtonVariant;
+use bevy::ecs::system::SystemParam;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui_widgets::Activate;
@@ -49,10 +48,10 @@ use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
 use crate::prefs::{ResetSettings, TrackPrefExt};
 use crate::settings::NavtileBase;
-use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiLeftColumn, button_variant, panel_background,
-    panel_button_label, row_label, spawn_panel_button,
-};
+use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
+use crate::ui::rows::{ROW_LEFT_PX, on_off};
+use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_block, spawn_section};
+use crate::ui::{UiBuildSet, panel_title, spawn_panel_button};
 
 // оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
 #[derive(Resource, Reflect, SettingsGroup, Default)]
@@ -79,49 +78,6 @@ pub struct DebugDoors(pub bool);
 #[settings_group(group = "debug", key = "conifer_noise")]
 pub struct DebugConiferNoise(pub bool);
 
-/// Какой слой переключает кнопка; определяет подсветку «активна».
-#[derive(Component, Clone, Copy)]
-enum DebugToggleButton {
-    Grid,
-    Doors,
-    Movepath,
-    ConiferNoise,
-}
-
-/// Кнопка-листалка в этом же ряду. Зелёная, пока выбрано значение по
-/// умолчанию, — так видно, что настройки не уведены от базовых, тем же цветом,
-/// каким тумблеры показывают «включено».
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum CyclerButton {
-    Camera,
-    Navtile,
-}
-
-/// Текст значения справа на листалке; та же метка, что на самой кнопке, —
-/// один компонент на все листалки, а не маркер на каждую (идиома
-/// `ui/navigation/mod.rs::NavValueLabel`).
-#[derive(Component, Clone, Copy)]
-struct CyclerValueLabel(CyclerButton);
-
-/// Что показывает листалка и стоит ли она на умолчании. Одна функция на спавн
-/// и на актуализацию: разойтись подписи и подсветке негде.
-fn cycler_state(
-    kind: CyclerButton,
-    position_mode: &CameraPositionMode,
-    navtile: &NavtileBase,
-) -> (String, bool) {
-    match kind {
-        CyclerButton::Camera => (
-            position_mode.label().to_string(),
-            *position_mode == CameraPositionMode::default(),
-        ),
-        CyclerButton::Navtile => (
-            navtile.label().to_string(),
-            *navtile == NavtileBase::default(),
-        ),
-    }
-}
-
 mod overlays;
 
 use self::overlays::{render_doors, render_grid, sync_conifer_noise_overlay, sync_navmesh_overlay};
@@ -130,7 +86,13 @@ pub struct UiDebugTogglesPlugin;
 
 impl Plugin for UiDebugTogglesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DebugGrid>()
+        app.add_knobs::<DebugGrid>()
+            .add_knobs::<DebugDoors>()
+            .add_knobs::<DrawMovePaths>()
+            .add_knobs::<DebugConiferNoise>()
+            .add_knobs::<CameraPositionMode>()
+            .add_knobs::<NavtileBase>()
+            .init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
             .init_resource::<DebugDoors>()
             .init_resource::<DebugConiferNoise>()
@@ -142,7 +104,7 @@ impl Plugin for UiDebugTogglesPlugin {
             .track_pref::<DebugNavmesh>()
             .track_pref::<DebugDoors>()
             .track_pref::<DebugConiferNoise>()
-            .add_systems(Startup, render_debug_toggles)
+            .add_systems(Startup, build_debug_tab.in_set(UiBuildSet::Sections))
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
             // раз по спавну мира
@@ -158,8 +120,6 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_systems(
                 Update,
                 (
-                    sync_toggle_buttons,
-                    sync_cycler_buttons,
                     render_grid.run_if(|grid: Res<DebugGrid>| grid.0),
                     // MapData появляется только под Playing
                     render_doors
@@ -186,10 +146,6 @@ impl Plugin for UiDebugTogglesPlugin {
                                 .or_else(resource_changed::<ConiferNoiseStyle>),
                         )
                         .after(crate::map::trees::rebuild_trees),
-                    sync_cycler_labels.run_if(
-                        resource_changed::<CameraPositionMode>
-                            .or_else(resource_changed::<NavtileBase>),
-                    ),
                     toggle_navmesh
                         .run_if(input_just_pressed(KeyCode::KeyN))
                         .run_if(not(super::typing_in_text_input)),
@@ -201,112 +157,114 @@ impl Plugin for UiDebugTogglesPlugin {
     }
 }
 
-fn render_debug_toggles(
-    mut commands: Commands,
-    position_mode: Res<CameraPositionMode>,
-    navtile: Res<NavtileBase>,
-    grid: Res<DebugGrid>,
-    doors: Res<DebugDoors>,
-    movepaths: Res<DrawMovePaths>,
-    conifer_noise: Res<DebugConiferNoise>,
-) {
-    let row = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
-                left: px(UI_SCREEN_EDGE_PX_OFFSET),
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                column_gap: px(6.),
-                padding: UiRect::all(px(10.)),
-                ..default()
-            },
-            panel_background(),
-            // низ левой колонки: панель Noise стыкуется прямо над этим рядом
-            UiLeftColumn::DebugToggles,
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("debug_toggles"),
-        ))
-        .id();
+/// Всё, что читают строки вкладки при спавне. Одним `SystemParam`, а не шестью
+/// аргументами: строк у вкладки шесть, и каждая новая удлиняла бы подпись
+/// системы (идиома `ui/navigation/mod.rs::NavPanelValues`).
+#[derive(SystemParam)]
+struct DebugValues<'w> {
+    position_mode: Res<'w, CameraPositionMode>,
+    navtile: Res<'w, NavtileBase>,
+    grid: Res<'w, DebugGrid>,
+    doors: Res<'w, DebugDoors>,
+    movepaths: Res<'w, DrawMovePaths>,
+    conifer_noise: Res<'w, DebugConiferNoise>,
+}
 
-    spawn_toggle(
+fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: DebugValues) {
+    let pane = panes.pane(SettingsTab::Debug);
+
+    let overlays = spawn_section(
         &mut commands,
-        row,
-        "grid",
-        DebugToggleButton::Grid,
-        grid.0,
-        |_activate: On<Activate>, mut grid: ResMut<DebugGrid>| {
-            grid.0 = !grid.0;
+        pane,
+        SectionSlot::Overlays,
+        panel_title("Overlays"),
+        "debug_overlays",
+    );
+    spawn_cycle_row(
+        &mut commands,
+        overlays,
+        "Grid",
+        ROW_LEFT_PX,
+        &*values.grid,
+        CycleBinding {
+            cycle: |grid: &mut DebugGrid| grid.0 = !grid.0,
+            text: |grid| on_off(grid.0).to_string(),
         },
     );
-    spawn_toggle(
+    spawn_cycle_row(
         &mut commands,
-        row,
-        "doors",
-        DebugToggleButton::Doors,
-        doors.0,
-        |_activate: On<Activate>, mut doors: ResMut<DebugDoors>| {
-            doors.0 = !doors.0;
+        overlays,
+        "Doors",
+        ROW_LEFT_PX,
+        &*values.doors,
+        CycleBinding {
+            cycle: |doors: &mut DebugDoors| doors.0 = !doors.0,
+            text: |doors| on_off(doors.0).to_string(),
         },
     );
-    spawn_toggle(
+    spawn_cycle_row(
         &mut commands,
-        row,
-        "movepath",
-        DebugToggleButton::Movepath,
-        movepaths.0,
-        |_activate: On<Activate>, mut movepaths: ResMut<DrawMovePaths>| {
-            movepaths.0 = !movepaths.0;
+        overlays,
+        "Move paths",
+        ROW_LEFT_PX,
+        &*values.movepaths,
+        CycleBinding {
+            cycle: |paths: &mut DrawMovePaths| paths.0 = !paths.0,
+            text: |paths| on_off(paths.0).to_string(),
         },
     );
-    spawn_toggle(
+    spawn_cycle_row(
         &mut commands,
-        row,
-        "noise",
-        DebugToggleButton::ConiferNoise,
-        conifer_noise.0,
-        |_activate: On<Activate>, mut noise: ResMut<DebugConiferNoise>| {
-            noise.0 = !noise.0;
+        overlays,
+        "Noise field",
+        ROW_LEFT_PX,
+        &*values.conifer_noise,
+        CycleBinding {
+            cycle: |noise: &mut DebugConiferNoise| noise.0 = !noise.0,
+            text: |noise| on_off(noise.0).to_string(),
         },
     );
 
+    let world = spawn_section(
+        &mut commands,
+        pane,
+        SectionSlot::WorldBuild,
+        panel_title("World build"),
+        "debug_world",
+    );
     // откуда стартует камера — клик листает reset ⇄ save
-    spawn_cycler(
+    spawn_cycle_row(
         &mut commands,
-        row,
-        CyclerButton::Camera,
-        "camera:",
-        &position_mode,
-        &navtile,
-        |_activate: On<Activate>, mut mode: ResMut<CameraPositionMode>| {
-            *mode = mode.next();
+        world,
+        "Camera start",
+        ROW_LEFT_PX,
+        &*values.position_mode,
+        CycleBinding {
+            cycle: |mode: &mut CameraPositionMode| *mode = mode.next(),
+            text: |mode| mode.label().to_string(),
         },
     );
     // сторона навтайла: клик листает 2m ⇄ 1m и перезагружает мир
     // (`city::reload_world`) — проходимость существует только в тайлах
     // текущего размера
-    spawn_cycler(
+    spawn_cycle_row(
         &mut commands,
-        row,
-        CyclerButton::Navtile,
-        "navtile:",
-        &position_mode,
-        &navtile,
-        |_activate: On<Activate>, mut navtile: ResMut<NavtileBase>| {
-            *navtile = navtile.next();
+        world,
+        "Navtile",
+        ROW_LEFT_PX,
+        &*values.navtile,
+        CycleBinding {
+            cycle: |navtile: &mut NavtileBase| *navtile = navtile.next(),
+            text: |navtile| navtile.label().to_string(),
         },
     );
 
-    // сброс всех настроек на умолчания. Кнопка-действие, а не тумблер и не
-    // листалка: зелёный в этом ряду значит «этот ресурс стоит на умолчании», и
-    // тем же цветом на кнопке, которая говорит о ЧУЖИХ ресурсах, читалось бы
-    // другое утверждение — поэтому она всегда обычная (`is_active: false`), а
-    // подсветку под курсором ей даёт feathers, как всякой кнопке
+    // сброс всех настроек на умолчания. Кнопка-действие, а не строка-значение:
+    // показывать ей нечего, она не про своё состояние, а про чужие
+    let actions = spawn_block(&mut commands, pane, SectionSlot::Actions, "debug_actions");
     spawn_panel_button(
         &mut commands,
-        row,
+        actions,
         (),
         "reset",
         false,
@@ -314,37 +272,6 @@ fn render_debug_toggles(
             commands.queue(ResetSettings);
         },
     );
-}
-
-/// Кнопка-листалка: подпись слева, текущее значение справа.
-fn spawn_cycler<M>(
-    commands: &mut Commands,
-    row: Entity,
-    kind: CyclerButton,
-    label: &str,
-    position_mode: &CameraPositionMode,
-    navtile: &NavtileBase,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
-) {
-    let (value, is_default) = cycler_state(kind, position_mode, navtile);
-    // подпись и значение — в своей строке-обёртке: узел самой кнопки приходит
-    // из сцены feathers, и переписывать его целиком ради одного `column_gap`
-    // значило бы потерять всё остальное, что она в нём задала
-    let caption = (
-        Node {
-            display: Display::Flex,
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: px(6.),
-            ..default()
-        },
-        crate::ui::text_container(),
-        children![
-            row_label(label),
-            (CyclerValueLabel(kind), panel_button_label(&value)),
-        ],
-    );
-    super::spawn_panel_button_with(commands, row, kind, caption, is_default, on_activate);
 }
 
 /// N — «показать слой навигации»: у сетки и у меша свои тумблеры показа, а
@@ -365,60 +292,4 @@ fn toggle_gizmos(mut doors: ResMut<DebugDoors>, mut movepaths: ResMut<DrawMovePa
     let on = !(doors.0 || movepaths.0);
     doors.0 = on;
     movepaths.0 = on;
-}
-
-/// Зелёный на листалках держится, пока выбрано значение по умолчанию.
-fn sync_cycler_buttons(
-    position_mode: Res<CameraPositionMode>,
-    navtile: Res<NavtileBase>,
-    mut buttons: Query<(&CyclerButton, &mut ButtonVariant)>,
-) {
-    for (cycler, mut variant) in &mut buttons {
-        let (_, is_default) = cycler_state(*cycler, &position_mode, &navtile);
-        variant.set_if_neq(button_variant(is_default));
-    }
-}
-
-/// Актуализация подписей листалок после правки ресурса извне (кнопкой,
-/// восстановленными настройками, BRP).
-fn sync_cycler_labels(
-    position_mode: Res<CameraPositionMode>,
-    navtile: Res<NavtileBase>,
-    mut labels: Query<(&mut Text, &CyclerValueLabel)>,
-) {
-    for (mut text, label) in &mut labels {
-        let (value, _) = cycler_state(label.0, &position_mode, &navtile);
-        text.0 = value;
-    }
-}
-
-fn spawn_toggle<M>(
-    commands: &mut Commands,
-    row: Entity,
-    label: &str,
-    kind: DebugToggleButton,
-    is_active: bool,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
-) {
-    spawn_panel_button(commands, row, kind, label, is_active, on_activate);
-}
-
-/// Зелёный на тумблерах держится, пока слой включён. Наведение и нажатие ведёт
-/// feathers сама — здесь остаётся только «активность».
-fn sync_toggle_buttons(
-    grid: Res<DebugGrid>,
-    doors: Res<DebugDoors>,
-    movepaths: Res<DrawMovePaths>,
-    conifer_noise: Res<DebugConiferNoise>,
-    mut buttons: Query<(&DebugToggleButton, &mut ButtonVariant)>,
-) {
-    for (toggle, mut variant) in &mut buttons {
-        let is_active = match toggle {
-            DebugToggleButton::Grid => grid.0,
-            DebugToggleButton::Doors => doors.0,
-            DebugToggleButton::Movepath => movepaths.0,
-            DebugToggleButton::ConiferNoise => conifer_noise.0,
-        };
-        variant.set_if_neq(button_variant(is_active));
-    }
 }

@@ -778,19 +778,24 @@ Summary; mechanics and measurements — **navigation-deep skill** (polymesh in i
 Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-speed
 skill**.
 
-- **UI input never reaches the world** — the panels sit over the map, so a click, drag or
-  scroll that lands on one must not also drive the camera or anything in the world.
+- **UI input never reaches the world** — the panel sits over the map, so a click, drag or
+  scroll that lands on it must not also drive the camera or anything in the world.
   `camera.rs::drag_pan` decides *in the press frame* whether the gesture belongs to the UI
-  (`pointer_over_ui` over `HoverMap`) and holds that verdict until release. The rule and
-  the idiom — CLAUDE.md.
-- **Panel map** — top-right: telemetry + **Speed button** (`ui/speed.rs`); top-left:
-  **World / Demon / Human** (`ui/stats.rs` — run counters, `DemonStyle` and `HumanStyle`
-  sliders); bottom centre: the **City** select (`ui/city.rs`); right column bottom-up: Tree rows →
-  Trees → Buildings → Roads → hotkey help; left column bottom-up: debug toggles →
-  Noise → **Navigation** (`ui/navigation/` — backend cycler `Algo: Navmesh ⇄ Polymesh`,
-  the selected backend's settings only, and the `Separation` / `Slots` crowd-knob
-  groups). Columns are stacked by **measured** heights (`stack_bottom_columns`;
-  `ComputedNode::size` is *physical* px — multiply by `inverse_scale_factor`).
+  (`pointer_over_ui` over `HoverMap`) and holds that verdict until release; `zoom_to_cursor`
+  runs under `not(hovering_ui)`, the same test as a run condition, so the wheel over the
+  panel scrolls it instead of zooming the map. The rule and the idiom — CLAUDE.md.
+- **Two layers.** **HUD**, always on screen: run counters (`ui/stats.rs`), telemetry +
+  **Speed button** (`ui/speed.rs`), the **City** select bottom centre (`ui/city.rs`),
+  hotkey help bottom right (`ui/hotkeys.rs`), the agent **BRP** badge (`ui/brp.rs`).
+  And **one settings panel** with four tabs (`ui/shell.rs`), left edge under the counters:
+  **Map** (Trees → Tree rows → Buildings → Roads → Noise), **Nav** (`ui/navigation/` —
+  backend cycler `Algo: Navmesh ⇄ Polymesh`, the selected backend's settings only, the
+  `Separation` / `Slots` crowd-knob groups), **Sim** (World seed/determinism, Demon, Human),
+  **Debug** (overlays, `Camera start` / `Navtile`, `reset`). `Tab` — or the `-`/`+` button,
+  or a click on the open tab — collapses it to the tab strip alone; the open tab and the
+  collapsed flag are a persisted settings group (`UiShellState`). Section order inside a
+  tab is `SectionSlot`'s declaration order (`sort_sections`), because the sections are
+  spawned by eight systems in eight plugins.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider, `SliderBinding<R> { get, set, range, text }`) and
   `spawn_cycle_row` (button that cycles a value, `CycleBinding<R> { cycle, text }`) — all
@@ -800,32 +805,37 @@ skill**.
   systems differing only in which field they touched. Use it for any panel row driven by
   a resource; the Navigation panel's rows are the deliberate exception, since their text
   is computed from several resources at once.
-- **Widgets & theme** (`ui/theme.rs`) — the panels are first-party **`bevy_feathers`**
-  controls wearing feathers' own look: `create_dark_theme()` as-is, grey buttons, blue
-  `Primary`, rounded corners, FiraSans at `PANEL_FONT` (12 px, not feathers' 14 — at 14 the
-  left column stopped fitting the screen). `PanelWidgetsPlugin` installs `FeathersCorePlugin`
+- **Widgets & theme** (`ui/theme.rs`) — the controls are first-party **`bevy_feathers`**;
+  the theme is `create_dark_theme()` with colour overrides only. The plaques are
+  **translucent** over the map (`PANEL_ALPHA` .72 / header .85 / block .50 on one near-black
+  `UI_COLOR`) and the text is **brighter** than feathers' (`TEXT_MAIN` white, `TEXT_DIM` at
+  oklch L .90): the panel keeps its legibility with type, not with an opaque fill.
+  `PANEL_FONT` is feathers' 14 px. `PanelWidgetsPlugin` installs `FeathersCorePlugin`
   (**not** the `FeathersPlugins` group — `TabNavigationPlugin` would let Tab+Space both press
   a button and pause the sim) plus `UiTheme`. Everything that is not a widget is coloured by
   the same **design tokens** (`panel_background`, `panel_block_background`, `row_label`,
-  `row_value`) — no hand-written UI colours are left. **"Active" is
-  `ButtonVariant::Primary`**: panels write the variant, feathers does hover / press /
-  disabled. Kit: `spawn_panel_button` (`spawn_panel_button_with` for two-text cycler rows);
-  a wrapper node between a panel root and its labels needs `text_container()` or the font
-  propagation stops at it. Detail — the **ui-panels** skill.
+  `row_value`) — no hand-written UI colours are left. A **value row rests transparent**
+  (`rows::VALUE_ROW_VARIANT` = `ButtonVariant::Plain`) and shows its plaque only under the
+  cursor; **"active" is `ButtonVariant::Primary`** on the buttons that have no value text
+  (tab, city, pause). Every container node comes from `ui_node` / `ui_row` / `ui_column`,
+  which carry the `ThemedText` marker — font propagation stops at the first node without it,
+  and `warn_broken_font_chain` (debug builds) names the culprit in the log. Detail — the
+  **ui-panels** skill.
 - **Shared kits** — `ui/slider.rs` (`spawn_slider_row`, `quantize`, `apply_step`,
   `retarget`, one `sync_slider_thumbs` for all panels — the layer under the knob kit,
   called directly only by the crowd demo, whose sliders drive demo-local state rather
   than a resource) and `ui/rows.rs` (`spawn_value_row` button rows; a row whose click
   currently does nothing gets `bevy::ui::InteractionDisabled`, which stops the highlight and
   swallows `Activate`). Use these, don't hand-roll a panel row.
-- **Debug toggles** (`ui/debug/`) — grid / doors / movepath / noise buttons, plus the
-  `camera:` and `navtile:` cyclers (global settings, deliberately not under a backend
+- **Debug tab** (`ui/debug/`) — the grid / doors / movepath / noise overlay rows, the
+  `Camera start` and `Navtile` cyclers (global settings, deliberately not under a backend
   section) and **`reset`** (`prefs::ResetSettings` — every setting back to its default,
-  world settings included, so the map reloads when they were off-baseline). The navmesh
-  overlay is **one merged mesh** (per-tile entities once cost 330 k); the noise overlay is
-  one CPU-built texture sprite. A cycler goes green while its resource equals
-  `Default::default()`; `reset` is an **action** button (always `Normal`, hover/press only)
-  — the accent colour there would claim something about other resources.
+  world settings included, so the map reloads when they were off-baseline). All of them are
+  knob-kit rows now, so each one reads its value out loud; the old row of bare buttons had
+  no value text at all, which is why it needed a colour to say "on" and "at its default".
+  The navmesh overlay is **one merged mesh** (per-tile entities once cost 330 k); the noise
+  overlay is one CPU-built texture sprite, and its fbm knobs are the **Noise** section of the
+  Map tab, gated on the same `DebugConiferNoise` the overlay row toggles.
 - **Camera start view** (`camera.rs`) — `CameraPositionMode` (`reset | save`, default
   `save`, persisted): where the camera stands when the world comes up. `save` writes
   `SavedCameraView` on exit (a `Last` system after `bevy::window::ExitSystems`) and

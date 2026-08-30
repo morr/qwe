@@ -56,15 +56,14 @@ pub fn spawn_slider_row<M>(
             // одна строка, а не подпись над полосой: у feathers строка ростом
             // `size::ROW_HEIGHT`, и двухэтажные ползунки выгоняли левую колонку
             // панелей за верх экрана — она наезжала на панели World/Demon/Human
-            Node {
+            crate::ui::ui_node(Node {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 column_gap: px(6.),
                 padding: UiRect::horizontal(px(8.)),
                 ..default()
-            },
-            crate::ui::text_container(),
+            }),
             // подпись не жмётся и не переносится: «Conifer share» и «Max
             // demons» на двух строках ломали ровный рост строк панели
             children![(

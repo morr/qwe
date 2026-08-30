@@ -1,10 +1,14 @@
-//! Три панели левого верхнего угла: World — сколько пешек ещё живо, сколько
-//! демонов ходит по городу, сколько душ съедено; Demon под ней — ползунки
-//! `DemonStyle` (кап, интервал спавна, скорость и надбавка на бросок); Human
-//! под ними — разброс личных скоростей (`HumanStyle`).
+//! Прогон: живые счётчики в HUD и вкладка Sim.
 //!
-//! Счётчики до этого жили только в BRP (`count Human`, `res get Telemetry`), то
-//! есть смотреть на симуляцию без агентского клиента рядом было нечем.
+//! Счётчики — сколько пешек ещё живо, сколько демонов ходит по городу, сколько
+//! душ съедено — стоят **поверх карты**, а не во вкладке: за ними смотрят
+//! непрерывно. До них эти числа жили только в BRP (`count Human`,
+//! `res get Telemetry`), то есть смотреть на симуляцию без агентского клиента
+//! рядом было нечем.
+//!
+//! Вкладка Sim — три секции: World (seed и детерминизм — свойства мира целиком),
+//! Demon (`DemonStyle`: кап, интервал спавна, скорость и надбавка на бросок) и
+//! Human (`HumanStyle`: разброс личных скоростей).
 
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor};
 use bevy::feathers::tokens;
@@ -17,10 +21,11 @@ use rand::Rng;
 
 use super::brp::{AgentBrpSession, BrpBadge};
 use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
-use super::rows::ROW_LEFT_PX;
+use super::rows::{ROW_LEFT_PX, on_off};
+use super::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use super::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background, row_label,
-    row_value,
+    TopLeftColumn, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, panel_background, panel_block_background,
+    panel_title, row_label, row_value,
 };
 use crate::demon::{Demon, DemonStyle};
 use crate::determinism::Determinism;
@@ -34,16 +39,6 @@ use crate::settings::{
     HUMAN_SPEED_SPREAD_STEP,
 };
 use crate::telemetry::Telemetry;
-
-/// Ширина панелей — как у остальных панелей с ползунками.
-const PANEL_WIDTH_PX: f32 = super::PANEL_WIDTH_PX;
-
-/// Колонка обеих панелей: по ней система развода с меткой BRP правит `top`.
-/// Панели внутри неё стыкует обычный флекс — в отличие от нижних колонок
-/// (`stack_bottom_columns`), которым приходится считать высоты вручную, потому
-/// что растут они вверх, от края экрана.
-#[derive(Component)]
-struct TopLeftColumn;
 
 /// Какой счётчик показывает строка; компонент висит на тексте значения.
 #[derive(Component, Clone, Copy)]
@@ -67,7 +62,10 @@ impl Plugin for UiStatsPlugin {
         app.add_knobs::<DemonStyle>()
             .add_knobs::<HumanStyle>()
             .add_knobs::<Determinism>()
-            .add_systems(Startup, render_stats_panel)
+            .add_systems(
+                Startup,
+                (render_hud_counters, build_sim_tab).in_set(UiBuildSet::Sections),
+            )
             .add_systems(
                 Update,
                 (
@@ -86,14 +84,7 @@ impl Plugin for UiStatsPlugin {
 /// что у шапки строки-ползунка (`ui::knob::spawn_knob`).
 fn count_row(label: &str, row: StatRow) -> impl Bundle {
     (
-        Node {
-            display: Display::Flex,
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: px(6.),
-            ..default()
-        },
-        super::text_container(),
+        super::ui_row(6.),
         children![
             (
                 row_label(label),
@@ -137,10 +128,6 @@ fn toggle_row_label(text: &str) -> impl Bundle {
     )
 }
 
-fn on_off(enabled: bool) -> &'static str {
-    if enabled { "on" } else { "off" }
-}
-
 /// Строка seed'а: подпись, поле ввода и кнопка перегенерации.
 ///
 /// Ввод применяется по Enter, а не на каждое нажатие: смена seed'а
@@ -173,9 +160,8 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
 
     let row = commands
         .spawn((
-            toggle_row_node(),
+            super::ui_node(toggle_row_node()),
             panel_block_background(),
-            super::text_container(),
             children![toggle_row_label("Seed")],
         ))
         .id();
@@ -197,88 +183,59 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
     row
 }
 
-/// Тело панели этой колонки: столбец на полупрозрачной подложке.
-fn panel_node() -> Node {
-    Node {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Column,
-        row_gap: px(4.),
-        padding: UiRect::all(px(8.)),
-        ..default()
-    }
+/// HUD-блок счётчиков: три живых числа прогона поверх карты, **вне** вкладок.
+///
+/// Не в секции World вкладки Sim, хотя они и про прогон: за счётчиками смотрят
+/// непрерывно, и прятать их за выбором вкладки значило бы смотреть на симуляцию
+/// в щёлку. Строкой первой в колонке — под меткой BRP, над панелью настроек.
+fn render_hud_counters(mut commands: Commands, panes: Res<SettingsPanes>) {
+    let counters = commands
+        .spawn((
+            super::ui_node(Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(2.),
+                padding: UiRect {
+                    top: px(6.),
+                    right: px(8.),
+                    bottom: px(6.),
+                    left: px(8.),
+                },
+                width: percent(100),
+                ..default()
+            }),
+            panel_background(),
+            Name::new("hud_counters"),
+            children![
+                count_row("Pawns", StatRow::Pawns),
+                count_row("Demons", StatRow::Demons),
+                count_row("Souls reaped", StatRow::Souls),
+            ],
+        ))
+        .id();
+    // первым ребёнком: панель настроек оболочка положила в колонку раньше
+    // (`UiBuildSet::Shell`), а счётчики стоят над ней
+    commands
+        .entity(panes.column())
+        .insert_children(0, &[counters]);
 }
 
-/// Заголовок панели. Не `super::panel_header`: тот считает объекты карты по
-/// `MapData`, а этим панелям считать в заголовке нечего.
-fn panel_title(title: &str) -> impl Bundle {
-    (Text::new(title), ThemeTextColor(tokens::PANE_HEADER_TEXT))
-}
-
-fn render_stats_panel(
+fn build_sim_tab(
     mut commands: Commands,
+    panes: Res<SettingsPanes>,
     style: Res<DemonStyle>,
     human_style: Res<HumanStyle>,
     determinism: Res<Determinism>,
     seed: Res<WorldSeed>,
 ) {
-    let column = commands
-        .spawn((
-            TopLeftColumn,
-            Node {
-                position_type: PositionType::Absolute,
-                top: px(UI_SCREEN_EDGE_PX_OFFSET),
-                // единственный свободный угол: снизу обе колонки заняты
-                // панелями стилей, сверху справа — телеметрия и кнопка скорости
-                left: px(UI_SCREEN_EDGE_PX_OFFSET),
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                row_gap: px(UI_SCREEN_EDGE_PX_OFFSET),
-                width: px(PANEL_WIDTH_PX),
-                ..default()
-            },
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("world_panels"),
-        ))
-        .id();
-
-    // панель World отдельной сущностью по той же причине, что Demon ниже:
-    // строке-тумблеру нужен `.observe()`, а он вешается на готовую сущность
-    let world_panel = commands
-        .spawn((
-            panel_node(),
-            panel_background(),
-            super::text_container(),
-            Name::new("world_stats_panel"),
-            children![
-                panel_title("World"),
-                // счётчики на своей плотной подложке, как строки-ползунки:
-                // на полупрозрачном фоне панели поверх светлой карты они
-                // читались заметно хуже соседних строк
-                (
-                    Node {
-                        display: Display::Flex,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(2.),
-                        padding: UiRect {
-                            top: px(4.),
-                            right: px(8.),
-                            bottom: px(6.),
-                            left: px(8.),
-                        },
-                        ..default()
-                    },
-                    panel_block_background(),
-                    children![
-                        count_row("Pawns", StatRow::Pawns),
-                        count_row("Demons", StatRow::Demons),
-                        count_row("Souls reaped", StatRow::Souls),
-                    ],
-                ),
-            ],
-        ))
-        .id();
-    commands.entity(column).add_child(world_panel);
+    let pane = panes.pane(SettingsTab::Sim);
+    let world_panel = spawn_section(
+        &mut commands,
+        pane,
+        SectionSlot::World,
+        panel_title("World"),
+        "world_sim_section",
+    );
 
     // тумблер детерминированного режима и поле seed'а — свойства мира целиком,
     // а не вида. Расталкивание и слоты стояли здесь по той же логике, но
@@ -300,18 +257,13 @@ fn render_stats_panel(
     let seed_row = spawn_seed_row(&mut commands, seed.0);
     commands.entity(world_panel).add_child(seed_row);
 
-    // панель Demon отдельной сущностью, а не внутри `children!`:
-    // `spawn_knob` берёт родителя сущностью, а там её ещё нет
-    let panel = commands
-        .spawn((
-            panel_node(),
-            panel_background(),
-            super::text_container(),
-            Name::new("demon_style_panel"),
-            children![panel_title("Demon")],
-        ))
-        .id();
-    commands.entity(column).add_child(panel);
+    let panel = spawn_section(
+        &mut commands,
+        pane,
+        SectionSlot::Demon,
+        panel_title("Demon"),
+        "demon_style_section",
+    );
 
     // кап — единственная целочисленная ручка панелей: шаг целый, и текст без
     // дробной части, так что округление ползунка и есть само значение
@@ -378,16 +330,13 @@ fn render_stats_panel(
         },
     );
 
-    let human_panel = commands
-        .spawn((
-            panel_node(),
-            panel_background(),
-            super::text_container(),
-            Name::new("human_style_panel"),
-            children![panel_title("Human")],
-        ))
-        .id();
-    commands.entity(column).add_child(human_panel);
+    let human_panel = spawn_section(
+        &mut commands,
+        pane,
+        SectionSlot::Human,
+        panel_title("Human"),
+        "human_style_section",
+    );
 
     // со знаком, потому что это полуширина: «15%» читалось бы как «все на 15%
     // быстрее». Знак — ASCII `+/-`, а не «±»: встроенный шрифт (фича
@@ -491,8 +440,8 @@ fn sync_seed_field(
 ///
 /// Высота читается из `ComputedNode`, то есть с прошлого кадра, и она в
 /// **физических** пикселях, тогда как `Node::top` — в логических: без
-/// `inverse_scale_factor` на retina зазор удваивается (та же ловушка, что в
-/// `stack_bottom_columns`). `top` пишется только когда реально изменился —
+/// `inverse_scale_factor` на retina зазор удваивается. `top` пишется только
+/// когда реально изменился —
 /// `Node` не `set_if_neq`-компонент, и безусловная запись метила бы его
 /// изменённым каждый кадр, заставляя `bevy_ui` пересчитывать раскладку зря.
 fn offset_below_brp_badge(

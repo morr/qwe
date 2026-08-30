@@ -7,28 +7,33 @@ use bevy::prelude::*;
 use crate::map::BuildingHeightMode;
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::ROW_LEFT_PX;
-use crate::ui::{GameUiRoot, PanelCount, UiRightColumn, panel_header, right_panel};
+use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
+use crate::ui::{PanelCount, UiBuildSet, panel_header};
 
 pub struct UiBuildingStylePlugin;
 
 impl Plugin for UiBuildingStylePlugin {
     fn build(&self, app: &mut App) {
         // подпись вслед за ресурсом — и на клик по кнопке, и на правку по BRP
-        app.add_knobs::<BuildingHeightMode>()
-            .add_systems(Startup, render_building_style_panel);
+        app.add_knobs::<BuildingHeightMode>().add_systems(
+            Startup,
+            build_buildings_section.in_set(UiBuildSet::Sections),
+        );
     }
 }
 
-fn render_building_style_panel(mut commands: Commands, mode: Res<BuildingHeightMode>) {
-    let panel = commands
-        .spawn((
-            right_panel(UiRightColumn::Buildings),
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("building_style_panel"),
-            children![panel_header("Buildings", PanelCount::Buildings)],
-        ))
-        .id();
+fn build_buildings_section(
+    mut commands: Commands,
+    panes: Res<SettingsPanes>,
+    mode: Res<BuildingHeightMode>,
+) {
+    let panel = spawn_section(
+        &mut commands,
+        panes.pane(SettingsTab::Map),
+        SectionSlot::Buildings,
+        panel_header("Buildings", PanelCount::Buildings),
+        "buildings_section",
+    );
 
     spawn_cycle_row(
         &mut commands,

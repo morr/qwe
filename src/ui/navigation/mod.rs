@@ -15,9 +15,9 @@
 //! ниже гаснет так же, как под детерминизмом.
 //!
 //! Настройки каждой подсистемы живут под её строкой и **видны только пока она
-//! выбрана** (`Display::None`, левую колонку перестыкует
-//! `ui::stack_bottom_columns`): ползунок радиуса агента ничего не значит, пока
-//! ходят по сетке, а алгоритм поиска по ней — пока ходят по мешу.
+//! выбрана** (`Display::None`; строки над и под ней сдвигает обычный флекс
+//! вкладки): ползунок радиуса агента ничего не значит, пока ходят по сетке, а
+//! алгоритм поиска по ней — пока ходят по мешу.
 //!
 //! - `Navmesh` → `Pathfind` (алгоритм поиска), `Show` (сеточный оверлей, он же
 //!   `DebugNavmesh`);
@@ -65,7 +65,7 @@
 //! проходимое пространство.
 
 use bevy::ecs::system::{IntoObserverSystem, SystemParam};
-use bevy::feathers::theme::{ThemeTextColor, ThemeToken, UiTheme};
+use bevy::feathers::theme::{ThemeToken, UiTheme};
 use bevy::feathers::tokens;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
@@ -80,10 +80,8 @@ use crate::settings::{
 };
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};
-use crate::ui::{
-    DebugNavmesh, GameUiRoot, UiLeftColumn, UiPanelGapBelow, left_panel, panel_block_background,
-    row_label,
-};
+use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_block};
+use crate::ui::{DebugNavmesh, UiBuildSet, panel_block_background, row_label};
 
 mod knobs;
 mod overlay;
@@ -222,7 +220,7 @@ impl Plugin for UiNavigationPlugin {
             .add_knobs::<SlotSearch>()
             .add_knobs::<HumanStyle>()
             .add_knobs::<PolymeshDebug>()
-            .add_systems(Startup, render_navigation_panel)
+            .add_systems(Startup, build_navigation_tab.in_set(UiBuildSet::Sections))
             // после смены города: оверлей умер с DespawnOnExit, ресурсы живы
             .add_systems(
                 OnEnter(AppState::Playing),
@@ -262,22 +260,16 @@ impl Plugin for UiNavigationPlugin {
     }
 }
 
-fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
-    let panel = commands
-        .spawn((
-            left_panel(UiLeftColumn::Navigation),
-            // ряд кнопок под панелью — другой род UI, вплотную он читался как
-            // её первая строка
-            UiPanelGapBelow,
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("navigation_panel"),
-            children![(
-                Text::new("Navigation"),
-                ThemeTextColor(tokens::PANE_HEADER_TEXT),
-            )],
-        ))
-        .id();
+fn build_navigation_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: NavPanelValues) {
+    // одним блоком без заголовка: заголовки этой вкладки — сами строки
+    // (`Algo`, тумблер `Separation`, подпись `Slots`), и общая шапка над ними
+    // повторяла бы имя вкладки
+    let panel = spawn_block(
+        &mut commands,
+        panes.pane(SettingsTab::Nav),
+        SectionSlot::Navigation,
+        "navigation_rows",
+    );
 
     // выбор бэкенда — одна строка на оба: клик листает `Navmesh` ⇄ `Polymesh`
     spawn_row(
@@ -399,7 +391,7 @@ fn render_navigation_panel(mut commands: Commands, values: NavPanelValues) {
 fn spawn_group_label(commands: &mut Commands, panel: Entity, label: &str) {
     let row = commands
         .spawn((
-            Node {
+            crate::ui::ui_node(Node {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
@@ -410,9 +402,8 @@ fn spawn_group_label(commands: &mut Commands, panel: Entity, label: &str) {
                     left: px(8.),
                 },
                 ..default()
-            },
+            }),
             panel_block_background(),
-            crate::ui::text_container(),
             children![row_label(label)],
         ))
         .id();

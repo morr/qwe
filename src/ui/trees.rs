@@ -13,7 +13,8 @@ use crate::settings::{
 };
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
-use crate::ui::{GameUiRoot, PanelCount, UiRightColumn, panel_header, right_panel};
+use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
+use crate::ui::{PanelCount, UiBuildSet, panel_header};
 
 /// Палитра листвы: зелень watabou плюс осенние и хвойные оттенки.
 const FOLIAGE_PALETTE: [Color; 5] = [
@@ -51,7 +52,7 @@ pub struct UiTreeStylePlugin;
 impl Plugin for UiTreeStylePlugin {
     fn build(&self, app: &mut App) {
         app.add_knobs::<TreeStyle>()
-            .add_systems(Startup, render_tree_style_panel)
+            .add_systems(Startup, build_trees_section.in_set(UiBuildSet::Sections))
             .add_systems(
                 Update,
                 (
@@ -64,16 +65,14 @@ impl Plugin for UiTreeStylePlugin {
     }
 }
 
-fn render_tree_style_panel(mut commands: Commands, style: Res<TreeStyle>) {
-    let panel = commands
-        .spawn((
-            right_panel(UiRightColumn::Trees),
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("tree_style_panel"),
-            children![panel_header("Trees", PanelCount::Trees)],
-        ))
-        .id();
+fn build_trees_section(mut commands: Commands, panes: Res<SettingsPanes>, style: Res<TreeStyle>) {
+    let panel = spawn_section(
+        &mut commands,
+        panes.pane(SettingsTab::Map),
+        SectionSlot::Trees,
+        panel_header("Trees", PanelCount::Trees),
+        "trees_section",
+    );
 
     // тумблеры источников — первыми: они решают, есть ли на карте лес и
     // одиночные деревья вообще, остальные ручки правят вид уже стоящих крон

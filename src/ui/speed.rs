@@ -177,8 +177,7 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
         .id();
 
     let caption = (
-        crate::ui::text_container(),
-        Node {
+        crate::ui::ui_node(Node {
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -187,7 +186,7 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
             // и по авто-ширине кнопка прыгала бы при каждом клике
             width: px(SPEED_BUTTON_WIDTH_PX),
             ..default()
-        },
+        }),
         children![
             (
                 row_label("Speed:"),

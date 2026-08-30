@@ -1,7 +1,9 @@
-//! Справка по хоткеям: неинтерактивный блок в правом нижнем углу, над панелью
-//! Buildings. Плашка — та же, что у рабочих панелей (`panel_background`), и по
-//! той же причине: сквозь что-то более прозрачное бежевая карта пробивала текст
-//! даже с тенью, и справка читалась хуже всего на экране.
+//! Справка по хоткеям: неинтерактивный блок в правом нижнем углу. Настройкой
+//! не является и потому стоит поверх карты, а не во вкладке — читают её как раз
+//! тогда, когда до панели настроек дела нет. Плашка — та же, что у панелей
+//! (`panel_background`), и по той же причине: сквозь что-то более прозрачное
+//! бежевая карта пробивала текст даже с тенью, и справка читалась хуже всего на
+//! экране.
 //!
 //! Список — единственное место, где хоткеи перечислены целиком; клавиши сами
 //! живут в своих плагинах (`restart`, `ui::debug`, `movement`). Добавил
@@ -15,12 +17,11 @@ use bevy::prelude::*;
 use bevy::feathers::theme::ThemeTextColor;
 use bevy::feathers::tokens;
 
-use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiPanelGapBelow, UiRightColumn, panel_background,
-};
+use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background};
 
-/// Ширина колонки с клавишей — все подписи в один символ.
-const KEY_COLUMN_PX: f32 = 14.0;
+/// Ширина колонки с клавишей — по самой длинной подписи (`Tab`), чтобы
+/// описания стояли в одну вертикаль.
+const KEY_COLUMN_PX: f32 = 28.0;
 
 /// `(клавиша, что делает)`.
 const HOTKEYS: &[(&str, &str)] = &[
@@ -28,6 +29,7 @@ const HOTKEYS: &[(&str, &str)] = &[
     ("G", "gizmos"),
     ("N", "navmesh"),
     ("M", "movepath"),
+    ("Tab", "settings panel"),
 ];
 
 pub struct UiHotkeysPlugin;
@@ -43,8 +45,6 @@ fn render_hotkeys_panel(mut commands: Commands) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                // последняя в правой колонке: `bottom` доедет от
-                // stack_right_column по высотам всех панелей под ней
                 bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 right: px(UI_SCREEN_EDGE_PX_OFFSET),
                 display: Display::Flex,
@@ -56,10 +56,6 @@ fn render_hotkeys_panel(mut commands: Commands) {
             panel_background(),
             // справка ничего не принимает: клики сквозь неё уходят на карту
             Pickable::IGNORE,
-            UiRightColumn::Hotkeys,
-            // справка — не настройка карты: от блока панелей OSM её отделяет
-            // зазор в отступ от края экрана
-            UiPanelGapBelow,
             GameUiRoot,
             Visibility::Hidden,
             Name::new("hotkeys_panel"),
@@ -69,13 +65,7 @@ fn render_hotkeys_panel(mut commands: Commands) {
     for (key, action) in HOTKEYS {
         let row = commands
             .spawn((
-                Node {
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(6.),
-                    ..default()
-                },
-                crate::ui::text_container(),
+                crate::ui::ui_row(6.),
                 children![
                     (
                         Text::new(*key),

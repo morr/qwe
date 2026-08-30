@@ -9,28 +9,33 @@ use bevy::prelude::*;
 use crate::map::{RoadJoin, RoadSmoothing, TreeRowPlacement, TreeRowStyle};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
-use crate::ui::{GameUiRoot, PanelCount, UiRightColumn, panel_header, right_panel};
+use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
+use crate::ui::{PanelCount, UiBuildSet, panel_header};
 
 pub struct UiTreeRowStylePlugin;
 
 impl Plugin for UiTreeRowStylePlugin {
     fn build(&self, app: &mut App) {
         // подписи вслед за ресурсом — и на клик по кнопке, и на правку по BRP
-        app.add_knobs::<TreeRowStyle>()
-            .add_systems(Startup, render_tree_row_style_panel);
+        app.add_knobs::<TreeRowStyle>().add_systems(
+            Startup,
+            build_tree_rows_section.in_set(UiBuildSet::Sections),
+        );
     }
 }
 
-fn render_tree_row_style_panel(mut commands: Commands, style: Res<TreeRowStyle>) {
-    let panel = commands
-        .spawn((
-            right_panel(UiRightColumn::TreeRows),
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("tree_row_style_panel"),
-            children![panel_header("Tree rows", PanelCount::TreeRows)],
-        ))
-        .id();
+fn build_tree_rows_section(
+    mut commands: Commands,
+    panes: Res<SettingsPanes>,
+    style: Res<TreeRowStyle>,
+) {
+    let panel = spawn_section(
+        &mut commands,
+        panes.pane(SettingsTab::Map),
+        SectionSlot::TreeRows,
+        panel_header("Tree rows", PanelCount::TreeRows),
+        "tree_rows_section",
+    );
 
     spawn_cycle_row(
         &mut commands,

@@ -1,12 +1,20 @@
-//! Панель Noise — параметры fbm поля хвои (`map::trees::ConiferNoiseStyle`).
-//! Дебажная по назначению, поэтому видна только пока включён дебаг-слой
-//! `noise` (как окно шума в zxc живёт при включённом оверлее): настраивать
-//! рельеф поля вслепую, без подсвеченных массивов, бессмысленно. Примесь пород
-//! (`Mix`) — не здесь, а в панели Trees: она игровая ручка вида леса, а не
-//! отладочная.
+//! Секция Noise вкладки Map — параметры fbm поля хвои
+//! (`map::trees::ConiferNoiseStyle`).
+//!
+//! Во вкладке Map, а не Debug: поле задаёт, где на карте встанут хвойные
+//! массивы, то есть это вид карты — и подбирают его рядом с секцией Trees, чья
+//! доля хвои по этому полю и раскладывается.
+//!
+//! Ползунки видны, только пока включён слой `noise`: настраивать рельеф поля
+//! вслепую, без подсвеченных массивов, нечем. Включает его первая строка секции
+//! — та же, что в секции Overlays вкладки Debug, на том же ресурсе: слой
+//! перечислен среди отладочных, но включать его приходится именно здесь, и
+//! отсылать за этим в другую вкладку значило бы оставить секцию без
+//! выключателя. Обе строки ведёт кит (`ui/knob.rs`), разойтись им негде.
+//!
+//! Примесь пород (`Noise mix`) — не здесь, а в секции Trees: она игровая ручка
+//! вида леса, а не отладочная.
 
-use bevy::feathers::theme::ThemeTextColor;
-use bevy::feathers::tokens;
 use bevy::prelude::*;
 
 use crate::map::ConiferNoiseStyle;
@@ -16,59 +24,59 @@ use crate::settings::{
     CONIFER_NOISE_PERSISTENCE_MIN, CONIFER_NOISE_PERSISTENCE_STEP, CONIFER_NOISE_WAVELENGTH_MAX,
     CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_STEP,
 };
-use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
-use crate::ui::{DebugConiferNoise, GameUiRoot, UiLeftColumn, left_panel};
+use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
+use crate::ui::rows::{ROW_LEFT_PX, on_off};
+use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
+use crate::ui::{DebugConiferNoise, UiBuildSet, panel_title};
 
-/// Корень панели — по нему видимость следует за тумблером `noise`.
+/// Строка-ползунок секции — по ней видимость следует за тумблером слоя.
 #[derive(Component)]
-struct ConiferNoisePanel;
+struct ConiferNoiseKnobRow;
 
 pub struct UiConiferNoisePlugin;
 
 impl Plugin for UiConiferNoisePlugin {
     fn build(&self, app: &mut App) {
         app.add_knobs::<ConiferNoiseStyle>()
-            .add_systems(Startup, render_noise_panel)
+            .add_knobs::<DebugConiferNoise>()
+            .add_systems(Startup, build_noise_section.in_set(UiBuildSet::Sections))
             .add_systems(
                 Update,
                 // без run_if: одна query и сравнение — дешевле, чем следить за
                 // окном `resource_changed` на первом кадре
-                sync_noise_panel_visibility,
+                sync_noise_knob_visibility,
             );
     }
 }
 
-fn render_noise_panel(
+fn build_noise_section(
     mut commands: Commands,
+    panes: Res<SettingsPanes>,
     noise: Res<ConiferNoiseStyle>,
     enabled: Res<DebugConiferNoise>,
 ) {
-    // левая колонка: правая панелями стилей забита до самого верха
-    let (mut node, slot, background) = left_panel(UiLeftColumn::Noise);
-    // тумблер восстановлен из настроек до Startup — панель сразу спавнится в
-    // согласии с ним, без мигания на первом кадре
-    node.display = if enabled.0 {
-        Display::Flex
-    } else {
-        Display::None
-    };
+    // без счётчика объектов (`panel_header`): поле определено на всей карте,
+    // считать нечего
+    let panel = spawn_section(
+        &mut commands,
+        panes.pane(SettingsTab::Map),
+        SectionSlot::Noise,
+        panel_title("Noise"),
+        "noise_section",
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Show",
+        ROW_LEFT_PX,
+        &*enabled,
+        CycleBinding {
+            cycle: |enabled: &mut DebugConiferNoise| enabled.0 = !enabled.0,
+            text: |enabled| on_off(enabled.0).to_string(),
+        },
+    );
 
-    let panel = commands
-        .spawn((
-            ConiferNoisePanel,
-            node,
-            background,
-            slot,
-            GameUiRoot,
-            Visibility::Hidden,
-            Name::new("conifer_noise_panel"),
-            // без счётчика объектов (`panel_header`): поле определено на всей
-            // карте, считать нечего
-            children![(Text::new("Noise"), ThemeTextColor(tokens::PANE_HEADER_TEXT),)],
-        ))
-        .id();
-
-    spawn_knob(
+    let row = spawn_knob(
         &mut commands,
         panel,
         "Wavelength",
@@ -84,9 +92,10 @@ fn render_noise_panel(
             text: |value| format!("{value:.0} m"),
         },
     );
+    commands.entity(row).insert(ConiferNoiseKnobRow);
     // единственная целочисленная ручка панели: и шаг, и текст без дробной
     // части, так что округление ползунка и есть само значение
-    spawn_knob(
+    let row = spawn_knob(
         &mut commands,
         panel,
         "Octaves",
@@ -98,7 +107,8 @@ fn render_noise_panel(
             text: |value| format!("{value:.0}"),
         },
     );
-    spawn_knob(
+    commands.entity(row).insert(ConiferNoiseKnobRow);
+    let row = spawn_knob(
         &mut commands,
         panel,
         "Lacunarity",
@@ -114,7 +124,8 @@ fn render_noise_panel(
             text: |value| format!("{value:.1}"),
         },
     );
-    spawn_knob(
+    commands.entity(row).insert(ConiferNoiseKnobRow);
+    let row = spawn_knob(
         &mut commands,
         panel,
         "Persistence",
@@ -130,13 +141,16 @@ fn render_noise_panel(
             text: |value| format!("{value:.2}"),
         },
     );
+    commands.entity(row).insert(ConiferNoiseKnobRow);
 }
 
-/// Панель живёт при включённом дебаг-слое `noise` и уходит из раскладки вместе
-/// с ним; левую колонку перестыкует `ui::stack_bottom_columns`.
-fn sync_noise_panel_visibility(
+/// Ползунки живут при включённом дебаг-слое `noise` и уходят из раскладки
+/// вместе с ним — та же логика, что у настроек невыбранного бэкенда в Nav:
+/// прячем то, что при нынешних настройках ни на что не влияет. Строка `Show`
+/// остаётся: ею слой и возвращают.
+fn sync_noise_knob_visibility(
     enabled: Res<DebugConiferNoise>,
-    mut panels: Query<&mut Node, With<ConiferNoisePanel>>,
+    mut panels: Query<&mut Node, With<ConiferNoiseKnobRow>>,
 ) {
     let display = if enabled.0 {
         Display::Flex
