@@ -217,3 +217,44 @@ stand, how density works, and which resources restyle them.
     areas — the field is defined everywhere, trees only grow in Wood polygons. The
     overlay draws the **un-jittered** field: at mix > 0 single crowns deliberately sit
     on the «wrong» side of the green boundary.
+
+## Seeing every crown at once
+
+`cargo run --example tree_gallery` — the exhaustive gallery of crowns the game can
+draw: `TreeShape::CONCRETE` (3 shapes with their own geometry; `Mixed` has none, it
+resolves to Cotton/Conifer before the mesh is built) × `TREE_VARIANTS` (12), each cell
+with its own shadow — long, offset or conifer fan, picked by the `h` rolled per variant,
+which is why one row carries three different shadows. `H` toggles the shadow layer, `G`
+cycles the ground under it (wood / park / pavement — the map's own three colors), `L`
+the captions.
+
+It is not a re-implementation: a cell is built by **`trees::crown_variant(shape,
+variant, style, params)`**, the same call `spawn_trees` fills its variant pool with, and
+the shadows go into one merged mesh through `push_template` exactly as the game's
+`tree_shadows` layer does. `crown_variant` exists for this — when the crown pipeline
+grows an axis (a new shape, a new shadow kind), the gallery shows it without a line of
+its own, so the axis must be added there rather than in the example.
+
+Its left panel drives **`CrownParams`** — every knob the crown geometry has, live:
+base-polygon vertices, radius jitter, lobe (the "size" of the bump over an edge, and
+because both `bloat` and `Spiker` grow their bump as the square root of edge/lobe, a
+*smaller* lobe gives a *puffier* outline), band lift/scale/shade weight, the two stroke
+widths, the spike floor, the five shadow numbers and the variant seed. `CrownParams`
+lives in `crown.rs`; **its `Default` is field-for-field the constants the city is drawn
+with**, which is what makes "Сброс к игре" exact and what lets the whole `map::trees`
+test suite keep pinning the game without a single changed expectation. The game itself
+passes `CrownParams::default()` and grows no panel for them.
+
+Knobs whose value differs per shape (12 base vertices vs 16 on a conifer, jitter 1/3 vs
+1/4, band lift 0.15/0.12/0.1) are **multipliers**, not absolutes: one slider moves all
+three shapes and keeps their proportions, where an absolute would erase the difference
+and need three sliders per quantity. Absolute are only the quantities with no per-shape
+value — stroke widths and the shadow geometry.
+
+Two things the panel had to borrow from the game rather than invent, and both are the
+kind of thing that silently looks wrong: the widget kit (`qwe::ui::slider`,
+`spawn_panel_button`, `panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
+the **font** — `apply_panel_font` lives in `UiPlugin`, which an example does not load, so
+the panel inserts `InheritableFont` (feathers' Fira Sans + `PANEL_FONT`) on its own root.
+Without it every label falls back to bevy's built-in font, which carries no Cyrillic and
+renders the whole panel as tofu.

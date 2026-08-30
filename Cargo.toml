@@ -13,6 +13,10 @@ autoexamples = false
 name = "crowd_demo"
 path = "examples/demos/crowd_demo/main.rs"
 
+[[example]]
+name = "tree_gallery"
+path = "examples/demos/tree_gallery/main.rs"
+
 # acceptance — headless-приёмка: печатает OK/FAILED и код возврата
 [[example]]
 name = "determinism_replay"

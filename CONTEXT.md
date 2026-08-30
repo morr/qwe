@@ -231,7 +231,9 @@ algorithm in `references/tree-algo.md`).
   (`TREE_DENSITY_MAX` 6.5×) is derived from `TREE_MIN_SPACING` (6 m) saturation, not
   chosen. Health check — the `osm parse: N trees planted of M asked …` log line.
   Detail (row bands, placement policies, thresholds) — osm-map skill,
-  `references/trees.md`.
+  `references/trees.md`. Every crown the game can draw, side by side —
+  `cargo run --example tree_gallery` (shape × variant, built by the game's own
+  `trees::crown_variant`).
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy (`casing_width`,
