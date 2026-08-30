@@ -872,3 +872,16 @@ fn game_defaults_keep_every_experiment_off() {
     assert_eq!(stuck_after, 0.5);
     assert_eq!(stuck_ramp, 0.5);
 }
+
+/// Продольная ручка: 1 (дефолт игры, [`SEPARATION_BACKSTEP`]) оставляет толчок
+/// целым, 0 — строго поперечным, промежуточное значение делит продольную часть.
+/// У стоящей пешки курса нет, и её толчок не трогают ни при каком `keep`.
+#[test]
+fn the_backstep_knob_scales_only_the_part_along_the_heading() {
+    let push = Vec2::new(1.0, 1.0);
+
+    assert_eq!(damp_along_heading(push, Vec2::X, 1.0), push);
+    assert_eq!(damp_along_heading(push, Vec2::X, 0.0), Vec2::new(0.0, 1.0));
+    assert_eq!(damp_along_heading(push, Vec2::X, 0.5), Vec2::new(0.5, 1.0));
+    assert_eq!(damp_along_heading(push, Vec2::ZERO, 0.0), push);
+}

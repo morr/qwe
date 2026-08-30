@@ -284,7 +284,9 @@ and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
 ## Demon
 
 States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target biased away
-from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always.
+from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always,
+and `movement::BodyScale::DEMON` — its body is the one thing movement would otherwise have
+to infer from the species.
 
 ### Wander
 

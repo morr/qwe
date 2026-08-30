@@ -96,15 +96,18 @@ share. Fired from exactly **two** places:
   it).
 
 **All run state is reset by observers of this event, each living in its owning module** —
-`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner`.
-`grep "On<WorldStarted>"` enumerates them.
+`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner`,
+`SeparationStats` (the crowd-demo counters). `grep "On<WorldStarted>"` enumerates them.
 
 **Membership is not kept by hand.** It is held from the outside by
 `a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares
 fingerprints, so a forgotten reset diverges whether or not anyone wrote it down. What that
 test cannot see is state invisible to both the simulation and the outcome counters; such a
 reset needs its own pin next to its observer (the regulator has one in `sim_time`, the frozen
-`Backend` one in `determinism`). Details — the `determinism` skill.
+`Backend` one in `determinism`, the separation counters one in
+`tests/movement.rs::a_new_run_inherits_no_separation_counters` — separation does not run
+under determinism at all, so the fingerprint cannot see them). Details — the `determinism`
+skill.
 
 **Map-derived state is not run state.** `NorthstarGrid` and `PolyNavmesh` are cleared by the
 city switch alone — a restart keeps the map, and with it the 12 s northstar hierarchy.

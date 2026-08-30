@@ -82,8 +82,8 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 - **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All
   run state (`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`,
-  `DemonSpawner`) is reset by observers of it, each in its owning module (`grep
-  "On<WorldStarted>"`). **Membership is held from the outside** by
+  `DemonSpawner`, `SeparationStats`) is reset by observers of it, each in its owning
+  module (`grep "On<WorldStarted>"`). **Membership is held from the outside** by
   `a_restart_replays_the_run`, not by hand. Map-derived state (`NorthstarGrid`,
   `PolyNavmesh`) is **not** run state — a restart keeps the map.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns pawns and corpses, fires
@@ -254,6 +254,13 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   species own it: a demon and the test walker carry it always, a human only while panicking;
   `strip_movement` takes it off a corpse. **Movement asks `Has<UrgentPath>` and names no
   species at all.**
+- **BodyScale** (`movement/components.rs`) — how many times this pawn's body is bigger than
+  a human's (`HUMAN` 1.0, `DEMON` the `DEMON_RADIUS_RATIO` 2×), a **ratio** because the
+  radius itself is a live slider (`HumanStyle::body_radius`). Required by `Movable`, so
+  every movable pawn has one; the demon writes `BodyScale::DEMON` at spawn, everyone else
+  takes the human default. `move_moving_entities` reads the rest distance off it
+  (`BodyScale::rest`) instead of asking `Has<Human>` — separation still derives its own
+  radius from `Has<Demon>`, both from the same ratio.
 - **Repath on the move** — `to_pathfinding` keeps the current path; a pawn walks the old one
   while the new is computed. `MovableStateMovingTag` means "has a path **or is coasting**".
   **Coasting** — a pawn whose path ran out mid-repath keeps walking `last_direction` over
@@ -599,6 +606,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
   `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,
   `SEAM_QUANTUM`, `SIMPLIFY_EPSILON`, `WALK_*`), the search budget and `COST_SCALE`.
+  Also not there: what a gizmo *looks like* and each visibility gate's own view margin —
+  `MOVEPATH_COLOR`/`MOVEPATH_ARROW_TIP`/`MOVEPATH_VIEW_SCREENS` (`movement/systems.rs`),
+  `DOOR_*` (`ui/debug/overlays.rs`), `VIEW_MARGIN` (`movement/mod.rs`) — they live beside
+  the draw call or the gate, see `camera::Viewport::of`.
   Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
   `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry

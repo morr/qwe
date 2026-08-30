@@ -53,9 +53,17 @@ by mobility
 Rules that keep the push from fighting the walk it is correcting, each fixing a
 symptom that was visible on screen:
 
-- **only across the heading** (`across_heading`) — a moving pawn is never displaced along
-  its own path, because the longitudinal part read as a follower reversing for a step,
-  and summed into a whole jam rotating like a carousel;
+- **the longitudinal push is kept on purpose** (`damp_along_heading`, share
+  `SeparationStyle::backstep`, default `SEPARATION_BACKSTEP` **1.0 — nothing is damped
+  at all**) — the retired `across_heading` zeroed the component along a moving pawn's
+  own heading, because it read as a follower reversing for a step. The sweep that
+  replaced it with a knob came out monotone the other way on the demo's funnel (200
+  pawns aimed at one point; overlapping pairs / worst overlap, table under
+  `SEPARATION_BACKSTEP`): 0.0 → 630…2251 / 1.79 m, 1.0 → 100…204 / 0.92 m. Damping it
+  takes away the only thing a converging crowd can widen with — outward *is* backward
+  along the heading — so the jam rotates instead of spreading. The reversal it was
+  aimed at is cured by the next rule (`shares`) instead, and the knob stays only so the
+  sweep can be redone with a slider rather than a rebuild;
 - **the pawn behind gives way** (`shares`) — for a pair on roughly the same course
   (courses less than 90° apart) where **exactly one** has the other in front, the
   follower takes the entire correction and the leader none, instead of the leader being
@@ -82,8 +90,10 @@ symptom that was visible on screen:
 - **head-on pairs step right** (`sidestep`, strength `SeparationStyle::sidestep`) — two
   pawns walking straight at each other have their pair axis collinear with both
   velocities, so the plain correction has no lateral component at all and they lock
-  together until an outside asymmetry frees them. With the across-heading rule this is
-  the *only* thing that resolves a head-on pair, so it must stay above zero;
+  together until an outside asymmetry frees them. Whatever `backstep` does with that
+  correction it stays collinear, so in the push branch the sidestep is the *only*
+  lateral component such a pair ever gets and it must stay above zero (the steering
+  below is the other answer, and it bends the walk instead of the push);
 - **a blocked pawn steers aside** (`SeparationSteer`, strength `SEPARATION_STEER` 1.0) —
   the push moves a **position** while the walk immediately carries the pawn back toward
   its goal, so the two forces cancel and the whole result goes into distance walked.
@@ -120,7 +130,11 @@ symptom that was visible on screen:
   within the rest distance of its goal — the blocking body will not let it any closer,
   and without the grant it would shove at that body forever. (Arrival on an exhausted
   path is likewise forgiven within the rest distance — separation may push a pawn off
-  its final tile at the last moment.) The set is rebuilt from scratch each run and
+  its final tile at the last moment.) The rest distance is `2 × the pawn's own radius`,
+  taken from its `movement::BodyScale` (a ratio over the `body_radius` slider, `DEMON` =
+  2×): the walk asks the component, not `Has<Human>`, which used to hand a demon-sized
+  arrival slack to anything that was not a human — the `dev.rs` test walker included.
+  The set is rebuilt from scratch each run and
   cleared by the toggle, the zoom gate and world entry, so under determinism it is
   empty from tick 0 and movement never depends on it.
 
@@ -173,7 +187,11 @@ off by default, so those branches of the solver never execute in a game build, a
 `lab.experiments.…` read is the marker that says so. Promoting a knob to the game means
 **moving the field**, which `game_defaults_keep_every_experiment_off` forces you to
 notice. Deliberately **not** a `SettingsGroup` either way: values are measured on the
-crowd demo, not chosen by the user. What
+crowd demo, not chosen by the user. What `SeparationStats` counts is **one run of the
+world**, not the session: its five counters (`runs`, `push_metres`, `worst_push` — the
+teleport detector — and the two pair sums) are zeroed by a `WorldStarted` observer in
+`movement/separation/`, the same seam `Telemetry` uses, because an `OnEnter(Playing)`
+reset would miss the R restart entirely. What
 it made visible: in a symmetric head-on flow the pair correction is collinear with
 both headings, `sidestep` is gated off by `alone`, and so **no lateral force exists at
 all** — the crowd stays a strictly one-dimensional chain and no value of `rate`,
@@ -230,6 +248,56 @@ visible on demand (drop `Slot search` to 2 m on the funnel and the tail of the c
 collapses onto one point). A pawn that finds nothing also loses its previous claim, so a
 saturated crowd churns reservations.
 
+### Who gets which slot — `SlotMatching`
+
+Ring search per pawn is only *one* of the two ways the goals of a batch are handed out,
+and not the default one. The single entry point for both is the free function
+`claim_batch` (`movement/destination.rs`), used by `assign_destination_slots` in the game
+and by `drive_routes` in the crowd demo; the mode is `SlotLab::matching`.
+
+`claim_batch` first splits the batch into **groups with the identical desired
+`end_tile`**, keeping the order of each group's first member, and a **group of one goes
+to `claim_slot` in either mode** — the batch answer degenerates to the greedy one there
+and costs measurably more. That is the ordinary case in the game, where every wanderer
+picks its own tile: the batch is almost all singletons, so the mode's price stays where
+it was introduced for — a crowd walking into one point (the demo's funnel, a pile at the
+portal).
+
+- **`SlotMatching::Greedy`** — pawn after pawn, in the order the batch arrived: each one
+  ring-searches for the nearest free slot to the goal (`claim_slot` above). The
+  centre goes to whoever is processed first and the outermost slots go to whoever is
+  left, i.e. exactly where a mismatch costs most there is no choice left to make.
+- **`SlotMatching::Batch`** (`#[default]`, `DestinationClaims::claim_group`) — slot after
+  slot, **from the rim of the bunch inward**. It collects the `n` free slots nearest the
+  goal (the same bunch greedy would have handed out; a square scan of the same
+  `SlotSearch` radius, sorted by `(distance², slot.x, slot.y)` — the coordinate tail
+  because up to eight slots tie at one distance and the pick between them has to be
+  stable — then truncated to the group size), and gives each slot, starting with the
+  farthest, to the nearest pawn that has none yet. The rim first because the cost of a
+  mismatch scales with how far the slot sits from the goal: a pawn on a rim of radius `R`
+  walks `R − ρ·cos(angle difference)` to a slot at `ρ`, so the angle decides everything at
+  the outermost slot and nothing at all at the central one (`ρ = 0`).
+
+Both modes end with the same shape of answer — everyone on their own slot, the crowd
+packing from the goal outward — and differ only in distance walked, which is why this is
+a lab knob and not a user setting. Batch became the default because the measurement paid
+for it on every criterion (`tools/separation_slots_lab/REPORT.md`, 3.1: `net` −23 %,
+`travel` −36 %, `through` −70 %, idle drift −49 %, and `sep_ms` *falls* because the crowd
+spreads out). Its price is `O(radius² + n·m)` per group against `n` ring searches. The
+failure mode is unchanged: a group short of free slots leaves its tail with `None`, i.e.
+the shared unclaimed goal, exactly as `claim_slot` does. Previous claims of the whole
+group are released **before** the free slots are collected, or members would route around
+their own last-tick slots and the bunch would drift off the goal for nothing.
+
+`SlotLab` (`Reflect` resource, registered in `MovementPlugin`) is to slots what
+`SeparationLab` is to separation: a measuring rig whose default reproduces the shipped
+behaviour. Of its four knobs the game reads **only** `matching` and `slack` (extra
+navtiles added to the slot side, 0 in the game); `claim_at` (defer the claim until the
+pawn is within N m of its goal) and `regroup` (walk a settled pawn back onto its slot
+after it is shoved off) are consumed by the demo alone — the game's `regroup_onto_slots`
+was dropped, because a settled pawn there always carries `NeedsWanderTarget` and picks a
+new goal anyway.
+
 The claim is **not** released on arrival: a pawn standing on its slot is exactly the
 occupancy being modelled. It moves on the next target selection, and is released by an
 `On<Remove, DestinationClaim>` observer on despawn (escape, restart, city switch) and by
@@ -245,7 +313,19 @@ pawn would silently keep its previous slot. **Chase is excluded** (a shared goal
 covered by slots). Unlike separation this runs in **both** modes: it is simulation, not
 cosmetics, which is also why there is no camera gate — unslotted clumps would pile up
 and freeze off screen, and the camera would arrive into exactly the pathology. No
-`HashMap` iteration reaches the output (keyed lookups only) and the assignment batch is
-sorted by `(species, PawnId)`, the same key discipline as `apply_pathfinding_results`.
+`HashMap` iteration reaches the output (keyed lookups only, and `claim_batch`'s grouping
+keeps insertion order) and the assignment batch is
+sorted **nearest-pawn-first** — by the squared distance from the pawn to the target it
+asked for, with `(species, PawnId)` (`order::pawn_key`) as the tail that breaks the tie.
+Nearest-first because the place at the goal must go to the pawn already standing next to
+it: sorted by id alone, a pawn from the far rim takes the middle while the one right
+there is sent outward, which is a detour for both and a counter-flow between them.
+It used to be `(species, PawnId)` alone; `2a1035e` swapped the leading key so the pawn
+already closest takes the nearest slot instead of the one that happens to hash first.
+The tail is what keeps the order total, so `sort_unstable` cannot depend on the query's
+traversal order — the same key discipline as `apply_pathfinding_results`, just with a
+float in front of it that is a pure function of two positions. The order matters past
+the sort too: under `SlotMatching::Batch` the groups are handed out in the order of
+their first member.
 Changing the radius slider or the navtile size re-keys the lattice, so the index is
 dropped and rebuilt from the next selections.

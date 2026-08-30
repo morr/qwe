@@ -342,7 +342,7 @@ counts what the player can actually see, not what the dispatcher is willing to s
   **Priority** (`priority::` in `movement/pathfinding.rs`): demons and fleeing humans
   (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
   priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
-  (1024 — sized for the 30× repath rate, see the constant's doc). The order only bites
+  (1024, `settings.rs` — sized for the 30× repath rate, see its doc). The order only bites
   when the cap binds — in normal play in-flight sits around 100. The speed panel shows
   in-flight / queued / avg ms. Gate and priority together are one pure function,
   `pathfinding.rs::queue_key(&Viewport, position, urgent) -> Option<(u8,
@@ -378,7 +378,8 @@ counts what the player can actually see, not what the dispatcher is willing to s
 - **The step itself** (`movement/step.rs::step_along_path`) — all five rules of one
   pawn-step (arrive, coast, hold, steer, slide) as one function over plain values:
   `&mut Movable`, a position, `dt`, the pawn's `StepModifiers` (its share of the
-  separation output), the species' `StepTuning`, and a `Walkable`. It returns a
+  separation output), the pawn's `StepTuning` (rest distance from its `BodyScale` — the
+  step names no species), and a `Walkable`. It returns a
   `StepOutcome` (`Moved` / `Arrived { destination_reached }` / `Halted`) and touches no
   `Entity`, `Commands` or query — the same shape as `human::decide` / `demon::decide`.
   `move_moving_entities` is the plumbing around it: query, commands, the human grid.
@@ -396,7 +397,7 @@ counts what the player can actually see, not what the dispatcher is willing to s
   coasting: state `Moving` + empty path still means `to_idle` — a wanderer must stop
   at its destination. Before coasting, 26–42% of fleeing humans stood at any instant
   at 30× (measured); the reply (`to_moving`) or `PathfindingError` ends the coast.
-  When the reply lands, up to `REPATH_TRIM_LIMIT` (4 — coasting drifts 4–6 tiles off
+  When the reply lands, up to `REPATH_TRIM_LIMIT` (`settings.rs`, 4 — coasting drifts 4–6 tiles off
   the request's start tile at flee speed) leading waypoints are dropped while the
   next one is no further than the first — without the trim the first step would be
   backwards; each drop is geometry-gated, the limit only guards corner-straightening.
