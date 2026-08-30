@@ -16,7 +16,7 @@ use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 
 pub use self::components::{
-    Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
+    BodyScale, Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag,
     NeedsWanderTarget, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
     RetireAt, SimPosition, UrgentPath, strip_movement,
 };
@@ -102,6 +102,10 @@ impl Plugin for MovementPlugin {
             // индекс заявок переживает сущности только через это снятие:
             // деспавн поднимает `Remove` на каждый компонент
             .add_observer(self::destination::on_destination_claim_removed)
+            // счётчики стенда — состояние прогона, а не выдача шагу: их сбрасывает
+            // тот же `WorldStarted`, что `Telemetry` и `SimTick`. Через кортеж
+            // `OnEnter(Playing)` ниже рестарт по R не проходит вовсе
+            .add_observer(self::separation::on_world_started)
             .add_systems(
                 OnEnter(AppState::Playing),
                 (
@@ -142,6 +146,7 @@ impl Plugin for MovementPlugin {
 
         app.register_type::<PathfindingRequest>()
             .register_type::<UrgentPath>()
+            .register_type::<BodyScale>()
             .register_type::<NeedsWanderTarget>()
             .register_type::<self::components::RequestedAt>()
             .register_type::<self::components::RetireAt>();

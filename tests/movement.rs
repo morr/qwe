@@ -12,10 +12,10 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
 use qwe::grid::{tile_center, world_to_tile};
-use qwe::loading::AppState;
+use qwe::loading::{AppState, WorldStarted};
 use qwe::movement::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, MovementPlugin,
-    PreviousSimPosition, SimPosition,
+    PreviousSimPosition, SeparationStats, SimPosition,
 };
 use qwe::navigation::{ArcNavmesh, Backend, PolymeshDebug};
 use qwe::settings::DEFAULT_NAVTILE_SIZE;
@@ -552,4 +552,37 @@ fn a_held_pawn_within_rest_distance_arrives() {
         MovableState::Idle,
         "придержанный у цели должен закончить путь, а не толкаться вечно"
     );
+}
+
+/// Новый прогон мира начинается с нулевых счётчиков расталкивания.
+///
+/// `worst_push` задуман детектором телепорта, а `runs`/`push_metres` стенд
+/// (`examples/demos/crowd_demo`) печатает как числа ОДНОГО прогона. Без сброса
+/// они мерили бы весь сеанс: рестарт по R остаётся в `Playing`, так что
+/// `OnEnter`, которым чистятся карты выдачи, для него не срабатывает вовсе.
+/// Отпечаток `a_restart_replays_the_run` сюда не достаёт — под детерминизмом
+/// расталкивания нет.
+#[test]
+fn a_new_run_inherits_no_separation_counters() {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    spawn_overlapping_pair(&mut app);
+
+    for _ in 0..5 {
+        app.update();
+    }
+    let stats = *app.world().resource::<SeparationStats>();
+    assert!(stats.runs > 0, "прогонов не было — тест ничего не мерит");
+    assert!(
+        stats.worst_push > 0.0,
+        "толчков не было — тест ничего не мерит"
+    );
+
+    app.world_mut().trigger(WorldStarted);
+
+    let stats = *app.world().resource::<SeparationStats>();
+    assert_eq!(stats.runs, 0, "прогоны прошлого мира");
+    assert_eq!(stats.worst_push, 0.0, "телепорт прошлого мира");
+    assert_eq!(stats.push_metres, 0.0, "метры прошлого мира");
+    assert_eq!(stats.overlapping_pairs, 0);
+    assert_eq!(stats.anticipated_pairs, 0);
 }

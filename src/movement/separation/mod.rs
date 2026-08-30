@@ -49,12 +49,14 @@ use crate::camera::Viewport;
 use crate::demon::{Demon, DemonDevourTag, DemonLungeTag};
 use crate::grid::world_to_tile;
 use crate::human::Human;
+use crate::loading::WorldStarted;
 use crate::movement::components::SimPosition;
 use crate::navigation::ContinuousSpace;
 use crate::settings::{
-    DEMON_BODY_RADIUS, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL, SEPARATION_HOLD,
-    SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM,
-    SEPARATION_PASS_SQUEEZE, SEPARATION_RATE, SEPARATION_SIDESTEP, SEPARATION_STEER,
+    DEMON_BODY_RADIUS, DEMON_MOBILITY, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL,
+    SEPARATION_HOLD, SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP,
+    SEPARATION_MAX_ZOOM, SEPARATION_PASS_SQUEEZE, SEPARATION_RATE, SEPARATION_SIDESTEP,
+    SEPARATION_STEER,
 };
 use crate::spatial::SpatialGrid;
 
@@ -67,10 +69,6 @@ use self::pairs::{Pawn, damp_along_heading};
 use self::solver::{
     SeparationState, Tuning, advance_stuck, clamped_step, relaxation_fraction, resolve_pushes,
 };
-
-/// Подвижность демона относительно человека: в паре человек забирает 4/5
-/// коррекции — толпа обтекает демона, а не демон толпу.
-const DEMON_MOBILITY: f32 = 0.25;
 
 /// Тумблер расталкивания — заголовок группы `Separation` во вкладке Nav.
 /// Выбор пользователя, переживает
@@ -591,9 +589,13 @@ impl Default for SeparationExperiments {
     }
 }
 
-/// Итоги последнего прогона — для стенда: сколько работы сделано и сколько
-/// движения ушло в толчки, а не в ходьбу. Пишется одной строкой в конце
+/// Итоги ПРОГОНА МИРА — для стенда: сколько работы сделано и сколько движения
+/// ушло в толчки, а не в ходьбу. Пишется одной строкой в конце
 /// [`separate_pawns`]; в игре не читается никем.
+///
+/// Все поля копятся, поэтому обнуляет их [`on_world_started`]: это состояние
+/// прогона, как `Telemetry`, а не выдача шагу движения (`SeparationHolds` и
+/// соседи), которую чистят на входе в мир из-за мёртвых сущностей.
 #[derive(Resource, Reflect, Default, Clone, Copy, Debug)]
 #[reflect(Resource, Default)]
 pub struct SeparationStats {
@@ -605,8 +607,23 @@ pub struct SeparationStats {
     /// Суммарная длина применённых толчков, м. Это движение, которое пешки
     /// потратили НЕ на дорогу.
     pub push_metres: f64,
-    /// Самый длинный одиночный толчок за всё время, м — детектор телепорта.
+    /// Самый длинный одиночный толчок за прогон мира, м — детектор телепорта.
+    /// «За прогон», а не за сеанс: иначе одна плохая секунда в первом городе
+    /// объявляла бы телепорт во всех следующих.
     pub worst_push: f32,
+}
+
+/// Новый прогон мира — счётчики расталкивания с нуля.
+///
+/// Шов именно `WorldStarted`, а не `OnEnter(AppState::Playing)`, которым
+/// чистятся карты выдачи: рестарт по R состояния не меняет вовсе
+/// (`restart.rs::on_restart`), и на `OnEnter` счётчики пережили бы его —
+/// а стенд читает их как числа одного прогона.
+///
+/// Отпечаток `a_restart_replays_the_run` этого сброса не стережёт: под
+/// детерминизмом расталкивания нет вовсе ([`separation_runs`]).
+pub(super) fn on_world_started(_event: On<WorldStarted>, mut stats: ResMut<SeparationStats>) {
+    *stats = SeparationStats::default();
 }
 
 /// Прогон расталкивания: гейты → сбор видимых из грубых сеток → толчки →
