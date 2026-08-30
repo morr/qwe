@@ -16,11 +16,11 @@ use crate::settings::{
     Z_WATERWAY, Z_WOOD,
 };
 
-const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
-const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
+pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
+pub const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
 /// Лес внутри парка — темнее парковой подложки (osm-carto `#ADD19E`), под ним
 /// и растут кроны; открытая часть парка так читается как поле.
-const WOOD_COLOR: Color = Color::srgb(0.678, 0.820, 0.620);
+pub const WOOD_COLOR: Color = Color::srgb(0.678, 0.820, 0.620);
 /// Ширина зелёной полосы под аллеей (`natural=tree_row`), м. Аллея — тот же лес,
 /// только вытянутый в линию, поэтому и подложка у неё лесная: без неё ряд крон
 /// висит на голом асфальте, тогда как каждое дерево в парке стоит на зелени.

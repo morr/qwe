@@ -32,37 +32,130 @@ pub(super) const PALM_BANDS: [f32; 2] = [0.7, 0.3];
 /// Выводится, а не пишется числом: солнце, повёрнутое в `map/mod.rs`, иначе
 /// развернуло бы тени, оставив штриховку крон на старой стороне.
 const SHADE_DIR: Vec2 = Vec2::new(-SHADOW_DIR.y, SHADOW_DIR.x);
-/// Растяжение силуэта тени вдоль её оси (`1 + 0.5·shadowLength·0.8`).
-const SHADOW_STRETCH: f32 = 1.4;
-/// Обратный сдвиг силуэта тени (`−R·(1 − shadowLength/4)`).
-const SHADOW_BACKSHIFT: f32 = -0.75;
-/// «Высота» дерева `h` из `drawTree`: `0.4 + 0.8·gauss3` — она решает, длинная
-/// тень или короткая, и на сколько радиусов вытянут веер у хвои. У watabou
-/// значение на дерево, здесь — на вариант кроны (геометрия кэшируется по ним).
-const SHADOW_HEIGHT_BASE: f32 = 0.4;
-const SHADOW_HEIGHT_SPREAD: f32 = 0.8;
-/// Порог `h`, выше которого крона отбрасывает длинную тень (`drawTree`:
-/// `h·shadowLength > 0.5` при `shadowLength = 1`).
-const LONG_SHADOW_HEIGHT: f32 = 0.5;
-/// Ширина устья выреза, ниже которой обводка съедает просвет целиком: один
-/// штрих уходит на чернила, второй — на видимую зелень между стенками.
-pub(super) const NOTCH_MOUTH_MIN: f32 = 2.0 * TREE_OUTLINE_STROKE;
-/// Глубина выреза, ниже которой ямку целиком закрывает обводка: два шипа по её
-/// краям сливаются в один горб с плоской верхушкой.
-pub(super) const NOTCH_DEPTH_MIN: f32 = TREE_OUTLINE_STROKE;
-/// Пол высоты шипа контура. У watabou шип над коротким ребром выходит
-/// непропорционально низким (`len^1.5`) — от таких шипов и вырезы мелкие, и
-/// острия тупые.
-const SPIKE_HEIGHT_MIN: f32 = 2.0 * TREE_OUTLINE_STROKE;
-/// Ни один угол контура не должен стать уже этого: сдвиг, раскрывающий вырез,
-/// не имеет права схлопнуть соседнее остриё в иглу.
-pub(super) const CORNER_MOUTH_FLOOR: f32 = TREE_OUTLINE_STROKE;
 /// Предел сдвига вершины базы, которым раскрывается залипший вырез, — доля
 /// радиуса кроны. Замерено: на 12 вариантах хватает 0.08.
 const NOTCH_NUDGE_LIMIT: f32 = 0.15;
 /// Шагов поиска сдвига: берётся наименьший из подходящих, чтобы силуэт менялся
 /// как можно меньше.
 const NOTCH_NUDGE_STEPS: usize = 50;
+/// Сид, с которого начинается нумерация вариантов кроны.
+const VARIANT_SEED_BASE: u32 = 0x051E_D2E5;
+/// Шаг сида между вариантами — простое число, чтобы соседние варианты не
+/// оказались на близких участках потока Лемера.
+const VARIANT_SEED_STRIDE: u32 = 7919;
+
+/// Ручки генерации кроны — всё, что решает, как крона выглядит, до цвета.
+/// Дефолт равен константам, на которых нарисован город: `CrownParams::default()`
+/// — это ровно тот вид, что в игре, и любая правка поля читается как «на
+/// столько отступили от игры».
+///
+/// Часть ручек — **множители** к величине, которая у каждой формы своя (вершин
+/// базы 12 против 16 у хвои, джиттер 1/3 против 1/4, подъём колец 0.15/0.12/0.1):
+/// один множитель двигает все три формы, сохраняя разницу между ними, тогда как
+/// абсолютное поле стёрло бы её и потребовало бы по ручке на форму.
+/// Остальные — абсолютные доли радиуса кроны, у которых своего значения по
+/// форме нет.
+///
+/// Ресурс — ради витрины `tree_gallery`, которая крутит их вживую; игра берёт
+/// [`CrownParams::default`] и панели для них не заводит.
+#[derive(Resource, Reflect, Clone, Debug)]
+#[reflect(Resource, Default)]
+pub struct CrownParams {
+    /// Множитель числа вершин базового многоугольника (12 у облака и пальмы,
+    /// 16 у хвои). Вершины — это лопасти контура: чем их больше, тем мельче
+    /// фестоны облака и тем гуще игольчатая кромка ели.
+    pub points: f32,
+    /// Множитель джиттера радиуса: на какую долю радиуса вершина базы
+    /// утапливается внутрь. Ноль — правильный многоугольник, крона выходит
+    /// штампованной.
+    pub radius_jitter: f32,
+    /// Множитель `lobe` — «крупности» выступа над ребром. Управляет и
+    /// раздуванием облака (`bloat`), и длиной шипов ели и листьев пальмы:
+    /// у обоих выступ растёт как корень из отношения длины ребра к `lobe`,
+    /// поэтому **меньший** `lobe` даёт **более** пышный контур.
+    pub lobe: f32,
+    /// Множитель подъёма колец штриховки к свету.
+    pub band_lift: f32,
+    /// Множитель масштаба колец штриховки: раздвигает или стягивает их к
+    /// контуру.
+    pub band_scale: f32,
+    /// Множитель веса штриховки — вероятности (у хвои: условия) нарисовать
+    /// кусок кольца. Ноль — чистая заливка без штрихов, большие значения
+    /// замыкают кольца целиком и с освещённой стороны.
+    pub shade_weight: f32,
+    /// Толщина чернильной обводки контура, доля радиуса. От неё же считаются
+    /// пороги «вырез съеден обводкой» — см. [`cone_outline`].
+    pub outline_stroke: f32,
+    /// Толщина штрихов внутренних колец, доля радиуса.
+    pub detail_stroke: f32,
+    /// Множитель пола высоты шипа хвойного контура (сам пол — две обводки).
+    pub spike_floor: f32,
+    /// Растяжение силуэта длинной тени вдоль её оси.
+    pub shadow_stretch: f32,
+    /// Обратный сдвиг силуэта длинной тени по той же оси.
+    pub shadow_backshift: f32,
+    /// «Высота» кроны `h` из `drawTree`: `base + spread·gauss3`. Она решает,
+    /// длинная тень или короткая, и на сколько радиусов вытянут веер у хвои.
+    /// У watabou значение на дерево, здесь — на вариант кроны (геометрия
+    /// кэшируется по вариантам).
+    pub shadow_height_base: f32,
+    pub shadow_height_spread: f32,
+    /// Порог `h`, выше которого крона отбрасывает длинную тень, а не сдвинутый
+    /// силуэт. Хвои не касается: у неё тень всегда конус-веер.
+    pub long_shadow_height: f32,
+    /// Сдвиг нумерации вариантов: другой сид — те же правила, но другие
+    /// `TREE_VARIANTS` крон.
+    pub seed: u32,
+}
+
+impl Default for CrownParams {
+    fn default() -> Self {
+        Self {
+            points: 1.0,
+            radius_jitter: 1.0,
+            lobe: 1.0,
+            band_lift: 1.0,
+            band_scale: 1.0,
+            shade_weight: 1.0,
+            outline_stroke: TREE_OUTLINE_STROKE,
+            detail_stroke: TREE_DETAIL_STROKE,
+            spike_floor: 1.0,
+            shadow_stretch: 1.4,
+            shadow_backshift: -0.75,
+            shadow_height_base: 0.4,
+            shadow_height_spread: 0.8,
+            long_shadow_height: 0.5,
+            seed: 0,
+        }
+    }
+}
+
+impl CrownParams {
+    /// Ширина устья выреза, ниже которой обводка съедает просвет целиком: один
+    /// штрих уходит на чернила, второй — на видимую зелень между стенками.
+    pub(super) fn notch_mouth_min(&self) -> f32 {
+        2.0 * self.outline_stroke
+    }
+
+    /// Глубина выреза, ниже которой ямку целиком закрывает обводка: два шипа по
+    /// её краям сливаются в один горб с плоской верхушкой.
+    pub(super) fn notch_depth_min(&self) -> f32 {
+        self.outline_stroke
+    }
+
+    /// Пол высоты шипа контура. У watabou шип над коротким ребром выходит
+    /// непропорционально низким (`len^1.5`) — от таких шипов и вырезы мелкие, и
+    /// острия тупые.
+    fn spike_height_min(&self) -> f32 {
+        2.0 * self.outline_stroke * self.spike_floor
+    }
+
+    /// Ни один угол контура не должен стать уже этого: сдвиг, раскрывающий
+    /// вырез, не имеет права схлопнуть соседнее остриё в иглу.
+    pub(super) fn corner_mouth_floor(&self) -> f32 {
+        self.outline_stroke
+    }
+}
 
 /// ГПСЧ Лемера (Park–Miller), как в Village.js: `seed = 48271·seed mod 2³¹−1`.
 pub(super) struct Lcg(u32);
@@ -115,42 +208,51 @@ impl TreeShape {
         }
     }
 
-    /// Вершин в базовом многоугольнике: у хвойной кроны их 16, у прочих 12.
-    fn base_points(self) -> usize {
-        match self {
-            Self::Conifer => 16,
-            Self::Cotton | Self::Palm => 12,
+    /// Вершин в базовом многоугольнике: у хвойной кроны их 16, у прочих 12,
+    /// умножено на [`CrownParams::points`]. Треугольник — низ: на меньшем числе
+    /// вершин многоугольника нет.
+    fn base_points(self, params: &CrownParams) -> usize {
+        let base = match self {
+            Self::Conifer => 16.0,
+            Self::Cotton | Self::Palm => 12.0,
             Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
-        }
+        };
+        ((base * params.points).round() as usize).max(3)
     }
 
     /// Доля радиуса, на которую джиттер утапливает вершину внутрь.
-    fn radius_jitter(self) -> f32 {
-        match self {
+    fn radius_jitter(self, params: &CrownParams) -> f32 {
+        let base = match self {
             Self::Conifer => 0.25,
             Self::Cotton | Self::Palm => 4.0 / 12.0,
             Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
-        }
+        };
+        base * params.radius_jitter
     }
 
     /// Сдвиг колец к свету за номер кольца, доля радиуса. Константа **формы**,
     /// а не номера кольца: `-(n+1)·R·0.15` у облака, `·0.12` у хвои, `·0.1` у
     /// пальмы.
-    fn band_lift(self) -> f32 {
-        match self {
+    fn band_lift(self, params: &CrownParams) -> f32 {
+        let base = match self {
             Self::Cotton => 0.15,
             Self::Conifer => 0.12,
             Self::Palm => 0.1,
             Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
-        }
+        };
+        base * params.band_lift
     }
 
-    /// Масштабы внутренних колец и вес вероятности штриха для каждого.
-    fn bands(self) -> Vec<(f32, f32)> {
+    /// Масштабы внутренних колец и вес вероятности штриха для каждого. Вес
+    /// считается по **исходному** масштабу кольца: множитель `band_scale`
+    /// двигает кольцо, а не густоту его штриховки, — та своя ручка.
+    fn bands(self, params: &CrownParams) -> Vec<(f32, f32)> {
+        let scaled =
+            |scale: f32, weight: f32| (scale * params.band_scale, weight * params.shade_weight);
         match self {
-            Self::Cotton => BALL_BANDS.iter().map(|&s| (s, 3.0 * s * s)).collect(),
-            Self::Conifer => CONE_BANDS.iter().map(|&s| (s, 0.5 + s)).collect(),
-            Self::Palm => PALM_BANDS.iter().map(|&s| (s, 3.0 * s)).collect(),
+            Self::Cotton => BALL_BANDS.iter().map(|&s| scaled(s, 3.0 * s * s)).collect(),
+            Self::Conifer => CONE_BANDS.iter().map(|&s| scaled(s, 0.5 + s)).collect(),
+            Self::Palm => PALM_BANDS.iter().map(|&s| scaled(s, 3.0 * s)).collect(),
             Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
         }
     }
@@ -176,9 +278,15 @@ impl TreeShape {
     }
 
     /// Штриховка кольца — у каждой формы своя процедура (`drawShaded1/2/4`).
-    pub(super) fn shade(self, ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+    pub(super) fn shade(
+        self,
+        ring: &[Vec2],
+        weight: f32,
+        rng: &mut Lcg,
+        params: &CrownParams,
+    ) -> Vec<Vec<Vec2>> {
         match self {
-            Self::Cotton => shaded_arcs(ring, weight, rng),
+            Self::Cotton => shaded_arcs(ring, weight, rng, params),
             Self::Conifer => chevron_arcs(ring, weight),
             Self::Palm => leaf_arcs(ring, weight, rng),
             Self::Mixed => unreachable!("{MIXED_HAS_NO_GEOMETRY}"),
@@ -197,29 +305,33 @@ pub(super) struct CrownGeometry {
 
 /// `getCloudCrown` / `getPineCrown` / `getPalmCrown`: базовый многоугольник с
 /// джиттером угла и радиуса, затем контур и уменьшенные кольца деталей.
-pub(super) fn crown_geometry(shape: TreeShape, rng: &mut Lcg) -> CrownGeometry {
-    let points = shape.base_points();
+pub(super) fn crown_geometry(
+    shape: TreeShape,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> CrownGeometry {
+    let points = shape.base_points(params);
     let mut base = Vec::with_capacity(points);
     for index in 0..points {
         let angle = TAU * (index as f32 + rng.gauss3()) / points as f32;
-        let radius = 1.0 - shape.radius_jitter() * rng.bell4().abs();
+        let radius = 1.0 - shape.radius_jitter(params) * rng.bell4().abs();
         base.push(Vec2::from_angle(angle) * radius);
     }
-    let lobe = (3.0 * PI / points as f32).sin();
+    let lobe = (3.0 * PI / points as f32).sin() * params.lobe;
     // правка залипших вырезов идёт только по контуру: кольца штриховки строятся
     // ниже из нетронутой базы. Облаку она не нужна — все его вырезы мельче
-    // `NOTCH_DEPTH_MIN`; пальме вредна — её листья тонкие по замыслу
+    // `CrownParams::notch_depth_min`; пальме вредна — её листья тонкие по замыслу
     let outer = if shape == TreeShape::Conifer {
-        cone_outline(&base, lobe)
+        cone_outline(&base, lobe, params)
     } else {
         shape.outline(&base, lobe)
     };
     let bands = shape
-        .bands()
+        .bands(params)
         .into_iter()
         .enumerate()
         .map(|(number, (scale, weight))| {
-            let lift = Vec2::new(0.0, (number as f32 + 1.0) * shape.band_lift());
+            let lift = Vec2::new(0.0, (number as f32 + 1.0) * shape.band_lift(params));
             let ring: Vec<Vec2> = base.iter().map(|&point| point * scale + lift).collect();
             (shape.outline(&ring, shape.band_lobe(lobe, scale)), weight)
         })
@@ -288,20 +400,25 @@ fn bend_control(from: Vec2, to: Vec2, lift: f32) -> Vec2 {
 
 /// Поток случайных чисел варианта кроны: крона и её тень разыгрываются из него
 /// подряд, так что вариант полностью задан своим номером.
-pub(super) fn variant_rng(variant: usize) -> Lcg {
-    Lcg::new(0x051E_D2E5 + variant as u32 * 7919)
+pub(super) fn variant_rng(variant: usize, params: &CrownParams) -> Lcg {
+    Lcg::new(
+        VARIANT_SEED_BASE
+            .wrapping_add(params.seed.wrapping_mul(VARIANT_SEED_STRIDE))
+            .wrapping_add(variant as u32 * VARIANT_SEED_STRIDE),
+    )
 }
 
 /// Контур хвойной кроны, у которого **каждый вырез читается под обводкой**.
-/// Обводка шириной `TREE_OUTLINE_STROKE` (12% радиуса) съедает вырез двумя
+/// Обводка шириной `CrownParams::outline_stroke` (12% радиуса по умолчанию)
+/// съедает вырез двумя
 /// способами, и оба дают на глаз один и тот же «горб» вместо двух шипов:
 ///
-/// - вырез **уже** `NOTCH_MOUTH_MIN` — чернила смыкаются поперёк, и он читается
+/// - вырез **уже** `notch_mouth_min` — чернила смыкаются поперёк, и он читается
 ///   иглой внутрь кроны;
-/// - вырез **мельче** `NOTCH_DEPTH_MIN` — ямку закрывает сама линия, и остаётся
+/// - вырез **мельче** `notch_depth_min` — ямку закрывает сама линия, и остаётся
 ///   плоская верхушка между двумя тупыми остриями.
 ///
-/// Мелкие вырезы лечит `SPIKE_HEIGHT_MIN`: у watabou высота шипа растёт как
+/// Мелкие вырезы лечит `spike_height_min`: у watabou высота шипа растёт как
 /// `len^1.5`, поэтому над коротким ребром он выходит непропорционально низким —
 /// пол высоты и поднимает такие шипы, и заодно заостряет их (острия 51–88° →
 /// 35–67°). Узкие лечит сдвиг виновной вершины базы поперёк хорды её соседей:
@@ -316,11 +433,11 @@ pub(super) fn variant_rng(variant: usize) -> Lcg {
 /// Отступление от watabou: у него обводка фиксированной ширины в мировых
 /// единицах и город смотрят издалека, так что вырождение не видно. Кроны
 /// облака и пальмы мимо: их мелкая рябь по замыслу тонет в чернилах.
-fn cone_outline(base: &[Vec2], lobe: f32) -> Vec<Vec2> {
+fn cone_outline(base: &[Vec2], lobe: f32, params: &CrownParams) -> Vec<Vec2> {
     let mut base = base.to_vec();
     loop {
-        let ring = spike_simple(&base, lobe, SPIKE_HEIGHT_MIN);
-        let swallowed = swallowed_notches(&ring);
+        let ring = spike_simple(&base, lobe, params.spike_height_min());
+        let swallowed = swallowed_notches(&ring, params);
         if swallowed.is_empty() {
             return ring;
         }
@@ -328,15 +445,15 @@ fn cone_outline(base: &[Vec2], lobe: f32) -> Vec<Vec2> {
         // цикл конечен
         if !swallowed
             .iter()
-            .any(|&vertex| nudge_notch_open(&mut base, vertex, lobe, swallowed.len()))
+            .any(|&vertex| nudge_notch_open(&mut base, vertex, lobe, swallowed.len(), params))
         {
-            return spike_simple(&base, lobe, SPIKE_HEIGHT_MIN);
+            return spike_simple(&base, lobe, params.spike_height_min());
         }
     }
 }
 
 /// Вершины базы, вырез над которыми обводка съедает — поперёк или по глубине.
-fn swallowed_notches(ring: &[Vec2]) -> Vec<usize> {
+fn swallowed_notches(ring: &[Vec2], params: &CrownParams) -> Vec<usize> {
     let count = ring.len() / 2;
     // впадины — чётные вершины контура: `spike_simple` кладёт вершину базы,
     // затем шип над ребром, которое из неё выходит
@@ -346,7 +463,7 @@ fn swallowed_notches(ring: &[Vec2]) -> Vec<usize> {
             let previous = ring[(index + ring.len() - 1) % ring.len()];
             corner_metrics(previous, ring[index], ring[index + 1]).is_some_and(
                 |(mouth, depth, valley)| {
-                    valley && (mouth < NOTCH_MOUTH_MIN || depth < NOTCH_DEPTH_MIN)
+                    valley && (mouth < params.notch_mouth_min() || depth < params.notch_depth_min())
                 },
             )
         })
@@ -356,9 +473,15 @@ fn swallowed_notches(ring: &[Vec2]) -> Vec<usize> {
 
 /// Сдвигает вершину базы поперёк хорды её соседей на наименьшее смещение, при
 /// котором съеденных вырезов становится меньше, а ни один угол контура не
-/// сужается за `CORNER_MOUTH_FLOOR`; пробуются оба направления. Без такого
+/// сужается за `corner_mouth_floor`; пробуются оба направления. Без такого
 /// смещения вершина остаётся на месте.
-fn nudge_notch_open(base: &mut [Vec2], vertex: usize, lobe: f32, swallowed: usize) -> bool {
+fn nudge_notch_open(
+    base: &mut [Vec2],
+    vertex: usize,
+    lobe: f32,
+    swallowed: usize,
+    params: &CrownParams,
+) -> bool {
     let count = base.len();
     let chord = base[(vertex + 1) % count] - base[(vertex + count - 1) % count];
     let step = chord.perp().normalize_or_zero() * (NOTCH_NUDGE_LIMIT / NOTCH_NUDGE_STEPS as f32);
@@ -366,9 +489,9 @@ fn nudge_notch_open(base: &mut [Vec2], vertex: usize, lobe: f32, swallowed: usiz
     for offset in 1..=NOTCH_NUDGE_STEPS {
         for direction in [1.0_f32, -1.0] {
             base[vertex] = origin + step * (offset as f32 * direction);
-            let ring = spike_simple(base, lobe, SPIKE_HEIGHT_MIN);
-            if swallowed_notches(&ring).len() < swallowed
-                && narrowest_corner(&ring) >= CORNER_MOUTH_FLOOR
+            let ring = spike_simple(base, lobe, params.spike_height_min());
+            if swallowed_notches(&ring, params).len() < swallowed
+                && narrowest_corner(&ring) >= params.corner_mouth_floor()
             {
                 return true;
             }
@@ -433,12 +556,12 @@ fn extrude_edge(a: Vec2, b: Vec2, lobe: f32, out: &mut Vec<Vec2>) {
 }
 
 /// `drawLongShadow`: силуэт кроны, растянутый вдоль оси тени и сдвинутый по ней.
-pub(super) fn shadow_ring(outer: &[Vec2]) -> Vec<Vec2> {
+pub(super) fn shadow_ring(outer: &[Vec2], params: &CrownParams) -> Vec<Vec2> {
     outer
         .iter()
         .map(|&point| {
             let local = Vec2::new(point.dot(SHADOW_DIR), point.perp_dot(SHADOW_DIR));
-            let x = (local.x + 1.0) * SHADOW_STRETCH + SHADOW_BACKSHIFT;
+            let x = (local.x + 1.0) * params.shadow_stretch + params.shadow_backshift;
             SHADOW_DIR * x + SHADOW_DIR.perp() * -local.y
         })
         .collect()
@@ -448,14 +571,19 @@ pub(super) fn shadow_ring(outer: &[Vec2]) -> Vec<Vec2> {
 /// штриховки своя у каждой формы, см. [`TreeShape::shade`]).
 /// Вершинные цвета настоящие; материал дерева умножает их на серый множитель,
 /// так зелень варьируется, а чернила остаются чернилами.
-pub(super) fn crown_mesh(geometry: &CrownGeometry, style: &TreeStyle, rng: &mut Lcg) -> Mesh {
+pub(super) fn crown_mesh(
+    geometry: &CrownGeometry,
+    style: &TreeStyle,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> Mesh {
     let mut builder = MeshBuilder::default();
     let ink = style.details.to_linear();
     builder.push_polygon(&geometry.outer, &[], style.foliage.to_linear());
-    builder.push_stroke(&geometry.outer, true, TREE_OUTLINE_STROKE, ink);
+    builder.push_stroke(&geometry.outer, true, params.outline_stroke, ink);
 
     for (ring, weight) in &geometry.bands {
-        for arc in geometry.shape.shade(ring, *weight, rng) {
+        for arc in geometry.shape.shade(ring, *weight, rng, params) {
             // круглые стыки, а не miter: «этаж» разворачивается на кончике
             // каждого шипа почти на 180°, и срезанный miter оставлял бы там
             // клин пустоты — ломаная читалась бы рваной. Контур кроны рисуется
@@ -463,7 +591,7 @@ pub(super) fn crown_mesh(geometry: &CrownGeometry, style: &TreeStyle, rng: &mut 
             builder.push_ribbon(
                 &arc,
                 false,
-                TREE_DETAIL_STROKE,
+                params.detail_stroke,
                 ink,
                 RibbonJoin::Round,
                 RibbonCap::Butt,
@@ -511,7 +639,12 @@ fn chain_arcs(ring: &[Vec2], step: usize, drawn: &[bool]) -> Vec<Vec<Vec2>> {
 /// по теневой стороне плюс россыпь коротких штрихов по краям — их **надо**
 /// рисовать, иначе кольцо читается как рваное. Отбрасываются только дуги
 /// короче собственной толщины: такая при зуме уже не штрих, а квадратик.
-pub(super) fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Vec2>> {
+pub(super) fn shaded_arcs(
+    ring: &[Vec2],
+    weight: f32,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> Vec<Vec<Vec2>> {
     let drawn: Vec<bool> = (0..ring.len())
         .map(|index| {
             let edge = ring[(index + 1) % ring.len()] - ring[index];
@@ -525,7 +658,7 @@ pub(super) fn shaded_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<
         arc.windows(2)
             .map(|pair| pair[0].distance(pair[1]))
             .sum::<f32>()
-            >= TREE_DETAIL_STROKE
+            >= params.detail_stroke
     });
     arcs
 }
@@ -584,8 +717,12 @@ pub(super) fn leaf_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Ve
 /// тень, низкая — простой сдвинутый силуэт; ель вместо этого отбрасывает
 /// веер-конус. `h` разыгрывается на вариант, так что соседние деревья стоят с
 /// тенями разной длины.
-pub(super) fn shadow_template(geometry: &CrownGeometry, rng: &mut Lcg) -> MeshBuilder {
-    let height = SHADOW_HEIGHT_BASE + SHADOW_HEIGHT_SPREAD * rng.gauss3();
+pub(super) fn shadow_template(
+    geometry: &CrownGeometry,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> MeshBuilder {
+    let height = params.shadow_height_base + params.shadow_height_spread * rng.gauss3();
     let mut builder = MeshBuilder::default();
     match geometry.shape {
         TreeShape::Conifer => {
@@ -593,8 +730,12 @@ pub(super) fn shadow_template(geometry: &CrownGeometry, rng: &mut Lcg) -> MeshBu
                 builder.push_polygon(&outer, &holes, LinearRgba::WHITE);
             }
         }
-        _ if height > LONG_SHADOW_HEIGHT => {
-            builder.push_polygon(&shadow_ring(&geometry.outer), &[], LinearRgba::WHITE);
+        _ if height > params.long_shadow_height => {
+            builder.push_polygon(
+                &shadow_ring(&geometry.outer, params),
+                &[],
+                LinearRgba::WHITE,
+            );
         }
         // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
         _ => {

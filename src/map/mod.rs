@@ -11,6 +11,7 @@ pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::{MeshBuilder, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
+pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
@@ -24,7 +25,7 @@ use crate::prefs::{TrackPrefExt, retuned};
 const SHADOW_DIR: Vec2 = Vec2::new(0.866_025_4, -0.5);
 /// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий по
 /// той же причине, что и [`SHADOW_DIR`].
-const SHADOW_COLOR: Color = Color::srgba(0.22, 0.24, 0.33, 0.42);
+pub const SHADOW_COLOR: Color = Color::srgba(0.22, 0.24, 0.33, 0.42);
 
 pub struct MapPlugin;
 

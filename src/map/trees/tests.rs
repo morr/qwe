@@ -1,10 +1,16 @@
 use super::crown::{
-    CONE_BANDS, CORNER_MOUTH_FLOOR, Lcg, NOTCH_DEPTH_MIN, NOTCH_MOUTH_MIN, PALM_BANDS, bloat,
-    chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs, shaded_arcs, shadow_ring,
+    CONE_BANDS, Lcg, PALM_BANDS, bloat, chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs,
+    shaded_arcs, shadow_ring,
 };
 use super::*;
 use crate::map::SHADOW_DIR;
 use crate::settings::CONIFER_NOISE_WAVELENGTH;
+
+/// Параметры кроны, на которых нарисован город: тесты пиннят игру, а не
+/// произвольную настройку витрины.
+fn params() -> CrownParams {
+    CrownParams::default()
+}
 
 fn ring_area(ring: &[Vec2]) -> f32 {
     ring.windows(2)
@@ -17,8 +23,8 @@ fn ring_area(ring: &[Vec2]) -> f32 {
 #[test]
 fn crown_geometry_is_deterministic() {
     for shape in TreeShape::CONCRETE {
-        let first = crown_geometry(shape, &mut Lcg::new(42));
-        let second = crown_geometry(shape, &mut Lcg::new(42));
+        let first = crown_geometry(shape, &mut Lcg::new(42), &params());
+        let second = crown_geometry(shape, &mut Lcg::new(42), &params());
         assert_eq!(first.outer, second.outer, "{shape:?}");
         assert_eq!(first.bands.len(), second.bands.len(), "{shape:?}");
     }
@@ -235,7 +241,7 @@ fn conifer_field_varies_on_the_scale_of_a_stand() {
 
 #[test]
 fn cloud_crown_stays_near_unit_radius() {
-    let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(7));
+    let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(7), &params());
     // bloat выдавливает наружу: контур длиннее базового 12-угольника
     assert!(crown.outer.len() > 12 * 4);
     for point in &crown.outer {
@@ -251,9 +257,9 @@ fn cloud_crown_stays_near_unit_radius() {
 
 #[test]
 fn every_shape_has_its_own_outline_and_bands() {
-    let cotton = crown_geometry(TreeShape::Cotton, &mut Lcg::new(5));
-    let conifer = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5));
-    let palm = crown_geometry(TreeShape::Palm, &mut Lcg::new(5));
+    let cotton = crown_geometry(TreeShape::Cotton, &mut Lcg::new(5), &params());
+    let conifer = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5), &params());
+    let palm = crown_geometry(TreeShape::Palm, &mut Lcg::new(5), &params());
     assert_eq!(conifer.bands.len(), CONE_BANDS.len());
     assert_eq!(palm.bands.len(), PALM_BANDS.len());
     assert_ne!(cotton.outer, conifer.outer);
@@ -284,17 +290,21 @@ fn corners(ring: &[Vec2]) -> Vec<(f32, f32, bool)> {
 #[test]
 fn every_conifer_notch_survives_the_outline_stroke() {
     for variant in 0..TREE_VARIANTS {
-        let crown = crown_geometry(TreeShape::Conifer, &mut variant_rng(variant));
+        let crown = crown_geometry(
+            TreeShape::Conifer,
+            &mut variant_rng(variant, &params()),
+            &params(),
+        );
         for (mouth, depth, valley) in corners(&crown.outer) {
             if !valley {
                 continue;
             }
             assert!(
-                mouth >= NOTCH_MOUTH_MIN,
+                mouth >= params().notch_mouth_min(),
                 "variant {variant}: вырез с устьем {mouth} — обводка сомкнётся поперёк"
             );
             assert!(
-                depth >= NOTCH_DEPTH_MIN,
+                depth >= params().notch_depth_min(),
                 "variant {variant}: вырез глубиной {depth} — обводка закроет ямку"
             );
         }
@@ -308,7 +318,11 @@ fn opening_notches_keeps_every_spike() {
     // держится в прежних границах (снятие шипа увело бы его к 1.9), острия не
     // тупые (снятие шипа с готового контура дотягивало до 107°) и не иглы
     for variant in 0..TREE_VARIANTS {
-        let crown = crown_geometry(TreeShape::Conifer, &mut variant_rng(variant));
+        let crown = crown_geometry(
+            TreeShape::Conifer,
+            &mut variant_rng(variant, &params()),
+            &params(),
+        );
         assert_eq!(crown.outer.len(), 32, "variant {variant}");
         assert!(ring_area(&crown.outer) > 0.0, "variant {variant}");
         let reach = crown
@@ -322,7 +336,7 @@ fn opening_notches_keeps_every_spike() {
         );
         for (mouth, _, _) in corners(&crown.outer) {
             assert!(
-                mouth >= CORNER_MOUTH_FLOOR,
+                mouth >= params().corner_mouth_floor(),
                 "variant {variant}: угол с устьем {mouth} схлопнулся в иглу"
             );
         }
@@ -334,11 +348,11 @@ fn the_cloud_outline_keeps_its_sub_stroke_ripple() {
     // облако и пальма идут мимо прохода: их мелкая рябь по замыслу тонет в
     // чернилах, и мерка «вырез шире обводки» к ним неприменима
     for shape in [TreeShape::Cotton, TreeShape::Palm] {
-        let crown = crown_geometry(shape, &mut Lcg::new(11));
+        let crown = crown_geometry(shape, &mut Lcg::new(11), &params());
         assert!(
             corners(&crown.outer)
                 .iter()
-                .any(|&(mouth, _, valley)| valley && mouth < NOTCH_MOUTH_MIN),
+                .any(|&(mouth, _, valley)| valley && mouth < params().notch_mouth_min()),
             "{shape:?}: рябь контура пропала — проход задел не только хвою"
         );
     }
@@ -363,8 +377,8 @@ fn bloat_pushes_midpoints_outward() {
 
 #[test]
 fn shadow_ring_stretches_along_shadow_dir() {
-    let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(3));
-    let shadow = shadow_ring(&crown.outer);
+    let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(3), &params());
+    let shadow = shadow_ring(&crown.outer, &params());
     let extent = |ring: &[Vec2]| {
         let projected: Vec<f32> = ring.iter().map(|point| point.dot(SHADOW_DIR)).collect();
         let min = projected.iter().copied().fold(f32::INFINITY, f32::min);
@@ -383,11 +397,11 @@ fn crown_mesh_builds_non_empty() {
     let mut rng = Lcg::new(11);
     let style = TreeStyle::default();
     for shape in TreeShape::CONCRETE {
-        let geometry = crown_geometry(shape, &mut rng);
-        let mesh = crown_mesh(&geometry, &style, &mut rng);
+        let geometry = crown_geometry(shape, &mut rng, &params());
+        let mesh = crown_mesh(&geometry, &style, &mut rng, &params());
         assert!(mesh.count_vertices() > 0, "{shape:?}");
         assert!(
-            shadow_template(&geometry, &mut rng).vertex_count() > 0,
+            shadow_template(&geometry, &mut rng, &params()).vertex_count() > 0,
             "{shape:?}"
         );
     }
@@ -403,7 +417,7 @@ fn band_centre(ring: &[Vec2]) -> Vec2 {
 /// попадает — светлая сторона у `drawShaded2` чистая, без случайных штрихов.
 #[test]
 fn conifer_shading_leans_into_the_shadow() {
-    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5));
+    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5), &params());
     for (ring, weight) in &geometry.bands {
         let arcs = chevron_arcs(ring, *weight);
         assert!(!arcs.is_empty(), "кольцо без штрихов вовсе");
@@ -436,7 +450,7 @@ fn conifer_shading_leans_into_the_shadow() {
 /// съедали лотерея `drawShaded1` и фильтр коротких дуг.
 #[test]
 fn conifer_has_a_tip() {
-    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5));
+    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5), &params());
     let (ring, weight) = geometry.bands.last().expect("три кольца у хвои");
     let arcs = chevron_arcs(ring, *weight);
     assert!(!arcs.is_empty(), "у ели нет верхушки");
@@ -451,8 +465,8 @@ fn conifer_has_a_tip() {
 #[test]
 fn every_conifer_band_is_a_single_arc() {
     for variant in 0..crate::settings::TREE_VARIANTS as u32 {
-        let mut rng = Lcg::new(0x051E_D2E5 + variant * 7919);
-        let geometry = crown_geometry(TreeShape::Conifer, &mut rng);
+        let mut rng = variant_rng(variant as usize, &params());
+        let geometry = crown_geometry(TreeShape::Conifer, &mut rng, &params());
         for (number, (ring, weight)) in geometry.bands.iter().enumerate() {
             assert_eq!(
                 chevron_arcs(ring, *weight).len(),
@@ -469,9 +483,9 @@ fn every_conifer_band_is_a_single_arc() {
 fn shaded_arcs_run_along_the_ring() {
     let mut rng = Lcg::new(5);
     for shape in TreeShape::CONCRETE {
-        let geometry = crown_geometry(shape, &mut rng);
+        let geometry = crown_geometry(shape, &mut rng, &params());
         for (ring, weight) in &geometry.bands {
-            for arc in shape.shade(ring, *weight, &mut rng) {
+            for arc in shape.shade(ring, *weight, &mut rng, &params()) {
                 let start = ring
                     .iter()
                     .position(|point| *point == arc[0])
@@ -493,7 +507,7 @@ fn shaded_arcs_run_along_the_ring() {
 #[test]
 fn palm_arcs_cover_whole_leaves() {
     let mut rng = Lcg::new(5);
-    let geometry = crown_geometry(TreeShape::Palm, &mut rng);
+    let geometry = crown_geometry(TreeShape::Palm, &mut rng, &params());
     for (ring, weight) in &geometry.bands {
         for arc in leaf_arcs(ring, *weight, &mut rng) {
             assert_eq!(arc.len() % 4, 1, "лист нарисован кусками: {}", arc.len());
@@ -507,9 +521,9 @@ fn palm_arcs_cover_whole_leaves() {
 #[test]
 fn cotton_keeps_its_dashes() {
     let mut rng = Lcg::new(0x051E_D2E5);
-    let geometry = crown_geometry(TreeShape::Cotton, &mut rng);
+    let geometry = crown_geometry(TreeShape::Cotton, &mut rng, &params());
     let (ring, weight) = &geometry.bands[0];
-    let arcs = shaded_arcs(ring, *weight, &mut rng);
+    let arcs = shaded_arcs(ring, *weight, &mut rng, &params());
     let length = |arc: &Vec<Vec2>| {
         arc.windows(2)
             .map(|pair| pair[0].distance(pair[1]))
@@ -528,7 +542,7 @@ fn cotton_keeps_its_dashes() {
 /// концу, а не растянутая клякса.
 #[test]
 fn conifer_shadow_tapers_into_a_cone() {
-    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(9));
+    let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(9), &params());
     let points: Vec<Vec2> = conifer_shadow(&geometry.outer, 0.8)
         .into_iter()
         .flat_map(|(outer, _)| outer)
@@ -556,9 +570,9 @@ fn conifer_shadow_tapers_into_a_cone() {
 #[test]
 fn shadow_length_varies_between_variants() {
     let reach = |variant: u32| {
-        let mut rng = Lcg::new(0x051E_D2E5 + variant * 7919);
-        let geometry = crown_geometry(TreeShape::Conifer, &mut rng);
-        shadow_template(&geometry, &mut rng)
+        let mut rng = variant_rng(variant as usize, &params());
+        let geometry = crown_geometry(TreeShape::Conifer, &mut rng, &params());
+        shadow_template(&geometry, &mut rng, &params())
             .positions_for_test()
             .iter()
             .map(|point| Vec2::new(point[0], point[1]).dot(SHADOW_DIR))

@@ -13,6 +13,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 pub use self::conifer::{ConiferField, ConiferNoiseStyle};
 // Приватные реэкспорты: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать геометрию.
+pub use self::crown::CrownParams;
 use self::crown::{
     CROWN_COLOR, INK_COLOR, crown_geometry, crown_mesh, shadow_template, variant_rng,
 };
@@ -44,8 +45,7 @@ pub enum TreeShape {
 impl TreeShape {
     pub const ALL: [Self; 4] = [Self::Cotton, Self::Conifer, Self::Palm, Self::Mixed];
     /// Формы с собственной геометрией кроны — всё, кроме `Mixed`.
-    #[cfg(test)]
-    const CONCRETE: [Self; 3] = [Self::Cotton, Self::Conifer, Self::Palm];
+    pub const CONCRETE: [Self; 3] = [Self::Cotton, Self::Conifer, Self::Palm];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -174,9 +174,53 @@ pub fn visible_count(appears_at: &[f32], density: f32) -> usize {
     appears_at.partition_point(|&at| at <= density)
 }
 
+/// Что сажать: где стоят деревья (позиция и радиус кроны) и при какой
+/// плотности каждое появляется. Два поля `MapData`, которые всегда ходят
+/// парой — и порядок в них общий, так что разъехаться им нельзя.
+#[derive(Clone, Copy)]
+pub struct PlantedTrees<'a> {
+    pub positions: &'a [(Vec2, f32)],
+    pub appears_at: &'a [f32],
+}
+
 /// Крона или её тень — чтобы пересборка стиля знала, что деспавнить.
 #[derive(Component)]
 pub struct TreeTag;
+
+/// Геометрия одного варианта кроны: то, что [`spawn_trees`] кладёт в свой пул
+/// и потом повторяет под каждым деревом этого варианта.
+///
+/// Публичной эта сборка сделана ради витрины `tree_gallery`: демо обязано
+/// показывать ровно ту геометрию, что попадает в игру, а не свою копию
+/// вызовов.
+pub struct CrownVariant {
+    /// Меш кроны единичного радиуса — заливка, чернильный контур, штрихи.
+    pub crown: Mesh,
+    /// Шаблон силуэта тени; в игре он копируется в общий меш теней
+    /// (`MeshBuilder::push_template`).
+    pub shadow: MeshBuilder,
+}
+
+/// Крона варианта `variant` формы `shape` под стилем `style`. Вариант задан
+/// целиком своим номером: крона и тень разыгрываются из одного потока
+/// [`variant_rng`] подряд.
+///
+/// `shape` должна быть конкретной ([`TreeShape::CONCRETE`]) — `Mixed`
+/// геометрии не имеет и разрешается в `Cotton`/`Conifer` раньше. `params` в
+/// игре всегда [`CrownParams::default`]; крутит их только витрина
+/// `tree_gallery`.
+pub fn crown_variant(
+    shape: TreeShape,
+    variant: usize,
+    style: &TreeStyle,
+    params: &CrownParams,
+) -> CrownVariant {
+    let mut rng = variant_rng(variant, params);
+    let geometry = crown_geometry(shape, &mut rng, params);
+    let crown = crown_mesh(&geometry, style, &mut rng, params);
+    let shadow = shadow_template(&geometry, &mut rng, params);
+    CrownVariant { crown, shadow }
+}
 
 /// Спавн деревьев: `TREE_VARIANTS` крон единичного радиуса, каждому дереву —
 /// вариант, оттенок и масштаб детерминированно по индексу; ползунок плотности
@@ -191,10 +235,14 @@ pub fn spawn_trees(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
     style: &TreeStyle,
-    trees: &[(Vec2, f32)],
-    appears_at: &[f32],
+    params: &CrownParams,
+    planted: PlantedTrees,
     field: &ConiferField,
 ) {
+    let PlantedTrees {
+        positions,
+        appears_at,
+    } = planted;
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
     let pools: Vec<(TreeShape, Vec<(Handle<Mesh>, MeshBuilder)>)> = style
         .shape
@@ -203,12 +251,8 @@ pub fn spawn_trees(
         .map(|&shape| {
             let variants = (0..TREE_VARIANTS)
                 .map(|variant| {
-                    let mut rng = variant_rng(variant);
-                    let geometry = crown_geometry(shape, &mut rng);
-                    (
-                        meshes.add(crown_mesh(&geometry, style, &mut rng)),
-                        shadow_template(&geometry, &mut rng),
-                    )
+                    let built = crown_variant(shape, variant, style, params);
+                    (meshes.add(built.crown), built.shadow)
                 })
                 .collect();
             (shape, variants)
@@ -222,7 +266,7 @@ pub fn spawn_trees(
 
     let mut shadows = MeshBuilder::default();
     let visible = visible_count(appears_at, style.density);
-    for (index, &(position, radius)) in trees.iter().take(visible).enumerate() {
+    for (index, &(position, radius)) in positions.iter().take(visible).enumerate() {
         let shape = style.shape.resolve(field.is_conifer(index));
         let variants = &pools
             .iter()
@@ -361,8 +405,13 @@ pub fn rebuild_trees(
         &mut meshes,
         &mut materials,
         &style,
-        &map.trees,
-        &map.tree_appears_at,
+        // ручки геометрии кроны в игре не выведены никуда: город рисуется
+        // дефолтом, а крутит их витрина `tree_gallery`
+        &CrownParams::default(),
+        PlantedTrees {
+            positions: &map.trees,
+            appears_at: &map.tree_appears_at,
+        },
         &field,
     );
 }
