@@ -116,7 +116,7 @@ did not fit 1080 px and ran off the top of the screen.
     HPA*/Theta*), **`Show`** (the grid fill overlay, `DebugNavmesh`);
   - `Polymesh` → **`Show`** (mesh overlay, draws nothing else), **`Chunks`** (default on)
     — the chunk hierarchy: it switches the *build* between layered and one flat layer
-    (`FLAT_CHUNK_METERS`) and therefore triggers a rebuild, and it is what puts the grid
+    (`POLYMESH_FLAT_CHUNK_METERS`) and therefore triggers a rebuild, and it is what puts the grid
     on the overlay; one toggle for both halves on purpose, since a grid drawn over a
     search that does not use it is a picture of something untrue — and an **agent
     radius** slider (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at
