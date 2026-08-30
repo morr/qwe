@@ -6,8 +6,11 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 
-use super::components::{Movable, MovableState, PathfindingTask, PreviousSimPosition, SimPosition};
-use super::pathfinding::listen_for_pathfinding_tasks;
+use super::components::{
+    Movable, MovableReachedDestinationEvent, MovableState, NeedsWanderTarget, PathfindingRequest,
+    PathfindingTask, PreviousSimPosition, RequestedAt, SimPosition,
+};
+use super::pathfinding::{listen_for_pathfinding_tasks, stamp_pathfinding_requests};
 use super::systems::rescue_trapped_entities;
 use crate::grid::{tile_center, world_to_tile};
 use crate::navigation::{ArcNavmesh, Backend, Navmesh, PathfindingResult};
@@ -521,4 +524,111 @@ fn a_demon_and_a_human_may_share_a_pawn_id() {
     app.update();
 
     assert_eq!(dispatched(app), PATHFINDING_URGENT_UNITS_PER_TICK as usize);
+}
+
+// --- переходы Movable ---
+
+/// Пешка в состоянии `Pathfinding` с живой заявкой в очереди — `to_idle`
+/// снимает всё трёхместное: путь, состояние, заявку и её метку тика.
+#[test]
+fn to_idle_cancels_a_request_that_never_left_the_queue() {
+    let mut app = App::new();
+    app.init_resource::<SimTick>();
+
+    // `MovableState` — поле `Movable`, а не компонент
+    let mut movable = Movable::new(1.0);
+    movable.state = MovableState::Pathfinding(IVec2::new(50, 50));
+
+    let entity = app
+        .world_mut()
+        .spawn((
+            movable,
+            SimPosition::default(),
+            PreviousSimPosition::default(),
+            PathfindingRequest {
+                start_tile: IVec2::new(100, 100),
+                end_tile: IVec2::new(50, 50),
+            },
+            RequestedAt(0),
+        ))
+        .id();
+
+    // Система, которая зовёт `to_idle`
+    fn stop_moving_system(mut query: Query<(&mut Movable, Entity)>, mut commands: Commands) {
+        for (mut movable, entity) in query.iter_mut() {
+            movable.to_idle(entity, &mut commands, false);
+        }
+    }
+
+    app.add_systems(Update, stop_moving_system);
+    app.update();
+
+    assert!(app.world().get::<PathfindingRequest>(entity).is_none());
+    assert!(app.world().get::<RequestedAt>(entity).is_none());
+    assert!(matches!(
+        app.world().get::<Movable>(entity).expect("Movable").state,
+        MovableState::Idle
+    ));
+    assert!(app.world().get::<NeedsWanderTarget>(entity).is_some());
+}
+
+/// Единственный риск фикса: заявка без метки тика. Детерминированный
+/// диспетчер требует `&RequestedAt`, и пешка без неё молча застыла бы.
+/// Поэтому метка снимается ТОЛЬКО вместе с заявкой, а новая пара рождается
+/// вместе: `to_pathfinding` вставляет заявку заново (взводит `Added`), и
+/// `stamp_pathfinding_requests` ставит свежую метку.
+#[test]
+fn a_target_picked_after_a_stop_gets_a_fresh_tick_mark() {
+    let mut app = App::new();
+    app.init_resource::<SimTick>();
+
+    // `MovableState` — поле `Movable`, а не компонент
+    let mut movable = Movable::new(1.0);
+    movable.state = MovableState::Pathfinding(IVec2::new(50, 50));
+
+    let entity = app
+        .world_mut()
+        .spawn((
+            movable,
+            SimPosition::default(),
+            PreviousSimPosition::default(),
+            PathfindingRequest {
+                start_tile: IVec2::new(100, 100),
+                end_tile: IVec2::new(50, 50),
+            },
+            RequestedAt(0),
+        ))
+        .id();
+
+    // Система, которая подряд вызывает `to_idle` и `to_pathfinding`
+    fn transition_system(mut query: Query<(&mut Movable, Entity)>, mut commands: Commands) {
+        for (mut movable, entity) in query.iter_mut() {
+            movable.to_idle(entity, &mut commands, false);
+            movable.to_pathfinding(
+                entity,
+                IVec2::new(100, 100),
+                IVec2::new(60, 60),
+                &mut commands,
+            );
+        }
+    }
+
+    app.add_systems(
+        Update,
+        (transition_system, stamp_pathfinding_requests).chain(),
+    );
+
+    // При `SimTick(5)` проверяем, что новая заявка получила свежую метку
+    *app.world_mut().resource_mut::<SimTick>() = SimTick(5);
+    app.update();
+
+    assert!(app.world().get::<PathfindingRequest>(entity).is_some());
+    assert_eq!(
+        app.world()
+            .get::<RequestedAt>(entity)
+            .expect("RequestedAt")
+            .0,
+        5,
+        "новая заявка обязана иметь метку текущего тика"
+    );
 }

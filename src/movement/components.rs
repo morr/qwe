@@ -154,6 +154,14 @@ impl Movable {
         }
     }
 
+    /// Остановить движение и вернуть пешку в `Idle`.
+    ///
+    /// `destination_reached` публикует `MovableReachedDestinationEvent`, но
+    /// только при уже пройденном пути: непройденный остаток означает, что до
+    /// цели не дошли. Вызывающий, который знает о приходе больше, чем сам
+    /// путь, — придержанный у цели в `step_along_path`, ответ «ты уже на
+    /// месте» в `accept_answer` — обязан вычистить путь ДО вызова, иначе
+    /// приход молча не публикуется.
     pub fn to_idle(&mut self, entity: Entity, commands: &mut Commands, destination_reached: bool) {
         if destination_reached
             && self.path.is_empty()
@@ -194,6 +202,21 @@ impl Movable {
     /// времени этот кадр стоит заметную долю виртуальной секунды, и остановка
     /// на каждой перепрокладке держала четверть паникующих стоящими в любой
     /// момент времени.
+    ///
+    /// Ещё не уехавшая заявка **снимается и подаётся заново**, а не
+    /// перезаписывается на месте. Оба её потребителя отбирают по
+    /// `Added<PathfindingRequest>` — `stamp_pathfinding_requests` и
+    /// `assign_destination_slots`, — а `insert` поверх живого компонента
+    /// взводит только `Changed`. Перецеленная в очереди пешка поэтому уезжала
+    /// с ключом FIFO от ПЕРВОЙ цели (`RequestedAt` тем старше, чем дольше
+    /// заявка стояла) и без слота на новую, продолжая держать
+    /// `DestinationClaim` на брошенной точке. Ждать этого приходится недолго:
+    /// очередь мирных — штатно вся неохваченная популяция, а в живом режиме
+    /// мирный вне кадра не диспетчится вовсе, так что паника перецеливает
+    /// человека поверх заявки, которая никуда не уходила.
+    ///
+    /// `RequestedAt` уходит вместе с заявкой (см. её док) и рождается заново
+    /// вместе с ней: `stamp_pathfinding_requests` стоит в хвосте того же тика.
     pub fn to_pathfinding(
         &mut self,
         entity: Entity,
@@ -203,11 +226,18 @@ impl Movable {
     ) {
         self.state = MovableState::Pathfinding(end_tile);
 
-        // в очередь; старый таск отменяется (дроп `Task`), старый запрос
-        // вытесняется вставкой
+        // в очередь; старый таск отменяется (дроп `Task`), старая заявка
+        // снимается вместе со своей меткой тика и подаётся заново — снятие и
+        // вставка идут двумя командами по порядку, поэтому `Added` взводится
         commands
             .entity(entity)
-            .remove::<(PathfindingTask, RetireAt, NeedsWanderTarget)>()
+            .remove::<(
+                PathfindingTask,
+                RetireAt,
+                NeedsWanderTarget,
+                PathfindingRequest,
+                RequestedAt,
+            )>()
             .insert(PathfindingRequest {
                 start_tile,
                 end_tile,
@@ -226,9 +256,31 @@ impl Movable {
         commands.entity(entity).insert(NeedsWanderTarget);
     }
 
+    /// Останавливается ВСЁ, чем пешка едет дальше: путь, тег движения и ещё не
+    /// уехавшая заявка вместе с меткой её тика.
+    ///
+    /// Заявка — потому что после перехода в `Idle` состояние уже не
+    /// `Pathfinding(end_tile)`, и ответ на неё `accept_answer`
+    /// (`pathfinding.rs`) выбросит первой же проверкой, — но выбросит ПОСЛЕ
+    /// того, как диспетчер посчитает по ней полноценный A*. Снять её может
+    /// только выдача в таск, так что оставленная заявка обязательно оплачена.
+    /// На волне успокоения (`human::behavior::flee`, `FleeAction::CalmDown`,
+    /// следом пауза 2–10 с, перезаписать её новой целью некому) это сотни
+    /// выброшенных поисков за тик.
+    ///
+    /// Метка тика уходит строго вместе с заявкой ([`RequestedAt`]): заявка без
+    /// метки для детерминированного диспетчера невидима, и пешка застыла бы
+    /// навсегда. Новую пару заводит `to_pathfinding` — вставленная заново
+    /// заявка снова взводит `Added`, и `stamp_pathfinding_requests` ставит
+    /// свежую метку.
+    ///
+    /// Запущенный поиск (`PathfindingTask`, `RetireAt`) здесь не трогается: он
+    /// уже оплачен, а его срок — часть тик-точной бухгалтерии приёмника.
     fn stop_moving(&mut self, entity: Entity, commands: &mut Commands) {
         self.path = [].into();
-        commands.entity(entity).remove::<MovableStateMovingTag>();
+        commands
+            .entity(entity)
+            .remove::<(MovableStateMovingTag, PathfindingRequest, RequestedAt)>();
     }
 }
 

@@ -299,6 +299,20 @@ counts what the player can actually see, not what the dispatcher is willing to s
   urgency from `Has<Human>` + `Has<HumanFleeTag>`, which put one species' name in seven
   movement queries and spread the rule over three modules in three polarities — and the
   third copy, in `loading::poll_warmup`, had already drifted to its own view margin.
+  **A request is cancelled only by `to_idle`** (`Movable::stop_moving` removes it together
+  with `RequestedAt`) or consumed by dispatch — nothing else takes it off. Leaving one on a
+  pawn that has gone `Idle` therefore buys a full A* whose answer `accept_answer` drops on
+  its first check, and the calm-down branch of `human::behavior::flee` used to do exactly
+  that for hundreds of pawns a tick.
+  **A re-target replaces the request, it does not overwrite it**: `to_pathfinding` removes
+  `PathfindingRequest` and `RequestedAt` and inserts a fresh request in the same command
+  chain. Both consumers — `stamp_pathfinding_requests` and `assign_destination_slots` —
+  filter on `Added<PathfindingRequest>`, and `insert` over a live component arms only
+  `Changed`, so a pawn re-targeted while queued used to keep the FIFO key of its first
+  goal and got no slot for the new one, still holding a `DestinationClaim` on the
+  abandoned point. The window is not exotic: a wanderer's request waits for the camera in
+  live mode and sits in a population-long queue in the deterministic one, and panic
+  re-targets right over it.
 - **Repath on the move** — `to_pathfinding` keeps the current path and the
   `MovableStateMovingTag`, so an entity walks its old path while the new one is
   computed; `MovableStateMovingTag` therefore means "has a path **or is coasting**",
