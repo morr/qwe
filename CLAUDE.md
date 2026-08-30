@@ -9,16 +9,45 @@ domain glossary: what a navtile, flee fan, chase claim, bridge corridor, or prun
 *is*, which invariants hold (fill order, z-ranges, SimSet ordering, telemetry math), and
 where each concept lives. Use its terms verbatim in code, commits, and test names.
 It is deliberately kept slim — terms and invariants only; the mechanisms and
-measurements behind them live in the four **domain skills** below, and each summary
-entry points at its skill. When a change introduces or retires a domain concept, update
-`CONTEXT.md` *and* the matching skill in the same change — a stale glossary is worse
-than none.
+measurements behind them live in the seven **domain skills** below, and each summary
+entry points at its skill.
+
+**A change to the domain model is a change to the agent-facing docs, in two tiers, both
+in the same change.** The paragraph above is written from the reader's side; this is the
+writer's side. **In `CONTEXT.md`** — a new term, a renamed or retired one, a changed
+invariant: the glossary is what the *next* session reads, so an old name left standing
+there is how the code ends up with two vocabularies for one thing. **In the domain skill
+that owns the area** — a new step in a mechanism, a moved responsibility, a changed
+threshold, a type that stops existing. That skill is what the next session reads
+*instead of the code*, so a rule left standing there after the code stopped obeying it is
+worse than no rule at all — and you already have the skill loaded, because touching that
+area required loading it. Nothing enforces either tier automatically: no file was edited,
+so no hook can fire.
 
 This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 
 ## Skills
 
 Skills hold the detail; this file holds the map. Load them — don't reconstruct their content from here.
+**Load the skill before the work, not before the edit**; several may apply at once (a panel row driven by a demon slider: `ui-panels` + `species-behavior`).
+
+| What you touch | Skill |
+|---|---|
+| any git operation — staging, committing, branching, rebasing, history | `git` |
+| running the app, BRP, screenshots, the trace log | `live-app` |
+| any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
+| `map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}` | `osm-map` |
+| `navigation/*`, `movement/*` (incl. separation, slots, the navtile size) | `navigation-deep` |
+| `rng.rs`, `determinism/*`, `tests/determinism.rs`, anything a replay depends on | `determinism` |
+| `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs` | `species-behavior` |
+| `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
+| `sim_time.rs` | `sim-speed` |
+| `ui/*`, `camera.rs`, `prefs.rs` | `ui-panels` |
+
+- **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
+- **Re-check the table when the work spreads to an area you didn't expect at the start** — the misses are never in the module the session is about, always in the one it drifts into (a UI change that ends up moving a threshold, a navigation fix that touches the replay contract).
+
+What each one carries, starting with the three engine-level skills:
 
 - **`git` — MANDATORY before any git operation** (staging, committing, branching, rebasing, history inspection, conflict resolution). Blocking prerequisite: do NOT run git commands until it is loaded.
 - **`live-app` — before running the app** (`cargo run`, smoke-testing in the real app, querying the live world over BRP on port 15702). The skill is engine-level and shared with zxc; **this project's inventory lives in `.claude/live-app-project.md`** (ready markers, `SimSpeed` vs `Time<Virtual>`, screenshots, camera, registered types, toggles) and `.claude/live-app.json` configures the `brp` CLI for it. Read the appendix together with the skill.
@@ -26,10 +55,13 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 
 Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
 
-**Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Load the one covering the code you are about to change; each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
+**Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
 - **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
+- **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
+- **`species-behavior` — before changing pawn behaviour** (`human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids.
+- **`world-lifecycle` — before changing how a world comes up or is torn down** (`loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs`): the states and the warmup hold, `SimBootPlugin`, the load thread, the `WorldStarted` seam and its run-state resets, restart slots, the city switch.
 - **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
 - **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `prefs.rs`): panel internals, the slider/row kits, column stacking, camera start view, persistence.
 

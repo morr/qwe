@@ -20,6 +20,29 @@ Two deep dives live next to this file and are read on demand:
 When a change here introduces or retires a concept, update the matching summary bullet
 in `CONTEXT.md` and the detail here in the same change.
 
+## Navtile size
+
+The navtile is **2 m by default and runtime-switchable to 1 m** via the `navtile:` cycler in
+the Debug tab (`NavtileBase` in `settings.rs`, persisted in prefs). Switching it reloads the
+world like a city switch, except the camera stays where it was — same city, same spot under
+inspection.
+
+**The live value is a process-global atomic**, read by `settings::navtile_size()`: background
+threads (navmesh fill, entrance generation) have no ECS access. It is written only in
+`OnEnter(Loading)`, before the load thread starts.
+
+Grid size is derived as `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m). **A filled
+`Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
+cancelled northstar build) never indexes against the switched atomic.
+
+**The northstar chunk scales with the tile** to stay 50 world metres — 25 tiles at 2 m, 50 at
+1 m. With the chunk pinned at 25 tiles a 1 m build explodes from ~14 s to ~140 s.
+
+Cost of 1 m, measured: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU, +1.6 GB RSS. A change
+to the navtile size is simulation input — it breaks a replay in flight (`determinism`).
+
+`grid.rs` holds the conversions: `world_to_tile` / `tile_center`.
+
 ## The grid navmesh
 
 - **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
@@ -142,6 +165,29 @@ in `CONTEXT.md` and the detail here in the same change.
   starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
   the resource before switching to `Playing`.
 
+## Viewport — the value the gates ask
+
+**`Viewport`** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
+`half_extent` (margin already applied) and `zoom` (world metres per logical pixel).
+`Viewport::of(window, camera_transform, screens)` is the single place that computes
+`window/2 · zoom · screens`. What a gate asks it: `contains` (**the edge counts as inside**),
+`min` / `max`, `distance_from_centre_squared`. Not Bevy's `Camera::viewport` — that one is in
+pixels.
+
+**Five gates use it and each keeps its own margin on purpose**, because each asks a different
+question:
+
+| gate | margin | why |
+|---|---|---|
+| warmup (`loading.rs::poll_warmup`) | 1.0 screens | counts what the player can actually see |
+| pathfinding dispatcher (`movement/`) | `VIEW_MARGIN` 1.2 | pawns at the edge must not stall on a small camera move |
+| separation (`movement/separation/`) | `VIEW_MARGIN` 1.2 | same reason |
+| movepath gizmos | 3.0 | debug drawing, wants context around the frame |
+| door gizmos | 1.5 | ditto |
+
+**Do not unify them.** The warmup margin in particular is deliberately the strictest: it
+counts what the player can actually see, not what the dispatcher is willing to serve early.
+
 ## Backends & the pipeline
 
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable resource, cycled
@@ -152,7 +198,8 @@ in `CONTEXT.md` and the detail here in the same change.
   (1.3 ms vs 36.4 ms mean, 15 ms vs 450 ms worst case) at ~10% longer paths. The other
   five stay switchable for comparison.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid` built
-  once from the final navmesh (after pruning; chunk 25), wrapped in `Arc`, called directly
+  once from the final navmesh (after pruning; chunk sized to 50 world metres — see *Navtile
+  size*), wrapped in `Arc`, called directly
   from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
   flat A*. The build takes **~12 s** on the 5600 × 3700 map, so it runs as an
   `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` and picked up by
@@ -168,7 +215,17 @@ in `CONTEXT.md` and the detail here in the same change.
   has, run from `Update` on a resource change.
 - **Backend** (`navigation/backend.rs`) — the active backend as one cloneable `Send`
   snapshot: the grid navmesh Arc + the selected algorithm (+ the northstar hierarchy once
-  built), or the polymesh overriding all of it. `Pathfinder::backend()` takes the live
+  built), or the polymesh overriding all of it. It is **the resource the whole simulation
+  reads** (`Res<Backend>`), seeded by `insert_backend` on `OnEnter(Playing)` — the live
+  dispatcher already runs during warmup, before any `WorldStarted` — and dropped on
+  `OnExit(Playing)` so the old city's `Arc`s go with it. **It has no `Default`, on purpose**:
+  the placeholder used to be an empty everywhere-passable grid, and a run once went through
+  buildings on it (`determinism/replay.rs`). An absent resource is loud — param validation
+  fails and the default Bevy error handler panics (tests and the replay scene set `warn`) —
+  unlike a silently wrong geometry. The cost is that **every system taking `Res<Backend>`
+  must sit in a `SimPipeline` set**, which carries the world gate (`in_world`) along with the
+  mode branch: the live pathfinding chain running in `Loading` crashed the app once.
+  `Pathfinder::backend()` takes the live
   snapshot, handed to the simulation as the `Res<Backend>` resource; the deterministic
   mode writes it once on `WorldStarted` and freezes it for the run, while the live mode
   re-takes it every frame in `PreUpdate` (`refresh_backend`); `spawn_path_task` moves it into the

@@ -10,6 +10,9 @@ Detail behind `sim_time.rs`. The summary (speed ladder, the 30× cap, SimClock) 
 (ladder 1-2-5-10-20-30); the optimization target is bigger populations, not a higher
 top speed.
 
+**Changing that mechanism is changing this file, in the same change** — a new regulator
+input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
+
 - **Speed ladder** — Space pauses, `=`/`-` walk `SPEED_LADDER`
   (1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).

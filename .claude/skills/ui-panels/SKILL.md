@@ -9,6 +9,9 @@ Detail behind `src/ui/` and `camera.rs`. The panel inventory and the UI-input ru
 in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 `CLAUDE.md` and is non-negotiable.
 
+**Changing that mechanism is changing this file, in the same change** — a new kit, a moved
+row, a retired widget. The term still goes to `CONTEXT.md`; the detail lives only here.
+
 ## Layout
 
 The UI is two layers over the map: a **HUD** that is always on screen, and **one settings
