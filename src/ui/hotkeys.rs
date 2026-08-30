@@ -54,7 +54,9 @@ fn render_hotkeys_panel(mut commands: Commands) {
                 ..default()
             },
             panel_background(),
-            // справка ничего не принимает: клики сквозь неё уходят на карту
+            // справка ничего не принимает: клики сквозь неё уходят на карту.
+            // `Pickable` не наследуется — метку несёт каждый узел справки, и
+            // одной плашки мало: под курсором оказывается ребёнок (см. цикл ниже)
             Pickable::IGNORE,
             GameUiRoot,
             Visibility::Hidden,
@@ -66,6 +68,9 @@ fn render_hotkeys_panel(mut commands: Commands) {
         let row = commands
             .spawn((
                 crate::ui::ui_row(6.),
+                // строка шире своих подписей: без метки в `HoverMap` попадала
+                // бы она, а не плашка
+                Pickable::IGNORE,
                 children![
                     (
                         Text::new(*key),
@@ -74,11 +79,43 @@ fn render_hotkeys_panel(mut commands: Commands) {
                             width: px(KEY_COLUMN_PX),
                             ..default()
                         },
+                        Pickable::IGNORE,
                     ),
-                    (Text::new(*action), ThemeTextColor(tokens::TEXT_DIM)),
+                    (
+                        Text::new(*action),
+                        ThemeTextColor(tokens::TEXT_DIM),
+                        Pickable::IGNORE,
+                    ),
                 ],
             ))
             .id();
         commands.entity(panel).add_child(row);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Справка лежит поверх карты и не принимает ничего: попади хоть один её
+    /// узел в `HoverMap`, `camera::pointer_over_ui` отдал бы ему протяжку
+    /// (`DragPan::OverUi`) и зум (`zoom_to_cursor` под `not(hovering_ui)`), а
+    /// прокручивать в справке нечего. `Pickable` не наследуется, поэтому
+    /// проверяем каждый узел, а не корень.
+    #[test]
+    fn every_node_of_the_hotkey_help_ignores_the_pointer() {
+        let mut world = World::new();
+        render_hotkeys_panel(world.commands());
+        world.flush();
+
+        let mut nodes = world.query_filtered::<Option<&Pickable>, With<Node>>();
+        assert_eq!(
+            nodes.iter(&world).count(),
+            1 + HOTKEYS.len() * 3,
+            "узлы справки: плашка, строка и две подписи на клавишу"
+        );
+        for pickable in nodes.iter(&world) {
+            assert_eq!(pickable, Some(&Pickable::IGNORE));
+        }
     }
 }
