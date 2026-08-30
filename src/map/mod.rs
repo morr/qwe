@@ -8,7 +8,7 @@ mod tram;
 pub mod trees;
 
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
-pub use self::meshing::{MeshBuilder, miter_offsets};
+pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};

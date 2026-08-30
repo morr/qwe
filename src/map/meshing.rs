@@ -526,7 +526,12 @@ pub fn miter_offsets(path: &[Vec2], closed: bool, half_width: f32) -> Vec<Vec2> 
 /// Ломаная без точек ближе `merge_distance` к предыдущей: на такой дистанции
 /// они не видны, но вырождают нормаль стыка. У замкнутой ленты так же
 /// подрезается хвост, сошедшийся с началом.
-fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<Vec2> {
+///
+/// Эпсилон выбирает потребитель, и они разные: рендеру важно «не видно»
+/// (`width / 4`, [`MeshBuilder::push_ribbon`]), полигональному навмешу — только
+/// вырожденность (`polymesh::build::DEGENERATE_SPAN`), потому что схлопывание
+/// по ширине сдвинуло бы его футпринт относительно заливки сетки.
+pub fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<Vec2> {
     let merge_distance_sq = merge_distance.powi(2);
     let mut path: Vec<Vec2> = Vec::with_capacity(points.len());
     for &point in points {
