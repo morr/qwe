@@ -4,7 +4,6 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
-use crate::grid::world_to_tile;
 use crate::map::footprint::distance_to_polyline;
 use crate::map::osm::model::{
     MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
@@ -12,8 +11,8 @@ use crate::map::osm::model::{
 use crate::settings::navtile_size;
 
 /// Стоимость шага между тайлами (для A*): прямой и диагональный.
-pub const COST_STRAIGHT: i32 = 100;
-pub const COST_DIAGONAL: i32 = 141;
+const COST_STRAIGHT: i32 = 100;
+const COST_DIAGONAL: i32 = 141;
 /// Множитель эвристики — та же шкала, что и стоимость шага.
 pub const COST_MULTIPLIER: f32 = 100.0;
 
@@ -24,6 +23,10 @@ pub const COST_MULTIPLIER: f32 = 100.0;
 /// [`navtile_size`], и всё, что работает по снапшоту (постройка northstar,
 /// отменённая при смене размера), ходит по размерам **своего** снапшота,
 /// а не по уже переключённому атомику.
+///
+/// Отсюда же и конверсии: растеризация и запросы к готовой сетке переводят
+/// мир↔тайл через [`Self::to_tile`] / [`Self::tile_center`], а не через
+/// `grid::world_to_tile` — тот считает по атомику.
 ///
 /// `Clone` — для снапшота под постройку иерархии northstar: копия сетки
 /// стоит один memcpy, а чтение оригинала под локом заняло бы все ~10 с
@@ -62,6 +65,47 @@ impl Navmesh {
         if let Some(index) = self.index(x, y) {
             self.passable[index] = value;
         }
+    }
+
+    /// Мир → тайл по размерам **своего** снапшота — пара к
+    /// [`Self::tile_center`] и та же арифметика, что в `grid::world_to_tile`,
+    /// но по `self.tile_size`. Всё, что растеризует в эту сетку или спрашивает
+    /// её о точке, ходит через них: глобальные конверсии считают по уже
+    /// переключённому атомику, и сетка, залитая при другом размере навтайла,
+    /// отвечала бы про чужой тайл (см. док типа).
+    pub fn to_tile(&self, position: Vec2) -> IVec2 {
+        (position / self.tile_size).floor().as_ivec2()
+    }
+
+    /// Центр тайла в мировых метрах — по размерам своего снапшота.
+    pub fn tile_center(&self, tile: IVec2) -> Vec2 {
+        (tile.as_vec2() + 0.5) * self.tile_size
+    }
+
+    /// Первый проходимый тайл, начиная с `from` по внутренней индексации
+    /// (`x * grid_size.y + y`) и с заворотом через конец сетки; `None` —
+    /// проходимых тайлов нет вовсе (в том числе когда сетка пуста).
+    ///
+    /// Нужен размещению населения (`human::spawn_population`) в двух ролях:
+    /// дешёвая проверка «сетка вообще не пустая» (скан обрывается на первом
+    /// же открытом тайле) и детерминированный запасной выбор, когда бюджет
+    /// случайных выборок исчерпан. Заворот — чтобы запасной выбор зависел от
+    /// последней выборки и не сваливал всё население в один тайл.
+    pub fn passable_from(&self, from: IVec2) -> Option<IVec2> {
+        let len = self.passable.len();
+        if len == 0 {
+            return None;
+        }
+        let start = self.index(from.x, from.y).unwrap_or(0);
+        (0..len).find_map(|step| {
+            let index = (start + step) % len;
+            self.passable[index].then(|| {
+                IVec2::new(
+                    index as i32 / self.grid_size.y,
+                    index as i32 % self.grid_size.y,
+                )
+            })
+        })
     }
 
     /// Соседи тайла для A*: 8 направлений, диагональ только когда оба смежных
@@ -157,13 +201,17 @@ impl Navmesh {
             .iter()
             .map(|road| (road.points.as_slice(), road.curb_reach()))
             .collect();
+        let bridge_bands = BridgeBands::build(&bridge_ways);
         let mut curb_tiles: HashMap<usize, CurbTile> = HashMap::new();
         for (index, road) in coverage.bridges().iter().enumerate() {
             let id = index as u32 + 1;
             for band in road.curb_bands() {
                 self.visit_polyline(&band.line, band.width, &mut |grid, x, y| {
                     if let Some(index) = grid.index(x, y) {
-                        push_id(&mut curb_tiles.entry(index).or_default().owners, id);
+                        let owners = &mut curb_tiles.entry(index).or_default().owners;
+                        if !owners.contains(&id) {
+                            owners.push(id);
+                        }
                     }
                 });
             }
@@ -189,7 +237,9 @@ impl Navmesh {
             });
         }
         let (grid_height, tile_size) = (self.grid_size.y, self.tile_size);
-        let tile_center = move |index: usize| -> Vec2 {
+        // центр тайла по плоскому индексу и в масштабе снапшота (`self.tile_size`) —
+        // не `crate::grid::tile_center`, читающий процессный атомик
+        let snapshot_tile_center = move |index: usize| -> Vec2 {
             let (x, y) = (index as i32 / grid_height, index as i32 % grid_height);
             (Vec2::new(x as f32, y as f32) + 0.5) * tile_size
         };
@@ -202,30 +252,32 @@ impl Navmesh {
         // Внутренние швы при этом открыты: щуп из шва попадает в соседнюю
         // ленту. Блокировка ничего не открывает сама по себе: тайл, который
         // щуп оставил открытым, может всё ещё лежать в воде
+        // Ленты берутся из [`BridgeBands`], а не перебором всех мостов:
+        // бордюрных тайлов тем больше, чем больше мостов, и перебор был
+        // квадратичным по ним
         for (&index, tile) in &curb_tiles {
             if tile.road {
                 continue;
             }
-            let center = tile_center(index);
-            let holds = tile.owners.iter().filter(|&&id| id != 0).any(|&id| {
+            let center = snapshot_tile_center(index);
+            let holds = tile.owners.iter().any(|&id| {
                 let owner = id as usize - 1;
                 let closest = closest_point_on_polyline(center, bridge_ways[owner].0);
                 let outward = (center - closest).normalize_or(Vec2::X);
                 let probe = center + outward * self.tile_size;
-                !bridge_ways.iter().enumerate().any(|(other, &(way, band))| {
-                    other != owner && distance_to_polyline(probe, way) <= band
-                })
+                !bridge_bands.covered_by_other(probe, owner)
             });
             if holds {
                 self.passable[index] = false;
             }
         }
         for road in map.roads.iter().filter(|road| road.bridge) {
-            // настил у́же полной ширины на диагональ тайла. Тайлы цепочки
-            // бордюра метятся по «осевая бордюра проходит через тайл», и на
-            // косом мосту центр такого тайла отклоняется от неё до полудиагонали
-            // (√2 м) — то есть залезает внутрь настила. Прорезка полной шириной
-            // открывала такие тайлы обратно, и барьер превращался в пунктир.
+            // прорезка не доходит до осевых бордюров (`width + curb`) на
+            // полудиагональ тайла. Тайлы цепочки бордюра метятся по «осевая
+            // бордюра проходит через тайл», и на косом мосту центр такого тайла
+            // отклоняется от неё до полудиагонали (√2 м) — то есть залезает
+            // внутрь настила. Прорезка до самой осевой открывала такие тайлы
+            // обратно, и барьер превращался в пунктир.
             // Урезание ровно на этот заход оставляет цепочку бордюра целой при
             // любом угле, а связность настила держит его собственная цепочка по
             // осевой — так же, как у тонких рек в set_polyline.
@@ -267,8 +319,8 @@ impl Navmesh {
                         continue;
                     }
                     let way = bridge_ways[tile.owners[0] as usize - 1].0;
-                    let outer = if distance_to_polyline(tile_center(side), way)
-                        >= distance_to_polyline(tile_center(vertical), way)
+                    let outer = if distance_to_polyline(snapshot_tile_center(side), way)
+                        >= distance_to_polyline(snapshot_tile_center(vertical), way)
                     {
                         side
                     } else {
@@ -301,11 +353,11 @@ impl Navmesh {
     /// заливкой (см. `row_spans`).
     fn set_area(&mut self, area: &PolyArea, value: bool) {
         let (min, max) = ring_bounds(&area.outer);
-        let min_tile = world_to_tile(min);
-        let max_tile = world_to_tile(max);
+        let min_tile = self.to_tile(min);
+        let max_tile = self.to_tile(max);
         let mut scratch = RowScratch::default();
         for y in min_tile.y.max(0)..=max_tile.y.min(self.grid_size.y - 1) {
-            row_spans(&area.outer, &area.holes, y, &mut scratch);
+            row_spans(&area.outer, &area.holes, y, self.tile_size, &mut scratch);
             for &(from, to) in &scratch.spans {
                 for x in from.max(0)..=to.min(self.grid_size.x - 1) {
                     self.set_passable(x, y, value);
@@ -417,8 +469,8 @@ impl Navmesh {
             let butt_start = index == 0 && !round_caps[0];
             let butt_end = index == last && !round_caps[1];
             let along = (to - from).normalize_or_zero();
-            let min_tile = world_to_tile(from.min(to) - width);
-            let max_tile = world_to_tile(from.max(to) + width);
+            let min_tile = self.to_tile(from.min(to) - width);
+            let max_tile = self.to_tile(from.max(to) + width);
             for x in min_tile.x.max(0)..=max_tile.x.min(grid_size.x - 1) {
                 for y in min_tile.y.max(0)..=max_tile.y.min(grid_size.y - 1) {
                     let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
@@ -455,8 +507,8 @@ impl Navmesh {
             let Some(direction) = delta.try_normalize() else {
                 continue;
             };
-            let min_tile = world_to_tile(from.min(to) - width);
-            let max_tile = world_to_tile(from.max(to) + width);
+            let min_tile = self.to_tile(from.min(to) - width);
+            let max_tile = self.to_tile(from.max(to) + width);
             for x in min_tile.x.max(0)..=max_tile.x.min(self.grid_size.x - 1) {
                 for y in min_tile.y.max(0)..=max_tile.y.min(self.grid_size.y - 1) {
                     let center = (Vec2::new(x as f32, y as f32) + 0.5) * self.tile_size;
@@ -481,8 +533,8 @@ impl Navmesh {
         to: Vec2,
         visit: &mut impl FnMut(&mut Self, i32, i32),
     ) {
-        let mut tile = world_to_tile(from);
-        let end = world_to_tile(to);
+        let mut tile = self.to_tile(from);
+        let end = self.to_tile(to);
         let delta = to - from;
 
         // t — доля отрезка; t_max — до следующей границы по оси, t_delta — шаг
@@ -517,13 +569,20 @@ impl Navmesh {
     }
 }
 
-/// Бордюрный тайл на этапе заливки. Два слота владельцев хватает: физически
-/// на одном тайле встречаются бордюры максимум двух соседних лент (проезжая
-/// часть и её тротуар).
+/// Бордюрный тайл на этапе заливки.
 #[derive(Default)]
 struct CurbTile {
-    /// Bridge-ways, чей бордюр проходит через тайл.
-    owners: [u32; 2],
+    /// Bridge-ways, чей бордюр проходит через тайл, в порядке обхода
+    /// `coverage.bridges()` — все, сколько есть, без предела.
+    ///
+    /// Предел был: два слота, «проезжая часть и её тротуар». Пара — не
+    /// максимум, а типичный случай; на узле, где сходятся несколько мостовых
+    /// way (пешеходная развязка), в один тайл приходят бордюры трёх и более
+    /// (счёт по городам — в скилле `navigation-deep`). Терять их нельзя:
+    /// решение ниже — `any` по владельцам, то есть выброшенный владелец может
+    /// только **снять** барьер, никогда не поставить, и терялся именно тот
+    /// единственный, чей щуп уходил наружу.
+    owners: Vec<u32>,
     /// Накрыт панелью примыкающей обычной дороги.
     road: bool,
 }
@@ -543,16 +602,77 @@ fn closest_point_on_polyline(point: Vec2, points: &[Vec2]) -> Vec2 {
     best
 }
 
-/// Дописывает id в первый свободный слот; дубликаты и переполнение — no-op
-/// (третий пересекающийся way не меняет исхода блокировки).
-fn push_id(slots: &mut [u32; 2], id: u32) {
-    if slots.contains(&id) {
-        return;
+/// Сторона ячейки пространственного хеша лент мостов, м. Того же порядка, что
+/// `NEARBY_CELL` у посадки деревьев (`map/osm/planting/index.rs`): в ячейке
+/// должно лежать несколько сегментов, а не весь мост и не полкарты. В
+/// `settings.rs` ей не место — от неё зависит только скорость щупа, ответ не
+/// зависит по построению (см. [`BridgeBands`]).
+const BRIDGE_BAND_CELL: f32 = 32.0;
+
+fn bridge_band_cell(point: Vec2) -> IVec2 {
+    (point / BRIDGE_BAND_CELL).floor().as_ivec2()
+}
+
+/// Отрезок осевой bridge-way вместе с полушириной его ленты
+/// (`RoadLine::curb_reach`) и номером владельца в `bridge_ways`.
+#[derive(Clone, Copy)]
+struct BridgeBand {
+    owner: u32,
+    reach: f32,
+    from: Vec2,
+    to: Vec2,
+}
+
+/// Ленты всех bridge-ways в равномерной сетке — индекс под щуп «что снаружи».
+///
+/// Щуп спрашивает одно: накрыт ли пробник лентой ЧУЖОГО way. Линейный перебор
+/// стоил «бордюрные тайлы × сегменты всех мостов», а бордюрных тайлов тем
+/// больше, чем больше мостов: на Лондоне (499 bridge-ways против 61 у Тулы) это
+/// уже квадратичный кусок заливки, и идёт он в потоке загрузки.
+///
+/// Ответ индекса **точен**, а не приближён, поэтому запрашивается ровно одна
+/// ячейка: отрезок кладётся во все ячейки своего AABB, расширенного на `reach`
+/// собственного way, значит любая точка ближе `reach` к отрезку лежит внутри
+/// этого AABB — её ячейка одна из тех, куда отрезок положен. Ни допуска, ни
+/// обхода соседних ячеек не нужно.
+struct BridgeBands(HashMap<IVec2, Vec<BridgeBand>>);
+
+impl BridgeBands {
+    /// `ways` — те же пары `(осевая, curb_reach)`, что перебирал щуп; номер в
+    /// срезе и есть владелец.
+    fn build(ways: &[(&[Vec2], f32)]) -> Self {
+        let mut cells: HashMap<IVec2, Vec<BridgeBand>> = HashMap::new();
+        for (owner, &(points, reach)) in ways.iter().enumerate() {
+            for segment in points.windows(2) {
+                let (from, to) = (segment[0], segment[1]);
+                let band = BridgeBand {
+                    owner: owner as u32,
+                    reach,
+                    from,
+                    to,
+                };
+                let lo = bridge_band_cell(from.min(to) - reach);
+                let hi = bridge_band_cell(from.max(to) + reach);
+                for x in lo.x..=hi.x {
+                    for y in lo.y..=hi.y {
+                        cells.entry(IVec2::new(x, y)).or_default().push(band);
+                    }
+                }
+            }
+        }
+        Self(cells)
     }
-    if slots[0] == 0 {
-        slots[0] = id;
-    } else if slots[1] == 0 {
-        slots[1] = id;
+
+    /// Лежит ли `probe` в ленте какого-нибудь way, кроме `owner`. Предикат
+    /// дословно тот же, что у перебора: `distance_to_polyline` — минимум по
+    /// отрезкам, а «минимум ≤ порога» и есть «нашёлся отрезок ≤ порога».
+    fn covered_by_other(&self, probe: Vec2, owner: usize) -> bool {
+        self.0.get(&bridge_band_cell(probe)).is_some_and(|bands| {
+            bands.iter().any(|band| {
+                band.owner as usize != owner
+                    && distance_to_segment(probe, band.from, band.to) <= band.reach
+            })
+        })
     }
 }
 
@@ -579,7 +699,13 @@ fn ring_crossings(ring: &[Vec2], scan_y: f32, out: &mut Vec<f32>) {
 /// Это и есть замена перебору «каждый тайл AABB × всё кольцо»: кольцо
 /// проходится один раз на строку, а не один раз на тайл. На доме разницы
 /// нет, на Темзе — три порядка (её AABB тянется через полкарты).
-fn ring_spans(ring: &[Vec2], scan_y: f32, crossings: &mut Vec<f32>, out: &mut Vec<(i32, i32)>) {
+fn ring_spans(
+    ring: &[Vec2],
+    scan_y: f32,
+    tile_size: f32,
+    crossings: &mut Vec<f32>,
+    out: &mut Vec<(i32, i32)>,
+) {
     out.clear();
     crossings.clear();
     ring_crossings(ring, scan_y, crossings);
@@ -591,7 +717,6 @@ fn ring_spans(ring: &[Vec2], scan_y: f32, crossings: &mut Vec<f32>, out: &mut Ve
     // `point_in_polygon` переключает флаг на каждом пересечении справа от
     // точки, значит внутренние отрезки — это пары [c0, c1), [c2, c3), …
     // Нечётный хвост (вырожденное кольцо) отбрасывается вместе с `chunks_exact`.
-    let tile_size = navtile_size();
     for pair in crossings.chunks_exact(2) {
         // центр тайла x — это (x + 0.5) * tile_size; ищем x с
         // pair[0] <= центр < pair[1]
@@ -619,20 +744,26 @@ struct RowScratch {
 /// even-odd совпал бы с прежней поточечной проверкой только для дырок строго
 /// внутри внешнего кольца, а кусок дырки, вылезший наружу (кривая
 /// OSM-мультиполигональная связка), он бы, наоборот, залил.
-fn row_spans(outer: &[Vec2], holes: &[Vec<Vec2>], y: i32, scratch: &mut RowScratch) {
-    let scan_y = (y as f32 + 0.5) * navtile_size();
+fn row_spans(
+    outer: &[Vec2],
+    holes: &[Vec<Vec2>],
+    y: i32,
+    tile_size: f32,
+    scratch: &mut RowScratch,
+) {
+    let scan_y = (y as f32 + 0.5) * tile_size;
     let RowScratch {
         crossings,
         spans,
         holes: hole_spans,
     } = scratch;
-    ring_spans(outer, scan_y, crossings, spans);
+    ring_spans(outer, scan_y, tile_size, crossings, spans);
 
     for hole in holes {
         if spans.is_empty() {
             return;
         }
-        ring_spans(hole, scan_y, crossings, hole_spans);
+        ring_spans(hole, scan_y, tile_size, crossings, hole_spans);
         for &(cut_from, cut_to) in hole_spans.iter() {
             let mut index = 0;
             while index < spans.len() {
@@ -678,30 +809,3 @@ impl ArcNavmesh {
 
 #[cfg(test)]
 mod tests;
-
-    /// Первый проходимый тайл, начиная с `from` по внутренней индексации
-    /// (`x * grid_size.y + y`) и с заворотом через конец сетки; `None` —
-    /// проходимых тайлов нет вовсе (в том числе когда сетка пуста).
-    ///
-    /// Нужен размещению населения (`human::spawn_population`) в двух ролях:
-    /// дешёвая проверка «сетка вообще не пустая» (скан обрывается на первом
-    /// же открытом тайле) и детерминированный запасной выбор, когда бюджет
-    /// случайных выборок исчерпан. Заворот — чтобы запасной выбор зависел от
-    /// последней выборки и не сваливал всё население в один тайл.
-    pub fn passable_from(&self, from: IVec2) -> Option<IVec2> {
-        let len = self.passable.len();
-        if len == 0 {
-            return None;
-        }
-        let start = self.index(from.x, from.y).unwrap_or(0);
-        (0..len).find_map(|step| {
-            let index = (start + step) % len;
-            self.passable[index].then(|| {
-                IVec2::new(
-                    index as i32 / self.grid_size.y,
-                    index as i32 % self.grid_size.y,
-                )
-            })
-        })
-    }
-

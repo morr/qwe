@@ -1,15 +1,16 @@
 use crate::map::osm::model::point_in_polygon;
 
 use super::*;
+use crate::grid::world_to_tile;
 use crate::map::footprint::bridge_curb_width;
 use crate::map::osm::fixture::{bridge, building, culvert, passage, rect, stream, street};
-use crate::settings::PASSAGE_MAX_WIDTH;
+use crate::settings::{MAP_SIZE, PASSAGE_MAX_WIDTH};
 
 /// Тайлы строки `y`, залитые построчной заливкой. Отрезки обрезаются по
 /// ширине проверяемой полосы — как `set_area` обрезает их по сетке.
 fn scanline_row(outer: &[Vec2], holes: &[Vec<Vec2>], y: i32, width: i32) -> Vec<i32> {
     let mut scratch = RowScratch::default();
-    row_spans(outer, holes, y, &mut scratch);
+    row_spans(outer, holes, y, navtile_size(), &mut scratch);
     scratch
         .spans
         .iter()
@@ -363,6 +364,48 @@ fn a_bridge_junction_is_not_walled_by_the_other_ways_curb() {
     assert!(passable_at(Vec2::new(130.0, 120.0)), "настил второго way");
 }
 
+/// Узел, в котором сходятся три мостовых way, — не редкость, а обычная
+/// пешеходная развязка: в кешах Лондона таких бордюрных тайлов 528 из 19 278
+/// (до семи владельцев на тайл), в Нью-Йорке 1 064, в Токио 148. Владельцев
+/// тайла надо держать всех: решение — `any` по ним, и выброшенный владелец
+/// может только снять барьер. Здесь щупы первых двух way попадают в ленты
+/// друг друга (внутренний шов, барьер не держат), а щуп третьего уходит в
+/// пустоту — тайл на клину между ветками обязан быть непроходим. На двух
+/// слотах владельцев третий терялся, и на этом месте в перилах оставалась
+/// дыра.
+#[test]
+fn a_curb_tile_keeps_the_owner_that_holds_it_at_a_three_way_junction() {
+    let node = Vec2::new(100.0, 101.0);
+    let mut map = MapData::default();
+    for end in [
+        Vec2::new(110.0, 91.0),
+        Vec2::new(110.0, 111.0),
+        Vec2::new(110.0, 121.0),
+    ] {
+        map.roads.push(bridge(vec![node, end], 3.5));
+    }
+
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+
+    let passable_at = |point: Vec2| {
+        let tile = world_to_tile(point);
+        navmesh.is_passable(tile.x, tile.y)
+    };
+    assert!(
+        !passable_at(Vec2::new(103.0, 101.0)),
+        "внешний бордюр третьего way на клину развязки"
+    );
+    assert!(passable_at(node), "узел развязки");
+    for point in [
+        Vec2::new(105.0, 96.0),
+        Vec2::new(105.0, 106.0),
+        Vec2::new(105.0, 111.0),
+    ] {
+        assert!(passable_at(point), "настил ветки у {point}");
+    }
+}
+
 /// Ширина арки ограничена: `service` шириной 5 м не должен вырезать по
 /// тайлу фасада с каждой стороны проёма.
 #[test]
@@ -466,3 +509,116 @@ fn passable_from_wraps_past_the_start() {
     );
 }
 
+/// Сетка с чужим размером тайла: снапшот вдвое мельче текущего атомика.
+/// Заливка обязана считать по нему — иначе дом ляжет не туда, где он стоит.
+fn half_scale_navmesh(side: i32) -> Navmesh {
+    let grid_size = IVec2::splat(side);
+    Navmesh {
+        passable: vec![true; (grid_size.x * grid_size.y) as usize],
+        grid_size,
+        tile_size: navtile_size() / 2.0,
+    }
+}
+
+/// Площадная заливка (вода и дома — основной объём) идёт по `tile_size`
+/// **своего** снапшота, а не по процессному атомику: иначе `Navmesh`, залитый
+/// при одном размере навтайла, растеризует дом в масштабе другого.
+#[test]
+fn set_area_rasterises_by_the_navmesh_own_tile_size() {
+    let mut navmesh = half_scale_navmesh(64);
+    let tile_size = navmesh.tile_size;
+    let area = building(rect(Vec2::new(10.0, 10.0), Vec2::new(30.0, 20.0)), vec![]);
+
+    navmesh.set_area(&area, false);
+
+    for x in 0..navmesh.grid_size.x {
+        for y in 0..navmesh.grid_size.y {
+            let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
+            assert_eq!(
+                navmesh.is_passable(x, y),
+                !point_in_polygon(center, &area.outer),
+                "тайл ({x}, {y}), центр {center:?}"
+            );
+        }
+    }
+}
+
+/// То же для ленты: границы перебора и — главное — стартовый тайл цепочки по
+/// осевой (`visit_segment_tiles`) берутся из снапшота. По атомику стена уехала
+/// бы в другую строку сетки целиком.
+#[test]
+fn set_polyline_rasterises_by_the_navmesh_own_tile_size() {
+    let mut navmesh = half_scale_navmesh(64);
+    let tile_size = navmesh.tile_size;
+    let (from, to) = (Vec2::new(10.0, 10.0), Vec2::new(30.0, 10.0));
+
+    navmesh.set_polyline(&[from, to], 2.0, false);
+
+    let tile_at = |point: Vec2| (point / tile_size).floor().as_ivec2();
+    for point in [Vec2::new(20.0, 9.5), Vec2::new(20.0, 10.5)] {
+        let tile = tile_at(point);
+        assert!(
+            !navmesh.is_passable(tile.x, tile.y),
+            "лента стены в точке {point:?}"
+        );
+    }
+    for point in [Vec2::new(20.0, 5.5), Vec2::new(20.0, 14.5)] {
+        let tile = tile_at(point);
+        assert!(
+            navmesh.is_passable(tile.x, tile.y),
+            "земля в стороне от стены, {point:?}"
+        );
+    }
+}
+
+/// Индекс лент мостов обязан отвечать **ровно** то же, что линейный перебор
+/// всех bridge-ways, который он заменил: щуп «что снаружи» решает, какой
+/// бордюр останется барьером, и любое расхождение — это либо дыра в перилах,
+/// либо мост, перегороженный собственным бордюром. Сцена держит все случаи,
+/// на которых индекс мог бы соврать: вплотную идущий тротуар, излом осевой,
+/// поперечный мост, мост в другой ячейке хеша и мост у самого начала координат
+/// (щуп уходит в отрицательные координаты — там `floor` и `as_ivec2`
+/// расходятся).
+#[test]
+fn the_bridge_band_index_answers_exactly_like_the_linear_scan() {
+    let v = Vec2::new;
+    let roads = [
+        bridge(vec![v(100.0, 100.0), v(160.0, 100.0)], 8.0),
+        bridge(vec![v(100.0, 107.0), v(160.0, 107.0)], 3.5),
+        bridge(vec![v(160.0, 100.0), v(200.0, 130.0), v(240.0, 130.0)], 8.0),
+        bridge(vec![v(130.0, 60.0), v(130.0, 140.0)], 5.0),
+        bridge(vec![v(0.0, 3.0), v(40.0, 3.0)], 8.0),
+        bridge(vec![v(900.0, 900.0), v(940.0, 980.0)], 16.0),
+    ];
+    let ways: Vec<(&[Vec2], f32)> = roads
+        .iter()
+        .map(|road| (road.points.as_slice(), road.curb_reach()))
+        .collect();
+    let bands = BridgeBands::build(&ways);
+    // предикат до фикса, слово в слово
+    let linear = |probe: Vec2, owner: usize| {
+        ways.iter()
+            .enumerate()
+            .any(|(other, &(way, band))| other != owner && distance_to_polyline(probe, way) <= band)
+    };
+    let mut probes: Vec<Vec2> = Vec::new();
+    for step_x in -15..130 {
+        for step_y in -15..80 {
+            probes.push(v(step_x as f32 * 2.0, step_y as f32 * 2.0));
+        }
+    }
+    for step_x in 435..485 {
+        for step_y in 435..495 {
+            probes.push(v(step_x as f32 * 2.0, step_y as f32 * 2.0));
+        }
+    }
+    for owner in 0..ways.len() {
+        for &probe in &probes {
+            assert_eq!(
+                bands.covered_by_other(probe, owner),
+                linear(probe, owner),
+                "щуп {probe:?} от владельца {owner}"
+            );
+        }
+    }
+}
