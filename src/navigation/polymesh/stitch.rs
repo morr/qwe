@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 
-use super::seams::quantized;
+use super::seams::node_world;
 use super::{ChunkComponents, ChunkGraph, GraphNode, from_poly, to_poly};
 
 /// Компоненты связности слоя: flood fill по соседству полигонов через общие
@@ -83,23 +83,35 @@ fn shared_polygon(layer: &polyanya::Layer, first: usize, second: usize) -> Optio
     shared_polygon_excluding(layer, first, second, usize::MAX)
 }
 
-/// Есть ли между вершинами **ребро**, а не просто общий полигон: в кольце
-/// полигона они должны стоять рядом. Ровно так ребро видит и поиск —
-/// разделённые третьей вершиной концы никакого перехода не дают.
-fn shared_edge(layer: &polyanya::Layer, first: usize, second: usize) -> bool {
-    let Some(vertex) = layer.vertices.get(first) else {
-        return false;
-    };
-    vertex.polygons.iter().any(|&polygon| {
-        polygon != u32::MAX
-            && layer.polygons.get(polygon as usize).is_some_and(|ring| {
-                let ring = &ring.vertices;
-                (0..ring.len()).any(|at| {
-                    let pair = (ring[at] as usize, ring[(at + 1) % ring.len()] as usize);
-                    pair == (first, second) || pair == (second, first)
+/// Полигон, в кольце которого эти две вершины стоят **рядом**, — то есть
+/// полигон по нашу сторону настоящего ребра между ними, а не просто общий.
+/// Ровно так ребро видит и поиск: `successors` переносит его через ребро, обе
+/// вершины которого держат один чужой полигон, и разделённые третьей вершиной
+/// концы никакого перехода не дают.
+///
+/// Считать можно только до сшивки: она метит индексы номером слоя.
+fn shared_edge_polygon(layer: &polyanya::Layer, first: usize, second: usize) -> Option<usize> {
+    layer
+        .vertices
+        .get(first)?
+        .polygons
+        .iter()
+        .find(|&&polygon| {
+            polygon != u32::MAX
+                && layer.polygons.get(polygon as usize).is_some_and(|ring| {
+                    let ring = &ring.vertices;
+                    (0..ring.len()).any(|at| {
+                        let pair = (ring[at] as usize, ring[(at + 1) % ring.len()] as usize);
+                        pair == (first, second) || pair == (second, first)
+                    })
                 })
-            })
-    })
+        })
+        .map(|&polygon| polygon as usize)
+}
+
+/// Есть ли между вершинами **ребро**, а не просто общий полигон.
+fn shared_edge(layer: &polyanya::Layer, first: usize, second: usize) -> bool {
+    shared_edge_polygon(layer, first, second).is_some()
 }
 
 /// То же, но мимо заданного полигона — для обхода соседей: у ребра их два, и
@@ -127,6 +139,14 @@ fn shared_polygon_excluding(
 /// совпадать; допуск покрывает только потерю точности f32 при переносе в
 /// локальные координаты чанка.
 pub const SEAM_EPSILON: f32 = 1e-3;
+
+/// Совпадают ли две точки шва в пределах допуска. Именованный предикат, а не
+/// сравнение на месте: допуск задан в метрах, а сравнивается квадрат
+/// расстояния, и описка `<= SEAM_EPSILON` в одной из копий сдвинула бы допуск
+/// молча.
+fn same_point(one: Vec2, two: Vec2) -> bool {
+    one.distance_squared(two) <= SEAM_EPSILON * SEAM_EPSILON
+}
 
 /// Итог разбора непарных вершин одного шва.
 struct Unstitched {
@@ -170,8 +190,10 @@ fn unstitchable(
 ) -> Unstitched {
     let at_corner = |layer: usize, list: &[usize], corner: Vec2| -> Option<usize> {
         list.iter().copied().find(|&vertex| {
-            from_poly(mesh.layers[layer].vertices[vertex].coords).distance_squared(corner)
-                <= SEAM_EPSILON * SEAM_EPSILON
+            same_point(
+                from_poly(mesh.layers[layer].vertices[vertex].coords),
+                corner,
+            )
         })
     };
     let corner_pair = |corner: Vec2| -> Option<(usize, usize)> {
@@ -262,21 +284,14 @@ fn strictly_inside(from: Vec2, to: Vec2, point: Vec2) -> bool {
     ratio > margin && ratio < 1.0 - margin
 }
 
-/// Сшивка соседних чанков и граф уровня 1 одним проходом.
-///
-/// Пары вершин ищутся **по совпадению мировых координат**, а не `zip`'ом
-/// отсортированных списков, как в примере из тестов polyanya: zip парует по
-/// порядку вдоль кромки и молча спарит не то, если с одной стороны вершин
-/// окажется больше.
-///
-/// `stitch_at_vertices` зовётся ровно один раз на весь меш: он метит индексы
-/// номером слоя через `+=`, и второй вызов пометил бы их повторно.
-pub(super) fn stitch_chunks(
-    mesh: &mut polyanya::Mesh,
-    grid: UVec2,
-    chunk_size: Vec2,
+/// Узлы графа уровня 1: по одному на компоненту связности каждого чанка.
+/// Центроид компоненты лежит в координатах слоя, узел — в мировых, поэтому к
+/// нему прибавляется `offset` слоя. Возвращает и таблицу «чанк → номера его
+/// узлов», которой сшивка адресует рёбра.
+fn graph_nodes(
+    mesh: &polyanya::Mesh,
     components: &[ChunkComponents],
-) -> ChunkGraph {
+) -> (Vec<Vec<u32>>, Vec<GraphNode>) {
     let mut node_of: Vec<Vec<u32>> = Vec::with_capacity(components.len());
     let mut nodes: Vec<GraphNode> = Vec::new();
     for (chunk, chunk_components) in components.iter().enumerate() {
@@ -294,13 +309,35 @@ pub(super) fn stitch_chunks(
             .collect();
         node_of.push(ids);
     }
+    (node_of, nodes)
+}
 
+/// Сшивка соседних чанков и граф уровня 1 одним проходом.
+///
+/// Пары вершин ищутся **по совпадению мировых координат**, а не `zip`'ом
+/// отсортированных списков, как в примере из тестов polyanya: zip парует по
+/// порядку вдоль кромки и молча спарит не то, если с одной стороны вершин
+/// окажется больше.
+///
+/// `stitch_at_vertices` зовётся ровно один раз на весь меш: он метит индексы
+/// номером слоя через `+=`, и второй вызов пометил бы их повторно.
+pub(super) fn stitch_chunks(
+    mesh: &mut polyanya::Mesh,
+    grid: UVec2,
+    chunk_size: Vec2,
+    components: &[ChunkComponents],
+) -> ChunkGraph {
+    let (node_of, nodes) = graph_nodes(mesh, components);
     let mut edges: Vec<Vec<(u32, f32)>> = vec![Vec::new(); nodes.len()];
-    // сколько вершин шва связывает пару компонент. Одной мало: polyanya
-    // переносит поиск через общее РЕБРО, а соприкосновение в точке она не
-    // пройдёт — а граф на таком ребре пообещает проход, и запрос выжжет весь
-    // бюджет итераций, разворачивая фронт по всему коридору
-    let mut touching: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    // пары компонент, у которых есть общий ОТРЕЗОК шва. Одного достаточно и
+    // один же необходим: polyanya переносит поиск через общее ребро, а
+    // соприкосновение в точке (или в двух точках по разные стороны
+    // препятствия) она не пройдёт — граф, пообещавший там проход, выжжет весь
+    // бюджет итераций, разворачивая фронт по всему коридору. Отсюда множество,
+    // а не счётчик: порога «сколько отрезков» здесь нет и заводить его не надо,
+    // а точечное касание отсекается само — одна общая вершина не даёт ни
+    // одного окна `windows(2)` со смежностью в кольце (см. ниже)
+    let mut touching: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     let mut stitches: Vec<((u8, u8), Vec<(usize, usize)>)> = Vec::new();
     let mut seam_vertices = 0;
     let mut weak_seams = 0;
@@ -324,12 +361,8 @@ pub(super) fn stitch_chunks(
             {
                 // общая кромка одна и та же для обоих соседей — слои живут в
                 // мировых координатах, локальных больше нет
-                let node = |node_x: u32, node_y: u32| {
-                    Vec2::new(
-                        quantized(node_x as f32 * chunk_size.x),
-                        quantized(node_y as f32 * chunk_size.y),
-                    )
-                };
+                let node =
+                    |node_x: u32, node_y: u32| node_world(UVec2::new(node_x, node_y), chunk_size);
                 let (start, end) = if along_y {
                     (node(x + 1, y), node(x + 1, y + 1))
                 } else {
@@ -348,11 +381,8 @@ pub(super) fn stitch_chunks(
                 // связывает несимметрично, поэтому здесь они пропускаются, а
                 // сшиваются отдельным проходом всеми парами сразу (см. ниже).
                 let corners = [start, end];
-                let on_corner = |world: Vec2| {
-                    corners
-                        .iter()
-                        .any(|corner| corner.distance_squared(world) <= SEAM_EPSILON * SEAM_EPSILON)
-                };
+                let on_corner =
+                    |world: Vec2| corners.iter().any(|&corner| same_point(corner, world));
                 let mut pairs = Vec::new();
                 // вершины, оставшиеся без пары, — вместе со слоем, у которого
                 // их нет. Считаются с обеих сторон: чей слой оказался богаче на
@@ -364,9 +394,10 @@ pub(super) fn stitch_chunks(
                         continue;
                     }
                     let matched = there.iter().find(|&&other| {
-                        from_poly(mesh.layers[neighbour].vertices[other].coords)
-                            .distance_squared(world)
-                            <= SEAM_EPSILON * SEAM_EPSILON
+                        same_point(
+                            from_poly(mesh.layers[neighbour].vertices[other].coords),
+                            world,
+                        )
                     });
                     let Some(&other) = matched else {
                         lonely.push((world, neighbour));
@@ -413,20 +444,27 @@ pub(super) fn stitch_chunks(
                 // соприкоснувшихся в точке (или в двух точках по разные
                 // стороны препятствия), проход не даёт. Граф, пообещавший
                 // такой проход, стоит очень дорого: коридор построен, а цели
-                // в нём не достичь, и запрос выжигает весь бюджет итераций,
-                // разворачивая фронт на гигабайты.
+                // в нём не достичь.
                 //
-                // Вершины идут вдоль шва по порядку (`get_vertices_on_segment`
-                // сортирует), так что соседние в списке и есть концы отрезка;
-                // отрезок свободен ровно тогда, когда обе его вершины лежат в
-                // одном полигоне — то есть у него есть общее ребро.
+                // Вершины идут вдоль шва по порядку
+                // (`get_vertices_on_segment` сортирует), но **соседние в
+                // списке пар — не всегда соседние на шве**: в список не
+                // попадают непарные вершины, а `unstitched.dropped` выкидывает
+                // из него ещё и отменённые стежки. На такой дыре «обе вершины
+                // лежат в одном полигоне» врёт: кольцо одного выпуклого
+                // полигона держит весь участок целиком, и признак дал бы ребро
+                // через несшитый отрезок. Поэтому спрашивается смежность в
+                // кольце — ровно то, что ищет `successors` и проверяет
+                // `verify_seams`. На здоровом шве это то же самое: полигоны
+                // выпуклы после `merge_polygons`, и вершины на прямой шва
+                // стоят в кольце подряд.
                 for window in pairs.windows(2) {
                     let [(here_from, there_from), (here_to, there_to)] = window else {
                         continue;
                     };
                     let (Some(polygon_here), Some(polygon_there)) = (
-                        shared_polygon(&mesh.layers[chunk], *here_from, *here_to),
-                        shared_polygon(&mesh.layers[neighbour], *there_from, *there_to),
+                        shared_edge_polygon(&mesh.layers[chunk], *here_from, *here_to),
+                        shared_edge_polygon(&mesh.layers[neighbour], *there_from, *there_to),
                     ) else {
                         continue;
                     };
@@ -436,12 +474,10 @@ pub(super) fn stitch_chunks(
                     ) else {
                         continue;
                     };
-                    *touching
-                        .entry((
-                            node_of[chunk][from as usize],
-                            node_of[neighbour][to as usize],
-                        ))
-                        .or_insert(0) += 1;
+                    touching.insert((
+                        node_of[chunk][from as usize],
+                        node_of[neighbour][to as usize],
+                    ));
                 }
                 if pairs.len() < 2 {
                     weak_seams += 1;
@@ -467,10 +503,7 @@ pub(super) fn stitch_chunks(
     // вокруг точки снова замкнуто.
     for node_y in 0..=grid.y {
         for node_x in 0..=grid.x {
-            let world = Vec2::new(
-                quantized(node_x as f32 * chunk_size.x),
-                quantized(node_y as f32 * chunk_size.y),
-            );
+            let world = node_world(UVec2::new(node_x, node_y), chunk_size);
             let mut sharing: Vec<(u8, usize)> = Vec::new();
             for (dx, dy) in [(-1i32, -1i32), (0, -1), (-1, 0), (0, 0)] {
                 let (cell_x, cell_y) = (node_x as i32 + dx, node_y as i32 + dy);
@@ -478,9 +511,10 @@ pub(super) fn stitch_chunks(
                     continue;
                 }
                 let chunk = (cell_y as u32 * grid.x + cell_x as u32) as usize;
-                let found = mesh.layers[chunk].vertices.iter().position(|vertex| {
-                    from_poly(vertex.coords).distance_squared(world) <= SEAM_EPSILON * SEAM_EPSILON
-                });
+                let found = mesh.layers[chunk]
+                    .vertices
+                    .iter()
+                    .position(|vertex| same_point(from_poly(vertex.coords), world));
                 if let Some(vertex) = found {
                     // та же побитовая привязка, что и на самом шве
                     mesh.layers[chunk].vertices[vertex].coords = to_poly(world);
@@ -500,14 +534,13 @@ pub(super) fn stitch_chunks(
 
     // порядок обхода `touching` — это порядок рёбер в списках смежности, а он
     // разрешает ничьи в поиске: два равных по стоимости коридора выбираются
-    // тем, чьё ребро легло раньше. `std::HashMap` перемешивает обход своим
+    // тем, чьё ребро легло раньше. `std::HashSet` перемешивает обход своим
     // случайным `RandomState`, то есть от запуска к запуску, — сортировка по
     // ключу делает граф (а с ним и найденные пути) воспроизводимым
-    let mut touching: Vec<((u32, u32), u32)> = touching.into_iter().collect();
-    touching.sort_unstable_by_key(|&(pair, _)| pair);
+    let mut touching: Vec<(u32, u32)> = touching.into_iter().collect();
+    touching.sort_unstable();
 
-    for ((from, to), segments) in touching {
-        debug_assert!(segments > 0);
+    for (from, to) in touching {
         let weight = nodes[from as usize]
             .center
             .distance(nodes[to as usize].center);
@@ -539,38 +572,8 @@ pub(super) fn stitch_chunks(
     if split_edges > 0 {
         warn!("polymesh: {split_edges} seam segments left unstitched — see stitch_chunks");
     }
-    // Сообщение длинное сознательно: его читает не только человек, но и агент,
-    // которому скормили лог падения, — и по нему должно быть видно, что именно
-    // сломано, чем это грозит, что чинить и чем воспроизвести без приложения.
     #[cfg(debug_assertions)]
-    if let Some((point, blind, rich)) = first_split {
-        let cell = |chunk: usize| UVec2::new(chunk as u32 % grid.x, chunk as u32 / grid.x);
-        let (blind, rich) = (cell(blind), cell(rich));
-        panic!(
-            "polymesh: BROKEN CHUNK SEAM GEOMETRY — {split_edges} seam segment(s) had to be \
-             left unstitched, first at {point} between chunks {rich} and {blind}.\n\
-             WHAT HAPPENED: chunk {rich} has a vertex strictly inside a seam segment that chunk \
-             {blind} keeps as one whole edge, and {rich} holds both ends of that segment in a \
-             single polygon. Stitching those ends would give {blind}'s edge a crossing into \
-             {rich} that {rich}'s own two halves cannot answer — a ONE-WAY SEAM (see \
-             `verify_seams`), on which polyanya's funnel stops converging and one query eats \
-             memory until the process is killed. `stitch_chunks` defended itself by not \
-             stitching that segment: the seam is a wall there, the mesh is safe but poorer.\n\
-             WHAT TO FIX: the per-chunk geometry, so both neighbours cut their shared border at \
-             the same points — `chunk_layer` (i_overlay clip plus `Triangulation::simplify`, \
-             both computed per chunk) and `seam_points` (the global crossings, the only part \
-             that is shared today). Do NOT 'fix' this by deleting this assert, by widening \
-             `SEAM_EPSILON`, or by stitching the segment anyway.\n\
-             NOT THIS FAILURE: an unpaired seam vertex on its own is normal — it means the \
-             neighbour has a wall there and nothing to pair with; those are counted separately \
-             in the `seam vertices face a wall on the other side` debug line.\n\
-             REPRODUCE OFFLINE, no app needed:\n\
-             cargo run --release --example polymesh_seam_audit -- <agent radius>\n\
-             It prints, per radius, every unpaired seam vertex with its coordinates and both \
-             chunks, what each side has within 2 m of it, and where obstacle contours cross \
-             that seam line."
-        );
-    }
+    panic_on_split_seam(first_split, split_edges, grid);
     if !stitches.is_empty() {
         // ровно один вызов на весь меш: он метит индексы номером слоя через
         // `+=`, и второй вызов пометил бы их повторно
@@ -587,6 +590,44 @@ pub(super) fn stitch_chunks(
     }
 }
 
+/// Разбитый шов: постройка спаслась, не сшив отрезок, но геометрия сломана — в
+/// отладочной сборке это повод остановиться. Сообщение длинное сознательно: его
+/// читает не только человек, но и агент, которому скормили лог падения, — и по
+/// нему должно быть видно, что именно сломано, чем это грозит, что чинить и чем
+/// воспроизвести без приложения.
+#[cfg(debug_assertions)]
+fn panic_on_split_seam(first_split: Option<(Vec2, usize, usize)>, split_edges: usize, grid: UVec2) {
+    let Some((point, blind, rich)) = first_split else {
+        return;
+    };
+    let cell = |chunk: usize| UVec2::new(chunk as u32 % grid.x, chunk as u32 / grid.x);
+    let (blind, rich) = (cell(blind), cell(rich));
+    panic!(
+        "polymesh: BROKEN CHUNK SEAM GEOMETRY — {split_edges} seam segment(s) had to be \
+         left unstitched, first at {point} between chunks {rich} and {blind}.\n\
+         WHAT HAPPENED: chunk {rich} has a vertex strictly inside a seam segment that chunk \
+         {blind} keeps as one whole edge, and {rich} holds both ends of that segment in a \
+         single polygon. Stitching those ends would give {blind}'s edge a crossing into \
+         {rich} that {rich}'s own two halves cannot answer — a ONE-WAY SEAM (see \
+         `verify_seams`), on which polyanya's funnel stops converging and one query eats \
+         memory until the process is killed. `stitch_chunks` defended itself by not \
+         stitching that segment: the seam is a wall there, the mesh is safe but poorer.\n\
+         WHAT TO FIX: the per-chunk geometry, so both neighbours cut their shared border at \
+         the same points — `chunk_layer` (i_overlay clip plus `Triangulation::simplify`, \
+         both computed per chunk) and `seam_points` (the global crossings, the only part \
+         that is shared today). Do NOT 'fix' this by deleting this assert, by widening \
+         `SEAM_EPSILON`, or by stitching the segment anyway.\n\
+         NOT THIS FAILURE: an unpaired seam vertex on its own is normal — it means the \
+         neighbour has a wall there and nothing to pair with; those are counted separately \
+         in the `seam vertices face a wall on the other side` debug line.\n\
+         REPRODUCE OFFLINE, no app needed:\n\
+         cargo run --release --example polymesh_seam_audit -- <agent radius>\n\
+         It prints, per radius, every unpaired seam vertex with its coordinates and both \
+         chunks, what each side has within 2 m of it, and where obstacle contours cross \
+         that seam line."
+    );
+}
+
 /// Проверка сшивки, только в отладочной сборке: **каждый шов обязан быть
 /// двусторонним**.
 ///
@@ -600,8 +641,7 @@ pub(super) fn stitch_chunks(
 /// уронить постройку здесь с внятным сообщением, чем ловить это потом.
 #[cfg(debug_assertions)]
 fn verify_seams(mesh: &polyanya::Mesh) {
-    let layer_of = |packed: u32| (packed >> 24) as usize;
-    let index_of = |packed: u32| (packed & 0x00FF_FFFF) as usize;
+    use super::{layer_of, polygon_of};
 
     for (index, layer) in mesh.layers.iter().enumerate() {
         for (number, polygon) in layer.polygons.iter().enumerate() {
@@ -620,7 +660,7 @@ fn verify_seams(mesh: &polyanya::Mesh) {
                     continue;
                 };
                 let other = &mesh.layers[layer_of(across)];
-                let ring_there = &other.polygons[index_of(across)].vertices;
+                let ring_there = &other.polygons[polygon_of(across)].vertices;
                 let mirrored = (0..ring_there.len()).any(|at| {
                     let one = other.vertices[ring_there[at] as usize].coords;
                     let two =
@@ -635,10 +675,73 @@ fn verify_seams(mesh: &polyanya::Mesh) {
                      chunks cut their shared border differently (see SEAM_QUANTUM, seam_points)",
                     from_poly(here.coords),
                     from_poly(next.coords),
-                    index_of(across),
+                    polygon_of(across),
                     layer_of(across),
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Дыра в списке пар — выброшенный стежок (`unstitchable`) или непарная
+    /// вершина — делает соседние в списке вершины НЕсоседними на шве. Общий
+    /// полигон у них при этом остаётся: кольцо одного выпуклого полигона
+    /// держит весь участок целиком. Ребро графа уровня 1 обязано считаться по
+    /// кольцу, иначе оно обещает переход через несшитый отрезок — `successors`
+    /// его не находит, `bounded_path` отдаёт `None`, и пешка с оптимальным
+    /// маршрутом через этот шов навсегда получает `PathfindingError`.
+    #[test]
+    fn a_gap_in_the_seam_pair_list_is_not_a_graph_edge() {
+        // один выпуклый полигон, у которого сторона на шве (x = 100) разбита
+        // на три ребра четырьмя коллинеарными вершинами
+        let corners = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(100.0, 0.0),
+            Vec2::new(100.0, 10.0),
+            Vec2::new(100.0, 20.0),
+            Vec2::new(100.0, 30.0),
+            Vec2::new(0.0, 30.0),
+        ];
+        let vertices = corners
+            .iter()
+            .map(|&point| polyanya::Vertex::new(to_poly(point), vec![0, u32::MAX]))
+            .collect();
+        let ring = (0..corners.len() as u32).collect();
+        let layer = polyanya::Layer::new(vertices, vec![polyanya::Polygon::new(ring, false)])
+            .expect("layer");
+
+        // вершины 1 и 4 — концы дыры: соседние в отфильтрованном списке пар,
+        // но на шве между ними ещё две вершины
+        assert!(
+            shared_polygon(&layer, 1, 4).is_some(),
+            "признак «общий полигон» на дыре даёт ложное «отрезок свободен»"
+        );
+        assert!(
+            shared_edge_polygon(&layer, 1, 4).is_none(),
+            "через несшитый участок шва перехода нет — ребра графа быть не должно"
+        );
+        assert_eq!(
+            shared_edge_polygon(&layer, 1, 2),
+            Some(0),
+            "соседние на шве вершины по-прежнему дают ребро"
+        );
+    }
+
+    /// `same_point` сравнивает квадрат расстояния с квадратом допуска, то есть
+    /// сам допуск — метры (`SEAM_EPSILON`), а не `SEAM_EPSILON²`.
+    #[test]
+    fn the_seam_tolerance_is_a_distance_not_its_square() {
+        let origin = Vec2::ZERO;
+        assert!(same_point(origin, Vec2::new(SEAM_EPSILON * 0.9, 0.0)));
+        assert!(!same_point(origin, Vec2::new(SEAM_EPSILON * 1.1, 0.0)));
+        // а квадрат допуска (1e-6 м) — это не допуск: такая точка ещё «та же»
+        assert!(same_point(
+            origin,
+            Vec2::new(SEAM_EPSILON * SEAM_EPSILON, 0.0)
+        ));
     }
 }

@@ -9,14 +9,15 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 
-use super::seams::{SeamPoints, chunk_outline, quantized, seam_points};
+use super::seams::{SeamPoints, chunk_outline, node_world, quantized, seam_points};
 use super::stitch::{components_of, stitch_chunks};
-use super::{
-    ChunkComponents, PolymeshBuild, PolymeshInput, SEARCH_DELTA, SEARCH_STEPS, chunk_grid,
-};
-use crate::map::miter_offsets;
+use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid, to_poly};
+use crate::map::footprint::CurbCoverage;
 use crate::map::osm::model::signed_ring_area;
-use crate::settings::MAP_SIZE;
+use crate::map::{merge_close_points, miter_offsets};
+use crate::settings::{
+    MAP_SIZE, POLYMESH_MAP_EDGE_MARGIN, POLYMESH_SEARCH_DELTA, POLYMESH_SEARCH_STEPS,
+};
 
 /// Упрощение контуров препятствий (Visvalingam–Whyatt внутри polyanya),
 /// метры. Не косметика: boolean оставляет отрезки в доли миллиметра, CDT на
@@ -24,16 +25,20 @@ use crate::settings::MAP_SIZE;
 /// `examples/polymesh_bench`, без упрощения прогон встаёт на 40-м запросе.
 const SIMPLIFY_EPSILON: f32 = 0.05;
 
-/// Насколько прямоугольник клипа ШИРЕ границы карты. Препятствия обрезаются
-/// снаружи от внешней границы триангуляции, а не внутрь: втянутый клип
-/// оставлял бы вдоль кромки карты проходимую щель шириной в отступ, и путь
-/// обходил бы по ней реку, упирающуюся в границу. Пересечение препятствием
-/// внешней границы polyanya переваривает: проходимость треугольника — точечный
-/// `contains` центра (внутри exterior и вне колец препятствий), так что
-/// треугольники за границей непроходимы сами по себе, а клип лишь не даёт
-/// хвостам OSM-геометрии за bbox раздувать триангуляцию
-/// (`polyanya::input/triangulation.rs::as_layer`).
-const MAP_EDGE_MARGIN: f32 = 10.0;
+/// Шаг ломаной, ниже которого точка схлопывается с предыдущей перед
+/// miter-офсетом, метры. На нулевом шаге `miter_offsets` подставляет запасную
+/// ось `Vec2::X` вместо нормали, и офсет вершины разворачивается — до 180° и до
+/// `MITER_LIMIT · half_width` длиной. Нулевой шаг здесь берётся не из OSM (на
+/// семи кешах ни одного дубля подряд, минимальный шаг 1.3 см), а из f32: сетка
+/// i_overlay мельче шага f32 на масштабе карты, поэтому микроребро boolean
+/// (те самые «доли миллиметра» из [`SIMPLIFY_EPSILON`]) приходит парой
+/// одинаковых вершин, а бордюрная полоса моста — производная от тех же
+/// офсетов — на Париже уже даёт шаг 0.49 мм. Сантиметр: тот же порядок, что у
+/// `SEAM_QUANTUM` («на порядок больше разрешения f32 на краю карты»), впятеро
+/// мельче упрощения и на два порядка мельче навтайла, так что оба заполнения
+/// остаются согласованными. Эпсилон рендера (`width / 4`) сюда не годится: на
+/// primary это 4 м, и футпринт меша уехал бы от футпринта сетки.
+const DEGENERATE_SPAN: f32 = 0.01;
 
 /// Весь конвейер: контуры препятствий → boolean → CDT polyanya. `None` —
 /// постройку отменили; проверки стоят перед каждым долгим шагом, внутрь
@@ -46,6 +51,134 @@ pub(super) fn build_polymesh(
 ) -> Option<PolymeshBuild> {
     let is_cancelled = || cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed));
 
+    let coverage = CurbCoverage::build(&input.roads);
+    let blockers = blocker_contours(input, &coverage);
+    let carves = carve_contours(input, &coverage);
+
+    if is_cancelled() {
+        return None;
+    }
+    // union(blockers) − union(carves) одним difference: NonZero при единой
+    // закрутке контуров объединяет внутри subject и внутри clip сам
+    let shapes = blockers.overlay(&carves, OverlayRule::Difference, FillRule::NonZero);
+    let margin = POLYMESH_MAP_EDGE_MARGIN;
+    let rect = vec![vec![
+        [-margin, -margin],
+        [MAP_SIZE.x + margin, -margin],
+        [MAP_SIZE.x + margin, MAP_SIZE.y + margin],
+        [-margin, MAP_SIZE.y + margin],
+    ]];
+    let shapes = shapes.overlay(&rect, OverlayRule::Intersect, FillRule::NonZero);
+    if is_cancelled() {
+        return None;
+    }
+
+    // Радиус агента отрабатывается ЗДЕСЬ, а не в polyanya.
+    //
+    // `Triangulation::set_agent_radius` раздувает каждое кольцо препятствия
+    // независимо (`input/triangulation.rs::inflate_obstacles` — `.map()` по
+    // interiors) и **не объединяет** результат. На карте города это всегда
+    // невалидный вход: соседние дома стоят в 30–40 см, раздутые на 0.2 м
+    // контуры пересекаются, и CDT получает самопересекающийся набор
+    // ограничений. Смежность в таком меше перестаёт соответствовать
+    // геометрии, и воронка поиска на нём зацикливается — замерено на
+    // `examples/polymesh_bench`: с радиусом 0.2 запрос №131 висит вечно и
+    // съедает всю память, с радиусом 0 те же 300 запросов проходят.
+    //
+    // Свой офсет плюс union даёт снова непересекающийся набор: union заодно
+    // разрешает самопересечения, которые miter даёт на острых вогнутых углах.
+    let inflated: Vec<Vec<[f32; 2]>> = shapes
+        .iter()
+        // контур 0 — внешний; дыры результата difference — карманы, см. выше
+        .filter_map(|shape| shape.first())
+        .map(|contour| {
+            let ring: Vec<Vec2> = contour.iter().map(|&p| Vec2::new(p[0], p[1])).collect();
+            if agent_radius > 0.0 {
+                oriented(inflate_ring(&ring, agent_radius))
+            } else {
+                oriented(ring)
+            }
+        })
+        // после схлопывания обмылок boolean может не дотянуть до трёх вершин —
+        // он и до этого ничего не блокировал, но в overlay ему делать нечего
+        .filter(|contour| contour.len() >= 3)
+        .collect();
+    let nothing: Vec<Vec<[f32; 2]>> = Vec::new();
+    let shapes = inflated.overlay(&nothing, OverlayRule::Subject, FillRule::NonZero);
+    if is_cancelled() {
+        return None;
+    }
+
+    // контуры придержаны для оверлея: polyanya хранит только проходимые
+    // полигоны, а закрасить надо непроходимое — и закрасить именно то, что
+    // блокирует на самом деле, то есть уже раздутое
+    let obstacles: Vec<Vec<Vec2>> = shapes
+        .iter()
+        .filter_map(|shape| shape.first())
+        .map(|contour| contour.iter().map(|&p| Vec2::new(p[0], p[1])).collect())
+        .collect();
+
+    let grid = chunk_grid(MAP_SIZE, chunk_meters);
+    let chunk_size = MAP_SIZE / grid.as_vec2();
+    let layers = chunk_layers(&shapes, grid, chunk_size, is_cancelled)?;
+    if is_cancelled() {
+        return None;
+    }
+
+    // компоненты считаются ДО сшивки: она метит индексы в `vertex.polygons`
+    // номером слоя, и обход по ним после неё уедет за границы своего слоя
+    let components: Vec<ChunkComponents> = layers.iter().map(components_of).collect();
+
+    let mut mesh = polyanya::Mesh {
+        layers,
+        ..Default::default()
+    };
+    // строго после слияния и строго ДО сшивки: `Layer::bake` требует
+    // несшитый слой, а `merge_polygons` начинается с `unbake`.
+    //
+    // Без bake меш только рисуется: поиску он даёт линейный скан по всем
+    // полигонам на каждый конец запроса вместо BVH.
+    let baking = Instant::now();
+    mesh.bake();
+    info!("polymesh baked in {:?}", baking.elapsed());
+    if is_cancelled() {
+        return None;
+    }
+
+    let stitching = Instant::now();
+    let graph = stitch_chunks(&mut mesh, grid, chunk_size, &components);
+    info!(
+        "polymesh stitched: {} seam vertices, {} component nodes, {} edges, {:?}",
+        graph.seam_vertices,
+        graph.nodes.len(),
+        graph.edges.iter().map(Vec::len).sum::<usize>(),
+        stitching.elapsed()
+    );
+
+    // допуск посадки концов запроса на меш. Дефолт polyanya —
+    // `search_delta 0.1 × (search_steps 2 − 1)` = 0.1 м, вдвое меньше
+    // минимального радиуса агента, и этого не хватает: цель прогулки — вершина контура здания
+    // (`human::pick_building_ahead`), а сетка объявляет тайл проходимым, если
+    // его центр вне полигона хоть на сантиметр. Раздутый на радиус контур
+    // такой центр накрывает, и цель оказывается вне меша. Замерено на Туле:
+    // с дефолтным допуском отказывало 96% запросов против 3.5% у сетки.
+    mesh.set_search_delta(POLYMESH_SEARCH_DELTA);
+    mesh.set_search_steps(POLYMESH_SEARCH_STEPS);
+    Some(PolymeshBuild {
+        mesh,
+        obstacles,
+        grid,
+        chunk_size,
+        components,
+        graph,
+    })
+}
+
+/// Контуры, которые БЛОКИРУЮТ: здания и вода со своими дырами, русла
+/// некульвертных водотоков, стены и внешние бордюры мостов. Порядок накопления
+/// — часть контракта: объединение и вычитание прорезов идут одним `overlay` в
+/// [`build_polymesh`].
+fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec<[f32; 2]>> {
     let mut blockers: Vec<Vec<[f32; 2]>> = Vec::new();
     // дыры колец идут в объединение обратным обходом: NonZero вычитает их из
     // внешнего кольца ровно так же, как сеточный `row_spans` вычитает их
@@ -90,7 +223,6 @@ pub(super) fn build_polymesh(
     // накрыто соседней лентой, и есть внутренний шов, остальное — внешняя
     // граница composite-моста. Мостов на карте десятки, так что N разностей
     // дешевле одного union зданий.
-    let coverage = crate::map::footprint::CurbCoverage::build(&input.roads);
     let bridges = coverage.bridges();
     let bands: Vec<Vec<[f32; 2]>> = bridges
         .iter()
@@ -114,7 +246,13 @@ pub(super) fn build_polymesh(
             blockers.extend(shape);
         }
     }
+    blockers
+}
 
+/// Контуры, которые ПРОРЕЗАЮТ блокирующие: настилы мостов, примыкающие к ним
+/// дороги и проезды-арки.
+fn carve_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec<[f32; 2]>> {
+    let bridges = coverage.bridges();
     let mut carves: Vec<Vec<[f32; 2]>> = Vec::new();
     for road in bridges {
         // настил — ровно проезжая часть, как её рисует рендер
@@ -141,69 +279,17 @@ pub(super) fn build_polymesh(
             push_contour(&mut carves, ring);
         }
     }
+    carves
+}
 
-    if is_cancelled() {
-        return None;
-    }
-    // union(blockers) − union(carves) одним difference: NonZero при единой
-    // закрутке контуров объединяет внутри subject и внутри clip сам
-    let shapes = blockers.overlay(&carves, OverlayRule::Difference, FillRule::NonZero);
-    let margin = MAP_EDGE_MARGIN;
-    let rect = vec![vec![
-        [-margin, -margin],
-        [MAP_SIZE.x + margin, -margin],
-        [MAP_SIZE.x + margin, MAP_SIZE.y + margin],
-        [-margin, MAP_SIZE.y + margin],
-    ]];
-    let shapes = shapes.overlay(&rect, OverlayRule::Intersect, FillRule::NonZero);
-    if is_cancelled() {
-        return None;
-    }
-
-    // Радиус агента отрабатывается ЗДЕСЬ, а не в polyanya.
-    //
-    // `Triangulation::set_agent_radius` раздувает каждое кольцо препятствия
-    // независимо (`input/triangulation.rs::inflate_obstacles` — `.map()` по
-    // interiors) и **не объединяет** результат. На карте города это всегда
-    // невалидный вход: соседние дома стоят в 30–40 см, раздутые на 0.2 м
-    // контуры пересекаются, и CDT получает самопересекающийся набор
-    // ограничений. Смежность в таком меше перестаёт соответствовать
-    // геометрии, и воронка поиска на нём зацикливается — замерено на
-    // `examples/polymesh_bench`: с радиусом 0.2 запрос №131 висит вечно и
-    // съедает всю память, с радиусом 0 те же 300 запросов проходят.
-    //
-    // Свой офсет плюс union даёт снова непересекающийся набор: union заодно
-    // разрешает самопересечения, которые miter даёт на острых вогнутых углах.
-    let inflated: Vec<Vec<[f32; 2]>> = shapes
-        .iter()
-        // контур 0 — внешний; дыры результата difference — карманы, см. выше
-        .filter_map(|shape| shape.first())
-        .map(|contour| {
-            let ring: Vec<Vec2> = contour.iter().map(|&p| Vec2::new(p[0], p[1])).collect();
-            if agent_radius > 0.0 {
-                oriented(inflate_ring(&ring, agent_radius))
-            } else {
-                oriented(ring)
-            }
-        })
-        .collect();
-    let nothing: Vec<Vec<[f32; 2]>> = Vec::new();
-    let shapes = inflated.overlay(&nothing, OverlayRule::Subject, FillRule::NonZero);
-    if is_cancelled() {
-        return None;
-    }
-
-    // контуры придержаны для оверлея: polyanya хранит только проходимые
-    // полигоны, а закрасить надо непроходимое — и закрасить именно то, что
-    // блокирует на самом деле, то есть уже раздутое
-    let obstacles: Vec<Vec<Vec2>> = shapes
-        .iter()
-        .filter_map(|shape| shape.first())
-        .map(|contour| contour.iter().map(|&p| Vec2::new(p[0], p[1])).collect())
-        .collect();
-
-    let grid = chunk_grid(MAP_SIZE, chunk_meters);
-    let chunk_size = MAP_SIZE / grid.as_vec2();
+/// Нарезка на слои: внешние контуры со своими bbox, глобальные точки швов, по
+/// слою на чанк. `None` — постройку отменили посреди цикла.
+fn chunk_layers(
+    shapes: &[Vec<Vec<[f32; 2]>>],
+    grid: UVec2,
+    chunk_size: Vec2,
+    is_cancelled: impl Fn() -> bool,
+) -> Option<Vec<polyanya::Layer>> {
     let chunking = Instant::now();
     // внешние контуры со своими bbox — по ним чанк отбирает то, что его
     // вообще задевает
@@ -246,57 +332,7 @@ pub(super) fn build_polymesh(
         grid.y,
         chunking.elapsed()
     );
-    if is_cancelled() {
-        return None;
-    }
-
-    // компоненты считаются ДО сшивки: она метит индексы в `vertex.polygons`
-    // номером слоя, и обход по ним после неё уедет за границы своего слоя
-    let components: Vec<ChunkComponents> = layers.iter().map(components_of).collect();
-
-    let mut mesh = polyanya::Mesh {
-        layers,
-        ..Default::default()
-    };
-    // строго после слияния и строго ДО сшивки: `Layer::bake` требует
-    // несшитый слой, а `merge_polygons` начинается с `unbake`.
-    //
-    // Без bake меш только рисуется: поиску он даёт линейный скан по всем
-    // полигонам на каждый конец запроса вместо BVH.
-    let baking = Instant::now();
-    mesh.bake();
-    info!("polymesh baked in {:?}", baking.elapsed());
-    if is_cancelled() {
-        return None;
-    }
-
-    let stitching = Instant::now();
-    let graph = stitch_chunks(&mut mesh, grid, chunk_size, &components);
-    info!(
-        "polymesh stitched: {} seam vertices, {} component nodes, {} edges, {:?}",
-        graph.seam_vertices,
-        graph.nodes.len(),
-        graph.edges.iter().map(Vec::len).sum::<usize>(),
-        stitching.elapsed()
-    );
-
-    // допуск посадки концов запроса на меш. Дефолт polyanya —
-    // `search_delta 0.1 × search_steps 2` = 0.2 м, ровно вровень с радиусом
-    // агента, и этого не хватает: цель прогулки — вершина контура здания
-    // (`human::pick_building_ahead`), а сетка объявляет тайл проходимым, если
-    // его центр вне полигона хоть на сантиметр. Раздутый на радиус контур
-    // такой центр накрывает, и цель оказывается вне меша. Замерено на Туле:
-    // с дефолтным допуском отказывало 96% запросов против 3.5% у сетки.
-    mesh.set_search_delta(SEARCH_DELTA);
-    mesh.set_search_steps(SEARCH_STEPS);
-    Some(PolymeshBuild {
-        mesh,
-        obstacles,
-        grid,
-        chunk_size,
-        components,
-        graph,
-    })
+    Some(layers)
 }
 
 /// Один чанк: препятствия, обрезанные его прямоугольником, триангулированные в
@@ -313,14 +349,8 @@ fn chunk_layer(
     chunk_size: Vec2,
     seams: &SeamPoints,
 ) -> polyanya::Layer {
-    let origin = Vec2::new(
-        quantized(cell.x as f32 * chunk_size.x),
-        quantized(cell.y as f32 * chunk_size.y),
-    );
-    let far = Vec2::new(
-        quantized((cell.x + 1) as f32 * chunk_size.x),
-        quantized((cell.y + 1) as f32 * chunk_size.y),
-    );
+    let origin = node_world(cell, chunk_size);
+    let far = node_world(cell + UVec2::ONE, chunk_size);
     let rect = vec![vec![
         [origin.x, origin.y],
         [far.x, origin.y],
@@ -352,7 +382,7 @@ fn chunk_layer(
         triangulation.add_obstacle(
             contour
                 .iter()
-                .map(|&point| polyanya_glam::Vec2::new(quantized(point[0]), quantized(point[1]))),
+                .map(|&[x, y]| to_poly(Vec2::new(quantized(x), quantized(y)))),
         );
     }
     // а вот упрощение обязательно, и это проверено: без него те же 300
@@ -372,8 +402,14 @@ fn chunk_layer(
 /// Кольцо, смещённое наружу на `distance`, тем же miter-офсетом, которым
 /// строятся ленты дорог. Сторона выбирается по площади: у смещённого наружу
 /// кольца она по модулю больше, и это не зависит от исходной закрутки.
-fn inflate_ring(ring: &[Vec2], distance: f32) -> Vec<Vec2> {
-    let offsets = miter_offsets(ring, true, distance);
+///
+/// Кольцо приходит из boolean, а i_overlay отдаёт f32 с шага мельче, чем f32
+/// различает на масштабе карты: микроребро становится парой одинаковых вершин,
+/// и без схлопывания ([`DEGENERATE_SPAN`]) угол на ней не раздувается, а
+/// срезается внутрь барьера на весь радиус агента.
+pub(super) fn inflate_ring(ring: &[Vec2], distance: f32) -> Vec<Vec2> {
+    let ring = merge_close_points(ring, true, DEGENERATE_SPAN);
+    let offsets = miter_offsets(&ring, true, distance);
     let shift = |sign: f32| -> Vec<Vec2> {
         ring.iter()
             .zip(&offsets)
@@ -419,13 +455,20 @@ fn push_hole(target: &mut Vec<Vec<[f32; 2]>>, ring: Vec<Vec2>) {
 }
 
 /// Замкнутый контур ленты постоянной ширины вдоль открытой ломаной:
-/// `p + o` вперёд, `p − o` в обратном порядке. Та же кромка, что у
-/// `RoadJoin::Miter`-отрисовки и у бордюров в заливке сетки.
-fn ribbon_outline(path: &[Vec2], width: f32) -> Option<Vec<Vec2>> {
+/// `p + o` вперёд, `p − o` в обратном порядке. Те же офсеты и те же ширины
+/// футпринта, что у `RoadJoin::Miter`-отрисовки и у бордюров в заливке сетки, —
+/// но по сырой осевой: рендер рисует свою сглаженную копию (`map::footprint`,
+/// док модуля), поэтому вершина в вершину лента совпадает только без
+/// сглаживания.
+///
+/// Вырожденные шаги схлопываются ([`DEGENERATE_SPAN`]) — иначе нулевой сегмент
+/// разворачивает офсет на стыке.
+pub(super) fn ribbon_outline(path: &[Vec2], width: f32) -> Option<Vec<Vec2>> {
+    let path = merge_close_points(path, false, DEGENERATE_SPAN);
     if path.len() < 2 {
         return None;
     }
-    let offsets = miter_offsets(path, false, width / 2.0);
+    let offsets = miter_offsets(&path, false, width / 2.0);
     let mut ring: Vec<Vec2> = path
         .iter()
         .zip(&offsets)

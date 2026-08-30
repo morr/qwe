@@ -1,5 +1,13 @@
-//! Швы между чанками: подразбиение общих кромок, компоненты связности слоя и
-//! сшивка соседних слоёв в один меш с графом переходов.
+//! Геометрия общей кромки чанков: подразбиение стороны, пересечения контуров
+//! препятствий с линиями сетки и готовый контур чанка для CDT.
+//!
+//! Фаза **до** триангуляции: `chunk_outline` отдаёт
+//! `Triangulation::from_outer_edges` внешний контур, в котором обе стороны шва
+//! получают одинаковый набор вершин — только на таком контуре соседние слои
+//! потом сходятся по общим рёбрам, а не по точкам. Сама сшивка — компоненты
+//! связности слоя и сборка слоёв в один меш с графом переходов — живёт в
+//! [`super::stitch`] и работает, когда все слои уже построены; округление на
+//! общую сетку (`SEAM_QUANTUM`) она берёт отсюда.
 
 use bevy::prelude::*;
 
@@ -35,6 +43,26 @@ pub const SEAM_QUANTUM: f32 = 0.01;
 
 pub(super) fn quantized(value: f32) -> f32 {
     (value / SEAM_QUANTUM).round() * SEAM_QUANTUM
+}
+
+/// Мировая координата узла сетки чанков вдоль одной оси — **функция от номера
+/// узла**, а не от координат чанка.
+///
+/// Единственное место, где это произведение считается. Побитовое совпадение
+/// всех сторон шва — несущий инвариант (почему именно — у [`seam_point`]), а
+/// пока выражение одно, он держится построением, а не дисциплиной: у левого
+/// соседа кромка не может выйти как `origin + size`, а у правого как
+/// `(node + 1) * size`.
+pub(super) fn node_coord(node: u32, size: f32) -> f32 {
+    quantized(node as f32 * size)
+}
+
+/// Мировая точка узла сетки чанков: [`node_coord`] по обеим осям.
+pub(super) fn node_world(node: UVec2, chunk_size: Vec2) -> Vec2 {
+    Vec2::new(
+        node_coord(node.x, chunk_size.x),
+        node_coord(node.y, chunk_size.y),
+    )
 }
 
 /// Точка подразбиения кромки чанка — **функция от номера узла сетки и номера
@@ -93,7 +121,7 @@ pub(super) fn seam_points(
             let a = Vec2::from(contour[index]);
             let b = Vec2::from(contour[(index + 1) % contour.len()]);
             for node in 0..=grid.x {
-                let line = quantized(node as f32 * chunk_size.x);
+                let line = node_coord(node, chunk_size.x);
                 if min.x > line || max.x < line {
                     continue;
                 }
@@ -102,7 +130,7 @@ pub(super) fn seam_points(
                 }
             }
             for node in 0..=grid.y {
-                let line = quantized(node as f32 * chunk_size.y);
+                let line = node_coord(node, chunk_size.y);
                 if min.y > line || max.y < line {
                     continue;
                 }
@@ -122,10 +150,7 @@ pub(super) fn seam_points(
 /// Внутренние точки одной стороны чанка: подразбиение плюс пересечения
 /// препятствий с этой линией сетки. Оба конца исключены — их ставит кольцо.
 fn side_points(node: u32, span: f32, steps: u32, crossings: &[f32]) -> Vec<f32> {
-    let (low, high) = (
-        quantized(node as f32 * span),
-        quantized((node + 1) as f32 * span),
-    );
+    let (low, high) = (node_coord(node, span), node_coord(node + 1, span));
     let mut points: Vec<f32> = (1..steps)
         .map(|step| quantized(seam_point(node, step, steps, span)))
         .collect();
@@ -166,12 +191,7 @@ pub(super) fn chunk_outline(
             &seams.vertical[node_x as usize],
         )
     };
-    let corner = |node_x: u32, node_y: u32| {
-        Vec2::new(
-            quantized(node_x as f32 * chunk_size.x),
-            quantized(node_y as f32 * chunk_size.y),
-        )
-    };
+    let corner = |node_x: u32, node_y: u32| node_world(UVec2::new(node_x, node_y), chunk_size);
 
     let (low_x, low_y) = (cell.x, cell.y);
     let (high_x, high_y) = (cell.x + 1, cell.y + 1);
@@ -202,4 +222,42 @@ pub(super) fn chunk_outline(
             .map(|y| Vec2::new(corner(low_x, 0).x, y)),
     );
     outline.into_iter().map(to_poly).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Общая кромка двух соседей должна быть **побитово** одинаковой: поиск
+    /// сверяет концы интервала воронки с координатами вершин точным
+    /// равенством, и расхождение в младшем разряде на каждом шве не даёт ей
+    /// сходиться (см. `seam_point`). Тест держит инвариант со стороны
+    /// результата: слева кромка считается как дальняя сторона чанка 0, справа
+    /// — как ближняя сторона чанка 1, и наборы обязаны совпасть до бита.
+    #[test]
+    fn neighbouring_chunks_share_the_seam_bit_for_bit() {
+        let chunk_size = Vec2::new(413.7, 271.3);
+        let seams = seam_points(&[], UVec2::new(2, 1), chunk_size);
+        let line = node_coord(1, chunk_size.x);
+        let on_seam = |cell: UVec2| -> Vec<u32> {
+            let mut ys: Vec<u32> = chunk_outline(cell, chunk_size, &seams)
+                .into_iter()
+                .filter(|point| point.x.to_bits() == line.to_bits())
+                .map(|point| point.y.to_bits())
+                .collect();
+            ys.sort_unstable();
+            ys
+        };
+        let left = on_seam(UVec2::new(0, 0));
+        assert!(
+            left.len() > 2,
+            "кромка должна быть подразбита, а не только по углам: {}",
+            left.len()
+        );
+        assert_eq!(
+            left,
+            on_seam(UVec2::new(1, 0)),
+            "у соседей разные числа на общей кромке — воронка не сойдётся"
+        );
+    }
 }

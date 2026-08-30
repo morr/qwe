@@ -1,6 +1,10 @@
+use super::build::{inflate_ring, ribbon_outline};
 use super::*;
 use crate::map::osm::model::{RoadClass, WaterKind};
-use crate::settings::MAP_SIZE;
+use crate::settings::{
+    MAP_SIZE, POLYMESH_CHUNK_TARGET_METERS, POLYMESH_FLAT_CHUNK_METERS, POLYMESH_SEARCH_DELTA,
+    POLYMESH_SEARCH_STEPS,
+};
 
 /// Сторона чанка для тестов иерархии: по умолчанию она больше карты
 /// (`CHUNK_TARGET_METERS`), то есть швов нет вовсе и проверять было бы
@@ -228,6 +232,18 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
     assert_eq!(path.first(), Some(&bank));
     assert!(path.last().expect("непустой путь").distance(island) < 1.0);
 }
+/// Раскладка упакованного индекса полигона (`layer_of`/`polygon_of`): старшие
+/// 8 бит — слой, младшие 24 — номер полигона внутри слоя. На ней стоит потолок
+/// `MAX_CHUNKS`, и её же читают `locate`, `segment_clear` и `verify_seams`.
+#[test]
+fn a_packed_polygon_index_splits_into_layer_and_number() {
+    let packed = ((MAX_CHUNKS - 1) << 24) | 0x00AB_CDEF;
+    assert_eq!(layer_of(packed), (MAX_CHUNKS - 1) as usize);
+    assert_eq!(polygon_of(packed), 0x00AB_CDEF);
+    // плоский меш — слой 0, номер полигона идёт как есть
+    assert_eq!(layer_of(7), 0);
+    assert_eq!(polygon_of(7), 7);
+}
 
 /// Чанк, целиком накрытый препятствием, даёт слой без единого полигона — на
 /// Нью-Йорке таких четыре (река, сплошная застройка). `Layer::bake` на нём
@@ -271,5 +287,163 @@ fn a_chunk_fully_covered_by_an_obstacle_builds_an_empty_layer() {
     assert!(
         find_path_polymesh(&mesh, from, to).is_some(),
         "пустой слой не должен ломать поиск в остальной карте"
+    );
+}
+
+/// Обе стороны чанка означают ровно то, что про них написано в `settings.rs`:
+/// «чанк размером с мир» — один слой без швов, штатная сторона — иерархия,
+/// влезающая в 8-битный индекс слоя (`MAX_CHUNKS`, он остался здесь).
+#[test]
+fn chunk_sides_mean_what_the_settings_say() {
+    assert_eq!(
+        chunk_grid(MAP_SIZE, Some(POLYMESH_FLAT_CHUNK_METERS)),
+        UVec2::ONE,
+        "плоская сторона обязана давать один слой"
+    );
+    let grid = chunk_grid(MAP_SIZE, Some(POLYMESH_CHUNK_TARGET_METERS));
+    assert!(grid.element_product() > 1, "штатная сторона даёт иерархию");
+    assert!(
+        grid.element_product() <= MAX_CHUNKS,
+        "сетка чанков обязана влезать в потолок слоёв"
+    );
+}
+
+/// Сторона чанка приходит снаружи — из `QWE_POLYMESH_CHUNK_M` для офлайн-прогонов
+/// и параметром из тестов, — и вырожденное значение обязано откатываться к
+/// дефолту, а не выдавать сетку в `u32::MAX` чанков: `map / 0` даёт `inf`,
+/// `as_uvec2` насыщается, а произведение `u32` заворачивается ровно под потолок
+/// `MAX_CHUNKS` и объявляет, что «уложились».
+#[test]
+fn a_degenerate_chunk_side_falls_back_to_the_default_grid() {
+    let default = chunk_grid(MAP_SIZE, Some(POLYMESH_CHUNK_TARGET_METERS));
+    assert!(
+        default.element_product() <= MAX_CHUNKS,
+        "дефолтная сторона обязана укладываться в потолок слоёв, вышло {default}"
+    );
+
+    for bad in [0.0, -400.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(
+            chunk_grid(MAP_SIZE, Some(bad)),
+            default,
+            "сторона {bad} — не длина, берётся {POLYMESH_CHUNK_TARGET_METERS} м"
+        );
+    }
+
+    // положительная, но мельче пола — это всё-таки просьба «мельче»: сторона
+    // поднимается до CHUNK_MIN_METERS, и потолок слоёв всё равно держится
+    for tiny in [f32::MIN_POSITIVE, 1e-30, 0.001, 0.5] {
+        let grid = chunk_grid(MAP_SIZE, Some(tiny));
+        assert!(
+            (1..=MAX_CHUNKS).contains(&grid.element_product()),
+            "сторона {tiny} м дала сетку {grid}"
+        );
+    }
+
+    // верхний конец не зажат: плоский слой строится тем же путём
+    assert_eq!(
+        chunk_grid(MAP_SIZE, Some(POLYMESH_FLAT_CHUNK_METERS)),
+        UVec2::ONE,
+        "сторона больше карты обязана давать один слой без швов"
+    );
+}
+
+/// Продублированный узел не имеет права двигать кромку ленты. Без схлопывания
+/// нулевой сегмент подставляет в `miter_offsets` запасную ось `Vec2::X`: у
+/// ленты, идущей на запад, офсет на этой вершине разворачивается на 180°,
+/// кромки меняются местами и кольцо складывается бабочкой.
+#[test]
+fn a_duplicated_node_does_not_flip_the_ribbon_edge() {
+    let start = Vec2::new(1000.0, 750.0);
+    let node = Vec2::new(500.0, 750.0);
+    let end = Vec2::new(0.0, 750.0);
+    assert_eq!(
+        ribbon_outline(&[start, node, node, end], 6.0),
+        ribbon_outline(&[start, node, end], 6.0),
+        "дубль узла обязан схлопнуться до исходной ломаной"
+    );
+}
+
+/// Путь, весь уместившийся в одну точку, ленты не даёт: после схлопывания в
+/// нём меньше двух вершин, и офсеты считать не по чему.
+#[test]
+fn a_path_collapsing_to_one_point_gives_no_ribbon() {
+    let point = Vec2::new(10.0, 10.0);
+    assert!(ribbon_outline(&[point, point], 6.0).is_none());
+}
+
+/// То же для кольца из boolean: i_overlay считает в целочисленной сетке мельче
+/// шага f32 на масштабе карты, поэтому микроребро приходит парой одинаковых
+/// вершин. На такой паре угол не раздувается биссектрисой, а срезается — ровно
+/// на радиус агента внутрь барьера.
+#[test]
+fn a_repeated_ring_vertex_does_not_dent_the_inflated_contour() {
+    let corner = Vec2::new(100.0, 0.0);
+    let far = Vec2::new(100.0, 100.0);
+    let near = Vec2::new(0.0, 100.0);
+    assert_eq!(
+        inflate_ring(&[Vec2::ZERO, corner, corner, far, near], 0.2),
+        inflate_ring(&[Vec2::ZERO, corner, far, near], 0.2),
+        "повторённая вершина обязана схлопнуться до исходного кольца"
+    );
+}
+
+/// Старт, не севший на меш, остаётся в полилинии **своей точкой**. Иначе второй
+/// точкой пути идёт первый waypoint воронки, посчитанный от посадки, и пешка
+/// шагает к нему по отрезку, который не проверял никто: воронка гарантирует
+/// свои звенья, `smoothed` — только срезы.
+#[test]
+fn a_snapped_start_stays_in_the_path_as_its_own_waypoint() {
+    let building = PolyArea {
+        outer: vec![
+            Vec2::new(1000.0, 1000.0),
+            Vec2::new(1040.0, 1000.0),
+            Vec2::new(1040.0, 1030.0),
+            Vec2::new(1000.0, 1030.0),
+        ],
+        holes: vec![],
+        kind: crate::map::osm::model::AreaKind::Building,
+        height: None,
+        entrances: vec![],
+    };
+    let input = PolymeshInput {
+        buildings: vec![building],
+        water: vec![],
+        water_lines: vec![],
+        walls: vec![],
+        roads: vec![],
+    };
+    let mesh = build_polymesh(&input, 1.0, None, None).expect("not cancelled");
+
+    // в полуметре от стены при радиусе агента 1 м — внутри инфляции
+    let from = Vec2::new(999.5, 1015.0);
+    let to = Vec2::new(960.0, 1015.0);
+    assert!(!mesh.contains(from), "старт обязан быть вне меша");
+
+    let path = find_path_polymesh(&mesh, from, to).expect("на запад путь свободен");
+    assert_eq!(
+        path.first(),
+        Some(&from),
+        "контракт: путь начинается там, где пешка стоит"
+    );
+    let snapped = path[1];
+    assert!(
+        mesh.contains(snapped),
+        "вторая точка обязана лежать на меше: {snapped:?}"
+    );
+    let tolerance = POLYMESH_SEARCH_DELTA * (POLYMESH_SEARCH_STEPS - 1) as f32;
+    assert!(
+        snapped.distance(from) <= tolerance + 1.0e-3,
+        "второй точкой идёт посадка старта, а не waypoint воронки: {} м",
+        snapped.distance(from)
+    );
+
+    // старт на меше лишней точки не порождает: посадка вернула его же
+    let free = Vec2::new(990.0, 1015.0);
+    assert!(mesh.contains(free));
+    let straight = find_path_polymesh(&mesh, free, to).expect("на запад путь свободен");
+    assert_eq!(straight.first(), Some(&free));
+    assert!(
+        straight[1].distance(free) > tolerance,
+        "дубля стартовой точки быть не должно: {straight:?}"
     );
 }

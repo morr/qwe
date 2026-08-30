@@ -3,12 +3,23 @@
 
 use bevy::prelude::*;
 
-use super::{PolymeshBuild, from_poly, to_poly};
+use super::{PolymeshBuild, from_poly, layer_of, polygon_of, to_poly};
 
 /// Путь по полигональному мешу от точки к точке, **включая стартовую** —
 /// таков контракт `movement::listen_for_pathfinding_tasks`, унаследованный от
 /// сеточного поиска (первый waypoint отбрасывается, единственный означает
 /// «уже на месте»). У polyanya `Path::path` старта не содержит.
+///
+/// Если старт пришлось сажать на меш (`locate`), посадка входит в полилинию
+/// **своей точкой**, сразу за сырым `from`. Иначе первым звеном шёл бы отрезок
+/// от места, которого на меше нет, до waypoint'а воронки, посчитанного от
+/// посадки, — то есть звено, которого не проверял никто: воронка отвечает за
+/// свои звенья, `smoothed` — только за срезы. Так непроверенным остаётся ровно
+/// посадочный шаг, а он не длиннее допуска
+/// ([`POLYMESH_SEARCH_DELTA`]·(`POLYMESH_SEARCH_STEPS`−1),
+/// 0.75 м). Куда именно сажать, меш решает по раздутым контурам и физической
+/// стены от полосы инфляции не отличает — уход посадки за тонкий барьер этим не
+/// лечится, лечится только его длина.
 ///
 /// Двухуровневый, по образцу `NorthstarGrid`: сперва A* по графу компонент
 /// чанков, затем один запрос polyanya, которому оставлены незаблокированными
@@ -48,10 +59,17 @@ pub fn find_path_polymesh(build: &PolymeshBuild, from: Vec2, to: Vec2) -> Option
     };
 
     let path = bounded_path(build, start, goal, blocked)?;
+    // полилиния строится от посадки: сглаживание обязано якориться на точке,
+    // про которую `segment_clear` может сказать правду
+    let snapped = from_poly(start.position());
     let mut points = Vec::with_capacity(path.path.len() + 1);
-    points.push(from);
+    points.push(snapped);
     points.extend(path.path.into_iter().map(from_poly));
-    Some(smoothed(&build.mesh, points))
+    let mut points = smoothed(&build.mesh, points);
+    if snapped.distance_squared(from) > WALK_EPSILON * WALK_EPSILON {
+        points.insert(0, from);
+    }
+    Some(points)
 }
 
 /// Протяжка верёвки по готовой ломаной: точка выбрасывается, если прямая мимо
@@ -166,8 +184,8 @@ fn segment_clear(mesh: &polyanya::Mesh, from: Vec2, to: Vec2) -> bool {
     // пути не больше, чем их всего в меше
     let ceiling: usize = mesh.layers.iter().map(|layer| layer.polygons.len()).sum();
     for _ in 0..ceiling {
-        let layer = &mesh.layers[(current >> 24) as usize];
-        let Some(polygon) = layer.polygons.get((current & 0x00FF_FFFF) as usize) else {
+        let layer = &mesh.layers[layer_of(current)];
+        let Some(polygon) = layer.polygons.get(polygon_of(current)) else {
             return false;
         };
         // ребро, через которое отрезок выходит: ближайшее пересечение дальше
