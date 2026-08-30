@@ -135,7 +135,8 @@ portal at `START_ZOOM` regardless of `CameraPositionMode` — the camera side is
 **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built from:
 `Tula | NewYork | Paris | Berlin | London | Tokyo | DevilsLake`. Each carries its **geo
 center** (bbox center of the Overpass extract), its **portal hint** and its **cache slug**.
-`MAP_SIZE` and therefore `GRID_SIZE` are shared, so switching city never resizes the navmesh.
+`MAP_SIZE` and therefore the derived `grid_size()` are shared, so switching city never
+resizes the navmesh.
 
 **A city switch is a full world reload.** Writing `City` (the select or BRP) sends the app
 back to `AppState::Loading`:

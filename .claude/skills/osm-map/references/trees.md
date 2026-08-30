@@ -48,7 +48,7 @@ stand, how density works, and which resources restyle them.
     It is its **own entity**, not part of the merged `woods` mesh, because it carries the
     same three knobs the road ribbons do — **join, smoothing (Chaikin), casing** — reusing
     `roads::push_ribbon` / `smooth_path` / `casing_width` verbatim. The knobs are separate
-    from the Roads panel's on purpose: an avenue's polyline and a street's come from
+    from the Roads section's on purpose: an avenue's polyline and a street's come from
     different data, and the band must read as *wood* even where the roads are left raw.
     Defaults differ from roads accordingly — smoothing `Light` (a street may turn a
     corner, a wood never does) and casing off (a second green outline reads as one more
@@ -71,7 +71,7 @@ stand, how density works, and which resources restyle them.
     n in order" is its *beginning*, so a natural order would show half the avenue and
     half bare ground. Reversing the index bits makes every prefix spread over the whole
     row while keeping thinning monotone.
-  - **`TreeRowPlacement`, a toggle in the Tree rows panel.** Road widths here are
+  - **`TreeRowPlacement`, a toggle in the Tree rows section.** Road widths here are
     *synthesised* from the highway class (8–16 m) and know nothing about real kerbs, so a
     mapped avenue routinely lies inside our road polygon. **`Keep`** (default) trusts the
     OSM position and rejects only what can never be right — inside a building or in water
@@ -166,10 +166,11 @@ stand, how density works, and which resources restyle them.
   conifer stands among cloud crowns. Any change reruns `rebuild_trees` (despawn
   `TreeTag`, respawn from the `MapData::trees` positions); the source toggles
   additionally rerun `recompose_row_trees` first, because they change the position set
-  itself rather than the look. The panel lives in `ui/trees.rs`, bottom-right, one
-  cycling button per field.
-- **TreeRowStyle** (resource, BRP-writable, persisted; panel `ui/tree_rows.rs` above
-  Trees) — the avenue knobs, split from TreeStyle the way Buildings is: `enabled` (rows
+  itself rather than the look. The section lives in `ui/trees.rs`, first in the **Map
+  tab** — cycling rows for the palette fields plus three slider rows: `Density`,
+  `Conifer share` and `Noise mix` (the last two hidden outside `TreeShape::Mixed`).
+- **TreeRowStyle** (resource, BRP-writable, persisted; section `ui/tree_rows.rs`, Map tab,
+  under Trees) — the avenue knobs, split from TreeStyle the way Buildings is: `enabled` (rows
   on/off — removes both the row trees and the green band), `placement`
   (`TreeRowPlacement`), `osm_spacing`, and the band's `join` / `smoothing` / `casing`
   (see Tree rows above). Which sources end up in `MapData::trees` is captured by
@@ -185,9 +186,10 @@ stand, how density works, and which resources restyle them.
   the same value and turn conifer together. The fbm parameters live in
   **`ConiferNoiseStyle`** (resource, persisted, BRP-writable): `wavelength` (default
   400 m sets the stand size, ~120–250 m across), `octaves`, `lacunarity`, `persistence`
-  — tunable at runtime from the **Noise panel** (`ui/noise.rs`, bottom-left above the
-  debug toggles, visible only while the `noise` debug toggle is on; ranges modeled on
-  zxc's noise sliders). The seed stays fixed, so a city looks the same every run.
+  — tunable at runtime from the **Noise section** (`ui/noise.rs`, last in the Map tab;
+  its knobs — not the section — are hidden while the `noise` overlay is off, and its own
+  first row `Show` is that very toggle; ranges modeled on zxc's noise sliders). The seed
+  stays fixed, so a city looks the same every run.
   - The cut is an **empirical quantile** of the field's values at the trees, not a fixed
     noise level: fbm is bell-distributed, so «everything above 0.9» would give a share
     unrelated to the one asked for. The quantile makes `TreeStyle::conifer_share` an
@@ -241,9 +243,16 @@ because both `bloat` and `Spiker` grow their bump as the square root of edge/lob
 *smaller* lobe gives a *puffier* outline), band lift/scale/shade weight, the two stroke
 widths, the spike floor, the five shadow numbers and the variant seed. `CrownParams`
 lives in `crown.rs`; **its `Default` is field-for-field the constants the city is drawn
-with**, which is what makes "Сброс к игре" exact and what lets the whole `map::trees`
-test suite keep pinning the game without a single changed expectation. The game itself
-passes `CrownParams::default()` and grows no panel for them.
+with**, which is what lets the whole `map::trees` test suite keep pinning the game
+without a single changed expectation. The game itself passes `CrownParams::default()`
+and grows no panel for them.
+
+The panel carries one knob that is **not** `CrownParams` and **not** the game's value:
+"Variance" in the `Цвет` group is `TreeStyle::variance`, and the gallery starts it at
+**0** against the city's 0.35 — one flat green over every cell is what makes a shape
+difference read, and set 5 was picked by eye in exactly that mode. That single departure
+is why the reset button is labelled «Сброс» and not «Сброс к игре»: it restores the
+gallery's own default — the game's geometry, the flat colour.
 
 `CrownParams::seed` picks the **crown set**: same rules, a different `TREE_VARIANTS`
 silhouettes. A single variant cannot be re-rolled — the set is one seed and the variant

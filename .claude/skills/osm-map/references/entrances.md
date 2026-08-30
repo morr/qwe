@@ -114,7 +114,7 @@ whole algorithm:
   building therefore gets the same doors on every launch, independent of extract order
   or of which buildings were parsed before it. Neighbours matter only through their
   geometry (the blocked-wall test above), never through parse order.
-- **Seeing them** — the `doors` toggle in the debug row (bottom-left, `DebugDoors`,
+- **Seeing them** — the `doors` row of the Debug tab's Overlays section (`DebugDoors`,
   remembered by `prefs`) draws a gizmo circle on every entrance, real and generated
   alike. Same shape as `movepath`: per-frame gizmos culled to `DOORS_VIEW_SCREENS`
   around the camera, because ten thousand ungated gizmos cost a frame.

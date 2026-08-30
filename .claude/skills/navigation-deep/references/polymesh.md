@@ -6,13 +6,13 @@ Detail behind `navigation/polymesh/`. The summary lives in `CONTEXT.md` (Navigat
 
 **Poly navmesh** (`navigation/polymesh/` — `build.rs` builds the mesh, `seams.rs`
 computes the shared chunk borders, `stitch.rs` sews the layers together, `path.rs`
-searches the result; panel — `ui/navigation/`) — a *polygonal* polyanya mesh
+searches the result; Nav tab — `ui/navigation/`) — a *polygonal* polyanya mesh
 triangulated from the same vector sources the grid fill rasterizes, recovering the
-fidelity the 2 m grid loses (bridge curbs, narrow waterways). While the Polymesh panel
+fidelity the 2 m grid loses (bridge curbs, narrow waterways). While the Polymesh backend
 is on and the mesh is built, **it is the pathfinding backend** — see **Polygonal
 routing** below. It is on **by default** (`PolymeshDebug::enabled`): the polygonal
 search is the world's navigation, and the grid is the fallback (while the mesh builds,
-and when the Navigation panel is switched back to `Navmesh` by hand). `show` defaults
+and when the Nav tab is switched back to `Navmesh` by hand). `show` defaults
 to *off* for the same reason — a default-on backend with a default-on overlay would
 bury a fresh install's city under polygon edges.
 
@@ -55,7 +55,7 @@ bands **minus the full drawn bands of every other bridge way**. Covered by a
 neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer edge ⇒ blocks. N differences over
 a few dozen bridges cost less than the single building union.
 
-**Conditional and async**: nothing builds while the Polymesh panel is off
+**Conditional and async**: nothing builds while the Polymesh backend is off
 (`PolymeshDebug`, persisted — on by default, so the usual path *is* a build on entering
 the world); the build runs on `AsyncComputeTaskPool`
 (`PolyNavmesh` resource: `PolymeshBuild` + generation counter + in-flight task,
@@ -161,7 +161,7 @@ mesh". Repro over all six cities: `examples/audit/polymesh_empty_layer_repro.rs`
 ## Polygonal routing
 
 **Polygonal routing** (`polymesh::find_path_polymesh`, dispatched in
-`movement/pathfinding.rs`) — with the Polymesh panel on, `dispatch_pathfinding_requests`
+`movement/pathfinding.rs`) — with the Polymesh backend on, `dispatch_pathfinding_requests`
 routes through the polygonal mesh and the `PathfindingAlgorithm` cycler is bypassed.
 **While the mesh is still building** (5–20 s) `Pathfinder::polymesh_build()` is `None`
 and the grid serves the request — the same fallback shape HPA* uses while

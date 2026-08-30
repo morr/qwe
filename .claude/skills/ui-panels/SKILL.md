@@ -31,7 +31,9 @@ did not fit 1080 px and ran off the top of the screen.
   The left column is `top`/`bottom`-anchored so the body has a ceiling to scroll against,
   and carries **`Pickable::IGNORE`**: it is taller than its content, and an invisible
   260 px strip eating the map's clicks would be exactly what "UI input never reaches the
-  world" forbids. Its children stay pickable.
+  world" forbids. Its children stay pickable — the component is per-entity and does not
+  propagate, so a subtree that must be transparent carries it on **every** node (the hotkey
+  help does: plaque, rows and both labels, `ui/hotkeys.rs`).
   Wheel over the panel scrolls the body (`Overflow::scroll_y` + a `Scroll` entity event
   ported from bevy's `scroll_and_overflow` example; `clamp_scroll` is the tested part) —
   and `camera.rs::zoom_to_cursor` now runs under `not(hovering_ui)`, so it no longer zooms
@@ -44,7 +46,10 @@ did not fit 1080 px and ran off the top of the screen.
   into tabs. **`SectionSlot`'s declaration order is the order inside a tab**
   (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by eight
   systems in eight plugins, and system order inside `UiBuildSet::Sections` is unspecified —
-  without the enum the Map tab came out shuffled on every run. `UiBuildSet` chains
+  without the enum the Map tab came out shuffled on every run. A section that arrives
+  **without** a `SectionSlot` sorts **last** (`slot_order`) and is named in a `warn!`: the
+  enum exists so a section's place cannot be forgotten, and sorting a slotless one to the
+  top would show that mistake as a mysteriously first panel body. `UiBuildSet` chains
   `Shell → Sections → Sort`.
 
 ## Panels
@@ -195,7 +200,7 @@ did not fit 1080 px and ran off the top of the screen.
   - **The plaques are translucent, and the text carries the legibility.** One near-black
     `UI_COLOR` at three alphas — `PANEL_ALPHA` .72 (pane body), .85 (header strip), .50
     (nested block) — so the city stays visible under the panel; `TEXT_MAIN` is white and
-    `TEXT_DIM` is oklch L .90 (`TEXT_BRIGHT`), both well above feathers' own. The library's
+    `TEXT_DIM` is oklch L .90 (`MUTED_TEXT`), both well above feathers' own. The library's
     values assume an opaque inspector plaque; over a bright map they read as grey on grey.
     Raising the alpha instead would have been the wrong knob: the panel is supposed to lie
     *on* the map, not replace it.
@@ -203,8 +208,12 @@ did not fit 1080 px and ran off the top of the screen.
     `ButtonVariant::Plain` (`rows::VALUE_ROW_VARIANT`, `BUTTON_PLAIN_BG` = `Color::NONE`):
     a panel is ten rows in a stack, and `Normal` gave each its own grey brick. A row says
     its state in **words** on the right (`On`/`Off`, `Round`, `Polymesh`); `Primary`
-    (`button_variant(is_active)`) is for the buttons that have no value text — the open tab,
-    the selected city, pause. Panels never paint backgrounds; feathers does hover, press and
+    (`button_variant(is_active)`) is for the buttons that stand alone instead of in a column
+    of rows, and say not their own value but "where am I" / "what state is the world in" —
+    the open tab in the strip (`ui/shell.rs::sync_shell`) and pause on the speed button
+    (`ui/speed.rs::update_speed_button`). Not the Debug tab's toggles (`spawn_cycle_row`
+    value rows printing `On`/`Off`), and not the city, which is a `FeathersMenu` popup with
+    no variant at all. Panels never paint backgrounds; feathers does hover, press and
     disabled itself, in a `Changed`-filtered `PreUpdate` system.
   - **The font is feathers' 14 px** (`PANEL_FONT` = `size::MEDIUM_FONT`). It was 12 while
     the panels stood in two columns from screen edge to screen edge; with one tabbed panel
@@ -213,14 +222,24 @@ did not fit 1080 px and ran off the top of the screen.
     roots that brought their own (`Without<InheritableFont>`, i.e. the monospace telemetry),
     which it used to overwrite on the first frame. The kits patch the same size onto the
     widgets (which carry an `InheritableFont` of their own and would otherwise win).
-  - **Containers come from `ui_node` / `ui_row` / `ui_column`, never from a bare `Node`.**
-    Font propagation runs `HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`, and the
-    traversal *stops* at the first entity without `ThemedText` — a wrapper between a root
-    and its labels that lacks the marker leaves everything below at the default 20 px. That
-    was not hypothetical: the World counters sat at 20 px in a different face for days,
-    because the marker was something to remember rather than something a constructor
-    brought. `warn_broken_font_chain` (debug builds, `Added<Text>`, after
-    `apply_panel_font`) walks the chain and names the offending node in the log.
+  - **A container *between a font source and a label* comes from `ui_node` / `ui_row` /
+    `ui_column`, never from a bare `Node`.** Font propagation runs
+    `HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`, and the traversal *stops* at
+    the first entity without `ThemedText` — a wrapper between a root and its labels that
+    lacks the marker leaves everything below at the default 20 px. That was not
+    hypothetical: the World counters sat at 20 px in a different face for days, because the
+    marker was something to remember rather than something a constructor brought.
+    **The source itself is not such a container**: `InheritableFont` is
+    `#[require(ThemedText, PropagateOver::<TextFont>)]`, so a root that brings its own font
+    (the monospace telemetry) or is handed one by `apply_panel_font` (every `GameUiRoot`)
+    carries the marker already and *starts* the chain instead of standing in it — which is
+    why the roots of `ui/hotkeys.rs`, `ui/speed.rs` and `ui/city.rs` are bare `Node`s and
+    are right to be. Nor is a `Node` patched onto a widget's own `bsn!` scene (`ui/rows.rs`,
+    `ui/city.rs`, `ui/slider.rs` — the widget brings the font, and the slider adds a bare
+    `ThemedText` because `FeathersSlider` does not) or a `Node` bundled with the very text
+    it lays out (the `flex_grow: 1.` spacers). `warn_broken_font_chain` (debug builds,
+    `Added<Text>`, after `apply_panel_font`) is the arbiter: it walks the chain, names the
+    offending node in the log, and stays silent in exactly the cases above.
   `spawn_panel_button(commands, parent, marker, label, is_active, on_activate)` is the kit;
   `spawn_panel_button_with` takes the caption as a bundle instead of a string, for the
   two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
@@ -250,20 +269,24 @@ did not fit 1080 px and ran off the top of the screen.
   panel must register what it uses rather than assume its neighbour did, which is the
   mirror-of-a-list habit this whole change removes. Without the memo the second call
   would simply add a second copy of both systems.
-- **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one the crowd
-  demo (`examples/demos/crowd_demo/`) still calls directly, since its sliders drive
+- **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one the examples
+  (`crowd_demo`, `tree_gallery`) call directly, since their sliders drive
   demo-local state rather than a resource: `spawn_slider_row` (label + value text +
   discrete `bevy_ui_widgets::Slider`), `quantize`, `apply_step` (quantize + put the thumb
   back on the stepped value), `retarget` (move the thumb when the value arrived past it —
-  over BRP, from saved settings, from a lab preset), and one `sync_slider_thumbs` for all
-  panels (sliders carry the shared `UiSlider` marker; registered once in `UiPlugin`).
+  over BRP, from saved settings, from a lab preset). Free functions only: the file holds no
+  system and no shared slider marker, and `UiPlugin` registers nothing out of it. What keeps
+  a panel's thumb on its value is `sync_knob_values::<R>` in `ui/knob.rs` — registered by
+  `add_knobs::<R>()` once per resource, from each panel's own plugin, it `retarget`s every
+  entity carrying `SliderBinding<R>`. A caller that drives demo-local state instead of a
+  resource writes that loop itself.
 - **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
   field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
   field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain
   bools, colour palettes and step tables alike, and forcing them through one list would
   need a type per kind. Registered by the same `add_knobs::<R>()` as the sliders.
   `CycleBinding` is *not* a component — the click observer captures it, and the sync only
-  needs it on the label. The rows that stay hand-written are the Navigation panel's
+  needs it on the label. The rows that stay hand-written are the Nav tab's
   (`NavValueLabel`): their text is computed from **several** resources at once (`Backend`
   from `PolymeshDebug`, `Separation` from determinism + backend + style), which a binding
   to one resource cannot express — that enum is the right tool there, not a leftover.
@@ -344,7 +367,7 @@ did not fit 1080 px and ran off the top of the screen.
   `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being
   built, before any schedule; `PrefsPlugin` is registered **last** because that scan needs
   the other plugins' `register_type` calls to have run. Delete the file to reset — or press
-  **`reset`** in the toggles row, which is the same thing from inside the game.
+  the Debug tab's **`reset`** button, which is the same thing from inside the game.
 
   **`prefs::ResetSettings`** is a `Command`, and it too is a registration rather than a
   list: it walks the type registry, keeps whatever carries `ReflectSettingsGroup`, and

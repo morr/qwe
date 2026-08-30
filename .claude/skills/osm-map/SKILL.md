@@ -259,7 +259,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
   round`). This is why the road layer must stay opaque and flat-colored: transparency or
   a per-way tint would expose every crossing.
-- **RoadStyle** (resource, BRP-writable, persisted; panel `ui/roads.rs` above Buildings)
+- **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Three independent knobs:
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
@@ -336,8 +336,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `RailLine::width` from parse is ignored for trams.
 - **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
-  layers, respawn from the unchanged `MapData::buildings`). The panel lives in
-  `ui/buildings.rs`, bottom-right above the Trees panel, one cycling button. A building
+  layers, respawn from the unchanged `MapData::buildings`). The section lives in
+  `ui/buildings.rs`, in the Map tab below Trees and Tree rows, one cycling row. A building
   with no height uses `DEFAULT_BUILDING_HEIGHT` (15 m) everywhere. Modes:
   - **Facade** (default, the historical look) — pseudo-3D: the footprint polygon shifted
     straight down in a darker color at z just below the roof (`Z_FACADE` 4.9), visible

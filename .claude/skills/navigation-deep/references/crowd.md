@@ -5,7 +5,7 @@ in `CONTEXT.md` (Simulation).
 
 ## Separation
 
-**Separation** (`movement/separation/`, toggle in the Navigation panel, persisted)
+**Separation** (`movement/separation/`, toggle in the Nav tab, persisted)
 — soft pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
 0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart — deliberately **larger** than half the
 sprite, so a resting pair leaves a visible gap (1.17 m against a 1.0 m `HUMAN_SIZE`).
@@ -157,7 +157,7 @@ from being aimed at the same point. A **slot** is a `k × k` block of navtiles,
 (`DestinationClaim`, reverse-indexed by the `DestinationClaims` resource); its goal is
 strictly the block's **centre** tile, so the goals of neighbouring slots sit exactly
 `k · navtile` apart — never less than the rest distance, for any combination of
-`NavtileBase` and the `HumanStyle::body_radius` slider (the Navigation panel's `Slots`
+`NavtileBase` and the `HumanStyle::body_radius` slider (the Nav tab's `Slots`
 group, and the crowd demo).
 
 The radius lives with the **human**, not with separation, precisely because slots read it

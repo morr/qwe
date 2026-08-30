@@ -46,7 +46,7 @@ to the navtile size is simulation input — it breaks a replay in flight (`deter
 ## The grid navmesh
 
 - **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
-  `x * GRID_SIZE.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
+  `x * grid_size.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
   block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
@@ -191,7 +191,7 @@ counts what the player can actually see, not what the dispatcher is willing to s
 ## Backends & the pipeline
 
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable resource, cycled
-  in the Navigation panel: A* / Dijkstra / Fringe / BFS (all from the `pathfinding`
+  in the Nav tab: A* / Dijkstra / Fringe / BFS (all from the `pathfinding`
   crate over the navmesh) plus **HPA*** and **Theta*** (hierarchical, from
   `bevy_northstar`). IDA*/IDDFS are deliberately excluded (never finish on open grids).
   **Default is HPA\*** — 28× cheaper than flat A* per `examples/bench/pathfinding_bench.rs`

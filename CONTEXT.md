@@ -93,7 +93,8 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   despawn may not happen in `Update` (CLAUDE.md). Always `to_portal: true`.
 - **City** (`city.rs`, resource, persisted) — `Tula | NewYork | Paris | Berlin | London |
   Tokyo | DevilsLake`, each with its geo center, portal hint and cache slug. `MAP_SIZE` and
-  `GRID_SIZE` are shared, so switching city never resizes the navmesh. UI — a select at
+  therefore the derived `grid_size()` are shared, so switching city never resizes the
+  navmesh. UI — a select at
   bottom centre (`ui/city.rs`).
 - **City switch = full world reload** — writing `City` sends the app back to
   `AppState::Loading`; the scene is torn down, the new extract downloaded and parsed, the
@@ -158,8 +159,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   runs once at the density ceiling**; the density slider shows a monotone *prefix*
   (`tree_appears_at`), never a replant. The ceiling (`TREE_DENSITY_MAX` 6.5×) is derived
   from `TREE_MIN_SPACING` (6 m) saturation, not chosen. Health check — the `osm parse: N
-  trees planted of M asked …` log line. Every crown the game can draw, side by side:
-  `cargo run --example tree_gallery`.
+  trees planted of M asked …` log line. **Crown geometry** is all in `CrownParams`
+  (`map/trees/crown.rs`), built by `crown_variant`; **the city is drawn with
+  `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
+  a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
+  re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,
@@ -177,8 +181,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing — smoothing
   works on a *copy*, since `RoadLine::points`/`width` are load-bearing for navmesh, arches,
   planting and entrances), **BuildingHeightMode**, **TreeStyle**, **TreeRowStyle**,
-  **ConiferNoiseStyle**. **Bridge / rail / tram layers** have their own z-slots and
-  primitives (`push_dashes`, `push_ticks`, tram zoom LOD).
+  **ConiferNoiseStyle**. **`CrownParams` is deliberately not one of them** — a plain
+  struct, no BRP, no prefs; only the `tree_gallery` example varies it. **Bridge / rail /
+  tram layers** have their own z-slots and primitives (`push_dashes`, `push_ticks`, tram
+  zoom LOD).
 
 ## Navigation
 
@@ -186,7 +192,7 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 `references/polymesh.md`, separation & slots in `references/crowd.md`).
 
 - **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
-  `x * GRID_SIZE.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
+  `x * grid_size.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
   block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
@@ -422,7 +428,7 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   only in `PlayPhase::Live`, and that is an invariant**: it hands out `PawnId`s from a
   counter `WorldStarted` resets, so a burst fired before the announcement deals the same
   numbers twice. Matching precondition: **no demon may be alive when a run starts**.
-- **Separation** (`movement/separation/`, Navigation panel, persisted) — soft pairwise
+- **Separation** (`movement/separation/`, Nav tab, persisted) — soft pairwise
   anti-overlap, **on-screen only, cosmetic by charter**: pawns keep their body radii
   (`HUMAN_BODY_RADIUS` 0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart. Runs **only on the
   polymesh backend and never under determinism** (grid waypoints re-collapse any push), once
@@ -435,9 +441,11 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   released on next target selection, despawn, or corpse strip — **not on arrival** (a
   standing pawn *is* the occupancy). **Chase and flee are excluded** by design. Runs in
   **both** modes — it is simulation, not cosmetics.
-- **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the World panel's
-  **Souls**. Invariant (check paused): `killed + escaped + alive == HUMAN_COUNT`. At high
-  sim speed BRP reads are skewed — pause before asserting.
+- **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the **Souls reaped** HUD
+  counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
+  holds the seed and the determinism row. Invariant (check paused):
+  `killed + escaped + alive == HUMAN_COUNT`. At high sim speed BRP reads are skewed —
+  pause before asserting.
 
 ## UI & debug
 
@@ -460,7 +468,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per
   resource**, however many knobs it has. **Use it for any panel row driven by a resource**;
-  the Navigation panel's rows are the deliberate exception, since their text is computed
+  the Nav tab's rows are the deliberate exception, since their text is computed
   from several resources at once.
 - **Widgets & theme** (`ui/theme.rs`) — the controls are first-party **`bevy_feathers`**,
   themed by `create_dark_theme()` with colour overrides only. The plaques are **translucent**
@@ -470,7 +478,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   press a button and pause the sim. Everything that is not a widget is coloured by **design
   tokens**; **no hand-written UI colours are left**. A **value row rests transparent**;
   **"active" is `ButtonVariant::Primary`**. Every container node comes from `ui_node` /
-  `ui_row` / `ui_column`, which carry the `ThemedText` marker.
+  `ui_row` / `ui_column`, which carry the `ThemedText` marker — every container *between a
+  font source and a label*, that is; a root is the source itself (`InheritableFont` requires
+  the marker) and stays a bare `Node`.
 - **Shared kits** — `ui/slider.rs` (the layer under the knob kit) and `ui/rows.rs`
   (`spawn_value_row`; a row whose click does nothing gets `bevy::ui::InteractionDisabled`).
   **Use these, don't hand-roll a panel row.**

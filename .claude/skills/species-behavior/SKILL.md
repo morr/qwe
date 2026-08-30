@@ -277,8 +277,8 @@ one line in `chase` that steps `SimPosition`, never written into `Movable::speed
 
 **`DemonSpawner`** — initial burst at the portal rim, then one demon per interval up to the
 cap. Runs in `FixedUpdate` so a restart re-fires the burst for free. Cap and interval live in
-**`DemonStyle { cap, interval, speed, lunge }`** (Demon panel sliders, persisted);
-`DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are only its `Default`.
+**`DemonStyle { cap, interval, speed, lunge }`** (sliders of the Sim tab's Demon section,
+persisted); `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are only its `Default`.
 
 - The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the reduced count).
 - Lowering the cap never despawns demons already out.
@@ -300,7 +300,10 @@ unpauses it. Matching precondition on the reset: **no demon may be alive when a 
 
 ## Telemetry
 
-`{killed, escaped}`, BRP-readable; `killed` is what the World panel shows as **Souls**.
+`{killed, escaped}`, BRP-readable; `killed` is what the **Souls reaped** HUD counter shows
+(`ui/stats.rs`, first in the left column, outside the settings tabs — panel internals live
+in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
+determinism row, no telemetry.
 
 **Invariant (check paused): `killed + escaped + alive == HUMAN_COUNT`.** At high sim speed
 BRP reads are skewed — pause before asserting.
