@@ -110,16 +110,53 @@ sift-then-request tail four times. The chase repath (`demon/behavior.rs`) now go
 left. The skeleton deliberately does **not** open the `SimRng`
 — the species does, in its own place, or the decision stream would advance on pawns that
 took no decision this tick. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`; it
-used to be declared in both species files.
+used to be declared in both species files. For the human that policy is
+`human/systems.rs::choose_target` — a pure function of `(map, rng, position, heading, ban,
+is_first_wander)`; the demon's is the two lines around `away` in its own system.
 
 ## Human
 
 States in `human/behavior.rs`, rules in `human/decide.rs`: **Wander** ⇄ **Flee**, plus
 **Escape** and the terminal **Corpse**.
 
+### Population size
+
+**`PopulationSize`** (`human/components.rs`) — the count `spawn_population` settles. No
+knob and deliberately not a `settings.rs` constant: the constant `HUMAN_COUNT` is its
+`Default`, and the resource exists so a headless scene can run 64 pawns instead of 20 000.
+
+- **Two readers, and they must stay in step**: `spawn_humans` (`WorldInitSet::Spawn`) and
+  `restart::on_restart`. A restart respawns the same number, which is what lets
+  `a_restart_replays_the_run` compare two runs of one size.
+- `HumanPlugin` only `init_resource`s it. **An app that wants another size inserts it
+  after `add_plugins`** — `determinism::replay::replay_app` does exactly that, and
+  swapping the two lines would silently put 20 000 humans back into the replay test.
+- Demo stands do not use it: they call `spawn_population` directly (`crowd_demo`) because
+  `HumanPlugin` would settle the whole city.
+- It is the right-hand side of the telemetry invariant at the end of this file.
+
 ### Wander
 
-`WanderPause` 2–10 s *between* walks, zero at spawn. Then:
+**`WanderPause` is drawn per arrival, not stood at every one.** `roll_wander_pause`
+(`human/systems.rs`) hands `HUMAN_WANDER_PAUSE_SHARE` (20 %) of arrivals the 2–10 s
+`HUMAN_WANDER_PAUSE` and `Duration::ZERO` to the rest — they pick the next target the same
+frame. A target is a point of the passer-by's route, not the errand he went out for.
+
+- **The roll goes on the target, not on the human.** A permanently hurrying fifth of the
+  population would be two sorts of pedestrian instead of one who sometimes stops.
+- **It is thrown at the choice of the next target** — the tail of `pick_wander_targets`,
+  out of the same `WanderIndex::next` decision stream as the target itself, because that is
+  where the pause is reloaded anyway; arrival knows nothing about the next target.
+- **A zero pause costs no step**: a `Timer` in `Once` mode is finished on its first `tick`
+  (`elapsed >= duration`), so "no pause" needs no separate state. Zero at spawn is the same
+  mechanism — every human walks from the first frame.
+- Measured on live Tula: **3383 of 16979 humans carrying a non-zero `WanderPause`, 19.9 %
+  against the 20 % asked for.**
+
+Unconditional in exactly one place: **calm-down** (`FleeAction::CalmDown`,
+`human/behavior.rs`) always stands the full 2–10 s, no share roll.
+
+Then the target:
 
 - **80 % — a building errand** anywhere in the city. These are the long routes and the real
   pathfinding load.
@@ -128,7 +165,7 @@ States in `human/behavior.rs`, rules in `human/decide.rs`: **Wander** ⇄ **Flee
 The one exception is the first target after calming down from panic (see **PanicRecoil**).
 
 **WanderHeading** — the direction a human is walking, kept between walks. Every next target
-is picked inside a `WANDER_CONE` (60°) around it; a building errand samples
+is picked inside a `WANDER_CONE` (±60°) around it; a building errand samples
 `WANDER_BUILDING_TRIES` (8) random buildings and takes the first inside the cone. Without
 the heading each pick was uniformly random and pawns wobbled in place. `flee` rewrites it to
 the away-vector on every repath, so a calmed human resumes facing away from the demon rather
@@ -141,22 +178,30 @@ with strolls first — 0.15 s.** `PanicRecoil` overrides it.
 
 **Pace** — a human's personal speed multiplier, rolled once at spawn and stored
 **normalized** (−1…+1); effective speed is `base × (1 + Pace × HumanStyle::spread)`, applied
-to *both* bases (walk and flee) — all three writers of a human's `Movable::speed` go through
-`Pace::speed`.
+to *both* bases (walk and flee). Every writer of a human's `Movable::speed` goes through
+`Pace::speed`: the spawn (`spawn_population`), the **Speed spread** slider
+(`sync_human_pace`), and both sides of the Wander ⇄ Flee transition — `panic` on the way in,
+`FleeAction::CalmDown` on the way out.
 
 - Normalized storage is what makes the **Speed spread** slider widen/narrow the ordering the
   crowd already rolled instead of re-dealing it.
 - A component, not something derived from `Movable::speed` — that field is overwritten on
   every Wander ⇄ Flee transition.
 - Ceiling 35 % is derived: above it the fastest humans outrun the slowest demon setting.
-- `sync_human_pace` applies slider moves (`resource_changed`), picking the base off
-  `Has<HumanFleeTag>`.
+- `sync_human_pace` applies slider moves, picking the base off `Has<HumanFleeTag>`. Its gate
+  is `systems::spread_changed` — a `Local`-backed compare of `HumanStyle::spread`, not
+  `resource_changed::<HumanStyle>`: the resource also carries `body_radius` (a slider on the
+  Nav tab), and gating on the whole resource re-tuned all 20 000 humans on every 0.01 m step
+  of a radius drag.
 
 ### Flee
 
-Enter when a demon is within `HUMAN_PANIC_RADIUS` (60 m). Repath every 0.7–1.2 s, stepping
-40–60 m away from the nearest demon. Calm-down at ×1.5 radius hysteresis
-(`RADIUS_HYSTERESIS`).
+Enter when a demon is within `HUMAN_PANIC_RADIUS` (60 m). **The first repath happens on the
+panic tick itself** — `panic` inserts `FleeRepath` already due (`Timer::almost_finish`), so
+`flee`, chained right after it, takes the decision rung on that same tick; otherwise a
+walking human (`Moving`, so no `needs_path`) would keep its stroll path at flee speed for up
+to 1.2 s. Then repath every 0.7–1.2 s, stepping 40–60 m away from the nearest demon.
+Calm-down at ×1.5 radius hysteresis (`RADIUS_HYSTERESIS`).
 
 **The Wander → Flee check (`panic`) is inverted**: each demon collects neighbours from the
 human grid instead of every wanderer polling the demon grid, so its cost tracks the crowd
@@ -185,8 +230,10 @@ calm-down the demon is already >90 m away.
 
 It is born in `human::decide`, where the demon's position is an input — the calm-down branch
 fires *because* the search found nobody, so it has nothing to build a ban from and leaves the
-stored one alone. A human who panics and calms down before the first repath therefore carries
-no ban (the old one pointed along a stale stroll course, at nothing).
+stored one alone. Since the first repath now lands on the panic tick, a fleeing human
+practically always carries a ban; the no-ban state survives only as the initial one, before
+a human has ever panicked (the old code synthesised it from a stale stroll course, pointing
+at nothing).
 
 While it is on, the next target must be an errand clearing two filters in
 `pick_building_ahead`:
@@ -198,6 +245,13 @@ While it is on, the next target must be an errand clearing two filters in
 Rejected candidates are dropped **before** the "best-aligned of the 8" fallback, which used
 to hand back a building nearly 180° from the heading — straight at the demon. Nothing
 acceptable → re-roll next frame (**never a stroll**); dropped at the first successful pick.
+
+**The one exception — a map with no buildings** (`MapData::buildings` empty: `MapData::default()`
+in tests and demo scenes; all seven shipped cities have thousands). `to_building` is then false
+even under a ban, so the pick falls through to the 20–40 m stroll, checked against `RECOIL_CONE`
+only — **`RECOIL_MIN_ERRAND` is not applied on that path at all** (no stroll could clear 90 m
+anyway), and the cone is tested **after** `clamp_to_map`, which turns the direction around at
+the map edge.
 
 **Why it is stored rather than synthesised.** It used to be built at the calm-down site as
 the negated `WanderHeading`, which dragged the **flee fan** in with it: ±0.6 rad (34°) of the
@@ -396,5 +450,7 @@ unpauses it. Matching precondition on the reset: **no demon may be alive when a 
 in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
 determinism row, no telemetry.
 
-**Invariant (check paused): `killed + escaped + alive == HUMAN_COUNT`.** At high sim speed
+**Invariant (check paused): `killed + escaped + alive == PopulationSize`** — the number the
+spawn read, not the constant. In the game it is the default `HUMAN_COUNT`; in a replay run
+it is whatever `replay_app` was given (`tests/determinism.rs` uses 64). At high sim speed
 BRP reads are skewed — pause before asserting.

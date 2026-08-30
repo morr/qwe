@@ -31,6 +31,37 @@ and typed back in.
 | Human | Demon`. **Nothing stores live RNG state**, so a restart has no RNG to reset:
 every stream is re-derived from the seed.
 
+### The placement stream — the one shared generator, and why it is allowed
+
+`rng.rs::stream(world_seed, domain, key)` builds a stream that belongs to no pawn. The
+only live one is `stream(world_seed, RngDomain::Population, 0)`, held across the **whole**
+`human/systems.rs::spawn_population` loop: the rejection loop that samples tiles until one
+is passable draws a variable number of samples per human, and that is fine inside one
+sequential pass.
+
+This is the shape the next section calls rejected, so the exception is spelled out:
+
+- **The consumption order is a fixed counter, not a traversal.** `for index in 0..count`
+  over a plain `usize` — no query, no `HashSet<Entity>`, no camera, nothing whose order
+  can differ between a run and its replay.
+- **Nothing personal comes out of it.** Colour, `Pace` and `WanderHeading` are drawn from
+  the human's own `decision_stream(world_seed, RngDomain::Human, pawn_id,
+  WanderIndex::SPAWN)`, so human N looks and walks the same however many times the tile
+  rejection missed for his neighbours. The shared stream decides *placement* only.
+- **It never crosses a system boundary.** Created and dropped inside the call, so there is
+  no generator resource for a restart to reset — `restart.rs` calls `spawn_population`
+  again and it re-derives the stream from the seed.
+
+The rule to carry forward: **a shared stream is legal only while the loop draining it is a
+`for i in 0..n` inside one function.** Move those draws into a system that iterates a
+query, or keep the generator in a resource between calls, and the exception is gone.
+
+Pinned by `human/systems.rs::population_is_a_function_of_the_seed` /
+`different_seeds_give_different_populations` (bit-for-bit fingerprint of the whole spawn)
+and by `rng/tests.rs::seed_for_is_stable`, which holds `seed_for(1, Population, 0)` as a
+golden value. `examples/demos/crowd_demo/scenario.rs` drains the same `(Population, 0)`
+stream under the same fixed-count loops — the same idiom, not a second exception.
+
 ## The decision stream
 
 `rng.rs::WanderIndex::next`, on humans *and* demons. A `SimRng` is built **per decision**
@@ -49,7 +80,8 @@ Consequences, all of them deliberate:
 Each rejected alternative has bitten:
 
 - **One shared generator** collapses under any reordering — `panic` draws its repath period
-  while walking a `HashSet<Entity>`, whose order differs between runs.
+  while walking a `HashSet<Entity>`, whose order differs between runs. The single exception
+  is the placement stream above, whose consumer is a fixed `0..count` loop.
 - **A live per-pawn stream** shifts under one added `rng.random()` inside a decision.
 - **Position as an input** is tempting and wrong: pawns stand on tile centres bit-for-bit,
   so `(pawn_id, tile) → target` would be a deterministic function, and every trajectory of
@@ -163,8 +195,12 @@ hand-written `in_state(Playing)`, nine of them on one `FixedUpdate` chain.
 - `SimSet::SpatialRebuild → DemonBehavior → HumanBehavior` (`spatial.rs`) is an **ordering**
   spine, not a second world gate. It does carry `run_if(in_state(Playing))`, but that gate
   belongs to `SpatialPlugin` and is simply absent wherever that plugin is not raised, so a
-  behaviour system inside it declares its `SimPipeline` branch anyway. The demon chain does
-  (`BothModes`); **`human::flee` still does not** — a known, deliberate leftover.
+  behaviour system inside it declares its `SimPipeline` branch anyway. Both chains do
+  (`BothModes`): the demons' `pick_wander_targets/acquire_targets/chase/devour` and the
+  humans' `panic/flee/escape`. Each is pinned by a test that raises its plugin **without**
+  `SpatialPlugin` and runs `FixedUpdate` in `Loading`, where the world resources do not
+  exist (`demon::tests::demon_behavior_does_not_run_outside_the_world`,
+  `human::tests::human_behavior_does_not_run_outside_the_world`).
 
 **Every system taking `Res<Backend>` must sit in a `SimPipeline` set** — that is what
 carries the world gate along with the mode branch.

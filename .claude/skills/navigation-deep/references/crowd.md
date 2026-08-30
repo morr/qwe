@@ -6,10 +6,14 @@ in `CONTEXT.md` (Simulation).
 ## Separation
 
 **Separation** (`movement/separation/`, toggle in the Nav tab, persisted)
-— soft pairwise anti-overlap: pawns on screen keep their body radii (`HUMAN_BODY_RADIUS`
-0.585 m / `DEMON_BODY_RADIUS` 1.17 m) apart — deliberately **larger** than half the
-sprite, so a resting pair leaves a visible gap (1.17 m against a 1.0 m `HUMAN_SIZE`).
-At the earlier 0.45 m the rest distance was *narrower* than the sprite and a correctly
+— soft pairwise anti-overlap: pawns on screen keep their body radii apart. The human
+radius is the `HumanStyle::body_radius` knob (0.3…1.2 m, Nav tab and the crowd demo);
+`HUMAN_BODY_RADIUS` 0.9 m is only its `Default`, and the demon's radius is never a
+separate knob — always twice the human one (`separation::demon_radius`,
+`DEMON_RADIUS_RATIO`, default `DEMON_BODY_RADIUS` 1.8 m). At the default that is
+deliberately **larger** than half the sprite, so a resting pair leaves a visible gap
+(1.8 m rest distance against a 1.0 m `HUMAN_SIZE`). At the earlier 0.45 m the rest
+distance (0.9 m) was *narrower* than the sprite and a correctly
 separated crowd still drew as a solid mosaic. Deliberately local and cosmetic, four
 gates in order: **the mode** (`separation_runs`) — no separation under determinism, and
 none on the grid backend either (`PolymeshDebug::enabled` off): grid waypoints sit in
@@ -30,8 +34,10 @@ would eat ~6% of a real second; ticks between runs only accumulate virtual dt); 
 below `SEPARATION_MAX_ZOOM`** (same 0.75 as the wander-dispatch cutoff — farther out a
 pawn is 1–2 px and overlap does not read). Candidates come from both coarse grids via
 `for_each_in_rect` over the viewport (`VIEW_MARGIN` slack), then a throwaway fine grid
-(`SEPARATION_CELL` 2.4 m — tied to the radii, it must exceed the largest sum
-demon+demon 2.34 m or a pair can fall outside the 3 × 3 scan; head+next linked lists in
+(`separation_cell()` — twice the demon radius, floored at `SEPARATION_CELL` 2.4 m, so
+3.6 m at the default radius: the cell must not be smaller than the largest sum
+demon+demon or an overlapping pair falls outside the 3 × 3 scan, and with the radius on a
+slider a plain constant would sooner or later be too small; head+next linked lists in
 `Local` buffers — no steady-state
 allocations) resolves pairs: each pair sheds `SEPARATION_RATE` (8/s) of its overlap per
 virtual second, clamped to `SEPARATION_MAX_STEP` (0.3 m) per run, split by mobility

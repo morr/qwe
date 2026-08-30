@@ -290,6 +290,10 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
 - **Seed derivation** — `seed_for(world_seed, domain, key)`, two rounds of splitmix64.
   `RngDomain: Population | Human | Demon`. **Nothing stores live RNG state**, so a restart
   has no RNG to reset — every stream is re-derived.
+- **Placement stream** (`rng.rs::stream`, `RngDomain::Population`) — the one shared
+  generator, held by `spawn_population` across every spawn. Legal precisely because its
+  consumer is a fixed `0..count` loop rather than a query traversal, and everything
+  personal (colour, `Pace`, heading) still comes from the pawn's own decision stream.
 - **Decision stream** (`rng.rs::WanderIndex::next`, humans *and* demons) — a `SimRng` is
   built **per decision** and dies with it, seeded from `(PawnId, decision number)`: the
   pawn's observable identity plus which choice this is, never the history of a stream. So
@@ -386,22 +390,35 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   shared by both species: `ready_to_pick` → the species' policy → `point_in_cone` /
   `clamp_to_map` → `request_wander_path` → `heading_towards`. Only **where** a pawn wants to
   go is per-species. It deliberately does **not** open the `SimRng`.
-- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s between walks;
-  80 % a building errand anywhere in the city — the real pathfinding load — and 20 % a
-  20–40 m stroll) ⇄ **Flee** (a demon within `HUMAN_PANIC_RADIUS` 60 m; repath every
-  0.7–1.2 s, stepping 40–60 m away), calm-down at ×1.5 radius hysteresis. The Wander → Flee
+- **PopulationSize** (`human/components.rs`, resource) — how many humans
+  `spawn_population` settles. **No knob, and not a `settings.rs` value**: its `Default`
+  *is* `HUMAN_COUNT` (20 000) and the game never changes it; the resource exists so a
+  headless scene can run a small crowd. Read at two sites that must stay in step —
+  `human::spawn_humans` under `WorldInitSet::Spawn` and `restart::on_restart`, so a
+  restart respawns the same number. Today the only non-default user is the replay yard
+  (`determinism::replay::replay_app`'s `population` argument; `tests/determinism.rs`
+  runs 64). **It is the right-hand side of the telemetry invariant** — see Telemetry.
+- **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s, rolled per
+  arrival and drawn by only `HUMAN_WANDER_PAUSE_SHARE` 20 % of them — the rest pick the
+  next target the same frame; 80 % a building errand anywhere in the city — the real
+  pathfinding load — and 20 % a 20–40 m stroll) ⇄ **Flee** (a demon within
+  `HUMAN_PANIC_RADIUS` 60 m; the first repath on the panic tick itself, then every
+  0.7–1.2 s, stepping 40–60 m away), calm-down at ×1.5
+  radius hysteresis. The Wander → Flee
   check is **inverted** — demons collect neighbours from the human grid, so its cost tracks
   the crowd near demons, not the city population. **Flee fan** — a non-chased fleeing human
   rotates its away-vector by a deterministic per-entity angle (±0.6 rad) so crowds spread;
   chased humans flee straight. **Escape** — a fleeing human within `ESCAPE_MARGIN` of the
   border despawns, `telemetry.escaped += 1`.
 - **WanderHeading** — the direction a human is walking, kept between walks; every next
-  target is picked inside a `WANDER_CONE` (60°) around it. Without it pawns wobbled in
+  target is picked inside a `WANDER_CONE` (±60°) around it. Without it pawns wobbled in
   place. `flee` rewrites it to the away-vector on every repath.
 - **PanicRecoil** — a unit vector *toward* the demon, written on **every flee repath** and
   **never queried live** (`pick_wander_targets` must stay off the demon grid). While it is
   on, the next target must be an errand outside `RECOIL_CONE` (±45°) and farther than
-  `RECOIL_MIN_ERRAND` (90 m); nothing acceptable → re-roll next frame, **never a stroll**.
+  `RECOIL_MIN_ERRAND` (90 m); nothing acceptable → re-roll next frame, **never a stroll** —
+  except on a map with no buildings at all, where the fallback stroll is filtered by the
+  cone alone, with no distance floor.
 - **HumanFirstWanderTag** — the very first target after spawn is always the *near* stroll,
   never an errand. Measured: errands first routed the on-screen pawns in 3.9 s, strolls
   first in 0.15 s. `PanicRecoil` overrides it.
@@ -462,8 +479,9 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
 - **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the **Souls reaped** HUD
   counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
   holds the seed and the determinism row. Invariant (check paused):
-  `killed + escaped + alive == HUMAN_COUNT`. At high sim speed BRP reads are skewed —
-  pause before asserting.
+  `killed + escaped + alive == PopulationSize` — the number the spawn actually read, not
+  the constant: in the game that is the default `HUMAN_COUNT`, in a replay run whatever
+  `replay_app` was given. At high sim speed BRP reads are skewed — pause before asserting.
 
 ## UI & debug
 
