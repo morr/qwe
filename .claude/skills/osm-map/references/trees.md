@@ -245,6 +245,16 @@ with**, which is what makes "Сброс к игре" exact and what lets the who
 test suite keep pinning the game without a single changed expectation. The game itself
 passes `CrownParams::default()` and grows no panel for them.
 
+`CrownParams::seed` picks the **crown set**: same rules, a different `TREE_VARIANTS`
+silhouettes. A single variant cannot be re-rolled — the set is one seed and the variant
+its index within it — so a bad silhouette is dropped by changing the whole set. The city
+runs on **seed 5**, chosen by eye in the gallery: set 0 had a conifer whose base vertices
+landed too evenly, leaving low spikes (height grows as `len^1.5`) and one flattened
+flank that read as a rendering fault among the other firs. The set stride is deliberately
+not a multiple of the per-variant stride — with equal strides `BASE + seed·s + variant·s`
+collapses to `BASE + (seed + variant)·s`, i.e. the seed slides the same row of crowns by
+one cell instead of reseeding it, and a bad variant merely moves to its neighbour.
+
 Knobs whose value differs per shape (12 base vertices vs 16 on a conifer, jitter 1/3 vs
 1/4, band lift 0.15/0.12/0.1) are **multipliers**, not absolutes: one slider moves all
 three shapes and keeps their proportions, where an absolute would erase the difference
