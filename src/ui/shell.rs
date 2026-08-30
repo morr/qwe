@@ -124,13 +124,23 @@ pub(super) struct SettingsPanes {
     /// Колонка левого края целиком: в неё же попадает HUD-блок счётчиков, и по
     /// ней метка BRP двигает всё, что под ней.
     column: Entity,
+    /// По одной на вкладку, в порядке [`SettingsTab::ALL`] — тем же списком их
+    /// заполняет `spawn_shell`.
     panes: [Entity; SettingsTab::ALL.len()],
 }
 
 impl SettingsPanes {
     /// Контейнер вкладки — родитель для секций панели.
+    ///
+    /// Позиция во вкладочном массиве — место вкладки в [`SettingsTab::ALL`], а
+    /// не её дискриминант: дискриминант был бы вторым порядком рядом с первым,
+    /// и перестановка `ALL` молча увела бы секции в чужую вкладку.
     pub(super) fn pane(&self, tab: SettingsTab) -> Entity {
-        self.panes[tab as usize]
+        let index = SettingsTab::ALL
+            .into_iter()
+            .position(|candidate| candidate == tab)
+            .expect("SettingsTab::ALL lists every tab");
+        self.panes[index]
     }
 
     /// Колонка левого края — для HUD-блоков, которые стоят НАД панелью настроек.
@@ -168,10 +178,16 @@ pub(super) enum SectionSlot {
 
 /// Секции по местам: `Startup` спавнит их в порядке запуска систем, то есть в
 /// произвольном, — здесь дети каждой вкладки переставляются по [`SectionSlot`].
+///
+/// Секция без слота — забытое место, а не первое: она уходит в конец вкладки, и
+/// о ней говорит лог. Поставить её молча наверх значило бы выдать пропуск за
+/// порядок — а перечисление заведено ровно затем, чтобы место секции нельзя
+/// было забыть.
 fn sort_sections(
     panes: Res<SettingsPanes>,
     children: Query<&Children>,
     slots: Query<&SectionSlot>,
+    names: Query<&Name>,
     mut commands: Commands,
 ) {
     for pane in panes.panes {
@@ -179,9 +195,27 @@ fn sort_sections(
             continue;
         };
         let mut sorted: Vec<Entity> = sections.iter().collect();
-        sorted.sort_by_key(|section| slots.get(*section).copied().ok());
+        for section in &sorted {
+            if slots.get(*section).is_ok() {
+                continue;
+            }
+            let name = names
+                .get(*section)
+                .map_or_else(|_| format!("{section}"), Name::to_string);
+            warn!(
+                "settings section {name} has no SectionSlot: its place in the tab is \
+                 undefined, so it goes last (spawn it through spawn_section / spawn_block)"
+            );
+        }
+        sorted.sort_by_key(|section| slot_order(slots.get(*section).ok().copied()));
         commands.entity(pane).replace_children(&sorted);
     }
+}
+
+/// Место секции среди детей вкладки: по объявлению [`SectionSlot`], а секция без
+/// слота — последней.
+fn slot_order(slot: Option<SectionSlot>) -> usize {
+    slot.map_or(usize::MAX, |slot| slot as usize)
 }
 
 /// Блок строк во вкладке — секция без заголовка. Вкладка Navigation вся такая:
@@ -538,6 +572,28 @@ mod tests {
         unique.dedup();
         assert_eq!(labels.len(), unique.len());
         assert_eq!(labels[0], SettingsTab::Map.label());
+    }
+
+    /// Секция попадает в контейнер **своей** вкладки: массив заполнен обходом
+    /// `SettingsTab::ALL`, и `pane` читает его тем же списком.
+    #[test]
+    fn a_tab_finds_its_own_pane() {
+        let entity = |index: u32| Entity::from_raw_u32(index).expect("entity");
+        let panes = SettingsPanes {
+            column: entity(100),
+            panes: SettingsTab::ALL.map(|tab| entity(1 + tab as u32)),
+        };
+        for tab in SettingsTab::ALL {
+            assert_eq!(panes.pane(tab), entity(1 + tab as u32));
+        }
+    }
+
+    /// Секция без слота — забытая, и её место в конце вкладки: наверху её
+    /// приняли бы за первую по порядку объявления.
+    #[test]
+    fn a_section_without_a_slot_goes_last() {
+        assert!(slot_order(None) > slot_order(Some(SectionSlot::Actions)));
+        assert!(slot_order(Some(SectionSlot::Trees)) < slot_order(Some(SectionSlot::TreeRows)));
     }
 
     /// Клик по чужой вкладке разворачивает панель: иначе кнопка отвечала бы
