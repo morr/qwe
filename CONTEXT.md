@@ -260,7 +260,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   passable tiles; on reply, up to `REPATH_TRIM_LIMIT` leading waypoints are trimmed.
 - **Rescue** (`movement::rescue_from_impassable`) — a pawn on an impassable tile is moved to
   the nearest passable one. **Trigger is a failed search**, not a clock; what counts as free
-  is the *active backend*. A full pass runs only after every completed polymesh build.
+  is the *active backend*. A full pass runs only after every completed polymesh build, and
+  it runs **ahead of that frame's target picking and dispatch** (`movement/mod.rs`).
 - **find_passable_tile_near** — target tile or its 8 neighbors only; callers tolerate `None`.
 - **Poly navmesh** (`navigation/polymesh/`) — a polygonal polyanya mesh from the same vector
   sources the grid rasterizes, ring **holes subtracted** as the grid subtracts them; **the
@@ -337,10 +338,13 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   system declares its branch with `.in_set(..)` and **never reads the mode**. **The sets
   also carry the world gate** (`in_world`), so "no set" reads as "lives outside the world",
   not "both modes".
-- **Retire tick** (`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`) — a request issued on tick `T`
-  is applied on exactly `T + 8`, waiting on the search if it has not finished. That wait
-  removes "when did the OS get around to it" from the simulation. **The constant must not
-  scale with `SimSpeed`.**
+- **Retire tick** (`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`) — the deadline is stamped **at
+  dispatch, not when the request was filed**: a request that leaves the queue on tick `D` is
+  applied on exactly `D + 8`, waiting on the search if it has not finished. The queue wait
+  before `D` is on top of that (a long queue is normal here — see *Dispatch rate*), so what
+  replays identically is not one fixed end-to-end latency but the deadline itself: `D` and
+  `D + 8` both follow from integer state. That wait removes "when did the OS get around to
+  it" from the simulation. **The constant must not scale with `SimSpeed`.**
 - **Dispatch rate** (`PATHFINDING_WANDER_UNITS_PER_TICK` 128 / `_URGENT_` 64) — how much
   leaves the queue each tick, measured in *predicted search cost* (an integer), not in
   requests. **Never reuse `MAX_*_IN_FLIGHT` here** — those cap concurrent searches behind
@@ -380,11 +384,16 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `Transform.translation.xy`**. `snapshot_previous_sim_positions` runs **before**
   `SimSet::SpatialRebuild` (as does the demon spawner) and `move_moving_entities` **after**
   `SimSet::HumanBehavior`, because behavior may move `SimPosition` itself (the demon lunge).
-- **Movable** — `{speed, path: VecDeque<IVec2>, state}` with `MovableState: Idle |
-  Pathfinding(goal) | Moving(goal) | PathfindingError`. `to_pathfinding` queues the search
-  and keeps the current path; **`to_idle` is the only transition that stops movement** —
-  and it stops it whole: path, `MovableStateMovingTag`, and a `PathfindingRequest` that has
-  not been dispatched yet, with its `RequestedAt`.
+- **Movable** — `{speed, path: VecDeque<Vec2>, state, last_direction}` with `MovableState:
+  Idle | Pathfinding(goal) | Moving(goal) | PathfindingError(goal)`. **Waypoints are in
+  world metres, the goal is a tile** (*Polygonal routing*); `last_direction` is the heading
+  of the last step, i.e. the coasting vector (*Repath on the move*). `to_pathfinding`
+  queues the search and keeps the current path; **`to_idle` is the only transition that
+  stops movement** — and it stops it whole: path, `MovableStateMovingTag`, and a
+  `PathfindingRequest` that has not been dispatched yet, with its `RequestedAt`.
+  **`to_pathfinding` re-files a queued request instead of overwriting it** (remove +
+  insert, with `RequestedAt`): both consumers filter on `Added<PathfindingRequest>`,
+  and an overwrite arms only `Changed`.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells (≥ the
   largest search radius, so a radius query is a 3×3 cell walk). Cells hold **entities
   only** — positions are read live through the `pos_of` closure. **A tie in distance is
@@ -479,7 +488,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   (`separation::demon_radius`, `DEMON_RADIUS_RATIO`, default `DEMON_BODY_RADIUS` 1.8 m).
   Runs **only on the
   polymesh backend and never under determinism** (grid waypoints re-collapse any push), once
-  per rendered frame, below `SEPARATION_MAX_ZOOM`. Lunging demons are exempt; the one
+  per rendered frame, below `SEPARATION_MAX_ZOOM`; the run is **dt-invariant** — overlap
+  decays as `exp(-rate · t)` of virtual time under a `max_speed · dt` ceiling
+  (`max_step` is only a teleport guard), so one frame at 30x equals thirty frames
+  at 1x. Lunging demons are exempt; the one
   deliberate breach of "cosmetic" is `SeparationHolds` + rest-distance arrival forgiveness.
   Measured on demand by `examples/demos/crowd_demo/`.
 - **Destination slot** (`movement/destination.rs`) — the reservation that stops two pawns

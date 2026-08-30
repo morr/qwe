@@ -127,8 +127,10 @@ pub struct UrgentPath;
 #[reflect(Component)]
 pub struct RequestedAt(pub u64);
 
-/// Тик, на котором ответ обязан быть применён, — `тик заявки +
-/// PATHFINDING_RETIRE_TICKS`.
+/// Тик, на котором ответ обязан быть применён, — `тик диспетчеризации +
+/// PATHFINDING_RETIRE_TICKS`. Не тик подачи ([`RequestedAt`]): до диспетчера
+/// заявка стоит в очереди, и сколько тиков она там простояла, в срок не
+/// входит.
 ///
 /// Это и есть развязка симуляции с реальным временем: поиск считается
 /// асинхронно, но результат ждёт своего тика, а если не успел — его дожидаются
@@ -142,6 +144,31 @@ pub struct RetireAt(pub u64);
 pub struct MovableReachedDestinationEvent {
     pub entity: Entity,
     pub grid_tile: IVec2,
+}
+
+/// Одна пешка под правкой: тождество, три компонента, которые переезд и смена
+/// состояния меняют ВМЕСТЕ, и буфер команд, которым эта смена объявляется.
+///
+/// Группа, а не пять параметров: `systems::rescue_from_impassable` и
+/// `pathfinding::accept_answer` принимали ровно эту пятёрку в одном и том же
+/// порядке, а третий вызывающий — `systems::rescue_trapped_entities` — собирал
+/// её из своего запроса. Врозь она смысла не имеет: переезд обязан поправить
+/// оба конца интерполяции (`SimPosition` и `PreviousSimPosition`) и сбросить
+/// путь (`Movable`) одним движением — иначе интерполяция протянет пешку через
+/// полгорода за кадр. Тот же приём, что у
+/// [`SeparationInput`](super::separation::SeparationInput) /
+/// `SeparationOutput`, только над заимствованиями компонентов, а не над
+/// ресурсами.
+///
+/// `Drop` не реализуется намеренно: `rescue_trapped_entities` читает
+/// `sim_position` уже ПОСЛЕ вызова спасения, и освободить заимствование там
+/// может только NLL.
+pub(super) struct PawnEdit<'a, 'w, 's> {
+    pub entity: Entity,
+    pub movable: &'a mut Movable,
+    pub sim_position: &'a mut SimPosition,
+    pub previous: &'a mut PreviousSimPosition,
+    pub commands: &'a mut Commands<'w, 's>,
 }
 
 impl Movable {

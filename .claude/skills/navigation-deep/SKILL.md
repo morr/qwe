@@ -382,6 +382,10 @@ counts what the player can actually see, not what the dispatcher is willing to s
   `StepOutcome` (`Moved` / `Arrived { destination_reached }` / `Halted`) and touches no
   `Entity`, `Commands` or query — the same shape as `human::decide` / `demon::decide`.
   `move_moving_entities` is the plumbing around it: query, commands, the human grid.
+  Both course changes the step makes on its own are gated on passability, which is what
+  the `Walkable` argument is for: coasting **halts** on an impassable tile, steering is
+  **dropped for that tick** and the pawn walks its plain course. `slide` is not gated —
+  it is a lab knob, off by default, and only ever shortens the step.
   Tested by value in `movement/step/tests.rs`, which is how `slide` and `steer_release`
   got covered at all — both are lab knobs, off by default, so a whole-`App` test could
   not reach them.
@@ -399,9 +403,18 @@ counts what the player can actually see, not what the dispatcher is willing to s
 - **find_passable_tile_near** — the target tile or its 8 neighbors only; callers must
   tolerate `None`.
 - **Rescue** (`movement::rescue_from_impassable`) — a pawn standing on an impassable tile
-  moves to the nearest passable one (`nearest_passable_tile`, ring search capped at
-  `RESCUE_SEARCH_TILES` = 16 tiles), both ends of the interpolation are set to the new
-  point and the stale path is dropped (`to_idle`). Ways in exist by construction: the
+  moves to the nearest free point (`Walkable::nearest_free_point`), both ends of the
+  interpolation are set to the new point and the stale path is dropped (`to_idle`).
+  **Where it moves to is two steps, not one.** On the mesh backend the snap comes first
+  (`PolymeshBuild::nearest_free_point` — polyanya's `get_closest_point` within the
+  0.75 m localisation tolerance, the same snap that seats the ends of a request): a
+  pawn caught by a rebuild with a larger agent radius stands centimetres from free space,
+  and a ring of tiles with a BVH query per candidate would cost three orders more than one
+  snap. Only when the snap misses — the pawn is not against a wall but deep inside a
+  house — does the shared `nearest_tile_where` ring search run, capped at
+  `RESCUE_SEARCH_TILES` = 16 tiles (32 m); on the bare grid it is the only step. So the
+  landing point is a mesh point, not necessarily a tile centre.
+  Ways in exist by construction: the
   spawn sifts tiles but stands the pawn on a tile centre whose own corner may already be
   inside a house (fill marks a tile by its centre), the polygonal mesh calls passable
   what the grid does not (contours inflated by the agent radius), coasting and the demon
@@ -422,12 +435,23 @@ counts what the player can actually see, not what the dispatcher is willing to s
   index into a `Vec`), and — while the polygonal mesh is built and selected —
   `PolymeshBuild::contains`, a layer-hinted `point_in_mesh`. The mesh is the stricter of
   the two: its contours are inflated by the agent radius, so a tile that clears the grid
-  can be inside an obstacle on the mesh.
+  can be inside an obstacle on the mesh. The same `allows` re-checks the mesh snap of the
+  step above (`.filter(|&snapped| self.allows(snapped))`), so the mesh answer can never
+  land a pawn on a blocked grid tile — a failed re-check falls through to the ring search.
   `rescue_trapped_entities` is the same check as a full pass, and it runs in exactly one
   place: **every completed mesh build** (`polymesh_rebuilt` watches
   `PolyNavmesh::generation` — `resource_changed` would also fire when a build merely
   starts). That is the only moment passability changes under pawns already standing. It
   logs `rescued N entities` with its own duration when it moves anyone.
+  It is also the **head of the `Update` movement chain** — explicitly `.before`
+  `human::pick_wander_targets` and, through the chain, before
+  `dispatch_pathfinding_requests` (`movement/mod.rs`). The teleport rewrites
+  `SimPosition` and drops the pawn to `Idle`, which is exactly what those two read in
+  the same frame: reaching the dispatcher first buys a full A* from the pre-teleport
+  `start_tile`, and `accept_answer` drops that answer on its very first check — one
+  budget slot per rescued pawn, on the one frame per city where they appear en masse.
+  Rescued in front of the picker, the pawn files its next request from the new
+  position in the same frame instead of standing one frame out.
   There is deliberately **no scan on entering the world**, though it looks called for: by
   then the grid is final and `spawn_population` picked its tiles with the very same
   `is_passable`, so the pass would re-test the predicate the spawn had just applied and

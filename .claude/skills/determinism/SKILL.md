@@ -210,13 +210,22 @@ carries the world gate along with the mode branch.
 
 ### Retire tick
 
-`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`. A request issued on tick `T` is applied on
-exactly `T + 8`, whether or not the search finished; if it did not,
+`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`. The deadline is stamped **at dispatch**, not
+when the request was filed: a request that leaves the queue on tick `D` is applied on
+exactly `D + 8`, whether or not the search finished; if it did not,
 `apply_pathfinding_results` waits on it (`block_on`).
 
+`D` is not `RequestedAt` — before dispatch the request waits in the FIFO queue, and **a
+long queue is the normal state of this mode** (see the dispatch rate below), so end-to-end
+"filed → applied" latency is queue wait + 8 and differs per request. Both halves are
+functions of integer state, so the tick each pawn starts moving on is the same in every
+replay — that is the guarantee, not a constant latency. Measuring from `RequestedAt`
+instead would put the deadline of a queued request in the past, and `block_on` would then
+wait out the whole search on the next tick.
+
 **That wait *is* the mechanism** — it removes "when did the OS get around to it" from the
-simulation. Eight ticks ≈ 125 ms at 1×, which is what today's `request → dispatch → task →
-collect` pipeline already costs, so pawn behavior is unchanged.
+simulation. Eight ticks ≈ 125 ms at 1×, which is what live mode's `request → dispatch →
+task → collect` pipeline already costs, so pawn behavior after dispatch is unchanged.
 
 It does **not** set throughput — the dispatch rate below does; K only buys a batch wall time
 before its join, and pays in path staleness. **The constant must not scale with `SimSpeed`**
@@ -251,6 +260,11 @@ queue mixes demons with fleeing humans.
 A small rate plus this FIFO *is* the deterministic replacement for the camera gate: distant
 pawns still wait longer, but reproducibly rather than because the player looked away. **The
 camera does not appear in it at all.**
+
+A re-target re-files the request, so its `RequestedAt` is the tick of the LATEST goal, not
+of the first: `to_pathfinding` removes request and mark together and
+`stamp_pathfinding_requests` stamps the fresh pair on the same tick. A new destination is a
+new request, and it queues behind everything filed before it.
 
 ### Frozen backend
 

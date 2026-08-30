@@ -164,6 +164,69 @@ fn a_pawn_deeper_than_the_search_radius_is_left_alone() {
     assert_eq!(position_of(&app, pawn), position);
 }
 
+// --- спасение впереди диспетчера ---
+
+use bevy::window::PrimaryWindow;
+
+use super::components::UrgentPath;
+use super::pathfinding::dispatch_pathfinding_requests;
+
+/// Ребро `rescue → dispatch` (`movement/mod.rs`) целиком: заявка застрявшей
+/// пешки снимается переездом ДО того, как диспетчер успеет оплатить по ней
+/// полный поиск от до-телепортного `start_tile`.
+///
+/// Вторая пешка — контроль: она стоит на проходимом, её заявка обязана уехать
+/// в таск. Без неё тест проходил бы и в случае, когда диспетчер вовсе не
+/// отработал (например, не нашёлся `Single<&Window>`).
+#[test]
+fn the_rescue_beats_the_dispatcher_to_a_trapped_pawns_request() {
+    AsyncComputeTaskPool::get_or_init(TaskPool::default);
+    let app = &mut app_with_block();
+    app.world_mut().spawn((Window::default(), PrimaryWindow));
+    app.world_mut().spawn(Camera2d);
+    // тот же порядок, что и в `MovementPlugin`
+    app.add_systems(
+        Update,
+        (rescue_trapped_entities, dispatch_pathfinding_requests).chain(),
+    );
+
+    // `UrgentPath` — иначе гейт видимости не пропустит ни ту, ни другую:
+    // масштаб камеры по умолчанию выше `WANDER_DISPATCH_MAX_ZOOM`
+    let trapped = spawn_pawn(app, tile_center(IVec2::new(105, 105)));
+    request_for(app, trapped, IVec2::new(105, 105), IVec2::new(200, 200));
+    let free = spawn_pawn(app, tile_center(IVec2::new(50, 50)));
+    request_for(app, free, IVec2::new(50, 50), IVec2::new(52, 50));
+
+    app.update();
+
+    assert_on_passable_tile(app, trapped);
+    assert!(
+        app.world().get::<PathfindingTask>(trapped).is_none(),
+        "диспетчер оплатил поиск от тайла, с которого пешку уже увезли"
+    );
+    assert!(
+        app.world().get::<PathfindingRequest>(trapped).is_none(),
+        "заявка пережила переезд"
+    );
+    assert!(
+        app.world().get::<PathfindingTask>(free).is_some(),
+        "диспетчер не отработал вовсе — тест ничего не проверил"
+    );
+}
+
+/// Пешка в `Pathfinding` со срочной заявкой в очереди.
+fn request_for(app: &mut App, pawn: Entity, start_tile: IVec2, end_tile: IVec2) {
+    let mut entity = app.world_mut().entity_mut(pawn);
+    entity.get_mut::<Movable>().expect("Movable").state = MovableState::Pathfinding(end_tile);
+    entity.insert((
+        PathfindingRequest {
+            start_tile,
+            end_tile,
+        },
+        UrgentPath,
+    ));
+}
+
 // --- спасение по провалу поиска ---
 
 /// Готовый ответ поиска для сущности: `None` — поиск не нашёл пути.
@@ -257,6 +320,46 @@ fn a_successful_answer_is_taken_as_a_path() {
     assert_eq!(movable.path.len(), 2);
 }
 
+/// Ответ «ты уже на месте» (путь из одной точки — стартовой) — это приход, и
+/// он обязан быть опубликован. Перепрокладка идёт на ходу, так что в пешке
+/// лежит непройденный старый путь, а событие в `to_idle` гейтится ещё и
+/// пустым путём: не почистить его в приёмке — значит промолчать о приходе, и
+/// молча, потому что единственный потребитель события — счётчик стенда.
+#[test]
+fn a_single_point_answer_reports_the_arrival_and_goes_idle() {
+    let app = &mut app_with_listener();
+    let end_tile = IVec2::new(50, 50);
+    let position = tile_center(end_tile);
+    let pawn = spawn_pawn(app, position);
+
+    #[derive(Resource, Default)]
+    struct Arrivals(Vec<IVec2>);
+    app.init_resource::<Arrivals>();
+    app.add_observer(
+        |event: On<MovableReachedDestinationEvent>, mut arrivals: ResMut<Arrivals>| {
+            arrivals.0.push(event.grid_tile);
+        },
+    );
+
+    // пешка ушла в поиск на ходу: старый путь при заявке не сбрасывается
+    app.world_mut()
+        .get_mut::<Movable>(pawn)
+        .expect("Movable")
+        .path = [tile_center(IVec2::new(60, 50))].into();
+    answer(app, pawn, end_tile, Some(vec![position]));
+
+    run_until_answered(app, pawn);
+
+    assert_eq!(
+        app.world().resource::<Arrivals>().0,
+        vec![end_tile],
+        "приход не опубликован"
+    );
+    let movable = app.world().get::<Movable>(pawn).expect("Movable");
+    assert_eq!(movable.state, MovableState::Idle);
+    assert!(movable.path.is_empty(), "старый путь остался в пешке");
+}
+
 // --- счётчики приёмки ---
 
 /// Приложение с зарегистрированной диагностикой: без регистрации
@@ -327,11 +430,12 @@ fn the_deterministic_receiver_reports_zeros_on_a_tick_with_nothing_due() {
 
 // --- детерминированный диспетчер ---
 
-use super::components::{PathfindingRequest, RequestedAt};
+use super::components::RetireAt;
 use super::pathfinding::dispatch_pathfinding_requests_deterministic;
 use crate::determinism::SimTick;
 use crate::settings::{
-    PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK, PATHFINDING_WANDER_UNITS_PER_TICK,
+    PATHFINDING_RETIRE_TICKS, PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK,
+    PATHFINDING_WANDER_UNITS_PER_TICK,
 };
 
 /// Приложение с одним детерминированным диспетчером и пустой (проходимой)
@@ -524,6 +628,168 @@ fn a_demon_and_a_human_may_share_a_pawn_id() {
     app.update();
 
     assert_eq!(dispatched(app), PATHFINDING_URGENT_UNITS_PER_TICK as usize);
+}
+
+/// Срок снятия отмеряется от диспетчеризации, а не от подачи: до диспетчера
+/// заявка стоит в очереди, а длинная очередь — штатное состояние режима.
+/// Регрессия на формулировку: три документа обещали «заявка с тика `T`
+/// приземляется на `T + K`», и при отсчёте от `RequestedAt` срок простоявшей
+/// заявки оказался бы в прошлом — приёмник снял бы её на следующем же тике,
+/// дожидаясь всего поиска в `block_on`.
+#[test]
+fn the_retire_deadline_is_measured_from_dispatch_not_from_the_request_tick() {
+    let app = &mut app_with_deterministic_dispatcher();
+    // вдвое больше бюджета: половина уедет на первом тике, половина на втором
+    for pawn_id in 0..PATHFINDING_WANDER_UNITS_PER_TICK * 2 {
+        spawn_request(app, pawn_id, 0, true, 0);
+    }
+
+    *app.world_mut().resource_mut::<SimTick>() = SimTick(3);
+    app.update();
+    *app.world_mut().resource_mut::<SimTick>() = SimTick(4);
+    app.update();
+
+    let mut deadlines: Vec<u64> = app
+        .world_mut()
+        .query::<&RetireAt>()
+        .iter(app.world())
+        .map(|retire_at| retire_at.0)
+        .collect();
+    deadlines.sort_unstable();
+    deadlines.dedup();
+    assert_eq!(
+        deadlines,
+        vec![3 + PATHFINDING_RETIRE_TICKS, 4 + PATHFINDING_RETIRE_TICKS],
+        "все заявки поданы на тике 0; будь срок отмерен от подачи, он был бы один на всех"
+    );
+}
+
+// --- перецеливание поверх неуехавшей заявки ---
+
+/// Пешка, перецеленная поверх заявки, которая ещё не уехала, обязана получить
+/// СВЕЖУЮ метку тика. `insert` поверх живого компонента `Added` не взводит, и
+/// `stamp_pathfinding_requests` проходил мимо: ключ FIFO оставался от первой
+/// цели, тем более старый, чем дольше заявка стояла в очереди.
+#[test]
+fn a_retarget_over_a_queued_request_gets_a_fresh_tick_mark() {
+    /// Два кадра: на первом заявка на A, на втором — перецеливание на B.
+    fn retarget(
+        mut step: Local<u8>,
+        mut query: Query<(Entity, &mut Movable)>,
+        mut commands: Commands,
+    ) {
+        *step += 1;
+        let end_tile = match *step {
+            1 => IVec2::new(50, 50),
+            2 => IVec2::new(70, 70),
+            _ => return,
+        };
+        for (entity, mut movable) in &mut query {
+            movable.to_pathfinding(entity, IVec2::new(10, 10), end_tile, &mut commands);
+        }
+    }
+
+    let mut app = App::new();
+    app.init_resource::<SimTick>()
+        .add_systems(Update, (retarget, stamp_pathfinding_requests).chain());
+    let pawn = app
+        .world_mut()
+        .spawn((
+            Movable::new(1.0),
+            SimPosition(tile_center(IVec2::new(10, 10))),
+            PreviousSimPosition(tile_center(IVec2::new(10, 10))),
+        ))
+        .id();
+
+    *app.world_mut().resource_mut::<SimTick>() = SimTick(3);
+    app.update();
+    assert_eq!(
+        app.world().get::<RequestedAt>(pawn).expect("метка тика").0,
+        3
+    );
+
+    // заявка никуда не уехала — диспетчера в этом приложении нет вовсе
+    *app.world_mut().resource_mut::<SimTick>() = SimTick(9);
+    app.update();
+
+    let request = app.world().get::<PathfindingRequest>(pawn).expect("заявка");
+    assert_eq!(request.end_tile, IVec2::new(70, 70));
+    assert_eq!(
+        app.world().get::<RequestedAt>(pawn).expect("метка тика").0,
+        9,
+        "перецеленная заявка обязана встать в очередь тиком перецеливания"
+    );
+}
+
+/// …и слот назначения на НОВУЮ цель, а не заявку, оставшуюся на брошенной.
+/// `assign_destination_slots` отбирает по тому же `Added`, поэтому до фикса
+/// перецеленная пешка держала `DestinationClaim` на точке, куда уже не идёт.
+#[test]
+fn a_retarget_over_a_queued_request_moves_the_destination_claim() {
+    use crate::movement::destination::slot_of;
+    use crate::movement::{DestinationClaim, SlotLab, SlotSearch, assign_destination_slots};
+
+    fn retarget(
+        mut step: Local<u8>,
+        mut query: Query<(Entity, &mut Movable)>,
+        mut commands: Commands,
+    ) {
+        *step += 1;
+        let end_tile = match *step {
+            1 => IVec2::new(50, 50),
+            2 => IVec2::new(70, 70),
+            _ => return,
+        };
+        for (entity, mut movable) in &mut query {
+            movable.to_pathfinding(entity, IVec2::new(10, 10), end_tile, &mut commands);
+        }
+    }
+
+    // пустая (всюду проходимая) сетка: проверяется раздача слотов, не поиск
+    let mut app = app_with(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))));
+    app.init_resource::<crate::human::HumanStyle>()
+        .init_resource::<SlotSearch>()
+        .init_resource::<SlotLab>()
+        .init_resource::<crate::movement::DestinationClaims>()
+        .add_systems(Update, (retarget, assign_destination_slots).chain());
+    let pawn = app
+        .world_mut()
+        .spawn((
+            Movable::new(1.0),
+            SimPosition(tile_center(IVec2::new(10, 10))),
+            PreviousSimPosition(tile_center(IVec2::new(10, 10))),
+        ))
+        .id();
+
+    app.update();
+    let side = crate::movement::slot_side(
+        2.0 * app
+            .world()
+            .resource::<crate::human::HumanStyle>()
+            .body_radius,
+    );
+    assert_eq!(
+        app.world().get::<DestinationClaim>(pawn).expect("слот").0,
+        slot_of(IVec2::new(50, 50), side)
+    );
+
+    app.update();
+
+    let claim = app.world().get::<DestinationClaim>(pawn).expect("слот");
+    assert_eq!(
+        claim.0,
+        slot_of(IVec2::new(70, 70), side),
+        "слот обязан переехать на новую цель"
+    );
+    assert!(
+        app.world()
+            .resource::<crate::movement::DestinationClaims>()
+            .is_free(
+                slot_of(IVec2::new(50, 50), side),
+                Entity::from_raw_u32(0).unwrap()
+            ),
+        "слот брошенной цели обязан освободиться"
+    );
 }
 
 // --- переходы Movable ---

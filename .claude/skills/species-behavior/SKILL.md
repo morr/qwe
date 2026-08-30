@@ -38,10 +38,16 @@ Fixed-step order is explicit and load-bearing:
   itself (the demon lunge), and a snapshot taken after that would flatten one tick of
   interpolation.
 
-**Movable** — `{speed, path: VecDeque<IVec2>, state}` with `MovableState: Idle |
-Pathfinding(goal) | Moving(goal) | PathfindingError`. `to_pathfinding` queues the search and
-keeps the current path (repath on the move — `navigation-deep`); `to_idle` is the only
-transition that stops movement.
+**Movable** — `{speed, path: VecDeque<Vec2>, state, last_direction}` with `MovableState:
+Idle | Pathfinding(goal) | Moving(goal) | PathfindingError(goal)`. The path is a
+**world-space polyline in metres**, not a tile list — the goal alone stays a tile
+(`navigation-deep`, `references/polymesh.md`); `last_direction` is the heading of the last
+step and is what a pawn coasts along when the path runs out before the reply does
+(`navigation-deep` — coasting). `to_pathfinding` queues the search and keeps the current
+path (repath on the move — `navigation-deep`); `to_idle` is the only transition that stops
+movement — and it also cancels an undispatched `PathfindingRequest` (with its
+`RequestedAt`), so a human calming down does not leave a flee search to be computed and
+thrown away.
 
 ## Spatial grids
 
