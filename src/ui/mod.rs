@@ -199,9 +199,10 @@ pub fn panel_button_label(label: &str) -> impl Bundle {
     (Text::new(label), ThemedText)
 }
 
-/// Узел-контейнер игрового UI: любой узел, под которым стоит текст.
+/// Узел-контейнер игрового UI: любой узел между источником шрифта и текстом
+/// под ним.
 ///
-/// **Единственный способ завести контейнер в `src/ui/`** — и это не стиль, а
+/// **Единственный способ завести такой контейнер в `src/ui/`** — и это не стиль, а
 /// защита. Распространение `InheritableFont` идёт только по цепочке сущностей с
 /// `ThemedText` (`HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`): на
 /// первом же узле без метки обход прекращается, и все подписи ниже остаются с
@@ -210,6 +211,12 @@ pub fn panel_button_label(label: &str) -> impl Bundle {
 /// Метка, которую надо было помнить на каждой из них, стоила панели World
 /// двадцатипиксельных счётчиков — поэтому её больше не ставят руками, её
 /// приносит конструктор. Забытую всё же метку ловит `warn_broken_font_chain`.
+///
+/// Сам источник — не контейнер: `InheritableFont` объявлен
+/// `#[require(ThemedText, PropagateOver::<TextFont>)]`, поэтому корень со своим
+/// шрифтом (телеметрия) или получивший его от `apply_panel_font` (любой
+/// `GameUiRoot`) уже помечен и спавнится голой `Node` — он цепочку начинает, а
+/// не стоит в ней.
 pub fn ui_node(node: Node) -> (Node, ThemedText) {
     (node, ThemedText)
 }
@@ -299,38 +306,64 @@ fn apply_panel_font(
 /// Молчит, когда источника шрифта над текстом нет вовсе (экран загрузки, метка
 /// BRP): там дефолтный шрифт — не поломка, а решение.
 #[cfg(debug_assertions)]
-fn warn_broken_font_chain(
-    texts: Query<Entity, Added<Text>>,
-    chain: Query<(
-        Option<&ChildOf>,
-        Has<ThemedText>,
-        Has<InheritableFont>,
-        Option<&Name>,
-    )>,
-) {
+fn warn_broken_font_chain(texts: Query<Entity, Added<Text>>, chain: FontChain) {
     for text in &texts {
-        let mut entity = text;
-        let mut broken: Option<Entity> = None;
-        while let Ok((parent, themed, is_source, name)) = chain.get(entity) {
-            if is_source {
-                // источник шрифта найден; если по дороге к нему был узел без
-                // метки — до текста шрифт не дошёл
-                if let Some(broken) = broken {
-                    let name = name.map_or_else(|| "<unnamed>".to_owned(), Name::to_string);
-                    warn!(
-                        "UI font chain broken: text {text} under {name} — node {broken} \
-                         has no ThemedText, so the font stops there (use ui_node/ui_row/ui_column)"
-                    );
-                }
-                break;
-            }
-            if !themed && broken.is_none() {
-                broken = Some(entity);
-            }
-            let Some(parent) = parent else { break };
-            entity = parent.parent();
+        if let Some(warning) = broken_font_chain(&chain, text) {
+            warn!("{warning}");
         }
     }
+}
+
+/// Цепочка «узел → родитель» глазами проверки шрифта: метка `ThemedText`,
+/// источник `InheritableFont` и имя узла для лога.
+#[cfg(debug_assertions)]
+type FontChain<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static ChildOf>,
+        Has<ThemedText>,
+        Has<InheritableFont>,
+        Option<&'static Name>,
+    ),
+>;
+
+/// Текст предупреждения об обрыве над `text` — или `None`, если шрифт дошёл
+/// (либо идти ему неоткуда).
+///
+/// Имя виноватого узла берётся там же, где он найден: на итерации с источником
+/// шрифта в руках уже чужой `Name`, и печатать его как нарушителя — значит
+/// показывать на панель вместо обёртки внутри неё. Источник в сообщении
+/// остаётся, но своей строкой: контейнеры из `ui_node` обычно безымянны, и имя
+/// панели — единственное, за что цепляется взгляд в логе.
+#[cfg(debug_assertions)]
+fn broken_font_chain(chain: &FontChain, text: Entity) -> Option<String> {
+    let mut entity = text;
+    let mut broken: Option<(Entity, String)> = None;
+    while let Ok((parent, themed, is_source, name)) = chain.get(entity) {
+        if is_source {
+            // источник шрифта найден; если по дороге к нему был узел без
+            // метки — до текста шрифт не дошёл
+            let (node, culprit) = broken?;
+            let source = node_name(name);
+            return Some(format!(
+                "UI font chain broken: text {text} under {source} — node {culprit} ({node}) \
+                 has no ThemedText, so the font stops there (use ui_node/ui_row/ui_column)"
+            ));
+        }
+        if !themed && broken.is_none() {
+            broken = Some((entity, node_name(name)));
+        }
+        let Some(parent) = parent else { break };
+        entity = parent.parent();
+    }
+    None
+}
+
+/// Имя узла для лога: собственный `Name`, если он есть.
+#[cfg(debug_assertions)]
+fn node_name(name: Option<&Name>) -> String {
+    name.map_or_else(|| "<unnamed>".to_owned(), Name::to_string)
 }
 
 /// Кнопка панели с одной подписью — обычный случай.
@@ -474,5 +507,58 @@ mod tests {
     fn the_active_button_is_the_primary_variant() {
         assert_eq!(button_variant(true), ButtonVariant::Primary);
         assert_eq!(button_variant(false), ButtonVariant::Normal);
+    }
+
+    /// Виноват узел без `ThemedText`, а не источник шрифта над ним: проверка
+    /// сперва печатала имя источника, а нарушителя — голым `Entity`, и
+    /// предупреждение показывало на панель целиком.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_broken_font_chain_warning_names_the_node_without_themed_text() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut app = App::new();
+        let panel = app
+            .world_mut()
+            .spawn((
+                Name::new("settings_panel"),
+                ThemedText,
+                InheritableFont {
+                    font: Handle::default(),
+                    font_size: PANEL_FONT,
+                    weight: FontWeight::NORMAL,
+                },
+            ))
+            .id();
+        let wrapper = app
+            .world_mut()
+            .spawn((
+                Name::new("row_without_marker"),
+                Node::default(),
+                ChildOf(panel),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Text::new("42"), ThemedText, ChildOf(wrapper)));
+
+        fn probe(chain: FontChain, texts: Query<Entity, With<Text>>) -> Option<String> {
+            texts
+                .iter()
+                .find_map(|text| broken_font_chain(&chain, text))
+        }
+        let warning = app
+            .world_mut()
+            .run_system_once(probe)
+            .expect("проверка цепочки прогоняется")
+            .expect("цепочка порвана — предупреждение есть");
+
+        assert!(
+            warning.contains("node row_without_marker"),
+            "предупреждение не назвало виноватый узел: {warning}"
+        );
+        assert!(
+            warning.contains("under settings_panel"),
+            "предупреждение потеряло источник шрифта: {warning}"
+        );
     }
 }
