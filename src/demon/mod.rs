@@ -261,6 +261,36 @@ mod tests {
         assert_eq!(ids, unique, "номера демонов повторились: {ids:?}");
     }
 
+    /// Спавн демона — единственное место, где вид объявляет своё тело;
+    /// забытый компонент означал бы демона с человеческим допуском прихода
+    /// (`movement::BodyScale`, умолчание `#[require]` — человеческое).
+    #[test]
+    fn every_demon_from_the_portal_carries_a_demon_body() {
+        let app = &mut app();
+        tick_through_a_moving_warmup(app);
+        app.world_mut()
+            .resource_mut::<NextState<PlayPhase>>()
+            .set(PlayPhase::Live);
+        for _ in 0..4 {
+            app.update();
+        }
+
+        let bodies: Vec<crate::movement::BodyScale> = app
+            .world_mut()
+            .query_filtered::<&crate::movement::BodyScale, With<Demon>>()
+            .iter(app.world())
+            .copied()
+            .collect();
+
+        assert!(!bodies.is_empty(), "в `Live` залп обязан выйти");
+        assert!(
+            bodies
+                .iter()
+                .all(|body| *body == crate::movement::BodyScale::DEMON),
+            "демон вышел с чужим телом: {bodies:?}"
+        );
+    }
+
     /// Регрессия: гейт на мир демонскому поведению давало чужое множество.
     ///
     /// `pick_wander_targets` и `chase` берут `Res<Backend>`, которого вне

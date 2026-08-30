@@ -138,6 +138,9 @@ fn spawn_demon(
         // маркер с него нечему — в отличие от человека, у которого он приходит
         // и уходит вместе с паникой
         crate::movement::UrgentPath,
+        // и тело своё демон тоже носит сам: явный компонент в кортеже спавна
+        // перебивает умолчание `#[require]` у `Movable`
+        crate::movement::BodyScale::DEMON,
         WanderIndex::ready(),
         DespawnOnExit(AppState::Playing),
         Name::new("demon"),

@@ -197,8 +197,8 @@ impl Default for FleeRepath {
 mod tests {
     use super::*;
     use crate::movement::{
-        DestinationClaim, Movable, MovableStateMovingTag, NeedsWanderTarget, PathfindingRequest,
-        PreviousSimPosition, RequestedAt, RetireAt, SimPosition,
+        BodyScale, DestinationClaim, Movable, MovableStateMovingTag, NeedsWanderTarget,
+        PathfindingRequest, PreviousSimPosition, RequestedAt, RetireAt, SimPosition,
     };
 
     /// Человек в разгар паники, с полным набором рантайм-компонент: бежит по
@@ -271,6 +271,7 @@ mod tests {
             ("DestinationClaim", corpse.contains::<DestinationClaim>()),
             // затянуты `#[require]` у `Movable` — и сняться обязаны вместе с ним
             ("SimPosition", corpse.contains::<SimPosition>()),
+            ("BodyScale", corpse.contains::<BodyScale>()),
             (
                 "PreviousSimPosition",
                 corpse.contains::<PreviousSimPosition>(),

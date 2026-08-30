@@ -4,7 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::movement::components::{
-    Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
+    BodyScale, Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
 };
 use crate::navigation::{Backend, Walkable};
 use crate::settings::unit_z;
@@ -57,6 +57,9 @@ pub fn move_moving_entities(
             Entity,
             &mut Movable,
             &mut SimPosition,
+            &BodyScale,
+            // только ради сетки людей: она и правда людская, а шаг про вид
+            // больше не спрашивает
             Has<crate::human::Human>,
         ),
         With<MovableStateMovingTag>,
@@ -74,12 +77,14 @@ pub fn move_moving_entities(
         steer_release: lab.steer_release,
         slide: lab.experiments.slide,
     };
-    let human_tuning = tuning_for(2.0 * human_style.body_radius);
-    let demon_tuning = tuning_for(2.0 * super::separation::demon_radius(human_style.body_radius));
+    // дистанция покоя берётся с самой пешки (`BodyScale`): движение не знает
+    // видов, поэтому тестовому ходоку не достаётся демонский допуск только
+    // потому, что он не человек
+    let human_radius = human_style.body_radius;
     let pushes = pushes.reader(separation.hold, lab.experiments.slide);
     let dt = time.delta_secs();
 
-    for (entity, mut movable, mut sim_position, is_human) in &mut query {
+    for (entity, mut movable, mut sim_position, body, is_human) in &mut query {
         let was_at = sim_position.0;
         // позиция пишется обратно только если шаг её и правда сдвинул:
         // `snapshot_previous_sim_positions` фильтрует по `Changed<SimPosition>`,
@@ -91,7 +96,7 @@ pub fn move_moving_entities(
             &mut position,
             dt,
             pushes.modifiers_for(entity),
-            if is_human { human_tuning } else { demon_tuning },
+            tuning_for(body.rest(human_radius)),
             &walkable,
         );
         if position != sim_position.0 {
@@ -240,6 +245,13 @@ pub fn on_movable_added_init_sim_position(
     previous.0 = sim_position.0;
 }
 
+// Внешность гизмо путей — цвет, геометрия стрелки и запас кадра — живёт рядом
+// с рисунком, а не в `settings.rs`: так же лежат `DOOR_COLOR`/
+// `DOOR_MARKER_RADIUS`/`DOORS_VIEW_SCREENS` (`ui/debug/overlays.rs`) и
+// константы оверлеев навигации. Запас у КАЖДОГО гейта видимости свой по
+// построению — док `camera::Viewport::of` и таблица пяти гейтов в скилле
+// navigation-deep; тот же довод, что у `movement::VIEW_MARGIN`. Симуляции ни
+// одно из трёх чисел не меняет.
 /// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.
 pub const MOVEPATH_COLOR: Color = Color::srgba(0.9, 0.2, 0.9, 0.7);
 /// Длина «крыльев» стрелки на конце пути; на коротком последнем сегменте

@@ -54,7 +54,10 @@ pub struct PreviousSimPosition(pub Vec2);
 #[derive(Component, Debug, Reflect)]
 #[reflect(Component)]
 // свежая пешка стоит в `Idle`, то есть цель ей нужна с первого тика
-#[require(SimPosition, PreviousSimPosition, NeedsWanderTarget)]
+// размер тела — в том же списке, что и положение: движимая пешка обязана иметь
+// и то и другое, а умолчание [`BodyScale::HUMAN`] означает «тело обычного
+// размера», а не «вид неизвестен, считать демоном»
+#[require(SimPosition, PreviousSimPosition, NeedsWanderTarget, BodyScale)]
 pub struct Movable {
     pub speed: f32,
     /// Waypoint'ы в мировых метрах, а не в тайлах: по полигональному мешу
@@ -120,6 +123,54 @@ pub struct PathfindingRequest {
 #[derive(Component, Debug, Reflect)]
 #[reflect(Component)]
 pub struct UrgentPath;
+
+/// Во сколько раз тело этой пешки больше человеческого: [`BodyScale::HUMAN`]
+/// (1.0) — человек, [`BodyScale::DEMON`] — демон. Отсюда движение берёт
+/// дистанцию покоя, с которой засчитывает приход
+/// (`systems::move_moving_entities`).
+///
+/// Отношение, а не радиус в метрах: сам радиус — живой ползунок
+/// ([`HumanStyle::body_radius`](crate::human::HumanStyle)), и абсолютное
+/// значение на пешке пришлось бы пересинхронизировать на каждое его движение,
+/// тогда как «демон вдвое больше человека» не меняется никогда.
+///
+/// Владеют значением **виды**, как и [`UrgentPath`]: демон пишет
+/// [`BodyScale::DEMON`] при спавне, человеку и отладочному ходоку достаётся
+/// умолчание через `#[require]` у [`Movable`]. Движение спрашивает компонент и
+/// ни одного вида не называет — до этого оно спрашивало `Has<Human>`, то есть
+/// «всё, что не человек, — демон», и ходок молча получал демонский допуск
+/// прихода.
+///
+/// Расталкивание берёт радиус по-своему (`separation/mod.rs`, `Has<Demon>`) —
+/// это его собственная площадка; обе стороны считают демонское тело из одного
+/// [`DEMON_RADIUS_RATIO`](crate::movement::separation::DEMON_RADIUS_RATIO).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Reflect)]
+#[reflect(Component)]
+pub struct BodyScale(pub f32);
+
+impl Default for BodyScale {
+    fn default() -> Self {
+        Self::HUMAN
+    }
+}
+
+impl BodyScale {
+    pub const HUMAN: Self = Self(1.0);
+    /// Демон вдвое больше человека — то же отношение, что у спрайтов и у
+    /// расталкивания.
+    pub const DEMON: Self = Self(super::separation::DEMON_RADIUS_RATIO);
+
+    /// Радиус тела при человеческом радиусе `human_radius`.
+    pub fn radius(self, human_radius: f32) -> f32 {
+        human_radius * self.0
+    }
+
+    /// Дистанция покоя пары таких тел — ближе неё расталкивание пешек друг к
+    /// другу не подпускает, поэтому с этим допуском засчитывается приход.
+    pub fn rest(self, human_radius: f32) -> f32 {
+        2.0 * self.radius(human_radius)
+    }
+}
 
 /// Тик, на котором подана заявка — ключ FIFO-очереди детерминированного
 /// диспетчера. Живёт и умирает вместе с [`PathfindingRequest`].
@@ -342,4 +393,57 @@ pub fn strip_movement(commands: &mut Commands, entity: Entity) {
             // вычесть место из живой толпы
             crate::movement::DestinationClaim,
         )>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX};
+
+    /// Та самая побочка находки: пешка без вида (отладочный ходок) — это тело
+    /// обычного размера, а не демон.
+    #[test]
+    fn a_pawn_of_no_species_carries_a_human_body() {
+        let mut world = World::new();
+        let pawn = world.spawn(Movable::new(1.0)).id();
+
+        assert_eq!(
+            world.get::<BodyScale>(pawn).copied(),
+            Some(BodyScale::HUMAN)
+        );
+    }
+
+    /// Явное тело в кортеже спавна не перебивается умолчанием `#[require]` —
+    /// иначе фикс молча уполовинил бы демонов.
+    #[test]
+    fn an_explicit_body_survives_the_require() {
+        let mut world = World::new();
+        let demon = world.spawn((Movable::new(1.0), BodyScale::DEMON)).id();
+
+        assert_eq!(
+            world.get::<BodyScale>(demon).copied(),
+            Some(BodyScale::DEMON)
+        );
+    }
+
+    /// Демонское тело — то же самое число, что у расталкивания, на обоих концах
+    /// ползунка радиуса. Разъедься они — толпа считала бы демона одного
+    /// размера, а шаг другого.
+    #[test]
+    fn a_demon_body_is_the_separation_radius() {
+        for radius in [HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX] {
+            let separation = crate::movement::separation::demon_radius(radius);
+            assert_eq!(BodyScale::DEMON.radius(radius), separation);
+            assert_eq!(BodyScale::DEMON.rest(radius), 2.0 * separation);
+        }
+    }
+
+    /// Человеческое тело — сам ползунок: побитово прежняя формула
+    /// `2.0 * body_radius`.
+    #[test]
+    fn a_human_body_is_twice_the_slider() {
+        for radius in [HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX] {
+            assert_eq!(BodyScale::HUMAN.rest(radius), 2.0 * radius);
+        }
+    }
 }
