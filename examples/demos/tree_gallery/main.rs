@@ -215,9 +215,15 @@ fn grid_size() -> Vec2 {
     )
 }
 
+/// Полоса окна, занятая панелью: отступ от края экрана, сама панель и такой
+/// же зазор справа от неё.
+fn panel_span() -> f32 {
+    PANEL_WIDTH_PX + 2.0 * UI_SCREEN_EDGE_PX_OFFSET
+}
+
 /// Экранная ширина, оставшаяся витрине от панели.
 fn viewport_width() -> f32 {
-    WINDOW_WIDTH - PANEL_WIDTH_PX - 3.0 * UI_SCREEN_EDGE_PX_OFFSET
+    WINDOW_WIDTH - panel_span()
 }
 
 fn spawn_camera(mut commands: Commands) {
@@ -226,12 +232,12 @@ fn spawn_camera(mut commands: Commands) {
     // части окна: иначе левые колонки витрины стоят под панелью
     let zoom = size.x * VIEW_MARGIN / viewport_width();
     let grid_centre = Vec2::new(size.x / 2.0 - CELL_X / 2.0, -size.y / 2.0 + CELL_Y / 2.0);
-    // центр свободной части окна правее центра экрана ровно на полширины панели
-    let centre = grid_centre
-        + Vec2::new(
-            (PANEL_WIDTH_PX + 3.0 * UI_SCREEN_EDGE_PX_OFFSET) / 2.0 * zoom,
-            0.0,
-        );
+    // Свободная часть окна лежит правее центра экрана ровно на полширины
+    // занятой панелью полосы — значит камера едет ВЛЕВО на столько же, и мир
+    // на экране уходит вправо, из-под панели. Знак тут единственное, что
+    // отличает «сетка по центру свободного места» от «первая колонка и все
+    // названия рядов спрятаны за панелью».
+    let centre = grid_centre - Vec2::new(panel_span() / 2.0 * zoom, 0.0);
     commands.spawn((
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
