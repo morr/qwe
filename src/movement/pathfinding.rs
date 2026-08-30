@@ -11,8 +11,8 @@ use super::systems::rescue_from_impassable;
 use crate::camera::Viewport;
 use crate::determinism::SimTick;
 use crate::movement::components::{
-    Movable, MovableState, PathfindingRequest, PathfindingTask, PreviousSimPosition, RequestedAt,
-    RetireAt, SimPosition,
+    Movable, MovableState, PathfindingRequest, PathfindingTask, PawnEdit, PreviousSimPosition,
+    RequestedAt, RetireAt, SimPosition,
 };
 use crate::navigation::{Backend, PathfindingResult, Walkable};
 
@@ -433,15 +433,17 @@ pub fn apply_pathfinding_results(
         accept_answer(
             result,
             &mut tally,
-            entity,
-            &mut movable,
-            &mut sim_position,
-            &mut previous,
+            PawnEdit {
+                entity,
+                movable: &mut movable,
+                sim_position: &mut sim_position,
+                previous: &mut previous,
+                commands: &mut commands,
+            },
             is_human,
             &mut walkable,
             &backend,
             &mut human_grid,
-            &mut commands,
         );
     }
 }
@@ -520,15 +522,17 @@ pub fn listen_for_pathfinding_tasks(
         accept_answer(
             result,
             &mut tally,
-            entity,
-            &mut movable,
-            &mut sim_position,
-            &mut previous,
+            PawnEdit {
+                entity,
+                movable: &mut movable,
+                sim_position: &mut sim_position,
+                previous: &mut previous,
+                commands: &mut commands,
+            },
             is_human,
             &mut walkable,
             &backend,
             &mut human_grid,
-            &mut commands,
         );
     }
 }
@@ -598,23 +602,22 @@ impl Drop for AnswerTally<'_, '_, '_> {
 /// `walkable` — ленивый взгляд на проходимость бэкенда: его read-лок во время
 /// загрузки на секунды держит на запись поток заливки, а нужен он только под
 /// спасение застрявших.
-#[allow(clippy::too_many_arguments)]
+///
+/// `pawn` — [`PawnEdit`]: тождество, три компонента, которые спасение правит
+/// вместе, и буфер команд. Ровно то же принимает `rescue_from_impassable`,
+/// которому эта приёмка пешку и передаёт.
 fn accept_answer<'backend>(
     result: PathfindingResult,
     tally: &mut AnswerTally<'_, '_, '_>,
-    entity: Entity,
-    movable: &mut Movable,
-    sim_position: &mut SimPosition,
-    previous: &mut PreviousSimPosition,
+    mut pawn: PawnEdit<'_, '_, '_>,
     is_human: bool,
     walkable: &mut Option<Walkable<'backend>>,
     backend: &'backend Backend,
     human_grid: &mut Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
-    commands: &mut Commands,
 ) {
     tally.record(&result);
 
-    let MovableState::Pathfinding(end_tile) = movable.state else {
+    let MovableState::Pathfinding(end_tile) = pawn.movable.state else {
         return;
     };
     // устаревший ответ — уже запрошена другая цель
@@ -624,20 +627,26 @@ fn accept_answer<'backend>(
 
     let Some(path) = result.path else {
         let walkable = walkable.get_or_insert_with(|| backend.walkable());
-        if rescue_from_impassable(walkable, entity, movable, sim_position, previous, commands) {
+        if rescue_from_impassable(walkable, &mut pawn) {
             if is_human && let Some(grid) = human_grid.as_mut() {
-                grid.insert(entity, sim_position.0);
+                grid.insert(pawn.entity, pawn.sim_position.0);
             }
             return;
         }
         // не застрял — цель просто недостижима; новую выберет поведение
-        movable.to_pathfinding_error(entity, end_tile, commands);
+        pawn.movable
+            .to_pathfinding_error(pawn.entity, end_tile, pawn.commands);
         return;
     };
 
     // путь всегда включает стартовую точку; один элемент — мы уже на месте
     if path.len() == 1 {
-        movable.to_idle(entity, commands, true);
+        // старый путь снимается ЗДЕСЬ: перепрокладка шла на ходу и его не
+        // сбрасывала, а `to_idle` объявляет приход только при пустом пути —
+        // иначе событие теряется молча (то же делает `step.rs` перед своим
+        // `to_idle`, и по той же причине)
+        pawn.movable.path.clear();
+        pawn.movable.to_idle(pawn.entity, pawn.commands, true);
         return;
     }
 
@@ -645,7 +654,7 @@ fn accept_answer<'backend>(
     // срезаем начало пути, пока следующий waypoint не дальше текущего —
     // иначе первый шаг был бы назад
     let mut path: std::collections::VecDeque<Vec2> = path.into_iter().skip(1).collect();
-    let position = sim_position.0;
+    let position = pawn.sim_position.0;
     let mut trimmed = 0;
     while trimmed < REPATH_TRIM_LIMIT
         && path.len() >= 2
@@ -654,7 +663,8 @@ fn accept_answer<'backend>(
         path.pop_front();
         trimmed += 1;
     }
-    movable.to_moving(end_tile, path, entity, commands);
+    pawn.movable
+        .to_moving(end_tile, path, pawn.entity, pawn.commands);
 }
 
 #[cfg(test)]

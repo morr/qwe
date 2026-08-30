@@ -4,7 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::movement::components::{
-    Movable, MovableStateMovingTag, PreviousSimPosition, SimPosition,
+    Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
 };
 use crate::navigation::{Backend, Walkable};
 use crate::settings::unit_z;
@@ -128,25 +128,18 @@ pub fn move_moving_entities(
 /// Переезд ставит и `PreviousSimPosition`: иначе интерполяция протянула бы
 /// пешку через полгорода за один кадр. Старый путь сбрасывается — он ведёт из
 /// места, где сущности больше нет.
-pub(super) fn rescue_from_impassable(
-    walkable: &Walkable,
-    entity: Entity,
-    movable: &mut Movable,
-    sim_position: &mut SimPosition,
-    previous: &mut PreviousSimPosition,
-    commands: &mut Commands,
-) -> bool {
-    if walkable.allows(sim_position.0) {
+pub(super) fn rescue_from_impassable(walkable: &Walkable, pawn: &mut PawnEdit<'_, '_, '_>) -> bool {
+    if walkable.allows(pawn.sim_position.0) {
         return false;
     }
     // не нашлось — оставляем как есть: телепорт за пределы кольца увёл бы
     // пешку дальше, чем она вообще могла бы дойти
-    let Some(free) = walkable.nearest_free_point(sim_position.0) else {
+    let Some(free) = walkable.nearest_free_point(pawn.sim_position.0) else {
         return false;
     };
-    sim_position.0 = free;
-    previous.0 = sim_position.0;
-    movable.to_idle(entity, commands, false);
+    pawn.sim_position.0 = free;
+    pawn.previous.0 = pawn.sim_position.0;
+    pawn.movable.to_idle(pawn.entity, pawn.commands, false);
     true
 }
 
@@ -182,14 +175,14 @@ pub fn rescue_trapped_entities(
     let started = std::time::Instant::now();
     let mut rescued = 0;
     for (entity, mut sim_position, mut previous, mut movable, is_human) in &mut query {
-        if !rescue_from_impassable(
-            &walkable,
+        let mut pawn = PawnEdit {
             entity,
-            &mut movable,
-            &mut sim_position,
-            &mut previous,
-            &mut commands,
-        ) {
+            movable: &mut movable,
+            sim_position: &mut sim_position,
+            previous: &mut previous,
+            commands: &mut commands,
+        };
+        if !rescue_from_impassable(&walkable, &mut pawn) {
             continue;
         }
         rescued += 1;
