@@ -155,6 +155,7 @@ RNG work above is unconditional.
 | pathfinding answers | when the task lands | on a fixed tick (`RetireAt`) |
 | dispatcher | camera-gated, priority by distance | FIFO by `(requested_at, species, pawn_id)` |
 | navigation backend | re-taken every frame | frozen for the run |
+| northstar hierarchy build | started after the warmup (`OnEnter(PlayPhase::Live)`) | started before it (`OnEnter(PlayPhase::Warmup)`) |
 | pawn separation | on (polymesh, on-screen) | off — the Nav tab's `Separation` row reads `off`, dimmed and unclickable, rather than a toggle that flips a resource nothing reads |
 
 **Only the humans' picking moves.** `demon::systems::pick_wander_targets` is registered once,
@@ -267,6 +268,17 @@ early while `Pathfinder::mode().is_building()` holds (`navigation/mode.rs`), and
 `elapsed` counter stands meanwhile, so the 10 s `WARMUP_TIMEOUT` cannot cut a build short.
 That costs ~11–14 s on first entry into a city on HPA — deliberately. Restarts do not pay
 it.
+
+And it is not only the *wait* that is deterministic-only — the build is **started** earlier
+too: `start_northstar_build` is registered a second time, on `OnEnter(PlayPhase::Warmup)` in
+`SimPipeline::Deterministic` (`navigation/mod.rs`; that `OnEnter` is one of the schedules
+`gate_pipelines` configures). Without that site the wait would not fall back, it would
+deadlock: `is_building()` is true for `HierarchyPending { wanted: true }` ("not started
+yet") as well, the early return freezes `elapsed` so the 10 s timeout never fires, and the
+phase that would start the build is `Live` — the one the warmup is holding. The live
+branch's reason for starting late (rayon fighting the warmup's A* for cores) does not apply
+here: this mode's warmup computes nothing. Detail — the `navigation-deep` skill,
+**NorthstarGrid**.
 
 **No pawn warmup in this mode**: once the backend is built it enters `Live` immediately. The
 pipeline lives in `FixedUpdate`, which is paused during warmup, so the pawn counter could

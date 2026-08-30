@@ -20,10 +20,37 @@ The whole fill order collapses into one boolean (`i_overlay` difference):
 union(water ∪ non-culvert waterways ∪ bridge curb bands ∪ buildings ∪ walls) −
 union(bridge decks ∪ joining roads ∪ passages), where the areas' **ring holes enter the
 union reversed** so NonZero subtracts them, clipped to the map rect **outset** by
-`MAP_EDGE_MARGIN` (an inset clip would leave a walkable sliver along the map edge for
+`POLYMESH_MAP_EDGE_MARGIN` (an inset clip would leave a walkable sliver along the map edge for
 paths to sneak around a river; polyanya digests obstacles crossing its outer boundary —
 triangle walkability is a point-in-polygon test of the triangle center), then CDT via
-`polyanya::Triangulation` with agent-radius inflation.
+`polyanya::Triangulation`.
+
+**The agent radius is inflated here, before the CDT, and never by
+`Triangulation::set_agent_radius`** — that call is made nowhere in `src/`. polyanya inflates
+each obstacle ring on its own (`input/triangulation.rs::inflate_obstacles`, a `.map()` over
+the interiors) and does **not** union the result; on a city map that is always an invalid
+input — neighbouring houses stand 30–40 cm apart, contours inflated by 0.2 m intersect, and
+CDT gets a self-intersecting constraint set whose adjacency no longer matches the geometry.
+The funnel then loops on it: measured on `examples/polymesh_bench`, at radius 0.2 query
+#131 hangs forever and eats all the memory, at radius 0 the same 300 queries pass. Instead
+every outer contour of the boolean is offset by `inflate_ring` (the same miter offset the
+road ribbons use) and the results are unioned again — the union also resolves the
+self-intersections miter leaves on sharp reflex corners. The per-chunk triangulation
+repeats the statement (`build.rs::chunk_layer`): the radius is already baked into the
+contours, so `set_agent_radius` is not called there either.
+
+**Every polyline is collapsed at `DEGENERATE_SPAN` (1 cm) before it reaches
+`miter_offsets`** — both the band outlines (`ribbon_outline`) and the agent-radius
+inflation (`inflate_ring`). On a zero-length step `miter_offsets` substitutes `Vec2::X`
+for the missing normal, and the vertex offset turns by up to 180° (a band running west
+swaps its two edges) or spikes out to `MITER_LIMIT · half_width`. The zero-length step
+does not come from OSM — no cached city has two identical adjacent nodes, the shortest
+way step measured is 1.3 cm — it comes from f32: i_overlay's integer grid (~4 µm at map
+scale) is finer than an f32 ulp out there (0.2–0.5 mm), so a boolean micro-edge is
+returned as a repeated vertex, and a derived centerline (a bridge curb band, itself
+`miter_offsets` output) already reaches a 0.49 mm step in Paris. The renderer's own
+merge (`width / 4`, `MeshBuilder::push_ribbon`) is deliberately **not** reused: on a
+16 m primary that is 4 m, and the mesh footprint would drift away from the grid fill's.
 
 **A ring hole is not an obstacle, but a hole of the *result* still is.** The input holes
 are subtracted the way the grid's `row_spans` subtracts them (reversed contour + NonZero,
@@ -62,6 +89,9 @@ the world); the build runs on `AsyncComputeTaskPool`
 cleared by `city.rs::reload_world` alongside `NorthstarGrid`). `PolymeshBuild`
 carries the obstacle contours next to the mesh on purpose: polyanya stores only
 **walkable** polygons, so without them the overlay could not paint what is blocked.
+Those contours are the **inflated** ones, kept after the offset-and-union step, so the
+overlay fill sits flush against the mesh edges — there is no agent-radius gap to read
+off the screen and no radius left to subtract a second time.
 A radius-slider step supersedes the in-flight build, and superseding **cancels** it
 through an `Arc<AtomicBool>` — the same machinery `NorthstarGrid` uses and for the same
 reason: the task body is synchronous, so dropping the `Task` throws away the result but
@@ -71,7 +101,7 @@ without the flag five superseded builds ran all cores to completion. Checks sit 
 each long stage (boolean, clip, `as_navmesh`, `merge_polygons`); inside `i_overlay` and
 `spade` there is nowhere to look.
 
-**Chunked by default** (`CHUNK_TARGET_METERS` = 400 m, capped at `MAX_CHUNKS` = 240
+**Chunked by default** (`POLYMESH_CHUNK_TARGET_METERS` = 400 m, capped at `MAX_CHUNKS` = 240
 layers): the map is cut into a grid of polyanya layers stitched along seams computed
 once in world coordinates, and the search runs over the chunk graph. Now that the
 divergence is fixed (see below) the hierarchy is the default, and it wins on both
@@ -79,12 +109,39 @@ numbers (Tula, 500 queries, radius 0.2, `examples/polymesh_bench`): **build 0.31
 5.72 s** flat — each chunk triangulates from its own small edge set — and **5.66 ms
 mean / 43 ms worst vs 6.18 / 104**, same misses. `QWE_POLYMESH_CHUNK_M` set larger than
 the map returns the flat single layer, which is how "hierarchy's fault" is told apart
-from "geometry's fault".
+from "geometry's fault". A value that is not a length (`0`, negative, `nan`, `inf` — all
+of them parse as `f32`) is refused with a warning and falls back to `POLYMESH_CHUNK_TARGET_METERS`,
+and a positive one is raised to `CHUNK_MIN_METERS` = 1 m: `map / 0` saturates `as_uvec2`
+to `u32::MAX`, the `u32` product wraps back under the cap, and the build used to be handed
+a `u32::MAX × u32::MAX` grid (a multiply-overflow panic inside the async task in dev).
+
+**Where the numbers live.** The world-scale ones are in `settings.rs` with the
+`POLYMESH_` prefix — `POLYMESH_SEARCH_DELTA`/`_STEPS`, `POLYMESH_MAP_EDGE_MARGIN`,
+`POLYMESH_CHUNK_TARGET_METERS`, `POLYMESH_FLAT_CHUNK_METERS`, next to
+`POLYMESH_AGENT_RADIUS_*` whose ceiling the tolerance sets. What stays beside its own
+code is what is a rule of the algorithm rather than a knob over the world: `MAX_CHUNKS`
+(polyanya's 8-bit layer index), the f32 tolerances (`SIMPLIFY_EPSILON`, `SEAM_QUANTUM`,
+`SEAM_EPSILON`, `WALK_EPSILON`, `WALK_PROBE`), `SEAM_STEP_METERS`, the search budget
+(`SEARCH_POPS_PER_POLYGON`, `SEARCH_STEPS_PER_POLL`, `MIN_SEARCH_POLLS`) and `COST_SCALE`.
+
+**A level-1 node is a connected component of one chunk, not the chunk** (`ChunkComponents`,
+`GraphNode`, `node_of` in `polymesh/mod.rs`; the flood fill is `stitch.rs::components_of`,
+over shared **edges** — two polygons pinched at a single vertex are not neighbours for
+polyanya's `successors` either, and a vertex fill would promise a passage the search cannot
+find). A chunk cut in two by a river is therefore two nodes, and the graph never joins them:
+an edge is only ever built between components of two *neighbouring* chunks, out of the seam
+pairs `stitch_chunks` produced, so nothing inside a chunk is connected by fiat. That is also
+what makes the graph the **reachability answer**: with more than one layer polyanya skips
+its island check (`vendor/polyanya/src/lib.rs`, `if self.layers.len() == 1`, marked `TODO`;
+the polled search in `async_helpers.rs` carries the same gate), so on a chunked mesh
+`astar` returning `None` in `polymesh/path.rs` *is* the verdict "unreachable" and there is
+nothing under it that would say so. A flat mesh is the other way round: one layer, the baked
+islands fire, and there is no graph at all.
 
 **The corridor is the route plus a corner fill** (`PolymeshBuild::corridor`): the
-low-level polyanya query sees only the chunks the level-1 A* walked, every other layer
-blocked — *and* the fourth chunk of each 2×2 block the route turns in. The graph is
-four-connected (an edge is a shared seam **segment**, not a point), so a diagonal trip
+low-level polyanya query sees only the chunks of the components the level-1 A* walked, every
+other layer blocked — *and* the fourth chunk of each 2×2 block the route turns in. Chunks
+are joined four-connected (an edge is a shared seam **segment**, not a point), so a diagonal
 is always a staircase A→B→C; with only those three open the free region has a reflex
 corner, the shortest path must round its vertex, and that vertex is a chunk grid node.
 polyanya's funnel lands on it *exactly* — with a non-empty `blocked_layers` any vertex
@@ -117,9 +174,26 @@ things and are both kept: the corridor shortens the route (1.090 → 1.061), smo
 removes the bend that remains (16.2 % → 5.1 % of paths, 20 bends over 396 paths) and
 costs 0.3 ms of the 6.5 ms mean.
 
+**The chunk outline is built to come out bit-identical on both sides, and three mechanisms
+do it** (`seams.rs`). `seam_points` collects every crossing of an obstacle contour with a
+grid line once for the whole map and hands both neighbours the same list. `SEAM_STEP_METERS`
+= 20 m subdivides each side on top of that: without it CDT puts a vertex on the outer
+contour only where an obstacle touches it, two neighbours share nothing but the chunk
+corners, and the stitched polygons become neighbours *through a point* instead of along an
+edge — the search then walks garbage adjacency, measured at **140 GB in seconds**. Both the
+grid node and the subdivision point are computed as a function of the node index and the
+step (`node_coord`, `seam_point`), never as `origin + lerp`: `x*s + s` and `(x+1)*s` are
+different f32 numbers, and the funnel compares its interval ends to vertex coordinates by
+exact equality, so a last-bit disagreement on every seam stops it converging (a minute to
+OOM on a map of two walls). `SEAM_QUANTUM` = 1 cm is the grid all of it is rounded onto —
+nodes, corners, subdivision points, crossings, and every clipped obstacle vertex
+(`build.rs::chunk_layer`) — because the two neighbours cut their shared border in separate
+i_overlay calls that return last-bit-different points; an unpaired vertex there leaves the
+seam **one-way**, and on that asymmetry the funnel again stops converging and the process
+dies of OOM. Pinned by `seams::tests::neighbouring_chunks_share_the_seam_bit_for_bit`.
+
 **Seam vertex sets are allowed to differ** between two neighbours, and the stitch is
-written for that. Only the chunk *outline* is global (`seam_points` — every crossing of
-an obstacle contour with a grid line, computed once for the whole map); the obstacles
+written for that. Only the chunk *outline* is global (`chunk_outline`, above); the obstacles
 themselves are clipped, simplified and triangulated per chunk, so a half-metre slit
 between inflated contours can stay open in one chunk and close in its neighbour, and
 spade can split a boundary edge at an intersection only one side knows about. A vertex
@@ -142,8 +216,26 @@ only. On Tula the assert fires on none of the nine slider radii — usually the 
 vertex splits the polygon too, so no shared polygon survives and nothing one-way can
 form.
 
-The build ends with **`mesh.bake()`**, strictly after `merge_polygons` (which starts by
-un-baking). Baking is what makes the mesh queryable at scale: without it point location
+**A gap in the pair list is therefore normal, and the level-1 graph edge is measured
+against the polygon ring because of it** (`shared_edge_polygon`). Unpaired vertices
+never enter `pairs`, and `unstitched.dropped` removes cancelled stitches from it, so two
+entries adjacent in the list need not be adjacent on the seam. "Both ends lie in one
+polygon" lies on such a gap — one convex polygon's ring spans the whole stretch — and
+the graph would promise a crossing over an unstitched segment: `successors` would not
+find it, `bounded_path` returns `None`, and every pawn whose cheapest level-1 route uses
+that edge gets a permanent `PathfindingError`. Ring adjacency is exactly what
+`successors` looks for and `verify_seams` checks, and on a healthy seam it is the same
+test: polygons are convex after `merge_polygons`, so the vertices they carry on the seam
+line are consecutive in the ring.
+
+**`mesh.bake()` sits between the layers and the stitch.** After `merge_polygons`, which
+starts by un-baking and runs per chunk inside `chunk_layer` — and, the load-bearing half,
+strictly *before* `stitch_chunks`: `Mesh::bake` says it "must be called before stitching"
+and `Layer::bake` "must be called on an unstitched layer", because `bake_islands_detection`
+walks `vertex.polygons` while stitching rewrites exactly those indices through
+`U32Layer::from_layer_and_polygon` (the same reason `components_of` runs before the stitch).
+The build does not end there: the stitch and then `set_search_delta` / `set_search_steps`
+follow. Baking is what makes the mesh queryable at scale: without it point location
 is a linear scan over every polygon, twice per query, and an unreachable goal burns the
 full `polygons.len() * 10` budget instead of failing at once on the island check.
 
@@ -174,6 +266,32 @@ polyanya's `Path::path` omits the start, so `find_path_polymesh` prepends it; th
 backends still return tiles and the dispatcher maps them through `tile_center`, so both
 look identical downstream.
 
+**The snapped start is a waypoint, not a silent jump.** `locate` seats both ends of the
+request on the mesh and the funnel runs from the *seated* point, so a polyline that opened
+with the pawn's raw position had one leg no one checked — the funnel vouches for its own
+links, `smoothed` only for the shortcuts it makes. When the seat moved the start,
+`find_path_polymesh` keeps it as the second point: the unchecked part is then the snap hop
+alone, at most the endpoint tolerance long. The mesh cannot do better on its own — inflation
+band and real wall are the same "not on the mesh" to it, and a seat can still land across a
+barrier thinner than the tolerance (a bridge curb, a sliver surviving the polygon
+difference); the un-inflated truth lives in the grid `Navmesh`, which the search does not
+hold.
+
+**Seating an endpoint is a ladder of three steps** (`PolymeshBuild::locate`), not one round
+tolerance: `get_closest_point` with the chunk hint (`Coords::on_layer` — straight into that
+layer's BVH instead of a linear scan over all of them), then the same call *without* the
+hint (right at a seam the free space may already be across it, in the neighbour), then
+`get_closest_point_towards(point, the other end of the same request)` — a straight walk
+towards the partner in `POLYMESH_SEARCH_DELTA` steps that **does not check what it crosses**.
+The third step buys the case the rings structurally cannot reach (they are arcs, not
+circles — see *Endpoint tolerance* below), and for a start it means "step towards the goal
+through whatever is in between"; it is only safe because the seat then enters the polyline
+as its own point. Read the miss numbers with that ladder in mind: the **96 % → 0.6 %** pair
+is from `26b016a`, *before* the towards-step existed (`546f6d0`, a day later); the radius
+ladder further down is measured *with* it; and `examples/audit/polymesh_miss_audit`
+classifies a seat through `nearest_free_point`, which has only the first two steps — its
+`walled` verdict is stricter than what `locate` actually manages.
+
 The **goal stays a tile** (`MovableState`, `PathfindingRequest`,
 `MovableReachedDestinationEvent`): it is the identity that discards a stale answer and
 the arrival test. Only waypoints became metric. The polygonal query therefore starts at
@@ -181,7 +299,7 @@ the pawn's real `SimPosition` and ends at `tile_center(end_tile)`.
 
 A **missed goal is `PathfindingError`, not a fallback**: with a non-zero agent radius a
 target picked by tile passability can land inside an inflated obstacle, and polyanya
-only snaps endpoints within `search_delta * search_steps` (0.2 m). The cost of that
+only snaps endpoints within `search_delta * (search_steps - 1)` (0.1 m by default). The cost of that
 choice is visible in the speed panel as `answers: N/frame, X % failed` — a pawn whose
 own position is off-mesh fails *every* repath and stands still, so the number is worth
 watching. It is computed from **two** diagnostics, `pathfinding/answered` and
@@ -195,20 +313,33 @@ navmesh.
 Coasting and the demon lunge's `line_of_sight` stay **grid** tests: they are cheap
 guards against walking into a wall, not path searches.
 
-Two knobs exist only because the default fails at city scale, both measured on Tula
+One knob exists only because the default fails at city scale, measured on Tula
 (40 199 polygons after merging, 20 000 pawns, 30×):
 
-- **Endpoint tolerance** (`SEARCH_DELTA * SEARCH_STEPS` = 1 m, half a navtile). polyanya
-  defaults to 0.2 m, exactly the agent radius, and that is not enough: 80 % of wander
+- **Endpoint tolerance** (`POLYMESH_SEARCH_DELTA * (POLYMESH_SEARCH_STEPS - 1)` = 0.75 m, a bit under half a
+  navtile — the rings run `0..steps` at radius `delta * step`, so the last one is the third,
+  not the fourth, and each is an arc of `step/(step+1)` of the turn, swept **clockwise from
+  +Y**, whose *first* hit wins, not its nearest — at the last step that leaves a quarter
+  turn, the sector from due west back to due north, never sampled at all
+  (`Layer::get_closest_point_inner`)). polyanya
+  defaults to 0.1 m, half the minimum agent radius, and that is not enough: 80 % of wander
   targets are building outline vertices, and the grid calls a tile passable when its
   centre clears the polygon by a centimetre. **96 % of requests failed** with the
-  default against 3.5 % on the grid; at 1 m it is **0.6 %**.
-- **`MAX_POLYMESH_PATHFINDING_IN_FLIGHT`** equals the grid's 1024 — an earlier low cap
-  tried to contain runaway memory and instead stalled the whole dispatcher.
+  default against 3.5 % on the grid; at 0.75 m it is **0.6 %**.
+
+**The in-flight cap is not a polymesh knob.** There is one limit for both backends,
+`MAX_PATHFINDING_IN_FLIGHT` = 1024 in `movement/pathfinding.rs`, sized for the dispatcher's
+demand at 30×; no `MAX_POLYMESH_PATHFINDING_IN_FLIGHT` exists. A separate, lower polymesh
+cap did exist and was deleted once it had been raised to the grid's value: a cap does not
+bound the memory of a diverging search — one query explodes, not their number — while a low
+one stalled the world, a couple of heavy searches holding almost every slot and the
+dispatcher handing out nothing to anyone. The mesh search's memory is bounded by its step
+budget (`polymesh/path.rs::SEARCH_POPS_PER_POLYGON`), the slots by that one cap; the full
+rationale lives in the constant's own doc comment.
 
 The same arithmetic sets the **ceiling of the agent radius slider**
 (`POLYMESH_AGENT_RADIUS_MAX` = 0.6, range 0.2–0.6): the tolerance rescues a goal that
-sits inside the inflation by less than a metre, and the inflation grows with the radius,
+sits inside the inflation by less than 0.75 m, and the inflation grows with the radius,
 so the two meet. Misses over the ladder (`examples/polymesh_miss_audit`, 600 queries,
 the seeded set of `polymesh_bench`): 0.5 % at 0.2–0.3, 1.0 % at 0.4, 1.7 % at 0.6,
 2.7 % at 0.7, then the cliff — 6.7 %, 12.3 %, **20.7 % at 1.0**, where 47 % of goals no

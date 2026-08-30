@@ -33,7 +33,11 @@ threads (navmesh fill, entrance generation) have no ECS access. It is written on
 
 Grid size is derived as `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m). **A filled
 `Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
-cancelled northstar build) never indexes against the switched atomic.
+cancelled northstar build) never indexes against the switched atomic. The snapshot owns the
+conversions too: rasterisation (`set_area`/`row_spans`, `visit_polyline*`,
+`visit_segment_tiles`) and the navmesh-side queries (`line_of_sight`,
+`snap_portal_position`) go through `Navmesh::to_tile` / `Navmesh::tile_center`, never
+through `grid::world_to_tile`, which reads the atomic.
 
 **The northstar chunk scales with the tile** to stay 50 world metres — 25 tiles at 2 m, 50 at
 1 m. With the chunk pinned at 25 tiles a 1 m build explodes from ~14 s to ~140 s.
@@ -41,7 +45,8 @@ cancelled northstar build) never indexes against the switched atomic.
 Cost of 1 m, measured: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU, +1.6 GB RSS. A change
 to the navtile size is simulation input — it breaks a replay in flight (`determinism`).
 
-`grid.rs` holds the conversions: `world_to_tile` / `tile_center`.
+`grid.rs` holds the global conversions — `world_to_tile` / `tile_center` — for callers with
+no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the atomic.
 
 ## The grid navmesh
 
@@ -62,21 +67,36 @@ to the navtile size is simulation input — it breaks a replay in flight (`deter
   longitudinal edges block, the deck ends stay open. All curbs block *before* any deck
   carves — the render layering (curbs under fills) repeated in the grid, so at a
   junction of two bridge ways one way's deck re-carves the other's curb and the bridge
-  is never walled across by its own curb. The deck carve is **narrower than the deck by
-  a tile diagonal**: a curb-chain tile's center wanders up to half a diagonal (√2 m)
-  off the curb centerline — i.e. *into* the deck on a slanted bridge — and a full-width
-  carve re-opened those tiles, turning the barrier into a dashed line. Deck
+  is never walled across by its own curb. The deck carve is `width + curb − tile·√2`
+  (`navmesh.rs::fill_from_mapdata`) — it stops **half a tile diagonal short of the curb
+  centerline**, which at the default 2 m navtile leaves it narrower than the deck itself
+  by `tile·√2 − curb`: a curb-chain tile's center wanders up to half a diagonal (√2 m)
+  off the curb centerline — i.e. *into* the deck on a slanted bridge — and carving out
+  to the centerline re-opened those tiles, turning the barrier into a dashed line. Deck
   connectivity survives the narrowing because `set_polyline` always walks the
   centerline chain, the same guarantee thin waterways rely on. A curb tile does
   **not** block unconditionally — OSM cuts one physical bridge into several ways
   (carriageway and its sidewalk are parallel ribbons), so each curb tile records
-  its owners (`CurbTile`) and the decision is an **outward probe**: step one
-  tile away from the owning way's centerline — if that point lands inside
+  **every** way that owns it (`CurbTile::owners`) and the decision is an
+  **outward probe**: step one tile away from the owning way's centerline — if
+  that point lands inside
   another bridge way's ribbon, the tile is an interior seam and stays open; if
   it lands on nothing, the tile is the outer boundary of the whole composite
-  and blocks. This survives nominal class widths swallowing a parallel sidewalk
+  and blocks. The decision is an `any` over the owners, so a dropped owner can
+  only *lose* barrier, never add it — and a pair is the typical case, not the
+  maximum: a junction of footbridge ways routinely puts three or more curb
+  chains on one tile (London 528 such tiles out of 19 278, up to seven owners;
+  New York 1 064; Tokyo 148; Tula 1). The two fixed slots the type used to keep
+  cost London 3 curb tiles and Tokyo 2 — a hole in the parapet exactly where
+  the branches meet. This survives nominal class widths swallowing a parallel sidewalk
   whole (primary is 16 m by default — a "covered by a neighbour ribbon" rule
-  would open *both* of the pair's outer curbs there). A **joining** non-bridge
+  would open *both* of the pair's outer curbs there). The probe asks a **spatial
+  hash of the bridge ribbons** (`BridgeBands`, 32 m cells — the
+  `planting/index.rs` idiom), never a linear scan of every bridge way: curb tiles
+  grow with the number of bridges, so the scan was the quadratic part of the fill
+  (London carries 499 bridge ways against Tula's 61). The index is exact, not
+  approximate — a segment goes into every cell of its AABB grown by its own
+  `curb_reach`, so a single cell lookup can never miss a covering ribbon. A **joining** non-bridge
   road opens the curb its panel covers — joining means sharing a node with a
   bridge way (`JOIN_EPSILON`); a riverbank path passing a few metres *under*
   the span shares no node and opens nothing. The rule only refrains from
@@ -161,7 +181,13 @@ to the navtile size is simulation input — it breaks a replay in flight (`deter
   screen is still up (`JobState::BuildingNavmesh` / `Pruning`).
 - **PortalPos** (resource) — actual portal position. `PORTAL_POS` in settings is only a
   **hint**; `snap_portal_position` spirals out to the nearest tile with clearance derived
-  from `PORTAL_DIAMETER`. The map-load thread snaps it between fill and prune (the flood
+  from `PORTAL_DIAMETER`, through the shared `nearest_tile_where` ring search — nearest is
+  Euclidean, so the first ring with a hit is not the answer (a corner at `r·√2` loses to a
+  straight tile of a later ring), capped at `PORTAL_SEARCH_METERS` = 400 m (`settings.rs`,
+  next to `PORTAL_DIAMETER`; metres, not tiles, so the navtile cycler does not move the
+  portal). Nothing clear inside the cap ⇒ `None`, and `map/osm/download.rs` logs
+  `no clear spot for portal` and keeps the raw hint — the prune flood then starts from the
+  unsnapped point. The map-load thread snaps it between fill and prune (the flood
   starts from the snapped position) and hands it back in `LoadedWorld`; `poll_job` inserts
   the resource before switching to `Playing`.
 
@@ -202,7 +228,8 @@ counts what the player can actually see, not what the dispatcher is willing to s
   size*), wrapped in `Arc`, called directly
   from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
   flat A*. The build takes **~12 s** on the 5600 × 3700 map, so it runs as an
-  `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` and picked up by
+  `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` **in the live branch
+  only** (the deterministic branch starts it earlier — next bullet) and picked up by
   `poll_northstar_build`; until it lands, `NorthstarGrid::get()` is `None` and the
   dispatcher **falls back to flat A\*** for HPA*/Theta* requests. Doing it inline cost
   11 s of frozen loader screen; starting it before the warmup ends made it fight the
@@ -213,6 +240,34 @@ counts what the player can actually see, not what the dispatcher is willing to s
   `northstar grid built` line at all). Switching `Algo` back to `Navmesh` or cycling
   `Pathfind` to HPA* starts the build right then — the same lazy shape the polygonal mesh
   has, run from `Update` on a resource change.
+  **Both ends of a request are bounds-checked against the grid's own dimensions**
+  (`grid_point` → `OrdinalGrid::in_bounds`) before `pathfind`, and out of bounds is a
+  silent `None` — same verdict the grid gives ("out-of-bounds reads impassable"). Without
+  it the crate logs a `log::error!` per call, at dispatcher rate, for a pawn past the map
+  edge. The size is asked of the grid, not of `settings::grid_size()`: the grid is built
+  from a navmesh snapshot and outlives a navtile-size change.
+- **Where the build starts is a mode branch — three registrations of
+  `start_northstar_build`** (`navigation/mod.rs::NavigationPlugin`, all
+  `run_if(northstar_wanted)`): `OnEnter(PlayPhase::Live)` in `SimPipeline::Live` (after the
+  warmup, for the core contention above); `OnEnter(PlayPhase::Warmup)` in
+  `SimPipeline::Deterministic` (before it); and `Update` on
+  `resource_changed::<PathfindingAlgorithm>`/`<PolymeshDebug>` under
+  `in_state(PlayPhase::Live)`, in no set and therefore in both modes — the lazy re-start on
+  a panel switch. **Putting the deterministic run on the live site would hang the loader
+  forever**, not merely pick a worse backend: `poll_warmup` returns early while
+  `Pathfinder::mode().is_building()` holds, and `is_building()` covers
+  `HierarchyPending { .. }` — including `wanted: true`, "not started yet". That early return
+  sits before the `elapsed` increment, so `WARMUP_TIMEOUT` can never fire, and the phase
+  whose `OnEnter` would start the build is exactly the one the warmup is holding:
+  "Building navigation..." with nothing building. The core-contention argument does not
+  carry over either — in this mode the warmup computes nothing (`FixedUpdate` is paused,
+  and there is no pawn warmup), so waiting the build out *is* its job. Without the wait the
+  frozen `Backend` taken at `WorldStarted` would carry `hierarchy: None` and the whole run
+  would go on flat A* while the panel reads HPA*. The polymesh needs no such branch:
+  `sync_polymesh_build` already runs in `OnEnter(AppState::Playing)`
+  (`WorldInitSet::Spawn`), before the warmup in both modes. A restart on R crosses no
+  `OnEnter` (`restart.rs::on_restart`), so no site fires and the previous run's hierarchy is
+  reused — that is the determinism skill's "restarts do not pay it".
 - **Backend** (`navigation/backend.rs`) — the active backend as one cloneable `Send`
   snapshot: the grid navmesh Arc + the selected algorithm (+ the northstar hierarchy once
   built), or the polymesh overriding all of it. It is **the resource the whole simulation

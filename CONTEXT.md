@@ -35,8 +35,10 @@ in `main.rs`.
   (2800 × 1850 tiles at 2 m); the live value is a process-global atomic
   (`settings::navtile_size()`), written only in `OnEnter(Loading)`, and **a filled `Navmesh`
   carries its own `grid_size`/`tile_size` snapshot** so stale snapshots never index against
-  the switched atomic. Switching reloads the world like a city switch, except the camera
-  stays put. `grid.rs`: `world_to_tile` / `tile_center`. Costs and the chunk scaling —
+  the switched atomic — the fill and the navmesh-side queries convert through
+  `Navmesh::to_tile` / `Navmesh::tile_center`, never the global pair. Switching reloads the
+  world like a city switch, except the camera stays put. `grid.rs`: `world_to_tile` /
+  `tile_center`, for callers with no `Navmesh` at hand. Costs and the chunk scaling —
   **navigation-deep skill**.
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
   `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
@@ -222,6 +224,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   by the map-load thread while the loader is up.
 - **PortalPos** (resource) — the actual portal position; `PORTAL_POS` is only a hint,
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
+  The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
+  the load thread warns and keeps the raw hint.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
@@ -264,12 +268,20 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   async, cancellable). polyanya is **vendored** (`vendor/polyanya`, edits marked `QWE:`);
   `bounded_path` is the only door to it, an exhausted budget **panics** by design, and so
   does a task older than `PATHFINDING_TASK_HANG_SECS`.
+- **Chunk graph** (`polymesh/stitch.rs::stitch_chunks`, `ChunkGraph`) — the level-1 graph of
+  the chunked poly navmesh: a **node is a connected component of one chunk**, an edge joins
+  components of two *neighbouring* chunks that share a seam **segment**. `find_path_polymesh`
+  A*s over it and hands polyanya the corridor of chunks. It is also **the reachability
+  answer** — polyanya's island check is off whenever there is more than one layer, so
+  `astar → None` means "unreachable"; on a flat mesh the baked islands answer instead.
 - **Polygonal routing** (`find_path_polymesh`) — paths are **world-space polylines**
   (`VecDeque<Vec2>`, start point included); **the goal stays a tile** (identity for
   stale-answer filtering and arrival). A missed goal is `PathfindingError`, not a fallback —
-  watch `answers: N/frame, X % failed` on the speed panel. Endpoint tolerance is 1 m, which
-  also sets the agent-radius slider ceiling (0.6 m). Coasting and lunge `line_of_sight` stay
-  grid tests.
+  watch `answers: N/frame, X % failed` on the speed panel. Endpoint tolerance is 0.75 m
+  (`POLYMESH_SEARCH_DELTA · (POLYMESH_SEARCH_STEPS − 1)`), which also sets the agent-radius slider ceiling
+  (0.6 m). **A start that had to be snapped stays in the polyline as its own second point**,
+  so every segment after that snap hop is one the funnel or `smoothed` vouched for. Coasting
+  and lunge `line_of_sight` stay grid tests.
 - **tiny_city / parity tests** (`map/osm/fixture.rs`, `navigation/parity_tests.rs`) — the
   shared `MapData` fixture from which **both fills** are built and must agree probe by probe:
   the executable form of "one rule for both fills". Run after touching either fill; **new
@@ -570,7 +582,12 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   over it stays beside its `decide.rs` — `MAX_CHASERS_PER_TARGET` and the ×1.5/×0.7 switch
   factors in `demon/decide.rs`, `FLEE_STEP`/`FLEE_SPREAD`/`ESCAPE_MARGIN` in
   `human/decide.rs`. A constant both species declare moves to `settings.rs`
-  (`WANDER_MAP_MARGIN`). Detail — **species-behavior skill**.
+  (`WANDER_MAP_MARGIN`). Same split in the polymesh: the world-scale metres are in
+  `settings.rs` under the `POLYMESH_` prefix (agent radius, endpoint tolerance, map-edge
+  margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
+  `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,
+  `SEAM_QUANTUM`, `SIMPLIFY_EPSILON`, `WALK_*`), the search budget and `COST_SCALE`.
+  Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
   `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry
   the tag coverage audit and the crown-algorithm write-up).
