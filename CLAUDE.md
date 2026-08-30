@@ -214,8 +214,9 @@ Current third-party crates and why they exist:
 - `bevy_northstar` — hierarchical HPA*/Theta* (its `Grid` is used directly, without the
   crate's plugin)
 - `polyanya` — polygonal navmesh (`navigation/polymesh/`): CDT + agent-radius
-  inflation of vector obstacles; used directly, no bevy integration. `polyanya_glam` is a
-  renamed `glam` 0.30 dep only to construct its `Vec2` (bevy 0.19 ships glam 0.32)
+  inflation of vector obstacles; used directly, no bevy integration. Vendored from
+  upstream master (`vendor/polyanya`, see `[patch.crates-io]`); since 0.17 it shares
+  glam 0.32 with bevy 0.19, so its `Vec2` **is** bevy's `Vec2`
 - `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)
 - `serde` / `serde_json` — Overpass JSON parsing
 - `ureq` 3 — blocking HTTPS download of the OSM extract (rustls + gzip by default)

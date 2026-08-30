@@ -242,11 +242,11 @@ full `polygons.len() * 10` budget instead of failing at once on the island check
 A chunk can come out **fully blocked** — a river, a solid block of buildings, and the
 layer has zero polygons. That is legal, and `polymesh chunked … N layers fully blocked`
 counts them: New York has 4 of 140, every other city of the panel has none. Such a layer
-is deliberately left *un-baked*: `BVH2d::build` (bvh2d 0.7, under
-`Layer::bake_polygon_finder`) has no recursion base for an empty shape list — it splits
-zero shapes into two empty halves forever and kills the process with a stack overflow in
-the `AsyncComputeTaskPool` worker, whatever the stack size. The guard lives in
-`vendor/polyanya/src/layers.rs`; every reader of `baked_polygons` already branches on
+is deliberately left *un-baked* — with polyanya 0.16's bvh2d, building the finder over an
+empty shape list recursed forever and killed the process with a stack overflow in the
+`AsyncComputeTaskPool` worker. The guard in `Layer::bake_polygon_finder` was upstreamed
+as vleue/polyanya#152 and ships with the vendored master (0.17 also moved the finder
+from bvh2d to an rstar `RTree`); every reader of `baked_polygons` already branches on
 `None` into the linear scan, which over zero polygons correctly answers "not on the
 mesh". Repro over all six cities: `examples/audit/polymesh_empty_layer_repro.rs`.
 
@@ -351,19 +351,21 @@ never sat on the mesh and one that sat in another connected component.
 
 **Divergence, resolved twice over.** A single search used to allocate unbounded memory
 (flat ~3 GB, then past 17 GB in seconds, OS kill): polyanya's iteration budget caps
-only queue *pops* while `successors` pushes fans of nodes unchecked. Fixed at the root
-in the **vendored** `vendor/polyanya` (a `[patch.crates-io]` path dep, edits marked
-`QWE:`): exact node repeats — same polygon, root and interval — are deduplicated,
-killing the cycle where a corner vertex on a seam's collinear edge chain spins
-equal-cost nodes around its polygon ring forever (root_history only drops strictly
-worse nodes). Belt and braces on top: `bounded_path` is the **only door to polyanya**
-— the corridor branch included, via the vendored `Mesh::get_path_on_layers` (the polled
-search honoring blocked layers; the blocking `path_on_layers` is not used, its internal
+only queue *pops* while `successors` pushes fans of nodes unchecked. Fixed at the root:
+exact node repeats — same polygon, root and interval — are deduplicated, killing the
+cycle where a corner vertex on a seam's collinear edge chain spins equal-cost nodes
+around its polygon ring forever (root_history only drops strictly worse nodes). That fix
+was born in the vendored copy and upstreamed as vleue/polyanya#151 (merged reworked, via
+a search-node arena), like the immediate `NotFound` return (#150) — both now arrive with
+the vendored master itself. What stays a **local `QWE:` patch** in `vendor/polyanya` (a
+`[patch.crates-io]` path dep) is `Mesh::get_path_on_layers` — the polled search honoring
+blocked layers with `Coords` ends, which upstream does not have. Belt and braces on top:
+`bounded_path` is the **only door to polyanya** — the corridor branch included, via that
+`get_path_on_layers` (the blocking `path_on_layers` is not used, its internal
 limit counts the whole mesh and cannot be interrupted). The external work budget scales
 to the open polygon count (40 pops each, min 4096 polls — 10 was measured on the flat
 mesh and starved healthy long corridor routes, which converge at ×2; see
-`examples/audit/polymesh_budget_repro`), a `NotFound` returns
-immediately instead of idling out the limit, and an exhausted budget is a **panic in
+`examples/audit/polymesh_budget_repro`), and an exhausted budget is a **panic in
 every build**, with both endpoints in the message: a diverging search must kill the
 game so the geometry (or the degenerate start/goal that caused it) gets fixed, not
 silently eat the async pool — live symptom of the silent version was demons frozen at
