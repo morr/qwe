@@ -692,6 +692,28 @@ impl TrafficSide {
     }
 }
 
+/// Вид бастиона — по тегу OSM, из которого он пришёл
+/// (`parse/tags.rs::bastion_kind`). `Stronghold` из выгрузки не приходит: это
+/// добор до квоты по обычным зданиям (`ROADMAP.md`, шаг 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BastionKind {
+    Police,
+    FireStation,
+    Church,
+    Military,
+    Stronghold,
+}
+
+/// Опорный пункт людей из OSM: полиция, пожарная часть, храм, военные.
+/// `pos` — нода как есть либо центроид контура; два объекта одного вида ближе
+/// `parse::BASTION_DEDUP_METERS` (или нода внутри контура) схлопнуты в один,
+/// остаётся контурный — см. `parse::fold_bastions`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bastion {
+    pub pos: Vec2,
+    pub kind: BastionKind,
+}
+
 /// Распарсенная карта; остаётся ресурсом после спавна — для отладки.
 #[derive(Resource, Debug, Default)]
 pub struct MapData {
@@ -717,6 +739,10 @@ pub struct MapData {
     /// Спортивные и детские площадки (`leisure=*`) — покрытие своего цвета и
     /// разметка (`map::pitch`). Навмеш не трогают: по площадке ходят.
     pub pitches: Vec<PolyArea>,
+    /// Бастионы из тегов OSM, уже без дублей и без тех, чей центр лежит за
+    /// картой. Здание с тегом бастиона лежит и в [`MapData::buildings`], и
+    /// здесь. Проходимость точки здесь не проверяется — это дело спавна.
+    pub bastions: Vec<Bastion>,
     pub roads: Vec<RoadLine>,
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
@@ -943,6 +969,28 @@ pub fn is_fortress_tower(area: &PolyArea) -> bool {
         .sum();
     perimeter > 0.0
         && ring_area(&area.outer) / (perimeter * perimeter) >= FORTRESS_TOWER_COMPACTNESS_MIN
+}
+
+/// Центроид кольца по площади (та же формула шнурования, что [`signed_ring_area`]).
+/// Считается относительно первой вершины: в абсолютных координатах карты
+/// произведения уходят за 1e10, и f32 теряет метры. Вырожденное кольцо —
+/// среднее вершин, чтобы не делить на ноль.
+pub fn ring_centroid(ring: &[Vec2]) -> Vec2 {
+    let origin = ring[0];
+    let mut doubled_area = 0.0;
+    let mut weighted = Vec2::ZERO;
+    let mut j = ring.len() - 1;
+    for i in 0..ring.len() {
+        let (a, b) = (ring[j] - origin, ring[i] - origin);
+        let cross = a.perp_dot(b);
+        doubled_area += cross;
+        weighted += (a + b) * cross;
+        j = i;
+    }
+    if doubled_area.abs() < 1e-6 {
+        return ring.iter().sum::<Vec2>() / ring.len() as f32;
+    }
+    origin + weighted / (3.0 * doubled_area)
 }
 
 /// AABB кольца: (min, max).

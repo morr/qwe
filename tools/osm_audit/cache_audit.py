@@ -34,6 +34,18 @@ WATER_OK = {"river", "canal", "weir", "stream", "brook", "ditch", "drain"}
 NON_WALKABLE = {"no", "garage", "emergency"}
 
 
+def bastion_kind(tags):
+    """parse/tags.rs::bastion_kind — признак поверх площадной классификации:
+    здание с `amenity=police` считается и зданием, и бастионом. Тут — до
+    дедупа парсера (`fold_bastions`), так что счёт чуть выше лога."""
+    amenity = tags.get("amenity")
+    if amenity in ("police", "fire_station", "place_of_worship"):
+        return amenity
+    if "military" in tags or tags.get("landuse") == "military":
+        return "military"
+    return None
+
+
 def area_kind(tags):
     """parse.rs::area_kind — порядок веток важен, луг проверяется до парка."""
     if "building" in tags:
@@ -112,6 +124,10 @@ def analyse(path):
             if tags.get("natural") == "tree":
                 kept["tree node"] += 1
                 continue
+            bastion = bastion_kind(tags)
+            if bastion is not None:
+                kept[f"bastion {bastion} (node)"] += 1
+                continue
             entrance = tags.get("entrance")
             if entrance is None:
                 dropped["node: ни вход, ни дерево"] += 1
@@ -170,6 +186,12 @@ def analyse(path):
             area = area_kind(tags)
             geometry = element.get("geometry") or []
             closed = len(geometry) >= 4 and geometry[0] == geometry[-1]
+            # бастион — рядом с площадной веткой, не вместо неё
+            bastion = bastion_kind(tags)
+            if bastion is not None and closed:
+                kept[f"bastion {bastion} (way)"] += 1
+                if area is None:
+                    continue
             if area is None:
                 dropped["way area: не классифицировано"] += 1
                 if len(unclassified) < 5:
@@ -182,6 +204,11 @@ def analyse(path):
 
         if kind == "relation":
             area = area_kind(tags)
+            bastion = bastion_kind(tags)
+            if bastion is not None:
+                kept[f"bastion {bastion} (relation)"] += 1
+                if area is None:
+                    continue
             if area is None:
                 dropped["relation: не классифицировано"] += 1
                 if len(unclassified) < 5:

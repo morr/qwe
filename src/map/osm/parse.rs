@@ -11,14 +11,15 @@ use crate::city::City;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
-    Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon, ring_area,
-    ring_bounds, ring_vertex_mean, signed_ring_area,
+    AreaKind, Bastion, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine,
+    RoadLine, Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow,
+    TreeRowLayout, WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon,
+    ring_area, ring_bounds, ring_centroid, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
 use crate::map::seed::seed_from_point;
+use crate::settings::MAP_SIZE;
 
 /// Ширина стены Кремля, м.
 const WALL_WIDTH: f32 = 3.0;
@@ -31,6 +32,11 @@ const RING_JOIN_EPSILON: f32 = 0.01;
 /// так что после одной и той же проекции координаты совпадают точно;
 /// сантиметровая сетка — страховка от шума f32, а не поиск ближайшего.
 const ENTRANCE_SNAP_SCALE: f32 = 100.0;
+
+/// Два бастиона одного вида ближе этого — один объект, размеченный дважды:
+/// нода у крыльца плюс контур, контур плюс relation. Тот же порог у
+/// `tools/osm_audit/slice_audit.py`, чтобы счёт аудита сходился с логом.
+pub const BASTION_DEDUP_METERS: f32 = 30.0;
 
 /// Разбор — две половины, и между ними шов.
 ///
@@ -58,6 +64,9 @@ struct ReadReport {
     /// `None` — зеркало не отдало `is_in`; карта рисуется правосторонней.
     traffic_side: Option<TrafficSide>,
     unclosed_rings: usize,
+    bastions: usize,
+    bastions_folded: usize,
+    bastions_outside: usize,
 }
 
 impl std::fmt::Display for ReadReport {
@@ -67,6 +76,9 @@ impl std::fmt::Display for ReadReport {
         let Self {
             traffic_side,
             unclosed_rings,
+            bastions,
+            bastions_folded,
+            bastions_outside,
         } = self;
         if traffic_side.is_none() {
             // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
@@ -81,6 +93,13 @@ impl std::fmt::Display for ReadReport {
             writeln!(
                 f,
                 "osm parse: {unclosed_rings} unclosed relation rings skipped"
+            )?;
+        }
+        if bastions_folded + bastions_outside > 0 {
+            writeln!(
+                f,
+                "osm parse: {bastions} bastions, {bastions_folded} folded as duplicates, \
+                 {bastions_outside} dropped outside the map"
             )?;
         }
         Ok(())
@@ -104,6 +123,10 @@ fn read_elements(
     }
     let mut unclosed_rings = 0usize;
     let mut entrances = Vec::new();
+    // бастионы — по той же причине после цикла: нода `amenity=police` у
+    // крыльца и контур участка с тем же тегом — один бастион, а контур
+    // приходит позже ноды
+    let mut bastions = Vec::new();
 
     for element in &response.elements {
         match element.kind.as_str() {
@@ -117,16 +140,30 @@ fn read_elements(
                 if let Some(structure) = parse_structure_node(element, bounds) {
                     map.structures.push(structure);
                 }
+                if let Some(candidate) = parse_bastion_node(element, bounds) {
+                    bastions.push(candidate);
+                }
             }
-            "way" => parse_way(element, bounds, &mut map),
-            "relation" => parse_relation(element, bounds, &mut map, &mut unclosed_rings),
+            "way" => parse_way(element, bounds, &mut map, &mut bastions),
+            "relation" => parse_relation(
+                element,
+                bounds,
+                &mut map,
+                &mut bastions,
+                &mut unclosed_rings,
+            ),
             _ => {}
         }
     }
 
+    let (bastions_folded, bastions_outside) = fold_bastions(&mut map, bastions);
+
     let report = ReadReport {
         traffic_side,
         unclosed_rings,
+        bastions: map.bastions.len(),
+        bastions_folded,
+        bastions_outside,
     };
     (map, entrances, report)
 }
@@ -1708,7 +1745,12 @@ fn push_area(map: &mut MapData, area: PolyArea) {
     }
 }
 
-fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
+fn parse_way(
+    element: &Element,
+    bounds: &GeoBounds,
+    map: &mut MapData,
+    bastions: &mut Vec<BastionCandidate>,
+) {
     let Some(geometry) = &element.geometry else {
         return;
     };
@@ -1830,6 +1872,22 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         return;
     }
 
+    // бастион — **рядом** с площадной веткой, не вместо неё: участок полиции
+    // без `building` даёт только бастион, здание с `amenity=police` — здание
+    // и бастион с центроидом того же контура. Стоит выше цилиндра промзоны:
+    // та ветка прерывает разбор
+    if let Some(kind) = bastion_kind(&element.tags)
+        && let Some(outer) = as_ring(&points)
+    {
+        bastions.push(BastionCandidate {
+            bastion: Bastion {
+                pos: ring_centroid(&outer),
+                kind,
+            },
+            outline: Some(outer),
+        });
+    }
+
     // Цилиндр промзоны — резервуар, силос, труба, башня. Эта ветка, в
     // отличие от рельсовой и трубопроводной, **прерывает разбор**: труба,
     // размеченная way с
@@ -1889,20 +1947,106 @@ fn driving_side(elements: &[Element]) -> Option<TrafficSide> {
         .map(|(_, side)| side)
 }
 
+/// Нода с тегом бастиона: отдел полиции точкой, часовня без контура.
+fn parse_bastion_node(element: &Element, bounds: &GeoBounds) -> Option<BastionCandidate> {
+    let kind = bastion_kind(&element.tags)?;
+    Some(BastionCandidate {
+        bastion: Bastion {
+            pos: bounds.project(element.lat?, element.lon?),
+            kind,
+        },
+        outline: None,
+    })
+}
+
+/// Бастион до дедупликации: у ноды контура нет, у way/relation — есть, и по
+/// нему нода того же вида внутри участка признаётся его дублем.
+struct BastionCandidate {
+    bastion: Bastion,
+    outline: Option<Vec<Vec2>>,
+}
+
+/// Дедупликация бастионов и отсев тех, чей центр лежит за картой. Возвращает
+/// (схлопнуто как дубль, выброшено за картой).
+///
+/// Дубль — тот же вид ближе [`BASTION_DEDUP_METERS`] к уже оставленному либо
+/// нода внутри его контура (пожарная часть: контур участка плюс нода у ворот
+/// в 80 м от центроида). Контурные идут первыми, так что при совпадении
+/// остаётся контур, а не нода: его центроид и есть центр участка.
+///
+/// За карту центр попадает у больших полигонов: bbox ловит way по любой
+/// вершине, а `landuse=military` в полгорода (тульское Мясново) лежит центром
+/// снаружи. Такой бастион не нужен никому, и `slice_audit.py` его тоже не
+/// считает. Квадратично по числу бастионов — их десятки.
+fn fold_bastions(map: &mut MapData, candidates: Vec<BastionCandidate>) -> (usize, usize) {
+    let (mut ordered, nodes): (Vec<_>, Vec<_>) = candidates
+        .into_iter()
+        .partition(|candidate| candidate.outline.is_some());
+    ordered.extend(nodes);
+
+    let (mut folded, mut outside) = (0, 0);
+    let mut kept: Vec<BastionCandidate> = Vec::new();
+    for candidate in ordered {
+        let Bastion { pos, kind } = candidate.bastion;
+        if pos.x < 0.0 || pos.y < 0.0 || pos.x > MAP_SIZE.x || pos.y > MAP_SIZE.y {
+            outside += 1;
+            continue;
+        }
+        let duplicate = kept.iter().any(|other| {
+            other.bastion.kind == kind
+                && (other.bastion.pos.distance(pos) < BASTION_DEDUP_METERS
+                    || other
+                        .outline
+                        .as_deref()
+                        .is_some_and(|ring| point_in_polygon(pos, ring)))
+        });
+        if duplicate {
+            folded += 1;
+            continue;
+        }
+        kept.push(candidate);
+    }
+    map.bastions = kept
+        .into_iter()
+        .map(|candidate| candidate.bastion)
+        .collect();
+    (folded, outside)
+}
+
 fn parse_relation(
     element: &Element,
     bounds: &GeoBounds,
     map: &mut MapData,
+    bastions: &mut Vec<BastionCandidate>,
     skipped_open_rings: &mut usize,
 ) {
-    let Some(kind) = area_kind(element) else {
+    let area = area_kind(element);
+    let bastion = bastion_kind(&element.tags);
+    if area.is_none() && bastion.is_none() {
         return;
-    };
+    }
     let Some(members) = &element.members else {
         return;
     };
 
     let outers = assemble_rings(members, "outer", bounds, skipped_open_rings);
+    // мультиполигон-бастион (монастырь с двором): центр самого большого кольца
+    if let Some(kind) = bastion
+        && let Some(outer) = outers
+            .iter()
+            .max_by(|a, b| ring_area(a).total_cmp(&ring_area(b)))
+    {
+        bastions.push(BastionCandidate {
+            bastion: Bastion {
+                pos: ring_centroid(outer),
+                kind,
+            },
+            outline: Some(outer.clone()),
+        });
+    }
+    let Some(kind) = area else {
+        return;
+    };
     let inners = assemble_rings(members, "inner", bounds, skipped_open_rings);
     let height = area_height(kind, &element.tags);
     let building_use = area_use(kind, &element.tags);
@@ -1988,9 +2132,9 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_use, crown_radius,
-    fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_road_underground,
-    is_roundabout, is_underground, pipe_width, rail_class, road_class, row_spacing, service_track,
-    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes, water_class,
-    water_width,
+    NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_use, bastion_kind,
+    crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward,
+    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_class,
+    row_spacing, service_track, structure_height, structure_kind, structure_radius, structure_size,
+    tagged_lanes, water_class, water_width,
 };

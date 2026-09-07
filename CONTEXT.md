@@ -132,7 +132,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
   bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS` are tried in
   order. **Bump `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**
-  (currently 13), or existing caches keep serving extracts that lack them.
+  (currently 15), or existing caches keep serving extracts that lack them.
 - **Driving side** (`TrafficSide: Right | Left`, `MapData::traffic_side`) — the
   `driving_side` tag of the country boundary the map's centre lies in, asked by `is_in` as a
   second `out tags` output (the tag is not on roads). No answer means `Right`. Read only by
@@ -195,6 +195,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the navmesh with gaps** (`FENCE_BAND_WIDTH` 0.3 m — the physical thickness, not the
     zoom-grown drawn width; see **Fence gap** under Navigation). The branch falls through,
     so a way that is both a fence and something else becomes both.
+  - **Bastion** — `{ pos, kind }` from `amenity=police|fire_station|place_of_worship`,
+    `military=*`, `landuse=military` (`BastionKind: Police | FireStation | Church |
+    Military | Stronghold`; `Stronghold` is the M1 quota top-up, never from OSM). A flag
+    **on top of** `area_kind`: a tagged building stays a building *and* yields a bastion at
+    its centroid. Folded after the element loop (same kind within 30 m, or a node inside a
+    kept outline — the outline survives) and dropped when the centroid is off the map.
+    Not drawn, not in the navmesh; consumed by the bastion spawn.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
     watercourse kind that does **not** block the navmesh. Drawn (`map/water.rs`) only

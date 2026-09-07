@@ -390,7 +390,7 @@ fn poll_job(
                 "osm map: {} buildings ({with_height} with height, {entrances} entrances), \
                  {} water, {} waterways ({culverts} culverts), {} parks, {} woods, {} grass, \
                  {} sand, {} landuse, {} parking, {} pitches, {} roads, {} rails, {} walls, \
-                 {} trees",
+                 {} trees, {} bastions",
                 map.buildings.len(),
                 map.water.len(),
                 map.water_lines.len(),
@@ -405,6 +405,7 @@ fn poll_job(
                 map.rails.len(),
                 map.walls.len(),
                 map.trees.len(),
+                map.bastions.len(),
             );
             commands.insert_resource(map);
             commands.insert_resource(PortalPos(world.portal));
