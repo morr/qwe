@@ -105,9 +105,40 @@ so the first `Playing` frame rebuilds it without an `OnEnter` registration. Gizm
 rejected: ~150 districts with tile-accurate borders are hundreds of thousands of segments
 per frame, the texture is a millisecond once per world.
 
+## Bastion sites (`bastion/mod.rs::plan_sites`, `bastion/fill.rs`)
+
+Where the bastions stand is map-derived like the districts, planned on the load thread
+right after them and carried in `LoadedWorld.bastions` → `BastionSites`.
+
+**Placing a point.** OSM gives a bastion as a building polygon, and its centroid lies
+inside the building — an impassable tile no pawn can reach and no district contains. So
+every point is **snapped** first: `nearest_tile_where` from the centroid's tile, up to
+`BASTION_SNAP_METERS` (150 m — wider than the widest factory hall), to the nearest
+passable tile; that lands on the pavement at the wall. The district is then read with
+`Districts::district_near` within `BASTION_DISTRICT_REACH` (24 m) rather than
+`district_at`: the label raster is 8 m coarse and labels a cell by its *centre* tile, so a
+2 m pavement tile can sit in a cell whose centre is inside the house. A tagged bastion
+with no passable tile in reach is dropped and counted (`dropped` in the log line).
+
+**Quota.** `closeness = 1 − dist_to_heart / max_dist` (0 for a district with no path);
+`quota(closeness)` is the first step of `BASTION_QUOTA_STEPS` whose bound is not below
+it — 0 up to 0.3, 1 up to 0.7, 2 up to 0.9, 3 at the heart. These are the roadmap's
+starting numbers, to be tuned from the `bastions: N tagged, M strongholds` log line, not
+in advance.
+
+**Top-up** (`fill_quota`, pure: pre-snapped inputs, no navmesh, no ECS). Candidates are
+buildings of at least `STRONGHOLD_MIN_AREA` (300 m²) whose snapped point has a district;
+a building already hosting a tagged bastion (a site within `BASTION_DEDUP_METERS` of its
+point in the same district) is not one. Each candidate draws one lot from
+`lcg_seeded_by(first outline vertex)` — the map's own lot, no `WorldSeed`, the same
+family doors and tree planting use — and a district short of its quota takes the
+smallest lots first. A district without eligible buildings keeps what it has. Tests in
+`fill.rs` pin the steps, the "two tags + quota 3 → one Stronghold, always the same
+building" case, quota 0, the tagged-building exclusion and scarcity.
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: **corruption** (`SimSet::Territory`),
-**bastions** with their quota and the `Stronghold` top-up, `Health`/`Attack`, demon
-kinds, souls, the outcome. Each lands here with its mechanism as it is written; until
-then `ROADMAP.md` is the only description and it is a plan, not a record.
+The roadmap's next steps on this layer, in order: bastion **entities** with `Health`,
+`BastionsStanding`, ruins and the heal-on-restart, **corruption** (`SimSet::Territory`),
+`Attack`, demon kinds, souls, the outcome. Each lands here with its mechanism as it is
+written; until then `ROADMAP.md` is the only description and it is a plan, not a record.

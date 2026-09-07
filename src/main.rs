@@ -4,8 +4,9 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, city, demon, determinism, dev, diagnostics, district, human, loading, map, movement,
-    navigation, portal, post, prefs, restart, rng, silhouette, sim_time, spatial, telemetry, ui,
+    bastion, camera, city, demon, determinism, dev, diagnostics, district, human, loading, map,
+    movement, navigation, portal, post, prefs, restart, rng, silhouette, sim_time, spatial,
+    telemetry, ui,
 };
 
 /// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт занят
@@ -100,6 +101,7 @@ fn main() {
             // раз в `Startup` и переживает любую смену мира
             silhouette::SilhouettePlugin,
             district::DistrictPlugin,
+            bastion::BastionPlugin,
         ))
         .add_plugins((
             loading::LoadingPlugin,

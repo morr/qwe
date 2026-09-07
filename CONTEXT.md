@@ -1276,6 +1276,18 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   The **district overlay** (`DebugDistricts`, Debug tab row `Districts`, hotkey `T`) is
   the label raster as one 8 m/texel sprite — hue by district id, the heart's district
   brighter, unreachable ones grey.
+- **BastionSites** (resource, `bastion.rs`; mechanism — **city-siege skill**) — where
+  the bastions stand: map-derived, planned by the load thread after the districts. A
+  **BastionSite** is `{ pos, kind, district, closeness }`; `pos` is the nearest passable
+  navtile to the OSM centroid (the centroid lies *inside* the building, where nothing
+  walks), `district` the district of that tile, **closeness** `1 − dist_to_heart /
+  max_dist` (1 at the heart). Tagged bastions (`MapData.bastions`) come first; then each
+  district is topped up to its **bastion quota** — `BASTION_QUOTA_STEPS` by closeness (0
+  up to 0.3, 1 up to 0.7, 2 up to 0.9, 3 at the heart) — with **Stronghold**s: buildings
+  of at least `STRONGHOLD_MIN_AREA` (300 m²) in the district, chosen by the geometry lot
+  (`lcg_seeded_by` on the first outline vertex, as doors and trees are), so one map
+  always yields the same sites whatever the world seed. A district without such
+  buildings keeps what it has.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built

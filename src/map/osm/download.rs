@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
+use crate::bastion::{BastionSites, plan_sites};
 use crate::city::City;
 use crate::district::Districts;
 use crate::grid::world_to_tile;
@@ -47,6 +48,8 @@ pub struct LoadedWorld {
     pub heart: Vec2,
     /// Районы по пропрунённому navmesh — производная от карты, как и он.
     pub districts: Districts,
+    /// Места бастионов: теги плюс добор до квоты района.
+    pub bastions: BastionSites,
 }
 
 pub enum JobState {
@@ -192,11 +195,24 @@ fn build_navmesh(
             .and_then(|id| districts.districts[id as usize].dist_to_heart)
     );
 
+    // бастионы — по районам: теги плюс добор до квоты, точки на проходимых
+    // тайлах у стен
+    let started = std::time::Instant::now();
+    let bastions = plan_sites(&map, &districts, &navmesh);
+    info!(
+        "bastions: {} tagged, {} strongholds, {} dropped in {:?}",
+        bastions.tagged,
+        bastions.strongholds(),
+        bastions.dropped,
+        started.elapsed()
+    );
+
     LoadedWorld {
         map,
         portal,
         heart,
         districts,
+        bastions,
     }
 }
 

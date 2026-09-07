@@ -274,7 +274,22 @@ impl Districts {
     /// Район в точке карты, O(1) по растру меток; `None` — вода, стена,
     /// недостижимый карман или точка за картой.
     pub fn district_at(&self, position: Vec2) -> Option<DistrictId> {
+        self.label((position / DISTRICT_LABEL_METERS).floor().as_ivec2())
+    }
+
+    /// Район ближайшей размеченной ячейки растра в пределах `max_meters`.
+    /// Растр грубее навтайла: у ячейки в 8 м метка по её центральному тайлу,
+    /// и проходимый тайл на тротуаре у стены попадает в ячейку, чей центр —
+    /// внутри дома. Для точки, которая заведомо на проходимом тайле, это и
+    /// есть её район.
+    pub fn district_near(&self, position: Vec2, max_meters: f32) -> Option<DistrictId> {
         let cell = (position / DISTRICT_LABEL_METERS).floor().as_ivec2();
+        let radius = (max_meters / DISTRICT_LABEL_METERS).ceil() as i32;
+        crate::navigation::nearest_tile_where(cell, radius, |cell| self.label(cell).is_some())
+            .and_then(|cell| self.label(cell))
+    }
+
+    fn label(&self, cell: IVec2) -> Option<DistrictId> {
         if cell.x < 0 || cell.y < 0 || cell.x >= self.label_size.x || cell.y >= self.label_size.y {
             return None;
         }

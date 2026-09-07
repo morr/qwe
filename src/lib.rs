@@ -1,3 +1,4 @@
+pub mod bastion;
 pub mod camera;
 pub mod city;
 pub mod demon;

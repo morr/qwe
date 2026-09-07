@@ -695,7 +695,7 @@ impl TrafficSide {
 /// Вид бастиона — по тегу OSM, из которого он пришёл
 /// (`parse/tags.rs::bastion_kind`). `Stronghold` из выгрузки не приходит: это
 /// добор до квоты по обычным зданиям (`ROADMAP.md`, шаг 6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
 pub enum BastionKind {
     Police,
     FireStation,
