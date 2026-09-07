@@ -50,7 +50,9 @@ in `main.rs`.
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
-  parks → woods → grass → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
+  parks → woods → grass → sand → ground grain → water → waterways → sidewalks → alley
+  casings → alleys →
+  road casings → roads → bridge
   casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5) →
   units → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
@@ -192,7 +194,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   are not computed** — overlapping `Round` caps in one opaque flat-colored layer are what
   makes them look joined; **keep the road layer opaque**.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
-  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing — smoothing
+  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing / sidewalk —
+  smoothing
   works on a *copy*, since `RoadLine::points`/`width` are load-bearing for navmesh, arches,
   planting and entrances), **BuildingHeightMode**, **TreeStyle**, **TreeRowStyle**,
   **ConiferNoiseStyle**. **`CrownParams` is deliberately not one of them** — a plain

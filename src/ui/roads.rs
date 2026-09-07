@@ -63,4 +63,15 @@ fn build_roads_section(mut commands: Commands, panes: Res<SettingsPanes>, style:
             text: |style| on_off(style.casing).to_string(),
         },
     );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Sidewalk",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.sidewalk = !style.sidewalk,
+            text: |style| on_off(style.sidewalk).to_string(),
+        },
+    );
 }

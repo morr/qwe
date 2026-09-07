@@ -272,6 +272,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
   colors over a single white `ColorMaterial`. ~7000 buildings cost a handful of entities.
   Trees stay individual entities (see `references/trees.md`).
+- **Ground grain** (`map/grain.rs`) — one map-sized translucent sprite at
+  `Z_GROUND_GRAIN` (0.8: above every land fill, below water and roads) tiled with a
+  256×256 noise texture generated at spawn (`SpriteImageMode::Tiled`, one texel per
+  metre). The tile is seamless by construction — each tile coordinate is an angle on a
+  torus in 4D simplex, so opposite edges match exactly; two octaves (48 m and 14 m).
+  Texels are white with alpha up to `LIGHT_ALPHA` 0.16 on light spots and black up to
+  `DARK_ALPHA` 0.05 on dark ones (the ground is light, so white barely shows). A flat
+  single-colour fill over thousands of metres read as paper; the grain reads as soil.
+  Cost: one textured quad per frame, ~130k noise samples once per load.
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
   every road, alley and kremlin wall is drawn. Two knobs, both named after their SVG /
   Mapnik counterparts: **join** (`Miter` — bisector offsets capped by `MITER_LIMIT`;
@@ -306,6 +315,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `Z_ROAD_CASING` (1.9), width `+2·casing_width` (8% of the road, 0.3–1 m). Both fills
     (1.5 / 2.0) sit above both casings on purpose: otherwise a casing would cut every
     crossing in half. Off by default.
+  - **sidewalk** — a light band (`SIDEWALK_COLOR`, between the ground and the white
+    carriageway) along **streets only** (an alley *is* a footpath), width
+    `+2·sidewalk_width` (15% of the road, 1.5–2.5 m per side), its own merged layer at
+    `Z_SIDEWALK` (1.3) under the alleys and every casing, so a footpath meeting a street
+    lies on the sidewalk instead of stopping at it. Drawing only — unlike `casing_width`
+    it is not a footprint band and touches neither the navmesh nor planting. Bridges
+    skip it (their curb is the edge). On by default: without it a street was a white
+    line on a beige sheet, with it a block gets a readable edge.
 
   Smoothing works on a **copy** — `RoadLine::points` and `width` are load-bearing for the
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,

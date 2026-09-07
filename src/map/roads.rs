@@ -39,7 +39,7 @@ use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine, WallLine};
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BUILDING, Z_RAIL, Z_RAIL_DASH, Z_ROAD,
-    Z_ROAD_CASING,
+    Z_ROAD_CASING, Z_SIDEWALK,
 };
 
 const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -139,7 +139,7 @@ impl RoadSmoothing {
 /// Стиль дорожных лент; переключается панелью Roads и BRP, сохраняется в
 /// настройках между запусками. Правка пересобирает дорожные слои
 /// ([`rebuild_roads`]).
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "roads")]
 pub struct RoadStyle {
@@ -147,6 +147,36 @@ pub struct RoadStyle {
     pub smoothing: RoadSmoothing,
     /// Тёмный кант по краю дороги отдельным слоем под заливкой.
     pub casing: bool,
+    /// Тротуар — светлая полоса вдоль улиц, слоем под аллеями. Улица без
+    /// него — белая линия на бежевом листе, с ним — полотно с обочинами,
+    /// и квартал получает читаемую кромку.
+    pub sidewalk: bool,
+}
+
+impl Default for RoadStyle {
+    fn default() -> Self {
+        Self {
+            join: RoadJoin::default(),
+            smoothing: RoadSmoothing::default(),
+            casing: false,
+            sidewalk: true,
+        }
+    }
+}
+
+/// Тротуар — светлее земли, но не белый, как полотно: две ступени серого
+/// между кварталом и дорогой, как у 2ГИС. Свой слой под аллеями, так что
+/// пешеходная дорожка, выходящая на улицу, ложится поверх него.
+const SIDEWALK_COLOR: Color = Color::srgb(0.937, 0.929, 0.906);
+/// Тротуар — 15% ширины улицы в пределах 1.5–2.5 м: у переулка — метр с
+/// небольшим на каждую сторону, у проспекта — не шире реального.
+const SIDEWALK_SCALE: f32 = 0.15;
+const SIDEWALK_RANGE: std::ops::RangeInclusive<f32> = 1.5..=2.5;
+
+/// Ширина тротуара с одной стороны улицы такой ширины. Только рисование:
+/// в отличие от `casing_width`, навмеш и посадку деревьев не трогает.
+fn sidewalk_width(width: f32) -> f32 {
+    (width * SIDEWALK_SCALE).clamp(*SIDEWALK_RANGE.start(), *SIDEWALK_RANGE.end())
 }
 
 /// Дорожный слой карты — чтобы пересборка стиля знала, что деспавнить.
@@ -168,6 +198,7 @@ pub fn spawn_roads(
     // вершинные цвета — материал один, белый
     let material = materials.add(Color::WHITE);
 
+    let mut sidewalks = MeshBuilder::default();
     let mut alley_casings = MeshBuilder::default();
     let mut alleys = MeshBuilder::default();
     let mut street_casings = MeshBuilder::default();
@@ -208,6 +239,17 @@ pub fn spawn_roads(
             RoadClass::Street => (&mut street_casings, &mut streets),
             RoadClass::Alley => (&mut alley_casings, &mut alleys),
         };
+        // тротуар только у улиц: аллея сама и есть пешеходная дорожка
+        if style.sidewalk && road.class == RoadClass::Street {
+            let width = road.width + 2.0 * sidewalk_width(road.width);
+            push_ribbon(
+                &mut sidewalks,
+                &points,
+                width,
+                SIDEWALK_COLOR.to_linear(),
+                style.join,
+            );
+        }
         if style.casing {
             let width = road.width + 2.0 * casing_width(road.width);
             push_ribbon(casing, &points, width, casing_color.to_linear(), style.join);
@@ -251,6 +293,7 @@ pub fn spawn_roads(
     }
 
     let vertices = [
+        &sidewalks,
         &alley_casings,
         &alleys,
         &street_casings,
@@ -266,6 +309,7 @@ pub fn spawn_roads(
     .sum::<usize>();
 
     for (builder, z, name) in [
+        (sidewalks, Z_SIDEWALK, "sidewalks"),
         (alley_casings, Z_ALLEY_CASING, "alley_casings"),
         (alleys, Z_ALLEY, "alleys"),
         (street_casings, Z_ROAD_CASING, "road_casings"),
@@ -290,11 +334,12 @@ pub fn spawn_roads(
     }
 
     info!(
-        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {})",
+        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalk {})",
         started.elapsed(),
         style.join,
         style.smoothing,
-        style.casing
+        style.casing,
+        style.sidewalk
     );
 }
 

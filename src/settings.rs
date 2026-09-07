@@ -761,12 +761,18 @@ pub const Z_TREE_ROW_BAND_CASING: f32 = 0.56;
 pub const Z_TREE_ROW_BAND: f32 = 0.57;
 pub const Z_GRASS: f32 = 0.6;
 pub const Z_SAND: f32 = 0.7;
+/// Зерно земли — над всеми заливками суши и под водой: пруд остаётся гладким,
+/// дороги и дома зерна не получают.
+pub const Z_GROUND_GRAIN: f32 = 0.8;
 pub const Z_POND: f32 = 1.0;
 /// Линейные водотоки — волосок над площадной водой: цвет у них общий, и там,
 /// где ручей впадает в пруд, порядок двух одноцветных слоёв не должен зависеть
 /// от случая. Ниже дорог и мостов, поэтому переход через русло по-прежнему
 /// рисуется поверх воды.
 pub const Z_WATERWAY: f32 = 1.05;
+/// Тротуары улиц — под аллеями и всеми кантами: пешеходная дорожка,
+/// выходящая на улицу, ложится поверх тротуара, а не обрывается о него.
+pub const Z_SIDEWALK: f32 = 1.3;
 /// Кант аллеи/улицы — прямо под своей заливкой. Порядок получается верным сам
 /// собой: кант улицы (1.9) кроет заливку аллеи (1.5), потому что улица старше
 /// аллеи, а заливки (1.5 и 2.0) кроют оба канта — иначе кант резал бы каждый
@@ -830,11 +836,13 @@ const _: () = {
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);
     assert!(Z_TREE_ROW_BAND < Z_GRASS);
     assert!(Z_GRASS < Z_SAND);
-    assert!(Z_SAND < Z_POND);
+    assert!(Z_SAND < Z_GROUND_GRAIN);
+    assert!(Z_GROUND_GRAIN < Z_POND);
     // водоток — волосок над площадной водой, но ниже дорог: переход через
     // русло рисуется поверх воды
     assert!(Z_POND < Z_WATERWAY);
-    assert!(Z_WATERWAY < Z_ALLEY_CASING);
+    assert!(Z_WATERWAY < Z_SIDEWALK);
+    assert!(Z_SIDEWALK < Z_ALLEY_CASING);
     // кант — прямо под своей заливкой, у всех трёх видов лент
     assert!(Z_ALLEY_CASING < Z_ALLEY);
     assert!(Z_ROAD_CASING < Z_ROAD);

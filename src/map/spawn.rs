@@ -1,5 +1,6 @@
-//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, луга, песок,
-//! вода площадная и линейная) + дороги, аллеи и стены (`map/roads.rs`, стиль ленты переключается
+//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (кварталы, парки, луга,
+//! песок, вода площадная и линейная) + зерно земли (`map/grain.rs`) + дороги,
+//! аллеи и стены (`map/roads.rs`, стиль ленты переключается
 //! панелью Roads) + здания (`map/buildings/`, режим отображения высоты
 //! переключается панелью Buildings) + деревья отдельными сущностями.
 
@@ -49,6 +50,7 @@ pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
@@ -63,6 +65,7 @@ pub fn spawn_map(
         DespawnOnExit(AppState::Playing),
         Name::new("ground"),
     ));
+    crate::map::grain::spawn_ground_grain(&mut commands, &mut images);
 
     // вершинные цвета — материал один, белый
     let material = materials.add(Color::WHITE);

@@ -1,5 +1,6 @@
 mod buildings;
 pub mod footprint;
+mod grain;
 mod meshing;
 pub mod osm;
 mod roads;

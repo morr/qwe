@@ -287,7 +287,8 @@ step when adding one):
 
 | entity | file |
 |---|---|
-| ground sprite, merged area layer meshes (parks/woods/grass/sand/water), waterway ribbons | `map/spawn.rs` |
+| ground sprite, merged area layer meshes (landuse/parks/woods/grass/sand/water), waterway ribbons | `map/spawn.rs` |
+| ground grain sprite (tiled noise over every land fill) | `map/grain.rs::spawn_ground_grain` |
 | road layers (alleys/roads/rails/walls + casings) | `map/roads.rs::spawn_roads` |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` |
