@@ -1288,6 +1288,17 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   (`lcg_seeded_by` on the first outline vertex, as doors and trees are), so one map
   always yields the same sites whatever the world seed. A district without such
   buildings keeps what it has.
+- **Bastion** (entity, `bastion.rs`, spawned in `WorldInitSet::Spawn` from
+  `BastionSites`) — `Bastion { kind, district }` + **Health** (`combat.rs`: `{ hp, max }`,
+  `bastion_hp(closeness) = BASTION_HP × (1 + BASTION_HEART_GAIN × closeness)`, 100 at the
+  edge, ×4 at the heart) + a `BASTION_MARKER_SIZE` sprite at `Z_BASTION`, coloured by
+  kind. **Destroyed** (`combat.rs` event, fired when `Health` reaches zero) turns it into
+  a **Ruin** — the same entity retagged with `RuinTag`, sprite dimmed, `Bastion` kept —
+  and fires **BastionDestroyed { entity, district }**. **BastionsStanding** (resource,
+  `Vec<u16>` per district) is run state: filled on `WorldStarted` from the sites, decremented
+  per ruin, part of the run `Fingerprint`. **A restart heals in place** — the
+  `WorldStarted` observer refills every `Health`, strips `RuinTag` and relights the
+  sprite; bastions never pass through the restart despawn list.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built

@@ -116,6 +116,13 @@ pub fn replay_app(
             crate::demon::DemonPlugin,
             crate::human::HumanPlugin,
             crate::restart::RestartPlugin,
+            // осадный слой M1: районы (перепись по тику), здоровье, бастионы
+            // (`BastionsStanding` — состояние прогона, в отпечатке). Ресурсы
+            // карты у них здесь пустые — двор без районов и без мест, — но
+            // сбросы `WorldStarted` страж видит только у перечисленных
+            crate::district::DistrictPlugin,
+            crate::combat::CombatPlugin,
+            crate::bastion::BastionPlugin,
         ))
         // Что сюда НЕ входит и почему — половина смысла этого списка.
         // `a_restart_replays_the_run` держит членство сбросов `WorldStarted`
@@ -264,6 +271,17 @@ pub fn fingerprint(world: &mut World) -> Fingerprint {
             eat(byte);
         }
         eat(state);
+    }
+    // состояние прогона осадного слоя — тем же хэшем (решение 12
+    // `ROADMAP.md`): пропущенный сброс расходится в `a_restart_replays_the_run`
+    // без отдельного теста. Стоящие бастионы по районам — плотный вектор, его
+    // порядок и есть порядок районов
+    if let Some(standing) = world.get_resource::<crate::bastion::BastionsStanding>() {
+        for count in &standing.0 {
+            for byte in count.to_le_bytes() {
+                eat(byte);
+            }
+        }
     }
 
     let telemetry = world.resource::<Telemetry>();

@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    bastion, camera, city, demon, determinism, dev, diagnostics, district, human, loading, map,
-    movement, navigation, portal, post, prefs, restart, rng, silhouette, sim_time, spatial,
+    bastion, camera, city, combat, demon, determinism, dev, diagnostics, district, human, loading,
+    map, movement, navigation, portal, post, prefs, restart, rng, silhouette, sim_time, spatial,
     telemetry, ui,
 };
 
@@ -101,6 +101,7 @@ fn main() {
             // раз в `Startup` и переживает любую смену мира
             silhouette::SilhouettePlugin,
             district::DistrictPlugin,
+            combat::CombatPlugin,
             bastion::BastionPlugin,
         ))
         .add_plugins((

@@ -136,9 +136,34 @@ smallest lots first. A district without eligible buildings keeps what it has. Te
 `fill.rs` pin the steps, the "two tags + quota 3 → one Stronghold, always the same
 building" case, quota 0, the tagged-building exclusion and scarcity.
 
+## Bastion entities (`bastion/mod.rs`)
+
+`spawn_bastions` (`OnEnter(Playing)`, `WorldInitSet::Spawn`) spawns one entity per
+site: `Bastion { kind, district }`, `Health::full(bastion_hp(closeness))`, a
+`BASTION_MARKER_SIZE` (12 m) square sprite coloured by kind at `Z_BASTION` (5.4 — above
+the roofs and every debug layer, below the units), `DespawnOnExit(Playing)`. Tula: 157
+sites → 157 entities (`brp count Bastion`).
+
+**HP gradient** — `bastion_hp(closeness) = BASTION_HP × (1 + BASTION_HEART_GAIN ×
+closeness)`: 100 at the edge, 400 at the heart. Per-kind multipliers are M2.
+
+**Ruin.** `combat::Destroyed { entity }` is the generic "health hit zero" event; the
+bastion's `on_destroyed` observer answers it: `BastionsStanding[district] −= 1`, the
+sprite goes `RUIN_COLOR`, `RuinTag` is inserted, `BastionDestroyed { entity, district }`
+fires. `Bastion` stays on the entity — the corpse idiom of `human::to_corpse` — so a
+second `Destroyed` on a ruin is a no-op (the query is `Without<RuinTag>`).
+
+**Restart heals in place** (roadmap decision 11). `on_world_started`: `BastionsStanding`
+is rebuilt from the sites (all standing), every `Health` refilled, every `RuinTag`
+removed and its sprite relit. The restart despawn list in `restart.rs` does not grow,
+and a bastion never passes through the spawner twice. `BastionsStanding` is the only
+run state here and it is in the run fingerprint, so `a_restart_replays_the_run` would
+catch a forgotten reset. The unit test pins ruin → standing −1, no double count, heal
+in place without a respawn.
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: bastion **entities** with `Health`,
-`BastionsStanding`, ruins and the heal-on-restart, **corruption** (`SimSet::Territory`),
-`Attack`, demon kinds, souls, the outcome. Each lands here with its mechanism as it is
-written; until then `ROADMAP.md` is the only description and it is a plan, not a record.
+The roadmap's next steps on this layer, in order: **corruption** (`SimSet::Territory`),
+`Attack`/`strike`, demon kinds, souls, the outcome. Each lands here with its mechanism as
+it is written; until then `ROADMAP.md` is the only description and it is a plan, not a
+record.
