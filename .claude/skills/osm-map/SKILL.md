@@ -277,8 +277,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   256×256 noise texture generated at spawn (`SpriteImageMode::Tiled`, one texel per
   metre). The tile is seamless by construction — each tile coordinate is an angle on a
   torus in 4D simplex, so opposite edges match exactly; two octaves (48 m and 14 m).
-  Texels are white with alpha up to `LIGHT_ALPHA` 0.16 on light spots and black up to
-  `DARK_ALPHA` 0.05 on dark ones (the ground is light, so white barely shows). A flat
+  Texels are white with alpha up to `LIGHT_ALPHA` 0.24 on light spots and black up to
+  `DARK_ALPHA` 0.09 on dark ones (the ground is light, so white barely shows). A flat
   single-colour fill over thousands of metres read as paper; the grain reads as soil.
   Cost: one textured quad per frame, ~130k noise samples once per load.
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
@@ -386,8 +386,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The section lives in
   `ui/buildings.rs`, in the Map tab below Trees and Tree rows, one cycling row. A building
-  with no height uses `DEFAULT_BUILDING_HEIGHT` (15 m) everywhere. Modes:
-  - **Facade** (default, the historical look) — pseudo-3D: the footprint polygon shifted
+  with no height uses the default of its `BuildingUse` in every mode (15 m, a house 6 m,
+  a garage 3 m — see **Building use**). Modes:
+  - **Facade** (the historical look) — pseudo-3D: the footprint polygon shifted
     straight down in a darker color at z just below the roof (`Z_FACADE` 4.9), visible
     only along south edges. Shift = height × `FACADE_SCALE` (0.2) clamped to 1.5–12 m, so
     a five-storey block keeps the historical 3 m band. Facades sit *under* every roof on
@@ -430,7 +431,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the doors overlay must shift by the same vector. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
-  - **2.5D+shadows+tint (ExtrusionShadowsTint)** — everything at once: the extruded
+  - **2.5D+shadows+tint (ExtrusionShadowsTint, the default)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
     `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
