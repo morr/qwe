@@ -320,6 +320,9 @@ mod tests {
             class: super::super::osm::model::RoadClass::Street,
             bridge: true,
             passage: false,
+            oneway: false,
+            roundabout: false,
+            lanes: None,
         };
         let [left, right] = road.curb_bands();
         let offset = (road.width + road.curb_width()) / 2.0;

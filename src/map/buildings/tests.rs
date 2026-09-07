@@ -245,6 +245,9 @@ fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {
         class: RoadClass::Street,
         bridge: false,
         passage,
+        oneway: false,
+        roundabout: false,
+        lanes: None,
     }
 }
 

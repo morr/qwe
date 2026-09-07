@@ -52,6 +52,9 @@ fn bridge_deck_opens_a_crossing_over_a_waterway() {
         class: RoadClass::Street,
         bridge: true,
         passage: false,
+        oneway: false,
+        roundabout: false,
+        lanes: None,
     };
     let bridged =
         build_polymesh(&input_with(vec![bridge]), 0.0, None, None).expect("not cancelled");
@@ -218,6 +221,9 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
         class: RoadClass::Street,
         bridge: true,
         passage: false,
+        oneway: false,
+        roundabout: false,
+        lanes: None,
     };
     let bridged = build_polymesh(&input(vec![bridge]), 0.4, None, None).expect("not cancelled");
     assert!(

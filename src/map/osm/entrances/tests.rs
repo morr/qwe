@@ -23,6 +23,9 @@ fn road(points: Vec<Vec2>) -> RoadLine {
         class: RoadClass::Street,
         bridge: false,
         passage: false,
+        oneway: false,
+        roundabout: false,
+        lanes: None,
     }
 }
 
