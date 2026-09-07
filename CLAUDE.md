@@ -296,6 +296,7 @@ step when adding one):
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | demons | `demon/systems.rs::spawn_demon` |
 | demon halo — a **child** of the demon, no component of its own: despawn is recursive | `demon/look.rs::halo` |
+| souls (kill sparks, despawn themselves in `FixedUpdate`) | `human/soul.rs::release_soul` |
 | navmesh overlay | `ui/debug/overlays.rs::sync_navmesh_overlay` |
 | conifer noise overlay | `ui/debug/overlays.rs::sync_conifer_noise_overlay` |
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |

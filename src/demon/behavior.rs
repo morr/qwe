@@ -269,7 +269,8 @@ pub fn on_demon_caught_human(
     event: On<DemonCaughtHumanEvent>,
     mut commands: Commands,
     mut telemetry: ResMut<Telemetry>,
-    humans: Query<(), With<Human>>,
+    humans: Query<&SimPosition, With<Human>>,
+    silhouettes: Res<crate::silhouette::Silhouettes>,
     seed: Res<crate::rng::WorldSeed>,
     mut movables: Query<(
         &mut Movable,
@@ -280,13 +281,15 @@ pub fn on_demon_caught_human(
     let DemonCaughtHumanEvent { demon, human } = *event;
 
     // два демона могли догнать одновременно — труп не убивают дважды
-    if humans.get(human).is_err() {
+    let Ok(position) = humans.get(human) else {
         return;
-    }
+    };
 
     // из чего состоит человек и что таскает за собой движение — знают человек
     // и движение; отсюда видно только, что случилось
     crate::human::to_corpse(&mut commands, human);
+    // душа — видимая сторона `killed`: искра над тем местом, где стоял человек
+    crate::human::release_soul(&mut commands, &silhouettes, position.0);
     telemetry.killed += 1;
 
     // демон → Devour; пауза — из личного потока демона, а не общего: убийства
@@ -590,6 +593,9 @@ mod tests {
     fn kill_app() -> App {
         let mut app = app();
         app.init_resource::<Telemetry>()
+            // обсервер выпускает душу и берёт под неё атлас силуэтов; без
+            // рендера ресурс пуст, и искра — обычный квадрат
+            .init_resource::<crate::silhouette::Silhouettes>()
             .insert_resource(crate::rng::WorldSeed(42))
             .add_observer(on_demon_caught_human);
         app
@@ -640,6 +646,7 @@ mod tests {
         let mut app = crate::sim_yard::behavior_yard();
         app.insert_resource(crate::rng::WorldSeed(1))
             .init_resource::<crate::telemetry::Telemetry>()
+            .init_resource::<crate::silhouette::Silhouettes>()
             .add_observer(on_demon_caught_human);
         app
     }

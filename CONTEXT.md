@@ -547,6 +547,11 @@ and no artist: every shape here is a formula, every colour a constant beside its
   panic, blue is water and tram. Its rim is **HDR** (> 1.0) so it blooms; under it a
   **portal stain** (the `Halo` glyph, dark violet, 2.6 portals wide) at `Z_PORTAL_STAIN`
   — above roads, below corpses.
+- **Soul** (`human/soul.rs`) — a golden HDR spark (`SoulMote`) released by the kill
+  observer at the victim's position, rising 6 m over 1.4 s of sim time and fading; it is
+  the visible side of `Telemetry::killed`. Lives at `Z_SOUL` above every unit. Stepped
+  and despawned in `FixedUpdate` (`rise_souls`, after `SimSet::HumanBehavior`) — a world
+  entity may not be despawned from `Update`.
 - **Bloom** (`camera.rs`) — the camera carries `Bloom` (which requires `Hdr`) with a
   prefilter threshold of **1.0**: only colours brighter than white glow (portal rim, demon
   halos, later souls and spells); the map, all ≤ 1, stays exactly as drawn. **No

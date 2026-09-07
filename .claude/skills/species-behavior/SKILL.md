@@ -414,7 +414,11 @@ keeps moving inside it, and the last ~1.4 m is never closed. A lunging demon car
 victim's live position. Lunging demons are exempt from separation.
 
 **Kill** at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); a `killed_this_tick`
-HashSet dedupes double kills within one command flush.
+HashSet dedupes double kills within one command flush. The observer also **releases a
+soul** (`human/soul.rs::release_soul`) at the victim's `SimPosition` — a golden HDR spark
+(`SoulMote`) that `rise_souls` (FixedUpdate, after `SimSet::HumanBehavior`) lifts 6 m over
+1.4 s of sim time and despawns; the visible side of `Telemetry::killed`. It reads
+`Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it.
 
 **What each exit from a chase strips is one list plus one exception.** The list is
 `ChaseComponents` (`demon/components.rs`) — the four chase components, removed whole by

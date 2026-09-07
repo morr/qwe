@@ -2,6 +2,7 @@ mod behavior;
 mod components;
 mod decide;
 mod look;
+mod soul;
 mod systems;
 
 use bevy::prelude::*;
@@ -13,6 +14,8 @@ pub use self::components::{
 };
 pub use self::look::PANIC_COLOR;
 use self::look::{on_calm_tint, on_panic_tint};
+use self::soul::rise_souls;
+pub use self::soul::{SoulMote, release_soul};
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
 // не своей выдумкой; `HumanPlugin` целиком ей не подходит (его `spawn_humans`
@@ -45,6 +48,7 @@ impl Plugin for HumanPlugin {
             .register_type::<PanicRecoil>()
             .register_type::<Pace>()
             .register_type::<Attire>()
+            .register_type::<SoulMote>()
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()
             .track_pref::<HumanStyle>()
@@ -96,6 +100,16 @@ impl Plugin for HumanPlugin {
                 )
                     .chain()
                     .in_set(SimSet::HumanBehavior),
+            )
+            // души — косметика на тике, после поведения: искра, выпущенная
+            // обсервером убийства этого тика, поднимается со следующего.
+            // В `BothModes`, потому что живёт внутри мира; despawn отжившей —
+            // в `FixedUpdate`, где ему и место (CLAUDE.md)
+            .add_systems(
+                FixedUpdate,
+                rise_souls
+                    .after(SimSet::HumanBehavior)
+                    .in_set(SimPipeline::BothModes),
             )
             .add_systems(
                 Update,
@@ -204,8 +218,8 @@ mod tests {
 
         assert_eq!(
             systems_in_set(&mut app, FixedUpdate, SimPipeline::BothModes),
-            3,
-            "цепочка panic/flee/escape обязана состоять в SimPipeline::BothModes"
+            4,
+            "цепочка panic/flee/escape и rise_souls обязаны состоять в SimPipeline::BothModes"
         );
     }
 }
