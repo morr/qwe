@@ -796,6 +796,9 @@ pub const Z_RAIL_DASH: f32 = 2.5;
 /// трамвая лежит сверху, а пересборка по ступени зума (`map/tram.rs`) не
 /// трогает меши дорог и тяжёлых рельсов.
 pub const Z_TRAM: f32 = 2.6;
+/// Выжженная земля под порталом: над дорогами (перекрёсток обуглен), под
+/// трупами (тела на пятне видны).
+pub const Z_PORTAL_STAIN: f32 = 2.8;
 pub const Z_CORPSE: f32 = 3.0;
 pub const Z_PORTAL: f32 = 4.0;
 pub const Z_BUILDING: f32 = 5.0;
@@ -850,7 +853,9 @@ const _: () = {
     // штриховка над своей лентой, трамвай — над штриховкой
     assert!(Z_RAIL < Z_RAIL_DASH);
     assert!(Z_RAIL_DASH < Z_TRAM);
-    assert!(Z_TRAM < Z_CORPSE);
+    // пятно под порталом кроет дороги, но не тела
+    assert!(Z_TRAM < Z_PORTAL_STAIN);
+    assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
     assert!(Z_PORTAL < Z_BUILDING);
     // Тот самый инвариант, который прозой не удержался (см. `Z_UNIT_BASE`).

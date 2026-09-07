@@ -2,6 +2,7 @@ use bevy::app::AppExit;
 use bevy::camera_controller::pan_camera::{MousePanSettings, PanCamera, PanCameraPlugin};
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::hover::HoverMap;
+use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsGroup};
 use bevy::window::PrimaryWindow;
@@ -11,6 +12,10 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::portal::PortalPos;
 use crate::prefs::TrackPrefExt;
 use crate::restart::RestartEvent;
+
+/// Сила bloom: доля свечения, добавляемого к кадру. У Bevy «естественные»
+/// 0.15 рассчитаны на тёмные сцены; над светлой картой ореол в 0.15 теряется.
+const BLOOM_INTENSITY: f32 = 0.25;
 
 /// Зум = масштаб трансформа камеры: мировых метров на экранный пиксель.
 /// 0.0625 (= 1/16) — «крупный план», нативный пиксель ассетов (16 px = 1 м);
@@ -183,6 +188,19 @@ fn spawn_camera(
         }),
         Transform::from_translation(view.position.extend(0.0)).with_scale(Vec3::splat(view.zoom)),
         Msaa::Off,
+        // HDR-кадр (`Bloom` требует `Hdr`) и bloom с порогом 1.0: светится
+        // только то, что нарисовано ярче белого — рукава портала, ореолы
+        // демонов, — а карта, вся в цветах ≤ 1, остаётся резкой, какой была.
+        // Тонмаппинг не ставится намеренно: `Tonemapping::None` у `Camera2d`
+        // по умолчанию, и палитра карты не сдвигается ни на тон
+        Bloom {
+            intensity: BLOOM_INTENSITY,
+            prefilter: BloomPrefilter {
+                threshold: 1.0,
+                threshold_softness: 0.3,
+            },
+            ..Bloom::NATURAL
+        },
         PanCamera {
             zoom_factor: view.zoom,
             min_zoom: MIN_ZOOM,

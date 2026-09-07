@@ -19,8 +19,10 @@ const DEMON_TINT_BASE: Vec3 = Vec3::new(0.78, 0.08, 0.10);
 const DEMON_TINT_STEP: Vec3 = Vec3::new(0.05, 0.07, -0.01);
 /// Диаметр ореола в телах демона.
 const HALO_RATIO: f32 = 3.0;
-/// Цвет ореола: тёплый, полупрозрачный; яркость — под bloom, см. `camera.rs`.
-const HALO_COLOR: Color = Color::srgba(1.0, 0.32, 0.10, 0.38);
+/// Цвет ореола: тёплый, полупрозрачный и ярче белого — HDR под bloom камеры
+/// (`camera.rs`): порог 1.0 пропускает в свечение только такие цвета. После
+/// альфа-смешивания центр даёт ~1.4, кромка гаснет в LDR.
+const HALO_COLOR: Color = Color::linear_rgba(2.4, 0.6, 0.2, 0.35);
 
 /// Ореол демона — дочерняя сущность с глифом [`Glyph::Halo`].
 #[derive(Component, Reflect, Default)]
@@ -72,7 +74,7 @@ mod tests {
                 red, green, blue, ..
             } = demon_tint(index).to_srgba();
             assert!(
-                red > 0.7 && red > green * 2.0 && green > blue,
+                red > 0.7 && red > green * 2.0 && red > blue * 2.0,
                 "shade {index} is not red-orange"
             );
         }

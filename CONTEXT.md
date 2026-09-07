@@ -51,8 +51,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
   → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
-  casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5) →
-  units → tree shadows → trees (20). Three live in their own modules:
+  casings → bridges → rails → rail dashes → tram → portal stain → corpses → portal →
+  buildings (5) → units → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
@@ -541,6 +541,16 @@ and no artist: every shape here is a formula, every colour a constant beside its
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
+- **Portal** (`portal.rs`, `assets/shaders/portal.wgsl`) — a `Mesh2d` quad with a
+  `PortalMaterial` (`Material2d`): a log-spiral vortex computed per pixel from
+  `globals.time` — no spritesheet, no frames. Violet on purpose: red is demons, amber is
+  panic, blue is water and tram. Its rim is **HDR** (> 1.0) so it blooms; under it a
+  **portal stain** (the `Halo` glyph, dark violet, 2.6 portals wide) at `Z_PORTAL_STAIN`
+  — above roads, below corpses.
+- **Bloom** (`camera.rs`) — the camera carries `Bloom` (which requires `Hdr`) with a
+  prefilter threshold of **1.0**: only colours brighter than white glow (portal rim, demon
+  halos, later souls and spells); the map, all ≤ 1, stays exactly as drawn. **No
+  tonemapper** — `Tonemapping::None` keeps the map palette untouched. `Msaa` stays off.
 
 ## UI & debug
 

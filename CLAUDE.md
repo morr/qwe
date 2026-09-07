@@ -292,7 +292,7 @@ step when adding one):
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
-| portal | `portal.rs` |
+| portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | demons | `demon/systems.rs::spawn_demon` |
 | demon halo — a **child** of the demon, no component of its own: despawn is recursive | `demon/look.rs::halo` |
