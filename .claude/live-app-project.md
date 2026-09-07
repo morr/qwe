@@ -224,8 +224,11 @@ $b cam                                          # read the resulting zoom back
 
   Negative `y` zooms out. Range is clamped to `0.05 … 4.5`.
 
-- Portal hint for Tula is `2284, 1969`; other cities put it at the map centre
-  (`2800, 1850`) unless `city.rs` says otherwise.
+- Tula is a *slice* (`city.rs::Slice`): the portal hint is `1400, 3450` — 250 m inside
+  the north edge, in Заречье — and the heart (the kremlin, `HeartPos`) is at `2800, 1110`;
+  `brp res get PortalPos` / `HeartPos` give the snapped values. Other cities put the
+  portal at the map centre (`2800, 1850`) unless `city.rs` says otherwise, and their
+  heart is the map centre.
 
 ## Registered types
 
@@ -239,7 +242,7 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
 `RequestedAt`, `RetireAt`.
 
-Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
+Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `HeartPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,

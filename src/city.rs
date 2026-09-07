@@ -68,7 +68,8 @@ impl Slice {
     /// Гео-центр bbox: сердце, сдвинутое **к** краю портала на
     /// `(HEART_DEPTH − 0.5) × протяжённость` — тогда сердце оказывается на
     /// `HEART_DEPTH` от того края. Метры → градусы через `METERS_PER_DEG_LAT`
-    /// и масштаб долготы на широте сердца.
+    /// и масштаб долготы на широте сердца. Округлено до 1e-5° (~1 м): центр
+    /// попадает в имя файла кеша, и хвост из 14 знаков там ни к чему.
     pub fn geo_center(&self) -> DVec2 {
         let shift = (HEART_DEPTH - 0.5) as f64 * self.extent() as f64;
         let lon_scale = METERS_PER_DEG_LAT * self.heart.x.to_radians().cos();
@@ -78,7 +79,7 @@ impl Slice {
             Edge::East => (0.0, shift / lon_scale),
             Edge::West => (0.0, -shift / lon_scale),
         };
-        self.heart + DVec2::new(dlat, dlon)
+        ((self.heart + DVec2::new(dlat, dlon)) * 1e5).round() / 1e5
     }
 
     /// Хинт портала в метрах карты: на краю портала, `portal_across` вдоль
