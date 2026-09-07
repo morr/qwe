@@ -197,8 +197,27 @@ onward from the next step) and `district_city` on an empty map: the heart falls 
 texture only when a district crosses one of `CORRUPTION_SHADES` (16) steps — the marker
 carries an FNV key of the quantised progress vector — or when `Districts` changes.
 
+## Strike (`combat.rs`)
+
+`Attack { damage, period }`, `AttackCooldown(Timer)` (`ready(period)` — pre-ticked, so the
+first blow lands at once), `AttackTarget(Entity)`. `strike_verdict(distance,
+cooldown_ready, target_alive)` is the pure rule: `Finished` (target at zero — the ladder
+sees it next tick), `OutOfReach` (over `ATTACK_REACH`, 3 m: the bastion's point is a
+pavement tile, the attacker stands on a neighbour, and 3 m clears the 2.83 m navtile
+diagonal the way `DEMON_LUNGE_RANGE` does), `Cooling`, `Hit`. The `strike` system ticks
+every attacker's cooldown with `Res<Time>` (the fixed step), reads the target's
+`Transform` (bastions do not move; a mobile target with `SimPosition` is M2), and on `Hit`
+resets the cooldown, applies `damage`, and fires `Destroyed` on the blow that reaches
+zero — `Health::damage` returns `true` once. A target that no longer exists is skipped;
+removing the `AttackTarget` is the ladder's job. Registered by `DemonPlugin` as the
+**tail of the demon chain** (`pick_wander_targets → acquire_targets → chase → devour →
+strike`, `SimSet::DemonBehavior`, `BothModes`): the Brute's ladder sets the target on a
+tick and the blow lands on the same tick. Tests: the verdict table, and a two-blow run
+in a bare `World` (wound, finish with one `Destroyed`, nothing on the third).
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: `Attack`/`strike`, demon kinds and the
-Brute ladder, souls, the outcome. Each lands here with its mechanism as it is written;
-until then `ROADMAP.md` is the only description and it is a plan, not a record.
+The roadmap's next steps on this layer, in order: demon kinds and the Brute ladder
+(the consumer of `AttackTarget`), souls, the outcome. Each lands here with its mechanism
+as it is written; until then `ROADMAP.md` is the only description and it is a plan, not
+a record.

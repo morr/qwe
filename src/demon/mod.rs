@@ -96,7 +96,15 @@ impl Plugin for DemonPlugin {
                     // порядок (демоны раньше людей) и настраивается чужим
                     // плагином — на него этот гейт не переложишь: без
                     // `SpatialPlugin` множество не гейтит ничего
-                    (pick_wander_targets, acquire_targets, chase, devour)
+                    // удар (`combat::strike`) — хвост цепочки: лестница Громилы
+                    // выставила цель на этом же тике, и бьёт он на нём же
+                    (
+                        pick_wander_targets,
+                        acquire_targets,
+                        chase,
+                        devour,
+                        crate::combat::strike,
+                    )
                         .chain()
                         .in_set(SimPipeline::BothModes),
                 )

@@ -1299,6 +1299,13 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   per ruin, part of the run `Fingerprint`. **A restart heals in place** — the
   `WorldStarted` observer refills every `Health`, strips `RuinTag` and relights the
   sprite; bastions never pass through the restart despawn list.
+- **Attack** (`combat.rs`) — `Attack { damage, period }` + `AttackCooldown` (a timer
+  ticked by `Res<Time>` in `FixedUpdate`, ready at spawn) + `AttackTarget(Entity)` (set and
+  cleared by the attacker's ladder; present ⇔ there is a target). **strike** runs at the
+  tail of the demon chain in `SimSet::DemonBehavior`: a target within `ATTACK_REACH` (3 m
+  of the bastion's point) with the cooldown out takes `damage`, and the blow that reaches
+  zero fires `Destroyed` exactly once; a target already at zero is left alone. Fixed
+  damage, no RNG.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
