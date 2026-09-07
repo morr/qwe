@@ -408,6 +408,103 @@ fn arc_steps_scale_with_radius() {
     assert!(arc_steps(1000.0, PI) <= MAX_ARC_STEPS);
 }
 
+/// Квадрат 20 × 20 с обходом против часовой стрелки.
+fn ccw_square() -> [Vec2; 4] {
+    [
+        Vec2::ZERO,
+        Vec2::new(20.0, 0.0),
+        Vec2::new(20.0, 20.0),
+        Vec2::new(0.0, 20.0),
+    ]
+}
+
+/// Кайма квадрата лежит внутри него при любом направлении обхода: дальний
+/// край — ровно на ширину каймы от контура.
+#[test]
+fn inset_band_stays_inside_the_ring_whichever_way_it_winds() {
+    for ring in [
+        ccw_square().to_vec(),
+        ccw_square().into_iter().rev().collect(),
+    ] {
+        let mut builder = MeshBuilder::default();
+        let width = builder.push_inset_band(&ring, 2.0, false, LinearRgba::RED, LinearRgba::WHITE);
+        assert_eq!(width, Some(2.0));
+        // четыре квада по четыре вершины
+        assert_eq!(builder.vertex_count(), 16);
+        for position in &builder.positions {
+            assert!(
+                (-1e-4..=20.0 + 1e-4).contains(&position[0])
+                    && (-1e-4..=20.0 + 1e-4).contains(&position[1]),
+                "band vertex outside the ring: {position:?}"
+            );
+        }
+        let inner: Vec<_> = builder
+            .positions
+            .iter()
+            .filter(|position| {
+                position[0] > 1e-4
+                    && position[0] < 20.0 - 1e-4
+                    && position[1] > 1e-4
+                    && position[1] < 20.0 - 1e-4
+            })
+            .collect();
+        assert_eq!(inner.len(), 8, "far edge vertices: {inner:?}");
+        for position in inner {
+            let near_far_edge =
+                |value: f32| (value - 2.0).abs() < 1e-4 || (value - 18.0).abs() < 1e-4;
+            assert!(
+                near_far_edge(position[0]) && near_far_edge(position[1]),
+                "{position:?}"
+            );
+        }
+    }
+}
+
+/// Кайма дырки лежит снаружи её контура — в заливке, а не в самой дырке.
+#[test]
+fn inset_band_of_a_hole_lies_outside_it() {
+    let hole = ccw_square();
+    let mut builder = MeshBuilder::default();
+    builder.push_inset_band(&hole, 2.0, true, LinearRgba::RED, LinearRgba::WHITE);
+    let outside = builder.positions.iter().filter(|position| {
+        position[0] < -1e-4
+            || position[0] > 20.0 + 1e-4
+            || position[1] < -1e-4
+            || position[1] > 20.0 + 1e-4
+    });
+    assert_eq!(outside.count(), 8, "far edge should sit outside the hole");
+}
+
+/// Узкая полоса каймы не получает: два метра с каждой стороны на трёхметровом
+/// газоне-разделителе вылезли бы за его дальний край на дорогу.
+#[test]
+fn inset_band_is_clamped_by_the_ring_thickness() {
+    let strip = [
+        Vec2::ZERO,
+        Vec2::new(100.0, 0.0),
+        Vec2::new(100.0, 3.0),
+        Vec2::new(0.0, 3.0),
+    ];
+    let mut builder = MeshBuilder::default();
+    let width = builder
+        .push_inset_band(&strip, 2.0, false, LinearRgba::RED, LinearRgba::WHITE)
+        .unwrap();
+    // толщина полосы (площадь / периметр) — 300 / 206 ≈ 1.46 м, кайма — 0.6 её
+    assert!(width < 1.0, "{width}");
+    let hair = [
+        Vec2::ZERO,
+        Vec2::new(100.0, 0.0),
+        Vec2::new(100.0, 0.2),
+        Vec2::new(0.0, 0.2),
+    ];
+    let mut builder = MeshBuilder::default();
+    assert_eq!(
+        builder.push_inset_band(&hair, 2.0, false, LinearRgba::RED, LinearRgba::WHITE),
+        None
+    );
+    assert!(builder.is_empty());
+}
+
 #[test]
 fn a_plain_builder_carries_no_ribbon_coords() {
     let mut builder = MeshBuilder::default();

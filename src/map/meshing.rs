@@ -41,6 +41,13 @@ const ARC_TOLERANCE: f32 = 0.05;
 /// Потолок числа хорд в дуге — страховка от вырожденного радиуса.
 const MAX_ARC_STEPS: usize = 12;
 
+/// Кайма контура ([`MeshBuilder::push_inset_band`]) не шире этой доли его
+/// толщины (`площадь / периметр`): у полосы толщина — половина ширины, и кайма
+/// в 0.6 её с каждой стороны оставляет посреди полосы просвет заливки.
+const RIM_THICKNESS_SHARE: f32 = 0.6;
+/// Кайма тоньше не кладётся: не видна, а квадов на контур — столько же.
+const MIN_RIM_WIDTH: f32 = 0.2;
+
 /// Стык сегментов ленты на изломе.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RibbonJoin {
@@ -614,6 +621,59 @@ impl MeshBuilder {
         }
     }
 
+    /// Кайма вдоль замкнутого контура: полоса ширины `width` от контура вглубь
+    /// него (при `outside` — наружу, так каймится дырка), цвет от `edge` на
+    /// контуре до `inner` на дальнем краю. Мелководье у берега, тёмная кромка
+    /// луга. Дальний край строится miter-офсетами, поэтому на острых вогнутых
+    /// углах соседние квады накладываются — цвет там один и тот же, и наложение
+    /// не видно.
+    ///
+    /// Ширина зажата толщиной самого контура (`площадь / периметр` — у полосы
+    /// это половина её ширины): у газона-разделителя в полтора метра кайма в два
+    /// метра вылезла бы за дальний край на дорогу. Тоньше 20 см кайма не кладётся.
+    /// Для `outside` толщина дырки ни при чём — ширину зажимает вызывающий по
+    /// внешнему контуру. Возвращает положенную ширину, `None` — кайма не легла.
+    pub fn push_inset_band(
+        &mut self,
+        ring: &[Vec2],
+        width: f32,
+        outside: bool,
+        edge: LinearRgba,
+        inner: LinearRgba,
+    ) -> Option<f32> {
+        let path = merge_close_points(ring, true, width / 4.0);
+        if path.len() < 3 {
+            return None;
+        }
+        let area = signed_area(&path);
+        let width = if outside {
+            width
+        } else {
+            width.min(RIM_THICKNESS_SHARE * area.abs() / perimeter(&path))
+        };
+        if width < MIN_RIM_WIDTH {
+            return None;
+        }
+        // у обхода против часовой стрелки внутренняя сторона слева — куда и
+        // смотрят miter-офсеты; по часовой — справа
+        let side = if (area > 0.0) != outside { 1.0 } else { -1.0 };
+        let offsets = miter_offsets(&path, true, width);
+        let count = path.len();
+        for index in 0..count {
+            let next = (index + 1) % count;
+            self.push_quad_gradient(
+                [
+                    path[index],
+                    path[index] + offsets[index] * side,
+                    path[next] + offsets[next] * side,
+                    path[next],
+                ],
+                [edge, inner, inner, edge],
+            );
+        }
+        Some(width)
+    }
+
     /// Прямоугольник по AABB (для тайловых оверлеев).
     pub fn push_rect(&mut self, min: Vec2, max: Vec2, color: LinearRgba) {
         self.push_quad(
@@ -665,6 +725,24 @@ impl MeshBuilder {
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
     }
+}
+
+/// Удвоенная площадь по формуле шнурков со знаком: положительна при обходе
+/// против часовой стрелки.
+fn signed_area(ring: &[Vec2]) -> f32 {
+    let count = ring.len();
+    (0..count)
+        .map(|index| ring[index].perp_dot(ring[(index + 1) % count]))
+        .sum::<f32>()
+        / 2.0
+}
+
+/// Периметр замкнутого контура.
+fn perimeter(ring: &[Vec2]) -> f32 {
+    let count = ring.len();
+    (0..count)
+        .map(|index| ring[index].distance(ring[(index + 1) % count]))
+        .sum()
 }
 
 /// Длина дуги в каждой точке ломаной и полная длина; у замкнутой — с

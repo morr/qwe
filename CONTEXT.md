@@ -191,6 +191,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
   `[across, to-nearest-end, half width, markings flag]` in metres, zeros on polygons.
+- **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
+  polygon carries a gradient band along its contour, holes included: water a lighter
+  **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
+  mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
+  no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
+  median strip never bleeds its rim onto the road.
 - **Sidewalks & markings** (`map/roads.rs`) — a street (≥ 8 m, not a passage) gets a grey
   **sidewalk band** at `Z_SIDEWALK` under every road ribbon (a crossing street's fill
   covers it, like a casing), width `sidewalk_width` (22 %, 1.2–3 m per side), and a dashed

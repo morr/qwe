@@ -9,7 +9,7 @@ use bevy::prelude::*;
 
 use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, TreeRow, WaterLine, water_line_caps};
+use crate::map::osm::{MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
@@ -42,6 +42,57 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
 
+/// Кайма площадного слоя вдоль его контура ([`MeshBuilder::push_inset_band`]):
+/// ширина, м, и цвет на самом контуре; к дальнему краю кайма сходит в заливку.
+struct Rim {
+    width: f32,
+    edge: Color,
+}
+
+/// Мелководье: светлая полоса вдоль берега внутри водного полигона — то, что
+/// делает пруд прудом, а не синим пятном. Три метра: у Упы это шестая часть
+/// ширины, у канала — треть.
+const WATER_RIM: Rim = Rim {
+    width: 3.0,
+    edge: Color::srgb(0.78, 0.885, 0.945),
+};
+/// Кромки зелени и песка — та же заливка на несколько процентов темнее:
+/// полигон читается как вырезанная фигура, а не как пятно, разлитое по земле.
+/// У леса кромка шире и темнее — под пологом у края тень.
+const PARK_RIM: Rim = Rim {
+    width: 2.5,
+    edge: Color::srgb(0.707, 0.808, 0.534),
+};
+const WOOD_RIM: Rim = Rim {
+    width: 3.0,
+    edge: Color::srgb(0.610, 0.738, 0.558),
+};
+const GRASS_RIM: Rim = Rim {
+    width: 2.0,
+    edge: Color::srgb(0.806, 0.871, 0.693),
+};
+const SAND_RIM: Rim = Rim {
+    width: 2.0,
+    edge: Color::srgb(0.913, 0.868, 0.737),
+};
+
+/// Полигон слоя с каймой по контуру, дырки включительно (у дырки кайма лежит
+/// снаружи её контура — внутри заливки). Кайма кладётся после заливки в тот
+/// же меш: в одном слое побеждает нарисованное позже (depth `GreaterEqual`),
+/// так что своего z ей не нужно. Ширину у дырок зажимает толщина внешнего
+/// контура — та же, что зажала кайму на нём самом.
+fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim) {
+    let fill = fill.to_linear();
+    let edge = rim.edge.to_linear();
+    builder.push_polygon(&area.outer, &area.holes, fill);
+    let Some(width) = builder.push_inset_band(&area.outer, rim.width, false, edge, fill) else {
+        return;
+    };
+    for hole in &area.holes {
+        builder.push_inset_band(hole, width, true, edge, fill);
+    }
+}
+
 pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -58,27 +109,27 @@ pub fn spawn_map(
 
     let mut parks = MeshBuilder::with_surface_coords();
     for park in &map.parks {
-        parks.push_polygon(&park.outer, &park.holes, PARK_COLOR.to_linear());
+        push_area(&mut parks, park, PARK_COLOR, &PARK_RIM);
     }
 
     let mut woods = MeshBuilder::with_surface_coords();
     for area in &map.woods {
-        woods.push_polygon(&area.outer, &area.holes, WOOD_COLOR.to_linear());
+        push_area(&mut woods, area, WOOD_COLOR, &WOOD_RIM);
     }
 
     let mut grass = MeshBuilder::with_surface_coords();
     for area in &map.grass {
-        grass.push_polygon(&area.outer, &area.holes, GRASS_COLOR.to_linear());
+        push_area(&mut grass, area, GRASS_COLOR, &GRASS_RIM);
     }
 
     let mut sand = MeshBuilder::with_surface_coords();
     for area in &map.sand {
-        sand.push_polygon(&area.outer, &area.holes, SAND_COLOR.to_linear());
+        push_area(&mut sand, area, SAND_COLOR, &SAND_RIM);
     }
 
     let mut water = MeshBuilder::with_surface_coords();
     for area in &map.water {
-        water.push_polygon(&area.outer, &area.holes, WATER_COLOR.to_linear());
+        push_area(&mut water, area, WATER_COLOR, &WATER_RIM);
     }
 
     let waterways = mesh_water_lines(&map.water_lines);

@@ -273,6 +273,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   negative past the node), polygons get zeros. *To-nearest-end* has a kink at the path's
   middle, and the GPU interpolates linearly, so `split_at_midpoint` inserts a vertex there —
   one extra quad per open ribbon in a surface mesh.
+- **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
+  polygon is followed, in the same builder, by a gradient band along its outer ring and
+  along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
+  gets a lighter **shore** (`WATER_RIM`, 3 m), park / wood / grass / sand an edge a few
+  percent darker than the fill (`*_RIM`, 2–3 m; the wood's the widest and darkest — shade
+  under the canopy edge). The far edge is built from `miter_offsets` on the ring, with the
+  side chosen by the ring's signed area (`outside` flips it for holes, whose band lies in
+  the fill). Two guards: the band width is clamped to `RIM_THICKNESS_SHARE` (0.6) of the
+  ring's thickness `|area| / perimeter` — a strip's thickness is half its width, so a
+  2 m rim on a 1.5 m median never pokes out onto the road — and nothing under
+  `MIN_RIM_WIDTH` (0.2 m) is pushed at all. Holes take the width the outer ring settled
+  on. No z-slot: opaque 2D meshes test depth with `GreaterEqual`, so within one mesh the
+  band pushed after the fill wins.
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
   Sidewalk`, cool light grey `SIDEWALK_COLOR`) — a street (`RoadClass::Street`, width ≥
   `STREET_MIN_WIDTH` 8 m, so `service` drives get none, and never a `passage`) gets a band
