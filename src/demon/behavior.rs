@@ -287,7 +287,7 @@ pub fn on_demon_caught_human(
 
     // из чего состоит человек и что таскает за собой движение — знают человек
     // и движение; отсюда видно только, что случилось
-    crate::human::to_corpse(&mut commands, human);
+    crate::human::to_corpse(&mut commands, &silhouettes, human);
     // душа — видимая сторона `killed`: искра над тем местом, где стоял человек
     crate::human::release_soul(&mut commands, &silhouettes, position.0);
     telemetry.killed += 1;

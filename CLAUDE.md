@@ -294,6 +294,7 @@ step when adding one):
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
+| blood pool — a **child** of the corpse, no component of its own: despawn is recursive | `human/look.rs::blood_pool` |
 | demons | `demon/systems.rs::spawn_demon` |
 | demon halo — a **child** of the demon, no component of its own: despawn is recursive | `demon/look.rs::halo` |
 | souls (kill sparks, despawn themselves in `FixedUpdate`) | `human/soul.rs::release_soul` |

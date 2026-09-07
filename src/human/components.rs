@@ -149,32 +149,29 @@ impl Default for WanderPause {
 #[reflect(Component)]
 pub struct CorpseTag;
 
-/// Цвет и размер лежащего тела — вид трупа принадлежит человеку, а не тому,
-/// кто его убил. Тело рисуется тем же диском, что и живой человек, только
-/// растянутым в эллипс и уложенным под одним из [`CORPSE_POSES`] углов.
-const CORPSE_COLOR: Color = Color::srgb(0.35, 0.16, 0.14);
-const CORPSE_SIZE: Vec2 = Vec2::new(1.6, 0.8);
-/// Сколько поз у лежащего тела: эллипс симметричен, поэтому позы делят
-/// полуоборот. Выбирается по битам `Entity` — это косметика, не состояние
-/// прогона, и в поток решений пешки ей нечего делать.
-const CORPSE_POSES: u64 = 8;
-
 /// Человек становится трупом: поведение и движение снимаются, тело ложится.
 ///
 /// Одна точка на весь переход, и живёт она у человека — не у демона. Обсервер
 /// убийства (`demon::behavior::on_demon_caught_human`) перечислял шестнадцать
 /// типов из двух чужих модулей; теперь он говорит, ЧТО случилось, а из чего
 /// состоит человек и что таскает за собой движение, знают те, кому это
-/// принадлежит.
+/// принадлежит. Как тело выглядит — поза, погасшая одежда, лужа под грудью —
+/// принадлежит рисунку человека (`look`), и вид трупа принадлежит человеку, а
+/// не тому, кто его убил.
 ///
 /// Что остаётся на теле намеренно: [`PawnId`](crate::rng::PawnId) и
 /// `WanderIndex` — паспорт пешки, по нему труп опознаётся в отладке; `Pace` и
 /// [`WanderHeading`] — жребий, разыгранный при спавне, читать его без
-/// `Movable` некому.
-pub fn to_corpse(commands: &mut Commands, entity: Entity) {
+/// `Movable` некому; `Attire` — из неё считается цвет тела.
+pub fn to_corpse(
+    commands: &mut Commands,
+    silhouettes: &crate::silhouette::Silhouettes,
+    entity: Entity,
+) {
     crate::movement::strip_movement(commands, entity);
-    let mut corpse = commands.entity(entity);
-    corpse
+    let pose = super::look::corpse_pose(entity);
+    commands
+        .entity(entity)
         .remove::<(
             Human,
             HumanWanderTag,
@@ -186,20 +183,14 @@ pub fn to_corpse(commands: &mut Commands, entity: Entity) {
         )>()
         .insert((
             CorpseTag,
-            crate::silhouette::Silhouette::new(CORPSE_SIZE, crate::settings::HUMAN_MIN_PX),
-        ));
-    corpse.entry::<Sprite>().and_modify(|mut sprite| {
-        sprite.color = CORPSE_COLOR;
-        sprite.custom_size = Some(CORPSE_SIZE);
-    });
-    let pose =
-        (entity.to_bits() % CORPSE_POSES) as f32 / CORPSE_POSES as f32 * std::f32::consts::PI;
-    corpse
-        .entry::<Transform>()
-        .and_modify(move |mut transform| {
-            transform.translation.z = crate::settings::Z_CORPSE;
-            transform.rotation = Quat::from_rotation_z(pose);
-        });
+            crate::silhouette::Silhouette::new(
+                Vec2::splat(super::look::CORPSE_SPAN),
+                crate::settings::HUMAN_MIN_PX,
+            ),
+        ))
+        // после `remove`: снятая паника вернула бы одежду поверх цвета тела
+        .queue(move |mut body: EntityWorldMut| super::look::lay_down(&mut body, pose))
+        .with_child(super::look::blood_pool(silhouettes, pose));
 }
 
 /// Троттлинг перепрокладки пути при бегстве.
@@ -229,6 +220,7 @@ mod tests {
             .spawn((
                 Sprite::default(),
                 Transform::default(),
+                Attire(Color::hsl(200.0, 0.4, 0.5)),
                 Human,
                 HumanFleeTag,
                 HumanFirstWanderTag,
@@ -261,7 +253,11 @@ mod tests {
         let human = spawn_fleeing_human(&mut app);
         app.world_mut().commands().queue(move |world: &mut World| {
             let mut commands = world.commands();
-            to_corpse(&mut commands, human);
+            to_corpse(
+                &mut commands,
+                &crate::silhouette::Silhouettes::default(),
+                human,
+            );
         });
         app.world_mut().flush();
 
@@ -302,26 +298,44 @@ mod tests {
         }
     }
 
-    /// Тело лежит: вид трупа принадлежит человеку, и переход его меняет.
+    /// Тело лежит: вид трупа принадлежит человеку, и переход его меняет —
+    /// погасшая одежда поверх снятой паники, поза по битам сущности, лужа под
+    /// телом.
     #[test]
     fn a_corpse_lies_down_under_everything_that_walks() {
         let mut app = App::new();
+        app.add_observer(super::super::look::on_calm_tint);
         let human = spawn_fleeing_human(&mut app);
         app.world_mut().commands().queue(move |world: &mut World| {
             let mut commands = world.commands();
-            to_corpse(&mut commands, human);
+            to_corpse(
+                &mut commands,
+                &crate::silhouette::Silhouettes::default(),
+                human,
+            );
         });
         app.world_mut().flush();
 
         let corpse = app.world().entity(human);
-        assert_eq!(corpse.get::<Sprite>().expect("Sprite").color, CORPSE_COLOR);
+        let attire = corpse.get::<Attire>().expect("одежда остаётся на теле");
+        let sprite = corpse.get::<Sprite>().expect("Sprite");
+        assert_eq!(sprite.color, super::super::look::corpse_tint(Some(attire)));
         assert_eq!(
-            corpse.get::<Sprite>().expect("Sprite").custom_size,
-            Some(CORPSE_SIZE)
+            sprite.custom_size,
+            Some(Vec2::splat(super::super::look::CORPSE_SPAN))
         );
-        assert_eq!(
-            corpse.get::<Transform>().expect("Transform").translation.z,
-            crate::settings::Z_CORPSE
+        let pose = super::super::look::corpse_pose(human);
+        assert_eq!(sprite.flip_x, pose.flip);
+        let transform = corpse.get::<Transform>().expect("Transform");
+        assert_eq!(transform.translation.z, crate::settings::Z_CORPSE);
+        assert_eq!(transform.rotation, Quat::from_rotation_z(pose.heading));
+
+        let children = corpse.get::<Children>().expect("лужа — ребёнок тела");
+        assert_eq!(children.len(), 1);
+        assert!(
+            app.world()
+                .entity(children[0])
+                .contains::<super::super::look::BloodPool>()
         );
     }
 }

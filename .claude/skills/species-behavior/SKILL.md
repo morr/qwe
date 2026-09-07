@@ -276,12 +276,19 @@ removes the coupling outright: the two angles no longer have to be compared at a
 
 ### Corpse
 
-**`CorpseTag`** — a killed human: behavior/movement components removed, the body's `Disc`
-glyph stretched into a dark 1.6 × 0.8 m ellipse at `Z_CORPSE`, laid in one of
-`CORPSE_POSES` (8) orientations chosen by the `Entity` bits — cosmetics, so it stays out
-of the decision stream. Its `Silhouette` is rewritten to the ellipse (`HUMAN_MIN_PX`
-floor), which is how the size lands on the sprite next frame. Not in the human spatial
-grid (the grid filters on `Human`).
+**`CorpseTag`** — a killed human: behavior/movement components removed, the body drawn as
+a **lying human figure** at `Z_CORPSE` — one of the four corpse glyphs of the silhouette
+atlas (`silhouette/figure.rs`: sprawled, prone, curled, collapsed), in one of
+`CORPSE_HEADINGS` (16) directions, mirrored or not, all chosen from the `Entity` bits
+through a splitmix hash (`human/look.rs::corpse_pose`) — cosmetics, so it stays out of
+the decision stream. The tint is the human's own `Attire` drained (`corpse_tint`: half
+the saturation, half the lightness), written by `lay_down`, an entity command queued
+*after* the tag removal so the calm-down observer restoring the attire cannot overwrite
+it. Under the chest hangs a **blood pool** child (`BloodPool`, the `Pool` glyph, half
+the corpse cell, z −0.02; its offset follows the pose and the mirror). Its `Silhouette`
+is rewritten to the `CORPSE_SPAN` cell (`HUMAN_MIN_PX` floor), which is how the size
+lands on the sprite next frame. Not in the human spatial grid (the grid filters on
+`Human`).
 
 The transition is **`human::to_corpse`**, one entry point, and it is where a corpse is
 defined — the kill observer in `demon/` only reports that it happened. Each module takes back

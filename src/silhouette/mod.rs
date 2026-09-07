@@ -1,16 +1,20 @@
-//! Силуэты пешек: процедурный атлас из трёх ячеек — диск человека, «уголёк»
-//! демона и ореол, — посчитанный при старте по расстоянию до контура, плюс
-//! пол размера в пикселях, ниже которого пешка на экране не ужимается.
+//! Силуэты пешек: процедурный атлас — диск человека, «уголёк» демона, ореол,
+//! лужа крови и четыре позы лежащего тела ([`figure`]), — посчитанный при
+//! старте по расстоянию до контура, плюс пол размера в пикселях, ниже
+//! которого пешка на экране не ужимается.
 //!
 //! В `assets/` ни одного файла: художника у проекта нет, а форма, которую
-//! видно с зума толпы, задаётся тремя формулами. Все три глифа лежат в **одном**
-//! изображении, потому что спрайты батчатся по текстуре: люди и демоны
-//! перемешаны по z (y-сортировка), и две текстуры резали бы батч на каждом
-//! демоне. Прозрачные тексели несут цвет кромки, а не чёрный — иначе линейная
+//! видно с зума толпы, задаётся формулами. Все глифы лежат в **одном**
+//! изображении, потому что спрайты батчатся по текстуре: люди, трупы и демоны
+//! перемешаны по z, и две текстуры резали бы батч на каждом демоне.
+//! Прозрачные тексели несут цвет кромки, а не чёрный — иначе линейная
 //! фильтрация подмешивала бы к краю чёрную рамку.
 //!
-//! Мипы считаются здесь же (усреднение 2×2): точка в 2–4 px с 64-пиксельной
+//! Мипы считаются здесь же (усреднение 2×2): точка в 2–4 px со 128-пиксельной
 //! текстуры без них искрит при каждом шаге пешки.
+//!
+//! Посмотреть на атлас глазами:
+//! `SILHOUETTE_DUMP=/tmp/atlas.png cargo test dump_atlas -- --ignored`.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -19,8 +23,12 @@ use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-/// Сторона ячейки атласа на нулевом мипе, px.
-const CELL_PX: u32 = 64;
+pub mod figure;
+
+/// Сторона ячейки атласа на нулевом мипе, px. 128, а не 64: ячейка трупа на
+/// самом крупном зуме (0,05 м/px) — 75 логических px, на ретине 150
+/// физических, и с 64 конечности фигуры расплывались бы.
+const CELL_PX: u32 = 128;
 /// Полуширина сглаживания кромки, px нулевого мипа.
 const EDGE_PX: f32 = 1.0;
 /// Радиус диска в долях полуячейки. Запас до края — на кромку и на глубокие
@@ -42,16 +50,59 @@ const HALO_RADIUS: f32 = 0.98;
 /// Ячейка атласа — форма, которую спрайт берёт по индексу.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Glyph {
-    /// Диск с тёмной каймой: человек, труп (растянутый в эллипс).
+    /// Диск с тёмной каймой: человек.
     Disc = 0,
     /// Семизубый уголёк с ярким ядром: демон.
     Ember = 1,
     /// Радиальное затухание: свечение вокруг демона и всякое «сияние».
     Halo = 2,
+    /// Лужа крови под трупом: неровное пятно с брызгами.
+    Pool = 3,
+    /// Лежащие тела, четыре позы — [`figure`]. Идут подряд: [`Glyph::corpse`].
+    Sprawled = 4,
+    Prone = 5,
+    Curled = 6,
+    Crumpled = 7,
 }
 
 impl Glyph {
-    const ALL: [Self; 3] = [Self::Disc, Self::Ember, Self::Halo];
+    const ALL: [Self; 8] = [
+        Self::Disc,
+        Self::Ember,
+        Self::Halo,
+        Self::Pool,
+        Self::Sprawled,
+        Self::Prone,
+        Self::Curled,
+        Self::Crumpled,
+    ];
+    const CORPSES: [Self; figure::POSES] =
+        [Self::Sprawled, Self::Prone, Self::Curled, Self::Crumpled];
+
+    /// Поза лежащего тела номер `pose` (по модулю числа поз).
+    pub fn corpse(pose: usize) -> Self {
+        Self::CORPSES[pose % figure::POSES]
+    }
+
+    /// Номер позы, если глиф — лежащее тело.
+    fn pose(self) -> Option<usize> {
+        Self::CORPSES.iter().position(|glyph| *glyph == self)
+    }
+
+    /// Куда под этот глиф ложится лужа, в координатах ячейки (−1…1): грудь
+    /// фигуры; у остальных глифов — центр.
+    pub fn pool_anchor(self) -> Vec2 {
+        self.pose()
+            .map_or(Vec2::ZERO, |pose| figure::Figure::pose(pose).pool_anchor())
+    }
+}
+
+/// Переключает спрайт на другой глиф того же атласа; спрайт без атласа
+/// (приложение без рендера) остаётся как был.
+pub fn set_glyph(sprite: &mut Sprite, glyph: Glyph) {
+    if let Some(atlas) = sprite.texture_atlas.as_mut() {
+        atlas.index = glyph as usize;
+    }
 }
 
 /// Атлас силуэтов. `None` — атлас не собран: приложение без рендера
@@ -134,7 +185,17 @@ fn build_atlas(
     mut layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut silhouettes: ResMut<Silhouettes>,
 ) {
-    let image = images.add(atlas_image());
+    let started = std::time::Instant::now();
+    let atlas = atlas_image();
+    info!(
+        "silhouette atlas: {}×{} px, {} mips, {} glyphs in {:.1?}",
+        atlas.width(),
+        atlas.height(),
+        atlas.texture_descriptor.mip_level_count,
+        Glyph::ALL.len(),
+        started.elapsed()
+    );
+    let image = images.add(atlas);
     let layout = layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(CELL_PX),
         Glyph::ALL.len() as u32,
@@ -181,29 +242,48 @@ fn atlas_image() -> Image {
     image
 }
 
-/// Нулевой мип: все ячейки подряд, RGBA8, строка 0 — верх.
+/// Нулевой мип: все ячейки подряд, RGBA8, строка 0 — верх. Обход по ячейкам,
+/// а не по строкам: фигура трупа собирается один раз на ячейку, не на тексель.
 fn rasterize_atlas(width: u32, height: u32) -> Vec<u8> {
-    let mut data = Vec::with_capacity((width * height * 4) as usize);
-    for row in 0..height {
-        for column in 0..width {
-            let glyph = Glyph::ALL[(column / CELL_PX) as usize];
-            let cell = Vec2::new(
-                (column % CELL_PX) as f32 + 0.5,
-                (height - 1 - row) as f32 + 0.5,
-            );
-            let p = cell / CELL_PX as f32 * 2.0 - 1.0;
-            let (shade, alpha) = texel(glyph, p);
-            let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
-            data.extend_from_slice(&[byte(shade), byte(shade), byte(shade), byte(alpha)]);
+    let mut data = vec![0u8; (width * height * 4) as usize];
+    let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
+    for (cell, glyph) in Glyph::ALL.iter().enumerate() {
+        let figure = glyph.pose().map(figure::Figure::pose);
+        for row in 0..CELL_PX {
+            for column in 0..CELL_PX {
+                let centre = Vec2::new(column as f32 + 0.5, (CELL_PX - 1 - row) as f32 + 0.5);
+                let p = centre / CELL_PX as f32 * 2.0 - 1.0;
+                let (shade, alpha) = match &figure {
+                    Some(figure) => figure.texel(p, edge()),
+                    None => texel(*glyph, p),
+                };
+                let x = cell as u32 * CELL_PX + column;
+                let i = ((row * width + x) * 4) as usize;
+                data[i..i + 4].copy_from_slice(&[
+                    byte(shade),
+                    byte(shade),
+                    byte(shade),
+                    byte(alpha),
+                ]);
+            }
         }
     }
     data
 }
 
+/// Полуширина сглаживания кромки в единицах ячейки (−1…1).
+fn edge() -> f32 {
+    EDGE_PX * 2.0 / CELL_PX as f32
+}
+
 /// Тексель глифа в точке `p` ячейки (−1…1 по обеим осям): яркость (множитель к
-/// цвету спрайта) и альфа.
+/// цвету спрайта) и альфа. Для тел собирает фигуру на каждый вызов — путь для
+/// тестов; атлас идёт через [`rasterize_atlas`].
 fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
-    let edge = EDGE_PX * 2.0 / CELL_PX as f32;
+    let edge = edge();
+    if let Some(pose) = glyph.pose() {
+        return figure::Figure::pose(pose).texel(p, edge);
+    }
     let r = p.length();
     match glyph {
         Glyph::Disc => {
@@ -225,6 +305,10 @@ fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
         Glyph::Halo => {
             let falloff = (1.0 - r / HALO_RADIUS).clamp(0.0, 1.0);
             (1.0, falloff * falloff)
+        }
+        Glyph::Pool => figure::pool_texel(p, edge),
+        Glyph::Sprawled | Glyph::Prone | Glyph::Curled | Glyph::Crumpled => {
+            unreachable!("тела отданы фигуре выше")
         }
     }
 }
@@ -317,14 +401,68 @@ mod tests {
     }
 
     #[test]
-    fn every_glyph_is_transparent_outside_and_opaque_at_its_centre() {
+    fn every_glyph_is_transparent_outside_and_opaque_at_its_anchor() {
         for glyph in Glyph::ALL {
             let (_, outside) = texel(glyph, Vec2::new(0.99, 0.99));
             assert_eq!(outside, 0.0, "{glyph:?} leaks past the cell corner");
-            let (shade, centre) = texel(glyph, Vec2::ZERO);
-            assert_eq!(centre, 1.0, "{glyph:?} is not solid at the centre");
+            let (_, anchor) = texel(glyph, glyph.pool_anchor());
+            assert_eq!(anchor, 1.0, "{glyph:?} is not solid at its anchor");
+        }
+        for glyph in [Glyph::Disc, Glyph::Ember, Glyph::Halo] {
+            let (shade, _) = texel(glyph, Vec2::ZERO);
             assert_eq!(shade, 1.0, "{glyph:?} is not brightest at the centre");
         }
+    }
+
+    #[test]
+    fn corpse_glyphs_are_the_four_poses_in_atlas_order() {
+        assert_eq!(Glyph::corpse(0), Glyph::Sprawled);
+        assert_eq!(Glyph::corpse(3), Glyph::Crumpled);
+        assert_eq!(Glyph::corpse(4), Glyph::Sprawled);
+        for (pose, glyph) in Glyph::CORPSES.into_iter().enumerate() {
+            assert_eq!(glyph as usize, Glyph::Pool as usize + 1 + pose);
+            assert_eq!(glyph.pose(), Some(pose));
+        }
+        assert_eq!(Glyph::Disc.pose(), None);
+        assert_eq!(Glyph::Disc.pool_anchor(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn set_glyph_moves_the_atlas_index_and_leaves_a_plain_sprite_alone() {
+        let mut plain = Sprite::default();
+        set_glyph(&mut plain, Glyph::Prone);
+        assert!(plain.texture_atlas.is_none());
+
+        let mut atlas = Sprite::from_atlas_image(
+            Handle::default(),
+            TextureAtlas {
+                layout: Handle::default(),
+                index: Glyph::Disc as usize,
+            },
+        );
+        set_glyph(&mut atlas, Glyph::Prone);
+        assert_eq!(atlas.texture_atlas.unwrap().index, Glyph::Prone as usize);
+    }
+
+    /// Не проверка, а инструмент: пишет нулевой мип атласа в PNG, чтобы
+    /// посмотреть на глифы глазами. `SILHOUETTE_DUMP=<путь> cargo test
+    /// dump_atlas -- --ignored`; прозрачное лучше смотреть на сером фоне
+    /// (`magick atlas.png -background gray50 -flatten out.png`).
+    #[test]
+    #[ignore = "пишет файл; запускать руками с SILHOUETTE_DUMP=<путь>"]
+    fn dump_atlas() {
+        let path = std::env::var("SILHOUETTE_DUMP").expect("SILHOUETTE_DUMP=<путь к png>");
+        // кодировщику нужен ровно нулевой мип: цепочку отрезаем
+        let mut image = atlas_image();
+        let level0 = (image.width() * image.height() * 4) as usize;
+        image.data.as_mut().expect("данные атласа").truncate(level0);
+        image.texture_descriptor.mip_level_count = 1;
+        image
+            .try_into_dynamic()
+            .expect("атлас — RGBA8")
+            .save(&path)
+            .expect("png не записался");
+        println!("atlas written to {path}");
     }
 
     #[test]
@@ -338,8 +476,8 @@ mod tests {
     fn mip_chain_ends_in_one_texel_and_keeps_the_layout() {
         let image = atlas_image();
         let width = CELL_PX * Glyph::ALL.len() as u32;
-        // 192×64 → … → 1×1: восемь уровней
-        assert_eq!(image.texture_descriptor.mip_level_count, 8);
+        // 1024×128 → … → 1×1: одиннадцать уровней
+        assert_eq!(image.texture_descriptor.mip_level_count, 11);
         let mut expected = 0;
         let (mut w, mut h) = (width, CELL_PX);
         loop {

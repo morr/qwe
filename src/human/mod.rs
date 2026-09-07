@@ -12,7 +12,7 @@ pub use self::components::{
     Attire, CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle,
     HumanWanderTag, Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
 };
-pub use self::look::PANIC_COLOR;
+pub use self::look::{BloodPool, PANIC_COLOR};
 use self::look::{on_calm_tint, on_panic_tint};
 use self::soul::rise_souls;
 pub use self::soul::{SoulMote, release_soul};
@@ -48,6 +48,7 @@ impl Plugin for HumanPlugin {
             .register_type::<PanicRecoil>()
             .register_type::<Pace>()
             .register_type::<Attire>()
+            .register_type::<BloodPool>()
             .register_type::<SoulMote>()
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()

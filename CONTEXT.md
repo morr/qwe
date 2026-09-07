@@ -455,12 +455,13 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   is what lets the **Speed spread** slider widen the ordering the crowd already rolled
   instead of re-dealing it. Ceiling 35 % is derived: above it the fastest humans outrun the
   slowest demon setting.
-- **CorpseTag** — a killed human: behavior/movement components removed, the body's disc
-  stretched into a dark ellipse at `Z_CORPSE` in one of eight poses (by `Entity` bits —
-  cosmetics, not run state), not in the human spatial grid. The transition is
-  **`human::to_corpse`**, one entry point; the kill observer in `demon/` only reports that
-  it happened. It calls **`movement::strip_movement`**, so `Movable`'s `#[require]` stays
-  the single record of what a movable entity drags along.
+- **CorpseTag** — a killed human: behavior/movement components removed, the body drawn
+  as a lying human figure at `Z_CORPSE` (the **corpse look**, see Look: pose, heading and
+  mirror by `Entity` bits — cosmetics, not run state; a **blood pool** child under the
+  chest), not in the human spatial grid. The transition is **`human::to_corpse`**, one
+  entry point; the kill observer in `demon/` only reports that it happened. It calls
+  **`movement::strip_movement`**, so `Movable`'s `#[require]` stays the single record of
+  what a movable entity drags along.
 - **Demon** states (`demon/behavior.rs`): **Wander** (a point in the `DEMON_WANDER_CONE`
   (1.3 rad half-angle) around the away-from-portal vector, `DEMON_WANDER_RANGE` 40–120 m;
   no `WanderPause` analogue and no stored `WanderHeading` — the next target is picked the
@@ -521,9 +522,10 @@ How pawns are drawn over the map — the map's own rendering is the **osm-map sk
 pawn half of the mechanism is in the **species-behavior skill**. There are no art assets
 and no artist: every shape here is a formula, every colour a constant beside its draw call.
 
-- **Silhouette** (`silhouette.rs`) — a pawn's on-map shape. One procedural **atlas**
-  (`Silhouettes` resource; three `Glyph`s — `Disc`, `Ember`, `Halo` — rasterised at
-  startup with a CPU mip chain) and the `Silhouette { body, min_px }` component: the body
+- **Silhouette** (`silhouette/`) — a pawn's on-map shape. One procedural **atlas**
+  (`Silhouettes` resource; eight 128 px `Glyph`s — `Disc`, `Ember`, `Halo`, `Pool` and
+  the four corpse figures of `silhouette/figure.rs` — rasterised at startup by signed
+  distance with a CPU mip chain) and the `Silhouette { body, min_px }` component: the body
   in metres plus a **screen-size floor** in logical px (`HUMAN_MIN_PX` 2, `DEMON_MIN_PX`
   5), so at city zoom a human stays a grain and a demon a point instead of vanishing.
   **`Sprite::custom_size` belongs to this module**: spawn sets the body, the two LOD
@@ -538,6 +540,13 @@ and no artist: every shape here is a formula, every colour a constant beside its
   tint** — `On<Add, HumanFleeTag>` paints the sprite `PANIC_COLOR` (amber, one for all,
   so the panic front reads as a spreading stain), `On<Remove, HumanFleeTag>` restores the
   attire. Transitions only, never per frame.
+- **Corpse look** (`human/look.rs`, figures in `silhouette/figure.rs`) — a killed human
+  is a **lying figure**, not an ellipse: head, torso and limbs as capsules on a skeleton
+  in metres of `CORPSE_HEIGHT`, four poses (sprawled, prone, curled, collapsed), sixteen
+  headings and a mirror, all from the `Entity` bits (`corpse_pose`). Limbs are drawn
+  thicker than anatomy so the pose survives crowd zoom. The tint is the pawn's own
+  attire **drained** (`corpse_tint`), so the dead keep their clothes; under the chest a
+  **blood pool** child (`BloodPool`, the `Pool` glyph, dark and translucent, not HDR).
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
