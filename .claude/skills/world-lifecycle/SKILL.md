@@ -112,11 +112,20 @@ skill.
 **Map-derived state is not run state.** `NorthstarGrid` and `PolyNavmesh` are cleared by the
 city switch alone — a restart keeps the map, and with it the 12 s northstar hierarchy.
 
+**Process-level state is neither.** The silhouette atlas (`Silhouettes`, filled once in
+`Startup` by `SilhouettePlugin` — an asset, not a world entity, which is why it is the one
+thing that legitimately runs in `Startup`) depends on neither the city nor the run and
+survives a restart and a city switch alike; `spawn_population`, `spawn_demon`, the kill
+observer and `spawn_portal` read it as a plain resource. An app without `SilhouettePlugin`
+(replay, tests) `init_resource`s it empty and draws squares — never a rebuild.
+
 ## Restart
 
-**RestartEvent** (`restart.rs`, R key or BRP) — despawns humans / corpses / demons / walkers,
-fires **WorldStarted**, respawns the population. The navmesh persists: it is filled once per
-city. Under determinism this replays the previous run tick for tick.
+**RestartEvent** (`restart.rs`, R key or BRP) — despawns humans / corpses / demons / walkers
+(demon halos and blood pools are their children and go with them; souls are not on the list —
+a `SoulMote` despawns itself within 1.4 s of sim time, see `species-behavior`), fires
+**WorldStarted**, respawns the population. The navmesh persists: it is filled once per city.
+Under determinism this replays the previous run tick for tick.
 
 **RestartPending** (`restart.rs`, resource) — "a restart was ordered". The only way to ask
 for one from anywhere but the R key: changing the **world seed** or flipping

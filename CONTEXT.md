@@ -52,7 +52,8 @@ in `main.rs`.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
   → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
   casings → bridges → rails → rail dashes → tram → portal stain → corpses → portal →
-  buildings (5) → units → tree shadows → trees (20). Three live in their own modules:
+  buildings (5) → units → souls (18) → tree shadows → trees (20). Three live in their own
+  modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
@@ -532,8 +533,8 @@ and no artist: every shape here is a formula, every colour a constant beside its
   systems write the size (a full pass only on a zoom change). One image for all glyphs,
   because sprites batch by texture and humans and demons interleave in y-sorted z. In an
   app without a renderer (replay, tests) the resource stays `None` and pawns are plain
-  squares; `HumanPlugin` / `DemonPlugin` only `init_resource` it, `SilhouettePlugin` in
-  `main.rs` fills it.
+  squares; `HumanPlugin` / `DemonPlugin` / `PortalPlugin` only `init_resource` it,
+  `SilhouettePlugin` in `main.rs` fills it.
 - **Attire** (`human/components.rs`, palette in `human/look.rs`) — a human's own colour,
   the three spawn draws of its decision stream, cool and muted (hue 170–290°): **warm on
   the map means demons and panic**. Separate from `Sprite::color` because of the **panic
