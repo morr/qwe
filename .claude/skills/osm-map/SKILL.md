@@ -382,13 +382,25 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward a darker muted tone (max 0.7); no-height buildings and the Kremlin
     keep their base color.
-  - **2.5D (Extrusion)** — watabou-style: roof lifted up by height × `EXTRUDE_SCALE`
-    (0.35) clamped to 2.5–30 m, south-facing wall quads (vertical gradient) fill the
-    gap; courtyard north walls included. No facade band, no shadows. Depth is painter's
-    algorithm *inside one mesh*: buildings sorted north-first (index-buffer order is
-    raster order), so a southern building correctly overlays its northern neighbour.
-    Known limits: units y-sort against flat z=5 and can draw over a tall roof they are
-    "behind"; kremlin wall polylines (z 5.1) draw over nearby lifted roofs.
+  - **2.5D (Extrusion)** — watabou-style: roof lifted by `lift = height ×
+    EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 2.5–30 m.
+    The lift is **oblique** (`EXTRUDE_SKEW` 0.4 — 0.4 m right per metre up): a
+    strictly vertical lift showed one south wall and a block read as a roof with a dark
+    band under it; the skew exposes two wall families, and with the light the shadows
+    already use (`SHADOW_DIR`, from the upper left) the west wall is lit and the south
+    wall shaded — three tones, which is what makes a box read as a box in watabou and
+    in 2GIS's 3D mode. The visible walls are the edges facing *against* the lift
+    (`silhouette_edges(outer, -extrusion_dir())`), courtyard walls the hole edges facing
+    *along* it; each wall's tone comes from `layers.rs::wall_colors` — the facade colour
+    mixed toward white by `outward · −SHADOW_DIR × WALL_LIT_MIX` (0.18) when lit, toward
+    black by `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical
+    gradient. No facade band, no shadows. Depth is painter's algorithm *inside one
+    mesh*: buildings sorted by their bounds-centre projection on the lift direction,
+    far end first (index-buffer order is raster order), so a south-western building
+    correctly overlays its north-eastern neighbour. `extrusion_lift` is `pub` because
+    the doors overlay must shift by the same vector. Known limits: units y-sort against
+    flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
+    (z 5.1) draw over nearby lifted roofs.
   - **2.5D+shadows+tint (ExtrusionShadowsTint)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
@@ -400,7 +412,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   (0.5 m) of the nearest one — clamped to a single edge it came out half a road wide.
   Width = the road's own width × |sin| of the entry angle, trimmed to the edge; height =
   `ARCH_HEIGHT` (6 real metres — 3 is physical but read as 2 px on a tall slab) as a
-  fraction of *that building's* height, `band × 6/height`, never taller than the wall. In
+  fraction of *that building's* height, `band × 6/height`, never taller than the wall.
+  Openings are looked up only on the walls the mode actually draws — `arch_openings`
+  takes a `facing` (2.5D: `-extrusion_dir()`, so south **and** west walls; facade band:
+  south only) — because `push_wall_with_openings` matches an opening to its wall by exact
+  edge endpoints, and a wall family the lookup does not know about would draw solid. In
   2.5D the wall is **really cut** (side pieces + a lintel above,
   `push_wall_with_openings`) so the layers beneath — the road running through, the
   ground — show through the hole, and `shadow_builder` patches the opening with

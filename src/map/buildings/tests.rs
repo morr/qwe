@@ -60,17 +60,43 @@ fn silhouette_is_winding_independent() {
 }
 
 #[test]
-fn extrusion_walls_face_south_only() {
-    // у квадрата при подъёме строго вверх видима одна южная стена
-    let edges = silhouette_edges(&square(), Vec2::NEG_Y);
-    assert_eq!(edges.len(), 1);
-    let (a, b) = edges[0];
-    assert_eq!(a.y, 0.0);
-    assert_eq!(b.y, 0.0);
+fn extrusion_walls_face_away_from_the_lift() {
+    // подъём вверх-вправо: у квадрата видимы южная и западная стены
+    let lift = extrusion_dir();
+    assert!(
+        lift.x > 0.0 && lift.y > 0.0,
+        "the lift is oblique: {lift:?}"
+    );
+    let edges = silhouette_edges(&square(), -lift);
+    assert_eq!(edges.len(), 2);
+    assert!(
+        edges.iter().any(|(a, b)| a.y == 0.0 && b.y == 0.0),
+        "south wall"
+    );
+    assert!(
+        edges.iter().any(|(a, b)| a.x == 0.0 && b.x == 0.0),
+        "west wall"
+    );
 }
 
 #[test]
-fn extrusion_sorts_north_first() {
+fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
+    let lift = extrusion_dir();
+    let facade = Color::srgb(0.6, 0.6, 0.6);
+    let luminance = |color: LinearRgba| color.red + color.green + color.blue;
+    // свет из верхнего левого угла: западная стена (нормаль −X) освещена,
+    // южная (нормаль −Y) в тени
+    let (west, _) = wall_colors(facade, Vec2::new(0.0, 10.0), Vec2::ZERO, lift);
+    let (south, _) = wall_colors(facade, Vec2::ZERO, Vec2::new(10.0, 0.0), lift);
+    assert!(luminance(west) > luminance(facade.to_linear()));
+    assert!(luminance(south) < luminance(facade.to_linear()));
+    // обход ребра тон не меняет
+    let (west_reversed, _) = wall_colors(facade, Vec2::ZERO, Vec2::new(0.0, 10.0), lift);
+    assert_eq!(west, west_reversed);
+}
+
+#[test]
+fn extrusion_sorts_the_far_end_of_the_lift_first() {
     let north = building(
         square()
             .iter()
@@ -91,8 +117,9 @@ fn extrusion_sorts_north_first() {
     };
     let sorted = positions(&[south.clone(), north.clone()]);
     let reversed = positions(&[north, south]);
-    // порядок входа не важен: painter's sort всегда пишет север первым,
-    // поэтому буферы вершин совпадают, а первая вершина — северная
+    // порядок входа не важен: painter's sort всегда пишет дальний по подъёму
+    // (северный) дом первым, поэтому буферы вершин совпадают, а первая
+    // вершина — северная
     assert_eq!(sorted, reversed);
     assert!(
         sorted[0][1] >= 100.0,
