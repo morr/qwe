@@ -27,14 +27,20 @@
 //! (`bridge`/`passage`-прорезы), арки, посадка деревьев и генератор дверей.
 //! Chaikin-сглаживание работает на копии и только ради картинки.
 //!
-//! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, серая
+//! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, светлая
 //! полоса шире проезжей части на [`sidewalk_width`] с каждой стороны), кант и
-//! заливка. Тротуар лежит под всеми лентами дорог по той же логике, что кант:
-//! заливка поперечной улицы кроет его на перекрёстке, и тротуар обрывается там,
-//! где обрывается в жизни. **Разметку** — штриховую осевую — рисует не
+//! заливка асфальтом. Тротуар лежит под всеми лентами дорог по той же логике,
+//! что кант: заливка поперечной улицы кроет его на перекрёстке, и тротуар
+//! обрывается там, где обрывается в жизни. **Разметку** — линии по границам
+//! полос ([`lane_count`]: тег `lanes`, иначе дефолт по ширине) — рисует не
 //! геометрия, а шейдер поверхностей (`map/surface.rs`) по локальным
-//! координатам ленты (`meshing::ATTRIBUTE_RIBBON`): линия сглажена, гаснет у
-//! торцов way (перекрёсток) и при отдалении, чего слитому мешу не сделать.
+//! координатам ленты (`meshing::ATTRIBUTE_RIBBON`): линия сглажена, гаснет при
+//! отдалении и **рвётся на перекрёстках** — по общим узлам ways
+//! (`roads/junctions.rs`), а не по торцам, так что way, разрезанный посреди
+//! квартала, несёт линию сквозь стык, а сквозная улица теряет её ровно на
+//! ширину поперечной. Широкие улицы кладутся поверх узких: заливка
+//! магистрали кроет торец жилой улицы, и в перекрёстке остаётся разметка
+//! магистрали с разрывом под въезд, а не обрубок линии въезда поверх неё.
 
 use std::borrow::Cow;
 use std::f32::consts::PI;
@@ -43,7 +49,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::footprint::casing_width;
-use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
+use crate::map::meshing::{Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine, WallLine};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::settings::{
@@ -51,26 +57,38 @@ use crate::settings::{
     Z_ROAD_CASING, Z_SIDEWALK,
 };
 
-/// Проезжая часть — не чисто белая, а на волос теплее и темнее: белой была,
-/// пока на ней не появилась разметка, которой на белом не видно.
-const ROAD_COLOR: Color = Color::srgb(0.95, 0.947, 0.94);
+/// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли, как на
+/// детальных картах 2ГИС и Яндекса. Белой (osm-carto) она была, пока не
+/// появилась разметка: белую линию на белом не видно, а на сером сетка улиц
+/// вдобавок перестаёт сливаться с дворами.
+const ROAD_COLOR: Color = Color::srgb(0.655, 0.66, 0.675);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
-/// Тротуар — холодный светло-серый бетон: от тёплой земли его отделяет и
-/// тон, и полтона яркости, от проезжей части — яркость.
-const SIDEWALK_COLOR: Color = Color::srgb(0.835, 0.83, 0.81);
+/// Тротуар — светлый бетон между асфальтом и тёплой землёй: светлее проезжей
+/// части на четверть, и именно эта ступень яркости читается как бордюр.
+const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 /// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
 /// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
 const SIDEWALK_SHARE: f32 = 0.22;
 const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
-/// Улицы у́же этого — проезды (`service`, 5 м): ни тротуара, ни разметки.
+/// Улицы у́же этого — проезды (`service`, 5 м): ни тротуара, ни разметки, ни
+/// разрыва в разметке улицы, к которой проезд примыкает.
 const STREET_MIN_WIDTH: f32 = 8.0;
 
-/// Кант дороги — затемнённая заливка, как у osm-carto (белая улица в сером
-/// канте). Отдельным слоем под заливкой: заливки всех дорог кроют канты всех
-/// дорог, поэтому кант никогда не режет перекрёсток пополам.
-const ROAD_CASING_COLOR: Color = Color::srgb(0.702, 0.702, 0.702);
+/// Полоса не у́же этого, м: `lanes=6` на десятиметровой ленте — данные о
+/// настоящей улице, а лента у нас по классу, и лишние полосы отбрасываются.
+const MIN_LANE_WIDTH: f32 = 2.5;
+/// Полос по умолчанию, когда тега `lanes` нет: двусторонней улице — по паре
+/// на каждые 7 м ширины (8 и 10 м — две полосы, 12 и 16 — четыре),
+/// односторонней — по полосе на 4.5 м (8 м — одна, без линий; 16 — три).
+const TWOWAY_METERS_PER_LANE_PAIR: f32 = 7.0;
+const ONEWAY_METERS_PER_LANE: f32 = 4.5;
+
+/// Кант дороги — затемнённая заливка, как у osm-carto (улица в тёмном канте);
+/// темнее асфальта. Отдельным слоем под заливкой: заливки всех дорог кроют
+/// канты всех дорог, поэтому кант никогда не режет перекрёсток пополам.
+const ROAD_CASING_COLOR: Color = Color::srgb(0.45, 0.45, 0.46);
 const ALLEY_CASING_COLOR: Color = Color::srgb(0.729, 0.678, 0.549);
 
 /// Ж/д путь как в osm-carto: тёмная лента и белая штриховка поверх неё.
@@ -89,10 +107,10 @@ const RAIL_DASH_SCALE: f32 = 0.6;
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
 
-/// Бордюр моста — серый бетон, общий для улиц и пешеходных мостиков. Темнее
-/// канта (0.702); толщины (и почему их диапазоны не пересекаются) — в
-/// `map::footprint`.
-const BRIDGE_CURB_COLOR: Color = Color::srgb(0.6, 0.6, 0.6);
+/// Бордюр моста — светлый бетонный парапет над серым настилом, общий для
+/// улиц и пешеходных мостиков. Толщины (и почему их диапазоны не
+/// пересекаются) — в `map::footprint`.
+const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
 
 /// Изломы мельче Chaikin не срезает: прямые участки обязаны остаться точками
 /// OSM, иначе сглаживание съедает и без того редкую геометрию длинных улиц.
@@ -195,6 +213,43 @@ pub fn sidewalk_width(road_width: f32) -> Option<f32> {
     })
 }
 
+/// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
+/// перекрёстках: класс `Street`, не арка (`passage` идёт сквозь дом), не у́же
+/// [`STREET_MIN_WIDTH`]. Мост — тоже: улица через реку не теряет полос.
+fn is_carriageway(road: &RoadLine) -> bool {
+    road.class == RoadClass::Street && !road.passage && road.width >= STREET_MIN_WIDTH
+}
+
+/// Число полос проезжей части: тег `lanes`, иначе дефолт по ширине, и не
+/// больше, чем влезает по [`MIN_LANE_WIDTH`]. Кольцо — всегда одна полоса:
+/// на однополосном кольце линий нет, а рвать линию двухполосного на каждом
+/// въезде хуже, чем не рисовать её вовсе.
+pub fn lane_count(road: &RoadLine) -> u8 {
+    if road.roundabout {
+        return 1;
+    }
+    let most = ((road.width / MIN_LANE_WIDTH).floor() as u8).max(1);
+    let lanes = match road.lanes {
+        Some(lanes) => lanes,
+        None if road.oneway => (road.width / ONEWAY_METERS_PER_LANE).floor() as u8,
+        None => 2 * (road.width / TWOWAY_METERS_PER_LANE_PAIR).round() as u8,
+    };
+    lanes.clamp(1, most)
+}
+
+/// Разметка проезжей части: линии лежат на границах полос, так что
+/// однополосной рисовать нечего.
+fn road_markings(road: &RoadLine) -> Option<Markings> {
+    if !is_carriageway(road) {
+        return None;
+    }
+    let lanes = lane_count(road);
+    (lanes >= 2).then_some(Markings {
+        lanes,
+        oneway: road.oneway,
+    })
+}
+
 /// Дорожный слой карты — чтобы пересборка стиля знала, что деспавнить.
 #[derive(Component)]
 pub struct RoadLayerTag;
@@ -215,6 +270,13 @@ pub fn spawn_roads(
     // вершинные цвета — плоский материал один, белый; фактурные — по виду
     // поверхности, из `SurfaceMaterials`
     let flat = materials.add(Color::WHITE);
+    // перекрёстки нужны только разметке: без неё и рвать нечего
+    let junctions = style
+        .markings
+        .then(|| junctions::marking_breaks(roads, is_carriageway));
+    // широкие улицы поверх узких — см. доку модуля
+    let mut order: Vec<usize> = (0..roads.len()).collect();
+    order.sort_by(|&a, &b| roads[a].width.total_cmp(&roads[b].width));
 
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alley_casings = MeshBuilder::default();
@@ -230,12 +292,18 @@ pub fn spawn_roads(
     let mut rail_dashes = MeshBuilder::default();
     let mut wall_ribbons = MeshBuilder::default();
 
-    for road in roads {
+    for index in order {
+        let road = &roads[index];
         let (casing_color, color) = match road.class {
             RoadClass::Street => (ROAD_CASING_COLOR, ROAD_COLOR),
             RoadClass::Alley => (ALLEY_CASING_COLOR, ALLEY_COLOR),
         };
         let points = centerline(road, style.smoothing);
+        // разметка и её разрывы — только пока она включена
+        let (markings, breaks) = match &junctions {
+            Some(found) => (road_markings(road), found.breaks[index].as_slice()),
+            None => (None, &[][..]),
+        };
         if road.bridge {
             // бордюр — всегда, независимо от style.casing: он и есть мост
             push_bridge_curb(
@@ -244,12 +312,14 @@ pub fn spawn_roads(
                 2.0 * road.curb_reach(),
                 style.join,
             );
-            push_ribbon(
+            bridge_fills.set_markings(markings);
+            push_street_fill(
                 &mut bridge_fills,
                 &points,
                 road.width,
                 color.to_linear(),
                 style.join,
+                breaks,
             );
             continue;
         }
@@ -257,11 +327,8 @@ pub fn spawn_roads(
             RoadClass::Street => (&mut street_casings, &mut streets),
             RoadClass::Alley => (&mut alley_casings, &mut alleys),
         };
-        // тротуар и разметка — улицам шире проезда; арка (`passage`) идёт
-        // сквозь дом, тротуару там взяться неоткуда
-        let street = road.class == RoadClass::Street && !road.passage;
         if style.sidewalks
-            && street
+            && is_carriageway(road)
             && let Some(sidewalk) = sidewalk_width(road.width)
         {
             push_ribbon(
@@ -276,8 +343,15 @@ pub fn spawn_roads(
             let width = road.width + 2.0 * casing_width(road.width);
             push_ribbon(casing, &points, width, casing_color.to_linear(), style.join);
         }
-        fill.set_road_markings(style.markings && street && road.width >= STREET_MIN_WIDTH);
-        push_ribbon(fill, &points, road.width, color.to_linear(), style.join);
+        fill.set_markings(markings);
+        push_street_fill(
+            fill,
+            &points,
+            road.width,
+            color.to_linear(),
+            style.join,
+            breaks,
+        );
     }
 
     for rail in rails {
@@ -388,13 +462,14 @@ pub fn spawn_roads(
     }
 
     info!(
-        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {})",
+        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {}, junctions {})",
         started.elapsed(),
         style.join,
         style.smoothing,
         style.casing,
         style.sidewalks,
         style.markings,
+        junctions.as_ref().map_or(0, |found| found.junctions),
     );
 }
 
@@ -467,6 +542,32 @@ pub fn push_ribbon(
     }
 }
 
+/// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
+/// `Square` разрывы деть некуда: `push_polyline` знает только торцы, а режим
+/// оставлен ради сравнения картинок, не ради разметки.
+fn push_street_fill(
+    builder: &mut MeshBuilder,
+    points: &[Vec2],
+    width: f32,
+    color: LinearRgba,
+    join: RoadJoin,
+    breaks: &[Break],
+) {
+    let (join, cap) = match join {
+        RoadJoin::Square => return builder.push_polyline(points, width, color),
+        RoadJoin::Miter => (RibbonJoin::Miter, RibbonCap::Butt),
+        RoadJoin::Round => (RibbonJoin::Round, RibbonCap::Round),
+    };
+    builder.push_ribbon_broken(
+        points,
+        width,
+        color,
+        join,
+        [cap; 2],
+        RibbonBreaks::At(breaks),
+    );
+}
+
 /// Штрих — метка, а не дорога: круглый торец на каждом штрихе стоил бы полудиска
 /// на каждый конец и всё равно был бы не виден на шести метрах.
 fn dash_join(join: RoadJoin) -> RibbonJoin {
@@ -530,6 +631,8 @@ fn chaikin(points: &[Vec2], width: f32) -> Vec<Vec2> {
     path.push(points[points.len() - 1]);
     path
 }
+
+mod junctions;
 
 #[cfg(test)]
 mod tests;

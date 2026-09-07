@@ -77,7 +77,13 @@ in `CONTEXT.md` and the detail here in the same change.
   3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
   z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
-  layers** below).
+  layers** below). Three more fields feed the **markings** only: `oneway`
+  (`oneway=yes|1|true|-1` — direction is irrelevant, we draw, we don't route;
+  `reversible`/`alternating` are not one-way), `roundabout`
+  (`junction=roundabout|circular`, implies `oneway`) and `lanes: Option<u8>` (the `lanes`
+  tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag).
+  Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
+  streets ≥ 8 m, the European cities on about half.
   **Underground road is dropped** (`parse/tags.rs::is_road_underground`) — the same rule rails
   and watercourses have always had, and it was simply missing on the highway branch:
   metro concourses and stairs came out as ordinary alleys drawn over the city (Tokyo
@@ -287,21 +293,45 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   on. No z-slot: opaque 2D meshes test depth with `GreaterEqual`, so within one mesh the
   band pushed after the fill wins.
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
-  Sidewalk`, cool light grey `SIDEWALK_COLOR`) — a street (`RoadClass::Street`, width ≥
-  `STREET_MIN_WIDTH` 8 m, so `service` drives get none, and never a `passage`) gets a band
-  `width + 2 · sidewalk_width` (22 % of the width, 1.2–3 m per side). It sits under every
-  road ribbon for the casing reason: a crossing street's fill covers it and the sidewalk
-  ends at the junction the way a real one does. A `footway` mapped alongside draws over it
-  as an alley — beige on grey, and tolerated.
-- **Markings** — the dashed centre line of a street is **not geometry**: `push_dashes`
-  would alias and crawl at `Msaa::Off` (a 0.25 m line is under a pixel at the start zoom).
-  The street fill is built with surface coords and `set_road_markings(true)` for streets ≥
-  8 m; the shader draws the line from `across` (|across| < half the `MARKING_WIDTH`, but
-  never thinner than 1.3 px, anti-aliased over ±0.7 px), dashes it along *to-end* (3 m on /
-  3 m off; the mirror at the path's middle is invisible), fades it within `MARKING_MARGIN`
-  (5 m) of either end — OSM splits ways at junctions, so that is where the crossing is —
-  and fades it out when the street is under ~20 px wide on screen (`2 · half width / px`).
-  `MARKING_COLOR` is grey: the fill is near-white and a white line would vanish.
+  Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
+  brightness step between them is what reads as the kerb) — a **carriageway**
+  (`is_carriageway`: `RoadClass::Street`, width ≥ `STREET_MIN_WIDTH` 8 m, so `service`
+  drives get none, and never a `passage`) gets a band `width + 2 · sidewalk_width` (22 % of
+  the width, 1.2–3 m per side). It sits under every road ribbon for the casing reason: a
+  crossing street's fill covers it and the sidewalk ends at the junction the way a real
+  one does. A `footway` mapped alongside draws over it as an alley — beige on grey, and
+  tolerated. The road fill went from osm-carto white to asphalt grey together with the
+  markings: a white line on white is invisible, and on grey the street grid also stops
+  merging with the courtyards.
+- **Markings** — the lane lines of a street are **not geometry**: `push_dashes` would
+  alias and crawl at `Msaa::Off` (a 0.15 m line is under a pixel at the start zoom). The
+  street (and bridge deck) fill is built with surface coords and
+  `set_markings(Some(Markings { lanes, oneway }))` for every carriageway with two or more
+  lanes — the code `lanes·2 + oneway` travels in the fourth `Ribbon` component. **Lane
+  count** (`roads::lane_count`): the `lanes` tag, else the width default (two-way: a lane
+  pair per 7 m → 8/10 m two, 12/16 m four; one-way: a lane per 4.5 m → 8 m one, 16 m
+  three), never more than the width allows at `MIN_LANE_WIDTH` 2.5 m, and **always one on
+  a roundabout** (a one-lane ring has no lines, and cutting a two-lane ring's line at every
+  entry looks worse than none). The shader puts a line on every interior lane boundary
+  (`round((across + half width) / lane width)`), dashed 3 m / 3 m, except the **axis** of a
+  two-way road with 4+ lanes, which is solid; a one-way road has no axis, and an odd
+  `lanes` on a two-way road (three: two one way, one the other) has none either — all its
+  boundaries are dashed. Line width `MARKING_WIDTH` 0.15 m but never under 1.3 px,
+  anti-aliased over ±0.7 px; faded out when a lane is under ~10 px on screen (`lane width
+  / px`). `MARKING_COLOR` is white at 0.85 alpha over the asphalt grey.
+  **Breaks** — the second `Ribbon` component is the signed distance to the nearest
+  **marking break** (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At` to
+  `push_ribbon_broken`): negative inside a gap, so the line fades at the gap edge
+  (`smoothstep(0, 1)`) and the dash phase is anchored there *with a gap first*, so no dash
+  ever pokes into a junction. The mesher projects each break's world point onto its own
+  (smoothed, merged) path — that is why a break is a point, not an arclength: the smoothed
+  centreline and the OSM node may disagree — merges overlapping gaps, and inserts a vertex
+  at every kink of the distance function (each gap centre and the crossover between
+  neighbours) so the GPU's linear interpolation is exact. The round cap extrapolates the
+  last quad's slope: a listed end goes negative, an unlisted one keeps growing — that is
+  what carries the line through a seam between two ways of one road. A ribbon with no
+  breaks at all gets `along + FAR_FROM_BREAKS` (dashes need a growing coordinate). The
+  `Square` join falls back to `push_polyline`, which knows only the ends.
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
   every road, alley and kremlin wall is drawn. Two knobs, both named after their SVG /
   Mapnik counterparts: **join** (`Miter` — bisector offsets capped by `MITER_LIMIT`;
@@ -313,13 +343,26 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   a bend is skipped only when `half_width · turn` is under it. An angle threshold was
   tried first and was wrong: 5° on an alley still leaves a 15 cm slit, plainly visible
   as a pale cut across the road when zoomed in.
-- **Junctions are not computed.** Overpass returns `out geom`, so shared node identity
-  between ways is never available; roads are independent polylines drawn overlapping in
-  one opaque single-colored layer. `Round` caps are what makes a junction *look* joined —
-  the caps of the ways meeting at a node overlap into a rounded blob, exactly how
-  osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
-  round`). This is why the road layer must stay opaque and flat-colored: transparency or
-  a per-way tint would expose every crossing.
+- **Junctions** (`map/roads/junctions.rs`) — computed for the markings only, and from
+  **shared nodes**, not segment intersections: Overpass `out geom` gives no node ids, but
+  a node shared by two ways projects to the same `Vec2` on both (quantised to 5 cm to be
+  safe). Participants are carriageways (`is_carriageway`). A node with two or more
+  distinct participants is a junction and hands every road there a `Break` of reach
+  `half the widest other road + JUNCTION_MARGIN` (1 m); a node where exactly two ways
+  *end* is a continuation (one road split by a tag change) and no break; a lone way end
+  is a dead end (reach 0); a closed way's seam is not an end. Segment intersection was
+  rejected on purpose: a bridge over a street shares no node with it and must not break
+  either line, which the node rule cannot do wrong. A service drive or a footway joining a
+  street is not a participant and leaves the street's line whole. Count and time are in
+  the `road meshing:` log line (`junctions N`).
+  **Junction geometry is still not computed**: roads are independent polylines drawn
+  overlapping in one opaque layer, and `Round` caps are what makes a junction *look*
+  joined — the caps of the ways meeting at a node overlap into a rounded blob, exactly
+  how osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
+  round`). The fill order is **narrow first, wide last** (`spawn_roads` sorts by width), so
+  the main road's fill and its gapped line lie over the side street's cap. This is why the
+  road layer must stay opaque with a world-position colour: transparency or a per-way tint
+  would expose every crossing.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —

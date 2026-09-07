@@ -130,7 +130,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     Park | Wood | Grass | Sand`; **only Wood carries trees**. Buildings carry
     `height: Option<f32>` and `entrances: Vec<Vec2>`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
-    `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them).
+    `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
+    `oneway`, `roundabout` (`junction=roundabout|circular`, implies one-way) and
+    `lanes: Option<u8>` (the tag, 1–8; the width default lives in `map/roads.rs`) — read
+    by the markings only.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -176,10 +179,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors, one white
   `ColorMaterial`; ~7000 buildings cost a handful of entities. Trees stay individual
   entities; tree and building **shadows** are each one merged mesh. **Ribbon**
-  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junctions
-  are not computed** — overlapping `Round` caps in one opaque layer are what makes them
-  look joined; **keep the road layer opaque, and its colour a function of world position
-  only** (a flat colour or the surface shader, never a per-way tint).
+  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
+  geometry is not computed** — overlapping `Round` caps in one opaque layer are what makes
+  them look joined; **keep the road layer opaque, and its colour a function of world
+  position only** (a flat colour or the surface shader, never a per-way tint). What *is*
+  computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or more
+  carriageways, found by exact coordinate match — Overpass gives no node ids, but a shared
+  node projects to the same point on every way. They feed the markings only.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
@@ -190,19 +196,29 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   startup); **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
   0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
-  `[across, to-nearest-end, half width, markings flag]` in metres, zeros on polygons.
+  `[across, to-break, half width, markings code]` in metres (*to-break* = signed distance
+  to the nearest **marking break**, negative inside a gap; code = `lanes·2 + oneway`, 0 =
+  none), zeros on polygons.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
   polygon carries a gradient band along its contour, holes included: water a lighter
   **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
   median strip never bleeds its rim onto the road.
-- **Sidewalks & markings** (`map/roads.rs`) — a street (≥ 8 m, not a passage) gets a grey
-  **sidewalk band** at `Z_SIDEWALK` under every road ribbon (a crossing street's fill
-  covers it, like a casing), width `sidewalk_width` (22 %, 1.2–3 m per side), and a dashed
-  **centre line drawn by the surface shader** from the `Ribbon` coordinates: anti-aliased,
-  never thinner than ~1.3 px, faded within 5 m of a way's end (the junction) and when the
-  street is under ~20 px wide on screen. Both are `RoadStyle` knobs, on by default.
+- **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
+  passage; bridges included) is asphalt grey and gets a light **sidewalk band** at
+  `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
+  casing), width `sidewalk_width` (22 %, 1.2–3 m per side), and white **lane markings
+  drawn by the surface shader** from the `Ribbon` coordinates: a line on every lane
+  boundary (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →
+  4; one-way 8 m → 1, i.e. none; a roundabout always 1), dashed, the axis of a two-way road
+  with 4+ lanes solid; anti-aliased, never thinner than ~1.3 px, gone when a lane is under
+  ~10 px on screen. **Marking breaks**: at every junction node each carriageway's lines
+  stop `half the widest other road + 1 m` short of the node — the through road gets a gap,
+  the side street ends before the carriageway edge; a way end shared with exactly one
+  other way end is a **continuation** (the line runs through the seam), any other way end
+  a dead end. Wider fills are pushed after narrower ones, so a junction shows the main
+  road's gap rather than the side street's stub. Both are `RoadStyle` knobs, on by default.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
   sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are

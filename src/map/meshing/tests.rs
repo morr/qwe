@@ -544,12 +544,15 @@ fn surface_coords_cover_every_vertex() {
     assert!(builder.build().contains_attribute(ATTRIBUTE_RIBBON));
 }
 
-/// Поперёк — ±полуширина на краях ленты, «до торца» растёт от обоих концов к
-/// середине, полуширина — та, что просили; флаг разметки — тот, что выставлен.
+/// Поперёк — ±полуширина на краях ленты, «до разрыва» растёт от обоих торцов
+/// к середине, полуширина — та, что просили; код разметки — тот, что выставлен.
 #[test]
 fn ribbon_coords_follow_the_ribbon_frame() {
     let mut builder = MeshBuilder::with_surface_coords();
-    builder.set_road_markings(true);
+    builder.set_markings(Some(Markings {
+        lanes: 2,
+        oneway: false,
+    }));
     builder.push_ribbon(
         &[Vec2::ZERO, Vec2::new(30.0, 0.0)],
         false,
@@ -562,19 +565,19 @@ fn ribbon_coords_follow_the_ribbon_frame() {
     // середина вставлена: два квада по четыре вершины
     assert_eq!(builder.vertex_count(), 8);
     for (position, ribbon) in builder.positions.iter().zip(coords) {
-        let [across, to_end, half_width, flag] = *ribbon;
+        let [across, to_break, half_width, mode] = *ribbon;
         assert_eq!(
             across, position[1],
             "across follows the offset from the axis"
         );
         let expected = position[0].min(30.0 - position[0]);
         assert!(
-            (to_end - expected).abs() < 1e-4,
-            "to_end at x={}: {to_end} vs {expected}",
+            (to_break - expected).abs() < 1e-4,
+            "to_break at x={}: {to_break} vs {expected}",
             position[0]
         );
         assert_eq!(half_width, 2.0);
-        assert_eq!(flag, 1.0);
+        assert_eq!(mode, 4.0, "two lanes, two-way");
     }
     let middle = builder
         .positions
@@ -606,11 +609,158 @@ fn cap_coords_go_negative_past_the_end() {
         .map(|(_, ribbon)| ribbon[1])
         .collect();
     assert!(!beyond.is_empty(), "no cap vertices past the ends");
-    assert!(beyond.iter().all(|&to_end| to_end < 0.0), "{beyond:?}");
+    assert!(beyond.iter().all(|&to_break| to_break < 0.0), "{beyond:?}");
     assert!(
         coords.iter().all(|ribbon| ribbon[3] == 0.0),
         "markings were never asked for"
     );
+}
+
+/// Разрыв посреди ленты: «до разрыва» — V с дном `-reach` в его центре, на
+/// центре стоит вершина, а торцы, которых в списке нет, продолжают линию —
+/// координата на полудисках растёт дальше по той же прямой.
+#[test]
+fn breaks_carve_a_gap_into_the_ribbon_coords() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    let breaks = [Break {
+        at: Vec2::new(30.0, 0.0),
+        reach: 5.0,
+    }];
+    builder.push_ribbon_broken(
+        &[Vec2::ZERO, Vec2::new(60.0, 0.0)],
+        4.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        [RibbonCap::Round; 2],
+        RibbonBreaks::At(&breaks),
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    for (position, ribbon) in builder.positions.iter().zip(coords) {
+        let expected = (position[0] - 30.0).abs() - 5.0;
+        assert!(
+            (ribbon[1] - expected).abs() < 1e-3,
+            "to_break at x={}: {} vs {expected}",
+            position[0],
+            ribbon[1]
+        );
+    }
+    let at_center = builder
+        .positions
+        .iter()
+        .filter(|position| (position[0] - 30.0).abs() < 1e-4)
+        .count();
+    assert_eq!(
+        at_center, 4,
+        "the kink at the break centre needs a vertex pair"
+    );
+}
+
+/// Торец в списке разрывов — тупик или перекрёсток: за ним «до разрыва»
+/// уходит в минус, как у ленты без списка. Торца в списке нет — way
+/// продолжается следующим: координата за торцом растёт, и разметка идёт
+/// сквозь стык.
+#[test]
+fn a_listed_end_stops_the_marking_and_an_unlisted_one_carries_it_on() {
+    let path = [Vec2::ZERO, Vec2::new(10.0, 0.0)];
+    let beyond_end = |breaks: &[Break]| -> Vec<f32> {
+        let mut builder = MeshBuilder::with_surface_coords();
+        builder.push_ribbon_broken(
+            &path,
+            2.0,
+            LinearRgba::WHITE,
+            RibbonJoin::Round,
+            [RibbonCap::Butt, RibbonCap::Round],
+            RibbonBreaks::At(breaks),
+        );
+        let coords = builder.ribbon_coords_for_test().unwrap();
+        builder
+            .positions
+            .iter()
+            .zip(coords)
+            .filter(|(position, _)| position[0] > 10.0 + 1e-4)
+            .map(|(_, ribbon)| ribbon[1])
+            .collect()
+    };
+    let dead_end = beyond_end(&[Break {
+        at: Vec2::new(10.0, 0.0),
+        reach: 0.0,
+    }]);
+    assert!(!dead_end.is_empty(), "no cap vertices past the end");
+    assert!(
+        dead_end.iter().all(|&to_break| to_break < 0.0),
+        "{dead_end:?}"
+    );
+
+    let junction = beyond_end(&[Break {
+        at: Vec2::new(10.0, 0.0),
+        reach: 3.0,
+    }]);
+    assert!(
+        junction.iter().all(|&to_break| to_break < -3.0),
+        "{junction:?}"
+    );
+
+    let continuation = beyond_end(&[Break {
+        at: Vec2::ZERO,
+        reach: 0.0,
+    }]);
+    assert!(
+        continuation.iter().all(|&to_break| to_break > 10.0),
+        "{continuation:?}"
+    );
+}
+
+/// Два разрыва внахлёст — один: дно V ниже любого из двух.
+#[test]
+fn overlapping_gaps_merge_into_one() {
+    let breaks = [
+        Break {
+            at: Vec2::new(20.0, 0.0),
+            reach: 5.0,
+        },
+        Break {
+            at: Vec2::new(26.0, 0.0),
+            reach: 5.0,
+        },
+    ];
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_ribbon_broken(
+        &[Vec2::ZERO, Vec2::new(60.0, 0.0)],
+        4.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+        [RibbonCap::Butt; 2],
+        RibbonBreaks::At(&breaks),
+    );
+    let deepest = builder
+        .ribbon_coords_for_test()
+        .unwrap()
+        .iter()
+        .map(|ribbon| ribbon[1])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (deepest + 8.0).abs() < 1e-3,
+        "the union [15, 31] is 16 m long, so the bottom is -8: {deepest}"
+    );
+}
+
+/// Без единого разрыва координата всё равно растёт вдоль ленты — по ней идут
+/// штрихи — и нигде не гаснет.
+#[test]
+fn a_ribbon_without_breaks_keeps_the_marking_coordinate_growing() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_ribbon_broken(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        2.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+        [RibbonCap::Butt; 2],
+        RibbonBreaks::At(&[]),
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    for (position, ribbon) in builder.positions.iter().zip(coords) {
+        assert!((ribbon[1] - (position[0] + FAR_FROM_BREAKS)).abs() < 1e-3);
+    }
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::map::osm::fixture;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {
@@ -196,6 +197,60 @@ fn sidewalks_belong_to_streets_not_service_roads() {
     assert!(residential < primary);
     assert!(SIDEWALK_WIDTH_RANGE.contains(&residential));
     assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));
+}
+
+#[test]
+fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
+    let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);
+    assert_eq!(
+        lane_count(&street),
+        2,
+        "жилая улица без тега — по полосе в каждую сторону"
+    );
+    street.width = 12.0;
+    assert_eq!(lane_count(&street), 4);
+    street.lanes = Some(3);
+    assert_eq!(lane_count(&street), 3, "тег важнее ширины");
+    street.lanes = Some(8);
+    assert_eq!(lane_count(&street), 4, "полоса у́же 2.5 м не бывает");
+    street.lanes = None;
+    street.oneway = true;
+    street.width = 8.0;
+    assert_eq!(lane_count(&street), 1, "односторонняя жилая — одна полоса");
+    street.width = 16.0;
+    assert_eq!(lane_count(&street), 3);
+    street.roundabout = true;
+    street.lanes = Some(2);
+    assert_eq!(lane_count(&street), 1, "на кольце линий нет");
+}
+
+#[test]
+fn markings_need_a_carriageway_with_two_lanes() {
+    let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let mut street = fixture::street(line.clone(), 8.0);
+    assert_eq!(
+        road_markings(&street),
+        Some(Markings {
+            lanes: 2,
+            oneway: false
+        })
+    );
+    street.oneway = true;
+    assert_eq!(road_markings(&street), None, "одна полоса — делить нечего");
+    street.width = 12.0;
+    assert_eq!(
+        road_markings(&street),
+        Some(Markings {
+            lanes: 2,
+            oneway: true
+        })
+    );
+    assert_eq!(road_markings(&fixture::street(line.clone(), 5.0)), None);
+    assert_eq!(road_markings(&fixture::passage(line.clone(), 8.0)), None);
+    assert!(
+        road_markings(&fixture::bridge(line, 8.0)).is_some(),
+        "мост несёт разметку своей улицы"
+    );
 }
 
 #[test]

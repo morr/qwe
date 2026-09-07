@@ -5,7 +5,7 @@
 //! Базовый цвет по-прежнему вершинный — слитые меши слоёв собираются как и
 //! раньше; шейдер кладёт поверх него процедурный шум по **мировым**
 //! координатам: крупную «облачность» тона, мелкое зерно, крапинки травы, дрейф
-//! ряби на воде и штриховую осевую на проезжей части. Ни текстур, ни
+//! ряби на воде и линии разметки на проезжей части. Ни текстур, ни
 //! художника: вся фактура — функция координаты пикселя, и потому две
 //! перекрывающиеся ленты одного слоя красятся одинаково (стык дорог в узле
 //! остаётся невидимым), а на любом зуме шум либо виден, либо погашен, но
@@ -30,19 +30,16 @@ use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 
 const SHADER_PATH: &str = "shaders/surface.wgsl";
 
-/// Ширина осевой линии разметки, м. На экране линия всё равно не тоньше
-/// ~1.3 px (шейдер расширяет её), так что число задаёт вид вблизи.
-const MARKING_WIDTH: f32 = 0.25;
-/// Штрих и пропуск осевой, м — обычная городская разметка 1.1.
+/// Ширина линии разметки, м — как у настоящей (10–15 см). На экране линия
+/// всё равно не тоньше ~1.3 px (шейдер расширяет её), так что число задаёт
+/// вид вблизи.
+const MARKING_WIDTH: f32 = 0.15;
+/// Штрих и пропуск штриховой линии, м.
 const MARKING_DASH: f32 = 3.0;
 const MARKING_GAP: f32 = 3.0;
-/// Отступ разметки от торца way, м: там перекрёсток (в OSM way почти всегда
-/// рвётся в узле пересечения), и линия, дотянутая до торца, торчала бы языком
-/// на поперечную улицу.
-const MARKING_MARGIN: f32 = 5.0;
-/// Цвет разметки — серый: проезжая часть на карте почти белая, и белая линия
-/// на ней невидима; тёмная читается той же полярностью, что кант.
-const MARKING_COLOR: LinearRgba = LinearRgba::new(0.48, 0.48, 0.48, 0.9);
+/// Цвет разметки — белый, чуть прозрачный: на сером асфальте белая линия
+/// читается, а прозрачность оставляет под ней зерно покрытия.
+const MARKING_COLOR: LinearRgba = LinearRgba::new(0.88, 0.88, 0.86, 0.85);
 
 /// Ползунок Texture по умолчанию — полная фактура.
 pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
@@ -71,12 +68,12 @@ pub struct SurfaceParams {
     pub speckle_threshold: f32,
     /// Скорость дрейфа облачности, м/с — рябь на воде.
     pub drift: f32,
-    /// Осевая разметка: ширина линии (ноль — без разметки), штрих, пропуск,
-    /// отступ от торца ленты, всё в метрах.
+    /// Разметка: ширина линии (ноль — без разметки), штрих и пропуск, м. Где
+    /// линии лежат и где рвутся — в координатах ленты
+    /// (`meshing::ATTRIBUTE_RIBBON`), не здесь.
     pub marking_width: f32,
     pub marking_dash: f32,
     pub marking_gap: f32,
-    pub marking_margin: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
 }
@@ -96,7 +93,6 @@ impl SurfaceParams {
         marking_width: 0.0,
         marking_dash: MARKING_DASH,
         marking_gap: MARKING_GAP,
-        marking_margin: MARKING_MARGIN,
         intensity: SURFACE_TEXTURE_DEFAULT,
     };
 }
@@ -112,9 +108,10 @@ pub enum SurfaceKind {
     Sand,
     /// Площадная вода и русла.
     Water,
-    /// Проезжая часть улицы — с разметкой.
+    /// Проезжая часть улицы — асфальт с разметкой.
     Street,
-    /// Настил моста: асфальт без разметки (в одном меше и улицы, и мостики).
+    /// Настил моста: тот же асфальт с разметкой, в одном меше и улицы, и
+    /// пешеходные мостики (те кода разметки не получают).
     Deck,
     /// Дорожка, тропа.
     Alley,
@@ -199,20 +196,14 @@ impl SurfaceKind {
                 drift: 0.6,
                 ..flat
             },
-            Self::Street => SurfaceParams {
+            // асфальт: заплаты в десятки метров и мелкое зерно покрытия
+            Self::Street | Self::Deck => SurfaceParams {
                 marking_color: Vec4::from_array(MARKING_COLOR.to_f32_array()),
-                mottle_amp: 0.025,
+                mottle_amp: 0.03,
                 mottle_scale: 60.0,
-                grain_amp: 0.03,
-                grain_scale: 2.0,
+                grain_amp: 0.04,
+                grain_scale: 1.2,
                 marking_width: MARKING_WIDTH,
-                ..flat
-            },
-            Self::Deck => SurfaceParams {
-                mottle_amp: 0.025,
-                mottle_scale: 60.0,
-                grain_amp: 0.03,
-                grain_scale: 2.0,
                 ..flat
             },
             Self::Alley => SurfaceParams {
@@ -387,10 +378,11 @@ mod tests {
     }
 
     #[test]
-    fn only_streets_carry_markings() {
+    fn only_carriageways_carry_markings() {
         for kind in SurfaceKind::ALL {
             let marked = kind.params(1.0).marking_width > 0.0;
-            assert_eq!(marked, kind == SurfaceKind::Street, "{kind:?}");
+            let carriageway = matches!(kind, SurfaceKind::Street | SurfaceKind::Deck);
+            assert_eq!(marked, carriageway, "{kind:?}");
         }
     }
 

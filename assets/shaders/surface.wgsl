@@ -40,7 +40,6 @@ struct SurfaceParams {
     marking_width: f32,
     marking_dash: f32,
     marking_gap: f32,
-    marking_margin: f32,
     intensity: f32,
 }
 
@@ -50,8 +49,9 @@ struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
-    // `meshing::ATTRIBUTE_RIBBON`: поперёк ленты (м), до ближайшего торца (м),
-    // полуширина (м), флаг разметки
+    // `meshing::ATTRIBUTE_RIBBON`: поперёк ленты (м), до разрыва разметки (м,
+    // внутри разрыва отрицательно), полуширина (м), код разметки
+    // (полосы · 2 + односторонняя; 0 — без разметки)
     @location(2) ribbon: vec4<f32>,
 }
 
@@ -162,22 +162,36 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         rgb = rgb * (1.0 - k * params.speckle_amp * dots);
     }
 
-    // разметка проезжей части: штриховая осевая по локальным координатам
-    // ленты. Линия не у́же ~1.3 px (тоньше — мерцает при сдвиге камеры), со
-    // сглаженным краем; гаснет у торцов way (там перекрёсток) и когда сама
-    // дорога на экране у́же пары десятков пикселей
-    if params.marking_width > 0.0 && in.ribbon.w > 0.5 {
+    // разметка проезжей части по локальным координатам ленты: линия на
+    // каждой границе полос — штриховая, а осевая многополосной двусторонней
+    // сплошная. Линия не у́же ~1.3 px (тоньше — мерцает при сдвиге камеры),
+    // со сглаженным краем; гаснет в разрыве у перекрёстка (`to_break` < 0) и
+    // когда полоса на экране у́же десятка пикселей
+    let mode = u32(round(max(in.ribbon.w, 0.0)));
+    if params.marking_width > 0.0 && mode >= 4u {
+        let lanes = f32(mode >> 1u);
+        let oneway = (mode & 1u) == 1u;
         let across = in.ribbon.x;
-        let to_end = in.ribbon.y;
+        let to_break = in.ribbon.y;
         let half_width = in.ribbon.z;
+        let lane_width = 2.0 * half_width / lanes;
+        // ближайшая граница полос, считая от края: 0 и `lanes` — края ленты
+        let boundary = round((across + half_width) / lane_width);
+        let inside = boundary >= 1.0 && boundary <= lanes - 1.0;
+        let to_boundary = abs(across + half_width - boundary * lane_width);
         let line = max(params.marking_width, 1.3 * px);
         let edge = 0.7 * px;
-        let on_line = 1.0 - smoothstep(line * 0.5 - edge, line * 0.5 + edge, abs(across));
-        let dash = dash_distance(to_end, params.marking_dash, params.marking_gap);
-        let on_dash = 1.0 - smoothstep(-edge, edge, dash);
-        let end_fade = smoothstep(params.marking_margin, params.marking_margin + 2.0, to_end);
-        let zoom_fade = smoothstep(14.0, 28.0, 2.0 * half_width / px);
-        let mask = on_line * on_dash * end_fade * zoom_fade * params.marking_color.a;
+        let on_line = 1.0 - smoothstep(line * 0.5 - edge, line * 0.5 + edge, to_boundary);
+        // осевая — граница ровно посередине двусторонней ленты
+        let axis = !oneway && boundary * 2.0 == lanes;
+        let solid = axis && lanes >= 4.0;
+        // штрихи считаются от края разрыва, и первым идёт пропуск: линия не
+        // упирается в перекрёсток штрихом
+        let dash = dash_distance(to_break - params.marking_gap, params.marking_dash, params.marking_gap);
+        let on_dash = select(1.0 - smoothstep(-edge, edge, dash), 1.0, solid);
+        let gap_fade = smoothstep(0.0, 1.0, to_break);
+        let zoom_fade = smoothstep(6.0, 12.0, lane_width / px);
+        let mask = on_line * on_dash * gap_fade * zoom_fade * params.marking_color.a * f32(inside);
         rgb = mix(rgb, params.marking_color.rgb, mask);
     }
 
