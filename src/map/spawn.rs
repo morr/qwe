@@ -123,7 +123,6 @@ pub fn spawn_map(
         &mut materials,
         *road_style,
         &map.roads,
-        &map.rails,
         &map.walls,
     );
 

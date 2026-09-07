@@ -97,8 +97,9 @@ in `CONTEXT.md` and the detail here in the same change.
   kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
   (see **Tram** below — its width from parse is ignored, the zoom LOD picks it),
   **Disused** (`abandoned` / `disused` / `razed` / `dismantled`)
-  is the `Active` ribbon washed out. A tram runs *on* the carriageway, so a
-  gauge-wide ribbon would cover its own street.
+  is the `Active` track overgrown — same construction, weedy palette. A tram runs *on*
+  the carriageway, so a gauge-wide ballast would cover its own street; `Active` and
+  `Disused` get one (see **Rail layers** below — the parsed width is the bed).
   `parse/tags.rs::rail_class` is a
   **whitelist**, so the station vocabulary (`platform`, `station`, `switch`, `signal`,
   `construction`, …) never becomes a line. The rail branch in `parse_way` runs *before*
@@ -300,23 +301,58 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
   rail bridges are out of scope. The curb is not just paint: the navmesh blocks the
   same bands (see **Bridge curbs are impassable** in the navigation-deep skill).
-- **Rail layers** (`map/roads.rs`, same file and the same `RoadLayerTag`, so a style
-  change rebuilds them with the roads) — osm-carto's dashed railway, two merged meshes:
-  a dark bed at `Z_RAIL` (2.4) and a white dash pattern at `Z_RAIL_DASH` (2.5), 6 m on /
-  6 m off, dash width 60% of the bed. Two layers rather than one mesh, for the casing
-  reason inverted: coplanar geometry z-fights, and the dashes must sit above *every*
-  bed. Both above `Z_ROAD` (2) so a track lies on its street, not under it.
-  `MeshBuilder::push_dashes` is the primitive — a single arclength pass emitting
-  `Butt`-capped ribbon chunks, keeping the OSM vertices inside a dash so the pattern
-  turns with the track. A way shorter than one dash still gets one, since most ways in a
-  junction are short and a bare bed reads as a road. Tram ways are skipped here — they
-  have their own module.
+- **Rail layers** (`map/rail.rs`, its own module with its own zoom LOD, like the tram's;
+  it left `map/roads.rs` when it stopped being a line style) — the **track**, not a map
+  symbol: a ballast prism, ties across it and two steel rails on the gauge. Three merged
+  meshes, `RailLayerTag`, all above `Z_ROAD` (2) so a track lies on its street: ballast
+  `Z_RAIL` (2.4), ties `Z_RAIL_TIE` (2.5), steel `Z_RAIL_STEEL` (2.55). Three rather
+  than one, for the casing reason inverted — coplanar geometry z-fights, and a tie must
+  sit above *every* ballast, or a junction of several ways delaminates. Inside the
+  ballast mesh the same rule is push order: **all** shoulders first, then all beds.
+  - **The prism** — the OSM width (rail 5 m, light_rail/subway 4) is the bed; the
+    shoulder under it is `SHOULDER_SCALE` (1.22) of that, darker. It is the slope that
+    separates the track from the ground it runs on; without it the track is a flat ribbon
+    again.
+  - **`RAIL_LODS`** — five buckets over the camera zoom range, and they change the
+    *drawing*, not its size: close up the real thing (ties 2.6 × 0.26 m every 65 cm,
+    gauge 30% of the bed — 1.5 m on a mainline — with 12 cm rails); by 0.26 m/px the two
+    rails no longer separate on screen and are dropped, ties thicken and thin out into
+    hatching; from 0.65 m/px the ties go too and osm-carto's white dash pattern comes
+    back, because a bare grey band reads as another street. `min_bed` floors the ballast
+    width on the last two buckets — 5 m is a pixel at city scale, and the track would
+    vanish before the roads it crosses. The numbers are derived from the screen size at
+    the **worst** (far) edge of each bucket: tie spacing never below ~6 px, no mark below
+    ~1 px. The second number that must hold across buckets is the **tie duty cycle**,
+    ~40% (the real 0.26 m in 0.65) — measured live: at 31% the ties stop being a texture,
+    become sparse marks, and the two white rails outweigh them into a ladder. Both,
+    plus the one-way progression (detail only ever falls away) and that ties and dashes
+    never coexist, are pinned by `rail/tests.rs`.
+  - **What a bucket costs** (Tula, 69 km of non-tram track inside the map, measured on
+    an M1 Max from the `rail meshing:` log line): bucket 4 45 k verts / 1 ms, bucket 2
+    131 k / 3 ms, bucket 1 298 k / 9 ms, bucket 0 673 k / 23 ms — a one-off hitch on the
+    threshold crossing, and ~23 MB of buffer at the deepest bucket. Frame rate stays
+    vsync-capped at 60 there. The 23 ms is what a denser tie step would multiply, so
+    treat bucket 0's 65 cm as the floor.
+  - **`RailZoomBucket`** works like `TramZoomBucket` (not persisted, recomputed each
+    Update via `set_if_neq`, `rebuild_rails` only on a threshold crossing) — a separate
+    resource because the tables' thresholds have nothing in common.
+  - **`MeshBuilder::push_rails`** is the new primitive: two ribbons offset from the
+    centerline by half the gauge, using the very `miter_offsets` that build a ribbon's
+    edge, so the rails hold the gauge through a bend instead of drifting outward at the
+    corner. `push_dashes` (far buckets) and `push_ticks` (ties) are as before.
+  - **No style resource.** Like the tram, rails ignore `RoadStyle` and hardwire
+    `Round` + `Light` with a fixed `RAIL_SMOOTH_WIDTH` (5 m), so the centerline is
+    identical on every bucket — a smoothing knob would slide the track against its own
+    ballast, and an LOD switch would wiggle it.
+  - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
+    steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
+    `Tram` is skipped here, it has its own module.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark
   red, 2GIS blue) and we take 2GIS's blue, since red on this map already means kremlin
   wall. Line and ties share one colour, so both go in one mesh (`TramLayerTag`, `Z_TRAM`
-  2.6 — above the rail dashes at crossings, name `tram`) — self-overlap costs nothing,
+  2.6 — above the rail steel at crossings, name `tram`) — self-overlap costs nothing,
   and there is no white dash layer for a tram. The tie primitive is
   `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
   a perpendicular bar rather than a piece of the path, and the first one is offset half

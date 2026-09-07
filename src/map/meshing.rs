@@ -284,6 +284,44 @@ impl MeshBuilder {
         }
     }
 
+    /// Две нитки рельсов вдоль ломаной: ленты ширины `width` по обе стороны
+    /// осевой, на полколеи от неё. Смещение — тот же miter-офсет, которым
+    /// считается край ленты ([`miter_offsets`]), поэтому нитка повторяет
+    /// изгиб пути без щелей на изломах и не разъезжается с балластом.
+    ///
+    /// Торцы — `Butt`: нитка кончается там же, где way, а полудиск на
+    /// сантиметровой ленте не виден и стоит лишнего веера.
+    pub fn push_rails(
+        &mut self,
+        points: &[Vec2],
+        gauge: f32,
+        width: f32,
+        color: LinearRgba,
+        join: RibbonJoin,
+    ) {
+        if gauge <= 0.0 || width <= 0.0 {
+            return;
+        }
+        // склейка по колее, а не по ширине нитки: нитка тоньше сантиметров, и
+        // по её мерке в путь прошли бы точки, вырождающие нормаль офсета
+        let path = merge_close_points(points, false, gauge / 4.0);
+        if path.len() < 2 {
+            return;
+        }
+
+        let offsets = miter_offsets(&path, false, gauge / 2.0);
+        let mut line = Vec::with_capacity(path.len());
+        for side in [1.0_f32, -1.0] {
+            line.clear();
+            line.extend(
+                path.iter()
+                    .zip(&offsets)
+                    .map(|(point, offset)| *point + *offset * side),
+            );
+            self.push_ribbon(&line, false, width, color, join, RibbonCap::Butt);
+        }
+    }
+
     /// Лента постоянной ширины вдоль ломаной: `join` — чем закрыт излом,
     /// `cap` — чем закрыты торцы разомкнутой ленты.
     ///

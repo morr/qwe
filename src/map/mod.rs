@@ -2,6 +2,7 @@ mod buildings;
 pub mod footprint;
 mod meshing;
 pub mod osm;
+mod rail;
 mod roads;
 mod spawn;
 mod tram;
@@ -37,6 +38,7 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
+            .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
@@ -57,12 +59,14 @@ impl Plugin for MapPlugin {
                 // уже собранному набору и до крон. Сами кроны спавнит
                 // `rebuild_trees` — в свежем мире деспавнить ему нечего, а спавн
                 // из одного места избавляет `spawn_map` от стиля деревьев и поля
-                // хвои разом. Трамвай спавнит `rebuild_tram` по той же причине:
-                // ступень зума остаётся его личным делом
+                // хвои разом. Рельсы и трамвай спавнят `rebuild_rails` /
+                // `rebuild_tram` по той же причине: ступень зума остаётся их
+                // личным делом
                 (
                     trees::recompose_row_trees,
                     trees::build_conifer_field,
                     spawn::spawn_map,
+                    rail::rebuild_rails,
                     tram::rebuild_tram,
                     spawn::rebuild_tree_row_band,
                     trees::rebuild_trees,
@@ -102,8 +106,15 @@ impl Plugin for MapPlugin {
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),
                     // ступень зума считается каждый кадр (одно чтение камеры и
-                    // сравнение), но пересборку трамвая запускает только её
-                    // фактическая смена
+                    // сравнение), но пересборку запускает только её фактическая
+                    // смена. Таблицы у путей и трамвая свои, и пороги в них не
+                    // совпадают, поэтому и ступени считаются порознь
+                    (
+                        rail::update_rail_zoom_bucket,
+                        rail::rebuild_rails.run_if(retuned::<rail::RailZoomBucket>),
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     (
                         tram::update_tram_zoom_bucket,
                         tram::rebuild_tram.run_if(retuned::<tram::TramZoomBucket>),

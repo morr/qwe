@@ -51,7 +51,7 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
   → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
-  casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5) →
+  casings → bridges → rail ballast → rail ties → rail steel → tram → corpses → portal → buildings (5) →
   units → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
@@ -136,7 +136,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     deletion is a hole in the navmesh.
   - **RailLine** — `railway=*` centerline; `RailKind: Active | Tram | Disused` *is* the
     drawing style; underground track is dropped. The rail branch of `parse_way` runs before
-    `highway` and falls through — a way can be both street and track.
+    `highway` and falls through — a way can be both street and track. A non-tram track is
+    drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
+    and two steel rails on the gauge, thinned out by **rail zoom LOD** into osm-carto's
+    dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
@@ -185,8 +188,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   planting and entrances), **BuildingHeightMode**, **TreeStyle**, **TreeRowStyle**,
   **ConiferNoiseStyle**. **`CrownParams` is deliberately not one of them** — a plain
   struct, no BRP, no prefs; only the `tree_gallery` example varies it. **Bridge / rail /
-  tram layers** have their own z-slots and primitives (`push_dashes`, `push_ticks`, tram
-  zoom LOD).
+  tram layers** have their own z-slots and primitives (`push_dashes`, `push_ticks`,
+  `push_rails`). Rail and tram answer to **no style resource at all** — their geometry is
+  a function of the camera zoom (a **zoom bucket** each, own LOD table), so a smoothing
+  knob that moved the centerline would slide the track against its own ballast.
 
 ## Navigation
 
