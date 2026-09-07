@@ -18,12 +18,42 @@ pub enum AreaKind {
     Sand,
 }
 
+/// Назначение здания по `building=*` (и `amenity=*`, когда сам тег — просто
+/// `yes`) — класс **отрисовки**: у каждого своя пара цветов крыши и стены,
+/// чтобы частный сектор, многоэтажки, промзона и церкви читались с общего
+/// плана. Не «вид опорного пункта» из `ROADMAP.md` — тот считается от
+/// `amenity` своей веткой. Полный словарь значений — `parse/tags.rs::building_use`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BuildingUse {
+    /// Частный дом: `house`, `detached`, `terrace`, `bungalow`, дача, изба.
+    House,
+    /// Многоквартирный: `apartments`, `residential`, `dormitory`, гостиница.
+    Apartments,
+    /// Торговля и офисы: `commercial`, `retail`, `office`, `kiosk`, супермаркет.
+    Commercial,
+    /// Промзона и склады: `industrial`, `warehouse`, `factory`, ангар, депо.
+    Industrial,
+    /// Гаражи, сараи, навесы: мелкие тёмные коробки.
+    Garage,
+    /// Храм: `church`, `cathedral`, `chapel`, мечеть, синагога, `place_of_worship`.
+    Church,
+    /// Общественное: школа, больница, вуз, вокзал, музей, администрация.
+    Public,
+    /// `building=yes` и всё, чему пары цветов не назначено; у воды и парков
+    /// тоже это значение.
+    #[default]
+    Other,
+}
+
 /// Полигон с дырками. Кольца открытые: последняя точка не повторяет первую.
 #[derive(Debug, Clone)]
 pub struct PolyArea {
     pub outer: Vec<Vec2>,
     pub holes: Vec<Vec<Vec2>>,
     pub kind: AreaKind,
+    /// Назначение здания (`parse/tags.rs::building_use`); у всего, что не
+    /// здание, — [`BuildingUse::Other`].
+    pub building_use: BuildingUse,
     /// Высота здания в метрах из OSM (`parse::building_height`). `None` —
     /// тегов нет либо это не здание: у воды, парков и лугов высоты не бывает.
     /// Покрытие сильно зависит от города (Берлин 80%, Токио 5%), поэтому
@@ -560,6 +590,7 @@ mod tests {
                 Vec2::new(4.0, 6.0),
             ]],
             kind: AreaKind::Building,
+            building_use: BuildingUse::Other,
             height: None,
             entrances: Vec::new(),
         };

@@ -70,7 +70,9 @@ in `CONTEXT.md` and the detail here in the same change.
   but Wood stays open ground — that is what makes the open half of a park read as a
   field, the way it does on OSM.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
-  tag is there). See **Building height** below. `entrances: Vec<Vec2>` — the OSM
+  tag is there). See **Building height** below. `building_use: BuildingUse` — the
+  drawing class (`Other` on everything that is not a building), see **Building use**
+  below. `entrances: Vec<Vec2>` — the OSM
   doors on this building's outline, empty for most buildings; see
   `references/entrances.md`.
 - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
@@ -164,6 +166,18 @@ in `CONTEXT.md` and the detail here in the same change.
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
   order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
   default. Coverage is logged per city on load (`N buildings (M with height)`).
+- **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
+  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
+  (roof, wall) colour pair in `map/buildings/mod.rs::base_colors`. Two sources in order:
+  `building=*` when the value says something (`house`, `apartments`, `garages`, `church`,
+  `school`, …), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
+  `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
+  + `amenity=…`. Anything outside the vocabulary is `Other`, the historical beige; the
+  vocabulary covers what a city carries by the hundreds, not the OSM wiki. Tula: `yes`
+  4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
+  garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
+  red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it),
+  so a pitched roof, when it comes, has to be inferred from class and footprint size.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS

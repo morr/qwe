@@ -1,6 +1,6 @@
 use super::build::{inflate_ring, ribbon_outline};
 use super::*;
-use crate::map::osm::model::{RoadClass, WaterKind};
+use crate::map::osm::model::{BuildingUse, RoadClass, WaterKind};
 use crate::settings::{
     MAP_SIZE, POLYMESH_CHUNK_TARGET_METERS, POLYMESH_FLAT_CHUNK_METERS, POLYMESH_SEARCH_DELTA,
     POLYMESH_SEARCH_STEPS,
@@ -134,6 +134,7 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
         ],
         holes: vec![],
         kind: crate::map::osm::model::AreaKind::Building,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     };
@@ -180,6 +181,7 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
             Vec2::new(1200.0, 1400.0),
         ]],
         kind: crate::map::osm::model::AreaKind::Water,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     };
@@ -192,6 +194,7 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
         ],
         holes: vec![],
         kind: crate::map::osm::model::AreaKind::Building,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     };
@@ -264,6 +267,7 @@ fn a_chunk_fully_covered_by_an_obstacle_builds_an_empty_layer() {
         ],
         holes: vec![],
         kind: crate::map::osm::model::AreaKind::Building,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     };
@@ -402,6 +406,7 @@ fn a_snapped_start_stays_in_the_path_as_its_own_waypoint() {
         ],
         holes: vec![],
         kind: crate::map::osm::model::AreaKind::Building,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     };

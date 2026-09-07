@@ -13,10 +13,18 @@
 
 ## Что рисуется сейчас
 
-Здания (+ высота, входы), дороги и аллеи, ж/д пути и трамвай, вода площадная и
-линейная (`waterway=river|stream|brook|canal|ditch|drain|weir`), парки, леса,
-луга, песок, стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
+Здания (+ высота, входы, назначение по `building=*` / `amenity=*` —
+`parse/tags.rs::building_use`, палитра по классу), дороги и аллеи, ж/д пути и
+трамвай, вода площадная и линейная
+(`waterway=river|stream|brook|canal|ditch|drain|weir`), парки, леса, луга,
+песок, стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
 одиночные ноды `natural=tree`).
+
+Значения `building=*` по кешу Тулы v7 (7465 зданий): `yes` 4004, `house` 2249,
+`apartments` 744, `commercial` 89, `retail` 64, `garages` 42, `service` 39,
+`garage` 32, `industrial` 31, `construction` 22, `church` 17, `school` 16,
+`office` 12, `hospital` 11, `dormitory` 10. `roof:shape` есть у 283 (`flat` 165,
+`hipped` 84), `building:colour` / `roof:colour` у 95 — оба пока не читаются.
 
 | | Тула | Париж | Берлин | Лондон | Токио | NY |
 |---|---|---|---|---|---|---|

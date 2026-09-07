@@ -128,7 +128,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand`; **only Wood carries trees**. Buildings carry
-    `height: Option<f32>` and `entrances: Vec<Vec2>`.
+    `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them).
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
@@ -149,6 +149,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal — every
   consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m). Coverage varies wildly by city
   (NY 97 % … Tokyo 5 %) and is logged on load.
+- **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
+  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
+  Other`, from `building=*` and, under a plain `building=yes`, from `amenity=*`. Each class
+  owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
+  and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building

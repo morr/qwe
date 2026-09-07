@@ -19,11 +19,30 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{AreaKind, MapData, PolyArea, RoadLine};
+use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::settings::Z_BUILDING;
 
+/// Палитра зданий — пара (крыша, стена) на каждое назначение. Крыша светлее
+/// стены, чтобы стена читалась полосой под ней; тёплые тона у жилья, серые у
+/// промзоны и гаражей, охра у казённых зданий. Храм — единственное исключение
+/// из «крыша светлее»: зелёная крыша на белой стене, как русская церковь на
+/// карте. `Other` — исторический бежевый, в котором раньше стоял весь город.
 const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
 const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
+const HOUSE_ROOF_COLOR: Color = Color::srgb(0.855, 0.655, 0.545);
+const HOUSE_FACADE_COLOR: Color = Color::srgb(0.70, 0.60, 0.50);
+const APARTMENTS_ROOF_COLOR: Color = Color::srgb(0.905, 0.885, 0.845);
+const APARTMENTS_FACADE_COLOR: Color = Color::srgb(0.615, 0.575, 0.515);
+const COMMERCIAL_ROOF_COLOR: Color = Color::srgb(0.845, 0.835, 0.805);
+const COMMERCIAL_FACADE_COLOR: Color = Color::srgb(0.575, 0.565, 0.545);
+const INDUSTRIAL_ROOF_COLOR: Color = Color::srgb(0.745, 0.745, 0.725);
+const INDUSTRIAL_FACADE_COLOR: Color = Color::srgb(0.505, 0.505, 0.49);
+const GARAGE_ROOF_COLOR: Color = Color::srgb(0.70, 0.68, 0.65);
+const GARAGE_FACADE_COLOR: Color = Color::srgb(0.48, 0.46, 0.43);
+const CHURCH_ROOF_COLOR: Color = Color::srgb(0.42, 0.60, 0.56);
+const CHURCH_FACADE_COLOR: Color = Color::srgb(0.93, 0.91, 0.86);
+const PUBLIC_ROOF_COLOR: Color = Color::srgb(0.93, 0.86, 0.66);
+const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.70, 0.62, 0.45);
 const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 
@@ -228,11 +247,21 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     Vec2::new(0.0, height)
 }
 
-/// Базовые цвета крыши и фасада по типу здания.
+/// Базовые цвета крыши и фасада по типу здания: Кремль — свой, остальные по
+/// назначению (`BuildingUse`).
 fn base_colors(building: &PolyArea) -> (Color, Color) {
-    match building.kind {
-        AreaKind::Kremlin => (KREMLIN_ROOF_COLOR, KREMLIN_FACADE_COLOR),
-        _ => (ROOF_COLOR, FACADE_COLOR),
+    if building.kind == AreaKind::Kremlin {
+        return (KREMLIN_ROOF_COLOR, KREMLIN_FACADE_COLOR);
+    }
+    match building.building_use {
+        BuildingUse::House => (HOUSE_ROOF_COLOR, HOUSE_FACADE_COLOR),
+        BuildingUse::Apartments => (APARTMENTS_ROOF_COLOR, APARTMENTS_FACADE_COLOR),
+        BuildingUse::Commercial => (COMMERCIAL_ROOF_COLOR, COMMERCIAL_FACADE_COLOR),
+        BuildingUse::Industrial => (INDUSTRIAL_ROOF_COLOR, INDUSTRIAL_FACADE_COLOR),
+        BuildingUse::Garage => (GARAGE_ROOF_COLOR, GARAGE_FACADE_COLOR),
+        BuildingUse::Church => (CHURCH_ROOF_COLOR, CHURCH_FACADE_COLOR),
+        BuildingUse::Public => (PUBLIC_ROOF_COLOR, PUBLIC_FACADE_COLOR),
+        BuildingUse::Other => (ROOF_COLOR, FACADE_COLOR),
     }
 }
 

@@ -1,3 +1,5 @@
+use bevy::color::Luminance;
+
 use super::arches::*;
 use super::layers::*;
 use super::*;
@@ -19,6 +21,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
         outer,
         holes: Vec::new(),
         kind,
+        building_use: BuildingUse::Other,
         height,
         entrances: Vec::new(),
     }
@@ -95,6 +98,34 @@ fn extrusion_sorts_north_first() {
         sorted[0][1] >= 100.0,
         "north building must be written first"
     );
+}
+
+#[test]
+fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
+    let mut house = building(square(), None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    let mut church = building(square(), None, AreaKind::Building);
+    church.building_use = BuildingUse::Church;
+    let other = building(square(), None, AreaKind::Building);
+    let mut kremlin = building(square(), None, AreaKind::Kremlin);
+    kremlin.building_use = BuildingUse::Church;
+
+    let roof = |b: &PolyArea| roof_color(b, 0, false);
+    assert_ne!(roof(&house), roof(&other));
+    assert_ne!(roof(&church), roof(&house));
+    // Кремль красится по `kind`, назначение его не перекрашивает
+    let kremlin_plain = building(square(), None, AreaKind::Kremlin);
+    assert_eq!(roof(&kremlin), roof(&kremlin_plain));
+    // крыша светлее стены — так стены читаются полосой под крышей. Храм —
+    // намеренное исключение: белые стены под зелёной крышей
+    for b in [&house, &other, &kremlin] {
+        let (roof, facade) = base_colors(b);
+        assert!(
+            roof.luminance() > facade.luminance(),
+            "{:?}",
+            b.building_use
+        );
+    }
 }
 
 #[test]
@@ -342,12 +373,14 @@ fn a_clamped_wall_still_gets_a_proportional_opening() {
 #[test]
 fn an_arch_is_cut_along_the_wall_not_along_the_road() {
     let house = building(square(), Some(15.0), AreaKind::Building);
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+    // `push_arches` — фасадный режим: полоса сдвинута строго вниз. Косой
+    // подъём 2.5D сюда не годится — его x-составляющая растянула бы проём
+    let band = Vec2::new(0.0, -3.0);
     // дорога идёт наискось и коротка: до стены дотягивается один конец
     let slanted = passage(vec![Vec2::new(4.0, -2.0), Vec2::new(9.0, 20.0)], true);
 
     let mut builder = MeshBuilder::default();
-    push_arches(&mut builder, &house, &[&slanted], lift);
+    push_arches(&mut builder, &house, &[&slanted], band);
 
     let span = |pick: fn(&[f32; 3]) -> f32| {
         let values: Vec<f32> = builder.positions_for_test().iter().map(pick).collect();
@@ -407,12 +440,13 @@ fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
 #[test]
 fn an_arch_near_a_corner_is_trimmed_to_the_wall() {
     let house = building(square(), Some(15.0), AreaKind::Building);
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+    // фасадная полоса, как в `an_arch_is_cut_along_the_wall_not_along_the_road`
+    let band = Vec2::new(0.0, -3.0);
     // дорога упирается в южную грань в метре от юго-западного угла
     let road = passage(vec![Vec2::new(1.0, 0.0), Vec2::new(1.0, 12.0)], true);
 
     let mut builder = MeshBuilder::default();
-    push_arches(&mut builder, &house, &[&road], lift);
+    push_arches(&mut builder, &house, &[&road], band);
     assert!(!builder.is_empty());
 
     let xs: Vec<f32> = builder

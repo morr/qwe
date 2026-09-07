@@ -1,6 +1,6 @@
 use super::cohorts::COHORT_ROW_MEAN;
 use super::*;
-use crate::map::osm::model::{RoadClass, RoadLine};
+use crate::map::osm::model::{BuildingUse, RoadClass, RoadLine};
 
 fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
     vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
@@ -11,6 +11,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>) -> PolyArea {
         outer,
         holes: Vec::new(),
         kind: AreaKind::Building,
+        building_use: BuildingUse::Other,
         height,
         entrances: Vec::new(),
     }

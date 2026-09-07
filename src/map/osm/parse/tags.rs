@@ -10,7 +10,9 @@ use std::ops::RangeInclusive;
 
 use bevy::prelude::*;
 
-use crate::map::osm::model::{AreaKind, RailKind, RoadClass, WaterKind, polyline_length};
+use crate::map::osm::model::{
+    AreaKind, BuildingUse, RailKind, RoadClass, WaterKind, polyline_length,
+};
 use crate::map::osm::overpass::Element;
 
 /// Метров на этаж, когда в OSM есть только `building:levels`. Без этого
@@ -43,6 +45,65 @@ const TREE_CROWN_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
 /// водоток, а разметочная линия; шире полусотни — либо опечатка, либо ширина
 /// поймы, а не воды (такое место в OSM размечают полигоном, а не линией).
 const WATER_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=50.0;
+
+/// Назначение здания по `building=*`. Значение `yes` (в Туле 4004 из 7465)
+/// ничего не говорит, и тогда смотрится `amenity=*` того же контура: школа
+/// или больница в OSM почти всегда `building=yes` + `amenity=school`. Всё,
+/// что не в словаре, — [`BuildingUse::Other`]: словарь только для того, что
+/// на карте встречается сотнями, а не для полноты OSM-вики.
+pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
+    let building = tags.get("building").map(String::as_str);
+    let by_building = match building {
+        Some(
+            "house" | "detached" | "semidetached_house" | "terrace" | "bungalow" | "cabin" | "hut"
+            | "farm" | "villa",
+        ) => Some(BuildingUse::House),
+        Some("apartments" | "residential" | "dormitory" | "hotel" | "hostel") => {
+            Some(BuildingUse::Apartments)
+        }
+        Some("commercial" | "retail" | "office" | "supermarket" | "kiosk" | "shop" | "mall") => {
+            Some(BuildingUse::Commercial)
+        }
+        Some(
+            "industrial" | "warehouse" | "factory" | "hangar" | "manufacture" | "service"
+            | "transportation" | "depot" | "storage_tank",
+        ) => Some(BuildingUse::Industrial),
+        Some("garage" | "garages" | "carport" | "shed" | "barn" | "roof") => {
+            Some(BuildingUse::Garage)
+        }
+        Some(
+            "church" | "cathedral" | "chapel" | "temple" | "mosque" | "synagogue" | "monastery"
+            | "religious" | "shrine",
+        ) => Some(BuildingUse::Church),
+        Some(
+            "school" | "hospital" | "university" | "college" | "kindergarten" | "public" | "civic"
+            | "government" | "train_station" | "museum" | "library" | "stadium" | "sports_hall"
+            | "fire_station" | "theatre" | "town_hall" | "courthouse",
+        ) => Some(BuildingUse::Public),
+        _ => None,
+    };
+    if let Some(class) = by_building {
+        return class;
+    }
+    match tags.get("amenity").map(String::as_str) {
+        Some("place_of_worship") => BuildingUse::Church,
+        Some(
+            "school" | "hospital" | "clinic" | "university" | "college" | "kindergarten" | "police"
+            | "fire_station" | "townhall" | "courthouse" | "library" | "theatre"
+            | "community_centre",
+        ) => BuildingUse::Public,
+        _ => BuildingUse::Other,
+    }
+}
+
+/// [`building_use`] только для зданий: у воды и парков назначения нет.
+pub(super) fn area_use(kind: AreaKind, tags: &HashMap<String, String>) -> BuildingUse {
+    if matches!(kind, AreaKind::Building | AreaKind::Kremlin) {
+        building_use(tags)
+    } else {
+        BuildingUse::Other
+    }
+}
 
 /// Классификация элемента по тегам → вид площадного объекта.
 pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
