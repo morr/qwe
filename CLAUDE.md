@@ -303,7 +303,8 @@ step when adding one):
 
 Not world entities, and deliberately without the component: the camera (`camera.rs`), the
 UI panels (`ui/*`, hidden/shown via `GameUiRoot`), the loader screen (`loading.rs`, has
-its own despawn on `PlayPhase::Live`).
+its own despawn on `PlayPhase::Live`), the vignette node (`post.rs`, a UI node that lives
+across cities).
 
 The rule is backed at runtime by `loading.rs::warn_leftover_world_entities`: on every
 entry into `Loading` it warns about anything that still has a `Transform` and is neither a

@@ -40,6 +40,10 @@ in `main.rs`.
   world like a city switch, except the camera stays put. `grid.rs`: `world_to_tile` /
   `tile_center`, for callers with no `Navmesh` at hand. Costs and the chunk scaling —
   **navigation-deep skill**.
+- **Post-processing** (`post.rs`) — the camera renders to an HDR target with **bloom**
+  thresholded at 1.0, so only the portal (its sprite tinted by `PORTAL_GLOW`, above 1.0)
+  glows; tonemapping is off so the map palette is untouched. A full-screen **vignette**
+  is a UI node under the panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
   `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
   — **the edge counts as inside**. Five visibility gates use it and **each keeps its own

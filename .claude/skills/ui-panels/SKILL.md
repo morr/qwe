@@ -51,6 +51,12 @@ did not fit 1080 px and ran off the top of the screen.
   enum exists so a section's place cannot be forgotten, and sorting a slotless one to the
   top would show that mistake as a mysteriously first panel body. `UiBuildSet` chains
   `Shell → Sections → Sort`.
+- **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
+  `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
+  `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,
+  `Pickable::IGNORE` keeps it out of `HoverMap` — without that it would be "a UI node
+  under the cursor" everywhere and `pointer_over_ui` would hand the whole map to the UI.
+  Not a `GameUiRoot`: it stays over the loader screen too. Spawned once at `Startup`.
 
 ## Panels
 
