@@ -73,7 +73,10 @@ QWE is a 2D demon-invasion simulation prototype built with **Bevy 0.19** (Rust, 
 2024): the Tula city center generated from OpenStreetMap data, 20 000 wandering humans,
 demons spawning from a portal. ECS with a plugin-based modular design; the simulation
 runs in `FixedUpdate`, the world spawns in `OnEnter(AppState::Playing)` after the OSM
-map loads. Full domain picture — `CONTEXT.md`.
+map loads. Full domain picture — `CONTEXT.md`. Where it is heading as a game — the
+pillars, the milestones and the open decisions — `VISION.md` (in Russian, by the
+author's choice; its candidate terms enter `CONTEXT.md` only with the code that carries
+them).
 
 ## Reference Points
 

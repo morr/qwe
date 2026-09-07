@@ -12,7 +12,8 @@ cache); later runs are offline. Deleting the cache file forces a re-download.
 
 Domain glossary and invariants live in [`CONTEXT.md`](CONTEXT.md), the OSM coverage audit
 in [`.claude/skills/osm-map/references/osm-coverage.md`](.claude/skills/osm-map/references/osm-coverage.md),
-working conventions in [`CLAUDE.md`](CLAUDE.md).
+working conventions in [`CLAUDE.md`](CLAUDE.md). Where the prototype is heading as a
+game — the design vision, milestones and open decisions — is [`VISION.md`](VISION.md).
 
 ## Examples
 
