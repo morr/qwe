@@ -289,6 +289,7 @@ requests plus the average search time, already computed by the app.
 $b res set DebugDoors .0 true         # tuple structs: field .0
 $b res set DebugGrid .0 true
 $b res set DebugNavmesh .0 true       # grid overlay: the `Show` row under Algo: Navmesh
+$b res set DebugDistricts .0 true     # district overlay (hotkey T); `res get Districts` for the model
 $b res set PolymeshDebug .enabled true            # Algo: Navmesh (false) ⇄ Polymesh (true)
 $b res set PolymeshDebug .show false              # polymesh overlay off, routing untouched
 $b res set DrawMovePaths .0 true
@@ -306,7 +307,7 @@ $b res set IndustryStyle .visible true            # промзона: цилин
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
-Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the
+Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `T` districts, `N` the
 navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
 `=`/`-` speed. The bottom-left button row has the layer toggles, the **Navigation**
 panel above it picks the pathfinding backend (`Algo`) and shows only that backend's

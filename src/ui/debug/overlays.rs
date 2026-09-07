@@ -9,17 +9,33 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PrimaryWindow;
 
-use super::{DebugConiferNoise, DebugNavmesh};
+use super::{DebugConiferNoise, DebugDistricts, DebugNavmesh};
 use crate::camera::Viewport;
+use crate::district::{DistrictId, Districts};
 use crate::grid::tile_center;
 use crate::loading::AppState;
 use crate::map::ConiferField;
 use crate::map::osm::MapData;
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
-use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
+use crate::settings::{
+    DISTRICT_LABEL_METERS, MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, Z_DISTRICT_OVERLAY, grid_size,
+    navtile_size,
+};
 
 #[derive(Component)]
 pub(super) struct NavmeshOverlayMarker;
+
+/// Слой районов. Под что нарисован, не хранит: `Districts` меняется только со
+/// сменой мира, и слой пересобирается по `resource_changed` — раз на загрузку.
+#[derive(Component)]
+pub(super) struct DistrictOverlayMarker;
+
+/// Прозрачность слоя районов: границы должны читаться, а дома под ними —
+/// оставаться различимыми.
+const DISTRICT_OVERLAY_ALPHA: f32 = 0.45;
+/// Шаг оттенка между соседними по номеру районами — золотой угол: номера
+/// раздаются обходом тайлов, и соседи по карте часто соседи по номеру.
+const DISTRICT_HUE_STEP: f32 = 137.508;
 
 /// Слой поля хвои и то, под что он нарисован: порог и поколение поля.
 /// Пересобирать текстуру, пока оба те же, незачем — правка любого другого поля
@@ -233,5 +249,87 @@ pub(super) fn sync_conifer_noise_overlay(
         Transform::from_translation((MAP_SIZE / 2.0).extend(Z_CONIFER_NOISE_OVERLAY)),
         DespawnOnExit(AppState::Playing),
         Name::new("conifer_noise_overlay"),
+    ));
+}
+
+/// Цвет района: оттенок по номеру, район сердца — светлее и насыщеннее,
+/// район без пути к сердцу — серый.
+fn district_color(id: DistrictId, districts: &Districts) -> Color {
+    let hue = (id as f32 * DISTRICT_HUE_STEP) % 360.0;
+    let district = &districts.districts[id as usize];
+    match district.dist_to_heart {
+        Some(0) => Color::hsl(hue, 1.0, 0.75),
+        Some(_) => Color::hsl(hue, 0.65, 0.5),
+        None => Color::hsl(hue, 0.0, 0.4),
+    }
+}
+
+/// Спавн/despawn слоя районов: один спрайт на всю карту с текстурой в шаг
+/// растра меток (`DISTRICT_LABEL_METERS`, 700 × 463), тексель — цвет района,
+/// вне района — прозрачно; границы читаются сами. Ближайший сосед, а не
+/// линейный сэмплер: край района — граница тайлов, размывать его незачем.
+/// Гизмо здесь не годятся: полторы сотни районов с произвольными границами
+/// по тайлам — это сотни тысяч отрезков за кадр, а текстура пересобирается
+/// за миллисекунды и раз на мир.
+pub(super) fn sync_district_overlay(
+    mut commands: Commands,
+    enabled: Res<DebugDistricts>,
+    districts: Res<Districts>,
+    mut images: ResMut<Assets<Image>>,
+    overlay: Query<Entity, With<DistrictOverlayMarker>>,
+) {
+    for entity in &overlay {
+        commands.entity(entity).despawn();
+    }
+    if !enabled.0 || districts.is_empty() {
+        return;
+    }
+
+    let size = (MAP_SIZE / DISTRICT_LABEL_METERS).ceil().as_uvec2();
+    let mut data = Vec::with_capacity((size.x * size.y * 4) as usize);
+    let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0) as u8;
+    for row in 0..size.y {
+        for column in 0..size.x {
+            // строка 0 текстуры — верх спрайта, то есть максимальный мировой y
+            let position = Vec2::new(column as f32 + 0.5, (size.y - 1 - row) as f32 + 0.5)
+                * DISTRICT_LABEL_METERS;
+            match districts.district_at(position) {
+                Some(id) => {
+                    let color = district_color(id, &districts).to_srgba();
+                    data.extend_from_slice(&[
+                        byte(color.red),
+                        byte(color.green),
+                        byte(color.blue),
+                        byte(DISTRICT_OVERLAY_ALPHA),
+                    ]);
+                }
+                None => data.extend_from_slice(&[0, 0, 0, 0]),
+            }
+        }
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+
+    commands.spawn((
+        DistrictOverlayMarker,
+        Sprite {
+            image: images.add(image),
+            custom_size: Some(MAP_SIZE),
+            ..default()
+        },
+        Transform::from_translation((MAP_SIZE / 2.0).extend(Z_DISTRICT_OVERLAY)),
+        DespawnOnExit(AppState::Playing),
+        Name::new("district_overlay"),
     ));
 }

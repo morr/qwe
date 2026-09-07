@@ -1270,6 +1270,12 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   from the heart's district; `None` = unreachable). **`district_at(pos)`** answers from
   the **label raster** — one label per `DISTRICT_LABEL_METERS` (8 m) cell, the district
   of the navtile at the cell's centre — O(1), no per-navtile storage.
+  **DistrictCensus** (resource) — living humans per district, recounted every
+  `DISTRICT_CENSUS_TICKS` (64, one sim second) in `SimSet::SpatialRebuild` on the
+  `SimTick` phase (so a replay counts on the same ticks); `sim/census_ms` measures it.
+  The **district overlay** (`DebugDistricts`, Debug tab row `Districts`, hotkey `T`) is
+  the label raster as one 8 m/texel sprite — hue by district id, the heart's district
+  brighter, unreachable ones grey.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built

@@ -12,11 +12,19 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use bevy::diagnostic::Diagnostics;
 use bevy::math::DVec2;
 use bevy::prelude::*;
 
+use crate::determinism::{SimPipeline, SimTick};
+use crate::diagnostics::{SIM_CENSUS_MS, measure_ms};
+use crate::human::Human;
+use crate::movement::SimPosition;
 use crate::navigation::Navmesh;
-use crate::settings::{DISTRICT_GRID, DISTRICT_LABEL_METERS, DISTRICT_MIN_AREA, MAP_SIZE};
+use crate::settings::{
+    DISTRICT_CENSUS_TICKS, DISTRICT_GRID, DISTRICT_LABEL_METERS, DISTRICT_MIN_AREA, MAP_SIZE,
+};
+use crate::spatial::SimSet;
 
 /// Номер района — индекс в [`Districts::districts`].
 pub type DistrictId = u16;
@@ -282,12 +290,56 @@ impl Districts {
     }
 }
 
+/// Перепись: живых людей в каждом районе, индекс — [`DistrictId`]. Считается
+/// раз в [`DISTRICT_CENSUS_TICKS`] проходом по всем людям через
+/// [`Districts::district_at`]; читают её скверна и HUD. Не состояние прогона:
+/// пересчитывается сама через секунду после любого рестарта.
+#[derive(Resource, Debug, Default, Reflect)]
+#[reflect(Resource)]
+pub struct DistrictCensus {
+    pub humans: Vec<u32>,
+}
+
+/// Перепись по тику симуляции, а не по своему счётчику: [`SimTick`]
+/// сбрасывается на `WorldStarted`, так что фаза переписи в повторе прогона та
+/// же, что в первом, — иначе скверна, которая её читает, разошлась бы с
+/// отпечатком. 20 000 чтений позиции плюс столько же выборок из растра раз в
+/// секунду симуляции; цена — `sim/census_ms`.
+fn census_districts(
+    tick: Res<SimTick>,
+    districts: Res<Districts>,
+    mut census: ResMut<DistrictCensus>,
+    humans: Query<&SimPosition, With<Human>>,
+    mut diagnostics: Diagnostics,
+) {
+    if !tick.0.is_multiple_of(DISTRICT_CENSUS_TICKS) {
+        return;
+    }
+    let started = std::time::Instant::now();
+    census.humans.clear();
+    census.humans.resize(districts.len(), 0);
+    for position in &humans {
+        if let Some(id) = districts.district_at(position.0) {
+            census.humans[id as usize] += 1;
+        }
+    }
+    measure_ms(&mut diagnostics, &SIM_CENSUS_MS, started);
+}
+
 pub struct DistrictPlugin;
 
 impl Plugin for DistrictPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Districts>()
-            .init_resource::<Districts>();
+            .register_type::<DistrictCensus>()
+            .init_resource::<Districts>()
+            .init_resource::<DistrictCensus>()
+            .add_systems(
+                FixedUpdate,
+                census_districts
+                    .in_set(SimSet::SpatialRebuild)
+                    .in_set(SimPipeline::BothModes),
+            );
     }
 }
 

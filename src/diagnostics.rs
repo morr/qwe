@@ -53,6 +53,10 @@ pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms")
 /// раза в кадр» (`movement/separation/`), так что прогонов ~60 в секунду
 /// против ~64 × time_scale тиков у остальных `sim/*_ms`.
 pub const SIM_SEPARATION_MS: DiagnosticPath = DiagnosticPath::const_new("sim/separation_ms");
+/// Перепись людей по районам (`district::census_districts`) — раз в
+/// `DISTRICT_CENSUS_TICKS`, а не каждый тик, так что среднее по истории
+/// занижено против цены одного прохода.
+pub const SIM_CENSUS_MS: DiagnosticPath = DiagnosticPath::const_new("sim/census_ms");
 
 /// Сглаженная цена **всего** тика — то, чем регулятор скорости объясняет своё
 /// решение (`sim_time::SimLoad`). Сумма `sim/*_ms` выше её не заменяет: она
@@ -103,6 +107,7 @@ impl Plugin for GameDiagnosticsPlugin {
         .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_SEPARATION_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_CENSUS_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_TICK_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_WAIT_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_WAIT_PEAK_MS).with_suffix(" ms"))

@@ -52,7 +52,10 @@ snapped portal and heart — see the `world-lifecycle` skill for the thread):
 
 Cost: one pass over all tiles plus the border pass — the same order as the prune BFS;
 logged as `districts: N in …` on the load thread. Memory during the build: a `u16` per
-navtile (10 MB at 2 m, 41 MB at 1 m), freed with the thread.
+navtile (10 MB at 2 m, 41 MB at 1 m), freed with the thread. Tula on the slice frame,
+2 m navtile: **161 districts in 109 ms** (prune took 71 ms on the same load), the
+portal's district 9 hops from the heart's; on the overlay the Упа reads as a colour break
+everywhere but at the bridges.
 
 **What it is not.** Not run state — a restart keeps it; a city switch or a navtile
 change reloads the world, so it is rebuilt with the navmesh. Not a pathfinding
@@ -76,10 +79,35 @@ differ yet are neighbours (through the deck). On `tiny_city`: a cell without a b
 its banks in two districts that are **not** neighbours; the cell with the bridge has both
 banks in one district.
 
+## Census (`DistrictCensus`)
+
+Living humans per district, `Vec<u32>` indexed by `DistrictId`. `census_districts` runs
+in `FixedUpdate`, `SimSet::SpatialRebuild`, `SimPipeline::BothModes`, and does its pass
+only when `SimTick % DISTRICT_CENSUS_TICKS == 0` (64 ticks, one simulated second): a full
+`Query<&SimPosition, With<Human>>` walk with a `district_at` lookup each — 20 000 reads
+and 20 000 raster reads per simulated second, measured as `sim/census_ms`. It keys on
+`SimTick` rather than a `Local` counter on purpose: the tick resets on `WorldStarted`, so
+a restart replays the census on the same ticks, and corruption (which will read it)
+stays inside the run fingerprint. Not run state — it recounts itself within a second of
+any restart, so it has no `WorldStarted` observer.
+
+## Debug overlay (`ui/debug/overlays.rs::sync_district_overlay`)
+
+`DebugDistricts` (Debug tab, row `Districts`; hotkey `T`; persisted like the other
+toggles). One sprite over `MAP_SIZE` with a 700 × 463 texture — one texel per label-raster
+cell — sampled `nearest`, at `Z_DISTRICT_OVERLAY` (5.35: above the grid-navmesh fill at
+5.2 and the polymesh overlay at 5.3, below every unit). Texel colour: hue from the
+district id stepped by the golden angle (ids are handed out in tile-scan order, so map
+neighbours are often id neighbours), the heart's district lighter and fully saturated,
+a district with no path to the heart grey; no district — transparent. Rebuilt on
+`resource_changed` of the toggle or of `Districts` — the resource arrives with the world,
+so the first `Playing` frame rebuilds it without an `OnEnter` registration. Gizmos were
+rejected: ~150 districts with tile-accurate borders are hundreds of thousands of segments
+per frame, the texture is a millisecond once per world.
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: the district **census** and the debug
-overlay (`T`), **corruption** (`SimSet::Territory`), **bastions** with their quota and the
-`Stronghold` top-up, `Health`/`Attack`, demon kinds, souls, the outcome. Each lands here
-with its mechanism as it is written; until then `ROADMAP.md` is the only description and
-it is a plan, not a record.
+The roadmap's next steps on this layer, in order: **corruption** (`SimSet::Territory`),
+**bastions** with their quota and the `Stronghold` top-up, `Health`/`Attack`, demon
+kinds, souls, the outcome. Each lands here with its mechanism as it is written; until
+then `ROADMAP.md` is the only description and it is a plan, not a record.
