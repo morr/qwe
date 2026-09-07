@@ -2,9 +2,11 @@ use bevy::color::Luminance;
 
 use super::arches::*;
 use super::layers::*;
+use super::roofs::*;
 use super::*;
 use crate::map::SHADOW_DIR;
 use crate::map::osm::RoadClass;
+use crate::map::osm::model::signed_ring_area;
 use crate::settings::ARCH_HEIGHT;
 
 fn square() -> Vec<Vec2> {
@@ -153,6 +155,111 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
             b.building_use
         );
     }
+}
+
+fn oblong(width: f32, length: f32) -> Vec<Vec2> {
+    vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(length, 0.0),
+        Vec2::new(length, width),
+        Vec2::new(0.0, width),
+    ]
+}
+
+#[test]
+fn a_gable_goes_on_houses_and_small_boxes_only() {
+    let mut house = building(oblong(8.0, 600.0), None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    assert!(is_gabled(&house), "a house of any size");
+    let small = building(square(), None, AreaKind::Building);
+    assert!(is_gabled(&small), "an untagged small box");
+    let big = building(oblong(20.0, 20.0), None, AreaKind::Building);
+    assert!(!is_gabled(&big), "an untagged big box");
+    let mut flats = building(square(), None, AreaKind::Building);
+    flats.building_use = BuildingUse::Apartments;
+    assert!(!is_gabled(&flats));
+    let mut yard = house.clone();
+    yard.holes.push(vec![
+        Vec2::new(4.0, 2.0),
+        Vec2::new(6.0, 2.0),
+        Vec2::new(6.0, 4.0),
+        Vec2::new(4.0, 4.0),
+    ]);
+    assert!(!is_gabled(&yard), "a courtyard has no ridge");
+}
+
+#[test]
+fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
+    // прямоугольник 20 × 6, повёрнутый на 30°, обойдённый по часовой
+    let rotate = |p: Vec2| Vec2::from_angle(30f32.to_radians()).rotate(p);
+    let mut ring: Vec<Vec2> = oblong(6.0, 20.0).into_iter().map(rotate).collect();
+    ring.reverse();
+    let rect = min_area_rect(&ring).unwrap();
+    assert!(
+        (rect[1] - rect[0]).length() > 19.9,
+        "long side first: {rect:?}"
+    );
+    assert!(
+        (rect[2] - rect[1]).length() < 6.1,
+        "short side second: {rect:?}"
+    );
+    assert!(signed_ring_area(&rect) > 0.0, "CCW");
+    // конёк — вдоль длинной оси
+    let mut house = building(ring, None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    let roof = gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, LinearRgba::WHITE).unwrap();
+    let ridge = roof.slopes[0].0[2] - roof.slopes[0].0[3];
+    let long = rect[1] - rect[0];
+    assert!(ridge.normalize().dot(long.normalize()).abs() > 0.999);
+}
+
+#[test]
+fn an_l_shaped_house_keeps_a_flat_roof() {
+    let l_shape = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(12.0, 0.0),
+        Vec2::new(12.0, 5.0),
+        Vec2::new(5.0, 5.0),
+        Vec2::new(5.0, 12.0),
+        Vec2::new(0.0, 12.0),
+    ];
+    let mut house = building(l_shape, None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    assert!(is_gabled(&house));
+    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, LinearRgba::WHITE).is_none());
+}
+
+#[test]
+fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
+    let luminance = |color: LinearRgba| color.red + color.green + color.blue;
+    let mut house = building(oblong(8.0, 20.0), None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    let base = LinearRgba::rgb(0.5, 0.5, 0.5);
+    let roof = gable_roof(&house, Vec2::ZERO, ridge_lift, base).unwrap();
+    // скаты: южный (карниз y = 0) отвёрнут от света, северный повёрнут
+    let (south, north) = (&roof.slopes[0], &roof.slopes[1]);
+    assert_eq!(south.0[0].y, 0.0);
+    assert!(luminance(south.1) < luminance(base));
+    assert!(luminance(north.1) > luminance(base));
+    // конёк поднят по вектору подъёма на масштаб стен
+    let ridge = south.0[3] - Vec2::new(0.0, 4.0);
+    let expected = ridge_lift(ridge_rise(8.0));
+    assert!(ridge.distance(expected) < 1e-4, "{ridge:?} vs {expected:?}");
+    assert!(expected.y > 0.0 && expected.x > 0.0);
+    // конёк — вдоль длинной оси, оба фронтона стоят на торцах
+    for ((a, b), apex) in roof.gables {
+        assert!((b - a).length() < 8.1, "gable on the short side");
+        assert!(apex.distance((a + b) / 2.0 + expected) < 1e-4);
+    }
+}
+
+#[test]
+fn a_house_without_height_is_two_storeys_not_five() {
+    let mut house = building(square(), None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    let other = building(square(), None, AreaKind::Building);
+    assert!(height_or_default(&house) < height_or_default(&other));
+    assert_eq!(height_or_default(&other), DEFAULT_BUILDING_HEIGHT);
 }
 
 #[test]

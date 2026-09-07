@@ -147,13 +147,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     avenues of the selected layout, `composed_for` caches which.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal — every
-  consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m). Coverage varies wildly by city
-  (NY 97 % … Tokyo 5 %) and is logged on load.
+  consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m; a house 6 m, a garage 3 m — by
+  building use). Coverage varies wildly by city (NY 97 % … Tokyo 5 %) and is logged on
+  load.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
   Other`, from `building=*` and, under a plain `building=yes`, from `amenity=*`. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
+- **Gable roof** (`map/buildings/roofs.rs`) — a two-slope roof **inferred**, not read
+  (`roof:shape` is rare): every house and every small untagged box whose outline nearly
+  fills its minimum-area bounding rectangle gets a ridge along the rectangle's long axis;
+  L-shaped and courtyard buildings stay flat. Detail in the `osm-map` skill.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building

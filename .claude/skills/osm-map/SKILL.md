@@ -176,8 +176,11 @@ in `CONTEXT.md` and the detail here in the same change.
   vocabulary covers what a city carries by the hundreds, not the OSM wiki. Tula: `yes`
   4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
   garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
-  red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it),
-  so a pitched roof, when it comes, has to be inferred from class and footprint size.
+  red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
+  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class
+  also picks the **default height** (`buildings/mod.rs::height_or_default`): a house
+  without a tag is 6 m and a garage 3 m, everything else the 15 m five-storey default —
+  most houses carry no height, and at 15 m the outskirts stood as tall as the centre.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS
@@ -403,6 +406,23 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     (z 5.1) draw over nearby lifted roofs.
   - **2.5D+shadows+tint (ExtrusionShadowsTint)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
+  - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
+    `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
+    `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard) gets two slopes instead of a
+    flat roof. The ridge runs along the long axis of the footprint's minimum-area
+    bounding rectangle (`min_area_rect`, edge directions of the ring tried as
+    orientations — no hull needed at 4–20 vertices); the roof is drawn over that
+    rectangle, not the outline (real roofs overhang), which is why it is only applied when
+    the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house stays
+    flat rather than wearing a rectangle. Slope tone: base roof colour mixed toward
+    white/black by the slope's plan normal against `−SHADOW_DIR` (`SLOPE_LIT_MIX` 0.12 /
+    `SLOPE_SHADED_MIX` 0.22), softer than walls. In 2.5D the ridge is lifted a further
+    `ridge_rise(width) = min(width/2 × ROOF_PITCH 0.8, ROOF_RISE_MAX 5 m)` real metres
+    through `ridge_lift` (same `EXTRUDE_SCALE`, no `EXTRUDE_RANGE` clamp), and the two
+    gable triangles are drawn on the visible end walls with the wall's top colour before
+    the slopes. In flat modes the ridge lift is zero and the two shades are all that
+    remains. Verified on Tula's western private sector: red-brown two-storey houses with a
+    visible ridge, the L-shaped ones flat.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment

@@ -8,7 +8,10 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
-use super::{BuildingHeightMode, base_colors, extrusion_dir, extrusion_lift, height_or_default};
+use super::roofs::{gable_roof, is_gabled};
+use super::{
+    BuildingHeightMode, base_colors, extrusion_dir, extrusion_lift, height_or_default, ridge_lift,
+};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
@@ -117,11 +120,20 @@ pub(super) fn facade_and_roof_builders(
         if let Some(passages) = arches.get(&index) {
             push_arches(&mut facades, building, passages, offset);
         }
-        roofs.push_polygon(
-            &building.outer,
-            &building.holes,
-            roof_color(building, index, tinted),
-        );
+        // двускатная крыша в плоском режиме — два ската разного тона в
+        // одной плоскости: конёк не поднят, но дом уже не коробка
+        let color = roof_color(building, index, tinted);
+        let gable = is_gabled(building)
+            .then(|| gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color))
+            .flatten();
+        match gable {
+            Some(roof) => {
+                for (slope, slope_color) in roof.slopes {
+                    roofs.push_quad(slope, slope_color);
+                }
+            }
+            None => roofs.push_polygon(&building.outer, &building.holes, color),
+        }
     }
     (facades, roofs)
 }
@@ -302,17 +314,34 @@ pub(super) fn extrusion_builder(
             }
         }
 
+        let color = roof_color(building, index, tinted);
+        let gable = is_gabled(building)
+            .then(|| gable_roof(building, lift, ridge_lift, color))
+            .flatten();
+        if let Some(roof) = gable {
+            // фронтон — верх торцевой стены, видим по тому же правилу, что
+            // и стена под ним: наружная нормаль торца смотрит против подъёма
+            for ((a, b), apex) in roof.gables {
+                let edge = b - a;
+                if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
+                    continue;
+                }
+                let (_, top) = wall_colors(facade_color, a, b, lift_dir);
+                builder.push_polygon(&[a, b, apex], &[], top);
+            }
+            for (slope, slope_color) in roof.slopes {
+                builder.push_quad(slope, slope_color);
+            }
+            continue;
+        }
+
         let roof_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + lift).collect();
         let roof_holes: Vec<Vec<Vec2>> = building
             .holes
             .iter()
             .map(|hole| hole.iter().map(|p| *p + lift).collect())
             .collect();
-        builder.push_polygon(
-            &roof_outer,
-            &roof_holes,
-            roof_color(building, index, tinted),
-        );
+        builder.push_polygon(&roof_outer, &roof_holes, color);
     }
     builder
 }

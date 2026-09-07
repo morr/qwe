@@ -5,11 +5,13 @@
 //! `BuildingHeightMode` пересобирает только зданиевые слои
 //! (`rebuild_buildings`).
 //!
-//! Геометрия разнесена по двум подмодулям: [`arches`] режет проходы
-//! `building_passage` сквозь стены, [`layers`] собирает сами меши слоёв.
+//! Геометрия разнесена по трём подмодулям: [`arches`] режет проходы
+//! `building_passage` сквозь стены, [`roofs`] ставит двускатные крыши на
+//! малые дома, [`layers`] собирает сами меши слоёв.
 
 mod arches;
 mod layers;
+mod roofs;
 
 use std::ops::RangeInclusive;
 
@@ -49,6 +51,11 @@ const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 /// Высота здания без OSM-данных — пятиэтажка. Через `FACADE_SCALE` даёт
 /// прежние 3 м фасадной полосы, так что режим Facade без высот не меняется.
 const DEFAULT_BUILDING_HEIGHT: f32 = 15.0;
+/// Частный дом и гараж без высоты в OSM — а высоты нет у большинства —
+/// пятиэтажками быть не могут: два этажа и одна коробка. Без этого окраины
+/// в 2.5D стояли того же роста, что и центр.
+const DEFAULT_HOUSE_HEIGHT: f32 = 6.0;
+const DEFAULT_GARAGE_HEIGHT: f32 = 3.0;
 /// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
 /// широкая полоса высотки залезала бы на низкого соседа.
 const Z_FACADE: f32 = Z_BUILDING - 0.1;
@@ -232,9 +239,14 @@ pub fn rebuild_buildings(
     );
 }
 
-/// Высота здания с дефолтом — `None` в OSM это норма, а не ошибка.
+/// Высота здания с дефолтом по назначению — `None` в OSM это норма, а не
+/// ошибка.
 fn height_or_default(building: &PolyArea) -> f32 {
-    building.height.unwrap_or(DEFAULT_BUILDING_HEIGHT)
+    building.height.unwrap_or(match building.building_use {
+        BuildingUse::House => DEFAULT_HOUSE_HEIGHT,
+        BuildingUse::Garage => DEFAULT_GARAGE_HEIGHT,
+        _ => DEFAULT_BUILDING_HEIGHT,
+    })
 }
 
 /// На сколько в этом режиме поднята крыша относительно настоящего контура.
@@ -252,7 +264,20 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     }
     let height = (height_or_default(building) * EXTRUDE_SCALE)
         .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    Vec2::new(EXTRUDE_SKEW * height, height)
+    oblique_lift(height)
+}
+
+/// Сдвиг на карте для `drawn` нарисованных метров высоты: вверх и на
+/// `EXTRUDE_SKEW` вправо.
+fn oblique_lift(drawn: f32) -> Vec2 {
+    Vec2::new(EXTRUDE_SKEW * drawn, drawn)
+}
+
+/// Сдвиг конька над карнизом для `rise` настоящих метров: тот же масштаб,
+/// что у стен, но без `EXTRUDE_RANGE` — обрезка держит стены в разумных
+/// пределах, а конёк и так ограничен `ROOF_RISE_MAX`.
+pub(super) fn ridge_lift(rise: f32) -> Vec2 {
+    oblique_lift(rise * EXTRUDE_SCALE)
 }
 
 /// Единичный вектор подъёма крыши в 2.5D — общий для всех домов, от высоты

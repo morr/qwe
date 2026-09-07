@@ -1,0 +1,155 @@
+//! Двускатные крыши малых домов. `roof:shape` в OSM стоит у 283 зданий Тулы
+//! из 7465, так что форма крыши не читается из тегов, а **выводится**: частный
+//! дом (`BuildingUse::House`) и любая мелкая коробка без назначения получают
+//! два ската, остальное — плоскую крышу. Плоская крыша у частного сектора
+//! была главной причиной, по которой окраины читались как склад контейнеров.
+//!
+//! Конёк идёт вдоль длинной оси минимального описанного прямоугольника
+//! (OBB) контура; крыша рисуется по этому прямоугольнику, а не по контуру, —
+//! у настоящего дома скаты и так нависают над стеной. Чтобы прямоугольник не
+//! торчал из дома буквой Г, крыша ставится только на контур, который его
+//! заполняет почти целиком ([`RECT_FILL_MIN`]); Г-образные и сложные дома
+//! остаются плоскими (straight skeleton — отдельная задача).
+
+use bevy::color::Mix;
+use bevy::prelude::*;
+
+use crate::map::SHADOW_DIR;
+use crate::map::osm::BuildingUse;
+use crate::map::osm::PolyArea;
+use crate::map::osm::model::signed_ring_area;
+
+/// Какую долю своего описанного прямоугольника контур обязан заполнять,
+/// чтобы прямоугольная крыша не торчала из него. Дом с эркером или срезанным
+/// углом проходит, Г-образный (≈0.5–0.7) — нет.
+const RECT_FILL_MIN: f32 = 0.85;
+/// Здание без назначения не крупнее этого, м², считается частным домом:
+/// в Туле `building=yes` стоит на 4004 контурах из 7465, и за окраины
+/// отвечает именно эта половина.
+const SMALL_FOOTPRINT_MAX: f32 = 250.0;
+/// Подъём конька на метр половины ширины дома — тангенс угла ската
+/// (0.8 ≈ 39°). Круче, чем у типовой шиферной крыши: на карте сверху рисуется
+/// доля высоты, и пологий скат вовсе не читался бы.
+const ROOF_PITCH: f32 = 0.8;
+/// Настоящих метров конька над карнизом, не больше: широкий ангар с
+/// пятиметровым коньком ещё дом, с десятиметровым — цирк.
+const ROOF_RISE_MAX: f32 = 5.0;
+/// Насколько скат, повёрнутый к свету, светлее базового тона крыши, а
+/// отвёрнутый — темнее. Мягче стен (`WALL_*_MIX`): крыша смотрит в небо и
+/// освещена вся, разница только в наклоне.
+const SLOPE_LIT_MIX: f32 = 0.12;
+const SLOPE_SHADED_MIX: f32 = 0.22;
+
+/// Двускатная крыша, разложенная на куски для painter's algorithm:
+/// фронтоны рисуются со стенами, скаты — поверх.
+pub(super) struct GableRoof {
+    /// Два ската: четырёхугольник (карниз, карниз, конёк, конёк) и тон.
+    pub slopes: [([Vec2; 4], LinearRgba); 2],
+    /// Два фронтона: торец прямоугольника `(a, b)` на уровне карниза (CCW,
+    /// наружная нормаль — правый перпендикуляр) и вершина конька над ним.
+    pub gables: [((Vec2, Vec2), Vec2); 2],
+}
+
+/// Крыша этого дома — двускатная?
+pub(super) fn is_gabled(building: &PolyArea) -> bool {
+    if !building.holes.is_empty() {
+        return false;
+    }
+    match building.building_use {
+        BuildingUse::House => true,
+        BuildingUse::Other => signed_ring_area(&building.outer).abs() <= SMALL_FOOTPRINT_MAX,
+        _ => false,
+    }
+}
+
+/// Настоящих метров конька над карнизом для дома шириной `width`.
+pub(super) fn ridge_rise(width: f32) -> f32 {
+    (width / 2.0 * ROOF_PITCH).min(ROOF_RISE_MAX)
+}
+
+/// Двускатная крыша над контуром, поднятым на `lift`; `ridge_lift` — на
+/// сколько выше карниза нарисован конёк (в плоских режимах — ноль, и скаты
+/// отличаются только тоном). `None` — контур не прямоугольный, крыша
+/// остаётся плоской.
+pub(super) fn gable_roof(
+    building: &PolyArea,
+    lift: Vec2,
+    ridge_lift: impl Fn(f32) -> Vec2,
+    base: LinearRgba,
+) -> Option<GableRoof> {
+    let rect = min_area_rect(&building.outer)?;
+    let rect_area = (rect[1] - rect[0]).length() * (rect[2] - rect[1]).length();
+    if rect_area <= 0.0 || signed_ring_area(&building.outer).abs() / rect_area < RECT_FILL_MIN {
+        return None;
+    }
+    let [c0, c1, c2, c3] = rect.map(|corner| corner + lift);
+    let width = (c2 - c1).length();
+    let ridge = ridge_lift(ridge_rise(width));
+    let (r0, r1) = ((c0 + c3) / 2.0 + ridge, (c1 + c2) / 2.0 + ridge);
+
+    // скат c0–c1 смотрит наружу правым перпендикуляром к c0→c1 (CCW-обход),
+    // противоположный — ровно наоборот
+    let long = (c1 - c0).normalize_or_zero();
+    let outward = Vec2::new(long.y, -long.x);
+    Some(GableRoof {
+        slopes: [
+            ([c0, c1, r1, r0], slope_color(base, outward)),
+            ([r0, r1, c2, c3], slope_color(base, -outward)),
+        ],
+        gables: [((c1, c2), r1), ((c3, c0), r0)],
+    })
+}
+
+/// Тон ската по повороту его наружной нормали (в плане) к свету.
+fn slope_color(base: LinearRgba, outward: Vec2) -> LinearRgba {
+    let lit = outward.dot(-SHADOW_DIR);
+    if lit >= 0.0 {
+        base.mix(&LinearRgba::WHITE, lit * SLOPE_LIT_MIX)
+    } else {
+        base.mix(&LinearRgba::BLACK, -lit * SLOPE_SHADED_MIX)
+    }
+}
+
+/// Минимальный по площади описанный прямоугольник кольца, CCW, первое ребро
+/// вдоль длинной оси. У такого прямоугольника одна сторона лежит на ребре
+/// выпуклой оболочки, а рёбра оболочки — подмножество рёбер контура, так что
+/// перебор направлений всех рёбер находит оптимум без построения оболочки:
+/// контуров тысячи, вершин в каждом — единицы.
+pub(super) fn min_area_rect(ring: &[Vec2]) -> Option<[Vec2; 4]> {
+    if ring.len() < 3 {
+        return None;
+    }
+    let mut best: Option<(f32, Vec2, Vec2, Vec2)> = None;
+    for i in 0..ring.len() {
+        let Some(u) = (ring[(i + 1) % ring.len()] - ring[i]).try_normalize() else {
+            continue;
+        };
+        let v = Vec2::new(-u.y, u.x);
+        let (mut u_min, mut u_max, mut v_min, mut v_max) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for point in ring {
+            let (pu, pv) = (point.dot(u), point.dot(v));
+            u_min = u_min.min(pu);
+            u_max = u_max.max(pu);
+            v_min = v_min.min(pv);
+            v_max = v_max.max(pv);
+        }
+        let area = (u_max - u_min) * (v_max - v_min);
+        if best.is_none_or(|(best_area, ..)| area < best_area) {
+            best = Some((area, u, Vec2::new(u_min, v_min), Vec2::new(u_max, v_max)));
+        }
+    }
+    let (_, u, low, high) = best?;
+    let v = Vec2::new(-u.y, u.x);
+    let corner = |pu: f32, pv: f32| u * pu + v * pv;
+    let mut rect = [
+        corner(low.x, low.y),
+        corner(high.x, low.y),
+        corner(high.x, high.y),
+        corner(low.x, high.y),
+    ];
+    // длинная ось первой: у CCW-квадрата сдвиг на одну вершину сохраняет обход
+    if high.x - low.x < high.y - low.y {
+        rect.rotate_left(1);
+    }
+    Some(rect)
+}
