@@ -1252,6 +1252,24 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   `City::heart_hint` is the hint, snapped by the load thread **after** prune to the nearest
   passable tile (no clearance needed — nothing spawns there), so the heart is reachable
   from the portal by construction.
+- **Districts** (resource, `district.rs`; the mechanism — **city-siege skill**) — the
+  coarse partition of walkable ground that corruption, the census and the distance to the
+  heart are counted on. Map-derived, not run state: built by the load thread right after
+  prune from the pruned navmesh and the snapped portal and heart, inserted by `poll_job`,
+  untouched by a restart. A **District** is a **connected component of passable navtiles
+  inside one cell** of `DISTRICT_GRID` (14 × 9, ~400 × 411 m) under 4-adjacency — *not*
+  the cell: a cell cut by the river yields one district per bank, a cell with a bridge
+  yields one, because the deck is passable and joins the banks. So "corruption crosses
+  the Упа only over a bridge" follows from the same navmesh the pawns walk, not from a
+  rule of its own. **Neighbours** are districts with at least one pair of adjacent tiles
+  across a cell border. A **shard** — a component under `DISTRICT_MIN_AREA` (1600 m²,
+  stated in metres so the navtile size does not move it) — is absorbed by the neighbour
+  with the longest shared border, smallest first, to a fixed point. Water, walls and
+  pruned pockets are in no district (`None`). Each district carries `cell`, `tiles`,
+  `centroid`, `neighbours` and **`dist_to_heart`** (BFS hops over the neighbour graph
+  from the heart's district; `None` = unreachable). **`district_at(pos)`** answers from
+  the **label raster** — one label per `DISTRICT_LABEL_METERS` (8 m) cell, the district
+  of the navtile at the cell's centre — O(1), no per-navtile storage.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built

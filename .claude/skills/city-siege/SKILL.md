@@ -1,0 +1,85 @@
+---
+name: city-siege
+description: Use when working on the M1 siege layer of qwe — the districts (district.rs: components inside grid cells, the shard rule, the label raster, dist_to_heart), the district_city fixture, and, as the milestone lands, the corruption spread, the bastions and their quota, souls and the outcome. Deep detail behind CONTEXT.md's Districts entry and ROADMAP.md steps 3–10.
+---
+
+# City siege — deep detail
+
+The detail layer behind the **Districts** entry of `CONTEXT.md` and the M1 steps of
+`ROADMAP.md` («Срез и скверна»). What is here is what the code obeys; what the roadmap
+plans and the code does not yet carry is marked as such. When a mechanism here changes,
+this file changes in the same commit — the term itself goes to `CONTEXT.md`.
+
+## Districts (`district.rs`)
+
+**Why not cells.** The first plan was "a cell is a district, land = has a building or a
+road". Checked against the map it fails M1's own promise: the Упа is 60–100 m wide, and on
+long stretches it lies *inside* a row of 400 × 411 m cells; such a cell has houses on both
+banks, is "land", its neighbours north and south are "land", and corruption would walk
+across the river without a bridge. A finer grid does not help — the river always lies
+inside some cell. Connectivity does (decision 9 of the roadmap).
+
+**Model.** `DISTRICT_GRID` (14 × 9) sets only the *scale*. A **District** is a connected
+component of passable navtiles inside one cell (4-adjacency, on the pruned navmesh —
+`Navmesh::is_passable`). A cell cut by water yields one district per bank; a cell with a
+bridge yields one district, because the deck is passable and joins the banks. Two
+districts are **neighbours** when at least one pair of their tiles is adjacent across a
+cell border. Water, walls and pruned pockets belong to no district.
+
+**Build** (`Districts::build`, load thread, right after `prune_unreachable`, on the
+snapped portal and heart — see the `world-lifecycle` skill for the thread):
+
+1. Flood fill per component with an explicit stack, restricted to tiles of the same cell.
+   The cell of a tile is `tile * DISTRICT_GRID / grid_size` (integer), so the cells share
+   the map evenly instead of leaving a 100 m strip at the top.
+2. Border lengths between components — one pass over the tiles looking right and up; a
+   differing label across an edge is always a cell border, since inside a cell adjacent
+   tiles were filled together.
+3. **Shards.** A component under `DISTRICT_MIN_AREA` (1600 m², stated in **metres** so
+   that the 1 m navtile does not turn a four-times-smaller yard into a shard) is merged
+   into the neighbour with the longest shared border, smallest shard first, repeated to a
+   fixed point; the merge folds the shard's border map into the absorber's. Isolated
+   shards do not exist after prune — everything passable is reachable from the portal,
+   hence borders something. Without this rule the heart would be surrounded by
+   twenty-tile districts each with a bastion quota of its own (step 6).
+4. Dense ids, neighbour lists (sorted, deduplicated), centroid = mean tile centre.
+5. `dist_to_heart` — BFS over the neighbour graph from the heart's district, in hops;
+   `None` where the heart is in no district (snapped into water) or unreachable.
+6. **Label raster** — `DISTRICT_LABEL_METERS` (8 m) → 700 × 463 cells; a cell's label is
+   the district of the navtile at its centre. `district_at(pos)` is an O(1) read of it.
+   A label per navtile (5.2 M at 2 m, 21 M at 1 m) is never stored: components are
+   computed on the full navmesh, but read by position.
+
+Cost: one pass over all tiles plus the border pass — the same order as the prune BFS;
+logged as `districts: N in …` on the load thread. Memory during the build: a `u16` per
+navtile (10 MB at 2 m, 41 MB at 1 m), freed with the thread.
+
+**What it is not.** Not run state — a restart keeps it; a city switch or a navtile
+change reloads the world, so it is rebuilt with the navmesh. Not a pathfinding
+structure — nothing routes over it.
+
+## The fixture: `district_city()` (`map/osm/fixture.rs`)
+
+`tiny_city` cannot host district tests — its banks are empty ground. `district_city` is
+one building over the whole map with yard-holes: four yards in a chain along the south
+(each in its own `DISTRICT_GRID` cell), from the fourth a 100 m strip north across a
+water band crossed by **one** `bridge`, a fifth yard at its end, a sixth to the east —
+the heart. Yards are joined by `passage` roads (arches through the building). A 20 × 20 m
+yard just across the cell border at x = 400, stitched to the first yard by its own
+passage, is the shard.
+
+`district.rs` tests pin: **8 districts** (six yards, the strip splits into a south-bank and
+a north-bank district because the water band straddles a cell row border at y ≈ 822 and
+the deck itself spans both); the portal district is **7 hops** from the heart; the shard
+resolves to the first yard's district; water resolves to `None`; the two bank districts
+differ yet are neighbours (through the deck). On `tiny_city`: a cell without a bridge has
+its banks in two districts that are **not** neighbours; the cell with the bridge has both
+banks in one district.
+
+## Not yet in the code
+
+The roadmap's next steps on this layer, in order: the district **census** and the debug
+overlay (`T`), **corruption** (`SimSet::Territory`), **bastions** with their quota and the
+`Stronghold` top-up, `Health`/`Attack`, demon kinds, souls, the outcome. Each lands here
+with its mechanism as it is written; until then `ROADMAP.md` is the only description and
+it is a plan, not a record.

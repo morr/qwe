@@ -4,6 +4,7 @@ pub mod demon;
 pub mod determinism;
 pub mod dev;
 pub mod diagnostics;
+pub mod district;
 pub mod grid;
 pub mod human;
 pub mod loading;

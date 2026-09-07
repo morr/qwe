@@ -410,6 +410,7 @@ fn poll_job(
             commands.insert_resource(map);
             commands.insert_resource(PortalPos(world.portal));
             commands.insert_resource(crate::portal::HeartPos(world.heart));
+            commands.insert_resource(world.districts);
             *connecting_since = None;
             next.set(AppState::Playing);
             return;

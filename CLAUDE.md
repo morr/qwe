@@ -43,6 +43,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
 | `sim_time.rs` | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs` | `ui-panels` |
+| `district.rs`, and the M1 siege layer as it lands (corruption, bastions, souls, outcome) | `city-siege` |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
 - **Re-check the table when the work spreads to an area you didn't expect at the start** — the misses are never in the module the session is about, always in the one it drifts into (a UI change that ends up moving a threshold, a navigation fix that touches the replay contract).
@@ -68,6 +69,7 @@ The links are absolute on purpose. A relative `../../../zxc` resolves only from 
 - **`world-lifecycle` — before changing how a world comes up or is torn down** (`loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs`): the states and the warmup hold, `SimBootPlugin`, the load thread, the `WorldStarted` seam and its run-state resets, restart slots, the city switch.
 - **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
 - **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `post.rs`, `prefs.rs`): panel internals, the tabbed shell and its section order, the slider/row kits, camera start view, persistence.
+- **`city-siege` — before changing the siege layer of M1** (`district.rs`, and corruption, bastions, souls and the outcome as they land): the district model (components inside cells, the shard rule, the label raster), the `district_city` fixture and what its tests pin, later the corruption spread and the bastion quota.
 
 **Caveat on the `bevy` skill:** it was written for zxc. Its "0.19 facts that get written wrong" section and `references/api_0_19.md` are engine-level and apply here verbatim. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
 

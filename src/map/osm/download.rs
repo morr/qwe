@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use crate::city::City;
+use crate::district::Districts;
 use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
@@ -44,6 +45,8 @@ pub struct LoadedWorld {
     pub map: MapData,
     pub portal: Vec2,
     pub heart: Vec2,
+    /// Районы по пропрунённому navmesh — производная от карты, как и он.
+    pub districts: Districts,
 }
 
 pub enum JobState {
@@ -174,7 +177,27 @@ fn build_navmesh(
         }
     };
 
-    LoadedWorld { map, portal, heart }
+    // районы — по пропрунённому navmesh и снапнутым порталу и сердцу;
+    // миллисекунды, своего состояния экрана загрузки не заслуживают
+    let started = std::time::Instant::now();
+    let districts = Districts::build(&navmesh, portal, heart);
+    info!(
+        "districts: {} in {:?} (heart {:?}, portal {:?} at {:?} steps)",
+        districts.len(),
+        started.elapsed(),
+        districts.heart,
+        districts.portal,
+        districts
+            .portal
+            .and_then(|id| districts.districts[id as usize].dist_to_heart)
+    );
+
+    LoadedWorld {
+        map,
+        portal,
+        heart,
+        districts,
+    }
 }
 
 fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
