@@ -21,8 +21,11 @@ Neighbouring skills: pathfinding, separation and destination slots are `navigati
 ## The fixed step
 
 **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-DemonBehavior → HumanBehavior`. **Demons act before humans so a kill lands before `escape`**
-— a human is never counted both killed and escaped in one tick.
+DemonBehavior → HumanBehavior → Territory`. **Demons act before humans so a kill lands
+before `escape`** — a human is never counted both killed and escaped in one tick.
+`Territory` is the siege layer's slot (corruption, `corruption.rs` — the `city-siege`
+skill): it reads what this tick's behaviour left (the census, the standing bastions) and
+writes only `Corruption`, so it has no ordering edge to `move_moving_entities`.
 
 **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
 interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems mutate

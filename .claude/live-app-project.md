@@ -243,7 +243,7 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 `RequestedAt`, `RetireAt`, `Bastion`, `RuinTag`, `Health`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `HeartPos`, `Districts`,
-`DistrictCensus`, `BastionSites`, `BastionsStanding`, `PathfindingAlgorithm`,
+`DistrictCensus`, `BastionSites`, `BastionsStanding`, `Corruption`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,

@@ -1457,8 +1457,21 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
 **navigation-deep skill**, `references/crowd.md`.
 
 - **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-  DemonBehavior → HumanBehavior`. **Demons act before humans so a kill lands before
-  `escape`** — a human is never counted both killed and escaped in one tick.
+  DemonBehavior → HumanBehavior → Territory`. **Demons act before humans so a kill lands
+  before `escape`** — a human is never counted both killed and escaped in one tick.
+  **Territory** is the corruption step: it reads the census and the standing bastions
+  of this tick and touches no pawn, so it needs no edge to `move_moving_entities`.
+- **Corruption** (resource, `corruption.rs`; mechanism — **city-siege skill**) — the
+  siege field: `progress: Vec<f32>` per district, a district is **corrupted** at `≥ 1`;
+  `to_heart` — hops from the corrupted set to the heart's district over the neighbour
+  graph (bastions count as passable — they can be broken). Run state: reset on
+  `WorldStarted` to zero with the portal's district corrupted, hashed into the run
+  `Fingerprint`. Each tick (`SimSet::Territory`, `PlayPhase::Live`) every uncorrupted
+  district with a corrupted neighbour **and no standing bastion** gains
+  `dt × CORRUPTION_RATE / (1 + humans / CORRUPTION_CROWD_HALF)` (1/30 per second and 50
+  humans: an empty district falls in 30 s, 50 humans stretch it to a minute). Corruption
+  never recedes (holy ground is M7). **DistrictCorrupted { district }** fires on the tick a
+  district crosses 1. The district overlay darkens a district toward purple by progress.
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop`. Systems mutate `SimPosition`, **never
   `Transform.translation.xy`**. `snapshot_previous_sim_positions` runs **before**

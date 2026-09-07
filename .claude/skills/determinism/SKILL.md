@@ -352,7 +352,13 @@ and cannot.
 
 This test is also what holds the **WorldStarted** reset membership from the outside — a
 forgotten reset diverges whether or not anyone wrote it down (see the `world-lifecycle`
-skill). What it cannot see is state invisible to both the simulation and the outcome
+skill). The siege layer's run state rides in the same hash rather than in tests of its own
+(roadmap decision 12): after the pawn rows, `fingerprint` eats `BastionsStanding` (one
+`u16` per district) and `Corruption::progress` (each `f32` in bits), both read with
+`get_resource` so a yard without those plugins still fingerprints. `replay_app` raises
+`DistrictPlugin`, `CombatPlugin`, `BastionPlugin` and `CorruptionPlugin` for exactly that
+reason — their map-derived resources stay empty on the yard, but their resets are then
+inside what the guard sees. What it cannot see is state invisible to both the simulation and the outcome
 counters; such a reset needs its own pin next to its observer (the regulator has one in
 `sim_time`, the frozen `Backend` one in `determinism` — the replay yard pins flat A*, so the
 seeded and the announced snapshots coincide there by construction).

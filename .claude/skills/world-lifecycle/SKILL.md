@@ -103,7 +103,9 @@ share. Fired from exactly **two** places:
 
 **All run state is reset by observers of this event, each living in its owning module** —
 `SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner`,
-`SeparationStats` (the crowd-demo counters). `grep "On<WorldStarted>"` enumerates them.
+`SeparationStats` (the crowd-demo counters), and the siege layer's `BastionsStanding` +
+the in-place bastion heal (`bastion.rs`) and `Corruption` (`corruption.rs`: zero
+everywhere, the portal's district corrupted). `grep "On<WorldStarted>"` enumerates them.
 
 **Membership is not kept by hand.** It is held from the outside by
 `a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares

@@ -161,9 +161,44 @@ run state here and it is in the run fingerprint, so `a_restart_replays_the_run` 
 catch a forgotten reset. The unit test pins ruin → standing −1, no double count, heal
 in place without a respawn.
 
+## Corruption (`corruption.rs`)
+
+`Corruption { progress: Vec<f32>, to_heart: Option<u16> }`, run state. `on_world_started`
+zeroes it and sets the portal's district to 1 — the invasion starts corrupted at the
+portal, on the first tick of every run.
+
+**The step** (`step`, pure — `progress`, the districts, the census, the standing
+bastions, `dt`): snapshot which districts are corrupted at the start of the step; then
+for every uncorrupted district with a corrupted neighbour in that snapshot and
+`standing[d] == 0`, `progress += dt × CORRUPTION_RATE / (1 + humans /
+CORRUPTION_CROWD_HALF)`, clamped to 1. The snapshot is what makes a district corrupted
+*this* step start infecting the *next* one, whatever the index order; the index walk, no
+RNG and district-independent accumulation make it deterministic for free. A short
+`humans` (the census has not run yet) or `standing` reads as zero. Returns the districts
+that crossed 1 this step; `spread_corruption` fires `DistrictCorrupted` for each and
+recomputes `to_heart` — `hops_to_heart`, a BFS from the whole corrupted set, bastions
+passable — only then, ~160 districts per recompute. `Res<Time>` inside `FixedUpdate` is
+`Time<Fixed>`, so `dt` is the tick.
+
+Schedule: `SimSet::Territory` (fourth in the spine, after `HumanBehavior`),
+`SimPipeline::BothModes`, `run_if(in_state(PlayPhase::Live))`. Reads `Districts`,
+`DistrictCensus`, `BastionsStanding`; writes `Corruption`; touches no pawn.
+
+Numbers (all `settings.rs`, all roadmap starting values to be tuned in step 11):
+`CORRUPTION_RATE = 1/30` per second — an empty district falls in 30 s; `CROWD_HALF = 50`
+— 50 humans make it a minute, 200 two and a half. Corruption never recedes (holy ground
+is M7). Tests: the four-district chain (grows only next to the corrupted, held by a
+bastion, halved by 50 humans, the corrupted untouched, crosses 1 exactly once and infects
+onward from the next step) and `district_city` on an empty map: the heart falls after
+`dist_to_heart × 30 s` to within a tick per hop.
+
+**Overlay.** `sync_district_overlay` mixes each district's colour toward
+`CORRUPTION_COLOR` by its progress. It runs every `Playing` frame but rebuilds the
+texture only when a district crosses one of `CORRUPTION_SHADES` (16) steps — the marker
+carries an FNV key of the quantised progress vector — or when `Districts` changes.
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: **corruption** (`SimSet::Territory`),
-`Attack`/`strike`, demon kinds, souls, the outcome. Each lands here with its mechanism as
-it is written; until then `ROADMAP.md` is the only description and it is a plan, not a
-record.
+The roadmap's next steps on this layer, in order: `Attack`/`strike`, demon kinds and the
+Brute ladder, souls, the outcome. Each lands here with its mechanism as it is written;
+until then `ROADMAP.md` is the only description and it is a plan, not a record.

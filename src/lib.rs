@@ -2,6 +2,7 @@ pub mod bastion;
 pub mod camera;
 pub mod city;
 pub mod combat;
+pub mod corruption;
 pub mod demon;
 pub mod determinism;
 pub mod dev;

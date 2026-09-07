@@ -165,13 +165,10 @@ impl Plugin for UiDebugTogglesPlugin {
                         .after(crate::map::trees::rebuild_trees),
                     // районы приезжают ресурсом вместе с миром (`poll_job`), и
                     // первый кадр под `Playing` видит их изменёнными — отдельной
-                    // регистрации на `OnEnter` слою не нужно
-                    sync_district_overlay
-                        .run_if(in_state(AppState::Playing))
-                        .run_if(
-                            resource_changed::<DebugDistricts>
-                                .or_else(resource_changed::<crate::district::Districts>),
-                        ),
+                    // регистрации на `OnEnter` слою не нужно. Каждый кадр, а не
+                    // по `resource_changed`: скверна меняется на каждом тике, и
+                    // «пересобирать ли» слой решает сам, по ступени прогресса
+                    sync_district_overlay.run_if(in_state(AppState::Playing)),
                     toggle_districts
                         .run_if(input_just_pressed(KeyCode::KeyT))
                         .run_if(not(super::typing_in_text_input)),

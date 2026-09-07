@@ -123,6 +123,7 @@ pub fn replay_app(
             crate::district::DistrictPlugin,
             crate::combat::CombatPlugin,
             crate::bastion::BastionPlugin,
+            crate::corruption::CorruptionPlugin,
         ))
         // Что сюда НЕ входит и почему — половина смысла этого списка.
         // `a_restart_replays_the_run` держит членство сбросов `WorldStarted`
@@ -279,6 +280,14 @@ pub fn fingerprint(world: &mut World) -> Fingerprint {
     if let Some(standing) = world.get_resource::<crate::bastion::BastionsStanding>() {
         for count in &standing.0 {
             for byte in count.to_le_bytes() {
+                eat(byte);
+            }
+        }
+    }
+    // скверна — в битах, как позиции: нужна побайтовая одинаковость
+    if let Some(corruption) = world.get_resource::<crate::corruption::Corruption>() {
+        for progress in &corruption.progress {
+            for byte in progress.to_bits().to_le_bytes() {
                 eat(byte);
             }
         }
