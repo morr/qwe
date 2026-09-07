@@ -36,7 +36,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | any git operation — staging, committing, branching, rebasing, history | `git` |
 | running the app, BRP, screenshots, the trace log | `live-app` |
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
-| `map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}` | `osm-map` |
+| `map/osm/*`, `map/{meshing,spawn,surface,roads,tram,trees,buildings}` | `osm-map` |
 | `navigation/*`, `movement/*` (incl. separation, slots, the navtile size) | `navigation-deep` |
 | `rng.rs`, `determinism/*`, `tests/determinism.rs`, anything a replay depends on | `determinism` |
 | `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs` | `species-behavior` |
@@ -57,7 +57,7 @@ Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's 
 
 **Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
-- **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
+- **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,surface,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
 - **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
 - **`species-behavior` — before changing pawn behaviour** (`human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids.

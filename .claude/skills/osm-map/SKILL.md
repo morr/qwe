@@ -260,12 +260,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
   **world position**, so two overlapping ribbons of one layer get the same pixel (the
   junction trick survives). Per `SurfaceKind` (`Ground | Park | Wood | Grass | Sand |
-  Water | Street | Deck | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (three
-  octaves of value noise from `mottle_scale` down, with a per-channel `tint` shift so a lawn
-  goes yellow-green ↔ blue-green, not just light ↔ dark), **grain** (two octaves at
-  `grain_scale`), **speckle** (a thresholded noise field → sparse dark dots, grass tufts and
-  undergrowth on Park/Grass/Wood), **drift** (the mottle slides with `globals.time` — only
-  Water), and the **markings** block (Street only). The zoom rule is one function,
+  Water | Street | Deck | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
+  octaves of value noise from `mottle_scale` down to an eighth of it, with a per-channel
+  `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
+  (three octaves from `grain_scale` down to a quarter), **speckle** (a thresholded noise
+  field → sparse dark dots, grass tufts and undergrowth on Park/Grass/Wood), **drift** (the
+  mottle slides with `globals.time` — only Water), and the **markings** block (Street and
+  Deck — a bridge deck carries its street's lines). The zoom rule is one function,
   `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
   contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
   a faded octave shifts no brightness, and zooming out makes a surface smoother, never
@@ -273,12 +274,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   shared by every city; `SurfaceStyle::texture` (section **Surfaces**, `ui/surfaces.rs`,
   persisted) rewrites the `intensity` uniform of each and rebuilds nothing.
   The material demands the **`Ribbon` vertex attribute** (`meshing::ATTRIBUTE_RIBBON`,
-  `[across, to-nearest-end, half width, markings flag]` in metres) and a mesh gets it only
-  from `MeshBuilder::with_surface_coords()`; `push_ribbon` fills it from the ribbon frame
-  (quads: ±half width; join fans: the outer side; caps: the projection, with *to-end*
-  negative past the node), polygons get zeros. *To-nearest-end* has a kink at the path's
-  middle, and the GPU interpolates linearly, so `split_at_midpoint` inserts a vertex there —
-  one extra quad per open ribbon in a surface mesh.
+  `[across, to-break, half width, markings code]` in metres: *to-break* is the signed
+  distance to the nearest marking break, the code is `Markings::encode`, `lanes·2 +
+  oneway`, 0 for none) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
+  `push_ribbon` / `push_ribbon_broken` fill it from the ribbon frame (quads: ±half width;
+  join fans: the outer side; round caps: the projection onto the normal, with *to-break*
+  extrapolated past the node along the last quad's slope), polygons get zeros. It costs
+  16 bytes per vertex, which is why building, crown and overlay meshes are built without
+  it. Where the breaks come from and why the mesher inserts a vertex at every kink of
+  *to-break* is under **Markings → Breaks** below.
 - **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
   polygon is followed, in the same builder, by a gradient band along its outer ring and
   along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
@@ -388,11 +392,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
   its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2): a gray **curb** (`BRIDGE_CURB_COLOR` 0.60, 12% of the width clamped
-  0.8–2 m) under the fill in the class color. The 2GIS look — the curb bands along both
-  deck edges are what makes a bridge read as a bridge, so the curb draws **always**,
-  independent of `RoadStyle::casing`, and is both darker and thicker than a casing so
-  the two never blend. Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
+  (`Z_BRIDGE` 2.2): a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
+  clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
+  deck. The 2GIS look — the curb bands along both deck edges are what makes a bridge read
+  as a bridge, so the curb draws **always**, independent of `RoadStyle::casing`, and is
+  thicker than a casing and lighter where the casing is darker, so the two never blend.
+  Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
   in a square cut; a `Round` half-disc or the `Square` end-extension would poke a curb
   tongue past the bridge end. The deck sits above `Z_ROAD` so an overpass covers the
   street it crosses, and below `Z_RAIL` so a track on the bridge stays visible; curbs

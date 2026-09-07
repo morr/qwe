@@ -176,9 +176,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   own smoothed copy. **A drawn band and a blocking band match by construction, not by
   discipline.**
 - **Merged meshes** (`map/meshing.rs`, `map/spawn.rs`, `map/roads.rs`, `map/buildings/`) —
-  one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors, one white
-  `ColorMaterial`; ~7000 buildings cost a handful of entities. Trees stay individual
-  entities; tree and building **shadows** are each one merged mesh. **Ribbon**
+  one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors over one white
+  `ColorMaterial` (buildings, casings, rails, walls) or the **surface material** below
+  (everything that is ground); ~7000 buildings cost a handful of entities. Trees stay
+  individual entities; tree and building **shadows** are each one merged mesh. **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed** — overlapping `Round` caps in one opaque layer are what makes
   them look joined; **keep the road layer opaque, and its colour a function of world
