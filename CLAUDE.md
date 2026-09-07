@@ -287,8 +287,8 @@ step when adding one):
 
 | entity | file |
 |---|---|
-| ground sprite, merged area layer meshes (parks/woods/grass/sand/water), waterway ribbons | `map/spawn.rs` |
-| road layers (alleys/roads/rails/walls + casings) | `map/roads.rs::spawn_roads` |
+| ground mesh, merged area layer meshes (parks/woods/grass/sand/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layer`) |
+| road layers (sidewalks/alleys/roads/bridges/rails/walls + casings) | `map/roads.rs::spawn_roads` (same helper) |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |

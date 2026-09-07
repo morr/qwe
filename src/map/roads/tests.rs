@@ -182,3 +182,22 @@ fn bridge_curb_ends_are_square_under_every_join() {
     push_ribbon(&mut fill, &points, 5.0, LinearRgba::WHITE, RoadJoin::Round);
     assert!(max_x(&fill) > 20.0);
 }
+
+#[test]
+fn sidewalks_belong_to_streets_not_service_roads() {
+    // проезд (`service`, 5 м) — без тротуара; жилая улица и магистраль — с ним,
+    // в пределах диапазона
+    assert_eq!(sidewalk_width(5.0), None);
+    let residential = sidewalk_width(8.0).unwrap();
+    let primary = sidewalk_width(16.0).unwrap();
+    assert!(residential < primary);
+    assert!(SIDEWALK_WIDTH_RANGE.contains(&residential));
+    assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));
+}
+
+#[test]
+fn road_style_defaults_draw_sidewalks_and_markings() {
+    let style = RoadStyle::default();
+    assert!(style.sidewalks);
+    assert!(style.markings);
+}

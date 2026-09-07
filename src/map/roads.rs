@@ -26,6 +26,15 @@
 //! Осевая (`RoadLine::points`) при этом **не трогается**: на ней стоят навмеш
 //! (`bridge`/`passage`-прорезы), арки, посадка деревьев и генератор дверей.
 //! Chaikin-сглаживание работает на копии и только ради картинки.
+//!
+//! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, серая
+//! полоса шире проезжей части на [`sidewalk_width`] с каждой стороны), кант и
+//! заливка. Тротуар лежит под всеми лентами дорог по той же логике, что кант:
+//! заливка поперечной улицы кроет его на перекрёстке, и тротуар обрывается там,
+//! где обрывается в жизни. **Разметку** — штриховую осевую — рисует не
+//! геометрия, а шейдер поверхностей (`map/surface.rs`) по локальным
+//! координатам ленты (`meshing::ATTRIBUTE_RIBBON`): линия сглажена, гаснет у
+//! торцов way (перекрёсток) и при отдалении, чего слитому мешу не сделать.
 
 use std::borrow::Cow;
 use std::f32::consts::PI;
@@ -33,18 +42,30 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::loading::AppState;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine, WallLine};
+use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BUILDING, Z_RAIL, Z_RAIL_DASH, Z_ROAD,
-    Z_ROAD_CASING,
+    Z_ROAD_CASING, Z_SIDEWALK,
 };
 
-const ROAD_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
+/// Проезжая часть — не чисто белая, а на волос теплее и темнее: белой была,
+/// пока на ней не появилась разметка, которой на белом не видно.
+const ROAD_COLOR: Color = Color::srgb(0.95, 0.947, 0.94);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
+
+/// Тротуар — холодный светло-серый бетон: от тёплой земли его отделяет и
+/// тон, и полтона яркости, от проезжей части — яркость.
+const SIDEWALK_COLOR: Color = Color::srgb(0.835, 0.83, 0.81);
+/// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
+/// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
+const SIDEWALK_SHARE: f32 = 0.22;
+const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
+/// Улицы у́же этого — проезды (`service`, 5 м): ни тротуара, ни разметки.
+const STREET_MIN_WIDTH: f32 = 8.0;
 
 /// Кант дороги — затемнённая заливка, как у osm-carto (белая улица в сером
 /// канте). Отдельным слоем под заливкой: заливки всех дорог кроют канты всех
@@ -139,7 +160,7 @@ impl RoadSmoothing {
 /// Стиль дорожных лент; переключается панелью Roads и BRP, сохраняется в
 /// настройках между запусками. Правка пересобирает дорожные слои
 /// ([`rebuild_roads`]).
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "roads")]
 pub struct RoadStyle {
@@ -147,6 +168,31 @@ pub struct RoadStyle {
     pub smoothing: RoadSmoothing,
     /// Тёмный кант по краю дороги отдельным слоем под заливкой.
     pub casing: bool,
+    /// Серая полоса тротуара вдоль улиц (не проездов) отдельным слоем под
+    /// всеми лентами.
+    pub sidewalks: bool,
+    /// Штриховая осевая на проезжей части улиц — рисует шейдер поверхностей.
+    pub markings: bool,
+}
+
+impl Default for RoadStyle {
+    fn default() -> Self {
+        Self {
+            join: RoadJoin::default(),
+            smoothing: RoadSmoothing::default(),
+            casing: false,
+            sidewalks: true,
+            markings: true,
+        }
+    }
+}
+
+/// Ширина тротуара с одной стороны улицы, м; проезд тротуара не получает.
+pub fn sidewalk_width(road_width: f32) -> Option<f32> {
+    (road_width >= STREET_MIN_WIDTH).then(|| {
+        (road_width * SIDEWALK_SHARE)
+            .clamp(*SIDEWALK_WIDTH_RANGE.start(), *SIDEWALK_WIDTH_RANGE.end())
+    })
 }
 
 /// Дорожный слой карты — чтобы пересборка стиля знала, что деспавнить.
@@ -159,24 +205,27 @@ pub fn spawn_roads(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
+    surfaces: &SurfaceMaterials,
     style: RoadStyle,
-    roads: &[RoadLine],
-    rails: &[RailLine],
-    walls: &[WallLine],
+    map: &MapData,
 ) {
     let started = std::time::Instant::now();
-    // вершинные цвета — материал один, белый
-    let material = materials.add(Color::WHITE);
+    let (roads, rails, walls): (&[RoadLine], &[RailLine], &[WallLine]) =
+        (&map.roads, &map.rails, &map.walls);
+    // вершинные цвета — плоский материал один, белый; фактурные — по виду
+    // поверхности, из `SurfaceMaterials`
+    let flat = materials.add(Color::WHITE);
 
+    let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alley_casings = MeshBuilder::default();
-    let mut alleys = MeshBuilder::default();
+    let mut alleys = MeshBuilder::with_surface_coords();
     let mut street_casings = MeshBuilder::default();
-    let mut streets = MeshBuilder::default();
+    let mut streets = MeshBuilder::with_surface_coords();
     // Настилы мостов — один меш на улицы и пешеходные мостики разом: белая и
     // песочная заливки соседствуют, и порядок перекрытия моста над мостом —
     // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
     let mut bridge_casings = MeshBuilder::default();
-    let mut bridge_fills = MeshBuilder::default();
+    let mut bridge_fills = MeshBuilder::with_surface_coords();
     let mut rail_beds = MeshBuilder::default();
     let mut rail_dashes = MeshBuilder::default();
     let mut wall_ribbons = MeshBuilder::default();
@@ -208,10 +257,26 @@ pub fn spawn_roads(
             RoadClass::Street => (&mut street_casings, &mut streets),
             RoadClass::Alley => (&mut alley_casings, &mut alleys),
         };
+        // тротуар и разметка — улицам шире проезда; арка (`passage`) идёт
+        // сквозь дом, тротуару там взяться неоткуда
+        let street = road.class == RoadClass::Street && !road.passage;
+        if style.sidewalks
+            && street
+            && let Some(sidewalk) = sidewalk_width(road.width)
+        {
+            push_ribbon(
+                &mut sidewalks,
+                &points,
+                road.width + 2.0 * sidewalk,
+                SIDEWALK_COLOR.to_linear(),
+                style.join,
+            );
+        }
         if style.casing {
             let width = road.width + 2.0 * casing_width(road.width);
             push_ribbon(casing, &points, width, casing_color.to_linear(), style.join);
         }
+        fill.set_road_markings(style.markings && street && road.width >= STREET_MIN_WIDTH);
         push_ribbon(fill, &points, road.width, color.to_linear(), style.join);
     }
 
@@ -251,6 +316,7 @@ pub fn spawn_roads(
     }
 
     let vertices = [
+        &sidewalks,
         &alley_casings,
         &alleys,
         &street_casings,
@@ -265,36 +331,70 @@ pub fn spawn_roads(
     .map(|builder| builder.vertex_count())
     .sum::<usize>();
 
-    for (builder, z, name) in [
-        (alley_casings, Z_ALLEY_CASING, "alley_casings"),
-        (alleys, Z_ALLEY, "alleys"),
-        (street_casings, Z_ROAD_CASING, "road_casings"),
-        (streets, Z_ROAD, "roads"),
-        (bridge_casings, Z_BRIDGE_CASING, "bridge_casings"),
-        (bridge_fills, Z_BRIDGE, "bridges"),
-        (rail_beds, Z_RAIL, "rails"),
-        (rail_dashes, Z_RAIL_DASH, "rail_dashes"),
-        (wall_ribbons, Z_WALL, "walls"),
+    let surface = |kind| LayerMaterial::Surface(surfaces.handle(kind));
+    for (builder, z, name, material) in [
+        (
+            sidewalks,
+            Z_SIDEWALK,
+            "sidewalks",
+            surface(SurfaceKind::Sidewalk),
+        ),
+        (
+            alley_casings,
+            Z_ALLEY_CASING,
+            "alley_casings",
+            LayerMaterial::Flat(flat.clone()),
+        ),
+        (alleys, Z_ALLEY, "alleys", surface(SurfaceKind::Alley)),
+        (
+            street_casings,
+            Z_ROAD_CASING,
+            "road_casings",
+            LayerMaterial::Flat(flat.clone()),
+        ),
+        (streets, Z_ROAD, "roads", surface(SurfaceKind::Street)),
+        (
+            bridge_casings,
+            Z_BRIDGE_CASING,
+            "bridge_casings",
+            LayerMaterial::Flat(flat.clone()),
+        ),
+        (
+            bridge_fills,
+            Z_BRIDGE,
+            "bridges",
+            surface(SurfaceKind::Deck),
+        ),
+        (
+            rail_beds,
+            Z_RAIL,
+            "rails",
+            LayerMaterial::Flat(flat.clone()),
+        ),
+        (
+            rail_dashes,
+            Z_RAIL_DASH,
+            "rail_dashes",
+            LayerMaterial::Flat(flat.clone()),
+        ),
+        (
+            wall_ribbons,
+            Z_WALL,
+            "walls",
+            LayerMaterial::Flat(flat.clone()),
+        ),
     ] {
-        if builder.is_empty() {
-            continue;
-        }
-        commands.spawn((
-            RoadLayerTag,
-            Mesh2d(meshes.add(builder.build())),
-            MeshMaterial2d(material.clone()),
-            Transform::from_xyz(0.0, 0.0, z),
-            DespawnOnExit(AppState::Playing),
-            Name::new(name),
-        ));
+        spawn_layer(commands, meshes, builder, z, name, material, RoadLayerTag);
     }
 
     info!(
-        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {})",
+        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {})",
         started.elapsed(),
         style.join,
         style.smoothing,
-        style.casing
+        style.casing,
+        style.sidewalks,
+        style.markings,
     );
 }
 
@@ -304,6 +404,7 @@ pub fn rebuild_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    surfaces: Res<SurfaceMaterials>,
     style: Res<RoadStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<RoadLayerTag>>,
@@ -315,10 +416,9 @@ pub fn rebuild_roads(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &surfaces,
         *style,
-        &map.roads,
-        &map.rails,
-        &map.walls,
+        &map,
     );
 }
 

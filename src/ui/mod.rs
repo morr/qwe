@@ -33,6 +33,7 @@ mod shell;
 pub mod slider;
 mod speed;
 mod stats;
+mod surfaces;
 mod theme;
 mod tree_rows;
 mod trees;
@@ -456,6 +457,7 @@ impl Plugin for UiPlugin {
             navigation::UiNavigationPlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
+            surfaces::UiSurfaceStylePlugin,
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
             brp::UiBrpBadgePlugin,

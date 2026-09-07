@@ -407,3 +407,142 @@ fn arc_steps_scale_with_radius() {
     assert_eq!(arc_steps(0.0, PI), 1);
     assert!(arc_steps(1000.0, PI) <= MAX_ARC_STEPS);
 }
+
+#[test]
+fn a_plain_builder_carries_no_ribbon_coords() {
+    let mut builder = MeshBuilder::default();
+    builder.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        false,
+        2.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Round,
+    );
+    assert!(builder.ribbon_coords_for_test().is_none());
+    assert!(!builder.build().contains_attribute(ATTRIBUTE_RIBBON));
+}
+
+/// Меш поверхности несёт координаты на каждой вершине — и у ленты, и у
+/// полигона, у которого они нулевые; иначе раскладка вершин не сойдётся.
+#[test]
+fn surface_coords_cover_every_vertex() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_polygon(
+        &[Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(4.0, 4.0)],
+        &[],
+        LinearRgba::WHITE,
+    );
+    builder.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)],
+        false,
+        2.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Round,
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    assert_eq!(coords.len(), builder.vertex_count());
+    assert!(coords[..3].iter().all(|&ribbon| ribbon == [0.0; 4]));
+    assert!(builder.build().contains_attribute(ATTRIBUTE_RIBBON));
+}
+
+/// Поперёк — ±полуширина на краях ленты, «до торца» растёт от обоих концов к
+/// середине, полуширина — та, что просили; флаг разметки — тот, что выставлен.
+#[test]
+fn ribbon_coords_follow_the_ribbon_frame() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.set_road_markings(true);
+    builder.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(30.0, 0.0)],
+        false,
+        4.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Butt,
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    // середина вставлена: два квада по четыре вершины
+    assert_eq!(builder.vertex_count(), 8);
+    for (position, ribbon) in builder.positions.iter().zip(coords) {
+        let [across, to_end, half_width, flag] = *ribbon;
+        assert_eq!(
+            across, position[1],
+            "across follows the offset from the axis"
+        );
+        let expected = position[0].min(30.0 - position[0]);
+        assert!(
+            (to_end - expected).abs() < 1e-4,
+            "to_end at x={}: {to_end} vs {expected}",
+            position[0]
+        );
+        assert_eq!(half_width, 2.0);
+        assert_eq!(flag, 1.0);
+    }
+    let middle = builder
+        .positions
+        .iter()
+        .filter(|position| (position[0] - 15.0).abs() < 1e-4)
+        .count();
+    assert_eq!(middle, 4, "the midpoint vertex pair is missing");
+}
+
+/// За торцом «до торца» отрицательно — по нему шейдер гасит разметку на
+/// полудиске, торчащем на перекрёсток.
+#[test]
+fn cap_coords_go_negative_past_the_end() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        false,
+        2.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Round,
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    let beyond: Vec<f32> = builder
+        .positions
+        .iter()
+        .zip(coords)
+        .filter(|(position, _)| position[0] > 10.0 + 1e-4 || position[0] < -1e-4)
+        .map(|(_, ribbon)| ribbon[1])
+        .collect();
+    assert!(!beyond.is_empty(), "no cap vertices past the ends");
+    assert!(beyond.iter().all(|&to_end| to_end < 0.0), "{beyond:?}");
+    assert!(
+        coords.iter().all(|ribbon| ribbon[3] == 0.0),
+        "markings were never asked for"
+    );
+}
+
+#[test]
+fn a_template_keeps_its_ribbon_coords_scaled() {
+    let mut template = MeshBuilder::with_surface_coords();
+    template.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
+        false,
+        2.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+        RibbonCap::Butt,
+    );
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_template(&template, Vec2::new(100.0, 100.0), 3.0);
+    let source = template.ribbon_coords_for_test().unwrap();
+    let copied = builder.ribbon_coords_for_test().unwrap();
+    assert_eq!(copied.len(), source.len());
+    for (from, to) in source.iter().zip(copied) {
+        assert_eq!(to[0], from[0] * 3.0);
+        assert_eq!(to[1], from[1] * 3.0);
+        assert_eq!(to[2], from[2] * 3.0);
+    }
+    // шаблон без координат под сборщик с ними — нули, а не паника
+    let mut plain = MeshBuilder::default();
+    plain.push_rect(Vec2::ZERO, Vec2::ONE, LinearRgba::WHITE);
+    builder.push_template(&plain, Vec2::ZERO, 1.0);
+    assert_eq!(
+        builder.ribbon_coords_for_test().unwrap().len(),
+        builder.vertex_count()
+    );
+}

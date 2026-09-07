@@ -163,6 +163,7 @@ pub(super) enum SectionSlot {
     TreeRows,
     Buildings,
     Roads,
+    Surfaces,
     Noise,
     // Nav — одним блоком
     Navigation,

@@ -83,7 +83,12 @@ did not fit 1080 px and ran off the top of the screen.
   `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
   into the Nav tab's crowd groups — they are about movement.
-- **Map tab** — Trees → Tree rows → Buildings → Roads → Noise.
+- **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Noise.
+  **Roads** (`ui/roads.rs`): five cycle rows on `RoadStyle` — joins, smoothing, casing,
+  **sidewalks**, **markings**. **Surfaces** (`ui/surfaces.rs`): one knob, **Texture**
+  (`SurfaceStyle::texture`, 0–150 %), the strength of the procedural surface shader; it
+  rewrites material uniforms, so a drag costs nothing and rebuilds no mesh. A header
+  without a count (`panel_title`), like Noise: the texture lies on the whole map.
   **Trees** (`ui/trees.rs`): shape / foliage / crown details / color variance, one button
   per row cycling through a fixed palette (`bevy_ui` has no text input, so hex fields became
   cycles), plus **slider rows** — **density** over `TREE_DENSITY_MIN..MAX`, **conifer share**

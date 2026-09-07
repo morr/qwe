@@ -241,11 +241,54 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 ## Rendering
 
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
-  building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
-  waterways, alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
-  `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
-  colors over a single white `ColorMaterial`. ~7000 buildings cost a handful of entities.
-  Trees stay individual entities (see `references/trees.md`).
+  building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks,
+  water, waterways, sidewalks, alleys, roads, building layers, walls): `MeshBuilder`
+  triangulates polygons via `earcutr` (holes supported, degenerate contours skipped +
+  counted) and emits per-vertex colors. Building, casing, rail and wall layers go over a
+  single white `ColorMaterial`; the **surfaces** — ground, area fills, water, road and
+  alley fills, sidewalks, the tree-row band — over the `SurfaceMaterial` below. ~7000
+  buildings cost a handful of entities. Trees stay individual entities (see
+  `references/trees.md`).
+- **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
+  `Material2d` with its own vertex + fragment stage) — procedural texture without a single
+  asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
+  **world position**, so two overlapping ribbons of one layer get the same pixel (the
+  junction trick survives). Per `SurfaceKind` (`Ground | Park | Wood | Grass | Sand |
+  Water | Street | Deck | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (three
+  octaves of value noise from `mottle_scale` down, with a per-channel `tint` shift so a lawn
+  goes yellow-green ↔ blue-green, not just light ↔ dark), **grain** (two octaves at
+  `grain_scale`), **speckle** (a thresholded noise field → sparse dark dots, grass tufts and
+  undergrowth on Park/Grass/Wood), **drift** (the mottle slides with `globals.time` — only
+  Water), and the **markings** block (Street only). The zoom rule is one function,
+  `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
+  contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
+  a faded octave shifts no brightness, and zooming out makes a surface smoother, never
+  brighter or shimmering. Materials are built once (`SurfaceMaterials`, `Startup`) and
+  shared by every city; `SurfaceStyle::texture` (section **Surfaces**, `ui/surfaces.rs`,
+  persisted) rewrites the `intensity` uniform of each and rebuilds nothing.
+  The material demands the **`Ribbon` vertex attribute** (`meshing::ATTRIBUTE_RIBBON`,
+  `[across, to-nearest-end, half width, markings flag]` in metres) and a mesh gets it only
+  from `MeshBuilder::with_surface_coords()`; `push_ribbon` fills it from the ribbon frame
+  (quads: ±half width; join fans: the outer side; caps: the projection, with *to-end*
+  negative past the node), polygons get zeros. *To-nearest-end* has a kink at the path's
+  middle, and the GPU interpolates linearly, so `split_at_midpoint` inserts a vertex there —
+  one extra quad per open ribbon in a surface mesh.
+- **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
+  Sidewalk`, cool light grey `SIDEWALK_COLOR`) — a street (`RoadClass::Street`, width ≥
+  `STREET_MIN_WIDTH` 8 m, so `service` drives get none, and never a `passage`) gets a band
+  `width + 2 · sidewalk_width` (22 % of the width, 1.2–3 m per side). It sits under every
+  road ribbon for the casing reason: a crossing street's fill covers it and the sidewalk
+  ends at the junction the way a real one does. A `footway` mapped alongside draws over it
+  as an alley — beige on grey, and tolerated.
+- **Markings** — the dashed centre line of a street is **not geometry**: `push_dashes`
+  would alias and crawl at `Msaa::Off` (a 0.25 m line is under a pixel at the start zoom).
+  The street fill is built with surface coords and `set_road_markings(true)` for streets ≥
+  8 m; the shader draws the line from `across` (|across| < half the `MARKING_WIDTH`, but
+  never thinner than 1.3 px, anti-aliased over ±0.7 px), dashes it along *to-end* (3 m on /
+  3 m off; the mirror at the path's middle is invisible), fades it within `MARKING_MARGIN`
+  (5 m) of either end — OSM splits ways at junctions, so that is where the crossing is —
+  and fades it out when the street is under ~20 px wide on screen (`2 · half width / px`).
+  `MARKING_COLOR` is grey: the fill is near-white and a white line would vanish.
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
   every road, alley and kremlin wall is drawn. Two knobs, both named after their SVG /
   Mapnik counterparts: **join** (`Miter` — bisector offsets capped by `MITER_LIMIT`;
@@ -266,7 +309,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   a per-way tint would expose every crossing.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
-  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Three independent knobs:
+  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —
+  **sidewalks** and **markings** (both on by default) are described above, the three
+  older ones:
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
     with *both ends* extended by half a width; no joins at all, which is what produced
     the notches on bends and the wedges at junctions), `Miter`, `Round` (default).

@@ -1,7 +1,7 @@
-//! Панель стиля дорожных лент: стык на изломе, сглаживание осевой, кант.
-//! Полей ввода в `bevy_ui` нет, поэтому каждая строка — кнопка, листающая
-//! значение по кругу (как у панели деревьев); правка `RoadStyle` пересобирает
-//! дорожные слои (`map::roads::rebuild_roads`).
+//! Панель стиля дорожных лент: стык на изломе, сглаживание осевой, кант,
+//! тротуары, разметка. Полей ввода в `bevy_ui` нет, поэтому каждая строка —
+//! кнопка, листающая значение по кругу (как у панели деревьев); правка
+//! `RoadStyle` пересобирает дорожные слои (`map::roads::rebuild_roads`).
 
 use bevy::prelude::*;
 
@@ -61,6 +61,28 @@ fn build_roads_section(mut commands: Commands, panes: Res<SettingsPanes>, style:
         CycleBinding {
             cycle: |style| style.casing = !style.casing,
             text: |style| on_off(style.casing).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Sidewalks",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.sidewalks = !style.sidewalks,
+            text: |style| on_off(style.sidewalks).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Markings",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.markings = !style.markings,
+            text: |style| on_off(style.markings).to_string(),
         },
     );
 }

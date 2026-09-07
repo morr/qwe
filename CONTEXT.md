@@ -50,9 +50,9 @@ in `main.rs`.
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
-  → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
-  casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5) →
-  units → tree shadows → trees (20). Three live in their own modules:
+  → sand → water → waterways → sidewalks → alley casings → alleys → road casings → roads →
+  bridge casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5)
+  → units → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
@@ -177,16 +177,34 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `ColorMaterial`; ~7000 buildings cost a handful of entities. Trees stay individual
   entities; tree and building **shadows** are each one merged mesh. **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junctions
-  are not computed** — overlapping `Round` caps in one opaque flat-colored layer are what
-  makes them look joined; **keep the road layer opaque**.
+  are not computed** — overlapping `Round` caps in one opaque layer are what makes them
+  look joined; **keep the road layer opaque, and its colour a function of world position
+  only** (a flat colour or the surface shader, never a per-way tint).
+- **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
+  the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
+  `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
+  noise by **world position** (large mottle with a warm/cool tint shift, fine grain, grass
+  speckle, drifting ripple on water) — no textures, no assets, and identical in any two
+  overlapping ribbons. **Every octave fades by pixel size** (`fwidth`), so nothing shimmers
+  when zoomed out. One material per **`SurfaceKind`** (`SurfaceMaterials`, built once at
+  startup); **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
+  0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
+  built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
+  `[across, to-nearest-end, half width, markings flag]` in metres, zeros on polygons.
+- **Sidewalks & markings** (`map/roads.rs`) — a street (≥ 8 m, not a passage) gets a grey
+  **sidewalk band** at `Z_SIDEWALK` under every road ribbon (a crossing street's fill
+  covers it, like a casing), width `sidewalk_width` (22 %, 1.2–3 m per side), and a dashed
+  **centre line drawn by the surface shader** from the `Ribbon` coordinates: anti-aliased,
+  never thinner than ~1.3 px, faded within 5 m of a way's end (the junction) and when the
+  street is under ~20 px wide on screen. Both are `RoadStyle` knobs, on by default.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
-  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing — smoothing
-  works on a *copy*, since `RoadLine::points`/`width` are load-bearing for navmesh, arches,
-  planting and entrances), **BuildingHeightMode**, **TreeStyle**, **TreeRowStyle**,
-  **ConiferNoiseStyle**. **`CrownParams` is deliberately not one of them** — a plain
-  struct, no BRP, no prefs; only the `tree_gallery` example varies it. **Bridge / rail /
-  tram layers** have their own z-slots and primitives (`push_dashes`, `push_ticks`, tram
-  zoom LOD).
+  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
+  sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are
+  load-bearing for navmesh, arches, planting and entrances), **BuildingHeightMode**,
+  **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** (uniforms only,
+  no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
+  no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
+  their own z-slots and primitives (`push_dashes`, `push_ticks`, tram zoom LOD).
 
 ## Navigation
 
