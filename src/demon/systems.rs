@@ -6,6 +6,7 @@ use rand::Rng;
 use crate::demon::components::{
     ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
 };
+use crate::demon::look::{demon_body, halo};
 use crate::loading::AppState;
 use crate::movement::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, SimPosition, point_in_cone,
@@ -15,9 +16,10 @@ use crate::navigation::Backend;
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream};
 use crate::settings::{
-    DEMON_INITIAL_BURST, DEMON_SIZE, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE,
-    PORTAL_DIAMETER, unit_z,
+    DEMON_INITIAL_BURST, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE, PORTAL_DIAMETER,
+    unit_z,
 };
+use crate::silhouette::Silhouettes;
 
 /// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены
 /// сброшенный спавнер выпускает залп заново без отдельного кода.
@@ -27,6 +29,7 @@ pub fn spawn_initial_burst(
     style: Res<DemonStyle>,
     portal_pos: Res<PortalPos>,
     seed: Res<WorldSeed>,
+    silhouettes: Res<Silhouettes>,
 ) {
     if spawner.initial_burst_done {
         return;
@@ -36,7 +39,7 @@ pub fn spawn_initial_burst(
     // залп тоже упирается в кап — иначе ползунок, выкрученный ниже восьми,
     // врал бы: демоны всё равно выходили бы залпом
     let burst = DEMON_INITIAL_BURST.min(style.cap);
-    let birth = DemonBirth::new(&seed, &portal_pos, &style);
+    let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
     for index in 0..burst {
         let angle = index as f32 / burst as f32 * std::f32::consts::TAU;
         spawn_demon(&mut commands, &mut spawner, &birth, Some(angle));
@@ -50,6 +53,7 @@ pub fn tick_spawner(
     style: Res<DemonStyle>,
     portal_pos: Res<PortalPos>,
     seed: Res<WorldSeed>,
+    silhouettes: Res<Silhouettes>,
 ) {
     // период таймера подтягивается здесь, а не отдельной системой на
     // `resource_changed`: рестарт и смена города пересоздают `DemonSpawner`
@@ -68,25 +72,32 @@ pub fn tick_spawner(
         return;
     }
 
-    let birth = DemonBirth::new(&seed, &portal_pos, &style);
+    let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
     spawn_demon(&mut commands, &mut spawner, &birth, None);
 }
 
-/// Всё, что демон получает при рождении помимо номера и угла. Три ресурса
+/// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
 /// читаются одинаково в обеих системах спавна, поэтому ездят одним значением,
-/// а не четвёркой позиционных аргументов.
-struct DemonBirth {
+/// а не пятёркой позиционных аргументов.
+struct DemonBirth<'a> {
     world_seed: u64,
     portal_pos: Vec2,
     speed: f32,
+    silhouettes: &'a Silhouettes,
 }
 
-impl DemonBirth {
-    fn new(seed: &WorldSeed, portal_pos: &PortalPos, style: &DemonStyle) -> Self {
+impl<'a> DemonBirth<'a> {
+    fn new(
+        seed: &WorldSeed,
+        portal_pos: &PortalPos,
+        style: &DemonStyle,
+        silhouettes: &'a Silhouettes,
+    ) -> Self {
         Self {
             world_seed: seed.0,
             portal_pos: portal_pos.0,
             speed: DEMON_SPEED * style.speed,
+            silhouettes,
         }
     }
 }
@@ -121,52 +132,33 @@ fn spawn_demon(
     let angle = angle.unwrap_or_else(|| rng.random_range(0.0..std::f32::consts::TAU));
     let position = birth.portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
 
-    commands.spawn((
-        Sprite {
-            color: demon_tint(index),
-            custom_size: Some(Vec2::splat(DEMON_SIZE)),
-            ..default()
-        },
-        Transform::from_translation(position.extend(unit_z(position.y))),
-        Demon,
-        DemonWanderTag,
-        Movable::new(birth.speed),
-        PawnId(index as u32),
-        // номер уникален только внутри вида, поэтому вид едет рядом с ним
-        Species::Demon,
-        // демон срочен всегда: инвазия за кадром не должна вставать, и снимать
-        // маркер с него нечему — в отличие от человека, у которого он приходит
-        // и уходит вместе с паникой
-        crate::movement::UrgentPath,
-        // и тело своё демон тоже носит сам: явный компонент в кортеже спавна
-        // перебивает умолчание `#[require]` у `Movable`
-        crate::movement::BodyScale::DEMON,
-        WanderIndex::ready(),
-        DespawnOnExit(AppState::Playing),
-        Name::new("demon"),
-    ));
-}
-
-/// Сколько оттенков в кольце: демон номер `index` берёт `index % DEMON_TINT_SHADES`-й.
-const DEMON_TINT_SHADES: usize = 5;
-/// Красный канал самого тёмного оттенка — демона номер 0.
-const DEMON_TINT_RED_BASE: f32 = 0.45;
-/// Шаг красного канала между соседними оттенками кольца.
-const DEMON_TINT_RED_STEP: f32 = 0.08;
-/// Зелёный и синий каналы у всех оттенков общие: варьируется только краснота,
-/// поэтому демон остаётся демоном, каким бы номером ни вышел из портала.
-const DEMON_TINT_GREEN: f32 = 0.06;
-const DEMON_TINT_BLUE: f32 = 0.10;
-
-/// Оттенок красного для демона номер `index` — кольцо из [`DEMON_TINT_SHADES`]
-/// тонов, чтобы вышедшие подряд демоны не сливались друг с другом.
-///
-/// Чистая функция рядом с местом вызова, как [`crate::map::trees::TreeStyle::tint_slot`]
-/// и `map::buildings::layers::roof_color`: цвета в этом проекте живут в своих
-/// модулях, а не в `settings.rs`.
-fn demon_tint(index: usize) -> Color {
-    let red = DEMON_TINT_RED_BASE + (index % DEMON_TINT_SHADES) as f32 * DEMON_TINT_RED_STEP;
-    Color::srgb(red, DEMON_TINT_GREEN, DEMON_TINT_BLUE)
+    let (sprite, silhouette) = demon_body(birth.silhouettes, index);
+    commands
+        .spawn((
+            sprite,
+            silhouette,
+            Transform::from_translation(position.extend(unit_z(position.y))),
+            Demon,
+            DemonWanderTag,
+            Movable::new(birth.speed),
+            PawnId(index as u32),
+            // номер уникален только внутри вида, поэтому вид едет рядом с ним
+            Species::Demon,
+            // демон срочен всегда: инвазия за кадром не должна вставать, и
+            // снимать маркер с него нечему — в отличие от человека, у которого
+            // он приходит и уходит вместе с паникой
+            crate::movement::UrgentPath,
+            // и тело своё демон тоже носит сам: явный компонент в кортеже
+            // спавна перебивает умолчание `#[require]` у `Movable`
+            crate::movement::BodyScale::DEMON,
+            WanderIndex::ready(),
+            DespawnOnExit(AppState::Playing),
+            Name::new("demon"),
+        ))
+        // ореол — дочерняя сущность: уходит вместе с демоном (despawn
+        // рекурсивен), пульсирует его масштабом и не нуждается в своём
+        // `DespawnOnExit`
+        .with_child(halo(birth.silhouettes));
 }
 
 /// Ползунок скорости — уже вышедшим демонам. `Movable::speed` пишется один раз,
@@ -261,41 +253,5 @@ pub fn draw_lunge_paths(
         gizmos
             .arrow_2d(sim_position.0, target_position.0, MOVEPATH_COLOR)
             .with_tip_length(MOVEPATH_ARROW_TIP.min(distance * 0.5));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Ради чего рампа и заведена: подряд вышедшие из портала демоны не сливаются
-    /// друг с другом. Сравнение попарное, а не «все разные по красному каналу», —
-    /// проверяем ровно то, что видит глаз.
-    #[test]
-    fn five_demons_in_a_row_get_five_different_tints() {
-        let tints: Vec<Color> = (0..DEMON_TINT_SHADES).map(demon_tint).collect();
-        for (i, left) in tints.iter().enumerate() {
-            for right in &tints[i + 1..] {
-                assert_ne!(left, right, "оттенки {tints:?} не различаются");
-            }
-        }
-    }
-
-    /// Кольцо: демон номер `DEMON_TINT_SHADES` начинает круг заново.
-    #[test]
-    fn the_ramp_wraps_after_five_demons() {
-        assert_eq!(demon_tint(DEMON_TINT_SHADES), demon_tint(0));
-        assert_eq!(demon_tint(DEMON_TINT_SHADES + 2), demon_tint(2));
-    }
-
-    /// Часовой на картинке: концы рампы и общие каналы — те самые числа, что
-    /// стояли в `spawn_demon` до выноса. Тест ловит смену палитры, а не формулы.
-    #[test]
-    fn the_ramp_keeps_the_shipped_shades_of_red() {
-        assert_eq!(demon_tint(0), Color::srgb(0.45, 0.06, 0.10));
-        assert_eq!(
-            demon_tint(DEMON_TINT_SHADES - 1),
-            Color::srgb(0.45 + 4.0 * 0.08, 0.06, 0.10)
-        );
     }
 }

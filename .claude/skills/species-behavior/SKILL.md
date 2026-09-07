@@ -224,6 +224,15 @@ humans flee straight.
 A fleeing human carries **`UrgentPath`** (it comes and goes with `HumanFleeTag`) — the
 dispatcher's "may not wait for the camera" marker; see `navigation-deep`.
 
+**Panic tint** (`human/look.rs`) — the same tag drives the colour: `On<Add, HumanFleeTag>`
+paints the sprite `PANIC_COLOR` (amber, one for all — the front of panic is a spreading
+stain, not confetti), `On<Remove, HumanFleeTag>` restores the human's own `Attire`. Two
+observers on transitions, no per-frame system over 20 000 sprites. The remove observer
+also fires on the corpse transition (harmless: `to_corpse` paints the body afterwards)
+and on despawn. `Attire` itself is the three spawn draws of the decision stream, now from
+a cool muted palette — the draw *count* is what must not change, since `Pace` and the
+heading follow in the same stream.
+
 **Escape** — a fleeing human within `ESCAPE_MARGIN` of the map border despawns,
 `telemetry.escaped += 1`. It is a despawn inside `FixedUpdate`, where the chained `SimSet`s
 give it a sync point (see CLAUDE.md, "Where a mass despawn may happen").
@@ -267,8 +276,12 @@ removes the coupling outright: the two angles no longer have to be compared at a
 
 ### Corpse
 
-**`CorpseTag`** — a killed human: behavior/movement components removed, dark lying sprite at
-`Z_CORPSE`. Not in the human spatial grid (the grid filters on `Human`).
+**`CorpseTag`** — a killed human: behavior/movement components removed, the body's `Disc`
+glyph stretched into a dark 1.6 × 0.8 m ellipse at `Z_CORPSE`, laid in one of
+`CORPSE_POSES` (8) orientations chosen by the `Entity` bits — cosmetics, so it stays out
+of the decision stream. Its `Silhouette` is rewritten to the ellipse (`HUMAN_MIN_PX`
+floor), which is how the size lands on the sprite next frame. Not in the human spatial
+grid (the grid filters on `Human`).
 
 The transition is **`human::to_corpse`**, one entry point, and it is where a corpse is
 defined — the kill observer in `demon/` only reports that it happened. Each module takes back
@@ -287,6 +300,14 @@ States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target bi
 from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always,
 and `movement::BodyScale::DEMON` — its body is the one thing movement would otherwise have
 to infer from the species.
+
+**Look** (`demon/look.rs`) — the `Ember` glyph of the silhouette atlas (seven spikes, a
+bright core), tinted by `demon_tint`: a five-shade ring from crimson to orange so demons
+born in a row stay apart. Under the body a **halo** — a child entity (`DemonHalo`, the
+`Halo` glyph, `HALO_RATIO` 3 bodies wide, local z −0.01): it inherits the devour pulse
+through the parent's scale, is despawned with the parent (despawn is recursive, so it
+carries no `DespawnOnExit` of its own), and y-sorting draws a neighbouring human *over*
+it. `spawn_demon` gets the atlas through `DemonBirth`.
 
 ### Wander
 

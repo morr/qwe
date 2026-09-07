@@ -15,6 +15,7 @@ pub mod prefs;
 pub mod restart;
 pub mod rng;
 pub mod settings;
+pub mod silhouette;
 pub mod sim_time;
 #[cfg(test)]
 // только для юнит-тестов стендов поведения: в боевую библиотеку и

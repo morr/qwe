@@ -1,15 +1,18 @@
 mod behavior;
 mod components;
 mod decide;
+mod look;
 mod systems;
 
 use bevy::prelude::*;
 
 use self::behavior::{escape, flee, panic};
 pub use self::components::{
-    CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
-    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
+    Attire, CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle,
+    HumanWanderTag, Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
 };
+pub use self::look::PANIC_COLOR;
+use self::look::{on_calm_tint, on_panic_tint};
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
 // не своей выдумкой; `HumanPlugin` целиком ей не подходит (его `spawn_humans`
@@ -41,10 +44,19 @@ impl Plugin for HumanPlugin {
             .register_type::<WanderHeading>()
             .register_type::<PanicRecoil>()
             .register_type::<Pace>()
+            .register_type::<Attire>()
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()
             .track_pref::<HumanStyle>()
             .init_resource::<PopulationSize>()
+            // атлас силуэтов собирает `SilhouettePlugin` (в игре); без него
+            // ресурс остаётся пустым, и спавн рисует обычные квадраты —
+            // приложению без рендера (реплей, тесты) больше и не нужно
+            .init_resource::<crate::silhouette::Silhouettes>()
+            // тон паники — на переходах, а не покадрово: обсерверы смены
+            // `HumanFleeTag` красят спрайт при входе в панику и при выходе
+            .add_observer(on_panic_tint)
+            .add_observer(on_calm_tint)
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),

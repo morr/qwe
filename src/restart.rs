@@ -10,6 +10,7 @@ use crate::human::{CorpseTag, Human, HumanStyle, PopulationSize, spawn_populatio
 use crate::loading::{AppState, WorldStarted};
 use crate::navigation::ArcNavmesh;
 use crate::rng::WorldSeed;
+use crate::silhouette::Silhouettes;
 
 // `Default` в reflect-регистрации — для BRP: `brp event RestartEvent` без
 // аргументов конструирует значение через `ReflectDefault`, и без него запрос
@@ -108,6 +109,7 @@ fn trigger_pending_restart(mut commands: Commands, mut pending: ResMut<RestartPe
     commands.trigger(RestartEvent { to_portal: true });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn on_restart(
     _event: On<RestartEvent>,
     mut commands: Commands,
@@ -115,6 +117,7 @@ fn on_restart(
     style: Res<HumanStyle>,
     seed: Res<WorldSeed>,
     size: Res<PopulationSize>,
+    silhouettes: Res<Silhouettes>,
     scene_entities: Query<
         Entity,
         Or<(With<Human>, With<CorpseTag>, With<Demon>, With<TestWalker>)>,
@@ -142,5 +145,6 @@ fn on_restart(
         style.spread,
         seed.0,
         size.0,
+        &silhouettes,
     );
 }

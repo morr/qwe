@@ -6,6 +6,7 @@ use crate::human::components::{
     Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
     WanderHeading, WanderPause,
 };
+use crate::human::look::{human_body, roll_attire};
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{
@@ -17,10 +18,11 @@ use crate::rng::{
     PawnId, RngDomain, SimRng, Species, WanderIndex, WorldSeed, decision_stream, stream,
 };
 use crate::settings::{
-    HUMAN_FLEE_SPEED, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
+    HUMAN_FLEE_SPEED, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
     HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, RECOIL_CONE, RECOIL_MIN_ERRAND,
     WANDER_CONE, unit_z,
 };
+use crate::silhouette::Silhouettes;
 
 /// Сколько зданий перебирается в поисках цели «по делам» в конусе курса;
 /// если ни одно не попало — берётся ближайшее по направлению из выборки.
@@ -50,6 +52,7 @@ pub fn spawn_humans(
     style: Res<HumanStyle>,
     seed: Res<WorldSeed>,
     size: Res<crate::human::PopulationSize>,
+    silhouettes: Res<Silhouettes>,
 ) {
     spawn_population(
         &mut commands,
@@ -57,6 +60,7 @@ pub fn spawn_humans(
         style.spread,
         seed.0,
         size.0,
+        &silhouettes,
     );
 }
 
@@ -81,6 +85,7 @@ pub fn spawn_population(
     spread: f32,
     world_seed: u64,
     count: usize,
+    silhouettes: &Silhouettes,
 ) {
     let mut placement = stream(world_seed, RngDomain::Population, 0);
     // ни одного проходимого тайла — расселять некуда, и отбор ниже крутился
@@ -124,12 +129,8 @@ pub fn spawn_population(
         };
         let position = tile_center(tile);
 
-        // пастельная «одежда» со случайным тоном
-        let color = Color::hsl(
-            rng.random_range(0.0..360.0),
-            rng.random_range(0.35..0.75),
-            rng.random_range(0.35..0.65),
-        );
+        // одежда — первые три броска потока; палитра в `look.rs`
+        let attire = roll_attire(&mut rng);
         // без стартовой паузы: все идут с первого кадра. Залп из 20 000 целей
         // разруливают гейт видимости диспетчера (мирные вне экрана путь не
         // получают) и дешёвый HPA* — рассинхронизация тут только заставляла
@@ -141,12 +142,11 @@ pub fn spawn_population(
             rng.random_range(0.0..std::f32::consts::TAU),
         ));
 
+        let (sprite, silhouette) = human_body(silhouettes, &attire);
         commands.spawn((
-            Sprite {
-                color,
-                custom_size: Some(Vec2::splat(HUMAN_SIZE)),
-                ..default()
-            },
+            // внешность — вложенным бандлом: плоский кортеж упёрся в предел
+            // пятнадцати элементов `Bundle`
+            (sprite, silhouette, attire),
             Transform::from_translation(position.extend(unit_z(position.y))),
             Human,
             HumanWanderTag,
@@ -553,6 +553,7 @@ mod tests {
             0.3,
             seed,
             crate::settings::HUMAN_COUNT,
+            &Silhouettes::default(),
         );
         world.flush();
 
@@ -603,7 +604,14 @@ mod tests {
     fn population_refuses_a_navmesh_without_passable_tiles() {
         let mut world = World::new();
         let navmesh = navmesh_blocked_except(vec![]);
-        spawn_population(&mut world.commands(), &navmesh, 0.3, 7, 4);
+        spawn_population(
+            &mut world.commands(),
+            &navmesh,
+            0.3,
+            7,
+            4,
+            &Silhouettes::default(),
+        );
         world.flush();
         let count = world.query::<&Human>().iter(&world).count();
         assert_eq!(count, 0, "пустой навмеш не должен спавнить никого");
@@ -619,7 +627,14 @@ mod tests {
         let hole_tile_size = crate::settings::navtile_size();
         let hole_rect = rect(hole_center, hole_center + hole_tile_size);
         let navmesh = navmesh_blocked_except(vec![hole_rect]);
-        spawn_population(&mut world.commands(), &navmesh, 0.3, 7, 4);
+        spawn_population(
+            &mut world.commands(),
+            &navmesh,
+            0.3,
+            7,
+            4,
+            &Silhouettes::default(),
+        );
         world.flush();
 
         let count = world.query::<&Human>().iter(&world).count();

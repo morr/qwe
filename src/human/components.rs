@@ -7,6 +7,13 @@ use crate::settings::{HUMAN_BODY_RADIUS, HUMAN_SPEED_SPREAD};
 #[reflect(Component)]
 pub struct Human;
 
+/// Одежда — свой цвет человека, разыгранный при спавне из его потока решений.
+/// Хранится отдельно от `Sprite::color`: тот на время паники перекрашивается
+/// в общий тон (`look.rs`), и возвращать после неё надо именно одежду.
+#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+#[reflect(Component)]
+pub struct Attire(pub Color);
+
 /// Личный разброс скорости, **нормированный**: −1…+1, разыгрывается один раз
 /// при спавне. Реальная скорость — `base × (1 + Pace × HumanStyle::spread)`,
 /// то есть отрицательный жребий замедляет, положительный ускоряет, ноль
@@ -143,9 +150,14 @@ impl Default for WanderPause {
 pub struct CorpseTag;
 
 /// Цвет и размер лежащего тела — вид трупа принадлежит человеку, а не тому,
-/// кто его убил.
+/// кто его убил. Тело рисуется тем же диском, что и живой человек, только
+/// растянутым в эллипс и уложенным под одним из [`CORPSE_POSES`] углов.
 const CORPSE_COLOR: Color = Color::srgb(0.35, 0.16, 0.14);
 const CORPSE_SIZE: Vec2 = Vec2::new(1.6, 0.8);
+/// Сколько поз у лежащего тела: эллипс симметричен, поэтому позы делят
+/// полуоборот. Выбирается по битам `Entity` — это косметика, не состояние
+/// прогона, и в поток решений пешки ей нечего делать.
+const CORPSE_POSES: u64 = 8;
 
 /// Человек становится трупом: поведение и движение снимаются, тело ложится.
 ///
@@ -172,14 +184,22 @@ pub fn to_corpse(commands: &mut Commands, entity: Entity) {
             FleeRepath,
             PanicRecoil,
         )>()
-        .insert(CorpseTag);
+        .insert((
+            CorpseTag,
+            crate::silhouette::Silhouette::new(CORPSE_SIZE, crate::settings::HUMAN_MIN_PX),
+        ));
     corpse.entry::<Sprite>().and_modify(|mut sprite| {
         sprite.color = CORPSE_COLOR;
         sprite.custom_size = Some(CORPSE_SIZE);
     });
-    corpse.entry::<Transform>().and_modify(|mut transform| {
-        transform.translation.z = crate::settings::Z_CORPSE;
-    });
+    let pose =
+        (entity.to_bits() % CORPSE_POSES) as f32 / CORPSE_POSES as f32 * std::f32::consts::PI;
+    corpse
+        .entry::<Transform>()
+        .and_modify(move |mut transform| {
+            transform.translation.z = crate::settings::Z_CORPSE;
+            transform.rotation = Quat::from_rotation_z(pose);
+        });
 }
 
 /// Троттлинг перепрокладки пути при бегстве.

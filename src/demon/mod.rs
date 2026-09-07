@@ -2,6 +2,7 @@ mod behavior;
 mod claims;
 mod components;
 mod decide;
+mod look;
 mod systems;
 
 use bevy::prelude::*;
@@ -11,6 +12,7 @@ pub use self::components::{
     ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
 };
+pub use self::look::DemonHalo;
 use self::systems::{
     draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
 };
@@ -41,9 +43,13 @@ impl Plugin for DemonPlugin {
             .register_type::<DevourUntil>()
             .register_type::<DemonStyle>()
             .register_type::<DemonSpawner>()
+            .register_type::<DemonHalo>()
             .init_resource::<DemonSpawner>()
             .init_resource::<DemonStyle>()
             .track_pref::<DemonStyle>()
+            // атлас силуэтов собирает `SilhouettePlugin`; пустой ресурс —
+            // квадраты, как и у людей (см. `HumanPlugin`)
+            .init_resource::<crate::silhouette::Silhouettes>()
             .add_observer(on_demon_caught_human)
             .add_observer(on_world_started)
             // `Live`, а не `Playing`: номера демонам раздаёт спавнер, а обнуляет
