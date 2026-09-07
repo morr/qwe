@@ -89,6 +89,21 @@ impl Material2d for PortalMaterial {
     }
 }
 
+/// Сердце города — цель вторжения (`VISION.md`). Стартует с хинта
+/// (`City::heart_hint`); в потоке загрузки, уже после прунинга, снапится к
+/// ближайшему проходимому тайлу: центроид кремля может лечь на стену, а
+/// районам нужен тайл, до которого можно дойти от портала. Живёт рядом с
+/// `PortalPos`, пока нет `district.rs`.
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
+pub struct HeartPos(pub Vec2);
+
+impl Default for HeartPos {
+    fn default() -> Self {
+        Self(City::default().heart_hint())
+    }
+}
+
 pub struct PortalPlugin;
 
 impl Plugin for PortalPlugin {
@@ -96,7 +111,9 @@ impl Plugin for PortalPlugin {
         app.add_plugins(Material2dPlugin::<PortalMaterial>::default())
             .register_type::<Portal>()
             .register_type::<PortalPos>()
+            .register_type::<HeartPos>()
             .init_resource::<PortalPos>()
+            .init_resource::<HeartPos>()
             // пятно берёт глиф ореола из атласа силуэтов; сам атлас собирает
             // `SilhouettePlugin`, здесь только гарантия, что ресурс есть
             .init_resource::<Silhouettes>()

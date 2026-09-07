@@ -29,9 +29,10 @@ import urllib.request
 MAP_SIZE = (5600.0, 3700.0)
 METERS_PER_DEG_LAT = 111_320.0
 
-# city.rs::geo_center
+# city.rs::geo_center. Тула — срез: центр вычислен от сердца (`Slice::geo_center`,
+# сердце 54.19506/37.62039, портал на севере, глубина 0.7 — `slice_audit.py`)
 CITIES = {
-    "tula": (54.18969, 37.59148),
+    "tula": (54.20171, 37.62039),
     "paris": (48.85565, 2.34612),
     "berlin": (52.519, 13.40133),
     "london": (51.5119, -0.1224),

@@ -24,7 +24,11 @@ pub struct GeoBounds {
 
 impl GeoBounds {
     pub fn for_city(city: City) -> Self {
-        let center = city.geo_center();
+        Self::around(city.geo_center())
+    }
+
+    /// Рамка `MAP_SIZE` вокруг гео-центра `(широта, долгота)`.
+    pub fn around(center: DVec2) -> Self {
         let lon_scale = METERS_PER_DEG_LAT * center.x.to_radians().cos();
         let half = DVec2::new(
             MAP_SIZE.x as f64 / 2.0 / lon_scale,

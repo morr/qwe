@@ -51,9 +51,16 @@ in `main.rs`.
   margin** (warmup 1.0, dispatcher/separation `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door
   gizmos 1.5), because each asks a different question — the table is in the
   **navigation-deep skill**. Not Bevy's `Camera::viewport`, which is in pixels.
-- **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
-  local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
-  f64 math, `MAP_SIZE`-sized bbox derived from the center.
+- **Geo anchor** — each `City` has a geo center; the map bbox is `MAP_SIZE` around it.
+  Projection is local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW
+  corner → (0,0), f64 math. A city with a **Slice** (`city.rs`; Tula only) is anchored
+  from its **heart** instead: `Slice { heart, portal_edge: Edge, portal_across }`, the
+  geo center *computed* as the heart shifted toward the portal edge by
+  `(HEART_DEPTH − 0.5) × map extent` (0.7 — the heart sits at 0.7 depth from the portal
+  edge, the portal `PORTAL_EDGE_MARGIN` inside that edge at `portal_across` along it).
+  Tula: heart = kremlin wall centroid (`TULA_HEART_GEO`), portal on the north edge in
+  Заречье, the Упа across the way. `City::heart_hint()` exists for every city (map
+  centre without a slice).
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → parking
@@ -110,7 +117,8 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   Consumed in `PreUpdate` after `InputSystems` — the same slot R uses, because a mass
   despawn may not happen in `Update` (CLAUDE.md). Always `to_portal: true`.
 - **City** (`city.rs`, resource, persisted) — `Tula | NewYork | Paris | Berlin | London |
-  Tokyo | DevilsLake`, each with its geo center, portal hint and cache slug. `MAP_SIZE` and
+  Tokyo | DevilsLake`, each with its geo center, portal hint, heart hint and cache slug
+  (Tula derives the first two from its *Slice* — see **Geo anchor**). `MAP_SIZE` and
   therefore the derived `grid_size()` are shared, so switching city never resizes the
   navmesh. UI — a select at
   bottom centre (`ui/city.rs`).
@@ -1240,6 +1248,10 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
+- **HeartPos** (resource, `portal.rs`) — the actual heart position, the invasion's goal;
+  `City::heart_hint` is the hint, snapped by the load thread **after** prune to the nearest
+  passable tile (no clearance needed — nothing spawns there), so the heart is reachable
+  from the portal by construction.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
