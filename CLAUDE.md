@@ -76,7 +76,8 @@ runs in `FixedUpdate`, the world spawns in `OnEnter(AppState::Playing)` after th
 map loads. Full domain picture — `CONTEXT.md`. Where it is heading as a game — the
 pillars, the milestones and the open decisions — `VISION.md` (in Russian, by the
 author's choice; its candidate terms enter `CONTEXT.md` only with the code that carries
-them).
+them). The nearest milestone broken into steps — `ROADMAP.md` (same language, same
+rule for its terms).
 
 ## Reference Points
 
