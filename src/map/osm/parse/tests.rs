@@ -265,6 +265,35 @@ fn buildings_standing_in_water_are_dropped() {
 }
 
 #[test]
+fn landuse_blocks_are_their_own_layer_and_never_win_over_green() {
+    let (sw, _, ne, _) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .area(&[("landuse", "residential")], square(CENTER, HALF))
+        .area(&[("landuse", "garages")], square(CENTER, HALF / 2.0))
+        .relation(
+            &[("landuse", "industrial")],
+            &[("outer", closed(vec![sw, Vec2::new(ne.x, sw.y), ne]))],
+        )
+        // зелень с тем же тегом остаётся зеленью
+        .area(&[("landuse", "forest")], square(CENTER, HALF / 4.0))
+        .area(&[("landuse", "grass")], square(CENTER, HALF / 8.0))
+        .parse();
+
+    let kinds: Vec<AreaKind> = map.landuse.iter().map(|area| area.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Residential,
+            AreaKind::Industrial,
+            AreaKind::Industrial
+        ]
+    );
+    assert_eq!(map.woods.len(), 1);
+    assert_eq!(map.grass.len(), 1);
+    assert!(map.buildings.is_empty() && map.parks.is_empty());
+}
+
+#[test]
 fn trees_avoid_grass_and_sand_inside_the_wood() {
     let (sw, _, ne, nw) = corners(WOOD_HALF);
     // луг — восточная половина массива, песок — северо-западная четверть

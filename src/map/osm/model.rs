@@ -16,6 +16,12 @@ pub enum AreaKind {
     Grass,
     /// Пляж или песчаная отмель (`natural=sand|beach`), тоже без деревьев.
     Sand,
+    /// Жилой квартал (`landuse=residential`) — еле заметная тёплая заливка под
+    /// всем остальным: подложка города перестаёт быть одним ровным листом.
+    Residential,
+    /// Промзона и гаражные кооперативы (`landuse=industrial|garages`) — та же
+    /// подложка, но серее и холоднее жилья.
+    Industrial,
 }
 
 /// Назначение здания по `building=*` (и `amenity=*`, когда сам тег — просто
@@ -345,6 +351,9 @@ pub struct MapData {
     pub grass: Vec<PolyArea>,
     /// Песчаные пляжи — тоже поверх парков и без деревьев.
     pub sand: Vec<PolyArea>,
+    /// Кварталы `landuse` (жильё, промзона) — самая нижняя заливка, под
+    /// парками; на навмеш и посадку деревьев не влияют.
+    pub landuse: Vec<PolyArea>,
     pub roads: Vec<RoadLine>,
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,

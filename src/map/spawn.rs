@@ -8,15 +8,20 @@ use bevy::prelude::*;
 use crate::loading::AppState;
 use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, TreeRow, WaterLine, water_line_caps};
+use crate::map::osm::{AreaKind, MapData, TreeRow, WaterLine, water_line_caps};
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING,
-    Z_WATERWAY, Z_WOOD,
+    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND,
+    Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
 };
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
+/// Кварталы `landuse` — на полтона от земли, не больше: заливка обязана
+/// делить город на жильё и промзону, не споря ни с зеленью, ни с домами.
+/// Жильё чуть светлее и теплее земли, промзона чуть темнее и холоднее.
+const RESIDENTIAL_COLOR: Color = Color::srgb(0.906, 0.886, 0.839);
+const INDUSTRIAL_COLOR: Color = Color::srgb(0.843, 0.843, 0.835);
 pub const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
 /// Лес внутри парка — темнее парковой подложки (osm-carto `#ADD19E`), под ним
 /// и растут кроны; открытая часть парка так читается как поле.
@@ -62,6 +67,15 @@ pub fn spawn_map(
     // вершинные цвета — материал один, белый
     let material = materials.add(Color::WHITE);
 
+    let mut landuse = MeshBuilder::default();
+    for area in &map.landuse {
+        let color = match area.kind {
+            AreaKind::Industrial => INDUSTRIAL_COLOR,
+            _ => RESIDENTIAL_COLOR,
+        };
+        landuse.push_polygon(&area.outer, &area.holes, color.to_linear());
+    }
+
     let mut parks = MeshBuilder::default();
     for park in &map.parks {
         parks.push_polygon(&park.outer, &park.holes, PARK_COLOR.to_linear());
@@ -89,7 +103,7 @@ pub fn spawn_map(
 
     let waterways = mesh_water_lines(&map.water_lines);
 
-    let skipped: usize = [&parks, &woods, &grass, &sand, &water]
+    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();
@@ -98,6 +112,7 @@ pub fn spawn_map(
     }
 
     for (builder, z, name) in [
+        (landuse, Z_LANDUSE, "landuse"),
         (parks, Z_PARK, "parks"),
         (woods, Z_WOOD, "woods"),
         (grass, Z_GRASS, "grass"),

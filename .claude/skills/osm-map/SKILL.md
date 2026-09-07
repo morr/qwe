@@ -36,9 +36,11 @@ in `CONTEXT.md` and the detail here in the same change.
   `leisure=park|garden`,
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
-  `natural=sand|beach`, `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **7** (v3 added `entrance` nodes, v4 `railway`,
-  v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`).
+  `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
+  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **8** (v3 added `entrance` nodes, v4 `railway`,
+  v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
+  blocks).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -63,12 +65,19 @@ in `CONTEXT.md` and the detail here in the same change.
 `map/osm/model.rs`; the resource stays resident after spawn.
 
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
-  `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand`. **Park** is the
+  `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
+  Industrial`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
   but Wood stays open ground — that is what makes the open half of a park read as a
-  field, the way it does on OSM.
+  field, the way it does on OSM. **Residential** (`landuse=residential`) and
+  **Industrial** (`landuse=industrial|garages`) are the *blocks* — `MapData::landuse`,
+  one merged layer at `Z_LANDUSE` (0.25) between the ground sprite and the parks, half
+  a tone off the ground colour (warmer/lighter for housing, greyer for industry) so the
+  city stops being one flat sheet. `area_kind` tries them **last**: any green tag on the
+  same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
+  residential, 44 industrial/commercial/retail polygons (the audit table).
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**

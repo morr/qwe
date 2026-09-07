@@ -17,7 +17,8 @@
 `parse/tags.rs::building_use`, палитра по классу), дороги и аллеи, ж/д пути и
 трамвай, вода площадная и линейная
 (`waterway=river|stream|brook|canal|ditch|drain|weir`), парки, леса, луга,
-песок, стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
+песок, кварталы `landuse=residential|industrial|garages` (заливка под всем, с
+кеша v8), стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
 одиночные ноды `natural=tree`).
 
 Значения `building=*` по кешу Тулы v7 (7465 зданий): `yes` 4004, `house` 2249,
@@ -104,8 +105,7 @@ block»). Пины — `parse::tests::a_culvert_hides_the_stream_and_leaves_the_
 | `area:highway` (покрытия дорог) | 11 | 418 | **1785** | 358 | 58 | 44 |
 | `leisure=pitch` | 44 | 79 | 191 | 145 | 135 | 310 |
 | playground/sports/stadium/pool | 80 | 121 | 316 | 93 | 72 | 368 |
-| landuse residential | 264 | 6 | 413 | 364 | 12 | 46 |
-| landuse industrial/commercial/retail | 44 | 5 | 272 | 667 | 125 | 14 |
+| landuse commercial/retail (residential и industrial — в запросе с v8) | 44 | 5 | 272 | 667 | 125 | 14 |
 | landuse brownfield/quarry/military/railway | 8 | 50 | 141 | 151 | 156 | 153 |
 | `natural` scrub/heath/wetland/rock | 4 | 333 | 542 | 61 | 82 | 115 |
 | `man_made` (пирсы, башни, эстакады) | 40 | 733 | **2846** | 265 | 126 | 246 |

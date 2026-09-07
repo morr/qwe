@@ -49,8 +49,8 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
-  → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
+  parks → woods → grass → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
   casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5) →
   units → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
@@ -127,7 +127,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   literal.**
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
-    Park | Wood | Grass | Sand`; **only Wood carries trees**. Buildings carry
+    Park | Wood | Grass | Sand | Residential | Industrial`; **only Wood carries trees**;
+    Residential/Industrial are the `landuse` **blocks** — a faint fill under everything
+    else, no effect on navigation or planting. Buildings carry
     `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them).

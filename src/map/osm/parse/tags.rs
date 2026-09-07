@@ -140,7 +140,12 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     {
         return Some(AreaKind::Park);
     }
-    None
+    // кварталы — последними: у них нет ничего, что перекрыло бы зелень
+    match landuse {
+        Some("residential") => Some(AreaKind::Residential),
+        Some("industrial" | "garages") => Some(AreaKind::Industrial),
+        _ => None,
+    }
 }
 
 /// Число из значения тега OSM. Единица измерения по умолчанию — метр, но
