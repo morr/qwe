@@ -251,12 +251,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   not of the frame, so with a camera that pans the fan is only visible around the centre,
   and following the camera is out of reach while the layer is rebuilt on the CPU (tens of
   milliseconds). It belongs with a move of the skew into the vertex shader.
-- **Sun** (`map/mod.rs`) — one light for the whole map, and now with both halves:
-  **`SHADOW_DIR`** (where the shadow points in plan) and **`SUN_ELEVATION_DEG`** (59°, the
-  summer noon of Tula's latitude — the hour a city is photographed from the air), from
-  which **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of
-  height. That 0.6 used to be a bare constant; it is the same number, but it now has a
-  cause, and the way to change it is the elevation.
+- **Sun** (`map/sun.rs`, `SunStyle`) — one light for the whole map, as **two knobs**:
+  **azimuth** (clockwise from north; the default 300° puts the shadow down-right at 30°,
+  the old `SHADOW_DIR` exactly) and **elevation** (default 59°, the summer noon of Tula's
+  latitude — the hour a city is photographed from the air), from which
+  **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of height.
+  Section *Sun*, persisted. **It is read through a process global**, not a `Res`, for the
+  same reason the navtile size is (`settings::navtile_size`): `shade_by_light`, the shadow
+  sweep, the roof clutter and the cars are pure functions deep inside mesh building.
+  The rule is the navtile's too — **only `apply_sun` writes it (in `PreUpdate`, before both
+  the world build and the Update rebuilds), and everything that depends on it rebuilds on
+  the same change**: building layers with their shadows, tree crowns, cars, and the roof
+  material's `light` uniform.
 - **Soft shadow** (`map/buildings/layers.rs::shadow_builder`) — a building's shadow is no
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's

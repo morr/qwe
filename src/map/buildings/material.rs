@@ -26,10 +26,10 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::roofs::min_area_rect;
-use crate::map::SHADOW_DIR;
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
+use crate::map::sun_light;
 use crate::settings::ROOF_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/roof.wgsl";
@@ -366,7 +366,7 @@ pub(super) fn building_seed(building: &PolyArea) -> u32 {
 /// `roof.wgsl`: порядок полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct RoofParams {
-    /// Направление **на солнце** в плане (`-SHADOW_DIR`): по нему рёбра
+    /// Направление **на солнце** в плане (`map::sun_light`): по нему рёбра
     /// фальца и профлиста получают блик с одной стороны и тень с другой, а
     /// поперечное свету ребро видно сильнее продольного.
     pub light: Vec2,
@@ -436,7 +436,7 @@ impl Default for RoofStyle {
 impl RoofStyle {
     fn params(self) -> RoofParams {
         RoofParams {
-            light: -SHADOW_DIR,
+            light: sun_light(),
             intensity: self.texture,
         }
     }

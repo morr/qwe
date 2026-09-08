@@ -8,10 +8,10 @@ use std::f32::consts::{PI, TAU};
 use bevy::prelude::*;
 
 use super::{TreeShape, TreeStyle};
-use crate::map::SHADOW_DIR;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::seed::Lcg;
+use crate::map::shadow_dir;
 use crate::settings::{TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE};
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -29,10 +29,12 @@ pub(super) const PALM_BANDS: [f32; 2] = [0.7, 0.3];
 ///
 /// Это тот же источник света, что отбрасывает тени на всей карте, записанный
 /// иначе: у ребра CCW-кольца нормаль перпендикулярна его направлению, поэтому
-/// «ребро вдоль [`SHADE_DIR`]» и «нормаль вдоль [`SHADOW_DIR`]» — одно условие.
+/// «ребро вдоль [`shade_dir`]» и «нормаль вдоль `map::shadow_dir`» — одно условие.
 /// Выводится, а не пишется числом: солнце, повёрнутое в `map/mod.rs`, иначе
 /// развернуло бы тени, оставив штриховку крон на старой стороне.
-const SHADE_DIR: Vec2 = Vec2::new(-SHADOW_DIR.y, SHADOW_DIR.x);
+fn shade_dir() -> Vec2 {
+    shadow_dir().perp()
+}
 /// Предел сдвига вершины базы, которым раскрывается залипший вырез, — доля
 /// радиуса кроны. Замерено: на 12 вариантах хватает 0.08.
 const NOTCH_NUDGE_LIMIT: f32 = 0.15;
@@ -564,9 +566,9 @@ pub(super) fn shadow_ring(outer: &[Vec2], params: &CrownParams) -> Vec<Vec2> {
     outer
         .iter()
         .map(|&point| {
-            let local = Vec2::new(point.dot(SHADOW_DIR), point.perp_dot(SHADOW_DIR));
+            let local = Vec2::new(point.dot(shadow_dir()), point.perp_dot(shadow_dir()));
             let x = (local.x + 1.0) * params.shadow_stretch + params.shadow_backshift;
-            SHADOW_DIR * x + SHADOW_DIR.perp() * -local.y
+            shadow_dir() * x + shadow_dir().perp() * -local.y
         })
         .collect()
 }
@@ -638,7 +640,7 @@ fn chain_arcs(ring: &[Vec2], step: usize, drawn: &[bool]) -> Vec<Vec<Vec2>> {
 }
 
 /// `drawShaded1` — штриховка облачной кроны. Вероятность нарисовать ребро тем
-/// выше, чем ближе его направление к `SHADE_DIR`: штрихи скапливаются на
+/// выше, чем ближе его направление к `shade_dir()`: штрихи скапливаются на
 /// теневой стороне кольца. Кольцо `0.8` (вес 1.92) выходит одной длинной дугой
 /// по теневой стороне плюс россыпь коротких штрихов по краям — их **надо**
 /// рисовать, иначе кольцо читается как рваное. Отбрасываются только дуги
@@ -653,7 +655,7 @@ pub(super) fn shaded_arcs(
         .map(|index| {
             let edge = ring[(index + 1) % ring.len()] - ring[index];
             edge.try_normalize().is_some_and(|direction| {
-                rng.next_f32() < weight * (0.5 + 0.5 * SHADE_DIR.dot(direction))
+                rng.next_f32() < weight * (0.5 + 0.5 * shade_dir().dot(direction))
             })
         })
         .collect();
@@ -681,7 +683,7 @@ pub(super) fn chevron_arcs(ring: &[Vec2], weight: f32) -> Vec<Vec<Vec2>> {
             let chord = ring[(chevron * 2 + 2) % ring.len()] - ring[chevron * 2];
             chord
                 .try_normalize()
-                .is_some_and(|direction| weight * (0.5 + 0.5 * SHADE_DIR.dot(direction)) > 0.5)
+                .is_some_and(|direction| weight * (0.5 + 0.5 * shade_dir().dot(direction)) > 0.5)
         })
         .collect();
     chain_arcs(ring, 2, &close_single_gaps(&drawn))
@@ -708,7 +710,7 @@ pub(super) fn leaf_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Ve
         .map(|leaf| {
             let chord = ring[(leaf * 4 + 4) % ring.len()] - ring[leaf * 4];
             chord.try_normalize().is_some_and(|direction| {
-                rng.next_f32() < weight * (0.5 + 0.5 * SHADE_DIR.dot(direction))
+                rng.next_f32() < weight * (0.5 + 0.5 * shade_dir().dot(direction))
             })
         })
         .collect();
@@ -743,7 +745,7 @@ pub(super) fn shadow_template(
         }
         // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
         _ => {
-            let offset = SHADOW_DIR * height;
+            let offset = shadow_dir() * height;
             let ring: Vec<Vec2> = geometry.outer.iter().map(|&p| p + offset).collect();
             builder.push_polygon(&ring, &[], LinearRgba::WHITE);
         }
@@ -764,8 +766,8 @@ pub(super) fn conifer_shadow(outer: &[Vec2], height: f32) -> Vec<(Vec<Vec2>, Vec
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
 
-    let tip = SHADOW_DIR * 3.0 * height;
-    let across = SHADOW_DIR.perp();
+    let tip = shadow_dir() * 3.0 * height;
+    let across = shadow_dir().perp();
     let steps = (3.0 * height).ceil().max(1.0);
     let mut parts: Vec<Vec<Vec2>> = vec![vec![across, -across, tip]];
     for step in 0..steps as usize {

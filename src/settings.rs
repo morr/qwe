@@ -1027,6 +1027,21 @@ pub const CAR_OCCUPANCY_MIN: f32 = 0.0;
 pub const CAR_OCCUPANCY_MAX: f32 = 1.0;
 pub const CAR_OCCUPANCY_STEP: f32 = 0.05;
 
+// --- Солнце карты (`map::sun`) ---
+/// Азимут по умолчанию, градусы по часовой стрелке от севера: 300° дают тень
+/// вправо-вниз под 30° — прежнюю константу `SHADOW_DIR`.
+pub const SUN_AZIMUTH_DEFAULT: f32 = 300.0;
+pub const SUN_AZIMUTH_MIN: f32 = 0.0;
+pub const SUN_AZIMUTH_MAX: f32 = 360.0;
+pub const SUN_AZIMUTH_STEP: f32 = 5.0;
+/// Высота по умолчанию, градусы: полдень середины лета на широте Тулы.
+/// Минимум не нулевой: на пяти градусах котангенс уходит за десяток, и тень
+/// всякого дома накрывает полквартала.
+pub const SUN_ELEVATION_DEFAULT: f32 = 59.0;
+pub const SUN_ELEVATION_MIN: f32 = 15.0;
+pub const SUN_ELEVATION_MAX: f32 = 80.0;
+pub const SUN_ELEVATION_STEP: f32 = 1.0;
+
 /// Радиус агента полигонального меша (панель Polymesh): инфляция препятствий
 /// при триангуляции. Минимум ненулевой: по мешу теперь ходят пешки шириной
 /// `HUMAN_SIZE`, а нулевой радиус даёт контур точно по нарисованной геометрии,

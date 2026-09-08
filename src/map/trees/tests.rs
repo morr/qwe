@@ -3,8 +3,8 @@ use super::crown::{
     shaded_arcs, shadow_ring,
 };
 use super::*;
-use crate::map::SHADOW_DIR;
 use crate::map::seed::Lcg;
+use crate::map::shadow_dir;
 use crate::settings::CONIFER_NOISE_WAVELENGTH;
 
 /// Параметры кроны, на которых нарисован город: тесты пиннят игру, а не
@@ -412,7 +412,7 @@ fn shadow_ring_stretches_along_shadow_dir() {
     let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(3), &params());
     let shadow = shadow_ring(&crown.outer, &params());
     let extent = |ring: &[Vec2]| {
-        let projected: Vec<f32> = ring.iter().map(|point| point.dot(SHADOW_DIR)).collect();
+        let projected: Vec<f32> = ring.iter().map(|point| point.dot(shadow_dir())).collect();
         let min = projected.iter().copied().fold(f32::INFINITY, f32::min);
         let max = projected.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         (min, max)
@@ -445,7 +445,7 @@ fn band_centre(ring: &[Vec2]) -> Vec2 {
 }
 
 /// Штрихи ели скапливаются на теневой стороне: центр тяжести чернил каждого
-/// кольца смещён по `SHADOW_DIR`, а самая освещённая вершина кольца в дуги не
+/// кольца смещён по `shadow_dir()`, а самая освещённая вершина кольца в дуги не
 /// попадает — светлая сторона у `drawShaded2` чистая, без случайных штрихов.
 #[test]
 fn conifer_shading_leans_into_the_shadow() {
@@ -456,14 +456,14 @@ fn conifer_shading_leans_into_the_shadow() {
         let points: Vec<Vec2> = arcs.iter().flatten().copied().collect();
         let ink = points.iter().copied().sum::<Vec2>() / points.len() as f32;
         assert!(
-            (ink - band_centre(ring)).dot(SHADOW_DIR) > 0.0,
+            (ink - band_centre(ring)).dot(shadow_dir()) > 0.0,
             "чернила кольца не на теневой стороне"
         );
         let lit = ring
             .iter()
             .copied()
             .reduce(|a, b| {
-                if b.dot(SHADOW_DIR) < a.dot(SHADOW_DIR) {
+                if b.dot(shadow_dir()) < a.dot(shadow_dir()) {
                     b
                 } else {
                     a
@@ -570,7 +570,7 @@ fn cotton_keeps_its_dashes() {
     );
 }
 
-/// Тень ели — конус: длиннее кроны вдоль `SHADOW_DIR` и сужается к дальнему
+/// Тень ели — конус: длиннее кроны вдоль `shadow_dir()` и сужается к дальнему
 /// концу, а не растянутая клякса.
 #[test]
 fn conifer_shadow_tapers_into_a_cone() {
@@ -579,14 +579,14 @@ fn conifer_shadow_tapers_into_a_cone() {
         .into_iter()
         .flat_map(|(outer, _)| outer)
         .collect();
-    let along = |point: &Vec2| point.dot(SHADOW_DIR);
+    let along = |point: &Vec2| point.dot(shadow_dir());
     let reach = points.iter().map(along).fold(f32::MIN, f32::max);
     assert!(reach > 2.0, "веер не дотянулся до 3h: {reach}");
     let width = |range: std::ops::Range<f32>| {
         let across: Vec<f32> = points
             .iter()
             .filter(|point| range.contains(&along(point)))
-            .map(|point| point.perp_dot(SHADOW_DIR))
+            .map(|point| point.perp_dot(shadow_dir()))
             .collect();
         across.iter().copied().fold(f32::MIN, f32::max)
             - across.iter().copied().fold(f32::MAX, f32::min)
@@ -607,7 +607,7 @@ fn shadow_length_varies_between_variants() {
         shadow_template(&geometry, &mut rng, &params())
             .positions_for_test()
             .iter()
-            .map(|point| Vec2::new(point[0], point[1]).dot(SHADOW_DIR))
+            .map(|point| Vec2::new(point[0], point[1]).dot(shadow_dir()))
             .fold(f32::MIN, f32::max)
     };
     let reaches: Vec<f32> = (0..crate::settings::TREE_VARIANTS as u32)

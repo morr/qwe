@@ -31,7 +31,7 @@ use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, Z_CAR};
 
 /// Габарит легковой машины, м — «Логан» с точностью до сантиметров.
@@ -340,7 +340,7 @@ fn place_on_path(points: &[Vec2], along: &[f32], at: f32) -> Option<(Vec2, Vec2)
 fn mesh_cars(cars: &[Car]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let shadow = SHADOW_COLOR.to_linear();
-    let offset = SHADOW_DIR * (CAR_HEIGHT * shadow_length_scale());
+    let offset = shadow_dir() * (CAR_HEIGHT * shadow_length_scale());
     for car in cars {
         builder.push_quad(body(car, offset), shadow);
     }
