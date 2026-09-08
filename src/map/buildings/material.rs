@@ -25,7 +25,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
-use super::roofs::min_area_rect;
+use crate::map::meshing::min_area_rect;
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
