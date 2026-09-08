@@ -15,7 +15,7 @@ use super::{
     BuildingHeightMode, RoofDetail, extrusion_dir, extrusion_lift, facade_color, height_or_default,
     ridge_lift, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, miter_offsets};
+use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
@@ -59,9 +59,6 @@ const ROOF_TINT_MAX_MIX: f32 = 0.3;
 /// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
 /// зумах, где тени вообще видны.
 const PENUMBRA_WIDTH: f32 = 1.0;
-/// Ширина контактного затенения по контуру дома, м: у стены небо перекрыто
-/// самой стеной, и на снимке дом всегда обведён тёмной каймой.
-const CONTACT_WIDTH: f32 = 1.1;
 
 /// Ширина парапета, м: у плоской кровли по контуру идёт бортик, и с воздуха
 /// он читается светлой каймой на солнечных гранях и тёмной на теневых.
@@ -239,8 +236,9 @@ pub(super) fn facade_and_roof_builders(
 /// непересекающихся фигур с дырками: тени смежных корпусов и соседних зданий
 /// перекрываются на земле, а любое наложение внутри одного полупрозрачного
 /// слоя читается как пятно двойной темноты. После union альфа везде ровно
-/// одна. Часть тени под зданиями закрывают их непрозрачные слои. Дыры (дворы)
-/// пропускаются: их тень падает внутрь футпринта.
+/// одна, и по контурам каждой фигуры идёт мягкий край (`PENUMBRA_WIDTH`).
+/// Часть тени под зданиями закрывают их непрозрачные слои. Дыры футпринта
+/// (дворы) в объединение не идут: их тень падает внутрь того же футпринта.
 /// `extruded` — арки в 2.5D прорезаны по-настоящему, и сквозь дыру видна
 /// голая дорога: без заплатки тени проём светится, хотя физически он затенён
 /// перемычкой. Заплатка кладётся сюда, в теневой слой: он ниже зданий и
@@ -261,19 +259,7 @@ pub(super) fn shadow_builder(
         for chain in silhouette_chains(&building.outer, SHADOW_DIR) {
             let mut sweep: Vec<Vec2> = chain.clone();
             sweep.extend(chain.iter().rev().map(|&point| point + offset));
-            push_contour(&mut sweeps, sweep, false);
-        }
-        // контактное затенение: сам футпринт, расширенный на `CONTACT_WIDTH`,
-        // тоже уходит в объединение. Земля под домом закрыта от неба целиком
-        // (в 2.5D она видна к северо-востоку от поднятой крыши и была там
-        // светлее двора), а метровая юбка по контуру — то самое тёмное
-        // обведение, которым дом прирастает к земле на всяком снимке, даже с
-        // солнечной стороны, где падающей тени нет
-        push_contour(&mut sweeps, contact_skirt(&building.outer), false);
-        // двор от неба не закрыт: его кольцо идёт обратным обходом и NonZero
-        // вычитает его из юбки
-        for hole in &building.holes {
-            push_contour(&mut sweeps, hole.clone(), true);
+            push_contour(&mut sweeps, sweep);
         }
     }
 
@@ -299,13 +285,15 @@ pub(super) fn shadow_builder(
         };
         let holes: Vec<Vec<Vec2>> = rings.collect();
         builder.push_polygon(&outer, &holes, color);
-        // кайма наружу от каждого контура объединённой фигуры — и от внешнего,
-        // и от контуров дырок (там «наружу» значит внутрь просвета). Каймы
-        // соседних фигур могут наложиться, но обе сходят в ноль, и удвоение
-        // выходит слабее самой тени
+        // кайма от каждого контура объединённой фигуры — наружу от внешнего и
+        // внутрь просвета от каждой дырки: `push_inset_band` выбирает сторону
+        // по площади самого кольца, так что просвету нужно `outside: false`,
+        // иначе кайма ляжет на уже залитое тело и обведёт дырку двойной
+        // темнотой вместо растушёвки. Каймы соседних фигур могут наложиться,
+        // но обе сходят в ноль, и удвоение выходит слабее самой тени
         builder.push_inset_band(&outer, PENUMBRA_WIDTH, true, color, fade);
         for hole in &holes {
-            builder.push_inset_band(hole, PENUMBRA_WIDTH, true, color, fade);
+            builder.push_inset_band(hole, PENUMBRA_WIDTH, false, color, fade);
         }
     }
 
@@ -337,33 +325,17 @@ pub(super) fn shadow_builder(
     builder
 }
 
-/// Контур в список для объединения: `hole` — обратный обход, который NonZero
-/// вычитает. Обход source-колец OSM произволен, поэтому нормализуется здесь и
-/// только здесь.
-fn push_contour(contours: &mut Vec<Vec<[f32; 2]>>, mut ring: Vec<Vec2>, hole: bool) {
+/// Контур в список для объединения, обходом против часовой стрелки — тем, что
+/// NonZero считает заливкой. Обход свипа зависит от того, с какой стороны дома
+/// идёт цепочка силуэта, поэтому нормализуется здесь и только здесь.
+fn push_contour(contours: &mut Vec<Vec<[f32; 2]>>, mut ring: Vec<Vec2>) {
     if ring.len() < 3 {
         return;
     }
-    if (signed_ring_area(&ring) < 0.0) != hole {
+    if signed_ring_area(&ring) < 0.0 {
         ring.reverse();
     }
     contours.push(ring.into_iter().map(|point| [point.x, point.y]).collect());
-}
-
-/// Контур дома, раздутый наружу на [`CONTACT_WIDTH`] — те же miter-офсеты, что
-/// строят дальний край каймы; сторона выбирается по знаковой площади, потому
-/// что офсеты смотрят влево по ходу обхода.
-pub(super) fn contact_skirt(ring: &[Vec2]) -> Vec<Vec2> {
-    let side = if signed_ring_area(ring) > 0.0 {
-        -1.0
-    } else {
-        1.0
-    };
-    let offsets = miter_offsets(ring, true, CONTACT_WIDTH);
-    ring.iter()
-        .zip(&offsets)
-        .map(|(point, offset)| *point + *offset * side)
-        .collect()
 }
 
 /// Непрерывные (циклически) цепочки рёбер-силуэта кольца — рёбер, чья

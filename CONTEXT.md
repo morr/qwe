@@ -217,13 +217,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   which **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of
   height. That 0.6 used to be a bare constant; it is the same number, but it now has a
   cause, and the way to change it is the elevation.
-- **Soft shadow and contact skirt** (`map/buildings/layers.rs::shadow_builder`) — a
-  building's shadow is no longer a hard silhouette. Every contour of the union carries a
-  **1 m band fading to zero alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which
-  comes from the frame's resolution and the sky's fill light, not from the sun's angular
-  size, and is therefore chosen by look), and every **footprint enters the union expanded by
-  `CONTACT_WIDTH` 1.1 m**, so the ground under a lifted 2.5D building is dark and every
-  building is tied to the ground by a rim even on its sunny side. The shadow layer now
+- **Soft shadow** (`map/buildings/layers.rs::shadow_builder`) — a building's shadow is no
+  longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
+  alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
+  resolution and the sky's fill light, not from the sun's angular size, and is therefore
+  chosen by look), outward from the outer ring and into the gap from a hole. What goes into
+  the union is still the silhouette sweeps and nothing else. The shadow layer now
   carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
   it is the most expensive thing the building layers build, and it does not depend on the
   roof-clutter zoom bucket.

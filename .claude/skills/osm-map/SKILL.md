@@ -591,14 +591,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       derived, and the elevation is what you change to move it. The azimuth stays
       `SHADOW_DIR`; together they are the one light every tone on the map answers to
       (`shade_by_light`, the roof shader's `light` uniform, the clutter shadows).
-    - **Contact skirt** — each footprint also enters the union **expanded outward by
-      `CONTACT_WIDTH` (1.1 m)** (`contact_skirt`, miter offsets with the side picked by
-      signed area), courtyards subtracted as reversed contours. Two things at once: on a
-      photo a building is bound to the ground by a dark rim even where no shadow falls,
-      and in 2.5D the ground *under* the building — visible north-east of the lifted roof
-      — stops being brighter than the yard around it.
-    - **Soft edge** — after the union each contour (outer ring and every hole) gets a
-      **`PENUMBRA_WIDTH` (1 m) band fading to zero alpha**, outward. This is not the
+    - **Only the sweeps go into the union.** A **contact skirt** was tried and taken back
+      out: every footprint also entered the union expanded outward by 1.1 m, to bind the
+      building to the ground with a dark rim the way a photo does and to darken the ground
+      under a lifted 2.5D roof. It reads as a grubby outline around every house, the
+      courtyards it had to subtract (reversed contours, or the skirt filled them) cut
+      other buildings' cast shadows out of every yard, and it cost half again as many
+      vertices. Don't reintroduce it without solving the yards.
+    - **Soft edge** — after the union each contour gets a **`PENUMBRA_WIDTH` (1 m) band
+      fading to zero alpha**: outward from the outer ring, and into the gap from a hole
+      (`push_inset_band` picks the side from the ring's own signed area, so a hole needs
+      `outside: false` — with `true` the band lands on the already-filled body and rings
+      the gap with double darkness instead of blurring it). This is not the
       geometric penumbra: the sun's angular size would give ~10 cm at these lengths. It is
       what actually softens a shadow edge on a photograph — the frame's resolution and the
       sky's fill light — so the width is chosen by look (1 m is 2–10 screen px at the zooms
@@ -608,7 +612,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode** changed (`mode.is_changed()`): it does not depend on the roof-clutter
       zoom bucket, and it is the single most expensive thing here — 90 ms of a 116 ms
-      build on Tula, measured before the union grew the skirts. `BuildingPlan { mode,
+      build on Tula. `BuildingPlan { mode,
       bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
       at seven arguments).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
