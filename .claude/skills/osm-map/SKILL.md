@@ -670,6 +670,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       true outward normal; the lean only picks which walls are visible.
   - **2.5D+shadows+tint (ExtrusionShadowsTint, the default)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
+  - **Hip roofs** (`buildings/roofs.rs::hip_roof`) — the other pitched roof, and the one
+    that does not need a rectangle. The outline is pushed inward by `HIP_INSET` (2.2 m,
+    clamped to `HIP_INSET_SHARE` 0.38 of the outline's own thickness, exactly as a rim is
+    clamped — a narrow shed would otherwise turn its slopes inside out) using the same
+    `miter_offsets`; each outline edge becomes a slope quad from the eave to its shifted
+    pair, and what is left inside is the **ridge plane**, drawn `RIDGE_LIGHTEN` lighter
+    because it faces straight up. Slope tone is `shade_by_light` on the edge's outward
+    normal, so a hip roof shows four or more tones instead of one. On a convex house that
+    construction *is* a hip roof; on an L-shaped one it is a hip roof with a flat top —
+    which is what the photo shows anyway, and what a straight skeleton would have cost an
+    order of magnitude more to produce. `roofing` is the single door: gable when the seed
+    says so and the rectangle fits, hip otherwise, flat when the building is not in the
+    pitched cohort at all — and `HIPPED_SHARE` (4 in 10) is the split among houses that
+    could take either. **The L-shaped case is why this exists**: those houses were flat
+    among pitched neighbours, which is the one thing an aerial photo of a private sector
+    never shows.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
     `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
     `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —

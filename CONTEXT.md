@@ -180,11 +180,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   above all — from `amenity=*` on the same outline. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
-- **Gable roof** (`map/buildings/roofs.rs`) — a two-slope roof **inferred**, not read
-  (`roof:shape` is rare): every house and every small untagged box whose outline nearly
-  fills its minimum-area bounding rectangle gets a ridge along the rectangle's long axis;
-  L-shaped and courtyard buildings stay flat, and so does the Kremlin — outside use-based
-  styling, as with its colour. Detail in the `osm-map` skill.
+- **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
+  not read (`roof:shape` is rare), in three kinds. A **gable** — two slopes with the ridge
+  along the long axis of the minimum-area bounding rectangle — needs an outline that nearly
+  fills that rectangle. A **hip** — a slope quad per outline edge, built by pushing the
+  outline inward on miter offsets, with the leftover interior as the ridge plane — needs
+  nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
+  (they used to stay flat among pitched neighbours). Which of the two a house takes is its
+  own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
+  and parapet. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
+  with its colour. Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
