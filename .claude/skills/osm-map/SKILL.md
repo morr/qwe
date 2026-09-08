@@ -576,15 +576,41 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     are outdoors and in shadow by meaning). Per contiguous **silhouette chain** of the
     footprint (edges whose outward normal faces the 30° light — `map/mod.rs::SHADOW_DIR`,
     one source for building and tree shadows alike) one swept
-    polygon `[chain, chain + offset reversed]`, offset = height × `SHADOW_LENGTH_SCALE`
-    (0.6) clamped to 3–45 m. Not per-edge quads — on staircase facades those overlapped
+    polygon `[chain, chain + offset reversed]`, offset = height ×
+    **`map::shadow_length_scale()`** clamped to 3–45 m. Not per-edge quads — on staircase
+    facades those overlapped
     along the shadow axis and the translucency stacked into stripes; a chain sweep
     cannot self-intersect (a silhouette edge's perp-step equals `outward·d > 0`, so the
     chain is monotone along the shadow perpendicular). All sweeps of the map are then
     merged by a boolean union (`i_overlay`, NonZero — sweeps are winding-normalized
-    first) into disjoint shapes-with-holes, so the translucent layer never overlaps
-    itself anywhere: no double-darkening between wings of one block or neighbouring
-    buildings (unlike tree shadows, which still stack).
+    first, in `push_contour`) into disjoint shapes-with-holes, so the translucent layer
+    never overlaps itself anywhere: no double-darkening between wings of one block or
+    neighbouring buildings (unlike tree shadows, which still stack).
+    - **The sun has an elevation now.** `SUN_ELEVATION_DEG` (59°, Tula's summer noon)
+      gives `shadow_length_scale() = cot 59° = 0.601` — numerically the old bare 0.6, but
+      derived, and the elevation is what you change to move it. The azimuth stays
+      `SHADOW_DIR`; together they are the one light every tone on the map answers to
+      (`shade_by_light`, the roof shader's `light` uniform, the clutter shadows).
+    - **Contact skirt** — each footprint also enters the union **expanded outward by
+      `CONTACT_WIDTH` (1.1 m)** (`contact_skirt`, miter offsets with the side picked by
+      signed area), courtyards subtracted as reversed contours. Two things at once: on a
+      photo a building is bound to the ground by a dark rim even where no shadow falls,
+      and in 2.5D the ground *under* the building — visible north-east of the lifted roof
+      — stops being brighter than the yard around it.
+    - **Soft edge** — after the union each contour (outer ring and every hole) gets a
+      **`PENUMBRA_WIDTH` (1 m) band fading to zero alpha**, outward. This is not the
+      geometric penumbra: the sun's angular size would give ~10 cm at these lengths. It is
+      what actually softens a shadow edge on a photograph — the frame's resolution and the
+      sky's fill light — so the width is chosen by look (1 m is 2–10 screen px at the zooms
+      where shadows read). Bands of neighbouring shapes may overlap, but both fade to
+      zero, so the doubling is weaker than the shadow itself.
+    - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
+      rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
+      **height mode** changed (`mode.is_changed()`): it does not depend on the roof-clutter
+      zoom bucket, and it is the single most expensive thing here — 90 ms of a 116 ms
+      build on Tula, measured before the union grew the skirts. `BuildingPlan { mode,
+      bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
+      at seven arguments).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward `ROOF_TALL_COLOR` (0.20, a near-black neutral — it must be darker in
     luminance than every palette colour, saturated tile included, or the ramp inverts),

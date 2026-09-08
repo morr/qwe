@@ -211,6 +211,22 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **The clutter is the only thing zoom changes about buildings** —
   `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) rebuilds the layer without it
   once a metre stops being worth two pixels, the way rail and tram rebuild themselves.
+- **Sun** (`map/mod.rs`) — one light for the whole map, and now with both halves:
+  **`SHADOW_DIR`** (where the shadow points in plan) and **`SUN_ELEVATION_DEG`** (59°, the
+  summer noon of Tula's latitude — the hour a city is photographed from the air), from
+  which **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of
+  height. That 0.6 used to be a bare constant; it is the same number, but it now has a
+  cause, and the way to change it is the elevation.
+- **Soft shadow and contact skirt** (`map/buildings/layers.rs::shadow_builder`) — a
+  building's shadow is no longer a hard silhouette. Every contour of the union carries a
+  **1 m band fading to zero alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which
+  comes from the frame's resolution and the sky's fill light, not from the sun's angular
+  size, and is therefore chosen by look), and every **footprint enters the union expanded by
+  `CONTACT_WIDTH` 1.1 m**, so the ground under a lifted 2.5D building is dark and every
+  building is tied to the ground by a rim even on its sunny side. The shadow layer now
+  carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
+  it is the most expensive thing the building layers build, and it does not depend on the
+  roof-clutter zoom bucket.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
