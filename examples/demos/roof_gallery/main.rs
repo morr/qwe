@@ -208,7 +208,7 @@ fn blocks() -> Vec<Block> {
             kind,
             title: kind.label(),
             note: match kind {
-                RoofKind::Bitumen => "рулонный ковёр, заплаты, лужи",
+                RoofKind::Bitumen => "рулонный ковёр, заплаты по возрасту, лужи",
                 RoofKind::Gravel => "засыпка по битуму",
                 RoofKind::Seam => "металл, рёбра по скату",
                 RoofKind::Corrugated => "волна 30 см по скату",
@@ -457,9 +457,11 @@ fn rebuild_roofs(
     let mut house = 0;
     for (index, block) in blocks().iter().enumerate() {
         for cell in cells(index, block) {
-            // фаза у каждого дома своя, ручка крутит их все разом: в игре
-            // посев берётся из первой вершины контура ровно затем, чтобы швы
-            // соседних домов не выстроились в одну линию через квартал
+            // посев у каждого дома свой, ручка крутит их все разом: в игре он
+            // берётся из первой вершины контура затем, чтобы швы соседних домов
+            // не выстроились в одну линию через квартал, и затем, чтобы у домов
+            // был разный возраст кровли (`roof.wgsl::roof_age`) — отсюда
+            // разное число заплат на битумных домах одного блока
             let seed = (tuning.seed + house as f32 * PHASE_STEP).fract();
             let look = RoofLook::new(block.kind, cell.color, axis, seed);
             let (outer, holes) = footprint(&cell, rotation, tuning.courtyard);

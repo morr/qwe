@@ -184,7 +184,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
   whole building**; code `0` is *not a roof* — walls, gables and parapets ride in the same
-  mesh). A soft flat roof gets a **parapet**: an inset band along the ring, lit by
+  mesh). **Roof age** is the second thing that seed carries (`roof.wgsl::roof_age`, hashed
+  from it, no attribute of its own): one number per building that sets how many repair
+  patches its bitumen carries (a young roof almost none, an old one a patch per second
+  cell), how much water stands on it, and — on every material — how faded and dirty it is.
+  A soft flat roof gets a **parapet**: an inset band along the ring, lit by
   `SHADOW_DIR` like a wall — soft is a property of the material (`RoofKind::has_parapet`:
   bitumen / gravel / membrane), not of the layer that draws it. Every flat roof of the
   city, in both flat modes and 2.5D, is laid by one call — **`push_flat_roof`** (fill +

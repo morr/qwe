@@ -649,7 +649,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     layer) and come out with their vertex colour untouched.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
-    line up: bitumen — 0.95 m roll seams, scattered repair patches, ponding stains; gravel —
+    line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
+    **age** below), ponding stains; gravel —
     strong fine grain and bright specks; seam metal — a lit rib and its shadow every
     0.62 m; corrugated — a 0.30 m wave plus 1.05 m sheet laps; tile — 0.32 m rows with a
     shadow line and per-tile jitter; membrane — 2 m sheet seams. **Rolls and tile rows run
@@ -668,9 +669,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
     rule the fix follows, and the same one the asphalt wear already followed: only a
-    minority of cells carry the feature (`PATCH_SHARE` 0.22), and inside its cell the
+    minority of cells carry the feature (the `share` argument), and inside its cell the
     feature is smaller than the cell and jittered, so two neighbours never meet at a cell
     boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
+  - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
+    the same seed** the texture phase rides on, and with a fixed patch share that was the
+    missing half of the patch fix: a minority of cells carried a patch, but *the same*
+    minority on every bitumen roof, so the whole district read as re-roofed and repaired in
+    one year. Age drives the patch share (`PATCH_SHARE_NEW` 0.04 → `PATCH_SHARE_OLD` 0.42,
+    mixed by `age²` — age is uniform, repairs are not, and ⟨age²⟩ = 1/3 keeps the mean
+    share at 0.17, near the old fixed 0.22, so what changes is the spread and not the tone
+    of the quarter), the ponding amount (0.07 → 0.13) and, on **every** material, the
+    common fade-and-dirt amplitude (×0.75 → ×1.35) — the last one is what makes the age
+    read as age rather than as a patch counter. It gets **no vertex attribute of its own**:
+    the seed is already a per-building random number the shader hashes several ways
+    (`seed·17`, `seed·11`, `seed·37`), the correlation between two patterns of one building
+    is not visible, and a fifth float would cost four bytes on every vertex of the building
+    layer. The consequence for the gallery: its `Seed` knob rolls the age too — that is how
+    a new roof is compared against an old one there.
   - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
     membrane) gets a 0.7 m inset band along its ring and every courtyard
     ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
