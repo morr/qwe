@@ -22,7 +22,10 @@ background=$(printf '%s' "$input" | jq -r '.tool_input.run_in_background // fals
 [ -z "$cmd" ] && exit 0
 
 state="/tmp/claude-skill-gate/$session"
-loaded() { [ -n "$session" ] && grep -qxF "$1" "$state" 2>/dev/null; }
+# No session id — no skill state exists at all; treat everything as loaded, or the
+# deny is one nothing can lift: loading a skill in such a session records nothing
+# (record-skill.sh exits on an empty session), so the advice could never be followed.
+loaded() { [ -z "$session" ] || grep -qxF "$1" "$state" 2>/dev/null; }
 
 # Command position: line start, after ; & | ( or $( — not any command that
 # merely mentions the word (`grep cargo`, `echo git`) — and past any leading
