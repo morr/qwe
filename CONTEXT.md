@@ -1582,6 +1582,17 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `PawnId` counter is shared, so the replay contract is untouched. The burst spawns Imps;
   Brutes come only by summoning. Sprite size and tint follow the kind (Brutes a darker
   ring toward purple).
+- **Brute ladder** (`demon/decide_brute.rs`, applied by `demon/besiege.rs::besiege`, in
+  the demon chain between `devour` and `strike`) — the same pure `decide` shape as the
+  chase: a target that is a ruin or gone → `Done` (drop `AttackTarget`, back to
+  `DemonWanderTag`); within `ATTACK_REACH` → `Strike` (stand, `strike` hits); else wait
+  for the first path / hold / `Repath` on the `ChaseRepath` tact. With no target: the
+  nearest **frontline bastion** with a free slot → `Engage`, or `Wander`. A bastion is
+  **frontline** when it stands in an uncorrupted district that has a corrupted
+  neighbour — the list is built once per tick from `Districts`, `Corruption` and the
+  bastions. **BastionClaims** (`demon/claims.rs`) counts Brutes per bastion from their
+  `AttackTarget`s each tick; `MAX_BRUTES_PER_BASTION` = 3 spreads them along the front.
+  Distance ties break on the bastion's `site` number, never on `Entity`.
 - **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`. **Do not
   reintroduce per-state demon speeds**: the only multipliers are the two user ones,
   `DemonStyle::speed` and `DemonStyle::lunge`.

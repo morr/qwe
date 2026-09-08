@@ -1,13 +1,16 @@
 mod behavior;
+mod besiege;
 mod claims;
 mod components;
 mod decide;
+mod decide_brute;
 mod look;
 mod systems;
 
 use bevy::prelude::*;
 
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
+use self::besiege::besiege;
 pub use self::components::{
     BruteTag, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
     DemonDevourTag, DemonKind, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
@@ -100,13 +103,15 @@ impl Plugin for DemonPlugin {
                     // порядок (демоны раньше людей) и настраивается чужим
                     // плагином — на него этот гейт не переложишь: без
                     // `SpatialPlugin` множество не гейтит ничего
-                    // удар (`combat::strike`) — хвост цепочки: лестница Громилы
+                    // осада (Громилы) — после погони (Бесы), удар
+                    // (`combat::strike`) — хвост цепочки: лестница Громилы
                     // выставила цель на этом же тике, и бьёт он на нём же
                     (
                         pick_wander_targets,
                         acquire_targets,
                         chase,
                         devour,
+                        besiege,
                         crate::combat::strike,
                     )
                         .chain()

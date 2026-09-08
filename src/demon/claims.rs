@@ -16,6 +16,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::decide::MAX_CHASERS_PER_TARGET;
+use super::decide_brute::MAX_BRUTES_PER_BASTION;
 
 #[derive(Default, Debug)]
 pub struct ChaseClaims(HashMap<Entity, usize>);
@@ -77,9 +78,48 @@ impl ChaseClaims {
     }
 }
 
+/// Места у бастионов: сколько Громил уже идут на каждый — та же форма, что
+/// [`ChaseClaims`], с лимитом [`MAX_BRUTES_PER_BASTION`]. Тоже значение на
+/// один тик, собранное из `AttackTarget` Громил выборки: источник правды о
+/// том, кто куда идёт, — компонент на демоне.
+#[derive(Default, Debug)]
+pub struct BastionClaims(HashMap<Entity, usize>);
+
+impl BastionClaims {
+    pub fn of(targets: impl Iterator<Item = Entity>) -> Self {
+        let mut claims = Self::default();
+        for target in targets {
+            claims.claim(target);
+        }
+        claims
+    }
+
+    pub fn claim(&mut self, bastion: Entity) {
+        *self.0.entry(bastion).or_insert(0) += 1;
+    }
+
+    /// Влезет ли ещё один Громила.
+    pub fn has_room(&self, bastion: Entity) -> bool {
+        self.0.get(&bastion).copied().unwrap_or(0) < MAX_BRUTES_PER_BASTION
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Трое на бастион — фронт; четвёртый идёт к соседнему.
+    #[test]
+    fn three_brutes_fill_a_bastion() {
+        let mut claims = BastionClaims::default();
+        for _ in 0..MAX_BRUTES_PER_BASTION - 1 {
+            claims.claim(target(1));
+        }
+        assert!(claims.has_room(target(1)));
+        claims.claim(target(1));
+        assert!(!claims.has_room(target(1)));
+        assert!(claims.has_room(target(2)));
+    }
 
     fn target(index: u32) -> Entity {
         Entity::from_raw_u32(index).expect("entity")

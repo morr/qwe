@@ -336,11 +336,40 @@ does not see kinds.
 
 **Look** (`demon/look.rs`) — the `Ember` glyph of the silhouette atlas (seven spikes, a
 bright core), tinted by `demon_tint`: a five-shade ring from crimson to orange so demons
-born in a row stay apart. Under the body a **halo** — a child entity (`DemonHalo`, the
+born in a row stay apart (a Brute takes `brute_tint`, its darker ring toward purple, and a
+body sized by its kind). Under the body a **halo** — a child entity (`DemonHalo`, the
 `Halo` glyph, `HALO_RATIO` 3 bodies wide, local z −0.01): it inherits the devour pulse
 through the parent's scale, is despawned with the parent (despawn is recursive, so it
 carries no `DespawnOnExit` of its own), and y-sorting draws a neighbouring human *over*
 it. `spawn_demon` gets the atlas through `DemonBirth`.
+
+### The Brute's ladder
+
+`demon/decide_brute.rs` — `BruteSense → decide → BruteAction`, the chase ladder's shape,
+applied by `demon/besiege.rs::besiege` (chain slot: after `devour`, before
+`combat::strike`, so a target set this tick is hit this tick). Rungs, in order:
+
+1. **A target** (`AttackTarget`): a ruin, or an entity that no longer exists → `Done` —
+   `AttackTarget` and `ChaseRepath` come off, `DemonWanderTag` goes back on, the in-flight
+   search is left alone (the `back_to_wander` rule). Within `ATTACK_REACH` → `Strike`:
+   `Movable::to_idle` if still moving, then nothing — the blow is `combat::strike`'s.
+   Otherwise the chase's own three: `WaitForPath` (first search in flight, no path, never
+   walked), `Hold` (tact not due; the timer ticks only on `Hold`/`Repath`, as in the
+   chase), `Repath { target }` — the bastion's point through `request_wander_path`,
+   skipped when the current goal tile is already it.
+2. **No target**: the nearest **frontline** bastion with a free slot → `Engage` — claim
+   the slot, `DemonWanderTag` off, `AttackTarget` + fresh `ChaseRepath` on, path
+   requested. The front is computed once per tick in `besiege`: standing bastions whose
+   district is uncorrupted and has a corrupted neighbour (`Corruption::is_corrupted` over
+   `District::neighbours`). Nearest is by distance squared with ties on `Bastion::site`
+   — the site index, never `Entity`.
+3. **No front** → `Wander`: the Brute keeps `DemonWanderTag` and the shared
+   `pick_wander_targets` walks it away from the portal like any demon.
+
+`BastionClaims` (`claims.rs`) is `ChaseClaims`' twin for bastions — built each tick from
+the Brutes' `AttackTarget`s, `MAX_BRUTES_PER_BASTION = 3` (a rule of the ladder, declared
+in `decide_brute.rs`). No lunge, no kill, no RNG anywhere in this ladder. Tests:
+`decide_brute::tests` (the table) and `claims::tests::three_brutes_fill_a_bastion`.
 
 ### Wander
 

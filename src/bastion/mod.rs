@@ -28,6 +28,9 @@ use crate::settings::{
 pub struct Bastion {
     pub kind: BastionKind,
     pub district: DistrictId,
+    /// Номер места в [`BastionSites`] — устойчивый номер для ничьих
+    /// (`Entity` в порядке не участвует, `movement/order.rs`).
+    pub site: u16,
 }
 
 /// Сломанный бастион: спрайт погашен, скверну не держит, `DespawnOnExit`
@@ -74,7 +77,7 @@ const RUIN_COLOR: Color = Color::srgba(0.25, 0.22, 0.22, 0.6);
 /// Спавн бастионов по местам из [`BastionSites`]: маркер-спрайт над крышами,
 /// здоровье по близости к сердцу.
 fn spawn_bastions(mut commands: Commands, sites: Res<BastionSites>) {
-    for site in &sites.sites {
+    for (index, site) in sites.sites.iter().enumerate() {
         commands.spawn((
             Sprite {
                 color: kind_color(site.kind),
@@ -85,6 +88,7 @@ fn spawn_bastions(mut commands: Commands, sites: Res<BastionSites>) {
             Bastion {
                 kind: site.kind,
                 district: site.district,
+                site: index as u16,
             },
             Health::full(bastion_hp(site.closeness)),
             DespawnOnExit(AppState::Playing),

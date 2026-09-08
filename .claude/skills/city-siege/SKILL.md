@@ -215,9 +215,20 @@ strike`, `SimSet::DemonBehavior`, `BothModes`): the Brute's ladder sets the targ
 tick and the blow lands on the same tick. Tests: the verdict table, and a two-blow run
 in a bare `World` (wound, finish with one `Destroyed`, nothing on the third).
 
+## Who breaks a bastion — the front
+
+The consumer of `AttackTarget` is the Brute (`species-behavior` skill, "The Brute's
+ladder"). What this layer defines for it is the **front**: a standing bastion in an
+uncorrupted district with at least one corrupted neighbour. That is exactly the set of
+bastions currently holding corruption back (`corruption::step` skips a district while
+`BastionsStanding[d] > 0`), so a Brute always works where the field is stuck. `besiege`
+rebuilds the list every tick from `Districts::neighbours`, `Corruption::is_corrupted` and
+the `Bastion` query — dozens of entries; a Brute with a target never reads it. A
+bastion behind a river is frontline by the graph even when the walk goes over a distant
+bridge; in M1 that is accepted (`ROADMAP.md`, step 8's risk).
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: demon kinds and the Brute ladder
-(the consumer of `AttackTarget`), souls, the outcome. Each lands here with its mechanism
-as it is written; until then `ROADMAP.md` is the only description and it is a plan, not
-a record.
+The roadmap's next steps on this layer, in order: the removal of the interval spawner,
+souls and summoning, the outcome. Each lands here with its mechanism as it is written;
+until then `ROADMAP.md` is the only description and it is a plan, not a record.
