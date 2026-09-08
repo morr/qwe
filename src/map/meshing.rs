@@ -27,6 +27,38 @@ pub const ATTRIBUTE_RIBBON: MeshVertexAttribute =
 /// Координаты не-ленточной вершины.
 const NO_RIBBON: [f32; 4] = [0.0; 4];
 
+/// Кровля дома для шейдера зданий (`map::buildings::material`):
+/// `[длинная ось x, длинная ось y, код материала, посев]`. Все четыре числа
+/// **одинаковы у всех вершин одного дома** — фактура кровли считается по
+/// мировой координате, повёрнутой в эту ось, а не по развёртке, поэтому
+/// координаты вершине не нужны, нужна только рамка. Отсюда и хранение:
+/// не аргумент каждого `push_*`, а состояние сборщика ([`Self::set_roof`]),
+/// как код разметки у лент.
+///
+/// Идентификатор — «высокий случайный», как и у [`ATTRIBUTE_RIBBON`].
+pub const ATTRIBUTE_ROOF: MeshVertexAttribute =
+    MeshVertexAttribute::new("Roof", 1_704_552_913, VertexFormat::Float32x4);
+
+/// Вершина вне кровли — стена, фронтон, кайма. Нулевой код материала гасит
+/// фактуру, и нулевая ось тогда ни на что не влияет.
+const NO_ROOF: [f32; 4] = [0.0; 4];
+
+/// Рамка кровли одного дома: длинная ось его контура, код материала
+/// (`buildings::material::RoofKind::code`) и посев вариаций. `meshing` не
+/// знает, что стоит за кодом, — он несёт четыре числа до шейдера.
+#[derive(Clone, Copy, Debug)]
+pub struct Roof {
+    pub axis: Vec2,
+    pub material: u32,
+    pub seed: f32,
+}
+
+impl Roof {
+    fn encode(self) -> [f32; 4] {
+        [self.axis.x, self.axis.y, self.material as f32, self.seed]
+    }
+}
+
 /// Максимальное удлинение стыка ленты относительно полуширины. Контур кроны
 /// полон почти встречных рёбер (впадины между фестонами), и там miter уходит
 /// в длинный шип — при 1.5 стык вырождается в срез, шипов не видно.
@@ -142,6 +174,12 @@ pub struct MeshBuilder {
     /// Код разметки ([`Markings::encode`]) для лент, которые лягут дальше
     /// ([`Self::set_markings`]); ноль — без разметки.
     markings: f32,
+    /// `Some` — меш собирается для `buildings::material::RoofMaterial` и несёт
+    /// [`ATTRIBUTE_ROOF`] на каждой вершине.
+    roof: Option<Vec<[f32; 4]>>,
+    /// Рамка кровли ([`Roof::encode`]) для геометрии, которая ляжет дальше
+    /// ([`Self::set_roof`]); нули — вне кровли.
+    roof_frame: [f32; 4],
 }
 
 impl MeshBuilder {
@@ -155,11 +193,27 @@ impl MeshBuilder {
         }
     }
 
+    /// Сборщик с рамками кровли ([`ATTRIBUTE_ROOF`]) — для зданиевых слоёв,
+    /// которые рисует `map::buildings::material::RoofMaterial`; без атрибута
+    /// тот материал меш не примет.
+    pub fn with_roof_coords() -> Self {
+        Self {
+            roof: Some(Vec::new()),
+            ..Self::default()
+        }
+    }
+
     /// Разметка лент, положенных после этого вызова: шейдер улиц кладёт линии
     /// только по ней, и узкий проезд её не получает. Без координат поверхности
     /// код некуда записать.
     pub fn set_markings(&mut self, markings: Option<Markings>) {
         self.markings = markings.map_or(0.0, Markings::encode);
+    }
+
+    /// Кровля, которой принадлежит геометрия после этого вызова; `None` —
+    /// стена, фронтон, кайма: всё, чему фактура кровли не полагается.
+    pub fn set_roof(&mut self, roof: Option<Roof>) {
+        self.roof_frame = roof.map_or(NO_ROOF, Roof::encode);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -172,11 +226,20 @@ impl MeshBuilder {
         self.ribbon.as_deref()
     }
 
+    /// Рамки кровли — тест проверяет по ним, что легло в атрибут.
+    #[cfg(test)]
+    pub fn roof_coords_for_test(&self) -> Option<&[[f32; 4]]> {
+        self.roof.as_deref()
+    }
+
     fn push_vertex(&mut self, position: Vec2, rgba: [f32; 4], ribbon: [f32; 4]) {
         self.positions.push([position.x, position.y, 0.0]);
         self.colors.push(rgba);
         if let Some(coords) = &mut self.ribbon {
             coords.push(ribbon);
+        }
+        if let Some(frames) = &mut self.roof {
+            frames.push(self.roof_frame);
         }
     }
 
@@ -266,6 +329,12 @@ impl MeshBuilder {
                 }
                 None => coords.extend(std::iter::repeat_n(NO_RIBBON, template.positions.len())),
             }
+        }
+        if let Some(frames) = &mut self.roof {
+            frames.extend(std::iter::repeat_n(
+                self.roof_frame,
+                template.positions.len(),
+            ));
         }
         self.indices
             .extend(template.indices.iter().map(|index| base + index));
@@ -800,6 +869,19 @@ impl MeshBuilder {
         edge: LinearRgba,
         inner: LinearRgba,
     ) -> Option<f32> {
+        self.push_inset_band_with(ring, width, outside, |_, _| (edge, inner))
+    }
+
+    /// Та же кайма, но цвет решается на каждое ребро контура `(a, b)` —
+    /// парапет кровли светлеет на солнечных гранях и темнеет на теневых, а
+    /// одной парой цветов на весь контур этого не сказать.
+    pub fn push_inset_band_with(
+        &mut self,
+        ring: &[Vec2],
+        width: f32,
+        outside: bool,
+        color: impl Fn(Vec2, Vec2) -> (LinearRgba, LinearRgba),
+    ) -> Option<f32> {
         let path = merge_close_points(ring, true, width / 4.0);
         if path.len() < 3 {
             return None;
@@ -820,6 +902,7 @@ impl MeshBuilder {
         let count = path.len();
         for index in 0..count {
             let next = (index + 1) % count;
+            let (edge, inner) = color(path[index], path[next]);
             self.push_quad_gradient(
                 [
                     path[index],
@@ -880,6 +963,9 @@ impl MeshBuilder {
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
         if let Some(ribbon) = self.ribbon {
             mesh.insert_attribute(ATTRIBUTE_RIBBON, ribbon);
+        }
+        if let Some(roof) = self.roof {
+            mesh.insert_attribute(ATTRIBUTE_ROOF, roof);
         }
         mesh.insert_indices(Indices::U32(self.indices));
         mesh

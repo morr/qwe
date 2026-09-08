@@ -8,9 +8,10 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
+use super::material::{RoofKind, RoofLook, roof_look};
 use super::roofs::gable_roof;
 use super::{
-    BuildingHeightMode, base_colors, extrusion_dir, extrusion_lift, height_or_default, ridge_lift,
+    BuildingHeightMode, extrusion_dir, extrusion_lift, facade_color, height_or_default, ridge_lift,
     shade_by_light,
 };
 use crate::map::meshing::MeshBuilder;
@@ -36,11 +37,23 @@ const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
 /// Высота, на которой рампа тона крыш выходит в максимум: Тула почти вся
 /// ниже 75 м, и sqrt в формуле отдаёт разрешение диапазону 5–30 м.
 const ROOF_TINT_MAX_HEIGHT: f32 = 60.0;
-/// Цвет крыши «в пределе»: темнее и глуше базового, но всё ещё тёплый —
-/// высотки читаются с общего плана, не превращая карту в теплокарту.
-const ROOF_TALL_COLOR: Color = Color::srgb(0.71, 0.63, 0.55);
+/// Цвет крыши «в пределе»: темнее и глуше материала — так высотка читается с
+/// общего плана. С переходом кровель на палитры материалов цель рампы
+/// пришлось опустить: прежние 0.71 были темнее старой почти белой крыши, но
+/// светлее нового битума, и рампа перевернулась бы — высокий дом стал бы
+/// светлее низкого.
+const ROOF_TALL_COLOR: Color = Color::srgb(0.34, 0.33, 0.32);
 /// Насколько рампа может увести крышу к `ROOF_TALL_COLOR` в пределе.
 const ROOF_TINT_MAX_MIX: f32 = 0.7;
+
+/// Ширина парапета, м: у плоской кровли по контуру идёт бортик, и с воздуха
+/// он читается светлой каймой на солнечных гранях и тёмной на теневых.
+const PARAPET_WIDTH: f32 = 0.7;
+/// Насколько бортик светлее кровли на солнечной грани и темнее на теневой.
+/// Жёстче ската (`SLOPE_*_MIX`) и мягче стены: это узкая полоска бетона,
+/// её задача — очертить кровлю, а не спорить со стеной.
+const PARAPET_LIT_MIX: f32 = 0.24;
+const PARAPET_SHADED_MIX: f32 = 0.20;
 
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
@@ -51,20 +64,47 @@ const WALL_TOP_LIGHTEN: f32 = 0.15;
 const WALL_LIT_MIX: f32 = 0.18;
 const WALL_SHADED_MIX: f32 = 0.22;
 
-/// Цвет крыши: базовый по типу, при `tinted` — рампа по высоте (Кремль и
-/// здания без высоты рампу пропускают), поверх — лёгкая вариация тона по
-/// индексу, чтобы кварталы не сливались.
-pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> Srgba {
-    let (roof_base, _) = base_colors(building);
-    let ramped = match building.height {
+/// Цвет крыши: базовый — из палитры её материала ([`roof_look`]), при
+/// `tinted` поверх идёт рампа по высоте (Кремль и здания без высоты рампу
+/// пропускают). Вариации тона внутри квартала даёт уже сам материал — выбор
+/// цвета из палитры и разброс по посеву, — поэтому прежнего «минус 3 % на
+/// каждый четвёртый дом по индексу» здесь больше нет.
+pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> Srgba {
+    match building.height {
         Some(height) if tinted && building.kind != AreaKind::Kremlin => {
             let t = (height / ROOF_TINT_MAX_HEIGHT).clamp(0.0, 1.0).sqrt();
-            roof_base.mix(&ROOF_TALL_COLOR, t * ROOF_TINT_MAX_MIX)
+            look.base
+                .mix(&ROOF_TALL_COLOR.to_srgba(), t * ROOF_TINT_MAX_MIX)
         }
-        _ => roof_base,
-    };
-    let tint = 1.0 - (index % 4) as f32 * 0.03;
-    ramped.to_srgba() * tint
+        _ => look.base,
+    }
+}
+
+/// Парапет по контуру плоской кровли: кайма внутрь контура, светлая на
+/// солнечных гранях и тёмная на теневых. Для дырки (двора) — наружу от её
+/// кольца, то есть тоже вглубь кровли, и нормаль там смотрит во двор.
+///
+/// Фактуру бортик не несёт (`set_roof(None)`): шов рулона поперёк парапета
+/// читался бы как трещина, а бетонный отлив на снимке и правда ровный.
+fn push_parapet(builder: &mut MeshBuilder, ring: &[Vec2], hole: bool, base: Srgba) {
+    let orientation = signed_ring_area(ring).signum() * if hole { -1.0 } else { 1.0 };
+    let inner = base.into();
+    builder.set_roof(None);
+    builder.push_inset_band_with(ring, PARAPET_WIDTH, hole, |a, b| {
+        let edge = b - a;
+        let outward = Vec2::new(edge.y, -edge.x).normalize_or_zero() * orientation;
+        let cap = shade_by_light(base, outward, PARAPET_LIT_MIX, PARAPET_SHADED_MIX);
+        (cap.into(), inner)
+    });
+}
+
+/// Парапет ставится только на плоскую кровлю мягкого типа — там он и есть на
+/// самом деле. У черепицы и профлиста вместо него свес, у фальца конёк.
+fn has_parapet(kind: RoofKind) -> bool {
+    matches!(
+        kind,
+        RoofKind::Bitumen | RoofKind::Gravel | RoofKind::Membrane
+    )
 }
 
 /// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
@@ -94,9 +134,10 @@ pub(super) fn facade_and_roof_builders(
 ) -> (MeshBuilder, MeshBuilder) {
     let arches = arches_by_building(buildings, passages);
     let mut facades = MeshBuilder::default();
-    let mut roofs = MeshBuilder::default();
+    // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
+    let mut roofs = MeshBuilder::with_roof_coords();
     for (index, building) in buildings.iter().enumerate() {
-        let (_, facade_color) = base_colors(building);
+        let facade_color = facade_color(building);
 
         // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
         // только вдоль южных граней любого полигона. Сдвиг — по высоте из
@@ -118,14 +159,24 @@ pub(super) fn facade_and_roof_builders(
         }
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
-        let color = roof_color(building, index, tinted);
+        let look = roof_look(building);
+        let color = roof_color(building, &look, tinted);
+        roofs.set_roof(Some(look.frame));
         match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
             Some(roof) => {
                 for (slope, slope_color) in roof.slopes {
                     roofs.push_quad(slope, slope_color);
                 }
             }
-            None => roofs.push_polygon(&building.outer, &building.holes, color.into()),
+            None => {
+                roofs.push_polygon(&building.outer, &building.holes, color.into());
+                if has_parapet(look.kind) {
+                    push_parapet(&mut roofs, &building.outer, false, color);
+                    for hole in &building.holes {
+                        push_parapet(&mut roofs, hole, true, color);
+                    }
+                }
+            }
         }
     }
     (facades, roofs)
@@ -279,12 +330,15 @@ pub(super) fn extrusion_builder(
         depth(&buildings[b]).total_cmp(&depth(&buildings[a]))
     });
 
-    let mut builder = MeshBuilder::default();
+    // стены и крыши едут одним мешем (painter's порядок общий), так что
+    // рамку кровли несёт и он: у стен она нулевая, у крыш своя
+    let mut builder = MeshBuilder::with_roof_coords();
     for index in order {
         let building = &buildings[index];
-        let (_, facade_color) = base_colors(building);
+        let facade_color = facade_color(building);
         // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
         let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+        builder.set_roof(None);
 
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
@@ -307,7 +361,8 @@ pub(super) fn extrusion_builder(
             }
         }
 
-        let color = roof_color(building, index, tinted);
+        let look = roof_look(building);
+        let color = roof_color(building, &look, tinted);
         if let Some(roof) = gable_roof(building, lift, ridge_lift, color) {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
@@ -319,6 +374,7 @@ pub(super) fn extrusion_builder(
                 let (_, top) = wall_colors(facade_color, a, b, lift_dir);
                 builder.push_polygon(&[a, b, apex], &[], top);
             }
+            builder.set_roof(Some(look.frame));
             for (slope, slope_color) in roof.slopes {
                 builder.push_quad(slope, slope_color);
             }
@@ -331,7 +387,14 @@ pub(super) fn extrusion_builder(
             .iter()
             .map(|hole| hole.iter().map(|p| *p + lift).collect())
             .collect();
+        builder.set_roof(Some(look.frame));
         builder.push_polygon(&roof_outer, &roof_holes, color.into());
+        if has_parapet(look.kind) {
+            push_parapet(&mut builder, &roof_outer, false, color);
+            for hole in &roof_holes {
+                push_parapet(&mut builder, hole, true, color);
+            }
+        }
     }
     builder
 }

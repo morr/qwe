@@ -186,7 +186,8 @@ in `CONTEXT.md` and the detail here in the same change.
   default. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
   Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
-  (roof, wall) colour pair in `map/buildings/mod.rs::base_colors`. Two sources in order:
+  wall colour (`map/buildings/mod.rs::facade_color`) and the **roofing material** the roof
+  colour then comes from (**Roof material** under Rendering). Two sources in order:
   `building=*` when the value says something (`house`, `apartments`, `garages`, `church`,
   `school`, …), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
   `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
@@ -280,8 +281,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
   sidewalks, alleys, roads, rail layers, tram, building layers, walls): `MeshBuilder`
   triangulates polygons via `earcutr` (holes supported, degenerate contours skipped +
-  counted) and emits per-vertex colors. Building, casing, rail and wall layers go over a
-  single white `ColorMaterial`; the **surfaces** — ground, area fills, water, road and
+  counted) and emits per-vertex colors. Facade, shadow, casing, rail and wall layers go
+  over a single white `ColorMaterial`; every layer carrying a roof (`building_roofs`, and
+  in 2.5D `building_extruded`, walls included) over the `RoofMaterial` of **Roof
+  material**; the **surfaces** — ground, area fills, water, road and
   alley fills, sidewalks, the tree-row band — over the `SurfaceMaterial` below. ~7000
   buildings cost a handful of entities. Trees stay individual entities (see
   `references/trees.md`).
@@ -571,8 +574,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     itself anywhere: no double-darkening between wings of one block or neighbouring
     buildings (unlike tree shadows, which still stack).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
-    the roof toward a darker muted tone (max 0.7); no-height buildings and the Kremlin
-    keep their base color.
+    the roof toward `ROOF_TALL_COLOR` (0.34, a dark neutral — it followed the palette down
+    when roofs became materials), max 0.7; no-height buildings and the Kremlin keep their
+    material colour.
   - **2.5D (Extrusion)** — watabou-style: roof lifted by `lift = height ×
     EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 2.5–30 m.
     The lift is **oblique** (`EXTRUDE_SKEW` 0.4 — 0.4 m right per metre up): a
@@ -617,6 +621,75 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the slopes. In flat modes the ridge lift is zero and the two shades are all that
     remains. Verified on Tula's western private sector: red-brown two-storey houses with a
     visible ridge, the L-shaped ones flat.
+- **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wgsl`) — what
+  the roof is *covered with*. The goal is the aerial photo: from above, a roof is a
+  **material** first (rolled bitumen with its seams and repair patches, gravel ballast,
+  standing-seam metal, corrugated sheet, tile, PVC membrane) and a colour second, and the
+  old per-`BuildingUse` roof colour plus a ±3 % tint by list index made a district read as
+  a dress pattern.
+  - **The pick** (`roof_look`) — a **seed hashed from the building's first vertex**
+    (three xorshift-multiply rounds over the centimetre coordinates; the door generator
+    is seeded from the same point, so both survive a rebuild and neither depends on the
+    order of `MapData::buildings`) chooses a slot in a **ten-slot table per
+    `BuildingUse`** — ten slots so a table reads as percentages: `House` is 5 tile / 2
+    seam / 2 corrugated / 1 bitumen, `Apartments` 7 bitumen, `Industrial` 5 corrugated,
+    and so on. `Church` is always seam metal (its green is now green *metal*), the
+    Kremlin too (and keeps `KREMLIN_ROOF_COLOR`), and `Other` — half the city — splits by
+    footprint at the same `SMALL_FOOTPRINT_MAX` 250 m² the gable rule uses: a small box is
+    a private house, a big one a block.
+  - **The colour** comes from that material's own palette (3–5 plausible shades, picked
+    by another slice of the same seed, then ±3 % of value). The palettes are deliberately
+    **tight in value and wide in hue** — neighbouring roofs on a photo differ in shade,
+    not in brightness, and a wide value spread reads as confetti.
+  - **The texture** is a `Material2d` in the shape of `SurfaceMaterial`: one material for
+    the whole app (`RoofMaterialHandle`, built at `Startup`), a `RoofParams` uniform
+    (`light` = `-SHADOW_DIR`, `intensity` = `RoofStyle::texture`) and a per-vertex
+    **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[long axis x, y, material code,
+    seed]`). All four numbers are constant over a building, so the attribute is a
+    *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
+    every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **not a
+    roof** — walls, gables and parapets ride in the same mesh (2.5D is one painter's-order
+    layer) and come out with their vertex colour untouched.
+  - **What the shader draws**, by world position rotated into the building's long axis
+    (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
+    line up: bitumen — 0.95 m roll seams, scattered repair patches, ponding stains; gravel —
+    strong fine grain and bright specks; seam metal — a lit rib and its shadow every
+    0.62 m; corrugated — a 0.30 m wave plus 1.05 m sheet laps; tile — 0.32 m rows with a
+    shadow line and per-tile jitter; membrane — 2 m sheet seams. **Rolls and tile rows run
+    along the ridge (constant `v`), seams and corrugation run down the slope (constant
+    `u`)** — the first version had the corrugation along the ridge, and water would have
+    run along the rib rather than down it. Rib lighting is scaled by
+    `|axis · light|`, so ribs pointing at the sun neither highlight nor shade. Every
+    octave and every stripe grid fades by `visible(wavelength, px)`, the `surface.wgsl`
+    rule, so nothing moirés when zoomed out; at the city zoom the texture is simply gone
+    and only the material's colour is left. The noise helpers are a **copy** of
+    `surface.wgsl`'s — there is no shader library in the project yet, and importing one
+    for four functions costs more than the copy.
+  - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
+    bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
+    cell — and that is not repair patches but a **chequerboard across the whole roof**:
+    the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
+    ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
+    rule the fix follows, and the same one the asphalt wear already followed: only a
+    minority of cells carry the feature (`PATCH_SHARE` 0.22), and inside its cell the
+    feature is smaller than the cell and jittered, so two neighbours never meet at a cell
+    boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
+  - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
+    membrane, `has_parapet`) gets a 0.7 m inset band along its ring and every courtyard
+    ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
+    dark on the shaded ones. Tile, seam and corrugated get none — they end in an eave, not
+    a parapet. The band carries **no** roof frame: a roll seam crossing a concrete coping
+    would read as a crack. `MeshBuilder::push_inset_band_with` (the per-edge-colour
+    sibling of `push_inset_band`) exists for exactly this.
+  - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
+    than wall, so the wall reads as a band under it" rule, which is retired: on a photo a
+    dark bitumen roof over light panel walls is the normal relation, and the 2.5D box is
+    held together by the two visible walls' own tones. The height ramp (`ShadowsTint`)
+    kept its direction only because `ROOF_TALL_COLOR` moved with the palette, from 0.71 to
+    0.34 — against the new bases the old target would have made tall roofs *lighter*.
+  - **`RoofStyle::texture`** (section Buildings, row `Roof texture`, persisted, BRP) is
+    the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
+    only, so dragging the slider rebuilds nothing.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment

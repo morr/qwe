@@ -1,7 +1,6 @@
-use bevy::color::Luminance;
-
 use super::arches::*;
 use super::layers::*;
+use super::material::*;
 use super::roofs::*;
 use super::*;
 use crate::map::SHADOW_DIR;
@@ -135,26 +134,71 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
     house.building_use = BuildingUse::House;
     let mut church = building(square(), None, AreaKind::Building);
     church.building_use = BuildingUse::Church;
-    let other = building(square(), None, AreaKind::Building);
+    let mut industrial = building(square(), None, AreaKind::Building);
+    industrial.building_use = BuildingUse::Industrial;
     let mut kremlin = building(square(), None, AreaKind::Kremlin);
     kremlin.building_use = BuildingUse::Church;
 
-    let roof = |b: &PolyArea| roof_color(b, 0, false);
-    assert_ne!(roof(&house), roof(&other));
-    assert_ne!(roof(&church), roof(&house));
-    // Кремль красится по `kind`, назначение его не перекрашивает
+    // цвет стены — по назначению, и Кремль вне этой развилки
+    assert_ne!(facade_color(&house), facade_color(&industrial));
+    assert_ne!(facade_color(&church), facade_color(&house));
     let kremlin_plain = building(square(), None, AreaKind::Kremlin);
+    assert_eq!(facade_color(&kremlin), facade_color(&kremlin_plain));
+
+    // а крыша — по материалу: у частного дома черепица или металл, у
+    // промзоны профлист или битум, и одинаковыми они не выходят
+    let roof = |b: &PolyArea| roof_color(b, &roof_look(b), false);
+    assert_ne!(roof(&house), roof(&industrial));
+    assert_ne!(roof(&church), roof(&house));
+    // назначение Кремля крышу тоже не трогает
     assert_eq!(roof(&kremlin), roof(&kremlin_plain));
-    // крыша светлее стены — так стены читаются полосой под крышей. Храм —
-    // намеренное исключение: белые стены под зелёной крышей
-    for b in [&house, &other, &kremlin] {
-        let (roof, facade) = base_colors(b);
-        assert!(
-            roof.luminance() > facade.luminance(),
-            "{:?}",
-            b.building_use
-        );
-    }
+}
+
+#[test]
+fn the_roof_material_is_stable_and_follows_the_use() {
+    let mut house = building(square(), None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    // посев берётся от геометрии, а не от места в списке: два прогона дают
+    // один материал, иначе переключение режима высот перекрашивало бы город
+    assert_eq!(roof_look(&house).kind, roof_look(&house).kind);
+    // сдвинутый дом — другой посев, а стало быть возможен и другой слот
+    let moved: Vec<Vec2> = square()
+        .into_iter()
+        .map(|p| p + Vec2::new(37.0, 0.0))
+        .collect();
+    let mut neighbour = building(moved, None, AreaKind::Building);
+    neighbour.building_use = BuildingUse::House;
+    let _ = roof_look(&neighbour);
+
+    // храм — всегда фальцевый металл, гараж — из своей таблицы
+    let mut church = building(square(), None, AreaKind::Building);
+    church.building_use = BuildingUse::Church;
+    assert_eq!(roof_look(&church).kind, RoofKind::Seam);
+
+    // ось фактуры — длинная сторона контура
+    let long = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(40.0, 0.0),
+        Vec2::new(40.0, 8.0),
+        Vec2::new(0.0, 8.0),
+    ];
+    let axis = roof_look(&building(long, None, AreaKind::Building))
+        .frame
+        .axis;
+    assert!(axis.x.abs() > axis.y.abs(), "{axis:?}");
+}
+
+#[test]
+fn every_vertex_of_a_roofed_layer_carries_a_frame() {
+    let mut block = building(oblong(14.0, 40.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    let builder = extrusion_builder(&[block], &[], false);
+    let frames = builder.roof_coords_for_test().expect("roof coords");
+    // атрибут обязан быть у каждой вершины, иначе меш материал не примет
+    assert_eq!(frames.len(), builder.vertex_count());
+    // стены и парапет — код 0 (фактуры нет), сама кровля — код материала
+    assert!(frames.iter().any(|frame| frame[2] == 0.0), "walls");
+    assert!(frames.iter().any(|frame| frame[2] > 0.0), "roof");
 }
 
 fn oblong(width: f32, length: f32) -> Vec<Vec2> {
@@ -402,14 +446,22 @@ fn neighbour_shadows_union_without_double_darkening() {
 
 #[test]
 fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
-    let base = roof_color(&building(square(), None, AreaKind::Building), 0, true);
-    let tall = roof_color(&building(square(), Some(60.0), AreaKind::Building), 0, true);
-    assert!(tall.red < base.red);
-    assert!(tall.green < base.green);
+    let color = |height, tinted| {
+        let b = building(square(), height, AreaKind::Building);
+        roof_color(&b, &roof_look(&b), tinted)
+    };
+    let base = color(None, true);
+    let tall = color(Some(60.0), true);
+    // именно темнее в сумме, а не в каждом канале: рампа ведёт к нейтральному
+    // тёмному, и у зеленоватой кровли её зелёный канал почти не двигается
+    let luminance = |color: Srgba| color.red + color.green + color.blue;
+    assert!(luminance(tall) < luminance(base), "{tall:?} vs {base:?}");
 
-    let kremlin_flat = roof_color(&building(square(), Some(60.0), AreaKind::Kremlin), 0, true);
-    let kremlin_base = roof_color(&building(square(), None, AreaKind::Kremlin), 0, false);
-    assert_eq!(kremlin_flat, kremlin_base);
+    let kremlin = |height, tinted| {
+        let b = building(square(), height, AreaKind::Kremlin);
+        roof_color(&b, &roof_look(&b), tinted)
+    };
+    assert_eq!(kremlin(Some(60.0), true), kremlin(None, false));
 }
 
 fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {

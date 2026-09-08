@@ -175,6 +175,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   fills its minimum-area bounding rectangle gets a ridge along the rectangle's long axis;
   L-shaped and courtyard buildings stay flat, and so does the Kremlin — outside use-based
   styling, as with its colour. Detail in the `osm-map` skill.
+- **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
+  therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
+  Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
+  half) and a **seed hashed from the building's first vertex**, as the door generator is
+  seeded. The colour comes from that material's own palette — **the per-use *roof* colours
+  are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
+  **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
+  (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
+  whole building**; code `0` is *not a roof* — walls, gables and parapets ride in the same
+  mesh). A soft flat roof (bitumen / gravel / membrane) also gets a **parapet**: an inset
+  band along the ring, lit by `SHADOW_DIR` like a wall. Strength — `RoofStyle::texture`
+  (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
+  the walls under it**, deliberately: that is the relation an aerial photo has, and the
+  older "roof lighter than wall" rule is retired with the per-use roof palette. Detail in
+  the `osm-map` skill.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -201,8 +216,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Merged meshes** (`map/meshing.rs`, `map/spawn.rs`, `map/roads.rs`, `map/rail.rs`,
   `map/tram.rs`, `map/buildings/`) —
   one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors over one white
-  `ColorMaterial` (buildings, casings, rails, walls) or the **surface material** below
-  (everything that is ground); ~7000 buildings cost a handful of entities. Trees stay
+  `ColorMaterial` (facades, shadows, casings, rails, walls), the **surface material** below
+  (everything that is ground) or the **roof material** above (every layer that carries a
+  roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees stay
   individual entities; tree and building **shadows** are each one merged mesh. **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed** — overlapping `Round` caps in one opaque layer are what makes
@@ -252,8 +268,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
   sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are
   load-bearing for navmesh, arches, planting and entrances), **BuildingHeightMode**,
-  **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** (uniforms only,
-  no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
+  **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** and
+  **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
   no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
   their own z-slots and primitives (`push_dashes`, `push_ticks`, `push_rails`). Rail and
   tram answer to **no style resource at all** — their geometry is a function of the camera

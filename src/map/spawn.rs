@@ -8,6 +8,7 @@
 
 use bevy::prelude::*;
 
+use crate::map::buildings::material::RoofMaterialHandle;
 use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
@@ -99,11 +100,15 @@ fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim)
     }
 }
 
+// материалов у карты теперь два комплекта (поверхности и кровли), и вместе с
+// мешами, `MapData` и двумя стилями это восьмой параметр системы
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     surfaces: Res<SurfaceMaterials>,
+    roof_material: Res<RoofMaterialHandle>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
@@ -193,6 +198,7 @@ pub fn spawn_map(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &roof_material,
         *height_mode,
         &map.buildings,
         &map.roads,
