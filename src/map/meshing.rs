@@ -117,7 +117,7 @@ pub enum RibbonCap {
 enum FanCoords {
     /// Стык: весь веер лежит на внешней стороне излома, «до разрыва» у него
     /// одно на все вершины — то же, что у точки пути.
-    Join { side: f32, to_end: f32 },
+    Join { side: f32, to_break: f32 },
     /// Торец: поперёк — проекция на `normal` ленты, «до разрыва» продолжается
     /// за точку пути линейно с наклоном `slope` последнего квада: в минус у
     /// тупика и перекрёстка (разметка на полудиске гаснет), в плюс там, где
@@ -670,7 +670,7 @@ impl MeshBuilder {
         incoming: Vec2,
         outgoing: Vec2,
         color: LinearRgba,
-        to_end: f32,
+        to_break: f32,
     ) {
         let turn = incoming.angle_to(outgoing);
         if radius * turn.abs() < ARC_TOLERANCE {
@@ -686,7 +686,7 @@ impl MeshBuilder {
             start,
             turn,
             color,
-            FanCoords::Join { side, to_end },
+            FanCoords::Join { side, to_break },
         );
     }
 
@@ -704,7 +704,7 @@ impl MeshBuilder {
         let base = self.positions.len() as u32;
         let rgba = color.to_f32_array();
         let at_center = match coords {
-            FanCoords::Join { to_end, .. } => self.coords(0.0, to_end, radius),
+            FanCoords::Join { to_break, .. } => self.coords(0.0, to_break, radius),
             FanCoords::Cap { at_end, .. } => self.coords(0.0, at_end, radius),
         };
         self.push_vertex(center, rgba, at_center);
@@ -712,7 +712,7 @@ impl MeshBuilder {
             let angle = start + sweep * step as f32 / steps as f32;
             let point = center + Vec2::from_angle(angle) * radius;
             let at_rim = match coords {
-                FanCoords::Join { side, to_end } => self.coords(side * radius, to_end, radius),
+                FanCoords::Join { side, to_break } => self.coords(side * radius, to_break, radius),
                 FanCoords::Cap {
                     outward,
                     normal,
