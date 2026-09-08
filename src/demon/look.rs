@@ -20,8 +20,8 @@ const DEMON_TINT_STEP: Vec3 = Vec3::new(0.05, 0.07, -0.01);
 /// Диаметр ореола в телах демона.
 const HALO_RATIO: f32 = 3.0;
 /// Цвет ореола: тёплый, полупрозрачный и ярче белого — HDR под bloom камеры
-/// (`camera.rs`): порог 1.0 пропускает в свечение только такие цвета. После
-/// альфа-смешивания центр даёт ~1.4, кромка гаснет в LDR.
+/// (`post.rs`): порог `BLOOM_THRESHOLD` 1.1 пропускает в свечение только такие
+/// цвета. После альфа-смешивания центр даёт ~1.4, кромка гаснет в LDR.
 const HALO_COLOR: Color = Color::linear_rgba(2.4, 0.6, 0.2, 0.35);
 
 /// Ореол демона — дочерняя сущность с глифом [`Glyph::Halo`].
@@ -65,6 +65,20 @@ mod tests {
         assert_eq!(demon_tint(0), Color::srgb(0.78, 0.08, 0.10));
         assert_eq!(demon_tint(5), demon_tint(0));
         assert_eq!(demon_tint(9), demon_tint(4));
+    }
+
+    /// Ради чего кольцо и заведено: подряд вышедшие из портала демоны не
+    /// сливаются друг с другом. Сравнение попарное, а не «все разные по
+    /// красному каналу», — проверяем ровно то, что видит глаз. Без него
+    /// нулевой [`DEMON_TINT_STEP`] прошёл бы мимо остальных тестов.
+    #[test]
+    fn five_demons_in_a_row_get_five_different_tints() {
+        let tints: Vec<Color> = (0..DEMON_TINT_SHADES).map(demon_tint).collect();
+        for (index, left) in tints.iter().enumerate() {
+            for right in &tints[index + 1..] {
+                assert_ne!(left, right, "shades {tints:?} do not differ");
+            }
+        }
     }
 
     #[test]
