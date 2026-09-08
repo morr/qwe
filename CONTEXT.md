@@ -202,8 +202,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
-  Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
-  half) and a **seed hashed from the building's first vertex**, as the door generator is
+  Membrane | Wall`, picked deterministically from `BuildingUse` (+ footprint size for the
+  untagged half) and a **seed hashed from the building's first vertex**, as the door generator is
   seeded. The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
@@ -217,7 +217,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
   it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
-  small hip, and a real hip could not be told from a flat roof. Strength — `RoofStyle::texture`
+  small hip, and a real hip could not be told from a flat roof.
+  **`Wall` is the same mechanism turned on the walls**: a wall sets the frame to
+  *its own direction*, so the shader's across-axis becomes "up the wall" and the floor seams
+  land parallel to the eaves, and it draws floor seams (1.05 drawn m = one storey), panel
+  joints (3.2 m) and **balconies** on a cell grid — columns, as a panel block has them.
+  Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
   the walls under it**, deliberately: that is the relation an aerial photo has, and the
   older "roof lighter than wall" rule is retired with the per-use roof palette. Every
