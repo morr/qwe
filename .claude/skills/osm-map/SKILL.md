@@ -904,6 +904,26 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       been removed. A zero-width vertex degenerates its quad into a triangle (that *is*
       the hard edge); an edge zero at both ends is not emitted at all, so the taper also
       takes vertices off the most expensive layer here.
+    - **Shadows on lower roofs** (`roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05) — the one
+      place this model used to lie outright. The ground layer is **under** every building
+      layer, so a nine-storey block did not darken the five-storey roof next to it, and in
+      a dense block that is the first thing an eye checks. A second, small layer sits
+      **over** the building layers and carries exactly the missing piece:
+      - for each building, the union of its **taller** neighbours' sweeps
+        **intersected with its own footprint** — one `overlay(Intersect, NonZero)` call,
+        so overlapping shadows on one roof merge instead of stacking into double darkness;
+      - a neighbour counts only if it is `SHADOW_MIN_DROP` (3 m) taller. Below that the
+        shadow reaches the eaves at most, and the pair test would run for nearly every
+        pair in a city where the median height is 8 m;
+      - casters come from a grid of sweep boxes (`SHADOW_CELL` 48 m, just over the longest
+        shadow in `SHADOW_LENGTH_RANGE`); the pairwise version would be 58 million tests;
+      - in 2.5D the result is **lifted by the target's own `Lean`**, so it lands on the
+        roof where that roof is drawn, not where its footprint is.
+      It rides the same `BuildingShadowTag`, so it rebuilds and despawns with the ground
+      shadows, and it is reported separately in the `building meshing:` line
+      (`shadows 91ms + Nms on roofs`) and by the offline bench. Its length clamp rides
+      `map::sun_stretch()` exactly as the ground sweeps do — two halves of one shadow may
+      not be measured differently.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
