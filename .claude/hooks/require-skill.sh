@@ -29,6 +29,14 @@ esac
 
 rel="${path#"$root"/}"
 
+# A worktree made by EnterWorktree lives under .claude/worktrees/<name>/ of the
+# main checkout, and $CLAUDE_PROJECT_DIR stays the main checkout after entering
+# it — strip that prefix first, or the `.claude/*` exemption below would ungate
+# every file of the worktree.
+case "$rel" in
+  .claude/worktrees/*/*) rel="${rel#.claude/worktrees/*/}" ;;
+esac
+
 # Never gated: the agent-configuration files themselves and docs.
 case "$rel" in
   .claude/*|*.md) exit 0 ;;
@@ -55,7 +63,7 @@ case "$rel" in
   src/rng.rs|src/rng/*|src/determinism/*|tests/determinism.rs|examples/acceptance/*) add determinism ;;
 esac
 case "$rel" in
-  src/human/*|src/demon/*|src/movement/wander.rs|src/spatial.rs|tests/spatial.rs) add species-behavior ;;
+  src/human/*|src/demon/*|src/silhouette/*|src/portal.rs|src/movement/wander.rs|src/spatial.rs|tests/spatial.rs) add species-behavior ;;
 esac
 case "$rel" in
   src/loading.rs|src/restart.rs|src/city.rs|src/map/osm/download.rs) add world-lifecycle ;;
