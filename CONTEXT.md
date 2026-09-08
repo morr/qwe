@@ -939,6 +939,11 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   through the type registry, **never a list**, so a new tunable is covered the day it is
   declared.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
+  **`OffscreenShotEvent`** → the same frame rendered into an **offscreen texture** by a
+  camera of its own, with its own centre, zoom and size, and written without the window
+  server: a locked screen or a covering window turns the ordinary screenshot solid black
+  and this one still works. It carries the real camera's post-processing but not the UI,
+  which is pinned to the main camera by `IsDefaultUiCamera`.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.
