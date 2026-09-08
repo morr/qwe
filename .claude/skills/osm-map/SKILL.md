@@ -568,6 +568,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
+  — three effects that keep a road from being one flat tone, all in the **ribbon frame**
+  so they follow the lane rather than the compass:
+  - **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m either side of each lane's
+    middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +6 %. The lane is found
+    from `fract` of `(across + half_width) / lane_width`, so **every** lane gets its own
+    pair without knowing how many there are;
+  - **repair patches** — 6 m cells hashed by world position, the top 12 % going 9 %
+    darker: fresh bitumen is darker than the old surface around it;
+  - **kerb dirt** — 7 % darker over the outer `EDGE_DIRT_REACH` 0.7 m, where the sand
+    and grit collect.
+  Everything fades by `visible(...)` like the rest of the surface texture. The block is
+  gated on `lanes >= 1`, which is what keeps it off the **parking lot**: that layer uses
+  the same `Street` material but carries no ribbon, and it would otherwise have grown
+  ruts across the stalls.
 - **The yard** — two changes that together stop the city from being a beige sheet with
   buildings on it, and both came from looking at the first offscreen shot (#27):
   - **The residential block is the yard.** `RESIDENTIAL_COLOR` went from half a tone off

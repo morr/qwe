@@ -367,6 +367,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   neighbouring trees of one variant from being copies. The ink of the outline and the
   hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from the air a crown has no
   outline, it has a shaded edge. Detail in the `osm-map` skill's `references/trees.md`.
+- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
+  never one tone. Three things in the **ribbon frame**, so they follow the lane and not
+  the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
+  the track of a car — measured with `fract` of the lane index, so every lane gets its
+  own pair), **repair patches** (6 m world cells, the top 12 % of a hash go darker: fresh
+  bitumen is darker than old) and **kerb dirt** (0.7 m of sand and grit along the edge).
+  Only ribbons that carry lanes get any of it — the parking lot rides the same
+  `SurfaceKind::Street` material and would otherwise grow ruts of its own.
 - **Worn paths** (`map/paths.rs`) — the desire lines of a courtyard: a straight strip of
   bare earth from **each OSM entrance to the nearest point of the nearest road**, 1.1 m
   wide, drawn only when that distance is between `PATH_MIN` 7 m and `PATH_MAX` 45 m
