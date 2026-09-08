@@ -294,6 +294,28 @@ fn landuse_blocks_are_their_own_layer_and_never_win_over_green() {
 }
 
 #[test]
+fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
+    let map = Overpass::new(CITY)
+        .area(&[("amenity", "parking")], square(CENTER, HALF))
+        // парковочный дом — здание: `building` проверяется раньше
+        .area(
+            &[("building", "yes"), ("amenity", "parking")],
+            square(CENTER, HALF / 4.0),
+        )
+        // озеленённая стоянка всё-таки стоянка: асфальт там главное, а вот
+        // сам сквер с тем же тегом остаётся сквером
+        .area(&[("leisure", "park")], square(CENTER, HALF / 2.0))
+        .parse();
+
+    assert_eq!(map.parking.len(), 1);
+    assert_eq!(map.parking[0].kind, AreaKind::Parking);
+    assert_eq!(map.buildings.len(), 1);
+    assert_eq!(map.parks.len(), 1);
+    // навмеша стоянка не касается — по ней ходят
+    assert!(map.landuse.is_empty());
+}
+
+#[test]
 fn trees_avoid_grass_and_sand_inside_the_wood() {
     let (sw, _, ne, nw) = corners(WOOD_HALF);
     // луг — восточная половина массива, песок — северо-западная четверть

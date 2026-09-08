@@ -55,7 +55,8 @@ in `main.rs`.
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
-  parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
+  parks → woods → tree-row band casing → tree-row band → grass → sand → parking → parking
+  markings → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
@@ -133,9 +134,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   literal.**
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
-    Park | Wood | Grass | Sand | Residential | Industrial`; **only Wood carries trees**;
+    Park | Wood | Grass | Sand | Residential | Industrial | Parking`; **only Wood carries
+    trees**;
     Residential/Industrial are the `landuse` **blocks** — a faint fill under everything
-    else, no effect on navigation or planting. Buildings carry
+    else, no effect on navigation or planting. **Parking** (`amenity=parking`,
+    `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
+    `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
+    park (`building` + `amenity=parking`) stays a building. Buildings carry
     `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
@@ -316,6 +321,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Parking lots** (`map/parking.rs`) — an `AreaKind::Parking` area is asphalt
+  (`Z_PARKING` 0.8) with its **stalls drawn on it** (`Z_PARKING_LINES` 0.81, a flat
+  material, no procedural texture on top of paint). `stalls(area)` lays them out in rows
+  along the **long axis of the area's `min_area_rect`** — a row of stalls, an aisle, a
+  row of stalls, the way a lot is actually striped: `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2,
+  `AISLE` 6.0, `EDGE_MARGIN` 1.2. Every stall is kept only if its **four corners** are
+  inside the outline, so an L-shaped lot gets none in the notch; a lot under `MIN_AREA`
+  (120 m²) gets no markings at all — a yard for four cars is not striped. **The markings
+  and the cars read the same `stalls()` list**, or a car would stand across its own line.
+  Tula: 171 lots.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
@@ -328,13 +343,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   4.4 × 1.8 m bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
   ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
-  fifths, black a fifth, the rest coloured. Each casts its own shadow, by the same `shadow_length_scale()` the
+  fifths, black a fifth, the rest coloured. Cars also **fill the lots** — `fill_lots` takes
+  the stalls above and occupies `LOT_OCCUPANCY` (55 %) of them, a lot being fuller than a
+  kerb. Each casts its own shadow, by the same `shadow_length_scale()` the
   buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
   walk through them, deliberately: a parked row along every street would eat the pavements
-  the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
+  the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street or
+  per lot, and
   a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
-  entirely when a car stops being worth six pixels. Tula: 22 022 cars, 176 k verts, 5.4 ms
-  to build (5665 / 45 k while only the avenues parked). Every street shape the row broke on,
+  entirely when a car stops being worth six pixels. Tula: 22 022 cars along the kerbs,
+  176 k verts, 5.4 ms to build, plus the lots. Every street shape the row broke on,
   side by side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /

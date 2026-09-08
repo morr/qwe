@@ -145,6 +145,12 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     {
         return Some(AreaKind::Park);
     }
+    // стоянка — после зелени и до кварталов: `amenity=parking` попадается и
+    // на озеленённых дворах, но асфальт там всё-таки главное. Парковочный
+    // дом (`building=*` + `amenity=parking`) сюда не доходит: здание выше
+    if tags.get("amenity").map(String::as_str) == Some("parking") {
+        return Some(AreaKind::Parking);
+    }
     // кварталы — последними: у них нет ничего, что перекрыло бы зелень
     match landuse {
         Some("residential") => Some(AreaKind::Residential),
