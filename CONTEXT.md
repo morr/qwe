@@ -316,6 +316,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
+  never one tone. Three things in the **ribbon frame**, so they follow the lane and not
+  the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
+  the track of a car — measured with `fract` of the lane index, so every lane gets its
+  own pair), **repair patches** (6 m world cells, the top 12 % of a hash go darker: fresh
+  bitumen is darker than old) and **kerb dirt** (0.7 m of sand and grit along the edge).
+  Only ribbons that carry lanes get any of it — the parking lot rides the same
+  `SurfaceKind::Street` material and would otherwise grow ruts of its own.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges

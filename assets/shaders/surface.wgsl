@@ -40,6 +40,7 @@ struct SurfaceParams {
     marking_width: f32,
     marking_dash: f32,
     marking_gap: f32,
+    wear: f32,
     intensity: f32,
 }
 
@@ -134,6 +135,18 @@ fn dash_distance(along: f32, dash: f32, gap: f32) -> f32 {
     return min(here, next);
 }
 
+// Износ асфальта. Колея — в 85 см от середины полосы (колея легковой машины
+// 1.5 м), шириной с покрышку; заплата — клетка в 6 м, свежий битум темнее
+// старого; грязь у бордюра — полоса в 70 см.
+const RUT_OFFSET: f32 = 0.85;
+const RUT_SIGMA: f32 = 0.32;
+const RUT_AMP: f32 = 0.075;
+const PATCH_SCALE: f32 = 6.0;
+const PATCH_SHARE: f32 = 0.88;
+const PATCH_AMP: f32 = 0.09;
+const EDGE_DIRT_REACH: f32 = 0.7;
+const EDGE_DIRT_AMP: f32 = 0.07;
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.world_position;
@@ -193,6 +206,37 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let zoom_fade = smoothstep(6.0, 12.0, lane_width / px);
         let mask = on_line * on_dash * gap_fade * zoom_fade * params.marking_color.a * f32(inside);
         rgb = mix(rgb, params.marking_color.rgb, mask);
+    }
+
+    // Износ покрытия — то, из-за чего асфальт на снимке никогда не ровного
+    // тона: колеи под колёсами, тёмные заплаты ремонта и грязь у бордюра.
+    // Считается **в раме ленты**, поэтому колея идёт по полосе, а не по
+    // странам света; ноль полос (стоянка на том же материале) износа не
+    // получает — там своя история.
+    if params.wear > 0.0 && lanes >= 1.0 {
+        let across = in.ribbon.x;
+        let half_width = in.ribbon.z;
+        let lane_width = 2.0 * half_width / lanes;
+        let w = k * params.wear;
+        // две колеи на полосу: колёса идут в 85 см от её середины, и полоса
+        // под ними отполирована до светлого
+        let in_lane = (across + half_width) / lane_width;
+        let from_middle = abs(in_lane - floor(in_lane) - 0.5) * lane_width;
+        let offset = from_middle - RUT_OFFSET;
+        let rut = exp(-offset * offset / (2.0 * RUT_SIGMA * RUT_SIGMA));
+        // гасится по **шагу полосы**, а не по ширине колеи: рисунок повторяется
+        // с полосой, и на спутниковом плане отполированные колеи ещё видны —
+        // это широкая разница тона, а не тонкая линия
+        rgb = rgb * (1.0 + w * RUT_AMP * rut * visible(lane_width, px));
+        // заплаты: свежий битум темнее старого, клетки по мировой координате.
+        // (`patch` — зарезервированное слово WGSL, отсюда `repair`.)
+        let repair = hash21(floor(p / PATCH_SCALE) + 3.7);
+        let fresh = smoothstep(PATCH_SHARE, PATCH_SHARE + 0.04, repair);
+        rgb = rgb * (1.0 - w * PATCH_AMP * fresh * visible(PATCH_SCALE, px));
+        // у бордюра скапливается грязь и песок
+        let to_edge = half_width - abs(across);
+        let dirt = 1.0 - smoothstep(0.0, EDGE_DIRT_REACH, to_edge);
+        rgb = rgb * (1.0 - w * EDGE_DIRT_AMP * dirt);
     }
 
     // слой непрозрачный: вода, дороги и зелень — сплошные заливки
