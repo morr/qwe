@@ -101,7 +101,11 @@ impl RngDomain {
 
 /// Финализатор splitmix64: рассеивает соседние значения по всему диапазону.
 /// Без него `pawn_id` 0, 1, 2 дали бы почти одинаковые засевы.
-const fn splitmix64(mut z: u64) -> u64 {
+///
+/// Не только для засевов: тем же хешем `human::look::corpse_pose` перемешивает
+/// биты `Entity` — там это косметика, а не жребий прогона, но рассеивание
+/// соседних значений нужно ровно то же.
+pub(crate) const fn splitmix64(mut z: u64) -> u64 {
     z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
