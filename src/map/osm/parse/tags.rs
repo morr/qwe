@@ -11,8 +11,8 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, PitchKind, RailKind, RoadClass, ServiceTrack, StructureKind, WaterKind,
-    polyline_length,
+    AreaKind, BuildingUse, FenceKind, PitchKind, RailKind, RoadClass, ServiceTrack, StructureKind,
+    WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -581,6 +581,19 @@ pub(super) fn pitch_kind(tags: &HashMap<String, String>) -> Option<PitchKind> {
         Some("sand") => PitchKind::Playground,
         _ => PitchKind::Hard,
     })
+}
+
+/// Ограда участка: белый список, как у путей и водотоков. `barrier=*` несёт
+/// ещё и `kerb`, `gate`, `bollard`, `block` — это точки и мелочь, а не линия,
+/// и `city_wall`, который забирает ветка выше: кремлёвская стена
+/// **непроходима**, а забор рисуется и только.
+pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
+    match tags.get("barrier").map(String::as_str)? {
+        "fence" => Some(FenceKind::Fence),
+        "wall" | "retaining_wall" => Some(FenceKind::Wall),
+        "hedge" => Some(FenceKind::Hedge),
+        _ => None,
+    }
 }
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при

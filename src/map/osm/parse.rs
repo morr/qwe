@@ -10,9 +10,9 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PipeLine, PolyArea, RailLine, RoadLine, Structure, TrafficSide, TreeCompose,
-    TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, point_in_area, point_in_polygon,
-    ring_bounds,
+    AreaKind, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine, Structure, TrafficSide,
+    TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, point_in_area,
+    point_in_polygon, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -398,6 +398,18 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         return;
     }
 
+    // Ограда участка — не стена: рисуется, но навмеша не касается. Ветка
+    // **не прерывает разбор**, как рельсовая и аллейная: обнесённое забором
+    // поле в OSM — это один way с `barrier=fence` **и** `leisure=pitch`, и он
+    // обязан стать и оградой, и площадкой. С `return` здесь Тула теряла три
+    // площадки, три стоянки, квартал и парк.
+    if let Some(kind) = fence_kind(&element.tags) {
+        map.fences.push(FenceLine {
+            points: points.clone(),
+            kind,
+        });
+    }
+
     // Цилиндр промзоны — резервуар, силос, труба, башня. Эта ветка, в
     // отличие от рельсовой и трубопроводной, **прерывает разбор**: труба,
     // размеченная way с
@@ -408,6 +420,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         map.structures.push(structure);
         return;
     }
+
 
     let Some(kind) = area_kind(element) else {
         return;
@@ -553,8 +566,9 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, is_building_passage,
-    is_oneway, is_oneway_backward, is_road_underground, is_roundabout, is_underground, pipe_width,
-    rail_class, road_class, row_spacing, service_track, structure_height, structure_kind,
-    structure_radius, structure_size, tagged_lanes, water_class, water_width,
+    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, fence_kind,
+    is_building_passage, is_oneway, is_oneway_backward, is_road_underground, is_roundabout,
+    is_underground, pipe_width, rail_class, road_class, row_spacing, service_track,
+    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes, water_class,
+    water_width,
 };
