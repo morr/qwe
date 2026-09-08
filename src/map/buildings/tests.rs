@@ -8,7 +8,7 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
-use crate::map::meshing::{WallMark, unpack_material};
+use crate::map::meshing::{WallMark, min_area_rect, unpack_material};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, fixture};
 use crate::map::shadow_dir;

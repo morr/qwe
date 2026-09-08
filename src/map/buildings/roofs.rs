@@ -26,7 +26,7 @@
 use bevy::prelude::*;
 
 use super::shade_by_light;
-use crate::map::meshing::{merge_close_points, miter_offsets};
+use crate::map::meshing::{merge_close_points, min_area_rect, miter_offsets};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 
@@ -357,48 +357,4 @@ pub(super) fn gable_roof(
         gables: [((c1, c2), r1), ((c3, c0), r0)],
         ridge_offset: ridge,
     })
-}
-
-/// Минимальный по площади описанный прямоугольник кольца, CCW, первое ребро
-/// вдоль длинной оси. У такого прямоугольника одна сторона лежит на ребре
-/// выпуклой оболочки, а рёбра оболочки — подмножество рёбер контура, так что
-/// перебор направлений всех рёбер находит оптимум без построения оболочки:
-/// контуров тысячи, вершин в каждом — единицы.
-pub(super) fn min_area_rect(ring: &[Vec2]) -> Option<[Vec2; 4]> {
-    if ring.len() < 3 {
-        return None;
-    }
-    let mut best: Option<(f32, Vec2, Vec2, Vec2)> = None;
-    for i in 0..ring.len() {
-        let Some(u) = (ring[(i + 1) % ring.len()] - ring[i]).try_normalize() else {
-            continue;
-        };
-        let v = Vec2::new(-u.y, u.x);
-        let (mut u_min, mut u_max, mut v_min, mut v_max) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
-        for point in ring {
-            let (pu, pv) = (point.dot(u), point.dot(v));
-            u_min = u_min.min(pu);
-            u_max = u_max.max(pu);
-            v_min = v_min.min(pv);
-            v_max = v_max.max(pv);
-        }
-        let area = (u_max - u_min) * (v_max - v_min);
-        if best.is_none_or(|(best_area, ..)| area < best_area) {
-            best = Some((area, u, Vec2::new(u_min, v_min), Vec2::new(u_max, v_max)));
-        }
-    }
-    let (_, u, low, high) = best?;
-    let v = Vec2::new(-u.y, u.x);
-    let corner = |pu: f32, pv: f32| u * pu + v * pv;
-    let mut rect = [
-        corner(low.x, low.y),
-        corner(high.x, low.y),
-        corner(high.x, high.y),
-        corner(low.x, high.y),
-    ];
-    // длинная ось первой: у CCW-квадрата сдвиг на одну вершину сохраняет обход
-    if high.x - low.x < high.y - low.y {
-        rect.rotate_left(1);
-    }
-    Some(rect)
 }
