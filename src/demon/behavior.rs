@@ -275,6 +275,7 @@ pub fn on_demon_caught_human(
     event: On<DemonCaughtHumanEvent>,
     mut commands: Commands,
     mut telemetry: ResMut<Telemetry>,
+    mut souls: ResMut<crate::souls::Souls>,
     humans: Query<&SimPosition, With<Human>>,
     silhouettes: Res<crate::silhouette::Silhouettes>,
     seed: Res<crate::rng::WorldSeed>,
@@ -297,6 +298,9 @@ pub fn on_demon_caught_human(
     // душа — видимая сторона `killed`: искра над тем местом, где стоял человек
     crate::human::release_soul(&mut commands, &silhouettes, position.0);
     telemetry.killed += 1;
+    // душа — там же, где счётчик убийств: одно место инкремента держит
+    // инвариант `souls.earned == telemetry.killed`
+    souls.earned += 1;
 
     // демон → Devour; пауза — из личного потока демона, а не общего: убийства
     // прилетают обсерверами, и их порядок в тике задан порядком команд.
@@ -603,6 +607,7 @@ mod tests {
             // обсервер выпускает душу и берёт под неё атлас силуэтов; без
             // рендера ресурс пуст, и искра — обычный квадрат
             .init_resource::<crate::silhouette::Silhouettes>()
+            .init_resource::<crate::souls::Souls>()
             .insert_resource(crate::rng::WorldSeed(42))
             .add_observer(on_demon_caught_human);
         app
@@ -654,6 +659,7 @@ mod tests {
         app.insert_resource(crate::rng::WorldSeed(1))
             .init_resource::<crate::telemetry::Telemetry>()
             .init_resource::<crate::silhouette::Silhouettes>()
+            .init_resource::<crate::souls::Souls>()
             .add_observer(on_demon_caught_human);
         app
     }

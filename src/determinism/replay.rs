@@ -124,6 +124,9 @@ pub fn replay_app(
             crate::combat::CombatPlugin,
             crate::bastion::BastionPlugin,
             crate::corruption::CorruptionPlugin,
+            // души — состояние прогона; хоткеи призыва внутри плагина висят
+            // на `ButtonInput<KeyCode>`, который двор заводит ниже
+            crate::souls::SoulsPlugin,
         ))
         // Что сюда НЕ входит и почему — половина смысла этого списка.
         // `a_restart_replays_the_run` держит членство сбросов `WorldStarted`
@@ -290,6 +293,16 @@ pub fn fingerprint(world: &mut World) -> Fingerprint {
             for byte in progress.to_bits().to_le_bytes() {
                 eat(byte);
             }
+        }
+    }
+    if let Some(souls) = world.get_resource::<crate::souls::Souls>() {
+        for byte in souls
+            .earned
+            .to_le_bytes()
+            .into_iter()
+            .chain(souls.spent.to_le_bytes())
+        {
+            eat(byte);
         }
     }
 

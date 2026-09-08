@@ -6,7 +6,7 @@ use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 use qwe::{
     bastion, camera, city, combat, corruption, demon, determinism, dev, diagnostics, district,
     human, loading, map, movement, navigation, portal, post, prefs, restart, rng, silhouette,
-    sim_time, spatial, telemetry, ui,
+    sim_time, souls, spatial, telemetry, ui,
 };
 
 /// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт занят
@@ -104,6 +104,7 @@ fn main() {
             combat::CombatPlugin,
             bastion::BastionPlugin,
             corruption::CorruptionPlugin,
+            souls::SoulsPlugin,
         ))
         .add_plugins((
             loading::LoadingPlugin,

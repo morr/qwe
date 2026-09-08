@@ -20,6 +20,7 @@ use crate::settings::{
     unit_z,
 };
 use crate::silhouette::Silhouettes;
+use crate::souls::{Souls, SummonRequested, summon_cost};
 
 /// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены
 /// сброшенный спавнер выпускает залп заново без отдельного кода.
@@ -49,6 +50,51 @@ pub fn spawn_initial_burst(
             &birth,
             DemonKind::Imp,
             Some(angle),
+        );
+    }
+}
+
+/// Призыв за души — потребитель `SummonRequested` в слоте спавнера: цена по
+/// виду и числу живых того же вида, потолок — `DemonStyle::cap` по всем
+/// живым. Не хватает — отказ (в лог, HUD красит цену), сообщение съедено.
+/// Живёт только в `Live`, как залп: `PawnId` раздаются после `WorldStarted`,
+/// а просьба, поданная в прогреве, сгорает в буфере сообщений, а не
+/// копится до первого тика.
+#[allow(clippy::too_many_arguments)]
+pub fn summon(
+    mut requests: MessageReader<SummonRequested>,
+    mut commands: Commands,
+    mut souls: ResMut<Souls>,
+    mut spawner: ResMut<DemonSpawner>,
+    style: Res<DemonStyle>,
+    portal_pos: Res<PortalPos>,
+    seed: Res<WorldSeed>,
+    silhouettes: Res<Silhouettes>,
+    alive: Query<&DemonKind, With<Demon>>,
+) {
+    for request in requests.read() {
+        let alive_total = alive.iter().len();
+        if alive_total >= style.cap {
+            debug!("summon {:?} refused: cap {}", request.kind, style.cap);
+            continue;
+        }
+        let alive_of_kind = alive.iter().filter(|&&kind| kind == request.kind).count();
+        let cost = summon_cost(request.kind, alive_of_kind);
+        if souls.available() < cost {
+            debug!(
+                "summon {:?} refused: {cost} souls needed, {} available",
+                request.kind,
+                souls.available()
+            );
+            continue;
+        }
+        souls.spent += cost;
+        let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
+        spawn_demon(&mut commands, &mut spawner, &birth, request.kind, None);
+        info!(
+            "summoned {:?} for {cost} souls, {} left",
+            request.kind,
+            souls.available()
         );
     }
 }

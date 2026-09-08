@@ -244,7 +244,8 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 `AttackTarget`, `DemonKind`, `ImpTag`, `BruteTag`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `HeartPos`, `Districts`,
-`DistrictCensus`, `BastionSites`, `BastionsStanding`, `Corruption`, `PathfindingAlgorithm`,
+`DistrictCensus`, `BastionSites`, `BastionsStanding`, `Corruption`, `Souls`,
+`PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
@@ -260,6 +261,11 @@ Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same pa
 the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
 Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
+
+Messages — `SummonRequested`: `$b msg SummonRequested '{"kind":"Brute"}'` (or `"Imp"`)
+asks for a demon at the portal for souls; `$b res get Souls` shows `earned` / `spent`,
+and a refused request only logs `summon … refused` at debug level. Hotkeys `1` / `2` do
+the same from the keyboard.
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.
@@ -309,7 +315,7 @@ $b res set IndustryStyle .visible true            # промзона: цилин
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
-Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `T` districts, `N` the
+Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `T` districts, `1`/`2` summon an imp / a brute, `N` the
 navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
 `=`/`-` speed. The bottom-left button row has the layer toggles, the **Navigation**
 panel above it picks the pathfinding backend (`Algo`) and shows only that backend's

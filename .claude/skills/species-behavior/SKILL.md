@@ -542,7 +542,10 @@ time. Two demons then share a `PawnId`, which breaks both the pawn's RNG stream 
 deterministic dispatcher's queue key (it died on a duplicate key ~30 ticks in). Relying on
 "warmup keeps the world paused" was not enough — that pause belongs to `sim_time` and space
 unpauses it. Matching precondition on the reset: **no demon may be alive when a run starts**
-(`demon::on_world_started` says so).
+(`demon::on_world_started` says so). **Summoning shares the slot**: `demon::systems::summon`
+is chained right after `spawn_initial_burst` under the same gates, reads
+`SummonRequested` messages and calls the same `spawn_demon` — the price, the cap check and
+the souls are the `city-siege` skill's.
 
 ## Look: the silhouette atlas and the portal
 

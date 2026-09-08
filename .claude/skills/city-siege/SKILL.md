@@ -227,8 +227,32 @@ the `Bastion` query — dozens of entries; a Brute with a target never reads it.
 bastion behind a river is frontline by the graph even when the walk goes over a distant
 bridge; in M1 that is accepted (`ROADMAP.md`, step 8's risk).
 
+## Souls and summoning (`souls.rs`, `demon/systems.rs::summon`)
+
+`Souls { earned, spent }`, run state (reset on `WorldStarted`, in the fingerprint);
+`available()` saturates at zero. `earned` is incremented in the **same observer** as
+`Telemetry::killed` (`demon::behavior::on_demon_caught_human`), the only kill site, so
+`earned == killed` holds by construction.
+
+`SummonRequested { kind }` is a `Message` (not an event): it is written from `Update` —
+the `1` / `2` hotkeys (`SoulsPlugin`, gated on `typing_in_text_input` because the seed
+field takes digits), the HUD buttons, `brp msg SummonRequested '{"kind":"Brute"}'` — and
+read on the fixed step by `summon`, chained right after `spawn_initial_burst` in the
+spawner slot (`before(SimSet::SpatialRebuild)`, `BothModes`, `run_if(PlayPhase::Live)`):
+`PawnId`s are dealt only after `WorldStarted`, and a request written during warmup burns
+in the message buffer instead of waiting for the first live tick. `summon` refuses when
+the living demons already reach `DemonStyle::cap` or when `available()` is under the
+price; otherwise it charges `spent` and calls `spawn_demon(kind)` at the portal rim,
+logging `summoned …`.
+
+**Price** — `summon_cost(kind, alive_of_kind) = ceil(base × (1 + SUMMON_COST_GROWTH ×
+alive_of_kind))`: `SUMMON_COST_IMP` 3, `SUMMON_COST_BRUTE` 25, growth 5 % per living demon
+of that kind. Roadmap starting values, tuned in step 11; the roadmap's risk stands — the
+burst of eight Imps must eat 25 humans before the first Brute, so the first minutes are
+watching.
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer, in order: the removal of the interval spawner,
-souls and summoning, the outcome. Each lands here with its mechanism as it is written;
-until then `ROADMAP.md` is the only description and it is a plan, not a record.
+The roadmap's next steps on this layer: the souls HUD and summon buttons, the outcome.
+Each lands here with its mechanism as it is written; until then `ROADMAP.md` is the only
+description and it is a plan, not a record.

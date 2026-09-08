@@ -379,7 +379,13 @@ and **pin the algorithm** to one that needs no build.
 
 **1:1 replay holds only while `DemonStyle` / `HumanStyle` / `SeparationStyle` / the
 algorithm / the navtile size are left alone mid-run.** Sliders are simulation input. Not
-enforced by code.
+enforced by code. **A summon is simulation input the same way**: `SummonRequested` (a
+`Message`, written by the HUD, the `1`/`2` hotkeys or `brp msg`) is consumed by
+`demon::summon` on the tick it reaches the fixed step, and a replay must feed it on the
+same tick — a yard that wants a summoned Brute writes the message before the `update`
+that carries that tick (`MessageWriter` from a system, or `world.write_message` between
+`run_to_tick` calls). `Souls { earned, spent }` is in the fingerprint; `earned` moves with
+`Telemetry::killed` from the same observer.
 
 **Frame rate does not matter.** `Time<Fixed>`'s step is constant regardless of fps and of
 `SimSpeed`; the answer to a path query waits for its tick; everything left in `Update` only

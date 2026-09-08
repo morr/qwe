@@ -1625,6 +1625,16 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   released on next target selection, despawn, or corpse strip — **not on arrival** (a
   standing pawn *is* the occupancy). **Chase and flee are excluded** by design. Runs in
   **both** modes — it is simulation, not cosmetics.
+- **Souls** (resource, `souls.rs`; mechanism — **city-siege skill**) — `{ earned, spent }`,
+  run state in the fingerprint; `earned` is incremented in the same kill observer as
+  `Telemetry::killed`, so `earned == killed` always. **Summon** — `SummonRequested { kind }`
+  is a `Message` written from `Update` (hotkeys `1` / `2`, gated on `typing_in_text_input`;
+  the HUD; `brp msg`) and consumed on the fixed step by `demon::summon` in the spawner
+  slot (`Live` only): under `DemonStyle::cap` and with `available()` ≥ `summon_cost(kind,
+  alive of that kind)` — `SUMMON_COST_IMP` 3 / `SUMMON_COST_BRUTE` 25 × (1 +
+  `SUMMON_COST_GROWTH` 5 % per living demon of the kind) — it charges `spent` and spawns
+  the demon at the portal rim; otherwise the request is refused and dropped. A summon is
+  simulation input like a slider (**determinism skill**, "The contract").
 - **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the **Souls reaped** HUD
   counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
   holds the seed and the determinism row. Invariant (check paused):

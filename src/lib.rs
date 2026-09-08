@@ -27,6 +27,7 @@ pub mod sim_time;
 // интеграционные тесты двор не собирается
 #[cfg(test)]
 pub mod sim_yard;
+pub mod souls;
 pub mod spatial;
 pub mod telemetry;
 pub mod ui;
