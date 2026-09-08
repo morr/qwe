@@ -316,6 +316,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
+  same shadow every other object does: its own ribbon, offset by `BRIDGE_HEIGHT` (6 m)
+  through `shadow_length_scale()`, drawn under the bridge and over whatever it crosses.
+  Nothing else produced it — the ground shadow layer only knows buildings — and a bridge
+  over the river is the most visible thing there is on water.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
