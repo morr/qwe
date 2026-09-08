@@ -15,11 +15,13 @@ mod roofs;
 
 use std::ops::RangeInclusive;
 
+use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use crate::loading::AppState;
+use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::settings::Z_BUILDING;
@@ -303,6 +305,21 @@ fn base_colors(building: &PolyArea) -> (Color, Color) {
         BuildingUse::Church => (CHURCH_ROOF_COLOR, CHURCH_FACADE_COLOR),
         BuildingUse::Public => (PUBLIC_ROOF_COLOR, PUBLIC_FACADE_COLOR),
         BuildingUse::Other => (ROOF_COLOR, FACADE_COLOR),
+    }
+}
+
+/// Тон поверхности по повороту её наружной нормали (в плане) к свету
+/// `SHADOW_DIR`: к свету — светлее базового на `lit_mix`, от света — темнее
+/// на `shaded_mix`, в обоих случаях пропорционально косинусу. Одно правило
+/// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
+/// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
+/// `Srgba` в сигнатуре делает пространство явным.
+pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
+    let lit = outward.dot(-SHADOW_DIR);
+    if lit >= 0.0 {
+        base.mix(&Srgba::WHITE, lit * lit_mix)
+    } else {
+        base.mix(&Srgba::BLACK, -lit * shaded_mix)
     }
 }
 

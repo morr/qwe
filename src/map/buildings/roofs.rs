@@ -11,13 +11,11 @@
 //! заполняет почти целиком ([`RECT_FILL_MIN`]); Г-образные и сложные дома
 //! остаются плоскими (straight skeleton — отдельная задача).
 
-use bevy::color::Mix;
 use bevy::prelude::*;
 
-use crate::map::SHADOW_DIR;
-use crate::map::osm::BuildingUse;
-use crate::map::osm::PolyArea;
+use super::shade_by_light;
 use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 
 /// Какую долю своего описанного прямоугольника контур обязан заполнять,
 /// чтобы прямоугольная крыша не торчала из него. Дом с эркером или срезанным
@@ -36,22 +34,27 @@ const ROOF_PITCH: f32 = 0.8;
 const ROOF_RISE_MAX: f32 = 5.0;
 /// Насколько скат, повёрнутый к свету, светлее базового тона крыши, а
 /// отвёрнутый — темнее. Мягче стен (`WALL_*_MIX`): крыша смотрит в небо и
-/// освещена вся, разница только в наклоне.
-const SLOPE_LIT_MIX: f32 = 0.12;
-const SLOPE_SHADED_MIX: f32 = 0.22;
+/// освещена вся, разница только в наклоне. Значения пересчитаны из прежнего
+/// смешивания в линейном пространстве, чтобы видимый шаг остался тем же.
+const SLOPE_LIT_MIX: f32 = 0.14;
+const SLOPE_SHADED_MIX: f32 = 0.11;
 
 /// Двускатная крыша, разложенная на куски для painter's algorithm:
 /// фронтоны рисуются со стенами, скаты — поверх.
 pub(super) struct GableRoof {
     /// Два ската: четырёхугольник (карниз, карниз, конёк, конёк) и тон.
-    pub slopes: [([Vec2; 4], LinearRgba); 2],
+    pub(super) slopes: [([Vec2; 4], LinearRgba); 2],
     /// Два фронтона: торец прямоугольника `(a, b)` на уровне карниза (CCW,
     /// наружная нормаль — правый перпендикуляр) и вершина конька над ним.
-    pub gables: [((Vec2, Vec2), Vec2); 2],
+    pub(super) gables: [((Vec2, Vec2), Vec2); 2],
 }
 
 /// Крыша этого дома — двускатная?
 pub(super) fn is_gabled(building: &PolyArea) -> bool {
+    // Кремль вне стилизации по назначению, как и в `base_colors`
+    if building.kind == AreaKind::Kremlin {
+        return false;
+    }
     if !building.holes.is_empty() {
         return false;
     }
@@ -69,14 +72,17 @@ pub(super) fn ridge_rise(width: f32) -> f32 {
 
 /// Двускатная крыша над контуром, поднятым на `lift`; `ridge_lift` — на
 /// сколько выше карниза нарисован конёк (в плоских режимах — ноль, и скаты
-/// отличаются только тоном). `None` — контур не прямоугольный, крыша
-/// остаётся плоской.
+/// отличаются только тоном). `None` — крыша остаётся плоской: дом не из
+/// тех, что [`is_gabled`], или контур не прямоугольный.
 pub(super) fn gable_roof(
     building: &PolyArea,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
-    base: LinearRgba,
+    base: Srgba,
 ) -> Option<GableRoof> {
+    if !is_gabled(building) {
+        return None;
+    }
     let rect = min_area_rect(&building.outer)?;
     let rect_area = (rect[1] - rect[0]).length() * (rect[2] - rect[1]).length();
     if rect_area <= 0.0 || signed_ring_area(&building.outer).abs() / rect_area < RECT_FILL_MIN {
@@ -93,21 +99,17 @@ pub(super) fn gable_roof(
     let outward = Vec2::new(long.y, -long.x);
     Some(GableRoof {
         slopes: [
-            ([c0, c1, r1, r0], slope_color(base, outward)),
-            ([r0, r1, c2, c3], slope_color(base, -outward)),
+            (
+                [c0, c1, r1, r0],
+                shade_by_light(base, outward, SLOPE_LIT_MIX, SLOPE_SHADED_MIX).into(),
+            ),
+            (
+                [r0, r1, c2, c3],
+                shade_by_light(base, -outward, SLOPE_LIT_MIX, SLOPE_SHADED_MIX).into(),
+            ),
         ],
         gables: [((c1, c2), r1), ((c3, c0), r0)],
     })
-}
-
-/// Тон ската по повороту его наружной нормали (в плане) к свету.
-fn slope_color(base: LinearRgba, outward: Vec2) -> LinearRgba {
-    let lit = outward.dot(-SHADOW_DIR);
-    if lit >= 0.0 {
-        base.mix(&LinearRgba::WHITE, lit * SLOPE_LIT_MIX)
-    } else {
-        base.mix(&LinearRgba::BLACK, -lit * SLOPE_SHADED_MIX)
-    }
 }
 
 /// Минимальный по площади описанный прямоугольник кольца, CCW, первое ребро

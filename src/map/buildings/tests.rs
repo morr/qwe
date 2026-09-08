@@ -178,6 +178,8 @@ fn a_gable_goes_on_houses_and_small_boxes_only() {
     let mut flats = building(square(), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
     assert!(!is_gabled(&flats));
+    let tower = building(square(), None, AreaKind::Kremlin);
+    assert!(!is_gabled(&tower), "the kremlin keeps its flat roof");
     let mut yard = house.clone();
     yard.holes.push(vec![
         Vec2::new(4.0, 2.0),
@@ -207,7 +209,7 @@ fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
     // конёк — вдоль длинной оси
     let mut house = building(ring, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    let roof = gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, LinearRgba::WHITE).unwrap();
+    let roof = gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).unwrap();
     let ridge = roof.slopes[0].0[2] - roof.slopes[0].0[3];
     let long = rect[1] - rect[0];
     assert!(ridge.normalize().dot(long.normalize()).abs() > 0.999);
@@ -226,7 +228,14 @@ fn an_l_shaped_house_keeps_a_flat_roof() {
     let mut house = building(l_shape, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     assert!(is_gabled(&house));
-    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, LinearRgba::WHITE).is_none());
+    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
+}
+
+#[test]
+fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
+    let mut flats = building(oblong(8.0, 20.0), None, AreaKind::Building);
+    flats.building_use = BuildingUse::Apartments;
+    assert!(gable_roof(&flats, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
 }
 
 #[test]
@@ -234,13 +243,13 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
     let luminance = |color: LinearRgba| color.red + color.green + color.blue;
     let mut house = building(oblong(8.0, 20.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    let base = LinearRgba::rgb(0.5, 0.5, 0.5);
+    let base = Srgba::rgb(0.5, 0.5, 0.5);
     let roof = gable_roof(&house, Vec2::ZERO, ridge_lift, base).unwrap();
     // скаты: южный (карниз y = 0) отвёрнут от света, северный повёрнут
     let (south, north) = (&roof.slopes[0], &roof.slopes[1]);
     assert_eq!(south.0[0].y, 0.0);
-    assert!(luminance(south.1) < luminance(base));
-    assert!(luminance(north.1) > luminance(base));
+    assert!(luminance(south.1) < luminance(base.into()));
+    assert!(luminance(north.1) > luminance(base.into()));
     // конёк поднят по вектору подъёма на масштаб стен
     let ridge = south.0[3] - Vec2::new(0.0, 4.0);
     let expected = ridge_lift(ridge_rise(8.0));

@@ -8,9 +8,10 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
-use super::roofs::{gable_roof, is_gabled};
+use super::roofs::gable_roof;
 use super::{
     BuildingHeightMode, base_colors, extrusion_dir, extrusion_lift, height_or_default, ridge_lift,
+    shade_by_light,
 };
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
@@ -53,7 +54,7 @@ const WALL_SHADED_MIX: f32 = 0.22;
 /// Цвет крыши: базовый по типу, при `tinted` — рампа по высоте (Кремль и
 /// здания без высоты рампу пропускают), поверх — лёгкая вариация тона по
 /// индексу, чтобы кварталы не сливались.
-pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> LinearRgba {
+pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> Srgba {
     let (roof_base, _) = base_colors(building);
     let ramped = match building.height {
         Some(height) if tinted && building.kind != AreaKind::Kremlin => {
@@ -63,7 +64,7 @@ pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> Lin
         _ => roof_base,
     };
     let tint = 1.0 - (index % 4) as f32 * 0.03;
-    LinearRgba::from(ramped.to_srgba() * tint)
+    ramped.to_srgba() * tint
 }
 
 /// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
@@ -80,14 +81,9 @@ pub(super) fn wall_colors(
     if normal.dot(lift_dir) > 0.0 {
         normal = -normal;
     }
-    let lit = normal.dot(-SHADOW_DIR);
-    let bottom = if lit >= 0.0 {
-        facade.mix(&Color::WHITE, lit * WALL_LIT_MIX)
-    } else {
-        facade.mix(&Color::BLACK, -lit * WALL_SHADED_MIX)
-    };
-    let top = bottom.mix(&Color::WHITE, WALL_TOP_LIGHTEN);
-    (bottom.to_linear(), top.to_linear())
+    let bottom = shade_by_light(facade.to_srgba(), normal, WALL_LIT_MIX, WALL_SHADED_MIX);
+    let top = bottom.mix(&Srgba::WHITE, WALL_TOP_LIGHTEN);
+    (bottom.into(), top.into())
 }
 
 /// Фасадная полоса + крыши (режимы Facade / Shadows / ShadowsTint).
@@ -123,16 +119,13 @@ pub(super) fn facade_and_roof_builders(
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
         let color = roof_color(building, index, tinted);
-        let gable = is_gabled(building)
-            .then(|| gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color))
-            .flatten();
-        match gable {
+        match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
             Some(roof) => {
                 for (slope, slope_color) in roof.slopes {
                     roofs.push_quad(slope, slope_color);
                 }
             }
-            None => roofs.push_polygon(&building.outer, &building.holes, color),
+            None => roofs.push_polygon(&building.outer, &building.holes, color.into()),
         }
     }
     (facades, roofs)
@@ -315,10 +308,7 @@ pub(super) fn extrusion_builder(
         }
 
         let color = roof_color(building, index, tinted);
-        let gable = is_gabled(building)
-            .then(|| gable_roof(building, lift, ridge_lift, color))
-            .flatten();
-        if let Some(roof) = gable {
+        if let Some(roof) = gable_roof(building, lift, ridge_lift, color) {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
             for ((a, b), apex) in roof.gables {
@@ -341,7 +331,7 @@ pub(super) fn extrusion_builder(
             .iter()
             .map(|hole| hole.iter().map(|p| *p + lift).collect())
             .collect();
-        builder.push_polygon(&roof_outer, &roof_holes, color);
+        builder.push_polygon(&roof_outer, &roof_holes, color.into());
     }
     builder
 }

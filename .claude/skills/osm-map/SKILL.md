@@ -421,10 +421,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     wall shaded — three tones, which is what makes a box read as a box in watabou and
     in 2GIS's 3D mode. The visible walls are the edges facing *against* the lift
     (`silhouette_edges(outer, -extrusion_dir())`), courtyard walls the hole edges facing
-    *along* it; each wall's tone comes from `layers.rs::wall_colors` — the facade colour
-    mixed toward white by `outward · −SHADOW_DIR × WALL_LIT_MIX` (0.18) when lit, toward
-    black by `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical
-    gradient. No facade band, no shadows. Depth is painter's algorithm *inside one
+    *along* it; each wall's tone comes from `layers.rs::wall_colors` through the shared
+    `buildings/mod.rs::shade_by_light` — the facade colour mixed toward white by
+    `outward · −SHADOW_DIR × WALL_LIT_MIX` (0.18) when lit, toward black by
+    `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical gradient.
+    All building tone mixing — the palette, the `roof_color` ramp, walls, slopes — is
+    done in sRGB, so the wall and slope constants compare directly. No facade band, no
+    shadows. Depth is painter's algorithm *inside one
     mesh*: buildings sorted by their bounds-centre projection on the lift direction,
     far end first (index-buffer order is raster order), so a south-western building
     correctly overlays its north-eastern neighbour. `extrusion_lift` is `pub` because
@@ -435,15 +438,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
     `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
-    `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard) gets two slopes instead of a
+    `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
+    its towers and gates keep the flat roof, like they keep their colour) gets two
+    slopes instead of a
     flat roof. The ridge runs along the long axis of the footprint's minimum-area
     bounding rectangle (`min_area_rect`, edge directions of the ring tried as
     orientations — no hull needed at 4–20 vertices); the roof is drawn over that
     rectangle, not the outline (real roofs overhang), which is why it is only applied when
     the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house stays
     flat rather than wearing a rectangle. Slope tone: base roof colour mixed toward
-    white/black by the slope's plan normal against `−SHADOW_DIR` (`SLOPE_LIT_MIX` 0.12 /
-    `SLOPE_SHADED_MIX` 0.22), softer than walls. In 2.5D the ridge is lifted a further
+    white/black by the slope's plan normal against `−SHADOW_DIR` (`SLOPE_LIT_MIX` 0.14 /
+    `SLOPE_SHADED_MIX` 0.11, through the same `shade_by_light` helper as the walls, in
+    sRGB), softer than walls. In 2.5D the ridge is lifted a further
     `ridge_rise(width) = min(width/2 × ROOF_PITCH 0.8, ROOF_RISE_MAX 5 m)` real metres
     through `ridge_lift` (same `EXTRUDE_SCALE`, no `EXTRUDE_RANGE` clamp), and the two
     gable triangles are drawn on the visible end walls with the wall's top colour before
