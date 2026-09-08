@@ -3,9 +3,9 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
-use crate::map::SHADOW_DIR;
 use crate::map::osm::fixture;
 use crate::map::osm::model::signed_ring_area;
+use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
 
 fn square() -> Vec<Vec2> {
@@ -46,7 +46,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
 #[test]
 fn silhouette_picks_edges_facing_the_shadow() {
     // свет сверху-слева, тень вправо-вниз: силуэт — нижнее и правое рёбра
-    let edges = silhouette_edges(&square(), SHADOW_DIR);
+    let edges = silhouette_edges(&square(), shadow_dir());
     assert_eq!(edges.len(), 2);
     assert!(edges.iter().all(|(a, b)| {
         let bottom = a.y == 0.0 && b.y == 0.0;
@@ -59,8 +59,8 @@ fn silhouette_picks_edges_facing_the_shadow() {
 fn silhouette_is_winding_independent() {
     let ccw = square();
     let cw: Vec<Vec2> = square().into_iter().rev().collect();
-    let mut ccw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&ccw, SHADOW_DIR);
-    let mut cw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&cw, SHADOW_DIR)
+    let mut ccw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&ccw, shadow_dir());
+    let mut cw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&cw, shadow_dir())
         .into_iter()
         .map(|(a, b)| (b, a))
         .collect();
@@ -347,7 +347,7 @@ fn shadow_length_scales_with_height() {
             .to_vec();
         positions
             .iter()
-            .map(|p| Vec2::new(p[0], p[1]).dot(SHADOW_DIR))
+            .map(|p| Vec2::new(p[0], p[1]).dot(shadow_dir()))
             .fold(f32::NEG_INFINITY, f32::max)
     };
     assert!(reach(std::slice::from_ref(&high)) > reach(std::slice::from_ref(&low)) + 10.0);
@@ -512,7 +512,7 @@ fn shadow_area(mesh: &Mesh) -> f32 {
 
 /// Свип цепочки силуэта — то, из чего union собирает тело тени.
 fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
-    let offset = SHADOW_DIR * height * crate::map::shadow_length_scale();
+    let offset = shadow_dir() * height * crate::map::shadow_length_scale();
     let mut sweep = chain.to_vec();
     sweep.extend(chain.iter().rev().map(|point| *point + offset));
     sweep
@@ -522,7 +522,7 @@ fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
 fn square_shadow_is_one_swept_polygon() {
     // одна цепочка низ+право даёт свип из шести вершин — по вершине на угол
     // цепочки и столько же на сдвинутую копию, без квадов на ребро
-    let chains = silhouette_chains(&square(), SHADOW_DIR);
+    let chains = silhouette_chains(&square(), shadow_dir());
     assert_eq!(chains.len(), 1);
     assert_eq!(chains[0].len() * 2, 6);
 
@@ -549,14 +549,14 @@ fn staircase_shadow_has_no_double_darkening() {
         Vec2::new(12.0, 9.0),
         Vec2::new(0.0, 9.0),
     ];
-    let chains = silhouette_chains(&staircase, SHADOW_DIR);
+    let chains = silhouette_chains(&staircase, shadow_dir());
     assert_eq!(chains.len(), 1, "лестница — одна непрерывная цепочка");
     assert_eq!(chains[0].len(), 7);
 
     // свип цепочки самопересечься не может, поэтому его площадь — ровно
     // «длина сдвига × размах контура поперёк тени»
     let offset_length = 20.0 * crate::map::shadow_length_scale();
-    let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
+    let perp_span = Vec2::new(12.0, 9.0).dot(shadow_dir().perp());
     let sweep = sweep_of(&chains[0], 20.0);
     assert!((signed_ring_area(&sweep).abs() - offset_length * perp_span).abs() < 0.5);
 

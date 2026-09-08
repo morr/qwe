@@ -8,6 +8,7 @@ pub mod osm;
 mod rail;
 mod roads;
 mod spawn;
+mod sun;
 mod surface;
 mod tram;
 pub mod trees;
@@ -19,6 +20,7 @@ pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
+pub use self::sun::{SunStyle, shadow_dir, shadow_length_scale, sun_light};
 pub use self::surface::SurfaceStyle;
 pub use self::tram::TramStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
@@ -29,26 +31,8 @@ use bevy::sprite_render::Material2dPlugin;
 use crate::loading::{AppState, WorldInitSet};
 use crate::prefs::{TrackPrefExt, retuned};
 
-/// Направление тени на всей карте: 30° вниз-вправо, нормировано. Один
-/// источник света и на дома, и на кроны — держится здесь, у общего родителя
-/// обоих, потому что разъехавшиеся тени видны на карте сразу.
-const SHADOW_DIR: Vec2 = Vec2::new(0.866_025_4, -0.5);
-
-/// Высота солнца над горизонтом, градусы — вторая половина того же светила,
-/// что задаёт [`SHADOW_DIR`]. Пятьдесят девять — полдень середины лета на
-/// широте Тулы (54.2° с. ш.): именно в такой час и снимают город с воздуха,
-/// тени коротки и ничего под ними не пропадает.
-const SUN_ELEVATION_DEG: f32 = 59.0;
-
-/// Метров тени на метр высоты — котангенс высоты солнца. Раньше здесь стояло
-/// «0.6 метра тени на метр высоты» без вывода; это ровно то же число
-/// (`1 / tan 59° = 0.601`), но теперь у него есть причина, и менять его
-/// полагается через [`SUN_ELEVATION_DEG`].
-pub fn shadow_length_scale() -> f32 {
-    1.0 / SUN_ELEVATION_DEG.to_radians().tan()
-}
-/// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий по
-/// той же причине, что и [`SHADOW_DIR`].
+/// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий и для
+/// домов, и для крон по той же причине, что и само солнце ([`sun`]).
 pub const SHADOW_COLOR: Color = Color::srgba(0.22, 0.24, 0.33, 0.42);
 
 pub struct MapPlugin;
@@ -61,6 +45,7 @@ impl Plugin for MapPlugin {
             .init_resource::<TreeRowStyle>()
             .init_resource::<ConiferField>()
             .init_resource::<ConiferNoiseStyle>()
+            .init_resource::<SunStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
@@ -75,6 +60,7 @@ impl Plugin for MapPlugin {
             .register_type::<ConiferNoiseStyle>()
             .register_type::<TreeShape>()
             .register_type::<TreeRowPlacement>()
+            .register_type::<SunStyle>()
             .register_type::<BuildingHeightMode>()
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
@@ -83,6 +69,7 @@ impl Plugin for MapPlugin {
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
+            .track_pref::<SunStyle>()
             .track_pref::<BuildingHeightMode>()
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
@@ -97,6 +84,11 @@ impl Plugin for MapPlugin {
                     buildings::material::init_roof_material,
                 ),
             )
+            // солнце — в глобаль, из которой его читают чистые функции сборки
+            // мешей. `PreUpdate` идёт и до `StateTransition` (там строится мир
+            // на входе), и до `Update` (там пересобираются слои), так что
+            // всякая сборка кадра видит уже новое солнце
+            .add_systems(PreUpdate, sun::apply_sun)
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -146,10 +138,13 @@ impl Plugin for MapPlugin {
                         // `retuned`, а не `resource_changed`: в кадре, где
                         // настройки легли на ресурс, кроны ещё не спавнены и
                         // пересобирать нечего
+                        // солнце меняет и кроны: тень дерева строится по нему
+                        // же, только запечена в шаблон варианта
                         .run_if(
                             retuned::<TreeStyle>
                                 .or_else(retuned::<TreeRowStyle>)
-                                .or_else(retuned::<ConiferNoiseStyle>),
+                                .or_else(retuned::<ConiferNoiseStyle>)
+                                .or_else(retuned::<SunStyle>),
                         ),
                     // ступень зума решает, стоит ли на крышах оборудование;
                     // порог редкий, а пересборка слоя — единственный способ его
@@ -158,6 +153,7 @@ impl Plugin for MapPlugin {
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
                         buildings::rebuild_buildings.run_if(
                             retuned::<BuildingHeightMode>
+                                .or_else(retuned::<SunStyle>)
                                 .or_else(retuned::<buildings::BuildingZoomBucket>),
                         ),
                     )
@@ -170,14 +166,16 @@ impl Plugin for MapPlugin {
                     // вовсе; порог у него свой, ближе зданиевого
                     (
                         zoom::update_zoom_bucket::<cars::CarLods>,
-                        cars::rebuild_cars.run_if(retuned::<cars::CarZoomBucket>),
+                        cars::rebuild_cars
+                            .run_if(retuned::<cars::CarZoomBucket>.or_else(retuned::<SunStyle>)),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
-                    buildings::material::retune_roof_material.run_if(retuned::<RoofStyle>),
+                    buildings::material::retune_roof_material
+                        .run_if(retuned::<RoofStyle>.or_else(retuned::<SunStyle>)),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку запускает только её фактическая
                     // смена. Таблицы у путей и трамвая свои, и пороги в них не

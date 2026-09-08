@@ -20,7 +20,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{CAR_MAX_ZOOM, Z_CAR};
 
 /// Габарит легковой машины, м — «Логан» с точностью до сантиметров.
@@ -197,7 +197,7 @@ fn park_along(cars: &mut Vec<Car>, road: &RoadLine, offset: f32, rng: &mut Lcg) 
 fn mesh_cars(cars: &[Car]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let shadow = SHADOW_COLOR.to_linear();
-    let offset = SHADOW_DIR * (CAR_HEIGHT * shadow_length_scale());
+    let offset = shadow_dir() * (CAR_HEIGHT * shadow_length_scale());
     for car in cars {
         builder.push_quad(body(car, offset), shadow);
     }

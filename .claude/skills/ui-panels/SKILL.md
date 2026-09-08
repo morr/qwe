@@ -65,6 +65,13 @@ did not fit 1080 px and ran off the top of the screen.
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
   palette, and only the halo is wanted. `Msaa::Off` stays (`camera.rs`), and UI is drawn
   after post-processing, so panels never bloom.
+- **Sun section** (`ui/sun.rs`, Map tab) — two knobs on `map::SunStyle`, azimuth (0–360°,
+  step 5) and elevation (15–80°, step 1). They are the most expensive knobs on the panel:
+  a change rebuilds the building layers **including the shadow union**, the tree crowns,
+  the car layer and the roof material's uniform, because every one of those bakes the light
+  into vertex colours or geometry. The steps are deliberately coarse for that reason. The
+  elevation floor is 15°, not 0: `cot 5°` is 11 metres of shadow per metre of height, and
+  every building would blanket its block.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
   `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
   `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,

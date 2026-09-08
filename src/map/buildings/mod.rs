@@ -30,9 +30,9 @@ pub use self::layers::push_flat_roof;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use self::material::RoofMaterialHandle;
 use crate::loading::AppState;
-use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
+use crate::map::sun_light;
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
@@ -320,6 +320,7 @@ pub fn rebuild_buildings(
     mut materials: ResMut<Assets<ColorMaterial>>,
     roof: Res<RoofMaterialHandle>,
     mode: Res<BuildingHeightMode>,
+    sun: Res<crate::map::SunStyle>,
     bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     layers: Query<Entity, With<BuildingLayerTag>>,
@@ -327,7 +328,7 @@ pub fn rebuild_buildings(
 ) {
     // ступень зума решает только судьбу оборудования на кровле; тени от неё
     // не зависят, а стоят дороже всего остального вместе взятого
-    let with_shadows = mode.is_changed();
+    let with_shadows = mode.is_changed() || sun.is_changed();
     for entity in &layers {
         commands.entity(entity).despawn();
     }
@@ -448,13 +449,13 @@ fn facade_color(building: &PolyArea) -> Color {
 }
 
 /// Тон поверхности по повороту её наружной нормали (в плане) к свету
-/// `SHADOW_DIR`: к свету — светлее базового на `lit_mix`, от света — темнее
+/// `map::sun_light`: к свету — светлее базового на `lit_mix`, от света — темнее
 /// на `shaded_mix`, в обоих случаях пропорционально косинусу. Одно правило
 /// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
 /// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
 /// `Srgba` в сигнатуре делает пространство явным.
 pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
-    let lit = outward.dot(-SHADOW_DIR);
+    let lit = outward.dot(sun_light());
     if lit >= 0.0 {
         base.mix(&Srgba::WHITE, lit * lit_mix)
     } else {
