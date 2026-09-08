@@ -11,7 +11,8 @@ use super::arches::{
     ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::{RoofKind, RoofLook, building_seed, roof_look};
+use super::garages::{GarageRun, garage_runs};
+use super::material::{RoofKind, RoofLook, building_seed, roof_look, run_look};
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
@@ -144,6 +145,17 @@ fn ridge_of(roof: &super::roofs::GableRoof) -> (Vec2, Vec2) {
     (near, far)
 }
 
+/// Кровля этого дома: у бокса, вошедшего в гаражный прогон, она берётся
+/// **от прогона**, а не от него самого. В этом весь приём: общий посев и
+/// общая ось превращают двадцать домиков в одну ленту, а по-своему посеянный
+/// бокс красится и ребрится сам по себе.
+fn look_of(building: &PolyArea, run: Option<&GarageRun>) -> RoofLook {
+    match run {
+        Some(run) => run_look(run),
+        None => roof_look(building),
+    }
+}
+
 /// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
 /// материала. Ровно это игра кладёт на всякий дом без скатной крыши — и в
 /// плоских режимах, где `outer` это сам контур, и в 2.5D, где он уже поднят
@@ -191,6 +203,7 @@ pub(super) fn facade_and_roof_builders(
     detail: RoofDetail,
 ) -> (MeshBuilder, MeshBuilder) {
     let arches = arches_by_building(buildings, passages);
+    let runs = garage_runs(buildings);
     let mut facades = MeshBuilder::default();
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
@@ -217,7 +230,7 @@ pub(super) fn facade_and_roof_builders(
         }
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
-        let look = roof_look(building);
+        let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         let mut items = Vec::new();
         match roofing(
@@ -460,6 +473,7 @@ pub(super) fn extrusion_builder(
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
+    let runs = garage_runs(buildings);
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
         let depth = |building: &PolyArea| lean.depth(building_center(building));
@@ -471,7 +485,7 @@ pub(super) fn extrusion_builder(
     let mut builder = MeshBuilder::with_roof_coords();
     for index in order {
         let building = &buildings[index];
-        let look = roof_look(building);
+        let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней

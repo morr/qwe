@@ -50,6 +50,17 @@ const CORRUGATED: u32 = 4u;
 const TILE: u32 = 5u;
 const MEMBRANE: u32 = 6u;
 const WALL: u32 = 7u;
+const GARAGE_ROW: u32 = 8u;
+const GARAGE_BLOCK: u32 = 9u;
+
+// Шаг бокса гаражного ряда и шаг рядов в кооперативе, м — **зеркало
+// `garages::BAY` и `garages::ROW_PITCH`**. Оттуда же приходит посев: у
+// прогона он не случаен, а подобран так, чтобы первый шов (у ленты
+// поперечный, у кооператива проезд) лёг ровно на его край.
+const BAY: f32 = 3.4;
+const ROW_PITCH: f32 = 18.0;
+// Из них 12 м занимают два ряда боксов спинами, остальное — проезд.
+const ROW_DEPTH: f32 = 12.0;
 
 // Стена: этаж (настоящие 3 м × `EXTRUDE_SCALE` 0.35 — столько её метра
 // нарисовано), ширина панели и балкон в долях этажа. Балкон занимает нижние
@@ -124,6 +135,18 @@ fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
     let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
     let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
     return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
+}
+
+// Полоса `[start, start + width)` в каждом периоде `period` по координате
+// `coord` — в отличие от `stripes` это широкий диапазон, а не линия: им
+// рисуется проезд между рядами гаражей. Края сглажены по пикселю, и вся
+// сетка гаснет, когда период становится мельче нескольких пикселей.
+fn band(coord: f32, period: f32, start: f32, width: f32, px: f32) -> f32 {
+    let phase = coord - period * floor(coord / period);
+    let edge = 0.6 * px;
+    let low = smoothstep(start - edge, start + edge, phase);
+    let high = 1.0 - smoothstep(start + width - edge, start + width + edge, phase);
+    return low * high * visible(period, px);
 }
 
 // Полоса шириной `width` через каждые `period` по координате `coord`: край
@@ -262,6 +285,35 @@ fn roof_shade(
     } else if kind == MEMBRANE {
         shade -= 0.05 * stripes(v, 2.0, 0.08, px);
         shade += 0.025 * fbm3(p + vec2<f32>(91.0, 5.0), 1.2, px);
+    } else if kind == GARAGE_ROW || kind == GARAGE_BLOCK {
+        // Гаражная лента. Единственное, что от неё остаётся на общем плане, —
+        // поперечный шов на каждом боксе: он и делает из ленты гребёнку.
+        let bay = floor(u / BAY);
+        var row = 0.0;
+        if kind == GARAGE_BLOCK {
+            // Кооператив целиком одним контуром: под ним не ангар, а ряды
+            // боксов с проездами. Проезд рисуется затемнением, а не дыркой в
+            // кровле: сверху щель между двумя рядами и есть тёмная полоса, а
+            // вырезать её по-настоящему значит резать контур булевой
+            // операцией и разойтись со стенами и тенью.
+            shade -= 0.30 * band(v, ROW_PITCH, ROW_DEPTH, ROW_PITCH - ROW_DEPTH, px);
+            // и стык спина к спине посередине пары рядов
+            shade -= 0.09 * stripes(v - ROW_DEPTH * 0.5, ROW_PITCH, 0.12, px);
+            // номер ряда: два ряда на период, и второй начинается на
+            // середине занятой боксами полосы
+            let cycle = v - ROW_PITCH * floor(v / ROW_PITCH);
+            row = floor(v / ROW_PITCH) * 2.0 + f32(cycle > ROW_DEPTH * 0.5);
+        }
+        shade -= 0.17 * stripes(u, BAY, 0.10, px);
+        // каждый бокс крашен своим хозяином — ±10 % по номеру бокса (и ряда,
+        // если это кооператив); тон держится ровно до шва, поэтому лента и
+        // читается как ряд ворот
+        shade += 0.10 * (hash21(vec2<f32>(bay, row * 13.0 + seed * 53.0)) - 0.5)
+            * visible(BAY, px);
+        // под швом — профлист, как и на одиночном гараже
+        shade += 0.10 * cos(TAU * u / 0.30) * slope_bite * visible(0.30, px);
+        // и ржавчина, которой на ГСК больше, чем на любой другой кровле
+        shade -= 0.06 * fbm3(p + vec2<f32>(67.0, 41.0), 1.6, px);
     } else if kind == WALL {
         // ось стены — она сама, поэтому `v` растёт **вверх по стене**, а `u`
         // идёт вдоль неё: межэтажный шов это линия постоянного `v`

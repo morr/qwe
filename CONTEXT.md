@@ -185,9 +185,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   p90 15 m; it is now median 8 m, p90 15 m, and the mix is printed in the `building
   meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
-  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
+  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
+  Church | Public |
   Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
-  above all — from `amenity=*` on the same outline. Each class
+  above all — from `amenity=*` on the same outline. **`garages` (plural) is its own class**:
+  OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
+  it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
@@ -207,9 +210,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
-  Membrane | Wall`, picked deterministically from `BuildingUse` (+ footprint size for the
+  Membrane | Wall | GarageRow | GarageBlock`, picked deterministically from `BuildingUse` (+ footprint size
+  for the
   untagged half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded. The colour comes from that material's own palette — **the per-use *roof* colours
+  seeded. The one kind picked by *geometry* rather than by use is `GarageRow` — see
+  **Garage rows** below. The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
@@ -236,6 +241,27 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
   per-building body of the 2.5D layer, walls included, because a roof shape does not read
   without them. Detail in the `osm-map` skill.
+- **Garage rows** (`map/buildings/garages.rs`) — a cooperative drawn as **rows of boxes**,
+  not as twenty little houses and not as one giant shed. Garage footprints within
+  `JOIN_GAP` (2 m) of each other are stitched into a **run** (union-find over a spatial
+  hash), and a run hands every one of its members **one axis, one seed and one phase** —
+  that is the whole trick: with a shared seed the roofs stop being separately coloured
+  and separately ribbed. A run is then one of two things:
+  - a **ribbon** (`RoofKind::GarageRow`) — at least `ROW_MIN_LENGTH` 12 m long and
+    `ROW_MIN_ASPECT` 2.2 times longer than wide. The shader draws a **seam every `BAY`
+    (3.4 m)** with its own paint tone inside each bay, and the phase is chosen so the
+    first seam lands on the end of the ribbon;
+  - a **cooperative** (`RoofKind::GarageBlock`) — a `BuildingUse::GarageBlock` outline at
+    least `BLOCK_MIN_WIDTH` 14 m wide and `BLOCK_MIN_AREA` 400 m² in area, i.e. wide
+    enough to hold rows *and* aisles. It gets the same bay seams plus a **darkened aisle
+    every `ROW_PITCH` (18 m = two 6 m rows back to back + a 6 m drive)**, phased to the
+    edge of the blob. The aisle is shading, not a hole cut in the roof — cutting it for
+    real would mean a boolean on the outline and would disagree with the walls and the
+    shadow.
+
+  `BAY` and `ROW_PITCH` are mirrored in `roof.wgsl` and must stay in step. No new
+  geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
+  refused on both (no penthouse, no vent, no chimney). Tula: 29 buildings in runs.
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own
