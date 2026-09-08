@@ -3,7 +3,7 @@
 // (лог-спираль: закрутка растёт к центру), турбулентность и рваный край — fbm
 // из шума значений. Цвета и параметры приходят из `PortalMaterial`
 // (`src/portal.rs`); яркость рукавов задаётся выше 1.0 намеренно — это HDR под
-// bloom камеры (`src/camera.rs`), без него они просто выбелятся.
+// bloom камеры (`src/post.rs`), без него они просто выбелятся.
 
 #import bevy_sprite::{mesh2d_vertex_output::VertexOutput, mesh2d_view_bindings::globals}
 

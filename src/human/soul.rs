@@ -14,7 +14,7 @@ use crate::loading::AppState;
 use crate::settings::{SOUL_LIFE, SOUL_MIN_PX, SOUL_RISE, SOUL_SIZE, Z_SOUL};
 use crate::silhouette::{Glyph, Silhouette, Silhouettes};
 
-/// Золото ярче белого — HDR, светится через bloom (`camera.rs`).
+/// Золото ярче белого — HDR, светится через bloom (`post.rs`).
 const SOUL_COLOR: LinearRgba = LinearRgba::new(2.6, 2.1, 0.9, 1.0);
 
 /// Искра души над телом; `age` — сколько она уже живёт.
