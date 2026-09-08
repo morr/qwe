@@ -1,15 +1,16 @@
 use super::*;
+use crate::camera::{MAX_ZOOM, MIN_ZOOM};
 
 /// Обе границы диапазона зума камеры покрыты ступенями, ступень не убывает с
 /// ростом зума, а зум ровно на границе попадает в верхнюю ступень.
 #[test]
 fn tram_bucket_covers_the_zoom_range() {
     let bucket_for_zoom = |zoom: f32| TramZoomBucket::for_zoom(zoom).index;
-    assert_eq!(bucket_for_zoom(0.05), 0);
-    assert_eq!(bucket_for_zoom(4.5), TRAM_LODS.len() - 1);
+    assert_eq!(bucket_for_zoom(MIN_ZOOM), 0);
+    assert_eq!(bucket_for_zoom(MAX_ZOOM), TRAM_LODS.len() - 1);
 
     let mut previous = 0;
-    for step in 0..=450 {
+    for step in 0..=(MAX_ZOOM * 100.0) as u32 {
         let zoom = step as f32 * 0.01;
         let bucket = bucket_for_zoom(zoom);
         assert!(bucket >= previous, "bucket dropped at zoom {zoom}");
@@ -34,9 +35,9 @@ fn tram_lods_step_up_with_zoom() {
 /// 1–3.2 экранных пикселей.
 #[test]
 fn tram_line_stays_near_screen_width() {
-    let mut min_zoom = 0.05;
+    let mut min_zoom = MIN_ZOOM;
     for lod in &TRAM_LODS {
-        let max_zoom = lod.max_zoom.min(4.5);
+        let max_zoom = lod.max_zoom.min(MAX_ZOOM);
         for zoom in [min_zoom, max_zoom] {
             let px = lod.line_width / zoom;
             assert!((1.0..=3.2).contains(&px), "line {px} px at zoom {zoom}");
@@ -51,7 +52,7 @@ fn tram_line_stays_near_screen_width() {
 fn tram_ties_stay_sparse_on_screen() {
     for lod in &TRAM_LODS {
         let Some(tie) = &lod.tie else { continue };
-        let worst_zoom = lod.max_zoom.min(4.5);
+        let worst_zoom = lod.max_zoom.min(MAX_ZOOM);
         assert!(
             tie.spacing / worst_zoom >= 10.0,
             "ties merge at zoom {worst_zoom}"

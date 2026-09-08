@@ -1,10 +1,6 @@
 use super::*;
+use crate::camera::{MAX_ZOOM, MIN_ZOOM};
 use crate::map::meshing::distance_to_path;
-
-/// Границы зума камеры (`camera::MIN_ZOOM` / `MAX_ZOOM`) — они приватны, а
-/// таблица LOD обязана покрывать именно их.
-const MIN_ZOOM: f32 = 0.05;
-const MAX_ZOOM: f32 = 4.5;
 
 /// Ширины балласта из OSM (`osm/parse/tags.rs`): магистральный путь,
 /// light_rail / метро, заброшенный. Экранные пороги обязаны держаться на
@@ -31,7 +27,7 @@ fn rail_bucket_covers_the_zoom_range() {
     assert_eq!(bucket_for_zoom(MAX_ZOOM), RAIL_LODS.len() - 1);
 
     let mut previous = 0;
-    for step in 0..=450 {
+    for step in 0..=(MAX_ZOOM * 100.0) as u32 {
         let zoom = step as f32 * 0.01;
         let bucket = bucket_for_zoom(zoom);
         assert!(bucket >= previous, "bucket dropped at zoom {zoom}");
