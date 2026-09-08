@@ -73,7 +73,7 @@ in `CONTEXT.md` and the detail here in the same change.
   but Wood stays open ground — that is what makes the open half of a park read as a
   field, the way it does on OSM. **Residential** (`landuse=residential`) and
   **Industrial** (`landuse=industrial|garages`) are the *blocks* — `MapData::landuse`,
-  one merged layer at `Z_LANDUSE` (0.25) between the ground sprite and the parks, half
+  one merged layer at `Z_LANDUSE` (0.25) between the ground mesh and the parks, half
   a tone off the ground colour (warmer/lighter for housing, greyer for industry) so the
   city stops being one flat sheet. `area_kind` tries them **last**: any green tag on the
   same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
@@ -304,6 +304,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   brighter or shimmering. Materials are built once (`SurfaceMaterials`, `Startup`) and
   shared by every city; `SurfaceStyle::texture` (section **Surfaces**, `ui/surfaces.rs`,
   persisted) rewrites the `intensity` uniform of each and rebuilds nothing.
+  **This is the map's only grain.** A second one — `map/grain.rs`, a map-sized sprite
+  tiled with a 256 px seamless simplex texture — was written in the building-look
+  worktree and dropped when that branch was merged on top of this material; the commits
+  describing it are history, not a missing file. Don't reintroduce a sprite grain: two
+  noise fields over the same fills read as dirt, and the shader one already fades by
+  pixel size.
   The material demands the **`Ribbon` vertex attribute** (`meshing::ATTRIBUTE_RIBBON`,
   `[across, to-break, half width, markings code]` in metres: *to-break* is the signed
   distance to the nearest marking break, the code is `Markings::encode`, `lanes·2 +
@@ -334,7 +340,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   drives get none, and never a `passage`) gets a band `width + 2 · sidewalk_width` (22 % of
   the width, 1.2–3 m per side). It sits under every road ribbon for the casing reason: a
   crossing street's fill covers it and the sidewalk ends at the junction the way a real
-  one does. A `footway` mapped alongside draws over it as an alley — beige on grey, and
+  one does. A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
+  lane markings, but the bridge branch of `spawn_roads` `continue`s into `bridge_casings`
+  + `bridges` *before* the sidewalk block — a deck gets no band ever, at any width or
+  `RoadStyle::sidewalks`. It would hang a metre or three past the deck edge over the
+  water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally.
+  A `footway` mapped alongside draws over it as an alley — beige on grey, and
   tolerated. The road fill went from osm-carto white to asphalt grey together with the
   markings: a white line on white is invisible, and on grey the street grid also stops
   merging with the courtyards.
@@ -416,14 +427,6 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `Z_ROAD_CASING` (1.9), width `+2·casing_width` (8% of the road, 0.3–1 m). Both fills
     (1.5 / 2.0) sit above both casings on purpose: otherwise a casing would cut every
     crossing in half. Off by default.
-  - **sidewalk** — a light band (`SIDEWALK_COLOR`, between the ground and the white
-    carriageway) along **streets only** (an alley *is* a footpath), width
-    `+2·sidewalk_width` (15% of the road, 1.5–2.5 m per side), its own merged layer at
-    `Z_SIDEWALK` (1.3) under the alleys and every casing, so a footpath meeting a street
-    lies on the sidewalk instead of stopping at it. Drawing only — unlike `casing_width`
-    it is not a footprint band and touches neither the navmesh nor planting. Bridges
-    skip it (their curb is the edge). On by default: without it a street was a white
-    line on a beige sheet, with it a block gets a readable edge.
 
   Smoothing works on a **copy** — `RoadLine::points` and `width` are load-bearing for the
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,

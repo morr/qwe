@@ -43,8 +43,8 @@ in `main.rs`.
 - **Post-processing** (`post.rs`) — the camera renders to an HDR target with **bloom**
   thresholded at 1.1, so only what draws itself above 1.0 glows — the portal vortex, demon
   halos, soul sparks — and the map's white markings and light roofs do not; tonemapping is
-  off so the map palette is untouched. A full-screen **vignette** is a UI node under the
-  panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
+  off so the map palette is untouched, and `Msaa` stays off. A full-screen **vignette** is
+  a UI node under the panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
   `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
   — **the edge counts as inside**. Five visibility gates use it and **each keeps its own
@@ -223,7 +223,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
   `[across, to-break, half width, markings code]` in metres (*to-break* = signed distance
   to the nearest **marking break**, negative inside a gap; code = `lanes·2 + oneway`, 0 =
-  none), zeros on polygons.
+  none), zeros on polygons. This shader grain is what the map has instead of a **ground
+  grain sprite** — a map-sized tiled noise sprite, proposed and then dropped in the merge
+  that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
   polygon carries a gradient band along its contour, holes included: water a lighter
   **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
@@ -233,9 +235,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
   passage; bridges included) is asphalt grey and gets a light **sidewalk band** at
   `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
-  casing), width `sidewalk_width` (22 %, 1.2–3 m per side), and white **lane markings
-  drawn by the surface shader** from the `Ribbon` coordinates: a line on every lane
-  boundary (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →
+  casing), width `sidewalk_width` (22 %, 1.2–3 m per side) — **never a bridge deck**,
+  which leaves for its own layers before the band is pushed and has its curb instead.
+  A carriageway also gets white **lane markings drawn by the surface shader** from the
+  `Ribbon` coordinates (a bridge keeps those): a line on every lane boundary
+  (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →
   4; one-way 8 m → 1, i.e. none; a roundabout always 1), dashed, the axis of a two-way road
   with 4+ lanes solid; anti-aliased, never thinner than ~1.3 px, gone when a lane is under
   ~10 px on screen. **Marking breaks**: at every junction node each carriageway's lines
@@ -613,7 +617,7 @@ its draw call.
   attire. Transitions only, never per frame.
 - **Corpse look** (`human/look.rs`, figures in `silhouette/figure.rs`) — a killed human
   is a **lying figure**, not an ellipse: head, torso and limbs as capsules on a skeleton
-  in metres of `CORPSE_HEIGHT`, four poses (sprawled, prone, curled, collapsed), sixteen
+  in metres of `CORPSE_HEIGHT`, four poses (sprawled, prone, curled, crumpled), sixteen
   headings and a mirror, all from the `Entity` bits (`corpse_pose`). Limbs are drawn
   thicker than anatomy so the pose survives crowd zoom. The tint is the pawn's own
   attire **drained** (`corpse_tint`), so the dead keep their clothes; under the chest a
@@ -631,11 +635,12 @@ its draw call.
   observer at the victim's position, rising 6 m over 1.4 s of sim time and fading; it is
   the visible side of `Telemetry::killed`. Lives at `Z_SOUL` above every unit. Stepped
   and despawned in `FixedUpdate` (`rise_souls`, after `SimSet::HumanBehavior`) — a world
-  entity may not be despawned from `Update`.
-- **Bloom** (`camera.rs`) — the camera carries `Bloom` (which requires `Hdr`) with a
-  prefilter threshold of **1.0**: only colours brighter than white glow (portal rim, demon
-  halos, souls; later spells); the map, all ≤ 1, stays exactly as drawn. **No
-  tonemapper** — `Tonemapping::None` keeps the map palette untouched. `Msaa` stays off.
+  entity may not be despawned from `Update`. Not the `Souls { earned, spent }` currency of
+  `ROADMAP.md` — that is a separate concept, a resource the same kill observer will
+  increment; the mote counts nothing and is only the visible side of the kill.
+- **Bloom** (`post.rs`) — what makes every HDR colour above glow: the portal rim, the
+  demon halos, the souls, and later spells. The setup and its threshold are under
+  **Post-processing** in App lifecycle; the tuning — **ui-panels skill**.
 
 ## UI & debug
 

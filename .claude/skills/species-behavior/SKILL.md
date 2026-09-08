@@ -282,7 +282,7 @@ removes the coupling outright: the two angles no longer have to be compared at a
 
 **`CorpseTag`** — a killed human: behavior/movement components removed, the body drawn as
 a **lying human figure** at `Z_CORPSE` — one of the four corpse glyphs of the silhouette
-atlas (`silhouette/figure.rs`: sprawled, prone, curled, collapsed), in one of
+atlas (`silhouette/figure.rs`: sprawled, prone, curled, crumpled), in one of
 `CORPSE_HEADINGS` (16) directions, mirrored or not, all chosen from the `Entity` bits
 through a splitmix hash (`human/look.rs::corpse_pose`) — cosmetics, so it stays out of
 the decision stream. The tint is the human's own `Attire` drained (`corpse_tint`: half
@@ -430,7 +430,10 @@ HashSet dedupes double kills within one command flush. The observer also **relea
 soul** (`human/soul.rs::release_soul`) at the victim's `SimPosition` — a golden HDR spark
 (`SoulMote`) that `rise_souls` (FixedUpdate, after `SimSet::HumanBehavior`) lifts 6 m over
 1.4 s of sim time and despawns; the visible side of `Telemetry::killed`. It reads
-`Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it.
+`Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it. The
+mote is **not** the `Souls { earned, spent }` currency of `ROADMAP.md` — that is a
+separate concept, a resource this same observer will increment next to `Telemetry::killed`;
+`SoulMote` counts nothing.
 
 **What each exit from a chase strips is one list plus one exception.** The list is
 `ChaseComponents` (`demon/components.rs`) — the four chase components, removed whole by
@@ -496,7 +499,7 @@ here. There are no art assets and no artist: every shape is a formula, every col
 constant beside its draw call — the per-species tints (`Attire`, `demon_tint`,
 `corpse_tint`, the halo, the soul) are described in the Human and Demon sections above.
 The camera's bloom, which is what makes the HDR colours here glow, is the **ui-panels
-skill** (`camera.rs`).
+skill** (`post.rs::camera_post_process`, the bundle `camera.rs` puts on the camera).
 
 ### The atlas
 
@@ -548,7 +551,11 @@ body's *smaller* side. `drawn_size(zoom)` (zoom = metres per logical px, i.e. th
 `DEMON_MIN_PX` 5 keeps a demon a findable point (its halo, 3 bodies wide, 15 px),
 `SOUL_MIN_PX` 3 keeps a 1.4 s spark visible.
 
-Two `Update` systems, chained, are the **only** writers of `Sprite::custom_size`:
+**`Sprite::custom_size` belongs to this module**, and to three writers inside it:
+`Silhouettes::sprite` sets the body at spawn, and from then on the size is owned by two
+chained `Update` systems. Nothing outside `silhouette/` writes the `custom_size` of an
+entity that carries a `Silhouette` — a look system that wants a different size rewrites
+the component, not the sprite. The two:
 
 - **`size_fresh_silhouettes`** — every frame, but `Changed<Silhouette>` only. A spawn or a
   corpse rewrite gets its size in the frame it appears, instead of waiting for the first
