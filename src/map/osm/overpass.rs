@@ -63,12 +63,14 @@ impl GeoBounds {
 /// новых зон не содержит, и без этого её никто бы не перекачал.
 /// v3 — ноды `entrance`. v4 — ways `railway`. v5 — ways `natural=tree_row`.
 /// v6 — ноды `natural=tree`. v7 — линейные `waterway`. v8 — кварталы
-/// `landuse=residential|industrial|garages`. v9 — стоянки `amenity=parking`.
-const QUERY_VERSION: u32 = 9;
+/// `landuse=residential|industrial|garages`. v9 — стоянки `amenity=parking`,
+/// v10 — спортивные и детские площадки `leisure=*`.
+const QUERY_VERSION: u32 = 10;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
-/// (`amenity=parking`), аллеи, одиночные деревья, стены Кремля, входы в здания.
+/// (`amenity=parking`), спортивные и детские площадки (`leisure=*`), аллеи,
+/// одиночные деревья, стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
         south,
@@ -105,6 +107,8 @@ pub fn overpass_query(city: City) -> String {
   relation["landuse"~"^(residential|industrial|garages)$"]({bbox});
   way["amenity"="parking"]({bbox});
   relation["amenity"="parking"]({bbox});
+  way["leisure"~"^(pitch|track|playground|sports_centre|stadium)$"]({bbox});
+  relation["leisure"~"^(pitch|track|playground|sports_centre|stadium)$"]({bbox});
   way["barrier"="city_wall"]({bbox});
   node["entrance"]({bbox});
 );
