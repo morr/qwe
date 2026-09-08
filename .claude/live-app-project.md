@@ -143,8 +143,11 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `PreviousSimPosition`, `CorpseTag`, `TestWalker`, `PathfindingRequest`, `ChaseTarget`,
 `ChaseRepath`, `FleeRepath`, `DevourUntil`, `WanderHeading`, `WanderPause`,
 `MovableStateMovingTag`, `HumanWanderTag`, `HumanFirstWanderTag`, `HumanFleeTag`,
-`PanicRecoil`, `Pace`, `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`, `DemonDevourTag`,
-`PawnId`, `WanderIndex`, `NeedsWanderTarget`, `RequestedAt`, `RetireAt`.
+`PanicRecoil`, `Pace`, `Attire`, `DemonWanderTag`, `DemonChaseTag`, `DemonLungeTag`,
+`DemonDevourTag`, `DemonHalo` (one per demon, a child entity), `BloodPool` (one per
+corpse, a child entity), `Silhouette`, `SoulMote`
+(kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
+`RequestedAt`, `RetireAt`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,

@@ -1,11 +1,12 @@
 ---
 name: species-behavior
-description: Use when working on pawn behaviour in qwe — the human and demon decision ladders (human/decide.rs, demon/decide.rs), their behavior.rs state machines, wander/flee/chase/devour, the flee fan, PanicRecoil, Pace, chase claims and the lunge, the demon spawner, corpses, the spatial grids and the SimSet order. Deep detail behind CONTEXT.md's Simulation summary.
+description: Use when working on pawn behaviour in qwe — the human and demon decision ladders (human/decide.rs, demon/decide.rs), their behavior.rs state machines, wander/flee/chase/devour, the flee fan, PanicRecoil, Pace, chase claims and the lunge, the demon spawner, corpses, the spatial grids and the SimSet order — and on how a pawn is drawn: the silhouette atlas and its glyphs (silhouette/, silhouette/figure.rs), the screen-size floor and the two LOD systems, the portal vortex and its stain (portal.rs). Deep detail behind CONTEXT.md's Simulation and Look summaries.
 ---
 
 # Species behaviour — deep detail
 
-Detail behind `src/human/`, `src/demon/`, `src/movement/wander.rs` and `src/spatial.rs`.
+Detail behind `src/human/`, `src/demon/`, `src/silhouette/`, `src/portal.rs`,
+`src/movement/wander.rs` and `src/spatial.rs`.
 `CONTEXT.md` names the states and the invariants; this file is the mechanism behind them and
 the measured reason each rung sits where it does.
 
@@ -133,7 +134,10 @@ knob and deliberately not a `settings.rs` constant: the constant `HUMAN_COUNT` i
 
 - **Two readers, and they must stay in step**: `spawn_humans` (`WorldInitSet::Spawn`) and
   `restart::on_restart`. A restart respawns the same number, which is what lets
-  `a_restart_replays_the_run` compare two runs of one size.
+  `a_restart_replays_the_run` compare two runs of one size. Staying in step is held by a
+  type rather than by discipline: both take the **`PopulationSpawn`** `SystemParam`
+  (`human/systems.rs` — navmesh, `HumanStyle`, `WorldSeed`, `PopulationSize`,
+  `Silhouettes`) and call its `spawn`, so neither can read a different set.
 - `HumanPlugin` only `init_resource`s it. **An app that wants another size inserts it
   after `add_plugins`** — `determinism::replay::replay_app` does exactly that, and
   swapping the two lines would silently put 20 000 humans back into the replay test.
@@ -224,6 +228,15 @@ humans flee straight.
 A fleeing human carries **`UrgentPath`** (it comes and goes with `HumanFleeTag`) — the
 dispatcher's "may not wait for the camera" marker; see `navigation-deep`.
 
+**Panic tint** (`human/look.rs`) — the same tag drives the colour: `On<Add, HumanFleeTag>`
+paints the sprite `PANIC_COLOR` (amber, one for all — the front of panic is a spreading
+stain, not confetti), `On<Remove, HumanFleeTag>` restores the human's own `Attire`. Two
+observers on transitions, no per-frame system over 20 000 sprites. The remove observer
+also fires on the corpse transition (harmless: `to_corpse` paints the body afterwards)
+and on despawn. `Attire` itself is the three spawn draws of the decision stream, now from
+a cool muted palette — the draw *count* is what must not change, since `Pace` and the
+heading follow in the same stream.
+
 **Escape** — a fleeing human within `ESCAPE_MARGIN` of the map border despawns,
 `telemetry.escaped += 1`. It is a despawn inside `FixedUpdate`, where the chained `SimSet`s
 give it a sync point (see CLAUDE.md, "Where a mass despawn may happen").
@@ -267,8 +280,20 @@ removes the coupling outright: the two angles no longer have to be compared at a
 
 ### Corpse
 
-**`CorpseTag`** — a killed human: behavior/movement components removed, dark lying sprite at
-`Z_CORPSE`. Not in the human spatial grid (the grid filters on `Human`).
+**`CorpseTag`** — a killed human: behavior/movement components removed, the body drawn as
+a **lying human figure** at `Z_CORPSE` — one of the four corpse glyphs of the silhouette
+atlas (`silhouette/figure.rs`: sprawled, prone, curled, collapsed), in one of
+`CORPSE_HEADINGS` (16) directions, mirrored or not, all chosen from the `Entity` bits
+through a splitmix hash (`human/look.rs::corpse_pose`) — cosmetics, so it stays out of
+the decision stream. The tint is the human's own `Attire` drained (`corpse_tint`: half
+the saturation, half the lightness), written by `lay_down`, an entity command queued
+*after* the tag removal so the calm-down observer restoring the attire cannot overwrite
+it. Under the chest hangs a **blood pool** child (`BloodPool`, the `Pool` glyph,
+`POOL_RATIO` 0.75 of the corpse cell, z −0.02; its offset follows the pose and the
+mirror). Its `Silhouette`
+is rewritten to the `CORPSE_SPAN` cell (`HUMAN_MIN_PX` floor), which is how the size
+lands on the sprite next frame. Not in the human spatial grid (the grid filters on
+`Human`).
 
 The transition is **`human::to_corpse`**, one entry point, and it is where a corpse is
 defined — the kill observer in `demon/` only reports that it happened. Each module takes back
@@ -287,6 +312,14 @@ States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target bi
 from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always,
 and `movement::BodyScale::DEMON` — its body is the one thing movement would otherwise have
 to infer from the species.
+
+**Look** (`demon/look.rs`) — the `Ember` glyph of the silhouette atlas (seven spikes, a
+bright core), tinted by `demon_tint`: a five-shade ring from crimson to orange so demons
+born in a row stay apart. Under the body a **halo** — a child entity (`DemonHalo`, the
+`Halo` glyph, `HALO_RATIO` 3 bodies wide, local z −0.01): it inherits the devour pulse
+through the parent's scale, is despawned with the parent (despawn is recursive, so it
+carries no `DespawnOnExit` of its own), and y-sorting draws a neighbouring human *over*
+it. `spawn_demon` gets the atlas through `DemonBirth`.
 
 ### Wander
 
@@ -393,7 +426,11 @@ keeps moving inside it, and the last ~1.4 m is never closed. A lunging demon car
 victim's live position. Lunging demons are exempt from separation.
 
 **Kill** at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); a `killed_this_tick`
-HashSet dedupes double kills within one command flush.
+HashSet dedupes double kills within one command flush. The observer also **releases a
+soul** (`human/soul.rs::release_soul`) at the victim's `SimPosition` — a golden HDR spark
+(`SoulMote`) that `rise_souls` (FixedUpdate, after `SimSet::HumanBehavior`) lifts 6 m over
+1.4 s of sim time and despawns; the visible side of `Telemetry::killed`. It reads
+`Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it.
 
 **What each exit from a chase strips is one list plus one exception.** The list is
 `ChaseComponents` (`demon/components.rs`) — the four chase components, removed whole by
@@ -450,6 +487,95 @@ deterministic dispatcher's queue key (it died on a duplicate key ~30 ticks in). 
 "warmup keeps the world paused" was not enough — that pause belongs to `sim_time` and space
 unpauses it. Matching precondition on the reset: **no demon may be alive when a run starts**
 (`demon::on_world_started` says so).
+
+## Look: the silhouette atlas and the portal
+
+`silhouette/` and `portal.rs` are the drawing half of a pawn. `CONTEXT.md`'s **Look**
+section names the terms and the two invariants; the mechanism and the measurements are
+here. There are no art assets and no artist: every shape is a formula, every colour a
+constant beside its draw call — the per-species tints (`Attire`, `demon_tint`,
+`corpse_tint`, the halo, the soul) are described in the Human and Demon sections above.
+The camera's bloom, which is what makes the HDR colours here glow, is the **ui-panels
+skill** (`camera.rs`).
+
+### The atlas
+
+**One image for all eight glyphs** — `CELL_PX` (128) per cell, 1024 × 128 on mip 0 —
+built once per process by `SilhouettePlugin` (`main.rs`) in `Startup` (`build_atlas`):
+glyphs depend on neither the city nor the run, so neither a restart nor a city switch
+rebuilds it, and the `Handle`s outlive every world. It logs a `silhouette atlas: …` line
+and costs ~8 ms.
+
+One image and not one per species **because sprites batch by texture**: humans, corpses
+and demons interleave in y-sorted z, so a second texture would cut the batch at every
+demon.
+
+- **Cell 128 px, not 64** — at the closest zoom (0.05 m/px) a corpse cell is ~75 logical
+  px, 150 physical on a retina display; at 64 the figure's limbs blur.
+- **Signed distance with a one-pixel edge** (`EDGE_PX`): `texel()` returns *(shade,
+  alpha)* per texel, where shade is a multiplier on the sprite colour — so one glyph
+  serves every tint, and a pawn's colour never touches the texture.
+- **Transparent texels carry the edge colour, not black**, or linear filtering would mix
+  a black rim into the outline.
+- **The mip chain is computed here**, 2×2 averaging down to 1×1 (`downsample`), and the
+  image is sampled **linearly** even though the app runs on
+  `ImagePlugin::default_nearest()`: a silhouette is a smooth figure, not pixel art, and a
+  2–4 px dot off a 128 px texture sparkles at every step of a pawn without mips.
+- **`Glyph`** — `Disc` (human), `Ember` (demon: seven spikes, a bright core), `Halo` (the
+  demon halo, the soul spark, the portal stain — any glow), `Pool` (blood) and the four
+  corpse poses, which sit **consecutively in atlas order** so `Glyph::corpse(i)` indexes
+  them. `Glyph::pool_anchor` gives the chest of a pose in cell coordinates (−1…1), the
+  centre for every other glyph. `Silhouettes::sprite(glyph, color, size)` is the only way
+  to make a pawn sprite; `set_glyph` swaps a live sprite onto another glyph of the same
+  atlas (a human becoming a corpse).
+- **The corpse figure** (`silhouette/figure.rs`) — head, torso, arms and legs as capsules
+  on a skeleton given **in heights** (1 = standing height), joints as angles off the body
+  axis: head towards +x, feet towards −x, the left side +y. Limbs are drawn 1.5–2× thicker
+  than anatomy on purpose — an honest 0.05-height arm is a fraction of a pixel at crowd
+  zoom, and the body has to read as a *pose*, not as wire. All four poses share one square
+  `CELL_SPAN` (1.4 heights) cell, because the sprite rotates to any angle and a rectangular
+  cell would win nothing.
+- **Look at it with your eyes**: `SILHOUETTE_DUMP=/tmp/atlas.png cargo test dump_atlas --
+  --ignored` writes mip 0 to a PNG (transparency reads better on a grey background).
+
+### The screen-size floor and the two LOD systems
+
+`Silhouette { body, min_px }` — the body in metres plus the floor in logical px on the
+body's *smaller* side. `drawn_size(zoom)` (zoom = metres per logical px, i.e. the camera
+`Transform`'s scale) stretches the body proportionally until its smaller side reaches
+`zoom * min_px`, and never shrinks it below the body. Without the floor a 1 m human is
+0.2 px at city zoom and disappears: `HUMAN_MIN_PX` 2 keeps the crowd a grain,
+`DEMON_MIN_PX` 5 keeps a demon a findable point (its halo, 3 bodies wide, 15 px),
+`SOUL_MIN_PX` 3 keeps a 1.4 s spark visible.
+
+Two `Update` systems, chained, are the **only** writers of `Sprite::custom_size`:
+
+- **`size_fresh_silhouettes`** — every frame, but `Changed<Silhouette>` only. A spawn or a
+  corpse rewrite gets its size in the frame it appears, instead of waiting for the first
+  wheel click.
+- **`resize_silhouettes_on_zoom`** — every silhouette, but only when the zoom actually
+  changed (`Local<f32>` holds the last one). Thousands of sprite writes per wheel click,
+  not per frame.
+
+Both return early when there is no `Camera2d`, which is the same contract as the atlas:
+without a renderer (replay, tests) `Silhouettes` stays `None`, `sprite()` hands back a
+plain square `Sprite`, and **that is not an error**. `HumanPlugin` / `DemonPlugin` /
+`PortalPlugin` only `init_resource::<Silhouettes>()`; `SilhouettePlugin` is what fills it,
+so a test yard that spawns pawns or runs the kill observer must `init_resource` it too.
+
+### Portal
+
+`portal.rs` + `assets/shaders/portal.wgsl` — a `Mesh2d` quad with `PortalMaterial`
+(`Material2d`): a three-armed log-spiral vortex with fbm turbulence computed per pixel
+from `globals.time`. No spritesheet, no frames, no `Update` system — the nine-frame 160 px
+sheet it replaced read as pixel mush stretched over 36 m, and nobody is going to repaint
+it. The Rust `PortalUniform`'s layout must stay in step with `PortalUniform` in the WGSL.
+The arms and the rim are **HDR** (`PORTAL_RIM`, > 1.0) so the camera's bloom catches them;
+the core is near-black violet. Violet because nothing else on the map is: red is demons,
+amber is panic, blue is water and tram. Under it the **stain** of scorched ground — the
+`Halo` glyph, `STAIN_RATIO` 2.6 portal diameters, at `Z_PORTAL_STAIN`: above roads (the
+junction under the portal is charred), below corpses (bodies stay visible on it).
+`PortalPos` itself — the hint, the snap to a passable tile — is `navigation-deep`.
 
 ## Telemetry
 

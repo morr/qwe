@@ -6,10 +6,8 @@ use bevy::prelude::*;
 
 use crate::demon::Demon;
 use crate::dev::TestWalker;
-use crate::human::{CorpseTag, Human, HumanStyle, PopulationSize, spawn_population};
+use crate::human::{CorpseTag, Human, PopulationSpawn};
 use crate::loading::{AppState, WorldStarted};
-use crate::navigation::ArcNavmesh;
-use crate::rng::WorldSeed;
 
 // `Default` в reflect-регистрации — для BRP: `brp event RestartEvent` без
 // аргументов конструирует значение через `ReflectDefault`, и без него запрос
@@ -111,10 +109,7 @@ fn trigger_pending_restart(mut commands: Commands, mut pending: ResMut<RestartPe
 fn on_restart(
     _event: On<RestartEvent>,
     mut commands: Commands,
-    arc_navmesh: Res<ArcNavmesh>,
-    style: Res<HumanStyle>,
-    seed: Res<WorldSeed>,
-    size: Res<PopulationSize>,
+    population: PopulationSpawn,
     scene_entities: Query<
         Entity,
         Or<(With<Human>, With<CorpseTag>, With<Demon>, With<TestWalker>)>,
@@ -129,18 +124,12 @@ fn on_restart(
 
     // всё состояние прогона — спавнер, счётчики, часы, тики, замороженный
     // бэкенд — сбрасывают обсерверы `WorldStarted`, каждый в своём модуле;
-    // триггер стоит до `spawn_population`, так что сбросы применяются раньше,
+    // триггер стоит до расселения, так что сбросы применяются раньше,
     // чем лягут команды спавна
     commands.trigger(WorldStarted);
 
     // состояние ГПСЧ сбрасывать нечего: все потоки выводятся из `WorldSeed` и
     // `PawnId`, а `spawned = 0` у сброшенного спавнера возвращает демонам те
     // же номера — значит, и те же потоки (см. `src/rng.rs`)
-    spawn_population(
-        &mut commands,
-        &arc_navmesh.read(),
-        style.spread,
-        seed.0,
-        size.0,
-    );
+    population.spawn(&mut commands);
 }

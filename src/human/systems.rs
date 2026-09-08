@@ -4,8 +4,9 @@ use rand::Rng;
 use crate::grid::tile_center;
 use crate::human::components::{
     Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
-    WanderHeading, WanderPause,
+    PopulationSize, WanderHeading, WanderPause,
 };
+use crate::human::look::{human_body, roll_attire};
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{
@@ -17,10 +18,11 @@ use crate::rng::{
     PawnId, RngDomain, SimRng, Species, WanderIndex, WorldSeed, decision_stream, stream,
 };
 use crate::settings::{
-    HUMAN_FLEE_SPEED, HUMAN_SIZE, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
+    HUMAN_FLEE_SPEED, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
     HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, RECOIL_CONE, RECOIL_MIN_ERRAND,
     WANDER_CONE, unit_z,
 };
+use crate::silhouette::Silhouettes;
 
 /// Сколько зданий перебирается в поисках цели «по делам» в конусе курса;
 /// если ни одно не попало — берётся ближайшее по направлению из выборки.
@@ -44,20 +46,54 @@ fn in_recoil_cone(direction: Vec2, ban: Vec2) -> bool {
     direction.dot(ban) > RECOIL_CONE.cos()
 }
 
-pub fn spawn_humans(
-    mut commands: Commands,
-    arc_navmesh: Res<ArcNavmesh>,
-    style: Res<HumanStyle>,
-    seed: Res<WorldSeed>,
-    size: Res<crate::human::PopulationSize>,
-) {
-    spawn_population(
-        &mut commands,
-        &arc_navmesh.read(),
-        style.spread,
-        seed.0,
-        size.0,
-    );
+pub fn spawn_humans(mut commands: Commands, population: PopulationSpawn) {
+    population.spawn(&mut commands);
+}
+
+/// Всё, чем расселяется население, одним `SystemParam`.
+///
+/// Пятёрку ресурсов читают одинаково оба спавна — `spawn_humans`
+/// (`WorldInitSet::Spawn`) и `restart::on_restart`, — и держаться в шаг они
+/// обязаны: рестарт расселяет то же население, иначе сравнивать два прогона
+/// нечем. Врозь это держалось дисциплиной, а пятый ресурс (атлас силуэтов)
+/// вдобавок упёр `on_restart` в `clippy::too_many_arguments`.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PopulationSpawn<'w> {
+    navmesh: Res<'w, ArcNavmesh>,
+    style: Res<'w, HumanStyle>,
+    seed: Res<'w, WorldSeed>,
+    size: Res<'w, PopulationSize>,
+    silhouettes: Res<'w, Silhouettes>,
+}
+
+impl PopulationSpawn<'_> {
+    /// Расселить население по навмешу, каким он есть сейчас.
+    pub fn spawn(&self, commands: &mut Commands) {
+        spawn_population(
+            commands,
+            &self.navmesh.read(),
+            &PopulationBirth {
+                spread: self.style.spread,
+                world_seed: self.seed.0,
+                count: self.size.0,
+                silhouettes: &self.silhouettes,
+            },
+        );
+    }
+}
+
+/// Всё, что население получает при расселении помимо навмеша: четыре
+/// значения ездят одним, а не четвёркой позиционных аргументов (тот же приём,
+/// что у `demon::systems::DemonBirth`).
+///
+/// Отдельно от [`PopulationSpawn`]: стенды и тесты строят набор из голых
+/// значений, ECS-ресурсов там нет вовсе.
+pub struct PopulationBirth<'a> {
+    /// Полуширина разброса личной скорости — `HumanStyle::spread`.
+    pub spread: f32,
+    pub world_seed: u64,
+    pub count: usize,
+    pub silhouettes: &'a Silhouettes,
 }
 
 /// Спавн населения; вызывается на старте и при рестарте сцены.
@@ -78,10 +114,14 @@ pub fn spawn_humans(
 pub fn spawn_population(
     commands: &mut Commands,
     navmesh: &crate::navigation::Navmesh,
-    spread: f32,
-    world_seed: u64,
-    count: usize,
+    birth: &PopulationBirth,
 ) {
+    let &PopulationBirth {
+        spread,
+        world_seed,
+        count,
+        silhouettes,
+    } = birth;
     let mut placement = stream(world_seed, RngDomain::Population, 0);
     // ни одного проходимого тайла — расселять некуда, и отбор ниже крутился
     // бы вечно; заодно это единственный случай, когда `grid_size` нулевой и
@@ -124,12 +164,8 @@ pub fn spawn_population(
         };
         let position = tile_center(tile);
 
-        // пастельная «одежда» со случайным тоном
-        let color = Color::hsl(
-            rng.random_range(0.0..360.0),
-            rng.random_range(0.35..0.75),
-            rng.random_range(0.35..0.65),
-        );
+        // одежда — первые три броска потока; палитра в `look.rs`
+        let attire = roll_attire(&mut rng);
         // без стартовой паузы: все идут с первого кадра. Залп из 20 000 целей
         // разруливают гейт видимости диспетчера (мирные вне экрана путь не
         // получают) и дешёвый HPA* — рассинхронизация тут только заставляла
@@ -141,12 +177,11 @@ pub fn spawn_population(
             rng.random_range(0.0..std::f32::consts::TAU),
         ));
 
+        let (sprite, silhouette) = human_body(silhouettes, &attire);
         commands.spawn((
-            Sprite {
-                color,
-                custom_size: Some(Vec2::splat(HUMAN_SIZE)),
-                ..default()
-            },
+            // внешность — вложенным бандлом: плоский кортеж упёрся в предел
+            // пятнадцати элементов `Bundle`
+            (sprite, silhouette, attire),
             Transform::from_translation(position.extend(unit_z(position.y))),
             Human,
             HumanWanderTag,
@@ -550,9 +585,12 @@ mod tests {
         spawn_population(
             &mut world.commands(),
             &navmesh,
-            0.3,
-            seed,
-            crate::settings::HUMAN_COUNT,
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: seed,
+                count: crate::settings::HUMAN_COUNT,
+                silhouettes: &Silhouettes::default(),
+            },
         );
         world.flush();
 
@@ -603,7 +641,16 @@ mod tests {
     fn population_refuses_a_navmesh_without_passable_tiles() {
         let mut world = World::new();
         let navmesh = navmesh_blocked_except(vec![]);
-        spawn_population(&mut world.commands(), &navmesh, 0.3, 7, 4);
+        spawn_population(
+            &mut world.commands(),
+            &navmesh,
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: 7,
+                count: 4,
+                silhouettes: &Silhouettes::default(),
+            },
+        );
         world.flush();
         let count = world.query::<&Human>().iter(&world).count();
         assert_eq!(count, 0, "пустой навмеш не должен спавнить никого");
@@ -619,7 +666,16 @@ mod tests {
         let hole_tile_size = crate::settings::navtile_size();
         let hole_rect = rect(hole_center, hole_center + hole_tile_size);
         let navmesh = navmesh_blocked_except(vec![hole_rect]);
-        spawn_population(&mut world.commands(), &navmesh, 0.3, 7, 4);
+        spawn_population(
+            &mut world.commands(),
+            &navmesh,
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: 7,
+                count: 4,
+                silhouettes: &Silhouettes::default(),
+            },
+        );
         world.flush();
 
         let count = world.query::<&Human>().iter(&world).count();

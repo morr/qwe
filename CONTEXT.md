@@ -41,10 +41,10 @@ in `main.rs`.
   `tile_center`, for callers with no `Navmesh` at hand. Costs and the chunk scaling —
   **navigation-deep skill**.
 - **Post-processing** (`post.rs`) — the camera renders to an HDR target with **bloom**
-  thresholded at 1.1, so only the portal (its sprite tinted by `PORTAL_GLOW`, above 1.0)
-  glows and the white markings and light roofs of the map do not; tonemapping is off so
-  the map palette is untouched. A full-screen **vignette** is a UI node under the panels,
-  `Pickable::IGNORE` (detail in the `ui-panels` skill).
+  thresholded at 1.1, so only what draws itself above 1.0 glows — the portal vortex, demon
+  halos, soul sparks — and the map's white markings and light roofs do not; tonemapping is
+  off so the map palette is untouched. A full-screen **vignette** is a UI node under the
+  panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
   `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
   — **the edge counts as inside**. Five visibility gates use it and **each keeps its own
@@ -57,8 +57,8 @@ in `main.rs`.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
   parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → corpses → portal → buildings (5) → units → tree
-  shadows → trees (20). Three live in their own modules:
+  → rail ties → rail steel → tram → portal stain → corpses → portal → buildings (5) →
+  units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
@@ -524,8 +524,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   is what lets the **Speed spread** slider widen the ordering the crowd already rolled
   instead of re-dealing it. Ceiling 35 % is derived: above it the fastest humans outrun the
   slowest demon setting.
-- **CorpseTag** — a killed human: behavior/movement components removed, dark lying sprite at
-  `Z_CORPSE`, not in the human spatial grid. The transition is **`human::to_corpse`**, one
+- **CorpseTag** — a killed human: behavior/movement components removed, the body drawn
+  as a lying human figure at `Z_CORPSE` (the **corpse look**, see Look: pose, heading and
+  mirror by `Entity` bits — cosmetics, not run state; a **blood pool** child under the
+  chest), not in the human spatial grid. The transition is **`human::to_corpse`**, one
   entry point; the kill observer in `demon/` only reports that it happened. It calls
   **`movement::strip_movement`**, so `Movable`'s `#[require]` stays the single record of
   what a movable entity drags along.
@@ -582,6 +584,58 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `killed + escaped + alive == PopulationSize` — the number the spawn actually read, not
   the constant: in the game that is the default `HUMAN_COUNT`, in a replay run whatever
   `replay_app` was given. At high sim speed BRP reads are skewed — pause before asserting.
+
+## Look
+
+How pawns are drawn over the map — the map's own rendering is the **osm-map skill**; the
+pawn half of the mechanism, `silhouette/` and `portal.rs` included, is the
+**species-behavior skill**, and the camera's bloom the **ui-panels skill**. There are no
+art assets and no artist: every shape here is a formula, every colour a constant beside
+its draw call.
+
+- **Silhouette** (`silhouette/`) — a pawn's on-map shape: one procedural **atlas**
+  (`Silhouettes` resource, eight `Glyph`s — `Disc`, `Ember`, `Halo`, `Pool` and the four
+  corpse figures of `silhouette/figure.rs`) plus the `Silhouette { body, min_px }`
+  component — the body in metres and a **screen-size floor** in logical px
+  (`HUMAN_MIN_PX` 2, `DEMON_MIN_PX` 5), so at city zoom a human stays a grain and a demon
+  a point instead of vanishing. Two invariants: **`Sprite::custom_size` belongs to this
+  module** — spawn sets the body, the module's two LOD systems write the size — and in an
+  app without a renderer (replay, tests) the resource stays `None` and pawns are plain
+  squares, which is not an error (`HumanPlugin` / `DemonPlugin` / `PortalPlugin` only
+  `init_resource` it, `SilhouettePlugin` in `main.rs` fills it). Rasterisation, the mip
+  chain, the one-image batching argument and the two LOD passes — **species-behavior
+  skill**.
+- **Attire** (`human/components.rs`, palette in `human/look.rs`) — a human's own colour,
+  the three spawn draws of its decision stream, cool and muted (hue 170–290°): **warm on
+  the map means demons and panic**. Separate from `Sprite::color` because of the **panic
+  tint** — `On<Add, HumanFleeTag>` paints the sprite `PANIC_COLOR` (amber, one for all,
+  so the panic front reads as a spreading stain), `On<Remove, HumanFleeTag>` restores the
+  attire. Transitions only, never per frame.
+- **Corpse look** (`human/look.rs`, figures in `silhouette/figure.rs`) — a killed human
+  is a **lying figure**, not an ellipse: head, torso and limbs as capsules on a skeleton
+  in metres of `CORPSE_HEIGHT`, four poses (sprawled, prone, curled, collapsed), sixteen
+  headings and a mirror, all from the `Entity` bits (`corpse_pose`). Limbs are drawn
+  thicker than anatomy so the pose survives crowd zoom. The tint is the pawn's own
+  attire **drained** (`corpse_tint`), so the dead keep their clothes; under the chest a
+  **blood pool** child (`BloodPool`, the `Pool` glyph, dark and translucent, not HDR).
+- **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
+  ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
+  three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
+- **Portal** (`portal.rs`, `assets/shaders/portal.wgsl`) — a `Mesh2d` quad with a
+  `PortalMaterial` (`Material2d`): a log-spiral vortex computed per pixel from
+  `globals.time` — no spritesheet, no frames. Violet on purpose: red is demons, amber is
+  panic, blue is water and tram. Its rim is **HDR** (> 1.0) so it blooms; under it a
+  **portal stain** (the `Halo` glyph, dark violet, 2.6 portals wide) at `Z_PORTAL_STAIN`
+  — above roads, below corpses.
+- **Soul** (`human/soul.rs`) — a golden HDR spark (`SoulMote`) released by the kill
+  observer at the victim's position, rising 6 m over 1.4 s of sim time and fading; it is
+  the visible side of `Telemetry::killed`. Lives at `Z_SOUL` above every unit. Stepped
+  and despawned in `FixedUpdate` (`rise_souls`, after `SimSet::HumanBehavior`) — a world
+  entity may not be despawned from `Update`.
+- **Bloom** (`camera.rs`) — the camera carries `Bloom` (which requires `Hdr`) with a
+  prefilter threshold of **1.0**: only colours brighter than white glow (portal rim, demon
+  halos, souls; later spells); the map, all ≤ 1, stays exactly as drawn. **No
+  tonemapper** — `Tonemapping::None` keeps the map palette untouched. `Msaa` stays off.
 
 ## UI & debug
 

@@ -63,7 +63,7 @@ case "$rel" in
   src/rng.rs|src/rng/*|src/determinism/*|tests/determinism.rs|examples/acceptance/*) add determinism ;;
 esac
 case "$rel" in
-  src/human/*|src/demon/*|src/movement/wander.rs|src/spatial.rs|tests/spatial.rs) add species-behavior ;;
+  src/human/*|src/demon/*|src/silhouette/*|src/portal.rs|src/movement/wander.rs|src/spatial.rs|tests/spatial.rs) add species-behavior ;;
 esac
 case "$rel" in
   src/loading.rs|src/restart.rs|src/city.rs|src/map/osm/download.rs) add world-lifecycle ;;
@@ -72,7 +72,7 @@ case "$rel" in
   src/sim_time.rs|src/sim_time/*) add sim-speed ;;
 esac
 case "$rel" in
-  src/ui/*|src/camera.rs|src/prefs.rs) add ui-panels ;;
+  src/ui/*|src/camera.rs|src/post.rs|src/prefs.rs) add ui-panels ;;
 esac
 
 [ -z "$required" ] && exit 0

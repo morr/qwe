@@ -53,12 +53,14 @@ did not fit 1080 px and ran off the top of the screen.
   `Shell → Sections → Sort`.
 - **Bloom** (`post.rs::camera_post_process`) — the bundle `camera.rs` adds to the camera:
   `Hdr`, `Tonemapping::None`, `DebandDither::Disabled` and `Bloom::NATURAL` at
-  `BLOOM_INTENSITY` 0.4 (well above `OLD_SCHOOL`'s 0.05 — one small source has to read
-  from the overview), `Additive` composite. Only the portal is brighter than 1.0:
-  `portal.rs` tints its sprite by `PORTAL_GLOW` (linear 2.0 / 2.2 / 3.6, blue-heavy so the
-  halo matches the funnel). The prefilter is `threshold` 1.1 / `threshold_softness` 0.1 —
-  the knee runs `threshold × softness` both ways, so it starts at 0.99 and a pure white
-  road (1.0) contributes nothing; 1.0 / 0.4 made everything above 0.6 glow and hazed the
+  `BLOOM_INTENSITY` 0.25 (bevy's "natural" 0.15 is for dark scenes and is lost over a
+  bright map; 0.4 was right while the portal was the only source, and reads as haze once
+  every demon carries a halo and every death a spark), `Additive` composite. What is
+  brighter than 1.0 draws itself so: the portal vortex and its rim (`portal.rs`), the
+  demon halo (~1.4 after alpha, `demon/look.rs`) and the soul spark (`human/soul.rs`) —
+  nothing on the map is. The prefilter is `threshold` 1.1 / `threshold_softness` 0.1 —
+  the knee runs `threshold × softness` both ways, so it starts at 0.99 and pure white lane
+  markings (1.0) contribute nothing; 1.0 / 0.4 made everything above 0.6 glow and hazed the
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
   palette, and only the halo is wanted.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
@@ -367,6 +369,17 @@ did not fit 1080 px and ran off the top of the screen.
 
 ## Camera start view
 
+- **HDR and bloom** (`camera.rs::spawn_camera`) — the camera carries `Bloom` (its
+  `#[require(Hdr)]` switches the view to an HDR target) with a `BloomPrefilter` of
+  `BLOOM_THRESHOLD` 1.0 / `BLOOM_THRESHOLD_SOFTNESS` 0.3 and `BLOOM_INTENSITY` 0.25
+  (all three `camera.rs` constants; Bevy's `NATURAL` 0.15 is
+  tuned for dark scenes and drowns over a light map). The threshold is the whole point:
+  the map is drawn in colours ≤ 1 and must not haze, so only deliberately over-bright
+  things glow — the portal rim (`portal.rs`), demon halos (`demon/look.rs`), soul sparks
+  (`human/soul.rs`). No
+  `Tonemapping` component: `Camera2d`'s required default is `None`, and a tonemapper
+  would shift every colour of the map. `Msaa::Off` stays. UI is drawn after
+  post-processing, so panels never bloom.
 - **Camera start view** (`camera.rs`) — **`CameraPositionMode`** (`reset | save`, default
   `save`, the `Camera start` row of the Debug tab, persisted) decides where the camera stands when the world comes up:
   `reset` — the snapped portal at `START_ZOOM`; `save` — the x/y/zoom written into

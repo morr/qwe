@@ -1,20 +1,26 @@
 mod behavior;
 mod components;
 mod decide;
+mod look;
+mod soul;
 mod systems;
 
 use bevy::prelude::*;
 
 use self::behavior::{escape, flee, panic};
 pub use self::components::{
-    CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
-    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
+    Attire, CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle,
+    HumanWanderTag, Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
 };
+pub use self::look::BloodPool;
+use self::look::{on_calm_tint, on_panic_tint};
+use self::soul::rise_souls;
+pub use self::soul::{SoulMote, release_soul};
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
 // не своей выдумкой; `HumanPlugin` целиком ей не подходит (его `spawn_humans`
 // расселил бы 20 000 пешек по всей карте)
-pub use self::systems::{pick_wander_targets, spawn_population};
+pub use self::systems::{PopulationBirth, PopulationSpawn, pick_wander_targets, spawn_population};
 use self::systems::{spawn_humans, spread_changed, sync_human_pace};
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
@@ -41,10 +47,21 @@ impl Plugin for HumanPlugin {
             .register_type::<WanderHeading>()
             .register_type::<PanicRecoil>()
             .register_type::<Pace>()
+            .register_type::<Attire>()
+            .register_type::<BloodPool>()
+            .register_type::<SoulMote>()
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()
             .track_pref::<HumanStyle>()
             .init_resource::<PopulationSize>()
+            // атлас силуэтов собирает `SilhouettePlugin` (в игре); без него
+            // ресурс остаётся пустым, и спавн рисует обычные квадраты —
+            // приложению без рендера (реплей, тесты) больше и не нужно
+            .init_resource::<crate::silhouette::Silhouettes>()
+            // тон паники — на переходах, а не покадрово: обсерверы смены
+            // `HumanFleeTag` красят спрайт при входе в панику и при выходе
+            .add_observer(on_panic_tint)
+            .add_observer(on_calm_tint)
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),
@@ -84,6 +101,16 @@ impl Plugin for HumanPlugin {
                 )
                     .chain()
                     .in_set(SimSet::HumanBehavior),
+            )
+            // души — косметика на тике, после поведения: искра, выпущенная
+            // обсервером убийства этого тика, поднимается со следующего.
+            // В `BothModes`, потому что живёт внутри мира; despawn отжившей —
+            // в `FixedUpdate`, где ему и место (CLAUDE.md)
+            .add_systems(
+                FixedUpdate,
+                rise_souls
+                    .after(SimSet::HumanBehavior)
+                    .in_set(SimPipeline::BothModes),
             )
             .add_systems(
                 Update,
@@ -192,8 +219,8 @@ mod tests {
 
         assert_eq!(
             systems_in_set(&mut app, FixedUpdate, SimPipeline::BothModes),
-            3,
-            "цепочка panic/flee/escape обязана состоять в SimPipeline::BothModes"
+            4,
+            "цепочка panic/flee/escape и rise_souls обязаны состоять в SimPipeline::BothModes"
         );
     }
 }

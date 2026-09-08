@@ -39,7 +39,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | `map/*` — the OSM pipeline (`map/osm/*`) and every layer (`meshing`, `spawn`, `surface`, `roads`, `rail`, `tram`, `trees`, `buildings`, `footprint`) | `osm-map` |
 | `navigation/*`, `movement/*` (incl. separation, slots, the navtile size), `tests/{navigation,movement}.rs` | `navigation-deep` |
 | `rng.rs`, `determinism/*`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
-| `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`, `tests/spatial.rs` | `species-behavior` |
+| `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `tests/spatial.rs` | `species-behavior` |
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
 | `sim_time.rs` | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs` | `ui-panels` |
@@ -63,7 +63,7 @@ The links are absolute on purpose. A relative `../../../zxc` resolves only from 
 - **`osm-map` — before changing the OSM pipeline or map rendering** (all of `map/*`: `map/osm/*`, `map/{meshing,spawn,surface,roads,rail,tram,trees,buildings,footprint}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
 - **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
-- **`species-behavior` — before changing pawn behaviour** (`human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids.
+- **`species-behavior` — before changing pawn behaviour or how a pawn is drawn** (`human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids, plus the look layer — the silhouette atlas and its mips, the screen-size floor and the two LOD systems, the portal vortex and its stain.
 - **`world-lifecycle` — before changing how a world comes up or is torn down** (`loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs`): the states and the warmup hold, `SimBootPlugin`, the load thread, the `WorldStarted` seam and its run-state resets, restart slots, the city switch.
 - **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
 - **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `post.rs`, `prefs.rs`): panel internals, the tabbed shell and its section order, the slider/row kits, camera start view, persistence.
@@ -296,9 +296,12 @@ step when adding one):
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper; shadows spawned directly) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
-| portal | `portal.rs` |
+| portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
+| blood pool — a **child** of the corpse, no component of its own: despawn is recursive | `human/look.rs::blood_pool` |
 | demons | `demon/systems.rs::spawn_demon` |
+| demon halo — a **child** of the demon, no component of its own: despawn is recursive | `demon/look.rs::halo` |
+| souls (kill sparks, despawn themselves in `FixedUpdate`) | `human/soul.rs::release_soul` |
 | navmesh overlay | `ui/debug/overlays.rs::sync_navmesh_overlay` |
 | conifer noise overlay | `ui/debug/overlays.rs::sync_conifer_noise_overlay` |
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |
