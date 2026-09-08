@@ -117,11 +117,29 @@ mod tests {
     fn the_grain_is_faint_and_two_sided() {
         let image = grain_tile();
         let data = image.data.as_ref().unwrap();
-        let alphas = data.chunks_exact(4).map(|texel| texel[3]);
-        let max = alphas.clone().max().unwrap();
-        assert!(max <= (LIGHT_ALPHA * 255.0) as u8 + 1, "alpha {max}");
-        let light = data.chunks_exact(4).filter(|t| t[0] == 255).count();
-        let dark = data.chunks_exact(4).filter(|t| t[0] == 0).count();
-        assert!(light > 0 && dark > 0);
+        // тексель с нулевой альфой не в счёт: белый прозрачный — это не
+        // светлое пятно, а пустое место. Потолок у каждой стороны свой:
+        // общий максимум потолок тёмной (втрое ниже светлой) не проверяет
+        let light = visible_alphas(data, 255);
+        let dark = visible_alphas(data, 0);
+        assert!(!light.is_empty() && !dark.is_empty());
+        let light_max = *light.iter().max().unwrap();
+        let dark_max = *dark.iter().max().unwrap();
+        assert!(
+            light_max <= (LIGHT_ALPHA * 255.0) as u8 + 1,
+            "light {light_max}"
+        );
+        assert!(
+            dark_max <= (DARK_ALPHA * 255.0) as u8 + 1,
+            "dark {dark_max}"
+        );
+    }
+
+    /// Альфы видимых текселей одной стороны зерна.
+    fn visible_alphas(data: &[u8], grey: u8) -> Vec<u8> {
+        data.chunks_exact(4)
+            .filter(|texel| texel[0] == grey && texel[3] > 0)
+            .map(|texel| texel[3])
+            .collect()
     }
 }
