@@ -18,6 +18,7 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use super::components::{Attire, HumanFleeTag};
+use crate::rng::splitmix64;
 use crate::settings::{CORPSE_HEIGHT, HUMAN_MIN_PX, HUMAN_SIZE, Z_CORPSE};
 use crate::silhouette::{Glyph, Silhouette, Silhouettes, figure, set_glyph};
 
@@ -98,19 +99,12 @@ pub struct CorpsePose {
 /// Поза по битам `Entity`: соседние индексы — соседи по числу, а позы соседних
 /// трупов обязаны различаться, поэтому биты сперва перемешиваются (splitmix64).
 pub fn corpse_pose(entity: Entity) -> CorpsePose {
-    let hash = mix(entity.to_bits());
+    let hash = splitmix64(entity.to_bits());
     CorpsePose {
         glyph: Glyph::corpse((hash % figure::POSES as u64) as usize),
         heading: ((hash >> 8) % CORPSE_HEADINGS) as f32 / CORPSE_HEADINGS as f32 * TAU,
         flip: (hash >> 16) & 1 == 1,
     }
-}
-
-fn mix(bits: u64) -> u64 {
-    let mut z = bits.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
 }
 
 /// Цвет трупа: своя одежда, погасшая.
@@ -130,7 +124,6 @@ pub(super) fn lay_down(body: &mut EntityWorldMut, pose: CorpsePose) {
     let tint = corpse_tint(body.get::<Attire>());
     if let Some(mut sprite) = body.get_mut::<Sprite>() {
         sprite.color = tint;
-        sprite.custom_size = Some(Vec2::splat(CORPSE_SPAN));
         sprite.flip_x = pose.flip;
         set_glyph(&mut sprite, pose.glyph);
     }

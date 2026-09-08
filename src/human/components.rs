@@ -320,9 +320,14 @@ mod tests {
         let attire = corpse.get::<Attire>().expect("одежда остаётся на теле");
         let sprite = corpse.get::<Sprite>().expect("Sprite");
         assert_eq!(sprite.color, super::super::look::corpse_tint(Some(attire)));
+        // размер трупа приходит через `Silhouette` — его пишут системы
+        // `silhouette/`, а не `lay_down`
         assert_eq!(
-            sprite.custom_size,
-            Some(Vec2::splat(super::super::look::CORPSE_SPAN))
+            corpse.get::<crate::silhouette::Silhouette>().copied(),
+            Some(crate::silhouette::Silhouette::new(
+                Vec2::splat(super::super::look::CORPSE_SPAN),
+                crate::settings::HUMAN_MIN_PX,
+            ))
         );
         let pose = super::super::look::corpse_pose(human);
         assert_eq!(sprite.flip_x, pose.flip);
