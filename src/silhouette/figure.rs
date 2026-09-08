@@ -1,4 +1,6 @@
-//! Лежащие тела и лужа под ними.
+//! Лежащие тела. Кровь под ними — соседний модуль ([`super::blood`]): она
+//! живёт своей жизнью, растекается и ложится брызгами, и от скелета зависит
+//! одним — точкой, куда её класть ([`Figure::pool_anchor`]).
 //!
 //! Труп — не растянутый диск, а фигура человека сверху: голова, торс, руки и
 //! ноги из капсул по скелету, в одной из [`POSES`] поз. Скелет задан в ростах
@@ -15,7 +17,7 @@
 
 use bevy::prelude::*;
 
-use super::{rimmed, smoothstep};
+use super::{Capsule, rimmed};
 
 /// Число поз; глифы `Glyph::corpse(i)` идут в атласе подряд.
 pub const POSES: usize = 4;
@@ -94,50 +96,9 @@ const SPECS: [PoseSpec; POSES] = [
     },
 ];
 
-/// Капсула с двумя радиусами (оболочка двух кругов); `a == b` — круг.
-struct Part {
-    a: Vec2,
-    b: Vec2,
-    ra: f32,
-    rb: f32,
-}
-
-impl Part {
-    fn capsule(a: Vec2, b: Vec2, ra: f32, rb: f32) -> Self {
-        Self { a, b, ra, rb }
-    }
-
-    fn dot(centre: Vec2, radius: f32) -> Self {
-        Self::capsule(centre, centre, radius, radius)
-    }
-
-    /// Расстояние со знаком до контура (внутри — отрицательное).
-    fn distance(&self, p: Vec2) -> f32 {
-        let ab = self.b - self.a;
-        let h = ab.length();
-        if h < 1e-4 {
-            return (p - self.a).length() - self.ra.max(self.rb);
-        }
-        let along = ab / h;
-        let q = p - self.a;
-        // в системе капсулы: y вдоль оси, x поперёк, по модулю
-        let q = Vec2::new(q.perp_dot(along).abs(), q.dot(along));
-        let slope = (self.ra - self.rb) / h;
-        let cos = (1.0 - slope * slope).max(0.0).sqrt();
-        let k = q.dot(Vec2::new(-slope, cos));
-        if k < 0.0 {
-            q.length() - self.ra
-        } else if k > cos * h {
-            (q - Vec2::new(0.0, h)).length() - self.rb
-        } else {
-            q.dot(Vec2::new(cos, slope)) - self.ra
-        }
-    }
-}
-
 /// Собранная поза: части в ростах, центр габаритного ящика и грудь.
 pub struct Figure {
-    parts: Vec<Part>,
+    parts: Vec<Capsule>,
     centre: Vec2,
     chest: Vec2,
 }
@@ -157,25 +118,25 @@ impl Figure {
         let hips = [Vec2::new(0.0, HIP_HALF), Vec2::new(0.0, -HIP_HALF)];
 
         let mut parts = vec![
-            Part::capsule(Vec2::ZERO, chest, HIP_R, CHEST_R),
-            Part::capsule(shoulders[0], shoulders[1], SHOULDER_R, SHOULDER_R),
-            Part::capsule(chest, head, NECK_R, NECK_R),
-            Part::dot(head, HEAD_R),
+            Capsule::new(Vec2::ZERO, chest, HIP_R, CHEST_R),
+            Capsule::new(shoulders[0], shoulders[1], SHOULDER_R, SHOULDER_R),
+            Capsule::new(chest, head, NECK_R, NECK_R),
+            Capsule::dot(head, HEAD_R),
         ];
         for (shoulder, (upper, fore)) in shoulders.into_iter().zip(spec.arms) {
             let elbow = shoulder + dir(upper) * UPPER_ARM;
             let wrist = elbow + dir(fore) * FOREARM;
-            parts.push(Part::capsule(shoulder, elbow, ARM_R, ARM_R * TAPER));
-            parts.push(Part::capsule(elbow, wrist, FOREARM_R, FOREARM_R * TAPER));
-            parts.push(Part::dot(wrist + dir(fore) * HAND_R, HAND_R));
+            parts.push(Capsule::new(shoulder, elbow, ARM_R, ARM_R * TAPER));
+            parts.push(Capsule::new(elbow, wrist, FOREARM_R, FOREARM_R * TAPER));
+            parts.push(Capsule::dot(wrist + dir(fore) * HAND_R, HAND_R));
         }
         for (hip, (thigh, calf, foot)) in hips.into_iter().zip(spec.legs) {
             let knee = hip + dir(thigh) * THIGH;
             let ankle = knee + dir(calf) * CALF;
             let toe = ankle + dir(foot) * FOOT;
-            parts.push(Part::capsule(hip, knee, THIGH_R, THIGH_R * TAPER));
-            parts.push(Part::capsule(knee, ankle, CALF_R, CALF_R * TAPER));
-            parts.push(Part::capsule(ankle, toe, FOOT_R, FOOT_R));
+            parts.push(Capsule::new(hip, knee, THIGH_R, THIGH_R * TAPER));
+            parts.push(Capsule::new(knee, ankle, CALF_R, CALF_R * TAPER));
+            parts.push(Capsule::new(ankle, toe, FOOT_R, FOOT_R));
         }
 
         let (mut min, mut max) = (Vec2::MAX, Vec2::MIN);
@@ -215,54 +176,11 @@ impl Figure {
     }
 }
 
-// --- Лужа ---
-/// Средний радиус в долях полуячейки; с гармониками и брызгами край не
-/// выходит за 0,9.
-const POOL_RADIUS: f32 = 0.62;
-/// Гармоники контура: порядок, амплитуда, фаза — пятно, а не круг.
-const POOL_WAVES: [(f32, f32, f32); 3] = [(2.0, 0.10, 4.0), (3.0, 0.12, 0.7), (5.0, 0.07, 2.1)];
-/// Брызги рядом: центр и радиус.
-const POOL_DROPS: [(Vec2, f32); 3] = [
-    (Vec2::new(0.78, 0.30), 0.09),
-    (Vec2::new(-0.66, -0.50), 0.07),
-    (Vec2::new(0.35, -0.80), 0.05),
-];
-/// Потемнение к середине: где крови больше, там она гуще.
-const POOL_CORE_SHADE: f32 = 0.75;
-
-/// Тексель лужи в точке `p` ячейки (−1…1).
-pub fn pool_texel(p: Vec2, edge: f32) -> (f32, f32) {
-    let r = p.length();
-    let theta = p.y.atan2(p.x);
-    let ripple: f32 = POOL_WAVES
-        .iter()
-        .map(|(order, amplitude, phase)| amplitude * (order * theta + phase).sin())
-        .sum();
-    let radius = POOL_RADIUS * (1.0 + ripple);
-    let mut inside = radius - r;
-    for (centre, drop) in POOL_DROPS {
-        inside = inside.max(drop - (p - centre).length());
-    }
-    let alpha = smoothstep(-edge, edge, inside);
-    let shade = 1.0 - (1.0 - POOL_CORE_SHADE) * (1.0 - r / radius).clamp(0.0, 1.0);
-    (shade, alpha)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const EDGE: f32 = 2.0 / 128.0;
-
-    #[test]
-    fn capsule_distance_is_negative_inside_and_positive_outside() {
-        let capsule = Part::capsule(Vec2::ZERO, Vec2::X, 0.2, 0.1);
-        assert!(capsule.distance(Vec2::new(0.5, 0.0)) < 0.0);
-        assert!(capsule.distance(Vec2::new(0.5, 0.5)) > 0.0);
-        // концы — окружности своих радиусов
-        assert!((capsule.distance(Vec2::new(-0.2, 0.0))).abs() < 1e-5);
-        assert!((capsule.distance(Vec2::new(1.1, 0.0))).abs() < 1e-5);
-    }
 
     #[test]
     fn every_pose_fits_its_cell_with_a_margin() {
@@ -310,14 +228,5 @@ mod tests {
                 "pose {index} covers {share} of its cell"
             );
         }
-    }
-
-    #[test]
-    fn pool_is_solid_in_the_middle_darker_there_and_gone_at_the_edge() {
-        let (core_shade, core_alpha) = pool_texel(Vec2::ZERO, EDGE);
-        assert_eq!(core_alpha, 1.0);
-        assert!(core_shade < 1.0);
-        let (_, corner) = pool_texel(Vec2::new(0.97, 0.97), EDGE);
-        assert_eq!(corner, 0.0);
     }
 }

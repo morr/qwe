@@ -10,6 +10,10 @@ autoexamples = false
 
 # demos — оконные, для человека: запустил и смотришь
 [[example]]
+name = "blood_gallery"
+path = "examples/demos/blood_gallery/main.rs"
+
+[[example]]
 name = "crowd_demo"
 path = "examples/demos/crowd_demo/main.rs"
 
