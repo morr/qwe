@@ -13,12 +13,13 @@ use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
 use crate::map::parking;
+use crate::map::pitch;
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_PARKING, Z_PARKING_LINES, Z_POND, Z_SAND,
-    Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
+    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_PARKING, Z_PARKING_LINES, Z_PITCH,
+    Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
 };
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
@@ -90,6 +91,12 @@ const SAND_RIM: Rim = Rim {
 const PARKING_RIM: Rim = Rim {
     width: 1.0,
     edge: Color::srgb(0.478, 0.475, 0.467),
+};
+/// Кромка площадки — бортик коробки или бровка поля: темнее любого покрытия,
+/// один на все виды, потому что на снимке это тень борта, а не краска.
+const PITCH_RIM: Rim = Rim {
+    width: 1.0,
+    edge: Color::srgb(0.322, 0.310, 0.286),
 };
 
 /// Полигон слоя с каймой по контуру, дырки включительно (у дырки кайма лежит
@@ -177,9 +184,25 @@ pub fn spawn_map(
         parking::push_markings(&mut parking_lines, area, stalls);
     }
 
+    // площадка — покрытие своего цвета, и на нём разметка (`map::pitch`).
+    // Кант тот же, что у прочих зон: у поля на снимке всегда есть кромка
+    let mut pitches = MeshBuilder::with_surface_coords();
+    for area in &map.pitches {
+        let AreaKind::Pitch(kind) = area.kind else {
+            continue;
+        };
+        push_area(&mut pitches, area, pitch::color(kind), &PITCH_RIM);
+    }
+    let mut pitch_lines = MeshBuilder::default();
+    for area in &map.pitches {
+        pitch::push_markings(&mut pitch_lines, area);
+    }
+
     let waterways = mesh_water_lines(&map.water_lines);
 
-    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &parking, &water]
+    let skipped: usize = [
+        &landuse, &parks, &woods, &grass, &sand, &pitches, &parking, &water,
+    ]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();
@@ -194,6 +217,7 @@ pub fn spawn_map(
         (woods, Z_WOOD, "woods", SurfaceKind::Wood),
         (grass, Z_GRASS, "grass", SurfaceKind::Grass),
         (sand, Z_SAND, "sand", SurfaceKind::Sand),
+        (pitches, Z_PITCH, "pitches", SurfaceKind::Ground),
         (parking, Z_PARKING, "parking", SurfaceKind::Street),
         (water, Z_POND, "water", SurfaceKind::Water),
         (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
@@ -218,17 +242,22 @@ pub fn spawn_map(
         &map,
     );
 
-    // разметка мест — своим мешем поверх асфальта стоянки: это белая краска,
-    // а не фактура покрытия, и потому плоский материал
-    spawn_layer(
-        &mut commands,
-        &mut meshes,
-        parking_lines,
-        Z_PARKING_LINES,
-        "parking_lines",
-        LayerMaterial::Flat(materials.add(Color::WHITE)),
-        (),
-    );
+    // разметка мест и полей — своими мешами поверх покрытия: это белая
+    // краска, а не фактура покрытия, и потому плоский материал
+    for (builder, z, name) in [
+        (pitch_lines, Z_PITCH_LINES, "pitch_lines"),
+        (parking_lines, Z_PARKING_LINES, "parking_lines"),
+    ] {
+        spawn_layer(
+            &mut commands,
+            &mut meshes,
+            builder,
+            z,
+            name,
+            LayerMaterial::Flat(materials.add(Color::WHITE)),
+            (),
+        );
+    }
 
     buildings::spawn_buildings(
         &mut commands,

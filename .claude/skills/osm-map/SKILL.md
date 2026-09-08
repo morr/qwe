@@ -89,6 +89,16 @@ in `CONTEXT.md` and the detail here in the same change.
   `multi-storey`, `rooftop`) — an underground car park is its own outline under a yard or
   a park, with no `building` on it, and drawing it striped would put asphalt on the lawn.
   Tula v9: 172 in the bbox, 170 reach `MapData::parking`.
+  **Pitch** (`leisure=pitch|track|playground|sports_centre|stadium`) is the fourth —
+  `MapData::pitches`, a surface plus markings (see **Pitches** below). It is tried after
+  parking and before the landuse blocks, but **after `park`/`garden`**: a park with a
+  pitch drawn on it stays a park, and the pitch arrives as its own way. Alone among the
+  area kinds it **carries a payload**, `PitchKind`, because the sport decides both the
+  colour and the marking and nothing else in the model has one — a field on `PolyArea`
+  (the `building_use` pattern) would be meaningless for every other area kind and would
+  touch all 33 literal constructions in the tests. Tula v10: 128 grounds in the bbox — 59
+  playgrounds, 48 pitches, 13 tracks, 7 sports centres, 1 stadium — of which 118 reach
+  `MapData::pitches`; the other 10 carry `building=*` too and stay buildings.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
@@ -579,6 +589,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
+  actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 0.75 and one
+  markings layer at 0.76, the parking pair's shape exactly: the paint is flat
+  `ColorMaterial`, the surface carries `SurfaceKind::Ground` (a neutral mottle — a
+  football field must not get the street's asphalt grain).
+  - **The kind is decided in three steps** (`parse/tags.rs::pitch_kind`), because `sport`
+    is missing on a quarter of Tula's pitches: `leisure` first (`track` → `Track`,
+    `playground` → `Playground`, `sports_centre`/`stadium` → `Ground`), then `sport` on a
+    `pitch` (soccer/rugby/athletics/… → `Soccer`, everything else → `Hard`), then
+    `surface` (`grass`/`dirt` → `Soccer`, `sand` → `Playground`, else `Hard`). The last
+    fallback is `Hard` on purpose: a nameless yard pitch in a Russian city is an asphalt
+    box far more often than a lawn.
+  - **Colour by kind**, not by tag: the football green is more saturated than a lawn's,
+    the hard court is a blue-grey darker than the street, the track is tartan orange, the
+    playground sandy. One rim (`PITCH_RIM`) for all of them — from above that edge is the
+    shadow of a kerb or a board, not paint.
+  - **Only `Soccer` and `Hard` are marked.** A playground has no markings; a track's run
+    along its oval and would have to follow the outline rather than the frame; a sports
+    centre contains the already-marked pitches. What is drawn: the perimeter, the centre
+    line, the centre circle (`CIRCLE_SHARE` 0.087 of the long side — 9.15 m on a 105 m
+    field, and the same fraction happens to work for a basketball box), and on a field
+    over `PENALTY_MIN_LENGTH` 45 m the two penalty areas.
+  - **The frame gate.** Markings are laid out in the `min_area_rect` frame, and only if
+    the outline fills it to `RECT_FILL_MIN` 0.85 (the gable roof's number, same meaning:
+    "this is a rectangle, not a blob") and the footprint is over `MIN_AREA` 150 m². On an
+    L-shaped patch the centre line would otherwise run across the lawn beside it.
+  - The circle is a 32-gon of quads (`ring`), 1.8 m a side at a 9 m radius — a fraction of
+    a pixel at any zoom where it is visible at all. There is no arc primitive in
+    `MeshBuilder` and this is the only caller that wants one.
 - **Parking** (`map/parking.rs`) — an `amenity=parking` area is drawn as asphalt
   (`Z_PARKING` 0.8, the `parking` surface layer) with the **stalls painted on it**
   (`Z_PARKING_LINES` 0.81). The markings go in a **flat-material** layer of their own,

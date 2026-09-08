@@ -797,6 +797,12 @@ pub const Z_TREE_ROW_BAND_CASING: f32 = 0.56;
 pub const Z_TREE_ROW_BAND: f32 = 0.57;
 pub const Z_GRASS: f32 = 0.6;
 pub const Z_SAND: f32 = 0.7;
+/// Спортивная и детская площадка (`map::pitch`) — поверх зелени, но под
+/// стоянкой: площадку во дворе размечают на газоне или на асфальте, а
+/// парковочный карман у неё всегда сверху.
+pub const Z_PITCH: f32 = 0.75;
+/// Разметка поля — поверх его покрытия.
+pub const Z_PITCH_LINES: f32 = 0.76;
 /// Стоянка (`map::parking`) — асфальт поверх зелени и песка, но под водой и
 /// дорогами: двор со стоянкой лежит на земле, а улица идёт по нему.
 pub const Z_PARKING: f32 = 0.8;
@@ -889,8 +895,10 @@ const _: () = {
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);
     assert!(Z_TREE_ROW_BAND < Z_GRASS);
     assert!(Z_GRASS < Z_SAND);
-    assert!(Z_SAND < Z_PARKING);
-    // разметка — поверх своего асфальта и под всем остальным
+    assert!(Z_SAND < Z_PITCH);
+    // разметка — поверх своего покрытия и под всем остальным
+    assert!(Z_PITCH < Z_PITCH_LINES);
+    assert!(Z_PITCH_LINES < Z_PARKING);
     assert!(Z_PARKING < Z_PARKING_LINES);
     assert!(Z_PARKING_LINES < Z_POND);
     // водоток — волосок над площадной водой, но ниже дорог: переход через
