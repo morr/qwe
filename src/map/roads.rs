@@ -52,7 +52,8 @@ use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
     miter_offsets,
 };
-use crate::map::osm::{MapData, RoadClass, RoadLine, WallLine};
+use crate::map::osm::model::{distance_to_segment, point_in_area, polyline_length};
+use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{
@@ -138,6 +139,88 @@ fn bridge_height(span: f32) -> f32 {
     (span * SPAN_TO_HEIGHT).min(BRIDGE_HEIGHT)
 }
 
+/// Отбрасывает ли этот мост тень вообще: пролёт от [`SHORT_SPAN`] — всегда,
+/// короче — только если под ним и правда пусто, то есть вода или рельсы.
+///
+/// Пропорциональной высоты мало. Западный подход к мосту через Упу — это
+/// четыре way по 23–30 м с `bridge=yes` и `layer=1`, а на месте там ровная
+/// земля: насыпь, а не эстакада. Отличить насыпь от пролёта по тегам нельзя,
+/// зато можно спросить, есть ли под ней разрыв. Дороги в этот список не
+/// входят намеренно — именно вдоль дорог и лежат подходы, — а вода и путь под
+/// коротким настилом сомнений не оставляют.
+///
+/// Длинному мосту вопрос не задаётся: на сотне метров насыпи не бывает, а
+/// перебирать контуры воды под каждым из них незачем.
+fn bridge_casts_shadow(points: &[Vec2], underneath: &Underneath) -> bool {
+    if polyline_length(points) >= SHORT_SPAN {
+        return true;
+    }
+    densify(
+        &merge_close_points(points, false, SHADOW_STEP / 4.0),
+        SHADOW_STEP,
+    )
+    .iter()
+    .any(|point| underneath.covers(*point))
+}
+
+/// Что лежит под настилом: контуры воды, русла водотоков и рельсовые пути,
+/// каждый со своим габаритом.
+///
+/// Габарит считается один раз на сборку слоёв, и это не оптимизация впрок:
+/// проба идёт по точке через каждые два метра короткого моста, а контуров воды
+/// в городе бывает под тысячу.
+struct Underneath<'a> {
+    /// Контуры воды — пруд, река, затон.
+    areas: Vec<(Rect, &'a PolyArea)>,
+    /// Русла водотоков и пути: осевая и полуширина.
+    lines: Vec<(Rect, &'a [Vec2], f32)>,
+}
+
+impl<'a> Underneath<'a> {
+    fn new(map: &'a MapData) -> Self {
+        let bounds = |points: &[Vec2], margin: f32| {
+            let (min, max) = points.iter().fold(
+                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+                |(min, max), point| (min.min(*point), max.max(*point)),
+            );
+            Rect::from_corners(min - margin, max + margin)
+        };
+        let channels = map
+            .water_lines
+            .iter()
+            // труба не разрыв: вода идёт под землёй, поверху проходят пешком
+            .filter(|line| !line.tunnel)
+            .map(|line| (line.points.as_slice(), line.width));
+        let rails = map
+            .rails
+            .iter()
+            .map(|rail| (rail.points.as_slice(), rail.width));
+        Self {
+            areas: map
+                .water
+                .iter()
+                .map(|area| (bounds(&area.outer, 0.0), area))
+                .collect(),
+            lines: channels
+                .chain(rails)
+                .map(|(points, width)| (bounds(points, width / 2.0), points, width / 2.0))
+                .collect(),
+        }
+    }
+
+    fn covers(&self, point: Vec2) -> bool {
+        self.areas
+            .iter()
+            .any(|(bounds, area)| bounds.contains(point) && point_in_area(point, area))
+            || self.lines.iter().any(|(bounds, path, half)| {
+                bounds.contains(point)
+                    && path
+                        .windows(2)
+                        .any(|span| distance_to_segment(point, span[0], span[1]) <= *half)
+            })
+    }
+}
+
 /// Точка теневой ленты: куда съехал настил и насколько он в этом месте поднят
 /// (0 у береговой опоры, 1 на полной высоте). Подъём нужен и после сдвига —
 /// им же сходит на нет кайма ([`push_bridge_shadow`]).
@@ -171,6 +254,11 @@ fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
 const RAMP_SHARE: f32 = 0.25;
 const RAMP_MAX: f32 = 25.0;
 const SHADOW_STEP: f32 = 2.0;
+
+/// Пролёт, короче которого way с `bridge=yes` считается мостом только над водой
+/// или путями — см. [`bridge_casts_shadow`]. Тридцать пять метров: подходы к
+/// мосту через Упу это 23–30 м, мостик через канал в парке — 39.
+const SHORT_SPAN: f32 = 35.0;
 
 /// Насколько тень настила шире самого настила с каждой стороны, м. Метр — это
 /// тень перил, толщина плиты и полоса воды, которой настил закрыл небо; от
@@ -433,6 +521,7 @@ pub fn spawn_roads(
     let mut bridge_fills = MeshBuilder::with_surface_coords();
     // тень моста — на то, над чем он проходит: воду, дорогу, пути
     let mut bridge_shadows = MeshBuilder::default();
+    let underneath = Underneath::new(map);
     let mut wall_ribbons = MeshBuilder::default();
 
     for index in order {
@@ -458,11 +547,13 @@ pub fn spawn_roads(
             // Тень настила — тот же настил, сдвинутый по свету на высоту
             // моста. Ни один другой слой её не даёт: наземные тени считают
             // только дома, а мост через Упу — самая заметная вещь на воде.
-            push_bridge_shadow(
-                &mut bridge_shadows,
-                &bridge_shadow_path(&points),
-                road.curb_reach(),
-            );
+            if bridge_casts_shadow(&points, &underneath) {
+                push_bridge_shadow(
+                    &mut bridge_shadows,
+                    &bridge_shadow_path(&points),
+                    road.curb_reach(),
+                );
+            }
             bridge_fills.set_markings(markings);
             push_street_fill(
                 &mut bridge_fills,

@@ -197,6 +197,36 @@ fn a_bridge_along_the_sun_is_still_outlined() {
     );
 }
 
+/// Западный подход к мосту через Упу — это четыре way по 23–30 м с
+/// `bridge=yes` и `layer=1`, а на месте под ними ровная земля: насыпь, а не
+/// эстакада. По тегам их от пролёта не отличить, поэтому у короткого моста
+/// спрашивают, есть ли под ним разрыв.
+#[test]
+fn a_short_bridge_needs_a_gap_under_it() {
+    let map = MapData {
+        water: vec![fixture::water_area(
+            fixture::square(Vec2::ZERO, 20.0),
+            vec![],
+        )],
+        rails: vec![fixture::rail(
+            vec![Vec2::new(200.0, -20.0), Vec2::new(200.0, 20.0)],
+            5.0,
+        )],
+        ..default()
+    };
+    let underneath = Underneath::new(&map);
+    let across = |x: f32, half: f32| [Vec2::new(x - half, 0.0), Vec2::new(x + half, 0.0)];
+
+    // мостик через пруд короток, но под ним вода
+    assert!(bridge_casts_shadow(&across(0.0, 10.0), &underneath));
+    // переход над путями — тоже разрыв
+    assert!(bridge_casts_shadow(&across(200.0, 10.0), &underneath));
+    // тот же пролёт по сухой земле — насыпь, тени нет
+    assert!(!bridge_casts_shadow(&across(500.0, 10.0), &underneath));
+    // а длинный не спрашивают вовсе: на шестидесяти метрах насыпи не бывает
+    assert!(bridge_casts_shadow(&across(500.0, 30.0), &underneath));
+}
+
 #[test]
 fn sidewalks_belong_to_streets_not_service_roads() {
     // проезд (`service`, 5 м) — без тротуара; жилая улица и магистраль — с ним,
