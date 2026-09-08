@@ -9,6 +9,9 @@
 input=$(cat)
 session=$(printf '%s' "$input" | jq -r '.session_id // ""')
 skill=$(printf '%s' "$input" | jq -r '.tool_input.skill // ""')
+# A qualified name (`plugin:bevy`, `apps/web:deploy`) is recorded bare: the
+# readers (require-skill.sh, guard-bash.sh) match the bare name exactly.
+skill="${skill##*:}"
 
 [ -z "$session" ] && exit 0
 [ -z "$skill" ] && exit 0

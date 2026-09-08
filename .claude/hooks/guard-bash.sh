@@ -25,8 +25,14 @@ state="/tmp/claude-skill-gate/$session"
 loaded() { [ -n "$session" ] && grep -qxF "$1" "$state" 2>/dev/null; }
 
 # Command position: line start, after ; & | ( or $( — not any command that
-# merely mentions the word (`grep cargo`, `echo git`).
-cmd_pos='(^|[;&|(]|\$\()[[:space:]]*'
+# merely mentions the word (`grep cargo`, `echo git`) — and past any leading
+# environment assignments or a wrapper with its options
+# (`CARGO_TARGET_DIR=/x cargo build`, `CARGO_INCREMENTAL=0 cargo test`,
+# `time cargo build`, `nice -n 10 cargo test`, `sudo -u me git commit`): the
+# word after those is still the command. An assignment value with spaces
+# inside quotes is not covered.
+cmd_prefix='([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|(env|time|nice|sudo|command|exec|nohup)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+)*'
+cmd_pos='(^|[;&|(]|\$\()[[:space:]]*'"$cmd_prefix"
 
 reason=""
 
@@ -42,9 +48,10 @@ if printf '%s' "$cmd" | grep -qE "${cmd_pos}git[[:space:]]+(-C[[:space:]]+[^[:sp
   fi
 fi
 
-# --- cargo: the four heavy commands (and tools/check.sh, which wraps them) run
-# in the background — a cold build takes minutes and a foreground call blocks
-# the session with nothing on screen.
+# --- cargo: the heavy commands — the four CLAUDE.md names (build, run, test,
+# clippy) plus check, bench, doc and nextest, which compile just the same — and
+# tools/check.sh, which wraps them, run in the background: a cold build takes
+# minutes and a foreground call blocks the session with nothing on screen.
 cargo_heavy="${cmd_pos}cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?(build|run|test|clippy|check|bench|doc|nextest)([[:space:]]|$)"
 is_cargo=false
 if printf '%s' "$cmd" | grep -qE "$cargo_heavy" || printf '%s' "$cmd" | grep -qE "${cmd_pos}([^[:space:]]*/)?tools/check\.sh([[:space:]]|$)"; then
@@ -64,18 +71,24 @@ if [ -z "$reason" ] && [ "$is_cargo" = true ] &&
 fi
 
 if [ -z "$reason" ] && [ "$is_cargo" = true ] && [ "$background" != "true" ]; then
-  reason="Run cargo build / run / test / clippy (and tools/check.sh) with run_in_background: true — a cold build here takes minutes and a foreground call blocks the session with nothing on screen (CLAUDE.md, Running cargo so progress stays visible). Repeat this exact command with run_in_background: true."
+  reason="Run cargo build / run / test / clippy / check / bench / doc / nextest (and tools/check.sh) with run_in_background: true — a cold build here takes minutes and a foreground call blocks the session with nothing on screen (CLAUDE.md, Running cargo so progress stays visible). Repeat this exact command with run_in_background: true."
 fi
 
 # --- the live app: `cargo run` of the app itself and the `brp` CLI need the
 # `live-app` skill (ready markers, SimSpeed vs Time<Virtual>, screenshots,
-# shutdown). `cargo run --example …` is a headless yard, not the app.
+# shutdown). `cargo run --example …` is a headless yard, not the app — but the
+# exemption holds only for the `cargo run` that carries the flag, so the
+# command is split at ; & | and each segment is tested on its own
+# (`cargo run --example x && cargo run` still runs the app).
 if [ -z "$reason" ]; then
   is_app_run=false
-  if printf '%s' "$cmd" | grep -qE "${cmd_pos}cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?run([[:space:]]|$)" &&
-     ! printf '%s' "$cmd" | grep -qE -- '--example([[:space:]=]|$)'; then
-    is_app_run=true
-  fi
+  cargo_run="${cmd_pos}cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?run([[:space:]]|$)"
+  while IFS= read -r segment; do
+    if printf '%s' "$segment" | grep -qE "$cargo_run" &&
+       ! printf '%s' "$segment" | grep -qE -- '--example([[:space:]=]|$)'; then
+      is_app_run=true
+    fi
+  done <<<"$(printf '%s' "$cmd" | tr ';&|' '\n')"
   if printf '%s' "$cmd" | grep -qE "${cmd_pos}([^[:space:]]*/)?brp([[:space:]]|$)"; then
     is_app_run=true
   fi

@@ -36,17 +36,17 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | any git operation — staging, committing, branching, rebasing, history | `git` |
 | running the app, BRP, screenshots, the trace log | `live-app` |
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
-| `map/osm/*`, `map/{meshing,spawn,roads,rail,tram,trees,buildings}` | `osm-map` |
-| `navigation/*`, `movement/*` (incl. separation, slots, the navtile size) | `navigation-deep` |
-| `rng.rs`, `determinism/*`, `tests/determinism.rs`, anything a replay depends on | `determinism` |
-| `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs` | `species-behavior` |
+| `map/*` — the OSM pipeline (`map/osm/*`) and every layer (`meshing`, `spawn`, `roads`, `rail`, `tram`, `trees`, `buildings`, `footprint`) | `osm-map` |
+| `navigation/*`, `movement/*` (incl. separation, slots, the navtile size), `tests/{navigation,movement}.rs` | `navigation-deep` |
+| `rng.rs`, `determinism/*`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
+| `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`, `tests/spatial.rs` | `species-behavior` |
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
 | `sim_time.rs` | `sim-speed` |
 | `ui/*`, `camera.rs`, `prefs.rs` | `ui-panels` |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
 - **Re-check the table when the work spreads to an area you didn't expect at the start** — the misses are never in the module the session is about, always in the one it drifts into (a UI change that ends up moving a threshold, a navigation fix that touches the replay contract).
-- **Two `PreToolUse` hooks enforce the table** (`.claude/hooks/`, wired in `.claude/settings.json`): `require-skill.sh` denies an `Edit`/`Write` of a gated path — every `.rs` under `src/`, `tests/`, `examples/` needs `bevy`, plus the domain skill of its row; `guard-bash.sh` denies a mutating git command without `git`, `cargo run` of the app or a `brp` call without `live-app`, a foreground `cargo build/run/test/clippy`, a cargo piped through `tail`/`head`/`grep`, and `--features bevy/dynamic_linking`. `record-skill.sh` (PostToolUse/Skill) is what tells them which skills the session has loaded; `worktree-drift.sh` reports, on `EnterWorktree` and on each `Skill` load, what the worktree's branch changed under `.claude/` — because skills, hooks and settings always load from the main checkout. They are the net, not the trigger — a deny costs the whole rejected call, so load ahead of the action.
+- **Two `PreToolUse` hooks enforce the table** (`.claude/hooks/`, wired in `.claude/settings.json`): `require-skill.sh` denies an `Edit`/`Write` of a gated path — every `.rs` under `src/`, `tests/`, `examples/` needs `bevy`, plus the domain skill of its row; `guard-bash.sh` denies a mutating git command without `git`, `cargo run` of the app or a `brp` call without `live-app`, a foreground heavy cargo command (`build`/`run`/`test`/`clippy`/`check`/`bench`/`doc`/`nextest`, and `tools/check.sh`), one of those piped through `tail`/`head`/`grep`/`rg`/`less`/`more`, and `--features bevy/dynamic_linking`. `record-skill.sh` (PostToolUse/Skill) is what tells them which skills the session has loaded; `worktree-drift.sh` reports, on `EnterWorktree` and on each `Skill` load, what the worktree's branch changed under `.claude/` — because skills, hooks and settings always load from the main checkout. They are the net, not the trigger — a deny costs the whole rejected call, so load ahead of the action.
 
 What each one carries, starting with the three engine-level skills:
 
@@ -58,7 +58,7 @@ Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's 
 
 **Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
-- **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,rail,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
+- **`osm-map` — before changing the OSM pipeline or map rendering** (all of `map/*`: `map/osm/*`, `map/{meshing,spawn,roads,rail,tram,trees,buildings,footprint}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
 - **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
 - **`species-behavior` — before changing pawn behaviour** (`human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids.
