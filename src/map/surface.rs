@@ -98,6 +98,9 @@ impl SurfaceParams {
 pub enum SurfaceKind {
     /// Земля под всей картой.
     Ground,
+    /// Двор жилого квартала: трава, но истоптанная и вперемешку с проплешинами
+    /// голой земли — потому и не [`Self::Grass`], у которой рисунок ровнее.
+    Yard,
     Park,
     Wood,
     Grass,
@@ -114,8 +117,9 @@ pub enum SurfaceKind {
 }
 
 impl SurfaceKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Ground,
+        Self::Yard,
         Self::Park,
         Self::Wood,
         Self::Grass,
@@ -138,6 +142,20 @@ impl SurfaceKind {
                 mottle_scale: 80.0,
                 grain_amp: 0.04,
                 grain_scale: 2.4,
+                ..flat
+            },
+            // двор: пятна вдвое крупнее амплитудой, чем у газона, и вдвое
+            // мельче шагом — это и есть разница между лугом и двором, по
+            // которому ходят: проплешины у подъездов, трава по углам
+            Self::Yard => SurfaceParams {
+                tint: Vec4::new(0.08, 0.045, -0.06, 0.0),
+                mottle_amp: 0.105,
+                mottle_scale: 22.0,
+                grain_amp: 0.055,
+                grain_scale: 1.6,
+                speckle_amp: 0.05,
+                speckle_scale: 2.2,
+                speckle_threshold: 0.7,
                 ..flat
             },
             Self::Park => SurfaceParams {

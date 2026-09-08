@@ -55,7 +55,8 @@ in `main.rs`.
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
-  parks → woods → tree-row band casing → tree-row band → grass → sand → pitches → pitch
+  parks → woods → tree-row band casing → tree-row band → grass → sand → worn paths →
+  pitches → pitch
   markings → parking → parking
   markings → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
@@ -137,8 +138,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
     **only Wood carries trees**;
-    Residential/Industrial are the `landuse` **blocks** — a faint fill under everything
-    else, no effect on navigation or planting. **Parking** (`amenity=parking`,
+    Residential/Industrial are the `landuse` **blocks** — the fill under everything else,
+    no effect on navigation or planting. **A residential block is drawn as a yard**: a
+    muted green, its own layer with its own `SurfaceKind::Yard` texture (patchier than
+    grass: bare ground by the doors), because between the houses there
+    is grass, and the older half-tone-off-the-ground fill was what made the whole city
+    read as one beige sheet with buildings placed on it. Industrial keeps the cold grey. **Parking** (`amenity=parking`,
     `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
     park (`building` + `amenity=parking`) stays a building. **Pitch** (`leisure=*`,
@@ -356,6 +361,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Worn paths** (`map/paths.rs`) — the desire lines of a courtyard: a straight strip of
+  bare earth from **each OSM entrance to the nearest point of the nearest road**, 1.1 m
+  wide, drawn only when that distance is between `PATH_MIN` 7 m and `PATH_MAX` 45 m
+  (shorter hides under the facade band, longer is a route rather than a short cut).
+  `Z_WORN_PATH` 0.72 — over any greenery, under the pitches and the parking. No path
+  finding and no bends: the desire line *is* the straight one people wore instead of the
+  detour. Nothing checks whether a path crosses a building or water either — the layer is
+  below both, so the crossing part is covered by them. Tula: 11 302 entrances, of which
+  the ones in courtyards get a path.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 0.75 with the markings at 0.76. What a
   courtyard is *made of* on a photo: a green football field with white lines, a blue
