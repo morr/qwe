@@ -3,14 +3,9 @@ use crate::map::osm::fixture;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {
-        points,
-        width,
         class: RoadClass::Alley,
-        bridge: false,
         passage,
-        oneway: false,
-        roundabout: false,
-        lanes: None,
+        ..fixture::street(points, width)
     }
 }
 

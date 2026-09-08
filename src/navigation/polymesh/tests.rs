@@ -1,6 +1,7 @@
 use super::build::{inflate_ring, ribbon_outline};
 use super::*;
-use crate::map::osm::model::{RoadClass, WaterKind};
+use crate::map::osm::fixture;
+use crate::map::osm::model::WaterKind;
 use crate::settings::{
     MAP_SIZE, POLYMESH_CHUNK_TARGET_METERS, POLYMESH_FLAT_CHUNK_METERS, POLYMESH_SEARCH_DELTA,
     POLYMESH_SEARCH_STEPS,
@@ -46,16 +47,7 @@ fn bridge_deck_opens_a_crossing_over_a_waterway() {
         "the waterway must survive as a filled obstacle for the overlay"
     );
 
-    let bridge = RoadLine {
-        points: vec![Vec2::new(300.0, 460.0), Vec2::new(300.0, 540.0)],
-        width: 5.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-        oneway: false,
-        roundabout: false,
-        lanes: None,
-    };
+    let bridge = fixture::bridge(vec![Vec2::new(300.0, 460.0), Vec2::new(300.0, 540.0)], 5.0);
     let bridged =
         build_polymesh(&input_with(vec![bridge]), 0.0, None, None).expect("not cancelled");
     let path = find_path_polymesh(&bridged, from, to)
@@ -215,16 +207,10 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
         "остров без моста недостижим — дыра результата отбрасывается"
     );
 
-    let bridge = RoadLine {
-        points: vec![Vec2::new(1300.0, 950.0), Vec2::new(1300.0, 1300.0)],
-        width: 20.0,
-        class: RoadClass::Street,
-        bridge: true,
-        passage: false,
-        oneway: false,
-        roundabout: false,
-        lanes: None,
-    };
+    let bridge = fixture::bridge(
+        vec![Vec2::new(1300.0, 950.0), Vec2::new(1300.0, 1300.0)],
+        20.0,
+    );
     let bridged = build_polymesh(&input(vec![bridge]), 0.4, None, None).expect("not cancelled");
     assert!(
         bridged.contains(island),
