@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::grid::tile_center;
 use crate::human::components::{
     Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
-    WanderHeading, WanderPause,
+    PopulationSize, WanderHeading, WanderPause,
 };
 use crate::human::look::{human_body, roll_attire};
 use crate::loading::AppState;
@@ -46,22 +46,54 @@ fn in_recoil_cone(direction: Vec2, ban: Vec2) -> bool {
     direction.dot(ban) > RECOIL_CONE.cos()
 }
 
-pub fn spawn_humans(
-    mut commands: Commands,
-    arc_navmesh: Res<ArcNavmesh>,
-    style: Res<HumanStyle>,
-    seed: Res<WorldSeed>,
-    size: Res<crate::human::PopulationSize>,
-    silhouettes: Res<Silhouettes>,
-) {
-    spawn_population(
-        &mut commands,
-        &arc_navmesh.read(),
-        style.spread,
-        seed.0,
-        size.0,
-        &silhouettes,
-    );
+pub fn spawn_humans(mut commands: Commands, population: PopulationSpawn) {
+    population.spawn(&mut commands);
+}
+
+/// Всё, чем расселяется население, одним `SystemParam`.
+///
+/// Пятёрку ресурсов читают одинаково оба спавна — `spawn_humans`
+/// (`WorldInitSet::Spawn`) и `restart::on_restart`, — и держаться в шаг они
+/// обязаны: рестарт расселяет то же население, иначе сравнивать два прогона
+/// нечем. Врозь это держалось дисциплиной, а пятый ресурс (атлас силуэтов)
+/// вдобавок упёр `on_restart` в `clippy::too_many_arguments`.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PopulationSpawn<'w> {
+    navmesh: Res<'w, ArcNavmesh>,
+    style: Res<'w, HumanStyle>,
+    seed: Res<'w, WorldSeed>,
+    size: Res<'w, PopulationSize>,
+    silhouettes: Res<'w, Silhouettes>,
+}
+
+impl PopulationSpawn<'_> {
+    /// Расселить население по навмешу, каким он есть сейчас.
+    pub fn spawn(&self, commands: &mut Commands) {
+        spawn_population(
+            commands,
+            &self.navmesh.read(),
+            &PopulationBirth {
+                spread: self.style.spread,
+                world_seed: self.seed.0,
+                count: self.size.0,
+                silhouettes: &self.silhouettes,
+            },
+        );
+    }
+}
+
+/// Всё, что население получает при расселении помимо навмеша: четыре
+/// значения ездят одним, а не четвёркой позиционных аргументов (тот же приём,
+/// что у `demon::systems::DemonBirth`).
+///
+/// Отдельно от [`PopulationSpawn`]: стенды и тесты строят набор из голых
+/// значений, ECS-ресурсов там нет вовсе.
+pub struct PopulationBirth<'a> {
+    /// Полуширина разброса личной скорости — `HumanStyle::spread`.
+    pub spread: f32,
+    pub world_seed: u64,
+    pub count: usize,
+    pub silhouettes: &'a Silhouettes,
 }
 
 /// Спавн населения; вызывается на старте и при рестарте сцены.
@@ -82,11 +114,14 @@ pub fn spawn_humans(
 pub fn spawn_population(
     commands: &mut Commands,
     navmesh: &crate::navigation::Navmesh,
-    spread: f32,
-    world_seed: u64,
-    count: usize,
-    silhouettes: &Silhouettes,
+    birth: &PopulationBirth,
 ) {
+    let &PopulationBirth {
+        spread,
+        world_seed,
+        count,
+        silhouettes,
+    } = birth;
     let mut placement = stream(world_seed, RngDomain::Population, 0);
     // ни одного проходимого тайла — расселять некуда, и отбор ниже крутился
     // бы вечно; заодно это единственный случай, когда `grid_size` нулевой и
@@ -550,10 +585,12 @@ mod tests {
         spawn_population(
             &mut world.commands(),
             &navmesh,
-            0.3,
-            seed,
-            crate::settings::HUMAN_COUNT,
-            &Silhouettes::default(),
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: seed,
+                count: crate::settings::HUMAN_COUNT,
+                silhouettes: &Silhouettes::default(),
+            },
         );
         world.flush();
 
@@ -607,10 +644,12 @@ mod tests {
         spawn_population(
             &mut world.commands(),
             &navmesh,
-            0.3,
-            7,
-            4,
-            &Silhouettes::default(),
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: 7,
+                count: 4,
+                silhouettes: &Silhouettes::default(),
+            },
         );
         world.flush();
         let count = world.query::<&Human>().iter(&world).count();
@@ -630,10 +669,12 @@ mod tests {
         spawn_population(
             &mut world.commands(),
             &navmesh,
-            0.3,
-            7,
-            4,
-            &Silhouettes::default(),
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: 7,
+                count: 4,
+                silhouettes: &Silhouettes::default(),
+            },
         );
         world.flush();
 

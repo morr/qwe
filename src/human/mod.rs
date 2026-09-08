@@ -12,7 +12,7 @@ pub use self::components::{
     Attire, CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle,
     HumanWanderTag, Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
 };
-pub use self::look::{BloodPool, PANIC_COLOR};
+pub use self::look::BloodPool;
 use self::look::{on_calm_tint, on_panic_tint};
 use self::soul::rise_souls;
 pub use self::soul::{SoulMote, release_soul};
@@ -20,7 +20,7 @@ pub use self::soul::{SoulMote, release_soul};
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
 // не своей выдумкой; `HumanPlugin` целиком ей не подходит (его `spawn_humans`
 // расселил бы 20 000 пешек по всей карте)
-pub use self::systems::{pick_wander_targets, spawn_population};
+pub use self::systems::{PopulationBirth, PopulationSpawn, pick_wander_targets, spawn_population};
 use self::systems::{spawn_humans, spread_changed, sync_human_pace};
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
