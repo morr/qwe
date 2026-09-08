@@ -10,6 +10,7 @@ pub mod loading;
 pub mod map;
 pub mod movement;
 pub mod navigation;
+pub mod photo;
 pub mod portal;
 pub mod post;
 pub mod prefs;

@@ -1012,6 +1012,15 @@ pub const ROOF_CLUTTER_MAX_ZOOM: f32 = 0.5;
 /// становится там мельче шести пикселей, а ряд вдоль улицы — мерцающим
 /// пунктиром. Порог задаёт таблицу `CarLods`, и его пересечение
 /// пересобирает слой.
+// --- Фотографический проход (`photo`) ---
+/// Дефолт и границы ползунка Photo (`PhotoStyle::amount`) — общая сила зерна,
+/// дымки, аберрации, шарпинга и кривой контраста. Ноль — прежний чистый кадр,
+/// единица — как задумано, полтора — приёмы начинают показывать себя.
+pub const PHOTO_AMOUNT_DEFAULT: f32 = 1.0;
+pub const PHOTO_AMOUNT_MIN: f32 = 0.0;
+pub const PHOTO_AMOUNT_MAX: f32 = 1.5;
+pub const PHOTO_AMOUNT_STEP: f32 = 0.1;
+
 pub const CAR_MAX_ZOOM: f32 = 0.8;
 
 pub const ROOF_TEXTURE_DEFAULT: f32 = 1.0;

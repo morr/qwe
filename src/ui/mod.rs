@@ -30,6 +30,7 @@ mod shell;
 // `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
 // нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
 // поднять не может — он тянет панели, карту и настройки
+mod photo;
 pub mod slider;
 mod speed;
 mod stats;
@@ -457,7 +458,9 @@ impl Plugin for UiPlugin {
             navigation::UiNavigationPlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
-            surfaces::UiSurfaceStylePlugin,
+            // кортеж `Plugins` кончается на пятнадцати: секции облика карты
+            // едут вложенным кортежем
+            (surfaces::UiSurfaceStylePlugin, photo::UiPhotoStylePlugin),
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
             brp::UiBrpBadgePlugin,

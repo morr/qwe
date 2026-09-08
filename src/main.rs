@@ -5,7 +5,7 @@ use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
     camera, city, demon, determinism, dev, diagnostics, human, loading, map, movement, navigation,
-    portal, post, prefs, restart, rng, silhouette, sim_time, spatial, telemetry, ui,
+    photo, portal, post, prefs, restart, rng, silhouette, sim_time, spatial, telemetry, ui,
 };
 
 /// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт занят
@@ -96,6 +96,7 @@ fn main() {
             determinism::DeterminismPlugin,
             // группа ниже уже во всю длину кортежа `Plugins` — 15 штук
             post::PostProcessPlugin,
+            photo::PhotoPlugin,
             // атлас силуэтов — уровня процесса, как и seed: собирается один
             // раз в `Startup` и переживает любую смену мира
             silhouette::SilhouettePlugin,

@@ -45,6 +45,17 @@ in `main.rs`.
   halos, soul sparks — and the map's white markings and light roofs do not; tonemapping is
   off so the map palette is untouched, and `Msaa` stays off. A full-screen **vignette** is
   a UI node under the panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
+- **Photo pass** (`photo.rs`, `assets/shaders/photo.wgsl`) — a full-screen pass **after
+  bloom, before tonemapping**, and the only thing on the map that is about *how the frame
+  was taken* rather than what is in it: sensor grain (fixed in screen space, as a sensor's
+  is), a cold haze that lifts only the shadows, chromatic aberration growing toward the
+  corners, an unsharp halo (a satellite frame is nearly always pan-sharpened) and an S-curve
+  of contrast. Each is deliberately at the edge of noticeable; a photograph is recognised by
+  all of them being present, not by any one being strong. The curve touches only the [0, 1]
+  part, so what draws itself above 1.0 (portal, halos, souls) stays above 1.0 and still
+  blooms. Strength — **`PhotoStyle::amount`** (section *Photo*, persisted); 0 is exactly the
+  old clean frame. A pipeline that fails to build leaves the frame untouched rather than
+  black — the pass returns before `post_process_write`.
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
   `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
   — **the edge counts as inside**. Five visibility gates use it and **each keeps its own

@@ -8,6 +8,10 @@
 //! Тонмаппинг выключен намеренно: любой из готовых кривых перекрасил бы всю
 //! палитру карты, а нужен только ореол.
 //!
+//! **Фотографический проход.** Зерно, дымка, аберрация, шарпинг и кривая
+//! контраста — отдельным полноэкранным проходом в `photo.rs`; сюда он входит
+//! только компонентом `PhotoSettings` на камере, по которому находит вид.
+//!
 //! **Виньетка.** Полноэкранный UI-узел с радиальным градиентом от
 //! прозрачного центра к тёмным углам. Он под панелями (`GlobalZIndex` ниже
 //! нуля) и `Pickable::IGNORE`: иначе он был бы «узлом UI под курсором» для
@@ -19,6 +23,8 @@ use bevy::picking::Pickable;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::ui::{ColorStop, GlobalZIndex};
+
+use crate::photo::PhotoSettings;
 
 /// Сила bloom — доля свечения в кадре. Бевины «естественные» 0.15 рассчитаны
 /// на тёмные сцены и над светлой картой теряются; 0.4 ставилось, пока
@@ -47,6 +53,9 @@ pub fn camera_post_process() -> impl Bundle {
         Hdr,
         Tonemapping::None,
         DebandDither::Disabled,
+        // фотографический проход (`photo.rs`) находит вид по этому
+        // компоненту — он же его юниформ
+        PhotoSettings::default(),
         Bloom {
             intensity: BLOOM_INTENSITY,
             prefilter: BloomPrefilter {

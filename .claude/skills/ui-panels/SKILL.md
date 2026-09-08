@@ -65,6 +65,31 @@ did not fit 1080 px and ran off the top of the screen.
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
   palette, and only the halo is wanted. `Msaa::Off` stays (`camera.rs`), and UI is drawn
   after post-processing, so panels never bloom.
+- **Photo pass** (`photo.rs`, shader `assets/shaders/photo.wgsl`) — the film half of the
+  post-processing, a full-screen pass scheduled `.after(bloom).in_set(Core2dSystems::
+  PostProcess)` (tonemapping is off, so nothing else competes for that slot). It follows
+  bevy's `custom_post_processing` example verbatim in shape: `PhotoSettings` is an
+  `ExtractComponent` + `ShaderType` **on the camera** (that is how the pass finds the view,
+  and `post::camera_post_process` is where it is added), `UniformComponentPlugin` makes the
+  uniform, and the pass takes `view_target.post_process_write()` to read the main texture
+  and write the flipped one.
+  - **Five effects, each at the edge of noticeable**: grain (3 %, hashed from the *screen
+    pixel*, so it sits still while the map pans, the way a sensor's does), haze (a cold lift
+    of the shadows only, scaled by `1 - luminance`), chromatic aberration (radial, growing
+    as the square of the distance from centre), an unsharp halo from four diagonal taps
+    (the pan-sharpen ring of a satellite frame), and an S-curve of contrast. A photograph is
+    recognised by all of them being there at once, not by any of them being strong.
+  - **HDR survives it**: the curve is applied to `clamp(colour, 0, 1)` and the excess is
+    added back, so the portal, the demon halos and the soul sparks stay above 1.0 and keep
+    blooming.
+  - **The target format is hardcoded `Rgba16Float`** — the pipeline is built once at
+    `RenderStartup`, before any view exists, and specialising per view for a single camera
+    would be machinery for nothing. `photo_pass` checks `Has<Hdr>` and skips otherwise.
+  - **Failure is a no-op, not a black screen**: every early return happens *before*
+    `post_process_write`, so a pipeline that did not build leaves the frame as the main pass
+    drew it.
+  - `PhotoStyle::amount` (section *Photo* in the Map tab, one knob, persisted) scales all
+    five; at zero the shader returns the sampled texel unchanged.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
   `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
   `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,
