@@ -23,6 +23,11 @@ ONEWAY = {"yes", "1", "true", "-1"}
 ROUNDABOUT = {"roundabout", "circular"}
 
 
+def is_oneway(tags):
+    """parse/tags.rs::is_oneway — кольцо одностороннее по определению."""
+    return tags.get("oneway") in ONEWAY or tags.get("junction") in ROUNDABOUT
+
+
 def main(paths):
     for path in paths:
         with open(path) as handle:
@@ -34,14 +39,11 @@ def main(paths):
             and element.get("tags", {}).get("highway") in STREETS
         ]
         roundabouts = [t for t in tags if t.get("junction") in ROUNDABOUT]
-        oneway = [
-            t for t in tags
-            if t.get("oneway") in ONEWAY or t.get("junction") in ROUNDABOUT
-        ]
+        oneway = [t for t in tags if is_oneway(t)]
         lanes = [t for t in tags if "lanes" in t]
         odd_twoway = [
             t for t in lanes
-            if t not in oneway and t["lanes"] in ("1", "3", "5", "7")
+            if not is_oneway(t) and t["lanes"] in ("1", "3", "5", "7")
         ]
         print(path)
         print(f"  streets >= 8 m:          {len(tags)}")
