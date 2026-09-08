@@ -286,13 +286,7 @@ fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
     }
     let r = p.length();
     match glyph {
-        Glyph::Disc => {
-            let inside = DISC_RADIUS - r;
-            let alpha = smoothstep(-edge, edge, inside);
-            let shade = RIM_SHADE
-                + (1.0 - RIM_SHADE) * smoothstep(RIM_WIDTH - edge, RIM_WIDTH + edge, inside);
-            (shade, alpha)
-        }
+        Glyph::Disc => rimmed(DISC_RADIUS - r, edge, RIM_WIDTH, RIM_SHADE),
         Glyph::Ember => {
             // зубец смотрит вверх: фаза сдвинута на четверть оборота
             let theta = p.y.atan2(p.x) - FRAC_PI_2;
@@ -316,6 +310,17 @@ fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
 fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
     let t = ((x - from) / (to - from)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Тело с тёмной каймой — форма диска и форма фигуры: альфа по контуру,
+/// яркость `rim_shade` у самого края и полная глубже каймы шириной `rim`.
+/// `inside` — расстояние внутрь от контура; `inside`, `rim` и `edge` — в одних
+/// единицах, каких именно, решает вызывающий (диск считает в долях полуячейки,
+/// фигура — в ростах).
+fn rimmed(inside: f32, edge: f32, rim: f32, rim_shade: f32) -> (f32, f32) {
+    let alpha = smoothstep(-edge, edge, inside);
+    let shade = rim_shade + (1.0 - rim_shade) * smoothstep(rim - edge, rim + edge, inside);
+    (shade, alpha)
 }
 
 /// Следующий мип: среднее по блоку 2×2 (2×1 / 1×2 у вырожденной стороны).

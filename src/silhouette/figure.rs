@@ -15,7 +15,7 @@
 
 use bevy::prelude::*;
 
-use super::smoothstep;
+use super::{rimmed, smoothstep};
 
 /// Число поз; глифы `Glyph::corpse(i)` идут в атласе подряд.
 pub const POSES: usize = 4;
@@ -103,12 +103,12 @@ struct Part {
 }
 
 impl Part {
-    fn limb(a: Vec2, b: Vec2, ra: f32, rb: f32) -> Self {
+    fn capsule(a: Vec2, b: Vec2, ra: f32, rb: f32) -> Self {
         Self { a, b, ra, rb }
     }
 
     fn dot(centre: Vec2, radius: f32) -> Self {
-        Self::limb(centre, centre, radius, radius)
+        Self::capsule(centre, centre, radius, radius)
     }
 
     /// Расстояние со знаком до контура (внутри — отрицательное).
@@ -157,25 +157,25 @@ impl Figure {
         let hips = [Vec2::new(0.0, HIP_HALF), Vec2::new(0.0, -HIP_HALF)];
 
         let mut parts = vec![
-            Part::limb(Vec2::ZERO, chest, HIP_R, CHEST_R),
-            Part::limb(shoulders[0], shoulders[1], SHOULDER_R, SHOULDER_R),
-            Part::limb(chest, head, NECK_R, NECK_R),
+            Part::capsule(Vec2::ZERO, chest, HIP_R, CHEST_R),
+            Part::capsule(shoulders[0], shoulders[1], SHOULDER_R, SHOULDER_R),
+            Part::capsule(chest, head, NECK_R, NECK_R),
             Part::dot(head, HEAD_R),
         ];
         for (shoulder, (upper, fore)) in shoulders.into_iter().zip(spec.arms) {
             let elbow = shoulder + dir(upper) * UPPER_ARM;
             let wrist = elbow + dir(fore) * FOREARM;
-            parts.push(Part::limb(shoulder, elbow, ARM_R, ARM_R * TAPER));
-            parts.push(Part::limb(elbow, wrist, FOREARM_R, FOREARM_R * TAPER));
+            parts.push(Part::capsule(shoulder, elbow, ARM_R, ARM_R * TAPER));
+            parts.push(Part::capsule(elbow, wrist, FOREARM_R, FOREARM_R * TAPER));
             parts.push(Part::dot(wrist + dir(fore) * HAND_R, HAND_R));
         }
         for (hip, (thigh, calf, foot)) in hips.into_iter().zip(spec.legs) {
             let knee = hip + dir(thigh) * THIGH;
             let ankle = knee + dir(calf) * CALF;
             let toe = ankle + dir(foot) * FOOT;
-            parts.push(Part::limb(hip, knee, THIGH_R, THIGH_R * TAPER));
-            parts.push(Part::limb(knee, ankle, CALF_R, CALF_R * TAPER));
-            parts.push(Part::limb(ankle, toe, FOOT_R, FOOT_R));
+            parts.push(Part::capsule(hip, knee, THIGH_R, THIGH_R * TAPER));
+            parts.push(Part::capsule(knee, ankle, CALF_R, CALF_R * TAPER));
+            parts.push(Part::capsule(ankle, toe, FOOT_R, FOOT_R));
         }
 
         let (mut min, mut max) = (Vec2::MAX, Vec2::MIN);
@@ -206,9 +206,7 @@ impl Figure {
             .iter()
             .map(|part| part.distance(f))
             .fold(f32::MAX, f32::min);
-        let alpha = smoothstep(-edge, edge, inside);
-        let shade = RIM_SHADE + (1.0 - RIM_SHADE) * smoothstep(RIM - edge, RIM + edge, inside);
-        (shade, alpha)
+        rimmed(inside, edge, RIM, RIM_SHADE)
     }
 
     /// Куда ложится лужа: грудь, в координатах ячейки (−1…1).
@@ -258,12 +256,12 @@ mod tests {
 
     #[test]
     fn capsule_distance_is_negative_inside_and_positive_outside() {
-        let limb = Part::limb(Vec2::ZERO, Vec2::X, 0.2, 0.1);
-        assert!(limb.distance(Vec2::new(0.5, 0.0)) < 0.0);
-        assert!(limb.distance(Vec2::new(0.5, 0.5)) > 0.0);
+        let capsule = Part::capsule(Vec2::ZERO, Vec2::X, 0.2, 0.1);
+        assert!(capsule.distance(Vec2::new(0.5, 0.0)) < 0.0);
+        assert!(capsule.distance(Vec2::new(0.5, 0.5)) > 0.0);
         // концы — окружности своих радиусов
-        assert!((limb.distance(Vec2::new(-0.2, 0.0))).abs() < 1e-5);
-        assert!((limb.distance(Vec2::new(1.1, 0.0))).abs() < 1e-5);
+        assert!((capsule.distance(Vec2::new(-0.2, 0.0))).abs() < 1e-5);
+        assert!((capsule.distance(Vec2::new(1.1, 0.0))).abs() < 1e-5);
     }
 
     #[test]
