@@ -302,7 +302,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   a per-way tint would expose every crossing.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
-  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Three independent knobs:
+  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Four independent knobs:
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
     with *both ends* extended by half a width; no joins at all, which is what produced
     the notches on bends and the wedges at junctions), `Miter`, `Round` (default).

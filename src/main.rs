@@ -94,7 +94,7 @@ fn main() {
             city::CityPlugin,
             rng::RngPlugin,
             determinism::DeterminismPlugin,
-            // группа из 16 плагинов ниже — предел кортежа `Plugins`
+            // группа ниже уже во всю длину кортежа `Plugins` — 15 штук
             post::PostProcessPlugin,
         ))
         .add_plugins((

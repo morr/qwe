@@ -198,6 +198,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junctions
   are not computed** — overlapping `Round` caps in one opaque flat-colored layer are what
   makes them look joined; **keep the road layer opaque**.
+- **Ground grain** (`map/grain.rs`) — the one map layer that is not a mesh: a map-sized
+  translucent sprite tiled with a seamless 256 px noise texture, above every land fill and
+  below water, so a flat single-colour ground reads as soil instead of paper. Detail in the
+  **osm-map skill**.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing / sidewalk —
   smoothing

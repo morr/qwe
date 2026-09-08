@@ -36,7 +36,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | any git operation — staging, committing, branching, rebasing, history | `git` |
 | running the app, BRP, screenshots, the trace log | `live-app` |
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
-| `map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}` | `osm-map` |
+| `map/osm/*`, `map/{meshing,spawn,grain,roads,tram,trees,buildings}` | `osm-map` |
 | `navigation/*`, `movement/*` (incl. separation, slots, the navtile size) | `navigation-deep` |
 | `rng.rs`, `determinism/*`, `tests/determinism.rs`, anything a replay depends on | `determinism` |
 | `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs` | `species-behavior` |
@@ -290,7 +290,7 @@ step when adding one):
 |---|---|
 | ground sprite, merged area layer meshes (landuse/parks/woods/grass/sand/water), waterway ribbons | `map/spawn.rs` |
 | ground grain sprite (tiled noise over every land fill) | `map/grain.rs::spawn_ground_grain` |
-| road layers (alleys/roads/rails/walls + casings) | `map/roads.rs::spawn_roads` |
+| road layers (sidewalks/alleys/roads/rails/walls + casings) | `map/roads.rs::spawn_roads` |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |

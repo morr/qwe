@@ -56,7 +56,9 @@ did not fit 1080 px and ran off the top of the screen.
   `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,
   `Pickable::IGNORE` keeps it out of `HoverMap` — without that it would be "a UI node
   under the cursor" everywhere and `pointer_over_ui` would hand the whole map to the UI.
-  Not a `GameUiRoot`: it stays over the loader screen too. Spawned once at `Startup`.
+  Not a `GameUiRoot`: it is not hidden with the game UI and survives the city switch. The
+  opaque loader root (z 0) covers it while `Loading` — the vignette frames the map, not the
+  loader. Spawned once at `Startup`.
 
 ## Panels
 
