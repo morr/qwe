@@ -19,8 +19,10 @@ pub mod trees;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-pub use self::buildings::{BuildingHeightMode, extrusion_lift};
-pub use self::cars::CarStyle;
+pub use self::buildings::{
+    BuildingHeightMode, BuildingPlan, BuildingZoomBucket, LayerCost, extrusion_lift, measure_layers,
+};
+pub use self::cars::{CarStyle, measure_cars};
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
 pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};

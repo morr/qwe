@@ -182,6 +182,77 @@ pub(super) struct RoofDetail {
     pub(super) clutter: bool,
 }
 
+/// Во что обошёлся один слой: имя, вершины, время сборки.
+pub struct LayerCost {
+    pub name: &'static str,
+    pub vertices: usize,
+    pub elapsed: Duration,
+}
+
+/// Сборка зданиевых слоёв **без мира и без ассетов** — для офлайн-замера
+/// (`examples/bench/map_meshing.rs`).
+///
+/// Существует потому, что мерить сборку в живом приложении на macOS нельзя:
+/// невидимому окну система урезает приоритет (App Nap), и те же 116 мс
+/// показывают себя пятью секундами. Здесь нет ни окна, ни GPU — только те же
+/// билдеры, что зовёт `spawn_buildings`.
+pub fn measure_layers(
+    buildings: &[PolyArea],
+    passages: &[RoadLine],
+    plan: BuildingPlan,
+) -> Vec<LayerCost> {
+    let BuildingPlan { mode, bucket, .. } = plan;
+    let detail = RoofDetail {
+        tinted: matches!(
+            mode,
+            BuildingHeightMode::ShadowsTint | BuildingHeightMode::ExtrusionShadowsTint
+        ),
+        clutter: bucket.index == 0,
+    };
+    let mut costs = Vec::new();
+    // замеряется число вершин, а не сам сборщик: у плоского режима билдеров
+    // два, и склеивать их ради замера значило бы мерить ещё и склейку
+    let mut measure = |name, build: &mut dyn FnMut() -> usize| {
+        let started = Instant::now();
+        let vertices = build();
+        costs.push(LayerCost {
+            name,
+            vertices,
+            elapsed: started.elapsed(),
+        });
+    };
+
+    match mode {
+        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
+            measure("extruded", &mut || {
+                extrusion_builder(buildings, passages, detail).vertex_count()
+            });
+        }
+        _ => {
+            measure("facades+roofs", &mut || {
+                let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
+                facades.vertex_count() + roofs.vertex_count()
+            });
+        }
+    }
+    if matches!(
+        mode,
+        BuildingHeightMode::Shadows
+            | BuildingHeightMode::ShadowsTint
+            | BuildingHeightMode::ExtrusionShadowsTint
+    ) {
+        measure("shadows", &mut || {
+            shadow_builder(
+                buildings,
+                passages,
+                mode == BuildingHeightMode::ExtrusionShadowsTint,
+            )
+            .vertex_count()
+        });
+    }
+    costs
+}
+
 /// Спавн зданиевых слоёв в выбранном режиме. Вызывается из `spawn_map` при
 /// входе в мир и из `rebuild_buildings` при переключении режима.
 pub fn spawn_buildings(

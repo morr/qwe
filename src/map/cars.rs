@@ -122,6 +122,21 @@ struct Car {
     color: Color,
 }
 
+/// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
+/// `buildings::measure_layers`. Ручки берутся игровые: бенч меряет тот слой,
+/// который город строит на дефолтных настройках, а не произвольный.
+pub fn measure_cars(roads: &[RoadLine]) -> (usize, usize) {
+    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let cars = park_cars(
+        roads,
+        &junctions,
+        CarStyle::default(),
+        RoadStyle::default().smoothing,
+    );
+    let builder = mesh_cars(&cars);
+    (cars.len(), builder.vertex_count())
+}
+
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
 #[allow(clippy::too_many_arguments)]
 pub fn rebuild_cars(

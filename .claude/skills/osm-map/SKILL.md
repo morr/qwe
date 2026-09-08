@@ -299,6 +299,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
   (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
   them would move every door and every tree in every city.
+- **Measuring the layer build** — `cargo run --example map_meshing [city]`
+  (`examples/bench/map_meshing.rs`) prints vertices and milliseconds per layer for every
+  height mode × clutter bucket, plus the car layer, straight from the Overpass cache
+  with **no window and no GPU**. That is the point of it: on macOS an invisible or
+  minimised window is put under App Nap, and a build that reports 116 ms on an awake screen
+  reports five seconds on a locked one — the `building meshing:` log line is only
+  trustworthy while the screen is awake. `map::measure_layers` / `map::measure_cars` are
+  the entry points; they call exactly the builders `spawn_buildings` calls. **Absolute
+  numbers still depend on the machine's power state** (with the display asleep everything
+  is 2–3× slower), so compare runs, not runs against the log.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
