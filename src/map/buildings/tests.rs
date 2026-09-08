@@ -510,6 +510,17 @@ fn shadow_area(mesh: &Mesh) -> f32 {
         .sum()
 }
 
+/// Вершины меша плоскими точками — тело и кайма вместе.
+fn mesh_points(mesh: &Mesh) -> Vec<Vec2> {
+    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap()
+        .iter()
+        .map(|point| Vec2::new(point[0], point[1]))
+        .collect()
+}
+
 /// Свип цепочки силуэта — то, из чего union собирает тело тени.
 fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
     let offset = SHADOW_DIR * height * crate::map::shadow_length_scale();
@@ -532,6 +543,38 @@ fn square_shadow_is_one_swept_polygon() {
     let mesh = shadow_builder(&list, &[], false).build();
     let expected = signed_ring_area(&sweep_of(&chains[0], 15.0)).abs();
     assert!((shadow_area(&mesh) - expected).abs() < 0.5, "{expected}");
+}
+
+#[test]
+fn the_penumbra_stays_off_the_lit_side_and_softens_the_far_edge() {
+    // тень примыкает к дому жёстко: метровая кайма по контуру примыкания
+    // обводила дом мягким пятном с солнечной стороны — тем самым контактным
+    // затенением, которое из объединения убрали
+    let list = [building(square(), Some(15.0), AreaKind::Building)];
+    let mesh = shadow_builder(&list, &[], false).build();
+    let along = |points: &[Vec2]| {
+        points
+            .iter()
+            .map(|point| point.dot(SHADOW_DIR))
+            .fold((f32::MAX, f32::MIN), |(low, high), value| {
+                (low.min(value), high.max(value))
+            })
+    };
+    let (footprint_near, footprint_far) = along(&square());
+    let (mesh_near, mesh_far) = along(&mesh_points(&mesh));
+    assert!(
+        mesh_near > footprint_near - 0.01,
+        "кайма не заходит против света за контур дома: {mesh_near} против {footprint_near}"
+    );
+
+    // а дальний край, наоборот, размыт на всю ширину — с запасом на miter:
+    // на прямом углу свипа офсет вершины длиннее ширины каймы в корень из двух
+    let offset = 15.0 * crate::map::shadow_length_scale();
+    let soft = mesh_far - (footprint_far + offset);
+    assert!(
+        (PENUMBRA_WIDTH..=PENUMBRA_WIDTH * 1.5).contains(&soft),
+        "дальний край размыт на {soft} м вместо {PENUMBRA_WIDTH}"
+    );
 }
 
 #[test]

@@ -882,6 +882,38 @@ impl MeshBuilder {
         outside: bool,
         color: impl Fn(Vec2, Vec2) -> (LinearRgba, LinearRgba),
     ) -> Option<f32> {
+        self.push_band(ring, width, outside, |_| 1.0, color)
+    }
+
+    /// Та же кайма, но ширина решается на каждой вершине — по единичному
+    /// направлению, в котором кайма от неё пойдёт. Полутень тени растёт с
+    /// расстоянием от того, кто её отбрасывает: у самой стены край жёсткий,
+    /// вдали — размытый, и одной ширины на весь контур этого не сказать
+    /// ([`super::buildings::layers::shadow_builder`]).
+    ///
+    /// `taper` возвращает долю `width` (вне `0..=1` зажимается). Схлопнутая в
+    /// ноль вершина вырождает свой квад в треугольник — это и есть жёсткий
+    /// край; ребро, у которого схлопнуты обе, не кладётся вовсе.
+    pub fn push_inset_band_tapered(
+        &mut self,
+        ring: &[Vec2],
+        width: f32,
+        outside: bool,
+        taper: impl Fn(Vec2) -> f32,
+        edge: LinearRgba,
+        inner: LinearRgba,
+    ) -> Option<f32> {
+        self.push_band(ring, width, outside, taper, |_, _| (edge, inner))
+    }
+
+    fn push_band(
+        &mut self,
+        ring: &[Vec2],
+        width: f32,
+        outside: bool,
+        taper: impl Fn(Vec2) -> f32,
+        color: impl Fn(Vec2, Vec2) -> (LinearRgba, LinearRgba),
+    ) -> Option<f32> {
         let path = merge_close_points(ring, true, width / 4.0);
         if path.len() < 3 {
             return None;
@@ -898,16 +930,27 @@ impl MeshBuilder {
         // у обхода против часовой стрелки внутренняя сторона слева — куда и
         // смотрят miter-офсеты; по часовой — справа
         let side = if (area > 0.0) != outside { 1.0 } else { -1.0 };
-        let offsets = miter_offsets(&path, true, width);
+        // офсеты единичной ширины, чтобы `taper` домножал уже готовое
+        // направление: множитель длину меняет, направление — нет. Сторона
+        // тоже вносится здесь, на месте — лишний `Vec` на кольцо стоил бы
+        // дороже самого сужения
+        let mut offsets = miter_offsets(&path, true, 1.0);
+        for offset in &mut offsets {
+            let direction = *offset * side;
+            *offset = direction * width * taper(direction.normalize_or_zero()).clamp(0.0, 1.0);
+        }
         let count = path.len();
         for index in 0..count {
             let next = (index + 1) % count;
+            if offsets[index] == Vec2::ZERO && offsets[next] == Vec2::ZERO {
+                continue;
+            }
             let (edge, inner) = color(path[index], path[next]);
             self.push_quad_gradient(
                 [
                     path[index],
-                    path[index] + offsets[index] * side,
-                    path[next] + offsets[next] * side,
+                    path[index] + offsets[index],
+                    path[next] + offsets[next],
                     path[next],
                 ],
                 [edge, inner, inner, edge],

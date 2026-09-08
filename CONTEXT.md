@@ -248,7 +248,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
   resolution and the sky's fill light, not from the sun's angular size, and is therefore
-  chosen by look), outward from the outer ring and into the gap from a hole. What goes into
+  chosen by look), outward from the outer ring and into the gap from a hole. Its width is
+  **tapered per vertex by `penumbra()` = the band direction projected on `SHADOW_DIR`**: a
+  shadow meets its own building hard and blurs with distance, so the contact edge gets no
+  band at all, the far edge the full metre, and a lateral edge grows from one to the other.
+  Untapered, the metre also ran along the contact contour and left a soft dark blot on the
+  sunlit side of every convex corner — the building came out ringed exactly like the
+  **contact skirt** that was taken back out of the union. What goes into
   the union is still the silhouette sweeps and nothing else. The shadow layer now
   carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
   it is the most expensive thing the building layers build, and it does not depend on the

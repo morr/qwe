@@ -608,6 +608,23 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       sky's fill light — so the width is chosen by look (1 m is 2–10 screen px at the zooms
       where shadows read). Bands of neighbouring shapes may overlap, but both fade to
       zero, so the doubling is weaker than the shadow itself.
+    - **The band is tapered, and that is what keeps the contact skirt from coming back.**
+      A shadow meets the thing that casts it **hard** — there is no penumbra at the wall —
+      and blurs as it runs away from it. In the union that difference is readable locally,
+      because the body always lies on the `SHADOW_DIR` side of a contact edge: the band's
+      own direction points *against* the light there, *along* it on the far edge, and
+      across it on a lateral one. Hence `layers.rs::penumbra(direction) =
+      direction·SHADOW_DIR` (clamped at zero) as the per-vertex share of the width, fed to
+      `MeshBuilder::push_inset_band_tapered` — zero at the contact, the full metre at the
+      far edge, and along a lateral side a growth from nothing at the building's corner to
+      full width at the far end, which is what a real penumbra does. Untapered (the state
+      the sun-shadows branch merged in) the metre also ran along the contact contour, and
+      the mitred band at every convex corner of the silhouette chain left a soft dark blot
+      a metre across **on the sunlit ground** — a stepped facade came out as a row of
+      them, and the building read as outlined by the very contact skirt that had just
+      been removed. A zero-width vertex degenerates its quad into a triangle (that *is*
+      the hard edge); an edge zero at both ends is not emitted at all, so the taper also
+      takes vertices off the most expensive layer here.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode** changed (`mode.is_changed()`): it does not depend on the roof-clutter
