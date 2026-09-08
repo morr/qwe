@@ -93,7 +93,8 @@ in `CONTEXT.md` and the detail here in the same change.
   version cost Tokyo 331 arches and 17 bridges, London 177 arches. Verified live on
   Tula: `navmesh: pruned 9898` before and after — the navmesh did not move.
 - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
-  `narrow_gauge` / `subway` 4 → `tram` 1.2). `RailKind: Active | Tram | Disused` — the
+  `narrow_gauge` / `subway` 4 → the disused values 3.5 → `tram` 1.2).
+  `RailKind: Active | Tram | Disused` — the
   kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
   (see **Tram** below — its width from parse is ignored, the zoom LOD picks it),
   **Disused** (`abandoned` / `disused` / `razed` / `dismantled`)
@@ -242,9 +243,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 ## Rendering
 
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
-  building layers in `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water,
-  waterways, alleys, roads, building layers, walls): `MeshBuilder` triangulates polygons via
-  `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
+  rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
+  `map/buildings/`) — **one merged `Mesh2d` per layer** (parks, water, waterways, alleys,
+  roads, rail layers, tram, building layers, walls): `MeshBuilder` triangulates polygons
+  via `earcutr` (holes supported, degenerate contours skipped + counted) and emits per-vertex
   colors over a single white `ColorMaterial`. ~7000 buildings cost a handful of entities.
   Trees stay individual entities (see `references/trees.md`).
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
@@ -305,23 +307,30 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   it left `map/roads.rs` when it stopped being a line style) — the **track**, not a map
   symbol: a ballast prism, ties across it and two steel rails on the gauge. Three merged
   meshes, `RailLayerTag`, all above `Z_ROAD` (2) so a track lies on its street: ballast
-  `Z_RAIL` (2.4), ties `Z_RAIL_TIE` (2.5), steel `Z_RAIL_STEEL` (2.55). Three rather
+  `Z_RAIL` (2.4), ties `Z_RAIL_TIE` (2.5), steel `Z_RAIL_STEEL` (2.55) — the far-bucket
+  dash rides in the tie mesh, it never coexists with ties. Three rather
   than one, for the casing reason inverted — coplanar geometry z-fights, and a tie must
   sit above *every* ballast, or a junction of several ways delaminates. Inside the
   ballast mesh the same rule is push order: **all** shoulders first, then all beds.
-  - **The prism** — the OSM width (rail 5 m, light_rail/subway 4) is the bed; the
-    shoulder under it is `SHOULDER_SCALE` (1.22) of that, darker. It is the slope that
-    separates the track from the ground it runs on; without it the track is a flat ribbon
-    again.
+  - **The prism** — the OSM width (rail 5 m, light_rail/narrow_gauge/subway 4, disused
+    3.5) is the bed; the tie length and the far-bucket dash width scale off it, so a
+    disused track is drawn narrower — but the **gauge is absolute** (1.5 m on every
+    bed: light_rail, subway and disused track are physically the same 1520 mm), because
+    a 30% share on a 4 m / 3.5 m bed put the two rails 3.6 / 3.0 px apart at the far
+    edge of bucket 1, under the 4 px floor at which they still read as two; the shoulder
+    under it is `SHOULDER_SCALE` (1.22) of that, darker. It is
+    the slope that separates the track from the ground it runs on; without it the track
+    is a flat ribbon again.
   - **`RAIL_LODS`** — five buckets over the camera zoom range, and they change the
     *drawing*, not its size: close up the real thing (ties 2.6 × 0.26 m every 65 cm,
-    gauge 30% of the bed — 1.5 m on a mainline — with 12 cm rails); by 0.26 m/px the two
+    a 1.5 m gauge on every bed with 12 cm rails); by 0.26 m/px the two
     rails no longer separate on screen and are dropped, ties thicken and thin out into
     hatching; from 0.65 m/px the ties go too and osm-carto's white dash pattern comes
     back, because a bare grey band reads as another street. `min_bed` floors the ballast
     width on the last two buckets — 5 m is a pixel at city scale, and the track would
     vanish before the roads it crosses. The numbers are derived from the screen size at
-    the **worst** (far) edge of each bucket: tie spacing never below ~6 px, no mark below
+    the **worst** (far) edge of each bucket, and they hold on **every** parsed bed width
+    (5 / 4 / 3.5 m), not only the mainline's: tie spacing never below ~6 px, no mark below
     ~1 px. The second number that must hold across buckets is the **tie duty cycle**,
     ~40% (the real 0.26 m in 0.65) — measured live: at 31% the ties stop being a texture,
     become sparse marks, and the two white rails outweigh them into a ladder. Both,
@@ -333,9 +342,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     threshold crossing, and ~23 MB of buffer at the deepest bucket. Frame rate stays
     vsync-capped at 60 there. The 23 ms is what a denser tie step would multiply, so
     treat bucket 0's 65 cm as the floor.
-  - **`RailZoomBucket`** works like `TramZoomBucket` (not persisted, recomputed each
-    Update via `set_if_neq`, `rebuild_rails` only on a threshold crossing) — a separate
-    resource because the tables' thresholds have nothing in common.
+  - **`RailZoomBucket`** is `ZoomBucket<RailLods>` — the same machinery as the tram's
+    (see **Zoom buckets** below), a separate resource because the tables' thresholds
+    have nothing in common: `RailLods` is the marker that hands `RAIL_LODS`'s
+    `max_zoom`s to `map/zoom.rs`.
   - **`MeshBuilder::push_rails`** is the new primitive: two ribbons offset from the
     centerline by half the gauge, using the very `miter_offsets` that build a ribbon's
     edge, so the rails hold the gauge through a bend instead of drifting outward at the
@@ -367,14 +377,27 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   width (targeting ~1.8 screen px, so the line neither fattens close up nor vanishes far
   out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~10 px);
   the farthest bucket drops ties entirely, as 2GIS does at city scale. `TramZoomBucket`
-  (resource, **not** persisted — zoom comes back from the camera's start view on every
-  world entry: `START_ZOOM`, or the saved zoom under `position: save`) holds
-  the current bucket index; `update_tram_zoom_bucket` recomputes it each Update frame
-  from `PanCamera::zoom_factor` via `set_if_neq`, so `rebuild_tram` fires only on an
-  actual threshold crossing, never per frame. The tram centerline is smoothed with a
+  is `ZoomBucket<TramLods>` (see **Zoom buckets** below), so `rebuild_tram` fires only
+  on an actual threshold crossing, never per frame. The tram centerline is smoothed with a
   fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
   path itself is identical across buckets and LOD switches don't wiggle the track.
   `RailLine::width` from parse is ignored for trams.
+- **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind both zoom LODs. Each
+  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`) and names it with a marker type
+  implementing `ZoomLods` (`RailLods`, `TramLods`, empty enums handing over the
+  `max_zoom`s). `ZoomBucket<T>` is the resource with the current index for that table;
+  `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
+  a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:
+  `update_zoom_bucket::<T>` each Update via `set_if_neq`, so the `retuned`-gated
+  `rebuild_*` runs only on a threshold crossing; and `seed_zoom_bucket::<T>` on world
+  entry — in the `WorldInitSet::Spawn` chain right before the layer's first `rebuild_*`
+  and after `camera::place_camera_on_world_ready` (hence that system is `pub(crate)`),
+  written without change detection so the build that follows stays the only one. The
+  seed exists because the camera opens on the saved zoom (`position: save` is the
+  default) or, on a city switch, on `START_ZOOM`, and neither matches the index the
+  resource happened to hold; the first build then went by the wrong bucket and the
+  first Update redid it — for rails up to 23 ms / 673 k vertices. The bucket is not
+  persisted (the camera dictates it), and `Default` is the farthest, cheapest bucket.
 - **BuildingHeightMode** (resource, BRP-writable, persisted) — how a building's OSM
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The section lives in
