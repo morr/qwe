@@ -322,12 +322,15 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
 }
 
 #[test]
-fn a_house_without_height_is_two_storeys_not_five() {
+fn a_house_without_height_stays_low() {
+    // квадрат 10 × 10 — мелкое пятно: частный дом это один-два этажа, дом без
+    // назначения на таком пятне тоже низкий, но выше. Разбор вывода — в
+    // тестах `heights`, здесь достаточно, что дефолт больше не один на всех
     let mut house = building(square(), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     let other = building(square(), None, AreaKind::Building);
-    assert!(height_or_default(&house) < height_or_default(&other));
-    assert_eq!(height_or_default(&other), DEFAULT_BUILDING_HEIGHT);
+    assert!(height_or_default(&house) <= 8.0);
+    assert!(height_or_default(&other) <= 12.0);
 }
 
 #[test]

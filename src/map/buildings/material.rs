@@ -365,7 +365,7 @@ fn footprint_area(building: &PolyArea) -> f32 {
 /// Посев дома из его первой вершины — три перемешивающих раунда, чтобы
 /// соседние по координате дома не попадали в один слот таблицы. Сантиметры,
 /// а не метры: два дома на одной улице отличаются десятками сантиметров.
-fn building_seed(building: &PolyArea) -> u32 {
+pub(super) fn building_seed(building: &PolyArea) -> u32 {
     let point = building.outer.first().copied().unwrap_or(Vec2::ZERO);
     let x = (point.x * 100.0) as i32 as u32;
     let y = (point.y * 100.0) as i32 as u32;
