@@ -200,8 +200,11 @@ pub fn spawn_map(
         &mut meshes,
         &mut materials,
         &roof_material,
-        *height_mode,
-        *building_bucket,
+        buildings::BuildingPlan {
+            mode: *height_mode,
+            bucket: *building_bucket,
+            shadows: true,
+        },
         &map.buildings,
         &map.roads,
     );

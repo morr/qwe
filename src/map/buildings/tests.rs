@@ -377,21 +377,37 @@ fn every_mode_builds_geometry_for_mixed_input() {
     assert_eq!(tinted.skipped_polygons(), 0);
 }
 
-/// Сумма площадей треугольников меша — двойное наложение внутри тени
-/// давало бы сумму больше площади самой фигуры.
-fn mesh_area(mesh: &Mesh) -> f32 {
+#[test]
+fn the_shadow_length_follows_the_sun_elevation() {
+    // 1 / tan 59° — то самое «0.6 метра тени на метр высоты», которое раньше
+    // стояло константой без вывода
+    let scale = crate::map::shadow_length_scale();
+    assert!((scale - 0.6).abs() < 0.01, "{scale}");
+}
+
+/// Сумма площадей **непрозрачных** треугольников меша — тела тени, без
+/// мягкого края: у каймы внутренние вершины сходят в нулевую альфу, и
+/// треугольник каймы всегда несёт хотя бы одну такую. Двойное наложение
+/// внутри тела дало бы сумму больше площади самой фигуры.
+fn shadow_area(mesh: &Mesh) -> f32 {
     let positions = mesh
         .attribute(Mesh::ATTRIBUTE_POSITION)
         .unwrap()
         .as_float3()
         .unwrap()
         .to_vec();
+    let bevy::mesh::VertexAttributeValues::Float32x4(colors) =
+        mesh.attribute(Mesh::ATTRIBUTE_COLOR).unwrap()
+    else {
+        panic!("цвет вершины — Float32x4");
+    };
     let indices: Vec<usize> = match mesh.indices().unwrap() {
         bevy::mesh::Indices::U32(list) => list.iter().map(|&i| i as usize).collect(),
         bevy::mesh::Indices::U16(list) => list.iter().map(|&i| i as usize).collect(),
     };
     indices
         .chunks_exact(3)
+        .filter(|triangle| triangle.iter().all(|&i| colors[i][3] > 0.0))
         .map(|triangle| {
             let point = |i: usize| Vec2::new(positions[triangle[i]][0], positions[triangle[i]][1]);
             (point(1) - point(0)).perp_dot(point(2) - point(0)).abs() / 2.0
@@ -399,12 +415,28 @@ fn mesh_area(mesh: &Mesh) -> f32 {
         .sum()
 }
 
+/// Свип цепочки силуэта — то, из чего union собирает тело тени.
+fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
+    let offset = SHADOW_DIR * height * crate::map::shadow_length_scale();
+    let mut sweep = chain.to_vec();
+    sweep.extend(chain.iter().rev().map(|point| *point + offset));
+    sweep
+}
+
 #[test]
 fn square_shadow_is_one_swept_polygon() {
+    // одна цепочка низ+право даёт свип из шести вершин — по вершине на угол
+    // цепочки и столько же на сдвинутую копию, без квадов на ребро
+    let chains = silhouette_chains(&square(), SHADOW_DIR);
+    assert_eq!(chains.len(), 1);
+    assert_eq!(chains[0].len() * 2, 6);
+
+    // и в самом слое тело тени — ровно этот свип: у одного дома объединять
+    // нечего, а мягкий край альфу тела не трогает
     let list = [building(square(), Some(15.0), AreaKind::Building)];
     let mesh = shadow_builder(&list, &[], false).build();
-    // одна цепочка низ+право: свип из 6 вершин, без квадов на ребро
-    assert_eq!(mesh.count_vertices(), 6);
+    let expected = signed_ring_area(&sweep_of(&chains[0], 15.0)).abs();
+    assert!((shadow_area(&mesh) - expected).abs() < 0.5, "{expected}");
 }
 
 #[test]
@@ -426,11 +458,17 @@ fn staircase_shadow_has_no_double_darkening() {
     assert_eq!(chains.len(), 1, "лестница — одна непрерывная цепочка");
     assert_eq!(chains[0].len(), 7);
 
+    // свип цепочки самопересечься не может, поэтому его площадь — ровно
+    // «длина сдвига × размах контура поперёк тени»
+    let offset_length = 20.0 * crate::map::shadow_length_scale();
+    let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
+    let sweep = sweep_of(&chains[0], 20.0);
+    assert!((signed_ring_area(&sweep).abs() - offset_length * perp_span).abs() < 0.5);
+
+    // и ровно столько же в слое: union не съел свип и не удвоил его
     let list = [building(staircase, Some(20.0), AreaKind::Building)];
     let mesh = shadow_builder(&list, &[], false).build();
-    let offset_length = 20.0 * SHADOW_LENGTH_SCALE;
-    let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
-    assert!((mesh_area(&mesh) - offset_length * perp_span).abs() < 0.5);
+    assert!((shadow_area(&mesh) - offset_length * perp_span).abs() < 0.5);
 }
 
 #[test]
@@ -445,9 +483,9 @@ fn neighbour_shadows_union_without_double_darkening() {
         AreaKind::Building,
     );
     let alone =
-        |b: &PolyArea| mesh_area(&shadow_builder(std::slice::from_ref(b), &[], false).build());
+        |b: &PolyArea| shadow_area(&shadow_builder(std::slice::from_ref(b), &[], false).build());
     let separate = alone(&left) + alone(&right);
-    let together = mesh_area(&shadow_builder(&[left, right], &[], false).build());
+    let together = shadow_area(&shadow_builder(&[left, right], &[], false).build());
     assert!(
         together < separate - 1.0,
         "union must remove the overlap: {together} vs {separate}"

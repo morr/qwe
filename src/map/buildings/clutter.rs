@@ -21,13 +21,13 @@
 use bevy::color::Mix;
 use bevy::prelude::*;
 
-use super::layers::{SHADOW_LENGTH_SCALE, silhouette_edges, wall_colors};
+use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
 use super::ridge_lift;
-use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::{SHADOW_DIR, shadow_length_scale};
 
 /// Сколько мест перебрать, прежде чем отказаться от коробки. Одна попытка
 /// на узком корпусе почти всегда промахивалась: машинное помещение 5 × 3.5 м
@@ -248,7 +248,7 @@ pub(super) fn push_items(
         // той же причине: у выпуклого прямоугольника свип двух теневых рёбер
         // и есть недостающая часть объединения, а выпуклую оболочку строить
         // не приходится
-        let offset = SHADOW_DIR * item.height * SHADOW_LENGTH_SCALE;
+        let offset = SHADOW_DIR * item.height * shadow_length_scale();
         for (a, b) in silhouette_edges(&item.base, SHADOW_DIR) {
             builder.push_quad([a, b, b + offset, a + offset], shadow);
         }

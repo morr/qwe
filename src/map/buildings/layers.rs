@@ -18,7 +18,7 @@ use super::{
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
-use crate::map::{SHADOW_COLOR, SHADOW_DIR};
+use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
 /// значит закрасить полквартала: карта сверху, а не изометрия. При 0.2
@@ -28,11 +28,10 @@ const FACADE_SCALE: f32 = 0.2;
 /// соседний квартал.
 const FACADE_HEIGHT_RANGE: RangeInclusive<f32> = 1.5..=12.0;
 
-/// Метров тени на метр высоты. Пятиэтажка (15 м) отбрасывает 9 м — тень
-/// перечёркивает типичную улицу (8–16 м), но не глотает соседний квартал.
-pub(super) const SHADOW_LENGTH_SCALE: f32 = 0.6;
 /// Границы длины тени, м: у сарая тень обязана остаться заметной, у башни —
-/// не накрыть полкарты.
+/// не накрыть полкарты. Сама длина считается из высоты солнца
+/// (`map::shadow_length_scale`): пятиэтажка (15 м) отбрасывает 9 м — тень
+/// перечёркивает типичную улицу (8–16 м), но не глотает соседний квартал.
 const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
 
 /// Высота, на которой рампа тона крыш выходит в максимум: Тула почти вся
@@ -54,6 +53,12 @@ const ROOF_TINT_MAX_HEIGHT: f32 = 60.0;
 const ROOF_TALL_COLOR: Color = Color::srgb(0.20, 0.20, 0.21);
 /// Насколько рампа может увести крышу к `ROOF_TALL_COLOR` в пределе.
 const ROOF_TINT_MAX_MIX: f32 = 0.3;
+
+/// Ширина мягкого края тени, м. Не физическая полутень (угловой размер
+/// солнца дал бы сантиметры), а то, чем край тени размыт на снимке:
+/// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
+/// зумах, где тени вообще видны.
+const PENUMBRA_WIDTH: f32 = 1.0;
 
 /// Ширина парапета, м: у плоской кровли по контуру идёт бортик, и с воздуха
 /// он читается светлой каймой на солнечных гранях и тёмной на теневых.
@@ -231,8 +236,9 @@ pub(super) fn facade_and_roof_builders(
 /// непересекающихся фигур с дырками: тени смежных корпусов и соседних зданий
 /// перекрываются на земле, а любое наложение внутри одного полупрозрачного
 /// слоя читается как пятно двойной темноты. После union альфа везде ровно
-/// одна. Часть тени под зданиями закрывают их непрозрачные слои. Дыры (дворы)
-/// пропускаются: их тень падает внутрь футпринта.
+/// одна, и по контурам каждой фигуры идёт мягкий край (`PENUMBRA_WIDTH`).
+/// Часть тени под зданиями закрывают их непрозрачные слои. Дыры футпринта
+/// (дворы) в объединение не идут: их тень падает внутрь того же футпринта.
 /// `extruded` — арки в 2.5D прорезаны по-настоящему, и сквозь дыру видна
 /// голая дорога: без заплатки тени проём светится, хотя физически он затенён
 /// перемычкой. Заплатка кладётся сюда, в теневой слой: он ниже зданий и
@@ -247,23 +253,26 @@ pub(super) fn shadow_builder(
 
     let mut sweeps: Vec<Vec<[f32; 2]>> = Vec::new();
     for building in buildings {
-        let length = (height_or_default(building) * SHADOW_LENGTH_SCALE)
+        let length = (height_or_default(building) * shadow_length_scale())
             .clamp(*SHADOW_LENGTH_RANGE.start(), *SHADOW_LENGTH_RANGE.end());
         let offset = SHADOW_DIR * length;
         for chain in silhouette_chains(&building.outer, SHADOW_DIR) {
             let mut sweep: Vec<Vec2> = chain.clone();
             sweep.extend(chain.iter().rev().map(|&point| point + offset));
-            // NonZero гасит контуры противоположного обхода — свипы обязаны
-            // быть одинаково закручены, а обход source-колец OSM произволен
-            if signed_ring_area(&sweep) < 0.0 {
-                sweep.reverse();
-            }
-            sweeps.push(sweep.into_iter().map(|point| [point.x, point.y]).collect());
+            push_contour(&mut sweeps, sweep);
         }
     }
 
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
+    // край тени на снимке мягкий, и не из-за углового размера солнца (тот дал
+    // бы сантиметры), а из-за разрешения кадра и рассеянного света неба.
+    // Поэтому полутень задаётся видом, а не физикой: метр — это 2–10 экранных
+    // пикселей на тех зумах, где тени вообще видны
+    let fade = LinearRgba {
+        alpha: 0.0,
+        ..color
+    };
     for shape in sweeps.simplify_shape(FillRule::NonZero) {
         let mut rings = shape.into_iter().map(|contour| {
             contour
@@ -276,6 +285,16 @@ pub(super) fn shadow_builder(
         };
         let holes: Vec<Vec<Vec2>> = rings.collect();
         builder.push_polygon(&outer, &holes, color);
+        // кайма от каждого контура объединённой фигуры — наружу от внешнего и
+        // внутрь просвета от каждой дырки: `push_inset_band` выбирает сторону
+        // по площади самого кольца, так что просвету нужно `outside: false`,
+        // иначе кайма ляжет на уже залитое тело и обведёт дырку двойной
+        // темнотой вместо растушёвки. Каймы соседних фигур могут наложиться,
+        // но обе сходят в ноль, и удвоение выходит слабее самой тени
+        builder.push_inset_band(&outer, PENUMBRA_WIDTH, true, color, fade);
+        for hole in &holes {
+            builder.push_inset_band(hole, PENUMBRA_WIDTH, false, color, fade);
+        }
     }
 
     if extruded {
@@ -304,6 +323,19 @@ pub(super) fn shadow_builder(
         }
     }
     builder
+}
+
+/// Контур в список для объединения, обходом против часовой стрелки — тем, что
+/// NonZero считает заливкой. Обход свипа зависит от того, с какой стороны дома
+/// идёт цепочка силуэта, поэтому нормализуется здесь и только здесь.
+fn push_contour(contours: &mut Vec<Vec<[f32; 2]>>, mut ring: Vec<Vec2>) {
+    if ring.len() < 3 {
+        return;
+    }
+    if signed_ring_area(&ring) < 0.0 {
+        ring.reverse();
+    }
+    contours.push(ring.into_iter().map(|point| [point.x, point.y]).collect());
 }
 
 /// Непрерывные (циклически) цепочки рёбер-силуэта кольца — рёбер, чья

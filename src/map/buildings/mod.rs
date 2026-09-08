@@ -17,7 +17,7 @@ pub mod material;
 mod roofs;
 
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bevy::color::Mix;
 use bevy::prelude::*;
@@ -140,6 +140,13 @@ impl BuildingHeightMode {
 #[derive(Component)]
 pub struct BuildingLayerTag;
 
+/// Теневой слой — своя метка, потому что пересобирается он реже прочих: тени
+/// зависят от режима высот и от `MapData`, но **не** от ступени зума, а их
+/// объединение стоит 90 мс из 115 мс всей сборки. Переход через порог
+/// оборудования на кровле их не трогает.
+#[derive(Component)]
+pub struct BuildingShadowTag;
+
 /// Ступени детализации кровли — единственное, чем зум правит слой зданий:
 /// вблизи на крышах стоит оборудование ([`clutter`]), дальше его нет. Коробка
 /// в метр становится субпиксельной и мерцает при панораме, а нарисована она в
@@ -156,6 +163,17 @@ impl ZoomLods for BuildingLods {
 /// Текущая ступень: `0` — с оборудованием, `1` — без.
 pub type BuildingZoomBucket = ZoomBucket<BuildingLods>;
 
+/// Что строить: режим высот, ступень зума и надо ли трогать теневой слой.
+/// Одним значением, а не тремя параметрами, — так `spawn_buildings`
+/// укладывается в семь аргументов, а вызывающий видит все три решения рядом.
+#[derive(Clone, Copy)]
+pub struct BuildingPlan {
+    pub mode: BuildingHeightMode,
+    pub bucket: BuildingZoomBucket,
+    /// `false` — теневой слой оставить как есть (см. [`BuildingShadowTag`]).
+    pub shadows: bool,
+}
+
 /// Что билдеры слоёв рисуют сверх геометрии. Оба флага — не про режим высот,
 /// а про подробность, поэтому едут одним значением, а не парой булей в
 /// каждой сигнатуре.
@@ -169,19 +187,20 @@ pub(super) struct RoofDetail {
 
 /// Спавн зданиевых слоёв в выбранном режиме. Вызывается из `spawn_map` при
 /// входе в мир и из `rebuild_buildings` при переключении режима.
-// материалы, режим, ступень зума и два среза `MapData` — восемь параметров,
-// и дробить их на структуру ради счётчика clippy незачем
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_buildings(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
     roof: &RoofMaterialHandle,
-    mode: BuildingHeightMode,
-    bucket: BuildingZoomBucket,
+    plan: BuildingPlan,
     buildings: &[PolyArea],
     passages: &[RoadLine],
 ) {
+    let BuildingPlan {
+        mode,
+        bucket,
+        shadows: with_shadows,
+    } = plan;
     // фасады и тени — плоский белый `ColorMaterial` под вершинные цвета;
     // всё, где есть крыша, идёт через `RoofMaterial` (у стен в том же меше
     // код материала нулевой, и фактуры они не получают)
@@ -250,21 +269,26 @@ pub fn spawn_buildings(
         }
     }
 
-    if matches!(
-        mode,
-        BuildingHeightMode::Shadows
-            | BuildingHeightMode::ShadowsTint
-            | BuildingHeightMode::ExtrusionShadowsTint
-    ) {
+    let mut shadow_time = Duration::ZERO;
+    if with_shadows
+        && matches!(
+            mode,
+            BuildingHeightMode::Shadows
+                | BuildingHeightMode::ShadowsTint
+                | BuildingHeightMode::ExtrusionShadowsTint
+        )
+    {
+        let shadow_started = Instant::now();
         let shadows = shadow_builder(
             buildings,
             passages,
             mode == BuildingHeightMode::ExtrusionShadowsTint,
         );
+        shadow_time = shadow_started.elapsed();
         vertices += shadows.vertex_count();
         if !shadows.is_empty() {
             commands.spawn((
-                BuildingLayerTag,
+                BuildingShadowTag,
                 Mesh2d(meshes.add(shadows.build())),
                 MeshMaterial2d(materials.add(ColorMaterial {
                     alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
@@ -280,7 +304,7 @@ pub fn spawn_buildings(
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавил парапет
     info!(
-        "building meshing: {vertices} verts in {:?} ({} buildings, {}, clutter {})",
+        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {})",
         started.elapsed(),
         buildings.len(),
         mode.label(),
@@ -302,18 +326,30 @@ pub fn rebuild_buildings(
     mode: Res<BuildingHeightMode>,
     bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
-    existing: Query<Entity, With<BuildingLayerTag>>,
+    layers: Query<Entity, With<BuildingLayerTag>>,
+    shadows: Query<Entity, With<BuildingShadowTag>>,
 ) {
-    for entity in &existing {
+    // ступень зума решает только судьбу оборудования на кровле; тени от неё
+    // не зависят, а стоят дороже всего остального вместе взятого
+    let with_shadows = mode.is_changed();
+    for entity in &layers {
         commands.entity(entity).despawn();
+    }
+    if with_shadows {
+        for entity in &shadows {
+            commands.entity(entity).despawn();
+        }
     }
     spawn_buildings(
         &mut commands,
         &mut meshes,
         &mut materials,
         &roof,
-        *mode,
-        *bucket,
+        BuildingPlan {
+            mode: *mode,
+            bucket: *bucket,
+            shadows: with_shadows,
+        },
         &map.buildings,
         &map.roads,
     );
