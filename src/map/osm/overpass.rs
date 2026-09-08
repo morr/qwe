@@ -65,13 +65,15 @@ impl GeoBounds {
 /// v6 — ноды `natural=tree`. v7 — линейные `waterway`. v8 — кварталы
 /// `landuse=residential|industrial|garages`. v9 — стоянки `amenity=parking`,
 /// v10 — спортивные и детские площадки `leisure=*`, v11 — ограды участков
-/// `barrier=fence|wall|retaining_wall|hedge`.
-const QUERY_VERSION: u32 = 11;
+/// `barrier=fence|wall|retaining_wall|hedge`, v12 — промзона: цилиндры
+/// `man_made=storage_tank|silo|chimney|water_tower|gasometer` и надземные
+/// трубопроводы `man_made=pipeline`.
+const QUERY_VERSION: u32 = 12;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
 /// (`amenity=parking`), спортивные и детские площадки (`leisure=*`), ограды
-/// участков (`barrier=*`), аллеи,
+/// участков (`barrier=*`), промышленные сооружения (`man_made=*`), аллеи,
 /// одиночные деревья, стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
@@ -113,6 +115,8 @@ pub fn overpass_query(city: City) -> String {
   relation["leisure"~"^(pitch|track|playground|sports_centre|stadium)$"]({bbox});
   way["barrier"="city_wall"]({bbox});
   way["barrier"~"^(fence|wall|retaining_wall|hedge)$"]({bbox});
+  way["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer|pipeline)$"]({bbox});
+  node["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer)$"]({bbox});
   node["entrance"]({bbox});
 );
 out geom;

@@ -7,6 +7,7 @@ pub mod buildings;
 pub mod cars;
 mod fences;
 pub mod footprint;
+mod industry;
 mod meshing;
 pub mod osm;
 mod parking;
@@ -156,6 +157,7 @@ impl Plugin for MapPlugin {
                     wagons::rebuild_wagons,
                     zoom::seed_zoom_bucket::<fences::FenceLods>,
                     fences::rebuild_fences,
+                    industry::rebuild_industry,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -234,6 +236,11 @@ impl Plugin for MapPlugin {
                         fences::rebuild_fences.run_if(
                             retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunStyle>),
                         ),
+                        // цилиндр промзоны ступени зума не имеет — его видно
+                        // ровно настолько, насколько видна тень, — зато
+                        // кренится он вместе с домами
+                        industry::rebuild_industry
+                            .run_if(retuned::<SunStyle>.or_else(retuned::<BuildingHeightMode>)),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

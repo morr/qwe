@@ -4,7 +4,7 @@ use super::*;
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
 use crate::map::osm::model::{
-    BuildingUse, FenceKind, PitchKind, RailKind, WaterKind, distance_to_segment,
+    BuildingUse, FenceKind, PitchKind, RailKind, StructureKind, WaterKind, distance_to_segment,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -335,6 +335,97 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
     let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
     assert_eq!(kinds, [FenceKind::Fence, FenceKind::Wall, FenceKind::Hedge]);
     assert_eq!(map.walls.len(), 1);
+}
+
+/// Цилиндры промзоны приезжают и нодой, и way. Way с `building=yes` при этом
+/// становится **только** цилиндром: труба, размеченная как здание, — тот же
+/// самый объект, и коробка под кругом была бы им обоим сразу.
+#[test]
+fn a_man_made_cylinder_arrives_instead_of_a_box() {
+    let map = Overpass::new(CITY)
+        // нода: размера в данных нет, берётся типовой для рода
+        .node(&[("man_made", "chimney")], CENTER)
+        // нода с тегом высоты — тег важнее типового
+        .node(&[("man_made", "water_tower"), ("height", "42")], CENTER)
+        // way, размеченный ещё и зданием
+        .area(
+            &[("man_made", "storage_tank"), ("building", "yes")],
+            square(CENTER, 10.0),
+        )
+        // `man_made=*` носит и всякое, что кругом на снимке не читается
+        .node(&[("man_made", "surveillance")], CENTER)
+        .area(&[("man_made", "works")], square(CENTER, HALF))
+        .parse();
+
+    let kinds: Vec<StructureKind> = map
+        .structures
+        .iter()
+        .map(|structure| structure.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            StructureKind::Chimney,
+            StructureKind::WaterTower,
+            StructureKind::Tank
+        ]
+    );
+    assert!(
+        map.buildings.is_empty(),
+        "цилиндр не должен становиться ещё и коробкой"
+    );
+
+    let chimney = map.structures[0];
+    assert_eq!(chimney.height, 60.0, "типовая высота заводской трубы");
+    assert_eq!(map.structures[1].height, 42.0, "тег важнее типовой высоты");
+    // радиус way считается по контуру: у квадрата со стороной 20 м среднее
+    // расстояние до вершин — половина диагонали
+    let tank = map.structures[2];
+    assert!(
+        (tank.radius - 10.0 * 2.0_f32.sqrt()).abs() < 0.5,
+        "{tank:?}"
+    );
+}
+
+/// До карты доезжает только **надземный** трубопровод: правило обратное тому,
+/// что у путей и водотоков, потому что труба без `location` в OSM закопана, а
+/// серебристая линия через весь город по закопанной трубе — враньё крупнее,
+/// чем потерянная эстакада без тега.
+#[test]
+fn only_an_overground_pipeline_reaches_the_map() {
+    let (sw, se, ne, nw) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[
+                ("man_made", "pipeline"),
+                ("location", "overground"),
+                ("count", "4"),
+            ],
+            vec![sw, ne],
+        )
+        // эстакада над улицей: way несёт оба тега, и оба обязаны доехать
+        .way(
+            &[
+                ("man_made", "pipeline"),
+                ("location", "overhead"),
+                ("highway", "residential"),
+            ],
+            vec![nw, ne],
+        )
+        // закопанные — мимо: и явно, и по умолчанию
+        .way(&[("man_made", "pipeline")], vec![se, nw])
+        .way(
+            &[("man_made", "pipeline"), ("location", "underground")],
+            vec![sw, se],
+        )
+        .parse();
+
+    assert_eq!(map.pipes.len(), 2);
+    assert!(
+        map.pipes[0].width > map.pipes[1].width,
+        "четвёрка труб шире пары"
+    );
+    assert_eq!(map.roads.len(), 1, "эстакада не должна съедать улицу");
 }
 
 /// Площадки разбираются по `leisure`, а поле — по `sport`/`surface`. Парк со

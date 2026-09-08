@@ -157,6 +157,30 @@ in `CONTEXT.md` and the detail here in the same change.
   map. **Rails never touch the navmesh** — see the navigation-deep skill.
 - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
   impassable.
+- **Structure** — an industrial cylinder: `man_made=storage_tank|silo|chimney|
+  water_tower|gasometer` as centre + radius + height + kind (`StructureKind`). A
+  **whitelist**, for `fence_kind`'s reason and more so: `man_made` is OSM's most mixed
+  key (`surveillance`, `street_cabinet`, `works`, even `bridge` as an outline), and only
+  those five read as a round spot from the air. Comes from a node **and** from a way:
+  a node has no outline, so its radius is the `diameter`/`width` tag or the kind's
+  default (`structure_size` — 2.5 m and 60 m for a chimney, 8 × 12 for a tank, 20 × 30
+  for a gasometer); a way's radius is the **mean distance from the vertex mean**, which
+  is exact on the near-circular ring OSM actually draws and overestimates a rectangular
+  silo block by √2. The way branch **returns** — the opposite of the fence branch —
+  because a chimney tagged `building=yes` is *the same object*, and falling through
+  would put a box under the circle; it also keeps doors and the navmesh off it, which a
+  chimney has no use for. Height comes from `height` only (`structure_height`): a
+  chimney has no storeys, so `building:levels` is not consulted. Tula: 8 chimneys (4 of
+  them nodes) and 2 water towers, one carrying a size tag; Berlin 2846 cylinders.
+- **PipeLine** — an overhead heating main: `man_made=pipeline` centerline + bundle width
+  from `count` (`pipe_width`, 0.7 m per pipe clamped 0.9–4 m; Tula runs pairs on twelve
+  ways and fours on six). **The above-ground test is inverted** relative to rails and
+  waterways: there underground has to be proven (`is_underground`), here *above* ground
+  does — `location=overground|overhead|bridge` and nothing else. An untagged pipeline in
+  OSM is buried, and drawing a silver line across the city over a buried pipe is a
+  bigger lie than losing a trestle whose tag somebody forgot. The branch **falls
+  through** like the fence one: a pipeline crossing a street on a trestle is one way
+  carrying both tags. Tula: 22 of 24 ways kept, 1.2 km.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
   `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
@@ -740,6 +764,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     which is why there is a test now.
   - Tula: 356 fences, 71 walls, 1 hedge (the audit's `barrier=hedge` row was right that
     live hedges are mapped as `barrier`, not `natural`).
+- **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **12**.
+  Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on the sun
+  and on `BuildingHeightMode` and on nothing else — there is no zoom bucket, because a
+  cylinder is visible exactly as far as its shadow is.
+  - **A cylinder is three layers, like a house**: `industry_shadows`
+    (`Z_INDUSTRY_SHADOW` 4.55, beside the building shadow), `industry_walls` (5.06) and
+    `industry_tops` (5.07) — **above** the houses, because a works chimney is taller than
+    anything around it and on a photo it covers the neighbouring shed, not the other way
+    round.
+  - **The shadow is a sweep, not a shifted disc** (`sweep` — the convex hull of the disc
+    and its copy, written out by hand as two half-arcs; the buildings get theirs from
+    `i_overlay`). A cylinder is solid from the ground to the top, so every height in
+    between casts too; a shifted disc would leave the strip between base and shadow
+    empty, which on a 60 m chimney is 36 m of missing shadow.
+  - **The wall is one quad per facet, each shaded on its own** (`shade_by_light`, mixes
+    0.26/0.26 — stronger than a flat house wall's 0.18/0.22, since the gradient has to
+    span the whole visible half). That gradient *is* what makes the circle read as a
+    cylinder; a single flat tone reads as a faceted prism. Only the half facing the
+    `Lean` is emitted, and with no lean at all (the flat height modes) nothing is — a
+    cylinder standing straight up shows no wall at all.
+  - **The rim** (`RIM_SHARE` 10 % of the radius, 0.25–1 m, 28 % toward black) is the
+    tank's coaming or the chimney's wall thickness. Without it the top reads as a sticker.
+  - **The pipeline is a fence one storey up**: line plus shadow, `PIPE_HEIGHT` 3 m,
+    `Z_PIPE_SHADOW`/`Z_PIPE` 2.76/2.77 — over the fences (2.75), because a heating main
+    steps over a fence, and under everything taller than its trestles. Shadows first,
+    then all the lines, for the fences' reason.
+  - Both are drawn as **one merged layer each and no painter's sort between structures**:
+    a taller cylinder's wall can therefore be covered by a shorter neighbour's top. With
+    ten of them per city they never meet; a city where they do wants the buildings' sort.
 - **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
   place that stayed empty: a station throat. On a photo half of it is standing stock, and
   without that the yard reads as a track diagram.

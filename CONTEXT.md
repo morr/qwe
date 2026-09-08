@@ -61,10 +61,13 @@ in `main.rs`.
   markings → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge shadows → bridge casings →
   bridges → rail ballast
-  → rail ties → rail steel → tram → wagons → cars → fences → portal stain → corpses →
-  portal → buildings (5) →
-  units → souls (18) → tree shadows → trees (20). Three live in their own modules:
-  `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
+  → rail ties → rail steel → tram → wagons → cars → fences → pipe shadows → pipes →
+  portal stain → corpses →
+  portal → buildings (5) → industry walls → industry tops (5.07) →
+  units → souls (18) → tree shadows → trees (20). Four live in their own modules:
+  `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_INDUSTRY_SHADOW`
+  4.55 (`map/industry.rs`, between them — a cylinder's shadow is a ground shadow like a
+  building's), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
   y ≤ MAP_SIZE.y** — a bigger map once sank northern units under roads.
@@ -431,6 +434,23 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   become both). The drawn width **grows as you zoom out** (`FENCE_LODS`, the tram's trick, aiming at
   ~1.5 screen px) and the layer disappears entirely past 0.9 m/px, where the grid of plots
   turns to dirt. Tula: 356 fences, 71 walls, 1 hedge.
+- **Industry** (`map/industry.rs`) — what gives an industrial belt away from the air is
+  not the sheds (those are the same boxes as everywhere) but **round spots and their
+  shadows**, and the overhead heating main. `MapData::structures` holds the cylinders
+  (`man_made=storage_tank|silo|chimney|water_tower|gasometer`, `Structure`: centre,
+  radius, height, kind) — each drawn as three layers the way a house is: the shadow (the
+  **sweep** of its disc along the light, not a shifted disc — a cylinder is solid from
+  the ground up), the visible wall (the half facing against the same `Lean` the houses
+  use, one quad per facet shaded by `shade_by_light`, which is what makes it read round
+  instead of faceted) and the top with a darker rim. A chimney is a 2.5 m circle nobody
+  would notice and a 36 m shadow everybody does. `MapData::pipes` holds the overhead
+  pipelines (`man_made=pipeline`, `PipeLine`) — a line and its shadow like a fence, but
+  3 m up and drawn above one, since a heating main steps over a fence rather than
+  stopping at it. **Only an explicitly above-ground pipeline is kept** (`location=
+  overground|overhead|bridge`) — the inverse of the rail and waterway rule, because an
+  untagged pipeline in OSM is buried. Neither touches the navmesh, for the fence's
+  reason. Tula: 8 chimneys, 2 water towers, 22 pipelines (1.2 km); Berlin has 2846
+  cylinders.
 - **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
