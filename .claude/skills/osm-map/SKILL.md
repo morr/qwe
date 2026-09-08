@@ -182,8 +182,9 @@ in `CONTEXT.md` and the detail here in the same change.
   (Paris 64%, Berlin 59%, London 50%, Tula 31%, **Tokyo 5%**). `parse_measure` handles
   the tag-value zoo — `12`, `12.5`, `12,5`, `12 m`, `3;4`, `40'6"`. Anything outside
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
-  order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
-  default. Coverage is logged per city on load (`N buildings (M with height)`).
+  order-of-magnitude typos. `None` is normal, not an error — and it is the majority
+  everywhere but New York, so what fills it in matters: see **Inferred storeys** under
+  Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
   Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
   wall colour (`map/buildings/mod.rs::facade_color`) and the **roofing material** the roof
@@ -196,10 +197,9 @@ in `CONTEXT.md` and the detail here in the same change.
   4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
   garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
-  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class
-  also picks the **default height** (`buildings/mod.rs::height_or_default`): a house
-  without a tag is 6 m and a garage 3 m, everything else the 15 m five-storey default —
-  most houses carry no height, and at 15 m the outskirts stood as tall as the centre.
+  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
+  also one of the two inputs of **Inferred storeys** (the other is the footprint's shape),
+  which is what fills in the height OSM does not carry.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS
@@ -690,6 +690,30 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the slopes. In flat modes the ridge lift is zero and the two shades are all that
     remains. Verified on Tula's western private sector: red-brown two-storey houses with a
     visible ridge, the L-shaped ones flat.
+- **Inferred storeys** (`buildings/heights.rs`) — the height of the 69 % of Tula (95 % of
+  Tokyo) that OSM leaves untagged. It used to be three numbers — house 6 m, garage 3 m,
+  everything else 15 m — and the measurement of that is its own argument: the city's
+  height distribution came out **median 15 m, p90 15 m**, i.e. no distribution at all.
+  Every shadow was the same length and every 2.5D lift the same size.
+  - **The footprint decides**, the way it does for an eye reading an aerial photo, and
+    only then the use: a **section** is a long thin box (≥ `SLAB_MIN_LENGTH` 35 m by
+    ≤ `SLAB_MAX_WIDTH` 18 m) at 5 / 9 / 12 storeys with the weights a Russian city has
+    (half of them five); a **tower** is compact and large (≥ `TOWER_FOOTPRINT_MIN` 500 m²,
+    sides within `TOWER_MAX_RATIO` 1.7) and is mostly nine; a **low** building is
+    ≤ `LOW_FOOTPRINT_MAX` 300 m² at 2–4; everything else large is 2–5 — that last branch
+    is the most populated one and being generous with it is what made the first version
+    come out skyscraping (p90 27 m before the tower table was halved).
+  - **Some uses are measured in metres, not storeys**: an industrial hall or a store has
+    one tall span, a church has one storey to the cornice, a garage is one box and gets no
+    spread at all (a row of garage boxes on a photo is all one height).
+  - **The slot inside a group is the building's own seed** — the same
+    `material::building_seed` that picks the roofing material, so heights survive a mode
+    switch, a zoom rebuild and a restart, and two identical footprints in different places
+    still come out different. **A tag always wins**; the inference runs only where
+    `PolyArea::height` is `None`.
+  - **`height_mix`** puts the result in the `building meshing:` log line
+    (`31% tagged, median 8 m, p90 15 m, max 82 m`) — a height distribution is exactly the
+    thing a screenshot cannot show, and that line is how this was tuned.
 - **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wgsl`) — what
   the roof is *covered with*. The goal is the aerial photo: from above, a roof is a
   **material** first (rolled bitumen with its seams and repair patches, gravel ballast,

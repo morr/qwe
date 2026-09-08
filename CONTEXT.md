@@ -161,10 +161,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **trees / tree_appears_at** — what the renderer reads; `compose_trees` merges forest +
     avenues of the selected layout, `composed_for` caches which.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
-  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal — every
-  consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m; a house 6 m, a garage 3 m — by
-  building use). Coverage varies wildly by city (NY 97 % … Tokyo 5 %) and is logged on
-  load.
+  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
+  coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
+- **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
+  tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
+  reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
+  storeys), a compact large one (≥ 500 m², sides within 1.7) a tower (mostly 9), a small
+  one (≤ 300 m²) an old low building (2–4), and industrial / commercial / church footprints
+  are measured in **metres of span** rather than storeys. The slot inside each group comes
+  from the building's own seed — the one that already picks its **Roof material** — so it
+  is stable across rebuilds and modes. The tag always wins. Before this the whole 69 %
+  took one of three numbers (3 / 6 / 15 m) and Tula's height distribution was median 15 m,
+  p90 15 m; it is now median 8 m, p90 15 m, and the mix is printed in the `building
+  meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
   Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
