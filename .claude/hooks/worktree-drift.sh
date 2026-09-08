@@ -17,6 +17,15 @@
 # - Skill: when the skill just loaded differs on the branch, hand over the
 #   branch's SKILL.md, which supersedes the one the tool returned.
 #
+# A third case is not drift the branch made but drift the worktree makes: a
+# skill that is a symlink with a relative target outside the repo
+# (.claude/skills/bevy -> ../../../zxc/...) resolves in the main checkout and
+# dangles in .claude/worktrees/<name>/. diff -rq swallows that (an unreadable
+# path, stderr, exit 2), so it is checked apart and reported in both moments —
+# the Skill tool still loads such a skill from the main checkout, but its
+# files must be read there, and a session launched inside the worktree would
+# not have it at all.
+#
 # Silent when nothing differs, which is nearly every worktree. Fails open on
 # anything unexpected — the hook informs, it never blocks.
 
@@ -60,11 +69,20 @@ claude_diff() {
 
 skill_of() { local p="${1#skills/}"; printf '%s' "${p%%/*}"; }
 
+# A symlink under the worktree's .claude/ whose target does not resolve from
+# there — the skill is unusable through the worktree path.
+dangling() { [ -L "$worktree/.claude/$1" ] && [ ! -e "$worktree/.claude/$1" ]; }
+
 if [ "$tool" = "Skill" ]; then
   skill=$(printf '%s' "$input" | jq -r '.tool_input.skill // ""')
   skill="${skill##*:}"
   [ -n "$skill" ] || exit 0
   [ -d "$root/.claude/skills/$skill" ] || exit 0
+
+  if dangling "skills/$skill"; then
+    branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    emit "The \`$skill\` skill above was loaded from the main checkout ($root/.claude/skills/$skill), and that copy is the one to use: this session works in the worktree of branch \`$branch\`, where the skill is a symlink (\`$(readlink "$worktree/.claude/skills/$skill")\`) that does not resolve. Read its reference files under $root/.claude/skills/$skill, never via $worktree/.claude/skills/$skill. A session launched inside the worktree would not have this skill at all."
+  fi
 
   changes=$(claude_diff "skills/$skill")
   [ -n "$changes" ] || exit 0
@@ -111,10 +129,22 @@ for area in skills hooks agents settings.json; do
 done
 changed_skills=$(printf '%s\n' $changed_skills | sort -u | tr '\n' ' ')
 
-[ -z "$changed_skills$branch_only_skills$main_only_skills$other" ] && exit 0
+dangling_skills=""
+for entry in "$worktree"/.claude/skills/*; do
+  [ -e "$entry" ] || [ -L "$entry" ] || continue
+  name="${entry##*/}"
+  dangling "skills/$name" && dangling_skills="$dangling_skills $name"
+done
+
+[ -z "$changed_skills$branch_only_skills$main_only_skills$other$dangling_skills" ] && exit 0
 
 branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD 2>/dev/null)
 msg="This session loads skills, hooks, agents and settings from the main checkout ($root), not from the worktree it just entered, and branch \`$branch\` differs there:"
+if [ -n "$dangling_skills" ]; then
+  msg="$msg
+
+Symlinked skills whose link does not resolve inside the worktree — the Skill tool still loads them from the main checkout, so load them normally and read their files there, never via the worktree path (a session launched inside the worktree would not have them at all):$(for s in $dangling_skills; do printf '\n- %s — link `%s`, files at %s/.claude/skills/%s' "$s" "$(readlink "$worktree/.claude/skills/$s")" "$root" "$s"; done)"
+fi
 if [ -n "$changed_skills" ]; then
   msg="$msg
 
