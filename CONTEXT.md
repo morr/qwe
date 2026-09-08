@@ -586,8 +586,8 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   slowest demon setting.
 - **CorpseTag** — a killed human: behavior/movement components removed, the body drawn
   as a lying human figure at `Z_CORPSE` (the **corpse look**, see Look: pose, heading and
-  mirror by `Entity` bits — cosmetics, not run state; a **blood pool** child under the
-  chest), not in the human spatial grid. The transition is **`human::to_corpse`**, one
+  mirror by `Entity` bits — cosmetics, not run state; **blood** under the chest, see
+  Look), not in the human spatial grid. The transition is **`human::to_corpse`**, one
   entry point; the kill observer in `demon/` only reports that it happened. It calls
   **`movement::strip_movement`**, so `Movable`'s `#[require]` stays the single record of
   what a movable entity drags along.
@@ -654,8 +654,10 @@ art assets and no artist: every shape here is a formula, every colour a constant
 its draw call.
 
 - **Silhouette** (`silhouette/`) — a pawn's on-map shape: one procedural **atlas**
-  (`Silhouettes` resource, eight `Glyph`s — `Disc`, `Ember`, `Halo`, `Pool` and the four
-  corpse figures of `silhouette/figure.rs`) plus the `Silhouette { body, min_px }`
+  (`Silhouettes` resource, `Glyph::COUNT` cells — `Disc`, `Ember`, `Halo`, ten blood
+  pools and ten spatters of `silhouette/blood.rs`, and the four corpse figures of
+  `silhouette/figure.rs`; the three families carry a variant number, and `Glyph::cell()`
+  is the atlas index) plus the `Silhouette { body, min_px }`
   component — the body in metres and a **screen-size floor** in logical px
   (`HUMAN_MIN_PX` 2, `DEMON_MIN_PX` 5), so at city zoom a human stays a grain and a demon
   a point instead of vanishing. Two invariants: **`Sprite::custom_size` belongs to this
@@ -676,8 +678,21 @@ its draw call.
   in metres of `CORPSE_HEIGHT`, four poses (sprawled, prone, curled, crumpled), sixteen
   headings and a mirror, all from the `Entity` bits (`corpse_pose`). Limbs are drawn
   thicker than anatomy so the pose survives crowd zoom. The tint is the pawn's own
-  attire **drained** (`corpse_tint`), so the dead keep their clothes; under the chest a
-  **blood pool** child (`BloodPool`, the `Pool` glyph, dark and translucent, not HDR).
+  attire **drained** (`corpse_tint`), so the dead keep their clothes; under the chest the
+  **blood** below.
+- **Blood** (`silhouette/blood.rs`, spawned by `human/look.rs`) — what a corpse leaves on
+  the ground, as **two** children, because they are two events: a **pool** (`BloodPool`,
+  lobes welded into one stain plus a rivulet) that **spreads** from `SPREAD_START` to full
+  over `SPREAD_SECS` of sim time (`spread_blood` in `Update`; `BloodSpread` comes off when
+  full, so the pass costs the last seconds' kills, not the map's corpses), and a
+  **spatter** (`BloodSpatter`) — a cast-off fan of drops, small ones far and drawn out
+  into commas, that lands whole and never grows, in a cell 1.8× wider. Ten glyphs of
+  each — **the count costs nothing per frame**: cells are rasterised once at startup and
+  the batch is still one texture — shape seeded from the variant number; which pair a body gets, plus its own spin,
+  size and tint, comes from the `Entity` bits (`blood_look`). **Thickness sets both alpha
+  and shade**: the sprite colour is the *thin film* and the glyph darkens the deep middle,
+  so a small drop is thin because it is small. Every stain side by side on three grounds:
+  `cargo run --example blood_gallery`.
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
