@@ -263,6 +263,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points: points.clone(),
             width,
             kind,
+            service: is_service_track(&element.tags),
         });
     }
 
@@ -454,6 +455,6 @@ mod tests;
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, is_building_passage,
-    is_oneway, is_oneway_backward, is_road_underground, is_roundabout, is_underground, rail_class,
-    road_class, row_spacing, tagged_lanes, water_class, water_width,
+    is_oneway, is_oneway_backward, is_road_underground, is_roundabout, is_service_track,
+    is_underground, rail_class, road_class, row_spacing, tagged_lanes, water_class, water_width,
 };
