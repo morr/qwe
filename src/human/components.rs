@@ -155,9 +155,9 @@ pub struct CorpseTag;
 /// убийства (`demon::behavior::on_demon_caught_human`) перечислял шестнадцать
 /// типов из двух чужих модулей; теперь он говорит, ЧТО случилось, а из чего
 /// состоит человек и что таскает за собой движение, знают те, кому это
-/// принадлежит. Как тело выглядит — поза, погасшая одежда, лужа под грудью —
-/// принадлежит рисунку человека (`look`), и вид трупа принадлежит человеку, а
-/// не тому, кто его убил.
+/// принадлежит. Как тело выглядит — поза, погасшая одежда, лужа и брызги под
+/// грудью — принадлежит рисунку человека (`look`), и вид трупа принадлежит
+/// человеку, а не тому, кто его убил.
 ///
 /// Что остаётся на теле намеренно: [`PawnId`](crate::rng::PawnId) и
 /// `WanderIndex` — паспорт пешки, по нему труп опознаётся в отладке; `Pace` и
@@ -170,6 +170,7 @@ pub fn to_corpse(
 ) {
     crate::movement::strip_movement(commands, entity);
     let pose = super::look::corpse_pose(entity);
+    let blood = super::look::blood_look(entity);
     commands
         .entity(entity)
         .remove::<(
@@ -190,7 +191,11 @@ pub fn to_corpse(
         ))
         // после `remove`: снятая паника вернула бы одежду поверх цвета тела
         .queue(move |mut body: EntityWorldMut| super::look::lay_down(&mut body, pose))
-        .with_child(super::look::blood_pool(silhouettes, pose));
+        // порядок вставки читается как порядок событий: сперва разлетелись
+        // брызги, потом на них натекла лужа. Рисование разводит их своим z
+        // (`look::Z_POOL` выше `look::Z_SPATTER`), а не этим порядком
+        .with_child(super::look::blood_spatter(silhouettes, pose, blood))
+        .with_child(super::look::blood_pool(silhouettes, pose, blood));
 }
 
 /// Троттлинг перепрокладки пути при бегстве.
@@ -335,12 +340,18 @@ mod tests {
         assert_eq!(transform.translation.z, crate::settings::Z_CORPSE);
         assert_eq!(transform.rotation, Quat::from_rotation_z(pose.heading));
 
-        let children = corpse.get::<Children>().expect("лужа — ребёнок тела");
-        assert_eq!(children.len(), 1);
-        assert!(
-            app.world()
-                .entity(children[0])
-                .contains::<super::super::look::BloodPool>()
-        );
+        // кровь — две дочерние сущности тела: брызги легли разом, лужа ещё
+        // натекает (`look::spread_blood`)
+        let children = corpse.get::<Children>().expect("кровь — дети тела");
+        assert_eq!(children.len(), 2);
+        let has = |index: usize| {
+            let child = app.world().entity(children[index]);
+            (
+                child.contains::<super::super::look::BloodSpatter>(),
+                child.contains::<super::super::look::BloodPool>(),
+            )
+        };
+        assert_eq!(has(0), (true, false), "первыми ложатся брызги");
+        assert_eq!(has(1), (false, true), "лужа натекает поверх них");
     }
 }

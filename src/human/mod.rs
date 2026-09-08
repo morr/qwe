@@ -12,7 +12,14 @@ pub use self::components::{
     Attire, CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle,
     HumanWanderTag, Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
 };
-pub use self::look::BloodPool;
+// `blood_pool` / `blood_spatter` / `spread_blood` наружу — их берёт витрина
+// крови (`examples/demos/blood_gallery`), чтобы показывать те же сущности, что
+// игра вешает на труп, а не свою копию; `HumanPlugin` целиком ей не подходит
+// (его `spawn_humans` расселил бы 20 000 пешек)
+pub use self::look::{
+    BloodLook, BloodPool, BloodSpatter, BloodSpread, CORPSE_SPAN, CorpsePose, blood_look,
+    blood_pool, blood_spatter, corpse_pose, spread_blood,
+};
 use self::look::{on_calm_tint, on_panic_tint};
 use self::soul::rise_souls;
 pub use self::soul::{SoulMote, release_soul};
@@ -49,6 +56,8 @@ impl Plugin for HumanPlugin {
             .register_type::<Pace>()
             .register_type::<Attire>()
             .register_type::<BloodPool>()
+            .register_type::<BloodSpatter>()
+            .register_type::<BloodSpread>()
             .register_type::<SoulMote>()
             .register_type::<HumanStyle>()
             .init_resource::<HumanStyle>()
@@ -110,6 +119,17 @@ impl Plugin for HumanPlugin {
                 FixedUpdate,
                 rise_souls
                     .after(SimSet::HumanBehavior)
+                    .in_set(SimPipeline::BothModes),
+            )
+            // кровь растекается в кадре, а не на тике: это косметика, тика ей
+            // не нужно, а роста хочется плавного. `BothModes` — потому что
+            // трупы есть в обоих режимах, и только множество приносит гейт на
+            // мир. Перед системой силуэтов, чтобы переписанный размер доехал
+            // до спрайта в том же кадре, а не в следующем
+            .add_systems(
+                Update,
+                spread_blood
+                    .before(crate::silhouette::size_fresh_silhouettes)
                     .in_set(SimPipeline::BothModes),
             )
             .add_systems(

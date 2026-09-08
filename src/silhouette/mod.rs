@@ -1,7 +1,7 @@
 //! Силуэты пешек: процедурный атлас — диск человека, «уголёк» демона, ореол,
-//! лужа крови и четыре позы лежащего тела ([`figure`]), — посчитанный при
-//! старте по расстоянию до контура, плюс пол размера в пикселях, ниже
-//! которого пешка на экране не ужимается.
+//! лужи крови и веера брызг ([`blood`]) и четыре позы лежащего тела
+//! ([`figure`]), — посчитанный при старте по расстоянию до контура, плюс пол
+//! размера в пикселях, ниже которого пешка на экране не ужимается.
 //!
 //! В `assets/` ни одного файла: художника у проекта нет, а форма, которую
 //! видно с зума толпы, задаётся формулами. Все глифы лежат в **одном**
@@ -23,6 +23,7 @@ use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+pub mod blood;
 pub mod figure;
 
 /// Сторона ячейки атласа на нулевом мипе, px. 128, а не 64: ячейка трупа на
@@ -48,45 +49,84 @@ const EMBER_TIP_SHADE: f32 = 0.40;
 const HALO_RADIUS: f32 = 0.98;
 
 /// Ячейка атласа — форма, которую спрайт берёт по индексу.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Три формы стоят особняком, у остальных есть **номер варианта**: поз у тела
+/// [`figure::POSES`], а луж и вееров брызг по десятку
+/// ([`blood::POOLS`], [`blood::SPATTERS`]) — перечислять каждый вариант
+/// отдельным именем значило бы держать три списка в согласии руками. Номер
+/// ячейки в атласе считает [`Glyph::cell`], и семейства в нём идут подряд.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Glyph {
     /// Диск с тёмной каймой: человек.
-    Disc = 0,
+    Disc,
     /// Семизубый уголёк с ярким ядром: демон.
-    Ember = 1,
+    Ember,
     /// Радиальное затухание: свечение вокруг демона и всякое «сияние».
-    Halo = 2,
-    /// Лужа крови под трупом: неровное пятно с брызгами.
-    Pool = 3,
-    /// Лежащие тела, четыре позы — [`figure`]. Идут подряд: [`Glyph::corpse`].
-    Sprawled = 4,
-    Prone = 5,
-    Curled = 6,
-    Crumpled = 7,
+    Halo,
+    /// Лужа крови под трупом — [`blood`]; номер брать через [`Glyph::pool`].
+    Pool(usize),
+    /// Веер брызг вокруг тела — [`blood`]; номер — через [`Glyph::spatter`].
+    Spatter(usize),
+    /// Лежащее тело — [`figure`]; номер позы — через [`Glyph::corpse`].
+    Corpse(usize),
 }
 
 impl Glyph {
-    const ALL: [Self; 8] = [
-        Self::Disc,
-        Self::Ember,
-        Self::Halo,
-        Self::Pool,
-        Self::Sprawled,
-        Self::Prone,
-        Self::Curled,
-        Self::Crumpled,
-    ];
-    const CORPSES: [Self; figure::POSES] =
-        [Self::Sprawled, Self::Prone, Self::Curled, Self::Crumpled];
+    /// Сколько ячеек в атласе.
+    pub const COUNT: usize = 3 + blood::POOLS + blood::SPATTERS + figure::POSES;
+
+    /// Номер ячейки в атласе. Семейства идут подряд — на этом стоит и
+    /// раскладка `TextureAtlasLayout`, и порядок [`Glyph::all`].
+    pub fn cell(self) -> usize {
+        match self {
+            Self::Disc => 0,
+            Self::Ember => 1,
+            Self::Halo => 2,
+            Self::Pool(variant) => {
+                debug_assert!(variant < blood::POOLS, "лужи №{variant} нет в атласе");
+                3 + variant
+            }
+            Self::Spatter(variant) => {
+                debug_assert!(variant < blood::SPATTERS, "брызг №{variant} нет в атласе");
+                3 + blood::POOLS + variant
+            }
+            Self::Corpse(pose) => {
+                debug_assert!(pose < figure::POSES, "позы №{pose} нет в атласе");
+                3 + blood::POOLS + blood::SPATTERS + pose
+            }
+        }
+    }
+
+    /// Все ячейки атласа по порядку [`Glyph::cell`].
+    pub fn all() -> impl Iterator<Item = Self> {
+        [Self::Disc, Self::Ember, Self::Halo]
+            .into_iter()
+            .chain((0..blood::POOLS).map(Self::Pool))
+            .chain((0..blood::SPATTERS).map(Self::Spatter))
+            .chain((0..figure::POSES).map(Self::Corpse))
+    }
 
     /// Поза лежащего тела номер `pose` (по модулю числа поз).
     pub fn corpse(pose: usize) -> Self {
-        Self::CORPSES[pose % figure::POSES]
+        Self::Corpse(pose % figure::POSES)
+    }
+
+    /// Лужа крови номер `variant` (по модулю числа луж).
+    pub fn pool(variant: usize) -> Self {
+        Self::Pool(variant % blood::POOLS)
+    }
+
+    /// Веер брызг номер `variant` (по модулю числа вееров).
+    pub fn spatter(variant: usize) -> Self {
+        Self::Spatter(variant % blood::SPATTERS)
     }
 
     /// Номер позы, если глиф — лежащее тело.
     fn pose(self) -> Option<usize> {
-        Self::CORPSES.iter().position(|glyph| *glyph == self)
+        match self {
+            Self::Corpse(pose) => Some(pose),
+            _ => None,
+        }
     }
 
     /// Куда под этот глиф ложится лужа, в координатах ячейки (−1…1): грудь
@@ -101,7 +141,7 @@ impl Glyph {
 /// (приложение без рендера) остаётся как был.
 pub fn set_glyph(sprite: &mut Sprite, glyph: Glyph) {
     if let Some(atlas) = sprite.texture_atlas.as_mut() {
-        atlas.index = glyph as usize;
+        atlas.index = glyph.cell();
     }
 }
 
@@ -123,7 +163,7 @@ impl Silhouettes {
                 atlas.image.clone(),
                 TextureAtlas {
                     layout: atlas.layout.clone(),
-                    index: glyph as usize,
+                    index: glyph.cell(),
                 },
             ),
             None => Sprite::default(),
@@ -192,13 +232,13 @@ fn build_atlas(
         atlas.width(),
         atlas.height(),
         atlas.texture_descriptor.mip_level_count,
-        Glyph::ALL.len(),
+        Glyph::COUNT,
         started.elapsed()
     );
     let image = images.add(atlas);
     let layout = layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(CELL_PX),
-        Glyph::ALL.len() as u32,
+        Glyph::COUNT as u32,
         1,
         None,
         None,
@@ -208,7 +248,7 @@ fn build_atlas(
 
 /// Изображение атласа со всей цепочкой мипов.
 fn atlas_image() -> Image {
-    let width = CELL_PX * Glyph::ALL.len() as u32;
+    let width = CELL_PX * Glyph::COUNT as u32;
     let height = CELL_PX;
     let level0 = rasterize_atlas(width, height);
 
@@ -247,16 +287,13 @@ fn atlas_image() -> Image {
 fn rasterize_atlas(width: u32, height: u32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 4) as usize];
     let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
-    for (cell, glyph) in Glyph::ALL.iter().enumerate() {
-        let figure = glyph.pose().map(figure::Figure::pose);
+    for (cell, glyph) in Glyph::all().enumerate() {
+        let shape = Shape::of(glyph);
         for row in 0..CELL_PX {
             for column in 0..CELL_PX {
                 let centre = Vec2::new(column as f32 + 0.5, (CELL_PX - 1 - row) as f32 + 0.5);
                 let p = centre / CELL_PX as f32 * 2.0 - 1.0;
-                let (shade, alpha) = match &figure {
-                    Some(figure) => figure.texel(p, edge()),
-                    None => texel(*glyph, p),
-                };
+                let (shade, alpha) = shape.texel(p, edge());
                 let x = cell as u32 * CELL_PX + column;
                 let i = ((row * width + x) * 4) as usize;
                 data[i..i + 4].copy_from_slice(&[
@@ -276,14 +313,39 @@ fn edge() -> f32 {
     EDGE_PX * 2.0 / CELL_PX as f32
 }
 
-/// Тексель глифа в точке `p` ячейки (−1…1 по обеим осям): яркость (множитель к
-/// цвету спрайта) и альфа. Для тел собирает фигуру на каждый вызов — путь для
-/// тестов; атлас идёт через [`rasterize_atlas`].
-fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
-    let edge = edge();
-    if let Some(pose) = glyph.pose() {
-        return figure::Figure::pose(pose).texel(p, edge);
+/// Форма глифа, собранная **один раз на ячейку**. У лежащего тела это два
+/// десятка капсул скелета, у брызг — три десятка капель: собирать их на
+/// каждый тексель значило бы умножить работу атласа на площадь ячейки.
+enum Shape {
+    /// Считается прямо из точки, собирать нечего: диск, уголёк, ореол.
+    Plain(Glyph),
+    Body(figure::Figure),
+    Blood(blood::Stain),
+}
+
+impl Shape {
+    fn of(glyph: Glyph) -> Self {
+        match glyph {
+            Glyph::Corpse(pose) => Self::Body(figure::Figure::pose(pose)),
+            Glyph::Pool(variant) => Self::Blood(blood::Stain::pool(variant)),
+            Glyph::Spatter(variant) => Self::Blood(blood::Stain::spatter(variant)),
+            plain => Self::Plain(plain),
+        }
     }
+
+    /// Тексель глифа в точке `p` ячейки (−1…1 по обеим осям): яркость
+    /// (множитель к цвету спрайта) и альфа.
+    fn texel(&self, p: Vec2, edge: f32) -> (f32, f32) {
+        match self {
+            Self::Plain(glyph) => plain_texel(*glyph, p, edge),
+            Self::Body(figure) => figure.texel(p, edge),
+            Self::Blood(stain) => stain.texel(p, edge),
+        }
+    }
+}
+
+/// Тексель глифа, у которого нет собираемой формы: одна формула от точки.
+fn plain_texel(glyph: Glyph, p: Vec2, edge: f32) -> (f32, f32) {
     let r = p.length();
     match glyph {
         Glyph::Disc => rimmed(DISC_RADIUS - r, edge, RIM_WIDTH, RIM_SHADE),
@@ -300,9 +362,60 @@ fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
             let falloff = (1.0 - r / HALO_RADIUS).clamp(0.0, 1.0);
             (1.0, falloff * falloff)
         }
-        Glyph::Pool => figure::pool_texel(p, edge),
-        Glyph::Sprawled | Glyph::Prone | Glyph::Curled | Glyph::Crumpled => {
-            unreachable!("тела отданы фигуре выше")
+        Glyph::Pool(_) | Glyph::Spatter(_) | Glyph::Corpse(_) => {
+            unreachable!("тела и кровь собраны в Shape::of")
+        }
+    }
+}
+
+/// Капсула с двумя радиусами — оболочка двух кругов; `a == b` даёт круг.
+/// Общий примитив рисунка: из неё сложены и кости лежащего тела
+/// ([`figure`]), и доли лужи с каплями брызг ([`blood`]).
+struct Capsule {
+    a: Vec2,
+    b: Vec2,
+    ra: f32,
+    rb: f32,
+}
+
+impl Capsule {
+    fn new(a: Vec2, b: Vec2, ra: f32, rb: f32) -> Self {
+        Self { a, b, ra, rb }
+    }
+
+    fn dot(centre: Vec2, radius: f32) -> Self {
+        Self::new(centre, centre, radius, radius)
+    }
+
+    /// Габаритный круг: центр и радиус. Тем, кто складывает пятно из десятков
+    /// капсул, он экономит вызов [`Capsule::distance`] на далёкой точке.
+    fn bound(&self) -> (Vec2, f32) {
+        (
+            (self.a + self.b) / 2.0,
+            (self.b - self.a).length() / 2.0 + self.ra.max(self.rb),
+        )
+    }
+
+    /// Расстояние со знаком до контура (внутри — отрицательное).
+    fn distance(&self, p: Vec2) -> f32 {
+        let ab = self.b - self.a;
+        let h = ab.length();
+        if h < 1e-4 {
+            return (p - self.a).length() - self.ra.max(self.rb);
+        }
+        let along = ab / h;
+        let q = p - self.a;
+        // в системе капсулы: y вдоль оси, x поперёк, по модулю
+        let q = Vec2::new(q.perp_dot(along).abs(), q.dot(along));
+        let slope = (self.ra - self.rb) / h;
+        let cos = (1.0 - slope * slope).max(0.0).sqrt();
+        let k = q.dot(Vec2::new(-slope, cos));
+        if k < 0.0 {
+            q.length() - self.ra
+        } else if k > cos * h {
+            (q - Vec2::new(0.0, h)).length() - self.rb
+        } else {
+            q.dot(Vec2::new(cos, slope)) - self.ra
         }
     }
 }
@@ -405,11 +518,27 @@ mod tests {
         assert_eq!(silhouette.drawn_size(4.5), Vec2::new(18.0, 9.0));
     }
 
+    /// Форма глифа на каждый вызов — путь тестов; атлас собирает её один раз
+    /// на ячейку ([`Shape::of`]).
+    fn texel(glyph: Glyph, p: Vec2) -> (f32, f32) {
+        Shape::of(glyph).texel(p, edge())
+    }
+
     #[test]
-    fn every_glyph_is_transparent_outside_and_opaque_at_its_anchor() {
-        for glyph in Glyph::ALL {
+    fn every_glyph_is_transparent_past_the_cell_corner() {
+        for glyph in Glyph::all() {
             let (_, outside) = texel(glyph, Vec2::new(0.99, 0.99));
             assert_eq!(outside, 0.0, "{glyph:?} leaks past the cell corner");
+        }
+    }
+
+    /// Плотное там, где должно быть плотным: тело — под своей лужей, лужа — в
+    /// середине. Брызг тут нет намеренно: у веера середина пустая (там стоит
+    /// лужа своим спрайтом), и его проверяет [`blood`].
+    #[test]
+    fn bodies_and_pools_are_solid_at_their_anchor() {
+        let bodies = (0..figure::POSES).map(Glyph::corpse);
+        for glyph in bodies.chain((0..blood::POOLS).map(Glyph::pool)) {
             let (_, anchor) = texel(glyph, glyph.pool_anchor());
             assert_eq!(anchor, 1.0, "{glyph:?} is not solid at its anchor");
         }
@@ -419,45 +548,46 @@ mod tests {
         }
     }
 
+    /// Номер варианта берётся по модулю: `Glyph::pool(POOLS)` — снова нулевая.
     #[test]
-    fn corpse_glyphs_are_the_four_poses_in_atlas_order() {
-        assert_eq!(Glyph::corpse(0), Glyph::Sprawled);
-        assert_eq!(Glyph::corpse(3), Glyph::Crumpled);
-        assert_eq!(Glyph::corpse(4), Glyph::Sprawled);
-        for (pose, glyph) in Glyph::CORPSES.into_iter().enumerate() {
-            assert_eq!(glyph as usize, Glyph::Pool as usize + 1 + pose);
-            assert_eq!(glyph.pose(), Some(pose));
-        }
+    fn a_variant_number_wraps_around_its_family() {
+        assert_eq!(Glyph::corpse(figure::POSES), Glyph::Corpse(0));
+        assert_eq!(Glyph::pool(blood::POOLS + 1), Glyph::Pool(1));
+        assert_eq!(Glyph::spatter(blood::SPATTERS), Glyph::Spatter(0));
+        assert_eq!(Glyph::Corpse(2).pose(), Some(2));
         assert_eq!(Glyph::Disc.pose(), None);
         assert_eq!(Glyph::Disc.pool_anchor(), Vec2::ZERO);
     }
 
-    /// Ячейка глифа в атласе — его собственный номер: [`rasterize_atlas`]
-    /// рисует ячейки по порядку [`Glyph::ALL`], а [`Silhouettes::sprite`]
-    /// берёт индекс из дискриминанта. Разъедутся эти два порядка — и каждая
-    /// пешка возьмёт чужую картинку, молча и на всех зумах сразу.
+    /// Ячейка глифа в атласе — его [`Glyph::cell`]: [`rasterize_atlas`] рисует
+    /// ячейки по порядку [`Glyph::all`], а [`Silhouettes::sprite`] берёт
+    /// индекс из `cell`. Разъедутся эти два порядка — и каждая пешка возьмёт
+    /// чужую картинку, молча и на всех зумах сразу.
     #[test]
     fn every_glyph_is_rasterised_into_the_cell_its_index_names() {
-        for (cell, glyph) in Glyph::ALL.into_iter().enumerate() {
-            assert_eq!(glyph as usize, cell, "{glyph:?} is not in cell {cell}");
+        let mut count = 0;
+        for (cell, glyph) in Glyph::all().enumerate() {
+            assert_eq!(glyph.cell(), cell, "{glyph:?} is not in cell {cell}");
+            count += 1;
         }
+        assert_eq!(count, Glyph::COUNT, "атлас режется не на столько ячеек");
     }
 
     #[test]
     fn set_glyph_moves_the_atlas_index_and_leaves_a_plain_sprite_alone() {
         let mut plain = Sprite::default();
-        set_glyph(&mut plain, Glyph::Prone);
+        set_glyph(&mut plain, Glyph::corpse(1));
         assert!(plain.texture_atlas.is_none());
 
         let mut atlas = Sprite::from_atlas_image(
             Handle::default(),
             TextureAtlas {
                 layout: Handle::default(),
-                index: Glyph::Disc as usize,
+                index: Glyph::Disc.cell(),
             },
         );
-        set_glyph(&mut atlas, Glyph::Prone);
-        assert_eq!(atlas.texture_atlas.unwrap().index, Glyph::Prone as usize);
+        set_glyph(&mut atlas, Glyph::corpse(1));
+        assert_eq!(atlas.texture_atlas.unwrap().index, Glyph::corpse(1).cell());
     }
 
     /// Не проверка, а инструмент: пишет нулевой мип атласа в PNG, чтобы
@@ -482,6 +612,20 @@ mod tests {
     }
 
     #[test]
+    fn capsule_distance_is_negative_inside_and_positive_outside() {
+        let capsule = Capsule::new(Vec2::ZERO, Vec2::X, 0.2, 0.1);
+        assert!(capsule.distance(Vec2::new(0.5, 0.0)) < 0.0);
+        assert!(capsule.distance(Vec2::new(0.5, 0.5)) > 0.0);
+        // концы — окружности своих радиусов
+        assert!((capsule.distance(Vec2::new(-0.2, 0.0))).abs() < 1e-5);
+        assert!((capsule.distance(Vec2::new(1.1, 0.0))).abs() < 1e-5);
+        // габарит накрывает оба конца целиком
+        let (centre, bound) = capsule.bound();
+        assert_eq!(centre, Vec2::new(0.5, 0.0));
+        assert!((bound - 0.7).abs() < 1e-5);
+    }
+
+    #[test]
     fn disc_rim_is_darker_than_its_core() {
         let (rim, alpha) = texel(Glyph::Disc, Vec2::new(DISC_RADIUS - RIM_WIDTH / 2.0, 0.0));
         assert_eq!(alpha, 1.0);
@@ -491,9 +635,11 @@ mod tests {
     #[test]
     fn mip_chain_ends_in_one_texel_and_keeps_the_layout() {
         let image = atlas_image();
-        let width = CELL_PX * Glyph::ALL.len() as u32;
-        // 1024×128 → … → 1×1: одиннадцать уровней
-        assert_eq!(image.texture_descriptor.mip_level_count, 11);
+        let width = CELL_PX * Glyph::COUNT as u32;
+        // цепочка идёт до 1×1, и её длина считается здесь же: число ячеек
+        // меняется вместе с числом вариантов крови, а вот «до одного текселя»
+        // — свойство самой цепочки
+        let mut levels = 1;
         let mut expected = 0;
         let (mut w, mut h) = (width, CELL_PX);
         loop {
@@ -501,8 +647,10 @@ mod tests {
             if w == 1 && h == 1 {
                 break;
             }
+            levels += 1;
             (w, h) = ((w / 2).max(1), (h / 2).max(1));
         }
+        assert_eq!(image.texture_descriptor.mip_level_count, levels);
         assert_eq!(image.data.as_ref().map(Vec::len), Some(expected as usize));
     }
 
