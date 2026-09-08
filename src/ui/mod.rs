@@ -24,6 +24,7 @@ mod hotkeys;
 mod knob;
 mod navigation;
 mod noise;
+mod outcome;
 mod roads;
 mod rows;
 mod shell;
@@ -462,7 +463,9 @@ impl Plugin for UiPlugin {
             (surfaces::UiSurfaceStylePlugin, sun::UiSunStylePlugin),
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
-            brp::UiBrpBadgePlugin,
+            // и плашки поверх карты — тоже вложенным: плашка исхода была
+            // шестнадцатой
+            (brp::UiBrpBadgePlugin, outcome::UiOutcomePlugin),
         ))
         .add_systems(Update, apply_panel_font)
         .add_systems(

@@ -1470,6 +1470,16 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   before `escape`** — a human is never counted both killed and escaped in one tick.
   **Territory** is the corruption step: it reads the census and the standing bastions
   of this tick and touches no pawn, so it needs no edge to `move_moving_entities`.
+- **Outcome** (resource, `outcome.rs`; mechanism — **city-siege skill**) — `Running |
+  Won { tick } | Lost { tick, reason: Stalemate }`, judged each tick at the tail of
+  `SimSet::Territory` after the corruption step: the **Heart**'s district corrupted →
+  `Won`; no living demon and fewer souls than an Imp costs → `Lost(Stalemate)`. The tick
+  is `SimTick`. On the transition the world is **paused** (`Time<Virtual>`) and the
+  outcome plaque (`ui/outcome.rs`) shows the verdict, the sim clock, the souls and
+  `R - restart`; the `WorldStarted` observer of `outcome.rs` lifts that pause only when the
+  outcome was not `Running` — a player's own pause survives a restart. Run state, reset on
+  `WorldStarted`, in the fingerprint (variant + tick). The heart itself is the gold
+  **Heart** marker sprite at `HeartPos` (`portal.rs`, `HEART_MARKER_SIZE`).
 - **Corruption** (resource, `corruption.rs`; mechanism — **city-siege skill**) — the
   siege field: `progress: Vec<f32>` per district, a district is **corrupted** at `≥ 1`;
   `to_heart` — hops from the corrupted set to the heart's district over the neighbour

@@ -251,8 +251,26 @@ of that kind. Roadmap starting values, tuned in step 11; the roadmap's risk stan
 burst of eight Imps must eat 25 humans before the first Brute, so the first minutes are
 watching.
 
+## Outcome (`outcome.rs`)
+
+`Outcome { Running | Won { tick } | Lost { tick, reason: Stalemate } }`, run state in the
+fingerprint (variant + tick), reset on `WorldStarted`. `judge` is the pure rule: the
+heart's district corrupted → `Won`; else no living demon **and** `available <
+summon_cost(Imp, 0)` → `Lost(Stalemate)` — with demons alive the run goes on however
+empty the purse, and without demons enough souls for one Imp is still a game. The
+judge runs in `SimSet::Territory` **after** `spread_corruption` (the win is declared on the
+tick the heart falls, not the next), `BothModes`, `Live` only; once the outcome leaves
+`Running` it stops looking. On the transition it pauses `Time<Virtual>` (roadmap decision
+6: no menu, R does everything) and logs `outcome: …`. `on_world_started` unpauses only
+if the outcome it resets was not `Running` — a Space pause is the player's (pinned by
+`a_new_run_lifts_only_the_outcomes_pause`). The plaque is `ui/outcome.rs` (the
+`ui-panels` skill); the HUD's `To heart` row is `Corruption::to_heart`.
+
+In M1 a stalemate is hard to reach honestly (nothing kills demons; "no demon alive" means
+a burst that caught nobody), so it is checked on a stand: `brp despawn` every demon with
+zero souls available → `Lost` on the next tick.
+
 ## Not yet in the code
 
-The roadmap's next steps on this layer: the souls HUD and summon buttons, the outcome.
-Each lands here with its mechanism as it is written; until then `ROADMAP.md` is the only
-description and it is a plan, not a record.
+The milestone's last step is the acceptance stand (`examples/acceptance/m1_win.rs`), the
+live Tula runs table and the tuning pass over the starting numbers — `ROADMAP.md`, step 11.

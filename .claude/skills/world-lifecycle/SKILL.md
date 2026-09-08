@@ -103,7 +103,12 @@ share. Fired from exactly **two** places:
 
 **All run state is reset by observers of this event, each living in its owning module** —
 `SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner`,
-`SeparationStats` (the crowd-demo counters), and the siege layer's `BastionsStanding` +
+`SeparationStats` (the crowd-demo counters), `Souls`, `Outcome` (whose observer also
+**lifts the outcome's pause**: the win/loss judge pauses `Time<Virtual>`, `sim_time`'s
+observer only sets the speed, and a restart on R passes through no `Warmup` where
+`resume_world` would unpause — so `outcome::on_world_started` unpauses iff the outcome it
+is resetting was not `Running`, leaving a player's Space pause alone), and the siege
+layer's `BastionsStanding` +
 the in-place bastion heal (`bastion.rs`) and `Corruption` (`corruption.rs`: zero
 everywhere, the portal's district corrupted). `grep "On<WorldStarted>"` enumerates them.
 

@@ -241,10 +241,10 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
 `RequestedAt`, `RetireAt`, `Bastion`, `RuinTag`, `Health`, `Attack`, `AttackCooldown`,
-`AttackTarget`, `DemonKind`, `ImpTag`, `BruteTag`.
+`AttackTarget`, `DemonKind`, `ImpTag`, `BruteTag`, `Heart`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `HeartPos`, `Districts`,
-`DistrictCensus`, `BastionSites`, `BastionsStanding`, `Corruption`, `Souls`,
+`DistrictCensus`, `BastionSites`, `BastionsStanding`, `Corruption`, `Souls`, `Outcome`,
 `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,

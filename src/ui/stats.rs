@@ -44,9 +44,13 @@ use crate::souls::{Souls, SummonRequested, summon_cost};
 #[derive(Component, Clone, Copy)]
 enum StatRow {
     Pawns,
+    /// По видам: `8 imp, 1 brute`.
     Demons,
     /// `доступно / заработано` — цена призыва читается против первого числа.
     Souls,
+    /// Переходов от скверны до сердца (`Corruption::to_heart`); `-` — сердца
+    /// нет или оно отрезано.
+    ToHeart,
 }
 
 /// Кнопка призыва — на самой кнопке (гасится, когда душ не хватает).
@@ -220,6 +224,7 @@ fn render_hud_counters(mut commands: Commands, panes: Res<SettingsPanes>) {
                 count_row("Pawns", StatRow::Pawns),
                 count_row("Demons", StatRow::Demons),
                 count_row("Souls", StatRow::Souls),
+                count_row("To heart", StatRow::ToHeart),
             ],
         ))
         .id();
@@ -409,15 +414,25 @@ fn build_sim_tab(
 /// архетипов, а не проходом по двадцати тысячам сущностей каждый кадр.
 fn sync_world_counts(
     humans: Query<(), With<Human>>,
-    demons: Query<(), With<Demon>>,
+    demons: Query<&DemonKind, With<Demon>>,
     souls: Res<Souls>,
+    corruption: Res<crate::corruption::Corruption>,
     mut labels: Query<(&StatRow, &mut Text)>,
 ) {
     for (row, mut text) in &mut labels {
         let value = match row {
             StatRow::Pawns => humans.iter().len().to_string(),
-            StatRow::Demons => demons.iter().len().to_string(),
+            StatRow::Demons => {
+                let brutes = demons
+                    .iter()
+                    .filter(|&&kind| kind == DemonKind::Brute)
+                    .count();
+                format!("{} imp, {brutes} brute", demons.iter().len() - brutes)
+            }
             StatRow::Souls => format!("{} / {}", souls.available(), souls.earned),
+            StatRow::ToHeart => corruption
+                .to_heart
+                .map_or_else(|| "-".to_string(), |hops| hops.to_string()),
         };
         text.set_if_neq(Text(value));
     }

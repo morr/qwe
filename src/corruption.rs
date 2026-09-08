@@ -129,7 +129,7 @@ fn on_world_started(
 /// Шаг скверны на тике. Читает только районы, перепись и стоящие бастионы,
 /// пишет только `Corruption`: с шагом движения (`move_moving_entities`,
 /// порядок с `Territory` не задан) не пересекается ни по одному компоненту.
-fn spread_corruption(
+pub fn spread_corruption(
     time: Res<Time>,
     districts: Res<Districts>,
     census: Res<DistrictCensus>,

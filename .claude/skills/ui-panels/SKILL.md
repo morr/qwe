@@ -93,8 +93,9 @@ did not fit 1080 px and ran off the top of the screen.
 ## Panels
 
 - **HUD counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
-  stripped on death), Demons, **Souls** as `available / earned` (`souls::Souls`), first in
-  the left column, **outside** the tabs: they are watched continuously, and putting them
+  stripped on death), Demons by kind (`8 imp, 1 brute`), **Souls** as `available / earned`
+  (`souls::Souls`), **To heart** (`Corruption::to_heart` in hops, `-` when unreachable),
+  first in the left column, **outside** the tabs: they are watched continuously, and putting them
   behind a tab choice would mean watching the simulation through a keyhole. Under them a
   row of two **summon buttons** (`spawn_panel_button_with` with a `SummonButton(kind)`
   marker on the button and `SummonCaption(kind)` on the caption): the caption reads
@@ -117,6 +118,12 @@ did not fit 1080 px and ran off the top of the screen.
   ruler (its width/offset/font and the fixed columns of the pathfinding lines) — changing
   the panel's geometry, font or any of these format strings means re-measuring the
   constants at the top of that script in the same change.
+- **Outcome plaque** (`ui/outcome.rs`) — a 320 px panel centred at 40 % of the screen
+  height, spawned hidden in `Startup` and toggled by `resource_changed::<Outcome>` alone:
+  it is not a `GameUiRoot` (that group means "the world is running", this one "the world
+  has ended"). Title `VICTORY` / `DEFEAT`, then the reason, `T+<sim seconds>`, `souls
+  available / earned` and `R - restart`; the text is written on the transition, not per
+  frame — the world is paused, nothing moves. ASCII only, like every panel.
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button.
   Left click walks the ladder up and wraps to 1x from its top step (`MAX_SIM_SPEED`), right
   click steps down; `Primary` while paused. It reads `Pointer<Click>` itself instead of

@@ -116,10 +116,13 @@ pub fn replay_app(
             crate::demon::DemonPlugin,
             crate::human::HumanPlugin,
             crate::restart::RestartPlugin,
-            // осадный слой M1: районы (перепись по тику), здоровье, бастионы
-            // (`BastionsStanding` — состояние прогона, в отпечатке). Ресурсы
-            // карты у них здесь пустые — двор без районов и без мест, — но
-            // сбросы `WorldStarted` страж видит только у перечисленных
+        ))
+        // осадный слой M1 — отдельным кортежем: `Plugins` принимает не больше
+        // 15 элементов. Районы (перепись по тику), здоровье, бастионы
+        // (`BastionsStanding` — состояние прогона, в отпечатке). Ресурсы
+        // карты у них здесь пустые — двор без районов и без мест, — но
+        // сбросы `WorldStarted` страж видит только у перечисленных
+        .add_plugins((
             crate::district::DistrictPlugin,
             crate::combat::CombatPlugin,
             crate::bastion::BastionPlugin,
@@ -127,6 +130,9 @@ pub fn replay_app(
             // души — состояние прогона; хоткеи призыва внутри плагина висят
             // на `ButtonInput<KeyCode>`, который двор заводит ниже
             crate::souls::SoulsPlugin,
+            // исход — тоже состояние прогона; его судья ставит паузу
+            // `Time<Virtual>`, которую тот же `WorldStarted` и снимает
+            crate::outcome::OutcomePlugin,
         ))
         // Что сюда НЕ входит и почему — половина смысла этого списка.
         // `a_restart_replays_the_run` держит членство сбросов `WorldStarted`
@@ -302,6 +308,17 @@ pub fn fingerprint(world: &mut World) -> Fingerprint {
             .into_iter()
             .chain(souls.spent.to_le_bytes())
         {
+            eat(byte);
+        }
+    }
+    if let Some(outcome) = world.get_resource::<crate::outcome::Outcome>() {
+        let (variant, tick) = match *outcome {
+            crate::outcome::Outcome::Running => (0u8, 0u64),
+            crate::outcome::Outcome::Won { tick } => (1, tick),
+            crate::outcome::Outcome::Lost { tick, .. } => (2, tick),
+        };
+        eat(variant);
+        for byte in tick.to_le_bytes() {
             eat(byte);
         }
     }
