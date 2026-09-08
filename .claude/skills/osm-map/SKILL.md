@@ -77,7 +77,8 @@ in `CONTEXT.md` and the detail here in the same change.
   a tone off the ground colour (warmer/lighter for housing, greyer for industry) so the
   city stops being one flat sheet. `area_kind` tries them **last**: any green tag on the
   same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
-  residential, 44 industrial/commercial/retail polygons (the audit table).
+  residential + 35 industrial/garages in the bbox (the audit table), 294 of them
+  reach `MapData::landuse`; `commercial`/`retail` are not requested.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
