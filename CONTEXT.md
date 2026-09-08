@@ -704,10 +704,23 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `SunOnMap`, never on the slider. Tula: 429 lines — 356 fences, 72 walls (one of them a
   retaining wall), 1 hedge.
 - **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
-  same shadow every other object does: its own ribbon, offset by `BRIDGE_HEIGHT` (6 m)
-  through `shadow_length_scale()`, drawn under the bridge and over whatever it crosses.
-  Nothing else produced it — the ground shadow layer only knows buildings — and a bridge
-  over the river is the most visible thing there is on water.
+  same shadow every other object does: its own band, offset through
+  `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
+  crosses. Nothing else produced it — the ground shadow layer only knows buildings — and a
+  bridge over the river is the most visible thing there is on water. Four rules make it
+  read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadow`:
+  **height follows the span** (`SPAN_TO_HEIGHT` 1/8, capped at `BRIDGE_HEIGHT` 6 m) —
+  OSM's `bridge=yes` also marks embankment steps and pavements that span nothing, and a
+  6 m shadow under a 20 m path is the loudest lie a map can tell, because a shadow reads
+  as height; **the offset tapers to zero at the abutments** (`RAMP_SHARE` 0.25 of the
+  length or `RAMP_MAX` 25 m, whichever is shorter), where the deck lies on the ground;
+  **the rise is additionally clamped by the span left ahead**, or the ramp — which climbs
+  faster than the arc advances — pushes the shadow past the deck's end as a dark wedge on
+  the street it joins; and the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on
+  each side, because a plate's shadow is its own silhouette translated, so a bridge
+  running along the sun hides all of it under itself. The centerline is densified to
+  `SHADOW_STEP` (2 m) first: the ramp lives in the vertices, and 42 of Tula's 61 bridges
+  are two-point ways whose every vertex is an end.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
