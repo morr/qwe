@@ -321,13 +321,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
   crosses. Nothing else produced it — the ground shadow layer only knows buildings — and a
-  bridge over the river is the most visible thing there is on water. Four rules make it
+  bridge over the river is the most visible thing there is on water. Five rules make it
   read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadow`:
   **height follows the span** (`SPAN_TO_HEIGHT` 1/8, capped at `BRIDGE_HEIGHT` 6 m) —
   OSM's `bridge=yes` also marks embankment steps and pavements that span nothing, and a
   6 m shadow under a 20 m path is the loudest lie a map can tell, because a shadow reads
-  as height; **the offset tapers to zero at the abutments** (`RAMP_SHARE` 0.25 of the
-  length or `RAMP_MAX` 25 m, whichever is shorter), where the deck lies on the ground;
+  as height; **a span under `SHORT_SPAN` (35 m) has to prove there is a gap under it** —
+  water or rail, never a road, since a road is exactly what an approach embankment runs
+  along (`bridge_casts_shadow` over `Underneath`); **the offset tapers to zero at the
+  abutments** (`RAMP_SHARE` 0.25 of the length or `RAMP_MAX` 25 m, whichever is shorter),
+  where the deck lies on the ground;
   **the rise is additionally clamped by the span left ahead**, or the ramp — which climbs
   faster than the arc advances — pushes the shadow past the deck's end as a dark wedge on
   the street it joins; and the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on

@@ -467,9 +467,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the ground shadow layer only knows buildings, and a bridge over the river is the most
   visible thing on the water. It sits **under** the deck and **over** what the bridge
   crosses — except a railway, which is drawn above the bridge for its own reasons.
-  Five decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
+  Six decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
   lie, and every one of them was a bug report first:
 
+  - **A span under `SHORT_SPAN` (35 m) has to prove there is a gap under it**
+    (`bridge_casts_shadow` probing `Underneath` every 2 m — water outlines, watercourse
+    channels, rails; **never roads**, because a road is exactly what an approach
+    embankment runs along). Proportional height was not enough on its own: the western
+    approach to the Упа crossing is four ways of 23–30 m carrying `bridge=yes` and
+    `layer=1`, and on the ground it is solid fill, which no tag distinguishes from a
+    span. A long way is never asked — there is no 100 m embankment — which also keeps the
+    probe off the bridges that would cost the most to test. `Underneath` precomputes an
+    AABB per outline for that: the probe is per 2 m of deck and a city carries up to a
+    thousand water outlines.
   - **The height follows the span** (`bridge_height` = `SPAN_TO_HEIGHT` 1/8 of the length,
     capped at `BRIDGE_HEIGHT` 6 m, so a span over 48 m is at the ceiling). It was a flat
     6 m, and OSM hands `bridge=yes` to far more than spans: embankment steps, the pavement
