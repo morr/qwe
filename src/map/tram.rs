@@ -1,18 +1,19 @@
 //! Трамвайные пути, вынесенные из дорожных слоёв: трамвай пересобирается по
 //! ступеням зума ([`TRAM_LODS`]) — линия держит почти постоянную экранную
 //! толщину («почти gizmo»), а шпалы редеют с отъездом камеры и на общем плане
-//! исчезают, иначе они сливаются в сплошную массу. Обычные ж/д пути остаются
-//! в `map/roads.rs` под стилем дорог.
+//! исчезают, иначе они сливаются в сплошную массу. Обычные ж/д пути — в
+//! `map/rail.rs`, со своей таблицей ступеней и своими слоями; стиль дорог
+//! (`RoadStyle`) не касается ни тех, ни других.
 //!
 //! Навмеша путь не касается — люди ходят через рельсы как по земле.
 
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::prelude::*;
 
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
+use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::Z_TRAM;
 
 /// Трамвай — не лента, а линия с поперечной насечкой, как в Яндекс.Картах и
@@ -104,27 +105,19 @@ pub const TRAM_LODS: [TramLod; 5] = [
     },
 ];
 
-/// Текущая ступень [`TRAM_LODS`] — индекс. Меняется только при пересечении
-/// порога зума ([`update_tram_zoom_bucket`]), на что [`rebuild_tram`] отвечает
-/// пересборкой одного трамвайного меша. Не сохраняется: зум сбрасывается к
-/// `START_ZOOM` на каждом входе в мир.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct TramZoomBucket(pub usize);
+/// [`TRAM_LODS`] как таблица ступеней зум-LOD (`map/zoom.rs`). Пустой enum —
+/// тип-маркер, значений у него не бывает.
+pub enum TramLods {}
 
-impl Default for TramZoomBucket {
-    fn default() -> Self {
-        Self(bucket_for_zoom(crate::camera::START_ZOOM))
+impl ZoomLods for TramLods {
+    fn max_zooms() -> impl Iterator<Item = f32> {
+        TRAM_LODS.into_iter().map(|lod| lod.max_zoom)
     }
 }
 
-/// Первая ступень, чья граница выше зума. Зум на самой границе попадает в
-/// верхнюю ступень.
-pub fn bucket_for_zoom(zoom: f32) -> usize {
-    TRAM_LODS
-        .iter()
-        .position(|lod| zoom < lod.max_zoom)
-        .unwrap_or(TRAM_LODS.len() - 1)
-}
+/// Текущая ступень [`TRAM_LODS`]; пересечение порога пересобирает трамвайный
+/// меш ([`rebuild_tram`]).
+pub type TramZoomBucket = ZoomBucket<TramLods>;
 
 /// Трамвайный меш — чтобы пересборка знала, что деспавнить.
 #[derive(Component)]
@@ -143,7 +136,7 @@ fn spawn_tram(
     rails: &[RailLine],
 ) {
     let started = std::time::Instant::now();
-    let lod = &TRAM_LODS[bucket.0];
+    let lod = &TRAM_LODS[bucket.index];
 
     let mut builder = MeshBuilder::default();
     for rail in rails {
@@ -171,7 +164,7 @@ fn spawn_tram(
     info!(
         "tram meshing: {vertices} verts in {:?} (bucket {})",
         started.elapsed(),
-        bucket.0,
+        bucket.index,
     );
 }
 
@@ -183,16 +176,6 @@ pub(crate) fn push_tram(builder: &mut MeshBuilder, points: &[Vec2], lod: &TramLo
     if let Some(tie) = &lod.tie {
         builder.push_ticks(points, tie.length, tie.thickness, tie.spacing, color);
     }
-}
-
-/// Ступень зума по фактическому масштабу камеры. `set_if_neq` — чтобы
-/// `resource_changed` срабатывал только на пересечении порога, а не каждый
-/// кадр.
-pub fn update_tram_zoom_bucket(
-    camera: Single<&PanCamera, With<Camera2d>>,
-    mut bucket: ResMut<TramZoomBucket>,
-) {
-    bucket.set_if_neq(TramZoomBucket(bucket_for_zoom(camera.zoom_factor)));
 }
 
 /// Пересборка трамвайного меша при смене ступени зума — дорожные и рельсовые

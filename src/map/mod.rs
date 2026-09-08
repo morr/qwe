@@ -2,10 +2,12 @@ mod buildings;
 pub mod footprint;
 mod meshing;
 pub mod osm;
+mod rail;
 mod roads;
 mod spawn;
 mod tram;
 pub mod trees;
+mod zoom;
 
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
@@ -37,6 +39,7 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
+            .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
@@ -57,18 +60,24 @@ impl Plugin for MapPlugin {
                 // уже собранному набору и до крон. Сами кроны спавнит
                 // `rebuild_trees` — в свежем мире деспавнить ему нечего, а спавн
                 // из одного места избавляет `spawn_map` от стиля деревьев и поля
-                // хвои разом. Трамвай спавнит `rebuild_tram` по той же причине:
-                // ступень зума остаётся его личным делом
+                // хвои разом. Рельсы и трамвай спавнят `rebuild_rails` /
+                // `rebuild_tram` по той же причине: ступень зума остаётся их
+                // личным делом. Ступень перед сборкой ставится по камере, а
+                // камера на стартовый вид — тоже в `Spawn`, отсюда `after`
                 (
                     trees::recompose_row_trees,
                     trees::build_conifer_field,
                     spawn::spawn_map,
+                    zoom::seed_zoom_bucket::<rail::RailLods>,
+                    rail::rebuild_rails,
+                    zoom::seed_zoom_bucket::<tram::TramLods>,
                     tram::rebuild_tram,
                     spawn::rebuild_tree_row_band,
                     trees::rebuild_trees,
                 )
                     .chain()
-                    .in_set(WorldInitSet::Spawn),
+                    .in_set(WorldInitSet::Spawn)
+                    .after(crate::camera::place_camera_on_world_ready),
             )
             .add_systems(
                 Update,
@@ -102,10 +111,17 @@ impl Plugin for MapPlugin {
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),
                     // ступень зума считается каждый кадр (одно чтение камеры и
-                    // сравнение), но пересборку трамвая запускает только её
-                    // фактическая смена
+                    // сравнение), но пересборку запускает только её фактическая
+                    // смена. Таблицы у путей и трамвая свои, и пороги в них не
+                    // совпадают, поэтому и ступени считаются порознь
                     (
-                        tram::update_tram_zoom_bucket,
+                        zoom::update_zoom_bucket::<rail::RailLods>,
+                        rail::rebuild_rails.run_if(retuned::<rail::RailZoomBucket>),
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
+                    (
+                        zoom::update_zoom_bucket::<tram::TramLods>,
                         tram::rebuild_tram.run_if(retuned::<tram::TramZoomBucket>),
                     )
                         .chain()

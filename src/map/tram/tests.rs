@@ -4,6 +4,7 @@ use super::*;
 /// ростом зума, а зум ровно на границе попадает в верхнюю ступень.
 #[test]
 fn tram_bucket_covers_the_zoom_range() {
+    let bucket_for_zoom = |zoom: f32| TramZoomBucket::for_zoom(zoom).index;
     assert_eq!(bucket_for_zoom(0.05), 0);
     assert_eq!(bucket_for_zoom(4.5), TRAM_LODS.len() - 1);
 

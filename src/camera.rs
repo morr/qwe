@@ -17,9 +17,7 @@ use crate::restart::RestartEvent;
 /// ~4.4 — вся карта (5600 м) в кадре при окне 1280.
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 4.5;
-/// Публичный: от него считается стартовая ступень зум-LOD трамвая
-/// (`map::tram::TramZoomBucket`).
-pub const START_ZOOM: f32 = 0.4;
+const START_ZOOM: f32 = 0.4;
 /// Множитель зума на один щелчок колеса. **Мультипликативный, а не линейный**:
 /// у `PanCamera` зум прибавляется (`zoom_factor -= lines·zoom_speed`), и на
 /// крупном плане, где сам `zoom_factor` мельче шага, один щелчок швыряет
@@ -253,7 +251,10 @@ fn apply_view(transform: &mut Transform, controller: &mut PanCamera, view: Camer
 /// у его портала. Перезагрузка **того же** города (смена размера навтайла)
 /// камеру не трогает вовсе: пользователь смотрит на тот же участок карты, и
 /// увозить его к порталу — значит терять место, которое он разглядывал.
-fn place_camera_on_world_ready(
+///
+/// `pub(crate)`: слои с зум-LOD (`map/zoom.rs`) ставят свою ступень по камере
+/// и обязаны идти после этой системы — в том же `WorldInitSet::Spawn`.
+pub(crate) fn place_camera_on_world_ready(
     mut last_city: Local<Option<City>>,
     city: Res<City>,
     mode: Res<CameraPositionMode>,
