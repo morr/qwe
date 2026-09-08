@@ -1,19 +1,26 @@
-//! Двускатные крыши малых домов. `roof:shape` в OSM стоит у 283 зданий Тулы
-//! из 7465, так что форма крыши не читается из тегов, а **выводится**: частный
+//! Скатные крыши малых домов. `roof:shape` в OSM стоит у 283 зданий Тулы из
+//! 7465, так что форма крыши не читается из тегов, а **выводится**: частный
 //! дом (`BuildingUse::House`) и любая мелкая коробка без назначения получают
-//! два ската, остальное — плоскую крышу. Плоская крыша у частного сектора
-//! была главной причиной, по которой окраины читались как склад контейнеров.
+//! скатную крышу, остальное — плоскую. Плоская крыша у частного сектора была
+//! главной причиной, по которой окраины читались как склад контейнеров.
 //!
-//! Конёк идёт вдоль длинной оси минимального описанного прямоугольника
-//! (OBB) контура; крыша рисуется по этому прямоугольнику, а не по контуру, —
-//! у настоящего дома скаты и так нависают над стеной. Чтобы прямоугольник не
-//! торчал из дома буквой Г, крыша ставится только на контур, который его
-//! заполняет почти целиком ([`RECT_FILL_MIN`]); Г-образные и сложные дома
-//! остаются плоскими (straight skeleton — отдельная задача).
+//! Скатных две, и выбор между ними — форма контура плюс посев дома
+//! ([`roofing`]):
+//!
+//! * **двускатная** ([`gable_roof`]) — конёк вдоль длинной оси минимального
+//!   описанного прямоугольника (OBB); крыша рисуется по этому прямоугольнику,
+//!   а не по контуру, — у настоящего дома скаты и так нависают над стеной.
+//!   Поэтому она ставится только на контур, заполняющий прямоугольник почти
+//!   целиком ([`RECT_FILL_MIN`]): иначе из дома торчала бы крыша буквой Г.
+//! * **вальмовая** ([`HipRoof`]) — скаты по всему контуру и площадка конька
+//!   внутри, построенные вдвигом контура на miter-офсетах. Ей форма контура
+//!   безразлична, и именно она достаётся Г-образным домам, которые до сих пор
+//!   оставались плоскими среди скатных соседей.
 
 use bevy::prelude::*;
 
 use super::shade_by_light;
+use crate::map::meshing::{merge_close_points, miter_offsets};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 
@@ -49,7 +56,125 @@ pub(super) struct GableRoof {
     pub(super) gables: [((Vec2, Vec2), Vec2); 2],
 }
 
-/// Крыша этого дома — двускатная?
+/// Вальмовая крыша: скаты по **всему** контуру и площадка конька внутри.
+///
+/// Строится не straight skeleton'ом, а вдвигом контура внутрь на
+/// [`HIP_INSET`] теми же miter-офсетами, что дают дальний край каймы: скат —
+/// квад между ребром контура и его сдвинутой парой, конёк — то, что осталось
+/// внутри. Для выпуклого дома это и есть вальма; для Г-образного — вальма с
+/// плоской верхушкой, то есть ровно то, что видно на снимке, и то, чего
+/// straight skeleton стоил бы на порядок дороже.
+pub(super) struct HipRoof {
+    /// Скаты: четырёхугольник (карниз, карниз, конёк, конёк) и тон, по одному
+    /// на ребро контура.
+    pub(super) slopes: Vec<([Vec2; 4], LinearRgba)>,
+    /// Площадка конька — вдвинутый контур и его тон.
+    pub(super) ridge: (Vec<Vec2>, LinearRgba),
+}
+
+/// Что за крыша у дома. Плоская — не «крыши нет», а именно плоская кровля со
+/// своим материалом и парапетом.
+pub(super) enum Roofing {
+    Gable(GableRoof),
+    Hip(HipRoof),
+    Flat,
+}
+
+/// Вылет ската вальмы по плану, м, и потолок этого вылета в долях толщины
+/// контура (`площадь / периметр`): у узкого дома скаты обязаны сойтись, а не
+/// вывернуться наизнанку — тот же зажим, что у каймы.
+const HIP_INSET: f32 = 2.2;
+const HIP_INSET_SHARE: f32 = 0.38;
+/// Насколько площадка конька светлее базового тона: она смотрит прямо в небо,
+/// а скаты — вбок.
+const RIDGE_LIGHTEN: f32 = 0.06;
+
+/// Крыша дома целиком: двускатная, вальмовая или плоская.
+///
+/// Двускатную получает почти прямоугольный дом (её конёк идёт по длинной оси
+/// и требует прямоугольника), вальмовую — тот же дом, если так выпал посев,
+/// **и** всякий негодный для двускатной контур: Г-образный дом до сих пор
+/// оставался с плоской крышей среди скатных соседей, что на снимке частного
+/// сектора видно сразу.
+pub(super) fn roofing(
+    building: &PolyArea,
+    lift: Vec2,
+    ridge_lift: impl Fn(f32) -> Vec2,
+    base: Srgba,
+    seed: u32,
+) -> Roofing {
+    if !is_gabled(building) {
+        return Roofing::Flat;
+    }
+    let hipped = (seed >> 5) % 10 < HIPPED_SHARE;
+    if !hipped && let Some(roof) = gable_roof(building, lift, &ridge_lift, base) {
+        return Roofing::Gable(roof);
+    }
+    match hip_roof(building, lift, &ridge_lift, base) {
+        Some(roof) => Roofing::Hip(roof),
+        // на совсем узком контуре вальма выворачивается, а двускатная не
+        // встала — пусть будет плоской, это по крайней мере не врёт
+        None => gable_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Gable),
+    }
+}
+
+/// Сколько домов из десяти кроются вальмой, а не двускатной. В частном
+/// секторе двускатных всё же больше, но вальма — не редкость.
+const HIPPED_SHARE: u32 = 4;
+
+/// Вальмовая крыша над контуром, поднятым на `lift`. `None` — контур слишком
+/// тонкий, чтобы скаты сошлись.
+fn hip_roof(
+    building: &PolyArea,
+    lift: Vec2,
+    ridge_lift: impl Fn(f32) -> Vec2,
+    base: Srgba,
+) -> Option<HipRoof> {
+    let ring = merge_close_points(&building.outer, true, HIP_INSET / 4.0);
+    if ring.len() < 3 {
+        return None;
+    }
+    let area = signed_ring_area(&ring);
+    let inset = HIP_INSET.min(HIP_INSET_SHARE * area.abs() / perimeter(&ring));
+    if inset < MIN_HIP_INSET {
+        return None;
+    }
+    // офсеты смотрят влево по ходу обхода: у CCW-кольца это внутрь
+    let side = if area > 0.0 { 1.0 } else { -1.0 };
+    let offsets = miter_offsets(&ring, true, inset);
+    let rise = ridge_lift((inset * ROOF_PITCH).min(ROOF_RISE_MAX));
+    let inner: Vec<Vec2> = ring
+        .iter()
+        .zip(&offsets)
+        .map(|(point, offset)| *point + *offset * side + lift + rise)
+        .collect();
+
+    let mut slopes = Vec::with_capacity(ring.len());
+    for index in 0..ring.len() {
+        let next = (index + 1) % ring.len();
+        let (a, b) = (ring[index] + lift, ring[next] + lift);
+        let outward = Vec2::new((b - a).y, -(b - a).x).normalize_or_zero() * side;
+        let tone = shade_by_light(base, outward, SLOPE_LIT_MIX, SLOPE_SHADED_MIX);
+        slopes.push(([a, b, inner[next], inner[index]], tone.into()));
+    }
+    Some(HipRoof {
+        slopes,
+        ridge: (inner, base.mix(&Srgba::WHITE, RIDGE_LIGHTEN).into()),
+    })
+}
+
+/// Тоньше этого вдвиг не имеет смысла: скат в двадцать сантиметров не виден,
+/// а вершин на контур столько же.
+const MIN_HIP_INSET: f32 = 0.4;
+
+/// Периметр замкнутого контура.
+fn perimeter(ring: &[Vec2]) -> f32 {
+    (0..ring.len())
+        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
+        .sum()
+}
+
+/// Крыша этого дома — скатная (двускатная или вальмовая)?
 pub(super) fn is_gabled(building: &PolyArea) -> bool {
     // Кремль вне стилизации по назначению, как и в `base_colors`
     if building.kind == AreaKind::Kremlin {

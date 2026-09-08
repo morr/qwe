@@ -9,8 +9,9 @@ use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
+use super::material::building_seed;
 use super::material::{RoofLook, roof_look};
-use super::roofs::gable_roof;
+use super::roofs::{HipRoof, Roofing, roofing};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
     height_or_default, shade_by_light,
@@ -112,6 +113,34 @@ fn push_parapet(builder: &mut MeshBuilder, ring: &[Vec2], hole: bool, base: Srgb
     });
 }
 
+/// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
+fn push_hip(builder: &mut MeshBuilder, roof: &HipRoof) {
+    for (slope, tone) in &roof.slopes {
+        builder.push_quad(*slope, *tone);
+    }
+    let (ridge, tone) = &roof.ridge;
+    builder.push_polygon(ridge, &[], *tone);
+}
+
+/// Концы «конька» вальмы — две самые далёкие друг от друга точки её
+/// площадки. У настоящей вальмы конёк это отрезок, и на четырёх-двадцати
+/// вершинах площадки перебор пар дешевле любой геометрии.
+fn hip_ridge_ends(roof: &HipRoof) -> (Vec2, Vec2) {
+    let ring = &roof.ridge.0;
+    let mut best = (ring[0], ring[0]);
+    let mut span = 0.0;
+    for (index, &a) in ring.iter().enumerate() {
+        for &b in &ring[index + 1..] {
+            let distance = a.distance_squared(b);
+            if distance > span {
+                span = distance;
+                best = (a, b);
+            }
+        }
+    }
+    best
+}
+
 /// Конёк двускатной крыши: у ската `[карниз, карниз, конёк, конёк]` два
 /// последних угла и есть его концы. Отдельным полем `GableRoof` их не держит —
 /// они уже там, а труба на коньке единственный, кому они понадобились.
@@ -200,8 +229,14 @@ pub(super) fn facade_and_roof_builders(
         let look = roof_look(building);
         let color = roof_color(building, &look, detail.tinted);
         let mut items = Vec::new();
-        match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
-            Some(roof) => {
+        match roofing(
+            building,
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            color,
+            building_seed(building),
+        ) {
+            Roofing::Gable(roof) => {
                 roofs.set_roof(Some(look.frame));
                 for (slope, slope_color) in roof.slopes {
                     roofs.push_quad(slope, slope_color);
@@ -210,7 +245,14 @@ pub(super) fn facade_and_roof_builders(
                     items.extend(ridge_chimney(&look, ridge_of(&roof)));
                 }
             }
-            None => {
+            Roofing::Hip(roof) => {
+                roofs.set_roof(Some(look.frame));
+                push_hip(&mut roofs, &roof);
+                if detail.clutter {
+                    items.extend(ridge_chimney(&look, hip_ridge_ends(&roof)));
+                }
+            }
+            Roofing::Flat => {
                 push_flat_roof(&mut roofs, &look, &building.outer, &building.holes, color);
                 if detail.clutter {
                     items = flat_roof_items(building, &look, Vec2::ZERO);
@@ -431,26 +473,47 @@ pub(super) fn extrusion_builder(
 
         let look = roof_look(building);
         let color = roof_color(building, &look, detail.tinted);
-        if let Some(roof) = gable_roof(building, lift, |rise| lean.ridge(rise), color) {
-            // фронтон — верх торцевой стены, видим по тому же правилу, что
-            // и стена под ним: наружная нормаль торца смотрит против подъёма
-            for ((a, b), apex) in roof.gables {
-                let edge = b - a;
-                if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
-                    continue;
-                }
-                let (_, top) = wall_colors(facade_color, a, b, lift_dir);
-                builder.push_polygon(&[a, b, apex], &[], top);
-            }
-            builder.set_roof(Some(look.frame));
-            for (slope, slope_color) in roof.slopes {
-                builder.push_quad(slope, slope_color);
-            }
+        let chimney_on = |builder: &mut MeshBuilder, ridge| {
             if detail.clutter {
-                let chimney: Vec<_> = ridge_chimney(&look, ridge_of(&roof)).into_iter().collect();
-                push_items(&mut builder, &chimney, Some(lean), color);
+                let chimney: Vec<_> = ridge_chimney(&look, ridge).into_iter().collect();
+                push_items(builder, &chimney, Some(lean), color);
             }
-            continue;
+        };
+        match roofing(
+            building,
+            lift,
+            |rise| lean.ridge(rise),
+            color,
+            building_seed(building),
+        ) {
+            Roofing::Gable(roof) => {
+                // фронтон — верх торцевой стены, видим по тому же правилу, что
+                // и стена под ним: наружная нормаль торца смотрит против подъёма
+                for ((a, b), apex) in roof.gables {
+                    let edge = b - a;
+                    if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
+                        continue;
+                    }
+                    let (_, top) = wall_colors(facade_color, a, b, lift_dir);
+                    builder.push_polygon(&[a, b, apex], &[], top);
+                }
+                builder.set_roof(Some(look.frame));
+                for (slope, slope_color) in roof.slopes {
+                    builder.push_quad(slope, slope_color);
+                }
+                chimney_on(&mut builder, ridge_of(&roof));
+                continue;
+            }
+            Roofing::Hip(roof) => {
+                // у вальмы фронтонов нет — скаты сходятся со всех сторон, и
+                // торцевая стена кончается на карнизе, как и боковая
+                builder.set_roof(Some(look.frame));
+                let ridge = hip_ridge_ends(&roof);
+                push_hip(&mut builder, &roof);
+                chimney_on(&mut builder, ridge);
+                continue;
+            }
+            Roofing::Flat => {}
         }
 
         let roof_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + lift).collect();
