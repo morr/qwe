@@ -263,6 +263,19 @@ pub(super) fn rail_class(railway: &str) -> Option<(f32, RailKind)> {
     })
 }
 
+/// Станционный путь: `service=*` есть только у путей, не относящихся к
+/// главному ходу. Белый список, а не «тег есть»: `service=crossover` — это
+/// съезд между главными путями, состав на нём не бросают.
+///
+/// Тег приезжает в кеше и так (`out geom` отдаёт все теги элемента), поэтому
+/// версию запроса поднимать не понадобилось.
+pub(super) fn is_service_track(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("service").map(String::as_str),
+        Some("siding" | "yard" | "spur")
+    )
+}
+
 /// Ширина по умолчанию и род по значению `waterway`; `None` — не водоток.
 ///
 /// Белый список по той же причине, что у [`rail_class`]: под `waterway=*` лежит
