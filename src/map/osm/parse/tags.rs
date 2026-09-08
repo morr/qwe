@@ -285,8 +285,9 @@ pub(super) fn is_roundabout(tags: &HashMap<String, String>) -> bool {
 }
 
 /// Число полос из `lanes`, если оно правдоподобно. В OSM это сумма по обоим
-/// направлениям; `2;3` и `2.5` попадаются и читаются как `2`.
-pub(super) fn lane_count(tags: &HashMap<String, String>) -> Option<u8> {
+/// направлениям; `2;3` и `2.5` попадаются и читаются как `2`. Только тег:
+/// дефолт по ширине и правило кольца — у рендера (`roads::lane_count`).
+pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
     let lanes = tags
         .get("lanes")
         .and_then(|value| parse_measure(value))?

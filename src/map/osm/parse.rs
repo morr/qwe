@@ -315,7 +315,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             passage: is_building_passage(&element.tags),
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
-            lanes: lane_count(&element.tags),
+            lanes: tagged_lanes(&element.tags),
         });
         return;
     }
@@ -442,6 +442,6 @@ mod tests;
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_height, area_kind, crown_radius, is_building_passage, is_oneway,
-    is_road_underground, is_roundabout, is_underground, lane_count, rail_class, road_class,
-    row_spacing, water_class, water_width,
+    is_road_underground, is_roundabout, is_underground, rail_class, road_class, row_spacing,
+    tagged_lanes, water_class, water_width,
 };
