@@ -270,6 +270,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Parked cars** (`map/cars.rs`) — a row of cars along every street wide enough
+  (`PARKED_MIN_WIDTH` 9 m, not a bridge, not an arch): 4.4 × 1.8 m bodies at a 6 m pitch,
+  45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
+  palette whose shares match what a photo of a Russian city shows (white / silver / grey a
+  half, black a quarter). Each casts its own shadow, by the same `shadow_length_scale()` the
+  buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
+  walk through them, deliberately: a parked row along every street would eat the pavements
+  the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
+  a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
+  entirely when a car stops being worth six pixels. Tula: 5665 cars, 45 k verts.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,

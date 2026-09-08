@@ -1,6 +1,7 @@
 // публичен по той же причине, что и `trees`: витрина `roof_gallery` строит
 // свои дома его же вызовами (`push_flat_roof`, `material::RoofLook`)
 pub mod buildings;
+mod cars;
 pub mod footprint;
 mod meshing;
 pub mod osm;
@@ -62,6 +63,7 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
+            .init_resource::<cars::CarZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -111,6 +113,8 @@ impl Plugin for MapPlugin {
                     trees::build_conifer_field,
                     zoom::seed_zoom_bucket::<buildings::BuildingLods>,
                     spawn::spawn_map,
+                    zoom::seed_zoom_bucket::<cars::CarLods>,
+                    cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -162,6 +166,14 @@ impl Plugin for MapPlugin {
                     roads::rebuild_roads
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),
+                    // машины — целый слой, который на общем плане не нужен
+                    // вовсе; порог у него свой, ближе зданиевого
+                    (
+                        zoom::update_zoom_bucket::<cars::CarLods>,
+                        cars::rebuild_cars.run_if(retuned::<cars::CarZoomBucket>),
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),

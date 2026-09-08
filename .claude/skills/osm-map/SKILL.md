@@ -506,6 +506,27 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
+  after the roofs themselves: a street with not one car on it reads as a drawing whatever
+  it is painted. A row goes along **both sides of every `RoadClass::Street` at least
+  `PARKED_MIN_WIDTH` (9 m) wide** that is neither a bridge nor an arch — 4.4 × 1.8 m bodies
+  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with `OCCUPANCY`
+  45 % of the places taken (a solid row from junction to junction looks like a dealership)
+  and `END_MARGIN` 8 m clear of each end, where the junction is. Colours are a ten-slot
+  palette in the shares a photo shows. Every car casts a shadow through the same
+  `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
+  then all bodies** — otherwise a car's shadow lands on top of the neighbour drawn before
+  it. The layer is one merged **blended** mesh (the shadow is translucent, the body is not)
+  at `Z_CAR` 2.7, above the tram and the rails (a car parks on the asphalt over the tracks)
+  and below the portal stain.
+  - **Decoration, and deliberately so**: cars touch neither the navmesh nor the simulation
+    and pawns walk through them. A parked row along every street would otherwise eat the
+    pavements the entire crowd walks on.
+  - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px, so a
+    4.4 m car is never under ~6 px): past the threshold the layer is not drawn at all, which
+    is cheaper than any LOD of the drawing itself. Seeded per street (its first point,
+    like doors and roofs), so the row is the same across rebuilds.
+  - Tula: **5665 cars, 45 k verts** — next to the building layer's 925 k, free.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark

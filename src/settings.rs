@@ -828,6 +828,10 @@ pub const Z_RAIL_STEEL: f32 = 2.55;
 pub const Z_TRAM: f32 = 2.6;
 /// Выжженная земля под порталом: над дорогами (перекрёсток обуглен), под
 /// трупами (тела на пятне видны).
+/// Припаркованные машины (`map::cars`) — выше трамвая и рельсов (машина
+/// стоит на асфальте поверх путей), ниже пятна портала и всего живого.
+pub const Z_CAR: f32 = 2.7;
+
 pub const Z_PORTAL_STAIN: f32 = 2.8;
 pub const Z_CORPSE: f32 = 3.0;
 pub const Z_PORTAL: f32 = 4.0;
@@ -891,7 +895,8 @@ const _: () = {
     assert!(Z_RAIL_TIE < Z_RAIL_STEEL);
     assert!(Z_RAIL_STEEL < Z_TRAM);
     // пятно под порталом кроет дороги, но не тела
-    assert!(Z_TRAM < Z_PORTAL_STAIN);
+    assert!(Z_TRAM < Z_CAR);
+    assert!(Z_CAR < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
     assert!(Z_PORTAL < Z_BUILDING);
@@ -1002,6 +1007,12 @@ pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
 /// таблицу ступеней `BuildingLods`, и его пересечение пересобирает слой
 /// зданий — как у пути и трамвая.
 pub const ROOF_CLUTTER_MAX_ZOOM: f32 = 0.5;
+
+/// Зум (метров на пиксель), выше которого слоя машин нет: машина в 4.4 м
+/// становится там мельче шести пикселей, а ряд вдоль улицы — мерцающим
+/// пунктиром. Порог задаёт таблицу `CarLods`, и его пересечение
+/// пересобирает слой.
+pub const CAR_MAX_ZOOM: f32 = 0.8;
 
 pub const ROOF_TEXTURE_DEFAULT: f32 = 1.0;
 pub const ROOF_TEXTURE_MIN: f32 = 0.0;
