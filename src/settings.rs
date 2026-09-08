@@ -787,6 +787,12 @@ pub const Z_TREE_ROW_BAND_CASING: f32 = 0.56;
 pub const Z_TREE_ROW_BAND: f32 = 0.57;
 pub const Z_GRASS: f32 = 0.6;
 pub const Z_SAND: f32 = 0.7;
+/// Стоянка (`map::parking`) — асфальт поверх зелени и песка, но под водой и
+/// дорогами: двор со стоянкой лежит на земле, а улица идёт по нему.
+pub const Z_PARKING: f32 = 0.8;
+/// Разметка мест — поверх асфальта стоянки и под всем остальным.
+pub const Z_PARKING_LINES: f32 = 0.81;
+
 pub const Z_POND: f32 = 1.0;
 /// Линейные водотоки — волосок над площадной водой: цвет у них общий, и там,
 /// где ручей впадает в пруд, порядок двух одноцветных слоёв не должен зависеть
@@ -873,7 +879,8 @@ const _: () = {
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);
     assert!(Z_TREE_ROW_BAND < Z_GRASS);
     assert!(Z_GRASS < Z_SAND);
-    assert!(Z_SAND < Z_POND);
+    assert!(Z_SAND < Z_PARKING);
+    assert!(Z_PARKING < Z_POND);
     // водоток — волосок над площадной водой, но ниже дорог: переход через
     // русло рисуется поверх воды
     assert!(Z_POND < Z_WATERWAY);

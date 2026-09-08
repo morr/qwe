@@ -37,10 +37,11 @@ in `CONTEXT.md` and the detail here in the same change.
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
   `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
+  `amenity=parking` (way+rel),
   `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **8** (v3 added `entrance` nodes, v4 `railway`,
+  `City`'s geo center. `QUERY_VERSION` is **9** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
-  blocks).
+  blocks, v9 `amenity=parking`).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -66,7 +67,7 @@ in `CONTEXT.md` and the detail here in the same change.
 
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
-  Industrial`. **Park** is the
+  Industrial | Parking`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
@@ -79,6 +80,12 @@ in `CONTEXT.md` and the detail here in the same change.
   same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
   residential + 35 industrial/garages in the bbox (the audit table), 294 of them
   reach `MapData::landuse`; `commercial`/`retail` are not requested.
+  **Parking** (`amenity=parking`) is the third such non-green class — `MapData::parking`,
+  asphalt with stalls painted on it (see **Parking** below). It is tried after the greens
+  and **before** the landuse blocks, but the branch is reached only for a polygon that is
+  not a building at all: a multi-storey car park carries `building` *and*
+  `amenity=parking`, and it must stay a building. Tula v9: 172 in the bbox, 171 reach
+  `MapData::parking`.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
@@ -318,7 +325,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   over a single white `ColorMaterial`; every layer carrying a roof (`building_roofs`, and
   in 2.5D `building_extruded`, walls included) over the `RoofMaterial` of **Roof
   material**; the **surfaces** — ground, area fills, water, road and
-  alley fills, sidewalks, the tree-row band — over the `SurfaceMaterial` below. ~7000
+  alley fills, sidewalks, parking asphalt (as `SurfaceKind::Street` — it *is* asphalt),
+  the tree-row band — over the `SurfaceMaterial` below. The parking **markings** are the
+  exception that proves the rule: paint over asphalt, so that layer stays on the flat
+  `ColorMaterial`. ~7000
   buildings cost a handful of entities. Trees stay individual entities (see
   `references/trees.md`).
 - **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
@@ -539,6 +549,26 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Parking** (`map/parking.rs`) — an `amenity=parking` area is drawn as asphalt
+  (`Z_PARKING` 0.8, the `parking` surface layer) with the **stalls painted on it**
+  (`Z_PARKING_LINES` 0.81). The markings go in a **flat-material** layer of their own,
+  not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
+  not on it, and a 12 cm line is the one thing on this map that must stay pure white.
+  - **The layout is one function**, `stalls(area)`, and the paint and the cars both call
+    it — two independent layouts would put a car across its own line. Rows run along the
+    **long axis of `min_area_rect`**, the axis a real lot is striped along: `STALL_WIDTH`
+    2.6 × `STALL_DEPTH` 5.2 m, two rows back to back, then an `AISLE` of 6 m, and
+    `EDGE_MARGIN` 1.2 m in from the edge.
+  - **A stall survives only if all four of its corners are inside the outline**
+    (`fits`, the same test the roof clutter uses for its boxes) — an L-shaped lot gets
+    nothing in the notch, and the OBB rows do not have to match the outline.
+  - **`MIN_AREA` 120 m²** — under that the lot gets no paint at all. A yard for four cars
+    is not striped in reality, and stripes on a 6 × 10 m patch read as a texture bug.
+  - The paint is drawn as the **border between stalls** (one bar to the left of each
+    stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
+    like, and it is cheaper than finding each stall's neighbour.
+  - Tula: **171 lots**. Parking touches neither the navmesh nor tree planting, like the
+    landuse blocks.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
@@ -634,6 +664,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
     in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
     once per rebuild and costs nothing per frame.
+  - **The lots are filled by the same pass** (`fill_lots`): every stall from
+    `parking::stalls`, `LOT_OCCUPANCY` **55 %** of them taken — a lot is fuller than a
+    kerb, and an empty one next to a painted grid reads as unfinished. Seeded per lot
+    (`lot_seed`, its first point) exactly like a street. That share is a constant, not
+    `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
+    lot is a different observation.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark

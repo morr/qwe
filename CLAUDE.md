@@ -291,7 +291,7 @@ step when adding one):
 
 | entity | file |
 |---|---|
-| ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layer`) |
+| ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layer`) |
 | road layers (sidewalks/alleys/roads/bridges/walls + casings) | `map/roads.rs::spawn_roads` (same helper) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::spawn_rails` |
 | parked cars | `map/cars.rs::rebuild_cars` (through `surface::spawn_layer`) |
