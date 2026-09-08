@@ -943,7 +943,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   camera of its own, with its own centre, zoom and size, and written without the window
   server: a locked screen or a covering window turns the ordinary screenshot solid black
   and this one still works. It carries the real camera's post-processing but not the UI,
-  which is pinned to the main camera by `IsDefaultUiCamera`.
+  which is pinned to the main camera by `IsDefaultUiCamera`. A differing zoom is
+  **applied to the user camera for the duration of the shot**, because the zoom-LOD layers
+  keep one mesh for all views and read their step from the user camera.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.

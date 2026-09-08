@@ -531,8 +531,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     *drawing*, not its size: close up the real thing (ties 2.6 × 0.26 m every 65 cm,
     a 1.5 m gauge on every bed with 12 cm rails); by 0.26 m/px the two
     rails no longer separate on screen and are dropped, ties thicken and thin out into
-    hatching; from 0.65 m/px the ties go too and osm-carto's white dash pattern comes
-    back, because a bare grey band reads as another street. `min_bed` floors the ballast
+    hatching; from 0.65 m/px the ties go too and a coarse dash pattern comes
+    back, because a bare grey band reads as another street. That dash was osm-carto's
+    **white** until the first offscreen shot showed what it does to a photo — a white
+    ladder across the whole station throat, the most map-like thing in the frame — and it
+    is now **darker than the ballast**: from the air a track is a grey band with a cross
+    ripple on it, never a white one. `min_bed` floors the ballast
     width on the last two buckets — 5 m is a pixel at city scale, and the track would
     vanish before the roads it crosses. The numbers are derived from the screen size at
     the **worst** (far) edge of each bucket, and they hold on **every** parsed bed width
