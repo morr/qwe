@@ -11,16 +11,9 @@
 use bevy::prelude::*;
 
 use crate::loading::AppState;
-use crate::settings::Z_SOUL;
+use crate::settings::{SOUL_LIFE, SOUL_MIN_PX, SOUL_RISE, SOUL_SIZE, Z_SOUL};
 use crate::silhouette::{Glyph, Silhouette, Silhouettes};
 
-/// Жизнь искры, секунд симуляции.
-const SOUL_LIFE: f32 = 1.4;
-/// Подъём за жизнь, м.
-const SOUL_RISE: f32 = 6.0;
-/// Тело искры, м, и пол на экране, логических px.
-const SOUL_SIZE: f32 = 2.0;
-const SOUL_MIN_PX: f32 = 3.0;
 /// Золото ярче белого — HDR, светится через bloom (`camera.rs`).
 const SOUL_COLOR: LinearRgba = LinearRgba::new(2.6, 2.1, 0.9, 1.0);
 
