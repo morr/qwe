@@ -9,8 +9,10 @@
 //!
 //! В каждом блоке — **по дому на каждый цвет палитры материала**, от крупного
 //! корпуса к частной коробке (30 → 8 м). Два разреза сразу: цвета материала
-//! видны рядом (палитры нарочно узкие по светлоте и широкие по тону — на
-//! снимке соседние крыши отличаются оттенком, а не устраивают конфетти), а
+//! видны рядом (у плоских кровель корпусов палитры узкие по светлоте и
+//! широкие по тону — на снимке соседние панельные дома отличаются оттенком, а
+//! не устраивают конфетти; у черепицы частного сектора наоборот, яркие и
+//! разные — красная, зелёная, синяя через забор друг от друга), а
 //! размер показывает главное про фактуру — она задана **в метрах** и не
 //! масштабируется вместе с домом: на 30-метровом корпусе видны и швы, и
 //! заплаты, на восьмиметровой коробке от них остаётся пара полос.
@@ -116,9 +118,11 @@ const DEPTH_RATIO: f32 = 0.62;
 /// Зазор между домами блока, м.
 const BUILDING_GAP: f32 = 5.0;
 
-/// Шаг сетки блоков, м. По x — самый широкий блок (пять домов) плюс поле; по
-/// y — дом, заголовок над ним и подписи под ним.
-const BLOCK_PITCH_X: f32 = 130.0;
+/// Шаг сетки блоков, м. По x он не константа, а самый широкий блок плюс это
+/// поле ([`block_pitch_x`]): палитры разной длины (семь цветов у черепицы,
+/// три у мембраны), и зашитое число ломалось бы на каждом новом цвете. По y —
+/// дом, заголовок над ним и подписи под ним.
+const BLOCK_MARGIN_X: f32 = 15.0;
 const BLOCK_PITCH_Y: f32 = 46.0;
 /// Блоков в ряду: семь материалов ложатся в 2 × 4, и такая сетка ближе всего
 /// по пропорциям к окну.
@@ -241,24 +245,47 @@ struct Cell {
     color: Srgba,
 }
 
+/// Длина дома витрины по его номеру в блоке из `count`: ровным шагом от
+/// крупного корпуса к мелкой коробке.
+fn house_length(slot: usize, count: usize) -> f32 {
+    let t = if count > 1 {
+        slot as f32 / (count - 1) as f32
+    } else {
+        0.0
+    };
+    BIG_LENGTH + (SMALL_LENGTH - BIG_LENGTH) * t
+}
+
+/// Ширина блока из `count` домов вместе с зазорами между ними.
+fn block_width(count: usize) -> f32 {
+    (0..count)
+        .map(|slot| house_length(slot, count))
+        .sum::<f32>()
+        + BUILDING_GAP * count.saturating_sub(1) as f32
+}
+
+/// Шаг сетки по x: самый широкий блок витрины плюс поле.
+fn block_pitch_x() -> f32 {
+    blocks()
+        .iter()
+        .map(|block| block_width(block.palette.len()))
+        .fold(0.0, f32::max)
+        + BLOCK_MARGIN_X
+}
+
 /// Дома одного блока: по дому на цвет палитры, длина ровным шагом от крупного
 /// корпуса к мелкой коробке. Стоят в ряд по общей базовой линии — так размеры
 /// сравниваются глазом, а не по памяти.
 fn cells(index: usize, block: &Block) -> Vec<Cell> {
     let origin = Vec2::new(
-        (index % BLOCK_COLUMNS) as f32 * BLOCK_PITCH_X,
+        (index % BLOCK_COLUMNS) as f32 * block_pitch_x(),
         -((index / BLOCK_COLUMNS) as f32) * BLOCK_PITCH_Y,
     );
     let count = block.palette.len();
     let mut cursor = 0.0;
     let mut cells = Vec::with_capacity(count);
     for (slot, color) in block.palette.iter().enumerate() {
-        let t = if count > 1 {
-            slot as f32 / (count - 1) as f32
-        } else {
-            0.0
-        };
-        let length = BIG_LENGTH + (SMALL_LENGTH - BIG_LENGTH) * t;
+        let length = house_length(slot, count);
         let half = Vec2::new(length, length * DEPTH_RATIO) / 2.0;
         cells.push(Cell {
             centre: origin + Vec2::new(cursor + half.x, half.y),

@@ -464,6 +464,31 @@ fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
     assert_eq!(kremlin(Some(60.0), true), kremlin(None, false));
 }
 
+#[test]
+fn the_tint_ramp_darkens_every_palette_colour() {
+    // Цель рампы обязана быть темнее любого цвета любой палитры, иначе на
+    // высоком доме рампа переворачивается и осветляет: у насыщенной красной
+    // черепицы сумма каналов ниже, чем у среднего серого. Проверяется на
+    // каждом цвете — палитры теперь не одни серые.
+    let tall = building(square(), Some(60.0), AreaKind::Building);
+    let luminance = |color: Srgba| color.red + color.green + color.blue;
+    let palettes = RoofKind::ALL
+        .iter()
+        .map(|kind| kind.palette())
+        .chain(std::iter::once(&CHURCH_ROOF_COLORS as &[Color]));
+    for palette in palettes {
+        for color in palette {
+            let look = RoofLook::new(RoofKind::Tile, color.to_srgba(), Vec2::X, 0.0);
+            let ramped = roof_color(&tall, &look, true);
+            let flat = roof_color(&tall, &look, false);
+            assert!(
+                luminance(ramped) < luminance(flat),
+                "{color:?}: ramped {ramped:?} vs flat {flat:?}"
+            );
+        }
+    }
+}
+
 fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {
     if passage {
         fixture::passage(points, 5.0)

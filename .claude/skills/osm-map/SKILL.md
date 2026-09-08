@@ -582,8 +582,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     itself anywhere: no double-darkening between wings of one block or neighbouring
     buildings (unlike tree shadows, which still stack).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
-    the roof toward `ROOF_TALL_COLOR` (0.34, a dark neutral — it followed the palette down
-    when roofs became materials), max 0.7; no-height buildings and the Kremlin keep their
+    the roof toward `ROOF_TALL_COLOR` (0.20, a near-black neutral — it must be darker in
+    luminance than every palette colour, saturated tile included, or the ramp inverts),
+    max 0.3 (a 27 m block: 0.55 → 0.48); no-height buildings and the Kremlin keep their
     material colour.
   - **2.5D (Extrusion)** — watabou-style: roof lifted by `lift = height ×
     EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 2.5–30 m.
@@ -645,10 +646,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     Kremlin too (and keeps `KREMLIN_ROOF_COLOR`), and `Other` — half the city — splits by
     footprint at the same `SMALL_FOOTPRINT_MAX` 250 m² the gable rule uses: a small box is
     a private house, a big one a block.
-  - **The colour** comes from that material's own palette (3–5 plausible shades, picked
-    by another slice of the same seed, then ±3 % of value). The palettes are deliberately
-    **tight in value and wide in hue** — neighbouring roofs on a photo differ in shade,
-    not in brightness, and a wide value spread reads as confetti.
+  - **The colour** comes from that material's own palette (3–7 plausible shades, picked
+    by another slice of the same seed, then ±3 % of value). **Value is calibrated against
+    the aerial photo at the city zoom**, where the texture has faded and the base colour
+    is all that is left: a panel block's bitumen is a mid grey there (~0.55 sRGB, palette
+    0.50–0.63), not the 0.38–0.50 of the first version, which on the map's ~0.9 ground
+    read as dirty-dark boxes — fine close up, unreal zoomed out. The spread differs by
+    what the roof covers: the **flat roofs of blocks** (bitumen, gravel, membrane) are
+    **tight in value and wide in hue** — neighbouring panel blocks on a photo differ in
+    shade, not in brightness, and a wide value spread there reads as confetti — while the
+    **private sector** (tile, and the seam / corrugated it also draws) is **bright and
+    many-hued**: red and brown metal tile, green, blue, silver and dark slate stand fence to
+    fence, and a palette of greys made the whole quarter one colour.
   - **The texture** is a `Material2d` in the shape of `SurfaceMaterial`: one material for
     the whole app (`RoofMaterialHandle`, built at `Startup`), a `RoofParams` uniform
     (`light` = `-SHADOW_DIR`, `intensity` = `RoofStyle::texture`) and a per-vertex
@@ -718,9 +727,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
     than wall, so the wall reads as a band under it" rule, which is retired: on a photo a
     dark bitumen roof over light panel walls is the normal relation, and the 2.5D box is
-    held together by the two visible walls' own tones. The height ramp (`ShadowsTint`)
-    kept its direction only because `ROOF_TALL_COLOR` moved with the palette, from 0.71 to
-    0.34 — against the new bases the old target would have made tall roofs *lighter*.
+    held together by the two visible walls' own tones. The relation is "as a rule": the
+    light materials (membrane, gravel, silver tile) sit above their walls, as they do on
+    the photo. The height ramp (`ShadowsTint`) keeps its direction only while
+    `ROOF_TALL_COLOR` is darker than every base — 0.71 with the near-white per-use roofs,
+    0.34 with the first dark bitumen, and now a near-black 0.20 with a short mix (0.3): a
+    mid-value neutral would *lighten* a saturated red or green tile, and the old 0.34 / 0.7
+    pair would have pulled a nine-storey bitumen roof from 0.55 back to 0.45, undoing the
+    brightening at the very zoom it was made for.
   - **`RoofStyle::texture`** (section Buildings, row `Roof texture`, persisted, BRP) is
     the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
     only, so dragging the slider rebuilds nothing.
