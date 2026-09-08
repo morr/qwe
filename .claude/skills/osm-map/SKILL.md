@@ -676,12 +676,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the same seed** the texture phase rides on, and with a fixed patch share that was the
     missing half of the patch fix: a minority of cells carried a patch, but *the same*
     minority on every bitumen roof, so the whole district read as re-roofed and repaired in
-    one year. Age drives the patch share (`PATCH_SHARE_NEW` 0.04 → `PATCH_SHARE_OLD` 0.42,
-    mixed by `age²` — age is uniform, repairs are not, and ⟨age²⟩ = 1/3 keeps the mean
-    share at 0.17, near the old fixed 0.22, so what changes is the spread and not the tone
-    of the quarter), the ponding amount (0.07 → 0.13) and, on **every** material, the
-    common fade-and-dirt amplitude (×0.75 → ×1.35) — the last one is what makes the age
-    read as age rather than as a patch counter. It gets **no vertex attribute of its own**:
+    one year. Age drives the patch share (`PATCH_SHARE_NEW` 0.04 → `PATCH_SHARE_OLD` 0.28,
+    mixed by `age²` — age is uniform, repairs are not; with ⟨age²⟩ = 1/3 the mean share
+    lands at 0.12, half the old fixed 0.22, so a patched roof is an event against clean
+    neighbours instead of the district's baseline), the ponding amount (0.07 → 0.13) and,
+    on **every** material, the common fade-and-dirt amplitude (×0.75 → ×1.35) — the last
+    one is what makes the age read as age rather than as a patch counter.
+    It gets **no vertex attribute of its own**:
     the seed is already a per-building random number the shader hashes several ways
     (`seed·17`, `seed·11`, `seed·37`), the correlation between two patterns of one building
     is not visible, and a fifth float would cost four bytes on every vertex of the building
@@ -720,7 +721,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     with the house. Knobs are what the game reads off the building itself — long axis,
     phase seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
     prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
-    zoom "the texture is gone" and "the texture is off" look alike. What the gallery may
+    zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
+    panel lists the shader's own **tuning constants** (patch cell, patch size, the two
+    share ends), parsed out of `roof.wgsl` itself by `constants.rs` (`include_str!`, lines
+    of the form `const NAME: f32 = …;`) rather than mirrored as Rust numbers — a mirror
+    would drift on the first edit and the gallery would then lie about exactly what it is
+    opened for. They are text, not knobs: the numbers live in the shader. What the gallery may
     **not** do is roll its own quad: houses go through `push_flat_roof`, the parapet
     marker in a block's caption comes from `RoofKind::has_parapet`. It picks material and
     colour directly (`RoofLook::new`) instead of through `roof_look`, because the seed

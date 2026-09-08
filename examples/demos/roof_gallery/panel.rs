@@ -1,5 +1,5 @@
-//! Панель витрины: строки-ползунки на все ручки — и плашка с масштабом внизу
-//! справа.
+//! Панель витрины: строки-ползунки на все ручки, значения констант шейдера
+//! под ними — и плашка с масштабом внизу справа.
 //!
 //! Виджеты — те же, что в панелях игры (`qwe::ui::slider`), а не свои: витрина
 //! обязана выглядеть и вести себя как настоящая панель, иначе непонятно, чему
@@ -24,14 +24,19 @@ use bevy::window::PrimaryWindow;
 use qwe::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use qwe::ui::{
     PANEL_FONT, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background,
-    panel_title, row_value, spawn_panel_button, ui_node,
+    panel_title, row_label, row_value, spawn_panel_button, ui_node,
 };
 
+use crate::constants::shader_constants;
 use crate::params::{ParamSpec, Tuning, specs};
 
 /// Отступ заголовка группы от края плашки — как у заголовка секции в панели
 /// настроек игры.
 const GROUP_HEADER_PAD_PX: f32 = 6.0;
+
+/// Отступ строки-константы от краёв панели — `ROW_LEFT_PX` строк игры,
+/// который сама она наружу не отдаёт.
+const ROW_PAD_PX: f32 = 8.0;
 
 /// Номер ручки в [`specs`] — на ползунке и на его числе.
 #[derive(Component, Clone, Copy)]
@@ -82,15 +87,7 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
 
     for (index, spec) in specs().into_iter().enumerate() {
         if let Some(group) = spec.group {
-            commands.spawn((
-                ui_node(Node {
-                    padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2)),
-                    ..default()
-                }),
-                panel_block_background(),
-                children![panel_title(group)],
-                ChildOf(panel),
-            ));
+            spawn_group_header(&mut commands, panel, group);
         }
         let value = (spec.get)(&tuning);
         spawn_slider_row(
@@ -116,6 +113,51 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         false,
         |_: On<Activate>, mut tuning: ResMut<Tuning>| *tuning = Tuning::default(),
     );
+
+    spawn_group_header(&mut commands, panel, "Константы roof.wgsl");
+    for (name, value) in shader_constants() {
+        spawn_constant_row(&mut commands, panel, name, value);
+    }
+}
+
+/// Заголовок группы строк — плашка с названием, как секция в панели игры.
+fn spawn_group_header(commands: &mut Commands, panel: Entity, title: &str) {
+    commands.spawn((
+        ui_node(Node {
+            padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2)),
+            ..default()
+        }),
+        panel_block_background(),
+        children![panel_title(title)],
+        ChildOf(panel),
+    ));
+}
+
+/// Константа шейдера: имя слева, значение справа — та же геометрия, что у
+/// строки-значения игры (`ui/rows.rs`), но **не кнопка**: крутить константу
+/// отсюда нельзя, а подсвечивать под курсором строку, клик по которой ничего
+/// не сделает, панель игры себе не позволяет.
+fn spawn_constant_row(commands: &mut Commands, panel: Entity, name: &str, value: &str) {
+    commands.spawn((
+        ui_node(Node {
+            column_gap: px(6),
+            padding: UiRect::axes(px(ROW_PAD_PX), px(1)),
+            ..default()
+        }),
+        children![
+            (
+                row_label(name),
+                // распорка: имя забирает свободную ширину, значение уходит
+                // к правому краю строки
+                Node {
+                    flex_grow: 1.,
+                    ..default()
+                },
+            ),
+            row_value(value),
+        ],
+        ChildOf(panel),
+    ));
 }
 
 /// Плашка с масштабом — внизу справа, подальше от панели. Не подсказка по
