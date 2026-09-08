@@ -345,8 +345,9 @@ did not fit 1080 px and ran off the top of the screen.
 ## Camera start view
 
 - **HDR and bloom** (`camera.rs::spawn_camera`) — the camera carries `Bloom` (its
-  `#[require(Hdr)]` switches the view to an HDR target) with `BloomPrefilter { threshold:
-  1.0, threshold_softness: 0.3 }` and `BLOOM_INTENSITY` 0.25 (Bevy's `NATURAL` 0.15 is
+  `#[require(Hdr)]` switches the view to an HDR target) with a `BloomPrefilter` of
+  `BLOOM_THRESHOLD` 1.0 / `BLOOM_THRESHOLD_SOFTNESS` 0.3 and `BLOOM_INTENSITY` 0.25
+  (all three `camera.rs` constants; Bevy's `NATURAL` 0.15 is
   tuned for dark scenes and drowns over a light map). The threshold is the whole point:
   the map is drawn in colours ≤ 1 and must not haze, so only deliberately over-bright
   things glow — the portal rim (`portal.rs`), demon halos (`demon/look.rs`), soul sparks
