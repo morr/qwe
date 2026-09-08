@@ -495,7 +495,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     centerline by half the gauge, using the very `miter_offsets` that build a ribbon's
     edge, so the rails hold the gauge through a bend instead of drifting outward at the
     corner. `push_dashes` (far buckets) and `push_ticks` (ties) are as before.
-  - **No style resource.** Like the tram, rails ignore `RoadStyle` and hardwire
+  - **No style resource.** Like the tram (whose only resource is a visibility toggle),
+    rails ignore `RoadStyle` and hardwire
     `Round` + `Light` with a fixed `RAIL_SMOOTH_WIDTH` (5 m), so the centerline is
     identical on every bucket — a smoothing knob would slide the track against its own
     ballast, and an LOD switch would wiggle it.
@@ -512,10 +513,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
   a perpendicular bar rather than a piece of the path, and the first one is offset half
   a step so a bar never lands exactly on a way endpoint and pairs into a cross at joins.
-  The style is fixed, no panel and no resource: on a line 1.5–2 px wide a join style is
-  invisible and Strong smoothing is indistinguishable from Light, so it is hardwired to
-  `Round` + `Light` (`TRAM_JOIN` / `TRAM_SMOOTHING`), and the sparse tie spacing is
-  baked into the LOD table.
+  The style is fixed, and the panel has exactly one row: on a line 1.5–2 px wide a join
+  style is invisible and Strong smoothing is indistinguishable from Light, so it is
+  hardwired to `Round` + `Light` (`TRAM_JOIN` / `TRAM_SMOOTHING`), and the sparse tie
+  spacing is baked into the LOD table.
+
+  **`TramStyle`** (resource, one field `visible`, on by default, BRP-writable, persisted,
+  settings group `tram`) is therefore the whole style surface: the `Tram` row at the bottom
+  of the **Roads** section (`ui/roads.rs`) — the track runs on the carriageway, so it is
+  read together with the roads rather than given a section of its own for one row. It is
+  **not** a field of `RoadStyle`, and that is the point: a `RoadStyle` edit reruns
+  `rebuild_roads`, and hiding the tram would then remesh every road layer for nothing.
+  `rebuild_tram` is gated on `retuned::<TramZoomBucket>.or_else(retuned::<TramStyle>)` and
+  the invisible case goes through it like any other — despawn the old layer, build no new
+  one — so there is no second path that could forget the despawn.
 
   **Tram zoom LOD** (`TRAM_LODS`) — the mesh is rebuilt at discrete zoom thresholds,
   pseudo-gizmo style: five buckets over the camera zoom range, each with its own line

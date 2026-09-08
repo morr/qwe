@@ -2,10 +2,14 @@
 //! тротуары, разметка. Полей ввода в `bevy_ui` нет, поэтому каждая строка —
 //! кнопка, листающая значение по кругу (как у панели деревьев); правка
 //! `RoadStyle` пересобирает дорожные слои (`map::roads::rebuild_roads`).
+//!
+//! Последняя строка секции — трамвай (`TramStyle`, свой ресурс со своей
+//! пересборкой `map::tram::rebuild_tram`): путь идёт по проезжей части, так
+//! что читается он вместе с дорогами, а не отдельной секцией на одну строку.
 
 use bevy::prelude::*;
 
-use crate::map::{RoadJoin, RoadSmoothing, RoadStyle};
+use crate::map::{RoadJoin, RoadSmoothing, RoadStyle, TramStyle};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
@@ -17,11 +21,17 @@ impl Plugin for UiRoadStylePlugin {
     fn build(&self, app: &mut App) {
         // подписи вслед за ресурсом — и на клик по кнопке, и на правку по BRP
         app.add_knobs::<RoadStyle>()
+            .add_knobs::<TramStyle>()
             .add_systems(Startup, build_roads_section.in_set(UiBuildSet::Sections));
     }
 }
 
-fn build_roads_section(mut commands: Commands, panes: Res<SettingsPanes>, style: Res<RoadStyle>) {
+fn build_roads_section(
+    mut commands: Commands,
+    panes: Res<SettingsPanes>,
+    style: Res<RoadStyle>,
+    tram: Res<TramStyle>,
+) {
     let panel = spawn_section(
         &mut commands,
         panes.pane(SettingsTab::Map),
@@ -83,6 +93,17 @@ fn build_roads_section(mut commands: Commands, panes: Res<SettingsPanes>, style:
         CycleBinding {
             cycle: |style| style.markings = !style.markings,
             text: |style| on_off(style.markings).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Tram",
+        ROW_LEFT_PX,
+        &*tram,
+        CycleBinding {
+            cycle: |tram| tram.visible = !tram.visible,
+            text: |tram| on_off(tram.visible).to_string(),
         },
     );
 }

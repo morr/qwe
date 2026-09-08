@@ -19,6 +19,7 @@ pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 pub use self::surface::SurfaceStyle;
+pub use self::tram::TramStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
@@ -51,6 +52,7 @@ impl Plugin for MapPlugin {
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
+            .init_resource::<TramStyle>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
             .register_type::<ConiferNoiseStyle>()
@@ -60,6 +62,7 @@ impl Plugin for MapPlugin {
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
             .register_type::<SurfaceStyle>()
+            .register_type::<TramStyle>()
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
@@ -67,6 +70,7 @@ impl Plugin for MapPlugin {
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
             .track_pref::<SurfaceStyle>()
+            .track_pref::<TramStyle>()
             // материалы поверхностей и кровель — один комплект на всё
             // приложение, слои всех городов берут хэндлы из него
             .add_systems(
@@ -149,7 +153,10 @@ impl Plugin for MapPlugin {
                         .run_if(in_state(AppState::Playing)),
                     (
                         zoom::update_zoom_bucket::<tram::TramLods>,
-                        tram::rebuild_tram.run_if(retuned::<tram::TramZoomBucket>),
+                        // тумблер видимости идёт через ту же пересборку: она и
+                        // деспавнит слой, и строит его заново
+                        tram::rebuild_tram
+                            .run_if(retuned::<tram::TramZoomBucket>.or_else(retuned::<TramStyle>)),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

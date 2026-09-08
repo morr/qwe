@@ -150,7 +150,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `highway` and falls through — a way can be both street and track. A non-tram track is
     drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
     and two steel rails on the gauge, thinned out by **rail zoom LOD** into osm-carto's
-    dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD.
+    dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD, and is
+    drawn only while `TramStyle::visible`.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
@@ -276,10 +277,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
   no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
   their own z-slots and primitives (`push_dashes`, `push_ticks`, `push_rails`). Rail and
-  tram answer to **no style resource at all** — their geometry is a function of the camera
+  tram answer to **no style resource** for their *geometry* — it is a function of the camera
   zoom (a **zoom bucket** each — `ZoomBucket<T>` over the layer's own LOD table,
   `map/zoom.rs`; seeded from the camera on world entry, then recomputed every frame), so a
   smoothing knob that moved the centerline would slide the track against its own ballast.
+  The tram's one resource is **TramStyle** — `visible` alone, on by default, the `Tram` row
+  of the Roads section (the track runs on the carriageway, so it is read with the roads); a
+  change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
 
 ## Navigation
 
