@@ -8,6 +8,7 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
+use crate::map::meshing::min_area_rect;
 use crate::map::osm::fixture;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::shadow_dir;

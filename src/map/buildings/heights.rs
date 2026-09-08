@@ -20,7 +20,7 @@
 use bevy::math::Vec2;
 
 use super::material::building_seed;
-use super::roofs::min_area_rect;
+use crate::map::meshing::min_area_rect;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{BuildingUse, PolyArea};
 
