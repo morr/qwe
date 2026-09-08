@@ -233,18 +233,8 @@ fn a_degenerate_path_makes_no_dashes() {
     assert!(builder.is_empty());
 }
 
-/// Расстояние от точки до ломаной — ни одна вершина скруглённой ленты не
-/// имеет права уйти дальше полуширины, торцы включительно.
-fn distance_to_path(point: Vec2, path: &[Vec2]) -> f32 {
-    path.windows(2)
-        .map(|segment| {
-            let span = segment[1] - segment[0];
-            let t = (point - segment[0]).dot(span) / span.length_squared();
-            point.distance(segment[0] + span * t.clamp(0.0, 1.0))
-        })
-        .fold(f32::INFINITY, f32::min)
-}
-
+/// Ни одна вершина скруглённой ленты не имеет права уйти дальше полуширины,
+/// торцы включительно.
 #[test]
 fn round_ribbon_stays_within_half_width() {
     let path = [

@@ -1,4 +1,5 @@
 use super::*;
+use crate::map::meshing::distance_to_path;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {
@@ -8,17 +9,6 @@ fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
         bridge: false,
         passage,
     }
-}
-
-/// Расстояние от точки до ломаной — тем же способом, что и в тестах мешинга.
-fn distance_to_path(point: Vec2, path: &[Vec2]) -> f32 {
-    path.windows(2)
-        .map(|segment| {
-            let span = segment[1] - segment[0];
-            let t = (point - segment[0]).dot(span) / span.length_squared();
-            point.distance(segment[0] + span * t.clamp(0.0, 1.0))
-        })
-        .fold(f32::INFINITY, f32::min)
 }
 
 #[test]

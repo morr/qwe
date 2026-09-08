@@ -275,14 +275,20 @@ pub fn rebuild_roads(
 /// Бордюр моста: торцы всегда [`RibbonCap::Butt`] — настил кончается ровным
 /// срезом, как на 2ГИС. Полудиск `Round` или продление `push_polyline` при
 /// `Square` торчали бы бордюрным языком за конец моста, поэтому мимо
-/// [`push_ribbon`]-обёртки, а стык — как у штриховки ([`dash_join`]).
+/// [`push_ribbon`]-обёртки.
 fn push_bridge_curb(builder: &mut MeshBuilder, points: &[Vec2], width: f32, join: RoadJoin) {
+    // `Square` — это `push_polyline` с продлёнными торцами, а торцы здесь
+    // решены выше; его излом сводится к `Miter`, как у любой метки, а не дороги
+    let join = match join {
+        RoadJoin::Square | RoadJoin::Miter => RibbonJoin::Miter,
+        RoadJoin::Round => RibbonJoin::Round,
+    };
     builder.push_ribbon(
         points,
         false,
         width,
         BRIDGE_CURB_COLOR.to_linear(),
-        dash_join(join),
+        join,
         RibbonCap::Butt,
     );
 }
@@ -314,15 +320,6 @@ pub fn push_ribbon(
             RibbonJoin::Round,
             RibbonCap::Round,
         ),
-    }
-}
-
-/// Штрих — метка, а не дорога: круглый торец на каждом штрихе стоил бы полудиска
-/// на каждый конец и всё равно был бы не виден на шести метрах.
-fn dash_join(join: RoadJoin) -> RibbonJoin {
-    match join {
-        RoadJoin::Square | RoadJoin::Miter => RibbonJoin::Miter,
-        RoadJoin::Round => RibbonJoin::Round,
     }
 }
 
