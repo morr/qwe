@@ -762,6 +762,50 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     cannot reach every combination — a membrane never lands on a private house — and it
     drops the ±3 % seeded jitter so the hex printed under a house is the constant in
     `material.rs`.
+- **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
+  second half of the same argument: a photographed roof is never empty, and it is the
+  small equipment with its short shadows that reads as "photo" rather than "fill".
+  - **What stands where follows the material**, not the building use, because the
+    material already encodes the kind of building: a soft flat roof (bitumen / gravel /
+    membrane) over 400 m² gets a **lift penthouse** (5 × 3.5 m, 3 m tall; a second one
+    over 1600 m²), every flat roof gets **ventilation shafts** (1.1 m cubes, one per
+    300 m², at most ten), a corrugated shed over 700 m² gets one or two **skylight
+    ribbons** (2.2 m wide, 62 % of the length, along the long axis; the second only if
+    the building is at least 22 m across), commercial and public buildings get
+    **air-conditioning units** in addition, and a gabled roof gets a **chimney** on the
+    ridge — `ridge_of` reads the ridge back out of `GableRoof`'s first slope, since the
+    two far corners of `[eave, eave, ridge, ridge]` are exactly it.
+  - **Placement** is a Park–Miller LCG (the crown generator's, copied — `map/trees`
+    keeps its own `pub(super)`) seeded from the roof material's building seed, so the
+    equipment survives a mode switch, a zoom-bucket rebuild and a restart in the same
+    place. Positions are rolled in the building's own frame (long axis × its
+    perpendicular, extent projected from the outline — no second `min_area_rect`),
+    inset by `EDGE_MARGIN` 1.6 m or 18 % of the short side, whichever is smaller. Every
+    candidate is accepted only if **all four corners are inside the footprint**
+    (`point_in_area`, holes included) — the frame is a rectangle and an L-shaped block
+    is not — and a miss is retried `PLACE_TRIES` (6) times before the item is dropped.
+    One try was the first version and it was wrong: a 5 × 3.5 m penthouse fits a 12 m
+    slab only in a narrow band, so most blocks came out with no penthouse at all.
+  - **Shadows are opaque.** The building layer draws without blending, so a translucent
+    shadow would not mix; each item's shadow is the roof colour mixed 30 % toward black,
+    swept the item's own height × `SHADOW_LENGTH_SCALE` along `SHADOW_DIR`. The sweep is
+    the two silhouette edges plus the offset rectangle — the same construction the
+    buildings' own shadows use, and for the same reason: for a convex base that *is* the
+    missing part of the union, and no convex hull has to be built. (The first version
+    swept all four edges; two of them were always inside the union.)
+  - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
+    it cannot be hidden without rebuilding, since it lives in the same merged mesh as
+    the houses (painter's order is per building: walls, roof, parapet, then its own
+    clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
+    `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
+    world entry before `spawn_map` and rebuilt on a threshold crossing through the same
+    `retuned` gate the height mode uses (one registration with `or_else`, deliberately:
+    two registrations of `rebuild_buildings` in one schedule could both fire in one
+    frame and spawn the layer twice).
+  - **What it costs** (Tula, 7643 buildings, 2.5D+shadows+tint, M1 Max): 603 018 verts /
+    69 ms with clutter against 279 186 / 58 ms without — one hitch on the threshold
+    crossing, in the same class as the rail layer's deepest bucket (673 k / 23 ms). Most
+    of it is the shafts: every flat roof gets at least one, and a shaft is 6 quads.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment
