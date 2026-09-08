@@ -20,6 +20,7 @@ use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadLine};
+use crate::map::surface::{self, LayerMaterial};
 use crate::settings::Z_BUILDING;
 
 const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
@@ -117,17 +118,15 @@ pub fn spawn_buildings(
     let mut spawn_layer =
         |commands: &mut Commands, meshes: &mut Assets<Mesh>, builder: MeshBuilder, z, name| {
             skipped += builder.skipped_polygons();
-            if builder.is_empty() {
-                return;
-            }
-            commands.spawn((
+            surface::spawn_layer(
+                commands,
+                meshes,
+                builder,
+                z,
+                name,
+                LayerMaterial::Flat(opaque.clone()),
                 BuildingLayerTag,
-                Mesh2d(meshes.add(builder.build())),
-                MeshMaterial2d(opaque.clone()),
-                Transform::from_xyz(0.0, 0.0, z),
-                DespawnOnExit(AppState::Playing),
-                Name::new(name),
-            ));
+            );
         };
 
     match mode {

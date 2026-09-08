@@ -291,7 +291,7 @@ step when adding one):
 | ground mesh, merged area layer meshes (parks/woods/grass/sand/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layer`) |
 | road layers (sidewalks/alleys/roads/bridges/rails/walls + casings) | `map/roads.rs::spawn_roads` (same helper) |
 | tram mesh | `map/tram.rs::spawn_tram` |
-| building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` |
+| building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper; shadows spawned directly) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
 | portal | `portal.rs` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
