@@ -22,6 +22,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+pub use self::layers::push_flat_roof;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use self::material::RoofMaterialHandle;
 use crate::loading::AppState;

@@ -184,12 +184,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
   whole building**; code `0` is *not a roof* — walls, gables and parapets ride in the same
-  mesh). A soft flat roof (bitumen / gravel / membrane) also gets a **parapet**: an inset
-  band along the ring, lit by `SHADOW_DIR` like a wall. Strength — `RoofStyle::texture`
+  mesh). A soft flat roof gets a **parapet**: an inset band along the ring, lit by
+  `SHADOW_DIR` like a wall — soft is a property of the material (`RoofKind::has_parapet`:
+  bitumen / gravel / membrane), not of the layer that draws it. Every flat roof of the
+  city, in both flat modes and 2.5D, is laid by one call — **`push_flat_roof`** (fill +
+  parapet). Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
   the walls under it**, deliberately: that is the relation an aerial photo has, and the
-  older "roof lighter than wall" rule is retired with the per-use roof palette. Detail in
-  the `osm-map` skill.
+  older "roof lighter than wall" rule is retired with the per-use roof palette. Every
+  material and every palette side by side, with a house per colour from a 30 m block down
+  to an 8 m shed: `cargo run --example roof_gallery`. Detail in the `osm-map` skill.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building

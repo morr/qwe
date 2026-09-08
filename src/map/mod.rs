@@ -1,4 +1,6 @@
-mod buildings;
+// публичен по той же причине, что и `trees`: витрина `roof_gallery` строит
+// свои дома его же вызовами (`push_flat_roof`, `material::RoofLook`)
+pub mod buildings;
 pub mod footprint;
 mod meshing;
 pub mod osm;

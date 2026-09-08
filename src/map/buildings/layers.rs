@@ -8,7 +8,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
-use super::material::{RoofKind, RoofLook, roof_look};
+use super::material::{RoofLook, roof_look};
 use super::roofs::gable_roof;
 use super::{
     BuildingHeightMode, extrusion_dir, extrusion_lift, facade_color, height_or_default, ridge_lift,
@@ -98,13 +98,29 @@ fn push_parapet(builder: &mut MeshBuilder, ring: &[Vec2], hole: bool, base: Srgb
     });
 }
 
-/// Парапет ставится только на плоскую кровлю мягкого типа — там он и есть на
-/// самом деле. У черепицы и профлиста вместо него свес, у фальца конёк.
-fn has_parapet(kind: RoofKind) -> bool {
-    matches!(
-        kind,
-        RoofKind::Bitumen | RoofKind::Gravel | RoofKind::Membrane
-    )
+/// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
+/// материала и парапет по краю, если материал мягкий. Ровно это игра кладёт
+/// на всякий дом без двускатной крыши — и в плоских режимах, где `outer` это
+/// сам контур, и в 2.5D, где он уже поднят на высоту стен.
+///
+/// Публично, потому что тем же вызовом рисует свои дома витрина
+/// `roof_gallery`: материал и цвет она перебирает сама ([`RoofLook::new`]), а
+/// геометрия обязана остаться игровой.
+pub fn push_flat_roof(
+    builder: &mut MeshBuilder,
+    look: &RoofLook,
+    outer: &[Vec2],
+    holes: &[Vec<Vec2>],
+    color: Srgba,
+) {
+    builder.set_roof(Some(look.frame));
+    builder.push_polygon(outer, holes, color.into());
+    if look.kind.has_parapet() {
+        push_parapet(builder, outer, false, color);
+        for hole in holes {
+            push_parapet(builder, hole, true, color);
+        }
+    }
 }
 
 /// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
@@ -161,22 +177,14 @@ pub(super) fn facade_and_roof_builders(
         // одной плоскости: конёк не поднят, но дом уже не коробка
         let look = roof_look(building);
         let color = roof_color(building, &look, tinted);
-        roofs.set_roof(Some(look.frame));
         match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
             Some(roof) => {
+                roofs.set_roof(Some(look.frame));
                 for (slope, slope_color) in roof.slopes {
                     roofs.push_quad(slope, slope_color);
                 }
             }
-            None => {
-                roofs.push_polygon(&building.outer, &building.holes, color.into());
-                if has_parapet(look.kind) {
-                    push_parapet(&mut roofs, &building.outer, false, color);
-                    for hole in &building.holes {
-                        push_parapet(&mut roofs, hole, true, color);
-                    }
-                }
-            }
+            None => push_flat_roof(&mut roofs, &look, &building.outer, &building.holes, color),
         }
     }
     (facades, roofs)
@@ -387,14 +395,7 @@ pub(super) fn extrusion_builder(
             .iter()
             .map(|hole| hole.iter().map(|p| *p + lift).collect())
             .collect();
-        builder.set_roof(Some(look.frame));
-        builder.push_polygon(&roof_outer, &roof_holes, color.into());
-        if has_parapet(look.kind) {
-            push_parapet(&mut builder, &roof_outer, false, color);
-            for hole in &roof_holes {
-                push_parapet(&mut builder, hole, true, color);
-            }
-        }
+        push_flat_roof(&mut builder, &look, &roof_outer, &roof_holes, color);
     }
     builder
 }

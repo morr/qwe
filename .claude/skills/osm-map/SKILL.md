@@ -672,12 +672,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     feature is smaller than the cell and jittered, so two neighbours never meet at a cell
     boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
   - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
-    membrane, `has_parapet`) gets a 0.7 m inset band along its ring and every courtyard
+    membrane) gets a 0.7 m inset band along its ring and every courtyard
     ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
     dark on the shaded ones. Tile, seam and corrugated get none — they end in an eave, not
-    a parapet. The band carries **no** roof frame: a roll seam crossing a concrete coping
+    a parapet. *Soft* is a property of the material, so the rule lives on it —
+    **`RoofKind::has_parapet`** (`material.rs`), not on the layer that happens to draw the
+    band. The band carries **no** roof frame: a roll seam crossing a concrete coping
     would read as a crack. `MeshBuilder::push_inset_band_with` (the per-edge-colour
     sibling of `push_inset_band`) exists for exactly this.
+  - **One call lays every flat roof** — `layers.rs::push_flat_roof(builder, look, outer,
+    holes, color)`: set the roof frame, fill the contour with its courtyards, add the
+    parapet if the material has one. Both callers use it — the flat modes with the real
+    contour, 2.5D with the contour already lifted onto the walls — and it is `pub` because
+    the `roof_gallery` example builds its houses with it. Slopes stay outside it: a gable
+    roof is computed by the caller, which needs the same `GableRoof` for the gables it
+    draws *with the walls*, before the roof.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
     than wall, so the wall reads as a band under it" rule, which is retired: on a photo a
     dark bitumen roof over light panel walls is the normal relation, and the 2.5D box is
@@ -687,6 +696,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RoofStyle::texture`** (section Buildings, row `Roof texture`, persisted, BRP) is
     the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
     only, so dragging the slider rebuilds nothing.
+  - **The gallery** — `cargo run --example roof_gallery` (`examples/demos/roof_gallery/`,
+    the shape of `tree_gallery`): seven blocks — six materials plus the church palette —
+    each with **a house per palette colour**, sized from a 30 m block down to an 8 m shed,
+    so the two things a still picture cannot say are said at once: the palette's spread
+    (tight in value, wide in hue) and that the texture is in **metres** and does not scale
+    with the house. Knobs are what the game reads off the building itself — long axis,
+    phase seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
+    prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
+    zoom "the texture is gone" and "the texture is off" look alike. What the gallery may
+    **not** do is roll its own quad: houses go through `push_flat_roof`, the parapet
+    marker in a block's caption comes from `RoofKind::has_parapet`. It picks material and
+    colour directly (`RoofLook::new`) instead of through `roof_look`, because the seed
+    cannot reach every combination — a membrane never lands on a private house — and it
+    drops the ±3 % seeded jitter so the hex printed under a house is the constant in
+    `material.rs`.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment
