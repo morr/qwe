@@ -677,6 +677,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
+- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
+  — three effects that keep a road from being one flat tone, all in the **ribbon frame**
+  so they follow the lane rather than the compass:
+  - **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m either side of each lane's
+    middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +6 %. The lane is found
+    from `fract` of `(across + half_width) / lane_width`, so **every** lane gets its own
+    pair without knowing how many there are;
+  - **repair patches** — 6 m cells hashed by world position, the top 12 % going 9 %
+    darker: fresh bitumen is darker than the old surface around it;
+  - **kerb dirt** — 7 % darker over the outer `EDGE_DIRT_REACH` 0.7 m, where the sand
+    and grit collect.
+  Everything fades by `visible(...)` like the rest of the surface texture. The block is
+  gated on `lanes >= 1`, which is what keeps it off the **parking lot**: that layer uses
+  the same `Street` material but carries no ribbon, and it would otherwise have grown
+  ruts across the stalls.
 - **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,

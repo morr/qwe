@@ -70,6 +70,10 @@ pub struct SurfaceParams {
     pub marking_width: f32,
     pub marking_dash: f32,
     pub marking_gap: f32,
+    /// Износ покрытия: колеи, заплаты, грязь у бордюра. Ноль — ровный
+    /// асфальт; считается только на лентах с полосами, поэтому стоянка на
+    /// том же материале его не получает.
+    pub wear: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
 }
@@ -89,6 +93,7 @@ impl SurfaceParams {
         marking_width: 0.0,
         marking_dash: MARKING_DASH,
         marking_gap: MARKING_GAP,
+        wear: 0.0,
         intensity: SURFACE_TEXTURE_DEFAULT,
     };
 }
@@ -218,6 +223,7 @@ impl SurfaceKind {
                 grain_amp: 0.04,
                 grain_scale: 1.2,
                 marking_width: MARKING_WIDTH,
+                wear: 1.0,
                 ..flat
             },
             Self::Alley => SurfaceParams {
