@@ -113,10 +113,11 @@ skill.
 city switch alone — a restart keeps the map, and with it the 12 s northstar hierarchy.
 
 **Process-level state is neither.** The silhouette atlas (`Silhouettes`, filled once in
-`Startup` by `SilhouettePlugin` — an asset, not a world entity, which is why it is the one
-thing that legitimately runs in `Startup`) depends on neither the city nor the run and
-survives a restart and a city switch alike; `spawn_population`, `spawn_demon`, the kill
-observer and `spawn_portal` read it as a plain resource. An app without `SilhouettePlugin`
+`Startup` by `SilhouettePlugin` — an asset, not a world entity, which is why it belongs in
+`Startup` next to the camera and the UI shell rather than in `OnEnter(Playing)`) depends
+on neither the city nor the run and survives a restart and a city switch alike;
+`spawn_population`, `spawn_demon`, `on_restart`, the kill observer and `spawn_portal`
+read it as a plain resource. An app without `SilhouettePlugin`
 (replay, tests) `init_resource`s it empty and draws squares — never a rebuild.
 
 ## Restart

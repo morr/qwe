@@ -349,7 +349,8 @@ did not fit 1080 px and ran off the top of the screen.
   1.0, threshold_softness: 0.3 }` and `BLOOM_INTENSITY` 0.25 (Bevy's `NATURAL` 0.15 is
   tuned for dark scenes and drowns over a light map). The threshold is the whole point:
   the map is drawn in colours ≤ 1 and must not haze, so only deliberately over-bright
-  things glow — the portal rim (`portal.rs`), demon halos (`demon/look.rs`). No
+  things glow — the portal rim (`portal.rs`), demon halos (`demon/look.rs`), soul sparks
+  (`human/soul.rs`). No
   `Tonemapping` component: `Camera2d`'s required default is `None`, and a tonemapper
   would shift every colour of the map. `Msaa::Off` stays. UI is drawn after
   post-processing, so panels never bloom.

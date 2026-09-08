@@ -519,22 +519,24 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
 
 ## Look
 
-How pawns are drawn over the map — the map's own rendering is the **osm-map skill**, the
-pawn half of the mechanism is in the **species-behavior skill**. There are no art assets
-and no artist: every shape here is a formula, every colour a constant beside its draw call.
+How pawns are drawn over the map — the map's own rendering is the **osm-map skill**; the
+pawn half of the mechanism, `silhouette/` and `portal.rs` included, is the
+**species-behavior skill**, and the camera's bloom the **ui-panels skill**. There are no
+art assets and no artist: every shape here is a formula, every colour a constant beside
+its draw call.
 
-- **Silhouette** (`silhouette/`) — a pawn's on-map shape. One procedural **atlas**
-  (`Silhouettes` resource; eight 128 px `Glyph`s — `Disc`, `Ember`, `Halo`, `Pool` and
-  the four corpse figures of `silhouette/figure.rs` — rasterised at startup by signed
-  distance with a CPU mip chain) and the `Silhouette { body, min_px }` component: the body
-  in metres plus a **screen-size floor** in logical px (`HUMAN_MIN_PX` 2, `DEMON_MIN_PX`
-  5), so at city zoom a human stays a grain and a demon a point instead of vanishing.
-  **`Sprite::custom_size` belongs to this module**: spawn sets the body, the two LOD
-  systems write the size (a full pass only on a zoom change). One image for all glyphs,
-  because sprites batch by texture and humans and demons interleave in y-sorted z. In an
+- **Silhouette** (`silhouette/`) — a pawn's on-map shape: one procedural **atlas**
+  (`Silhouettes` resource, eight `Glyph`s — `Disc`, `Ember`, `Halo`, `Pool` and the four
+  corpse figures of `silhouette/figure.rs`) plus the `Silhouette { body, min_px }`
+  component — the body in metres and a **screen-size floor** in logical px
+  (`HUMAN_MIN_PX` 2, `DEMON_MIN_PX` 5), so at city zoom a human stays a grain and a demon
+  a point instead of vanishing. Two invariants: **`Sprite::custom_size` belongs to this
+  module** — spawn sets the body, the module's two LOD systems write the size — and in an
   app without a renderer (replay, tests) the resource stays `None` and pawns are plain
-  squares; `HumanPlugin` / `DemonPlugin` / `PortalPlugin` only `init_resource` it,
-  `SilhouettePlugin` in `main.rs` fills it.
+  squares, which is not an error (`HumanPlugin` / `DemonPlugin` / `PortalPlugin` only
+  `init_resource` it, `SilhouettePlugin` in `main.rs` fills it). Rasterisation, the mip
+  chain, the one-image batching argument and the two LOD passes — **species-behavior
+  skill**.
 - **Attire** (`human/components.rs`, palette in `human/look.rs`) — a human's own colour,
   the three spawn draws of its decision stream, cool and muted (hue 170–290°): **warm on
   the map means demons and panic**. Separate from `Sprite::color` because of the **panic
@@ -564,7 +566,7 @@ and no artist: every shape here is a formula, every colour a constant beside its
   entity may not be despawned from `Update`.
 - **Bloom** (`camera.rs`) — the camera carries `Bloom` (which requires `Hdr`) with a
   prefilter threshold of **1.0**: only colours brighter than white glow (portal rim, demon
-  halos, later souls and spells); the map, all ≤ 1, stays exactly as drawn. **No
+  halos, souls; later spells); the map, all ≤ 1, stays exactly as drawn. **No
   tonemapper** — `Tonemapping::None` keeps the map palette untouched. `Msaa` stays off.
 
 ## UI & debug
