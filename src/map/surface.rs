@@ -27,6 +27,7 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::loading::AppState;
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
+use crate::settings::SURFACE_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/surface.wgsl";
 
@@ -40,12 +41,6 @@ const MARKING_GAP: f32 = 3.0;
 /// Цвет разметки — белый, чуть прозрачный: на сером асфальте белая линия
 /// читается, а прозрачность оставляет под ней зерно покрытия.
 const MARKING_COLOR: LinearRgba = LinearRgba::new(0.88, 0.88, 0.86, 0.85);
-
-/// Ползунок Texture по умолчанию — полная фактура.
-pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
-pub const SURFACE_TEXTURE_MIN: f32 = 0.0;
-pub const SURFACE_TEXTURE_MAX: f32 = 1.5;
-pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
 
 /// Параметры фактуры — юниформ шейдера. Зеркало `SurfaceParams` в
 /// `surface.wgsl`: порядок полей обязан совпадать.

@@ -13,9 +13,7 @@ pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
-pub use self::surface::{
-    SURFACE_TEXTURE_MAX, SURFACE_TEXTURE_MIN, SURFACE_TEXTURE_STEP, SurfaceStyle,
-};
+pub use self::surface::SurfaceStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;

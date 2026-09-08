@@ -936,6 +936,16 @@ pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
 /// к запуску, как и посадка деревьев.
 pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
 
+// --- Фактура поверхностей (`map::surface`) ---
+/// Дефолт и границы ползунка Texture (`SurfaceStyle::texture`) — общий
+/// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
+/// до фактуры; 1 — фактура как задумана; полтора — заметно грубее, дальше шум
+/// перекрикивает цвет слоя.
+pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
+pub const SURFACE_TEXTURE_MIN: f32 = 0.0;
+pub const SURFACE_TEXTURE_MAX: f32 = 1.5;
+pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
+
 /// Радиус агента полигонального меша (панель Polymesh): инфляция препятствий
 /// при триангуляции. Минимум ненулевой: по мешу теперь ходят пешки шириной
 /// `HUMAN_SIZE`, а нулевой радиус даёт контур точно по нарисованной геометрии,
@@ -1076,6 +1086,10 @@ const _: () = {
     assert!(
         CONIFER_NOISE_PERSISTENCE >= CONIFER_NOISE_PERSISTENCE_MIN
             && CONIFER_NOISE_PERSISTENCE <= CONIFER_NOISE_PERSISTENCE_MAX
+    );
+    assert!(
+        SURFACE_TEXTURE_DEFAULT >= SURFACE_TEXTURE_MIN
+            && SURFACE_TEXTURE_DEFAULT <= SURFACE_TEXTURE_MAX
     );
 };
 
