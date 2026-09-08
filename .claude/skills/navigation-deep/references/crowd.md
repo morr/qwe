@@ -8,9 +8,11 @@ in `CONTEXT.md` (Simulation).
 **Separation** (`movement/separation/`, toggle in the Nav tab, persisted)
 — soft pairwise anti-overlap: pawns on screen keep their body radii apart. The human
 radius is the `HumanStyle::body_radius` knob (0.3…1.2 m, Nav tab and the crowd demo);
-`HUMAN_BODY_RADIUS` 0.9 m is only its `Default`, and the demon's radius is never a
-separate knob — always twice the human one (`separation::demon_radius`,
-`DEMON_RADIUS_RATIO`, default `DEMON_BODY_RADIUS` 1.8 m). At the default that is
+`HUMAN_BODY_RADIUS` 0.9 m is only its `Default`, and a demon's radius is never a
+separate knob — it is the pawn's `BodyScale` times the human radius (an Imp twice the
+human one: `separation::demon_radius`, `DEMON_RADIUS_RATIO`, default `DEMON_BODY_RADIUS`
+1.8 m; a Brute three times). The neighbour cell is sized from the largest body
+(`MAX_BODY_SCALE`), so a Brute pair still lands in shared 3 × 3 cells. At the default that is
 deliberately **larger** than half the sprite, so a resting pair leaves a visible gap
 (1.8 m rest distance against a 1.0 m `HUMAN_SIZE`). At the earlier 0.45 m the rest
 distance (0.9 m) was *narrower* than the sprite and a correctly

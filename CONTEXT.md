@@ -1337,10 +1337,12 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 - **BodyScale** (`movement/components.rs`) — how many times this pawn's body is bigger than
   a human's (`HUMAN` 1.0, `DEMON` the `DEMON_RADIUS_RATIO` 2×), a **ratio** because the
   radius itself is a live slider (`HumanStyle::body_radius`). Required by `Movable`, so
-  every movable pawn has one; the demon writes `BodyScale::DEMON` at spawn, everyone else
-  takes the human default. `move_moving_entities` reads the rest distance off it
-  (`BodyScale::rest`) instead of asking `Has<Human>` — separation still derives its own
-  radius from `Has<Demon>`, both from the same ratio.
+  every movable pawn has one; a demon writes its kind's body at spawn
+  (`DemonKindStats::body_scale`: Imp = `BodyScale::DEMON`, Brute 3×), everyone else takes
+  the human default. `move_moving_entities` reads the rest distance off it
+  (`BodyScale::rest`) and **separation reads its radius off it too** — with two demon
+  bodies "a demon is twice a human" is no longer a rule; the separation cell is sized
+  from `MAX_BODY_SCALE`, the largest body.
 - **Repath on the move** — `to_pathfinding` keeps the current path; a pawn walks the old one
   while the new is computed. `MovableStateMovingTag` means "has a path **or is coasting**".
   **Coasting** — a pawn whose path ran out mid-repath keeps walking `last_direction` over
@@ -1571,6 +1573,15 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `DemonCaughtHumanEvent`. **Devour** — pause 1.5–2 s with a sine pulse ×1 → ×1.5; the pause
   is rolled in the kill observer from the demon's **decision stream**, so a kill advances its
   `WanderIndex`.
+- **DemonKind** (`demon/components.rs`, component next to `Demon`; numbers in
+  `settings::IMP` / `settings::BRUTE`, `DemonKindStats { speed_mul, body_scale, damage,
+  attack_period }`) — **Imp**, the hunter as before (2× body, eats humans, no attack), and
+  **Brute** (3× body, ×0.6 speed, `Attack` 10 per second, never chases humans). The kind
+  rides with a marker (`ImpTag` / `BruteTag`) because a query cannot filter on a variant:
+  `acquire_targets` and `chase` are `With<ImpTag>`. `Species` stays `Demon` and the
+  `PawnId` counter is shared, so the replay contract is untouched. The burst spawns Imps;
+  Brutes come only by summoning. Sprite size and tint follow the kind (Brutes a darker
+  ring toward purple).
 - **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`. **Do not
   reintroduce per-state demon speeds**: the only multipliers are the two user ones,
   `DemonStyle::speed` and `DemonStyle::lunge`.

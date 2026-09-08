@@ -3,8 +3,10 @@ use std::time::Duration;
 use bevy::prelude::*;
 use rand::Rng;
 
+use crate::combat::{Attack, AttackCooldown};
 use crate::demon::components::{
-    ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
+    BruteTag, ChaseTarget, Demon, DemonKind, DemonLungeTag, DemonSpawner, DemonStyle,
+    DemonWanderTag, ImpTag,
 };
 use crate::demon::look::{demon_body, halo};
 use crate::loading::AppState;
@@ -40,9 +42,16 @@ pub fn spawn_initial_burst(
     // врал бы: демоны всё равно выходили бы залпом
     let burst = DEMON_INITIAL_BURST.min(style.cap);
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
+    // залп — Бесы: Громилы приходят только призывом
     for index in 0..burst {
         let angle = index as f32 / burst as f32 * std::f32::consts::TAU;
-        spawn_demon(&mut commands, &mut spawner, &birth, Some(angle));
+        spawn_demon(
+            &mut commands,
+            &mut spawner,
+            &birth,
+            DemonKind::Imp,
+            Some(angle),
+        );
     }
 }
 
@@ -73,13 +82,13 @@ pub fn tick_spawner(
     }
 
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
-    spawn_demon(&mut commands, &mut spawner, &birth, None);
+    spawn_demon(&mut commands, &mut spawner, &birth, DemonKind::Imp, None);
 }
 
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
 /// читаются одинаково в обеих системах спавна, поэтому ездят одним значением,
 /// а не пятёркой позиционных аргументов.
-struct DemonBirth<'a> {
+pub(super) struct DemonBirth<'a> {
     world_seed: u64,
     portal_pos: Vec2,
     speed: f32,
@@ -87,7 +96,7 @@ struct DemonBirth<'a> {
 }
 
 impl<'a> DemonBirth<'a> {
-    fn new(
+    pub(super) fn new(
         seed: &WorldSeed,
         portal_pos: &PortalPos,
         style: &DemonStyle,
@@ -114,10 +123,14 @@ impl<'a> DemonBirth<'a> {
 /// намеренно: угол тянется из потока **самого нового демона**, засеянного его
 /// `index`, — поэтому демон номер N выходит одинаково, сколько бы демонов ни
 /// успело родиться и умереть до него.
-fn spawn_demon(
+///
+/// Вид (`kind`) задаёт тело, скорость и удар (`settings::IMP` / `BRUTE`);
+/// номер и поток ГПСЧ у видов общие — `Species` по-прежнему `Demon`.
+pub(super) fn spawn_demon(
     commands: &mut Commands,
     spawner: &mut DemonSpawner,
     birth: &DemonBirth,
+    kind: DemonKind,
     angle: Option<f32>,
 ) {
     let index = spawner.spawned;
@@ -131,34 +144,49 @@ fn spawn_demon(
     );
     let angle = angle.unwrap_or_else(|| rng.random_range(0.0..std::f32::consts::TAU));
     let position = birth.portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
+    let stats = kind.stats();
 
-    let (sprite, silhouette) = demon_body(birth.silhouettes, index);
-    commands
-        .spawn((
-            sprite,
-            silhouette,
-            Transform::from_translation(position.extend(unit_z(position.y))),
-            Demon,
-            DemonWanderTag,
-            Movable::new(birth.speed),
-            PawnId(index as u32),
-            // номер уникален только внутри вида, поэтому вид едет рядом с ним
-            Species::Demon,
-            // демон срочен всегда: инвазия за кадром не должна вставать, и
-            // снимать маркер с него нечему — в отличие от человека, у которого
-            // он приходит и уходит вместе с паникой
-            crate::movement::UrgentPath,
-            // и тело своё демон тоже носит сам: явный компонент в кортеже
-            // спавна перебивает умолчание `#[require]` у `Movable`
-            crate::movement::BodyScale::DEMON,
-            WanderIndex::ready(),
-            DespawnOnExit(AppState::Playing),
-            Name::new("demon"),
-        ))
-        // ореол — дочерняя сущность: уходит вместе с демоном (despawn
-        // рекурсивен), пульсирует его масштабом и не нуждается в своём
-        // `DespawnOnExit`
-        .with_child(halo(birth.silhouettes));
+    let (sprite, silhouette) = demon_body(birth.silhouettes, kind, index);
+    let mut demon = commands.spawn((
+        sprite,
+        silhouette,
+        Transform::from_translation(position.extend(unit_z(position.y))),
+        Demon,
+        kind,
+        DemonWanderTag,
+        Movable::new(birth.speed * stats.speed_mul),
+        PawnId(index as u32),
+        // номер уникален только внутри вида, поэтому вид едет рядом с ним
+        Species::Demon,
+        // демон срочен всегда: инвазия за кадром не должна вставать, и снимать
+        // маркер с него нечему — в отличие от человека, у которого он приходит
+        // и уходит вместе с паникой
+        crate::movement::UrgentPath,
+        // и тело своё демон тоже носит сам: явный компонент в кортеже спавна
+        // перебивает умолчание `#[require]` у `Movable`
+        crate::movement::BodyScale(stats.body_scale),
+        WanderIndex::ready(),
+        DespawnOnExit(AppState::Playing),
+        Name::new(kind.label()),
+    ));
+    // ореол — дочерняя сущность: уходит вместе с демоном (despawn рекурсивен),
+    // пульсирует его масштабом и не нуждается в своём `DespawnOnExit`
+    demon.with_child(halo(birth.silhouettes, kind));
+    match kind {
+        DemonKind::Imp => {
+            demon.insert(ImpTag);
+        }
+        DemonKind::Brute => {
+            demon.insert((
+                BruteTag,
+                Attack {
+                    damage: stats.damage,
+                    period: stats.attack_period,
+                },
+                AttackCooldown::ready(stats.attack_period),
+            ));
+        }
+    }
 }
 
 /// Ползунок скорости — уже вышедшим демонам. `Movable::speed` пишется один раз,
@@ -166,10 +194,13 @@ fn spawn_demon(
 /// следующим демонам из портала, а сотня уже гуляющих осталась бы на старой.
 /// Гоняется по `resource_changed::<DemonStyle>`, то есть на движение ползунка,
 /// а не покадрово.
-pub fn sync_demon_speed(style: Res<DemonStyle>, mut demons: Query<&mut Movable, With<Demon>>) {
+pub fn sync_demon_speed(
+    style: Res<DemonStyle>,
+    mut demons: Query<(&mut Movable, &DemonKind), With<Demon>>,
+) {
     let speed = DEMON_SPEED * style.speed;
-    for mut movable in &mut demons {
-        movable.speed = speed;
+    for (mut movable, kind) in &mut demons {
+        movable.speed = speed * kind.stats().speed_mul;
     }
 }
 

@@ -6,7 +6,7 @@ use rand::Rng;
 use crate::demon::claims::ChaseClaims;
 use crate::demon::components::{
     ChaseComponents, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
-    DemonDevourTag, DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
+    DemonDevourTag, DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil, ImpTag,
 };
 use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
 use crate::grid::world_to_tile;
@@ -23,13 +23,14 @@ use crate::telemetry::Telemetry;
 
 /// Wander → Chase: ближайший человек в радиусе агро, у которого ещё нет
 /// `MAX_CHASERS_PER_TARGET` преследователей. Демон берёт агро с первого же
-/// тика после выхода из портала.
+/// тика после выхода из портала. Только Бесы (`ImpTag`): Громила людей не
+/// преследует, у него своя лестница.
 pub fn acquire_targets(
     mut commands: Commands,
     humans: Res<SpatialGrid<Human>>,
     positions: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
-    query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
+    query: Query<(Entity, &SimPosition), (With<Demon>, With<ImpTag>, With<DemonWanderTag>)>,
 ) {
     let mut claims = ChaseClaims::of(chasing.iter().map(|chase_target| chase_target.0));
 
@@ -88,7 +89,12 @@ pub fn chase(
             Has<PathfindingTask>,
             Has<PathfindingRequest>,
         ),
-        (With<Demon>, With<DemonChaseTag>, Without<Human>),
+        (
+            With<Demon>,
+            With<ImpTag>,
+            With<DemonChaseTag>,
+            Without<Human>,
+        ),
     >,
     targets: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
 ) {
@@ -398,6 +404,7 @@ mod tests {
         app.world_mut()
             .spawn((
                 Demon,
+                ImpTag,
                 DemonChaseTag,
                 ChaseTarget(target),
                 ChaseRepath::default(),
@@ -665,6 +672,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Demon,
+                ImpTag,
                 DemonChaseTag,
                 ChaseTarget(human),
                 ChaseRepath::default(),

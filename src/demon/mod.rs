@@ -9,8 +9,9 @@ use bevy::prelude::*;
 
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
 pub use self::components::{
-    ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
+    BruteTag, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
+    DemonDevourTag, DemonKind, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
+    DevourUntil, ImpTag,
 };
 pub use self::look::DemonHalo;
 use self::systems::{
@@ -34,6 +35,9 @@ impl Plugin for DemonPlugin {
         }
 
         app.register_type::<Demon>()
+            .register_type::<DemonKind>()
+            .register_type::<ImpTag>()
+            .register_type::<BruteTag>()
             .register_type::<DemonWanderTag>()
             .register_type::<DemonChaseTag>()
             .register_type::<DemonDevourTag>()

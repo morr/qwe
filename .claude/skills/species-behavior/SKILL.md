@@ -312,8 +312,27 @@ and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
 
 States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target biased away
 from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always,
-and `movement::BodyScale::DEMON` — its body is the one thing movement would otherwise have
-to infer from the species.
+and its kind's `movement::BodyScale` — its body is the one thing movement would otherwise
+have to infer from the species.
+
+### Kinds
+
+`DemonKind { Imp, Brute }` (`demon/components.rs`), the numbers in `settings.rs` as
+`DemonKindStats` (`IMP`, `BRUTE`): speed multiplier, body scale, damage, attack period.
+**Imp** is the demon described in this whole section — 2× body (`BodyScale::DEMON`),
+speed ×1, no attack. **Brute** — 3× body, ×0.6 speed, `combat::Attack { 10, 1 s }` +
+`AttackCooldown` inserted at spawn — never chases humans: `acquire_targets` and `chase`
+filter `With<ImpTag>`, and its own ladder (the `city-siege` skill) drives it to the
+bastions. The marker tags (`ImpTag` / `BruteTag`) exist because a query cannot filter on
+an enum variant. Four places went from "a demon is one size and one speed" to the kind:
+`spawn_demon` (body, `Movable::new(base × speed_mul)`), `sync_demon_speed`
+(× `speed_mul`), separation (radius off `BodyScale`, the cell off `MAX_BODY_SCALE` —
+`navigation-deep`, `references/crowd.md`) and the look (`demon/look.rs`: `demon_body` and
+`halo` take the kind — sprite and halo sized `DEMON_SIZE × body_scale / IMP.body_scale`,
+`kind_tint` picks the Imp's hot ring or the Brute's darker ring toward purple,
+`brute_tint`). The burst spawns Imps only; Brutes come by summoning.
+`Species::Demon` and the shared `PawnId` counter are unchanged — the replay contract
+does not see kinds.
 
 **Look** (`demon/look.rs`) — the `Ember` glyph of the silhouette atlas (seven spikes, a
 bright core), tinted by `demon_tint`: a five-shade ring from crimson to orange so demons

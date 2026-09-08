@@ -414,6 +414,44 @@ pub const SEPARATION_MAX_ZOOM: f32 = 0.75;
 /// расталкивания исключён целиком.
 pub const HUMAN_BODY_RADIUS: f32 = 0.9;
 pub const DEMON_BODY_RADIUS: f32 = 1.8;
+
+/// Вид демона как множители над общей базой (`DEMON_SPEED`, `HUMAN_BODY_RADIUS`):
+/// `Species` в `rng.rs` остаётся `Demon | Human`, номера у видов общие —
+/// контракт повтора не тронут. HP видов — M2.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemonKindStats {
+    /// Множитель к `DEMON_SPEED × DemonStyle::speed`.
+    pub speed_mul: f32,
+    /// Тело в человеческих радиусах (`movement::BodyScale`).
+    pub body_scale: f32,
+    /// Урон за удар по бастиону; у Беса нет удара — ноль.
+    pub damage: f32,
+    /// Период удара, сек.
+    pub attack_period: f32,
+}
+
+/// Бес — нынешний охотник без изменений: вдвое больше человека, ест людей,
+/// бастионов не трогает.
+pub const IMP: DemonKindStats = DemonKindStats {
+    speed_mul: 1.0,
+    body_scale: DEMON_BODY_RADIUS / HUMAN_BODY_RADIUS,
+    damage: 0.0,
+    attack_period: 1.0,
+};
+/// Громила — ломает бастионы на фронте скверны, людей не ест. Втрое больше
+/// человека и на 40 % медленнее Беса: читаться в толпе силуэтом. Урон 10/с —
+/// бастион окраины (100 HP) падает за 10 с, сердца (400) — за 40 одному,
+/// втроём (`MAX_BRUTES_PER_BASTION`) — за 13.
+pub const BRUTE: DemonKindStats = DemonKindStats {
+    speed_mul: 0.6,
+    body_scale: 3.0,
+    damage: 10.0,
+    attack_period: 1.0,
+};
+/// Самое крупное тело среди пешек, в человеческих радиусах: от него считается
+/// ячейка расталкивания (`separation_cell`) — пара таких обязана попадать в
+/// общие 3 × 3 ячейки.
+pub const MAX_BODY_SCALE: f32 = BRUTE.body_scale;
 /// Подвижность демона относительно человека: в паре человек забирает 4/5
 /// коррекции — толпа обтекает демона, а не демон толпу. Пожирающий демон
 /// (`DemonDevourTag`) идёт с нулевой подвижностью — толкает, но не двигается,

@@ -54,10 +54,10 @@ use crate::loading::WorldStarted;
 use crate::movement::components::SimPosition;
 use crate::navigation::ContinuousSpace;
 use crate::settings::{
-    DEMON_BODY_RADIUS, DEMON_MOBILITY, HUMAN_BODY_RADIUS, SEPARATION_BACKSTEP, SEPARATION_CELL,
-    SEPARATION_HOLD, SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP,
-    SEPARATION_MAX_ZOOM, SEPARATION_PASS_SQUEEZE, SEPARATION_RATE, SEPARATION_SIDESTEP,
-    SEPARATION_STEER,
+    DEMON_BODY_RADIUS, DEMON_MOBILITY, HUMAN_BODY_RADIUS, MAX_BODY_SCALE, SEPARATION_BACKSTEP,
+    SEPARATION_CELL, SEPARATION_HOLD, SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED,
+    SEPARATION_MAX_STEP, SEPARATION_MAX_ZOOM, SEPARATION_PASS_SQUEEZE, SEPARATION_RATE,
+    SEPARATION_SIDESTEP, SEPARATION_STEER,
 };
 use crate::spatial::SpatialGrid;
 
@@ -165,19 +165,22 @@ pub fn separation_allowed_by_mode(deterministic: bool, polymesh_nav: bool) -> bo
 /// ([`DEMON_SIZE`] против [`HUMAN_SIZE`]).
 pub const DEMON_RADIUS_RATIO: f32 = DEMON_BODY_RADIUS / HUMAN_BODY_RADIUS;
 
-/// Радиус тела демона по радиусу тела человека — не отдельная ручка: он всегда
-/// вдвое больше, как и спрайт.
+/// Радиус тела Беса по радиусу тела человека — не отдельная ручка: он всегда
+/// вдвое больше, как и спрайт. Сам прогон радиус берёт с пешки
+/// (`BodyScale::radius`) — у видов демонов тела разные; эта функция —
+/// формула Беса, по которой пинится `BodyScale::DEMON`.
 pub fn demon_radius(human_radius: f32) -> f32 {
     human_radius * DEMON_RADIUS_RATIO
 }
 
 /// Сторона одноразовой мелкой сетки соседей. Считается от радиуса, а не
 /// берётся константой: ячейка ОБЯЗАНА быть не меньше максимальной суммы
-/// радиусов (демон+демон), иначе перекрывшаяся пара не попадёт в общие
-/// 3 × 3 ячейки и её не найдут. С ручкой радиуса константа рано или поздно
-/// оказалась бы мала.
+/// радиусов — самое крупное тело с самым крупным (`MAX_BODY_SCALE`, Громила
+/// с Громилой), иначе перекрывшаяся пара не попадёт в общие 3 × 3 ячейки и
+/// её не найдут. С ручкой радиуса константа рано или поздно оказалась бы
+/// мала.
 pub fn separation_cell(human_radius: f32) -> f32 {
-    (demon_radius(human_radius) * 2.0).max(SEPARATION_CELL)
+    (human_radius * MAX_BODY_SCALE * 2.0).max(SEPARATION_CELL)
 }
 
 impl Default for SeparationStyle {
@@ -654,6 +657,7 @@ pub fn separate_pawns(
             &mut SimPosition,
             &crate::rng::PawnId,
             &crate::movement::Movable,
+            &crate::movement::BodyScale,
             Has<crate::movement::MovableStateMovingTag>,
             Has<Demon>,
             Has<DemonDevourTag>,
@@ -691,7 +695,6 @@ pub fn separate_pawns(
     let view = Viewport::of(&window, &camera, VIEW_MARGIN);
 
     let human_radius = human_style.body_radius;
-    let demon_radius = demon_radius(human_radius);
 
     // разыменование ОДИН раз: через `Local` каждое обращение к полю заимствует
     // весь ресурс, и «сложить в один буфер, читая соседний» не даст компилятор
@@ -702,7 +705,7 @@ pub fn separate_pawns(
         let stuck_seen = &state.stuck;
         let mut collect = |entity: Entity| {
             // мимо запроса — бросок, труп, пешка чужого вида в чужой сетке
-            let Ok((sim_position, pawn_id, movable, is_moving, is_demon, is_devouring)) =
+            let Ok((sim_position, pawn_id, movable, body, is_moving, is_demon, is_devouring)) =
                 pawns.get(entity)
             else {
                 return;
@@ -711,12 +714,15 @@ pub fn separate_pawns(
             if !view.contains(position) {
                 return;
             }
-            let (radius, mobility) = if is_devouring {
-                (demon_radius, 0.0)
+            // радиус — с пешки, как у шага движения: у видов демонов тела
+            // разные, и «демон = вдвое больше» тут уже не правило
+            let radius = body.radius(human_radius);
+            let mobility = if is_devouring {
+                0.0
             } else if is_demon {
-                (demon_radius, DEMON_MOBILITY)
+                DEMON_MOBILITY
             } else {
-                (human_radius, 1.0)
+                1.0
             };
             // осевшая пешка упирается: см. [`SeparationExperiments::idle_mobility`].
             // Множителем, а не заменой, — иначе ручка перебивала бы и
@@ -802,7 +808,7 @@ pub fn separate_pawns(
         if !navmesh.is_passable(tile.x, tile.y) {
             continue;
         }
-        let Ok((mut sim_position, _, _, _, is_demon, _)) = pawns.get_mut(pawn.entity) else {
+        let Ok((mut sim_position, _, _, _, _, is_demon, _)) = pawns.get_mut(pawn.entity) else {
             continue;
         };
         sim_position.0 = target;
