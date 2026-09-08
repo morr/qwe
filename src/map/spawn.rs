@@ -112,6 +112,7 @@ pub fn spawn_map(
     building_bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
+    building_lean: Res<buildings::BuildingLean>,
     road_style: Res<RoadStyle>,
 ) {
     // земля — квад на всю карту тем же фактурным материалом, что и прочие
@@ -202,6 +203,7 @@ pub fn spawn_map(
         &roof_material,
         buildings::BuildingPlan {
             mode: *height_mode,
+            lean: *building_lean,
             bucket: *building_bucket,
             shadows: true,
         },

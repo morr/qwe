@@ -32,7 +32,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
+use crate::settings::{LEAN_MAX, MAP_SIZE, NADIR_ALTITUDE, ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
 /// гаражей, охра у казённых зданий, белёный кирпич у храма.
@@ -169,6 +169,7 @@ pub type BuildingZoomBucket = ZoomBucket<BuildingLods>;
 #[derive(Clone, Copy)]
 pub struct BuildingPlan {
     pub mode: BuildingHeightMode,
+    pub lean: BuildingLean,
     pub bucket: BuildingZoomBucket,
     /// `false` — теневой слой оставить как есть (см. [`BuildingShadowTag`]).
     pub shadows: bool,
@@ -198,6 +199,7 @@ pub fn spawn_buildings(
 ) {
     let BuildingPlan {
         mode,
+        lean,
         bucket,
         shadows: with_shadows,
     } = plan;
@@ -236,7 +238,7 @@ pub fn spawn_buildings(
             spawn_layer(
                 commands,
                 meshes,
-                extrusion_builder(buildings, passages, detail),
+                extrusion_builder(buildings, passages, detail, lean),
                 Z_BUILDING,
                 "building_extruded",
                 LayerMaterial::Roof(roof.handle()),
@@ -283,6 +285,7 @@ pub fn spawn_buildings(
             buildings,
             passages,
             mode == BuildingHeightMode::ExtrusionShadowsTint,
+            lean,
         );
         shadow_time = shadow_started.elapsed();
         vertices += shadows.vertex_count();
@@ -324,14 +327,17 @@ pub fn rebuild_buildings(
     mut materials: ResMut<Assets<ColorMaterial>>,
     roof: Res<RoofMaterialHandle>,
     mode: Res<BuildingHeightMode>,
+    lean: Res<BuildingLean>,
     bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     layers: Query<Entity, With<BuildingLayerTag>>,
     shadows: Query<Entity, With<BuildingShadowTag>>,
 ) {
     // ступень зума решает только судьбу оборудования на кровле; тени от неё
-    // не зависят, а стоят дороже всего остального вместе взятого
-    let with_shadows = mode.is_changed();
+    // не зависят, а стоят дороже всего остального вместе взятого. Отклонение
+    // верха их всё же трогает: в 2.5D сквозь арку видна земля, и заплатка
+    // проёма стоит по стене, которую выбирает как раз оно
+    let with_shadows = mode.is_changed() || lean.is_changed();
     for entity in &layers {
         commands.entity(entity).despawn();
     }
@@ -347,6 +353,7 @@ pub fn rebuild_buildings(
         &roof,
         BuildingPlan {
             mode: *mode,
+            lean: *lean,
             bucket: *bucket,
             shadows: with_shadows,
         },
@@ -365,13 +372,133 @@ fn height_or_default(building: &PolyArea) -> f32 {
     })
 }
 
-/// На сколько в этом режиме поднята крыша относительно настоящего контура.
-/// В режимах без экструзии — ноль.
+/// Куда «падает» верх дома. Два ответа, и оба честные — просто снимки
+/// разные:
 ///
-/// Публично, потому что оверлей дверей обязан повторять тот же сдвиг: дверь
-/// живёт на настоящем контуре, а он в 2.5D уходит под нарисованный дом, и
-/// метка на северной грани иначе читается как «дверь в середине здания».
-pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
+/// * **Fixed** — один и тот же косой сдвиг у всех домов. Так выглядит кадр со
+///   **спутника**: сцена в 5 км с орбиты в 500 км занимает доли градуса, и
+///   отклонение по всему кадру практически постоянно. Так же выглядит и
+///   ортофотоплан, только у него отклонения нет вовсе.
+/// * **Radial** — каждый дом отклоняется **от точки надира**, тем сильнее, чем
+///   дальше от неё. Так выглядит кадр с **самолёта или квадрокоптера**: высота
+///   съёмки сравнима с размером кадра, и параллакс расходится лучами. Это самый
+///   узнаваемый геометрический признак аэрофотоснимка — и ровно то, чего у
+///   плоской карты не бывает.
+///
+/// Переключается панелью Buildings, сохраняется между запусками; правка
+/// пересобирает зданиевые слои.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "buildings", key = "lean")]
+pub enum BuildingLean {
+    /// Постоянный косой сдвиг — спутниковый кадр (и статус-кво).
+    #[default]
+    Fixed,
+    /// Лучами от надира — кадр с самолёта.
+    Radial,
+}
+
+impl BuildingLean {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Fixed => Self::Radial,
+            Self::Radial => Self::Fixed,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fixed => "Fixed",
+            Self::Radial => "Radial (nadir)",
+        }
+    }
+}
+
+/// Точка надира — та, под которой камера стоит отвесно и дом не отклоняется
+/// вовсе. Центр карты: кадр покрывает город целиком, и надир у него один.
+fn nadir() -> Vec2 {
+    MAP_SIZE * 0.5
+}
+
+/// Отклонение верха **этого** дома от отвеса: единичное направление и метров
+/// смещения на метр нарисованной высоты. Одно значение на дом — по нему
+/// выбираются видимые стены, поднимается крыша, встаёт труба на коньке и
+/// сортируется painter's порядок.
+#[derive(Clone, Copy)]
+pub(super) struct Lean {
+    /// Смещение верха на метр нарисованной высоты. Вектором, а не парой
+    /// «направление × длина»: у постоянного сдвига это ровно `(0.4, 1)`, и
+    /// круг через `normalize`/`length` сдвинул бы его на единицу последнего
+    /// разряда — что немедленно видно на обрезке `EXTRUDE_RANGE`.
+    per_meter: Vec2,
+}
+
+impl Lean {
+    /// Отклонение дома с центром `at`.
+    pub(super) fn of(at: Vec2, mode: BuildingLean) -> Self {
+        match mode {
+            BuildingLean::Fixed => Self {
+                per_meter: Vec2::new(EXTRUDE_SKEW, 1.0),
+            },
+            BuildingLean::Radial => {
+                let from_nadir = at - nadir();
+                let scale = (from_nadir.length() / NADIR_ALTITUDE).min(LEAN_MAX);
+                Self {
+                    per_meter: from_nadir.try_normalize().unwrap_or(Vec2::Y) * scale,
+                }
+            }
+        }
+    }
+
+    /// Единичное направление отклонения: по нему выбираются видимые стены.
+    pub(super) fn dir(self) -> Vec2 {
+        self.per_meter.try_normalize().unwrap_or(Vec2::Y)
+    }
+
+    /// Во сколько раз смещение длиннее нарисованной высоты — тесту, которому
+    /// надо сравнить силу отклонения, а не его направление.
+    #[cfg(test)]
+    pub(super) fn scale(self) -> f32 {
+        self.per_meter.length()
+    }
+
+    /// Смещение верха для `drawn` нарисованных метров высоты.
+    pub(super) fn lift(self, drawn: f32) -> Vec2 {
+        self.per_meter * drawn
+    }
+
+    /// Сдвиг конька над карнизом для `rise` настоящих метров: тот же масштаб,
+    /// что у стен, но без `EXTRUDE_RANGE` — обрезка держит стены в разумных
+    /// пределах, а конёк и так ограничен `ROOF_RISE_MAX`.
+    pub(super) fn ridge(self, rise: f32) -> Vec2 {
+        self.lift(rise * EXTRUDE_SCALE)
+    }
+
+    /// Ключ painter's сортировки: больше — дальше, пишется раньше. У
+    /// постоянного сдвига «дальше» это дальний конец вектора, у лучевого —
+    /// дальше от надира: луч от камеры к дальнему дому проходит над ближним,
+    /// и ближний обязан лечь поверх.
+    pub(super) fn depth(at: Vec2, mode: BuildingLean) -> f32 {
+        match mode {
+            BuildingLean::Fixed => at.dot(Self::of(at, mode).dir()),
+            BuildingLean::Radial => (at - nadir()).length(),
+        }
+    }
+}
+
+/// Центр контура — по нему считается отклонение и порядок отрисовки. Bounds,
+/// а не центроид: сортировка и так была по ним, и лишний обход контура тут ни
+/// к чему.
+pub(super) fn building_center(building: &PolyArea) -> Vec2 {
+    let (min, max) = crate::map::osm::model::ring_bounds(&building.outer);
+    (min + max) * 0.5
+}
+
+/// На сколько в этом режиме поднята крыша относительно настоящего контура.
+/// В режимах без экструзии — ноль. Одна точка входа на всех, кому нужен этот
+/// сдвиг: слой экструзии, заплатка арки в тенях и всякий, кто захочет
+/// поставить метку на нарисованный дом, а не на его настоящий контур.
+pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode, lean: BuildingLean) -> Vec2 {
     if !matches!(
         mode,
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
@@ -380,28 +507,7 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     }
     let height = (height_or_default(building) * EXTRUDE_SCALE)
         .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    oblique_lift(height)
-}
-
-/// Сдвиг на карте для `drawn` нарисованных метров высоты: вверх и на
-/// `EXTRUDE_SKEW` вправо.
-fn oblique_lift(drawn: f32) -> Vec2 {
-    Vec2::new(EXTRUDE_SKEW * drawn, drawn)
-}
-
-/// Сдвиг конька над карнизом для `rise` настоящих метров: тот же масштаб,
-/// что у стен, но без `EXTRUDE_RANGE` — обрезка держит стены в разумных
-/// пределах, а конёк и так ограничен `ROOF_RISE_MAX`.
-pub(super) fn ridge_lift(rise: f32) -> Vec2 {
-    oblique_lift(rise * EXTRUDE_SCALE)
-}
-
-/// Единичный вектор подъёма крыши в 2.5D — общий для всех домов, от высоты
-/// зависит только длина. По нему выбираются видимые стены (те, что смотрят
-/// против него) и порядок painter's sort (дальний конец вектора пишется
-/// первым).
-pub(super) fn extrusion_dir() -> Vec2 {
-    Vec2::new(EXTRUDE_SKEW, 1.0).normalize()
+    Lean::of(building_center(building), lean).lift(height)
 }
 
 /// Базовый цвет стены по типу здания: Кремль — свой, остальные по назначению

@@ -21,9 +21,9 @@
 use bevy::color::Mix;
 use bevy::prelude::*;
 
+use super::Lean;
 use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
-use super::ridge_lift;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::{BuildingUse, PolyArea};
@@ -234,7 +234,7 @@ pub(super) fn ridge_chimney(look: &RoofLook, ridge: (Vec2, Vec2)) -> Option<Roof
 pub(super) fn push_items(
     builder: &mut MeshBuilder,
     items: &[RoofItem],
-    lift_dir: Option<Vec2>,
+    lean: Option<Lean>,
     roof: Srgba,
 ) {
     if items.is_empty() {
@@ -254,10 +254,10 @@ pub(super) fn push_items(
         }
         builder.push_quad(item.base.map(|point| point + offset), shadow);
 
-        let lift = lift_dir.map_or(Vec2::ZERO, |_| ridge_lift(item.height));
-        if let Some(lift_dir) = lift_dir {
-            for (a, b) in silhouette_edges(&item.base, -lift_dir) {
-                let (bottom, top) = wall_colors(item.wall, a, b, lift_dir);
+        let lift = lean.map_or(Vec2::ZERO, |lean| lean.ridge(item.height));
+        if let Some(lean) = lean {
+            for (a, b) in silhouette_edges(&item.base, -lean.dir()) {
+                let (bottom, top) = wall_colors(item.wall, a, b, lean.dir());
                 builder.push_quad_gradient([a, b, b + lift, a + lift], [bottom, bottom, top, top]);
             }
         }

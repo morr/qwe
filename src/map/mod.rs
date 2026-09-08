@@ -13,7 +13,7 @@ pub mod trees;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-pub use self::buildings::{BuildingHeightMode, extrusion_lift};
+pub use self::buildings::{BuildingHeightMode, BuildingLean, extrusion_lift};
 pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
@@ -61,6 +61,7 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferField>()
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
+            .init_resource::<BuildingLean>()
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
@@ -74,6 +75,7 @@ impl Plugin for MapPlugin {
             .register_type::<TreeShape>()
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
+            .register_type::<BuildingLean>()
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
             .register_type::<SurfaceStyle>()
@@ -82,6 +84,7 @@ impl Plugin for MapPlugin {
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
             .track_pref::<BuildingHeightMode>()
+            .track_pref::<BuildingLean>()
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
             .track_pref::<SurfaceStyle>()
@@ -154,6 +157,7 @@ impl Plugin for MapPlugin {
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
                         buildings::rebuild_buildings.run_if(
                             retuned::<BuildingHeightMode>
+                                .or_else(retuned::<BuildingLean>)
                                 .or_else(retuned::<buildings::BuildingZoomBucket>),
                         ),
                     )
