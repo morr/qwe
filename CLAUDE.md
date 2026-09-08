@@ -42,7 +42,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | `human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs` | `species-behavior` |
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
 | `sim_time.rs` | `sim-speed` |
-| `ui/*`, `camera.rs`, `prefs.rs` | `ui-panels` |
+| `ui/*`, `camera.rs`, `post.rs`, `prefs.rs` | `ui-panels` |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
 - **Re-check the table when the work spreads to an area you didn't expect at the start** — the misses are never in the module the session is about, always in the one it drifts into (a UI change that ends up moving a threshold, a navigation fix that touches the replay contract).
@@ -56,6 +56,8 @@ What each one carries, starting with the three engine-level skills:
 
 Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
 
+The links are absolute on purpose. A relative `../../../zxc` resolves only from the main checkout: a session launched inside `.claude/worktrees/<name>` would list none of the three, and with the hooks above that is a deny nothing can lift — the skill the hook asks for cannot be loaded. On another machine, or after moving zxc, relink them: `ln -sfn <zxc>/.claude/skills/<x> .claude/skills/<x>` for `bevy`, `git`, `live-app`.
+
 **Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
 - **`osm-map` — before changing the OSM pipeline or map rendering** (`map/osm/*`, `map/{meshing,spawn,roads,tram,trees,buildings}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
@@ -64,7 +66,7 @@ Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's 
 - **`species-behavior` — before changing pawn behaviour** (`human/*`, `demon/*`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids.
 - **`world-lifecycle` — before changing how a world comes up or is torn down** (`loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs`): the states and the warmup hold, `SimBootPlugin`, the load thread, the `WorldStarted` seam and its run-state resets, restart slots, the city switch.
 - **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
-- **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `prefs.rs`): panel internals, the tabbed shell and its section order, the slider/row kits, camera start view, persistence.
+- **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `post.rs`, `prefs.rs`): panel internals, the tabbed shell and its section order, the slider/row kits, camera start view, persistence.
 
 **Caveat on the `bevy` skill:** it was written for zxc. Its "0.19 facts that get written wrong" section and `references/api_0_19.md` are engine-level and apply here verbatim. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
 

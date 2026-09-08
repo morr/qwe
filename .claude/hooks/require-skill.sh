@@ -64,7 +64,7 @@ case "$rel" in
   src/sim_time.rs|src/sim_time/*) add sim-speed ;;
 esac
 case "$rel" in
-  src/ui/*|src/camera.rs|src/prefs.rs) add ui-panels ;;
+  src/ui/*|src/camera.rs|src/post.rs|src/prefs.rs) add ui-panels ;;
 esac
 
 [ -z "$required" ] && exit 0
