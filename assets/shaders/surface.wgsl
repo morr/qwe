@@ -168,8 +168,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // со сглаженным краем; гаснет в разрыве у перекрёстка (`to_break` < 0) и
     // когда полоса на экране у́же десятка пикселей
     let mode = u32(round(max(in.ribbon.w, 0.0)));
-    if params.marking_width > 0.0 && mode >= 4u {
-        let lanes = f32(mode >> 1u);
+    let lanes = f32(mode >> 1u);
+    if params.marking_width > 0.0 && lanes >= 2.0 {
         let oneway = (mode & 1u) == 1u;
         let across = in.ribbon.x;
         let to_break = in.ribbon.y;
