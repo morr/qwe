@@ -248,6 +248,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or more
   carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids, but
   a shared node projects to the same point on every way. They feed the markings only.
+- **Satellite palette** — every colour of the map is calibrated to **what a city looks like
+  from the air**, not to a cartographic style: mid grey-brown ground (0.49), dark asphalt
+  (0.37) under white markings, muted greens (park 0.40 / canopy 0.27), a dark grey-green
+  river (0.24), and building walls a step *below* it all so a lit panel reads as lit
+  concrete rather than white card. The tram lost its 2GIS blue with the same argument — a
+  symbol colour is the one thing a photograph never has. The old osm-carto-derived palette
+  (pale sand ground 0.88, cyan water, light grey asphalt) is gone; the values and the
+  reasoning per surface live in the constants' own comments and in the **osm-map skill**.
+  **`TreeStyle::foliage` is persisted**, so the new dark canopy needs a `reset` in the Debug
+  tab on a machine that already has a `settings.toml`.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural

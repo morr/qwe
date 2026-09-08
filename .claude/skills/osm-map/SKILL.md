@@ -276,6 +276,32 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 
 ## Rendering
 
+- **Satellite palette** — the map's colours answer to a photograph, not to a map style.
+  The old set was osm-carto's, softened: pale sand ground, cyan water, near-white roofs,
+  light grey asphalt. Nothing in an aerial photo is that light or that saturated, and the
+  single change that moves the picture furthest is the tonal range. What each surface got
+  (sRGB, before → after):
+
+  | surface | was | now | why |
+  |---|---|---|---|
+  | ground | 0.88 | **0.49** | courtyards, bare earth and untagged yards; half the map is this, and it sets whether the rest reads as photo |
+  | landuse residential / industrial | 0.91 / 0.84 | 0.51 / 0.48 | still half a tone off the ground, in both directions |
+  | park / meadow | 0.77,0.88,0.58 / 0.87,0.94,0.75 | **0.40,0.46,0.29** / 0.48,0.52,0.32 | summer grass from above is muted and yellowish, not a highlighter |
+  | wood canopy | 0.68,0.82,0.62 | **0.27,0.35,0.22** | a canopy is the darkest green on the frame |
+  | water | 0.66,0.80,0.91 | **0.24,0.31,0.32** | the Упа is grey-green and nearly asphalt-dark; the cyan fill was the one thing that could never pass for a photo |
+  | asphalt | 0.66 | **0.37** | and the white markings finally read as markings |
+  | sidewalk | 0.82 | 0.53 | the kerb is still a brightness step, 1.5× rather than 1.25× |
+  | alley / path | 0.91,0.88,0.77 | 0.55,0.52,0.46 | gravel and concrete, not sand |
+  | tree canopy (`CROWN_COLOR`) | 0.42,0.60,0.33 | 0.27,0.38,0.22 | matches the wood polygons under it |
+  | tram | 2GIS blue | 0.37 grey | a symbol colour is what a photograph never has |
+  | shadow | rgba 0.22,0.24,0.33 @ .42 | 0.14,0.17,0.26 @ .46 | shadows on a photo are filled by sky light — colder and deeper, not grey |
+  | building walls | 0.48…0.93 | 0.44…0.80 | the whole facade palette stepped down: over a light ground it was the map's bright top, over a dark one it would be white card |
+
+  Two things this does **not** touch: the Kremlin's red (a real brick wall) and the roof
+  materials of **Roof material** above, which were already picked against a photo. And one
+  trap — **`TreeStyle::foliage` is a persisted setting**, so an existing `settings.toml`
+  keeps serving the old bright green until `reset` in the Debug tab (or a BRP write). The
+  same applies to every other tunable whose `Default` a palette change moves.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
