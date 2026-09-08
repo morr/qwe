@@ -90,6 +90,22 @@ pub fn replay_app(
     seed: u64,
     population: usize,
 ) -> App {
+    replay_app_with(map, navmesh, portal, seed, population, |_| {})
+}
+
+/// То же приложение, но с рукой на мире **до** входа в `Playing`: `configure`
+/// вставляет ресурсы, которые в игре приносит поток загрузки рядом с картой
+/// (`Districts`, `BastionSites`), и вешает наблюдателей. Позже — нельзя:
+/// `spawn_bastions` идёт в `OnEnter(Playing)` и ставит ровно те места, что
+/// лежат в ресурсе к этому моменту.
+pub fn replay_app_with(
+    map: MapData,
+    navmesh: Navmesh,
+    portal: Vec2,
+    seed: u64,
+    population: usize,
+    configure: impl FnOnce(&mut App),
+) -> App {
     let mut app = App::new();
     // Косметические системы (`draw_lunge_paths`, `draw_move_paths`) просят
     // `Gizmos`, а он живёт в рендере, которого здесь нет. По умолчанию Bevy
@@ -185,6 +201,8 @@ pub fn replay_app(
         .resource_mut::<Time<Virtual>>()
         .set_max_delta(Duration::from_secs(10));
 
+    configure(&mut app);
+
     // Дальше — те же две фазы, что проходит игра. Мир объявляет свой старт
     // сам, на входе в `Live` (`SimBootPlugin`): этим событием прогон забирает
     // себе бэкенд, обнуляет тики, телеметрию, часы и спавнер демонов.
@@ -209,6 +227,12 @@ pub fn replay_app(
 /// подавая за кадр столько тиков, сколько говорит очередной элемент `pattern`
 /// (циклически). Разный `pattern` при одном отпечатке — и есть проверка «fps
 /// ни при чём».
+///
+/// **Стоящий мир — выход, а не вечный цикл.** Кадр, которому подали тики, а
+/// `SimTick` не сдвинулся, значит `Time<Virtual>` на паузе — так судья исхода
+/// останавливает прогон на победе (`outcome::judge_outcome`). До цели такому
+/// миру не дойти никогда; отпечаток снимается там, где он встал, а тик
+/// остановки читается из `SimTick` (или из `Outcome`) вызывающим.
 pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progress) -> Fingerprint {
     let started = std::time::Instant::now();
     let mut frame = 0usize;
@@ -218,11 +242,18 @@ pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progre
         // перескакивает цель, и отпечатки снимались бы на РАЗНЫХ тиках — а
         // тогда «рваный кадр» проваливался бы всегда, и не потому, что
         // симуляция зависит от fps
-        let remaining = (target - app.world().resource::<SimTick>().0) as u32;
+        let before = app.world().resource::<SimTick>().0;
+        let remaining = (target - before) as u32;
         let ticks_this_frame = pattern[frame % pattern.len()].min(remaining);
         app.insert_resource(TimeUpdateStrategy::ManualDuration(TICK * ticks_this_frame));
         app.update();
         frame += 1;
+        if app.world().resource::<SimTick>().0 == before {
+            if progress == Progress::Print {
+                println!("  мир стоит на тике {before} — прокрутка остановлена");
+            }
+            break;
+        }
 
         if progress == Progress::Print {
             let tick = app.world().resource::<SimTick>().0;

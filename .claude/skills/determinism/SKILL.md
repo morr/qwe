@@ -314,6 +314,17 @@ find the few thousand standing ones.
 - **`sim_yard::behavior_yard`** (test-only) — the four resources a species' behaviour stand
   needs (backend, grid, diagnostics store, clock). Answers "did this rung fire".
 - **`replay_app`** — the run yard. Answers "does the whole run replay".
+  **`replay_app_with`** is the same yard with a `configure(&mut App)` hook that runs
+  **before** the `Playing` entry — the only moment to insert what the game's load thread
+  brings next to the map (`Districts`, `BastionSites`) and to hang observers: `spawn_bastions`
+  runs in `OnEnter(Playing)` and takes whatever sites the resource holds by then. The M1 stand
+  (`examples/acceptance/m1_win.rs`, the `city-siege` skill) is its one caller.
+
+**`run_to_tick` stops on a standing world.** A frame that was handed ticks and moved
+`SimTick` by nothing means `Time<Virtual>` is paused — that is how `outcome::judge_outcome`
+ends a run on the win. Such a world never reaches the target, so the loop breaks and the
+fingerprint is taken where it stands; the caller reads the stopping tick from `SimTick` or
+`Outcome`. Before this the M1 stand spun forever on the tick the heart fell.
 
 **The list of plugins `replay_app` deliberately leaves out lives next to the list it
 includes**, with a reason per line: that boundary is exactly what `a_restart_replays_the_run`

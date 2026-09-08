@@ -270,7 +270,21 @@ In M1 a stalemate is hard to reach honestly (nothing kills demons; "no demon ali
 a burst that caught nobody), so it is checked on a stand: `brp despawn` every demon with
 zero souls available → `Lost` on the next tick.
 
-## Not yet in the code
+## The acceptance stand (`examples/acceptance/m1_win.rs`)
 
-The milestone's last step is the acceptance stand (`examples/acceptance/m1_win.rs`), the
-live Tula runs table and the tuning pass over the starting numbers — `ROADMAP.md`, step 11.
+`cargo run --example m1_win` — the whole siege loop headless, on `district_city`, on
+`replay_app_with` (the `determinism` skill): the districts and one hand-made
+`BastionSites` (a Stronghold at `city.south_bank`, the district that holds the bridge,
+HP by `closeness` like a real site) go in through the configure hook; 200 humans; at
+`SUMMON_TICK` (10) the purse gets `SOULS_GRANT` (100) and a `SummonRequested { Brute }` is
+written straight into the world (`World::write_message` — the message survives the next
+`First` swap and `summon` reads it on that update's fixed step). The run goes in
+`CHUNK_TICKS` (1 280) slices until `Outcome` leaves `Running` or `MAX_TICKS` (60 000, a
+quarter hour); a `SiegeLog` resource filled by two observers (`DistrictCorrupted`,
+`BastionDestroyed`) records the ticks. Two runs on seed 1, then three checks: `Won` before
+the cap; the same outcome (variant + tick) in both runs; every north-bank district
+(centroid past `NORTH_BANK_Y` 900) corrupted **after** the bastion's district — the bridge
+was the road. The numbers it prints are the baseline table in `ROADMAP.md`, step 11.
+
+The stand is why `run_to_tick` now returns on a standing world: the judge's pause used to
+leave it spinning on the winning tick.
