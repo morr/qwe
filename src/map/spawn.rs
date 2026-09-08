@@ -1,15 +1,17 @@
-//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (парки, луга, песок,
-//! вода площадная и линейная) + дороги, аллеи и стены (`map/roads.rs`, стиль ленты переключается
-//! панелью Roads) + здания (`map/buildings/`, режим отображения высоты
-//! переключается панелью Buildings) + деревья отдельными сущностями.
+//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (земля, парки, луга,
+//! песок, вода площадная и линейная) + дороги, аллеи и стены (`map/roads.rs`,
+//! стиль ленты переключается панелью Roads) + здания (`map/buildings/`, режим
+//! отображения высоты переключается панелью Buildings) + деревья отдельными
+//! сущностями. Поверхности красит фактурный материал (`map/surface.rs`):
+//! цвет слоя по-прежнему вершинный, шум кладёт шейдер.
 
 use bevy::prelude::*;
 
-use crate::loading::AppState;
 use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, TreeRow, WaterLine, water_line_caps};
+use crate::map::osm::{MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
+use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING,
@@ -40,51 +42,94 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
 
+/// Кайма площадного слоя вдоль его контура ([`MeshBuilder::push_inset_band`]):
+/// ширина, м, и цвет на самом контуре; к дальнему краю кайма сходит в заливку.
+struct Rim {
+    width: f32,
+    edge: Color,
+}
+
+/// Мелководье: светлая полоса вдоль берега внутри водного полигона — то, что
+/// делает пруд прудом, а не синим пятном. Три метра: у Упы это шестая часть
+/// ширины, у канала — треть.
+const WATER_RIM: Rim = Rim {
+    width: 3.0,
+    edge: Color::srgb(0.78, 0.885, 0.945),
+};
+/// Кромки зелени и песка — та же заливка на несколько процентов темнее:
+/// полигон читается как вырезанная фигура, а не как пятно, разлитое по земле.
+/// У леса кромка шире и темнее — под пологом у края тень.
+const PARK_RIM: Rim = Rim {
+    width: 2.5,
+    edge: Color::srgb(0.707, 0.808, 0.534),
+};
+const WOOD_RIM: Rim = Rim {
+    width: 3.0,
+    edge: Color::srgb(0.610, 0.738, 0.558),
+};
+const GRASS_RIM: Rim = Rim {
+    width: 2.0,
+    edge: Color::srgb(0.806, 0.871, 0.693),
+};
+const SAND_RIM: Rim = Rim {
+    width: 2.0,
+    edge: Color::srgb(0.913, 0.868, 0.737),
+};
+
+/// Полигон слоя с каймой по контуру, дырки включительно (у дырки кайма лежит
+/// снаружи её контура — внутри заливки). Кайма кладётся после заливки в тот
+/// же меш: в одном слое побеждает нарисованное позже (depth `GreaterEqual`),
+/// так что своего z ей не нужно. Ширину у дырок зажимает толщина внешнего
+/// контура — та же, что зажала кайму на нём самом.
+fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim) {
+    let fill = fill.to_linear();
+    let edge = rim.edge.to_linear();
+    builder.push_polygon(&area.outer, &area.holes, fill);
+    let Some(width) = builder.push_inset_band(&area.outer, rim.width, false, edge, fill) else {
+        return;
+    };
+    for hole in &area.holes {
+        builder.push_inset_band(hole, width, true, edge, fill);
+    }
+}
+
 pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    surfaces: Res<SurfaceMaterials>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
 ) {
-    commands.spawn((
-        Sprite {
-            color: GROUND_COLOR,
-            custom_size: Some(MAP_SIZE),
-            ..default()
-        },
-        Transform::from_translation((MAP_SIZE / 2.0).extend(Z_GROUND)),
-        DespawnOnExit(AppState::Playing),
-        Name::new("ground"),
-    ));
+    // земля — квад на всю карту тем же фактурным материалом, что и прочие
+    // поверхности: спрайту с плоским цветом фактуру не положить
+    let mut ground = MeshBuilder::with_surface_coords();
+    ground.push_rect(Vec2::ZERO, MAP_SIZE, GROUND_COLOR.to_linear());
 
-    // вершинные цвета — материал один, белый
-    let material = materials.add(Color::WHITE);
-
-    let mut parks = MeshBuilder::default();
+    let mut parks = MeshBuilder::with_surface_coords();
     for park in &map.parks {
-        parks.push_polygon(&park.outer, &park.holes, PARK_COLOR.to_linear());
+        push_area(&mut parks, park, PARK_COLOR, &PARK_RIM);
     }
 
-    let mut woods = MeshBuilder::default();
+    let mut woods = MeshBuilder::with_surface_coords();
     for area in &map.woods {
-        woods.push_polygon(&area.outer, &area.holes, WOOD_COLOR.to_linear());
+        push_area(&mut woods, area, WOOD_COLOR, &WOOD_RIM);
     }
 
-    let mut grass = MeshBuilder::default();
+    let mut grass = MeshBuilder::with_surface_coords();
     for area in &map.grass {
-        grass.push_polygon(&area.outer, &area.holes, GRASS_COLOR.to_linear());
+        push_area(&mut grass, area, GRASS_COLOR, &GRASS_RIM);
     }
 
-    let mut sand = MeshBuilder::default();
+    let mut sand = MeshBuilder::with_surface_coords();
     for area in &map.sand {
-        sand.push_polygon(&area.outer, &area.holes, SAND_COLOR.to_linear());
+        push_area(&mut sand, area, SAND_COLOR, &SAND_RIM);
     }
 
-    let mut water = MeshBuilder::default();
+    let mut water = MeshBuilder::with_surface_coords();
     for area in &map.water {
-        water.push_polygon(&area.outer, &area.holes, WATER_COLOR.to_linear());
+        push_area(&mut water, area, WATER_COLOR, &WATER_RIM);
     }
 
     let waterways = mesh_water_lines(&map.water_lines);
@@ -97,33 +142,33 @@ pub fn spawn_map(
         warn!("map meshing: {skipped} degenerate polygons skipped");
     }
 
-    for (builder, z, name) in [
-        (parks, Z_PARK, "parks"),
-        (woods, Z_WOOD, "woods"),
-        (grass, Z_GRASS, "grass"),
-        (sand, Z_SAND, "sand"),
-        (water, Z_POND, "water"),
-        (waterways, Z_WATERWAY, "waterways"),
+    for (builder, z, name, kind) in [
+        (ground, Z_GROUND, "ground", SurfaceKind::Ground),
+        (parks, Z_PARK, "parks", SurfaceKind::Park),
+        (woods, Z_WOOD, "woods", SurfaceKind::Wood),
+        (grass, Z_GRASS, "grass", SurfaceKind::Grass),
+        (sand, Z_SAND, "sand", SurfaceKind::Sand),
+        (water, Z_POND, "water", SurfaceKind::Water),
+        (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
     ] {
-        if builder.is_empty() {
-            continue;
-        }
-        commands.spawn((
-            Mesh2d(meshes.add(builder.build())),
-            MeshMaterial2d(material.clone()),
-            Transform::from_xyz(0.0, 0.0, z),
-            DespawnOnExit(AppState::Playing),
-            Name::new(name),
-        ));
+        spawn_layer(
+            &mut commands,
+            &mut meshes,
+            builder,
+            z,
+            name,
+            LayerMaterial::Surface(surfaces.handle(kind)),
+            (),
+        );
     }
 
     roads::spawn_roads(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &surfaces,
         *road_style,
-        &map.roads,
-        &map.walls,
+        &map,
     );
 
     buildings::spawn_buildings(
@@ -143,7 +188,7 @@ pub fn spawn_map(
 /// (`water_line_caps`), и между порталами воды на карте просто нет.
 fn mesh_water_lines(lines: &[WaterLine]) -> MeshBuilder {
     let color = WATER_COLOR.to_linear();
-    let mut open = MeshBuilder::default();
+    let mut open = MeshBuilder::with_surface_coords();
 
     for line in lines.iter().filter(|line| !line.tunnel) {
         // сглаживание как у дорог: русло в OSM — ломаная по точкам съёмки, и на
@@ -183,11 +228,13 @@ pub fn spawn_tree_row_band(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
+    surfaces: &SurfaceMaterials,
     rows: &[TreeRow],
     style: &TreeRowStyle,
 ) {
     let mut casing = MeshBuilder::default();
-    let mut fill = MeshBuilder::default();
+    // заливка — лесная поверхность, с той же фактурой, что лес под кронами
+    let mut fill = MeshBuilder::with_surface_coords();
     // тумблер панели выключает аллеи целиком: без деревьев ряда полоса под
     // ними — просто зелёная линия поперёк города
     let rows = if style.enabled { rows } else { &[] };
@@ -215,22 +262,22 @@ pub fn spawn_tree_row_band(
         );
     }
 
-    let material = materials.add(Color::WHITE);
-    for (builder, z, name) in [
-        (casing, Z_TREE_ROW_BAND_CASING, "tree_row_band_casing"),
-        (fill, Z_TREE_ROW_BAND, "tree_row_band"),
+    let flat = materials.add(Color::WHITE);
+    for (builder, z, name, material) in [
+        (
+            casing,
+            Z_TREE_ROW_BAND_CASING,
+            "tree_row_band_casing",
+            LayerMaterial::Flat(flat),
+        ),
+        (
+            fill,
+            Z_TREE_ROW_BAND,
+            "tree_row_band",
+            LayerMaterial::Surface(surfaces.handle(SurfaceKind::Wood)),
+        ),
     ] {
-        if builder.is_empty() {
-            continue;
-        }
-        commands.spawn((
-            TreeRowBandTag,
-            Mesh2d(meshes.add(builder.build())),
-            MeshMaterial2d(material.clone()),
-            Transform::from_xyz(0.0, 0.0, z),
-            DespawnOnExit(AppState::Playing),
-            Name::new(name),
-        ));
+        spawn_layer(commands, meshes, builder, z, name, material, TreeRowBandTag);
     }
 }
 
@@ -239,6 +286,7 @@ pub fn rebuild_tree_row_band(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    surfaces: Res<SurfaceMaterials>,
     style: Res<TreeRowStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<TreeRowBandTag>>,
@@ -250,6 +298,7 @@ pub fn rebuild_tree_row_band(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &surfaces,
         &map.tree_rows,
         &style,
     );

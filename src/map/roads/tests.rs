@@ -1,13 +1,12 @@
 use super::*;
 use crate::map::meshing::distance_to_path;
+use crate::map::osm::fixture;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {
-        points,
-        width,
         class: RoadClass::Alley,
-        bridge: false,
         passage,
+        ..fixture::street(points, width)
     }
 }
 
@@ -132,4 +131,77 @@ fn bridge_curb_ends_are_square_under_every_join() {
     let mut fill = MeshBuilder::default();
     push_ribbon(&mut fill, &points, 5.0, LinearRgba::WHITE, RoadJoin::Round);
     assert!(max_x(&fill) > 20.0);
+}
+
+#[test]
+fn sidewalks_belong_to_streets_not_service_roads() {
+    // проезд (`service`, 5 м) — без тротуара; жилая улица и магистраль — с ним,
+    // в пределах диапазона
+    assert_eq!(sidewalk_width(5.0), None);
+    let residential = sidewalk_width(8.0).unwrap();
+    let primary = sidewalk_width(16.0).unwrap();
+    assert!(residential < primary);
+    assert!(SIDEWALK_WIDTH_RANGE.contains(&residential));
+    assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));
+}
+
+#[test]
+fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
+    let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);
+    assert_eq!(
+        lane_count(&street),
+        2,
+        "жилая улица без тега — по полосе в каждую сторону"
+    );
+    street.width = 12.0;
+    assert_eq!(lane_count(&street), 4);
+    street.lanes = Some(3);
+    assert_eq!(lane_count(&street), 3, "тег важнее ширины");
+    street.lanes = Some(8);
+    assert_eq!(lane_count(&street), 4, "полоса у́же 2.5 м не бывает");
+    street.lanes = None;
+    street.oneway = true;
+    street.width = 8.0;
+    assert_eq!(lane_count(&street), 1, "односторонняя жилая — одна полоса");
+    street.width = 16.0;
+    assert_eq!(lane_count(&street), 3);
+    street.roundabout = true;
+    street.lanes = Some(2);
+    assert_eq!(lane_count(&street), 1, "на кольце линий нет");
+}
+
+#[test]
+fn markings_need_a_carriageway_with_two_lanes() {
+    let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let mut street = fixture::street(line.clone(), 8.0);
+    assert_eq!(
+        road_markings(&street),
+        Some(Markings {
+            lanes: 2,
+            oneway: false
+        })
+    );
+    street.oneway = true;
+    assert_eq!(road_markings(&street), None, "одна полоса — делить нечего");
+    street.width = 12.0;
+    assert_eq!(
+        road_markings(&street),
+        Some(Markings {
+            lanes: 2,
+            oneway: true
+        })
+    );
+    assert_eq!(road_markings(&fixture::street(line.clone(), 5.0)), None);
+    assert_eq!(road_markings(&fixture::passage(line.clone(), 8.0)), None);
+    assert!(
+        road_markings(&fixture::bridge(line, 8.0)).is_some(),
+        "мост несёт разметку своей улицы"
+    );
+}
+
+#[test]
+fn road_style_defaults_draw_sidewalks_and_markings() {
+    let style = RoadStyle::default();
+    assert!(style.sidewalks);
+    assert!(style.markings);
 }

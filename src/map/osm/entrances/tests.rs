@@ -1,6 +1,7 @@
 use super::cohorts::COHORT_ROW_MEAN;
 use super::*;
-use crate::map::osm::model::{RoadClass, RoadLine};
+use crate::map::osm::fixture;
+use crate::map::osm::model::RoadLine;
 
 fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
     vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
@@ -17,13 +18,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>) -> PolyArea {
 }
 
 fn road(points: Vec<Vec2>) -> RoadLine {
-    RoadLine {
-        points,
-        width: 8.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage: false,
-    }
+    fixture::street(points, 8.0)
 }
 
 /// Дом стоит между двух улиц, но одна из них вплотную к южной грани, а

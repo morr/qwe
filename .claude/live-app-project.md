@@ -149,6 +149,7 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
+`RoadStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`.
@@ -201,6 +202,9 @@ $b res set TreeStyle .woods false                 # источники дере�
 $b res set TreeStyle .standalone false            # …одиночные natural=tree
 $b res set TreeRowStyle .enabled false            # …аллеи (панель Tree rows)
 $b res set PathfindingAlgorithm . '"Hpa"'
+$b res set RoadStyle .sidewalks false             # тротуары / разметка улиц
+$b res set RoadStyle .markings false
+$b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
 Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the

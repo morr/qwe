@@ -513,6 +513,49 @@ fn a_bridge_and_an_arch_outrank_the_underground_rule() {
     );
 }
 
+/// Односторонность, кольцо и число полос — то, по чему рисуется разметка.
+#[test]
+fn oneway_roundabout_and_lanes_reach_the_road() {
+    let (sw, se, ..) = corners(HALF);
+    let road = |extra: &[(&str, &str)]| {
+        let tags: Vec<(&str, &str)> = [("highway", "residential")]
+            .into_iter()
+            .chain(extra.iter().copied())
+            .collect();
+        Overpass::new(CITY)
+            .way(&tags, vec![sw, se])
+            .parse()
+            .roads
+            .remove(0)
+    };
+
+    let plain = road(&[]);
+    assert!(!plain.oneway && !plain.roundabout);
+    assert_eq!(plain.lanes, None, "без тега — дефолт у рендера");
+
+    assert!(road(&[("oneway", "yes")]).oneway);
+    assert!(road(&[("oneway", "-1")]).oneway, "направление не важно");
+    assert!(!road(&[("oneway", "no")]).oneway);
+    assert!(!road(&[("oneway", "reversible")]).oneway);
+
+    let ring = road(&[("junction", "roundabout")]);
+    assert!(
+        ring.roundabout && ring.oneway,
+        "кольцо одностороннее по определению"
+    );
+    assert!(road(&[("junction", "circular")]).roundabout);
+
+    assert_eq!(road(&[("lanes", "4")]).lanes, Some(4));
+    assert_eq!(road(&[("lanes", "2;3")]).lanes, Some(2));
+    assert_eq!(road(&[("lanes", "2.5")]).lanes, Some(2));
+    assert_eq!(road(&[("lanes", "0")]).lanes, None);
+    assert_eq!(
+        road(&[("lanes", "12")]).lanes,
+        None,
+        "за восемью полосами — не лента, а вся развязка"
+    );
+}
+
 #[test]
 fn height_prefers_the_metric_tag_then_falls_back_to_levels() {
     // ветка Нью-Йорка: метры из LiDAR-импорта

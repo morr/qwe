@@ -44,6 +44,10 @@ const TREE_CROWN_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
 /// поймы, а не воды (такое место в OSM размечают полигоном, а не линией).
 const WATER_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=50.0;
 
+/// Границы правдоподобия `lanes`: ноль — не дорога, а за восемью полосами —
+/// опечатка или сумма всей развязки, а не одной ленты.
+const LANES_RANGE: RangeInclusive<f32> = 1.0..=8.0;
+
 /// Классификация элемента по тегам → вид площадного объекта.
 pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     let tags = &element.tags;
@@ -259,6 +263,36 @@ pub(super) fn is_building_passage(tags: &HashMap<String, String>) -> bool {
             tags.get("covered").map(String::as_str),
             Some("yes" | "building_passage")
         )
+}
+
+/// Односторонняя ли улица: `oneway=yes|1|true|-1` (направление не важно — мы
+/// рисуем, а не маршрутизируем) и любое кольцо, одностороннее по определению.
+/// `reversible` / `alternating` — нет: там едут в обе стороны, пусть по очереди.
+pub(super) fn is_oneway(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("oneway").map(String::as_str),
+        Some("yes" | "1" | "true" | "-1")
+    ) || is_roundabout(tags)
+}
+
+/// Кольцевая развязка: `junction=roundabout` (с приоритетом кольца) и
+/// `junction=circular` (без него) — для картинки одно и то же кольцо.
+pub(super) fn is_roundabout(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("junction").map(String::as_str),
+        Some("roundabout" | "circular")
+    )
+}
+
+/// Число полос из `lanes`, если оно правдоподобно. В OSM это сумма по обоим
+/// направлениям; `2;3` и `2.5` попадаются и читаются как `2`. Только тег:
+/// дефолт по ширине и правило кольца — у рендера (`roads::lane_count`).
+pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
+    let lanes = tags
+        .get("lanes")
+        .and_then(|value| parse_measure(value))?
+        .floor();
+    LANES_RANGE.contains(&lanes).then_some(lanes as u8)
 }
 
 /// Шаг посадки аллеи из тегов, м. `spacing` как есть, иначе `count` /

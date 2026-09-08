@@ -214,6 +214,9 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         class: RoadClass::Street,
         bridge: false,
         passage: false,
+        oneway: false,
+        roundabout: false,
+        lanes: None,
     }
 }
 

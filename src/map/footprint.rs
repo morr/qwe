@@ -314,13 +314,7 @@ mod tests {
     /// и рендер.
     #[test]
     fn curb_bands_sit_on_both_deck_edges() {
-        let road = RoadLine {
-            points: vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)],
-            width: 8.0,
-            class: super::super::osm::model::RoadClass::Street,
-            bridge: true,
-            passage: false,
-        };
+        let road = fixture::bridge(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0);
         let [left, right] = road.curb_bands();
         let offset = (road.width + road.curb_width()) / 2.0;
         assert_eq!(left.width, road.curb_width());

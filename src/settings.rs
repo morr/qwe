@@ -764,6 +764,11 @@ pub const Z_POND: f32 = 1.0;
 /// от случая. Ниже дорог и мостов, поэтому переход через русло по-прежнему
 /// рисуется поверх воды.
 pub const Z_WATERWAY: f32 = 1.05;
+/// Тротуар — полоса под проезжей частью улицы, шире её на тротуар с каждой
+/// стороны (`map/roads.rs`). Ниже канта аллеи: дорожка вдоль улицы (в OSM
+/// тротуар часто размечен отдельной `footway`) ложится поверх полосы, а не
+/// тонет в ней. Выше водотока: улица по набережной кроет русло тротуаром.
+pub const Z_SIDEWALK: f32 = 1.2;
 /// Кант аллеи/улицы — прямо под своей заливкой. Порядок получается верным сам
 /// собой: кант улицы (1.9) кроет заливку аллеи (1.5), потому что улица старше
 /// аллеи, а заливки (1.5 и 2.0) кроют оба канта — иначе кант резал бы каждый
@@ -833,7 +838,9 @@ const _: () = {
     // водоток — волосок над площадной водой, но ниже дорог: переход через
     // русло рисуется поверх воды
     assert!(Z_POND < Z_WATERWAY);
-    assert!(Z_WATERWAY < Z_ALLEY_CASING);
+    // тротуар — под всеми лентами дорог, но над водой
+    assert!(Z_WATERWAY < Z_SIDEWALK);
+    assert!(Z_SIDEWALK < Z_ALLEY_CASING);
     // кант — прямо под своей заливкой, у всех трёх видов лент
     assert!(Z_ALLEY_CASING < Z_ALLEY);
     assert!(Z_ROAD_CASING < Z_ROAD);
@@ -932,6 +939,16 @@ pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
 /// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
 /// к запуску, как и посадка деревьев.
 pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
+
+// --- Фактура поверхностей (`map::surface`) ---
+/// Дефолт и границы ползунка Texture (`SurfaceStyle::texture`) — общий
+/// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
+/// до фактуры; 1 — фактура как задумана; полтора — заметно грубее, дальше шум
+/// перекрикивает цвет слоя.
+pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
+pub const SURFACE_TEXTURE_MIN: f32 = 0.0;
+pub const SURFACE_TEXTURE_MAX: f32 = 1.5;
+pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
 
 /// Радиус агента полигонального меша (панель Polymesh): инфляция препятствий
 /// при триангуляции. Минимум ненулевой: по мешу теперь ходят пешки шириной
@@ -1073,6 +1090,10 @@ const _: () = {
     assert!(
         CONIFER_NOISE_PERSISTENCE >= CONIFER_NOISE_PERSISTENCE_MIN
             && CONIFER_NOISE_PERSISTENCE <= CONIFER_NOISE_PERSISTENCE_MAX
+    );
+    assert!(
+        SURFACE_TEXTURE_DEFAULT >= SURFACE_TEXTURE_MIN
+            && SURFACE_TEXTURE_DEFAULT <= SURFACE_TEXTURE_MAX
     );
 };
 

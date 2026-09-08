@@ -29,6 +29,14 @@ esac
 
 rel="${path#"$root"/}"
 
+# A worktree under .claude/worktrees/<name>/ is the same repo, and this hook
+# runs from the main checkout's $CLAUDE_PROJECT_DIR after EnterWorktree (see
+# worktree-drift.sh): judge the path relative to the worktree, or every file of
+# the branch would fall into the "never gated" .claude/ branch below.
+case "$rel" in
+  .claude/worktrees/*/*) rel="${rel#.claude/worktrees/*/}" ;;
+esac
+
 # Never gated: the agent-configuration files themselves and docs.
 case "$rel" in
   .claude/*|*.md) exit 0 ;;

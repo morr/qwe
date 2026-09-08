@@ -29,10 +29,10 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
-use crate::loading::AppState;
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
+use crate::map::surface::{LayerMaterial, spawn_layer};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
 
@@ -318,23 +318,23 @@ fn spawn_rails(
     }
 
     let vertices = ballast.vertex_count() + ties.vertex_count() + steel.vertex_count();
+    // вершинные цвета — материал белый и плоский: фактура поверхностей пути ни
+    // к чему, он и так весь из щебня, шпал и стали
+    let flat = materials.add(Color::WHITE);
     for (builder, z, name) in [
         (ballast, Z_RAIL, "rail_ballast"),
         (ties, Z_RAIL_TIE, "rail_ties"),
         (steel, Z_RAIL_STEEL, "rail_steel"),
     ] {
-        if builder.is_empty() {
-            continue;
-        }
-        commands.spawn((
+        spawn_layer(
+            commands,
+            meshes,
+            builder,
+            z,
+            name,
+            LayerMaterial::Flat(flat.clone()),
             RailLayerTag,
-            Mesh2d(meshes.add(builder.build())),
-            // вершинные цвета — материал белый, как у остальных слоёв карты
-            MeshMaterial2d(materials.add(Color::WHITE)),
-            Transform::from_xyz(0.0, 0.0, z),
-            DespawnOnExit(AppState::Playing),
-            Name::new(name),
-        ));
+        );
     }
 
     info!(

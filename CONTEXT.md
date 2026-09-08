@@ -49,10 +49,11 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
-  → sand → water → waterways → alley casings → alleys → road casings → roads → bridge
-  casings → bridges → rail ballast → rail ties → rail steel → tram → corpses → portal →
-  buildings (5) → units → tree shadows → trees (20). Three live in their own modules:
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods →
+  tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
+  alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
+  → rail ties → rail steel → tram → corpses → portal → buildings (5) → units → tree
+  shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
@@ -130,7 +131,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     Park | Wood | Grass | Sand`; **only Wood carries trees**. Buildings carry
     `height: Option<f32>` and `entrances: Vec<Vec2>`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
-    `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them).
+    `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
+    `oneway`, `roundabout` (`junction=roundabout|circular`, implies one-way) and
+    `lanes: Option<u8>` (the tag, 1–8; the width default lives in `map/roads.rs`) — read
+    by the markings only.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -177,24 +181,62 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   discipline.**
 - **Merged meshes** (`map/meshing.rs`, `map/spawn.rs`, `map/roads.rs`, `map/rail.rs`,
   `map/tram.rs`, `map/buildings/`) —
-  one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors, one white
-  `ColorMaterial`; ~7000 buildings cost a handful of entities. Trees stay individual
-  entities; tree and building **shadows** are each one merged mesh. **Ribbon**
-  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junctions
-  are not computed** — overlapping `Round` caps in one opaque flat-colored layer are what
-  makes them look joined; **keep the road layer opaque**.
+  one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors over one white
+  `ColorMaterial` (buildings, casings, rails, walls) or the **surface material** below
+  (everything that is ground); ~7000 buildings cost a handful of entities. Trees stay
+  individual entities; tree and building **shadows** are each one merged mesh. **Ribbon**
+  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
+  geometry is not computed** — overlapping `Round` caps in one opaque layer are what makes
+  them look joined; **keep the road layer opaque, and its colour a function of world
+  position only** (a flat colour or the surface shader, never a per-way tint). What *is*
+  computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or more
+  carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids, but
+  a shared node projects to the same point on every way. They feed the markings only.
+- **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
+  the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
+  `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
+  noise by **world position** (large mottle with a warm/cool tint shift, fine grain, grass
+  speckle, drifting ripple on water) — no textures, no assets, and identical in any two
+  overlapping ribbons. **Every octave fades by pixel size** (`fwidth`), so nothing shimmers
+  when zoomed out. One material per **`SurfaceKind`** (`SurfaceMaterials`, built once at
+  startup); **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
+  0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
+  built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
+  `[across, to-break, half width, markings code]` in metres (*to-break* = signed distance
+  to the nearest **marking break**, negative inside a gap; code = `lanes·2 + oneway`, 0 =
+  none), zeros on polygons.
+- **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
+  polygon carries a gradient band along its contour, holes included: water a lighter
+  **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
+  mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
+  no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
+  median strip never bleeds its rim onto the road.
+- **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
+  passage; bridges included) is asphalt grey and gets a light **sidewalk band** at
+  `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
+  casing), width `sidewalk_width` (22 %, 1.2–3 m per side), and white **lane markings
+  drawn by the surface shader** from the `Ribbon` coordinates: a line on every lane
+  boundary (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →
+  4; one-way 8 m → 1, i.e. none; a roundabout always 1), dashed, the axis of a two-way road
+  with 4+ lanes solid; anti-aliased, never thinner than ~1.3 px, gone when a lane is under
+  ~10 px on screen. **Marking breaks**: at every junction node each carriageway's lines
+  stop `half the widest other road + 1 m` short of the node — the through road gets a gap,
+  the side street ends before the carriageway edge; a way end shared with exactly one
+  other way end is a **continuation** (the line runs through the seam), any other way end
+  a dead end. Wider fills are pushed after narrower ones, so a junction shows the main
+  road's gap rather than the side street's stub. Both are `RoadStyle` knobs, on by default.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
-  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing — smoothing
-  works on a *copy*, since `RoadLine::points`/`width` are load-bearing for navmesh, arches,
-  planting and entrances), **BuildingHeightMode**, **TreeStyle**, **TreeRowStyle**,
-  **ConiferNoiseStyle**. **`CrownParams` is deliberately not one of them** — a plain
-  struct, no BRP, no prefs; only the `tree_gallery` example varies it. **Bridge / rail /
-  tram layers** have their own z-slots and primitives (`push_dashes`, `push_ticks`,
-  `push_rails`). Rail and tram answer to **no style resource at all** — their geometry is
-  a function of the camera zoom (a **zoom bucket** each — `ZoomBucket<T>` over the
-  layer's own LOD table, `map/zoom.rs`; seeded from the camera on world entry, then
-  recomputed every frame), so a smoothing knob that moved the centerline would slide
-  the track against its own ballast.
+  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
+  sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are
+  load-bearing for navmesh, arches, planting and entrances), **BuildingHeightMode**,
+  **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** (uniforms only,
+  no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
+  no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
+  their own z-slots and primitives (`push_dashes`, `push_ticks`, `push_rails`). Rail and
+  tram answer to **no style resource at all** — their geometry is a function of the camera
+  zoom (a **zoom bucket** each — `ZoomBucket<T>` over the layer's own LOD table,
+  `map/zoom.rs`; seeded from the camera on world entry, then recomputed every frame), so a
+  smoothing knob that moved the centerline would slide the track against its own ballast.
 
 ## Navigation
 
@@ -538,7 +580,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   button, or a click on the open tab) collapses it to the tab strip; the open tab and the
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
-  spawned by eight systems in eight plugins.
+  spawned by one system per section plugin.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

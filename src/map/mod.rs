@@ -5,6 +5,7 @@ pub mod osm;
 mod rail;
 mod roads;
 mod spawn;
+mod surface;
 mod tram;
 pub mod trees;
 mod zoom;
@@ -14,9 +15,11 @@ pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
+pub use self::surface::SurfaceStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;
+use bevy::sprite_render::Material2dPlugin;
 
 use crate::loading::{AppState, WorldInitSet};
 use crate::prefs::{TrackPrefExt, retuned};
@@ -33,12 +36,14 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TreeStyle>()
+        app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
+            .init_resource::<TreeStyle>()
             .init_resource::<TreeRowStyle>()
             .init_resource::<ConiferField>()
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<RoadStyle>()
+            .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
             .register_type::<TreeStyle>()
@@ -48,11 +53,16 @@ impl Plugin for MapPlugin {
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
             .register_type::<RoadStyle>()
+            .register_type::<SurfaceStyle>()
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
             .track_pref::<BuildingHeightMode>()
             .track_pref::<RoadStyle>()
+            .track_pref::<SurfaceStyle>()
+            // материалы поверхностей — один комплект на всё приложение, слои
+            // всех городов берут хэндлы из него
+            .add_systems(Startup, surface::init_surface_materials)
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -110,6 +120,9 @@ impl Plugin for MapPlugin {
                     roads::rebuild_roads
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),
+                    // сила фактуры — юниформ материалов, а не меши: без
+                    // привязки к состоянию, материалы живут вне мира
+                    surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку запускает только её фактическая
                     // смена. Таблицы у путей и трамвая свои, и пороги в них не

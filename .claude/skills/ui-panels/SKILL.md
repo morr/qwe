@@ -44,8 +44,8 @@ did not fit 1080 px and ran off the top of the screen.
   headers *are* rows: `Algo`, the `Separation` toggle, the `Slots` label). The returned
   entity is the parent it hands to the kits, so panel bodies did not change when they moved
   into tabs. **`SectionSlot`'s declaration order is the order inside a tab**
-  (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by eight
-  systems in eight plugins, and system order inside `UiBuildSet::Sections` is unspecified —
+  (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by one
+  system per section plugin, and system order inside `UiBuildSet::Sections` is unspecified —
   without the enum the Map tab came out shuffled on every run. A section that arrives
   **without** a `SectionSlot` sorts **last** (`slot_order`) and is named in a `warn!`: the
   enum exists so a section's place cannot be forgotten, and sorting a slotless one to the
@@ -83,7 +83,12 @@ did not fit 1080 px and ran off the top of the screen.
   `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
   into the Nav tab's crowd groups — they are about movement.
-- **Map tab** — Trees → Tree rows → Buildings → Roads → Noise.
+- **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Noise.
+  **Roads** (`ui/roads.rs`): five cycle rows on `RoadStyle` — joins, smoothing, casing,
+  **sidewalks**, **markings**. **Surfaces** (`ui/surfaces.rs`): one knob, **Texture**
+  (`SurfaceStyle::texture`, 0–150 %), the strength of the procedural surface shader; it
+  rewrites material uniforms, so a drag costs nothing and rebuilds no mesh. A header
+  without a count (`panel_title`), like Noise: the texture lies on the whole map.
   **Trees** (`ui/trees.rs`): shape / foliage / crown details / color variance, one button
   per row cycling through a fixed palette (`bevy_ui` has no text input, so hex fields became
   cycles), plus **slider rows** — **density** over `TREE_DENSITY_MIN..MAX`, **conifer share**

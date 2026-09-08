@@ -2,7 +2,7 @@ use super::arches::*;
 use super::layers::*;
 use super::*;
 use crate::map::SHADOW_DIR;
-use crate::map::osm::RoadClass;
+use crate::map::osm::fixture;
 use crate::settings::ARCH_HEIGHT;
 
 fn square() -> Vec<Vec2> {
@@ -239,12 +239,10 @@ fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
 }
 
 fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {
-    RoadLine {
-        points,
-        width: 5.0,
-        class: RoadClass::Street,
-        bridge: false,
-        passage,
+    if passage {
+        fixture::passage(points, 5.0)
+    } else {
+        fixture::street(points, 5.0)
     }
 }
 

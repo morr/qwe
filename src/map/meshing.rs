@@ -1,12 +1,31 @@
 //! Сборка слитых 2D-мешей слоёв карты: тысячи полигонов OSM в один
-//! `Mesh2d` с вершинными цветами (стоковый `ColorMaterial` их умножает).
+//! `Mesh2d` с вершинными цветами (стоковый `ColorMaterial` их умножает;
+//! `map::surface::SurfaceMaterial` — умножает и кладёт поверх фактуру).
 
 use std::f32::consts::PI;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::Indices;
+use bevy::mesh::{Indices, MeshVertexAttribute, VertexFormat};
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
+
+/// Локальные координаты ленты для шейдера поверхностей (`map::surface`):
+/// `[поперёк, до разрыва, полуширина, код разметки]` — метры и код
+/// [`Markings`]. «До разрыва» — знаковое расстояние до края ближайшего
+/// разрыва разметки ([`RibbonBreaks`]): по нему шейдер улиц гасит линии на
+/// перекрёстке и фазирует штрихи. У полигонов и прочей не-ленточной геометрии
+/// — нули. Атрибут есть только у мешей, собранных через
+/// [`MeshBuilder::with_surface_coords`]: зданиям, кронам и оверлеям он ни к
+/// чему, а это 16 байт на вершину.
+///
+/// Идентификатор — «высокий случайный», как велит документация
+/// `MeshVertexAttribute`: он задаёт порядок атрибутов и не должен совпасть со
+/// встроенными.
+pub const ATTRIBUTE_RIBBON: MeshVertexAttribute =
+    MeshVertexAttribute::new("Ribbon", 2_078_446_317, VertexFormat::Float32x4);
+
+/// Координаты не-ленточной вершины.
+const NO_RIBBON: [f32; 4] = [0.0; 4];
 
 /// Максимальное удлинение стыка ленты относительно полуширины. Контур кроны
 /// полон почти встречных рёбер (впадины между фестонами), и там miter уходит
@@ -23,6 +42,54 @@ const ARC_TOLERANCE: f32 = 0.05;
 
 /// Потолок числа хорд в дуге — страховка от вырожденного радиуса.
 const MAX_ARC_STEPS: usize = 12;
+
+/// Кайма контура ([`MeshBuilder::push_inset_band`]) не шире этой доли его
+/// толщины (`площадь / периметр`): у полосы толщина — половина ширины, и кайма
+/// в 0.6 её с каждой стороны оставляет посреди полосы просвет заливки.
+const RIM_THICKNESS_SHARE: f32 = 0.6;
+/// Кайма тоньше не кладётся: не видна, а квадов на контур — столько же.
+const MIN_RIM_WIDTH: f32 = 0.2;
+
+/// «До разрыва» у ленты без единого разрыва: длина дуги плюс это. Разметке
+/// нужна координата, растущая вдоль ленты (по ней идут штрихи), а гаснуть ей
+/// негде — way продолжается с обоих концов.
+const FAR_FROM_BREAKS: f32 = 1000.0;
+
+/// Разметка проезжей части для шейдера улиц: число полос и односторонность.
+/// В [`ATTRIBUTE_RIBBON`] едет кодом `полосы · 2 + односторонняя`; ноль —
+/// без разметки. Шейдер кладёт линию на каждую границу полос: штриховую, а
+/// осевую многополосной двусторонней — сплошную.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Markings {
+    pub lanes: u8,
+    pub oneway: bool,
+}
+
+impl Markings {
+    fn encode(self) -> f32 {
+        f32::from(self.lanes) * 2.0 + if self.oneway { 1.0 } else { 0.0 }
+    }
+}
+
+/// Разрыв разметки: точка на дороге (перекрёсток, тупик) и полудлина разрыва
+/// вдоль неё, м. Точка — мировая: лента проецирует её на свой путь сама,
+/// поэтому узел OSM и сглаженная осевая, по которой лента построена, могут
+/// расходиться.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Break {
+    pub at: Vec2,
+    pub reach: f32,
+}
+
+/// Где у ленты разрывы разметки.
+#[derive(Clone, Copy)]
+pub enum RibbonBreaks<'a> {
+    /// Торцы ленты, и только они: «до разрыва» — до ближайшего торца.
+    Ends,
+    /// Заданный список. Торец, которого в списке нет, — стык с продолжением
+    /// той же дороги: разметка идёт сквозь него.
+    At(&'a [Break]),
+}
 
 /// Стык сегментов ленты на изломе.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -45,17 +112,77 @@ pub enum RibbonCap {
     Round,
 }
 
+/// Координаты [`ATTRIBUTE_RIBBON`] для вершин веера.
+#[derive(Clone, Copy)]
+enum FanCoords {
+    /// Стык: весь веер лежит на внешней стороне излома, «до разрыва» у него
+    /// одно на все вершины — то же, что у точки пути.
+    Join { side: f32, to_break: f32 },
+    /// Торец: поперёк — проекция на `normal` ленты, «до разрыва» продолжается
+    /// за точку пути линейно с наклоном `slope` последнего квада: в минус у
+    /// тупика и перекрёстка (разметка на полудиске гаснет), в плюс там, где
+    /// way продолжается следующим и линия идёт сквозь стык.
+    Cap {
+        outward: Vec2,
+        normal: Vec2,
+        at_end: f32,
+        slope: f32,
+    },
+}
+
 #[derive(Default)]
 pub struct MeshBuilder {
     positions: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
     skipped_polygons: usize,
+    /// `Some` — меш собирается для `SurfaceMaterial` и несёт
+    /// [`ATTRIBUTE_RIBBON`] на каждой вершине.
+    ribbon: Option<Vec<[f32; 4]>>,
+    /// Код разметки ([`Markings::encode`]) для лент, которые лягут дальше
+    /// ([`Self::set_markings`]); ноль — без разметки.
+    markings: f32,
 }
 
 impl MeshBuilder {
+    /// Сборщик с локальными координатами лент ([`ATTRIBUTE_RIBBON`]) — для
+    /// слоёв, которые рисует `map::surface::SurfaceMaterial`; без них тот
+    /// материал меш не примет.
+    pub fn with_surface_coords() -> Self {
+        Self {
+            ribbon: Some(Vec::new()),
+            ..Self::default()
+        }
+    }
+
+    /// Разметка лент, положенных после этого вызова: шейдер улиц кладёт линии
+    /// только по ней, и узкий проезд её не получает. Без координат поверхности
+    /// код некуда записать.
+    pub fn set_markings(&mut self, markings: Option<Markings>) {
+        self.markings = markings.map_or(0.0, Markings::encode);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty()
+    }
+
+    /// Координаты ленты — тест проверяет по ним, что легло в атрибут.
+    #[cfg(test)]
+    pub fn ribbon_coords_for_test(&self) -> Option<&[[f32; 4]]> {
+        self.ribbon.as_deref()
+    }
+
+    fn push_vertex(&mut self, position: Vec2, rgba: [f32; 4], ribbon: [f32; 4]) {
+        self.positions.push([position.x, position.y, 0.0]);
+        self.colors.push(rgba);
+        if let Some(coords) = &mut self.ribbon {
+            coords.push(ribbon);
+        }
+    }
+
+    /// Координаты вершины ленты с текущим кодом разметки.
+    fn coords(&self, across: f32, to_break: f32, half_width: f32) -> [f32; 4] {
+        [across, to_break, half_width, self.markings]
     }
 
     pub fn skipped_polygons(&self) -> usize {
@@ -110,8 +237,7 @@ impl MeshBuilder {
         let base = self.positions.len() as u32;
         let rgba = color.to_f32_array();
         for chunk in coordinates.chunks_exact(2) {
-            self.positions.push([chunk[0] as f32, chunk[1] as f32, 0.0]);
-            self.colors.push(rgba);
+            self.push_vertex(Vec2::new(chunk[0] as f32, chunk[1] as f32), rgba, NO_RIBBON);
         }
         self.indices
             .extend(triangles.into_iter().map(|index| base + index as u32));
@@ -131,6 +257,16 @@ impl MeshBuilder {
                 ]
             }));
         self.colors.extend_from_slice(&template.colors);
+        if let Some(coords) = &mut self.ribbon {
+            match &template.ribbon {
+                Some(source) => {
+                    coords.extend(source.iter().map(|[across, to_break, half_width, mode]| {
+                        [across * scale, to_break * scale, half_width * scale, *mode]
+                    }))
+                }
+                None => coords.extend(std::iter::repeat_n(NO_RIBBON, template.positions.len())),
+            }
+        }
         self.indices
             .extend(template.indices.iter().map(|index| base + index));
     }
@@ -138,17 +274,30 @@ impl MeshBuilder {
     /// Полилиния как цепочка квадов; каждый конец сегмента продлён на
     /// полширины, чтобы стыки перекрывались (как у старых дорог-спрайтов).
     pub fn push_polyline(&mut self, points: &[Vec2], width: f32, color: LinearRgba) {
-        for segment in points.windows(2) {
+        let half_width = width / 2.0;
+        let (along, total) = arclengths(points, false);
+        for (index, segment) in points.windows(2).enumerate() {
             let Some(direction) = (segment[1] - segment[0]).try_normalize() else {
                 continue;
             };
-            let extension = direction * width / 2.0;
-            let normal = direction.perp() * width / 2.0;
+            let extension = direction * half_width;
+            let normal = direction.perp() * half_width;
             let from = segment[0] - extension;
             let to = segment[1] + extension;
-            self.push_quad(
+            // «до торца» — по продлённым концам; излом этой функции на
+            // середине пути тут может попасть внутрь квада, но режим оставлен
+            // ради сравнения картинок, а не ради разметки
+            let at_from = to_nearest_end(along[index] - half_width, total);
+            let at_to = to_nearest_end(along[index + 1] + half_width, total);
+            self.push_quad_full(
                 [from + normal, from - normal, to - normal, to + normal],
-                color,
+                [color; 4],
+                [
+                    self.coords(half_width, at_from, half_width),
+                    self.coords(-half_width, at_from, half_width),
+                    self.coords(-half_width, at_to, half_width),
+                    self.coords(half_width, at_to, half_width),
+                ],
             );
         }
     }
@@ -359,12 +508,77 @@ impl MeshBuilder {
         join: RibbonJoin,
         caps: [RibbonCap; 2],
     ) {
-        let path = merge_close_points(points, closed, width / 4.0);
+        self.push_ribbon_shaped(
+            points,
+            width,
+            color,
+            RibbonShape {
+                closed,
+                join,
+                caps,
+                breaks: RibbonBreaks::Ends,
+            },
+        );
+    }
+
+    /// Разомкнутая лента с разрывами разметки ([`RibbonBreaks`]) — проезжая
+    /// часть улицы: «до разрыва» в [`ATTRIBUTE_RIBBON`] считается до края
+    /// ближайшего разрыва, а не до торца. Замкнутой ленте разрывы ни к чему —
+    /// у неё в этой координате длина дуги.
+    pub fn push_ribbon_broken(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        color: LinearRgba,
+        join: RibbonJoin,
+        caps: [RibbonCap; 2],
+        breaks: RibbonBreaks,
+    ) {
+        self.push_ribbon_shaped(
+            points,
+            width,
+            color,
+            RibbonShape {
+                closed: false,
+                join,
+                caps,
+                breaks,
+            },
+        );
+    }
+
+    fn push_ribbon_shaped(
+        &mut self,
+        points: &[Vec2],
+        width: f32,
+        color: LinearRgba,
+        shape: RibbonShape,
+    ) {
+        let RibbonShape {
+            closed,
+            join,
+            caps,
+            breaks,
+        } = shape;
+        let mut path = merge_close_points(points, closed, width / 4.0);
         if path.len() < 2 {
             return;
         }
 
         let half_width = width / 2.0;
+        let (mut along, total) = arclengths(&path, closed);
+        // «до разрыва» — по ней шейдер гасит разметку у перекрёстка и
+        // фазирует штрихи; у замкнутой ленты разрывов нет, остаётся длина дуги
+        let ends: Vec<f32> = if closed {
+            along.clone()
+        } else {
+            let gaps = GapProfile::new(&path, &along, total, breaks);
+            if self.ribbon.is_some() {
+                gaps.split_path(&mut path, &mut along, width / 4.0);
+            }
+            along.iter().map(|&at| gaps.distance(at)).collect()
+        };
+
         let count = path.len();
         let segments = if closed { count } else { count - 1 };
 
@@ -374,14 +588,15 @@ impl MeshBuilder {
 
                 for index in 0..segments {
                     let next = (index + 1) % count;
-                    self.push_quad(
+                    self.push_quad_full(
                         [
                             path[index] + offsets[index],
                             path[index] - offsets[index],
                             path[next] - offsets[next],
                             path[next] + offsets[next],
                         ],
-                        color,
+                        [color; 4],
+                        self.segment_coords(half_width, ends[index], ends[next]),
                     );
                 }
             }
@@ -394,14 +609,15 @@ impl MeshBuilder {
                         continue;
                     };
                     let normal = direction.perp() * half_width;
-                    self.push_quad(
+                    self.push_quad_full(
                         [
                             path[index] + normal,
                             path[index] - normal,
                             path[next] - normal,
                             path[next] + normal,
                         ],
-                        color,
+                        [color; 4],
+                        self.segment_coords(half_width, ends[index], ends[next]),
                     );
                 }
                 for index in 0..count {
@@ -416,7 +632,14 @@ impl MeshBuilder {
                     ) else {
                         continue;
                     };
-                    self.push_join_fan(path[index], half_width, incoming, outgoing, color);
+                    self.push_join_fan(
+                        path[index],
+                        half_width,
+                        incoming,
+                        outgoing,
+                        color,
+                        ends[index],
+                    );
                 }
             }
         }
@@ -427,7 +650,19 @@ impl MeshBuilder {
             if caps[0] == RibbonCap::Round
                 && let Some(direction) = (path[1] - path[0]).try_normalize()
             {
-                self.push_arc_fan(path[0], half_width, direction.perp().to_angle(), PI, color);
+                self.push_arc_fan(
+                    path[0],
+                    half_width,
+                    direction.perp().to_angle(),
+                    PI,
+                    color,
+                    FanCoords::Cap {
+                        outward: -direction,
+                        normal: direction.perp(),
+                        at_end: ends[0],
+                        slope: slope_between(ends[0], ends[1], along[1] - along[0]),
+                    },
+                );
             }
             if caps[1] == RibbonCap::Round
                 && let Some(direction) = (path[count - 1] - path[count - 2]).try_normalize()
@@ -438,9 +673,31 @@ impl MeshBuilder {
                     (-direction.perp()).to_angle(),
                     PI,
                     color,
+                    FanCoords::Cap {
+                        outward: direction,
+                        normal: direction.perp(),
+                        at_end: ends[count - 1],
+                        slope: slope_between(
+                            ends[count - 1],
+                            ends[count - 2],
+                            along[count - 1] - along[count - 2],
+                        ),
+                    },
                 );
             }
         }
+    }
+
+    /// Координаты четырёх углов квада сегмента: `+нормаль` в начале, `−нормаль`
+    /// в начале, `−нормаль` в конце, `+нормаль` в конце — порядок
+    /// [`Self::push_quad_full`].
+    fn segment_coords(&self, half_width: f32, at_start: f32, at_end: f32) -> [[f32; 4]; 4] {
+        [
+            self.coords(half_width, at_start, half_width),
+            self.coords(-half_width, at_start, half_width),
+            self.coords(-half_width, at_end, half_width),
+            self.coords(half_width, at_end, half_width),
+        ]
     }
 
     /// Веер, закрывающий щель butt-квадов на **внешней** стороне излома.
@@ -458,6 +715,7 @@ impl MeshBuilder {
         incoming: Vec2,
         outgoing: Vec2,
         color: LinearRgba,
+        to_break: f32,
     ) {
         let turn = incoming.angle_to(outgoing);
         if radius * turn.abs() < ARC_TOLERANCE {
@@ -467,7 +725,14 @@ impl MeshBuilder {
         // угол нормали растёт вместе с углом направления, поэтому от нормали
         // входящего сегмента до нормали исходящего ровно `turn` радиан
         let start = (incoming.perp() * side).to_angle();
-        self.push_arc_fan(center, radius, start, turn, color);
+        self.push_arc_fan(
+            center,
+            radius,
+            start,
+            turn,
+            color,
+            FanCoords::Join { side, to_break },
+        );
     }
 
     /// Веер треугольников по дуге: `sweep` радиан от `start` вокруг `center`.
@@ -478,22 +743,94 @@ impl MeshBuilder {
         start: f32,
         sweep: f32,
         color: LinearRgba,
+        coords: FanCoords,
     ) {
         let steps = arc_steps(radius, sweep.abs());
         let base = self.positions.len() as u32;
         let rgba = color.to_f32_array();
-        self.positions.push([center.x, center.y, 0.0]);
-        self.colors.push(rgba);
+        let at_center = match coords {
+            FanCoords::Join { to_break, .. } => self.coords(0.0, to_break, radius),
+            FanCoords::Cap { at_end, .. } => self.coords(0.0, at_end, radius),
+        };
+        self.push_vertex(center, rgba, at_center);
         for step in 0..=steps {
             let angle = start + sweep * step as f32 / steps as f32;
             let point = center + Vec2::from_angle(angle) * radius;
-            self.positions.push([point.x, point.y, 0.0]);
-            self.colors.push(rgba);
+            let at_rim = match coords {
+                FanCoords::Join { side, to_break } => self.coords(side * radius, to_break, radius),
+                FanCoords::Cap {
+                    outward,
+                    normal,
+                    at_end,
+                    slope,
+                } => {
+                    let offset = point - center;
+                    self.coords(
+                        offset.dot(normal),
+                        at_end + slope * offset.dot(outward),
+                        radius,
+                    )
+                }
+            };
+            self.push_vertex(point, rgba, at_rim);
         }
         for step in 0..steps as u32 {
             self.indices
                 .extend([base, base + 1 + step, base + 2 + step]);
         }
+    }
+
+    /// Кайма вдоль замкнутого контура: полоса ширины `width` от контура вглубь
+    /// него (при `outside` — наружу, так каймится дырка), цвет от `edge` на
+    /// контуре до `inner` на дальнем краю. Мелководье у берега, тёмная кромка
+    /// луга. Дальний край строится miter-офсетами, поэтому на острых вогнутых
+    /// углах соседние квады накладываются — цвет там один и тот же, и наложение
+    /// не видно.
+    ///
+    /// Ширина зажата толщиной самого контура (`площадь / периметр` — у полосы
+    /// это половина её ширины): у газона-разделителя в полтора метра кайма в два
+    /// метра вылезла бы за дальний край на дорогу. Тоньше 20 см кайма не кладётся.
+    /// Для `outside` толщина дырки ни при чём — ширину зажимает вызывающий по
+    /// внешнему контуру. Возвращает положенную ширину, `None` — кайма не легла.
+    pub fn push_inset_band(
+        &mut self,
+        ring: &[Vec2],
+        width: f32,
+        outside: bool,
+        edge: LinearRgba,
+        inner: LinearRgba,
+    ) -> Option<f32> {
+        let path = merge_close_points(ring, true, width / 4.0);
+        if path.len() < 3 {
+            return None;
+        }
+        let area = signed_area(&path);
+        let width = if outside {
+            width
+        } else {
+            width.min(RIM_THICKNESS_SHARE * area.abs() / perimeter(&path))
+        };
+        if width < MIN_RIM_WIDTH {
+            return None;
+        }
+        // у обхода против часовой стрелки внутренняя сторона слева — куда и
+        // смотрят miter-офсеты; по часовой — справа
+        let side = if (area > 0.0) != outside { 1.0 } else { -1.0 };
+        let offsets = miter_offsets(&path, true, width);
+        let count = path.len();
+        for index in 0..count {
+            let next = (index + 1) % count;
+            self.push_quad_gradient(
+                [
+                    path[index],
+                    path[index] + offsets[index] * side,
+                    path[next] + offsets[next] * side,
+                    path[next],
+                ],
+                [edge, inner, inner, edge],
+            );
+        }
+        Some(width)
     }
 
     /// Прямоугольник по AABB (для тайловых оверлеев).
@@ -516,10 +853,19 @@ impl MeshBuilder {
     /// Квад с цветом на каждую вершину — для вертикального градиента стен
     /// экструдированных зданий.
     pub(crate) fn push_quad_gradient(&mut self, corners: [Vec2; 4], colors: [LinearRgba; 4]) {
+        self.push_quad_full(corners, colors, [NO_RIBBON; 4]);
+    }
+
+    /// Квад с цветом и координатами ленты на каждую вершину.
+    fn push_quad_full(
+        &mut self,
+        corners: [Vec2; 4],
+        colors: [LinearRgba; 4],
+        coords: [[f32; 4]; 4],
+    ) {
         let base = self.positions.len() as u32;
-        for (corner, color) in corners.into_iter().zip(colors) {
-            self.positions.push([corner.x, corner.y, 0.0]);
-            self.colors.push(color.to_f32_array());
+        for ((corner, color), ribbon) in corners.into_iter().zip(colors).zip(coords) {
+            self.push_vertex(corner, color.to_f32_array(), ribbon);
         }
         self.indices
             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -532,9 +878,179 @@ impl MeshBuilder {
         );
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
+        if let Some(ribbon) = self.ribbon {
+            mesh.insert_attribute(ATTRIBUTE_RIBBON, ribbon);
+        }
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
     }
+}
+
+/// Удвоенная площадь по формуле шнурков со знаком: положительна при обходе
+/// против часовой стрелки.
+fn signed_area(ring: &[Vec2]) -> f32 {
+    let count = ring.len();
+    (0..count)
+        .map(|index| ring[index].perp_dot(ring[(index + 1) % count]))
+        .sum::<f32>()
+        / 2.0
+}
+
+/// Периметр замкнутого контура.
+fn perimeter(ring: &[Vec2]) -> f32 {
+    let count = ring.len();
+    (0..count)
+        .map(|index| ring[index].distance(ring[(index + 1) % count]))
+        .sum()
+}
+
+/// Длина дуги в каждой точке ломаной и полная длина; у замкнутой — с
+/// замыкающим сегментом.
+fn arclengths(path: &[Vec2], closed: bool) -> (Vec<f32>, f32) {
+    let mut along = Vec::with_capacity(path.len());
+    let mut total = 0.0;
+    for (index, point) in path.iter().enumerate() {
+        if index > 0 {
+            total += point.distance(path[index - 1]);
+        }
+        along.push(total);
+    }
+    if closed && path.len() > 1 {
+        total += path[path.len() - 1].distance(path[0]);
+    }
+    (along, total)
+}
+
+/// Расстояние до ближайшего торца разомкнутого пути.
+fn to_nearest_end(along: f32, total: f32) -> f32 {
+    along.min(total - along)
+}
+
+/// Наклон «до разрыва» на последнем кваде — чтобы продолжить её за торец.
+/// Вырожденный квад (нулевой длины) наклона не имеет: за торцом тогда
+/// как у тупика, в минус.
+fn slope_between(at_end: f32, at_neighbour: f32, distance: f32) -> f32 {
+    if distance > 0.0 {
+        (at_end - at_neighbour) / distance
+    } else {
+        -1.0
+    }
+}
+
+/// Форма ленты: замкнута ли, чем закрыты изломы и торцы, где разрывы разметки.
+struct RibbonShape<'a> {
+    closed: bool,
+    join: RibbonJoin,
+    caps: [RibbonCap; 2],
+    breaks: RibbonBreaks<'a>,
+}
+
+/// Разрывы разметки одной ленты в координатах длины дуги — отсортированы и не
+/// пересекаются, так что между двумя соседними «до разрыва» — функция с одним
+/// изломом.
+struct GapProfile {
+    /// `(центр, полудлина)` каждого разрыва.
+    gaps: Vec<(f32, f32)>,
+}
+
+impl GapProfile {
+    fn new(path: &[Vec2], along: &[f32], total: f32, breaks: RibbonBreaks) -> Self {
+        let mut gaps: Vec<(f32, f32)> = match breaks {
+            RibbonBreaks::Ends => vec![(0.0, 0.0), (total, 0.0)],
+            RibbonBreaks::At(list) => list
+                .iter()
+                .map(|gap| (project_onto_path(path, along, gap.at), gap.reach))
+                .collect(),
+        };
+        gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // пересекающиеся разрывы — в один: иначе между ними ближайший менялся
+        // бы не там, где считает `kinks`
+        let mut merged: Vec<(f32, f32)> = Vec::with_capacity(gaps.len());
+        for (center, reach) in gaps {
+            match merged.last_mut() {
+                Some(last) if center - reach <= last.0 + last.1 => {
+                    let start = (last.0 - last.1).min(center - reach);
+                    let end = (last.0 + last.1).max(center + reach);
+                    *last = ((start + end) / 2.0, (end - start) / 2.0);
+                }
+                _ => merged.push((center, reach)),
+            }
+        }
+        Self { gaps: merged }
+    }
+
+    /// Знаковое расстояние до края ближайшего разрыва: внутри разрыва
+    /// отрицательно. Без разрывов — длина дуги за [`FAR_FROM_BREAKS`].
+    fn distance(&self, at: f32) -> f32 {
+        if self.gaps.is_empty() {
+            return at + FAR_FROM_BREAKS;
+        }
+        self.gaps
+            .iter()
+            .map(|&(center, reach)| (at - center).abs() - reach)
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    /// Изломы функции «до разрыва»: центр каждого разрыва и точка между
+    /// соседними, где ближайший из них меняется.
+    fn kinks(&self) -> Vec<f32> {
+        let mut kinks = Vec::with_capacity(self.gaps.len() * 2);
+        for (index, &(center, reach)) in self.gaps.iter().enumerate() {
+            kinks.push(center);
+            if let Some(&(next_center, next_reach)) = self.gaps.get(index + 1) {
+                kinks.push((center + next_center + reach - next_reach) / 2.0);
+            }
+        }
+        kinks
+    }
+
+    /// Вершина на каждом изломе, чтобы «до разрыва» была линейной внутри
+    /// каждого квада: GPU интерполирует атрибут по прямой, и квад, накрывший
+    /// излом, получил бы расстояние, растущее там, где оно убывает. Излом ближе
+    /// `merge_distance` к соседней вершине не вставляется: внутри такого
+    /// коротышки его не видно, а вырожденный квад — да.
+    fn split_path(&self, path: &mut Vec<Vec2>, along: &mut Vec<f32>, merge_distance: f32) {
+        for kink in self.kinks() {
+            insert_vertex_at(path, along, kink, merge_distance);
+        }
+    }
+}
+
+/// Вершина на длине дуги `at`, если та внутри какого-то сегмента и не ближе
+/// `merge_distance` к его концам.
+fn insert_vertex_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, at: f32, merge_distance: f32) {
+    let Some(index) = along
+        .windows(2)
+        .position(|pair| pair[0] < at && at < pair[1])
+    else {
+        return;
+    };
+    if at - along[index] <= merge_distance || along[index + 1] - at <= merge_distance {
+        return;
+    }
+    let t = (at - along[index]) / (along[index + 1] - along[index]);
+    let point = path[index].lerp(path[index + 1], t);
+    path.insert(index + 1, point);
+    along.insert(index + 1, at);
+}
+
+/// Длина дуги в ближайшей к `point` точке ломаной.
+fn project_onto_path(path: &[Vec2], along: &[f32], point: Vec2) -> f32 {
+    let mut best = (f32::INFINITY, 0.0);
+    for (index, segment) in path.windows(2).enumerate() {
+        let span = segment[1] - segment[0];
+        let length_sq = span.length_squared();
+        let t = if length_sq > 0.0 {
+            ((point - segment[0]).dot(span) / length_sq).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let distance = point.distance_squared(segment[0] + span * t);
+        if distance < best.0 {
+            best = (distance, along[index] + t * length_sq.sqrt());
+        }
+    }
+    best.1
 }
 
 /// Miter-офсет вершины ломаной: вектор от точки пути до края ленты полуширины
