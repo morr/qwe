@@ -28,6 +28,10 @@ path = "examples/acceptance/determinism_replay.rs"
 
 # bench — офлайн-замеры скорости
 [[example]]
+name = "map_meshing"
+path = "examples/bench/map_meshing.rs"
+
+[[example]]
 name = "pathfinding_bench"
 path = "examples/bench/pathfinding_bench.rs"
 

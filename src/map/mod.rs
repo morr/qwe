@@ -15,7 +15,10 @@ pub mod trees;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-pub use self::buildings::{BuildingHeightMode, extrusion_lift};
+pub use self::buildings::{
+    BuildingHeightMode, BuildingPlan, BuildingZoomBucket, LayerCost, extrusion_lift, measure_layers,
+};
+pub use self::cars::measure_cars;
 pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};

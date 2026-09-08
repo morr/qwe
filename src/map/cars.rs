@@ -99,6 +99,14 @@ impl Lcg {
     }
 }
 
+/// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
+/// `buildings::measure_layers`.
+pub fn measure_cars(roads: &[RoadLine]) -> (usize, usize) {
+    let cars = park_cars(roads);
+    let builder = mesh_cars(&cars);
+    (cars.len(), builder.vertex_count())
+}
+
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
 pub fn rebuild_cars(
     mut commands: Commands,
