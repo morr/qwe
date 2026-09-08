@@ -649,7 +649,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     layer) and come out with their vertex colour untouched.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
-    line up: bitumen — 0.95 m roll seams, 6 m repair patches, ponding stains; gravel —
+    line up: bitumen — 0.95 m roll seams, scattered repair patches, ponding stains; gravel —
     strong fine grain and bright specks; seam metal — a lit rib and its shadow every
     0.62 m; corrugated — a 0.30 m wave plus 1.05 m sheet laps; tile — 0.32 m rows with a
     shadow line and per-tile jitter; membrane — 2 m sheet seams. **Rolls and tile rows run
@@ -662,6 +662,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     and only the material's colour is left. The noise helpers are a **copy** of
     `surface.wgsl`'s — there is no shader library in the project yet, and importing one
     for four functions costs more than the copy.
+  - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
+    bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
+    cell — and that is not repair patches but a **chequerboard across the whole roof**:
+    the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
+    ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
+    rule the fix follows, and the same one the asphalt wear already followed: only a
+    minority of cells carry the feature (`PATCH_SHARE` 0.22), and inside its cell the
+    feature is smaller than the cell and jittered, so two neighbours never meet at a cell
+    boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
   - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
     membrane, `has_parapet`) gets a 0.7 m inset band along its ring and every courtyard
     ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
