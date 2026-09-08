@@ -250,7 +250,7 @@ pub const KILL_DISTANCE: f32 = 1.0;
 /// ресурса `DemonStyle`, системы читают его, а не эти константы.
 pub const DEMON_INITIAL_BURST: usize = 8;
 pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
-pub const DEMON_CAP: usize = 100;
+pub const DEMON_CAP: usize = 350;
 /// Множитель к `DEMON_SPEED` и надбавка к ней на время броска — тоже дефолты
 /// `DemonStyle`. Оба ползунка стоят на 30% своего хода: скорость 130% от базы,
 /// бросок +30% к получившейся скорости.
