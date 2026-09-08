@@ -5,6 +5,7 @@
 
 use std::f32::consts::{PI, TAU};
 
+use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::{TreeShape, TreeStyle};
@@ -13,6 +14,11 @@ use crate::map::osm::model::signed_ring_area;
 use crate::map::seed::Lcg;
 use crate::map::{shadow_dir, sun_stretch};
 use crate::settings::{TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE};
+
+/// Насколько контур и штрихи уведены к цвету листвы. Ноль — прежние чернила
+/// watabou, единица — крона без рисунка вовсе; 0.62 оставляет тень края и
+/// ветвей, но снимает с кроны обводку.
+pub(super) const INK_FOLIAGE_MIX: f32 = 0.62;
 
 /// Чернила контура и штрихов (watabou `colorInk`).
 pub(super) const INK_COLOR: Color = Color::srgb(0.004, 0.008, 0.024);
@@ -591,7 +597,16 @@ pub(super) fn crown_mesh(
     params: &CrownParams,
 ) -> Mesh {
     let mut builder = MeshBuilder::default();
-    let ink = style.details.to_linear();
+    // Чернила смешиваются с листвой: на снимке у кроны нет обводки, у неё
+    // есть **затенённый край**. Ручка «Crown details» остаётся ручкой — она
+    // по-прежнему решает, к чему уводить тень, — но чистых чернил на карте
+    // больше нет, и полог перестаёт читаться клипартом. Отдельным дефолтом
+    // этого было не сделать: цвет сохраняется в настройках, и у всех, кто
+    // уже играл, в `settings.toml` лежат прежние чернила.
+    let ink = style
+        .details
+        .mix(&style.foliage, INK_FOLIAGE_MIX)
+        .to_linear();
     builder.push_polygon(&geometry.outer, &[], style.foliage.to_linear());
     builder.push_stroke(&geometry.outer, true, params.outline_stroke, ink);
 

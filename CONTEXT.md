@@ -361,6 +361,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+  **The crown is coloured by a material of its own** (`map/trees/canopy.rs`, shader
+  `crown.wgsl`), not by a flat fill: the side facing the sun is lighter, the far side
+  darker with a falloff by radius, and a leaf ripple by world position keeps two
+  neighbouring trees of one variant from being copies. The ink of the outline and the
+  hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from the air a crown has no
+  outline, it has a shaded edge. Detail in the `osm-map` skill's `references/trees.md`.
 - **Worn paths** (`map/paths.rs`) — the desire lines of a courtyard: a straight strip of
   bare earth from **each OSM entrance to the nearest point of the nearest road**, 1.1 m
   wide, drawn only when that distance is between `PATH_MIN` 7 m and `PATH_MAX` 45 m

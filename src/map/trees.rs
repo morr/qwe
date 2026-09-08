@@ -4,8 +4,11 @@
 //! мятый 12-угольник → «bloat» (рекурсивное выдавливание середин рёбер) →
 //! облачный контур; внутренние кольца-штрихи; тень — растянутый силуэт.
 
+mod canopy;
 mod conifer;
 mod crown;
+
+pub use self::canopy::CrownMaterial;
 
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
@@ -22,7 +25,9 @@ use crate::map::SHADOW_COLOR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
-use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
+use crate::settings::{
+    CROWN_TEXTURE, TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
+};
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -245,10 +250,19 @@ pub fn crown_variant(
 /// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов пешеходов
 /// теряется по одной-две на кадр (тень мигает). Слой из одного меша — как
 /// `building_shadows` — этой фазе не по зубам и рисуется одним вызовом.
+/// Хранилища материалов, которые нужны дереву: тень рисуется плоским
+/// `ColorMaterial`, крона — своим [`CrownMaterial`]. Одним параметром, а не
+/// двумя, чтобы спавн и пересборка укладывались в семь аргументов.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct TreeMaterials<'w> {
+    pub flat: ResMut<'w, Assets<ColorMaterial>>,
+    pub crowns: ResMut<'w, Assets<CrownMaterial>>,
+}
+
 pub fn spawn_trees(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
+    materials: &mut TreeMaterials,
     style: &TreeStyle,
     params: &CrownParams,
     planted: PlantedTrees,
@@ -273,10 +287,16 @@ pub fn spawn_trees(
             (shape, variants)
         })
         .collect();
-    let tints: Vec<Handle<ColorMaterial>> = style
+    // множитель яркости уехал из цвета материала в юниформ: цвет кроне
+    // теперь считает шейдер (`canopy`), и слотов ровно столько же
+    let tints: Vec<Handle<CrownMaterial>> = style
         .tint_factors()
         .iter()
-        .map(|&factor| materials.add(Color::srgb(factor, factor, factor)))
+        .map(|&factor| {
+            materials
+                .crowns
+                .add(CrownMaterial::of(factor, CROWN_TEXTURE))
+        })
         .collect();
 
     let mut shadows = MeshBuilder::default();
@@ -313,7 +333,7 @@ pub fn spawn_trees(
         commands.spawn((
             TreeTag,
             Mesh2d(meshes.add(shadows.build())),
-            MeshMaterial2d(materials.add(SHADOW_COLOR)),
+            MeshMaterial2d(materials.flat.add(SHADOW_COLOR)),
             Transform::from_xyz(0.0, 0.0, Z_TREE_SHADOW),
             DespawnOnExit(AppState::Playing),
             Name::new("tree_shadows"),
@@ -403,7 +423,7 @@ pub fn retune_conifer_field(
 pub fn rebuild_trees(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut materials: TreeMaterials,
     style: Res<TreeStyle>,
     map: Res<MapData>,
     mut field: ResMut<ConiferField>,
