@@ -432,6 +432,17 @@ mod tests {
         assert_eq!(Glyph::Disc.pool_anchor(), Vec2::ZERO);
     }
 
+    /// Ячейка глифа в атласе — его собственный номер: [`rasterize_atlas`]
+    /// рисует ячейки по порядку [`Glyph::ALL`], а [`Silhouettes::sprite`]
+    /// берёт индекс из дискриминанта. Разъедутся эти два порядка — и каждая
+    /// пешка возьмёт чужую картинку, молча и на всех зумах сразу.
+    #[test]
+    fn every_glyph_is_rasterised_into_the_cell_its_index_names() {
+        for (cell, glyph) in Glyph::ALL.into_iter().enumerate() {
+            assert_eq!(glyph as usize, cell, "{glyph:?} is not in cell {cell}");
+        }
+    }
+
     #[test]
     fn set_glyph_moves_the_atlas_index_and_leaves_a_plain_sprite_alone() {
         let mut plain = Sprite::default();
