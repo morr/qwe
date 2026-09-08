@@ -1,23 +1,18 @@
 use super::*;
+use crate::map::meshing::distance_to_path;
 
 /// Границы зума камеры (`camera::MIN_ZOOM` / `MAX_ZOOM`) — они приватны, а
 /// таблица LOD обязана покрывать именно их.
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 4.5;
 
-/// Ширина балласта из OSM у магистрального пути — на ней считаются экранные
-/// размеры шпал и ниток.
-const NOMINAL_BED: f32 = 5.0;
+/// Ширины балласта из OSM (`osm/parse/tags.rs`): магистральный путь,
+/// light_rail / метро, заброшенный. Экранные пороги обязаны держаться на
+/// **каждой** — колея одна, а шпала и штрих считаются от балласта.
+const BEDS: [f32; 3] = [5.0, 4.0, 3.5];
 
-fn distance_to_path(point: Vec2, path: &[Vec2]) -> f32 {
-    path.windows(2)
-        .map(|segment| {
-            let span = segment[1] - segment[0];
-            let t = (point - segment[0]).dot(span) / span.length_squared();
-            point.distance(segment[0] + span * t.clamp(0.0, 1.0))
-        })
-        .fold(f32::INFINITY, f32::min)
-}
+/// Ширина балласта магистрального пути — для тестов на геометрию призмы.
+const NOMINAL_BED: f32 = 5.0;
 
 fn half_extent(builder: &MeshBuilder) -> f32 {
     builder
@@ -31,6 +26,7 @@ fn half_extent(builder: &MeshBuilder) -> f32 {
 /// ростом зума, а зум ровно на границе попадает в верхнюю ступень.
 #[test]
 fn rail_bucket_covers_the_zoom_range() {
+    let bucket_for_zoom = |zoom: f32| RailZoomBucket::for_zoom(zoom).index;
     assert_eq!(bucket_for_zoom(MIN_ZOOM), 0);
     assert_eq!(bucket_for_zoom(MAX_ZOOM), RAIL_LODS.len() - 1);
 
@@ -91,16 +87,20 @@ fn rail_detail_falls_away_with_zoom() {
     assert!(RAIL_LODS[RAIL_LODS.len() - 1].dash.is_some());
 }
 
-/// Экранные размеры на **худшем** краю каждой ступени: путь не должен ни
-/// слипаться в сплошную массу, ни истончаться до невидимого волоска.
+/// Экранные размеры на **худшем** краю каждой ступени и на каждой ширине
+/// балласта из парсера: путь не должен ни слипаться в сплошную массу, ни
+/// истончаться до невидимого волоска.
 #[test]
 fn rail_marks_stay_legible_on_screen() {
-    for (index, lod) in RAIL_LODS.iter().enumerate() {
+    for (nominal, (index, lod)) in BEDS
+        .into_iter()
+        .flat_map(|nominal| RAIL_LODS.iter().enumerate().map(move |lod| (nominal, lod)))
+    {
         let max_zoom = lod.max_zoom.min(MAX_ZOOM);
-        let bed = NOMINAL_BED.max(lod.min_bed);
+        let bed = nominal.max(lod.min_bed);
         assert!(
             bed / max_zoom >= 1.8,
-            "bucket {index}: ballast {} px",
+            "bucket {index}, bed {nominal}: ballast {} px",
             bed / max_zoom
         );
 
@@ -117,7 +117,10 @@ fn rail_marks_stay_legible_on_screen() {
             );
             // шпала лежит поперёк балласта, но не торчит из-под него
             assert!(tie.length_scale > 0.0 && tie.length_scale < 1.0);
-            assert!(bed * tie.length_scale > tie.thickness);
+            assert!(
+                bed * tie.length_scale > tie.thickness,
+                "bucket {index}, bed {nominal}: tie shorter than it is thick"
+            );
             // доля шпалы в шаге держится около настоящих 40% (0.26 м на 0.65):
             // упадёт — шпалы перестанут быть текстурой, станут редкими метками,
             // и две белые нитки перевесят их в лестницу
@@ -134,14 +137,28 @@ fn rail_marks_stay_legible_on_screen() {
                 (1.0..=3.5).contains(&width),
                 "bucket {index}: rail {width} px"
             );
-            // две нитки обязаны читаться порознь, иначе это одна полоса
-            let gauge = bed * steel.gauge_scale;
+            // две нитки обязаны читаться порознь, иначе это одна полоса —
+            // колея абсолютная, поэтому зазор один на любой балласт
+            let gauge = steel.gauge;
             assert!(
                 (gauge - steel.width) / max_zoom >= 4.0,
                 "bucket {index}: rails merge {} px apart",
                 (gauge - steel.width) / max_zoom
             );
-            assert!(gauge < bed, "bucket {index}: gauge wider than the ballast");
+            assert!(
+                gauge < bed,
+                "bucket {index}, bed {nominal}: gauge wider than the ballast"
+            );
+            // нитки лежат на шпалах, а не торчат за их концы — на самом узком
+            // балласте это и есть предел абсолютной колеи
+            let tie = lod
+                .tie
+                .as_ref()
+                .expect("rails without ties are refused above");
+            assert!(
+                gauge + steel.width <= bed * tie.length_scale,
+                "bucket {index}, bed {nominal}: rails overhang the ties"
+            );
         }
 
         if let Some(dash) = &lod.dash {
@@ -152,8 +169,13 @@ fn rail_marks_stay_legible_on_screen() {
             // штрих обязан лежать внутри балласта, иначе он читается как
             // вторая линия рядом с путём
             assert!(dash.width_scale > 0.0 && dash.width_scale < 1.0);
-            // ...но при этом быть виден: 0.6 от восьмиметровой ленты — 4.8 м
-            assert!(bed * dash.width_scale / max_zoom >= 1.0);
+            // ...но при этом быть виден: половина балласта, поднятого `min_bed`
+            // (4.5 м из девяти на последней ступени), — ровно пиксель на её
+            // дальнем краю
+            assert!(
+                bed * dash.width_scale / max_zoom >= 1.0,
+                "bucket {index}, bed {nominal}: dash under a pixel"
+            );
         }
     }
 }

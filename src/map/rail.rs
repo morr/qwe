@@ -27,13 +27,13 @@
 
 use std::borrow::Cow;
 
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::prelude::*;
 
 use crate::loading::AppState;
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
+use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
 
 /// Цвета одного вида пути. Действующий путь — щебень, креозотная шпала и
@@ -89,10 +89,13 @@ pub struct RailTieLod {
     pub spacing: f32,
 }
 
-/// Нитки одной ступени: колея как доля ширины балласта (1.5 м на пятиметровом
-/// балласте — это стандартные 1520 мм) и ширина самой нитки, м.
+/// Нитки одной ступени: колея и ширина самой нитки, м. Колея — абсолютная,
+/// одна на все виды пути (1.5 м — стандартные 1520 мм; light_rail, метро и
+/// заброшенный путь физически той же колеи, у него лишь заросший балласт), а
+/// не доля балласта: на 4- и 3.5-метровом балласте доля 0.30 сводила нитки на
+/// ступени 1 до 3.6 и 3.0 px, ниже порога, на котором они читаются порознь.
 pub struct RailSteelLod {
-    pub gauge_scale: f32,
+    pub gauge: f32,
     pub width: f32,
 }
 
@@ -143,7 +146,7 @@ pub const RAIL_LODS: [RailLod; 5] = [
             spacing: 0.65,
         }),
         steel: Some(RailSteelLod {
-            gauge_scale: 0.30,
+            gauge: 1.5,
             width: 0.12,
         }),
         dash: None,
@@ -157,7 +160,7 @@ pub const RAIL_LODS: [RailLod; 5] = [
             spacing: 1.6,
         }),
         steel: Some(RailSteelLod {
-            gauge_scale: 0.30,
+            gauge: 1.5,
             width: 0.26,
         }),
         dash: None,
@@ -197,28 +200,20 @@ pub const RAIL_LODS: [RailLod; 5] = [
     },
 ];
 
-/// Текущая ступень [`RAIL_LODS`] — индекс. Меняется только при пересечении
-/// порога зума ([`update_rail_zoom_bucket`]), на что [`rebuild_rails`] отвечает
-/// пересборкой рельсовых слоёв. Не сохраняется: зум сбрасывается к
-/// `START_ZOOM` на каждом входе в мир.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct RailZoomBucket(pub usize);
+/// [`RAIL_LODS`] как таблица ступеней зум-LOD (`map/zoom.rs`). Своя, а не
+/// трамвайная: у пути и порогов больше, и смысл у них другой. Пустой enum —
+/// тип-маркер, значений у него не бывает.
+pub enum RailLods {}
 
-impl Default for RailZoomBucket {
-    fn default() -> Self {
-        Self(bucket_for_zoom(crate::camera::START_ZOOM))
+impl ZoomLods for RailLods {
+    fn max_zooms() -> impl Iterator<Item = f32> {
+        RAIL_LODS.into_iter().map(|lod| lod.max_zoom)
     }
 }
 
-/// Первая ступень, чья граница выше зума. Зум на самой границе попадает в
-/// верхнюю ступень — то же правило, что у трамвая (`tram::bucket_for_zoom`),
-/// но по своей таблице: у пути и порогов больше, и смысл у них другой.
-pub fn bucket_for_zoom(zoom: f32) -> usize {
-    RAIL_LODS
-        .iter()
-        .position(|lod| zoom < lod.max_zoom)
-        .unwrap_or(RAIL_LODS.len() - 1)
-}
+/// Текущая ступень [`RAIL_LODS`]; пересечение порога пересобирает рельсовые
+/// слои ([`rebuild_rails`]).
+pub type RailZoomBucket = ZoomBucket<RailLods>;
 
 /// Рельсовый слой карты — чтобы пересборка знала, что деспавнить.
 #[derive(Component)]
@@ -245,7 +240,7 @@ fn spawn_rails(
     rails: &[RailLine],
 ) {
     let started = std::time::Instant::now();
-    let lod = &RAIL_LODS[bucket.0];
+    let lod = &RAIL_LODS[bucket.index];
 
     let tracks: Vec<Track> = rails
         .iter()
@@ -314,7 +309,7 @@ fn spawn_rails(
         if let Some(rails_lod) = &lod.steel {
             steel.push_rails(
                 &track.points,
-                track.bed * rails_lod.gauge_scale,
+                rails_lod.gauge,
                 rails_lod.width,
                 track.palette.steel.to_linear(),
                 RibbonJoin::Round,
@@ -345,18 +340,8 @@ fn spawn_rails(
     info!(
         "rail meshing: {vertices} verts in {:?} (bucket {})",
         started.elapsed(),
-        bucket.0,
+        bucket.index,
     );
-}
-
-/// Ступень зума по фактическому масштабу камеры. `set_if_neq` — чтобы
-/// `resource_changed` срабатывал только на пересечении порога, а не каждый
-/// кадр.
-pub fn update_rail_zoom_bucket(
-    camera: Single<&PanCamera, With<Camera2d>>,
-    mut bucket: ResMut<RailZoomBucket>,
-) {
-    bucket.set_if_neq(RailZoomBucket(bucket_for_zoom(camera.zoom_factor)));
 }
 
 /// Пересборка рельсовых слоёв при смене ступени зума — дорожные и трамвайный
