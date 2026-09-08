@@ -689,17 +689,22 @@ fn kremlin_buildings_classified_by_historic_tag() {
     assert_eq!(map.buildings[0].kind, AreaKind::Kremlin);
 }
 
-/// Назначение здания — класс отрисовки: `building=*` напрямую, а у
-/// безликого `building=yes` — по `amenity=*` того же контура. Вода
-/// назначения не имеет, даже если тег на ней стоит.
+/// Назначение здания — класс отрисовки: `building=*` напрямую, а когда его
+/// значение вне словаря (безликое `yes`, но и `construction`) — по
+/// `amenity=*` того же контура. Вода назначения не имеет, даже если тег
+/// на ней стоит.
 #[test]
-fn building_use_comes_from_the_building_tag_or_amenity_under_a_plain_yes() {
+fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() {
     let map = Overpass::new(CITY)
         .area(&[("building", "house")], square(CENTER, HALF))
         .area(&[("building", "apartments")], square(CENTER, HALF))
         .area(&[("building", "garages")], square(CENTER, HALF))
         .area(
             &[("building", "yes"), ("amenity", "school")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "construction"), ("amenity", "school")],
             square(CENTER, HALF),
         )
         .area(
@@ -724,6 +729,8 @@ fn building_use_comes_from_the_building_tag_or_amenity_under_a_plain_yes() {
             BuildingUse::House,
             BuildingUse::Apartments,
             BuildingUse::Garage,
+            BuildingUse::Public,
+            // значение вне словаря отдаёт слово `amenity` так же, как `yes`
             BuildingUse::Public,
             BuildingUse::Church,
             // `building=*` со смыслом сильнее `amenity`

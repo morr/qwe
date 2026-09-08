@@ -67,7 +67,8 @@ impl GeoBounds {
 const QUERY_VERSION: u32 = 8;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
-/// луга, песок, аллеи, одиночные деревья, стены Кремля, входы в здания.
+/// луга, песок, кварталы (`landuse=residential|industrial|garages`), аллеи,
+/// одиночные деревья, стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
         south,

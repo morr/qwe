@@ -160,7 +160,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   load.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
-  Other`, from `building=*` and, under a plain `building=yes`, from `amenity=*`. Each class
+  Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
+  above all — from `amenity=*` on the same outline. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
 - **Gable roof** (`map/buildings/roofs.rs`) — a two-slope roof **inferred**, not read
