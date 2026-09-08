@@ -44,8 +44,8 @@ did not fit 1080 px and ran off the top of the screen.
   headers *are* rows: `Algo`, the `Separation` toggle, the `Slots` label). The returned
   entity is the parent it hands to the kits, so panel bodies did not change when they moved
   into tabs. **`SectionSlot`'s declaration order is the order inside a tab**
-  (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by eight
-  systems in eight plugins, and system order inside `UiBuildSet::Sections` is unspecified —
+  (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by one
+  system per section plugin, and system order inside `UiBuildSet::Sections` is unspecified —
   without the enum the Map tab came out shuffled on every run. A section that arrives
   **without** a `SectionSlot` sorts **last** (`slot_order`) and is named in a `warn!`: the
   enum exists so a section's place cannot be forgotten, and sorting a slotless one to the

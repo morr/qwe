@@ -49,10 +49,11 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods → grass
-  → sand → water → waterways → sidewalks → alley casings → alleys → road casings → roads →
-  bridge casings → bridges → rails → rail dashes → tram → corpses → portal → buildings (5)
-  → units → tree shadows → trees (20). Three live in their own modules:
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods →
+  tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
+  alley casings → alleys → road casings → roads → bridge casings → bridges → rails → rail
+  dashes → tram → corpses → portal → buildings (5) → units → tree shadows → trees (20).
+  Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
   (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
@@ -185,8 +186,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   them look joined; **keep the road layer opaque, and its colour a function of world
   position only** (a flat colour or the surface shader, never a per-way tint). What *is*
   computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or more
-  carriageways, found by exact coordinate match — Overpass gives no node ids, but a shared
-  node projects to the same point on every way. They feed the markings only.
+  carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids, but
+  a shared node projects to the same point on every way. They feed the markings only.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
@@ -571,7 +572,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   button, or a click on the open tab) collapses it to the tab strip; the open tab and the
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
-  spawned by eight systems in eight plugins.
+  spawned by one system per section plugin.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per
