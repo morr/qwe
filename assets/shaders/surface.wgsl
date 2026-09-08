@@ -40,6 +40,10 @@ struct SurfaceParams {
     marking_width: f32,
     marking_dash: f32,
     marking_gap: f32,
+    crossing_bar: f32,
+    crossing_pitch: f32,
+    crossing_depth: f32,
+    crossing_inset: f32,
     intensity: f32,
 }
 
@@ -192,6 +196,30 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let gap_fade = smoothstep(0.0, 1.0, to_break);
         let zoom_fade = smoothstep(6.0, 12.0, lane_width / px);
         let mask = on_line * on_dash * gap_fade * zoom_fade * params.marking_color.a * f32(inside);
+        rgb = mix(rgb, params.marking_color.rgb, mask);
+    }
+
+    // пешеходный переход: полосы вдоль движения, повторяющиеся поперёк
+    // дороги, в неглубокой полосе **внутри** разрыва разметки. Внутри разрыва
+    // (`to_break` < 0) — потому что это и есть ворота: разрыв бывает только у
+    // настоящего узла, а у тупика его ширина ноль, и зебры там не появится.
+    // Линий полос в разрыве нет, спорить не с чем
+    if params.crossing_bar > 0.0 && lanes >= 2.0 {
+        let into_gap = -in.ribbon.y;
+        let depth = params.crossing_depth;
+        let inset = params.crossing_inset;
+        // мягкие торцы: зебра не обрывается о край разрыва
+        let along = smoothstep(inset, inset + 0.5, into_gap)
+            * (1.0 - smoothstep(inset + depth - 0.5, inset + depth, into_gap));
+        let phase = in.ribbon.x - params.crossing_pitch * floor(in.ribbon.x / params.crossing_pitch);
+        let half_bar = max(params.crossing_bar, 1.3 * px) * 0.5;
+        let edge = 0.7 * px;
+        let across_bar = 1.0
+            - smoothstep(half_bar - edge, half_bar + edge, abs(phase - params.crossing_pitch * 0.5));
+        // на общем плане зебра сливается в сплошное пятно — гасим её тем же
+        // порогом, что и полосы: шаг у́же десятка пикселей смысла не несёт
+        let zoom_fade = smoothstep(6.0, 12.0, params.crossing_pitch / px);
+        let mask = along * across_bar * zoom_fade * params.marking_color.a;
         rgb = mix(rgb, params.marking_color.rgb, mask);
     }
 

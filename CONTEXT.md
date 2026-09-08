@@ -372,6 +372,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   other way end is a **continuation** (the line runs through the seam), any other way end
   a dead end. Wider fills are pushed after narrower ones, so a junction shows the main
   road's gap rather than the side street's stub. Both are `RoadStyle` knobs, on by default.
+  **Crossings** ride on the same coordinates: a zebra of `CROSSING_BAR` 0.65 m bars at a
+  1.2 m pitch, `CROSSING_DEPTH` 3 m deep, drawn **inside** the marking gap
+  (`to_break` < 0) — which is also the gate, since a gap exists only at a real junction
+  node and a dead end's gap is zero wide. No geometry at all: 618 junctions on Tula cost
+  nothing but eight lines of shader.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
   sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are

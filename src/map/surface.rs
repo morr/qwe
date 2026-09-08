@@ -43,6 +43,18 @@ const MARKING_GAP: f32 = 3.0;
 /// читается, а прозрачность оставляет под ней зерно покрытия.
 const MARKING_COLOR: LinearRgba = LinearRgba::new(0.88, 0.88, 0.86, 0.85);
 
+/// Пешеходный переход: ширина полосы «зебры» и просвет между полосами, м.
+/// Полосы идут **вдоль** движения и повторяются поперёк дороги — как и
+/// положено зебре; шаг 1.2 м с полосой в 0.65 м это ГОСТ.
+const CROSSING_BAR: f32 = 0.65;
+const CROSSING_PITCH: f32 = 1.2;
+/// Глубина зебры вдоль дороги, м, и её отступ от края разрыва разметки.
+/// Отсчёт идёт **внутрь разрыва** (`to_break` там отрицательно), и это же
+/// служит воротами: разрыв бывает только у настоящего узла, а у тупика его
+/// ширина ноль — значит, у тупика и зебры не будет.
+const CROSSING_DEPTH: f32 = 3.0;
+const CROSSING_INSET: f32 = 0.4;
+
 /// Параметры фактуры — юниформ шейдера. Зеркало `SurfaceParams` в
 /// `surface.wgsl`: порядок полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
@@ -70,6 +82,12 @@ pub struct SurfaceParams {
     pub marking_width: f32,
     pub marking_dash: f32,
     pub marking_gap: f32,
+    /// Зебра: ширина полосы (ноль — без переходов), шаг поперёк дороги,
+    /// глубина вдоль неё и отступ внутрь разрыва, м.
+    pub crossing_bar: f32,
+    pub crossing_pitch: f32,
+    pub crossing_depth: f32,
+    pub crossing_inset: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
 }
@@ -89,6 +107,10 @@ impl SurfaceParams {
         marking_width: 0.0,
         marking_dash: MARKING_DASH,
         marking_gap: MARKING_GAP,
+        crossing_bar: 0.0,
+        crossing_pitch: CROSSING_PITCH,
+        crossing_depth: CROSSING_DEPTH,
+        crossing_inset: CROSSING_INSET,
         intensity: SURFACE_TEXTURE_DEFAULT,
     };
 }
@@ -198,6 +220,7 @@ impl SurfaceKind {
                 grain_amp: 0.04,
                 grain_scale: 1.2,
                 marking_width: MARKING_WIDTH,
+                crossing_bar: CROSSING_BAR,
                 ..flat
             },
             Self::Alley => SurfaceParams {
@@ -380,6 +403,8 @@ mod tests {
             let marked = kind.params(1.0).marking_width > 0.0;
             let carriageway = matches!(kind, SurfaceKind::Street);
             assert_eq!(marked, carriageway, "{kind:?}");
+            // зебра — та же проезжая часть и никто больше
+            assert_eq!(kind.params(1.0).crossing_bar > 0.0, carriageway, "{kind:?}");
         }
     }
 
