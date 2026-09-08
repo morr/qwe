@@ -824,12 +824,28 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     and only the material's colour is left. The noise helpers are a **copy** of
     `surface.wgsl`'s — there is no shader library in the project yet, and importing one
     for four functions costs more than the copy.
+  - **The wall is the same mechanism, code `Wall`** (`layers.rs::wall_frame`). A wall sets
+    the roof frame to **its own direction**, and that one choice is what makes it work: the
+    shader's across-axis then measures distance *from* the wall line, i.e. up the wall, so
+    a line of constant `v` is a **floor seam parallel to the eaves**, and `u` runs along the
+    wall for the vertical panel joints. It draws seams every `FLOOR` (1.05 drawn metres —
+    a real 3 m storey × `EXTRUDE_SCALE`), panel joints every `PANEL` (3.2 m) and
+    **balconies** on the cell grid of the two: a cell is one storey by one panel, 58 % of
+    them carry a balcony (hashed from the cell and the building's seed), each filling the
+    lower two thirds of its storey and 62 % of its panel — which is why they come out in
+    **columns**, as they do on a real block, rather than scattered. All of it fades with
+    `visible(FLOOR, px)`: a storey is a fraction of a pixel at city zoom.
+    The phase of the seams is global rather than measured from each wall's own base — the
+    starting offset is therefore arbitrary, but it is the *same* for adjacent walls of one
+    building, so a seam does not break at a corner, and that is the only thing an eye can
+    check.
   - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
     bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
     cell — and that is not repair patches but a **chequerboard across the whole roof**:
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
-    rule the fix follows, and the same one the asphalt wear already followed: only a
+    rule the fix follows, and the same one the asphalt wear and the wall balconies above
+    already follow: only a
     minority of cells carry the feature (the `share` argument), and inside its cell the
     feature is smaller than the cell and jittered, so two neighbours never meet at a cell
     boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.

@@ -9,14 +9,13 @@ use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::building_seed;
-use super::material::{RoofLook, roof_look};
+use super::material::{RoofKind, RoofLook, building_seed, roof_look};
 use super::roofs::{HipRoof, Roofing, roofing};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
     height_or_default, shade_by_light,
 };
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, Roof};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
@@ -111,6 +110,19 @@ fn push_parapet(builder: &mut MeshBuilder, ring: &[Vec2], hole: bool, base: Srgb
         let cap = shade_by_light(base, outward, PARAPET_LIT_MIX, PARAPET_SHADED_MIX);
         (cap.into(), inner)
     });
+}
+
+/// Рамка **стены** для шейдера: ось — сама стена, поэтому «поперёк» в
+/// шейдере оказывается направлением вверх по ней, и межэтажные швы ложатся
+/// параллельно карнизу. Начало отсчёта общее для всей карты, а не своё у
+/// каждой стены: фаза шва от этого произвольна, но одинакова у смежных стен
+/// одного дома — на угле шов не разрывается, а это единственное, что видно.
+fn wall_frame(a: Vec2, b: Vec2, seed: u32) -> Option<Roof> {
+    Some(Roof {
+        axis: (b - a).try_normalize()?,
+        material: RoofKind::Wall.code(),
+        seed: (seed >> 12 & 0xff) as f32 / 255.0,
+    })
 }
 
 /// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
@@ -458,8 +470,10 @@ pub(super) fn extrusion_builder(
             .unwrap_or_default();
         // видимы стены рёбер, смотрящих против подъёма: при сдвиге
         // вверх-вправо — южные и западные
+        let seed = building_seed(building);
         for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
             let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+            builder.set_roof(wall_frame(a, b, seed));
             push_wall_with_openings(&mut builder, a, b, lift, &openings, bottom, top);
         }
         // двор: видима внутренняя стена его дальней стороны — та, чья
@@ -467,9 +481,11 @@ pub(super) fn extrusion_builder(
         for hole in &building.holes {
             for (a, b) in silhouette_edges(hole, lift_dir) {
                 let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+                builder.set_roof(wall_frame(a, b, seed));
                 push_wall_with_openings(&mut builder, a, b, lift, &openings, bottom, top);
             }
         }
+        builder.set_roof(None);
 
         let look = roof_look(building);
         let color = roof_color(building, &look, detail.tinted);
