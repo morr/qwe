@@ -379,6 +379,40 @@ fn every_mode_builds_geometry_for_mixed_input() {
 
 /// Сумма площадей треугольников меша — двойное наложение внутри тени
 /// давало бы сумму больше площади самой фигуры.
+#[test]
+fn the_shadow_length_follows_the_sun_elevation() {
+    // 1 / tan 59° — то самое «0.6 метра тени на метр высоты», которое раньше
+    // стояло константой без вывода
+    let scale = crate::map::shadow_length_scale();
+    assert!((scale - 0.6).abs() < 0.01, "{scale}");
+}
+
+#[test]
+fn the_contact_skirt_grows_the_outline_whichever_way_it_is_wound() {
+    let ccw = square();
+    let cw: Vec<Vec2> = square().into_iter().rev().collect();
+    // юбка обязана быть шире контура при любом обходе: сторону выбирает
+    // знаковая площадь, и перепутанный знак утопил бы её внутрь дома
+    for ring in [ccw, cw] {
+        let skirt = contact_skirt(&ring);
+        assert_eq!(skirt.len(), ring.len());
+        let area = signed_ring_area(&skirt).abs();
+        assert!(area > signed_ring_area(&ring).abs(), "{area}");
+        // и ровно на ширину юбки по каждой стороне: 10 + 2 · 1.1 в квадрате
+        assert!((area - 12.2 * 12.2).abs() < 0.1, "{area}");
+    }
+}
+
+#[test]
+fn the_shadow_covers_the_ground_under_the_building() {
+    // без контактной юбки тень одного дома — только свип силуэта; с ней в
+    // объединение входит и сам футпринт, раздутый на метр с небольшим
+    let alone = building(square(), Some(15.0), AreaKind::Building);
+    let area = mesh_area(&shadow_builder(&[alone], &[], false).build());
+    // 12.2² юбки уже больше футпринта, а свип 9-метровой тени добавляет ещё
+    assert!(area > 12.2 * 12.2, "{area}");
+}
+
 fn mesh_area(mesh: &Mesh) -> f32 {
     let positions = mesh
         .attribute(Mesh::ATTRIBUTE_POSITION)
@@ -401,10 +435,17 @@ fn mesh_area(mesh: &Mesh) -> f32 {
 
 #[test]
 fn square_shadow_is_one_swept_polygon() {
+    // одна цепочка низ+право даёт свип из шести вершин — по вершине на угол
+    // цепочки и столько же на сдвинутую копию, без квадов на ребро
+    let chains = silhouette_chains(&square(), SHADOW_DIR);
+    assert_eq!(chains.len(), 1);
+    assert_eq!(chains[0].len() * 2, 6);
+
+    // в самом слое к свипу прирастают контактная юбка и мягкий край, и всё
+    // это остаётся **одной** фигурой: контуров у объединения ровно один
     let list = [building(square(), Some(15.0), AreaKind::Building)];
     let mesh = shadow_builder(&list, &[], false).build();
-    // одна цепочка низ+право: свип из 6 вершин, без квадов на ребро
-    assert_eq!(mesh.count_vertices(), 6);
+    assert!(mesh.count_vertices() > 6);
 }
 
 #[test]
@@ -426,11 +467,20 @@ fn staircase_shadow_has_no_double_darkening() {
     assert_eq!(chains.len(), 1, "лестница — одна непрерывная цепочка");
     assert_eq!(chains[0].len(), 7);
 
+    // свип цепочки самопересечься не может, поэтому его площадь — ровно
+    // «длина сдвига × размах контура поперёк тени». Проверяется на самом
+    // свипе: в слой сверх него идут ещё контактная юбка и мягкий край
+    let offset_length = 20.0 * crate::map::shadow_length_scale();
+    let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
+    let offset = SHADOW_DIR * offset_length;
+    let mut sweep = chains[0].clone();
+    sweep.extend(chains[0].iter().rev().map(|point| *point + offset));
+    assert!((signed_ring_area(&sweep).abs() - offset_length * perp_span).abs() < 0.5);
+
+    // а в слое этого свипа не меньше — union не съел его и не удвоил
     let list = [building(staircase, Some(20.0), AreaKind::Building)];
     let mesh = shadow_builder(&list, &[], false).build();
-    let offset_length = 20.0 * SHADOW_LENGTH_SCALE;
-    let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
-    assert!((mesh_area(&mesh) - offset_length * perp_span).abs() < 0.5);
+    assert!(mesh_area(&mesh) > offset_length * perp_span);
 }
 
 #[test]
