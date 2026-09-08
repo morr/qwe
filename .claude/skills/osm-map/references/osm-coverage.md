@@ -32,7 +32,8 @@ REF-счётчики; KEPT-строки `cache_audit.py` по кешам v8 не
 кеша v9), спортивные и детские площадки `leisure=pitch|track|playground|
 sports_centre|stadium` (покрытие по виду спорта + разметка, с кеша v10),
 стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
-одиночные ноды `natural=tree`).
+одиночные ноды `natural=tree`), вагоны на станционных путях (`service=*` — тег
+лежал в кеше с v4, перекачки не потребовалось).
 
 Значения `building=*` по кешу Тулы v7 (7465 зданий): `yes` 4004, `house` 2249,
 `apartments` 744, `commercial` 89, `retail` 64, `garages` 42, `service` 39,
@@ -49,6 +50,7 @@ OSM — это весь кооператив одним контуром, в Т�
 | `natural=tree` (ноды) | 107 | 27252 | 17295 | 14498 | 2137 | 6022 |
 | `natural=tree_row` | 13 | 345 | 47 | 20 | 71 | 8 |
 | `railway` (все way) | 309 | 943 | 1422 | 1306 | 818 | 455 |
+| из них станционных (`service=siding\|yard\|spur`) | 162 | — | — | — | — | — |
 | `landuse=residential` (way+rel) | 264 | 6 | 413 | 364 | 12 | 45 |
 | `landuse=industrial\|garages` (way+rel) | 35 | 2 | 2 | 25 | 3 | 12 |
 | `amenity=parking` (way+rel) | 172 | 183 | **2234** | 272 | 771 | 238 |

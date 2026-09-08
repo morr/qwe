@@ -19,6 +19,7 @@ mod sun;
 mod surface;
 mod tram;
 pub mod trees;
+mod wagons;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
@@ -73,6 +74,7 @@ impl Plugin for MapPlugin {
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
             .init_resource::<CarStyle>()
+            .init_resource::<wagons::WagonZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -148,6 +150,8 @@ impl Plugin for MapPlugin {
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<cars::CarLods>,
                     cars::rebuild_cars,
+                    zoom::seed_zoom_bucket::<wagons::WagonLods>,
+                    wagons::rebuild_wagons,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -217,6 +221,10 @@ impl Plugin for MapPlugin {
                                 .or_else(retuned::<CarStyle>)
                                 .or_else(retuned::<RoadStyle>)
                                 .or_else(retuned::<SunOnMap>),
+                        ),
+                        zoom::update_zoom_bucket::<wagons::WagonLods>,
+                        wagons::rebuild_wagons.run_if(
+                            retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
                         ),
                     )
                         .chain()

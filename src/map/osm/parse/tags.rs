@@ -426,6 +426,19 @@ pub(super) fn crown_radius(tags: &HashMap<String, String>) -> Option<f32> {
     TREE_CROWN_RADIUS_RANGE.contains(&radius).then_some(radius)
 }
 
+/// Станционный путь: `service=*` есть только у путей, не относящихся к
+/// главному ходу. Белый список, а не «тег есть»: `service=crossover` — это
+/// съезд между главными путями, состав на нём не бросают.
+///
+/// Тег приезжает в кеше и так (`out geom` отдаёт все теги элемента), поэтому
+/// версию запроса поднимать не понадобилось.
+pub(super) fn is_service_track(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("service").map(String::as_str),
+        Some("siding" | "yard" | "spur")
+    )
+}
+
 /// Что за площадка — по `leisure`, а внутри `pitch` по `sport` и `surface`.
 ///
 /// Белый список, как у путей и водотоков: `leisure=*` несёт ещё десяток

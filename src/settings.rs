@@ -844,6 +844,9 @@ pub const Z_TRAM: f32 = 2.6;
 /// Припаркованные машины (`map::cars`) — выше трамвая и рельсов (машина
 /// стоит на асфальте поверх путей), ниже пятна портала и всего живого.
 pub const Z_CAR: f32 = 2.7;
+/// Вагоны — на путях, то есть ниже машин и выше стального слоя рельсов:
+/// вагон стоит на рельсе, а не под ним.
+pub const Z_WAGON: f32 = 2.65;
 /// Выжженная земля под порталом: над дорогами (перекрёсток обуглен), под
 /// трупами (тела на пятне видны).
 pub const Z_PORTAL_STAIN: f32 = 2.8;
@@ -913,7 +916,8 @@ const _: () = {
     assert!(Z_RAIL_TIE < Z_RAIL_STEEL);
     assert!(Z_RAIL_STEEL < Z_TRAM);
     // пятно под порталом кроет дороги, но не тела
-    assert!(Z_TRAM < Z_CAR);
+    assert!(Z_TRAM < Z_WAGON);
+    assert!(Z_WAGON < Z_CAR);
     assert!(Z_CAR < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
@@ -1049,6 +1053,10 @@ pub const CAR_OCCUPANCY_DEFAULT: f32 = 0.45;
 pub const CAR_OCCUPANCY_MIN: f32 = 0.0;
 pub const CAR_OCCUPANCY_MAX: f32 = 1.0;
 pub const CAR_OCCUPANCY_STEP: f32 = 0.05;
+
+/// Вагон вчетверо длиннее машины, поэтому и виден вчетверо дальше: свой
+/// порог, а не общий с машинами (`map::wagons`).
+pub const WAGON_MAX_ZOOM: f32 = 2.0;
 
 // --- Солнце карты (`map::sun`) ---
 /// Азимут по умолчанию, градусы по часовой стрелке от севера: 300° дают тень

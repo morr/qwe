@@ -660,6 +660,26 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     like, and it is cheaper than finding each stall's neighbour.
   - Tula: **171 lots**. Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
+- **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
+  place that stayed empty: a station throat. On a photo half of it is standing stock, and
+  without that the yard reads as a track diagram.
+  - **Only service track carries them** (`RailLine::service`, parsed from
+    `service=siding|yard|spur` by `is_service_track`). That is not an approximation, it is
+    the thing that distinguishes a station from a running line on any photo: stock stands
+    on a siding for weeks and on the running line it is either moving or absent.
+    `crossover` is deliberately out of the whitelist — it links two running lines.
+  - **Rakes, not rows**: `RAKE_MIN..RAKE_MAX` (3–16) cars coupled at `COUPLED_GAP` 0.9 m,
+    then `GAP_MIN..GAP_MAX` (12–90 m) of empty track, seeded from the track's first point.
+    An even row at a fixed pitch reads as a fence.
+  - **The shadow is the point**: a 3.8 m body against a 13.9 × 3.1 m footprint throws a
+    shadow half as long as the wagon, by the same `shadow_length_scale()` as the buildings,
+    and that is what makes a rake read as solid objects rather than paint.
+  - Its own bucket (`WagonZoomBucket`, `WAGON_MAX_ZOOM` 2.0): a wagon is four times a car
+    and stays legible four times further out, so sharing `CarZoomBucket` would have hidden
+    the yards early. `Z_WAGON` 2.65 — above the rail steel (a wagon stands *on* the rail),
+    below the cars.
+  - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
+    has been sitting in every cache since v4.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
