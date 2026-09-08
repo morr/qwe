@@ -32,6 +32,15 @@ const ATTIRE_LIGHTNESS: std::ops::Range<f32> = 0.30..0.55;
 
 /// Одежда — три броска потока решений пешки, как и прежде: число и порядок
 /// бросков менять нельзя, за ними идут темп и курс.
+///
+/// Второй потребитель этой раскладки — стенд расталкивания
+/// (`examples/demos/crowd_demo/scenario.rs::spawn_pawn`): он тратит на цвет
+/// ровно те же три броска своей копией, а не вызовом — стенду нужна своя
+/// палитра в полный круг тонов, иначе в куче не различить соседей. Совпадать
+/// обязан только счёт: от него зависит, попадут ли темп и курс толпы стенда на
+/// городские значения, а значит — сойдутся ли мерки «до» и «после» у замера,
+/// к цвету отношения не имеющего. Счёт держит тест
+/// `attire_spends_exactly_three_draws`.
 pub(super) fn roll_attire(rng: &mut impl Rng) -> Attire {
     Attire(Color::hsl(
         rng.random_range(ATTIRE_HUE),
@@ -154,6 +163,30 @@ pub(super) fn blood_pool(silhouettes: &Silhouettes, pose: CorpsePose) -> impl Bu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rng::{RngDomain, WanderIndex, decision_stream};
+
+    /// Одежда обязана стоить ровно три броска: следом в том же потоке идут темп
+    /// и курс (`spawn_population`), и ту же раскладку своей копией держит стенд
+    /// расталкивания. Лишний или пропавший бросок сдвинул бы обе стороны молча —
+    /// та же страховка, что и `the_stroll_branch_spends_exactly_two_draws`.
+    #[test]
+    fn attire_spends_exactly_three_draws() {
+        let mut rolled = decision_stream(1, RngDomain::Human, 0, WanderIndex::SPAWN);
+        let _ = roll_attire(&mut rolled);
+        let after_attire: f32 = rolled.random_range(0.0..1.0);
+
+        let mut manual = decision_stream(1, RngDomain::Human, 0, WanderIndex::SPAWN);
+        for range in [ATTIRE_HUE, ATTIRE_SATURATION, ATTIRE_LIGHTNESS] {
+            let _: f32 = manual.random_range(range);
+        }
+        let after_manual: f32 = manual.random_range(0.0..1.0);
+
+        assert_eq!(
+            after_attire.to_bits(),
+            after_manual.to_bits(),
+            "после одежды поток обязан стоять на четвёртом броске"
+        );
+    }
 
     #[test]
     fn corpse_tint_keeps_the_hue_and_drains_the_light() {

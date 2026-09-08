@@ -262,6 +262,13 @@ pub(crate) fn spawn_pawn(
     wandering: bool,
 ) {
     let mut rng = decision_stream(seed, RngDomain::Human, pawn_id, WanderIndex::SPAWN);
+    // цвет — три броска, ровно столько же, сколько тратит на одежду игра
+    // (`human::look::roll_attire`): за ними в том же потоке идут темп и курс, и
+    // совпадение счёта — единственное, чем толпа стенда держится за городскую.
+    // Палитра при этом своя, в полный круг тонов: город ушёл в холодную
+    // половину ради того, чтобы тёплое на карте значило демонов и панику, а
+    // стенду надо различать соседей в куче. Счёт закреплён тестом
+    // `attire_spends_exactly_three_draws` (`human/look.rs`).
     let color = Color::hsl(
         rng.random_range(0.0..360.0),
         rng.random_range(0.35..0.75),
