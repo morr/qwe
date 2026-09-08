@@ -1,7 +1,7 @@
 use super::build::{inflate_ring, ribbon_outline};
 use super::*;
 use crate::map::osm::fixture;
-use crate::map::osm::model::{BuildingUse, WaterKind};
+use crate::map::osm::model::WaterKind;
 use crate::settings::{
     MAP_SIZE, POLYMESH_CHUNK_TARGET_METERS, POLYMESH_FLAT_CHUNK_METERS, POLYMESH_SEARCH_DELTA,
     POLYMESH_SEARCH_STEPS,
@@ -120,19 +120,15 @@ fn a_route_crosses_chunks_through_the_only_gap_in_a_wall() {
 /// радиусом — сетка о нём ничего не знает.
 #[test]
 fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
-    let building = PolyArea {
-        outer: vec![
+    let building = fixture::building(
+        vec![
             Vec2::new(1000.0, 1000.0),
             Vec2::new(1040.0, 1000.0),
             Vec2::new(1040.0, 1030.0),
             Vec2::new(1000.0, 1030.0),
         ],
-        holes: vec![],
-        kind: crate::map::osm::model::AreaKind::Building,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-    };
+        vec![],
+    );
     let input = PolymeshInput {
         buildings: vec![building],
         water: vec![],
@@ -162,37 +158,29 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
 #[test]
 fn an_island_is_walkable_once_a_bridge_reaches_it() {
     // квадратное «русло» с островом-дырой и сараем во дворе острова
-    let river = PolyArea {
-        outer: vec![
+    let river = fixture::water_area(
+        vec![
             Vec2::new(1000.0, 1000.0),
             Vec2::new(1600.0, 1000.0),
             Vec2::new(1600.0, 1600.0),
             Vec2::new(1000.0, 1600.0),
         ],
-        holes: vec![vec![
+        vec![vec![
             Vec2::new(1200.0, 1200.0),
             Vec2::new(1400.0, 1200.0),
             Vec2::new(1400.0, 1400.0),
             Vec2::new(1200.0, 1400.0),
         ]],
-        kind: crate::map::osm::model::AreaKind::Water,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-    };
-    let shed = PolyArea {
-        outer: vec![
+    );
+    let shed = fixture::building(
+        vec![
             Vec2::new(1240.0, 1240.0),
             Vec2::new(1270.0, 1240.0),
             Vec2::new(1270.0, 1270.0),
             Vec2::new(1240.0, 1270.0),
         ],
-        holes: vec![],
-        kind: crate::map::osm::model::AreaKind::Building,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-    };
+        vec![],
+    );
     let input = |roads: Vec<RoadLine>| PolymeshInput {
         buildings: vec![shed.clone()],
         water: vec![river.clone()],
@@ -248,21 +236,17 @@ fn a_packed_polygon_index_splits_into_layer_and_number() {
 /// падение всего тестового бинаря — так и задумано.
 #[test]
 fn a_chunk_fully_covered_by_an_obstacle_builds_an_empty_layer() {
-    let blocked = PolyArea {
-        // с запасом за края чанка (0,0)-(400,400), чтобы после инфляции
-        // радиусом агента не осталось щели вдоль кромки
-        outer: vec![
+    // с запасом за края чанка (0,0)-(400,400), чтобы после инфляции радиусом
+    // агента не осталось щели вдоль кромки
+    let blocked = fixture::building(
+        vec![
             Vec2::new(-50.0, -50.0),
             Vec2::new(CHUNK_METERS + 50.0, -50.0),
             Vec2::new(CHUNK_METERS + 50.0, CHUNK_METERS + 50.0),
             Vec2::new(-50.0, CHUNK_METERS + 50.0),
         ],
-        holes: vec![],
-        kind: crate::map::osm::model::AreaKind::Building,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-    };
+        vec![],
+    );
     let input = PolymeshInput {
         buildings: vec![blocked],
         water: vec![],
@@ -389,19 +373,15 @@ fn a_repeated_ring_vertex_does_not_dent_the_inflated_contour() {
 /// свои звенья, `smoothed` — только срезы.
 #[test]
 fn a_snapped_start_stays_in_the_path_as_its_own_waypoint() {
-    let building = PolyArea {
-        outer: vec![
+    let building = fixture::building(
+        vec![
             Vec2::new(1000.0, 1000.0),
             Vec2::new(1040.0, 1000.0),
             Vec2::new(1040.0, 1030.0),
             Vec2::new(1000.0, 1030.0),
         ],
-        holes: vec![],
-        kind: crate::map::osm::model::AreaKind::Building,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-    };
+        vec![],
+    );
     let input = PolymeshInput {
         buildings: vec![building],
         water: vec![],
