@@ -30,6 +30,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::garages::garage_runs;
 use self::heights::{height_mix, height_or_default};
+pub(crate) use self::layers::SHADOW_LENGTH_RANGE;
 use self::layers::{
     ShadowSweeps, extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
 };
@@ -557,7 +558,7 @@ pub struct Lean {
 
 impl Lean {
     /// Отклонение дома.
-    pub(super) fn of() -> Self {
+    pub(crate) fn of() -> Self {
         Self {
             per_meter: Vec2::new(EXTRUDE_SKEW, 1.0),
         }
@@ -569,7 +570,7 @@ impl Lean {
     }
 
     /// Смещение верха для `drawn` нарисованных метров высоты.
-    pub(super) fn lift(self, drawn: f32) -> Vec2 {
+    pub(crate) fn lift(self, drawn: f32) -> Vec2 {
         self.per_meter * drawn
     }
 
@@ -603,15 +604,26 @@ pub(super) fn building_center(building: &PolyArea) -> Vec2 {
 /// сдвиг: слой экструзии, заплатка арки в тенях и всякий, кто захочет
 /// поставить метку на нарисованный дом, а не на его настоящий контур.
 pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
+    drawn_lift(height_or_default(building), mode)
+}
+
+/// Подъём верха над контуром для объекта высотой `height`: тот же масштаб и та
+/// же обрезка, что у крыш, и ноль в режимах без экструзии.
+///
+/// Отдельно от [`extrusion_lift`], потому что кренится не только дом: тем же
+/// правилом встают цилиндры промзоны (`map/industry.rs`), у которых нет ни
+/// контура, ни `BuildingUse`. Обрезка [`EXTRUDE_RANGE`] тут и есть главное:
+/// без неё шестидесятиметровая заводская труба ложилась на карту
+/// восьмидесятиметровой трубой.
+pub(crate) fn drawn_lift(height: f32, mode: BuildingHeightMode) -> Vec2 {
     if !matches!(
         mode,
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
     ) {
         return Vec2::ZERO;
     }
-    let height = (height_or_default(building) * EXTRUDE_SCALE)
-        .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    Lean::of().lift(height)
+    let drawn = (height * EXTRUDE_SCALE).clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
+    Lean::of().lift(drawn)
 }
 
 /// Тон поверхности по повороту её наружной нормали (в плане) к свету
@@ -620,7 +632,7 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
 /// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
 /// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
 /// `Srgba` в сигнатуре делает пространство явным.
-pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
+pub(crate) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
     let lit = outward.dot(sun_light());
     if lit >= 0.0 {
         base.mix(&Srgba::WHITE, lit * lit_mix)

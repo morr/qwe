@@ -7,6 +7,7 @@ pub mod buildings;
 // вызовом (`cars_mesh`), а стенд кузовов рисует машины его же `body`
 pub mod cars;
 pub mod footprint;
+mod industry;
 mod meshing;
 pub mod osm;
 mod parking;
@@ -157,6 +158,7 @@ impl Plugin for MapPlugin {
                     cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<wagons::WagonLods>,
                     wagons::rebuild_wagons,
+                    industry::rebuild_industry,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -236,6 +238,11 @@ impl Plugin for MapPlugin {
                         wagons::rebuild_wagons.run_if(
                             retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
                         ),
+                        // цилиндр промзоны ступени зума не имеет — его видно
+                        // ровно настолько, насколько видна тень, — зато
+                        // кренится он вместе с домами
+                        industry::rebuild_industry
+                            .run_if(retuned::<SunStyle>.or_else(retuned::<BuildingHeightMode>)),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

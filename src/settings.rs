@@ -862,12 +862,25 @@ pub const Z_CAR: f32 = 2.7;
 /// Вагоны — на путях, то есть ниже машин и выше стального слоя рельсов:
 /// вагон стоит на рельсе, а не под ним.
 pub const Z_WAGON: f32 = 2.65;
+/// Надземный трубопровод и его тень (`map/industry.rs`): над всем, что стоит
+/// на земле, — теплотрасса идёт на опорах поверх машин и вагонов, — и под
+/// всем, что выше трёх метров.
+pub const Z_PIPE_SHADOW: f32 = 2.76;
+pub const Z_PIPE: f32 = 2.77;
 /// Выжженная земля под порталом: над дорогами (перекрёсток обуглен), под
 /// трупами (тела на пятне видны).
 pub const Z_PORTAL_STAIN: f32 = 2.8;
 pub const Z_CORPSE: f32 = 3.0;
 pub const Z_PORTAL: f32 = 4.0;
 pub const Z_BUILDING: f32 = 5.0;
+/// Цилиндры промзоны (`map/industry.rs`): тень лежит под домами, а стена и
+/// верх — над ними. Заводская труба выше всего, что стоит вокруг, и на
+/// снимке она перекрывает соседний корпус, а не наоборот; тень же наравне с
+/// домовой (`Z_BUILDING_SHADOW` 4.5) — на кровлю соседа она не ложится, для
+/// этого есть отдельный слой у зданий.
+pub const Z_INDUSTRY_SHADOW: f32 = 4.55;
+pub const Z_INDUSTRY_WALL: f32 = 5.06;
+pub const Z_INDUSTRY: f32 = 5.07;
 /// Насколько z юнита падает на метр к северу (кто ниже — тот ближе).
 pub const Y_SORT_FACTOR: f32 = 0.002;
 /// Юниты: z = `Z_UNIT_BASE - y * Y_SORT_FACTOR`.
@@ -935,11 +948,18 @@ const _: () = {
     // вагон стоит на рельсе и ниже машины
     assert!(Z_TRAM < Z_WAGON);
     assert!(Z_WAGON < Z_CAR);
+    // теплотрасса перешагивает всё, что стоит на земле, — и свою тень
+    assert!(Z_CAR < Z_PIPE_SHADOW);
+    assert!(Z_PIPE_SHADOW < Z_PIPE);
     // пятно под порталом кроет дороги, но не тела
-    assert!(Z_CAR < Z_PORTAL_STAIN);
+    assert!(Z_PIPE < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
-    assert!(Z_PORTAL < Z_BUILDING);
+    // цилиндр промзоны: тень под домами, стена и верх над ними
+    assert!(Z_PORTAL < Z_INDUSTRY_SHADOW);
+    assert!(Z_INDUSTRY_SHADOW < Z_BUILDING);
+    assert!(Z_BUILDING < Z_INDUSTRY_WALL);
+    assert!(Z_INDUSTRY_WALL < Z_INDUSTRY);
     // Тот самый инвариант, который прозой не удержался (см. `Z_UNIT_BASE`).
     // Теперь база из него и выводится, так что проверка стережёт уже не её, а
     // будущую правку: сменится `Y_SORT_FACTOR`, `Z_BUILDING` или размер карты —
