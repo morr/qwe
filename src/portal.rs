@@ -66,6 +66,8 @@ fn spawn_portal(
         TextureAtlas { layout, index: 0 },
     );
     sprite.custom_size = Some(Vec2::splat(PORTAL_DIAMETER));
+    // ярче единицы — в HDR-кадре портал цветёт bloom-ом (`post.rs`)
+    sprite.color = crate::post::PORTAL_GLOW;
 
     commands.spawn((
         sprite,

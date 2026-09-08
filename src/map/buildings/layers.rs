@@ -8,7 +8,11 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
-use super::{BuildingHeightMode, base_colors, extrusion_lift, height_or_default};
+use super::roofs::gable_roof;
+use super::{
+    BuildingHeightMode, base_colors, extrusion_dir, extrusion_lift, height_or_default, ridge_lift,
+    shade_by_light,
+};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
@@ -40,11 +44,17 @@ const ROOF_TINT_MAX_MIX: f32 = 0.7;
 
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
+/// Насколько стена, повёрнутая прямо к свету, светлее базового тона фасада,
+/// и насколько отвёрнутая — темнее. Свет тот же, что даёт тени
+/// (`SHADOW_DIR`): при косом подъёме западная стена на нём, южная в тени,
+/// и без этой разницы две видимые стены сливались бы в один угол.
+const WALL_LIT_MIX: f32 = 0.18;
+const WALL_SHADED_MIX: f32 = 0.22;
 
 /// Цвет крыши: базовый по типу, при `tinted` — рампа по высоте (Кремль и
 /// здания без высоты рампу пропускают), поверх — лёгкая вариация тона по
 /// индексу, чтобы кварталы не сливались.
-pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> LinearRgba {
+pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> Srgba {
     let (roof_base, _) = base_colors(building);
     let ramped = match building.height {
         Some(height) if tinted && building.kind != AreaKind::Kremlin => {
@@ -53,8 +63,27 @@ pub(super) fn roof_color(building: &PolyArea, index: usize, tinted: bool) -> Lin
         }
         _ => roof_base,
     };
-    let tint = 1.0 - (index % 3) as f32 * 0.025;
-    LinearRgba::from(ramped.to_srgba() * tint)
+    let tint = 1.0 - (index % 4) as f32 * 0.03;
+    ramped.to_srgba() * tint
+}
+
+/// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
+/// значит её настоящая нормаль смотрит против подъёма — это и выбирает
+/// сторону перпендикуляра, обход кольца тут ни при чём.
+pub(super) fn wall_colors(
+    facade: Color,
+    a: Vec2,
+    b: Vec2,
+    lift_dir: Vec2,
+) -> (LinearRgba, LinearRgba) {
+    let edge = b - a;
+    let mut normal = Vec2::new(edge.y, -edge.x).normalize_or_zero();
+    if normal.dot(lift_dir) > 0.0 {
+        normal = -normal;
+    }
+    let bottom = shade_by_light(facade.to_srgba(), normal, WALL_LIT_MIX, WALL_SHADED_MIX);
+    let top = bottom.mix(&Srgba::WHITE, WALL_TOP_LIGHTEN);
+    (bottom.into(), top.into())
 }
 
 /// Фасадная полоса + крыши (режимы Facade / Shadows / ShadowsTint).
@@ -87,11 +116,17 @@ pub(super) fn facade_and_roof_builders(
         if let Some(passages) = arches.get(&index) {
             push_arches(&mut facades, building, passages, offset);
         }
-        roofs.push_polygon(
-            &building.outer,
-            &building.holes,
-            roof_color(building, index, tinted),
-        );
+        // двускатная крыша в плоском режиме — два ската разного тона в
+        // одной плоскости: конёк не поднят, но дом уже не коробка
+        let color = roof_color(building, index, tinted);
+        match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
+            Some(roof) => {
+                for (slope, slope_color) in roof.slopes {
+                    roofs.push_quad(slope, slope_color);
+                }
+            }
+            None => roofs.push_polygon(&building.outer, &building.holes, color.into()),
+        }
     }
     (facades, roofs)
 }
@@ -168,7 +203,7 @@ pub(super) fn shadow_builder(
         for (index, passages) in by_building {
             let building = &buildings[index];
             let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
-            for opening in arch_openings(building, &passages, lift) {
+            for opening in arch_openings(building, &passages, lift, -extrusion_dir()) {
                 let Some(along) = (opening.b - opening.a).try_normalize() else {
                     continue;
                 };
@@ -223,23 +258,25 @@ pub(super) fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>
 }
 
 /// 2.5D-экструзия: painter's algorithm внутри одного меша — треугольники
-/// растеризуются в порядке index-буфера, поэтому здания пишутся с севера на
-/// юг (южное поверх), на здание сначала стены, потом крыша. Фасадной полосы
-/// в этом режиме нет — её заменяют настоящие стены; `tinted` включает рампу
-/// тона крыш, как в `ShadowsTint`.
+/// растеризуются в порядке index-буфера, поэтому здания пишутся от дальнего
+/// конца вектора подъёма к ближнему (при косом подъёме вверх-вправо —
+/// с северо-востока на юго-запад, ближнее поверх), на здание сначала стены,
+/// потом крыша. Фасадной полосы в этом режиме нет — её заменяют настоящие
+/// стены; `tinted` включает рампу тона крыш, как в `ShadowsTint`.
 pub(super) fn extrusion_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
     tinted: bool,
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
+    let lift_dir = extrusion_dir();
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
-        let center_y = |building: &PolyArea| {
+        let depth = |building: &PolyArea| {
             let (min, max) = ring_bounds(&building.outer);
-            min.y + max.y
+            (min + max).dot(lift_dir)
         };
-        center_y(&buildings[b]).total_cmp(&center_y(&buildings[a]))
+        depth(&buildings[b]).total_cmp(&depth(&buildings[a]))
     });
 
     let mut builder = MeshBuilder::default();
@@ -249,26 +286,43 @@ pub(super) fn extrusion_builder(
         // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
         let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
 
-        let wall_bottom = facade_color.to_linear();
-        let wall_top = facade_color
-            .mix(&Color::WHITE, WALL_TOP_LIGHTEN)
-            .to_linear();
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
         let openings = arches
             .get(&index)
-            .map(|passages| arch_openings(building, passages, lift))
+            .map(|passages| arch_openings(building, passages, lift, -lift_dir))
             .unwrap_or_default();
-        // при сдвиге крыши строго вверх видимы только стены южных рёбер
-        for (a, b) in silhouette_edges(&building.outer, Vec2::NEG_Y) {
-            push_wall_with_openings(&mut builder, a, b, lift, &openings, wall_bottom, wall_top);
+        // видимы стены рёбер, смотрящих против подъёма: при сдвиге
+        // вверх-вправо — южные и западные
+        for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
+            let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+            push_wall_with_openings(&mut builder, a, b, lift, &openings, bottom, top);
         }
-        // двор: видима внутренняя стена его северной стороны — та, чья
-        // наружная (для кольца дыры) нормаль смотрит вверх
+        // двор: видима внутренняя стена его дальней стороны — та, чья
+        // наружная (для кольца дыры) нормаль смотрит по подъёму
         for hole in &building.holes {
-            for (a, b) in silhouette_edges(hole, Vec2::Y) {
-                push_wall_with_openings(&mut builder, a, b, lift, &openings, wall_bottom, wall_top);
+            for (a, b) in silhouette_edges(hole, lift_dir) {
+                let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+                push_wall_with_openings(&mut builder, a, b, lift, &openings, bottom, top);
             }
+        }
+
+        let color = roof_color(building, index, tinted);
+        if let Some(roof) = gable_roof(building, lift, ridge_lift, color) {
+            // фронтон — верх торцевой стены, видим по тому же правилу, что
+            // и стена под ним: наружная нормаль торца смотрит против подъёма
+            for ((a, b), apex) in roof.gables {
+                let edge = b - a;
+                if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
+                    continue;
+                }
+                let (_, top) = wall_colors(facade_color, a, b, lift_dir);
+                builder.push_polygon(&[a, b, apex], &[], top);
+            }
+            for (slope, slope_color) in roof.slopes {
+                builder.push_quad(slope, slope_color);
+            }
+            continue;
         }
 
         let roof_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + lift).collect();
@@ -277,11 +331,7 @@ pub(super) fn extrusion_builder(
             .iter()
             .map(|hole| hole.iter().map(|p| *p + lift).collect())
             .collect();
-        builder.push_polygon(
-            &roof_outer,
-            &roof_holes,
-            roof_color(building, index, tinted),
-        );
+        builder.push_polygon(&roof_outer, &roof_holes, color.into());
     }
     builder
 }

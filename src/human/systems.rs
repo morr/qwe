@@ -455,7 +455,7 @@ pub fn pick_wander_targets(
 mod tests {
     use super::*;
     use crate::map::osm::{
-        AreaKind,
+        AreaKind, BuildingUse,
         fixture::{building, rect},
     };
     use crate::settings::{HUMAN_BODY_RADIUS_MAX, HUMAN_SPEED_SPREAD_MAX, MAP_SIZE};
@@ -643,6 +643,7 @@ mod tests {
             outer: vec![corner],
             holes: vec![],
             kind: AreaKind::Building,
+            building_use: BuildingUse::Other,
             height: None,
             entrances: vec![],
         }

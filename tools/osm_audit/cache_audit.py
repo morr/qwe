@@ -46,6 +46,10 @@ def area_kind(tags):
         return "wood"
     if tags.get("leisure") in ("park", "garden") or landuse == "recreation_ground":
         return "park"
+    if landuse == "residential":
+        return "residential"
+    if landuse in ("industrial", "garages"):
+        return "industrial"
     return None
 
 

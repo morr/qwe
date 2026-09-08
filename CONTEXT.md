@@ -40,6 +40,11 @@ in `main.rs`.
   world like a city switch, except the camera stays put. `grid.rs`: `world_to_tile` /
   `tile_center`, for callers with no `Navmesh` at hand. Costs and the chunk scaling —
   **navigation-deep skill**.
+- **Post-processing** (`post.rs`) — the camera renders to an HDR target with **bloom**
+  thresholded at 1.1, so only the portal (its sprite tinted by `PORTAL_GLOW`, above 1.0)
+  glows and the white markings and light roofs of the map do not; tonemapping is off so
+  the map palette is untouched. A full-screen **vignette** is a UI node under the panels,
+  `Pickable::IGNORE` (detail in the `ui-panels` skill).
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
   `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
   — **the edge counts as inside**. Five visibility gates use it and **each keeps its own
@@ -49,8 +54,8 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → parks → woods →
-  tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
+  parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → corpses → portal → buildings (5) → units → tree
   shadows → trees (20). Three live in their own modules:
@@ -128,8 +133,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   literal.**
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
-    Park | Wood | Grass | Sand`; **only Wood carries trees**. Buildings carry
-    `height: Option<f32>` and `entrances: Vec<Vec2>`.
+    Park | Wood | Grass | Sand | Residential | Industrial`; **only Wood carries trees**;
+    Residential/Industrial are the `landuse` **blocks** — a faint fill under everything
+    else, no effect on navigation or planting. Buildings carry
+    `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
     `oneway`, `roundabout` (`junction=roundabout|circular`, implies one-way) and
@@ -154,8 +161,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     avenues of the selected layout, `composed_for` caches which.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal — every
-  consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m). Coverage varies wildly by city
-  (NY 97 % … Tokyo 5 %) and is logged on load.
+  consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m; a house 6 m, a garage 3 m — by
+  building use). Coverage varies wildly by city (NY 97 % … Tokyo 5 %) and is logged on
+  load.
+- **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
+  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
+  Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
+  above all — from `amenity=*` on the same outline. Each class
+  owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
+  and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
+- **Gable roof** (`map/buildings/roofs.rs`) — a two-slope roof **inferred**, not read
+  (`roof:shape` is rare): every house and every small untagged box whose outline nearly
+  fills its minimum-area bounding rectangle gets a ridge along the rectangle's long axis;
+  L-shaped and courtyard buildings stay flat, and so does the Kremlin — outside use-based
+  styling, as with its colour. Detail in the `osm-map` skill.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building

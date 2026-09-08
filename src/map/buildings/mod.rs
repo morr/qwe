@@ -5,32 +5,60 @@
 //! `BuildingHeightMode` пересобирает только зданиевые слои
 //! (`rebuild_buildings`).
 //!
-//! Геометрия разнесена по двум подмодулям: [`arches`] режет проходы
-//! `building_passage` сквозь стены, [`layers`] собирает сами меши слоёв.
+//! Геометрия разнесена по трём подмодулям: [`arches`] режет проходы
+//! `building_passage` сквозь стены, [`roofs`] ставит двускатные крыши на
+//! малые дома, [`layers`] собирает сами меши слоёв.
 
 mod arches;
 mod layers;
+mod roofs;
 
 use std::ops::RangeInclusive;
 
+use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use crate::loading::AppState;
+use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{AreaKind, MapData, PolyArea, RoadLine};
+use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
 use crate::settings::Z_BUILDING;
 
+/// Палитра зданий — пара (крыша, стена) на каждое назначение. Крыша светлее
+/// стены, чтобы стена читалась полосой под ней; тёплые тона у жилья, серые у
+/// промзоны и гаражей, охра у казённых зданий. Храм — единственное исключение
+/// из «крыша светлее»: зелёная крыша на белой стене, как русская церковь на
+/// карте. `Other` — исторический бежевый, в котором раньше стоял весь город.
 const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
 const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
+const HOUSE_ROOF_COLOR: Color = Color::srgb(0.855, 0.655, 0.545);
+const HOUSE_FACADE_COLOR: Color = Color::srgb(0.70, 0.60, 0.50);
+const APARTMENTS_ROOF_COLOR: Color = Color::srgb(0.905, 0.885, 0.845);
+const APARTMENTS_FACADE_COLOR: Color = Color::srgb(0.615, 0.575, 0.515);
+const COMMERCIAL_ROOF_COLOR: Color = Color::srgb(0.845, 0.835, 0.805);
+const COMMERCIAL_FACADE_COLOR: Color = Color::srgb(0.575, 0.565, 0.545);
+const INDUSTRIAL_ROOF_COLOR: Color = Color::srgb(0.745, 0.745, 0.725);
+const INDUSTRIAL_FACADE_COLOR: Color = Color::srgb(0.505, 0.505, 0.49);
+const GARAGE_ROOF_COLOR: Color = Color::srgb(0.70, 0.68, 0.65);
+const GARAGE_FACADE_COLOR: Color = Color::srgb(0.48, 0.46, 0.43);
+const CHURCH_ROOF_COLOR: Color = Color::srgb(0.42, 0.60, 0.56);
+const CHURCH_FACADE_COLOR: Color = Color::srgb(0.93, 0.91, 0.86);
+const PUBLIC_ROOF_COLOR: Color = Color::srgb(0.93, 0.86, 0.66);
+const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.70, 0.62, 0.45);
 const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 
 /// Высота здания без OSM-данных — пятиэтажка. Через `FACADE_SCALE` даёт
 /// прежние 3 м фасадной полосы, так что режим Facade без высот не меняется.
 const DEFAULT_BUILDING_HEIGHT: f32 = 15.0;
+/// Частный дом и гараж без высоты в OSM — а высоты нет у большинства —
+/// пятиэтажками быть не могут: два этажа и одна коробка. Без этого окраины
+/// в 2.5D стояли того же роста, что и центр.
+const DEFAULT_HOUSE_HEIGHT: f32 = 6.0;
+const DEFAULT_GARAGE_HEIGHT: f32 = 3.0;
 /// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
 /// широкая полоса высотки залезала бы на низкого соседа.
 const Z_FACADE: f32 = Z_BUILDING - 0.1;
@@ -44,6 +72,14 @@ const Z_BUILDING_SHADOW: f32 = Z_BUILDING - 0.5;
 /// Метров подъёма крыши на метр высоты в 2.5D: драматичнее фасадной полосы,
 /// но карта остаётся видом сверху, а не изометрией.
 const EXTRUDE_SCALE: f32 = 0.35;
+/// Косина подъёма: метров вправо на метр вверх. Строго вертикальный подъём
+/// показывал одну южную стену, и дом читался как крыша с тёмной полосой
+/// под ней. С косым сдвигом видны две стены — южная в тени и западная на
+/// свету (свет из верхнего левого угла, как у теней) — и крыша: три тона,
+/// из которых и складывается объём у watabou и в 3D-режиме 2GIS. Камера
+/// при этом как бы смотрит из нижнего левого угла: дальние дома те, что
+/// выше и правее.
+const EXTRUDE_SKEW: f32 = 0.4;
 /// Границы подъёма крыши, м.
 const EXTRUDE_RANGE: RangeInclusive<f32> = 2.5..=30.0;
 
@@ -204,9 +240,14 @@ pub fn rebuild_buildings(
     );
 }
 
-/// Высота здания с дефолтом — `None` в OSM это норма, а не ошибка.
+/// Высота здания с дефолтом по назначению — `None` в OSM это норма, а не
+/// ошибка.
 fn height_or_default(building: &PolyArea) -> f32 {
-    building.height.unwrap_or(DEFAULT_BUILDING_HEIGHT)
+    building.height.unwrap_or(match building.building_use {
+        BuildingUse::House => DEFAULT_HOUSE_HEIGHT,
+        BuildingUse::Garage => DEFAULT_GARAGE_HEIGHT,
+        _ => DEFAULT_BUILDING_HEIGHT,
+    })
 }
 
 /// На сколько в этом режиме поднята крыша относительно настоящего контура.
@@ -224,14 +265,60 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     }
     let height = (height_or_default(building) * EXTRUDE_SCALE)
         .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    Vec2::new(0.0, height)
+    oblique_lift(height)
 }
 
-/// Базовые цвета крыши и фасада по типу здания.
+/// Сдвиг на карте для `drawn` нарисованных метров высоты: вверх и на
+/// `EXTRUDE_SKEW` вправо.
+fn oblique_lift(drawn: f32) -> Vec2 {
+    Vec2::new(EXTRUDE_SKEW * drawn, drawn)
+}
+
+/// Сдвиг конька над карнизом для `rise` настоящих метров: тот же масштаб,
+/// что у стен, но без `EXTRUDE_RANGE` — обрезка держит стены в разумных
+/// пределах, а конёк и так ограничен `ROOF_RISE_MAX`.
+pub(super) fn ridge_lift(rise: f32) -> Vec2 {
+    oblique_lift(rise * EXTRUDE_SCALE)
+}
+
+/// Единичный вектор подъёма крыши в 2.5D — общий для всех домов, от высоты
+/// зависит только длина. По нему выбираются видимые стены (те, что смотрят
+/// против него) и порядок painter's sort (дальний конец вектора пишется
+/// первым).
+pub(super) fn extrusion_dir() -> Vec2 {
+    Vec2::new(EXTRUDE_SKEW, 1.0).normalize()
+}
+
+/// Базовые цвета крыши и фасада по типу здания: Кремль — свой, остальные по
+/// назначению (`BuildingUse`).
 fn base_colors(building: &PolyArea) -> (Color, Color) {
-    match building.kind {
-        AreaKind::Kremlin => (KREMLIN_ROOF_COLOR, KREMLIN_FACADE_COLOR),
-        _ => (ROOF_COLOR, FACADE_COLOR),
+    if building.kind == AreaKind::Kremlin {
+        return (KREMLIN_ROOF_COLOR, KREMLIN_FACADE_COLOR);
+    }
+    match building.building_use {
+        BuildingUse::House => (HOUSE_ROOF_COLOR, HOUSE_FACADE_COLOR),
+        BuildingUse::Apartments => (APARTMENTS_ROOF_COLOR, APARTMENTS_FACADE_COLOR),
+        BuildingUse::Commercial => (COMMERCIAL_ROOF_COLOR, COMMERCIAL_FACADE_COLOR),
+        BuildingUse::Industrial => (INDUSTRIAL_ROOF_COLOR, INDUSTRIAL_FACADE_COLOR),
+        BuildingUse::Garage => (GARAGE_ROOF_COLOR, GARAGE_FACADE_COLOR),
+        BuildingUse::Church => (CHURCH_ROOF_COLOR, CHURCH_FACADE_COLOR),
+        BuildingUse::Public => (PUBLIC_ROOF_COLOR, PUBLIC_FACADE_COLOR),
+        BuildingUse::Other => (ROOF_COLOR, FACADE_COLOR),
+    }
+}
+
+/// Тон поверхности по повороту её наружной нормали (в плане) к свету
+/// `SHADOW_DIR`: к свету — светлее базового на `lit_mix`, от света — темнее
+/// на `shaded_mix`, в обоих случаях пропорционально косинусу. Одно правило
+/// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
+/// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
+/// `Srgba` в сигнатуре делает пространство явным.
+pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
+    let lit = outward.dot(-SHADOW_DIR);
+    if lit >= 0.0 {
+        base.mix(&Srgba::WHITE, lit * lit_mix)
+    } else {
+        base.mix(&Srgba::BLACK, -lit * shaded_mix)
     }
 }
 

@@ -3,7 +3,7 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{RailKind, WaterKind, distance_to_segment};
+use crate::map::osm::model::{BuildingUse, RailKind, WaterKind, distance_to_segment};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -262,6 +262,35 @@ fn buildings_standing_in_water_are_dropped() {
             .iter()
             .any(|&point| !point_in_area(point, &map.water[0]))
     );
+}
+
+#[test]
+fn landuse_blocks_are_their_own_layer_and_never_win_over_green() {
+    let (sw, _, ne, _) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .area(&[("landuse", "residential")], square(CENTER, HALF))
+        .area(&[("landuse", "garages")], square(CENTER, HALF / 2.0))
+        .relation(
+            &[("landuse", "industrial")],
+            &[("outer", closed(vec![sw, Vec2::new(ne.x, sw.y), ne]))],
+        )
+        // зелень с тем же тегом остаётся зеленью
+        .area(&[("landuse", "forest")], square(CENTER, HALF / 4.0))
+        .area(&[("landuse", "grass")], square(CENTER, HALF / 8.0))
+        .parse();
+
+    let kinds: Vec<AreaKind> = map.landuse.iter().map(|area| area.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Residential,
+            AreaKind::Industrial,
+            AreaKind::Industrial
+        ]
+    );
+    assert_eq!(map.woods.len(), 1);
+    assert_eq!(map.grass.len(), 1);
+    assert!(map.buildings.is_empty() && map.parks.is_empty());
 }
 
 #[test]
@@ -701,6 +730,58 @@ fn kremlin_buildings_classified_by_historic_tag() {
         .parse();
 
     assert_eq!(map.buildings[0].kind, AreaKind::Kremlin);
+}
+
+/// Назначение здания — класс отрисовки: `building=*` напрямую, а когда его
+/// значение вне словаря (безликое `yes`, но и `construction`) — по
+/// `amenity=*` того же контура. Вода назначения не имеет, даже если тег
+/// на ней стоит.
+#[test]
+fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() {
+    let map = Overpass::new(CITY)
+        .area(&[("building", "house")], square(CENTER, HALF))
+        .area(&[("building", "apartments")], square(CENTER, HALF))
+        .area(&[("building", "garages")], square(CENTER, HALF))
+        .area(
+            &[("building", "yes"), ("amenity", "school")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "construction"), ("amenity", "school")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "yes"), ("amenity", "place_of_worship")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "church"), ("amenity", "school")],
+            square(CENTER, HALF),
+        )
+        .area(&[("building", "yes")], square(CENTER, HALF))
+        .area(
+            &[("natural", "water"), ("amenity", "school")],
+            square(CENTER, HALF),
+        )
+        .parse();
+
+    let uses: Vec<BuildingUse> = map.buildings.iter().map(|b| b.building_use).collect();
+    assert_eq!(
+        uses,
+        [
+            BuildingUse::House,
+            BuildingUse::Apartments,
+            BuildingUse::Garage,
+            BuildingUse::Public,
+            // значение вне словаря отдаёт слово `amenity` так же, как `yes`
+            BuildingUse::Public,
+            BuildingUse::Church,
+            // `building=*` со смыслом сильнее `amenity`
+            BuildingUse::Church,
+            BuildingUse::Other,
+        ]
+    );
+    assert_eq!(map.water[0].building_use, BuildingUse::Other);
 }
 
 /// `natural=tree_row` доезжает до `MapData::tree_rows` и даёт деревья вдоль

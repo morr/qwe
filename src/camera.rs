@@ -181,6 +181,7 @@ fn spawn_camera(
         }),
         Transform::from_translation(view.position.extend(0.0)).with_scale(Vec3::splat(view.zoom)),
         Msaa::Off,
+        crate::post::camera_post_process(),
         PanCamera {
             zoom_factor: view.zoom,
             min_zoom: MIN_ZOOM,

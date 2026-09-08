@@ -5,7 +5,7 @@ use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
     camera, city, demon, determinism, dev, diagnostics, human, loading, map, movement, navigation,
-    portal, prefs, restart, rng, sim_time, spatial, telemetry, ui,
+    portal, post, prefs, restart, rng, sim_time, spatial, telemetry, ui,
 };
 
 /// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт занят
@@ -94,6 +94,8 @@ fn main() {
             city::CityPlugin,
             rng::RngPlugin,
             determinism::DeterminismPlugin,
+            // группа ниже уже во всю длину кортежа `Plugins` — 15 штук
+            post::PostProcessPlugin,
         ))
         .add_plugins((
             loading::LoadingPlugin,

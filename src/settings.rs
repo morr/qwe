@@ -747,6 +747,9 @@ pub const RESCUE_SEARCH_TILES: i32 = 16;
 
 // --- Z-слои (см. y-сортировку юнитов) ---
 pub const Z_GROUND: f32 = 0.0;
+/// Кварталы `landuse` — между голой землёй и парками: заливка едва отличима
+/// от земли и обязана лежать под любой зеленью.
+pub const Z_LANDUSE: f32 = 0.25;
 pub const Z_PARK: f32 = 0.5;
 /// Лес, луга и песок лежат внутри парковых полигонов — поверх заливки парка.
 pub const Z_WOOD: f32 = 0.55;
@@ -828,7 +831,8 @@ pub const Z_CONIFER_NOISE_OVERLAY: f32 = 21.0;
 // остальное — свобода, которую отбирать незачем.
 const _: () = {
     // площадные заливки: земля → парк → лес → трава → песок → вода
-    assert!(Z_GROUND < Z_PARK);
+    assert!(Z_GROUND < Z_LANDUSE);
+    assert!(Z_LANDUSE < Z_PARK);
     assert!(Z_PARK < Z_WOOD);
     assert!(Z_WOOD < Z_TREE_ROW_BAND_CASING);
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);

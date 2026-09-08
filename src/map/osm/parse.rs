@@ -239,6 +239,7 @@ fn push_area(map: &mut MapData, area: PolyArea) {
         AreaKind::Wood => map.woods.push(area),
         AreaKind::Grass => map.grass.push(area),
         AreaKind::Sand => map.sand.push(area),
+        AreaKind::Residential | AreaKind::Industrial => map.landuse.push(area),
     }
 }
 
@@ -340,6 +341,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             outer,
             holes: Vec::new(),
             kind,
+            building_use: area_use(kind, &element.tags),
             height: area_height(kind, &element.tags),
             entrances: Vec::new(),
         },
@@ -362,6 +364,7 @@ fn parse_relation(
     let outers = assemble_rings(members, "outer", bounds, skipped_open_rings);
     let inners = assemble_rings(members, "inner", bounds, skipped_open_rings);
     let height = area_height(kind, &element.tags);
+    let building_use = area_use(kind, &element.tags);
 
     for outer in outers {
         let holes = inners
@@ -375,6 +378,7 @@ fn parse_relation(
                 outer,
                 holes,
                 kind,
+                building_use,
                 height,
                 entrances: Vec::new(),
             },
@@ -441,7 +445,7 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_height, area_kind, crown_radius, is_building_passage, is_oneway,
-    is_road_underground, is_roundabout, is_underground, rail_class, road_class, row_spacing,
-    tagged_lanes, water_class, water_width,
+    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, is_building_passage,
+    is_oneway, is_road_underground, is_roundabout, is_underground, rail_class, road_class,
+    row_spacing, tagged_lanes, water_class, water_width,
 };

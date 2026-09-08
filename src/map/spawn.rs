@@ -1,24 +1,30 @@
-//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (земля, парки, луга,
-//! песок, вода площадная и линейная) + дороги, аллеи и стены (`map/roads.rs`,
-//! стиль ленты переключается панелью Roads) + здания (`map/buildings/`, режим
-//! отображения высоты переключается панелью Buildings) + деревья отдельными
-//! сущностями. Поверхности красит фактурный материал (`map/surface.rs`):
-//! цвет слоя по-прежнему вершинный, шум кладёт шейдер.
+//! Рендер OSM-карты: по одному слитому `Mesh2d` на слой (земля, кварталы,
+//! парки, луга, песок, вода площадная и линейная) + дороги, аллеи и стены
+//! (`map/roads.rs`, стиль ленты переключается панелью Roads) + здания
+//! (`map/buildings/`, режим отображения высоты переключается панелью
+//! Buildings) + деревья отдельными сущностями. Поверхности красит фактурный
+//! материал (`map/surface.rs`): цвет слоя по-прежнему вершинный, шум кладёт
+//! шейдер.
 
 use bevy::prelude::*;
 
 use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
+use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING,
-    Z_WATERWAY, Z_WOOD,
+    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND,
+    Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
 };
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
+/// Кварталы `landuse` — на полтона от земли, не больше: заливка обязана
+/// делить город на жильё и промзону, не споря ни с зеленью, ни с домами.
+/// Жильё чуть светлее и теплее земли, промзона чуть темнее и холоднее.
+const RESIDENTIAL_COLOR: Color = Color::srgb(0.906, 0.886, 0.839);
+const INDUSTRIAL_COLOR: Color = Color::srgb(0.843, 0.843, 0.835);
 pub const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
 /// Лес внутри парка — темнее парковой подложки (osm-carto `#ADD19E`), под ним
 /// и растут кроны; открытая часть парка так читается как поле.
@@ -107,6 +113,17 @@ pub fn spawn_map(
     let mut ground = MeshBuilder::with_surface_coords();
     ground.push_rect(Vec2::ZERO, MAP_SIZE, GROUND_COLOR.to_linear());
 
+    // квартал — самая нижняя заливка, на полтона от земли; каймы у него нет
+    // намеренно: кромка спорила бы и с зеленью, и с домами
+    let mut landuse = MeshBuilder::with_surface_coords();
+    for area in &map.landuse {
+        let color = match area.kind {
+            AreaKind::Industrial => INDUSTRIAL_COLOR,
+            _ => RESIDENTIAL_COLOR,
+        };
+        landuse.push_polygon(&area.outer, &area.holes, color.to_linear());
+    }
+
     let mut parks = MeshBuilder::with_surface_coords();
     for park in &map.parks {
         push_area(&mut parks, park, PARK_COLOR, &PARK_RIM);
@@ -134,7 +151,7 @@ pub fn spawn_map(
 
     let waterways = mesh_water_lines(&map.water_lines);
 
-    let skipped: usize = [&parks, &woods, &grass, &sand, &water]
+    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();
@@ -144,6 +161,7 @@ pub fn spawn_map(
 
     for (builder, z, name, kind) in [
         (ground, Z_GROUND, "ground", SurfaceKind::Ground),
+        (landuse, Z_LANDUSE, "landuse", SurfaceKind::Ground),
         (parks, Z_PARK, "parks", SurfaceKind::Park),
         (woods, Z_WOOD, "woods", SurfaceKind::Wood),
         (grass, Z_GRASS, "grass", SurfaceKind::Grass),

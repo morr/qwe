@@ -30,8 +30,8 @@ use bevy::prelude::*;
 use serde_json::{Value, json};
 
 use super::model::{
-    AreaKind, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine, WaterKind,
-    WaterLine,
+    AreaKind, BuildingUse, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine,
+    WaterKind, WaterLine,
 };
 use super::overpass::GeoBounds;
 use crate::city::City;
@@ -174,6 +174,7 @@ pub fn building(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
         outer,
         holes,
         kind: AreaKind::Building,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     }
@@ -184,6 +185,7 @@ pub fn water_area(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
         outer,
         holes,
         kind: AreaKind::Water,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     }
@@ -194,6 +196,7 @@ pub fn wood(outer: Vec<Vec2>) -> PolyArea {
         outer,
         holes: vec![],
         kind: AreaKind::Wood,
+        building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
     }

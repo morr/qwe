@@ -36,9 +36,11 @@ in `CONTEXT.md` and the detail here in the same change.
   `leisure=park|garden`,
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
-  `natural=sand|beach`, `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **7** (v3 added `entrance` nodes, v4 `railway`,
-  v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`).
+  `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
+  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **8** (v3 added `entrance` nodes, v4 `railway`,
+  v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
+  blocks).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -63,14 +65,24 @@ in `CONTEXT.md` and the detail here in the same change.
 `map/osm/model.rs`; the resource stays resident after spawn.
 
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
-  `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand`. **Park** is the
+  `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
+  Industrial`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
   but Wood stays open ground — that is what makes the open half of a park read as a
-  field, the way it does on OSM.
+  field, the way it does on OSM. **Residential** (`landuse=residential`) and
+  **Industrial** (`landuse=industrial|garages`) are the *blocks* — `MapData::landuse`,
+  one merged layer at `Z_LANDUSE` (0.25) between the ground sprite and the parks, half
+  a tone off the ground colour (warmer/lighter for housing, greyer for industry) so the
+  city stops being one flat sheet. `area_kind` tries them **last**: any green tag on the
+  same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
+  residential + 35 industrial/garages in the bbox (the audit table), 294 of them
+  reach `MapData::landuse`; `commercial`/`retail` are not requested.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
-  tag is there). See **Building height** below. `entrances: Vec<Vec2>` — the OSM
+  tag is there). See **Building height** below. `building_use: BuildingUse` — the
+  drawing class (`Other` on everything that is not a building), see **Building use**
+  below. `entrances: Vec<Vec2>` — the OSM
   doors on this building's outline, empty for most buildings; see
   `references/entrances.md`.
 - **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
@@ -172,6 +184,21 @@ in `CONTEXT.md` and the detail here in the same change.
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
   order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
   default. Coverage is logged per city on load (`N buildings (M with height)`).
+- **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
+  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
+  (roof, wall) colour pair in `map/buildings/mod.rs::base_colors`. Two sources in order:
+  `building=*` when the value says something (`house`, `apartments`, `garages`, `church`,
+  `school`, …), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
+  `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
+  + `amenity=…`. Anything outside the vocabulary is `Other`, the historical beige; the
+  vocabulary covers what a city carries by the hundreds, not the OSM wiki. Tula: `yes`
+  4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
+  garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
+  red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
+  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class
+  also picks the **default height** (`buildings/mod.rs::height_or_default`): a house
+  without a tag is 6 m and a garage 3 m, everything else the 15 m five-storey default —
+  most houses carry no height, and at 15 m the outskirts stood as tall as the centre.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS
@@ -389,6 +416,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `Z_ROAD_CASING` (1.9), width `+2·casing_width` (8% of the road, 0.3–1 m). Both fills
     (1.5 / 2.0) sit above both casings on purpose: otherwise a casing would cut every
     crossing in half. Off by default.
+  - **sidewalk** — a light band (`SIDEWALK_COLOR`, between the ground and the white
+    carriageway) along **streets only** (an alley *is* a footpath), width
+    `+2·sidewalk_width` (15% of the road, 1.5–2.5 m per side), its own merged layer at
+    `Z_SIDEWALK` (1.3) under the alleys and every casing, so a footpath meeting a street
+    lies on the sidewalk instead of stopping at it. Drawing only — unlike `casing_width`
+    it is not a footprint band and touches neither the navmesh nor planting. Bridges
+    skip it (their curb is the edge). On by default: without it a street was a white
+    line on a beige sheet, with it a block gets a readable edge.
 
   Smoothing works on a **copy** — `RoadLine::points` and `width` are load-bearing for the
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
@@ -509,8 +544,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The section lives in
   `ui/buildings.rs`, in the Map tab below Trees and Tree rows, one cycling row. A building
-  with no height uses `DEFAULT_BUILDING_HEIGHT` (15 m) everywhere. Modes:
-  - **Facade** (default, the historical look) — pseudo-3D: the footprint polygon shifted
+  with no height uses the default of its `BuildingUse` in every mode (15 m, a house 6 m,
+  a garage 3 m — see **Building use**). Modes:
+  - **Facade** (the historical look) — pseudo-3D: the footprint polygon shifted
     straight down in a darker color at z just below the roof (`Z_FACADE` 4.9), visible
     only along south edges. Shift = height × `FACADE_SCALE` (0.2) clamped to 1.5–12 m, so
     a five-storey block keeps the historical 3 m band. Facades sit *under* every roof on
@@ -534,15 +570,50 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward a darker muted tone (max 0.7); no-height buildings and the Kremlin
     keep their base color.
-  - **2.5D (Extrusion)** — watabou-style: roof lifted up by height × `EXTRUDE_SCALE`
-    (0.35) clamped to 2.5–30 m, south-facing wall quads (vertical gradient) fill the
-    gap; courtyard north walls included. No facade band, no shadows. Depth is painter's
-    algorithm *inside one mesh*: buildings sorted north-first (index-buffer order is
-    raster order), so a southern building correctly overlays its northern neighbour.
-    Known limits: units y-sort against flat z=5 and can draw over a tall roof they are
-    "behind"; kremlin wall polylines (z 5.1) draw over nearby lifted roofs.
-  - **2.5D+shadows+tint (ExtrusionShadowsTint)** — everything at once: the extruded
+  - **2.5D (Extrusion)** — watabou-style: roof lifted by `lift = height ×
+    EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 2.5–30 m.
+    The lift is **oblique** (`EXTRUDE_SKEW` 0.4 — 0.4 m right per metre up): a
+    strictly vertical lift showed one south wall and a block read as a roof with a dark
+    band under it; the skew exposes two wall families, and with the light the shadows
+    already use (`SHADOW_DIR`, from the upper left) the west wall is lit and the south
+    wall shaded — three tones, which is what makes a box read as a box in watabou and
+    in 2GIS's 3D mode. The visible walls are the edges facing *against* the lift
+    (`silhouette_edges(outer, -extrusion_dir())`), courtyard walls the hole edges facing
+    *along* it; each wall's tone comes from `layers.rs::wall_colors` through the shared
+    `buildings/mod.rs::shade_by_light` — the facade colour mixed toward white by
+    `outward · −SHADOW_DIR × WALL_LIT_MIX` (0.18) when lit, toward black by
+    `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical gradient.
+    All building tone mixing — the palette, the `roof_color` ramp, walls, slopes — is
+    done in sRGB, so the wall and slope constants compare directly. No facade band, no
+    shadows. Depth is painter's algorithm *inside one
+    mesh*: buildings sorted by their bounds-centre projection on the lift direction,
+    far end first (index-buffer order is raster order), so a south-western building
+    correctly overlays its north-eastern neighbour. `extrusion_lift` is `pub` because
+    the doors overlay must shift by the same vector. Known limits: units y-sort against
+    flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
+    (z 5.1) draw over nearby lifted roofs.
+  - **2.5D+shadows+tint (ExtrusionShadowsTint, the default)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
+  - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
+    `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
+    `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
+    its towers and gates keep the flat roof, like they keep their colour) gets two
+    slopes instead of a
+    flat roof. The ridge runs along the long axis of the footprint's minimum-area
+    bounding rectangle (`min_area_rect`, edge directions of the ring tried as
+    orientations — no hull needed at 4–20 vertices); the roof is drawn over that
+    rectangle, not the outline (real roofs overhang), which is why it is only applied when
+    the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house stays
+    flat rather than wearing a rectangle. Slope tone: base roof colour mixed toward
+    white/black by the slope's plan normal against `−SHADOW_DIR` (`SLOPE_LIT_MIX` 0.14 /
+    `SLOPE_SHADED_MIX` 0.11, through the same `shade_by_light` helper as the walls, in
+    sRGB), softer than walls. In 2.5D the ridge is lifted a further
+    `ridge_rise(width) = min(width/2 × ROOF_PITCH 0.8, ROOF_RISE_MAX 5 m)` real metres
+    through `ridge_lift` (same `EXTRUDE_SCALE`, no `EXTRUDE_RANGE` clamp), and the two
+    gable triangles are drawn on the visible end walls with the wall's top colour before
+    the slopes. In flat modes the ridge lift is zero and the two shades are all that
+    remains. Verified on Tula's western private sector: red-brown two-storey houses with a
+    visible ridge, the L-shaped ones flat.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment
@@ -552,7 +623,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   (0.5 m) of the nearest one — clamped to a single edge it came out half a road wide.
   Width = the road's own width × |sin| of the entry angle, trimmed to the edge; height =
   `ARCH_HEIGHT` (6 real metres — 3 is physical but read as 2 px on a tall slab) as a
-  fraction of *that building's* height, `band × 6/height`, never taller than the wall. In
+  fraction of *that building's* height, `band × 6/height`, never taller than the wall.
+  Openings are looked up only on the walls the mode actually draws — `arch_openings`
+  takes a `facing` (2.5D: `-extrusion_dir()`, so south **and** west walls; facade band:
+  south only) — because `push_wall_with_openings` matches an opening to its wall by exact
+  edge endpoints, and a wall family the lookup does not know about would draw solid. In
   2.5D the wall is **really cut** (side pieces + a lintel above,
   `push_wall_with_openings`) so the layers beneath — the road running through, the
   ground — show through the hole, and `shadow_builder` patches the opening with

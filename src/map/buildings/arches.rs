@@ -55,10 +55,16 @@ pub(super) struct ArchOpening {
     pub(super) sill: Vec2,
 }
 
+/// `facing` — куда смотрят видимые стены режима: в 2.5D против вектора
+/// подъёма (`-extrusion_dir()`), у фасадной полосы строго на юг. Проёмы
+/// кроятся ровно по тем граням, что режим рисует, — иначе стена и вырез не
+/// совпадут ребро в ребро, а `push_wall_with_openings` ищет проём по
+/// точному равенству концов грани.
 pub(super) fn arch_openings(
     building: &PolyArea,
     passages: &[&RoadLine],
     band: Vec2,
+    facing: Vec2,
 ) -> Vec<ArchOpening> {
     if passages.is_empty() || band == Vec2::ZERO {
         return Vec::new();
@@ -68,13 +74,13 @@ pub(super) fn arch_openings(
     let sill = band * (ARCH_HEIGHT / height_or_default(building)).min(1.0);
 
     // видимые стены — те же грани, что рисует `extrusion_builder`
-    let walls: Vec<(Vec2, Vec2)> = silhouette_edges(&building.outer, Vec2::NEG_Y)
+    let walls: Vec<(Vec2, Vec2)> = silhouette_edges(&building.outer, facing)
         .into_iter()
         .chain(
             building
                 .holes
                 .iter()
-                .flat_map(|hole| silhouette_edges(hole, Vec2::Y)),
+                .flat_map(|hole| silhouette_edges(hole, -facing)),
         )
         .collect();
 
@@ -201,7 +207,8 @@ pub(super) fn push_arches(
     let color = ARCH_COLOR
         .mix(&Color::srgb(0.22, 0.24, 0.33), SHADOW_COLOR.alpha())
         .to_linear();
-    for opening in arch_openings(building, passages, band) {
+    // полоса фасада сдвинута строго вниз — видны только южные грани
+    for opening in arch_openings(building, passages, band, Vec2::NEG_Y) {
         let Some(along) = (opening.b - opening.a).try_normalize() else {
             continue;
         };
