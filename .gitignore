@@ -25,6 +25,9 @@
 # dev screenshot helper output (src/dev.rs) + brp shot's downscaled copy
 screenshot.png
 screenshot.small.png
+# закадровый снимок (`OffscreenShotEvent`) — путь задаёт сам вызывающий,
+# поэтому шире: любой png в корне репозитория тут дневниковый, не исходник
+/*.png
 
 # cached OpenStreetMap extract, downloaded at first app start
 assets/osm/

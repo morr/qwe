@@ -185,6 +185,10 @@ fn spawn_camera(
         }),
         Transform::from_translation(view.position.extend(0.0)).with_scale(Vec3::splat(view.zoom)),
         Msaa::Off,
+        // панели принадлежат **этой** камере: закадровый снимок
+        // (`dev::OffscreenShotEvent`) поднимает вторую, и без маркера UI
+        // достался бы той из них, у которой выше порядок
+        bevy::ui::IsDefaultUiCamera,
         crate::post::camera_post_process(),
         PanCamera {
             zoom_factor: view.zoom,
