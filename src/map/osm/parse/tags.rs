@@ -11,7 +11,7 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, RailKind, RoadClass, WaterKind, polyline_length,
+    AreaKind, BuildingUse, PitchKind, RailKind, RoadClass, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 
@@ -151,6 +151,13 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     // дом (`building=*` + `amenity=parking`) сюда не доходит: здание выше
     if tags.get("amenity").map(String::as_str) == Some("parking") {
         return Some(AreaKind::Parking);
+    }
+    // площадка — после стоянки и до кварталов: `leisure=pitch` во дворе
+    // сплошь и рядом лежит внутри `landuse=residential`, и покрытие поля
+    // важнее подложки квартала. Парк проверен выше: `leisure=park` со
+    // спортплощадкой на нём остаётся парком, а поле внутри придёт своим way
+    if let Some(kind) = pitch_kind(tags) {
+        return Some(AreaKind::Pitch(kind));
     }
     // кварталы — последними: у них нет ничего, что перекрыло бы зелень
     match landuse {
@@ -417,6 +424,45 @@ pub(super) fn crown_radius(tags: &HashMap<String, String>) -> Option<f32> {
         .and_then(|value| parse_measure(value))?;
     let radius = diameter / 2.0;
     TREE_CROWN_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
+/// Что за площадка — по `leisure`, а внутри `pitch` по `sport` и `surface`.
+///
+/// Белый список, как у путей и водотоков: `leisure=*` несёт ещё десяток
+/// значений (`fitness_centre`, `dance`, `bandstand`, `marina`), которые
+/// сверху не площадка, а здание или вовсе точка. `park` и `garden` сюда не
+/// доходят — их забирает [`area_kind`] выше.
+///
+/// Вид спорта в OSM проставлен не всегда (в Туле у 37 из 48 полей), поэтому
+/// решение трёхступенчатое: `sport`, потом `surface`, потом «твёрдая
+/// площадка» — в русском дворе безымянное поле это чаще всего асфальтовая
+/// коробка, а не газон.
+pub(super) fn pitch_kind(tags: &HashMap<String, String>) -> Option<PitchKind> {
+    let leisure = tags.get("leisure").map(String::as_str)?;
+    match leisure {
+        "track" => return Some(PitchKind::Track),
+        "playground" => return Some(PitchKind::Playground),
+        "sports_centre" | "stadium" => return Some(PitchKind::Ground),
+        "pitch" => {}
+        _ => return None,
+    }
+    // `sport=soccer;ice_hockey` — тоже поле: берём первое значение
+    let sport = tags
+        .get("sport")
+        .map(String::as_str)
+        .and_then(|value| value.split(';').next());
+    if let Some(sport) = sport {
+        return Some(match sport {
+            "soccer" | "football" | "american_football" | "rugby" | "rugby_union" | "athletics"
+            | "equestrian" | "baseball" | "cricket" | "field_hockey" | "multi" => PitchKind::Soccer,
+            _ => PitchKind::Hard,
+        });
+    }
+    Some(match tags.get("surface").map(String::as_str) {
+        Some("grass" | "dirt" | "ground" | "earth") => PitchKind::Soccer,
+        Some("sand") => PitchKind::Playground,
+        _ => PitchKind::Hard,
+    })
 }
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при

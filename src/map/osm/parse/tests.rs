@@ -3,7 +3,7 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{BuildingUse, RailKind, WaterKind, distance_to_segment};
+use crate::map::osm::model::{BuildingUse, PitchKind, RailKind, WaterKind, distance_to_segment};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -313,6 +313,47 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
     assert_eq!(map.parks.len(), 1);
     // навмеша стоянка не касается — по ней ходят
     assert!(map.landuse.is_empty());
+}
+
+/// Площадки разбираются по `leisure`, а поле — по `sport`/`surface`. Парк со
+/// спортивной площадкой на нём остаётся парком: поле приезжает своим way.
+#[test]
+fn a_leisure_ground_becomes_a_pitch_of_its_own_kind() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("leisure", "pitch"), ("sport", "soccer")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("leisure", "pitch"), ("sport", "basketball")],
+            square(CENTER, HALF),
+        )
+        // без вида спорта решает покрытие, а без покрытия — «коробка»
+        .area(
+            &[("leisure", "pitch"), ("surface", "grass")],
+            square(CENTER, HALF),
+        )
+        .area(&[("leisure", "pitch")], square(CENTER, HALF))
+        .area(&[("leisure", "playground")], square(CENTER, HALF))
+        .area(&[("leisure", "track")], square(CENTER, HALF))
+        // не площадка вовсе: значение вне белого списка
+        .area(&[("leisure", "bandstand")], square(CENTER, HALF))
+        .area(&[("leisure", "park")], square(CENTER, HALF))
+        .parse();
+
+    let kinds: Vec<AreaKind> = map.pitches.iter().map(|area| area.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Pitch(PitchKind::Soccer),
+            AreaKind::Pitch(PitchKind::Hard),
+            AreaKind::Pitch(PitchKind::Soccer),
+            AreaKind::Pitch(PitchKind::Hard),
+            AreaKind::Pitch(PitchKind::Playground),
+            AreaKind::Pitch(PitchKind::Track),
+        ]
+    );
+    assert_eq!(map.parks.len(), 1);
 }
 
 #[test]

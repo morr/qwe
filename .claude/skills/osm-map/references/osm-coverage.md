@@ -4,7 +4,8 @@
 и выбрасываются, а какие мы даже не спрашиваем. Считано **01.08.2026** на
 `fc5a445`, версия запроса **v6**; запрос с тех пор поднят до **v9** — v7 добавил
 линейные `waterway` (их было 24/39/52/32/60/0 по шести городам), v8 — кварталы
-`landuse=residential|industrial|garages`, v9 — стоянки `amenity=parking`.
+`landuse=residential|industrial|garages`, v9 — стоянки `amenity=parking`,
+v10 — спортивные и детские площадки `leisure=*`.
 Таблицы ниже водотоков не учитывают;
 строки `landuse` пересчитаны через Overpass 2026-09-08 под запрос v8 —
 `landuse commercial/retail` отдельно, `residential` и `industrial/garages` как
@@ -28,7 +29,9 @@ REF-счётчики; KEPT-строки `cache_audit.py` по кешам v8 не
 (`waterway=river|stream|brook|canal|ditch|drain|weir`), парки, леса, луга,
 песок, кварталы `landuse=residential|industrial|garages` (заливка под всем, с
 кеша v8), стоянки `amenity=parking` (асфальт + разметка мест + машины на них, с
-кеша v9), стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
+кеша v9), спортивные и детские площадки `leisure=pitch|track|playground|
+sports_centre|stadium` (покрытие по виду спорта + разметка, с кеша v10),
+стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
 одиночные ноды `natural=tree`).
 
 Значения `building=*` по кешу Тулы v7 (7465 зданий): `yes` 4004, `house` 2249,
@@ -49,6 +52,14 @@ OSM — это весь кооператив одним контуром, в Т�
 | `landuse=residential` (way+rel) | 264 | 6 | 413 | 364 | 12 | 45 |
 | `landuse=industrial\|garages` (way+rel) | 35 | 2 | 2 | 25 | 3 | 12 |
 | `amenity=parking` (way+rel) | 172 | 183 | **2234** | 272 | 771 | 238 |
+| `leisure=pitch` (way+rel) | 48 | 79 | 191 | 145 | 135 | 310 |
+| `leisure` playground/track/sports_centre/stadium | 80 | 121 | 316 | 93 | 72 | 368 |
+
+Строки `leisure` — прежние счётчики из раздела «не запрашиваем»; пересчитана
+через Overpass 2026-09-08 только Тула, и там их **128**: 59 детских площадок,
+48 полей, 13 дорожек, 7 спорткомплексов, 1 стадион. Вид спорта проставлен у 37
+полей из 48 (`soccer` 12, `basketball` 11, `volleyball` 3, дальше единицы), а
+`surface` — всего у 12; отсюда трёхступенчатый разбор в `pitch_kind`.
 
 Берлин со своими 2234 стоянками — единственный город, где строка стоит внимания
 до отрисовки: там это не двор с четырьмя местами, а полноценный слой.
@@ -142,8 +153,6 @@ block»). Пины — `parse::tests::a_culvert_hides_the_stream_and_leaves_the_
 | прочие `barrier` (заборы, стены) | 491 | 3759 | 4561 | **8778** | 767 | 1522 |
 | `highway` + `area=yes` (площади) | 4 | **2465** | 181 | 336 | 268 | 300 |
 | `area:highway` (покрытия дорог) | 11 | 418 | **1785** | 358 | 58 | 44 |
-| `leisure=pitch` | 44 | 79 | 191 | 145 | 135 | 310 |
-| playground/sports/stadium/pool | 80 | 121 | 316 | 93 | 72 | 368 |
 | landuse commercial/retail | 24 | 3 | 270 | 643 | 124 | 1 |
 | landuse brownfield/quarry/military/railway | 8 | 50 | 141 | 151 | 156 | 153 |
 | `natural` scrub/heath/wetland/rock | 4 | 333 | 542 | 61 | 82 | 115 |

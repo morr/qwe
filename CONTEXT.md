@@ -55,7 +55,8 @@ in `main.rs`.
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
-  parks → woods → tree-row band casing → tree-row band → grass → sand → parking → parking
+  parks → woods → tree-row band casing → tree-row band → grass → sand → pitches → pitch
+  markings → parking → parking
   markings → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
@@ -134,13 +135,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   literal.**
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
-    Park | Wood | Grass | Sand | Residential | Industrial | Parking`; **only Wood carries
-    trees**;
+    Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
+    **only Wood carries trees**;
     Residential/Industrial are the `landuse` **blocks** — a faint fill under everything
     else, no effect on navigation or planting. **Parking** (`amenity=parking`,
     `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
-    park (`building` + `amenity=parking`) stays a building. Buildings carry
+    park (`building` + `amenity=parking`) stays a building. **Pitch** (`leisure=*`,
+    `MapData::pitches`) is a sports or children's ground — see **Pitches** below; the
+    `PitchKind` rides inside the `AreaKind` value, since nothing but a pitch has one.
+    Buildings carry
     `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
@@ -352,6 +356,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
+  playground|sports_centre|stadium`), `Z_PITCH` 0.75 with the markings at 0.76. What a
+  courtyard is *made of* on a photo: a green football field with white lines, a blue
+  basketball box, the rust-orange oval of a running track, the sandy patch of a
+  playground. `PitchKind: Soccer | Hard | Track | Playground | Ground` decides the
+  surface colour; the kind comes from `leisure`, then `sport`, then `surface` (a nameless
+  yard pitch is a hard court more often than a lawn). **Only `Soccer` and `Hard` get
+  markings** — perimeter, centre line, centre circle, and penalty boxes on a field over
+  `PENALTY_MIN_LENGTH` (45 m) — drawn in the `min_area_rect` frame and only when the
+  outline fills that frame to `RECT_FILL_MIN` (0.85, the same number the gable roof uses)
+  and is over `MIN_AREA` 150 m²: on an L-shaped patch the centre line would run over the
+  lawn. Tula: 128 pitches.
 - **Parking lots** (`map/parking.rs`) — an `AreaKind::Parking` area is asphalt
   (`Z_PARKING` 0.8) with its **stalls drawn on it** (`Z_PARKING_LINES` 0.81, a flat
   material, no procedural texture on top of paint). `stalls(area)` lays them out in rows
