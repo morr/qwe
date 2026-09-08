@@ -49,10 +49,17 @@ use crate::map::footprint::casing_width;
 use crate::map::meshing::{Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RoadClass, RoadLine, WallLine};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
+use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{
-    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BUILDING, Z_ROAD, Z_ROAD_CASING,
-    Z_SIDEWALK,
+    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
+    Z_ROAD_CASING, Z_SIDEWALK,
 };
+
+/// Высота настила моста над тем, что под ним, м. Длину тени она даёт тем же
+/// котангенсом высоты солнца, что у домов и вагонов: путепровод над улицей
+/// поднят метров на шесть, и тень от него — самое заметное, что бывает на
+/// воде под мостом.
+const BRIDGE_HEIGHT: f32 = 6.0;
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли, как на
 /// детальных картах 2ГИС и Яндекса. Белой (osm-carto) она была, пока не
@@ -273,6 +280,12 @@ pub fn spawn_roads(
     // вершинные цвета — плоский материал один, белый; фактурные — по виду
     // поверхности, из `SurfaceMaterials`
     let flat = materials.add(Color::WHITE);
+    // тень моста полупрозрачна, поэтому у неё свой материал с блендингом:
+    // белый непрозрачный съел бы альфу вершинного цвета
+    let shadow = materials.add(ColorMaterial {
+        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
+        ..default()
+    });
     // перекрёстки нужны только разметке: без неё и рвать нечего
     let junctions = style
         .markings
@@ -291,6 +304,8 @@ pub fn spawn_roads(
     // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
     let mut bridge_casings = MeshBuilder::default();
     let mut bridge_fills = MeshBuilder::with_surface_coords();
+    // тень моста — на то, над чем он проходит: воду, дорогу, пути
+    let mut bridge_shadows = MeshBuilder::default();
     let mut wall_ribbons = MeshBuilder::default();
 
     for index in order {
@@ -311,6 +326,18 @@ pub fn spawn_roads(
                 &mut bridge_casings,
                 &points,
                 2.0 * road.curb_reach(),
+                style.join,
+            );
+            // Тень настила — тот же настил, сдвинутый по свету на высоту
+            // моста. Ни один другой слой её не даёт: наземные тени считают
+            // только дома, а мост через Упу — самая заметная вещь на воде.
+            let offset = shadow_dir() * (BRIDGE_HEIGHT * shadow_length_scale());
+            let shifted: Vec<Vec2> = points.iter().map(|point| *point + offset).collect();
+            push_ribbon(
+                &mut bridge_shadows,
+                &shifted,
+                2.0 * road.curb_reach(),
+                SHADOW_COLOR.to_linear(),
                 style.join,
             );
             bridge_fills.set_markings(markings);
@@ -401,6 +428,12 @@ pub fn spawn_roads(
             LayerMaterial::Flat(flat.clone()),
         ),
         (streets, Z_ROAD, "roads", surface(SurfaceKind::Street)),
+        (
+            bridge_shadows,
+            Z_BRIDGE_SHADOW,
+            "bridge_shadows",
+            LayerMaterial::Flat(shadow.clone()),
+        ),
         (
             bridge_casings,
             Z_BRIDGE_CASING,

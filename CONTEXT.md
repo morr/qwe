@@ -701,6 +701,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shadow lives on the map's own sun, so the layer rebuilds on the zoom bucket and on
   `SunOnMap`, never on the slider. Tula: 429 lines — 356 fences, 72 walls (one of them a
   retaining wall), 1 hedge.
+- **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
+  same shadow every other object does: its own ribbon, offset by `BRIDGE_HEIGHT` (6 m)
+  through `shadow_length_scale()`, drawn under the bridge and over whatever it crosses.
+  Nothing else produced it — the ground shadow layer only knows buildings — and a bridge
+  over the river is the most visible thing there is on water.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
