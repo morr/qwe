@@ -260,13 +260,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
   **world position**, so two overlapping ribbons of one layer get the same pixel (the
   junction trick survives). Per `SurfaceKind` (`Ground | Park | Wood | Grass | Sand |
-  Water | Street | Deck | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
+  Water | Street | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
   octaves of value noise from `mottle_scale` down to an eighth of it, with a per-channel
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
   (three octaves from `grain_scale` down to a quarter), **speckle** (a thresholded noise
   field → sparse dark dots, grass tufts and undergrowth on Park/Grass/Wood), **drift** (the
-  mottle slides with `globals.time` — only Water), and the **markings** block (Street and
-  Deck — a bridge deck carries its street's lines). The zoom rule is one function,
+  mottle slides with `globals.time` — only Water), and the **markings** block (Street —
+  a bridge deck is the same kind and carries its street's lines; a footbridge in the same
+  mesh has no markings code and stays bare). The zoom rule is one function,
   `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
   contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
   a faded octave shifts no brightness, and zooming out makes a surface smoother, never

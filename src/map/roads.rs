@@ -438,7 +438,7 @@ pub fn spawn_roads(
             bridge_fills,
             Z_BRIDGE,
             "bridges",
-            surface(SurfaceKind::Deck),
+            surface(SurfaceKind::Street),
         ),
         (
             rail_beds,

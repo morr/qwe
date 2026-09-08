@@ -103,18 +103,17 @@ pub enum SurfaceKind {
     Sand,
     /// Площадная вода и русла.
     Water,
-    /// Проезжая часть улицы — асфальт с разметкой.
+    /// Проезжая часть улицы и настил моста — асфальт с разметкой. Настил
+    /// отдельного вида не получает: покрытие то же, а пешеходный мостик в
+    /// том же меше без кода разметки и так остаётся без линий.
     Street,
-    /// Настил моста: тот же асфальт с разметкой, в одном меше и улицы, и
-    /// пешеходные мостики (те кода разметки не получают).
-    Deck,
     /// Дорожка, тропа.
     Alley,
     Sidewalk,
 }
 
 impl SurfaceKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::Ground,
         Self::Park,
         Self::Wood,
@@ -122,7 +121,6 @@ impl SurfaceKind {
         Self::Sand,
         Self::Water,
         Self::Street,
-        Self::Deck,
         Self::Alley,
         Self::Sidewalk,
     ];
@@ -192,7 +190,7 @@ impl SurfaceKind {
                 ..flat
             },
             // асфальт: заплаты в десятки метров и мелкое зерно покрытия
-            Self::Street | Self::Deck => SurfaceParams {
+            Self::Street => SurfaceParams {
                 marking_color: Vec4::from_array(MARKING_COLOR.to_f32_array()),
                 mottle_amp: 0.03,
                 mottle_scale: 60.0,
@@ -376,7 +374,7 @@ mod tests {
     fn only_carriageways_carry_markings() {
         for kind in SurfaceKind::ALL {
             let marked = kind.params(1.0).marking_width > 0.0;
-            let carriageway = matches!(kind, SurfaceKind::Street | SurfaceKind::Deck);
+            let carriageway = matches!(kind, SurfaceKind::Street);
             assert_eq!(marked, carriageway, "{kind:?}");
         }
     }
