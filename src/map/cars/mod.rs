@@ -26,7 +26,8 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::buildings::LayerCost;
 use crate::map::meshing::{Break, MeshBuilder};
-use crate::map::osm::{MapData, RoadLine};
+use crate::map::osm::{MapData, PolyArea, RoadLine};
+use crate::map::parking;
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
@@ -63,6 +64,11 @@ const PARK_SLOP: f32 = 0.12;
 /// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
 /// те же пять пустых метров, что и на настоящем узле.
 const JUNCTION_CLEARANCE: f32 = 5.0;
+/// Какая доля мест занята на **размеченной стоянке** — там машин больше, чем
+/// вдоль улицы, но не под завязку. Своя константа, а не ползунок
+/// `CarStyle::occupancy`: тот про рваный ряд у бордюра, а полупустая стоянка
+/// — это другое наблюдение, и крутить их вместе нечем.
+const LOT_OCCUPANCY: f32 = 0.55;
 
 /// Ручки слоя машин: строки `Cars` и `Occupancy` секции Roads
 /// (`ui/roads.rs`) — путь и машины стоят на одной проезжей части, так что
@@ -228,7 +234,8 @@ pub fn rebuild_cars(
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
-    let cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
+    let mut cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
+    cars.extend(fill_lots(&map.parking));
     let builder = mesh_cars(&cars, detail);
     let count = cars.len();
     let vertices = builder.vertex_count();
@@ -321,6 +328,35 @@ fn park_cars(
         }
     }
     cars
+}
+
+/// Машины на размеченных стоянках: то же место, что и у разметки
+/// (`map::parking::stalls`), — иначе машина встала бы мимо своей полосы.
+/// Занято меньше половины мест: полная стоянка выглядит как автосалон, а
+/// пустая — как чертёж.
+fn fill_lots(lots: &[PolyArea]) -> Vec<Car> {
+    let mut cars = Vec::new();
+    for lot in lots {
+        let mut rng = Lcg::new(lot_seed(lot));
+        for stall in parking::stalls(lot) {
+            if rng.next_f32() >= LOT_OCCUPANCY {
+                continue;
+            }
+            cars.push(Car {
+                at: stall.at,
+                along: stall.along,
+                color: body::color_from_share(rng.next_f32()),
+                shape: CarShape::from_share(rng.next_f32()),
+            });
+        }
+    }
+    cars
+}
+
+/// Посев стоянки — от её первой вершины, тем же [`seed_from_point`], что у
+/// улиц, домов и крон.
+fn lot_seed(lot: &PolyArea) -> u32 {
+    seed_from_point(lot.outer.first().copied().unwrap_or(Vec2::ZERO))
 }
 
 /// Улица, вдоль которой паркуются: настоящая проезжая часть — то же
