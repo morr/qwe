@@ -63,11 +63,13 @@ impl GeoBounds {
 /// новых зон не содержит, и без этого её никто бы не перекачал.
 /// v3 — ноды `entrance`. v4 — ways `railway`. v5 — ways `natural=tree_row`.
 /// v6 — ноды `natural=tree`. v7 — линейные `waterway`. v8 — кварталы
-/// `landuse=residential|industrial|garages`.
-const QUERY_VERSION: u32 = 8;
+/// `landuse=residential|industrial|garages`. v9 — ограды участков
+/// `barrier=fence|wall|retaining_wall|hedge`.
+const QUERY_VERSION: u32 = 9;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
-/// луга, песок, кварталы (`landuse=residential|industrial|garages`), аллеи,
+/// луга, песок, кварталы (`landuse=residential|industrial|garages`), ограды
+/// участков (`barrier=*`), аллеи,
 /// одиночные деревья, стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
@@ -104,6 +106,7 @@ pub fn overpass_query(city: City) -> String {
   way["landuse"~"^(residential|industrial|garages)$"]({bbox});
   relation["landuse"~"^(residential|industrial|garages)$"]({bbox});
   way["barrier"="city_wall"]({bbox});
+  way["barrier"~"^(fence|wall|retaining_wall|hedge)$"]({bbox});
   node["entrance"]({bbox});
 );
 out geom;
