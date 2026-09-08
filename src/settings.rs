@@ -821,6 +821,10 @@ pub const Z_ALLEY_CASING: f32 = 1.4;
 pub const Z_ALLEY: f32 = 1.5;
 pub const Z_ROAD_CASING: f32 = 1.9;
 pub const Z_ROAD: f32 = 2.0;
+/// Тень моста (`map::roads`) — под самим мостом и над тем, что он пересекает:
+/// воду, дорогу, землю. Мост через реку — самая заметная вещь на воде, и без
+/// тени он лежит на ней плоской лентой.
+pub const Z_BRIDGE_SHADOW: f32 = 2.05;
 /// Мост (`bridge=yes`) — над обычными дорогами, чтобы эстакада крыла улицу,
 /// которую пересекает, но под рельсами: трамвай, идущий по мосту, обязан
 /// остаться виден. Бордюр — под настилом, по той же логике, что канты под
@@ -905,6 +909,8 @@ const _: () = {
     // кант — прямо под своей заливкой, у всех трёх видов лент
     assert!(Z_ALLEY_CASING < Z_ALLEY);
     assert!(Z_ROAD_CASING < Z_ROAD);
+    assert!(Z_ROAD < Z_BRIDGE_SHADOW);
+    assert!(Z_BRIDGE_SHADOW < Z_BRIDGE_CASING);
     assert!(Z_BRIDGE_CASING < Z_BRIDGE);
     // кант улицы кроет заливку аллеи: улица старше аллеи
     assert!(Z_ALLEY < Z_ROAD_CASING);

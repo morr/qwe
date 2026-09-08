@@ -418,6 +418,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (120 m²) gets no markings at all — a yard for four cars is not striped. **The markings
   and the cars read the same `stalls()` list**, or a car would stand across its own line.
   Tula: 171 lots.
+- **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
+  same shadow every other object does: its own ribbon, offset by `BRIDGE_HEIGHT` (6 m)
+  through `shadow_length_scale()`, drawn under the bridge and over whatever it crosses.
+  Nothing else produced it — the ground shadow layer only knows buildings — and a bridge
+  over the river is the most visible thing there is on water.
 - **Standing wagons** (`map/wagons.rs`) — a station throat with empty rails reads as a
   diagram; half the area of a real one is taken by standing stock. Same trick as the
   parked cars, and the whole difference is *where*: wagons go **only on service track**

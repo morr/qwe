@@ -494,8 +494,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
-  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2): a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
+  its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
+  `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
+  (`Z_BRIDGE` 2.2). The **shadow** is the deck's own ribbon offset by `BRIDGE_HEIGHT`
+  (6 m) through the usual `shadow_length_scale()`, on a blended material of its own (the
+  flat white one would eat the vertex alpha): nothing else produced it, because the
+  ground shadow layer only knows buildings, and a bridge over the river is the most
+  visible thing on the water. It sits **under** the deck and **over** what the bridge
+  crosses — except a railway, which is drawn above the bridge for its own reasons.
+  About the pair itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
   deck. The 2GIS look — the curb bands along both deck edges are what makes a bridge read
   as a bridge, so the curb draws **always**, independent of `RoadStyle::casing`, and is
