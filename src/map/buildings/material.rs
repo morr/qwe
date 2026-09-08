@@ -54,58 +54,118 @@ pub enum RoofKind {
 }
 
 impl RoofKind {
+    /// Исчерпывающий список материалов — по нему идёт витрина
+    /// `roof_gallery`.
+    pub const ALL: [Self; 6] = [
+        Self::Bitumen,
+        Self::Gravel,
+        Self::Seam,
+        Self::Corrugated,
+        Self::Tile,
+        Self::Membrane,
+    ];
+
     /// Код для [`ATTRIBUTE_ROOF`]; `0` — вершина вне кровли.
     pub fn code(self) -> u32 {
         self as u32 + 1
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bitumen => "Битум",
+            Self::Gravel => "Гравий",
+            Self::Seam => "Фальц",
+            Self::Corrugated => "Профлист",
+            Self::Tile => "Черепица",
+            Self::Membrane => "Мембрана",
+        }
+    }
+
+    /// Палитра материала: несколько правдоподобных цветов, дом выбирает свой
+    /// посевом. Кремль и храм красятся не по материалу — их палитры знает
+    /// [`palette`].
+    pub fn palette(self) -> &'static [Color] {
+        match self {
+            Self::Bitumen => &BITUMEN_COLORS,
+            Self::Gravel => &GRAVEL_COLORS,
+            Self::Seam => &SEAM_COLORS,
+            Self::Corrugated => &CORRUGATED_COLORS,
+            Self::Tile => &TILE_COLORS,
+            Self::Membrane => &MEMBRANE_COLORS,
+        }
+    }
+
+    /// Парапет ставится только на плоскую кровлю мягкого типа — там он и есть
+    /// на самом деле. У черепицы и профлиста вместо него свес, у фальца конёк.
+    ///
+    /// Свойство материала, а не слоя: по нему [`super::layers`] решает, класть
+    /// ли кайму, и по нему же витрина подписывает материал.
+    pub fn has_parapet(self) -> bool {
+        matches!(self, Self::Bitumen | Self::Gravel | Self::Membrane)
+    }
 }
 
 /// Палитры материалов — по несколько правдоподобных цветов на каждый, дом
-/// выбирает свой посевом. Разброс внутри палитры узкий: на снимке соседние
-/// дома отличаются оттенком, а не устраивают конфетти.
+/// выбирает свой посевом. Светлота выверена по спутниковому снимку Тулы
+/// **на общем плане**, где фактура уже погашена и от кровли остаётся один
+/// базовый цвет: битум панельного дома там — средне-серый (~0.55 в sRGB),
+/// а не почти чёрный; первая версия палитр (0.38–0.50) на светлой земле
+/// карты (~0.9) читалась грязно-тёмными коробками.
+///
+/// Разброс внутри палитры разный по назначению. У **плоских кровель
+/// корпусов** (битум, гравий, мембрана) он узкий: соседние панельные дома на
+/// снимке отличаются оттенком, а не светлотой, и широкий разброс дал бы
+/// конфетти. У **частного сектора** (черепица, а с ним фальц и профлист)
+/// наоборот — цвета яркие и разные: красная и коричневая металлочерепица,
+/// зелёная, синяя, серебристый и тёмный шифер стоят через забор друг от
+/// друга, и палитра из серых оттенков делала посёлок одноцветным.
 const BITUMEN_COLORS: [Color; 5] = [
-    Color::srgb(0.42, 0.41, 0.39),
-    Color::srgb(0.47, 0.45, 0.42),
-    Color::srgb(0.38, 0.37, 0.36),
-    Color::srgb(0.44, 0.42, 0.39),
-    Color::srgb(0.50, 0.48, 0.45),
+    Color::srgb(0.55, 0.54, 0.52),
+    Color::srgb(0.60, 0.58, 0.55),
+    Color::srgb(0.50, 0.49, 0.48),
+    Color::srgb(0.57, 0.55, 0.51),
+    Color::srgb(0.63, 0.61, 0.58),
 ];
 const GRAVEL_COLORS: [Color; 3] = [
-    Color::srgb(0.60, 0.58, 0.54),
-    Color::srgb(0.64, 0.62, 0.57),
-    Color::srgb(0.56, 0.54, 0.50),
+    Color::srgb(0.70, 0.68, 0.64),
+    Color::srgb(0.74, 0.72, 0.67),
+    Color::srgb(0.66, 0.64, 0.60),
 ];
 const SEAM_COLORS: [Color; 5] = [
-    Color::srgb(0.52, 0.53, 0.54),
-    Color::srgb(0.34, 0.45, 0.38),
-    Color::srgb(0.46, 0.30, 0.26),
-    Color::srgb(0.40, 0.44, 0.50),
-    Color::srgb(0.58, 0.58, 0.57),
-];
-const CORRUGATED_COLORS: [Color; 4] = [
     Color::srgb(0.62, 0.63, 0.64),
-    Color::srgb(0.45, 0.48, 0.53),
-    Color::srgb(0.38, 0.46, 0.38),
-    Color::srgb(0.50, 0.33, 0.28),
+    Color::srgb(0.36, 0.52, 0.42),
+    Color::srgb(0.60, 0.32, 0.27),
+    Color::srgb(0.44, 0.50, 0.60),
+    Color::srgb(0.70, 0.70, 0.69),
 ];
-const TILE_COLORS: [Color; 5] = [
-    Color::srgb(0.55, 0.34, 0.26),
-    Color::srgb(0.47, 0.30, 0.24),
-    Color::srgb(0.52, 0.51, 0.49),
-    Color::srgb(0.44, 0.44, 0.43),
-    Color::srgb(0.33, 0.40, 0.33),
+const CORRUGATED_COLORS: [Color; 5] = [
+    Color::srgb(0.70, 0.71, 0.72),
+    Color::srgb(0.42, 0.50, 0.62),
+    Color::srgb(0.38, 0.52, 0.40),
+    Color::srgb(0.62, 0.34, 0.28),
+    Color::srgb(0.56, 0.40, 0.30),
+];
+const TILE_COLORS: [Color; 7] = [
+    Color::srgb(0.72, 0.22, 0.18),
+    Color::srgb(0.78, 0.45, 0.30),
+    Color::srgb(0.58, 0.36, 0.26),
+    Color::srgb(0.32, 0.50, 0.36),
+    Color::srgb(0.30, 0.42, 0.64),
+    Color::srgb(0.72, 0.71, 0.68),
+    Color::srgb(0.45, 0.45, 0.44),
 ];
 const MEMBRANE_COLORS: [Color; 3] = [
-    Color::srgb(0.72, 0.72, 0.70),
-    Color::srgb(0.66, 0.67, 0.67),
-    Color::srgb(0.76, 0.76, 0.74),
+    Color::srgb(0.80, 0.80, 0.78),
+    Color::srgb(0.75, 0.76, 0.76),
+    Color::srgb(0.84, 0.84, 0.82),
 ];
 /// Храм остаётся зелёным, как его рисуют на картах, — но теперь это зелёный
-/// **металл**, с фальцем и бликом.
-const CHURCH_COLORS: [Color; 3] = [
-    Color::srgb(0.32, 0.46, 0.40),
-    Color::srgb(0.28, 0.42, 0.44),
-    Color::srgb(0.36, 0.48, 0.36),
+/// **металл**, с фальцем и бликом. Единственная палитра не по материалу:
+/// [`RoofKind::palette`] её не знает, её выбирает [`palette`] по назначению.
+pub const CHURCH_ROOF_COLORS: [Color; 3] = [
+    Color::srgb(0.36, 0.54, 0.46),
+    Color::srgb(0.32, 0.50, 0.52),
+    Color::srgb(0.40, 0.56, 0.40),
 ];
 
 /// Доли материалов по назначению — десять слотов, то есть проценты по
@@ -192,14 +252,39 @@ const SMALL_FOOTPRINT_MAX: f32 = 250.0;
 
 /// Кровля дома глазами отрисовки: чем крыта, какого цвета и с какой рамкой
 /// для шейдера.
-pub(super) struct RoofLook {
+pub struct RoofLook {
     /// Чем крыта — по нему решается, положен ли парапет.
-    pub(super) kind: RoofKind,
+    pub kind: RoofKind,
     /// Базовый цвет — из палитры материала; рампу по высоте и затенение
     /// ската кладут поверх вызывающие.
-    pub(super) base: Srgba,
+    pub base: Srgba,
     /// Что уходит в [`ATTRIBUTE_ROOF`] на каждой вершине кровли.
-    pub(super) frame: Roof,
+    pub frame: Roof,
+}
+
+impl RoofLook {
+    /// Кровля, заданная напрямую: материал, цвет, длинная ось дома и посев
+    /// вариаций фактуры. Игра все четыре числа выводит из самого дома
+    /// ([`roof_look`]) — витрина `roof_gallery` перебирает ими все материалы
+    /// и все их палитры.
+    ///
+    /// Посев несёт **два** независимых смысла, и оба выводит из него шейдер:
+    /// фазу швов (чтобы ковры соседних домов не выстроились в одну линию) и
+    /// **возраст** кровли (`roof.wgsl::roof_age` — хеш от посева: сколько на
+    /// битуме заплат, сколько на ней луж, насколько она выгорела). Отдельного
+    /// числа под возраст нет намеренно: на каждой вершине слоя зданий это ещё
+    /// четыре байта, а корреляция двух узоров одного дома глазом не видна.
+    pub fn new(kind: RoofKind, base: Srgba, axis: Vec2, seed: f32) -> Self {
+        Self {
+            kind,
+            base,
+            frame: Roof {
+                axis,
+                material: kind.code(),
+                seed,
+            },
+        }
+    }
 }
 
 /// Кровля этого дома: материал по назначению и посеву, цвет из палитры
@@ -219,20 +304,19 @@ pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
     let axis = min_area_rect(&building.outer)
         .and_then(|rect| (rect[1] - rect[0]).try_normalize())
         .unwrap_or(Vec2::X);
-    RoofLook {
+    RoofLook::new(
         kind,
-        base: Srgba {
+        Srgba {
             red: base.red * jitter,
             green: base.green * jitter,
             blue: base.blue * jitter,
             alpha: 1.0,
         },
-        frame: Roof {
-            axis,
-            material: kind.code(),
-            seed: (seed >> 24) as f32 / 255.0,
-        },
-    }
+        axis,
+        // старший байт посева — фаза фактуры и возраст кровли
+        // ([`RoofLook::new`]); младшие уже разобраны на слот и цвет
+        (seed >> 24) as f32 / 255.0,
+    )
 }
 
 /// Материал кровли этого дома. Кремль крыт металлом (его цвет всё равно свой),
@@ -269,16 +353,9 @@ fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
         return std::slice::from_ref(&super::KREMLIN_ROOF_COLOR);
     }
     if building.building_use == BuildingUse::Church {
-        return &CHURCH_COLORS;
+        return &CHURCH_ROOF_COLORS;
     }
-    match kind {
-        RoofKind::Bitumen => &BITUMEN_COLORS,
-        RoofKind::Gravel => &GRAVEL_COLORS,
-        RoofKind::Seam => &SEAM_COLORS,
-        RoofKind::Corrugated => &CORRUGATED_COLORS,
-        RoofKind::Tile => &TILE_COLORS,
-        RoofKind::Membrane => &MEMBRANE_COLORS,
-    }
+    kind.palette()
 }
 
 fn footprint_area(building: &PolyArea) -> f32 {

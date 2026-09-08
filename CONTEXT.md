@@ -150,7 +150,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `highway` and falls through — a way can be both street and track. A non-tram track is
     drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
     and two steel rails on the gauge, thinned out by **rail zoom LOD** into osm-carto's
-    dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD.
+    dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD, and is
+    drawn only while `TramStyle::visible`.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
@@ -184,12 +185,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
   whole building**; code `0` is *not a roof* — walls, gables and parapets ride in the same
-  mesh). A soft flat roof (bitumen / gravel / membrane) also gets a **parapet**: an inset
-  band along the ring, lit by `SHADOW_DIR` like a wall. Strength — `RoofStyle::texture`
+  mesh). **Roof age** is the second thing that seed carries (`roof.wgsl::roof_age`, hashed
+  from it, no attribute of its own): one number per building that sets how many repair
+  patches its bitumen carries (a young roof almost none, an old one a patch per second
+  cell), how much water stands on it, and — on every material — how faded and dirty it is.
+  A soft flat roof gets a **parapet**: an inset band along the ring, lit by
+  `SHADOW_DIR` like a wall — soft is a property of the material (`RoofKind::has_parapet`:
+  bitumen / gravel / membrane), not of the layer that draws it. Every flat roof of the
+  city, in both flat modes and 2.5D, is laid by one call — **`push_flat_roof`** (fill +
+  parapet). Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
   the walls under it**, deliberately: that is the relation an aerial photo has, and the
-  older "roof lighter than wall" rule is retired with the per-use roof palette. Detail in
-  the `osm-map` skill.
+  older "roof lighter than wall" rule is retired with the per-use roof palette. Every
+  material and every palette side by side, with a house per colour from a 30 m block down
+  to an 8 m shed: `cargo run --example roof_gallery`. Detail in the `osm-map` skill.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -272,10 +281,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
   no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
   their own z-slots and primitives (`push_dashes`, `push_ticks`, `push_rails`). Rail and
-  tram answer to **no style resource at all** — their geometry is a function of the camera
+  tram answer to **no style resource** for their *geometry* — it is a function of the camera
   zoom (a **zoom bucket** each — `ZoomBucket<T>` over the layer's own LOD table,
   `map/zoom.rs`; seeded from the camera on world entry, then recomputed every frame), so a
   smoothing knob that moved the centerline would slide the track against its own ballast.
+  The tram's one resource is **TramStyle** — `visible` alone, **off** by default (the blue
+  line lies on the carriageway and at city zoom reads as another street layer), the `Tram`
+  row of the Roads section (the track runs on the carriageway, so it is read with the roads);
+  a change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
 
 ## Navigation
 

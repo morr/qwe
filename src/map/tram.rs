@@ -3,11 +3,13 @@
 //! толщину («почти gizmo»), а шпалы редеют с отъездом камеры и на общем плане
 //! исчезают, иначе они сливаются в сплошную массу. Обычные ж/д пути — в
 //! `map/rail.rs`, со своей таблицей ступеней и своими слоями; стиль дорог
-//! (`RoadStyle`) не касается ни тех, ни других.
+//! (`RoadStyle`) не касается ни тех, ни других. Ручка у трамвая одна —
+//! [`TramStyle::visible`], рисовать его или нет.
 //!
 //! Навмеша путь не касается — люди ходят через рельсы как по земле.
 
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
@@ -31,12 +33,27 @@ const TRAM_COLOR: Color = Color::srgb(0.290, 0.451, 0.780);
 /// при переходе через порог зума.
 const TRAM_SMOOTH_WIDTH: f32 = 1.2;
 
-/// Стиль зафиксирован, без ручек панели: на линии в полтора-два экранных
-/// пикселя стык излома не читается вовсе, а Strong-сглаживание неотличимо от
-/// Light. Осевая всегда слегка сглажена — ломаная OSM на повороте даёт тонкой
-/// линии заметный угол.
+/// Стиль зафиксирован — панель переключает только видимость ([`TramStyle`]): на
+/// линии в полтора-два экранных пикселя стык излома не читается вовсе, а
+/// Strong-сглаживание неотличимо от Light. Осевая всегда слегка сглажена —
+/// ломаная OSM на повороте даёт тонкой линии заметный угол.
 const TRAM_JOIN: RoadJoin = RoadJoin::Round;
 const TRAM_SMOOTHING: RoadSmoothing = RoadSmoothing::Light;
+
+/// Единственная ручка трамвая — рисовать его или нет; строка `Tram` в секции
+/// Roads (`ui/roads.rs`), пишется и по BRP, сохраняется между запусками.
+/// Правка пересобирает только трамвайный слой ([`rebuild_tram`]) — держать
+/// тумблер в [`RoadStyle`](crate::map::RoadStyle) значило бы гнать полную
+/// пересборку дорожных слоёв на каждое переключение трамвая.
+///
+/// Синяя линия с насечкой лежит на самой проезжей части и на общем плане
+/// читается как ещё один слой улиц — трамвай выключен, пока его не включат.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "tram")]
+pub struct TramStyle {
+    pub visible: bool,
+}
 
 /// Шпала одной ступени: длина поперёк пути, толщина и шаг, м. Насечка обязана
 /// быть заметно длиннее толщины самой линии — иначе она сливается с ней в
@@ -178,18 +195,23 @@ pub(crate) fn push_tram(builder: &mut MeshBuilder, points: &[Vec2], lod: &TramLo
     }
 }
 
-/// Пересборка трамвайного меша при смене ступени зума — дорожные и рельсовые
-/// слои не трогаются.
+/// Пересборка трамвайного меша при смене ступени зума или переключении
+/// [`TramStyle`] — дорожные и рельсовые слои не трогаются. Выключенный трамвай
+/// проходит через ту же пересборку: деспавн старого слоя и никакого нового.
 pub fn rebuild_tram(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     bucket: Res<TramZoomBucket>,
+    style: Res<TramStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<TramLayerTag>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
+    }
+    if !style.visible {
+        return;
     }
     spawn_tram(
         &mut commands,

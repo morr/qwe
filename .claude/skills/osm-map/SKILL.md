@@ -498,7 +498,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     centerline by half the gauge, using the very `miter_offsets` that build a ribbon's
     edge, so the rails hold the gauge through a bend instead of drifting outward at the
     corner. `push_dashes` (far buckets) and `push_ticks` (ties) are as before.
-  - **No style resource.** Like the tram, rails ignore `RoadStyle` and hardwire
+  - **No style resource.** Like the tram (whose only resource is a visibility toggle),
+    rails ignore `RoadStyle` and hardwire
     `Round` + `Light` with a fixed `RAIL_SMOOTH_WIDTH` (5 m), so the centerline is
     identical on every bucket — a smoothing knob would slide the track against its own
     ballast, and an LOD switch would wiggle it.
@@ -515,10 +516,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
   a perpendicular bar rather than a piece of the path, and the first one is offset half
   a step so a bar never lands exactly on a way endpoint and pairs into a cross at joins.
-  The style is fixed, no panel and no resource: on a line 1.5–2 px wide a join style is
-  invisible and Strong smoothing is indistinguishable from Light, so it is hardwired to
-  `Round` + `Light` (`TRAM_JOIN` / `TRAM_SMOOTHING`), and the sparse tie spacing is
-  baked into the LOD table.
+  The style is fixed, and the panel has exactly one row: on a line 1.5–2 px wide a join
+  style is invisible and Strong smoothing is indistinguishable from Light, so it is
+  hardwired to `Round` + `Light` (`TRAM_JOIN` / `TRAM_SMOOTHING`), and the sparse tie
+  spacing is baked into the LOD table.
+
+  **`TramStyle`** (resource, one field `visible`, **off** by default — the blue line lies on
+  the carriageway and at city zoom reads as another street layer — BRP-writable, persisted,
+  settings group `tram`) is therefore the whole style surface: the `Tram` row at the bottom
+  of the **Roads** section (`ui/roads.rs`) — the track runs on the carriageway, so it is
+  read together with the roads rather than given a section of its own for one row. It is
+  **not** a field of `RoadStyle`, and that is the point: a `RoadStyle` edit reruns
+  `rebuild_roads`, and hiding the tram would then remesh every road layer for nothing.
+  `rebuild_tram` is gated on `retuned::<TramZoomBucket>.or_else(retuned::<TramStyle>)` and
+  the invisible case goes through it like any other — despawn the old layer, build no new
+  one — so there is no second path that could forget the despawn.
 
   **Tram zoom LOD** (`TRAM_LODS`) — the mesh is rebuilt at discrete zoom thresholds,
   pseudo-gizmo style: five buckets over the camera zoom range, each with its own line
@@ -574,8 +586,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     itself anywhere: no double-darkening between wings of one block or neighbouring
     buildings (unlike tree shadows, which still stack).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
-    the roof toward `ROOF_TALL_COLOR` (0.34, a dark neutral — it followed the palette down
-    when roofs became materials), max 0.7; no-height buildings and the Kremlin keep their
+    the roof toward `ROOF_TALL_COLOR` (0.20, a near-black neutral — it must be darker in
+    luminance than every palette colour, saturated tile included, or the ramp inverts),
+    max 0.3 (a 27 m block: 0.55 → 0.48); no-height buildings and the Kremlin keep their
     material colour.
   - **2.5D (Extrusion)** — watabou-style: roof lifted by `lift = height ×
     EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 2.5–30 m.
@@ -637,10 +650,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     Kremlin too (and keeps `KREMLIN_ROOF_COLOR`), and `Other` — half the city — splits by
     footprint at the same `SMALL_FOOTPRINT_MAX` 250 m² the gable rule uses: a small box is
     a private house, a big one a block.
-  - **The colour** comes from that material's own palette (3–5 plausible shades, picked
-    by another slice of the same seed, then ±3 % of value). The palettes are deliberately
-    **tight in value and wide in hue** — neighbouring roofs on a photo differ in shade,
-    not in brightness, and a wide value spread reads as confetti.
+  - **The colour** comes from that material's own palette (3–7 plausible shades, picked
+    by another slice of the same seed, then ±3 % of value). **Value is calibrated against
+    the aerial photo at the city zoom**, where the texture has faded and the base colour
+    is all that is left: a panel block's bitumen is a mid grey there (~0.55 sRGB, palette
+    0.50–0.63), not the 0.38–0.50 of the first version, which on the map's ~0.9 ground
+    read as dirty-dark boxes — fine close up, unreal zoomed out. The spread differs by
+    what the roof covers: the **flat roofs of blocks** (bitumen, gravel, membrane) are
+    **tight in value and wide in hue** — neighbouring panel blocks on a photo differ in
+    shade, not in brightness, and a wide value spread there reads as confetti — while the
+    **private sector** (tile, and the seam / corrugated it also draws) is **bright and
+    many-hued**: red and brown metal tile, green, blue, silver and dark slate stand fence to
+    fence, and a palette of greys made the whole quarter one colour.
   - **The texture** is a `Material2d` in the shape of `SurfaceMaterial`: one material for
     the whole app (`RoofMaterialHandle`, built at `Startup`), a `RoofParams` uniform
     (`light` = `-SHADOW_DIR`, `intensity` = `RoofStyle::texture`) and a per-vertex
@@ -652,7 +673,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     layer) and come out with their vertex colour untouched.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
-    line up: bitumen — 0.95 m roll seams, scattered repair patches, ponding stains; gravel —
+    line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
+    **age** below), ponding stains; gravel —
     strong fine grain and bright specks; seam metal — a lit rib and its shadow every
     0.62 m; corrugated — a 0.30 m wave plus 1.05 m sheet laps; tile — 0.32 m rows with a
     shadow line and per-tile jitter; membrane — 2 m sheet seams. **Rolls and tile rows run
@@ -671,25 +693,75 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
     rule the fix follows, and the same one the asphalt wear already followed: only a
-    minority of cells carry the feature (`PATCH_SHARE` 0.22), and inside its cell the
+    minority of cells carry the feature (the `share` argument), and inside its cell the
     feature is smaller than the cell and jittered, so two neighbours never meet at a cell
     boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
+  - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
+    the same seed** the texture phase rides on, and with a fixed patch share that was the
+    missing half of the patch fix: a minority of cells carried a patch, but *the same*
+    minority on every bitumen roof, so the whole district read as re-roofed and repaired in
+    one year. Age drives the patch share (`PATCH_SHARE_NEW` 0.04 → `PATCH_SHARE_OLD` 0.28,
+    mixed by `age²` — age is uniform, repairs are not; with ⟨age²⟩ = 1/3 the mean share
+    lands at 0.12, half the old fixed 0.22, so a patched roof is an event against clean
+    neighbours instead of the district's baseline), the ponding amount (0.07 → 0.13) and,
+    on **every** material, the common fade-and-dirt amplitude (×0.75 → ×1.35) — the last
+    one is what makes the age read as age rather than as a patch counter.
+    It gets **no vertex attribute of its own**:
+    the seed is already a per-building random number the shader hashes several ways
+    (`seed·17`, `seed·11`, `seed·37`), the correlation between two patterns of one building
+    is not visible, and a fifth float would cost four bytes on every vertex of the building
+    layer. The consequence for the gallery: its `Seed` knob rolls the age too — that is how
+    a new roof is compared against an old one there.
   - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
-    membrane, `has_parapet`) gets a 0.7 m inset band along its ring and every courtyard
+    membrane) gets a 0.7 m inset band along its ring and every courtyard
     ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
     dark on the shaded ones. Tile, seam and corrugated get none — they end in an eave, not
-    a parapet. The band carries **no** roof frame: a roll seam crossing a concrete coping
+    a parapet. *Soft* is a property of the material, so the rule lives on it —
+    **`RoofKind::has_parapet`** (`material.rs`), not on the layer that happens to draw the
+    band. The band carries **no** roof frame: a roll seam crossing a concrete coping
     would read as a crack. `MeshBuilder::push_inset_band_with` (the per-edge-colour
     sibling of `push_inset_band`) exists for exactly this.
+  - **One call lays every flat roof** — `layers.rs::push_flat_roof(builder, look, outer,
+    holes, color)`: set the roof frame, fill the contour with its courtyards, add the
+    parapet if the material has one. Both callers use it — the flat modes with the real
+    contour, 2.5D with the contour already lifted onto the walls — and it is `pub` because
+    the `roof_gallery` example builds its houses with it. Slopes stay outside it: a gable
+    roof is computed by the caller, which needs the same `GableRoof` for the gables it
+    draws *with the walls*, before the roof.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
     than wall, so the wall reads as a band under it" rule, which is retired: on a photo a
     dark bitumen roof over light panel walls is the normal relation, and the 2.5D box is
-    held together by the two visible walls' own tones. The height ramp (`ShadowsTint`)
-    kept its direction only because `ROOF_TALL_COLOR` moved with the palette, from 0.71 to
-    0.34 — against the new bases the old target would have made tall roofs *lighter*.
+    held together by the two visible walls' own tones. The relation is "as a rule": the
+    light materials (membrane, gravel, silver tile) sit above their walls, as they do on
+    the photo. The height ramp (`ShadowsTint`) keeps its direction only while
+    `ROOF_TALL_COLOR` is darker than every base — 0.71 with the near-white per-use roofs,
+    0.34 with the first dark bitumen, and now a near-black 0.20 with a short mix (0.3): a
+    mid-value neutral would *lighten* a saturated red or green tile, and the old 0.34 / 0.7
+    pair would have pulled a nine-storey bitumen roof from 0.55 back to 0.45, undoing the
+    brightening at the very zoom it was made for.
   - **`RoofStyle::texture`** (section Buildings, row `Roof texture`, persisted, BRP) is
     the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
     only, so dragging the slider rebuilds nothing.
+  - **The gallery** — `cargo run --example roof_gallery` (`examples/demos/roof_gallery/`,
+    the shape of `tree_gallery`): seven blocks — six materials plus the church palette —
+    each with **a house per palette colour**, sized from a 30 m block down to an 8 m shed,
+    so the two things a still picture cannot say are said at once: the palette's spread
+    (tight in value, wide in hue) and that the texture is in **metres** and does not scale
+    with the house. Knobs are what the game reads off the building itself — long axis,
+    phase seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
+    prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
+    zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
+    panel lists the shader's own **tuning constants** (patch cell, patch size, the two
+    share ends), parsed out of `roof.wgsl` itself by `constants.rs` (`include_str!`, lines
+    of the form `const NAME: f32 = …;`) rather than mirrored as Rust numbers — a mirror
+    would drift on the first edit and the gallery would then lie about exactly what it is
+    opened for. They are text, not knobs: the numbers live in the shader. What the gallery may
+    **not** do is roll its own quad: houses go through `push_flat_roof`, the parapet
+    marker in a block's caption comes from `RoofKind::has_parapet`. It picks material and
+    colour directly (`RoofLook::new`) instead of through `roof_look`, because the seed
+    cannot reach every combination — a membrane never lands on a private house — and it
+    drops the ±3 % seeded jitter so the hex printed under a house is the constant in
+    `material.rs`.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment
