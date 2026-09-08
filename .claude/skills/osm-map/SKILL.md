@@ -496,13 +496,52 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
   its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
   `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2). The **shadow** is the deck's own ribbon offset by `BRIDGE_HEIGHT`
-  (6 m) through the usual `shadow_length_scale()`, on a blended material of its own (the
-  flat white one would eat the vertex alpha): nothing else produced it, because the
-  ground shadow layer only knows buildings, and a bridge over the river is the most
+  (`Z_BRIDGE` 2.2). The **shadow** is the deck's own band, offset along `shadow_dir()` by
+  the deck height through the usual `shadow_length_scale()`, on a blended material of its
+  own (the flat white one would eat the vertex alpha). Nothing else produced it, because
+  the ground shadow layer only knows buildings, and a bridge over the river is the most
   visible thing on the water. It sits **under** the deck and **over** what the bridge
   crosses — except a railway, which is drawn above the bridge for its own reasons.
-  About the pair itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
+  Five decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
+  lie, and every one of them was a bug report first:
+
+  - **The height follows the span** (`bridge_height` = `SPAN_TO_HEIGHT` 1/8 of the length,
+    capped at `BRIDGE_HEIGHT` 6 m, so a span over 48 m is at the ceiling). It was a flat
+    6 m, and OSM hands `bridge=yes` to far more than spans: embankment steps, the pavement
+    beside a flyover, a 4 m plank over a storm drain. A 6 m shadow under a 20 m path that
+    stands on level ground is the loudest lie the map can tell, because **a shadow reads
+    as height** and nothing else on the map states it.
+  - **The centerline is densified to `SHADOW_STEP` (2 m) first** (`densify`). The ramp
+    below lives in the vertices, and **42 of Tula's 61 bridge ways carry exactly two
+    points** — the Упа crossing among them — so every vertex was an end, the rise was zero
+    everywhere, and the shadow landed exactly under the deck, i.e. nowhere. The ways that
+    did have vertices (a 571 m flyover with 42 of them, one per ~14 m) got a shadow that
+    stepped from vertex to vertex in visible teeth.
+  - **The offset ramps from zero at each end** (smoothstep over `RAMP_SHARE` 0.25 of the
+    length capped at `RAMP_MAX` 25 m) — at the abutment the deck is on the ground and
+    casts nothing, and the constant-offset version poked a dark band past the deck onto
+    the street that joins it, which is exactly where a bridge meets a road and where the
+    eye is.
+  - **The rise is clamped by the span left ahead of the shadow** (`room / |offset·t|`,
+    `room` measured to the end the offset points at). The ramp is not enough on its own: a
+    smoothstep climbs faster than the arc advances, so on a short bridge the shadow
+    overtook its own end anyway and lay past the abutment as a wedge — the artifact that
+    survived two rounds of fixing the ramp.
+  - **The band is `SHADOW_SPREAD` (1 m) wider than the deck on each side**, tapering with
+    the same rise. A plate's shadow is its silhouette *translated*, so the offset splits
+    into a crosswise part (the visible strip beside the deck) and a lengthwise one (the
+    band slides along itself and stays under the deck) — a bridge running along the sun
+    azimuth has no crosswise part at all and showed nothing, which is what the footbridges
+    over the ponds did. The fringe is the water the deck cuts off from the sky plus the
+    railing shadow and the slab's thickness, and unlike the offset it barely depends on
+    the height.
+
+  Because the width varies along the band it is **not** a `push_ribbon`: the rails come
+  from `miter_offsets` scaled per point, and go in as one `push_polygon` quad per segment,
+  adjacent quads sharing their edge vertex for vertex so a translucent layer never doubles
+  over itself.
+
+  About the deck itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
   deck. The 2GIS look — the curb bands along both deck edges are what makes a bridge read
   as a bridge, so the curb draws **always**, independent of `RoadStyle::casing`, and is
@@ -667,6 +706,30 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     like, and it is cheaper than finding each stall's neighbour.
   - Tula: **171 lots**. Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge`, added in
+  `QUERY_VERSION` **11**. What is drawn is a thin ribbon **and its shadow**, and the
+  shadow is the point: from above a fence is a 25 cm hair, and on a photo it is the dark
+  thread beside it that you actually see. In a private-house district that grid of plot
+  boundaries *is* the texture of the district.
+  - **`FenceLine` is a separate type, not `WallLine` with a flag.** The kremlin wall is
+    impassable and goes into the navmesh; a fence is decoration and pawns walk through
+    it. Merging them would one day put 427 impassable lines across the courtyards the
+    whole crowd walks in — the same call as parked cars.
+  - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
+    nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
+    exactly the scale a fence has to be visible at; aiming for ~1.5 screen px is the
+    tram's trick and the honest one. The far bucket draws nothing at all, because at city
+    scale the plot grid turns into dirt.
+  - `fence_kind` is a whitelist for the reason every other one is: `barrier=*` also
+    carries `kerb`, `gate`, `bollard`, `block` — points and street furniture, not lines —
+    and `city_wall`, which the branch above already took.
+  - **The branch falls through**, like the rail and tree-row ones: a fenced pitch in OSM
+    is one way carrying `barrier=fence` *and* `leisure=pitch`, and it has to become both.
+    With a `return` there Tula lost three pitches, three parking lots, a block and a park
+    to the fence branch — caught by the counts in the `osm map:` line, not by any test,
+    which is why there is a test now.
+  - Tula: 356 fences, 71 walls, 1 hedge (the audit's `barrier=hedge` row was right that
+    live hedges are mapped as `barrier`, not `natural`).
 - **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
   place that stayed empty: a station throat. On a photo half of it is standing stock, and
   without that the yard reads as a track diagram.

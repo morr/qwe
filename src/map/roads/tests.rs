@@ -133,6 +133,70 @@ fn bridge_curb_ends_are_square_under_every_join() {
     assert!(max_x(&fill) > 20.0);
 }
 
+/// Подъём настила живёт в вершинах осевой, а прямой мост в OSM — это ровно
+/// две точки, и обе торцы (42 из 61 моста Тулы, включая мост через Упу). Пока
+/// путь тени не догущался, `rise` в обеих был нулём, тень ложилась точь-в-точь
+/// под настил и пропадала целиком: мостики через пруд не отбрасывали тени
+/// вовсе.
+#[test]
+fn a_straight_two_point_bridge_still_casts_a_shadow() {
+    let deck = [Vec2::ZERO, Vec2::new(60.0, 0.0)];
+    let shadow = bridge_shadow_path(&deck);
+
+    // у береговой опоры настил лежит на земле — торцы теневого пути на месте
+    assert_eq!(shadow[0].rise, 0.0);
+    assert!(shadow[0].at.distance(deck[0]) < 1e-3);
+    let end = &shadow[shadow.len() - 1];
+    assert_eq!(end.rise, 0.0);
+    assert!(end.at.distance(deck[1]) < 1e-3);
+
+    // а середина поднялась на полную высоту и отъехала по свету: шесть метров
+    // при любом разумном солнце дают больше метра тени (порог, а не точное
+    // число, — высота солнца это глобаль, которую крутят соседние тесты)
+    let middle = &shadow[shadow.len() / 2];
+    assert_eq!(middle.rise, 1.0);
+    let drift = middle.at.distance(deck[0].midpoint(deck[1]));
+    assert!(
+        drift > 1.0,
+        "the deck shadow stayed under the deck ({drift} m)"
+    );
+}
+
+/// Мостик, идущий ровно по азимуту солнца: поперечной части у сдвига нет, и
+/// тень-силуэт целиком прячется под настилом. Видимой её делает кайма — и
+/// кайма же обязана сойти к нулю у торцов, где настил лежит на земле.
+#[test]
+fn a_bridge_along_the_sun_is_still_outlined() {
+    let along = shadow_dir() * 60.0;
+    let deck = [Vec2::ZERO, along];
+    let reach = 2.55;
+    let mut builder = MeshBuilder::default();
+    push_bridge_shadow(&mut builder, &bridge_shadow_path(&deck), reach);
+
+    // ширину меряем поперёк моста — по проекции на нормаль его направления
+    let across = along.normalize().perp();
+    let (mut inside, mut ends) = (0.0_f32, 0.0_f32);
+    for position in builder.positions_for_test() {
+        let point = Vec2::new(position[0], position[1]);
+        let side = across.dot(point).abs();
+        // торцы — первые и последние два метра ленты
+        let at = along.normalize().dot(point);
+        if at < 2.0 || at > along.length() - 2.0 {
+            ends = ends.max(side);
+        } else {
+            inside = inside.max(side);
+        }
+    }
+    assert!(
+        inside > reach + 0.5 * SHADOW_SPREAD,
+        "the shadow band is no wider than the deck ({inside} m)"
+    );
+    assert!(
+        ends < reach + 0.5,
+        "the band still flares where the deck sits on the ground ({ends} m)"
+    );
+}
+
 #[test]
 fn sidewalks_belong_to_streets_not_service_roads() {
     // проезд (`service`, 5 м) — без тротуара; жилая улица и магистраль — с ним,

@@ -59,8 +59,10 @@ in `main.rs`.
   pitches → pitch
   markings → parking → parking
   markings → water → waterways → sidewalks →
-  alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
+  alley casings → alleys → road casings → roads → bridge shadows → bridge casings →
+  bridges → rail ballast
+  → rail ties → rail steel → tram → wagons → cars → fences → portal stain → corpses →
+  portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
@@ -418,11 +420,35 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (120 m²) gets no markings at all — a yard for four cars is not striped. **The markings
   and the cars read the same `stalls()` list**, or a car would stand across its own line.
   Tula: 171 lots.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge` as a line and,
+  more to the point, **its shadow**: from above a fence is a quarter-metre hair, and what
+  actually carries it on a photo is the dark thread lying beside it. In a private-house
+  district that grid of plot boundaries is the texture of the whole district, and without
+  it the houses stand in an open field. `FenceLine` is **not** a `WallLine` with a flag:
+  the kremlin wall is impassable and enters the navmesh, a fence is decoration and pawns
+  walk through it — 427 lines cutting the blocks would strand the crowd in the courtyards.
+  The parse branch **falls through** (a fenced pitch is one way tagged both ways and must
+  become both). The drawn width **grows as you zoom out** (`FENCE_LODS`, the tram's trick, aiming at
+  ~1.5 screen px) and the layer disappears entirely past 0.9 m/px, where the grid of plots
+  turns to dirt. Tula: 356 fences, 71 walls, 1 hedge.
 - **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
-  same shadow every other object does: its own ribbon, offset by `BRIDGE_HEIGHT` (6 m)
-  through `shadow_length_scale()`, drawn under the bridge and over whatever it crosses.
-  Nothing else produced it — the ground shadow layer only knows buildings — and a bridge
-  over the river is the most visible thing there is on water.
+  same shadow every other object does: its own band, offset through
+  `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
+  crosses. Nothing else produced it — the ground shadow layer only knows buildings — and a
+  bridge over the river is the most visible thing there is on water. Four rules make it
+  read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadow`:
+  **height follows the span** (`SPAN_TO_HEIGHT` 1/8, capped at `BRIDGE_HEIGHT` 6 m) —
+  OSM's `bridge=yes` also marks embankment steps and pavements that span nothing, and a
+  6 m shadow under a 20 m path is the loudest lie a map can tell, because a shadow reads
+  as height; **the offset tapers to zero at the abutments** (`RAMP_SHARE` 0.25 of the
+  length or `RAMP_MAX` 25 m, whichever is shorter), where the deck lies on the ground;
+  **the rise is additionally clamped by the span left ahead**, or the ramp — which climbs
+  faster than the arc advances — pushes the shadow past the deck's end as a dark wedge on
+  the street it joins; and the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on
+  each side, because a plate's shadow is its own silhouette translated, so a bridge
+  running along the sun hides all of it under itself. The centerline is densified to
+  `SHADOW_STEP` (2 m) first: the ramp lives in the vertices, and 42 of Tula's 61 bridges
+  are two-point ways whose every vertex is an end.
 - **Standing wagons** (`map/wagons.rs`) — a station throat with empty rails reads as a
   diagram; half the area of a real one is taken by standing stock. Same trick as the
   parked cars, and the whole difference is *where*: wagons go **only on service track**
