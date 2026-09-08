@@ -219,9 +219,17 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
-    // стены и оборудование — код 0 (фактуры нет), сама кровля — код материала
-    assert!(frames.iter().any(|frame| frame[2] == 0.0), "walls");
-    assert!(frames.iter().any(|frame| frame[2] > 0.0), "roof");
+    // у стены теперь своя рамка и свой код — по ней шейдер кладёт межэтажные
+    // швы; ноль остаётся тому, у чего фактуры нет вовсе (фронтон,
+    // оборудование), а у этой коробки нет ни того, ни другого
+    let wall = RoofKind::Wall.code() as f32;
+    assert!(frames.iter().any(|frame| frame[2] == wall), "walls");
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame[2] > 0.0 && frame[2] != wall),
+        "roof"
+    );
 }
 
 fn oblong(width: f32, length: f32) -> Vec<Vec2> {

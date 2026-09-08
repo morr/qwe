@@ -49,6 +49,16 @@ const SEAM: u32 = 3u;
 const CORRUGATED: u32 = 4u;
 const TILE: u32 = 5u;
 const MEMBRANE: u32 = 6u;
+const WALL: u32 = 7u;
+
+// Стена: этаж (настоящие 3 м × `EXTRUDE_SCALE` 0.35 — столько её метра
+// нарисовано), ширина панели и балкон в долях этажа. Балкон занимает нижние
+// две трети этажа и половину панели по ширине — как на панельном доме.
+const FLOOR: f32 = 1.05;
+const PANEL: f32 = 3.2;
+const BALCONY_HIGH: f32 = 0.72;
+const BALCONY_LOW: f32 = 0.12;
+const BALCONY_WIDE: f32 = 0.62;
 
 const TAU: f32 = 6.283185307;
 
@@ -252,6 +262,25 @@ fn roof_shade(
     } else if kind == MEMBRANE {
         shade -= 0.05 * stripes(v, 2.0, 0.08, px);
         shade += 0.025 * fbm3(p + vec2<f32>(91.0, 5.0), 1.2, px);
+    } else if kind == WALL {
+        // ось стены — она сама, поэтому `v` растёт **вверх по стене**, а `u`
+        // идёт вдоль неё: межэтажный шов это линия постоянного `v`
+        shade -= 0.055 * stripes(v, FLOOR, 0.05, px);
+        // вертикальные швы панелей
+        shade -= 0.035 * stripes(u, PANEL, 0.05, px);
+        // балконы: своя ячейка на этаж и панель, часть занята выступом.
+        // Ячейка берётся по **обеим** координатам, так что балконы стоят
+        // столбцами, как на настоящем доме, а не в шахматном порядке
+        let cell = vec2<f32>(floor(u / PANEL), floor(v / FLOOR));
+        let inside = fract(vec2<f32>(u / PANEL, v / FLOOR));
+        let has_balcony = hash21(cell + seed * 29.0) > 0.42;
+        let in_box = inside.y > BALCONY_LOW && inside.y < BALCONY_HIGH
+            && abs(inside.x - 0.5) < BALCONY_WIDE * 0.5;
+        // видно только вблизи: этаж на карте это доли пикселя почти всегда
+        let close = visible(FLOOR, px);
+        shade -= 0.10 * f32(has_balcony && in_box) * close;
+        // и лёгкая грязь по стене
+        shade += 0.02 * fbm3(p + vec2<f32>(57.0, 23.0), 2.0, px);
     }
     return shade;
 }
