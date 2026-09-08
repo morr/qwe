@@ -9,6 +9,7 @@ pub mod footprint;
 mod meshing;
 pub mod osm;
 mod parking;
+mod paths;
 mod pitch;
 mod rail;
 mod roads;
