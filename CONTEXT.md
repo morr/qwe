@@ -226,6 +226,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
   per-building body of the 2.5D layer, walls included, because a roof shape does not read
   without them. Detail in the `osm-map` skill.
+- **Roof shadows** (`map/buildings/layers.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
+  — the one place the shadow model used to lie outright. The ground shadow layer sits
+  **under** every building layer, so a nine-storey block did not darken the five-storey
+  roof beside it. This second layer sits **over** them and carries exactly the missing
+  piece: for each building, the union of its taller neighbours' shadow sweeps
+  **intersected with its own footprint** (i_overlay, `Intersect` + `NonZero` in one call,
+  so two shadows on one roof do not stack into double darkness). A neighbour counts as a
+  caster only if it is `SHADOW_MIN_DROP` (3 m) taller — below that the shadow reaches the
+  eaves at most, and the pair test would run for nearly every pair in the city. Casters
+  are found through a grid of sweep boxes (`SHADOW_CELL` 48 m, just over the longest
+  shadow). In 2.5D the intersection is lifted by the target's own `Lean`, so it lands on
+  the roof as drawn.
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own

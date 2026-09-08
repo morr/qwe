@@ -69,6 +69,13 @@ const ROOF_TINT_MAX_MIX: f32 = 0.3;
 /// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
 /// зумах, где тени вообще видны.
 pub(super) const PENUMBRA_WIDTH: f32 = 1.0;
+/// Насколько сосед обязан быть выше, чтобы его тень легла на кровлю, м. Ниже
+/// этого тень попадает разве что на карниз, а считать её пришлось бы для
+/// каждой пары домов одной этажности — то есть почти для всех.
+const SHADOW_MIN_DROP: f32 = 3.0;
+/// Ячейка сетки, по которой ищутся отбрасывающие соседи, м: чуть шире самой
+/// длинной тени (`SHADOW_LENGTH_RANGE`).
+const SHADOW_CELL: f32 = 48.0;
 
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
@@ -380,6 +387,148 @@ pub(super) fn shadow_builder(
 /// объединения убрали (`references` в скилле `osm-map`).
 fn penumbra(direction: Vec2) -> f32 {
     direction.dot(shadow_dir()).max(0.0)
+}
+
+/// Тени, падающие **на кровли**: единственное место, где прежняя модель теней
+/// прямо врала. Теневой слой лежит под всеми зданиевыми, поэтому
+/// девятиэтажка не темнила крышу пятиэтажки под собой, и в плотном квартале
+/// это видно сразу.
+///
+/// Считается ровно то, чего не хватало: пересечение теневой развёртки дома с
+/// **контуром соседа, который ниже**. Ниже — потому что тень на крышу
+/// **выше** отбрасывающего не попадает, а равные по высоте затеняют друг
+/// друга разве что карнизом.
+///
+/// Порядок — по индексу дома, поэтому меш детерминирован.
+pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> MeshBuilder {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+
+    let mut builder = MeshBuilder::default();
+    let color = SHADOW_COLOR.to_linear();
+    let heights: Vec<f32> = buildings.iter().map(height_or_default).collect();
+    // тот же зажим, что у наземных теней, и так же едущий за солнцем: две
+    // половины одной тени не имеют права мериться по-разному
+    let stretch = sun_stretch();
+    let (min_length, max_length) = (
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    );
+    let sweeps: Vec<Vec<Vec<[f32; 2]>>> = buildings
+        .iter()
+        .zip(&heights)
+        .map(|(building, &height)| {
+            let length = (height * shadow_length_scale()).clamp(min_length, max_length);
+            let offset = shadow_dir() * length;
+            silhouette_chains(&building.outer, shadow_dir())
+                .into_iter()
+                .map(|chain| {
+                    let mut sweep: Vec<[f32; 2]> =
+                        chain.iter().map(|point| point.to_array()).collect();
+                    sweep.extend(chain.iter().rev().map(|point| (*point + offset).to_array()));
+                    sweep
+                })
+                .collect()
+        })
+        .collect();
+    let boxes: Vec<(Vec2, Vec2)> = buildings.iter().map(|b| ring_box(&b.outer)).collect();
+    let sweep_boxes: Vec<(Vec2, Vec2)> = sweeps
+        .iter()
+        .map(|shapes| {
+            let points: Vec<Vec2> = shapes
+                .iter()
+                .flatten()
+                .map(|point| Vec2::from_array(*point))
+                .collect();
+            ring_box(&points)
+        })
+        .collect();
+
+    // сетка по развёрткам: тень длиной до 45 м, домов семь с половиной тысяч,
+    // и перебор пар был бы пятьюдесятью миллионами проверок
+    let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, (min, max)) in sweep_boxes.iter().enumerate() {
+        let low = (*min / SHADOW_CELL).floor();
+        let high = (*max / SHADOW_CELL).floor();
+        for x in low.x as i32..=high.x as i32 {
+            for y in low.y as i32..=high.y as i32 {
+                cells.entry((x, y)).or_default().push(index);
+            }
+        }
+    }
+
+    for (target, building) in buildings.iter().enumerate() {
+        let (min, max) = boxes[target];
+        let lift = if extruded {
+            extrusion_lift(building, BuildingHeightMode::Extrusion)
+        } else {
+            Vec2::ZERO
+        };
+        let footprint: Vec<Vec<[f32; 2]>> = std::iter::once(&building.outer)
+            .chain(&building.holes)
+            .map(|ring| ring.iter().map(|point| point.to_array()).collect())
+            .collect();
+
+        let mut casters: Vec<usize> = Vec::new();
+        let low = (min / SHADOW_CELL).floor();
+        let high = (max / SHADOW_CELL).floor();
+        for x in low.x as i32..=high.x as i32 {
+            for y in low.y as i32..=high.y as i32 {
+                let Some(near) = cells.get(&(x, y)) else {
+                    continue;
+                };
+                casters.extend(near.iter().copied().filter(|&caster| {
+                    caster != target
+                        && heights[caster] - heights[target] >= SHADOW_MIN_DROP
+                        && boxes_overlap((min, max), sweep_boxes[caster])
+                }));
+            }
+        }
+        casters.sort_unstable();
+        casters.dedup();
+        if casters.is_empty() {
+            continue;
+        }
+
+        let cast: Vec<Vec<[f32; 2]>> = casters
+            .into_iter()
+            .flat_map(|caster| sweeps[caster].iter().cloned())
+            .collect();
+        // объединение развёрток и пересечение с контуром — за один вызов:
+        // NonZero склеивает перекрывающиеся тени, а Intersect обрезает их по
+        // дому. Без склейки две тени на одной крыше дали бы двойную темноту
+        for shape in cast.overlay(&footprint, OverlayRule::Intersect, FillRule::NonZero) {
+            let mut rings = shape.into_iter().map(|contour| {
+                contour
+                    .into_iter()
+                    .map(|point| Vec2::from_array(point) + lift)
+                    .collect::<Vec<Vec2>>()
+            });
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            let holes: Vec<Vec<Vec2>> = rings.collect();
+            builder.push_polygon(&outer, &holes, color);
+        }
+    }
+    builder
+}
+
+/// Осевой прямоугольник кольца.
+fn ring_box(ring: &[Vec2]) -> (Vec2, Vec2) {
+    let mut min = Vec2::splat(f32::MAX);
+    let mut max = Vec2::splat(f32::MIN);
+    for point in ring {
+        min = min.min(*point);
+        max = max.max(*point);
+    }
+    (min, max)
+}
+
+fn boxes_overlap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
+    a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
 }
 
 /// Контур в список для объединения, обходом против часовой стрелки — тем, что
