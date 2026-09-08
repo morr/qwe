@@ -5,6 +5,7 @@ pub mod buildings;
 // публичен по той же причине: витрина `car_gallery` расставляет ряды его же
 // вызовом (`cars_mesh`)
 pub mod cars;
+mod fences;
 pub mod footprint;
 mod meshing;
 pub mod osm;
@@ -75,6 +76,7 @@ impl Plugin for MapPlugin {
             .init_resource::<cars::CarZoomBucket>()
             .init_resource::<CarStyle>()
             .init_resource::<wagons::WagonZoomBucket>()
+            .init_resource::<fences::FenceZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -152,6 +154,8 @@ impl Plugin for MapPlugin {
                     cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<wagons::WagonLods>,
                     wagons::rebuild_wagons,
+                    zoom::seed_zoom_bucket::<fences::FenceLods>,
+                    fences::rebuild_fences,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -225,6 +229,10 @@ impl Plugin for MapPlugin {
                         zoom::update_zoom_bucket::<wagons::WagonLods>,
                         wagons::rebuild_wagons.run_if(
                             retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
+                        ),
+                        zoom::update_zoom_bucket::<fences::FenceLods>,
+                        fences::rebuild_fences.run_if(
+                            retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunStyle>),
                         ),
                     )
                         .chain()

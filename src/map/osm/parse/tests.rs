@@ -3,7 +3,9 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{BuildingUse, PitchKind, RailKind, WaterKind, distance_to_segment};
+use crate::map::osm::model::{
+    BuildingUse, FenceKind, PitchKind, RailKind, WaterKind, distance_to_segment,
+};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -313,6 +315,26 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
     assert_eq!(map.parks.len(), 1);
     // навмеша стоянка не касается — по ней ходят
     assert!(map.landuse.is_empty());
+}
+
+/// Ограды участков доезжают до `MapData::fences` и не смешиваются со стеной
+/// Кремля: та непроходима и лежит в `walls`.
+#[test]
+fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
+    let (sw, _, ne, _) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(&[("barrier", "fence")], vec![sw, ne])
+        .way(&[("barrier", "wall")], vec![sw, ne])
+        .way(&[("barrier", "hedge")], vec![sw, ne])
+        .way(&[("barrier", "city_wall")], vec![sw, ne])
+        // не линия и не ограда: калитка и бордюр
+        .way(&[("barrier", "gate")], vec![sw, ne])
+        .way(&[("barrier", "kerb")], vec![sw, ne])
+        .parse();
+
+    let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
+    assert_eq!(kinds, [FenceKind::Fence, FenceKind::Wall, FenceKind::Hedge]);
+    assert_eq!(map.walls.len(), 1);
 }
 
 /// Площадки разбираются по `leisure`, а поле — по `sport`/`surface`. Парк со

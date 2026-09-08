@@ -175,6 +175,29 @@ pub struct WallLine {
     pub width: f32,
 }
 
+/// Что за ограда — она же способ отрисовки (`map::fences`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FenceKind {
+    /// `barrier=fence` — доска, штакетник, профнастил.
+    Fence,
+    /// `barrier=wall|retaining_wall` — бетон или кирпич, светлее и шире.
+    Wall,
+    /// `barrier=hedge` — живая изгородь, зелёная и мягкая.
+    Hedge,
+}
+
+/// Ограда участка: полилиния и её род.
+///
+/// Отдельный тип, а не [`WallLine`] с полем: кремлёвская стена **непроходима
+/// и попадает в навмеш**, а забор — декорация, которую пешки проходят
+/// насквозь. Смешать их значило бы однажды перекрыть 427 линиями все дворы
+/// частного сектора.
+#[derive(Debug, Clone)]
+pub struct FenceLine {
+    pub points: Vec<Vec2>,
+    pub kind: FenceKind,
+}
+
 /// Род водотока — он же ширина по умолчанию, когда в данных нет `width`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaterKind {
@@ -415,6 +438,9 @@ pub struct MapData {
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
+    /// Ограды участков (`barrier=fence|wall|hedge`) — только рисуются, навмеш
+    /// не трогают: см. [`FenceLine`].
+    pub fences: Vec<FenceLine>,
     /// Линейные водотоки — реки, ручьи, каналы, канавы. В навмеш попадают
     /// (кроме труб), в отличие от рельсов: см. [`WaterLine`].
     pub water_lines: Vec<WaterLine>,

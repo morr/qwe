@@ -851,6 +851,9 @@ pub const Z_CAR: f32 = 2.7;
 /// Вагоны — на путях, то есть ниже машин и выше стального слоя рельсов:
 /// вагон стоит на рельсе, а не под ним.
 pub const Z_WAGON: f32 = 2.65;
+/// Ограды участков (`map::fences`) — над машинами и вагонами: забор стоит на
+/// земле, но пересекает и двор, и обочину, а спорить ему не с чем.
+pub const Z_FENCE: f32 = 2.75;
 /// Выжженная земля под порталом: над дорогами (перекрёсток обуглен), под
 /// трупами (тела на пятне видны).
 pub const Z_PORTAL_STAIN: f32 = 2.8;
@@ -924,7 +927,8 @@ const _: () = {
     // пятно под порталом кроет дороги, но не тела
     assert!(Z_TRAM < Z_WAGON);
     assert!(Z_WAGON < Z_CAR);
-    assert!(Z_CAR < Z_PORTAL_STAIN);
+    assert!(Z_CAR < Z_FENCE);
+    assert!(Z_FENCE < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
     assert!(Z_PORTAL < Z_BUILDING);

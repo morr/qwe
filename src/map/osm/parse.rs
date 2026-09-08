@@ -10,8 +10,8 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RailLine, RoadLine, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, point_in_area, point_in_polygon, ring_bounds,
+    AreaKind, FenceLine, MapData, PolyArea, RailLine, RoadLine, TreeCompose, TreeNode, TreeRow,
+    TreeRowLayout, WallLine, WaterLine, point_in_area, point_in_polygon, ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -340,6 +340,18 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         return;
     }
 
+    // Ограда участка — не стена: рисуется, но навмеша не касается. Ветка
+    // **не прерывает разбор**, как рельсовая и аллейная: обнесённое забором
+    // поле в OSM — это один way с `barrier=fence` **и** `leisure=pitch`, и он
+    // обязан стать и оградой, и площадкой. С `return` здесь Тула теряла три
+    // площадки, три стоянки, квартал и парк.
+    if let Some(kind) = fence_kind(&element.tags) {
+        map.fences.push(FenceLine {
+            points: points.clone(),
+            kind,
+        });
+    }
+
     let Some(kind) = area_kind(element) else {
         return;
     };
@@ -456,7 +468,8 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, is_building_passage,
-    is_oneway, is_oneway_backward, is_road_underground, is_roundabout, is_service_track,
-    is_underground, rail_class, road_class, row_spacing, tagged_lanes, water_class, water_width,
+    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, fence_kind,
+    is_building_passage, is_oneway, is_oneway_backward, is_road_underground, is_roundabout,
+    is_service_track, is_underground, rail_class, road_class, row_spacing, tagged_lanes,
+    water_class, water_width,
 };
