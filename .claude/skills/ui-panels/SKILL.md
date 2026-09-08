@@ -473,6 +473,11 @@ did not fit 1080 px and ran off the top of the screen.
   determinism restart request use it; do not hand-roll
   `resource_changed::<T>.and_then(not(resource_added::<T>))` again.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
+  **`OffscreenShotEvent`** → a second camera rendering into an offscreen texture, so a
+  covered or locked screen no longer means a black png (details in
+  `.claude/live-app-project.md`). One consequence for the UI layer: the main camera
+  carries **`IsDefaultUiCamera`** so the panels stay on it rather than following whichever
+  camera the engine picks — which also keeps them out of the offscreen frame.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.

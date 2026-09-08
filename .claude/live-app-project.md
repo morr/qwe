@@ -116,6 +116,31 @@ root, overwritten every time, plus a `screenshot.small.png` copy downscaled to 1
 window **must be visible** — `shot` raises it, but a full-screen editor over it still
 wins; a black png means exactly that, not a broken renderer.
 
+### The offscreen shot — when the window cannot be seen
+
+```bash
+$b event OffscreenShotEvent '{}'                                   # 1568×980 from where the camera is
+$b event OffscreenShotEvent '{"at":[2300,1900],"zoom":0.4,"path":"gsk.png"}'
+```
+
+`OffscreenShotEvent` (`dev.rs`) renders the frame into an **offscreen texture** with a
+camera of its own and writes the png without the window server being involved at all. That
+is the difference that matters: a **locked screen, a sleeping display or another window on
+top all make `brp shot` return solid black**, and there is no way to tell that from a
+rendering bug. This one keeps working — check `magick identify -format "%[fx:mean]"`, a
+real frame is around 0.2–0.4.
+
+Every field is optional: `at` (map metres) and `zoom` (metres per frame pixel) default to
+the user camera's, `size` to 1568 × 980 (long edge exactly at the downscale threshold, so
+the file reaches you unsquashed), `path` to `offscreen.png`. The camera carries the same
+post-processing as the real one (bloom), so the picture is what the
+window would show — **except the UI**, which stays on the main camera
+(`IsDefaultUiCamera` in `camera.rs`) and is out of the frame on purpose: this is a picture
+of the map, not of the app. It lives for `WARMUP_FRAMES` (2) frames and despawns itself.
+
+The file is written asynchronously like every screenshot, so wait for it (`until [ -f x ]`)
+rather than reading it immediately.
+
 ## Camera
 
 - `brp cam <x> <y>` moves the camera and sticks — coordinates are map metres, the map is
@@ -164,7 +189,7 @@ No PRNG state is stored anywhere to look at: a pawn carries `PawnId` +
 Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same path
 the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
-Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
+Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.
