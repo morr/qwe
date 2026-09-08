@@ -167,7 +167,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Gable roof** (`map/buildings/roofs.rs`) — a two-slope roof **inferred**, not read
   (`roof:shape` is rare): every house and every small untagged box whose outline nearly
   fills its minimum-area bounding rectangle gets a ridge along the rectangle's long axis;
-  L-shaped and courtyard buildings stay flat. Detail in the `osm-map` skill.
+  L-shaped and courtyard buildings stay flat, and so does the Kremlin — outside use-based
+  styling, as with its colour. Detail in the `osm-map` skill.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building

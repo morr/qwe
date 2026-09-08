@@ -51,6 +51,16 @@ did not fit 1080 px and ran off the top of the screen.
   enum exists so a section's place cannot be forgotten, and sorting a slotless one to the
   top would show that mistake as a mysteriously first panel body. `UiBuildSet` chains
   `Shell → Sections → Sort`.
+- **Bloom** (`post.rs::camera_post_process`) — the bundle `camera.rs` adds to the camera:
+  `Hdr`, `Tonemapping::None`, `DebandDither::Disabled` and `Bloom::NATURAL` at
+  `BLOOM_INTENSITY` 0.4 (well above `OLD_SCHOOL`'s 0.05 — one small source has to read
+  from the overview), `Additive` composite. Only the portal is brighter than 1.0:
+  `portal.rs` tints its sprite by `PORTAL_GLOW` (linear 2.0 / 2.2 / 3.6, blue-heavy so the
+  halo matches the funnel). The prefilter is `threshold` 1.1 / `threshold_softness` 0.1 —
+  the knee runs `threshold × softness` both ways, so it starts at 0.99 and a pure white
+  road (1.0) contributes nothing; 1.0 / 0.4 made everything above 0.6 glow and hazed the
+  whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
+  palette, and only the halo is wanted.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
   `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
   `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,
