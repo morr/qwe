@@ -125,6 +125,18 @@ impl RoadJoin {
             Self::Round => "Round",
         }
     }
+
+    /// Излом и торец ленты `MeshBuilder`. `None` — `Square`: ленты у него нет
+    /// вовсе, это `push_polyline` с продлёнными торцами. Одна таблица на всех,
+    /// кто кладёт ленту дороги ([`push_ribbon`], [`push_street_fill`]) —
+    /// разойдясь, они дали бы двум слоям одной улицы разные торцы.
+    fn ribbon_shape(self) -> Option<(RibbonJoin, RibbonCap)> {
+        match self {
+            Self::Square => None,
+            Self::Miter => Some((RibbonJoin::Miter, RibbonCap::Butt)),
+            Self::Round => Some((RibbonJoin::Round, RibbonCap::Round)),
+        }
+    }
 }
 
 /// Сколько раз осевая прогоняется через Chaikin перед построением ленты.
@@ -470,25 +482,10 @@ pub fn push_ribbon(
     color: LinearRgba,
     join: RoadJoin,
 ) {
-    match join {
-        RoadJoin::Square => builder.push_polyline(points, width, color),
-        RoadJoin::Miter => builder.push_ribbon(
-            points,
-            false,
-            width,
-            color,
-            RibbonJoin::Miter,
-            RibbonCap::Butt,
-        ),
-        RoadJoin::Round => builder.push_ribbon(
-            points,
-            false,
-            width,
-            color,
-            RibbonJoin::Round,
-            RibbonCap::Round,
-        ),
-    }
+    let Some((join, cap)) = join.ribbon_shape() else {
+        return builder.push_polyline(points, width, color);
+    };
+    builder.push_ribbon(points, false, width, color, join, cap);
 }
 
 /// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
@@ -502,10 +499,8 @@ fn push_street_fill(
     join: RoadJoin,
     breaks: &[Break],
 ) {
-    let (join, cap) = match join {
-        RoadJoin::Square => return builder.push_polyline(points, width, color),
-        RoadJoin::Miter => (RibbonJoin::Miter, RibbonCap::Butt),
-        RoadJoin::Round => (RibbonJoin::Round, RibbonCap::Round),
+    let Some((join, cap)) = join.ribbon_shape() else {
+        return builder.push_polyline(points, width, color);
     };
     builder.push_ribbon_broken(
         points,
