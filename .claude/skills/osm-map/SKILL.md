@@ -1038,9 +1038,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `|axis · light|`, so ribs pointing at the sun neither highlight nor shade. Every
     octave and every stripe grid fades by `visible(wavelength, px)`, the `surface.wgsl`
     rule, so nothing moirés when zoomed out; at the city zoom the texture is simply gone
-    and only the material's colour is left. The noise helpers are a **copy** of
-    `surface.wgsl`'s — there is no shader library in the project yet, and importing one
-    for four functions costs more than the copy.
+    and only the material's colour is left. The noise helpers come from
+    **`assets/shaders/noise.wgsl`**, imported by path
+    (`#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes, band}`)
+    — they were copied into both shaders until the second copy, and the `visible`
+    rule in particular is one that must not drift.
   - **The wall is the same mechanism, code `Wall`** (`layers.rs::wall_frame`). A wall sets
     the roof frame to **its own direction**, and that one choice is what makes it work: the
     shader's across-axis then measures distance *from* the wall line, i.e. up the wall, so
