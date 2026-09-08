@@ -8,11 +8,12 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
+use super::clutter::{flat_roof_items, push_items, ridge_chimney};
 use super::material::{RoofLook, roof_look};
 use super::roofs::gable_roof;
 use super::{
-    BuildingHeightMode, extrusion_dir, extrusion_lift, facade_color, height_or_default, ridge_lift,
-    shade_by_light,
+    BuildingHeightMode, RoofDetail, extrusion_dir, extrusion_lift, facade_color, height_or_default,
+    ridge_lift, shade_by_light,
 };
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
@@ -106,6 +107,14 @@ fn push_parapet(builder: &mut MeshBuilder, ring: &[Vec2], hole: bool, base: Srgb
     });
 }
 
+/// Конёк двускатной крыши: у ската `[карниз, карниз, конёк, конёк]` два
+/// последних угла и есть его концы. Отдельным полем `GableRoof` их не держит —
+/// они уже там, а труба на коньке единственный, кому они понадобились.
+fn ridge_of(roof: &super::roofs::GableRoof) -> (Vec2, Vec2) {
+    let [_, _, far, near] = roof.slopes[0].0;
+    (near, far)
+}
+
 /// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
 /// материала и парапет по краю, если материал мягкий. Ровно это игра кладёт
 /// на всякий дом без двускатной крыши — и в плоских режимах, где `outer` это
@@ -154,7 +163,7 @@ pub(super) fn wall_colors(
 pub(super) fn facade_and_roof_builders(
     buildings: &[PolyArea],
     passages: &[RoadLine],
-    tinted: bool,
+    detail: RoofDetail,
 ) -> (MeshBuilder, MeshBuilder) {
     let arches = arches_by_building(buildings, passages);
     let mut facades = MeshBuilder::default();
@@ -184,16 +193,28 @@ pub(super) fn facade_and_roof_builders(
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
         let look = roof_look(building);
-        let color = roof_color(building, &look, tinted);
+        let color = roof_color(building, &look, detail.tinted);
+        let mut items = Vec::new();
         match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
             Some(roof) => {
                 roofs.set_roof(Some(look.frame));
                 for (slope, slope_color) in roof.slopes {
                     roofs.push_quad(slope, slope_color);
                 }
+                if detail.clutter {
+                    items.extend(ridge_chimney(&look, ridge_of(&roof)));
+                }
             }
-            None => push_flat_roof(&mut roofs, &look, &building.outer, &building.holes, color),
+            None => {
+                push_flat_roof(&mut roofs, &look, &building.outer, &building.holes, color);
+                if detail.clutter {
+                    items = flat_roof_items(building, &look, Vec2::ZERO);
+                }
+            }
         }
+        // в плоском режиме у коробки нет стен — только тень и верх, как у
+        // самих домов в этих режимах
+        push_items(&mut roofs, &items, None, color);
     }
     (facades, roofs)
 }
@@ -333,7 +354,7 @@ pub(super) fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>
 pub(super) fn extrusion_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
-    tinted: bool,
+    detail: RoofDetail,
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
     let lift_dir = extrusion_dir();
@@ -378,7 +399,7 @@ pub(super) fn extrusion_builder(
         }
 
         let look = roof_look(building);
-        let color = roof_color(building, &look, tinted);
+        let color = roof_color(building, &look, detail.tinted);
         if let Some(roof) = gable_roof(building, lift, ridge_lift, color) {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
@@ -394,6 +415,10 @@ pub(super) fn extrusion_builder(
             for (slope, slope_color) in roof.slopes {
                 builder.push_quad(slope, slope_color);
             }
+            if detail.clutter {
+                let chimney: Vec<_> = ridge_chimney(&look, ridge_of(&roof)).into_iter().collect();
+                push_items(&mut builder, &chimney, Some(lift_dir), color);
+            }
             continue;
         }
 
@@ -404,6 +429,10 @@ pub(super) fn extrusion_builder(
             .map(|hole| hole.iter().map(|p| *p + lift).collect())
             .collect();
         push_flat_roof(&mut builder, &look, &roof_outer, &roof_holes, color);
+        if detail.clutter {
+            let items = flat_roof_items(building, &look, lift);
+            push_items(&mut builder, &items, Some(lift_dir), color);
+        }
     }
     builder
 }

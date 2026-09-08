@@ -47,6 +47,7 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferField>()
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
+            .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -94,6 +95,7 @@ impl Plugin for MapPlugin {
                 (
                     trees::recompose_row_trees,
                     trees::build_conifer_field,
+                    zoom::seed_zoom_bucket::<buildings::BuildingLods>,
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
@@ -131,9 +133,18 @@ impl Plugin for MapPlugin {
                                 .or_else(retuned::<TreeRowStyle>)
                                 .or_else(retuned::<ConiferNoiseStyle>),
                         ),
-                    buildings::rebuild_buildings
-                        .run_if(in_state(AppState::Playing))
-                        .run_if(retuned::<BuildingHeightMode>),
+                    // ступень зума решает, стоит ли на крышах оборудование;
+                    // порог редкий, а пересборка слоя — единственный способ его
+                    // снять, как у пути и трамвая
+                    (
+                        zoom::update_zoom_bucket::<buildings::BuildingLods>,
+                        buildings::rebuild_buildings.run_if(
+                            retuned::<BuildingHeightMode>
+                                .or_else(retuned::<buildings::BuildingZoomBucket>),
+                        ),
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     roads::rebuild_roads
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),

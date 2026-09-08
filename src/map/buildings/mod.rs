@@ -11,6 +11,7 @@
 //! крыша крыта, — и её фактуру рисует шейдер этого материала.
 
 mod arches;
+mod clutter;
 mod layers;
 pub mod material;
 mod roofs;
@@ -30,7 +31,8 @@ use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
-use crate::settings::Z_BUILDING;
+use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
 /// гаражей, охра у казённых зданий, белёный кирпич у храма.
@@ -138,14 +140,45 @@ impl BuildingHeightMode {
 #[derive(Component)]
 pub struct BuildingLayerTag;
 
+/// Ступени детализации кровли — единственное, чем зум правит слой зданий:
+/// вблизи на крышах стоит оборудование ([`clutter`]), дальше его нет. Коробка
+/// в метр становится субпиксельной и мерцает при панораме, а нарисована она в
+/// том же меше, что и дома, — снять её можно только пересборкой слоя, как
+/// пересобирают себя путь и трамвай.
+pub enum BuildingLods {}
+
+impl ZoomLods for BuildingLods {
+    fn max_zooms() -> impl Iterator<Item = f32> {
+        [ROOF_CLUTTER_MAX_ZOOM, f32::INFINITY].into_iter()
+    }
+}
+
+/// Текущая ступень: `0` — с оборудованием, `1` — без.
+pub type BuildingZoomBucket = ZoomBucket<BuildingLods>;
+
+/// Что билдеры слоёв рисуют сверх геометрии. Оба флага — не про режим высот,
+/// а про подробность, поэтому едут одним значением, а не парой булей в
+/// каждой сигнатуре.
+#[derive(Clone, Copy)]
+pub(super) struct RoofDetail {
+    /// Рампа тона крыш по высоте (режимы `*ShadowsTint`).
+    pub(super) tinted: bool,
+    /// Оборудование на кровле — по ступени зума.
+    pub(super) clutter: bool,
+}
+
 /// Спавн зданиевых слоёв в выбранном режиме. Вызывается из `spawn_map` при
 /// входе в мир и из `rebuild_buildings` при переключении режима.
+// материалы, режим, ступень зума и два среза `MapData` — восемь параметров,
+// и дробить их на структуру ради счётчика clippy незачем
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_buildings(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
     roof: &RoofMaterialHandle,
     mode: BuildingHeightMode,
+    bucket: BuildingZoomBucket,
     buildings: &[PolyArea],
     passages: &[RoadLine],
 ) {
@@ -177,11 +210,14 @@ pub fn spawn_buildings(
 
     match mode {
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
-            let tinted = mode == BuildingHeightMode::ExtrusionShadowsTint;
+            let detail = RoofDetail {
+                tinted: mode == BuildingHeightMode::ExtrusionShadowsTint,
+                clutter: bucket.index == 0,
+            };
             spawn_layer(
                 commands,
                 meshes,
-                extrusion_builder(buildings, passages, tinted),
+                extrusion_builder(buildings, passages, detail),
                 Z_BUILDING,
                 "building_extruded",
                 LayerMaterial::Roof(roof.handle()),
@@ -190,8 +226,11 @@ pub fn spawn_buildings(
         BuildingHeightMode::Facade
         | BuildingHeightMode::Shadows
         | BuildingHeightMode::ShadowsTint => {
-            let tinted = mode == BuildingHeightMode::ShadowsTint;
-            let (facades, roofs) = facade_and_roof_builders(buildings, passages, tinted);
+            let detail = RoofDetail {
+                tinted: mode == BuildingHeightMode::ShadowsTint,
+                clutter: bucket.index == 0,
+            };
+            let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
             spawn_layer(
                 commands,
                 meshes,
@@ -241,10 +280,11 @@ pub fn spawn_buildings(
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавил парапет
     info!(
-        "building meshing: {vertices} verts in {:?} ({} buildings, {})",
+        "building meshing: {vertices} verts in {:?} ({} buildings, {}, clutter {})",
         started.elapsed(),
         buildings.len(),
         mode.label(),
+        bucket.index == 0,
     );
     if skipped > 0 {
         warn!("building meshing: {skipped} degenerate polygons skipped");
@@ -253,12 +293,14 @@ pub fn spawn_buildings(
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:
 /// деспавн старых слоёв и повторный спавн из той же `MapData`.
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     roof: Res<RoofMaterialHandle>,
     mode: Res<BuildingHeightMode>,
+    bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<BuildingLayerTag>>,
 ) {
@@ -271,6 +313,7 @@ pub fn rebuild_buildings(
         &mut materials,
         &roof,
         *mode,
+        *bucket,
         &map.buildings,
         &map.roads,
     );

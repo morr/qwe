@@ -17,6 +17,16 @@ fn square() -> Vec<Vec2> {
     ]
 }
 
+/// Подробность слоя для теста: рампа тона по вкусу, оборудование на кровле
+/// выключено — эти тесты про геометрию домов, а коробки на крышах только
+/// добавили бы им вершин.
+fn detail(tinted: bool) -> RoofDetail {
+    RoofDetail {
+        tinted,
+        clutter: false,
+    }
+}
+
 fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
     PolyArea {
         outer,
@@ -108,7 +118,7 @@ fn extrusion_sorts_the_far_end_of_the_lift_first() {
     );
     let south = building(square(), Some(3.0), AreaKind::Building);
     let positions = |list: &[PolyArea]| {
-        extrusion_builder(list, &[], false)
+        extrusion_builder(list, &[], detail(false))
             .build()
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -192,7 +202,7 @@ fn the_roof_material_is_stable_and_follows_the_use() {
 fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let mut block = building(oblong(14.0, 40.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
-    let builder = extrusion_builder(&[block], &[], false);
+    let builder = extrusion_builder(&[block], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
@@ -350,7 +360,7 @@ fn every_mode_builds_geometry_for_mixed_input() {
         building(square(), Some(12.0), AreaKind::Kremlin),
     ];
 
-    let (facades, roofs) = facade_and_roof_builders(&list, &[], true);
+    let (facades, roofs) = facade_and_roof_builders(&list, &[], detail(true));
     assert!(!facades.is_empty());
     assert!(!roofs.is_empty());
     assert_eq!(facades.skipped_polygons(), 0);
@@ -358,11 +368,11 @@ fn every_mode_builds_geometry_for_mixed_input() {
     let shadows = shadow_builder(&list, &[], false);
     assert!(!shadows.is_empty());
 
-    let extruded = extrusion_builder(&list, &[], false);
+    let extruded = extrusion_builder(&list, &[], detail(false));
     assert!(!extruded.is_empty());
     assert_eq!(extruded.skipped_polygons(), 0);
     // комбинированный режим: рампа меняет цвета, но не геометрию
-    let tinted = extrusion_builder(&list, &[], true);
+    let tinted = extrusion_builder(&list, &[], detail(true));
     assert!(!tinted.is_empty());
     assert_eq!(tinted.skipped_polygons(), 0);
 }
@@ -515,14 +525,14 @@ fn only_a_building_passage_cuts_an_arch() {
         true,
     )];
 
-    let solid = extrusion_builder(&house, &[], false).vertex_count();
-    assert!(extrusion_builder(&house, &through, false).vertex_count() > solid);
+    let solid = extrusion_builder(&house, &[], detail(false)).vertex_count();
+    assert!(extrusion_builder(&house, &through, detail(false)).vertex_count() > solid);
     assert_eq!(
-        extrusion_builder(&house, &alongside, false).vertex_count(),
+        extrusion_builder(&house, &alongside, detail(false)).vertex_count(),
         solid
     );
     assert_eq!(
-        extrusion_builder(&house, &elsewhere, false).vertex_count(),
+        extrusion_builder(&house, &elsewhere, detail(false)).vertex_count(),
         solid
     );
 }
