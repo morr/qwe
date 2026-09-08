@@ -199,6 +199,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   older "roof lighter than wall" rule is retired with the per-use roof palette. Every
   material and every palette side by side, with a house per colour from a 30 m block down
   to an 8 m shed: `cargo run --example roof_gallery`. Detail in the `osm-map` skill.
+- **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
+  penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
+  industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own
+  **opaque** shadow (a translucent one could not blend inside the opaque building layer),
+  placed by a Park–Miller LCG seeded from the same building seed the roof material uses,
+  and every candidate is rejected unless all four corners fall inside the footprint —
+  the placement frame is a rectangle, an L-shaped building is not. Which items a roof
+  gets follows its **material**, not the building use: soft flat roofs carry the
+  penthouse and the shafts, corrugated sheds the skylights, a gable a chimney.
+  **The clutter is the only thing zoom changes about buildings** —
+  `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) rebuilds the layer without it
+  once a metre stops being worth two pixels, the way rail and tram rebuild themselves.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
