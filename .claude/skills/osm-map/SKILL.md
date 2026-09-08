@@ -636,12 +636,39 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     All building tone mixing — the palette, the `roof_color` ramp, walls, slopes — is
     done in sRGB, so the wall and slope constants compare directly. No facade band, no
     shadows. Depth is painter's algorithm *inside one
-    mesh*: buildings sorted by their bounds-centre projection on the lift direction,
-    far end first (index-buffer order is raster order), so a south-western building
-    correctly overlays its north-eastern neighbour. `extrusion_lift` is `pub` because
-    the doors overlay must shift by the same vector. Known limits: units y-sort against
+    mesh*: buildings sorted by `Lean::depth`, far first (index-buffer order is raster
+    order), so a south-western building correctly overlays its north-eastern neighbour.
+    `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
+    in the shadows and anything that wants to put a marker on the *drawn* building rather
+    than its real outline all go through it. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
+    - **`BuildingLean` — which way the top goes** (panel row *Lean*, persisted, rebuilds
+      the building layers). `Fixed` is everything above: one oblique skew for the whole
+      city, and that is exactly what a **satellite** frame gives — 5 km of city from
+      500 km up spans fractions of a degree, so the parallax is constant across it (a true
+      orthomosaic has none at all). `Radial` leans every building **away from the nadir**,
+      by `min(distance / NADIR_ALTITUDE, LEAN_MAX)` metres per drawn metre of height,
+      which is what an **aircraft or drone** frame gives: the flying height is comparable
+      to the frame, so the parallax spreads in rays and buildings on opposite sides of the
+      frame lean in opposite directions. The nadir is the map centre; `NADIR_ALTITUDE`
+      500 m is chosen so the lean at the portal (530 m out) matches `Fixed` in *strength*
+      and differs only in direction — switching the row there changes nothing but the
+      angle — and `LEAN_MAX` 1.4 is, with `EXTRUDE_SCALE`, a tangent of 0.49, i.e. 26° off
+      nadir: the angle aerial survey actually works at, past which the frame is not taken.
+    - **`Lean` is a per-building value**, not a global function: direction, `lift(drawn)`,
+      `ridge(rise)` and the painter's key `depth(centre, mode)` all come from it, and
+      `layers.rs` builds one per building. It holds **metres of displacement per drawn
+      metre as a vector** rather than a `(direction, length)` pair on purpose: for `Fixed`
+      that vector is exactly `(0.4, 1)`, and a round trip through `normalize` × `length`
+      moves it by one ulp — enough to break the `EXTRUDE_RANGE` clamp assertion in the
+      arch tests.
+    - **The sun does not follow the lean.** The lean is the camera, the shadow is the
+      light, and their being independent is itself a realism cue: in `Radial` the
+      buildings south of the nadir show their sunlit north walls while those north of it
+      show shaded south walls, exactly as on a real oblique frame. `wall_colors` needs no
+      change for that — it takes the true outward normal and the lean only picks which
+      walls are visible.
   - **2.5D+shadows+tint (ExtrusionShadowsTint, the default)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
