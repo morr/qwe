@@ -5,21 +5,25 @@
 //! `BuildingHeightMode` пересобирает только зданиевые слои
 //! (`rebuild_buildings`).
 //!
-//! Геометрия разнесена по трём подмодулям: [`arches`] режет проходы
+//! Геометрия разнесена по подмодулям: [`arches`] режет проходы
 //! `building_passage` сквозь стены, [`roofs`] ставит двускатные крыши на
-//! малые дома, [`layers`] собирает сами меши слоёв.
+//! малые дома, [`layers`] собирает сами меши слоёв, [`material`] решает, чем
+//! крыша крыта, — и её фактуру рисует шейдер этого материала.
 
 mod arches;
 mod layers;
+pub mod material;
 mod roofs;
 
 use std::ops::RangeInclusive;
+use std::time::Instant;
 
 use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
+use self::material::RoofMaterialHandle;
 use crate::loading::AppState;
 use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
@@ -27,26 +31,21 @@ use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
 use crate::settings::Z_BUILDING;
 
-/// Палитра зданий — пара (крыша, стена) на каждое назначение. Крыша светлее
-/// стены, чтобы стена читалась полосой под ней; тёплые тона у жилья, серые у
-/// промзоны и гаражей, охра у казённых зданий. Храм — единственное исключение
-/// из «крыша светлее»: зелёная крыша на белой стене, как русская церковь на
-/// карте. `Other` — исторический бежевый, в котором раньше стоял весь город.
-const ROOF_COLOR: Color = Color::srgb(0.949, 0.929, 0.878);
+/// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
+/// гаражей, охра у казённых зданий, белёный кирпич у храма.
+///
+/// Цвета крыш отсюда ушли в [`material`]: крыша теперь красится своим
+/// материалом (битум, металл, черепица), а не назначением, и прежнее правило
+/// «крыша светлее стены» вместе с ними. На снимке сверху ровно наоборот —
+/// тёмный битумный ковёр на светлой панельной стене, и объём коробки держат
+/// разные тона двух видимых стен, а не контраст с крышей.
 const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
-const HOUSE_ROOF_COLOR: Color = Color::srgb(0.855, 0.655, 0.545);
 const HOUSE_FACADE_COLOR: Color = Color::srgb(0.70, 0.60, 0.50);
-const APARTMENTS_ROOF_COLOR: Color = Color::srgb(0.905, 0.885, 0.845);
 const APARTMENTS_FACADE_COLOR: Color = Color::srgb(0.615, 0.575, 0.515);
-const COMMERCIAL_ROOF_COLOR: Color = Color::srgb(0.845, 0.835, 0.805);
 const COMMERCIAL_FACADE_COLOR: Color = Color::srgb(0.575, 0.565, 0.545);
-const INDUSTRIAL_ROOF_COLOR: Color = Color::srgb(0.745, 0.745, 0.725);
 const INDUSTRIAL_FACADE_COLOR: Color = Color::srgb(0.505, 0.505, 0.49);
-const GARAGE_ROOF_COLOR: Color = Color::srgb(0.70, 0.68, 0.65);
 const GARAGE_FACADE_COLOR: Color = Color::srgb(0.48, 0.46, 0.43);
-const CHURCH_ROOF_COLOR: Color = Color::srgb(0.42, 0.60, 0.56);
 const CHURCH_FACADE_COLOR: Color = Color::srgb(0.93, 0.91, 0.86);
-const PUBLIC_ROOF_COLOR: Color = Color::srgb(0.93, 0.86, 0.66);
 const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.70, 0.62, 0.45);
 const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
@@ -144,26 +143,36 @@ pub fn spawn_buildings(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
+    roof: &RoofMaterialHandle,
     mode: BuildingHeightMode,
     buildings: &[PolyArea],
     passages: &[RoadLine],
 ) {
-    // вершинные цвета — материал один, белый; тени — свой blend-материал
+    // фасады и тени — плоский белый `ColorMaterial` под вершинные цвета;
+    // всё, где есть крыша, идёт через `RoofMaterial` (у стен в том же меше
+    // код материала нулевой, и фактуры они не получают)
+    let started = Instant::now();
     let opaque = materials.add(Color::WHITE);
     let mut skipped = 0;
-    let mut spawn_layer =
-        |commands: &mut Commands, meshes: &mut Assets<Mesh>, builder: MeshBuilder, z, name| {
-            skipped += builder.skipped_polygons();
-            surface::spawn_layer(
-                commands,
-                meshes,
-                builder,
-                z,
-                name,
-                LayerMaterial::Flat(opaque.clone()),
-                BuildingLayerTag,
-            );
-        };
+    let mut vertices = 0;
+    let mut spawn_layer = |commands: &mut Commands,
+                           meshes: &mut Assets<Mesh>,
+                           builder: MeshBuilder,
+                           z,
+                           name,
+                           material| {
+        skipped += builder.skipped_polygons();
+        vertices += builder.vertex_count();
+        surface::spawn_layer(
+            commands,
+            meshes,
+            builder,
+            z,
+            name,
+            material,
+            BuildingLayerTag,
+        );
+    };
 
     match mode {
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
@@ -174,6 +183,7 @@ pub fn spawn_buildings(
                 extrusion_builder(buildings, passages, tinted),
                 Z_BUILDING,
                 "building_extruded",
+                LayerMaterial::Roof(roof.handle()),
             );
         }
         BuildingHeightMode::Facade
@@ -181,8 +191,22 @@ pub fn spawn_buildings(
         | BuildingHeightMode::ShadowsTint => {
             let tinted = mode == BuildingHeightMode::ShadowsTint;
             let (facades, roofs) = facade_and_roof_builders(buildings, passages, tinted);
-            spawn_layer(commands, meshes, facades, Z_FACADE, "building_facades");
-            spawn_layer(commands, meshes, roofs, Z_BUILDING, "building_roofs");
+            spawn_layer(
+                commands,
+                meshes,
+                facades,
+                Z_FACADE,
+                "building_facades",
+                LayerMaterial::Flat(opaque.clone()),
+            );
+            spawn_layer(
+                commands,
+                meshes,
+                roofs,
+                Z_BUILDING,
+                "building_roofs",
+                LayerMaterial::Roof(roof.handle()),
+            );
         }
     }
 
@@ -197,6 +221,7 @@ pub fn spawn_buildings(
             passages,
             mode == BuildingHeightMode::ExtrusionShadowsTint,
         );
+        vertices += shadows.vertex_count();
         if !shadows.is_empty() {
             commands.spawn((
                 BuildingLayerTag,
@@ -212,6 +237,14 @@ pub fn spawn_buildings(
         }
     }
 
+    // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
+    // режим и сколько геометрии добавил парапет
+    info!(
+        "building meshing: {vertices} verts in {:?} ({} buildings, {})",
+        started.elapsed(),
+        buildings.len(),
+        mode.label(),
+    );
     if skipped > 0 {
         warn!("building meshing: {skipped} degenerate polygons skipped");
     }
@@ -223,6 +256,7 @@ pub fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    roof: Res<RoofMaterialHandle>,
     mode: Res<BuildingHeightMode>,
     map: Res<MapData>,
     existing: Query<Entity, With<BuildingLayerTag>>,
@@ -234,6 +268,7 @@ pub fn rebuild_buildings(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &roof,
         *mode,
         &map.buildings,
         &map.roads,
@@ -289,21 +324,21 @@ pub(super) fn extrusion_dir() -> Vec2 {
     Vec2::new(EXTRUDE_SKEW, 1.0).normalize()
 }
 
-/// Базовые цвета крыши и фасада по типу здания: Кремль — свой, остальные по
-/// назначению (`BuildingUse`).
-fn base_colors(building: &PolyArea) -> (Color, Color) {
+/// Базовый цвет стены по типу здания: Кремль — свой, остальные по назначению
+/// (`BuildingUse`). Крыша красится не отсюда, а материалом ([`material`]).
+fn facade_color(building: &PolyArea) -> Color {
     if building.kind == AreaKind::Kremlin {
-        return (KREMLIN_ROOF_COLOR, KREMLIN_FACADE_COLOR);
+        return KREMLIN_FACADE_COLOR;
     }
     match building.building_use {
-        BuildingUse::House => (HOUSE_ROOF_COLOR, HOUSE_FACADE_COLOR),
-        BuildingUse::Apartments => (APARTMENTS_ROOF_COLOR, APARTMENTS_FACADE_COLOR),
-        BuildingUse::Commercial => (COMMERCIAL_ROOF_COLOR, COMMERCIAL_FACADE_COLOR),
-        BuildingUse::Industrial => (INDUSTRIAL_ROOF_COLOR, INDUSTRIAL_FACADE_COLOR),
-        BuildingUse::Garage => (GARAGE_ROOF_COLOR, GARAGE_FACADE_COLOR),
-        BuildingUse::Church => (CHURCH_ROOF_COLOR, CHURCH_FACADE_COLOR),
-        BuildingUse::Public => (PUBLIC_ROOF_COLOR, PUBLIC_FACADE_COLOR),
-        BuildingUse::Other => (ROOF_COLOR, FACADE_COLOR),
+        BuildingUse::House => HOUSE_FACADE_COLOR,
+        BuildingUse::Apartments => APARTMENTS_FACADE_COLOR,
+        BuildingUse::Commercial => COMMERCIAL_FACADE_COLOR,
+        BuildingUse::Industrial => INDUSTRIAL_FACADE_COLOR,
+        BuildingUse::Garage => GARAGE_FACADE_COLOR,
+        BuildingUse::Church => CHURCH_FACADE_COLOR,
+        BuildingUse::Public => PUBLIC_FACADE_COLOR,
+        BuildingUse::Other => FACADE_COLOR,
     }
 }
 

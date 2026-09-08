@@ -1,0 +1,220 @@
+// Процедурная фактура кровель. Материал и смысл кодов — `src/map/buildings/material.rs`.
+//
+// Слой зданий несёт и крыши, и стены (в 2.5D это один меш с painter's
+// порядком), поэтому первое, что делает фрагмент, — смотрит код материала:
+// ноль (стена, фронтон, кайма парапета) уходит с одним вершинным цветом,
+// как раньше.
+//
+// Фактура считается по **мировой** координате, повёрнутой в длинную ось дома
+// (`meshing::ATTRIBUTE_ROOF`): швы ковра и рёбра фальца идут вдоль стен, а не
+// по странам света, и при этом два треугольника одной крыши красятся
+// согласованно без развёртки. Октавы гасятся по размеру пикселя (`fwidth`),
+// как в `surface.wgsl`: волна короче пары пикселей исчезает, а не муарит.
+//
+// Шумовые помощники ниже — копия `surface.wgsl`; общей библиотеки шейдеров в
+// проекте пока нет, а тянуть её ради четырёх функций дороже, чем повторить.
+
+#import bevy_sprite::{
+    mesh2d_functions as mesh_functions,
+    mesh2d_view_bindings::view,
+}
+
+#ifdef TONEMAP_IN_SHADER
+#import bevy_core_pipeline::tonemapping
+#endif
+#ifdef SRGB_OUTPUT
+#import bevy_render::color_operations::linear_to_srgb
+#endif
+#ifdef OKLAB_OUTPUT
+#import bevy_render::color_operations::linear_rgb_to_oklab
+#endif
+
+// Зеркало `material::RoofParams` — порядок полей обязан совпадать.
+struct RoofParams {
+    light: vec2<f32>,
+    intensity: f32,
+}
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: RoofParams;
+
+// Коды материалов — зеркало `material::RoofKind::code`; ноль это «не кровля».
+const BITUMEN: u32 = 1u;
+const GRAVEL: u32 = 2u;
+const SEAM: u32 = 3u;
+const CORRUGATED: u32 = 4u;
+const TILE: u32 = 5u;
+const MEMBRANE: u32 = 6u;
+
+const TAU: f32 = 6.283185307;
+
+struct Vertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec4<f32>,
+    // `meshing::ATTRIBUTE_ROOF`: длинная ось дома (x, y), код материала, посев
+    @location(2) roof: vec4<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_position: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    // рамка одна на весь дом, интерполировать нечего — и код материала
+    // между двумя домами интерполировать было бы просто неверно
+    @location(2) @interpolate(flat) roof: vec4<f32>,
+}
+
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
+    let world_position = mesh_functions::mesh2d_position_local_to_world(
+        world_from_local,
+        vec4<f32>(vertex.position, 1.0),
+    );
+    out.position = mesh_functions::mesh2d_position_world_to_clip(world_position);
+    out.world_position = world_position.xy;
+    out.color = vertex.color;
+    out.roof = vertex.roof;
+    return out;
+}
+
+// Хеш вещественной пары в [0, 1) (Dave Hoskins, hash12).
+fn hash21(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
+    p3 = p3 + dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// Value noise, центрированный: [-0.5, 0.5].
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash21(i);
+    let b = hash21(i + vec2<f32>(1.0, 0.0));
+    let c = hash21(i + vec2<f32>(0.0, 1.0));
+    let d = hash21(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) - 0.5;
+}
+
+// Видимость волны длиной `wavelength` при `px` метрах на пиксель.
+fn visible(wavelength: f32, px: f32) -> f32 {
+    return smoothstep(1.5, 4.0, wavelength / px);
+}
+
+// Три октавы от `scale` вниз, ~[-1, 1].
+fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
+    let n0 = value_noise(p / scale) * visible(scale, px);
+    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
+    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
+    return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
+}
+
+// Полоса шириной `width` через каждые `period` по координате `coord`: край
+// сглажен по пикселю, сама линия не тоньше пикселя, и вся сетка гаснет,
+// когда шаг становится мельче нескольких пикселей.
+fn stripes(coord: f32, period: f32, width: f32, px: f32) -> f32 {
+    let phase = coord - period * floor(coord / period + 0.5);
+    let half_width = max(width, px) * 0.5;
+    let edge = 0.6 * px;
+    let line = 1.0 - smoothstep(half_width - edge, half_width + edge, abs(phase));
+    return line * visible(period, px);
+}
+
+// Поправка яркости кровли: сколько её фактура добавляет к вершинному цвету.
+// `uv` — координаты в раме дома (вдоль длинной оси и поперёк), `across` —
+// единичный вектор поперёк рёбер, `p` — мировая точка.
+fn roof_shade(
+    kind: u32,
+    uv: vec2<f32>,
+    axis: vec2<f32>,
+    across: vec2<f32>,
+    p: vec2<f32>,
+    px: f32,
+    seed: f32,
+) -> f32 {
+    let u = uv.x;
+    let v = uv.y;
+    // выцветание и грязь — общее для всякой кровли
+    var shade = 0.045 * fbm3(p + vec2<f32>(13.0, 29.0), 8.0, px)
+        + 0.030 * fbm3(p + vec2<f32>(3.0, 7.0), 0.7, px);
+    // Рулон и черепица кладутся **вдоль** конька (шов и ряд идут по длинной
+    // оси, то есть при постоянном `v`), а фальц и профлист — **по скату**,
+    // поперёк неё: иначе вода с крыши потечёт вдоль ребра, а не по нему.
+    // Отсюда две координаты и две «поперечных» оси; свет считается по той,
+    // что поперёк рёбер, — ребро вдоль солнца не даёт ни блика, ни тени.
+    let slope_bite = abs(dot(axis, params.light));
+    let slope_side = sign(dot(axis, params.light));
+    let bite = abs(dot(across, params.light));
+    let side = sign(dot(across, params.light));
+
+    if kind == BITUMEN {
+        // швы рулонов вдоль длинной оси, шаг — ширина рулона
+        shade -= 0.10 * stripes(v, 0.95, 0.06, px);
+        // заплаты ремонта: клетки 6 м, каждая своего оттенка
+        shade += 0.085 * (hash21(floor(vec2<f32>(u, v) / 6.0) + seed * 17.0) - 0.5)
+            * visible(6.0, px);
+        // застоявшаяся вода — тёмные пятна у парапета и в разжелобках
+        let pond = value_noise(p / 4.0 + 31.0) + 0.5;
+        shade -= 0.10 * smoothstep(0.72, 0.86, pond) * visible(4.0, px);
+    } else if kind == GRAVEL {
+        shade += 0.12 * fbm3(p + vec2<f32>(47.0, 17.0), 0.45, px);
+        let dots = value_noise(p / 0.6 + 71.0) + 0.5;
+        shade += 0.07 * smoothstep(0.62, 0.80, dots) * visible(0.6, px);
+    } else if kind == SEAM {
+        // фальц: светлое ребро и его тень рядом, шаг — ширина картины
+        let rib = stripes(u, 0.62, 0.07, px);
+        let dark = stripes(u - 0.10 * slope_side, 0.62, 0.07, px);
+        shade += (0.20 * rib - 0.13 * dark) * slope_bite;
+    } else if kind == CORRUGATED {
+        // волна профлиста: 30 см, поэтому видна только вблизи
+        shade += 0.13 * cos(TAU * u / 0.30) * slope_bite * visible(0.30, px);
+        // нахлёсты листов держатся дольше волны
+        shade -= 0.06 * stripes(u, 1.05, 0.05, px);
+    } else if kind == TILE {
+        // ряды вдоль конька — тень под каждым рядом
+        shade -= 0.14 * stripes(v, 0.32, 0.05, px);
+        // и разнобой отдельных черепиц вдоль ряда
+        shade += 0.10 * (hash21(floor(vec2<f32>(u / 0.25, v / 0.32)) + seed * 11.0) - 0.5)
+            * visible(0.28, px);
+    } else if kind == MEMBRANE {
+        shade -= 0.05 * stripes(v, 2.0, 0.08, px);
+        shade += 0.025 * fbm3(p + vec2<f32>(91.0, 5.0), 1.2, px);
+    }
+    return shade;
+}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    var rgb = in.color.rgb;
+    let kind = u32(round(max(in.roof.z, 0.0)));
+
+    if kind != 0u && params.intensity > 0.0 {
+        let p = in.world_position;
+        // метров на пиксель; камера без поворота, так что обе производные равны
+        let px = max(max(fwidth(p.x), fwidth(p.y)), 1e-4);
+        let axis = in.roof.xy;
+        let across = vec2<f32>(-axis.y, axis.x);
+        let seed = in.roof.w;
+        // фаза по посеву: швы соседних домов не выстраиваются в одну линию
+        // через квартал
+        let uv = vec2<f32>(dot(p, axis) + seed * 37.0, dot(p, across) + seed * 23.0);
+        let shade = roof_shade(kind, uv, axis, across, p, px, seed);
+        // тон уводится вместе с яркостью: тёмное на кровле ещё и холоднее
+        let tint = vec3<f32>(0.35, 0.15, -0.30) * shade;
+        rgb = rgb * (1.0 + params.intensity * (vec3<f32>(shade) + tint));
+    }
+
+    var output_color = vec4<f32>(rgb, 1.0);
+#ifdef TONEMAP_IN_SHADER
+    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
+#endif
+#ifdef SRGB_OUTPUT
+    output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
+#endif
+#ifdef OKLAB_OUTPUT
+    output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
+#endif
+    return output_color;
+}

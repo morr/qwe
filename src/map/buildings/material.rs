@@ -1,0 +1,417 @@
+//! Материал кровли: чем крыша покрыта, какого она от этого цвета и какую
+//! фактуру кладёт поверх шейдер `assets/shaders/roof.wgsl`.
+//!
+//! До этого крыша была заливкой по назначению здания плюс ±3 % по индексу в
+//! массиве, и с воздуха квартал читался как выкройка. На снимке же кровля —
+//! это в первую очередь **материал**: рулонный битум панельного дома со швами
+//! ковра и заплатами, гравийная засыпка, фальцевый металл общественного
+//! здания, профлист гаража, черепица частного сектора, светлая ПВХ-мембрана
+//! нового ТЦ. Материал выбирается детерминированно по назначению и посеву от
+//! геометрии ([`roof_look`]), цвет берётся из палитры материала, а его
+//! фактуру рисует шейдер по мировой координате, повёрнутой в длинную ось дома
+//! ([`crate::map::meshing::ATTRIBUTE_ROOF`]).
+//!
+//! Стены едут в том же меше, что и крыши (2.5D — один слой с painter's
+//! порядком), поэтому материал обязан уметь и «без фактуры»: код `0` —
+//! стена, фронтон, кайма.
+
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::prelude::*;
+use bevy::reflect::TypePath;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
+use bevy::shader::ShaderRef;
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+
+use super::roofs::min_area_rect;
+use crate::map::SHADOW_DIR;
+use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
+use crate::settings::ROOF_TEXTURE_DEFAULT;
+
+const SHADER_PATH: &str = "shaders/roof.wgsl";
+
+/// Чем крыша покрыта. Код материала (`code`) едет в вершинный атрибут и
+/// разбирается шейдером; ноль занят «не кровлей» (стена, фронтон, кайма),
+/// поэтому коды начинаются с единицы.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RoofKind {
+    /// Рулонный битумный ковёр: швы через метр, заплаты ремонта, лужи.
+    /// Кровля почти всякого панельного и кирпичного дома.
+    Bitumen,
+    /// Гравийная засыпка по битуму — светлее и зернистее, без швов.
+    Gravel,
+    /// Фальцевый металл: частые рёбра с бликом, окрашенный или оцинковка.
+    Seam,
+    /// Профлист: волна много мельче фальца, гаражи и промка.
+    Corrugated,
+    /// Черепица, шифер, ондулин — ряды поперёк ската, частный сектор.
+    Tile,
+    /// ПВХ-мембрана: светлая, почти ровная, широкие полотнища. Новые ТЦ.
+    Membrane,
+}
+
+impl RoofKind {
+    /// Код для [`ATTRIBUTE_ROOF`]; `0` — вершина вне кровли.
+    pub fn code(self) -> u32 {
+        self as u32 + 1
+    }
+}
+
+/// Палитры материалов — по несколько правдоподобных цветов на каждый, дом
+/// выбирает свой посевом. Разброс внутри палитры узкий: на снимке соседние
+/// дома отличаются оттенком, а не устраивают конфетти.
+const BITUMEN_COLORS: [Color; 5] = [
+    Color::srgb(0.42, 0.41, 0.39),
+    Color::srgb(0.47, 0.45, 0.42),
+    Color::srgb(0.38, 0.37, 0.36),
+    Color::srgb(0.44, 0.42, 0.39),
+    Color::srgb(0.50, 0.48, 0.45),
+];
+const GRAVEL_COLORS: [Color; 3] = [
+    Color::srgb(0.60, 0.58, 0.54),
+    Color::srgb(0.64, 0.62, 0.57),
+    Color::srgb(0.56, 0.54, 0.50),
+];
+const SEAM_COLORS: [Color; 5] = [
+    Color::srgb(0.52, 0.53, 0.54),
+    Color::srgb(0.34, 0.45, 0.38),
+    Color::srgb(0.46, 0.30, 0.26),
+    Color::srgb(0.40, 0.44, 0.50),
+    Color::srgb(0.58, 0.58, 0.57),
+];
+const CORRUGATED_COLORS: [Color; 4] = [
+    Color::srgb(0.62, 0.63, 0.64),
+    Color::srgb(0.45, 0.48, 0.53),
+    Color::srgb(0.38, 0.46, 0.38),
+    Color::srgb(0.50, 0.33, 0.28),
+];
+const TILE_COLORS: [Color; 5] = [
+    Color::srgb(0.55, 0.34, 0.26),
+    Color::srgb(0.47, 0.30, 0.24),
+    Color::srgb(0.52, 0.51, 0.49),
+    Color::srgb(0.44, 0.44, 0.43),
+    Color::srgb(0.33, 0.40, 0.33),
+];
+const MEMBRANE_COLORS: [Color; 3] = [
+    Color::srgb(0.72, 0.72, 0.70),
+    Color::srgb(0.66, 0.67, 0.67),
+    Color::srgb(0.76, 0.76, 0.74),
+];
+/// Храм остаётся зелёным, как его рисуют на картах, — но теперь это зелёный
+/// **металл**, с фальцем и бликом.
+const CHURCH_COLORS: [Color; 3] = [
+    Color::srgb(0.32, 0.46, 0.40),
+    Color::srgb(0.28, 0.42, 0.44),
+    Color::srgb(0.36, 0.48, 0.36),
+];
+
+/// Доли материалов по назначению — десять слотов, то есть проценты по
+/// десяткам; дом берёт слот посевом. Не выдумка: по спутнику Тулы частный
+/// сектор — черепица и шифер с вкраплениями профлиста, панельные кварталы —
+/// сплошной битум, промзона — профлист.
+const HOUSE_ROOFS: [RoofKind; 10] = [
+    RoofKind::Tile,
+    RoofKind::Tile,
+    RoofKind::Tile,
+    RoofKind::Tile,
+    RoofKind::Tile,
+    RoofKind::Seam,
+    RoofKind::Seam,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Bitumen,
+];
+const APARTMENTS_ROOFS: [RoofKind; 10] = [
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Gravel,
+    RoofKind::Seam,
+    RoofKind::Membrane,
+];
+const COMMERCIAL_ROOFS: [RoofKind; 10] = [
+    RoofKind::Membrane,
+    RoofKind::Membrane,
+    RoofKind::Membrane,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Gravel,
+    RoofKind::Seam,
+    RoofKind::Seam,
+    RoofKind::Corrugated,
+];
+const INDUSTRIAL_ROOFS: [RoofKind; 10] = [
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Gravel,
+    RoofKind::Seam,
+];
+const GARAGE_ROOFS: [RoofKind; 10] = [
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Seam,
+    RoofKind::Tile,
+];
+const PUBLIC_ROOFS: [RoofKind; 10] = [
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Seam,
+    RoofKind::Seam,
+    RoofKind::Seam,
+    RoofKind::Gravel,
+    RoofKind::Gravel,
+    RoofKind::Membrane,
+];
+
+/// Пятно, ниже которого `building=yes` считается частным домом, — то же
+/// число, по которому [`super::roofs`] ставит на него двускатную крышу: одна
+/// граница, один смысл «это дом, а не корпус».
+const SMALL_FOOTPRINT_MAX: f32 = 250.0;
+
+/// Кровля дома глазами отрисовки: чем крыта, какого цвета и с какой рамкой
+/// для шейдера.
+pub(super) struct RoofLook {
+    /// Чем крыта — по нему решается, положен ли парапет.
+    pub(super) kind: RoofKind,
+    /// Базовый цвет — из палитры материала; рампу по высоте и затенение
+    /// ската кладут поверх вызывающие.
+    pub(super) base: Srgba,
+    /// Что уходит в [`ATTRIBUTE_ROOF`] на каждой вершине кровли.
+    pub(super) frame: Roof,
+}
+
+/// Кровля этого дома: материал по назначению и посеву, цвет из палитры
+/// материала, длинная ось контура — как ось фактуры.
+///
+/// Посев — от **первой вершины контура**, как у генератора дверей: он не
+/// зависит ни от порядка домов в `MapData`, ни от режима отрисовки, поэтому
+/// переключение режима высот не перекрашивает город.
+pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
+    let seed = building_seed(building);
+    let kind = kind_of(building, seed);
+    let palette = palette(building, kind);
+    let base = palette[(seed >> 8) as usize % palette.len()].to_srgba();
+    // ±3 % яркости поверх выбранного цвета: два дома одной палитры и одного
+    // слота всё-таки не близнецы
+    let jitter = 1.0 + ((seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    let axis = min_area_rect(&building.outer)
+        .and_then(|rect| (rect[1] - rect[0]).try_normalize())
+        .unwrap_or(Vec2::X);
+    RoofLook {
+        kind,
+        base: Srgba {
+            red: base.red * jitter,
+            green: base.green * jitter,
+            blue: base.blue * jitter,
+            alpha: 1.0,
+        },
+        frame: Roof {
+            axis,
+            material: kind.code(),
+            seed: (seed >> 24) as f32 / 255.0,
+        },
+    }
+}
+
+/// Материал кровли этого дома. Кремль крыт металлом (его цвет всё равно свой),
+/// «дом» и мелкая коробка без назначения — частный сектор, остальное по
+/// назначению.
+fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
+    if building.kind == AreaKind::Kremlin {
+        return RoofKind::Seam;
+    }
+    let table = match building.building_use {
+        BuildingUse::House => &HOUSE_ROOFS,
+        BuildingUse::Apartments => &APARTMENTS_ROOFS,
+        BuildingUse::Commercial => &COMMERCIAL_ROOFS,
+        BuildingUse::Industrial => &INDUSTRIAL_ROOFS,
+        BuildingUse::Garage => &GARAGE_ROOFS,
+        BuildingUse::Church => return RoofKind::Seam,
+        BuildingUse::Public => &PUBLIC_ROOFS,
+        // `building=yes` — половина города: мелкая коробка это частный дом,
+        // крупный контур — корпус, и кроют их по-разному
+        BuildingUse::Other => {
+            if footprint_area(building) <= SMALL_FOOTPRINT_MAX {
+                &HOUSE_ROOFS
+            } else {
+                &APARTMENTS_ROOFS
+            }
+        }
+    };
+    table[seed as usize % table.len()]
+}
+
+/// Палитра цвета кровли: Кремль и храм — своё, остальные по материалу.
+fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
+    if building.kind == AreaKind::Kremlin {
+        return std::slice::from_ref(&super::KREMLIN_ROOF_COLOR);
+    }
+    if building.building_use == BuildingUse::Church {
+        return &CHURCH_COLORS;
+    }
+    match kind {
+        RoofKind::Bitumen => &BITUMEN_COLORS,
+        RoofKind::Gravel => &GRAVEL_COLORS,
+        RoofKind::Seam => &SEAM_COLORS,
+        RoofKind::Corrugated => &CORRUGATED_COLORS,
+        RoofKind::Tile => &TILE_COLORS,
+        RoofKind::Membrane => &MEMBRANE_COLORS,
+    }
+}
+
+fn footprint_area(building: &PolyArea) -> f32 {
+    crate::map::osm::model::signed_ring_area(&building.outer).abs()
+}
+
+/// Посев дома из его первой вершины — три перемешивающих раунда, чтобы
+/// соседние по координате дома не попадали в один слот таблицы. Сантиметры,
+/// а не метры: два дома на одной улице отличаются десятками сантиметров.
+fn building_seed(building: &PolyArea) -> u32 {
+    let point = building.outer.first().copied().unwrap_or(Vec2::ZERO);
+    let x = (point.x * 100.0) as i32 as u32;
+    let y = (point.y * 100.0) as i32 as u32;
+    let mut hash = x ^ y.rotate_left(16);
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x7feb_352d);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x846c_a68b);
+    hash ^= hash >> 16;
+    hash
+}
+
+/// Параметры фактуры кровель — юниформ шейдера. Зеркало `RoofParams` в
+/// `roof.wgsl`: порядок полей обязан совпадать.
+#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
+pub struct RoofParams {
+    /// Направление **на солнце** в плане (`-SHADOW_DIR`): по нему рёбра
+    /// фальца и профлиста получают блик с одной стороны и тень с другой, а
+    /// поперечное свету ребро видно сильнее продольного.
+    pub light: Vec2,
+    /// Общий множитель амплитуд — ползунок панели; ноль возвращает прежнюю
+    /// плоскую заливку.
+    pub intensity: f32,
+}
+
+/// Материал зданиевых слоёв: вершинный цвет × процедурная фактура кровли.
+/// Один на всё приложение — [`RoofMaterialHandle`].
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+pub struct RoofMaterial {
+    #[uniform(0)]
+    pub params: RoofParams,
+}
+
+impl Material2d for RoofMaterial {
+    fn vertex_shader() -> ShaderRef {
+        SHADER_PATH.into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        SHADER_PATH.into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Opaque
+    }
+
+    /// Своя раскладка вершин: позиция, цвет и [`ATTRIBUTE_ROOF`] — меш без
+    /// него этим материалом не нарисовать, и это намеренно: собирать слой для
+    /// него надо через `MeshBuilder::with_roof_coords`.
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        _key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let vertex_layout = layout.0.get_layout(&[
+            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            Mesh::ATTRIBUTE_COLOR.at_shader_location(1),
+            ATTRIBUTE_ROOF.at_shader_location(2),
+        ])?;
+        descriptor.vertex.buffers = vec![vertex_layout];
+        Ok(())
+    }
+}
+
+/// Сила фактуры кровель; ползунок Texture секции Buildings и BRP,
+/// сохраняется между запусками. Правка не пересобирает мешей — меняется
+/// только юниформ материала ([`retune_roof_material`]).
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "roofs")]
+pub struct RoofStyle {
+    /// Множитель всех амплитуд, 0 — плоские крыши как прежде.
+    pub texture: f32,
+}
+
+impl Default for RoofStyle {
+    fn default() -> Self {
+        Self {
+            texture: ROOF_TEXTURE_DEFAULT,
+        }
+    }
+}
+
+impl RoofStyle {
+    fn params(self) -> RoofParams {
+        RoofParams {
+            light: -SHADOW_DIR,
+            intensity: self.texture,
+        }
+    }
+}
+
+/// Хэндл материала кровель: слои пересобираются на каждый город и на каждую
+/// правку режима высот, а материал живёт и переиспользуется.
+#[derive(Resource)]
+pub struct RoofMaterialHandle(Handle<RoofMaterial>);
+
+impl RoofMaterialHandle {
+    pub fn handle(&self) -> Handle<RoofMaterial> {
+        self.0.clone()
+    }
+}
+
+/// Материал кровель на старте приложения, с силой фактуры из сохранённых
+/// настроек.
+pub fn init_roof_material(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<RoofMaterial>>,
+    style: Res<RoofStyle>,
+) {
+    let handle = materials.add(RoofMaterial {
+        params: style.params(),
+    });
+    commands.insert_resource(RoofMaterialHandle(handle));
+}
+
+/// Правка ползунка Texture — новые параметры в материал; меши не трогаются.
+pub fn retune_roof_material(
+    style: Res<RoofStyle>,
+    handle: Res<RoofMaterialHandle>,
+    mut materials: ResMut<Assets<RoofMaterial>>,
+) {
+    if let Some(mut material) = materials.get_mut(&handle.0) {
+        material.params = style.params();
+    }
+}

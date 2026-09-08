@@ -26,6 +26,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::loading::AppState;
+use crate::map::buildings::material::RoofMaterial;
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::settings::SURFACE_TEXTURE_DEFAULT;
 
@@ -311,10 +312,12 @@ pub fn init_surface_materials(
 }
 
 /// Чем красить слой карты: плоским `ColorMaterial` (кант, рельсы, стены —
-/// всё, чему фактура ни к чему) или фактурным материалом поверхности.
+/// всё, чему фактура ни к чему), фактурным материалом поверхности или
+/// материалом кровель (`map::buildings::material`).
 pub enum LayerMaterial {
     Flat(Handle<ColorMaterial>),
     Surface(Handle<SurfaceMaterial>),
+    Roof(Handle<RoofMaterial>),
 }
 
 /// Слой карты из собранного меша: пустой сборщик не спавнится вовсе. Меш для
@@ -342,6 +345,7 @@ pub fn spawn_layer(
     match material {
         LayerMaterial::Flat(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
     };
 }
 

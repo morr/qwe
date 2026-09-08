@@ -10,6 +10,7 @@ mod tram;
 pub mod trees;
 mod zoom;
 
+pub use self::buildings::material::RoofStyle;
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
@@ -37,11 +38,13 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
+            .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
             .init_resource::<TreeStyle>()
             .init_resource::<TreeRowStyle>()
             .init_resource::<ConiferField>()
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
+            .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
@@ -52,17 +55,25 @@ impl Plugin for MapPlugin {
             .register_type::<TreeShape>()
             .register_type::<TreeRowPlacement>()
             .register_type::<BuildingHeightMode>()
+            .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
             .register_type::<SurfaceStyle>()
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
             .track_pref::<BuildingHeightMode>()
+            .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
             .track_pref::<SurfaceStyle>()
-            // материалы поверхностей — один комплект на всё приложение, слои
-            // всех городов берут хэндлы из него
-            .add_systems(Startup, surface::init_surface_materials)
+            // материалы поверхностей и кровель — один комплект на всё
+            // приложение, слои всех городов берут хэндлы из него
+            .add_systems(
+                Startup,
+                (
+                    surface::init_surface_materials,
+                    buildings::material::init_roof_material,
+                ),
+            )
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -123,6 +134,7 @@ impl Plugin for MapPlugin {
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
+                    buildings::material::retune_roof_material.run_if(retuned::<RoofStyle>),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку запускает только её фактическая
                     // смена. Таблицы у путей и трамвая свои, и пороги в них не
