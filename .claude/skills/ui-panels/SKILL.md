@@ -106,7 +106,7 @@ did not fit 1080 px and ran off the top of the screen.
 - **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Noise.
   **Roads** (`ui/roads.rs`): five cycle rows on `RoadStyle` — joins, smoothing, casing,
   **sidewalks**, **markings** — plus **Tram**, the one row of a *different* resource
-  (`TramStyle::visible`, on by default), so the section registers `add_knobs` twice. The
+  (`TramStyle::visible`, off by default), so the section registers `add_knobs` twice. The
   tram sits here because its track runs on the carriageway, and it is deliberately not a
   `RoadStyle` field: that would remesh every road layer on a toggle whose only effect is one
   merged mesh (`map::tram::rebuild_tram`). **Surfaces** (`ui/surfaces.rs`): one knob, **Texture**

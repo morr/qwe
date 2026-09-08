@@ -518,7 +518,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   hardwired to `Round` + `Light` (`TRAM_JOIN` / `TRAM_SMOOTHING`), and the sparse tie
   spacing is baked into the LOD table.
 
-  **`TramStyle`** (resource, one field `visible`, on by default, BRP-writable, persisted,
+  **`TramStyle`** (resource, one field `visible`, **off** by default — the blue line lies on
+  the carriageway and at city zoom reads as another street layer — BRP-writable, persisted,
   settings group `tram`) is therefore the whole style surface: the `Tram` row at the bottom
   of the **Roads** section (`ui/roads.rs`) — the track runs on the carriageway, so it is
   read together with the roads rather than given a section of its own for one row. It is

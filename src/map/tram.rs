@@ -35,8 +35,8 @@ const TRAM_SMOOTH_WIDTH: f32 = 1.2;
 
 /// Стиль зафиксирован — панель переключает только видимость ([`TramStyle`]): на
 /// линии в полтора-два экранных пикселя стык излома не читается вовсе, а
-/// Strong-сглаживание неотличимо от Light. Осевая всегда слегка сглажена — ломаная OSM на повороте даёт тонкой
-/// линии заметный угол.
+/// Strong-сглаживание неотличимо от Light. Осевая всегда слегка сглажена —
+/// ломаная OSM на повороте даёт тонкой линии заметный угол.
 const TRAM_JOIN: RoadJoin = RoadJoin::Round;
 const TRAM_SMOOTHING: RoadSmoothing = RoadSmoothing::Light;
 
@@ -46,20 +46,13 @@ const TRAM_SMOOTHING: RoadSmoothing = RoadSmoothing::Light;
 /// тумблер в [`RoadStyle`](crate::map::RoadStyle) значило бы гнать полную
 /// пересборку дорожных слоёв на каждое переключение трамвая.
 ///
-/// Трамвай — часть картинки города, а не отладочный слой, поэтому по умолчанию
-/// он нарисован; тумблер нужен затем, что синяя линия с насечкой лежит на самой
-/// проезжей части и на общем плане может читаться как ещё один слой улиц.
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
+/// Синяя линия с насечкой лежит на самой проезжей части и на общем плане
+/// читается как ещё один слой улиц — трамвай выключен, пока его не включат.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug, Default)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "tram")]
 pub struct TramStyle {
     pub visible: bool,
-}
-
-impl Default for TramStyle {
-    fn default() -> Self {
-        Self { visible: true }
-    }
 }
 
 /// Шпала одной ступени: длина поперёк пути, толщина и шаг, м. Насечка обязана

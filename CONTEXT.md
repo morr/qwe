@@ -281,9 +281,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   zoom (a **zoom bucket** each — `ZoomBucket<T>` over the layer's own LOD table,
   `map/zoom.rs`; seeded from the camera on world entry, then recomputed every frame), so a
   smoothing knob that moved the centerline would slide the track against its own ballast.
-  The tram's one resource is **TramStyle** — `visible` alone, on by default, the `Tram` row
-  of the Roads section (the track runs on the carriageway, so it is read with the roads); a
-  change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
+  The tram's one resource is **TramStyle** — `visible` alone, **off** by default (the blue
+  line lies on the carriageway and at city zoom reads as another street layer), the `Tram`
+  row of the Roads section (the track runs on the carriageway, so it is read with the roads);
+  a change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
 
 ## Navigation
 
