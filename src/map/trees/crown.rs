@@ -15,8 +15,13 @@ use crate::settings::{TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE};
 
 /// Чернила контура и штрихов (watabou `colorInk`).
 pub(super) const INK_COLOR: Color = Color::srgb(0.004, 0.008, 0.024);
-/// Базовая зелень кроны; пер-дерево умножается на яркость из `TINT_FACTORS`.
-pub(super) const CROWN_COLOR: Color = Color::srgb(0.42, 0.60, 0.33);
+/// Базовая зелень кроны — полог лиственного дерева сверху, тёмный и
+/// холодный; пер-дерево умножается на яркость из `TINT_FACTORS`.
+///
+/// Это **дефолт** `TreeStyle::foliage`, а он сохраняется между запусками:
+/// в готовом `settings.toml` уже лежит прежняя светлая зелень, и новый
+/// дефолт до неё не доберётся — нужен `reset` в панели Debug.
+pub(super) const CROWN_COLOR: Color = Color::srgb(0.271, 0.376, 0.216);
 /// Внутренние кольца штриховки облачной кроны — `BALL_BANDS2`.
 const BALL_BANDS: [f32; 2] = [0.8, 0.5];
 /// Кольца конической кроны — `CONE_BANDS3`.

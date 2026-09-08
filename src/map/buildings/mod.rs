@@ -35,21 +35,24 @@ use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
-/// гаражей, охра у казённых зданий, белёный кирпич у храма.
+/// гаражей, охра у казённых зданий, белёный кирпич у храма. Вся палитра
+/// опущена под спутниковую землю: на светлой она была светлым верхом карты,
+/// на тёмной стала бы картонной коробкой — освещённая панель на снимке
+/// светлее двора, но не белая.
 ///
 /// Цвета крыш отсюда ушли в [`material`]: крыша теперь красится своим
 /// материалом (битум, металл, черепица), а не назначением, и прежнее правило
 /// «крыша светлее стены» вместе с ними. На снимке сверху ровно наоборот —
 /// тёмный битумный ковёр на светлой панельной стене, и объём коробки держат
 /// разные тона двух видимых стен, а не контраст с крышей.
-const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
-const HOUSE_FACADE_COLOR: Color = Color::srgb(0.70, 0.60, 0.50);
-const APARTMENTS_FACADE_COLOR: Color = Color::srgb(0.615, 0.575, 0.515);
-const COMMERCIAL_FACADE_COLOR: Color = Color::srgb(0.575, 0.565, 0.545);
-const INDUSTRIAL_FACADE_COLOR: Color = Color::srgb(0.505, 0.505, 0.49);
-const GARAGE_FACADE_COLOR: Color = Color::srgb(0.48, 0.46, 0.43);
-const CHURCH_FACADE_COLOR: Color = Color::srgb(0.93, 0.91, 0.86);
-const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.70, 0.62, 0.45);
+const FACADE_COLOR: Color = Color::srgb(0.545, 0.514, 0.463);
+const HOUSE_FACADE_COLOR: Color = Color::srgb(0.580, 0.510, 0.435);
+const APARTMENTS_FACADE_COLOR: Color = Color::srgb(0.525, 0.502, 0.463);
+const COMMERCIAL_FACADE_COLOR: Color = Color::srgb(0.510, 0.502, 0.490);
+const INDUSTRIAL_FACADE_COLOR: Color = Color::srgb(0.455, 0.455, 0.447);
+const GARAGE_FACADE_COLOR: Color = Color::srgb(0.435, 0.420, 0.396);
+const CHURCH_FACADE_COLOR: Color = Color::srgb(0.800, 0.784, 0.749);
+const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.600, 0.545, 0.435);
 const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 
