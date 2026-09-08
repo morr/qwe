@@ -34,7 +34,7 @@ interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems 
 Fixed-step order is explicit and load-bearing:
 
 - `snapshot_previous_sim_positions` **before** `SimSet::SpatialRebuild`;
-- the demon spawner (`spawn_initial_burst`, `tick_spawner`) **before**
+- the demon spawner (`spawn_initial_burst`) **before**
   `SimSet::SpatialRebuild` — the edge is what puts a sync point between the spawn commands
   and the grid rebuild, so a demon is in the grid on the tick it is born. With no edge the
   flush landed on either side of the rebuild depending on the executor;
@@ -516,15 +516,18 @@ one line in `chase` that steps `SimPosition`, never written into `Movable::speed
 
 ### The spawner
 
-**`DemonSpawner`** — initial burst at the portal rim, then one demon per interval up to the
-cap. Runs in `FixedUpdate` so a restart re-fires the burst for free. Cap and interval live in
-**`DemonStyle { cap, interval, speed, lunge }`** (sliders of the Sim tab's Demon section,
-persisted); `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are only its `Default`.
+**`DemonSpawner`** — the initial burst of Imps at the portal rim, and nothing after it:
+further demons come only by **summoning** for souls (roadmap decision 5 — an interval
+spawner contradicts "souls buy demons"; `tick_spawner`, `DemonStyle::interval`, the
+**Spawn every** slider and the `DEMON_SPAWN_INTERVAL*` constants were removed with it).
+Runs in `FixedUpdate` so a restart re-fires the burst for free. The cap lives in
+**`DemonStyle { cap, speed, lunge }`** (sliders of the Sim tab's Demon section, persisted);
+`DEMON_CAP` is only its `Default`, and it caps summoning too. A `settings.toml` written
+before the change still carries `interval` — `bevy_settings` applies TOML by field and
+skips the unknown key.
 
 - The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the reduced count).
 - Lowering the cap never despawns demons already out.
-- The timer's period is re-synced inside `tick_spawner`, because restart and city switch
-  rebuild `DemonSpawner` whole.
 
 **A demon acts from the first tick it exists**, the initial burst included — held by the
 schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in

@@ -1596,9 +1596,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
 - **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`. **Do not
   reintroduce per-state demon speeds**: the only multipliers are the two user ones,
   `DemonStyle::speed` and `DemonStyle::lunge`.
-- **DemonSpawner** — initial burst at the portal rim, then one demon per interval up to the
-  cap; cap and interval live in **`DemonStyle`**, `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are
-  only its `Default`. Lowering the cap never despawns demons already out. **The spawner runs
+- **DemonSpawner** — the initial burst of Imps at the portal rim; after it demons come only
+  by summoning for souls (no interval spawner — roadmap decision 5). The cap lives in
+  **`DemonStyle { cap, speed, lunge }`**, `DEMON_CAP` is only its `Default`, and it caps
+  summoning too. Lowering the cap never despawns demons already out. **The spawner runs
   only in `PlayPhase::Live`, and that is an invariant**: it hands out `PawnId`s from a
   counter `WorldStarted` resets, so a burst fired before the announcement deals the same
   numbers twice. Matching precondition: **no demon may be alive when a run starts**. It runs

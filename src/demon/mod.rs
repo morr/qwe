@@ -17,9 +17,7 @@ pub use self::components::{
     DevourUntil, ImpTag,
 };
 pub use self::look::DemonHalo;
-use self::systems::{
-    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
-};
+use self::systems::{draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed};
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{PlayPhase, WorldStarted};
 use crate::prefs::TrackPrefExt;
@@ -70,8 +68,8 @@ impl Plugin for DemonPlugin {
             // все 11–14 с постройки навигации.
             .add_systems(
                 FixedUpdate,
-                (spawn_initial_burst, tick_spawner)
-                    .chain()
+                // залп один; призыв за души встанет в тот же слот (`souls.rs`)
+                spawn_initial_burst
                     // рождение — голова тика: ребро к `SpatialRebuild` ставит
                     // точку синхронизации, команды спавна применяются на ней, и
                     // демон входит в сетку и действует на том же тике, на

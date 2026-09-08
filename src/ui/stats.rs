@@ -33,8 +33,7 @@ use crate::human::{Human, HumanStyle};
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::settings::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
-    DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
-    DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
+    DEMON_LUNGE_BOOST_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
     DEMON_SPEED_FACTOR_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
     HUMAN_SPEED_SPREAD_STEP,
 };
@@ -277,22 +276,6 @@ fn build_sim_tab(
             set: |style, value| style.cap = value as usize,
             range: (DEMON_CAP_MIN, DEMON_CAP_MAX, DEMON_CAP_STEP),
             text: |value| format!("{value:.0}"),
-        },
-    );
-    spawn_knob(
-        &mut commands,
-        panel,
-        "Spawn every",
-        &*style,
-        SliderBinding {
-            get: |style| style.interval,
-            set: |style, value| style.interval = value,
-            range: (
-                DEMON_SPAWN_INTERVAL_MIN,
-                DEMON_SPAWN_INTERVAL_MAX,
-                DEMON_SPAWN_INTERVAL_STEP,
-            ),
-            text: |value| format!("{value:.1} s"),
         },
     );
     // скорость и бросок — проценты: множитель «1.3» на панели ничего не

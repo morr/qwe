@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use bevy::prelude::*;
 use rand::Rng;
 
@@ -55,39 +53,9 @@ pub fn spawn_initial_burst(
     }
 }
 
-pub fn tick_spawner(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut spawner: ResMut<DemonSpawner>,
-    style: Res<DemonStyle>,
-    portal_pos: Res<PortalPos>,
-    seed: Res<WorldSeed>,
-    silhouettes: Res<Silhouettes>,
-) {
-    // период таймера подтягивается здесь, а не отдельной системой на
-    // `resource_changed`: рестарт и смена города пересоздают `DemonSpawner`
-    // целиком (`restart.rs`, `city.rs`), и таймер вернулся бы к константе,
-    // тогда как ресурс с тех пор не менялся — чинить было бы некому
-    let interval = Duration::from_secs_f32(style.interval);
-    if spawner.timer.duration() != interval {
-        spawner.timer.set_duration(interval);
-    }
-
-    if spawner.spawned >= style.cap {
-        return;
-    }
-    spawner.timer.tick(time.delta());
-    if !spawner.timer.just_finished() {
-        return;
-    }
-
-    let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
-    spawn_demon(&mut commands, &mut spawner, &birth, DemonKind::Imp, None);
-}
-
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
-/// читаются одинаково в обеих системах спавна, поэтому ездят одним значением,
-/// а не пятёркой позиционных аргументов.
+/// читаются одинаково у залпа и у призыва, поэтому ездят одним значением, а
+/// не пятёркой позиционных аргументов.
 pub(super) struct DemonBirth<'a> {
     world_seed: u64,
     portal_pos: Vec2,

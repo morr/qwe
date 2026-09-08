@@ -3,7 +3,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::settings::{
     BRUTE, DEMON_CAP, DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_BOOST,
-    DEMON_SPAWN_INTERVAL, DEMON_SPEED_FACTOR, DemonKindStats, IMP,
+    DEMON_SPEED_FACTOR, DemonKindStats, IMP,
 };
 
 #[derive(Component, Reflect, Default)]
@@ -153,11 +153,9 @@ pub struct DemonCaughtHumanEvent {
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "demon")]
 pub struct DemonStyle {
-    /// Потолок числа демонов; дойдя до него, спавнер молчит. Понижение уже
-    /// вышедших демонов не убирает — оно видно только после рестарта.
+    /// Потолок числа демонов; дойдя до него, залп и призыв молчат. Понижение
+    /// уже вышедших демонов не убирает — оно видно только после рестарта.
     pub cap: usize,
-    /// Секунды между демонами после стартового залпа.
-    pub interval: f32,
     /// Множитель к `DEMON_SPEED`, 1.0…2.0. Пишется в `Movable::speed` при
     /// спавне, а уже вышедшим демонам его раздаёт `sync_demon_speed`.
     pub speed: f32,
@@ -171,14 +169,16 @@ impl Default for DemonStyle {
     fn default() -> Self {
         Self {
             cap: DEMON_CAP,
-            interval: DEMON_SPAWN_INTERVAL,
             speed: DEMON_SPEED_FACTOR,
             lunge: DEMON_LUNGE_BOOST,
         }
     }
 }
 
-/// Спавнер демонов: стартовый залп, затем по таймеру до капа.
+/// Спавнер демонов: стартовый залп, дальше — только призыв за души.
+/// Интервального спавна нет (решение 5 `ROADMAP.md`): он противоречил бы
+/// «души покупают демонов». Старый `settings.toml` с ключом `interval`
+/// читается как прежде — лишний ключ `bevy_settings` пропускает.
 ///
 /// Состояние мира, а не настройка: `WorldStarted` пересобирает его целиком
 /// (`demon::on_world_started`). В реестре типов — ради живого осмотра по BRP,
@@ -186,20 +186,9 @@ impl Default for DemonStyle {
 /// Регистрация даёт и запись: правка `spawned` руками по BRP раздаст уже
 /// выданные `PawnId` второй раз, а на их уникальности стоят и поток ГПСЧ
 /// пешки, и ключ очереди диспетчера.
-#[derive(Resource, Reflect)]
+#[derive(Resource, Reflect, Default)]
 #[reflect(Resource)]
 pub struct DemonSpawner {
-    pub timer: Timer,
     pub spawned: usize,
     pub initial_burst_done: bool,
-}
-
-impl Default for DemonSpawner {
-    fn default() -> Self {
-        Self {
-            timer: Timer::from_seconds(DEMON_SPAWN_INTERVAL, TimerMode::Repeating),
-            spawned: 0,
-            initial_burst_done: false,
-        }
-    }
 }

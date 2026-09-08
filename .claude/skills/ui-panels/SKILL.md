@@ -117,10 +117,10 @@ did not fit 1080 px and ran off the top of the screen.
   `Activate`, which fires for *any* mouse button and would make one right click move both
   ways.
 - **Sim tab** (`ui/stats.rs`) — three sections. **World**: `Deterministic` and the `Seed`
-  field + `new`. **Demon**: the four `DemonStyle` knobs — **Max demons** (0…500, step 5),
-  **Spawn every** (0.1…10 s, step 0.1), **Speed** (100…200%, step 5) and **Lunge boost**
-  (+0…+100%, step 5); both percent rows print as percent, a bare `1.3` on the panel says
-  nothing. **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a
+  field + `new`. **Demon**: the three `DemonStyle` knobs — **Max demons** (0…500, step 5),
+  **Speed** (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows
+  print as percent, a bare `1.3` on the panel says nothing. **Spawn every** stood here
+  until the interval spawner went (M1: demons are bought with souls, not dripped). **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a
   half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the ASCII
   `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
