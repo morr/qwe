@@ -6,7 +6,7 @@ use super::*;
 use crate::map::SHADOW_DIR;
 use crate::map::osm::fixture;
 use crate::map::osm::model::signed_ring_area;
-use crate::settings::{ARCH_HEIGHT, LEAN_MAX, MAP_SIZE};
+use crate::settings::ARCH_HEIGHT;
 
 fn square() -> Vec<Vec2> {
     vec![
@@ -27,10 +27,9 @@ fn detail(tinted: bool) -> RoofDetail {
     }
 }
 
-/// Постоянный косой сдвиг — то отклонение, на котором писались все эти
-/// тесты; лучевое живёт в своих, рядом с надиром.
+/// Отклонение верха дома — одно на все дома, см. [`Lean`].
 fn fixed_lean() -> Lean {
-    Lean::of(Vec2::ZERO, BuildingLean::Fixed)
+    Lean::of()
 }
 
 fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
@@ -124,7 +123,7 @@ fn extrusion_sorts_the_far_end_of_the_lift_first() {
     );
     let south = building(square(), Some(3.0), AreaKind::Building);
     let positions = |list: &[PolyArea]| {
-        extrusion_builder(list, &[], detail(false), BuildingLean::Fixed)
+        extrusion_builder(list, &[], detail(false))
             .build()
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -208,7 +207,7 @@ fn the_roof_material_is_stable_and_follows_the_use() {
 fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let mut block = building(oblong(14.0, 40.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
-    let builder = extrusion_builder(&[block], &[], detail(false), BuildingLean::Fixed);
+    let builder = extrusion_builder(&[block], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
@@ -336,7 +335,7 @@ fn shadow_length_scales_with_height() {
     let low = building(square(), Some(6.0), AreaKind::Building);
     let high = building(square(), Some(60.0), AreaKind::Building);
     let reach = |list: &[PolyArea]| {
-        let mesh = shadow_builder(list, &[], false, BuildingLean::Fixed).build();
+        let mesh = shadow_builder(list, &[], false).build();
         let positions = mesh
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -371,49 +370,28 @@ fn every_mode_builds_geometry_for_mixed_input() {
     assert!(!roofs.is_empty());
     assert_eq!(facades.skipped_polygons(), 0);
 
-    let shadows = shadow_builder(&list, &[], false, BuildingLean::Fixed);
+    let shadows = shadow_builder(&list, &[], false);
     assert!(!shadows.is_empty());
 
-    let extruded = extrusion_builder(&list, &[], detail(false), BuildingLean::Fixed);
+    let extruded = extrusion_builder(&list, &[], detail(false));
     assert!(!extruded.is_empty());
     assert_eq!(extruded.skipped_polygons(), 0);
     // комбинированный режим: рампа меняет цвета, но не геометрию
-    let tinted = extrusion_builder(&list, &[], detail(true), BuildingLean::Fixed);
+    let tinted = extrusion_builder(&list, &[], detail(true));
     assert!(!tinted.is_empty());
     assert_eq!(tinted.skipped_polygons(), 0);
 }
 
 #[test]
-fn the_radial_lean_points_away_from_the_nadir_and_grows_with_distance() {
-    let nadir = MAP_SIZE * 0.5;
-    let near = Lean::of(nadir + Vec2::new(100.0, 0.0), BuildingLean::Radial);
-    let far = Lean::of(nadir + Vec2::new(1200.0, 0.0), BuildingLean::Radial);
-    // от надира, а не по странам света
-    assert!(near.dir().x > 0.9, "{:?}", near.dir());
-    let south = Lean::of(nadir - Vec2::new(0.0, 800.0), BuildingLean::Radial);
-    assert!(south.dir().y < -0.9, "{:?}", south.dir());
-    // и тем сильнее, чем дальше — до потолка
-    assert!(far.scale() > near.scale());
-    assert!(far.scale() <= LEAN_MAX + f32::EPSILON);
-    let corner = Lean::of(Vec2::ZERO, BuildingLean::Radial);
-    assert_eq!(corner.scale(), LEAN_MAX);
-
-    // постоянное отклонение от места не зависит вовсе
-    let fixed = |at| Lean::of(at, BuildingLean::Fixed);
-    assert_eq!(
-        fixed(Vec2::ZERO).dir(),
-        fixed(nadir + Vec2::X * 900.0).dir()
-    );
-}
-
-#[test]
-fn the_painter_order_puts_the_far_side_of_the_nadir_first() {
-    let nadir = MAP_SIZE * 0.5;
-    // дальше от надира — раньше в буфере: луч от камеры к дальнему дому идёт
-    // над ближним, и ближний обязан лечь поверх
-    let near = Lean::depth(nadir + Vec2::new(50.0, 0.0), BuildingLean::Radial);
-    let far = Lean::depth(nadir + Vec2::new(1500.0, 0.0), BuildingLean::Radial);
+fn the_painter_order_puts_the_far_side_first() {
+    // «дальше» — вдоль отклонения верха: верх дальнего дома уезжает на
+    // ближний, и ближний обязан лечь поверх, то есть попасть в буфер позже
+    let dir = fixed_lean().dir();
+    let near = Lean::depth(Vec2::ZERO);
+    let far = Lean::depth(dir * 900.0);
     assert!(far > near);
+    // поперёк отклонения глубина не меняется: сортировать там нечего
+    assert_eq!(Lean::depth(dir.perp() * 700.0), near);
 }
 
 #[test]
@@ -473,7 +451,7 @@ fn square_shadow_is_one_swept_polygon() {
     // и в самом слое тело тени — ровно этот свип: у одного дома объединять
     // нечего, а мягкий край альфу тела не трогает
     let list = [building(square(), Some(15.0), AreaKind::Building)];
-    let mesh = shadow_builder(&list, &[], false, BuildingLean::Fixed).build();
+    let mesh = shadow_builder(&list, &[], false).build();
     let expected = signed_ring_area(&sweep_of(&chains[0], 15.0)).abs();
     assert!((shadow_area(&mesh) - expected).abs() < 0.5, "{expected}");
 }
@@ -506,7 +484,7 @@ fn staircase_shadow_has_no_double_darkening() {
 
     // и ровно столько же в слое: union не съел свип и не удвоил его
     let list = [building(staircase, Some(20.0), AreaKind::Building)];
-    let mesh = shadow_builder(&list, &[], false, BuildingLean::Fixed).build();
+    let mesh = shadow_builder(&list, &[], false).build();
     assert!((shadow_area(&mesh) - offset_length * perp_span).abs() < 0.5);
 }
 
@@ -521,14 +499,10 @@ fn neighbour_shadows_union_without_double_darkening() {
         Some(15.0),
         AreaKind::Building,
     );
-    let alone = |b: &PolyArea| {
-        shadow_area(
-            &shadow_builder(std::slice::from_ref(b), &[], false, BuildingLean::Fixed).build(),
-        )
-    };
+    let alone =
+        |b: &PolyArea| shadow_area(&shadow_builder(std::slice::from_ref(b), &[], false).build());
     let separate = alone(&left) + alone(&right);
-    let together =
-        shadow_area(&shadow_builder(&[left, right], &[], false, BuildingLean::Fixed).build());
+    let together = shadow_area(&shadow_builder(&[left, right], &[], false).build());
     assert!(
         together < separate - 1.0,
         "union must remove the overlap: {together} vs {separate}"
@@ -606,17 +580,14 @@ fn only_a_building_passage_cuts_an_arch() {
         true,
     )];
 
-    let solid = extrusion_builder(&house, &[], detail(false), BuildingLean::Fixed).vertex_count();
-    assert!(
-        extrusion_builder(&house, &through, detail(false), BuildingLean::Fixed).vertex_count()
-            > solid
-    );
+    let solid = extrusion_builder(&house, &[], detail(false)).vertex_count();
+    assert!(extrusion_builder(&house, &through, detail(false)).vertex_count() > solid);
     assert_eq!(
-        extrusion_builder(&house, &alongside, detail(false), BuildingLean::Fixed).vertex_count(),
+        extrusion_builder(&house, &alongside, detail(false)).vertex_count(),
         solid
     );
     assert_eq!(
-        extrusion_builder(&house, &elsewhere, detail(false), BuildingLean::Fixed).vertex_count(),
+        extrusion_builder(&house, &elsewhere, detail(false)).vertex_count(),
         solid
     );
 }
@@ -628,7 +599,7 @@ fn only_a_building_passage_cuts_an_arch() {
 fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
     // 40 м высоты, подъём 14 м: арка обязана занять 14 × 3/40 = 1.05 м
     let tall = building(square(), Some(40.0), AreaKind::Building);
-    let lift = extrusion_lift(&tall, BuildingHeightMode::Extrusion, BuildingLean::Fixed);
+    let lift = extrusion_lift(&tall, BuildingHeightMode::Extrusion);
     let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
 
     let mut builder = MeshBuilder::default();
@@ -657,7 +628,7 @@ fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
 fn a_clamped_wall_still_gets_a_proportional_opening() {
     // 4 м высоты: подъём 4 × 0.35 = 1.4 обрезается снизу до 2.5 м
     let low = building(square(), Some(4.0), AreaKind::Building);
-    let lift = extrusion_lift(&low, BuildingHeightMode::Extrusion, BuildingLean::Fixed);
+    let lift = extrusion_lift(&low, BuildingHeightMode::Extrusion);
     assert_eq!(lift.y, *EXTRUDE_RANGE.start());
 
     let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
@@ -727,7 +698,7 @@ fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
         Some(15.0),
         AreaKind::Building,
     );
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion, BuildingLean::Fixed);
+    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
     let road = passage(vec![Vec2::new(5.0, 0.0), Vec2::new(5.0, 12.0)], true);
 
     let mut builder = MeshBuilder::default();
@@ -793,7 +764,7 @@ fn an_arch_lying_inside_the_outline_still_cuts_an_opening() {
         Some(42.0),
         AreaKind::Building,
     );
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion, BuildingLean::Fixed);
+    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
     let inner = passage(vec![Vec2::new(5.0, 0.0), Vec2::new(5.2, 14.0)], true);
 
     let mut builder = MeshBuilder::default();

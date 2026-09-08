@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use crate::map::{BuildingHeightMode, BuildingLean, RoofStyle};
+use crate::map::{BuildingHeightMode, RoofStyle};
 use crate::settings::{ROOF_TEXTURE_MAX, ROOF_TEXTURE_MIN, ROOF_TEXTURE_STEP};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::ROW_LEFT_PX;
@@ -17,7 +17,6 @@ impl Plugin for UiBuildingStylePlugin {
     fn build(&self, app: &mut App) {
         // подпись вслед за ресурсом — и на клик по кнопке, и на правку по BRP
         app.add_knobs::<BuildingHeightMode>()
-            .add_knobs::<BuildingLean>()
             .add_knobs::<RoofStyle>()
             .add_systems(
                 Startup,
@@ -30,7 +29,6 @@ fn build_buildings_section(
     mut commands: Commands,
     panes: Res<SettingsPanes>,
     mode: Res<BuildingHeightMode>,
-    lean: Res<BuildingLean>,
     roofs: Res<RoofStyle>,
 ) {
     let panel = spawn_section(
@@ -50,20 +48,6 @@ fn build_buildings_section(
         CycleBinding {
             cycle: |mode| *mode = mode.next(),
             text: |mode| mode.label().to_string(),
-        },
-    );
-
-    // куда «падает» верх дома: постоянный косой сдвиг (спутниковый кадр) или
-    // лучами от надира (кадр с самолёта)
-    spawn_cycle_row(
-        &mut commands,
-        panel,
-        "Lean",
-        ROW_LEFT_PX,
-        &*lean,
-        CycleBinding {
-            cycle: |lean| *lean = lean.next(),
-            text: |lean| lean.label().to_string(),
         },
     );
 

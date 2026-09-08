@@ -12,8 +12,8 @@ use super::clutter::{flat_roof_items, push_items, ridge_chimney};
 use super::material::{RoofLook, roof_look};
 use super::roofs::gable_roof;
 use super::{
-    BuildingHeightMode, BuildingLean, Lean, RoofDetail, building_center, extrusion_lift,
-    facade_color, height_or_default, shade_by_light,
+    BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
+    height_or_default, shade_by_light,
 };
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::signed_ring_area;
@@ -247,7 +247,6 @@ pub(super) fn shadow_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
     extruded: bool,
-    lean_mode: BuildingLean,
 ) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
@@ -310,8 +309,8 @@ pub(super) fn shadow_builder(
         by_building.sort_unstable_by_key(|&(index, _)| index);
         for (index, passages) in by_building {
             let building = &buildings[index];
-            let lean = Lean::of(building_center(building), lean_mode);
-            let lift = extrusion_lift(building, BuildingHeightMode::Extrusion, lean_mode);
+            let lean = Lean::of();
+            let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
             for opening in arch_openings(building, &passages, lift, -lean.dir()) {
                 let Some(along) = (opening.b - opening.a).try_normalize() else {
                     continue;
@@ -389,12 +388,11 @@ pub(super) fn extrusion_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
     detail: RoofDetail,
-    lean_mode: BuildingLean,
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
-        let depth = |building: &PolyArea| Lean::depth(building_center(building), lean_mode);
+        let depth = |building: &PolyArea| Lean::depth(building_center(building));
         depth(&buildings[b]).total_cmp(&depth(&buildings[a]))
     });
 
@@ -404,12 +402,10 @@ pub(super) fn extrusion_builder(
     for index in order {
         let building = &buildings[index];
         let facade_color = facade_color(building);
-        // отклонение верха — своё у каждого дома: при лучевом режиме оно
-        // зависит от того, где дом стоит относительно надира
-        let lean = Lean::of(building_center(building), lean_mode);
+        let lean = Lean::of();
         let lift_dir = lean.dir();
         // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
-        let lift = extrusion_lift(building, BuildingHeightMode::Extrusion, lean_mode);
+        let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
         builder.set_roof(None);
 
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние

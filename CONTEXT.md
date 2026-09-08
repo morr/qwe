@@ -211,20 +211,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **The clutter is the only thing zoom changes about buildings** —
   `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) rebuilds the layer without it
   once a metre stops being worth two pixels, the way rail and tram rebuild themselves.
-- **Lean** (`map/buildings/mod.rs`, `BuildingLean` + `Lean`) — which way the *top* of a
-  building is displaced, and the second thing (with the sun) that a 2.5D building answers
-  to. **`Fixed`** — one oblique skew for every building, which is what a **satellite**
-  frame looks like: 5 km of city seen from 500 km up spans fractions of a degree, so the
-  parallax is constant (an orthomosaic has none at all). **`Radial`** — every building
-  leans **away from the nadir**, harder the farther it stands, which is what an
-  **aircraft or drone** frame looks like, and is the geometric signature a flat map never
-  has. The nadir is the map centre; `NADIR_ALTITUDE` 500 m makes the lean at the portal
-  match `Fixed` in strength and differ only in direction, and `LEAN_MAX` 1.4 is 26° off
-  nadir — where aerial survey actually works. `Lean` is a **per-building value** (metres
-  of displacement per drawn metre of height, held as a vector) and carries the painter's
-  key with it: **far from the nadir is drawn first**, because the ray to a far building
-  passes over a near one. **The sun is independent of it** — the lean is the camera, the
-  shadow is the light. Panel row *Lean*, persisted; a change rebuilds the building layers.
+- **Lean** (`map/buildings/mod.rs`, `Lean`) — which way the *top* of a building is
+  displaced, and the second thing (with the sun) that a 2.5D building answers to. One
+  oblique skew for every building, which is what a **satellite** frame looks like: 5 km of
+  city seen from 500 km up spans fractions of a degree, so the parallax is constant (an
+  orthomosaic has none at all). `Lean` is a **per-building value** (metres of displacement
+  per drawn metre of height, held as a vector) and carries the painter's key with it:
+  **the far end of the skew is drawn first**, because the top of a far building is
+  displaced onto a near one. **The sun is independent of it** — the lean is the camera,
+  the shadow is the light. A radial lean away from the nadir — the signature of an
+  *aircraft* frame — was tried and taken back out: the nadir is the centre of the **map**,
+  not of the frame, so with a camera that pans the fan is only visible around the centre,
+  and following the camera is out of reach while the layer is rebuilt on the CPU (tens of
+  milliseconds). It belongs with a move of the skew into the vertex shader.
 - **Sun** (`map/mod.rs`) — one light for the whole map, and now with both halves:
   **`SHADOW_DIR`** (where the shadow points in plan) and **`SUN_ELEVATION_DEG`** (59°, the
   summer noon of Tula's latitude — the hour a city is photographed from the air), from
