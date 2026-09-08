@@ -93,9 +93,15 @@ did not fit 1080 px and ran off the top of the screen.
 ## Panels
 
 - **HUD counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
-  stripped on death), Demons, Souls reaped (`Telemetry::killed`), first in the left column,
-  **outside** the tabs: they are watched continuously, and putting them behind a tab choice
-  would mean watching the simulation through a keyhole. The counters use `iter().len()`,
+  stripped on death), Demons, **Souls** as `available / earned` (`souls::Souls`), first in
+  the left column, **outside** the tabs: they are watched continuously, and putting them
+  behind a tab choice would mean watching the simulation through a keyhole. Under them a
+  row of two **summon buttons** (`spawn_panel_button_with` with a `SummonButton(kind)`
+  marker on the button and `SummonCaption(kind)` on the caption): the caption reads
+  `imp 3` / `brute 25` with the live `summon_cost`, the click observer writes
+  `SummonRequested`, and `sync_summon_buttons` puts `InteractionDisabled` on a button the
+  souls cannot pay for — the inert-row idiom of `ui/rows.rs`, so a click that would be
+  refused is not offered. The counters use `iter().len()`,
   not `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so
   the length is a sum over archetypes rather than a walk over 20 000 entities every frame.
   In agent runs the red **BRP badge** owns that corner, and `offset_below_brp_badge`

@@ -1635,9 +1635,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `SUMMON_COST_GROWTH` 5 % per living demon of the kind) — it charges `spent` and spawns
   the demon at the portal rim; otherwise the request is refused and dropped. A summon is
   simulation input like a slider (**determinism skill**, "The contract").
-- **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the **Souls reaped** HUD
-  counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
-  holds the seed and the determinism row. Invariant (check paused):
+- **Telemetry** — `{killed, escaped}`, BRP-readable; the HUD's **Souls** row shows
+  `Souls::available / earned` (`ui/stats.rs`, with the two summon buttons under it), *not*
+  a row of the Sim tab's **World** section — that section holds the seed and the
+  determinism row. Invariant (check paused):
   `killed + escaped + alive == PopulationSize` — the number the spawn actually read, not
   the constant: in the game that is the default `HUMAN_COUNT`, in a replay run whatever
   `replay_app` was given. At high sim speed BRP reads are skewed — pause before asserting.

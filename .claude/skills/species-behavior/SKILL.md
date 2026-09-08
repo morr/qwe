@@ -724,10 +724,10 @@ junction under the portal is charred), below corpses (bodies stay visible on it)
 
 ## Telemetry
 
-`{killed, escaped}`, BRP-readable; `killed` is what the **Souls reaped** HUD counter shows
-(`ui/stats.rs`, first in the left column, outside the settings tabs — panel internals live
-in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
-determinism row, no telemetry.
+`{killed, escaped}`, BRP-readable; `killed` equals `Souls::earned`, and the HUD's **Souls**
+row shows `available / earned` (`ui/stats.rs`, first in the left column, outside the
+settings tabs — panel internals live in the **ui-panels skill**). The Sim tab's **World**
+section is a different thing: seed and determinism row, no telemetry.
 
 **Invariant (check paused): `killed + escaped + alive == PopulationSize`** — the number the
 spawn read, not the constant. In the game it is the default `HUMAN_COUNT`; in a replay run

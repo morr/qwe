@@ -1,14 +1,15 @@
 //! Прогон: живые счётчики в HUD и вкладка Sim.
 //!
 //! Счётчики — сколько пешек ещё живо, сколько демонов ходит по городу, сколько
-//! душ съедено — стоят **поверх карты**, а не во вкладке: за ними смотрят
-//! непрерывно. До них эти числа жили только в BRP (`count Human`,
+//! душ доступно из заработанных — стоят **поверх карты**, а не во вкладке: за
+//! ними смотрят непрерывно. До них эти числа жили только в BRP (`count Human`,
 //! `res get Telemetry`), то есть смотреть на симуляцию без агентского клиента
-//! рядом было нечем.
+//! рядом было нечем. Под счётчиками — две кнопки призыва с живой ценой
+//! (`souls.rs`): клик по кнопке — UI-нода, в мир не доходит по построению.
 //!
 //! Вкладка Sim — три секции: World (seed и детерминизм — свойства мира целиком),
-//! Demon (`DemonStyle`: кап, интервал спавна, скорость и надбавка на бросок) и
-//! Human (`HumanStyle`: разброс личных скоростей).
+//! Demon (`DemonStyle`: кап, скорость и надбавка на бросок) и Human
+//! (`HumanStyle`: разброс личных скоростей).
 
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor};
 use bevy::feathers::tokens;
@@ -27,7 +28,7 @@ use super::{
     TopLeftColumn, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, panel_background, panel_block_background,
     panel_title, row_label, row_value,
 };
-use crate::demon::{Demon, DemonStyle};
+use crate::demon::{Demon, DemonKind, DemonStyle};
 use crate::determinism::Determinism;
 use crate::human::{Human, HumanStyle};
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
@@ -37,15 +38,24 @@ use crate::settings::{
     DEMON_SPEED_FACTOR_STEP, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
     HUMAN_SPEED_SPREAD_STEP,
 };
-use crate::telemetry::Telemetry;
+use crate::souls::{Souls, SummonRequested, summon_cost};
 
 /// Какой счётчик показывает строка; компонент висит на тексте значения.
 #[derive(Component, Clone, Copy)]
 enum StatRow {
     Pawns,
     Demons,
+    /// `доступно / заработано` — цена призыва читается против первого числа.
     Souls,
 }
+
+/// Кнопка призыва — на самой кнопке (гасится, когда душ не хватает).
+#[derive(Component, Clone, Copy)]
+struct SummonButton(DemonKind);
+
+/// Подпись кнопки призыва — на её тексте: вид и живая цена.
+#[derive(Component, Clone, Copy)]
+struct SummonCaption(DemonKind);
 
 /// Поле ввода seed'а мира.
 #[derive(Component)]
@@ -69,6 +79,7 @@ impl Plugin for UiStatsPlugin {
                 Update,
                 (
                     sync_world_counts,
+                    sync_summon_buttons,
                     apply_seed_on_enter,
                     sync_seed_field.run_if(resource_changed::<WorldSeed>),
                     // метка BRP стоит только в агентских запусках, и только
@@ -208,15 +219,63 @@ fn render_hud_counters(mut commands: Commands, panes: Res<SettingsPanes>) {
             children![
                 count_row("Pawns", StatRow::Pawns),
                 count_row("Demons", StatRow::Demons),
-                count_row("Souls reaped", StatRow::Souls),
+                count_row("Souls", StatRow::Souls),
             ],
         ))
         .id();
+    // призыв — ряд из двух кнопок под счётчиками: цена живая, кнопка гаснет,
+    // когда душ не хватает. Только ASCII: `default_font` без кириллицы
+    let summons = commands
+        .spawn((super::ui_row(6.), Name::new("hud_summon")))
+        .id();
+    commands.entity(counters).add_child(summons);
+    for kind in [DemonKind::Imp, DemonKind::Brute] {
+        super::spawn_panel_button_with(
+            &mut commands,
+            summons,
+            SummonButton(kind),
+            (super::panel_button_label(kind.label()), SummonCaption(kind)),
+            false,
+            move |_activate: On<Activate>, mut requests: MessageWriter<SummonRequested>| {
+                requests.write(SummonRequested { kind });
+            },
+        );
+    }
     // первым ребёнком: панель настроек оболочка положила в колонку раньше
     // (`UiBuildSet::Shell`), а счётчики стоят над ней
     commands
         .entity(panes.column())
         .insert_children(0, &[counters]);
+}
+
+/// Живая цена на кнопках призыва и их доступность: цена растёт с живыми
+/// того же вида (`summon_cost`), кнопка без душ на неё —
+/// `InteractionDisabled`, как инертная строка панели (`ui/rows.rs`).
+fn sync_summon_buttons(
+    mut commands: Commands,
+    souls: Res<Souls>,
+    demons: Query<&DemonKind, With<Demon>>,
+    mut captions: Query<(&SummonCaption, &mut Text)>,
+    buttons: Query<(Entity, &SummonButton, Has<bevy::ui::InteractionDisabled>)>,
+) {
+    let cost =
+        |kind: DemonKind| summon_cost(kind, demons.iter().filter(|&&alive| alive == kind).count());
+    for (caption, mut text) in &mut captions {
+        let kind = caption.0;
+        text.set_if_neq(Text(format!("{} {}", kind.label(), cost(kind))));
+    }
+    for (entity, button, disabled) in &buttons {
+        let affordable = souls.available() >= cost(button.0);
+        if affordable && disabled {
+            commands
+                .entity(entity)
+                .remove::<bevy::ui::InteractionDisabled>();
+        } else if !affordable && !disabled {
+            commands
+                .entity(entity)
+                .insert(bevy::ui::InteractionDisabled);
+        }
+    }
 }
 
 fn build_sim_tab(
@@ -351,16 +410,16 @@ fn build_sim_tab(
 fn sync_world_counts(
     humans: Query<(), With<Human>>,
     demons: Query<(), With<Demon>>,
-    telemetry: Res<Telemetry>,
+    souls: Res<Souls>,
     mut labels: Query<(&StatRow, &mut Text)>,
 ) {
     for (row, mut text) in &mut labels {
         let value = match row {
-            StatRow::Pawns => humans.iter().len(),
-            StatRow::Demons => demons.iter().len(),
-            StatRow::Souls => telemetry.killed,
+            StatRow::Pawns => humans.iter().len().to_string(),
+            StatRow::Demons => demons.iter().len().to_string(),
+            StatRow::Souls => format!("{} / {}", souls.available(), souls.earned),
         };
-        text.set_if_neq(Text(value.to_string()));
+        text.set_if_neq(Text(value));
     }
 }
 
