@@ -782,8 +782,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     seed]`). All four numbers are constant over a building, so the attribute is a
     *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **not a
-    roof** — walls, gables and parapets ride in the same mesh (2.5D is one painter's-order
-    layer) and come out with their vertex colour untouched.
+    roof** — walls, gables and roof clutter ride in the same mesh (2.5D is one
+    painter's-order layer) and come out with their vertex colour untouched.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
@@ -825,20 +825,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     is not visible, and a fifth float would cost four bytes on every vertex of the building
     layer. The consequence for the gallery: its `Seed` knob rolls the age too — that is how
     a new roof is compared against an old one there.
-  - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
-    membrane) gets a 0.7 m inset band along its ring and every courtyard
-    ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
-    dark on the shaded ones. Tile, seam and corrugated get none — they end in an eave, not
-    a parapet. *Soft* is a property of the material, so the rule lives on it —
-    **`RoofKind::has_parapet`** (`material.rs`), not on the layer that happens to draw the
-    band. The band carries **no** roof frame: a roll seam crossing a concrete coping
-    would read as a crack. `MeshBuilder::push_inset_band_with` (the per-edge-colour
-    sibling of `push_inset_band`) exists for exactly this.
+  - **There is no parapet, and putting one back needs a different construction.** A soft
+    flat roof (bitumen / gravel / membrane, the old `RoofKind::has_parapet`) used to get a
+    0.7 m inset band along its ring and every courtyard ring, lit by `shade_by_light` like
+    a wall (0.24 / 0.20) — bright on the sunny edges, dark on the shaded ones. That is
+    **the same construction as a hip roof's slopes** (an inset band on miter offsets,
+    shaded by the edge's own outward normal) at a third of the width, so from the air every
+    panel block wore a small hip, and the hip of a large private house — inset capped at
+    `HIP_INSET` 2.2 m — was the same picture only wider. Two things a roof shape must never
+    do, and it did both. The band's other cost is why the retreat is not a one-liner back:
+    it wants to read as a vertical coping standing *above* the roof, and an inset band
+    shaded by a plan normal cannot say that. `MeshBuilder::push_inset_band_with` (the
+    per-edge-colour sibling of `push_inset_band`) survives as a primitive; nothing in the
+    building layers uses it any more.
   - **One call lays every flat roof** — `layers.rs::push_flat_roof(builder, look, outer,
-    holes, color)`: set the roof frame, fill the contour with its courtyards, add the
-    parapet if the material has one. Both callers use it — the flat modes with the real
-    contour, 2.5D with the contour already lifted onto the walls — and it is `pub` because
-    the `roof_gallery` example builds its houses with it. Slopes stay outside it: a gable
+    holes, color)`: set the roof frame, fill the contour with its courtyards. Both callers
+    use it — the flat modes with the real contour, 2.5D with the contour already lifted
+    onto the walls. It is `pub(super)` now: the gallery reaches the same geometry through
+    `push_house`, one level up. Slopes stay outside it: a gable
     roof is computed by the caller, which needs the same `GableRoof` for the gables it
     draws *with the walls*, before the roof.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
@@ -890,9 +894,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
       numbers: a mirror would drift on the first edit and the gallery would then lie about
       exactly what it is opened for. They are text, not knobs: the numbers live in the code.
-    - What the gallery may **not** do is roll its own geometry: the parapet marker in a
-      block's caption comes from `RoofKind::has_parapet`, the shape numbers from
-      `shape_facts`. It picks material and colour directly (`RoofLook::new`) instead of
+    - What the gallery may **not** do is roll its own geometry: every house goes through
+      `push_house`, the shape numbers come from `shape_facts`, the shape that a caption
+      reports is the one `push_house` returned. It picks material and colour directly
+      (`RoofLook::new`) instead of
       through `roof_look`, because the seed cannot reach every combination — a membrane never
       lands on a private house — and it drops the ±3 % seeded jitter so the hex printed under
       a house is the constant in `material.rs`.
@@ -932,8 +937,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     swept all four edges; two of them were always inside the union.)
   - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
     it cannot be hidden without rebuilding, since it lives in the same merged mesh as
-    the houses (painter's order is per building: walls, roof, parapet, then its own
-    clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
+    the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
     `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
     world entry before `spawn_map` and rebuilt on a threshold crossing through the same
     `retuned` gate the height mode uses (one registration with `or_else`, deliberately:

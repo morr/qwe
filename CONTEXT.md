@@ -188,7 +188,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
   (they used to stay flat among pitched neighbours). Which of the two a house takes is its
   own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
-  and parapet. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
+  and its clutter. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
   with its colour. **`RoofShape`** is the same three as an *input*: the city never asks for
   one, `roof_gallery` does, to stand one outline under all three — and a refusal there stays
   a refusal instead of being swapped for another shape the way `roofing` swaps it.
@@ -203,16 +203,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
-  whole building**; code `0` is *not a roof* — walls, gables and parapets ride in the same
+  whole building**; code `0` is *not a roof* — walls and gables ride in the same
   mesh). **Roof age** is the second thing that seed carries (`roof.wgsl::roof_age`, hashed
   from it, no attribute of its own): one number per building that sets how many repair
   patches its bitumen carries (a young roof almost none, an old one a patch per second
   cell), how much water stands on it, and — on every material — how faded and dirty it is.
-  A soft flat roof gets a **parapet**: an inset band along the ring, lit by
-  `SHADOW_DIR` like a wall — soft is a property of the material (`RoofKind::has_parapet`:
-  bitumen / gravel / membrane), not of the layer that draws it. Every flat roof of the
-  city, in both flat modes and 2.5D, is laid by one call — **`push_flat_roof`** (fill +
-  parapet). Strength — `RoofStyle::texture`
+  Every flat roof of the city, in both flat modes and 2.5D, is laid by one call —
+  **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
+  it, a 0.7 m inset band lit by `SHADOW_DIR`; that is gone, because it is the same
+  construction as a hip's slopes and only narrower — from the air every panel block wore a
+  small hip, and a real hip could not be told from a flat roof. Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
   the walls under it**, deliberately: that is the relation an aerial photo has, and the
   older "roof lighter than wall" rule is retired with the per-use roof palette. Every
