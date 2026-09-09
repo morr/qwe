@@ -234,20 +234,20 @@ fn oblong(width: f32, length: f32) -> Vec<Vec2> {
 }
 
 #[test]
-fn a_gable_goes_on_houses_and_small_boxes_only() {
+fn a_pitched_roof_goes_on_houses_and_small_boxes_only() {
     let _sun = crate::map::default_sun();
     let mut house = building(oblong(8.0, 600.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(is_gabled(&house), "a house of any size");
+    assert!(is_pitched(&house), "a house of any size");
     let small = building(square(), None, AreaKind::Building);
-    assert!(is_gabled(&small), "an untagged small box");
+    assert!(is_pitched(&small), "an untagged small box");
     let big = building(oblong(20.0, 20.0), None, AreaKind::Building);
-    assert!(!is_gabled(&big), "an untagged big box");
+    assert!(!is_pitched(&big), "an untagged big box");
     let mut flats = building(square(), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
-    assert!(!is_gabled(&flats));
+    assert!(!is_pitched(&flats));
     let tower = building(square(), None, AreaKind::Kremlin);
-    assert!(!is_gabled(&tower), "the kremlin keeps its flat roof");
+    assert!(!is_pitched(&tower), "the kremlin keeps its flat roof");
     let mut yard = house.clone();
     yard.holes.push(vec![
         Vec2::new(4.0, 2.0),
@@ -255,7 +255,7 @@ fn a_gable_goes_on_houses_and_small_boxes_only() {
         Vec2::new(6.0, 4.0),
         Vec2::new(4.0, 4.0),
     ]);
-    assert!(!is_gabled(&yard), "a courtyard has no ridge");
+    assert!(!is_pitched(&yard), "a courtyard has no ridge");
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
 }
 
 #[test]
-fn an_l_shaped_house_keeps_a_flat_roof() {
+fn an_l_shaped_house_is_pitched_but_takes_no_gable() {
     let _sun = crate::map::default_sun();
     let l_shape = vec![
         Vec2::new(0.0, 0.0),
@@ -297,7 +297,7 @@ fn an_l_shaped_house_keeps_a_flat_roof() {
     ];
     let mut house = building(l_shape, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(is_gabled(&house));
+    assert!(is_pitched(&house));
     assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
 }
 

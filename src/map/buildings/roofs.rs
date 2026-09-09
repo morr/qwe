@@ -60,6 +60,10 @@ pub(super) struct GableRoof {
     /// Два фронтона: торец прямоугольника `(a, b)` на уровне карниза (CCW,
     /// наружная нормаль — правый перпендикуляр) и вершина конька над ним.
     pub(super) gables: [((Vec2, Vec2), Vec2); 2],
+    /// Сдвиг конька над карнизом — тот самый `ridge_lift(ridge_rise(width))`,
+    /// которым подняты вершины скатов. Нужен всякому, кто ставит предмет на
+    /// конёк и должен вернуть его в систему настоящего контура.
+    pub(super) ridge_offset: Vec2,
 }
 
 /// Вальмовая крыша: скаты по **всему** контуру и площадка конька внутри.
@@ -76,6 +80,10 @@ pub(super) struct HipRoof {
     pub(super) slopes: Vec<([Vec2; 4], LinearRgba)>,
     /// Площадка конька — вдвинутый контур и его тон.
     pub(super) ridge: (Vec<Vec2>, LinearRgba),
+    /// Сдвиг конька над карнизом — тот самый `ridge_lift(ridge_rise(inset))`,
+    /// которым подняты вершины скатов. Нужен всякому, кто ставит предмет на
+    /// конёк и должен вернуть его в систему настоящего контура.
+    pub(super) ridge_offset: Vec2,
 }
 
 /// Что за крыша у дома. Плоская — не «крыши нет», а именно плоская кровля со
@@ -185,7 +193,7 @@ pub(super) fn roofing(
     base: Srgba,
     seed: u32,
 ) -> Roofing {
-    if !is_gabled(building) {
+    if !is_pitched(building) {
         return Roofing::Flat;
     }
     let hipped = (seed >> 5) % 10 < HIPPED_SHARE;
@@ -235,6 +243,7 @@ fn hip_roof(
     Some(HipRoof {
         slopes,
         ridge: (inner, base.mix(&Srgba::WHITE, RIDGE_LIGHTEN).into()),
+        ridge_offset: rise,
     })
 }
 
@@ -271,8 +280,11 @@ fn perimeter(ring: &[Vec2]) -> f32 {
         .sum()
 }
 
-/// Крыша этого дома — скатная (двускатная или вальмовая)?
-pub(super) fn is_gabled(building: &PolyArea) -> bool {
+/// Дом из **скатной когорты**? Предикат гейтит не два ската, а скатную
+/// крышу вообще: его `false` — это `Roofing::Flat`, а `true` открывает и
+/// двускатную, и вальмовую, причём вальма достаётся в том числе тем, кому
+/// двускатная отказала (Г-образный контур).
+pub(super) fn is_pitched(building: &PolyArea) -> bool {
     // Кремль вне стилизации по назначению, как и в `base_colors`
     if building.kind == AreaKind::Kremlin {
         return false;
@@ -308,14 +320,14 @@ fn bounding_rect(ring: &[Vec2]) -> Option<([Vec2; 4], f32)> {
 /// Двускатная крыша над контуром, поднятым на `lift`; `ridge_lift` — на
 /// сколько выше карниза нарисован конёк (в плоских режимах — ноль, и скаты
 /// отличаются только тоном). `None` — крыша остаётся плоской: дом не из
-/// тех, что [`is_gabled`], или контур не прямоугольный.
+/// тех, что [`is_pitched`], или контур не прямоугольный.
 pub(super) fn gable_roof(
     building: &PolyArea,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
 ) -> Option<GableRoof> {
-    if !is_gabled(building) {
+    if !is_pitched(building) {
         return None;
     }
     let (rect, fill) = bounding_rect(&building.outer)?;
@@ -343,6 +355,7 @@ pub(super) fn gable_roof(
             ),
         ],
         gables: [((c1, c2), r1), ((c3, c0), r0)],
+        ridge_offset: ridge,
     })
 }
 

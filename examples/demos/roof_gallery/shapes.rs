@@ -109,7 +109,7 @@ fn house(ring: Vec<Vec2>, height: f32) -> PolyArea {
         holes: Vec::new(),
         kind: AreaKind::Building,
         // частный дом: только ему игра вообще ставит скатную крышу
-        // (`roofs::is_gabled`), и сетка форм существует про него
+        // (`roofs::is_pitched`), и сетка форм существует про него
         building_use: BuildingUse::House,
         height: Some(height),
         entrances: Vec::new(),

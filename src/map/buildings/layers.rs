@@ -220,14 +220,24 @@ pub(super) fn facade_and_roof_builders(
                     roofs.push_quad(slope, slope_color);
                 }
                 if detail.clutter {
-                    items.extend(ridge_chimney(&look, ridge_of(&roof)));
+                    items.extend(ridge_chimney(
+                        building,
+                        &look,
+                        ridge_of(&roof),
+                        roof.ridge_offset,
+                    ));
                 }
             }
             Roofing::Hip(roof) => {
                 roofs.set_roof(Some(look.frame));
                 push_hip(&mut roofs, &roof);
                 if detail.clutter {
-                    items.extend(ridge_chimney(&look, hip_ridge_ends(&roof)));
+                    items.extend(ridge_chimney(
+                        building,
+                        &look,
+                        hip_ridge_ends(&roof),
+                        roof.ridge_offset,
+                    ));
                 }
             }
             Roofing::Flat => {
@@ -239,7 +249,7 @@ pub(super) fn facade_and_roof_builders(
         }
         // в плоском режиме у коробки нет стен — только тень и верх, как у
         // самих домов в этих режимах
-        push_items(&mut roofs, &items, None, color, building, Vec2::ZERO);
+        push_items(&mut roofs, &items, None, color);
     }
     (facades, roofs)
 }
@@ -524,10 +534,12 @@ fn push_house_with_arches(
         }
     }
 
-    let chimney_on = |builder: &mut MeshBuilder, ridge| {
+    let chimney_on = |builder: &mut MeshBuilder, ridge, ridge_offset| {
         if clutter {
-            let chimney: Vec<_> = ridge_chimney(look, ridge).into_iter().collect();
-            push_items(builder, &chimney, Some(lean), color, building, lift);
+            let chimney: Vec<_> = ridge_chimney(building, look, ridge, lift + ridge_offset)
+                .into_iter()
+                .collect();
+            push_items(builder, &chimney, Some(lean), color);
         }
     };
     match roofing_of(
@@ -553,7 +565,7 @@ fn push_house_with_arches(
             for (slope, slope_color) in roof.slopes {
                 builder.push_quad(slope, slope_color);
             }
-            chimney_on(builder, ridge_of(&roof));
+            chimney_on(builder, ridge_of(&roof), roof.ridge_offset);
             RoofShape::Gable
         }
         Roofing::Hip(roof) => {
@@ -561,8 +573,9 @@ fn push_house_with_arches(
             // торцевая стена кончается на карнизе, как и боковая
             builder.set_roof(Some(look.frame));
             let ridge = hip_ridge_ends(&roof);
+            let ridge_offset = roof.ridge_offset;
             push_hip(builder, &roof);
-            chimney_on(builder, ridge);
+            chimney_on(builder, ridge, ridge_offset);
             RoofShape::Hip
         }
         Roofing::Flat => {
@@ -575,7 +588,7 @@ fn push_house_with_arches(
             push_flat_roof(builder, look, &roof_outer, &roof_holes, color);
             if clutter {
                 let items = flat_roof_items(building, look, lift);
-                push_items(builder, &items, Some(lean), color, building, lift);
+                push_items(builder, &items, Some(lean), color);
             }
             RoofShape::Flat
         }

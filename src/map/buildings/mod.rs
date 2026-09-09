@@ -6,8 +6,9 @@
 //! (`rebuild_buildings`).
 //!
 //! Геометрия разнесена по подмодулям: [`arches`] режет проходы
-//! `building_passage` сквозь стены, [`roofs`] ставит двускатные крыши на
-//! малые дома, [`layers`] собирает сами меши слоёв, [`material`] решает, чем
+//! `building_passage` сквозь стены, [`roofs`] ставит скатные крыши
+//! (двускатные и вальмовые) на малые дома, [`layers`] собирает сами меши
+//! слоёв, [`material`] решает, чем
 //! крыша крыта, [`heights`] — сколько у него этажей, когда OSM молчит, — и
 //! фактуру кровли рисует шейдер её материала.
 
@@ -25,7 +26,6 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-pub use self::clutter::{RoofItem, flat_roof_items, push_items};
 use self::heights::{height_mix, height_or_default};
 pub use self::layers::push_house;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
