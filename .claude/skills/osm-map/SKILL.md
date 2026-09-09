@@ -752,10 +752,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     - **The band is tapered, and that is what keeps the contact skirt from coming back.**
       A shadow meets the thing that casts it **hard** — there is no penumbra at the wall —
       and blurs as it runs away from it. In the union that difference is readable locally,
-      because the body always lies on the `SHADOW_DIR` side of a contact edge: the band's
-      own direction points *against* the light there, *along* it on the far edge, and
+      because the body always lies on the `map::shadow_dir()` side of a contact edge: the
+      band's own direction points *against* the light there, *along* it on the far edge, and
       across it on a lateral one. Hence `layers.rs::penumbra(direction) =
-      direction·SHADOW_DIR` (clamped at zero) as the per-vertex share of the width, fed to
+      direction·shadow_dir()` (clamped at zero) as the per-vertex share of the width, fed to
       `MeshBuilder::push_inset_band_tapered` — zero at the contact, the full metre at the
       far edge, and along a lateral side a growth from nothing at the building's corner to
       full width at the far end, which is what a real penumbra does. Untapered (the state
@@ -784,13 +784,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     The lift is **oblique** (`EXTRUDE_SKEW` 0.4 — 0.4 m right per metre up): a
     strictly vertical lift showed one south wall and a block read as a roof with a dark
     band under it; the skew exposes two wall families, and with the light the shadows
-    already use (`SHADOW_DIR`, from the upper left) the west wall is lit and the south
+    already use (`map::shadow_dir()`, from the upper left at the default sun) the west wall is lit and the south
     wall shaded — three tones, which is what makes a box read as a box in watabou and
     in 2GIS's 3D mode. The visible walls are the edges facing *against* the lift
     (`silhouette_edges(outer, -extrusion_dir())`), courtyard walls the hole edges facing
     *along* it; each wall's tone comes from `layers.rs::wall_colors` through the shared
     `buildings/mod.rs::shade_by_light` — the facade colour mixed toward white by
-    `outward · −SHADOW_DIR × WALL_LIT_MIX` (0.18) when lit, toward black by
+    `outward · map::sun_light() × WALL_LIT_MIX` (0.18) when lit, toward black by
     `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical gradient.
     All building tone mixing — the palette, the `roof_color` ramp, walls, slopes — is
     done in sRGB, so the wall and slope constants compare directly. No facade band, no
@@ -846,17 +846,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     among pitched neighbours, which is the one thing an aerial photo of a private sector
     never shows.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
-    `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
+    `is_pitched` (`BuildingUse::House` of any size, or `Other` with a footprint under
     `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
-    its towers and gates keep the flat roof, like they keep their colour) gets two
-    slopes instead of a
-    flat roof. The ridge runs along the long axis of the footprint's minimum-area
+    its towers and gates keep the flat roof, like they keep their colour) is in the
+    **pitched cohort** and gets two slopes instead of a flat roof — unless `roofing`
+    hands it to **Hip roofs** above, which is what happens on 4 houses in 10 by seed and
+    on every outline a gable refuses. The ridge runs along the long axis of the footprint's minimum-area
     bounding rectangle (`min_area_rect`, edge directions of the ring tried as
     orientations — no hull needed at 4–20 vertices); the roof is drawn over that
     rectangle, not the outline (real roofs overhang), which is why it is only applied when
-    the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house stays
-    flat rather than wearing a rectangle. Slope tone: base roof colour mixed toward
-    white/black by the slope's plan normal against `−SHADOW_DIR` (`SLOPE_LIT_MIX` 0.14 /
+    the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house would
+    wear a rectangle sticking out of it, so it takes a **hip** instead (it stayed *flat*
+    until hip roofs existed). Slope tone: base roof colour mixed toward
+    white/black by the slope's plan normal against `map::sun_light()` (`SLOPE_LIT_MIX` 0.14 /
     `SLOPE_SHADED_MIX` 0.11, through the same `shade_by_light` helper as the walls, in
     sRGB), softer than walls. In 2.5D the ridge is lifted a further
     `ridge_rise(width) = min(width/2 × ROOF_PITCH 0.8, ROOF_RISE_MAX 5 m)` real metres
@@ -864,7 +866,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     gable triangles are drawn on the visible end walls with the wall's top colour before
     the slopes. In flat modes the ridge lift is zero and the two shades are all that
     remains. Verified on Tula's western private sector: red-brown two-storey houses with a
-    visible ridge, the L-shaped ones flat.
+    visible ridge — the L-shaped ones were flat there, which is the observation **Hip
+    roofs** was written against.
 - **Inferred storeys** (`buildings/heights.rs`) — the height of the 69 % of Tula (95 % of
   Tokyo) that OSM leaves untagged. It used to be three numbers — house 6 m, garage 3 m,
   everything else 15 m — and the measurement of that is its own argument: the city's
@@ -924,7 +927,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     fence, and a palette of greys made the whole quarter one colour.
   - **The texture** is a `Material2d` in the shape of `SurfaceMaterial`: one material for
     the whole app (`RoofMaterialHandle`, built at `Startup`), a `RoofParams` uniform
-    (`light` = `-SHADOW_DIR`, `intensity` = `RoofStyle::texture`) and a per-vertex
+    (`light` = `map::sun_light()`, `intensity` = `RoofStyle::texture`) and a per-vertex
     **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[long axis x, y, material code,
     seed]`). All four numbers are constant over a building, so the attribute is a
     *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
@@ -1032,7 +1035,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       keeps its own painter's order by laying the grids top-down; it does not sort, because
       gaps keep its houses from overlapping at all.
     - Knobs are what the game reads off the building itself — wall height, long axis, phase
-      seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
+      seed, courtyard — plus two game sliders, `RoofStyle::texture` and **the sun**
+      (`SunStyle` azimuth and elevation over the same process global, written straight into
+      `SunOnMap` with no `settle_sun`: the settle exists for the city's rebuild, not the
+      gallery's; the shapes grid always carries its clutter, so the elevation knob has a
+      shadow to move). The readout at the bottom right
       prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
       zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
       panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
@@ -1090,9 +1097,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     alike). Physically the shadow would go over the edge, and on a photo it does — but this
     one is drawn opaque and in *this* roof's colour, inside the merged building mesh, so
     past the edge it would be a dark bar lying on the neighbour's roof and on the ground.
-    At the default 59° a 1 m shaft fits inside `EDGE_MARGIN` and nothing is cut; at 15° a
-    3 m lift penthouse wants 11 m, i.e. the defect appears exactly at the end of the slider
-    the elevation knob exists for.
+    The cut is not reserved for the low end of the slider: at the default 59° a 3 m plant
+    room already wants `3 × cot 59° = 1.8 m`, more than the `EDGE_MARGIN` 1.6 m the frame
+    keeps, and the margin shrinks further on a narrow building (1.08 m on a 6 m side), so a
+    1 m shaft can be cut there too. Only the smallest boxes on a wide roof stay whole at
+    59°. At 15° a 3 m lift penthouse wants 11 m, so the clipping the elevation knob exists
+    for is what dominates at the end of the slider — but the default picture is not
+    untouched by it.
   - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
     it cannot be hidden without rebuilding, since it lives in the same merged mesh as
     the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
