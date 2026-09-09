@@ -725,8 +725,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       is what the map is built with, and `settle_sun` (`PreUpdate`) copies one into the
       other after `SUN_SETTLE` (0.35 s) of quiet. Every rebuild and the prefs write are
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
-      scale is a full building rebuild with its shadow union (120–200 ms) plus 15 k crowns
-      plus the car layer, and there are seventy divisions on the scale.
+      scale is a full building rebuild with its shadow union (77–86 ms on Tula, of which the
+      union is 47–56 — measured on an M1 Max through the slider itself) plus 15 k crowns plus
+      the car layer, and there are seventy divisions on the scale.
     - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
       is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
       first `Main` pass is *after* `Startup`: without the seed the `light` uniform would

@@ -69,7 +69,7 @@ did not fit 1080 px and ran off the top of the screen.
   step 5) and elevation (15–80°, step 1). They are the most expensive knobs on the panel:
   a change rebuilds the building layers **including the shadow union**, the tree crowns,
   the car layer and the roof material's uniform, because every one of those bakes the light
-  into vertex colours or geometry — 120–200 ms on Tula for the buildings alone. So the steps
+  into vertex colours or geometry — 77–86 ms on Tula for the buildings alone. So the steps
   are coarse, and the section is the one place where **the knob's resource is not what the
   map follows**: the rows write `SunStyle` like any other kit rows, and `map::sun::settle_sun`
   copies it into `SunOnMap` after 0.35 s of quiet, which is what every rebuild is gated on.
