@@ -440,9 +440,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (`man_made=storage_tank|silo|chimney|water_tower|gasometer`, `Structure`: centre,
   radius, height, kind) — each drawn as three layers the way a house is: the shadow (the
   **sweep** of its disc along the light, not a shifted disc — a cylinder is solid from
-  the ground up), the visible wall (the half facing against the same `Lean` the houses
-  use, one quad per facet shaded by `shade_by_light`, which is what makes it read round
-  instead of faceted) and the top with a darker rim. A chimney is a 2.5 m circle nobody
+  the ground up), the visible wall (the **near** half — the one turned away from the same
+  `Lean` the houses use, since the top leans away from the camera — one quad per facet
+  shaded by `shade_by_light`, which is what makes it read round instead of faceted) and the top with a darker rim. A chimney is a 2.5 m circle nobody
   would notice and a 36 m shadow everybody does. `MapData::pipes` holds the overhead
   pipelines (`man_made=pipeline`, `PipeLine`) — a line and its shadow like a fence, but
   3 m up and drawn above one, since a heating main steps over a fence rather than

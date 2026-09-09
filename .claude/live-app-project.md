@@ -32,6 +32,14 @@ config still points at 15703: `BRP_PORT=15704 $b count Human`. A busy *default*
 port only warns and disables BRP (`qwe (no brp)` in the title) — a second window
 started by hand still runs.
 
+**The parallel session is often the previous you.** A session continued after a
+compaction gets a new id, and the background task that launched the app belongs
+to the old one: `TaskStop` answers `Task … is not running` or `No task found with
+ID`, while the app itself is very much alive and holding 15703 — so the relaunch
+panics with the lines above. Stop it the way the app can hear: `$b quit`, then
+`pgrep -f 'target/debug/qwe'` to confirm nothing is left. Same at the end of a
+session: the task list is not the inventory of running apps, `$b procs` is.
+
 ```bash
 $b alive     # alive: qwe 0.1.0 on http://127.0.0.1:15703/ (pid 40321) — pid must be the task's
 $b procs     # both copies, with their ports and start times
@@ -145,8 +153,18 @@ window would show — **except the UI**, which stays on the main camera
 (`IsDefaultUiCamera` in `camera.rs`) and is out of the frame on purpose: this is a picture
 of the map, not of the app. It lives for `WARMUP_FRAMES` (2) frames and despawns itself.
 
-The file is written asynchronously like every screenshot, so wait for it (`until [ -f x ]`)
-rather than reading it immediately.
+The file is written asynchronously like every screenshot, and — unlike `brp shot` — nothing
+here waits for it. **Wait on the reader, not on the path.** `until [ -f x ]` returns the
+moment the file is created, which is before it holds a whole png: `ls` finds it and `magick
+identify` answers `improper image header`, a line that reads exactly like a broken renderer.
+
+```bash
+rm -f gsk.png                                  # a stale png would pass the test below
+$b event OffscreenShotEvent '{"path":"gsk.png"}'
+until magick identify gsk.png >/dev/null 2>&1; do sleep 0.2; done
+```
+
+The loop body sleeps: `do :; done` spins a core, and this machine is usually compiling.
 
 ## Camera
 

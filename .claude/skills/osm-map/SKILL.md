@@ -781,9 +781,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **The wall is one quad per facet, each shaded on its own** (`shade_by_light`, mixes
     0.26/0.26 — stronger than a flat house wall's 0.18/0.22, since the gradient has to
     span the whole visible half). That gradient *is* what makes the circle read as a
-    cylinder; a single flat tone reads as a faceted prism. Only the half facing the
-    `Lean` is emitted, and with no lean at all (the flat height modes) nothing is — a
-    cylinder standing straight up shows no wall at all.
+    cylinder; a single flat tone reads as a faceted prism. **Only the half turned
+    *away* from the `Lean` is emitted** (`outward · lift < 0`) — the near one. The
+    camera sits at the nadir and the top leans away from it, so what it sees is the
+    near side of the wall, exactly as the building extrusion picks its edges
+    (`silhouette_edges(outer, -lift_dir)`). The far half was drawn first and left the
+    near end of the silhouette open, and through that hole the cylinder's own base
+    shadow showed as a dark half-disc under the chimney. The geometry in one line: the
+    silhouette of a leaning cylinder is a stadium — the top circle covers
+    `[|lift|−r, |lift|+r]`, the near half of the wall covers `[−r, |lift|−r]`, together
+    the whole stadium, with no foot piece and no seam. With no lean at all (the flat
+    height modes) nothing is emitted — a cylinder standing straight up shows no wall.
   - **The rim** (`RIM_SHARE` 10 % of the radius, 0.25–1 m, 28 % toward black) is the
     tank's coaming or the chimney's wall thickness. Without it the top reads as a sticker.
   - **The pipeline is a fence one storey up**: line plus shadow, `PIPE_HEIGHT` 3 m,
