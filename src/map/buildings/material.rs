@@ -13,7 +13,7 @@
 //!
 //! Стены едут в том же меше, что и крыши (2.5D — один слой с painter's
 //! порядком), поэтому материал обязан уметь и «без фактуры»: код `0` —
-//! стена, фронтон, кайма.
+//! стена, фронтон, оборудование кровли.
 
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
@@ -29,13 +29,14 @@ use super::roofs::min_area_rect;
 use crate::map::SHADOW_DIR;
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
+use crate::map::seed::seed_from_point;
 use crate::settings::ROOF_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/roof.wgsl";
 
 /// Чем крыша покрыта. Код материала (`code`) едет в вершинный атрибут и
-/// разбирается шейдером; ноль занят «не кровлей» (стена, фронтон, кайма),
-/// поэтому коды начинаются с единицы.
+/// разбирается шейдером; ноль занят «не кровлей» (стена, фронтон,
+/// оборудование), поэтому коды начинаются с единицы.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RoofKind {
     /// Рулонный битумный ковёр: швы через метр, заплаты ремонта, лужи.
@@ -93,15 +94,6 @@ impl RoofKind {
             Self::Tile => &TILE_COLORS,
             Self::Membrane => &MEMBRANE_COLORS,
         }
-    }
-
-    /// Парапет ставится только на плоскую кровлю мягкого типа — там он и есть
-    /// на самом деле. У черепицы и профлиста вместо него свес, у фальца конёк.
-    ///
-    /// Свойство материала, а не слоя: по нему [`super::layers`] решает, класть
-    /// ли кайму, и по нему же витрина подписывает материал.
-    pub fn has_parapet(self) -> bool {
-        matches!(self, Self::Bitumen | Self::Gravel | Self::Membrane)
     }
 }
 
@@ -253,7 +245,8 @@ const SMALL_FOOTPRINT_MAX: f32 = 250.0;
 /// Кровля дома глазами отрисовки: чем крыта, какого цвета и с какой рамкой
 /// для шейдера.
 pub struct RoofLook {
-    /// Чем крыта — по нему решается, положен ли парапет.
+    /// Чем крыта — код материала уходит в шейдер фактуры, а сам материал
+    /// решает, что стоит на кровле (`clutter.rs`).
     pub kind: RoofKind,
     /// Базовый цвет — из палитры материала; рампу по высоте и затенение
     /// ската кладут поверх вызывающие.
@@ -362,20 +355,11 @@ fn footprint_area(building: &PolyArea) -> f32 {
     crate::map::osm::model::signed_ring_area(&building.outer).abs()
 }
 
-/// Посев дома из его первой вершины — три перемешивающих раунда, чтобы
-/// соседние по координате дома не попадали в один слот таблицы. Сантиметры,
-/// а не метры: два дома на одной улице отличаются десятками сантиметров.
-fn building_seed(building: &PolyArea) -> u32 {
-    let point = building.outer.first().copied().unwrap_or(Vec2::ZERO);
-    let x = (point.x * 100.0) as i32 as u32;
-    let y = (point.y * 100.0) as i32 as u32;
-    let mut hash = x ^ y.rotate_left(16);
-    hash ^= hash >> 16;
-    hash = hash.wrapping_mul(0x7feb_352d);
-    hash ^= hash >> 15;
-    hash = hash.wrapping_mul(0x846c_a68b);
-    hash ^= hash >> 16;
-    hash
+/// Посев дома — от его первой вершины ([`seed_from_point`]): материал кровли,
+/// оборудование на ней и додуманная этажность держатся на одном числе, и оно
+/// не зависит ни от порядка домов в выгрузке, ни от пересборки слоя.
+pub(super) fn building_seed(building: &PolyArea) -> u32 {
+    seed_from_point(building.outer.first().copied().unwrap_or(Vec2::ZERO))
 }
 
 /// Параметры фактуры кровель — юниформ шейдера. Зеркало `RoofParams` в

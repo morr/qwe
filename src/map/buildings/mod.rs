@@ -8,10 +8,12 @@
 //! Геометрия разнесена по подмодулям: [`arches`] режет проходы
 //! `building_passage` сквозь стены, [`roofs`] ставит двускатные крыши на
 //! малые дома, [`layers`] собирает сами меши слоёв, [`material`] решает, чем
-//! крыша крыта, — и её фактуру рисует шейдер этого материала.
+//! крыша крыта, [`heights`] — сколько у него этажей, когда OSM молчит, — и
+//! фактуру кровли рисует шейдер её материала.
 
 mod arches;
 mod clutter;
+mod heights;
 mod layers;
 pub mod material;
 mod roofs;
@@ -23,9 +25,11 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-pub use self::layers::push_flat_roof;
+use self::heights::{height_mix, height_or_default};
+pub use self::layers::push_house;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use self::material::RoofMaterialHandle;
+pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
 use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
@@ -53,14 +57,6 @@ const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.70, 0.62, 0.45);
 const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 
-/// Высота здания без OSM-данных — пятиэтажка. Через `FACADE_SCALE` даёт
-/// прежние 3 м фасадной полосы, так что режим Facade без высот не меняется.
-const DEFAULT_BUILDING_HEIGHT: f32 = 15.0;
-/// Частный дом и гараж без высоты в OSM — а высоты нет у большинства —
-/// пятиэтажками быть не могут: два этажа и одна коробка. Без этого окраины
-/// в 2.5D стояли того же роста, что и центр.
-const DEFAULT_HOUSE_HEIGHT: f32 = 6.0;
-const DEFAULT_GARAGE_HEIGHT: f32 = 3.0;
 /// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
 /// широкая полоса высотки залезала бы на низкого соседа.
 const Z_FACADE: f32 = Z_BUILDING - 0.1;
@@ -302,13 +298,14 @@ pub fn spawn_buildings(
     }
 
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
-    // режим и сколько геометрии добавил парапет
+    // режим и сколько геометрии добавило оборудование кровель
     info!(
-        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {})",
+        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {}, heights: {})",
         started.elapsed(),
         buildings.len(),
         mode.label(),
         bucket.index == 0,
+        height_mix(buildings),
     );
     if skipped > 0 {
         warn!("building meshing: {skipped} degenerate polygons skipped");
@@ -355,22 +352,75 @@ pub fn rebuild_buildings(
     );
 }
 
-/// Высота здания с дефолтом по назначению — `None` в OSM это норма, а не
-/// ошибка.
-fn height_or_default(building: &PolyArea) -> f32 {
-    building.height.unwrap_or(match building.building_use {
-        BuildingUse::House => DEFAULT_HOUSE_HEIGHT,
-        BuildingUse::Garage => DEFAULT_GARAGE_HEIGHT,
-        _ => DEFAULT_BUILDING_HEIGHT,
-    })
+/// Отклонение верха **этого** дома от отвеса: единичное направление и метров
+/// смещения на метр нарисованной высоты. Одно значение на дом — по нему
+/// выбираются видимые стены, поднимается крыша, встаёт труба на коньке и
+/// сортируется painter's порядок.
+///
+/// Сдвиг сейчас один и тот же у всех домов: так выглядит кадр со **спутника**
+/// (сцена в 5 км с орбиты в 500 км занимает доли градуса, и отклонение по
+/// кадру практически постоянно) и ортофотоплан. Лучевое отклонение от надира —
+/// признак съёмки с самолёта — пробовали и убрали: надир прибит к центру
+/// карты, а не кадра, поэтому при подвижной камере веер виден только вокруг
+/// центра, а следовать за камерой он не может — пересборка слоя стоит десятки
+/// миллисекунд. Вернуть его имеет смысл вместе с переносом сдвига в вершинный
+/// шейдер.
+#[derive(Clone, Copy)]
+pub(super) struct Lean {
+    /// Смещение верха на метр нарисованной высоты. Вектором, а не парой
+    /// «направление × длина»: у постоянного сдвига это ровно `(0.4, 1)`, и
+    /// круг через `normalize`/`length` сдвинул бы его на единицу последнего
+    /// разряда — что немедленно видно на обрезке `EXTRUDE_RANGE`.
+    per_meter: Vec2,
+}
+
+impl Lean {
+    /// Отклонение дома.
+    pub(super) fn of() -> Self {
+        Self {
+            per_meter: Vec2::new(EXTRUDE_SKEW, 1.0),
+        }
+    }
+
+    /// Единичное направление отклонения: по нему выбираются видимые стены.
+    pub(super) fn dir(self) -> Vec2 {
+        self.per_meter.try_normalize().unwrap_or(Vec2::Y)
+    }
+
+    /// Смещение верха для `drawn` нарисованных метров высоты.
+    pub(super) fn lift(self, drawn: f32) -> Vec2 {
+        self.per_meter * drawn
+    }
+
+    /// Сдвиг конька над карнизом для `rise` настоящих метров: тот же масштаб,
+    /// что у стен, но без `EXTRUDE_RANGE` — обрезка держит стены в разумных
+    /// пределах, а конёк и так ограничен `ROOF_RISE_MAX`.
+    pub(super) fn ridge(self, rise: f32) -> Vec2 {
+        self.lift(rise * EXTRUDE_SCALE)
+    }
+
+    /// Ключ painter's сортировки: больше — дальше, пишется раньше. «Дальше»
+    /// при постоянном сдвиге — дальний конец вектора отклонения. Ключ берётся
+    /// у **значения**, как и всё остальное здесь: в тот день, когда `of()`
+    /// снова начнёт зависеть от дома, сортировка обязана поехать вместе с
+    /// наклоном, а не остаться на дефолтном.
+    pub(super) fn depth(self, at: Vec2) -> f32 {
+        at.dot(self.dir())
+    }
+}
+
+/// Центр контура — по нему считается отклонение и порядок отрисовки. Bounds,
+/// а не центроид: сортировка и так была по ним, и лишний обход контура тут ни
+/// к чему.
+pub(super) fn building_center(building: &PolyArea) -> Vec2 {
+    let (min, max) = crate::map::osm::model::ring_bounds(&building.outer);
+    (min + max) * 0.5
 }
 
 /// На сколько в этом режиме поднята крыша относительно настоящего контура.
-/// В режимах без экструзии — ноль.
-///
-/// Публично, потому что оверлей дверей обязан повторять тот же сдвиг: дверь
-/// живёт на настоящем контуре, а он в 2.5D уходит под нарисованный дом, и
-/// метка на северной грани иначе читается как «дверь в середине здания».
+/// В режимах без экструзии — ноль. Одна точка входа на всех, кому нужен этот
+/// сдвиг: слой экструзии, заплатка арки в тенях и всякий, кто захочет
+/// поставить метку на нарисованный дом, а не на его настоящий контур.
 pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     if !matches!(
         mode,
@@ -380,28 +430,7 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     }
     let height = (height_or_default(building) * EXTRUDE_SCALE)
         .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    oblique_lift(height)
-}
-
-/// Сдвиг на карте для `drawn` нарисованных метров высоты: вверх и на
-/// `EXTRUDE_SKEW` вправо.
-fn oblique_lift(drawn: f32) -> Vec2 {
-    Vec2::new(EXTRUDE_SKEW * drawn, drawn)
-}
-
-/// Сдвиг конька над карнизом для `rise` настоящих метров: тот же масштаб,
-/// что у стен, но без `EXTRUDE_RANGE` — обрезка держит стены в разумных
-/// пределах, а конёк и так ограничен `ROOF_RISE_MAX`.
-pub(super) fn ridge_lift(rise: f32) -> Vec2 {
-    oblique_lift(rise * EXTRUDE_SCALE)
-}
-
-/// Единичный вектор подъёма крыши в 2.5D — общий для всех домов, от высоты
-/// зависит только длина. По нему выбираются видимые стены (те, что смотрят
-/// против него) и порядок painter's sort (дальний конец вектора пишется
-/// первым).
-pub(super) fn extrusion_dir() -> Vec2 {
-    Vec2::new(EXTRUDE_SKEW, 1.0).normalize()
+    Lean::of().lift(height)
 }
 
 /// Базовый цвет стены по типу здания: Кремль — свой, остальные по назначению

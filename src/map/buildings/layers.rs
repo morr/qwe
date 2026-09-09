@@ -7,16 +7,18 @@ use std::ops::RangeInclusive;
 use bevy::color::Mix;
 use bevy::prelude::*;
 
-use super::arches::{arch_openings, arches_by_building, push_arches, push_wall_with_openings};
+use super::arches::{
+    ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
+};
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::{RoofLook, roof_look};
-use super::roofs::gable_roof;
+use super::material::{RoofLook, building_seed, roof_look};
+use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
-    BuildingHeightMode, RoofDetail, extrusion_dir, extrusion_lift, facade_color, height_or_default,
-    ridge_lift, shade_by_light,
+    BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
+    height_or_default, shade_by_light,
 };
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::{ring_bounds, signed_ring_area};
+use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
 
@@ -58,16 +60,7 @@ const ROOF_TINT_MAX_MIX: f32 = 0.3;
 /// солнца дал бы сантиметры), а то, чем край тени размыт на снимке:
 /// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
 /// зумах, где тени вообще видны.
-const PENUMBRA_WIDTH: f32 = 1.0;
-
-/// Ширина парапета, м: у плоской кровли по контуру идёт бортик, и с воздуха
-/// он читается светлой каймой на солнечных гранях и тёмной на теневых.
-const PARAPET_WIDTH: f32 = 0.7;
-/// Насколько бортик светлее кровли на солнечной грани и темнее на теневой.
-/// Жёстче ската (`SLOPE_*_MIX`) и мягче стены: это узкая полоска бетона,
-/// её задача — очертить кровлю, а не спорить со стеной.
-const PARAPET_LIT_MIX: f32 = 0.24;
-const PARAPET_SHADED_MIX: f32 = 0.20;
+pub(super) const PENUMBRA_WIDTH: f32 = 1.0;
 
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
@@ -94,22 +87,32 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
     }
 }
 
-/// Парапет по контуру плоской кровли: кайма внутрь контура, светлая на
-/// солнечных гранях и тёмная на теневых. Для дырки (двора) — наружу от её
-/// кольца, то есть тоже вглубь кровли, и нормаль там смотрит во двор.
-///
-/// Фактуру бортик не несёт (`set_roof(None)`): шов рулона поперёк парапета
-/// читался бы как трещина, а бетонный отлив на снимке и правда ровный.
-fn push_parapet(builder: &mut MeshBuilder, ring: &[Vec2], hole: bool, base: Srgba) {
-    let orientation = signed_ring_area(ring).signum() * if hole { -1.0 } else { 1.0 };
-    let inner = base.into();
-    builder.set_roof(None);
-    builder.push_inset_band_with(ring, PARAPET_WIDTH, hole, |a, b| {
-        let edge = b - a;
-        let outward = Vec2::new(edge.y, -edge.x).normalize_or_zero() * orientation;
-        let cap = shade_by_light(base, outward, PARAPET_LIT_MIX, PARAPET_SHADED_MIX);
-        (cap.into(), inner)
-    });
+/// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
+fn push_hip(builder: &mut MeshBuilder, roof: &HipRoof) {
+    for (slope, tone) in &roof.slopes {
+        builder.push_quad(*slope, *tone);
+    }
+    let (ridge, tone) = &roof.ridge;
+    builder.push_polygon(ridge, &[], *tone);
+}
+
+/// Концы «конька» вальмы — две самые далёкие друг от друга точки её
+/// площадки. У настоящей вальмы конёк это отрезок, и на четырёх-двадцати
+/// вершинах площадки перебор пар дешевле любой геометрии.
+fn hip_ridge_ends(roof: &HipRoof) -> (Vec2, Vec2) {
+    let ring = &roof.ridge.0;
+    let mut best = (ring[0], ring[0]);
+    let mut span = 0.0;
+    for (index, &a) in ring.iter().enumerate() {
+        for &b in &ring[index + 1..] {
+            let distance = a.distance_squared(b);
+            if distance > span {
+                span = distance;
+                best = (a, b);
+            }
+        }
+    }
+    best
 }
 
 /// Конёк двускатной крыши: у ската `[карниз, карниз, конёк, конёк]` два
@@ -121,14 +124,16 @@ fn ridge_of(roof: &super::roofs::GableRoof) -> (Vec2, Vec2) {
 }
 
 /// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
-/// материала и парапет по краю, если материал мягкий. Ровно это игра кладёт
-/// на всякий дом без двускатной крыши — и в плоских режимах, где `outer` это
-/// сам контур, и в 2.5D, где он уже поднят на высоту стен.
+/// материала. Ровно это игра кладёт на всякий дом без скатной крыши — и в
+/// плоских режимах, где `outer` это сам контур, и в 2.5D, где он уже поднят
+/// на высоту стен.
 ///
-/// Публично, потому что тем же вызовом рисует свои дома витрина
-/// `roof_gallery`: материал и цвет она перебирает сама ([`RoofLook::new`]), а
-/// геометрия обязана остаться игровой.
-pub fn push_flat_roof(
+/// **Бортика по краю у мягкой кровли больше нет.** Он был каймой в 0.7 м,
+/// затенённой по нормали ребра, — то есть той же самой конструкцией, что и
+/// скаты вальмы, только уже; с воздуха он читался не парапетом, а маленькой
+/// вальмой на каждом панельном доме, и отличить по нему настоящую вальму от
+/// плоской крыши было нельзя. Край кровли и без него держат стены под ней.
+pub(super) fn push_flat_roof(
     builder: &mut MeshBuilder,
     look: &RoofLook,
     outer: &[Vec2],
@@ -137,12 +142,6 @@ pub fn push_flat_roof(
 ) {
     builder.set_roof(Some(look.frame));
     builder.push_polygon(outer, holes, color.into());
-    if look.kind.has_parapet() {
-        push_parapet(builder, outer, false, color);
-        for hole in holes {
-            push_parapet(builder, hole, true, color);
-        }
-    }
 }
 
 /// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
@@ -200,8 +199,14 @@ pub(super) fn facade_and_roof_builders(
         let look = roof_look(building);
         let color = roof_color(building, &look, detail.tinted);
         let mut items = Vec::new();
-        match gable_roof(building, Vec2::ZERO, |_| Vec2::ZERO, color) {
-            Some(roof) => {
+        match roofing(
+            building,
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            color,
+            building_seed(building),
+        ) {
+            Roofing::Gable(roof) => {
                 roofs.set_roof(Some(look.frame));
                 for (slope, slope_color) in roof.slopes {
                     roofs.push_quad(slope, slope_color);
@@ -210,7 +215,14 @@ pub(super) fn facade_and_roof_builders(
                     items.extend(ridge_chimney(&look, ridge_of(&roof)));
                 }
             }
-            None => {
+            Roofing::Hip(roof) => {
+                roofs.set_roof(Some(look.frame));
+                push_hip(&mut roofs, &roof);
+                if detail.clutter {
+                    items.extend(ridge_chimney(&look, hip_ridge_ends(&roof)));
+                }
+            }
+            Roofing::Flat => {
                 push_flat_roof(&mut roofs, &look, &building.outer, &building.holes, color);
                 if detail.clutter {
                     items = flat_roof_items(building, &look, Vec2::ZERO);
@@ -286,14 +298,15 @@ pub(super) fn shadow_builder(
         let holes: Vec<Vec<Vec2>> = rings.collect();
         builder.push_polygon(&outer, &holes, color);
         // кайма от каждого контура объединённой фигуры — наружу от внешнего и
-        // внутрь просвета от каждой дырки: `push_inset_band` выбирает сторону
-        // по площади самого кольца, так что просвету нужно `outside: false`,
-        // иначе кайма ляжет на уже залитое тело и обведёт дырку двойной
-        // темнотой вместо растушёвки. Каймы соседних фигур могут наложиться,
-        // но обе сходят в ноль, и удвоение выходит слабее самой тени
-        builder.push_inset_band(&outer, PENUMBRA_WIDTH, true, color, fade);
+        // внутрь просвета от каждой дырки: кайма выбирает сторону по площади
+        // самого кольца, так что просвету нужно `outside: false`, иначе она
+        // ляжет на уже залитое тело и обведёт дырку двойной темнотой вместо
+        // растушёвки. Каймы соседних фигур могут наложиться, но обе сходят в
+        // ноль, и удвоение выходит слабее самой тени. Ширина на каждой
+        // вершине — своя, см. [`penumbra`]
+        builder.push_inset_band_tapered(&outer, PENUMBRA_WIDTH, true, penumbra, color, fade);
         for hole in &holes {
-            builder.push_inset_band(hole, PENUMBRA_WIDTH, false, color, fade);
+            builder.push_inset_band_tapered(hole, PENUMBRA_WIDTH, false, penumbra, color, fade);
         }
     }
 
@@ -309,8 +322,9 @@ pub(super) fn shadow_builder(
         by_building.sort_unstable_by_key(|&(index, _)| index);
         for (index, passages) in by_building {
             let building = &buildings[index];
+            let lean = Lean::of();
             let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
-            for opening in arch_openings(building, &passages, lift, -extrusion_dir()) {
+            for opening in arch_openings(building, &passages, lift, -lean.dir()) {
                 let Some(along) = (opening.b - opening.a).try_normalize() else {
                     continue;
                 };
@@ -323,6 +337,26 @@ pub(super) fn shadow_builder(
         }
     }
     builder
+}
+
+/// Доля [`PENUMBRA_WIDTH`], которую кайма получает на вершине, идущей в
+/// сторону `direction`: проекция этого направления на `SHADOW_DIR`.
+///
+/// Полутень растёт с расстоянием от того, кто отбрасывает тень, а у самой
+/// стены её нет вовсе — тень примыкает к дому жёстко. В объединённой фигуре
+/// это различие читается локально: у ребра примыкания «наружу» смотрит
+/// **против** света (тело тени лежит по `SHADOW_DIR` от него), у дальнего
+/// края — по свету, у бокового — поперёк. Отсюда и правило: у примыкания
+/// ноль, у дальнего края вся ширина, вдоль боковой стороны — рост от нуля на
+/// углу дома до полной ширины на дальнем конце, ровно как у настоящей
+/// полутени.
+///
+/// Без него метровая кайма шла и по контуру примыкания: на солнечной стороне
+/// каждого выпуклого угла дома оставалось тёмное пятно в метр, и дом выходил
+/// обведён мягкой каймой — тем самым «контактным затенением», которое из
+/// объединения убрали (`references` в скилле `osm-map`).
+fn penumbra(direction: Vec2) -> f32 {
+    direction.dot(SHADOW_DIR).max(0.0)
 }
 
 /// Контур в список для объединения, обходом против часовой стрелки — тем, что
@@ -389,13 +423,10 @@ pub(super) fn extrusion_builder(
     detail: RoofDetail,
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
-    let lift_dir = extrusion_dir();
+    let lean = Lean::of();
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
-        let depth = |building: &PolyArea| {
-            let (min, max) = ring_bounds(&building.outer);
-            (min + max).dot(lift_dir)
-        };
+        let depth = |building: &PolyArea| lean.depth(building_center(building));
         depth(&buildings[b]).total_cmp(&depth(&buildings[a]))
     });
 
@@ -404,35 +435,97 @@ pub(super) fn extrusion_builder(
     let mut builder = MeshBuilder::with_roof_coords();
     for index in order {
         let building = &buildings[index];
-        let facade_color = facade_color(building);
-        // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
-        let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
-        builder.set_roof(None);
-
+        let look = roof_look(building);
+        let color = roof_color(building, &look, detail.tinted);
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
         let openings = arches
             .get(&index)
-            .map(|passages| arch_openings(building, passages, lift, -lift_dir))
+            .map(|passages| {
+                let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+                arch_openings(building, passages, lift, -lean.dir())
+            })
             .unwrap_or_default();
-        // видимы стены рёбер, смотрящих против подъёма: при сдвиге
-        // вверх-вправо — южные и западные
-        for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
-            let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-            push_wall_with_openings(&mut builder, a, b, lift, &openings, bottom, top);
-        }
-        // двор: видима внутренняя стена его дальней стороны — та, чья
-        // наружная (для кольца дыры) нормаль смотрит по подъёму
-        for hole in &building.holes {
-            for (a, b) in silhouette_edges(hole, lift_dir) {
-                let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-                push_wall_with_openings(&mut builder, a, b, lift, &openings, bottom, top);
-            }
-        }
+        push_house_with_arches(
+            &mut builder,
+            building,
+            &look,
+            color,
+            RoofShape::Auto,
+            detail.clutter,
+            &openings,
+        );
+    }
+    builder
+}
 
-        let look = roof_look(building);
-        let color = roof_color(building, &look, detail.tinted);
-        if let Some(roof) = gable_roof(building, lift, ridge_lift, color) {
+/// Один дом в 2.5D: видимые стены, потом крыша заказанной формы и её
+/// оборудование. Возвращает форму, которая **на самом деле** легла в меш, —
+/// заказанной она равна не всегда: на негодном контуре скатная крыша не
+/// строится, и дом остаётся с плоской.
+///
+/// Публично, потому что тем же вызовом строит свои дома витрина
+/// `roof_gallery`: форму, материал и цвет она перебирает сама
+/// ([`RoofShape`], [`RoofLook::new`]), а стены, скаты и оборудование обязаны
+/// остаться игровыми. Арок у витрины нет — их знает только городская ветка
+/// ([`push_house_with_arches`]).
+pub fn push_house(
+    builder: &mut MeshBuilder,
+    building: &PolyArea,
+    look: &RoofLook,
+    color: Srgba,
+    shape: RoofShape,
+    clutter: bool,
+) -> RoofShape {
+    push_house_with_arches(builder, building, look, color, shape, clutter, &[])
+}
+
+fn push_house_with_arches(
+    builder: &mut MeshBuilder,
+    building: &PolyArea,
+    look: &RoofLook,
+    color: Srgba,
+    shape: RoofShape,
+    clutter: bool,
+    openings: &[ArchOpening],
+) -> RoofShape {
+    let facade_color = facade_color(building);
+    let lean = Lean::of();
+    let lift_dir = lean.dir();
+    // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
+    let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+    builder.set_roof(None);
+
+    // видимы стены рёбер, смотрящих против подъёма: при сдвиге
+    // вверх-вправо — южные и западные
+    for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
+        let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+        push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
+    }
+    // двор: видима внутренняя стена его дальней стороны — та, чья
+    // наружная (для кольца дыры) нормаль смотрит по подъёму
+    for hole in &building.holes {
+        for (a, b) in silhouette_edges(hole, lift_dir) {
+            let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+            push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
+        }
+    }
+
+    let chimney_on = |builder: &mut MeshBuilder, ridge| {
+        if clutter {
+            let chimney: Vec<_> = ridge_chimney(look, ridge).into_iter().collect();
+            push_items(builder, &chimney, Some(lean), color);
+        }
+    };
+    match roofing_of(
+        shape,
+        building,
+        lift,
+        |rise| lean.ridge(rise),
+        color,
+        building_seed(building),
+    ) {
+        Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
             for ((a, b), apex) in roof.gables {
@@ -447,26 +540,33 @@ pub(super) fn extrusion_builder(
             for (slope, slope_color) in roof.slopes {
                 builder.push_quad(slope, slope_color);
             }
-            if detail.clutter {
-                let chimney: Vec<_> = ridge_chimney(&look, ridge_of(&roof)).into_iter().collect();
-                push_items(&mut builder, &chimney, Some(lift_dir), color);
-            }
-            continue;
+            chimney_on(builder, ridge_of(&roof));
+            RoofShape::Gable
         }
-
-        let roof_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + lift).collect();
-        let roof_holes: Vec<Vec<Vec2>> = building
-            .holes
-            .iter()
-            .map(|hole| hole.iter().map(|p| *p + lift).collect())
-            .collect();
-        push_flat_roof(&mut builder, &look, &roof_outer, &roof_holes, color);
-        if detail.clutter {
-            let items = flat_roof_items(building, &look, lift);
-            push_items(&mut builder, &items, Some(lift_dir), color);
+        Roofing::Hip(roof) => {
+            // у вальмы фронтонов нет — скаты сходятся со всех сторон, и
+            // торцевая стена кончается на карнизе, как и боковая
+            builder.set_roof(Some(look.frame));
+            let ridge = hip_ridge_ends(&roof);
+            push_hip(builder, &roof);
+            chimney_on(builder, ridge);
+            RoofShape::Hip
+        }
+        Roofing::Flat => {
+            let roof_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + lift).collect();
+            let roof_holes: Vec<Vec<Vec2>> = building
+                .holes
+                .iter()
+                .map(|hole| hole.iter().map(|p| *p + lift).collect())
+                .collect();
+            push_flat_roof(builder, look, &roof_outer, &roof_holes, color);
+            if clutter {
+                let items = flat_roof_items(building, look, lift);
+                push_items(builder, &items, Some(lean), color);
+            }
+            RoofShape::Flat
         }
     }
-    builder
 }
 
 /// Рёбра кольца, чья наружная нормаль смотрит по `direction` — силуэт с

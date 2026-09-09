@@ -1,19 +1,15 @@
-//! Панель витрины: строки-ползунки на все ручки, значения констант кровель
-//! под ними — фактуры из `roof.wgsl` и формы из `roofs.rs` — и плашка с
-//! масштабом внизу справа.
+//! Панель витрины: строки-ползунки на ручки и плашка с масштабом внизу
+//! справа.
 //!
 //! Виджеты — те же, что в панелях игры (`qwe::ui::slider`), а не свои: витрина
 //! обязана выглядеть и вести себя как настоящая панель, иначе непонятно, чему
-//! в ней верить.
-//!
-//! Обработчик протяжки **один на все ручки**. Ползунок носит свой номер в
-//! таблице [`specs`], по номеру достаётся `set` — и четыре почти одинаковых
-//! наблюдателя сворачиваются в один.
+//! в ней верить. Устройство целиком повторяет `roof_gallery/panel.rs` — один
+//! наблюдатель протяжки на все ручки, номер ручки на самом ползунке.
 //!
 //! **Шрифт панель ставит себе сама.** В игре его вешает `apply_panel_font` по
 //! `Added<GameUiRoot>`, но эта система живёт в `UiPlugin`, которого здесь нет —
 //! а без `InheritableFont` подписи достаются дефолтному шрифту bevy, где нет
-//! кириллицы, и вся панель выходит квадратиками не того кегля.
+//! кириллицы.
 
 use bevy::feathers::constants::fonts;
 use bevy::feathers::controls::ButtonVariant;
@@ -22,22 +18,18 @@ use bevy::prelude::*;
 use bevy::text::FontWeight;
 use bevy::ui_widgets::{Activate, ValueChange};
 use bevy::window::PrimaryWindow;
+use qwe::settings::CAR_MAX_ZOOM;
 use qwe::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
 use qwe::ui::{
     PANEL_FONT, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background,
-    panel_title, row_label, row_value, spawn_panel_button, ui_node,
+    panel_title, row_value, spawn_panel_button, ui_node,
 };
 
-use crate::constants::{shader_constants, shape_constants};
 use crate::params::{ParamSpec, Tuning, specs};
 
 /// Отступ заголовка группы от края плашки — как у заголовка секции в панели
 /// настроек игры.
 const GROUP_HEADER_PAD_PX: f32 = 6.0;
-
-/// Отступ строки-константы от краёв панели — `ROW_LEFT_PX` строк игры,
-/// который сама она наружу не отдаёт.
-const ROW_PAD_PX: f32 = 8.0;
 
 /// Номер ручки в [`specs`] — на ползунке и на его числе.
 #[derive(Component, Clone, Copy)]
@@ -46,10 +38,12 @@ pub(crate) struct ParamSlider(usize);
 #[derive(Component, Clone, Copy)]
 pub(crate) struct ParamValue(usize);
 
-/// Строка с масштабом: сколько метров в пикселе и какая фактура на нём ещё
-/// жива.
+/// Строка с масштабом: сколько метров в пикселе и жив ли на нём слой машин.
 #[derive(Component)]
 pub(crate) struct ScaleReadout;
+
+#[derive(Component)]
+pub(crate) struct ResetButton;
 
 fn panel_font(assets: &AssetServer) -> InheritableFont {
     InheritableFont {
@@ -66,21 +60,13 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
                 position_type: PositionType::Absolute,
                 top: px(UI_SCREEN_EDGE_PX_OFFSET),
                 left: px(UI_SCREEN_EDGE_PX_OFFSET),
-                // до низа экрана: телу нужен потолок высоты, иначе строки
-                // растут за край и прокручивать нечего
-                bottom: px(UI_SCREEN_EDGE_PX_OFFSET),
                 width: px(PANEL_WIDTH_PX),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(UI_SCREEN_EDGE_PX_OFFSET),
                 padding: UiRect::all(px(GROUP_HEADER_PAD_PX)),
-                overflow: Overflow::scroll_y(),
-                flex_shrink: 1.,
-                min_height: px(0),
                 ..default()
             }),
             panel_background(),
-            // тот же шрифт, которым игра пишет свои панели: своей
-            // `apply_panel_font` тут нет, см. шапку модуля
             panel_font(&assets),
             Name::new("gallery_panel"),
         ))
@@ -114,16 +100,6 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         false,
         |_: On<Activate>, mut tuning: ResMut<Tuning>| *tuning = Tuning::default(),
     );
-
-    spawn_group_header(&mut commands, panel, "Константы roof.wgsl");
-    for (name, value) in shader_constants() {
-        spawn_constant_row(&mut commands, panel, name, value);
-    }
-
-    spawn_group_header(&mut commands, panel, "Константы roofs.rs");
-    for (name, value) in shape_constants() {
-        spawn_constant_row(&mut commands, panel, name, value);
-    }
 }
 
 /// Заголовок группы строк — плашка с названием, как секция в панели игры.
@@ -139,37 +115,9 @@ fn spawn_group_header(commands: &mut Commands, panel: Entity, title: &str) {
     ));
 }
 
-/// Константа шейдера: имя слева, значение справа — та же геометрия, что у
-/// строки-значения игры (`ui/rows.rs`), но **не кнопка**: крутить константу
-/// отсюда нельзя, а подсвечивать под курсором строку, клик по которой ничего
-/// не сделает, панель игры себе не позволяет.
-fn spawn_constant_row(commands: &mut Commands, panel: Entity, name: &str, value: &str) {
-    commands.spawn((
-        ui_node(Node {
-            column_gap: px(6),
-            padding: UiRect::axes(px(ROW_PAD_PX), px(1)),
-            ..default()
-        }),
-        children![
-            (
-                row_label(name),
-                // распорка: имя забирает свободную ширину, значение уходит
-                // к правому краю строки
-                Node {
-                    flex_grow: 1.,
-                    ..default()
-                },
-            ),
-            row_value(value),
-        ],
-        ChildOf(panel),
-    ));
-}
-
-/// Плашка с масштабом — внизу справа, подальше от панели. Не подсказка по
-/// клавишам, а измерение: правило гашения октав в `roof.wgsl` задано в
-/// пикселях, и без числа на экране «фактура пропала» не отличить от «фактура
-/// выключена».
+/// Плашка с масштабом — внизу справа. Не подсказка, а измерение: в игре слой
+/// машин снимается целиком за `CAR_MAX_ZOOM`, и без числа на экране «мелко, но
+/// видно» не отличить от «в игре здесь уже пусто».
 pub(crate) fn spawn_readout(mut commands: Commands, assets: Res<AssetServer>) {
     commands.spawn((
         ui_node(Node {
@@ -187,25 +135,20 @@ pub(crate) fn spawn_readout(mut commands: Commands, assets: Res<AssetServer>) {
 }
 
 /// Метров на пиксель — по камере, а не по окну: масштаб проекции считается в
-/// **логических** точках, а `fwidth` в шейдере меряет физический пиксель,
-/// отсюда деление на `scale_factor`. Всё, что короче полутора пикселей,
-/// шейдер гасит полностью, всё, что длиннее четырёх, показывает целиком
-/// (`visible` в `roof.wgsl`) — эти два числа плашка и печатает.
+/// **логических** точках.
 pub(crate) fn update_readout(
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut readout: Single<&mut Text, With<ScaleReadout>>,
 ) {
     let metres_per_pixel = camera.scale.x / window.scale_factor();
-    readout.0 = format!(
-        "{metres_per_pixel:.3} м/пиксель  ·  фактура крупнее {:.2} м видна целиком, мельче {:.2} м погашена",
-        metres_per_pixel * 4.0,
-        metres_per_pixel * 1.5,
-    );
+    let in_game = if metres_per_pixel < CAR_MAX_ZOOM {
+        "слой машин в игре здесь рисуется"
+    } else {
+        "в игре на таком зуме слоя машин уже нет"
+    };
+    readout.0 = format!("{metres_per_pixel:.3} м/пиксель  ·  {in_game} (порог {CAR_MAX_ZOOM})");
 }
-
-#[derive(Component)]
-pub(crate) struct ResetButton;
 
 /// Протяжка любой ручки. Округляет до шага, возвращает бегунок на округлённое
 /// место и пишет поле — какое именно, знает [`ParamSpec::set`] под номером,
@@ -224,8 +167,8 @@ fn on_param_change(
     let spec = &specs[index];
     let stepped = apply_step(&change, &mut commands, spec.range);
     if (spec.get)(&tuning) == stepped {
-        // ресурс правится только на смене шага: пересборка витрины стоит
-        // всех домов разом, и платить ею за каждый пиксель протяжки нельзя
+        // ресурс правится только на смене шага: пересборка витрины стоит всех
+        // клеток разом, и платить ею за каждый пиксель протяжки нельзя
         return;
     }
     (spec.set)(&mut tuning, stepped);

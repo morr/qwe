@@ -11,6 +11,7 @@ use super::{TreeShape, TreeStyle};
 use crate::map::SHADOW_DIR;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::signed_ring_area;
+use crate::map::seed::Lcg;
 use crate::settings::{TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE};
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -181,30 +182,6 @@ impl CrownParams {
     /// вырез, не имеет права схлопнуть соседнее остриё в иглу.
     pub(super) fn corner_mouth_floor(&self) -> f32 {
         self.outline_stroke
-    }
-}
-
-/// ГПСЧ Лемера (Park–Miller), как в Village.js: `seed = 48271·seed mod 2³¹−1`.
-pub(super) struct Lcg(u32);
-
-impl Lcg {
-    pub(super) fn new(seed: u32) -> Self {
-        Self((seed % 0x7FFF_FFFF).max(1))
-    }
-
-    fn next_f32(&mut self) -> f32 {
-        self.0 = ((u64::from(self.0) * 48271) % 0x7FFF_FFFF) as u32;
-        self.0 as f32 / 2_147_483_647.0
-    }
-
-    /// Среднее трёх uniform — колокол на (0,1) со средним 0.5.
-    fn gauss3(&mut self) -> f32 {
-        (self.next_f32() + self.next_f32() + self.next_f32()) / 3.0
-    }
-
-    /// Сумма четырёх uniform / 2 − 1 — колокол на (−1,1) со средним 0.
-    fn bell4(&mut self) -> f32 {
-        (self.next_f32() + self.next_f32() + self.next_f32() + self.next_f32()) / 2.0 - 1.0
     }
 }
 

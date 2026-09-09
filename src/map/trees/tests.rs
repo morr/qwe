@@ -1,9 +1,10 @@
 use super::crown::{
-    CONE_BANDS, Lcg, PALM_BANDS, bloat, chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs,
+    CONE_BANDS, PALM_BANDS, bloat, chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs,
     shaded_arcs, shadow_ring,
 };
 use super::*;
 use crate::map::SHADOW_DIR;
+use crate::map::seed::Lcg;
 use crate::settings::CONIFER_NOISE_WAVELENGTH;
 
 /// Параметры кроны, на которых нарисован город: тесты пиннят игру, а не

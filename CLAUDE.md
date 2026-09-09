@@ -36,7 +36,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | any git operation — staging, committing, branching, rebasing, history | `git` |
 | running the app, BRP, screenshots, the trace log | `live-app` |
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
-| `map/*` — the OSM pipeline (`map/osm/*`) and every layer (`meshing`, `spawn`, `surface`, `roads`, `rail`, `tram`, `trees`, `buildings`, `footprint`) | `osm-map` |
+| `map/*` — the OSM pipeline (`map/osm/*`) and every layer (`meshing`, `spawn`, `surface`, `roads`, `rail`, `tram`, `cars`, `trees`, `buildings`, `footprint`, `seed`) | `osm-map` |
 | `navigation/*`, `movement/*` (incl. separation, slots, the navtile size), `tests/{navigation,movement}.rs` | `navigation-deep` |
 | `rng.rs`, `determinism/*`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
 | `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `tests/spatial.rs` | `species-behavior` |
@@ -293,6 +293,7 @@ step when adding one):
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layer`) |
 | road layers (sidewalks/alleys/roads/bridges/walls + casings) | `map/roads.rs::spawn_roads` (same helper) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::spawn_rails` |
+| parked cars | `map/cars.rs::rebuild_cars` (through `surface::spawn_layer`) |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper; shadows spawned directly) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |

@@ -57,7 +57,7 @@ in `main.rs`.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
   parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → portal stain → corpses → portal → buildings (5) →
+  → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
@@ -161,21 +161,45 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **trees / tree_appears_at** — what the renderer reads; `compose_trees` merges forest +
     avenues of the selected layout, `composed_for` caches which.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
-  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal — every
-  consumer owns a default (`DEFAULT_BUILDING_HEIGHT` 15 m; a house 6 m, a garage 3 m — by
-  building use). Coverage varies wildly by city (NY 97 % … Tokyo 5 %) and is logged on
-  load.
+  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
+  coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
+- **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
+  tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
+  reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
+  storeys), a compact large one (≥ 500 m², sides within 1.7) a tower (mostly 9), a small
+  one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
+  long thin shed stays low), and industrial / commercial / church footprints are measured
+  in **metres of span** rather than storeys.
+  A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
+  storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large
+  squarish school never comes out a tower.
+  The slot inside each group comes
+  from the building's own seed — the one that already picks its **Roof material** — so it
+  is stable across rebuilds and modes. The tag always wins. Before this the whole 69 %
+  took one of three numbers (3 / 6 / 15 m) and Tula's height distribution was median 15 m,
+  p90 15 m; it is now median 8 m, p90 15 m, and the mix is printed in the `building
+  meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
   Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
   above all — from `amenity=*` on the same outline. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
-- **Gable roof** (`map/buildings/roofs.rs`) — a two-slope roof **inferred**, not read
-  (`roof:shape` is rare): every house and every small untagged box whose outline nearly
-  fills its minimum-area bounding rectangle gets a ridge along the rectangle's long axis;
-  L-shaped and courtyard buildings stay flat, and so does the Kremlin — outside use-based
-  styling, as with its colour. Detail in the `osm-map` skill.
+- **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
+  not read (`roof:shape` is rare), in three kinds. A **gable** — two slopes with the ridge
+  along the long axis of the minimum-area bounding rectangle — needs an outline that nearly
+  fills that rectangle. A **hip** — a slope quad per outline edge, built by pushing the
+  outline inward on miter offsets, with the leftover interior as the ridge plane — needs
+  nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
+  (they used to stay flat among pitched neighbours). Which of the two a house takes is its
+  own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
+  and its clutter. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
+  with its colour. **`RoofShape`** is the same three as an *input*: the city never asks for
+  one, `roof_gallery` does, to stand one outline under all three — and a refusal there stays
+  a refusal instead of being swapped for another shape the way `roofing` swaps it.
+  **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, hip inset,
+  either ridge rise) so the gallery prints them rather than restating them.
+  Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
@@ -184,21 +208,24 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
-  whole building**; code `0` is *not a roof* — walls, gables and parapets ride in the same
+  whole building**; code `0` is *not a roof* — walls and gables ride in the same
   mesh). **Roof age** is the second thing that seed carries (`roof.wgsl::roof_age`, hashed
   from it, no attribute of its own): one number per building that sets how many repair
   patches its bitumen carries (a young roof almost none, an old one a patch per second
   cell), how much water stands on it, and — on every material — how faded and dirty it is.
-  A soft flat roof gets a **parapet**: an inset band along the ring, lit by
-  `SHADOW_DIR` like a wall — soft is a property of the material (`RoofKind::has_parapet`:
-  bitumen / gravel / membrane), not of the layer that draws it. Every flat roof of the
-  city, in both flat modes and 2.5D, is laid by one call — **`push_flat_roof`** (fill +
-  parapet). Strength — `RoofStyle::texture`
+  Every flat roof of the city, in both flat modes and 2.5D, is laid by one call —
+  **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
+  it, a 0.7 m inset band lit by `SHADOW_DIR`; that is gone, because it is the same
+  construction as a hip's slopes and only narrower — from the air every panel block wore a
+  small hip, and a real hip could not be told from a flat roof. Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
   the walls under it**, deliberately: that is the relation an aerial photo has, and the
   older "roof lighter than wall" rule is retired with the per-use roof palette. Every
   material and every palette side by side, with a house per colour from a 30 m block down
-  to an 8 m shed: `cargo run --example roof_gallery`. Detail in the `osm-map` skill.
+  to an 8 m shed, and above them every *shape* over five outlines:
+  `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
+  per-building body of the 2.5D layer, walls included, because a roof shape does not read
+  without them. Detail in the `osm-map` skill.
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own
@@ -211,6 +238,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **The clutter is the only thing zoom changes about buildings** —
   `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) rebuilds the layer without it
   once a metre stops being worth two pixels, the way rail and tram rebuild themselves.
+- **Lean** (`map/buildings/mod.rs`, `Lean`) — which way the *top* of a building is
+  displaced, and the second thing (with the sun) that a 2.5D building answers to. One
+  oblique skew for every building, which is what a **satellite** frame looks like: 5 km of
+  city seen from 500 km up spans fractions of a degree, so the parallax is constant (an
+  orthomosaic has none at all). `Lean` is a **per-building value** (metres of displacement
+  per drawn metre of height, held as a vector) and carries the painter's key with it:
+  **the far end of the skew is drawn first**, because the top of a far building is
+  displaced onto a near one. **The sun is independent of it** — the lean is the camera,
+  the shadow is the light. A radial lean away from the nadir — the signature of an
+  *aircraft* frame — was tried and taken back out: the nadir is the centre of the **map**,
+  not of the frame, so with a camera that pans the fan is only visible around the centre,
+  and following the camera is out of reach while the layer is rebuilt on the CPU (tens of
+  milliseconds). It belongs with a move of the skew into the vertex shader.
 - **Sun** (`map/mod.rs`) — one light for the whole map, and now with both halves:
   **`SHADOW_DIR`** (where the shadow points in plan) and **`SUN_ELEVATION_DEG`** (59°, the
   summer noon of Tula's latitude — the hour a city is photographed from the air), from
@@ -221,11 +261,23 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
   resolution and the sky's fill light, not from the sun's angular size, and is therefore
-  chosen by look), outward from the outer ring and into the gap from a hole. What goes into
+  chosen by look), outward from the outer ring and into the gap from a hole. Its width is
+  **tapered per vertex by `penumbra()` = the band direction projected on `SHADOW_DIR`**: a
+  shadow meets its own building hard and blurs with distance, so the contact edge gets no
+  band at all, the far edge the full metre, and a lateral edge grows from one to the other.
+  Untapered, the metre also ran along the contact contour and left a soft dark blot on the
+  sunlit side of every convex corner — the building came out ringed exactly like the
+  **contact skirt** that was taken back out of the union. What goes into
   the union is still the silhouette sweeps and nothing else. The shadow layer now
   carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
   it is the most expensive thing the building layers build, and it does not depend on the
   roof-clutter zoom bucket.
+- **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
+  (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
+  the roof material, parked cars. **The seed is the object's own reference point** — the
+  first vertex of a footprint, the first point of a street — never its index in the extract,
+  so a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage
+  (doors, tree planting) keeps its own point-seeded `rng::lcg_seeded_by`.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -243,6 +295,26 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
+  `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
+  `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
+  and roundabouts. The pitch is walked along the **whole street's arclength**, not segment
+  by segment, and the row **breaks at the junctions the lane markings already know**
+  (`junctions::marking_breaks`, plus a 5 m clearance) rather than at the ends of an OSM way.
+  A **one-way** carriageway gets a single row, on its right-hand kerb — which is what stops
+  the two halves of a divided avenue from parking a column down their median, and is why
+  `oneway=-1` is now normalized at parse by reversing the way.
+  4.4 × 1.8 m bodies at a 6 m pitch,
+  45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
+  ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
+  fifths, black a fifth, the rest coloured. Each casts its own shadow, by the same `shadow_length_scale()` the
+  buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
+  walk through them, deliberately: a parked row along every street would eat the pavements
+  the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
+  a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
+  entirely when a car stops being worth six pixels. Tula: 22 022 cars, 176 k verts, 5.4 ms
+  to build (5665 / 45 k while only the avenues parked). Every street shape the row broke on,
+  side by side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,
@@ -316,6 +388,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   line lies on the carriageway and at city zoom reads as another street layer), the `Tram`
   row of the Roads section (the track runs on the carriageway, so it is read with the roads);
   a change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
+  **CarStyle** sits in the same section for the same reason and with the same shape —
+  `visible` (**on** by default) and `occupancy` (the share of parking places taken, 0.45),
+  the `Cars` and `Occupancy` rows; a change goes through `rebuild_cars` alone.
 
 ## Navigation
 

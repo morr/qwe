@@ -89,13 +89,22 @@ in `CONTEXT.md` and the detail here in the same change.
   3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
   z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
-  layers** below). Three more fields feed the **markings** only: `oneway`
-  (`oneway=yes|1|true|-1` — direction is irrelevant, we draw, we don't route;
-  `reversible`/`alternating` are not one-way), `roundabout`
+  layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
+  (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way), `roundabout`
   (`junction=roundabout|circular`, implies `oneway`) and `lanes: Option<u8>` (the `lanes`
   tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag).
   Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
   streets ≥ 8 m, the European cities on about half.
+  **The direction of a one-way way is load-bearing now**, and it did not use to be: the
+  cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
+  against the order of the points" — is **normalized at parse by reversing the way**
+  (`parse_way`, `is_oneway_backward`). One notion of "which way this street runs" instead
+  of two, and nothing downstream has to remember the tag. It is not free: a street's seed
+  is `seed::seed_from_point` of its **first** point, so such a way is seeded differently
+  and its row stands
+  elsewhere than it did — deterministic and reproducible, just not identical. Only the
+  highway branch reverses; the rail and waterway branches of the same way ran earlier and
+  keep the original order.
   **Underground road is dropped** (`parse/tags.rs::is_road_underground`) — the same rule rails
   and watercourses have always had, and it was simply missing on the highway branch:
   metro concourses and stairs came out as ordinary alleys drawn over the city (Tokyo
@@ -182,8 +191,9 @@ in `CONTEXT.md` and the detail here in the same change.
   (Paris 64%, Berlin 59%, London 50%, Tula 31%, **Tokyo 5%**). `parse_measure` handles
   the tag-value zoo — `12`, `12.5`, `12,5`, `12 m`, `3;4`, `40'6"`. Anything outside
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
-  order-of-magnitude typos. `None` is normal, not an error — every consumer owns a
-  default. Coverage is logged per city on load (`N buildings (M with height)`).
+  order-of-magnitude typos. `None` is normal, not an error — and it is the majority
+  everywhere but New York, so what fills it in matters: see **Inferred storeys** under
+  Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
   Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
   wall colour (`map/buildings/mod.rs::facade_color`) and the **roofing material** the roof
@@ -196,10 +206,9 @@ in `CONTEXT.md` and the detail here in the same change.
   4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
   garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
-  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class
-  also picks the **default height** (`buildings/mod.rs::height_or_default`): a house
-  without a tag is 6 m and a garage 3 m, everything else the 15 m five-storey default —
-  most houses carry no height, and at 15 m the outskirts stood as tall as the centre.
+  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
+  also one of the two inputs of **Inferred storeys** (the other is the footprint's shape),
+  which is what fills in the height OSM does not carry.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS
@@ -276,6 +285,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 
 ## Rendering
 
+- **One RNG and one point seed for the whole of `map/*`** (`map/seed.rs`) — everything a
+  layer scatters must survive a rebuild: a zoom-bucket crossing, a height-mode switch, a
+  restart. So the layers share two primitives instead of copying them. **`Lcg`** is the
+  Park–Miller (Lehmer) generator of `Village.js` — `seed = 48271·seed mod 2³¹−1`, plus
+  `range`, `gauss3` (a bell on (0,1)) and `bell4` (a bell on (−1,1)); it started in the
+  crown generator and was lifted out when the parked cars became its third caller.
+  **`seed_from_point(Vec2)`** is the seed itself: the object's **own reference point** in
+  centimetres — the first vertex of a footprint, the first point of a street — through three
+  mixing rounds, never the object's index in the extract, which a re-parse is free to move.
+  Callers: `buildings::material::building_seed` (the roof material, the roof shape and, since
+  the height inference, the storeys), `buildings::clutter`, `trees::crown`, `cars`.
+  The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
+  (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
+  them would move every door and every tree in every city.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
@@ -506,6 +529,101 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
+  after the roofs themselves: a street with not one car on it reads as a drawing whatever
+  it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
+  the very predicate that decides where a sidewalk and lane markings go, opened up for this
+  — minus a bridge (nobody parks on one) and a roundabout (you drive it, you don't park on
+  it), both excluded by `parkable` rather than by the predicate, which markings still need
+  them in. The threshold that stood here before was `road.width >= 9 m`, and it was reading
+  the wrong thing: `RoadLine::width` is a **drawing constant of the class**
+  (`primary` 16, `tertiary` 10, `residential` 8, `service` 5), never a measured street
+  width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
+  photo shows the housing blocks parked solid. `STREET_MIN_WIDTH` (8 m) lets
+  `residential`/`unclassified`/`living_street` in and keeps `service` out, which is exactly
+  the line wanted. On an 8 m street the row sits `8/2 − CURB_GAP − CAR_WIDTH/2 = 2.6 m` off
+  the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
+  `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
+  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with
+  `CarStyle::occupancy` (`CAR_OCCUPANCY_DEFAULT`, 45 %) of the places taken (a solid row
+  from junction to junction looks like a dealership)
+  and `END_MARGIN` 2 m clear of each end — that margin is only about the drawn ribbon's
+  butt, so a car does not hang off it; a junction is a different question, answered below.
+  The pitch is walked along the **arclength of the whole street**, not segment by segment:
+  a city polyline's link is routinely shorter than two margins, and the old
+  `points.windows(2)` walk dropped every such link whole (51 % of Tula's segments, 35 % of
+  its length) and reset the step at every vertex, so the row tore or doubled across a bend.
+  `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
+  extra rule handles curvature: a place closer than `CAR_LENGTH` to the last car **placed on
+  that side** is skipped, measured in world distance so it catches a corner and any other
+  bend alike.
+  - **The row breaks at real junctions, not at way ends.** It used to break at the ends of
+    the OSM way, which is wrong in both directions at once: a way cut mid-street by a tag
+    change tore the row for no reason, and a way running straight through a crossing parked
+    cars in the middle of it. `roads/junctions.rs::marking_breaks` already answers this
+    question for the lane markings — the module opens up and the layer calls it with
+    `is_carriageway` over the **whole** `map.roads` slice (its `breaks` are indexed by the
+    road's position in the input, and the participants must be every real street, not only
+    the parkable ones: a residential street joining another has to break the row too). A
+    place within `Break::reach + JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
+    end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
+    ends meeting are not a break at all, which is the half of the defect that tore the row.
+  - **A one-way carriageway gets one row, on its right.** Traffic here is right-hand, so on
+    each half of a divided avenue the kerb is on the right and the median on the left; two
+    rows would put a column of cars down the median, and in Tula 145 of 218 `primary` ways
+    are exactly such halves. The same rule is right for an ordinary one-way lane. `across`
+    points left, so the right-hand side is `-1`; the direction it is right of is the way's
+    own point order, which parse has already normalized (see **RoadLine** above).
+  - **Not cached, and that is measured, not assumed**: `marking_breaks` costs 0.76 ms of the
+    layer's 5.4 ms build on Tula, next to 70 ms for the building layer — a resource cached
+    per world load would not pay for itself.
+  Colours are a ten-slot
+  palette in the shares a photo shows. Every car casts a shadow through the same
+  `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
+  then all bodies** — otherwise a car's shadow lands on top of the neighbour drawn before
+  it. The layer is one merged **blended** mesh (the shadow is translucent, the body is not)
+  at `Z_CAR` 2.7, above the tram and the rails (a car parks on the asphalt over the tracks)
+  and below the portal stain.
+  - **Decoration, and deliberately so**: cars touch neither the navmesh nor the simulation
+    and pawns walk through them. A parked row along every street would otherwise eat the
+    pavements the entire crowd walks on.
+  - **`CarStyle`** (resource, BRP-writable, persisted, settings group `cars`) is the whole
+    style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
+    field for the tram's reason — that would remesh every road layer on a knob whose only
+    effect is one merged mesh — and `rebuild_cars` is gated on
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)`,
+    one registration, since two in one schedule could both fire in a frame and spawn the
+    layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
+    centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
+    style.smoothing)`, never the raw OSM points), so Smoothing moves the cars with the
+    asphalt. The invisible case
+    goes through the same early return as the far zoom bucket: despawn the old layer, build
+    no new one, so no second path can forget the despawn.
+  - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px, so a
+    4.4 m car is never under ~6 px): past the threshold the layer is not drawn at all, which
+    is cheaper than any LOD of the drawing itself. Seeded per street (its first point,
+    like doors and roofs), so the row is the same across rebuilds.
+  - **The gallery** — `cargo run --example car_gallery` (`examples/demos/car_gallery/`, the
+    shape of `roof_gallery`): eight cells, and they are **not** pretty streets but the list
+    of shapes the row used to break on — straight, a ten-link polyline, a 90° bend, a T and
+    a four-way crossing, a divided avenue, an 8 m residential street, a `service` drive and
+    a bridge (both empty). Under each one, in the caption, what it is there to show. It may
+    not roll its own geometry: `cars_mesh` is the one door out of `map/cars.rs` and the
+    cells are described with the very `osm::fixture` the parse tests use, so a cell and a
+    test talk about the same object. Its own is only the asphalt underneath, drawn with
+    `MeshBuilder::push_ribbon` in the game's `ROAD_COLOR` — the brightness step between a
+    body and the surface is half of how the row reads. `CAR_GALLERY_SHOT=path.png` takes one
+    frame and exits, the way the roof gallery does and for the same reason. It has already
+    earned its keep once: the divided-avenue cell was built with the two carriageways
+    swapped (left-hand traffic), and the picture said so at a glance.
+    The `panel.rs` and `params.rs` modules repeat identically across galleries — intentionally,
+    so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
+    `examples/demos/gallery_shot.rs`: it holds the frame counts and window-raise logic, both
+    debugged facts (commit 21853a3), and fixes apply there to all galleries at once.
+  - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
+    45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
+    in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
+    once per rebuild and costs nothing per frame.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark
@@ -608,6 +726,23 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       sky's fill light — so the width is chosen by look (1 m is 2–10 screen px at the zooms
       where shadows read). Bands of neighbouring shapes may overlap, but both fade to
       zero, so the doubling is weaker than the shadow itself.
+    - **The band is tapered, and that is what keeps the contact skirt from coming back.**
+      A shadow meets the thing that casts it **hard** — there is no penumbra at the wall —
+      and blurs as it runs away from it. In the union that difference is readable locally,
+      because the body always lies on the `SHADOW_DIR` side of a contact edge: the band's
+      own direction points *against* the light there, *along* it on the far edge, and
+      across it on a lateral one. Hence `layers.rs::penumbra(direction) =
+      direction·SHADOW_DIR` (clamped at zero) as the per-vertex share of the width, fed to
+      `MeshBuilder::push_inset_band_tapered` — zero at the contact, the full metre at the
+      far edge, and along a lateral side a growth from nothing at the building's corner to
+      full width at the far end, which is what a real penumbra does. Untapered (the state
+      the sun-shadows branch merged in) the metre also ran along the contact contour, and
+      the mitred band at every convex corner of the silhouette chain left a soft dark blot
+      a metre across **on the sunlit ground** — a stepped facade came out as a row of
+      them, and the building read as outlined by the very contact skirt that had just
+      been removed. A zero-width vertex degenerates its quad into a triangle (that *is*
+      the hard edge); an edge zero at both ends is not emitted at all, so the taper also
+      takes vertices off the most expensive layer here.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode** changed (`mode.is_changed()`): it does not depend on the roof-clutter
@@ -636,14 +771,56 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     All building tone mixing — the palette, the `roof_color` ramp, walls, slopes — is
     done in sRGB, so the wall and slope constants compare directly. No facade band, no
     shadows. Depth is painter's algorithm *inside one
-    mesh*: buildings sorted by their bounds-centre projection on the lift direction,
-    far end first (index-buffer order is raster order), so a south-western building
-    correctly overlays its north-eastern neighbour. `extrusion_lift` is `pub` because
-    the doors overlay must shift by the same vector. Known limits: units y-sort against
+    mesh*: buildings sorted by `Lean::depth`, far first (index-buffer order is raster
+    order), so a south-western building correctly overlays its north-eastern neighbour.
+    `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
+    in the shadows and anything that wants to put a marker on the *drawn* building rather
+    than its real outline all go through it. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
+    - **`Lean` is a per-building value**, not a global function: direction,
+      `lift(drawn)`, `ridge(rise)` and the painter's key `depth(centre)` all come from it,
+      and `layers.rs` builds one per building. It holds **metres of displacement per drawn
+      metre as a vector** rather than a `(direction, length)` pair on purpose: the vector
+      is exactly `(0.4, 1)`, and a round trip through `normalize` × `length` moves it by
+      one ulp — enough to break the `EXTRUDE_RANGE` clamp assertion in the arch tests.
+      One oblique skew for the whole city is what a **satellite** frame gives: 5 km of
+      city from 500 km up spans fractions of a degree, so the parallax is constant across
+      it (a true orthomosaic has none at all).
+    - **A radial lean was tried and taken back out.** A frame from an *aircraft* leans
+      every building away from the nadir, harder the farther it stands, and that fan is
+      the most recognisable signature of aerial photography. It does not work here,
+      because the nadir would be the centre of the **map** and not of the frame: with a
+      camera that pans, the fan is only visible around the map centre, and everywhere else
+      it is an ordinary skew pointing somewhere else. Making the nadir follow the camera
+      is what would be honest, and it is out of reach while the lean is baked into the
+      merged mesh — a rebuild is tens of milliseconds against a 16 ms frame. The way back
+      in is the vertex shader: the lean is linear in height, so basis + height as vertex
+      attributes and the nadir as a uniform would cost nothing per frame. Three things
+      would have to move with it — the painter's sort (to a depth test writing the same
+      key), the choice of visible walls (build every edge, collapse the invisible ones in
+      the shader) and the arch patch in the shadow layer.
+    - **The sun does not follow the lean.** The lean is the camera, the shadow is the
+      light, and their being independent is itself a realism cue. `wall_colors` takes the
+      true outward normal; the lean only picks which walls are visible.
   - **2.5D+shadows+tint (ExtrusionShadowsTint, the default)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
+  - **Hip roofs** (`buildings/roofs.rs::hip_roof`) — the other pitched roof, and the one
+    that does not need a rectangle. The outline is pushed inward by `HIP_INSET` (2.2 m,
+    clamped to `HIP_INSET_SHARE` 0.38 of the outline's own thickness, exactly as a rim is
+    clamped — a narrow shed would otherwise turn its slopes inside out) using the same
+    `miter_offsets`; each outline edge becomes a slope quad from the eave to its shifted
+    pair, and what is left inside is the **ridge plane**, drawn `RIDGE_LIGHTEN` lighter
+    because it faces straight up. Slope tone is `shade_by_light` on the edge's outward
+    normal, so a hip roof shows four or more tones instead of one. On a convex house that
+    construction *is* a hip roof; on an L-shaped one it is a hip roof with a flat top —
+    which is what the photo shows anyway, and what a straight skeleton would have cost an
+    order of magnitude more to produce. `roofing` is the single door: gable when the seed
+    says so and the rectangle fits, hip otherwise, flat when the building is not in the
+    pitched cohort at all — and `HIPPED_SHARE` (4 in 10) is the split among houses that
+    could take either. **The L-shaped case is why this exists**: those houses were flat
+    among pitched neighbours, which is the one thing an aerial photo of a private sector
+    never shows.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
     `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
     `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
@@ -664,6 +841,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the slopes. In flat modes the ridge lift is zero and the two shades are all that
     remains. Verified on Tula's western private sector: red-brown two-storey houses with a
     visible ridge, the L-shaped ones flat.
+- **Inferred storeys** (`buildings/heights.rs`) — the height of the 69 % of Tula (95 % of
+  Tokyo) that OSM leaves untagged. It used to be three numbers — house 6 m, garage 3 m,
+  everything else 15 m — and the measurement of that is its own argument: the city's
+  height distribution came out **median 15 m, p90 15 m**, i.e. no distribution at all.
+  Every shadow was the same length and every 2.5D lift the same size.
+  - **The footprint decides**, the way it does for an eye reading an aerial photo, and
+    only then the use: a **section** is a long thin box (≥ `SLAB_MIN_LENGTH` 35 m by
+    ≤ `SLAB_MAX_WIDTH` 18 m) at 5 / 9 / 12 storeys with the weights a Russian city has
+    (half of them five); a **tower** is compact and large (≥ `TOWER_FOOTPRINT_MIN` 500 m²,
+    sides within `TOWER_MAX_RATIO` 1.7) and is mostly nine; a **low** building is
+    ≤ `LOW_FOOTPRINT_MAX` 300 m² at 2–4 (over 300 m²: the area test comes first, so a long
+    thin shed stays low); everything else large is 2–5 — that last branch
+    is the most populated one and being generous with it is what made the first version
+    come out skyscraping (p90 27 m before the tower table was halved).
+  - **Some uses are measured in metres, not storeys**: an industrial hall or a store has
+    one tall span, a church has one storey to the cornice, a garage is one box and gets no
+    spread at all (a row of garage boxes on a photo is all one height).
+  - **A public building is measured by its use, not its shape** — school, clinic, office
+    (`BuildingUse::Public`) at 2–5 storeys, the same table as «everything else large»
+    but reached before the footprint is consulted: a 900 m² school with a squarish plan
+    would otherwise be a tower.
+  - **The slot inside a group is the building's own seed** — the same
+    `material::building_seed` that picks the roofing material, so heights survive a mode
+    switch, a zoom rebuild and a restart, and two identical footprints in different places
+    still come out different. **A tag always wins**; the inference runs only where
+    `PolyArea::height` is `None`.
+  - **`height_mix`** puts the result in the `building meshing:` log line
+    (`31% tagged, median 8 m, p90 15 m, max 82 m`) — a height distribution is exactly the
+    thing a screenshot cannot show, and that line is how this was tuned.
 - **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wgsl`) — what
   the roof is *covered with*. The goal is the aerial photo: from above, a roof is a
   **material** first (rolled bitumen with its seams and repair patches, gravel ballast,
@@ -699,8 +905,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     seed]`). All four numbers are constant over a building, so the attribute is a
     *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **not a
-    roof** — walls, gables and parapets ride in the same mesh (2.5D is one painter's-order
-    layer) and come out with their vertex colour untouched.
+    roof** — walls, gables and roof clutter ride in the same mesh (2.5D is one
+    painter's-order layer) and come out with their vertex colour untouched.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
@@ -742,20 +948,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     is not visible, and a fifth float would cost four bytes on every vertex of the building
     layer. The consequence for the gallery: its `Seed` knob rolls the age too — that is how
     a new roof is compared against an old one there.
-  - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
-    membrane) gets a 0.7 m inset band along its ring and every courtyard
-    ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
-    dark on the shaded ones. Tile, seam and corrugated get none — they end in an eave, not
-    a parapet. *Soft* is a property of the material, so the rule lives on it —
-    **`RoofKind::has_parapet`** (`material.rs`), not on the layer that happens to draw the
-    band. The band carries **no** roof frame: a roll seam crossing a concrete coping
-    would read as a crack. `MeshBuilder::push_inset_band_with` (the per-edge-colour
-    sibling of `push_inset_band`) exists for exactly this.
+  - **There is no parapet, and putting one back needs a different construction.** A soft
+    flat roof (bitumen / gravel / membrane, the old `RoofKind::has_parapet`) used to get a
+    0.7 m inset band along its ring and every courtyard ring, lit by `shade_by_light` like
+    a wall (0.24 / 0.20) — bright on the sunny edges, dark on the shaded ones. That is
+    **the same construction as a hip roof's slopes** (an inset band on miter offsets,
+    shaded by the edge's own outward normal) at a third of the width, so from the air every
+    panel block wore a small hip, and the hip of a large private house — inset capped at
+    `HIP_INSET` 2.2 m — was the same picture only wider. Two things a roof shape must never
+    do, and it did both. The band's other cost is why the retreat is not a one-liner back:
+    it wants to read as a vertical coping standing *above* the roof, and an inset band
+    shaded by a plan normal cannot say that. `MeshBuilder::push_inset_band_with` (the
+    per-edge-colour sibling of `push_inset_band`) survives as a primitive; nothing in the
+    building layers uses it any more.
   - **One call lays every flat roof** — `layers.rs::push_flat_roof(builder, look, outer,
-    holes, color)`: set the roof frame, fill the contour with its courtyards, add the
-    parapet if the material has one. Both callers use it — the flat modes with the real
-    contour, 2.5D with the contour already lifted onto the walls — and it is `pub` because
-    the `roof_gallery` example builds its houses with it. Slopes stay outside it: a gable
+    holes, color)`: set the roof frame, fill the contour with its courtyards. Both callers
+    use it — the flat modes with the real contour, 2.5D with the contour already lifted
+    onto the walls. It is `pub(super)` now: the gallery reaches the same geometry through
+    `push_house`, one level up. Slopes stay outside it: a gable
     roof is computed by the caller, which needs the same `GableRoof` for the gables it
     draws *with the walls*, before the roof.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
@@ -773,25 +983,50 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
     only, so dragging the slider rebuilds nothing.
   - **The gallery** — `cargo run --example roof_gallery` (`examples/demos/roof_gallery/`,
-    the shape of `tree_gallery`): seven blocks — six materials plus the church palette —
-    each with **a house per palette colour**, sized from a 30 m block down to an 8 m shed,
-    so the two things a still picture cannot say are said at once: the palette's spread
-    (tight in value, wide in hue) and that the texture is in **metres** and does not scale
-    with the house. Knobs are what the game reads off the building itself — long axis,
-    phase seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
-    prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
-    zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
-    panel lists the shader's own **tuning constants** (patch cell, patch size, the two
-    share ends), parsed out of `roof.wgsl` itself by `constants.rs` (`include_str!`, lines
-    of the form `const NAME: f32 = …;`) rather than mirrored as Rust numbers — a mirror
-    would drift on the first edit and the gallery would then lie about exactly what it is
-    opened for. They are text, not knobs: the numbers live in the shader. What the gallery may
-    **not** do is roll its own quad: houses go through `push_flat_roof`, the parapet
-    marker in a block's caption comes from `RoofKind::has_parapet`. It picks material and
-    colour directly (`RoofLook::new`) instead of through `roof_look`, because the seed
-    cannot reach every combination — a membrane never lands on a private house — and it
-    drops the ±3 % seeded jitter so the hex printed under a house is the constant in
-    `material.rs`.
+    the shape of `tree_gallery`), and it answers the two halves of "what is a roof" in two
+    grids, because a material and a shape are chosen by different code from different
+    inputs.
+    - **Materials, below** — seven blocks, six materials plus the church palette, each
+      with **a house per palette colour**, sized from a 30 m block down to an 8 m shed, so
+      the two things a still picture cannot say are said at once: the palette's spread
+      (tight in value, wide in hue) and that the texture is in **metres** and does not scale
+      with the house. Their roofs are **flat by request** (`RoofShape::Flat`) and carry no
+      clutter — a slope would take half the covering out of view and a shaft would stand on
+      the rest.
+    - **Shapes, above** (`shapes.rs`) — five outlines (rectangle, near-square, L, U, and a
+      dumbbell: a big body on a thin neck) each under all three shapes **and** under the
+      game's own choice, four columns. Under every house the shape that actually reached the
+      mesh — a refused one says so instead of being quietly swapped, which is what
+      `RoofShape` exists for — and the ridge rise in real metres; beside every row the two
+      numbers the choice is made from, rectangle fill and hip inset, straight from
+      `roofs::shape_facts`. That is the only way to tell a hip from a flat roof with a
+      chamfer on a picture, and a gable's rise from a hip's.
+    - **Every house is a house** — `push_house`, the per-building body of
+      `extrusion_builder` (walls, roof, clutter), lifted out of that loop for exactly this
+      reason: without walls under it a shape shows neither its ridge rise, nor its missing
+      gables, nor the silhouette height two same-sized houses do not share. The gallery
+      keeps its own painter's order by laying the grids top-down; it does not sort, because
+      gaps keep its houses from overlapping at all.
+    - Knobs are what the game reads off the building itself — wall height, long axis, phase
+      seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
+      prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
+      zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
+      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
+      cell, patch size, the two share ends), shape from `roofs.rs` (fill threshold, hipped
+      share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
+      (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
+      numbers: a mirror would drift on the first edit and the gallery would then lie about
+      exactly what it is opened for. They are text, not knobs: the numbers live in the code.
+    - What the gallery may **not** do is roll its own geometry: every house goes through
+      `push_house`, the shape numbers come from `shape_facts`, the shape that a caption
+      reports is the one `push_house` returned. It picks material and colour directly
+      (`RoofLook::new`) instead of
+      through `roof_look`, because the seed cannot reach every combination — a membrane never
+      lands on a private house — and it drops the ±3 % seeded jitter so the hex printed under
+      a house is the constant in `material.rs`.
+    - `ROOF_GALLERY_SHOT=path.png` takes one frame and exits. The example has no BRP, and a
+      screen grab over another window comes out black, so this is the only way a session
+      without the window in front of it can look at its own work.
 - **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".
@@ -805,8 +1040,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     **air-conditioning units** in addition, and a gabled roof gets a **chimney** on the
     ridge — `ridge_of` reads the ridge back out of `GableRoof`'s first slope, since the
     two far corners of `[eave, eave, ridge, ridge]` are exactly it.
-  - **Placement** is a Park–Miller LCG (the crown generator's, copied — `map/trees`
-    keeps its own `pub(super)`) seeded from the roof material's building seed, so the
+  - **Placement** is the shared Park–Miller LCG — `map/seed.rs::Lcg`, one copy for the
+    whole of `map/*` (crowns, this clutter, the parked cars), the crown generator's
+    original lifted out of `map/trees` — seeded from the roof material's building seed
+    (`seed::seed_from_point`, the same door), so the
     equipment survives a mode switch, a zoom-bucket rebuild and a restart in the same
     place. Positions are rolled in the building's own frame (long axis × its
     perpendicular, extent projected from the outline — no second `min_area_rect`),
@@ -825,8 +1062,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     swept all four edges; two of them were always inside the union.)
   - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
     it cannot be hidden without rebuilding, since it lives in the same merged mesh as
-    the houses (painter's order is per building: walls, roof, parapet, then its own
-    clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
+    the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
     `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
     world entry before `spawn_map` and rebuilt on a threshold crossing through the same
     `retuned` gate the height mode uses (one registration with `or_else`, deliberately:

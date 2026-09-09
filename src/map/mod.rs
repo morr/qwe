@@ -1,11 +1,16 @@
 // публичен по той же причине, что и `trees`: витрина `roof_gallery` строит
-// свои дома его же вызовами (`push_flat_roof`, `material::RoofLook`)
+// свои дома его же вызовами (`push_house`, `RoofShape`, `shape_facts`,
+// `material::RoofLook`)
 pub mod buildings;
+// публичен по той же причине: витрина `car_gallery` расставляет ряды его же
+// вызовом (`cars_mesh`)
+pub mod cars;
 pub mod footprint;
 mod meshing;
 pub mod osm;
 mod rail;
 mod roads;
+mod seed;
 mod spawn;
 mod surface;
 mod tram;
@@ -14,9 +19,15 @@ mod zoom;
 
 pub use self::buildings::material::RoofStyle;
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
-pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
+pub use self::cars::CarStyle;
+// `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
+// (`car_gallery` рисует под рядами саму проезжую часть)
+pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
-pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
+// `ROAD_COLOR` и `smooth_path` наружу по той же причине: ряд машин витрины
+// обязан стоять на том же асфальте, что в городе, а асфальт — на той же
+// сглаженной осевой
+pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 pub use self::surface::SurfaceStyle;
 pub use self::tram::TramStyle;
@@ -62,6 +73,8 @@ impl Plugin for MapPlugin {
             .init_resource::<ConiferNoiseStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
+            .init_resource::<cars::CarZoomBucket>()
+            .init_resource::<CarStyle>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -78,6 +91,7 @@ impl Plugin for MapPlugin {
             .register_type::<RoadStyle>()
             .register_type::<SurfaceStyle>()
             .register_type::<TramStyle>()
+            .register_type::<CarStyle>()
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
@@ -86,6 +100,7 @@ impl Plugin for MapPlugin {
             .track_pref::<RoadStyle>()
             .track_pref::<SurfaceStyle>()
             .track_pref::<TramStyle>()
+            .track_pref::<CarStyle>()
             // материалы поверхностей и кровель — один комплект на всё
             // приложение, слои всех городов берут хэндлы из него
             .add_systems(
@@ -111,6 +126,8 @@ impl Plugin for MapPlugin {
                     trees::build_conifer_field,
                     zoom::seed_zoom_bucket::<buildings::BuildingLods>,
                     spawn::spawn_map,
+                    zoom::seed_zoom_bucket::<cars::CarLods>,
+                    cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -162,6 +179,23 @@ impl Plugin for MapPlugin {
                     roads::rebuild_roads
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),
+                    // машины — целый слой, который на общем плане не нужен
+                    // вовсе; порог у него свой, ближе зданиевого. Тумблер и
+                    // ручка занятости идут одной регистрацией через `or_else`:
+                    // две в одном расписании могли бы сработать в одном кадре
+                    // и заспавнить слой дважды. `RoadStyle` здесь же: ряд стоит
+                    // по сглаженной осевой, и смена Smoothing двигает его
+                    // вместе с асфальтом
+                    (
+                        zoom::update_zoom_bucket::<cars::CarLods>,
+                        cars::rebuild_cars.run_if(
+                            retuned::<cars::CarZoomBucket>
+                                .or_else(retuned::<CarStyle>)
+                                .or_else(retuned::<RoadStyle>),
+                        ),
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),

@@ -58,7 +58,10 @@ use crate::settings::{
 /// детальных картах 2ГИС и Яндекса. Белой (osm-carto) она была, пока не
 /// появилась разметка: белую линию на белом не видно, а на сером сетка улиц
 /// вдобавок перестаёт сливаться с дворами.
-const ROAD_COLOR: Color = Color::srgb(0.655, 0.66, 0.675);
+/// Открыт наружу витрине машин: ряд обязан стоять на том же асфальте, что в
+/// городе, — на своём сером ступень яркости между кузовом и покрытием была бы
+/// не та.
+pub const ROAD_COLOR: Color = Color::srgb(0.655, 0.66, 0.675);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
@@ -213,7 +216,11 @@ pub fn sidewalk_width(road_width: f32) -> Option<f32> {
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
 /// перекрёстках: класс `Street`, не арка (`passage` идёт сквозь дом), не у́же
 /// [`STREET_MIN_WIDTH`]. Мост — тоже: улица через реку не теряет полос.
-fn is_carriageway(road: &RoadLine) -> bool {
+///
+/// Открыт наружу для [`map::cars`](crate::map::cars): «улица, вдоль которой
+/// паркуются» — то же самое понятие, что «улица, у которой есть тротуар и
+/// разметка», и второй копии предиката у слоя машин быть не должно.
+pub fn is_carriageway(road: &RoadLine) -> bool {
     road.class == RoadClass::Street && !road.passage && road.width >= STREET_MIN_WIDTH
 }
 
@@ -567,7 +574,10 @@ fn chaikin(points: &[Vec2], width: f32) -> Vec<Vec2> {
     path
 }
 
-mod junctions;
+/// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин обязан
+/// рваться на тех же перекрёстках, на которых рвётся разметка, и второго
+/// восстановления узлов по общим нодам заводить незачем.
+pub(super) mod junctions;
 
 #[cfg(test)]
 mod tests;
