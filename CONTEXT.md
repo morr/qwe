@@ -302,7 +302,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
   a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
   entirely when a car stops being worth six pixels. Tula: 22 022 cars, 176 k verts, 5.4 ms
-  to build (5665 / 45 k while only the avenues parked).
+  to build (5665 / 45 k while only the avenues parked). Every street shape the row broke on,
+  side by side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,

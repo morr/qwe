@@ -14,6 +14,10 @@ name = "crowd_demo"
 path = "examples/demos/crowd_demo/main.rs"
 
 [[example]]
+name = "car_gallery"
+path = "examples/demos/car_gallery/main.rs"
+
+[[example]]
 name = "roof_gallery"
 path = "examples/demos/roof_gallery/main.rs"
 

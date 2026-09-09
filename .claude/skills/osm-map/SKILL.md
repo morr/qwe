@@ -584,6 +584,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     4.4 m car is never under ~6 px): past the threshold the layer is not drawn at all, which
     is cheaper than any LOD of the drawing itself. Seeded per street (its first point,
     like doors and roofs), so the row is the same across rebuilds.
+  - **The gallery** — `cargo run --example car_gallery` (`examples/demos/car_gallery/`, the
+    shape of `roof_gallery`): eight cells, and they are **not** pretty streets but the list
+    of shapes the row used to break on — straight, a ten-link polyline, a 90° bend, a T and
+    a four-way crossing, a divided avenue, an 8 m residential street, a `service` drive and
+    a bridge (both empty). Under each one, in the caption, what it is there to show. It may
+    not roll its own geometry: `cars_mesh` is the one door out of `map/cars.rs` and the
+    cells are described with the very `osm::fixture` the parse tests use, so a cell and a
+    test talk about the same object. Its own is only the asphalt underneath, drawn with
+    `MeshBuilder::push_ribbon` in the game's `ROAD_COLOR` — the brightness step between a
+    body and the surface is half of how the row reads. `CAR_GALLERY_SHOT=path.png` takes one
+    frame and exits, the way the roof gallery does and for the same reason. It has already
+    earned its keep once: the divided-avenue cell was built with the two carriageways
+    swapped (left-hand traffic), and the picture said so at a glance.
   - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
     45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
     in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built

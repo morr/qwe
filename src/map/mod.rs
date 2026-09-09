@@ -2,7 +2,9 @@
 // свои дома его же вызовами (`push_house`, `RoofShape`, `shape_facts`,
 // `material::RoofLook`)
 pub mod buildings;
-mod cars;
+// публичен по той же причине: витрина `car_gallery` расставляет ряды его же
+// вызовом (`cars_mesh`)
+pub mod cars;
 pub mod footprint;
 mod meshing;
 pub mod osm;
@@ -18,9 +20,13 @@ mod zoom;
 pub use self::buildings::material::RoofStyle;
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
 pub use self::cars::CarStyle;
-pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
+// `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
+// (`car_gallery` рисует под рядами саму проезжую часть)
+pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
-pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
+// `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
+// том же асфальте, что в городе
+pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 pub use self::surface::SurfaceStyle;
 pub use self::tram::TramStyle;
