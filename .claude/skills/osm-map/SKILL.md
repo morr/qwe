@@ -608,6 +608,23 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       sky's fill light — so the width is chosen by look (1 m is 2–10 screen px at the zooms
       where shadows read). Bands of neighbouring shapes may overlap, but both fade to
       zero, so the doubling is weaker than the shadow itself.
+    - **The band is tapered, and that is what keeps the contact skirt from coming back.**
+      A shadow meets the thing that casts it **hard** — there is no penumbra at the wall —
+      and blurs as it runs away from it. In the union that difference is readable locally,
+      because the body always lies on the `SHADOW_DIR` side of a contact edge: the band's
+      own direction points *against* the light there, *along* it on the far edge, and
+      across it on a lateral one. Hence `layers.rs::penumbra(direction) =
+      direction·SHADOW_DIR` (clamped at zero) as the per-vertex share of the width, fed to
+      `MeshBuilder::push_inset_band_tapered` — zero at the contact, the full metre at the
+      far edge, and along a lateral side a growth from nothing at the building's corner to
+      full width at the far end, which is what a real penumbra does. Untapered (the state
+      the sun-shadows branch merged in) the metre also ran along the contact contour, and
+      the mitred band at every convex corner of the silhouette chain left a soft dark blot
+      a metre across **on the sunlit ground** — a stepped facade came out as a row of
+      them, and the building read as outlined by the very contact skirt that had just
+      been removed. A zero-width vertex degenerates its quad into a triangle (that *is*
+      the hard edge); an edge zero at both ends is not emitted at all, so the taper also
+      takes vertices off the most expensive layer here.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode** changed (`mode.is_changed()`): it does not depend on the roof-clutter
@@ -670,6 +687,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       true outward normal; the lean only picks which walls are visible.
   - **2.5D+shadows+tint (ExtrusionShadowsTint, the default)** — everything at once: the extruded
     geometry with the tint ramp on lifted roofs plus the long-shadow layer.
+  - **Hip roofs** (`buildings/roofs.rs::hip_roof`) — the other pitched roof, and the one
+    that does not need a rectangle. The outline is pushed inward by `HIP_INSET` (2.2 m,
+    clamped to `HIP_INSET_SHARE` 0.38 of the outline's own thickness, exactly as a rim is
+    clamped — a narrow shed would otherwise turn its slopes inside out) using the same
+    `miter_offsets`; each outline edge becomes a slope quad from the eave to its shifted
+    pair, and what is left inside is the **ridge plane**, drawn `RIDGE_LIGHTEN` lighter
+    because it faces straight up. Slope tone is `shade_by_light` on the edge's outward
+    normal, so a hip roof shows four or more tones instead of one. On a convex house that
+    construction *is* a hip roof; on an L-shaped one it is a hip roof with a flat top —
+    which is what the photo shows anyway, and what a straight skeleton would have cost an
+    order of magnitude more to produce. `roofing` is the single door: gable when the seed
+    says so and the rectangle fits, hip otherwise, flat when the building is not in the
+    pitched cohort at all — and `HIPPED_SHARE` (4 in 10) is the split among houses that
+    could take either. **The L-shaped case is why this exists**: those houses were flat
+    among pitched neighbours, which is the one thing an aerial photo of a private sector
+    never shows.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
     `is_gabled` (`BuildingUse::House` of any size, or `Other` with a footprint under
     `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
@@ -749,8 +782,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     seed]`). All four numbers are constant over a building, so the attribute is a
     *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **not a
-    roof** — walls, gables and parapets ride in the same mesh (2.5D is one painter's-order
-    layer) and come out with their vertex colour untouched.
+    roof** — walls, gables and roof clutter ride in the same mesh (2.5D is one
+    painter's-order layer) and come out with their vertex colour untouched.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
@@ -792,20 +825,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     is not visible, and a fifth float would cost four bytes on every vertex of the building
     layer. The consequence for the gallery: its `Seed` knob rolls the age too — that is how
     a new roof is compared against an old one there.
-  - **Parapet** (`layers.rs::push_parapet`) — a soft flat roof (bitumen / gravel /
-    membrane) gets a 0.7 m inset band along its ring and every courtyard
-    ring, lit by `shade_by_light` like a wall (0.24 / 0.20): bright on the sunny edges,
-    dark on the shaded ones. Tile, seam and corrugated get none — they end in an eave, not
-    a parapet. *Soft* is a property of the material, so the rule lives on it —
-    **`RoofKind::has_parapet`** (`material.rs`), not on the layer that happens to draw the
-    band. The band carries **no** roof frame: a roll seam crossing a concrete coping
-    would read as a crack. `MeshBuilder::push_inset_band_with` (the per-edge-colour
-    sibling of `push_inset_band`) exists for exactly this.
+  - **There is no parapet, and putting one back needs a different construction.** A soft
+    flat roof (bitumen / gravel / membrane, the old `RoofKind::has_parapet`) used to get a
+    0.7 m inset band along its ring and every courtyard ring, lit by `shade_by_light` like
+    a wall (0.24 / 0.20) — bright on the sunny edges, dark on the shaded ones. That is
+    **the same construction as a hip roof's slopes** (an inset band on miter offsets,
+    shaded by the edge's own outward normal) at a third of the width, so from the air every
+    panel block wore a small hip, and the hip of a large private house — inset capped at
+    `HIP_INSET` 2.2 m — was the same picture only wider. Two things a roof shape must never
+    do, and it did both. The band's other cost is why the retreat is not a one-liner back:
+    it wants to read as a vertical coping standing *above* the roof, and an inset band
+    shaded by a plan normal cannot say that. `MeshBuilder::push_inset_band_with` (the
+    per-edge-colour sibling of `push_inset_band`) survives as a primitive; nothing in the
+    building layers uses it any more.
   - **One call lays every flat roof** — `layers.rs::push_flat_roof(builder, look, outer,
-    holes, color)`: set the roof frame, fill the contour with its courtyards, add the
-    parapet if the material has one. Both callers use it — the flat modes with the real
-    contour, 2.5D with the contour already lifted onto the walls — and it is `pub` because
-    the `roof_gallery` example builds its houses with it. Slopes stay outside it: a gable
+    holes, color)`: set the roof frame, fill the contour with its courtyards. Both callers
+    use it — the flat modes with the real contour, 2.5D with the contour already lifted
+    onto the walls. It is `pub(super)` now: the gallery reaches the same geometry through
+    `push_house`, one level up. Slopes stay outside it: a gable
     roof is computed by the caller, which needs the same `GableRoof` for the gables it
     draws *with the walls*, before the roof.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
@@ -823,25 +860,50 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
     only, so dragging the slider rebuilds nothing.
   - **The gallery** — `cargo run --example roof_gallery` (`examples/demos/roof_gallery/`,
-    the shape of `tree_gallery`): seven blocks — six materials plus the church palette —
-    each with **a house per palette colour**, sized from a 30 m block down to an 8 m shed,
-    so the two things a still picture cannot say are said at once: the palette's spread
-    (tight in value, wide in hue) and that the texture is in **metres** and does not scale
-    with the house. Knobs are what the game reads off the building itself — long axis,
-    phase seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
-    prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
-    zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
-    panel lists the shader's own **tuning constants** (patch cell, patch size, the two
-    share ends), parsed out of `roof.wgsl` itself by `constants.rs` (`include_str!`, lines
-    of the form `const NAME: f32 = …;`) rather than mirrored as Rust numbers — a mirror
-    would drift on the first edit and the gallery would then lie about exactly what it is
-    opened for. They are text, not knobs: the numbers live in the shader. What the gallery may
-    **not** do is roll its own quad: houses go through `push_flat_roof`, the parapet
-    marker in a block's caption comes from `RoofKind::has_parapet`. It picks material and
-    colour directly (`RoofLook::new`) instead of through `roof_look`, because the seed
-    cannot reach every combination — a membrane never lands on a private house — and it
-    drops the ±3 % seeded jitter so the hex printed under a house is the constant in
-    `material.rs`.
+    the shape of `tree_gallery`), and it answers the two halves of "what is a roof" in two
+    grids, because a material and a shape are chosen by different code from different
+    inputs.
+    - **Materials, below** — seven blocks, six materials plus the church palette, each
+      with **a house per palette colour**, sized from a 30 m block down to an 8 m shed, so
+      the two things a still picture cannot say are said at once: the palette's spread
+      (tight in value, wide in hue) and that the texture is in **metres** and does not scale
+      with the house. Their roofs are **flat by request** (`RoofShape::Flat`) and carry no
+      clutter — a slope would take half the covering out of view and a shaft would stand on
+      the rest.
+    - **Shapes, above** (`shapes.rs`) — five outlines (rectangle, near-square, L, U, and a
+      dumbbell: a big body on a thin neck) each under all three shapes **and** under the
+      game's own choice, four columns. Under every house the shape that actually reached the
+      mesh — a refused one says so instead of being quietly swapped, which is what
+      `RoofShape` exists for — and the ridge rise in real metres; beside every row the two
+      numbers the choice is made from, rectangle fill and hip inset, straight from
+      `roofs::shape_facts`. That is the only way to tell a hip from a flat roof with a
+      chamfer on a picture, and a gable's rise from a hip's.
+    - **Every house is a house** — `push_house`, the per-building body of
+      `extrusion_builder` (walls, roof, clutter), lifted out of that loop for exactly this
+      reason: without walls under it a shape shows neither its ridge rise, nor its missing
+      gables, nor the silhouette height two same-sized houses do not share. The gallery
+      keeps its own painter's order by laying the grids top-down; it does not sort, because
+      gaps keep its houses from overlapping at all.
+    - Knobs are what the game reads off the building itself — wall height, long axis, phase
+      seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
+      prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
+      zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
+      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
+      cell, patch size, the two share ends), shape from `roofs.rs` (fill threshold, hipped
+      share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
+      (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
+      numbers: a mirror would drift on the first edit and the gallery would then lie about
+      exactly what it is opened for. They are text, not knobs: the numbers live in the code.
+    - What the gallery may **not** do is roll its own geometry: every house goes through
+      `push_house`, the shape numbers come from `shape_facts`, the shape that a caption
+      reports is the one `push_house` returned. It picks material and colour directly
+      (`RoofLook::new`) instead of
+      through `roof_look`, because the seed cannot reach every combination — a membrane never
+      lands on a private house — and it drops the ±3 % seeded jitter so the hex printed under
+      a house is the constant in `material.rs`.
+    - `ROOF_GALLERY_SHOT=path.png` takes one frame and exits. The example has no BRP, and a
+      screen grab over another window comes out black, so this is the only way a session
+      without the window in front of it can look at its own work.
 - **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".
@@ -875,8 +937,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     swept all four edges; two of them were always inside the union.)
   - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
     it cannot be hidden without rebuilding, since it lives in the same merged mesh as
-    the houses (painter's order is per building: walls, roof, parapet, then its own
-    clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
+    the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
     `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
     world entry before `spawn_map` and rebuilt on a threshold crossing through the same
     `retuned` gate the height mode uses (one registration with `or_else`, deliberately:

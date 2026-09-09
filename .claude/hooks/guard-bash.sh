@@ -17,6 +17,7 @@
 input=$(cat)
 session=$(printf '%s' "$input" | jq -r '.session_id // ""')
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
+cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 background=$(printf '%s' "$input" | jq -r '.tool_input.run_in_background // false')
 
 [ -z "$cmd" ] && exit 0
@@ -98,6 +99,51 @@ if [ -z "$reason" ]; then
   if [ "$is_app_run" = true ] && ! loaded live-app; then
     reason="This runs or drives the live app and the \`live-app\` skill is not loaded in this session — CLAUDE.md marks it mandatory before running the app or querying it over BRP (launch in the background, ready markers, the brp CLI, screenshots, shutting it down; this project's inventory is .claude/live-app-project.md). Call the Skill tool for \`live-app\`, then repeat this command."
   fi
+fi
+
+# --- source files are edited with Edit/Write, never rewritten from a script.
+# The rule is CLAUDE.md's ("Editing files — use Edit, not a Python script"), and
+# it is the one that slips hardest: a session told to prefer Bash drifts into
+# `python3 - <<PY … write_text()` call by call, and a `str.replace()` that
+# matches nothing is a silent no-op. It also silently defeats the *other* gate —
+# require-skill.sh only sees Edit|Write, so a file rewritten from Bash skips the
+# domain-skill check entirely. One measured session made 154 such writes (132 of
+# them .rs) against 124 Edits, and the gate fired on none of them.
+#
+# The exemption CLAUDE.md grants — a genuinely mechanical sweep across many call
+# sites, where Edit has no equivalent — is spelled, not guessed: the command
+# carries the literal marker `# mechanical-sweep`.
+if [ -z "$reason" ] && ! printf '%s' "$cmd" | grep -qF '# mechanical-sweep'; then
+  # Bound forms first — the target is the token the construct writes to, so a
+  # `grep src/x.rs > /tmp/out` is not mistaken for a rewrite of src/x.rs.
+  targets=$(
+    printf '%s' "$cmd" | grep -oE '(^|[^0-9<>])>>?[[:space:]]*[^[:space:];&|)"'"'"'<>]+' |
+      sed -E 's/.*>>?[[:space:]]*//'
+    printf '%s' "$cmd" | grep -oE '\btee[[:space:]]+(-a[[:space:]]+)?[^[:space:];&|)"'"'"'<>]+' |
+      sed -E 's/^tee[[:space:]]+(-a[[:space:]]+)?//'
+  )
+  # Unbound forms — an in-place editor or an interpreter writing a file. Their
+  # target is inside the script, so every path-looking token counts.
+  if printf '%s' "$cmd" | grep -qE '(sed|perl)[[:space:]]+[^|;&]*(-[A-Za-z]*i|--in-place)|write_text\(|writeFileSync|File\.write|\.write\(|open\([^)]*["'"'"'][wa]'; then
+    targets="$targets
+$(printf '%s' "$cmd" | grep -oE '[A-Za-z0-9_./-]+\.(rs|wgsl|md|toml)')"
+  fi
+
+  root="${CLAUDE_PROJECT_DIR:-$cwd}"
+  for target in $targets; do
+    case "$target" in
+      "$root"/*) target="${target#"$root"/}" ;;
+      /*|~*) continue ;;   # outside the project (scratchpad, /tmp, a sibling repo)
+    esac
+    case "$target" in
+      .claude/worktrees/*/*) target="${target#.claude/worktrees/*/}" ;;
+    esac
+    case "$target" in
+      src/*.rs|tests/*.rs|examples/*.rs|benches/*.rs|assets/*.wgsl|*.md|Cargo.toml)
+        reason="Edit and Write are how source files change here — never a script that rewrites one (CLAUDE.md, \"Editing files — use Edit, not a Python script\"). This command writes \`$target\`: a \`str.replace()\` that matches nothing is a silent no-op, and a file rewritten from Bash also skips the domain-skill gate, which only watches Edit|Write. Grep the anchor, Read a window around it, then Edit against a line you have just seen. If this really is a mechanical sweep across many call sites — the one case a script wins — say so by putting the literal \`# mechanical-sweep\` in the command, assert on every replacement, and \`git diff\` afterwards."
+        break ;;
+    esac
+  done
 fi
 
 [ -z "$reason" ] && exit 0

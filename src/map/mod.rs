@@ -1,5 +1,6 @@
 // публичен по той же причине, что и `trees`: витрина `roof_gallery` строит
-// свои дома его же вызовами (`push_flat_roof`, `material::RoofLook`)
+// свои дома его же вызовами (`push_house`, `RoofShape`, `shape_facts`,
+// `material::RoofLook`)
 pub mod buildings;
 pub mod footprint;
 mod meshing;
