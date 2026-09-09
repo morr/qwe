@@ -87,7 +87,7 @@ done
 
 [ -z "$missing" ] && exit 0
 
-reason="Load the skill(s) first — CLAUDE.md's skill table marks them required for this path, and they are not loaded in this session:${missing}. Call the Skill tool for each, then repeat this edit. (If one is already loaded via a slash command, calling Skill again is harmless.)"
+reason="Load the skill(s) first — CLAUDE.md's skill table marks them required for this path, and they are not loaded in this session:${missing}. Call the Skill tool for each, then repeat this edit. (Calling Skill again is harmless when one is already loaded via a slash command, and expected after a compaction: the record is per session id, so a continued session starts empty — the same compaction truncated the skill's text away, so it needs the call anyway. It answers with a short note when the text did survive.)"
 
 jq -n --arg reason "$reason" '{
   hookSpecificOutput: {
