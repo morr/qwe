@@ -523,7 +523,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
   at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with `OCCUPANCY`
   45 % of the places taken (a solid row from junction to junction looks like a dealership)
-  and `END_MARGIN` 8 m clear of each end, where the junction is. Colours are a ten-slot
+  and `END_MARGIN` 2 m clear of each end — that margin is only about the drawn ribbon's
+  butt, so a car does not hang off it; a junction is a different question, answered below.
+  The pitch is walked along the **arclength of the whole street**, not segment by segment:
+  a city polyline's link is routinely shorter than two margins, and the old
+  `points.windows(2)` walk dropped every such link whole (51 % of Tula's segments, 35 % of
+  its length) and reset the step at every vertex, so the row tore or doubled across a bend.
+  `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
+  extra rule handles curvature: a place closer than `CAR_LENGTH` to the last car **placed on
+  that side** is skipped, measured in world distance so it catches a corner and any other
+  bend alike. Colours are a ten-slot
   palette in the shares a photo shows. Every car casts a shadow through the same
   `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
   then all bodies** — otherwise a car's shadow lands on top of the neighbour drawn before

@@ -47,8 +47,11 @@ const CURB_GAP: f32 = 0.5;
 /// Какая доля мест занята. Сплошной ряд от перекрёстка до перекрёстка
 /// выглядит как автосалон; у настоящей улицы ряд рваный.
 const OCCUPANCY: f32 = 0.45;
-/// Ближе этого к торцу улицы не паркуются — там перекрёсток.
-const END_MARGIN: f32 = 8.0;
+/// Отступ от торца нарисованной ленты, м: машина, поставленная вплотную к
+/// концу улицы, свисала бы с него. Про перекрёстки этот отступ ничего не
+/// знает — way кончается где угодно, а перекрёсток восстанавливается по
+/// общим нодам (`map::roads::junctions`).
+const END_MARGIN: f32 = 2.0;
 
 /// Палитра кузовов, по долям близкая к тому, что видно на снимке русского
 /// города: белый, серебро и серый — половина ряда, чёрный — четверть,
@@ -157,32 +160,73 @@ fn parkable(road: &RoadLine) -> bool {
     is_carriageway(road) && !road.bridge && !road.roundabout
 }
 
-/// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по осевой, со сдвигом
-/// `offset` поперёк и с пропусками.
+/// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по **всей** ломаной улицы, со
+/// сдвигом `offset` поперёк и с пропусками.
+///
+/// Шаг идёт по дуговой координате целой улицы, а не по каждому её звену
+/// порознь: звено ломаной в городе сплошь и рядом короче двух отступов, и
+/// пошаговый обход `windows(2)` выбрасывал их целиком (в кеше Тулы — половину
+/// сегментов и треть длины), а на каждой вершине сбрасывал шаг, отчего ряд то
+/// рвался, то удваивался.
 fn park_along(cars: &mut Vec<Car>, road: &RoadLine, offset: f32, rng: &mut Lcg) {
-    for pair in road.points.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
-        let Some(along) = (to - from).try_normalize() else {
+    let (along, total) = arclengths(&road.points);
+    if total <= 2.0 * END_MARGIN {
+        return;
+    }
+    // последняя **поставленная** машина этой стороны: на изломе внутренний
+    // ряд сжимается, и место, наехавшее на соседа, пропускается. Проверка по
+    // мировому расстоянию, а не по дуговой координате, — она ловит и излом,
+    // и любую другую кривизну
+    let mut last: Option<Vec2> = None;
+    let mut step = END_MARGIN;
+    while step <= total - END_MARGIN {
+        let at = step;
+        step += CAR_PITCH;
+        let Some((point, direction)) = place_on_path(&road.points, &along, at) else {
             continue;
         };
-        let across = Vec2::new(-along.y, along.x);
-        let length = from.distance(to);
-        if length <= 2.0 * END_MARGIN {
+        let place = point + Vec2::new(-direction.y, direction.x) * offset;
+        if last.is_some_and(|previous| previous.distance(place) < CAR_LENGTH) {
             continue;
         }
-        let mut at = END_MARGIN;
-        while at <= length - END_MARGIN {
-            if rng.next_f32() < OCCUPANCY {
-                cars.push(Car {
-                    at: from + along * at + across * offset,
-                    along,
-                    color: CAR_COLORS
-                        [(rng.next_f32() * CAR_COLORS.len() as f32) as usize % CAR_COLORS.len()],
-                });
-            }
-            at += CAR_PITCH;
+        if rng.next_f32() >= OCCUPANCY {
+            continue;
         }
+        last = Some(place);
+        cars.push(Car {
+            at: place,
+            along: direction,
+            color: CAR_COLORS
+                [(rng.next_f32() * CAR_COLORS.len() as f32) as usize % CAR_COLORS.len()],
+        });
     }
+}
+
+/// Накопленные длины по точкам ломаной и её полная длина — та же форма, что
+/// у лент в `map::meshing`, но своя: обобщать ради одного вызова нечего.
+fn arclengths(points: &[Vec2]) -> (Vec<f32>, f32) {
+    let mut along = Vec::with_capacity(points.len());
+    let mut total = 0.0;
+    for (index, &point) in points.iter().enumerate() {
+        if index > 0 {
+            total += point.distance(points[index - 1]);
+        }
+        along.push(total);
+    }
+    (along, total)
+}
+
+/// Точка ломаной на дуговой координате `at` и направление звена, на которое
+/// она попала: звено ищется бинарным поиском по `along`, позиция внутри него —
+/// интерполяцией.
+fn place_on_path(points: &[Vec2], along: &[f32], at: f32) -> Option<(Vec2, Vec2)> {
+    let last = points.len().checked_sub(2)?;
+    let index = match along.binary_search_by(|value| value.total_cmp(&at)) {
+        Ok(index) => index.min(last),
+        Err(index) => index.saturating_sub(1).min(last),
+    };
+    let direction = (points[index + 1] - points[index]).try_normalize()?;
+    Some((points[index] + direction * (at - along[index]), direction))
 }
 
 /// Меш слоя: сначала **все** тени, потом **все** кузова — тень соседней
@@ -265,6 +309,56 @@ mod tests {
         // 5 м — `service`, проезд: там не паркуются
         let service = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
         assert!(park_cars(std::slice::from_ref(&service)).is_empty());
+    }
+
+    #[test]
+    fn the_row_crosses_the_bends_of_a_polyline() {
+        // десять звеньев по 10 м: каждое короче прежних двух отступов, и
+        // посегментный обход не ставил на них ни одной машины
+        let points = (0..=10).map(|i| Vec2::new(i as f32 * 10.0, 0.0)).collect();
+        let with_vertices = park_cars(std::slice::from_ref(&street(points, 12.0)));
+        let straight = street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 12.0);
+        let one_span = park_cars(std::slice::from_ref(&straight));
+
+        // вершины на прямой не меняют ничего: шаг идёт по длине улицы
+        assert!(!with_vertices.is_empty());
+        assert_eq!(with_vertices.len(), one_span.len());
+        for (car, twin) in with_vertices.iter().zip(&one_span) {
+            assert!(car.at.distance(twin.at) < 0.01, "{} / {}", car.at, twin.at);
+        }
+    }
+
+    #[test]
+    fn cars_never_overlap_on_a_sharp_bend() {
+        // излом в 90°: с внутренней стороны ряд сжимается, и место, наехавшее
+        // на соседа, обязано быть пропущено
+        let road = street(
+            vec![
+                Vec2::new(0.0, 100.0),
+                Vec2::new(0.0, 0.0),
+                Vec2::new(100.0, 0.0),
+            ],
+            12.0,
+        );
+        let cars = park_cars(std::slice::from_ref(&road));
+        assert!(cars.len() > 10, "{}", cars.len());
+        for (index, car) in cars.iter().enumerate() {
+            for other in &cars[index + 1..] {
+                let gap = car.at.distance(other.at);
+                assert!(
+                    gap >= CAR_LENGTH - 0.01,
+                    "{gap} м между {} и {}",
+                    car.at,
+                    other.at
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_street_shorter_than_its_end_margins_stays_empty() {
+        let stub = street(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)], 12.0);
+        assert!(park_cars(std::slice::from_ref(&stub)).is_empty());
     }
 
     #[test]
