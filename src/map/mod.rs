@@ -107,7 +107,7 @@ impl Plugin for MapPlugin {
             .add_systems(
                 Startup,
                 (
-                    (sun::seed_sun, sun::apply_sun),
+                    (sun::seed_sun, sun::apply_sun).chain(),
                     (
                         surface::init_surface_materials,
                         buildings::material::init_roof_material,

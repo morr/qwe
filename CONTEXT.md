@@ -264,10 +264,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
   the global holds is the ready shadow vector and cotangent, not the two angles: it is read
   hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are
-  not hoisted out of a loop. **Only `apply_sun` writes it, in `PreUpdate`** — which makes
-  the global readable on the main thread between `PreUpdate` and the end of `Update`, and
-  nowhere else (a reader in `PostUpdate`, in the render world or on a worker thread must
-  take **`SunOnMap`** as a resource instead).
+  not hoisted out of a loop. **Only `apply_sun` writes it** — once in `Startup` after
+  `seed_sun` (so that `init_roof_material`, which bakes the light into the roof material's
+  uniform for the life of the process, reads the *saved* sun and not the compile-time one),
+  and then every frame in `PreUpdate`. That makes the global readable on the main thread in
+  `Startup` after that pair and between `PreUpdate` and the end of `Update`, and nowhere
+  else (a reader in `PostUpdate`, in the render world or on a worker thread must take
+  **`SunOnMap`** as a resource instead).
 - **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
   slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
   it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
