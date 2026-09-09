@@ -1,6 +1,11 @@
+//! Солнце — процессная глобаль, а тесты идут параллельными потоками в одном
+//! процессе: каждый тест здесь строит освещённую геометрию, поэтому каждый
+//! берёт `default_sun()` — гард, который держит солнце на дефолте и не пускает
+//! к нему соседа (`map/sun.rs`).
+
 use super::crown::{
     CONE_BANDS, PALM_BANDS, bloat, chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs,
-    shaded_arcs, shadow_ring,
+    shade_dir, shaded_arcs, shadow_ring,
 };
 use super::*;
 use crate::map::seed::Lcg;
@@ -23,6 +28,7 @@ fn ring_area(ring: &[Vec2]) -> f32 {
 
 #[test]
 fn crown_geometry_is_deterministic() {
+    let _sun = crate::map::default_sun();
     for shape in TreeShape::CONCRETE {
         let first = crown_geometry(shape, &mut Lcg::new(42), &params());
         let second = crown_geometry(shape, &mut Lcg::new(42), &params());
@@ -33,6 +39,7 @@ fn crown_geometry_is_deterministic() {
 
 #[test]
 fn only_mixed_listens_to_the_conifer_field() {
+    let _sun = crate::map::default_sun();
     assert_eq!(TreeShape::Mixed.resolve(true), TreeShape::Conifer);
     assert_eq!(TreeShape::Mixed.resolve(false), TreeShape::Cotton);
     for shape in TreeShape::CONCRETE {
@@ -45,6 +52,7 @@ fn only_mixed_listens_to_the_conifer_field() {
 /// яркости вместо перемешанных крон.
 #[test]
 fn tint_slots_cover_every_shade() {
+    let _sun = crate::map::default_sun();
     let slots: Vec<usize> = (0..5).map(TreeStyle::tint_slot).collect();
     let mut distinct = slots.clone();
     distinct.sort_unstable();
@@ -60,6 +68,7 @@ fn tint_slots_cover_every_shade() {
 /// ряд множителей.
 #[test]
 fn zero_variance_flattens_the_tints() {
+    let _sun = crate::map::default_sun();
     let flat = TreeStyle {
         variance: 0.0,
         ..default()
@@ -108,6 +117,7 @@ fn field_at(share: f32) -> ConiferField {
 /// mix, а не «примерно похоже» на неё.
 #[test]
 fn conifer_share_matches_the_slider() {
+    let _sun = crate::map::default_sun();
     let total = GRID_SIDE * GRID_SIDE;
     for mix in [0.0, 0.3, 1.0] {
         for share in [0.05, 0.1, 0.25, 0.5] {
@@ -174,6 +184,7 @@ fn stand_stats(field: &ConiferField) -> (usize, f32, usize) {
 /// [`mix_scatters_singles_without_moving_the_share`].
 #[test]
 fn conifers_grow_in_stands() {
+    let _sun = crate::map::default_sun();
     let share = 0.1;
     let field = field_at(share);
     let (conifers, clustering, lonely) = stand_stats(&field);
@@ -195,6 +206,7 @@ fn conifers_grow_in_stands() {
 /// сдвигается ([`conifer_share_matches_the_slider`] гоняет и mix > 0).
 #[test]
 fn mix_scatters_singles_without_moving_the_share() {
+    let _sun = crate::map::default_sun();
     let (_, clustering, lonely) = stand_stats(&field_with(0.1, 0.2));
     let (_, pure_clustering, _) = stand_stats(&field_at(0.1));
     eprintln!("mixed clustering {clustering:.3}, lonely {lonely}");
@@ -217,6 +229,7 @@ fn mix_scatters_singles_without_moving_the_share() {
 /// пересобирающие `MapData::trees`, меняли бы породу стоящих деревьев.
 #[test]
 fn jitter_follows_the_position_not_the_index() {
+    let _sun = crate::map::default_sun();
     let forest = test_forest();
     let mut reversed = forest.clone();
     reversed.reverse();
@@ -235,6 +248,7 @@ fn jitter_follows_the_position_not_the_index() {
 
 #[test]
 fn conifer_share_edges_are_pure() {
+    let _sun = crate::map::default_sun();
     let total = GRID_SIDE * GRID_SIDE;
     let none = field_at(0.0);
     let all = field_at(1.0);
@@ -248,6 +262,7 @@ fn conifer_share_edges_are_pure() {
 /// масштабов.
 #[test]
 fn conifer_field_varies_on_the_scale_of_a_stand() {
+    let _sun = crate::map::default_sun();
     let field = ConiferField::default();
     let mean_step = |step: f32| {
         let samples = 400;
@@ -273,6 +288,7 @@ fn conifer_field_varies_on_the_scale_of_a_stand() {
 
 #[test]
 fn cloud_crown_stays_near_unit_radius() {
+    let _sun = crate::map::default_sun();
     let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(7), &params());
     // bloat выдавливает наружу: контур длиннее базового 12-угольника
     assert!(crown.outer.len() > 12 * 4);
@@ -289,6 +305,7 @@ fn cloud_crown_stays_near_unit_radius() {
 
 #[test]
 fn every_shape_has_its_own_outline_and_bands() {
+    let _sun = crate::map::default_sun();
     let cotton = crown_geometry(TreeShape::Cotton, &mut Lcg::new(5), &params());
     let conifer = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5), &params());
     let palm = crown_geometry(TreeShape::Palm, &mut Lcg::new(5), &params());
@@ -321,6 +338,7 @@ fn corners(ring: &[Vec2]) -> Vec<(f32, f32, bool)> {
 
 #[test]
 fn every_conifer_notch_survives_the_outline_stroke() {
+    let _sun = crate::map::default_sun();
     for variant in 0..TREE_VARIANTS {
         let crown = crown_geometry(
             TreeShape::Conifer,
@@ -345,6 +363,7 @@ fn every_conifer_notch_survives_the_outline_stroke() {
 
 #[test]
 fn opening_notches_keeps_every_spike() {
+    let _sun = crate::map::default_sun();
     // вырезы раскрываются полом высоты шипа и сдвигом вершины базы, а не снятием
     // шипа: 16-угольник с шипом на каждом ребре остаётся 32-точечным, вылет
     // держится в прежних границах (снятие шипа увело бы его к 1.9), острия не
@@ -377,6 +396,7 @@ fn opening_notches_keeps_every_spike() {
 
 #[test]
 fn the_cloud_outline_keeps_its_sub_stroke_ripple() {
+    let _sun = crate::map::default_sun();
     // облако и пальма идут мимо прохода: их мелкая рябь по замыслу тонет в
     // чернилах, и мерка «вырез шире обводки» к ним неприменима
     for shape in [TreeShape::Cotton, TreeShape::Palm] {
@@ -392,6 +412,7 @@ fn the_cloud_outline_keeps_its_sub_stroke_ripple() {
 
 #[test]
 fn bloat_pushes_midpoints_outward() {
+    let _sun = crate::map::default_sun();
     let square = [
         Vec2::new(1.0, -1.0),
         Vec2::new(1.0, 1.0),
@@ -409,6 +430,7 @@ fn bloat_pushes_midpoints_outward() {
 
 #[test]
 fn shadow_ring_stretches_along_shadow_dir() {
+    let _sun = crate::map::default_sun();
     let crown = crown_geometry(TreeShape::Cotton, &mut Lcg::new(3), &params());
     let shadow = shadow_ring(&crown.outer, &params());
     let extent = |ring: &[Vec2]| {
@@ -426,6 +448,7 @@ fn shadow_ring_stretches_along_shadow_dir() {
 
 #[test]
 fn crown_mesh_builds_non_empty() {
+    let _sun = crate::map::default_sun();
     let mut rng = Lcg::new(11);
     let style = TreeStyle::default();
     for shape in TreeShape::CONCRETE {
@@ -449,6 +472,7 @@ fn band_centre(ring: &[Vec2]) -> Vec2 {
 /// попадает — светлая сторона у `drawShaded2` чистая, без случайных штрихов.
 #[test]
 fn conifer_shading_leans_into_the_shadow() {
+    let _sun = crate::map::default_sun();
     let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5), &params());
     for (ring, weight) in &geometry.bands {
         let arcs = chevron_arcs(ring, *weight);
@@ -482,6 +506,7 @@ fn conifer_shading_leans_into_the_shadow() {
 /// съедали лотерея `drawShaded1` и фильтр коротких дуг.
 #[test]
 fn conifer_has_a_tip() {
+    let _sun = crate::map::default_sun();
     let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(5), &params());
     let (ring, weight) = geometry.bands.last().expect("три кольца у хвои");
     let arcs = chevron_arcs(ring, *weight);
@@ -496,6 +521,7 @@ fn conifer_has_a_tip() {
 /// распадалось надвое (на 12 вариантах таких колец было пять).
 #[test]
 fn every_conifer_band_is_a_single_arc() {
+    let _sun = crate::map::default_sun();
     for variant in 0..crate::settings::TREE_VARIANTS as u32 {
         let mut rng = variant_rng(variant as usize, &params());
         let geometry = crown_geometry(TreeShape::Conifer, &mut rng, &params());
@@ -513,6 +539,7 @@ fn every_conifer_band_is_a_single_arc() {
 /// внутри. Так «этаж» кроны рисуется одной ломаной, а не россыпью штрихов.
 #[test]
 fn shaded_arcs_run_along_the_ring() {
+    let _sun = crate::map::default_sun();
     let mut rng = Lcg::new(5);
     for shape in TreeShape::CONCRETE {
         let geometry = crown_geometry(shape, &mut rng, &params());
@@ -538,6 +565,7 @@ fn shaded_arcs_run_along_the_ring() {
 /// склеенных соседних листьев — 9, 13, … Всегда `4·n + 1`.
 #[test]
 fn palm_arcs_cover_whole_leaves() {
+    let _sun = crate::map::default_sun();
     let mut rng = Lcg::new(5);
     let geometry = crown_geometry(TreeShape::Palm, &mut rng, &params());
     for (ring, weight) in &geometry.bands {
@@ -552,6 +580,7 @@ fn palm_arcs_cover_whole_leaves() {
 /// больше половины дуг, и кольцо читалось как рваное.
 #[test]
 fn cotton_keeps_its_dashes() {
+    let _sun = crate::map::default_sun();
     let mut rng = Lcg::new(0x051E_D2E5);
     let geometry = crown_geometry(TreeShape::Cotton, &mut rng, &params());
     let (ring, weight) = &geometry.bands[0];
@@ -574,6 +603,7 @@ fn cotton_keeps_its_dashes() {
 /// концу, а не растянутая клякса.
 #[test]
 fn conifer_shadow_tapers_into_a_cone() {
+    let _sun = crate::map::default_sun();
     let geometry = crown_geometry(TreeShape::Conifer, &mut Lcg::new(9), &params());
     let points: Vec<Vec2> = conifer_shadow(&geometry.outer, 0.8)
         .into_iter()
@@ -601,6 +631,7 @@ fn conifer_shadow_tapers_into_a_cone() {
 /// разной длины — у watabou это `h` из `drawTree`.
 #[test]
 fn shadow_length_varies_between_variants() {
+    let _sun = crate::map::default_sun();
     let reach = |variant: u32| {
         let mut rng = variant_rng(variant as usize, &params());
         let geometry = crown_geometry(TreeShape::Conifer, &mut rng, &params());
@@ -616,4 +647,48 @@ fn shadow_length_varies_between_variants() {
     let spread = reaches.iter().copied().fold(f32::MIN, f32::max)
         - reaches.iter().copied().fold(f32::MAX, f32::min);
     assert!(spread > 0.5, "тени всех вариантов одной длины: {spread}");
+}
+
+/// Штриховка кроны обязана быть в точности перпендикуляром тени: переход с
+/// написанного руками `Vec2::new(-y, x)` на `.perp()` ничем, кроме этого, не
+/// запинен, а перепутанный знак развернул бы теневую сторону всех крон.
+#[test]
+fn the_shade_direction_is_the_shadow_turned_left() {
+    let _sun = crate::map::default_sun();
+    let shadow = shadow_dir();
+    assert!(
+        shade_dir().distance(Vec2::new(-shadow.y, shadow.x)) < 1e-6,
+        "{:?} vs {shadow:?}",
+        shade_dir()
+    );
+}
+
+/// Докуда конус тени ели дотягивается вдоль тени.
+fn conifer_reach(outer: &[Vec2], height: f32) -> f32 {
+    conifer_shadow(outer, height)
+        .iter()
+        .flat_map(|(ring, _)| ring.iter())
+        .map(|point| point.dot(shadow_dir()))
+        .fold(f32::MIN, f32::max)
+}
+
+/// Высота солнца тянет тень кроны так же, как тень дома: до этого длина тени
+/// дерева бралась только из разыгранной «высоты» варианта, и на 15° дома
+/// получали сорокапятиметровые тени, а деревья рядом — прежние короткие.
+#[test]
+fn a_lower_sun_lengthens_the_tree_shadow() {
+    let outer: Vec<Vec2> = (0..8)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 8.0))
+        .collect();
+    let high = {
+        let _sun = crate::map::sun_at(300.0, 59.0);
+        conifer_reach(&outer, 1.0)
+    };
+    let low = {
+        let _sun = crate::map::sun_at(300.0, 15.0);
+        conifer_reach(&outer, 1.0)
+    };
+    // `cot 15° / cot 59°` = 6.2; крона у ближнего конца конуса даёт запас в обе
+    // стороны, поэтому границы широкие
+    assert!(low > high * 5.0 && low < high * 7.0, "{high} -> {low}");
 }

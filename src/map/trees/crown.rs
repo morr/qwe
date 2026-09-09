@@ -11,7 +11,7 @@ use super::{TreeShape, TreeStyle};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::seed::Lcg;
-use crate::map::shadow_dir;
+use crate::map::{shadow_dir, sun_stretch};
 use crate::settings::{TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE};
 
 /// Чернила контура и штрихов (watabou `colorInk`).
@@ -32,7 +32,7 @@ pub(super) const PALM_BANDS: [f32; 2] = [0.7, 0.3];
 /// «ребро вдоль [`shade_dir`]» и «нормаль вдоль `map::shadow_dir`» — одно условие.
 /// Выводится, а не пишется числом: солнце, повёрнутое в `map/mod.rs`, иначе
 /// развернуло бы тени, оставив штриховку крон на старой стороне.
-fn shade_dir() -> Vec2 {
+pub(super) fn shade_dir() -> Vec2 {
     shadow_dir().perp()
 }
 /// Предел сдвига вершины базы, которым раскрывается залипший вырез, — доля
@@ -562,12 +562,19 @@ fn extrude_edge(a: Vec2, b: Vec2, lobe: f32, out: &mut Vec<Vec2>) {
 }
 
 /// `drawLongShadow`: силуэт кроны, растянутый вдоль оси тени и сдвинутый по ней.
+///
+/// Растяжение — произведение двух: `params.shadow_stretch` от watabou (какой
+/// формы тень у этой кроны) и [`sun_stretch`] от высоты солнца (насколько
+/// длиннее она стала). Второе множится ровно на ту же координату, что и
+/// первое, потому что низкое солнце удлиняет всю тень целиком, сдвиг вдоль
+/// оси включительно.
 pub(super) fn shadow_ring(outer: &[Vec2], params: &CrownParams) -> Vec<Vec2> {
+    let sun = sun_stretch();
     outer
         .iter()
         .map(|&point| {
             let local = Vec2::new(point.dot(shadow_dir()), point.perp_dot(shadow_dir()));
-            let x = (local.x + 1.0) * params.shadow_stretch + params.shadow_backshift;
+            let x = ((local.x + 1.0) * params.shadow_stretch + params.shadow_backshift) * sun;
             shadow_dir() * x + shadow_dir().perp() * -local.y
         })
         .collect()
@@ -728,6 +735,11 @@ pub(super) fn shadow_template(
     rng: &mut Lcg,
     params: &CrownParams,
 ) -> MeshBuilder {
+    // высоту разыгрывает вариант, а во сколько раз тень от неё длиннее —
+    // солнце ([`sun_stretch`], у домов оно же растягивает зажим длины). Тип
+    // тени при этом выбирает сама разыгранная высота, до растяжения: иначе на
+    // 15° всякая крона разом получила бы длинную тень вместо сдвинутого
+    // силуэта
     let height = params.shadow_height_base + params.shadow_height_spread * rng.gauss3();
     let mut builder = MeshBuilder::default();
     match geometry.shape {
@@ -745,7 +757,7 @@ pub(super) fn shadow_template(
         }
         // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
         _ => {
-            let offset = shadow_dir() * height;
+            let offset = shadow_dir() * height * sun_stretch();
             let ring: Vec<Vec2> = geometry.outer.iter().map(|&p| p + offset).collect();
             builder.push_polygon(&ring, &[], LinearRgba::WHITE);
         }
@@ -755,6 +767,7 @@ pub(super) fn shadow_template(
 
 /// `drawConiferShadow`: тень ели — не растянутый силуэт, а **конус**.
 /// Треугольник от ствола (± радиус поперёк тени) к дальнему концу `3h`
+/// (умноженному на [`sun_stretch`], как и всякая длина тени на карте)
 /// задаёт ствол конуса, а поверх вдоль тени ложатся копии кроны убывающего
 /// масштаба — получается ярусная «ёлка» вместо кляксы.
 ///
@@ -766,9 +779,13 @@ pub(super) fn conifer_shadow(outer: &[Vec2], height: f32) -> Vec<(Vec<Vec2>, Vec
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
 
-    let tip = shadow_dir() * 3.0 * height;
+    let length = 3.0 * height * sun_stretch();
+    let tip = shadow_dir() * length;
     let across = shadow_dir().perp();
-    let steps = (3.0 * height).ceil().max(1.0);
+    // ярусы идут по метру длины, а не по числу: на низком солнце конус вдвое
+    // длиннее и ступеней в нём вдвое больше, иначе «ёлка» растянулась бы в
+    // размазанный клин
+    let steps = length.ceil().max(1.0);
     let mut parts: Vec<Vec<Vec2>> = vec![vec![across, -across, tip]];
     for step in 0..steps as usize {
         let scale = 1.0 - step as f32 / steps;
