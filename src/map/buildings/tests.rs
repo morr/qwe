@@ -211,7 +211,7 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
-    // стены и парапет — код 0 (фактуры нет), сама кровля — код материала
+    // стены и оборудование — код 0 (фактуры нет), сама кровля — код материала
     assert!(frames.iter().any(|frame| frame[2] == 0.0), "walls");
     assert!(frames.iter().any(|frame| frame[2] > 0.0), "roof");
 }
@@ -397,6 +397,81 @@ fn the_painter_order_puts_the_far_side_first() {
     assert_eq!(Lean::depth(dir.perp() * 700.0), near);
 }
 
+fn house(outer: Vec<Vec2>) -> PolyArea {
+    let mut house = building(outer, None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    house
+}
+
+/// Площадь плоской фигуры по её квадам и полигонам — для проверки, что крыша
+/// накрыла пятно целиком и ровно один раз.
+fn hip_area(roof: &HipRoof) -> f32 {
+    let quad = |corners: &[Vec2; 4]| {
+        (corners[1] - corners[0])
+            .perp_dot(corners[2] - corners[0])
+            .abs()
+            / 2.0
+            + (corners[2] - corners[0])
+                .perp_dot(corners[3] - corners[0])
+                .abs()
+                / 2.0
+    };
+    roof.slopes
+        .iter()
+        .map(|(slope, _)| quad(slope))
+        .sum::<f32>()
+        + signed_ring_area(&roof.ridge.0).abs()
+}
+
+#[test]
+fn a_hip_roof_covers_the_footprint_exactly_once() {
+    // плоский режим: скаты и площадка конька лежат в одной плоскости, и их
+    // площади обязаны сложиться в площадь пятна — ни дыр, ни нахлёстов
+    let plot = oblong(10.0, 20.0);
+    let base = Srgba::WHITE;
+    let Roofing::Hip(roof) = hip_only(&house(plot.clone()), base) else {
+        panic!("a rectangle must accept a hip roof");
+    };
+    let footprint = signed_ring_area(&plot).abs();
+    assert!(
+        (hip_area(&roof) - footprint).abs() < 0.5,
+        "{} vs {footprint}",
+        hip_area(&roof)
+    );
+    // скатов ровно по ребру контура
+    assert_eq!(roof.slopes.len(), plot.len());
+}
+
+#[test]
+fn an_l_shaped_house_gets_a_hip_roof_instead_of_a_flat_one() {
+    // Г-образный дом двускатную не принимает — прямоугольник торчал бы из
+    // него, — и до сих пор оставался плоским среди скатных соседей
+    let ell = house(vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(14.0, 0.0),
+        Vec2::new(14.0, 6.0),
+        Vec2::new(6.0, 6.0),
+        Vec2::new(6.0, 14.0),
+        Vec2::new(0.0, 14.0),
+    ]);
+    assert!(!matches!(
+        roofing(&ell, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0),
+        Roofing::Flat
+    ));
+    // а плоская кровля так и остаётся у того, кому она положена
+    let mut block = building(oblong(30.0, 80.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    assert!(matches!(
+        roofing(&block, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0),
+        Roofing::Flat
+    ));
+}
+
+/// Вальма с посевом, который её гарантирует.
+fn hip_only(building: &PolyArea, base: Srgba) -> Roofing {
+    roofing(building, Vec2::ZERO, |_| Vec2::ZERO, base, 1 << 5)
+}
+
 #[test]
 fn the_shadow_length_follows_the_sun_elevation() {
     // 1 / tan 59° — то самое «0.6 метра тени на метр высоты», которое раньше
@@ -435,6 +510,17 @@ fn shadow_area(mesh: &Mesh) -> f32 {
         .sum()
 }
 
+/// Вершины меша плоскими точками — тело и кайма вместе.
+fn mesh_points(mesh: &Mesh) -> Vec<Vec2> {
+    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap()
+        .iter()
+        .map(|point| Vec2::new(point[0], point[1]))
+        .collect()
+}
+
 /// Свип цепочки силуэта — то, из чего union собирает тело тени.
 fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
     let offset = SHADOW_DIR * height * crate::map::shadow_length_scale();
@@ -457,6 +543,38 @@ fn square_shadow_is_one_swept_polygon() {
     let mesh = shadow_builder(&list, &[], false).build();
     let expected = signed_ring_area(&sweep_of(&chains[0], 15.0)).abs();
     assert!((shadow_area(&mesh) - expected).abs() < 0.5, "{expected}");
+}
+
+#[test]
+fn the_penumbra_stays_off_the_lit_side_and_softens_the_far_edge() {
+    // тень примыкает к дому жёстко: метровая кайма по контуру примыкания
+    // обводила дом мягким пятном с солнечной стороны — тем самым контактным
+    // затенением, которое из объединения убрали
+    let list = [building(square(), Some(15.0), AreaKind::Building)];
+    let mesh = shadow_builder(&list, &[], false).build();
+    let along = |points: &[Vec2]| {
+        points
+            .iter()
+            .map(|point| point.dot(SHADOW_DIR))
+            .fold((f32::MAX, f32::MIN), |(low, high), value| {
+                (low.min(value), high.max(value))
+            })
+    };
+    let (footprint_near, footprint_far) = along(&square());
+    let (mesh_near, mesh_far) = along(&mesh_points(&mesh));
+    assert!(
+        mesh_near > footprint_near - 0.01,
+        "кайма не заходит против света за контур дома: {mesh_near} против {footprint_near}"
+    );
+
+    // а дальний край, наоборот, размыт на всю ширину — с запасом на miter:
+    // на прямом углу свипа офсет вершины длиннее ширины каймы в корень из двух
+    let offset = 15.0 * crate::map::shadow_length_scale();
+    let soft = mesh_far - (footprint_far + offset);
+    assert!(
+        (PENUMBRA_WIDTH..=PENUMBRA_WIDTH * 1.5).contains(&soft),
+        "дальний край размыт на {soft} м вместо {PENUMBRA_WIDTH}"
+    );
 }
 
 #[test]

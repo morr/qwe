@@ -1,5 +1,6 @@
-//! Панель витрины: строки-ползунки на все ручки, значения констант шейдера
-//! под ними — и плашка с масштабом внизу справа.
+//! Панель витрины: строки-ползунки на все ручки, значения констант кровель
+//! под ними — фактуры из `roof.wgsl` и формы из `roofs.rs` — и плашка с
+//! масштабом внизу справа.
 //!
 //! Виджеты — те же, что в панелях игры (`qwe::ui::slider`), а не свои: витрина
 //! обязана выглядеть и вести себя как настоящая панель, иначе непонятно, чему
@@ -27,7 +28,7 @@ use qwe::ui::{
     panel_title, row_label, row_value, spawn_panel_button, ui_node,
 };
 
-use crate::constants::shader_constants;
+use crate::constants::{shader_constants, shape_constants};
 use crate::params::{ParamSpec, Tuning, specs};
 
 /// Отступ заголовка группы от края плашки — как у заголовка секции в панели
@@ -116,6 +117,11 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
 
     spawn_group_header(&mut commands, panel, "Константы roof.wgsl");
     for (name, value) in shader_constants() {
+        spawn_constant_row(&mut commands, panel, name, value);
+    }
+
+    spawn_group_header(&mut commands, panel, "Константы roofs.rs");
+    for (name, value) in shape_constants() {
         spawn_constant_row(&mut commands, panel, name, value);
     }
 }

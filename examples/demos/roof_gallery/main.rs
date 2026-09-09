@@ -1,5 +1,19 @@
-//! Витрина кровель: все материалы, которыми игра кроет дома, разом на одном
-//! экране — и панель, которой их вид можно крутить вживую.
+//! Витрина кровель: все материалы и все формы, которыми игра кроет дома,
+//! разом на одном экране — и панель, которой их вид можно крутить вживую.
+//!
+//! Кровля — это две независимые вещи, и витрина разложена по ним на две
+//! сетки. **Чем крыта** — материал (`RoofKind`), он же цвет и фактура: нижняя
+//! сетка, семь блоков. **Какой формы** — плоская, двускатная или вальмовая
+//! (`RoofShape`), и решает её не материал, а `roofs.rs`, по контуру и посеву:
+//! верхняя сетка, [`shapes`], пять контуров под всеми тремя формами и под
+//! выбором самой игры.
+//!
+//! **Дом здесь — дом, а не одна крыша.** Всё, что стоит на витрине, кладёт
+//! [`push_house`] — тот самый вызов, которым `layers.rs` строит 2.5D-город:
+//! видимые стены, подъём крыши над ними, скаты, фронтоны и труба на коньке.
+//! Иначе главного и не увидеть: подъём конька, отсутствие фронтонов у вальмы
+//! и разная высота силуэта у двускатного и вальмового дома одного размера на
+//! голой крыше не читаются вовсе.
 //!
 //! Чем крыша покрыта, задано перечислением `RoofKind` — шесть материалов
 //! (`Bitumen`, `Gravel`, `Seam`, `Corrugated`, `Tile`, `Membrane`); седьмым
@@ -17,15 +31,13 @@
 //! масштабируется вместе с домом: на 30-метровом корпусе видны и швы, и
 //! заплаты, на восьмиметровой коробке от них остаётся пара полос.
 //!
-//! **Геометрия здесь та же, что в игре, а не её копия.** Дом кладёт
-//! [`push_flat_roof`] — ровно тот вызов, которым `layers.rs` рисует всякую
-//! плоскую крышу города, и в плоских режимах, и в 2.5D. Отсюда и парапет: его
-//! ставит не витрина, а правило материала (`RoofKind::has_parapet`) — мягкая
-//! кровля (битум, гравий, мембрана) получает кайму 0.7 м, черепица и профлист
-//! обходятся свесом. В подписи блока «· парапет» печатается по тому же
-//! правилу, а не руками.
+//! **Геометрия здесь та же, что в игре, а не её копия.** Числа под контурами
+//! верхней сетки — заполнение описанного прямоугольника, вылет ската вальмы,
+//! подъём конька — приходят из `roofs::shape_facts`, то есть ровно те, по
+//! которым игра и принимает решение; форму, стены и скаты кладёт
+//! [`push_house`].
 //!
-//! Отличий от игры два, оба намеренные:
+//! Отличий от игры три, все намеренные:
 //!
 //! - **материал и цвет выбирает витрина, а не посев.** В городе их решает
 //!   `roof_look`: назначение здания даёт таблицу материалов, посев от первой
@@ -35,24 +47,26 @@
 //!   пользуется и `roof_look`;
 //! - **цвет берётся из палитры дословно**, без игрового разброса ±3 % по
 //!   посеву: под каждым домом написан его hex, и он обязан совпадать с
-//!   константой в `material.rs`.
+//!   константой в `material.rs`;
+//! - **форму витрина заказывает**, а не выводит из дома: `RoofShape` — вход,
+//!   которого у города нет, он-то как раз и нужен, чтобы поставить рядом один
+//!   контур под тремя крышами. Отказ при этом не подменяется: если игра на
+//!   этом контуре двускатную не строит, дом остаётся плоским и в подписи так
+//!   и написано.
 //!
-//! Форму крыши витрина не показывает: скаты, конёк и фронтон решает не
-//! материал, а `roofs.rs` — по назначению и по тому, насколько контур
-//! заполняет свой прямоугольник.
+//! **Панель слева — то, что в игре приходит от самого дома**: высота стен,
+//! поворот длинной оси (по ней повёрнута рамка кровли — швы ковра идут вдоль
+//! конька, рёбра фальца по скату, и на повороте это видно), посев фазы, двор;
+//! плюс единственный игровой ползунок кровель, `RoofStyle::texture`. Дефолт
+//! каждой равен игровому, поэтому отклонение читается как «на столько мы от
+//! игры отошли».
 //!
-//! **Панель слева — то, что в игре приходит от самого дома**: поворот длинной
-//! оси (по ней повёрнута рамка кровли — швы ковра идут вдоль конька, рёбра
-//! фальца по скату, и на повороте это видно), посев фазы, двор; плюс
-//! единственный игровой ползунок кровель, `RoofStyle::texture`. Дефолт каждой
-//! равен игровому, поэтому отклонение читается как «на столько мы от игры
-//! отошли».
-//!
-//! **Под ручками — константы фактуры**, прочитанные из самого `roof.wgsl`
-//! (`constants.rs`): шаг сетки заплат, размер латки, доли клеток у новой и у
-//! старой кровли. Ползунка на них нет и не будет — они в шейдере, — но
-//! подобрать число, глядя на картинку, нельзя, не видя его текущего значения
-//! рядом с ней.
+//! **Под ручками — константы**, прочитанные из самих исходников
+//! (`constants.rs`): фактуры — из `roof.wgsl` (шаг сетки заплат, размер латки,
+//! доли клеток у новой и у старой кровли), формы — из `roofs.rs` (порог
+//! заполнения прямоугольника, доля вальмовых, вылет ската и его зажим, уклон).
+//! Ползунка на них нет и не будет — они в коде, — но подобрать число, глядя на
+//! картинку, нельзя, не видя его текущего значения рядом с ней.
 //!
 //! **Плашка внизу справа — масштаб.** Все октавы фактуры гаснут по
 //! `visible(длина волны, px)` из `roof.wgsl`: короче полутора пикселей —
@@ -77,15 +91,22 @@
 //! | ЛКМ-перетаскивание, `WASD` | панорама |
 //! | `G` | подложка: земля карты → нейтральный серый → тёмный |
 //! | `L` | подписи вкл/выкл |
+//!
+//! `ROOF_GALLERY_SHOT=путь.png` — поднять окно, снять витрину и выйти. Нужно
+//! затем, что у примера нет BRP: без этого проверить внешний вид из сессии
+//! нечем. Окно поднимается само — перекрытое чужим окном macOS снимает
+//! чёрным.
 
 mod constants;
 mod panel;
 mod params;
+mod shapes;
 
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::window::PrimaryWindow;
@@ -94,7 +115,8 @@ use qwe::map::buildings::material::{
     CHURCH_ROOF_COLORS, RoofKind, RoofLook, RoofMaterial, RoofMaterialHandle, init_roof_material,
     retune_roof_material,
 };
-use qwe::map::buildings::push_flat_roof;
+use qwe::map::buildings::{RoofShape, push_house};
+use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle};
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
@@ -132,19 +154,32 @@ const BLOCK_COLUMNS: usize = 2;
 const HEADER_RISE: f32 = 24.0;
 const CAPTION_DROP: f32 = 5.0;
 
+/// Зазор между подписями нижнего ряда форм и заголовками блоков материалов,
+/// м. Небольшой: место под сами подписи уже отмерено `shapes::BOTTOM_REACH`,
+/// и складывать два запаса значит развести сетки на полэкрана.
+const SHAPES_GAP: f32 = 12.0;
+/// Чем крыты дома сетки форм. Черепица — кровля частного сектора, а сетка
+/// форм именно про него: скатную крышу игра ставит только частному дому.
+/// Цвет один на всю сетку и берётся из палитры материала, чтобы рядом
+/// сравнивалась форма, а не оттенок.
+const SHAPE_ROOF: RoofKind = RoofKind::Tile;
+
 /// Мировой размер пикселя шрифта: `Text2d` меряет кегль в пикселях, а сцена —
 /// в метрах. При 0.1 подпись выходит ~2 м высотой, то есть примерно в четверть
 /// самого мелкого дома.
 const TEXT_SCALE: f32 = 0.1;
 const CAPTION_FONT: f32 = 24.0;
 const HEADER_FONT: f32 = 32.0;
+/// Подписи сетки форм: в них по две-три строки, и общий `CAPTION_FONT` в шаг
+/// клетки по высоте не помещается.
+const SHAPE_CAPTION_FONT: f32 = 22.0;
 /// Поля вокруг сетки при стартовом зуме, доля её размера.
 const VIEW_MARGIN: f32 = 1.12;
 
 /// Подложка витрины. Земля карты — то, на чём крыши стоят в игре; серый —
 /// нейтральный фон, на котором честно сравниваются цвета палитр; тёмный
 /// показывает, насколько светлы мембрана и гравий.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum Ground {
     #[default]
     Map,
@@ -178,16 +213,32 @@ impl Ground {
     }
 }
 
-/// Показывать ли подписи. Отдельным ресурсом, а не состоянием сущностей:
-/// подложка перекрашивает их же, и держать оба признака в одном месте проще.
+/// Что видно на витрине помимо домов: подложка и подписи. Одним ресурсом, а
+/// не двумя, потому что они связаны — чернила подписи выбирает подложка, обе
+/// правки садятся на одни и те же сущности, и системе пересборки нужны сразу
+/// обе.
 #[derive(Resource)]
-struct Show {
+struct View {
+    ground: Ground,
     captions: bool,
 }
 
-impl Default for Show {
+impl Default for View {
     fn default() -> Self {
-        Self { captions: true }
+        Self {
+            ground: Ground::default(),
+            captions: true,
+        }
+    }
+}
+
+impl View {
+    fn visibility(&self) -> Visibility {
+        if self.captions {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        }
     }
 }
 
@@ -199,14 +250,19 @@ struct RoofLayer;
 #[derive(Component)]
 struct Caption;
 
+/// Подписи сетки форм. В отличие от остальных, зависят от того, что легло в
+/// меш: заказанную форму игра ставит не всегда, и написать «отказ» можно
+/// только после сборки. Поэтому они деспавнятся и спавнятся вместе с кровлями.
+#[derive(Component)]
+struct ShapeCaption;
+
 /// Блок витрины: один материал и его палитра.
 struct Block {
     kind: RoofKind,
     /// Заголовок блока — у материала его имя, у храма имя назначения: палитра
     /// там выбрана не материалом.
     title: &'static str,
-    /// Чем этот материал отличается на глаз — в том же заголовке. Пометка про
-    /// парапет к подписи не относится: её печатает правило материала.
+    /// Чем этот материал отличается на глаз — в том же заголовке.
     note: &'static str,
     palette: &'static [Color],
 }
@@ -323,8 +379,7 @@ fn main() {
         // квадратиками, а feathers несёт в себе Fira Sans, на котором написаны
         // панели игры
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
-        .init_resource::<Ground>()
-        .init_resource::<Show>()
+        .init_resource::<View>()
         .init_resource::<Tuning>()
         .init_resource::<RoofStyle>()
         .insert_resource(ClearColor(Ground::default().color()))
@@ -358,16 +413,65 @@ fn main() {
                     .run_if(resource_changed::<Tuning>),
                 // юниформ материала, а не пересборка мешей — как в игре
                 retune_roof_material.run_if(resource_changed::<RoofStyle>),
-                apply_ground.run_if(resource_changed::<Ground>.or_else(resource_changed::<Show>)),
+                apply_ground.run_if(resource_changed::<View>),
+                auto_shot.run_if(|| shot_path().is_some()),
             )
                 .chain(),
         )
         .run();
 }
 
-/// Прямоугольник сетки в мировых единицах, вместе с полями под заголовки и
-/// подписи, — по нему ставится камера.
-fn grid_rect() -> Rect {
+/// Куда класть автоснимок витрины, если он заказан переменной окружения.
+fn shot_path() -> Option<String> {
+    std::env::var("ROOF_GALLERY_SHOT").ok()
+}
+
+/// Кадр, на котором окно поднимается на передний план, кадр снимка и кадр
+/// выхода.
+///
+/// Поднимать обязательно: macOS снимает **настоящую поверхность окна**, и
+/// перекрытое чужим окном оно отдаёт чёрный прямоугольник — ровно то, на чём
+/// уже спотыкались с `brp shot`. `Window::focused = true` уходит в
+/// `winit::focus_window` (`bevy_winit::system::changed_windows`), поэтому
+/// поднятие — это одно присваивание, а не osascript снаружи.
+///
+/// Числа: первый кадр уходит на сборку сетки (она идёт в `Update`, а не в
+/// `Startup`), дальше нужно дать шейдеру, шрифту и самому поднятию доехать до
+/// экрана; после снимка — столько же, потому что на диск его пишет
+/// наблюдатель, а не эта система.
+const SHOT_RAISE_FRAME: u32 = 5;
+const SHOT_FRAME: u32 = 30;
+const SHOT_EXIT_FRAME: u32 = SHOT_FRAME + 30;
+
+/// Снимок витрины и выход — единственный способ посмотреть на неё из сессии:
+/// BRP у примера нет.
+fn auto_shot(
+    mut commands: Commands,
+    mut frame: Local<u32>,
+    mut exit: MessageWriter<AppExit>,
+    mut window: Single<&mut Window, With<PrimaryWindow>>,
+) {
+    *frame += 1;
+    let Some(path) = shot_path() else {
+        return;
+    };
+    if *frame == SHOT_RAISE_FRAME {
+        // трогаем ровно на одном кадре: всякое взятие `&mut Window` метит его
+        // изменённым, и `changed_windows` перебирал бы окно каждый кадр
+        window.focused = true;
+    }
+    if *frame == SHOT_FRAME {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path));
+    }
+    if *frame == SHOT_EXIT_FRAME {
+        exit.write(AppExit::Success);
+    }
+}
+
+/// Прямоугольник сетки материалов вместе с полями под заголовки и подписи.
+fn material_rect() -> Rect {
     let mut rect = Rect::from_corners(Vec2::ZERO, Vec2::ZERO);
     for (index, block) in blocks().iter().enumerate() {
         for cell in cells(index, block) {
@@ -378,6 +482,41 @@ fn grid_rect() -> Rect {
         }
     }
     rect
+}
+
+/// Центр левой верхней клетки сетки форм: над блоками материалов, по их
+/// середине, с местом слева под подписи рядов. Нижний ряд поднят ещё на
+/// `BOTTOM_REACH` — на столько уходят вниз его подписи, иначе они легли бы на
+/// заголовки блоков материалов.
+fn shapes_origin() -> Vec2 {
+    let materials = material_rect();
+    let width = shapes::ROW_LABEL_WIDTH + shapes::COLUMNS.len() as f32 * shapes::CELL_PITCH.x;
+    let rows = shapes::row_count() as f32;
+    Vec2::new(
+        materials.center().x - width / 2.0 + shapes::ROW_LABEL_WIDTH + shapes::CELL_PITCH.x / 2.0,
+        materials.max.y + SHAPES_GAP + shapes::BOTTOM_REACH + (rows - 1.0) * shapes::CELL_PITCH.y,
+    )
+}
+
+/// Прямоугольник сетки форм вместе с колонкой подписей слева и подписями под
+/// нижним рядом.
+fn shapes_rect() -> Rect {
+    let origin = shapes_origin();
+    let columns = shapes::COLUMNS.len() as f32;
+    let rows = shapes::row_count() as f32;
+    Rect::from_corners(
+        origin
+            - Vec2::new(
+                shapes::CELL_PITCH.x / 2.0 + shapes::ROW_LABEL_WIDTH,
+                (rows - 1.0) * shapes::CELL_PITCH.y + shapes::BOTTOM_REACH,
+            ),
+        origin + Vec2::new((columns - 0.5) * shapes::CELL_PITCH.x, shapes::TOP_REACH),
+    )
+}
+
+/// Прямоугольник всей витрины в мировых единицах — по нему ставится камера.
+fn grid_rect() -> Rect {
+    material_rect().union(shapes_rect())
 }
 
 /// Полоса окна, занятая панелью: отступ от края экрана, сама панель и такой
@@ -435,7 +574,7 @@ fn spawn_camera(mut commands: Commands, window: Single<&Window, With<PrimaryWind
 
 /// Заголовки блоков и hex под каждым домом. От ручек не зависят, поэтому
 /// спавнятся один раз и переживают пересборку кровель.
-fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>, ground: Res<Ground>) {
+fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>, view: Res<View>) {
     let font: Handle<Font> = assets.load(fonts::REGULAR);
     for (index, block) in blocks().iter().enumerate() {
         let cells = cells(index, block);
@@ -443,18 +582,11 @@ fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>, ground: Res<Gr
             continue;
         };
         let base = first.centre.y - first.half.y;
-        // «· парапет» печатает правило материала, а не витрина: кайму по
-        // контуру кладёт оно же
-        let parapet = if block.kind.has_parapet() {
-            " · парапет"
-        } else {
-            ""
-        };
         commands.spawn((
             Caption,
-            Text2d::new(format!("{} — {}{parapet}", block.title, block.note)),
+            Text2d::new(format!("{} — {}", block.title, block.note)),
             label_font(&font, HEADER_FONT),
-            TextColor(ground.ink()),
+            TextColor(view.ground.ink()),
             Anchor::CENTER_LEFT,
             Transform::from_xyz(first.centre.x - first.half.x, base + HEADER_RISE, 2.0)
                 .with_scale(Vec3::splat(TEXT_SCALE)),
@@ -464,7 +596,7 @@ fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>, ground: Res<Gr
                 Caption,
                 Text2d::new(cell.color.to_hex()),
                 label_font(&font, CAPTION_FONT),
-                TextColor(ground.ink()),
+                TextColor(view.ground.ink()),
                 Transform::from_xyz(cell.centre.x, base - CAPTION_DROP, 2.0)
                     .with_scale(Vec3::splat(TEXT_SCALE)),
             ));
@@ -473,13 +605,21 @@ fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>, ground: Res<Gr
 }
 
 /// Пересборка витрины под текущие ручки: деспавн прежнего слоя и сборка
-/// нового тем же вызовом, которым кровли строит игра.
+/// нового тем же вызовом, которым дома строит игра.
+///
+/// Порядок укладки — painter's, как в `extrusion_builder`: дальние дома
+/// раньше ближних, иначе поднятая крыша соседа сверху окажется под ним. В
+/// сетках он совпадает с порядком обхода — ряды идут сверху вниз, а внутри
+/// ряда дома разнесены зазором и не перекрываются вовсе, — поэтому сортировки
+/// тут нет: сетка витрины не город, её раскладку выбирает она сама.
 fn rebuild_roofs(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    assets: Res<AssetServer>,
     roof: Res<RoofMaterialHandle>,
     tuning: Res<Tuning>,
-    existing: Query<Entity, With<RoofLayer>>,
+    view: Res<View>,
+    existing: Query<Entity, Or<(With<RoofLayer>, With<ShapeCaption>)>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
@@ -488,19 +628,51 @@ fn rebuild_roofs(
     let rotation = Rot2::degrees(tuning.axis_deg);
     let axis = rotation * Vec2::X;
     let mut builder = MeshBuilder::with_roof_coords();
-    let mut house = 0;
+    // посев у каждого дома свой, ручка крутит их все разом: в игре он берётся
+    // из первой вершины контура затем, чтобы швы соседних домов не выстроились
+    // в одну линию через квартал, и затем, чтобы у домов был разный возраст
+    // кровли (`roof.wgsl::roof_age`) — отсюда разное число заплат на битумных
+    // домах одного блока
+    let mut house = 0usize;
+    let mut next_seed = || {
+        let seed = (tuning.seed + house as f32 * PHASE_STEP).fract();
+        house += 1;
+        seed
+    };
+
+    // сетка форм стоит выше материалов, значит и укладывается раньше
+    let font: Handle<Font> = assets.load(fonts::REGULAR);
+    let shape_color = SHAPE_ROOF.palette()[0].to_srgba();
+    for cell in shapes::cells(shapes_origin(), tuning.height) {
+        let look = RoofLook::new(SHAPE_ROOF, shape_color, axis, next_seed());
+        // оборудование включено: труба на коньке — часть того, как читается
+        // скатная крыша, и ставит её то же правило, что в городе
+        let drawn = push_house(
+            &mut builder,
+            &cell.area,
+            &look,
+            shape_color,
+            cell.shape,
+            true,
+        );
+        spawn_shape_captions(&mut commands, &font, &view, &cell, drawn);
+    }
+
     for (index, block) in blocks().iter().enumerate() {
         for cell in cells(index, block) {
-            // посев у каждого дома свой, ручка крутит их все разом: в игре он
-            // берётся из первой вершины контура затем, чтобы швы соседних домов
-            // не выстроились в одну линию через квартал, и затем, чтобы у домов
-            // был разный возраст кровли (`roof.wgsl::roof_age`) — отсюда
-            // разное число заплат на битумных домах одного блока
-            let seed = (tuning.seed + house as f32 * PHASE_STEP).fract();
-            let look = RoofLook::new(block.kind, cell.color, axis, seed);
-            let (outer, holes) = footprint(&cell, rotation, tuning.courtyard);
-            push_flat_roof(&mut builder, &look, &outer, &holes, cell.color);
-            house += 1;
+            let look = RoofLook::new(block.kind, cell.color, axis, next_seed());
+            // форма — плоская, и заказана нарочно: блок материалов про цвет и
+            // фактуру, а скат увёл бы половину кровли из-под взгляда.
+            // Оборудования по той же причине нет: шахты и будки закрывают
+            // ровно то, ради чего сюда смотрят
+            push_house(
+                &mut builder,
+                &material_house(&cell, rotation, &tuning),
+                &look,
+                cell.color,
+                RoofShape::Flat,
+                false,
+            );
         }
     }
 
@@ -513,13 +685,66 @@ fn rebuild_roofs(
     ));
 }
 
+/// Подписи одной клетки сетки форм: что легло на дом — под ним, а имя контура
+/// с числами выбора — слева от ряда, один раз на ряд.
+fn spawn_shape_captions(
+    commands: &mut Commands,
+    font: &Handle<Font>,
+    view: &View,
+    cell: &shapes::ShapeCell,
+    drawn: RoofShape,
+) {
+    let label = |text: String, at: Vec2, anchor: Anchor| {
+        (
+            Caption,
+            ShapeCaption,
+            Text2d::new(text),
+            label_font(font, SHAPE_CAPTION_FONT),
+            TextColor(view.ground.ink()),
+            anchor,
+            view.visibility(),
+            Transform::from_translation(at.extend(2.0)).with_scale(Vec3::splat(TEXT_SCALE)),
+        )
+    };
+    commands.spawn(label(
+        shapes::cell_caption(cell, drawn),
+        cell.caption_at(),
+        Anchor::TOP_CENTER,
+    ));
+    if cell.first_in_row(shapes_origin()) {
+        commands.spawn(label(
+            shapes::row_caption(cell.row),
+            cell.centre - Vec2::new(shapes::CELL_PITCH.x / 2.0 + 1.0, 0.0),
+            Anchor::CENTER_RIGHT,
+        ));
+    }
+}
+
+/// Дом блока материалов: прямоугольная коробка с необязательным двором,
+/// повёрнутая на угол длинной оси.
+///
+/// Назначение у всех одно (`Other`) и намеренно: по нему игра красит стены
+/// (`facade_color`), и разные тона стен под разными блоками сбивали бы
+/// сравнение самих кровель.
+fn material_house(cell: &Cell, rotation: Rot2, tuning: &Tuning) -> PolyArea {
+    let (outer, holes) = footprint(cell, rotation, tuning.courtyard);
+    PolyArea {
+        outer,
+        holes,
+        kind: AreaKind::Building,
+        building_use: BuildingUse::Other,
+        height: Some(tuning.height),
+        entrances: Vec::new(),
+    }
+}
+
 /// Шаг фазы между соседними домами витрины — иррациональная доля, чтобы фазы
 /// не повторялись по кругу палитры.
 const PHASE_STEP: f32 = 0.147;
 
 /// Наименьшая сторона двора и наименьшее поле от двора до края крыши, м:
-/// двор уже метра не читается, а поле уже трёх метров съедает парапет
-/// (0.7 м с каждой стороны) вместе с заливкой между ним и внешней каймой.
+/// двор уже метра не читается, а поле уже трёх метров не оставляет места
+/// стене двора — она рисуется по дальней стороне дырки и требует ширины.
 const MIN_COURTYARD_SIDE: f32 = 1.0;
 const MIN_COURTYARD_MARGIN: f32 = 3.0;
 
@@ -568,30 +793,25 @@ fn label_font(font: &Handle<Font>, size: f32) -> TextFont {
     }
 }
 
-fn cycle_ground(mut ground: ResMut<Ground>) {
-    *ground = ground.next();
+fn cycle_ground(mut view: ResMut<View>) {
+    view.ground = view.ground.next();
 }
 
-fn toggle_captions(mut show: ResMut<Show>) {
-    show.captions = !show.captions;
+fn toggle_captions(mut view: ResMut<View>) {
+    view.captions = !view.captions;
 }
 
 /// Подложка и подписи одной системой: чернила зависят от подложки, а видимость
 /// — от тумблера, и обе живут на одних и тех же сущностях.
 fn apply_ground(
-    ground: Res<Ground>,
-    show: Res<Show>,
+    view: Res<View>,
     mut clear: ResMut<ClearColor>,
     mut captions: Query<(&mut Visibility, &mut TextColor), With<Caption>>,
 ) {
-    clear.0 = ground.color();
-    let visibility = if show.captions {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
+    clear.0 = view.ground.color();
+    let visibility = view.visibility();
     for (mut value, mut color) in &mut captions {
         *value = visibility;
-        color.0 = ground.ink();
+        color.0 = view.ground.ink();
     }
 }
