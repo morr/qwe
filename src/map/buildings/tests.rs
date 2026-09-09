@@ -27,11 +27,6 @@ fn detail(tinted: bool) -> RoofDetail {
     }
 }
 
-/// Отклонение верха дома — одно на все дома, см. [`Lean`].
-fn fixed_lean() -> Lean {
-    Lean::of()
-}
-
 fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
     PolyArea {
         outer,
@@ -78,7 +73,7 @@ fn silhouette_is_winding_independent() {
 #[test]
 fn extrusion_walls_face_away_from_the_lift() {
     // подъём вверх-вправо: у квадрата видимы южная и западная стены
-    let lift = fixed_lean().dir();
+    let lift = Lean::of().dir();
     assert!(
         lift.x > 0.0 && lift.y > 0.0,
         "the lift is oblique: {lift:?}"
@@ -97,7 +92,7 @@ fn extrusion_walls_face_away_from_the_lift() {
 
 #[test]
 fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
-    let lift = fixed_lean().dir();
+    let lift = Lean::of().dir();
     let facade = Color::srgb(0.6, 0.6, 0.6);
     let luminance = |color: LinearRgba| color.red + color.green + color.blue;
     // свет из верхнего левого угла: западная стена (нормаль −X) освещена,
@@ -303,7 +298,7 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
     let mut house = building(oblong(8.0, 20.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     let base = Srgba::rgb(0.5, 0.5, 0.5);
-    let roof = gable_roof(&house, Vec2::ZERO, |rise| fixed_lean().ridge(rise), base).unwrap();
+    let roof = gable_roof(&house, Vec2::ZERO, |rise| Lean::of().ridge(rise), base).unwrap();
     // скаты: южный (карниз y = 0) отвёрнут от света, северный повёрнут
     let (south, north) = (&roof.slopes[0], &roof.slopes[1]);
     assert_eq!(south.0[0].y, 0.0);
@@ -311,7 +306,7 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
     assert!(luminance(north.1) > luminance(base.into()));
     // конёк поднят по вектору подъёма на масштаб стен
     let ridge = south.0[3] - Vec2::new(0.0, 4.0);
-    let expected = fixed_lean().ridge(ridge_rise(8.0));
+    let expected = Lean::of().ridge(ridge_rise(8.0));
     assert!(ridge.distance(expected) < 1e-4, "{ridge:?} vs {expected:?}");
     assert!(expected.y > 0.0 && expected.x > 0.0);
     // конёк — вдоль длинной оси, оба фронтона стоят на торцах
@@ -389,12 +384,13 @@ fn every_mode_builds_geometry_for_mixed_input() {
 fn the_painter_order_puts_the_far_side_first() {
     // «дальше» — вдоль отклонения верха: верх дальнего дома уезжает на
     // ближний, и ближний обязан лечь поверх, то есть попасть в буфер позже
-    let dir = fixed_lean().dir();
-    let near = Lean::depth(Vec2::ZERO);
-    let far = Lean::depth(dir * 900.0);
+    let lean = Lean::of();
+    let dir = lean.dir();
+    let near = lean.depth(Vec2::ZERO);
+    let far = lean.depth(dir * 900.0);
     assert!(far > near);
     // поперёк отклонения глубина не меняется: сортировать там нечего
-    assert_eq!(Lean::depth(dir.perp() * 700.0), near);
+    assert_eq!(lean.depth(dir.perp() * 700.0), near);
 }
 
 fn house(outer: Vec<Vec2>) -> PolyArea {

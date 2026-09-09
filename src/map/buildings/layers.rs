@@ -11,8 +11,7 @@ use super::arches::{
     ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::building_seed;
-use super::material::{RoofLook, roof_look};
+use super::material::{RoofLook, building_seed, roof_look};
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
@@ -424,9 +423,10 @@ pub(super) fn extrusion_builder(
     detail: RoofDetail,
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
+    let lean = Lean::of();
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
-        let depth = |building: &PolyArea| Lean::depth(building_center(building));
+        let depth = |building: &PolyArea| lean.depth(building_center(building));
         depth(&buildings[b]).total_cmp(&depth(&buildings[a]))
     });
 
@@ -443,7 +443,7 @@ pub(super) fn extrusion_builder(
             .get(&index)
             .map(|passages| {
                 let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
-                arch_openings(building, passages, lift, -Lean::of().dir())
+                arch_openings(building, passages, lift, -lean.dir())
             })
             .unwrap_or_default();
         push_house_with_arches(

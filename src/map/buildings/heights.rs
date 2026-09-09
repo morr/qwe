@@ -43,14 +43,12 @@ const SLAB_STOREYS: [f32; 10] = [5.0, 5.0, 5.0, 5.0, 5.0, 9.0, 9.0, 9.0, 12.0, 1
 /// шестнадцать. Первый вариант таблицы был вдвое выше, и город вышел
 /// небоскрёбным: у Тулы p90 поднялась до 27 м, тогда как девятиэтажка там
 /// уже редкость.
-const TOWER_STOREYS: [f32; 8] = [5.0, 9.0, 9.0, 9.0, 12.0, 12.0, 16.0, 16.0];
+const TOWER_STOREYS: [f32; 8] = [5.0, 9.0, 9.0, 9.0, 9.0, 12.0, 12.0, 16.0];
 /// Всё остальное крупное — кирпичный корпус, школа, контора: два-пять этажей.
 /// Это самая населённая ветка вывода, и она обязана быть низкой.
 const MID_STOREYS: [f32; 6] = [2.0, 3.0, 3.0, 4.0, 4.0, 5.0];
 /// Старый дом в центре: два-четыре этажа.
 const LOW_STOREYS: [f32; 6] = [2.0, 2.0, 3.0, 3.0, 3.0, 4.0];
-/// Казённое здание — школа, поликлиника, контора.
-const PUBLIC_STOREYS: [f32; 6] = [2.0, 3.0, 3.0, 4.0, 4.0, 5.0];
 /// Храм: не этажами, а сразу метрами — у него один «этаж» до карниза.
 const CHURCH_HEIGHTS: [f32; 4] = [12.0, 14.0, 18.0, 22.0];
 /// Цех и склад — тоже метрами: один пролёт, но высокий.
@@ -79,46 +77,67 @@ pub(super) fn height_or_default(building: &PolyArea) -> f32 {
         .unwrap_or_else(|| inferred_height(building, building_seed(building)))
 }
 
+/// Слот дома в таблице группы: посев решает, какой из вариантов ему достался.
+/// Одна выборка на все таблицы — иначе разряды посева расходятся по веткам и
+/// «тот же дом — та же высота» приходится доказывать заново в каждой.
+fn pick(table: &[f32], seed: u32) -> f32 {
+    table[(seed >> 3) as usize % table.len()]
+}
+
 /// Выведенная высота — та самая, которой в OSM не нашлось.
 fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
-    let (length, width) = footprint_size(&building.outer);
     let area = signed_ring_area(&building.outer).abs();
-    let slot = |count: usize| (seed >> 3) as usize % count;
 
     match building.building_use {
         BuildingUse::Garage => GARAGE_HEIGHT,
-        BuildingUse::House => HOUSE_HEIGHTS[slot(HOUSE_HEIGHTS.len())],
-        BuildingUse::Church => CHURCH_HEIGHTS[slot(CHURCH_HEIGHTS.len())],
-        BuildingUse::Industrial => HALL_HEIGHTS[slot(HALL_HEIGHTS.len())],
-        BuildingUse::Commercial if area >= STORE_FOOTPRINT_MIN => {
-            STORE_HEIGHTS[slot(STORE_HEIGHTS.len())]
-        }
-        BuildingUse::Public => STOREY * PUBLIC_STOREYS[slot(PUBLIC_STOREYS.len())],
+        BuildingUse::House => pick(&HOUSE_HEIGHTS, seed),
+        BuildingUse::Church => pick(&CHURCH_HEIGHTS, seed),
+        BuildingUse::Industrial => pick(&HALL_HEIGHTS, seed),
+        BuildingUse::Commercial if area >= STORE_FOOTPRINT_MIN => pick(&STORE_HEIGHTS, seed),
+        // казённое здание — школа, поликлиника, контора: та же таблица, что у
+        // прочего крупного корпуса, но **в обход проверки формы**: школа в
+        // 900 м² с почти квадратным планом иначе вышла бы башней в 9–16
+        // этажей. Общее имя, а не копия: две таблицы одного числа разошлись бы
+        // на первой же правке «прочего корпуса», и молча
+        BuildingUse::Public => STOREY * pick(&MID_STOREYS, seed),
         // жильё, контора и половина города без назначения — по форме пятна
-        _ => STOREY * storeys_by_shape(length, width, area, seed),
+        _ => STOREY * storeys_by_shape(&building.outer, area, seed),
     }
 }
 
 /// Этажность по форме пятна: лента — секция, компактное крупное — башня,
 /// мелкое — старый малоэтажный дом.
-fn storeys_by_shape(length: f32, width: f32, area: f32, seed: u32) -> f32 {
-    let slot = |count: usize| (seed >> 3) as usize % count;
-    let squarish = width > 0.0 && length / width <= TOWER_MAX_RATIO;
+///
+/// **Площадь спрашивается первой**: контур до `LOW_FOOTPRINT_MAX` — старый
+/// малоэтажный дом, даже если он лента по сторонам (40 × 7 м — сарай, а не
+/// панельная секция). Правило секции поэтому читается «≥ 35 м, ≤ 18 м и
+/// крупнее 300 м²».
+///
+/// Стороны пятна берутся **только там, где они решают**: мелкий контур
+/// отвечает одной площадью, и `min_area_rect` (перебор рёбер по всем точкам,
+/// то есть O(n²)) на нём не считается вовсе. Ветка вывода зовётся на дом
+/// трижды за сборку слоя — фасад/экструзия, тени, строка `heights:` — и
+/// умножать на три стоит только ту работу, без которой не обойтись.
+fn storeys_by_shape(ring: &[Vec2], area: f32, seed: u32) -> f32 {
     if area <= LOW_FOOTPRINT_MAX {
-        LOW_STOREYS[slot(LOW_STOREYS.len())]
-    } else if length >= SLAB_MIN_LENGTH && width <= SLAB_MAX_WIDTH {
-        SLAB_STOREYS[slot(SLAB_STOREYS.len())]
+        return pick(&LOW_STOREYS, seed);
+    }
+    let (length, width) = footprint_size(ring);
+    let squarish = width > 0.0 && length / width <= TOWER_MAX_RATIO;
+    if length >= SLAB_MIN_LENGTH && width <= SLAB_MAX_WIDTH {
+        pick(&SLAB_STOREYS, seed)
     } else if area >= TOWER_FOOTPRINT_MIN && squarish {
-        TOWER_STOREYS[slot(TOWER_STOREYS.len())]
+        pick(&TOWER_STOREYS, seed)
     } else {
-        MID_STOREYS[slot(MID_STOREYS.len())]
+        pick(&MID_STOREYS, seed)
     }
 }
 
 /// Длина и ширина пятна — стороны минимального описанного прямоугольника,
 /// длинная первой. Тот же `min_area_rect`, что даёт ось двускатной крыши и
-/// ось фактуры кровли; контуры короткие, и третий его вызов на дом стоит
-/// доли миллисекунды на весь город.
+/// ось фактуры кровли; контуры короткие, но перебор в нём квадратичный, и
+/// зовётся он отсюда только на крупном пятне без тега высоты — см.
+/// [`storeys_by_shape`].
 fn footprint_size(ring: &[Vec2]) -> (f32, f32) {
     let Some(rect) = min_area_rect(ring) else {
         return (0.0, 0.0);
@@ -241,5 +260,24 @@ mod tests {
             BuildingUse::Other,
         );
         assert_eq!(height_or_default(&slab), height_or_default(&slab));
+    }
+
+    #[test]
+    fn a_tower_is_mostly_nine_storeys() {
+        let sixteen = TOWER_STOREYS.iter().filter(|s| **s == 16.0).count();
+        let nine = TOWER_STOREYS.iter().filter(|s| **s == 9.0).count();
+        assert!(nine * 2 >= TOWER_STOREYS.len(), "девять — не «в основном»");
+        assert!(
+            sixteen * 8 <= TOWER_STOREYS.len(),
+            "шестнадцать — не «изредка»"
+        );
+    }
+
+    #[test]
+    fn a_public_building_is_never_a_tower() {
+        // школа в 900 м² с почти квадратным планом: по форме — башня, по
+        // назначению — казённое здание в 2–5 этажей
+        let school = building(oblong(28.0, 32.0, Vec2::ZERO), BuildingUse::Public);
+        assert!(height_or_default(&school) <= 15.0);
     }
 }
