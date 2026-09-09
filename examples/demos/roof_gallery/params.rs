@@ -8,10 +8,14 @@
 //! Материал, цвет и форма ручками не крутятся: они и есть сетки витрины — все
 //! шесть материалов с их палитрами по блокам, все три формы по контурам.
 //! Ручки — то, что в игре приходит от **дома**: какой он высоты, как повёрнут,
-//! какой у него посев фазы и есть ли двор, — плюс единственный игровой
-//! ползунок кровель, `RoofStyle::texture`.
+//! какой у него посев фазы и есть ли двор, — плюс два игровых ползунка: сила
+//! фактуры кровель (`RoofStyle::texture`) и час съёмки (`SunStyle`), общий для
+//! всей карты.
 
-use qwe::settings::ROOF_TEXTURE_DEFAULT;
+use qwe::settings::{
+    ROOF_TEXTURE_DEFAULT, SUN_AZIMUTH_DEFAULT, SUN_AZIMUTH_MAX, SUN_AZIMUTH_MIN, SUN_AZIMUTH_STEP,
+    SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN, SUN_ELEVATION_STEP,
+};
 
 /// Высота стен по умолчанию, м: середина `HOUSE_HEIGHTS` из `heights.rs` —
 /// частный дом, то есть тот единственный класс, которому игра вообще ставит
@@ -49,6 +53,14 @@ pub(crate) struct Tuning {
     /// только на нём видно, что она встаёт, — а заодно что дом с двором
     /// скатной крыши не получает вовсе (`roofs::is_gabled`).
     pub(crate) courtyard: f32,
+    /// Азимут солнца, градусы — игровой `SunStyle::azimuth`. Свет тут не
+    /// декорация витрины: по нему освещены рёбра фальца и профлиста в шейдере
+    /// (`RoofParams::light`), по нему же тянутся тени коробок на кровле.
+    pub(crate) sun_azimuth: f32,
+    /// Высота солнца, градусы — игровой `SunStyle::elevation`. Единственная
+    /// ручка витрины, которая меняет **длину**: на 15° тень вентшахты втрое
+    /// длиннее самой шахты, и видно, обрезана ли она краем кровли.
+    pub(crate) sun_elevation: f32,
 }
 
 impl Default for Tuning {
@@ -59,6 +71,8 @@ impl Default for Tuning {
             axis_deg: 0.0,
             seed: 0.0,
             courtyard: 0.0,
+            sun_azimuth: SUN_AZIMUTH_DEFAULT,
+            sun_elevation: SUN_ELEVATION_DEFAULT,
         }
     }
 }
@@ -141,6 +155,22 @@ pub(crate) fn specs() -> Vec<ParamSpec> {
             get: |t| t.courtyard,
             set: |t, v| t.courtyard = v,
             format: courtyard,
+            group: None,
+        },
+        ParamSpec {
+            label: "Azimuth",
+            range: (SUN_AZIMUTH_MIN, SUN_AZIMUTH_MAX, SUN_AZIMUTH_STEP),
+            get: |t| t.sun_azimuth,
+            set: |t, v| t.sun_azimuth = v,
+            format: degrees,
+            group: Some("Солнце"),
+        },
+        ParamSpec {
+            label: "Elevation",
+            range: (SUN_ELEVATION_MIN, SUN_ELEVATION_MAX, SUN_ELEVATION_STEP),
+            get: |t| t.sun_elevation,
+            set: |t, v| t.sun_elevation = v,
+            format: degrees,
             group: None,
         },
     ]
