@@ -532,7 +532,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
   extra rule handles curvature: a place closer than `CAR_LENGTH` to the last car **placed on
   that side** is skipped, measured in world distance so it catches a corner and any other
-  bend alike. Colours are a ten-slot
+  bend alike.
+  - **The row breaks at real junctions, not at way ends.** It used to break at the ends of
+    the OSM way, which is wrong in both directions at once: a way cut mid-street by a tag
+    change tore the row for no reason, and a way running straight through a crossing parked
+    cars in the middle of it. `roads/junctions.rs::marking_breaks` already answers this
+    question for the lane markings — the module opens up and the layer calls it with
+    `is_carriageway` over the **whole** `map.roads` slice (its `breaks` are indexed by the
+    road's position in the input, and the participants must be every real street, not only
+    the parkable ones: a residential street joining another has to break the row too). A
+    place within `Break::reach + CAR_JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
+    end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
+    ends meeting are not a break at all, which is the half of the defect that tore the row.
+  - **Not cached, and that is measured, not assumed**: `marking_breaks` costs 0.76 ms of the
+    layer's 5.4 ms build on Tula, next to 70 ms for the building layer — a resource cached
+    per world load would not pay for itself.
+  Colours are a ten-slot
   palette in the shares a photo shows. Every car casts a shadow through the same
   `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
   then all bodies** — otherwise a car's shadow lands on top of the neighbour drawn before

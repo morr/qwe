@@ -287,7 +287,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
-  and roundabouts. 4.4 × 1.8 m bodies at a 6 m pitch,
+  and roundabouts. The pitch is walked along the **whole street's arclength**, not segment
+  by segment, and the row **breaks at the junctions the lane markings already know**
+  (`junctions::marking_breaks`, plus a 5 m clearance) rather than at the ends of an OSM way.
+  4.4 × 1.8 m bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
   palette whose shares match what a photo of a Russian city shows (white / silver / grey a
   half, black a quarter). Each casts its own shadow, by the same `shadow_length_scale()` the

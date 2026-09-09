@@ -23,9 +23,10 @@
 
 use bevy::prelude::*;
 
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, RoadLine};
 use crate::map::roads::is_carriageway;
+use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -52,6 +53,11 @@ const OCCUPANCY: f32 = 0.45;
 /// знает — way кончается где угодно, а перекрёсток восстанавливается по
 /// общим нодам (`map::roads::junctions`).
 const END_MARGIN: f32 = 2.0;
+/// Насколько ряд не доходит до перекрёстка, м, сверх полуширины самой широкой
+/// из сошедшихся дорог (`Break::reach`): ближе пяти метров к перекрёстку не
+/// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
+/// те же пять пустых метров, что и на настоящем узле.
+const JUNCTION_CLEARANCE: f32 = 5.0;
 
 /// Палитра кузовов, по долям близкая к тому, что видно на снимке русского
 /// города: белый, серебро и серый — половина ряда, чёрный — четверть,
@@ -108,10 +114,21 @@ pub fn rebuild_cars(
     if bucket.index > 0 {
         return;
     }
-    let cars = park_cars(&map.roads);
+    let started = std::time::Instant::now();
+    // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
+    // обязан прерваться и там, где к жилой улице примыкает другая жилая.
+    //
+    // Считаются заново на каждую пересборку слоя, а не один раз на загрузку
+    // мира: по Туле это 0.76 мс из 5.4 мс сборки всего слоя — на фоне 70 мс
+    // зданиевого слоя кеш ради этого не окупается, и мерить надо было
+    // прежде, чем его заводить
+    let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
+    let breaks_took = started.elapsed();
+    let cars = park_cars(&map.roads, &junctions);
     let builder = mesh_cars(&cars);
     let count = cars.len();
     let vertices = builder.vertex_count();
+    let elapsed = started.elapsed();
     if builder.is_empty() {
         return;
     }
@@ -129,13 +146,20 @@ pub fn rebuild_cars(
         LayerMaterial::Flat(material),
         CarLayerTag,
     );
-    info!("cars: {count} parked ({vertices} verts)");
+    info!(
+        "cars: {count} parked ({vertices} verts) in {elapsed:?} (junctions {}, {breaks_took:?})",
+        junctions.junctions,
+    );
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.
-fn park_cars(roads: &[RoadLine]) -> Vec<Car> {
+///
+/// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
+/// поэтому `roads` — весь срез карты, а не отфильтрованный список
+/// парковочных.
+fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks) -> Vec<Car> {
     let mut cars = Vec::new();
-    for road in roads {
+    for (index, road) in roads.iter().enumerate() {
         if !parkable(road) {
             continue;
         }
@@ -145,7 +169,13 @@ fn park_cars(roads: &[RoadLine]) -> Vec<Car> {
         // ряд с каждой стороны: отступ от кромки внутрь проезжей части
         let offset = road.width / 2.0 - CURB_GAP - CAR_WIDTH / 2.0;
         for side in [-1.0, 1.0] {
-            park_along(&mut cars, road, side * offset, &mut rng);
+            park_along(
+                &mut cars,
+                road,
+                side * offset,
+                &junctions.breaks[index],
+                &mut rng,
+            );
         }
     }
     cars
@@ -168,7 +198,13 @@ fn parkable(road: &RoadLine) -> bool {
 /// пошаговый обход `windows(2)` выбрасывал их целиком (в кеше Тулы — половину
 /// сегментов и треть длины), а на каждой вершине сбрасывал шаг, отчего ряд то
 /// рвался, то удваивался.
-fn park_along(cars: &mut Vec<Car>, road: &RoadLine, offset: f32, rng: &mut Lcg) {
+fn park_along(
+    cars: &mut Vec<Car>,
+    road: &RoadLine,
+    offset: f32,
+    junctions: &[Break],
+    rng: &mut Lcg,
+) {
     let (along, total) = arclengths(&road.points);
     if total <= 2.0 * END_MARGIN {
         return;
@@ -186,6 +222,12 @@ fn park_along(cars: &mut Vec<Car>, road: &RoadLine, offset: f32, rng: &mut Lcg) 
             continue;
         };
         let place = point + Vec2::new(-direction.y, direction.x) * offset;
+        if junctions
+            .iter()
+            .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
+        {
+            continue;
+        }
         if last.is_some_and(|previous| previous.distance(place) < CAR_LENGTH) {
             continue;
         }
@@ -261,15 +303,21 @@ fn body(car: &Car, offset: Vec2) -> [Vec2; 4] {
 mod tests {
     use super::*;
     use crate::map::osm::fixture;
+    use crate::map::roads::junctions::JUNCTION_MARGIN;
 
     fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         fixture::street(points, width)
     }
 
+    /// Расстановка по срезу целиком — так же, как её зовёт пересборка слоя.
+    fn park(roads: &[RoadLine]) -> Vec<Car> {
+        park_cars(roads, &junctions::marking_breaks(roads, is_carriageway))
+    }
+
     #[test]
     fn cars_line_a_street_on_both_sides() {
         let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        let cars = park_cars(std::slice::from_ref(&road));
+        let cars = park(std::slice::from_ref(&road));
         assert!(!cars.is_empty());
         // ряды по обе стороны осевой, внутри проезжей части
         let offset = road.width / 2.0 - CURB_GAP - CAR_WIDTH / 2.0;
@@ -284,18 +332,18 @@ mod tests {
     #[test]
     fn a_narrow_lane_and_a_bridge_stay_empty() {
         let narrow = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
-        assert!(park_cars(std::slice::from_ref(&narrow)).is_empty());
+        assert!(park(std::slice::from_ref(&narrow)).is_empty());
 
         let mut bridge = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 14.0);
         bridge.bridge = true;
-        assert!(park_cars(std::slice::from_ref(&bridge)).is_empty());
+        assert!(park(std::slice::from_ref(&bridge)).is_empty());
     }
 
     #[test]
     fn a_residential_street_gets_a_row() {
         // 8 м — `residential`/`unclassified`: основная масса улиц города
         let residential = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 8.0);
-        let cars = park_cars(std::slice::from_ref(&residential));
+        let cars = park(std::slice::from_ref(&residential));
         assert!(!cars.is_empty());
         // и ряды на ней не наезжают на осевую: между ними остаётся проезд
         for car in &cars {
@@ -308,7 +356,7 @@ mod tests {
 
         // 5 м — `service`, проезд: там не паркуются
         let service = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
-        assert!(park_cars(std::slice::from_ref(&service)).is_empty());
+        assert!(park(std::slice::from_ref(&service)).is_empty());
     }
 
     #[test]
@@ -316,9 +364,9 @@ mod tests {
         // десять звеньев по 10 м: каждое короче прежних двух отступов, и
         // посегментный обход не ставил на них ни одной машины
         let points = (0..=10).map(|i| Vec2::new(i as f32 * 10.0, 0.0)).collect();
-        let with_vertices = park_cars(std::slice::from_ref(&street(points, 12.0)));
+        let with_vertices = park(std::slice::from_ref(&street(points, 12.0)));
         let straight = street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 12.0);
-        let one_span = park_cars(std::slice::from_ref(&straight));
+        let one_span = park(std::slice::from_ref(&straight));
 
         // вершины на прямой не меняют ничего: шаг идёт по длине улицы
         assert!(!with_vertices.is_empty());
@@ -340,7 +388,7 @@ mod tests {
             ],
             12.0,
         );
-        let cars = park_cars(std::slice::from_ref(&road));
+        let cars = park(std::slice::from_ref(&road));
         assert!(cars.len() > 10, "{}", cars.len());
         for (index, car) in cars.iter().enumerate() {
             for other in &cars[index + 1..] {
@@ -356,28 +404,77 @@ mod tests {
     }
 
     #[test]
+    fn a_junction_clears_the_row_and_the_row_resumes() {
+        // Т-образный: сквозная улица с нодой в узле (перекрёсток и держится
+        // на общей ноде) и примыкающая к ней в середине
+        let through = street(
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(100.0, 0.0),
+                Vec2::new(200.0, 0.0),
+            ],
+            12.0,
+        );
+        let joining = street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 10.0);
+        let cars = park(&[through, joining]);
+
+        // полуширина самой широкой из сошедшихся плюс запас разметки и клиренс
+        let node = Vec2::new(100.0, 0.0);
+        let cleared = 10.0 / 2.0 + JUNCTION_MARGIN + JUNCTION_CLEARANCE;
+        for car in &cars {
+            assert!(
+                car.at.distance(node) >= cleared - 0.01,
+                "машина на перекрёстке: {}",
+                car.at
+            );
+        }
+        // и ряд идёт дальше по обе стороны от узла
+        assert!(
+            cars.iter()
+                .any(|car| car.at.x > 130.0 && car.at.y.abs() < 6.0)
+        );
+        assert!(
+            cars.iter()
+                .any(|car| car.at.x < 70.0 && car.at.y.abs() < 6.0)
+        );
+    }
+
+    #[test]
+    fn a_way_split_in_the_middle_keeps_the_row() {
+        // одна прямая улица, разрезанная на два way в общей ноде: стык двух
+        // торцов — не перекрёсток, и ряд идёт сквозь него
+        let first = street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 12.0);
+        let second = street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        let cars = park(&[first, second]);
+        assert!(
+            cars.iter().any(|car| (92.0..=108.0).contains(&car.at.x)),
+            "ряд разорван на стыке двух way одной улицы"
+        );
+    }
+
+    #[test]
     fn a_street_shorter_than_its_end_margins_stays_empty() {
         let stub = street(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)], 12.0);
-        assert!(park_cars(std::slice::from_ref(&stub)).is_empty());
+        assert!(park(std::slice::from_ref(&stub)).is_empty());
     }
 
     #[test]
     fn a_roundabout_stays_empty() {
         let mut ring = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
         ring.roundabout = true;
-        assert!(park_cars(std::slice::from_ref(&ring)).is_empty());
+        assert!(park(std::slice::from_ref(&ring)).is_empty());
     }
 
     #[test]
     fn the_row_is_ragged_and_stable() {
         let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(400.0, 0.0)], 12.0);
-        let cars = park_cars(std::slice::from_ref(&road));
+        let cars = park(std::slice::from_ref(&road));
         // мест на 400 м вдвое больше, чем машин: ряд рваный, а не сплошной
         let places = ((400.0 - 2.0 * END_MARGIN) / CAR_PITCH) as usize * 2;
         assert!(cars.len() < places, "{} of {places}", cars.len());
         assert!(cars.len() > places / 5, "{} of {places}", cars.len());
         // и он тот же самый при повторной сборке
-        let again = park_cars(std::slice::from_ref(&road));
+        let again = park(std::slice::from_ref(&road));
         assert_eq!(cars.len(), again.len());
         for (car, twin) in cars.iter().zip(&again) {
             assert_eq!(car.at, twin.at);

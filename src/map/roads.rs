@@ -571,7 +571,10 @@ fn chaikin(points: &[Vec2], width: f32) -> Vec<Vec2> {
     path
 }
 
-mod junctions;
+/// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин обязан
+/// рваться на тех же перекрёстках, на которых рвётся разметка, и второго
+/// восстановления узлов по общим нодам заводить незачем.
+pub(super) mod junctions;
 
 #[cfg(test)]
 mod tests;
