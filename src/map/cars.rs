@@ -22,6 +22,7 @@
 //! пары пикселей.
 
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, RoadLine};
@@ -31,7 +32,7 @@ use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
-use crate::settings::{CAR_MAX_ZOOM, Z_CAR};
+use crate::settings::{CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, Z_CAR};
 
 /// Габарит легковой машины, м — «Логан» с точностью до сантиметров.
 const CAR_LENGTH: f32 = 4.4;
@@ -45,9 +46,6 @@ const CAR_PITCH: f32 = 6.0;
 /// колесо на кромке; полметра оставляют полосу асфальта между рядом и
 /// разметкой, как на настоящей улице.
 const CURB_GAP: f32 = 0.5;
-/// Какая доля мест занята. Сплошной ряд от перекрёстка до перекрёстка
-/// выглядит как автосалон; у настоящей улицы ряд рваный.
-const OCCUPANCY: f32 = 0.45;
 /// Отступ от торца нарисованной ленты, м: машина, поставленная вплотную к
 /// концу улицы, свисала бы с него. Про перекрёстки этот отступ ничего не
 /// знает — way кончается где угодно, а перекрёсток восстанавливается по
@@ -74,6 +72,30 @@ const CAR_COLORS: [Color; 10] = [
     Color::srgb(0.29, 0.33, 0.28),
     Color::srgb(0.55, 0.50, 0.42),
 ];
+
+/// Ручки слоя машин: строки `Cars` и `Occupancy` секции Roads
+/// (`ui/roads.rs`) — путь и машины стоят на одной проезжей части, так что
+/// читаются вместе с дорогами. Пишется и по BRP, сохраняется между запусками;
+/// правка пересобирает **только** слой машин ([`rebuild_cars`]), держать её в
+/// [`RoadStyle`](crate::map::RoadStyle) значило бы гнать полную пересборку
+/// дорожных слоёв на каждый шаг ползунка.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "cars")]
+pub struct CarStyle {
+    pub visible: bool,
+    /// Доля занятых мест, 0..1 — печатается процентом.
+    pub occupancy: f32,
+}
+
+impl Default for CarStyle {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            occupancy: CAR_OCCUPANCY_DEFAULT,
+        }
+    }
+}
 
 /// Слой машин — чтобы пересборка по зуму знала, что деспавнить.
 #[derive(Component)]
@@ -105,13 +127,17 @@ pub fn rebuild_cars(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     bucket: Res<CarZoomBucket>,
+    style: Res<CarStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    if bucket.index > 0 {
+    // выключенный слой проходит тем же путём, что и снятый зумом: деспавн
+    // старого и никакой сборки нового — второй ветки, которая могла бы забыть
+    // деспавн, нет
+    if bucket.index > 0 || !style.visible {
         return;
     }
     let started = std::time::Instant::now();
@@ -124,7 +150,7 @@ pub fn rebuild_cars(
     // прежде, чем его заводить
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
-    let cars = park_cars(&map.roads, &junctions);
+    let cars = park_cars(&map.roads, &junctions, *style);
     let builder = mesh_cars(&cars);
     let count = cars.len();
     let vertices = builder.vertex_count();
@@ -157,7 +183,7 @@ pub fn rebuild_cars(
 /// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
 /// поэтому `roads` — весь срез карты, а не отфильтрованный список
 /// парковочных.
-fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks) -> Vec<Car> {
+fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks, style: CarStyle) -> Vec<Car> {
     let mut cars = Vec::new();
     for (index, road) in roads.iter().enumerate() {
         if !parkable(road) {
@@ -180,6 +206,7 @@ fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks) -> Vec<Car> {
                 road,
                 side * offset,
                 &junctions.breaks[index],
+                style.occupancy,
                 &mut rng,
             );
         }
@@ -209,6 +236,7 @@ fn park_along(
     road: &RoadLine,
     offset: f32,
     junctions: &[Break],
+    occupancy: f32,
     rng: &mut Lcg,
 ) {
     let (along, total) = arclengths(&road.points);
@@ -237,7 +265,7 @@ fn park_along(
         if last.is_some_and(|previous| previous.distance(place) < CAR_LENGTH) {
             continue;
         }
-        if rng.next_f32() >= OCCUPANCY {
+        if rng.next_f32() >= occupancy {
             continue;
         }
         last = Some(place);
@@ -317,7 +345,15 @@ mod tests {
 
     /// Расстановка по срезу целиком — так же, как её зовёт пересборка слоя.
     fn park(roads: &[RoadLine]) -> Vec<Car> {
-        park_cars(roads, &junctions::marking_breaks(roads, is_carriageway))
+        park_with(roads, CarStyle::default())
+    }
+
+    fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
+        park_cars(
+            roads,
+            &junctions::marking_breaks(roads, is_carriageway),
+            style,
+        )
     }
 
     #[test]
@@ -480,6 +516,16 @@ mod tests {
         let both = park(std::slice::from_ref(&street(points, 12.0)));
         assert!(both.iter().any(|car| car.at.y > 0.0));
         assert!(both.iter().any(|car| car.at.y < 0.0));
+    }
+
+    #[test]
+    fn occupancy_zero_parks_nothing() {
+        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        let empty = CarStyle {
+            occupancy: 0.0,
+            ..default()
+        };
+        assert!(park_with(std::slice::from_ref(&road), empty).is_empty());
     }
 
     #[test]

@@ -17,6 +17,7 @@ mod zoom;
 
 pub use self::buildings::material::RoofStyle;
 pub use self::buildings::{BuildingHeightMode, extrusion_lift};
+pub use self::cars::CarStyle;
 pub use self::meshing::{MeshBuilder, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 pub use self::roads::{RoadJoin, RoadSmoothing, RoadStyle};
@@ -66,6 +67,7 @@ impl Plugin for MapPlugin {
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
+            .init_resource::<CarStyle>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -82,6 +84,7 @@ impl Plugin for MapPlugin {
             .register_type::<RoadStyle>()
             .register_type::<SurfaceStyle>()
             .register_type::<TramStyle>()
+            .register_type::<CarStyle>()
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
@@ -90,6 +93,7 @@ impl Plugin for MapPlugin {
             .track_pref::<RoadStyle>()
             .track_pref::<SurfaceStyle>()
             .track_pref::<TramStyle>()
+            .track_pref::<CarStyle>()
             // материалы поверхностей и кровель — один комплект на всё
             // приложение, слои всех городов берут хэндлы из него
             .add_systems(
@@ -169,10 +173,14 @@ impl Plugin for MapPlugin {
                         .run_if(in_state(AppState::Playing))
                         .run_if(retuned::<RoadStyle>),
                     // машины — целый слой, который на общем плане не нужен
-                    // вовсе; порог у него свой, ближе зданиевого
+                    // вовсе; порог у него свой, ближе зданиевого. Тумблер и
+                    // ручка занятости идут одной регистрацией через `or_else`:
+                    // две в одном расписании могли бы сработать в одном кадре
+                    // и заспавнить слой дважды
                     (
                         zoom::update_zoom_bucket::<cars::CarLods>,
-                        cars::rebuild_cars.run_if(retuned::<cars::CarZoomBucket>),
+                        cars::rebuild_cars
+                            .run_if(retuned::<cars::CarZoomBucket>.or_else(retuned::<CarStyle>)),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

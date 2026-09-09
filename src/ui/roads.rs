@@ -3,14 +3,17 @@
 //! кнопка, листающая значение по кругу (как у панели деревьев); правка
 //! `RoadStyle` пересобирает дорожные слои (`map::roads::rebuild_roads`).
 //!
-//! Последняя строка секции — трамвай (`TramStyle`, свой ресурс со своей
-//! пересборкой `map::tram::rebuild_tram`): путь идёт по проезжей части, так
-//! что читается он вместе с дорогами, а не отдельной секцией на одну строку.
+//! Последние строки секции — трамвай (`TramStyle`) и машины (`CarStyle`,
+//! тумблер плюс ползунок занятости): у каждого свой ресурс со своей
+//! пересборкой (`map::tram::rebuild_tram`, `map::cars::rebuild_cars`). И путь,
+//! и припаркованный ряд стоят на той же проезжей части, так что читаются они
+//! вместе с дорогами, а не отдельными секциями на одну-две строки.
 
 use bevy::prelude::*;
 
-use crate::map::{RoadJoin, RoadSmoothing, RoadStyle, TramStyle};
-use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
+use crate::map::{CarStyle, RoadJoin, RoadSmoothing, RoadStyle, TramStyle};
+use crate::settings::{CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP};
+use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use crate::ui::{PanelCount, UiBuildSet, panel_header};
@@ -22,6 +25,7 @@ impl Plugin for UiRoadStylePlugin {
         // подписи вслед за ресурсом — и на клик по кнопке, и на правку по BRP
         app.add_knobs::<RoadStyle>()
             .add_knobs::<TramStyle>()
+            .add_knobs::<CarStyle>()
             .add_systems(Startup, build_roads_section.in_set(UiBuildSet::Sections));
     }
 }
@@ -31,6 +35,7 @@ fn build_roads_section(
     panes: Res<SettingsPanes>,
     style: Res<RoadStyle>,
     tram: Res<TramStyle>,
+    cars: Res<CarStyle>,
 ) {
     let panel = spawn_section(
         &mut commands,
@@ -104,6 +109,29 @@ fn build_roads_section(
         CycleBinding {
             cycle: |tram| tram.visible = !tram.visible,
             text: |tram| on_off(tram.visible).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Cars",
+        ROW_LEFT_PX,
+        &*cars,
+        CycleBinding {
+            cycle: |cars| cars.visible = !cars.visible,
+            text: |cars| on_off(cars.visible).to_string(),
+        },
+    );
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Occupancy",
+        &*cars,
+        SliderBinding {
+            get: |cars| cars.occupancy,
+            set: |cars, value| cars.occupancy = value,
+            range: (CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_STEP),
+            text: |value| format!("{:.0}%", value * 100.),
         },
     );
 }

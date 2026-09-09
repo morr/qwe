@@ -1008,6 +1008,14 @@ pub const ROOF_CLUTTER_MAX_ZOOM: f32 = 0.5;
 /// пересобирает слой.
 pub const CAR_MAX_ZOOM: f32 = 0.8;
 
+/// Дефолт, границы и шаг ползунка занятости мест (`CarStyle::occupancy`) —
+/// какая доля парковочных мест улицы занята. Сплошной ряд от перекрёстка до
+/// перекрёстка выглядит как автосалон; у настоящей улицы ряд рваный.
+pub const CAR_OCCUPANCY_DEFAULT: f32 = 0.45;
+pub const CAR_OCCUPANCY_MIN: f32 = 0.0;
+pub const CAR_OCCUPANCY_MAX: f32 = 1.0;
+pub const CAR_OCCUPANCY_STEP: f32 = 0.05;
+
 /// Дефолт и границы ползунка Texture секции Buildings
 /// (`RoofStyle::texture`) — множитель амплитуд фактуры крыш: 0 — плоская
 /// заливка материала без швов и зерна, 1 — как задумано, полтора — фактура

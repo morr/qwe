@@ -530,7 +530,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
   `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
   at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with `OCCUPANCY`
-  45 % of the places taken (a solid row from junction to junction looks like a dealership)
+  `CarStyle::occupancy` (45 % by default) of the places taken (a solid row from junction to
+  junction looks like a dealership)
   and `END_MARGIN` 2 m clear of each end — that margin is only about the drawn ribbon's
   butt, so a car does not hang off it; a junction is a different question, answered below.
   The pitch is walked along the **arclength of the whole street**, not segment by segment:
@@ -571,11 +572,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Decoration, and deliberately so**: cars touch neither the navmesh nor the simulation
     and pawns walk through them. A parked row along every street would otherwise eat the
     pavements the entire crowd walks on.
+  - **`CarStyle`** (resource, BRP-writable, persisted, settings group `cars`) is the whole
+    style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
+    field for the tram's reason — that would remesh every road layer on a knob whose only
+    effect is one merged mesh — and `rebuild_cars` is gated on
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>)`, one registration, since two in
+    one schedule could both fire in a frame and spawn the layer twice. The invisible case
+    goes through the same early return as the far zoom bucket: despawn the old layer, build
+    no new one, so no second path can forget the despawn.
   - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px, so a
     4.4 m car is never under ~6 px): past the threshold the layer is not drawn at all, which
     is cheaper than any LOD of the drawing itself. Seeded per street (its first point,
     like doors and roofs), so the row is the same across rebuilds.
-  - Tula: **5665 cars, 45 k verts** — next to the building layer's 925 k, free.
+  - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
+    45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
+    in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
+    once per rebuild and costs nothing per frame.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark

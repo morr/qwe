@@ -111,7 +111,13 @@ did not fit 1080 px and ran off the top of the screen.
   (`TramStyle::visible`, off by default), so the section registers `add_knobs` twice. The
   tram sits here because its track runs on the carriageway, and it is deliberately not a
   `RoadStyle` field: that would remesh every road layer on a toggle whose only effect is one
-  merged mesh (`map::tram::rebuild_tram`). **Surfaces** (`ui/surfaces.rs`): one knob, **Texture**
+  merged mesh (`map::tram::rebuild_tram`). Under it, the third foreign resource in the
+  section: **Cars** and **Occupancy** on `CarStyle` — a toggle (on by default) and the only
+  slider in Roads (0–100 %, step 5, printed as a percent), for the same reason and with the
+  same shape, rebuilding only `map::cars::rebuild_cars`. Its drag needs no debounce, and
+  that is measured: the knob kit quantizes to the step, so a full-scale drag is 20 rebuilds
+  of 4–7 ms each on Tula, not 400 — well under the ~30 ms at which
+  `camera::track_camera_view`'s treatment would be called for. **Surfaces** (`ui/surfaces.rs`): one knob, **Texture**
   (`SurfaceStyle::texture`, 0–150 %), the strength of the procedural surface shader; it
   rewrites material uniforms, so a drag costs nothing and rebuilds no mesh. A header
   without a count (`panel_title`), like Noise: the texture lies on the whole map.

@@ -301,7 +301,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   walk through them, deliberately: a parked row along every street would eat the pavements
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
   a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
-  entirely when a car stops being worth six pixels. Tula: 5665 cars, 45 k verts.
+  entirely when a car stops being worth six pixels. Tula: 22 022 cars, 176 k verts, 5.4 ms
+  to build (5665 / 45 k while only the avenues parked).
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,
@@ -375,6 +376,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   line lies on the carriageway and at city zoom reads as another street layer), the `Tram`
   row of the Roads section (the track runs on the carriageway, so it is read with the roads);
   a change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
+  **CarStyle** sits in the same section for the same reason and with the same shape —
+  `visible` (**on** by default) and `occupancy` (the share of parking places taken, 0.45),
+  the `Cars` and `Occupancy` rows; a change goes through `rebuild_cars` alone.
 
 ## Navigation
 
