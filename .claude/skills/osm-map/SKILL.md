@@ -508,8 +508,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `Tram` is skipped here, it has its own module.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
-  it is painted. A row goes along **both sides of every `RoadClass::Street` at least
-  `PARKED_MIN_WIDTH` (9 m) wide** that is neither a bridge nor an arch — 4.4 × 1.8 m bodies
+  it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
+  the very predicate that decides where a sidewalk and lane markings go, opened up for this
+  — minus a bridge (nobody parks on one) and a roundabout (you drive it, you don't park on
+  it), both excluded by `parkable` rather than by the predicate, which markings still need
+  them in. The threshold that stood here before was `road.width >= 9 m`, and it was reading
+  the wrong thing: `RoadLine::width` is a **drawing constant of the class**
+  (`primary` 16, `tertiary` 10, `residential` 8, `service` 5), never a measured street
+  width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
+  photo shows the housing blocks parked solid. `STREET_MIN_WIDTH` (8 m) lets
+  `residential`/`unclassified`/`living_street` in and keeps `service` out, which is exactly
+  the line wanted. On an 8 m street the row sits `8/2 − CURB_GAP − CAR_WIDTH/2 = 2.6 m` off
+  the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
+  `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
   at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with `OCCUPANCY`
   45 % of the places taken (a solid row from junction to junction looks like a dealership)
   and `END_MARGIN` 8 m clear of each end, where the junction is. Colours are a ten-slot

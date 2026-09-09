@@ -213,7 +213,11 @@ pub fn sidewalk_width(road_width: f32) -> Option<f32> {
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
 /// перекрёстках: класс `Street`, не арка (`passage` идёт сквозь дом), не у́же
 /// [`STREET_MIN_WIDTH`]. Мост — тоже: улица через реку не теряет полос.
-fn is_carriageway(road: &RoadLine) -> bool {
+///
+/// Открыт наружу для [`map::cars`](crate::map::cars): «улица, вдоль которой
+/// паркуются» — то же самое понятие, что «улица, у которой есть тротуар и
+/// разметка», и второй копии предиката у слоя машин быть не должно.
+pub fn is_carriageway(road: &RoadLine) -> bool {
     road.class == RoadClass::Street && !road.passage && road.width >= STREET_MIN_WIDTH
 }
 

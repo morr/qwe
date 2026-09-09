@@ -9,6 +9,13 @@
 //! симуляцию, пешки ходят сквозь них. Это сознательно: припаркованный ряд
 //! вдоль каждой улицы съел бы тротуары, по которым идёт вся толпа.
 //!
+//! Паркуются вдоль **всякой** проезжей части, а не только вдоль магистралей:
+//! отбор идёт тем же [`is_carriageway`], которым `map::roads` решает, где
+//! рисовать тротуар и разметку. Ширина в `RoadLine` — рисовальная константа
+//! класса, а не измеренная ширина улицы, так что порог по ней читается не как
+//! «узкая улица», а как «не магистраль»; на снимке города плотнее всего
+//! запаркованы как раз жилые кварталы.
+//!
 //! Расстановка детерминирована (ГПСЧ Лемера, засеянный первой точкой улицы),
 //! так что от запуска к запуску ряд стоит одинаково. Виден он только вблизи:
 //! [`CarZoomBucket`] снимает слой целиком, когда машина становится мельче
@@ -17,7 +24,8 @@
 use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{MapData, RoadClass, RoadLine};
+use crate::map::osm::{MapData, RoadLine};
+use crate::map::roads::is_carriageway;
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -36,9 +44,6 @@ const CAR_PITCH: f32 = 6.0;
 /// колесо на кромке; полметра оставляют полосу асфальта между рядом и
 /// разметкой, как на настоящей улице.
 const CURB_GAP: f32 = 0.5;
-/// Улица у́же этого ряда не держит: на шести метрах две встречные машины уже
-/// не разъедутся, и никто там не паркуется.
-const PARKED_MIN_WIDTH: f32 = 9.0;
 /// Какая доля мест занята. Сплошной ряд от перекрёстка до перекрёстка
 /// выглядит как автосалон; у настоящей улицы ряд рваный.
 const OCCUPANCY: f32 = 0.45;
@@ -143,13 +148,13 @@ fn park_cars(roads: &[RoadLine]) -> Vec<Car> {
     cars
 }
 
-/// Улица, вдоль которой паркуются: проезжая часть, не арка, не мост (на
-/// мосту не стоят) и достаточно широкая.
+/// Улица, вдоль которой паркуются: настоящая проезжая часть — то же
+/// [`is_carriageway`], которым отбирает тротуары и разметку `map::roads`, —
+/// но не мост (на мосту не стоят) и не кольцо (по кольцу едут, а не
+/// паркуются). Разметке мост и кольцо нужны, машинам нет, поэтому оба
+/// условия здесь, а не внутри предиката.
 fn parkable(road: &RoadLine) -> bool {
-    road.class == RoadClass::Street
-        && !road.passage
-        && !road.bridge
-        && road.width >= PARKED_MIN_WIDTH
+    is_carriageway(road) && !road.bridge && !road.roundabout
 }
 
 /// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по осевой, со сдвигом
@@ -240,6 +245,33 @@ mod tests {
         let mut bridge = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 14.0);
         bridge.bridge = true;
         assert!(park_cars(std::slice::from_ref(&bridge)).is_empty());
+    }
+
+    #[test]
+    fn a_residential_street_gets_a_row() {
+        // 8 м — `residential`/`unclassified`: основная масса улиц города
+        let residential = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 8.0);
+        let cars = park_cars(std::slice::from_ref(&residential));
+        assert!(!cars.is_empty());
+        // и ряды на ней не наезжают на осевую: между ними остаётся проезд
+        for car in &cars {
+            assert!(
+                car.at.y.abs() - CAR_WIDTH / 2.0 > 0.5,
+                "ряд на осевой: {}",
+                car.at.y
+            );
+        }
+
+        // 5 м — `service`, проезд: там не паркуются
+        let service = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
+        assert!(park_cars(std::slice::from_ref(&service)).is_empty());
+    }
+
+    #[test]
+    fn a_roundabout_stays_empty() {
+        let mut ring = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        ring.roundabout = true;
+        assert!(park_cars(std::slice::from_ref(&ring)).is_empty());
     }
 
     #[test]
