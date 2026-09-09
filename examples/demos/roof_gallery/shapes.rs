@@ -34,24 +34,58 @@ pub(crate) const COLUMNS: [RoofShape; 4] = [
     RoofShape::Hip,
 ];
 
-/// Шаг сетки, м. По y — контур (22 м), подъём крыши над ним и две строки
-/// подписи. По x — заметно больше самого широкого контура (гантель, 38 м):
-/// сетка форм стоит над сеткой материалов, а та шире, и лишняя ширина здесь
-/// достаётся даром — кадр всё равно ограничен высотой. Заодно подпись под
-/// домом не приходится ломать по слогам.
-pub(crate) const CELL_PITCH: Vec2 = Vec2::new(68.0, 36.0);
+/// Шаг сетки, м. По y — самый высокий контур (22 м), подъём крыши над ним и
+/// три строки подписи под ним. По x — заметно больше самого широкого контура
+/// (гантель, 38 м): сетка форм стоит над сеткой материалов, а та шире, и
+/// лишняя ширина здесь достаётся даром — кадр всё равно ограничен высотой.
+/// Заодно подпись под домом не приходится ломать по слогам.
+pub(crate) const CELL_PITCH: Vec2 = Vec2::new(68.0, 38.0);
 
 /// Ширина колонки подписей слева от сетки, м.
 pub(crate) const ROW_LABEL_WIDTH: f32 = 48.0;
+
+/// Зазор от карниза до подписи и высота самой подписи, м.
+///
+/// Подпись висит **под своим домом**, а не на постоянном отступе от центра
+/// клетки: контуры разной высоты, и от центра подпись высокого контура
+/// заезжала на дом следующего ряда.
+const CAPTION_DROP: f32 = 1.5;
+const CAPTION_HEIGHT: f32 = 9.0;
+
+/// Полувысота самого высокого контура, м. Ниже неё уходит подпись, и по сумме
+/// сетка знает свой нижний край.
+const HALF_HEIGHT_MAX: f32 = 11.0;
+
+/// На сколько подписи уходят ниже центра нижнего ряда, м.
+pub(crate) const BOTTOM_REACH: f32 = HALF_HEIGHT_MAX + CAPTION_DROP + CAPTION_HEIGHT;
+
+/// Насколько верх крыши уходит выше центра клетки, м: полувысота контура плюс
+/// подъём (`EXTRUDE_RANGE` начинается с 2.5 м).
+pub(crate) const TOP_REACH: f32 = HALF_HEIGHT_MAX + 3.0;
 
 /// Дом сетки форм: контур на своём месте и заказанная ему форма.
 pub(crate) struct ShapeCell {
     pub(crate) area: PolyArea,
     pub(crate) shape: RoofShape,
     pub(crate) centre: Vec2,
+    /// Полувысота контура — по ней подпись садится под карниз этого дома, а
+    /// не под середину клетки.
+    half_height: f32,
     /// Номер контура сверху вниз — по нему подпись строки ставится один раз
     /// на ряд.
     pub(crate) row: usize,
+}
+
+impl ShapeCell {
+    /// Куда ставить подпись дома: под его карнизом, якорем за верхний край.
+    pub(crate) fn caption_at(&self) -> Vec2 {
+        self.centre - Vec2::new(0.0, self.half_height + CAPTION_DROP)
+    }
+
+    /// Первая клетка ряда — только она несёт подпись самого ряда.
+    pub(crate) fn first_in_row(&self, origin: Vec2) -> bool {
+        self.centre.x == origin.x
+    }
 }
 
 /// Контур витрины: как его звать и чем он тут занят.
@@ -153,6 +187,10 @@ fn rect(size: Vec2) -> Vec<Vec2> {
 pub(crate) fn cells(origin: Vec2, height: f32) -> Vec<ShapeCell> {
     let mut cells = Vec::new();
     for (row, outline) in outlines().into_iter().enumerate() {
+        let half_height = outline
+            .ring
+            .iter()
+            .fold(0.0_f32, |top, point| top.max(point.y.abs()));
         for (column, shape) in COLUMNS.into_iter().enumerate() {
             let centre = origin + Vec2::new(column as f32, -(row as f32)) * CELL_PITCH;
             let ring = outline.ring.iter().map(|point| *point + centre).collect();
@@ -160,6 +198,7 @@ pub(crate) fn cells(origin: Vec2, height: f32) -> Vec<ShapeCell> {
                 area: house(ring, height),
                 shape,
                 centre,
+                half_height,
                 row,
             });
         }

@@ -156,8 +156,10 @@ const BLOCK_COLUMNS: usize = 2;
 const HEADER_RISE: f32 = 24.0;
 const CAPTION_DROP: f32 = 5.0;
 
-/// Зазор между сеткой форм и сеткой материалов, м.
-const SHAPES_GAP: f32 = 30.0;
+/// Зазор между подписями нижнего ряда форм и заголовками блоков материалов,
+/// м. Небольшой: место под сами подписи уже отмерено `shapes::BOTTOM_REACH`,
+/// и складывать два запаса значит развести сетки на полэкрана.
+const SHAPES_GAP: f32 = 12.0;
 /// Чем крыты дома сетки форм. Черепица — кровля частного сектора, а сетка
 /// форм именно про него: скатную крышу игра ставит только частному дому.
 /// Цвет один на всю сетку и берётся из палитры материала, чтобы рядом
@@ -466,18 +468,21 @@ fn material_rect() -> Rect {
 }
 
 /// Центр левой верхней клетки сетки форм: над блоками материалов, по их
-/// середине, с местом слева под подписи рядов.
+/// середине, с местом слева под подписи рядов. Нижний ряд поднят ещё на
+/// `BOTTOM_REACH` — на столько уходят вниз его подписи, иначе они легли бы на
+/// заголовки блоков материалов.
 fn shapes_origin() -> Vec2 {
     let materials = material_rect();
     let width = shapes::ROW_LABEL_WIDTH + shapes::COLUMNS.len() as f32 * shapes::CELL_PITCH.x;
     let rows = shapes::row_count() as f32;
     Vec2::new(
         materials.center().x - width / 2.0 + shapes::ROW_LABEL_WIDTH + shapes::CELL_PITCH.x / 2.0,
-        materials.max.y + SHAPES_GAP + (rows - 1.0) * shapes::CELL_PITCH.y,
+        materials.max.y + SHAPES_GAP + shapes::BOTTOM_REACH + (rows - 1.0) * shapes::CELL_PITCH.y,
     )
 }
 
-/// Прямоугольник сетки форм вместе с колонкой подписей слева.
+/// Прямоугольник сетки форм вместе с колонкой подписей слева и подписями под
+/// нижним рядом.
 fn shapes_rect() -> Rect {
     let origin = shapes_origin();
     let columns = shapes::COLUMNS.len() as f32;
@@ -486,13 +491,9 @@ fn shapes_rect() -> Rect {
         origin
             - Vec2::new(
                 shapes::CELL_PITCH.x / 2.0 + shapes::ROW_LABEL_WIDTH,
-                (rows - 0.5) * shapes::CELL_PITCH.y,
+                (rows - 1.0) * shapes::CELL_PITCH.y + shapes::BOTTOM_REACH,
             ),
-        origin
-            + Vec2::new(
-                (columns - 0.5) * shapes::CELL_PITCH.x,
-                shapes::CELL_PITCH.y / 2.0,
-            ),
+        origin + Vec2::new((columns - 0.5) * shapes::CELL_PITCH.x, shapes::TOP_REACH),
     )
 }
 
@@ -697,10 +698,10 @@ fn spawn_shape_captions(
     };
     commands.spawn(label(
         shapes::cell_caption(cell, drawn),
-        cell.centre - Vec2::new(0.0, shapes::CELL_PITCH.y / 2.0 - 1.0),
+        cell.caption_at(),
         Anchor::TOP_CENTER,
     ));
-    if cell.centre.x == shapes_origin().x {
+    if cell.first_in_row(shapes_origin()) {
         commands.spawn(label(
             shapes::row_caption(cell.row),
             cell.centre - Vec2::new(shapes::CELL_PITCH.x / 2.0 + 1.0, 0.0),
