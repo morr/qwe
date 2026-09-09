@@ -189,7 +189,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (they used to stay flat among pitched neighbours). Which of the two a house takes is its
   own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
   and parapet. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
-  with its colour. Detail in the `osm-map` skill.
+  with its colour. **`RoofShape`** is the same three as an *input*: the city never asks for
+  one, `roof_gallery` does, to stand one outline under all three — and a refusal there stays
+  a refusal instead of being swapped for another shape the way `roofing` swaps it.
+  **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, hip inset,
+  either ridge rise) so the gallery prints them rather than restating them.
+  Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
@@ -212,7 +217,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the walls under it**, deliberately: that is the relation an aerial photo has, and the
   older "roof lighter than wall" rule is retired with the per-use roof palette. Every
   material and every palette side by side, with a house per colour from a 30 m block down
-  to an 8 m shed: `cargo run --example roof_gallery`. Detail in the `osm-map` skill.
+  to an 8 m shed, and above them every *shape* over five outlines:
+  `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
+  per-building body of the 2.5D layer, walls included, because a roof shape does not read
+  without them. Detail in the `osm-map` skill.
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own

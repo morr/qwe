@@ -856,25 +856,49 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the amplitude of all of it; 0 leaves flat material colours. It rewrites the uniform
     only, so dragging the slider rebuilds nothing.
   - **The gallery** — `cargo run --example roof_gallery` (`examples/demos/roof_gallery/`,
-    the shape of `tree_gallery`): seven blocks — six materials plus the church palette —
-    each with **a house per palette colour**, sized from a 30 m block down to an 8 m shed,
-    so the two things a still picture cannot say are said at once: the palette's spread
-    (tight in value, wide in hue) and that the texture is in **metres** and does not scale
-    with the house. Knobs are what the game reads off the building itself — long axis,
-    phase seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
-    prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
-    zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
-    panel lists the shader's own **tuning constants** (patch cell, patch size, the two
-    share ends), parsed out of `roof.wgsl` itself by `constants.rs` (`include_str!`, lines
-    of the form `const NAME: f32 = …;`) rather than mirrored as Rust numbers — a mirror
-    would drift on the first edit and the gallery would then lie about exactly what it is
-    opened for. They are text, not knobs: the numbers live in the shader. What the gallery may
-    **not** do is roll its own quad: houses go through `push_flat_roof`, the parapet
-    marker in a block's caption comes from `RoofKind::has_parapet`. It picks material and
-    colour directly (`RoofLook::new`) instead of through `roof_look`, because the seed
-    cannot reach every combination — a membrane never lands on a private house — and it
-    drops the ±3 % seeded jitter so the hex printed under a house is the constant in
-    `material.rs`.
+    the shape of `tree_gallery`), and it answers the two halves of "what is a roof" in two
+    grids, because a material and a shape are chosen by different code from different
+    inputs.
+    - **Materials, below** — seven blocks, six materials plus the church palette, each
+      with **a house per palette colour**, sized from a 30 m block down to an 8 m shed, so
+      the two things a still picture cannot say are said at once: the palette's spread
+      (tight in value, wide in hue) and that the texture is in **metres** and does not scale
+      with the house. Their roofs are **flat by request** (`RoofShape::Flat`) and carry no
+      clutter — a slope would take half the covering out of view and a shaft would stand on
+      the rest.
+    - **Shapes, above** (`shapes.rs`) — five outlines (rectangle, near-square, L, U, and a
+      dumbbell: a big body on a thin neck) each under all three shapes **and** under the
+      game's own choice, four columns. Under every house the shape that actually reached the
+      mesh — a refused one says so instead of being quietly swapped, which is what
+      `RoofShape` exists for — and the ridge rise in real metres; beside every row the two
+      numbers the choice is made from, rectangle fill and hip inset, straight from
+      `roofs::shape_facts`. That is the only way to tell a hip from a flat roof with a
+      chamfer on a picture, and a gable's rise from a hip's.
+    - **Every house is a house** — `push_house`, the per-building body of
+      `extrusion_builder` (walls, roof, clutter), lifted out of that loop for exactly this
+      reason: without walls under it a shape shows neither its ridge rise, nor its missing
+      gables, nor the silhouette height two same-sized houses do not share. The gallery
+      keeps its own painter's order by laying the grids top-down; it does not sort, because
+      gaps keep its houses from overlapping at all.
+    - Knobs are what the game reads off the building itself — wall height, long axis, phase
+      seed, courtyard — plus `RoofStyle::texture`; the readout at the bottom right
+      prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
+      zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
+      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
+      cell, patch size, the two share ends), shape from `roofs.rs` (fill threshold, hipped
+      share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
+      (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
+      numbers: a mirror would drift on the first edit and the gallery would then lie about
+      exactly what it is opened for. They are text, not knobs: the numbers live in the code.
+    - What the gallery may **not** do is roll its own geometry: the parapet marker in a
+      block's caption comes from `RoofKind::has_parapet`, the shape numbers from
+      `shape_facts`. It picks material and colour directly (`RoofLook::new`) instead of
+      through `roof_look`, because the seed cannot reach every combination — a membrane never
+      lands on a private house — and it drops the ±3 % seeded jitter so the hex printed under
+      a house is the constant in `material.rs`.
+    - `ROOF_GALLERY_SHOT=path.png` takes one frame and exits. The example has no BRP, and a
+      screen grab over another window comes out black, so this is the only way a session
+      without the window in front of it can look at its own work.
 - **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".
