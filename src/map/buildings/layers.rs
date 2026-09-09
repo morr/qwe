@@ -20,7 +20,7 @@ use super::{
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
 /// значит закрасить полквартала: карта сверху, а не изометрия. При 0.2
@@ -30,10 +30,18 @@ const FACADE_SCALE: f32 = 0.2;
 /// соседний квартал.
 const FACADE_HEIGHT_RANGE: RangeInclusive<f32> = 1.5..=12.0;
 
-/// Границы длины тени, м: у сарая тень обязана остаться заметной, у башни —
-/// не накрыть полкарты. Сама длина считается из высоты солнца
-/// (`map::shadow_length_scale`): пятиэтажка (15 м) отбрасывает 9 м — тень
-/// перечёркивает типичную улицу (8–16 м), но не глотает соседний квартал.
+/// Границы длины тени, м, **при дефолтном солнце**: у сарая тень обязана
+/// остаться заметной, у башни — не накрыть полкарты. Сама длина считается из
+/// высоты солнца (`map::shadow_length_scale`): пятиэтажка (15 м) отбрасывает
+/// 9 м — тень перечёркивает типичную улицу (8–16 м), но не глотает соседний
+/// квартал.
+///
+/// Границы едут за солнцем (`map::sun_stretch`), и это не украшение: числа
+/// подобраны под `cot 59° = 0.6`, а на 15° масштаб 3.73, и неподвижный
+/// потолок в 45 м уравнял бы по длине тени всё выше 12 м — верхние 10–15 %
+/// домов Тулы, то есть ровно те кварталы, ради которых ползунок и уводят
+/// вниз. На 80° неподвижный пол в 3 м так же съел бы разницу у всего ниже
+/// 17 м.
 const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
 
 /// Высота, на которой рампа тона крыш выходит в максимум: Тула почти вся
@@ -231,7 +239,7 @@ pub(super) fn facade_and_roof_builders(
         }
         // в плоском режиме у коробки нет стен — только тень и верх, как у
         // самих домов в этих режимах
-        push_items(&mut roofs, &items, None, color);
+        push_items(&mut roofs, &items, None, color, building, Vec2::ZERO);
     }
     (facades, roofs)
 }
@@ -264,9 +272,14 @@ pub(super) fn shadow_builder(
     use i_overlay::float::simplify::SimplifyShape;
 
     let mut sweeps: Vec<Vec<[f32; 2]>> = Vec::new();
+    let stretch = sun_stretch();
+    let (min_length, max_length) = (
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    );
     for building in buildings {
-        let length = (height_or_default(building) * shadow_length_scale())
-            .clamp(*SHADOW_LENGTH_RANGE.start(), *SHADOW_LENGTH_RANGE.end());
+        let length =
+            (height_or_default(building) * shadow_length_scale()).clamp(min_length, max_length);
         let offset = shadow_dir() * length;
         for chain in silhouette_chains(&building.outer, shadow_dir()) {
             let mut sweep: Vec<Vec2> = chain.clone();
@@ -514,7 +527,7 @@ fn push_house_with_arches(
     let chimney_on = |builder: &mut MeshBuilder, ridge| {
         if clutter {
             let chimney: Vec<_> = ridge_chimney(look, ridge).into_iter().collect();
-            push_items(builder, &chimney, Some(lean), color);
+            push_items(builder, &chimney, Some(lean), color, building, lift);
         }
     };
     match roofing_of(
@@ -562,7 +575,7 @@ fn push_house_with_arches(
             push_flat_roof(builder, look, &roof_outer, &roof_holes, color);
             if clutter {
                 let items = flat_roof_items(building, look, lift);
-                push_items(builder, &items, Some(lean), color);
+                push_items(builder, &items, Some(lean), color, building, lift);
             }
             RoofShape::Flat
         }

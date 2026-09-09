@@ -87,7 +87,11 @@ const CLUTTER_SHADOW_MIX: f32 = 0.30;
 
 /// Коробка на крыше: основание (CCW, уже в координатах нарисованной кровли),
 /// настоящая высота над ней и чем красить.
-pub(super) struct RoofItem {
+///
+/// Публична по той же причине, что и `push_flat_roof`: витрина кровель
+/// (`roof_gallery`) ставит на свои крыши то же оборудование теми же вызовами,
+/// а не своей копией.
+pub struct RoofItem {
     base: [Vec2; 4],
     height: f32,
     top: Color,
@@ -97,7 +101,7 @@ pub(super) struct RoofItem {
 /// Оборудование на плоской кровле дома. `lift` — сдвиг нарисованной кровли
 /// над контуром: основания коробок приходят уже сдвинутыми, а попадание в
 /// контур проверяется до сдвига, по настоящему пятну.
-pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) -> Vec<RoofItem> {
+pub fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) -> Vec<RoofItem> {
     let axis = look.frame.axis;
     let perp = Vec2::new(-axis.y, axis.x);
     let Some(frame) = Frame::of(building, axis, perp) else {
@@ -213,11 +217,13 @@ pub(super) fn ridge_chimney(look: &RoofLook, ridge: (Vec2, Vec2)) -> Option<Roof
 /// Коробки в меш: сначала непрозрачная тень каждой, потом сама коробка —
 /// видимые стены и верх. В плоских режимах (`lift_dir` не задан) остаётся
 /// тень и верх, то есть коробка сверху.
-pub(super) fn push_items(
+pub fn push_items(
     builder: &mut MeshBuilder,
     items: &[RoofItem],
     lean: Option<Lean>,
     roof: Srgba,
+    building: &PolyArea,
+    lift: Vec2,
 ) {
     if items.is_empty() {
         return;
@@ -230,7 +236,16 @@ pub(super) fn push_items(
         // той же причине: у выпуклого прямоугольника свип двух теневых рёбер
         // и есть недостающая часть объединения, а выпуклую оболочку строить
         // не приходится
-        let offset = shadow_dir() * item.height * shadow_length_scale();
+        // тень обрезана краем кровли. Физически она бы через край перевалила
+        // — и на снимке переваливает, — но рисуется она цветом этой крыши и
+        // непрозрачной, в общем меше зданий: на дефолтных 59° метровая
+        // вентшахта укладывается в отступ от края (`EDGE_MARGIN`), а на 15°
+        // машинное помещение даёт одиннадцать метров и тёмная полоса уехала бы
+        // с крыши на соседний дом и на землю. То есть портится это ровно на том
+        // конце ползунка, ради которого высота солнца и стала ручкой
+        let length =
+            (item.height * shadow_length_scale()).min(shadow_reach(building, lift, &item.base));
+        let offset = shadow_dir() * length;
         for (a, b) in silhouette_edges(&item.base, shadow_dir()) {
             builder.push_quad([a, b, b + offset, a + offset], shadow);
         }
@@ -245,6 +260,43 @@ pub(super) fn push_items(
         }
         builder.push_quad(item.base.map(|point| point + lift), item.top.to_linear());
     }
+}
+
+/// Докуда тень коробки дотянется, не съехав с нарисованной кровли: ближайшее
+/// пересечение луча тени с контуром здания — из каждого угла основания, по
+/// внешнему кольцу и по каждому двору.
+///
+/// Меряется по **ненадвинутому** контуру, как и попадание коробки в него
+/// (`fit`): сдвиг 2.5D переносит кровлю целиком. У скатной крыши контур чуть
+/// уже нарисованного ската (настоящая крыша свисает), так что труба на коньке
+/// обрезается с запасом в свою пользу — лучше, чем наоборот.
+fn shadow_reach(building: &PolyArea, lift: Vec2, base: &[Vec2; 4]) -> f32 {
+    let dir = shadow_dir();
+    let mut reach = f32::MAX;
+    for ring in std::iter::once(&building.outer).chain(building.holes.iter()) {
+        for (index, &a) in ring.iter().enumerate() {
+            let b = ring[(index + 1) % ring.len()];
+            for corner in base {
+                if let Some(hit) = ray_hits_segment(*corner - lift, dir, a, b) {
+                    reach = reach.min(hit);
+                }
+            }
+        }
+    }
+    reach
+}
+
+/// Длина по лучу до пересечения с отрезком, если луч его пересекает.
+fn ray_hits_segment(from: Vec2, dir: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
+    let edge = b - a;
+    let denom = dir.perp_dot(edge);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let to_a = a - from;
+    let along_ray = to_a.perp_dot(edge) / denom;
+    let along_edge = to_a.perp_dot(dir) / denom;
+    (along_ray >= 0.0 && (0.0..=1.0).contains(&along_edge)).then_some(along_ray)
 }
 
 /// Рама дома: длинная ось, её длина и ширина, начало — угол описанного по
@@ -355,6 +407,7 @@ fn rect(center: Vec2, size: Vec2, axis: Vec2, perp: Vec2) -> [Vec2; 4] {
 mod tests {
     use super::*;
     use crate::map::osm::AreaKind;
+    use crate::settings::SUN_ELEVATION_MIN;
 
     fn building(outer: Vec<Vec2>, building_use: BuildingUse) -> PolyArea {
         PolyArea {
@@ -376,8 +429,66 @@ mod tests {
         ]
     }
 
+    /// Луч тени останавливается на краю кровли: азимут 270° кладёт тень строго
+    /// на восток, и от коробки в `x = 4..6` до стены `x = 20` остаётся 14 м —
+    /// по ближайшему из углов, а не по дальнему.
+    #[test]
+    fn the_shadow_reach_stops_at_the_roof_edge() {
+        let _sun = crate::map::sun_at(270.0, 45.0);
+        assert!(
+            (shadow_dir() - Vec2::X).length() < 1e-5,
+            "{:?}",
+            shadow_dir()
+        );
+        let slab = building(block(20.0, 20.0), BuildingUse::Other);
+        let base = rect(Vec2::new(5.0, 10.0), Vec2::splat(2.0), Vec2::X, Vec2::Y);
+        let reach = shadow_reach(&slab, Vec2::ZERO, &base);
+        assert!((reach - 14.0).abs() < 1e-3, "{reach}");
+    }
+
+    /// На низком солнце тень оборудования обязана остаться на крыше: рисуется
+    /// она непрозрачной и цветом этой кровли, так что съехавшая полоса легла бы
+    /// тёмной чертой на соседний дом и на землю.
+    #[test]
+    fn a_low_sun_keeps_the_equipment_shadow_on_the_roof() {
+        let _sun = crate::map::sun_at(300.0, SUN_ELEVATION_MIN);
+        let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
+        let look = super::super::material::roof_look(&slab);
+        let mut items = flat_roof_items(&slab, &look, Vec2::ZERO);
+        assert!(!items.is_empty());
+        // и отдельно — машинное помещение у самого края с наветренной стороны:
+        // разложенное оборудование до края может и не достать, а зажим нужен
+        // именно ему
+        items.push(RoofItem {
+            base: rect(Vec2::new(50.0, 8.0), PENTHOUSE_SIZE, Vec2::X, Vec2::Y),
+            height: PENTHOUSE_HEIGHT,
+            top: PENTHOUSE_TOP,
+            wall: PENTHOUSE_WALL,
+        });
+        let mut clamped = 0;
+        for item in &items {
+            let wanted = item.height * shadow_length_scale();
+            let reach = shadow_reach(&slab, Vec2::ZERO, &item.base);
+            if reach < wanted {
+                clamped += 1;
+            }
+            let offset = shadow_dir() * wanted.min(reach);
+            for corner in item.base {
+                // зажатая тень кончается ровно на стене, и точка на самом
+                // контуре в `point_in_area` уже наружу — отступаем на промилле
+                let far = corner + offset * 0.999;
+                assert!(point_in_area(far, &slab), "{far:?} is off the roof");
+            }
+        }
+        // без зажима хоть одна тень с этой крыши уходит: машинное помещение в
+        // три метра даёт на 15° одиннадцать метров при шестнадцатиметровой
+        // ширине корпуса
+        assert!(clamped > 0, "nothing was clamped, the case is not covered");
+    }
+
     #[test]
     fn a_block_gets_equipment_and_a_shed_does_not() {
+        let _sun = crate::map::default_sun();
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
         let look = super::super::material::roof_look(&slab);
         let items = flat_roof_items(&slab, &look, Vec2::ZERO);
@@ -391,6 +502,7 @@ mod tests {
 
     #[test]
     fn equipment_stays_inside_the_footprint() {
+        let _sun = crate::map::default_sun();
         // Г-образный контур: рама прямоугольна, дом — нет
         let ell = building(
             vec![
@@ -413,6 +525,7 @@ mod tests {
 
     #[test]
     fn the_placement_is_stable() {
+        let _sun = crate::map::default_sun();
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
         let look = super::super::material::roof_look(&slab);
         let first = flat_roof_items(&slab, &look, Vec2::ZERO);
