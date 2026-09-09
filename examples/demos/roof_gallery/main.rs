@@ -101,12 +101,13 @@ mod constants;
 mod panel;
 mod params;
 mod shapes;
+#[path = "../gallery_shot.rs"]
+mod shot;
 
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::window::PrimaryWindow;
@@ -124,6 +125,7 @@ use crate::panel::{
     spawn_panel, spawn_readout, sync_param_rows, sync_reset_button, update_readout,
 };
 use crate::params::Tuning;
+use crate::shot::{ShotRequest, auto_shot, request_shot};
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 860.0;
@@ -393,6 +395,7 @@ fn main() {
                 // тот же старт, что у `MapPlugin`: хэндл материала с силой
                 // фактуры из ресурса
                 init_roof_material,
+                request_shot("ROOF_GALLERY_SHOT"),
             ),
         )
         .add_systems(
@@ -414,60 +417,11 @@ fn main() {
                 // юниформ материала, а не пересборка мешей — как в игре
                 retune_roof_material.run_if(resource_changed::<RoofStyle>),
                 apply_ground.run_if(resource_changed::<View>),
-                auto_shot.run_if(|| shot_path().is_some()),
+                auto_shot.run_if(resource_exists::<ShotRequest>),
             )
                 .chain(),
         )
         .run();
-}
-
-/// Куда класть автоснимок витрины, если он заказан переменной окружения.
-fn shot_path() -> Option<String> {
-    std::env::var("ROOF_GALLERY_SHOT").ok()
-}
-
-/// Кадр, на котором окно поднимается на передний план, кадр снимка и кадр
-/// выхода.
-///
-/// Поднимать обязательно: macOS снимает **настоящую поверхность окна**, и
-/// перекрытое чужим окном оно отдаёт чёрный прямоугольник — ровно то, на чём
-/// уже спотыкались с `brp shot`. `Window::focused = true` уходит в
-/// `winit::focus_window` (`bevy_winit::system::changed_windows`), поэтому
-/// поднятие — это одно присваивание, а не osascript снаружи.
-///
-/// Числа: первый кадр уходит на сборку сетки (она идёт в `Update`, а не в
-/// `Startup`), дальше нужно дать шейдеру, шрифту и самому поднятию доехать до
-/// экрана; после снимка — столько же, потому что на диск его пишет
-/// наблюдатель, а не эта система.
-const SHOT_RAISE_FRAME: u32 = 5;
-const SHOT_FRAME: u32 = 30;
-const SHOT_EXIT_FRAME: u32 = SHOT_FRAME + 30;
-
-/// Снимок витрины и выход — единственный способ посмотреть на неё из сессии:
-/// BRP у примера нет.
-fn auto_shot(
-    mut commands: Commands,
-    mut frame: Local<u32>,
-    mut exit: MessageWriter<AppExit>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
-) {
-    *frame += 1;
-    let Some(path) = shot_path() else {
-        return;
-    };
-    if *frame == SHOT_RAISE_FRAME {
-        // трогаем ровно на одном кадре: всякое взятие `&mut Window` метит его
-        // изменённым, и `changed_windows` перебирал бы окно каждый кадр
-        window.focused = true;
-    }
-    if *frame == SHOT_FRAME {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path));
-    }
-    if *frame == SHOT_EXIT_FRAME {
-        exit.write(AppExit::Success);
-    }
 }
 
 /// Прямоугольник сетки материалов вместе с полями под заголовки и подписи.
@@ -711,7 +665,7 @@ fn spawn_shape_captions(
         cell.caption_at(),
         Anchor::TOP_CENTER,
     ));
-    if cell.first_in_row(shapes_origin()) {
+    if cell.first_in_row() {
         commands.spawn(label(
             shapes::row_caption(cell.row),
             cell.centre - Vec2::new(shapes::CELL_PITCH.x / 2.0 + 1.0, 0.0),
