@@ -211,7 +211,7 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
-    // стены и парапет — код 0 (фактуры нет), сама кровля — код материала
+    // стены и оборудование — код 0 (фактуры нет), сама кровля — код материала
     assert!(frames.iter().any(|frame| frame[2] == 0.0), "walls");
     assert!(frames.iter().any(|frame| frame[2] > 0.0), "roof");
 }

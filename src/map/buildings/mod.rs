@@ -26,8 +26,8 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::heights::{height_mix, height_or_default};
+pub use self::layers::push_house;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
-pub use self::layers::{push_flat_roof, push_house};
 use self::material::RoofMaterialHandle;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
@@ -298,7 +298,7 @@ pub fn spawn_buildings(
     }
 
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
-    // режим и сколько геометрии добавил парапет
+    // режим и сколько геометрии добавило оборудование кровель
     info!(
         "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {}, heights: {})",
         started.elapsed(),
