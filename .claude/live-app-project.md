@@ -32,6 +32,14 @@ config still points at 15703: `BRP_PORT=15704 $b count Human`. A busy *default*
 port only warns and disables BRP (`qwe (no brp)` in the title) — a second window
 started by hand still runs.
 
+**The parallel session is often the previous you.** A session continued after a
+compaction gets a new id, and the background task that launched the app belongs
+to the old one: `TaskStop` answers `Task … is not running` or `No task found with
+ID`, while the app itself is very much alive and holding 15703 — so the relaunch
+panics with the lines above. Stop it the way the app can hear: `$b quit`, then
+`pgrep -f 'target/debug/qwe'` to confirm nothing is left. Same at the end of a
+session: the task list is not the inventory of running apps, `$b procs` is.
+
 ```bash
 $b alive     # alive: qwe 0.1.0 on http://127.0.0.1:15703/ (pid 40321) — pid must be the task's
 $b procs     # both copies, with their ports and start times
