@@ -57,7 +57,7 @@ in `main.rs`.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
   parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → portal stain → corpses → portal → buildings (5) →
+  → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
   (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
@@ -167,8 +167,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
   storeys), a compact large one (≥ 500 m², sides within 1.7) a tower (mostly 9), a small
-  one (≤ 300 m²) an old low building (2–4), and industrial / commercial / church footprints
-  are measured in **metres of span** rather than storeys. The slot inside each group comes
+  one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
+  long thin shed stays low), and industrial / commercial / church footprints are measured
+  in **metres of span** rather than storeys.
+  A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
+  storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large
+  squarish school never comes out a tower.
+  The slot inside each group comes
   from the building's own seed — the one that already picks its **Roof material** — so it
   is stable across rebuilds and modes. The tag always wins. Before this the whole 69 %
   took one of three numbers (3 / 6 / 15 m) and Tula's height distribution was median 15 m,
@@ -267,6 +272,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
   it is the most expensive thing the building layers build, and it does not depend on the
   roof-clutter zoom bucket.
+- **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
+  (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
+  the roof material, parked cars. **The seed is the object's own reference point** — the
+  first vertex of a footprint, the first point of a street — never its index in the extract,
+  so a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage
+  (doors, tree planting) keeps its own point-seeded `rng::lcg_seeded_by`.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -295,8 +306,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `oneway=-1` is now normalized at parse by reversing the way.
   4.4 × 1.8 m bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
-  palette whose shares match what a photo of a Russian city shows (white / silver / grey a
-  half, black a quarter). Each casts its own shadow, by the same `shadow_length_scale()` the
+  ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
+  fifths, black a fifth, the rest coloured. Each casts its own shadow, by the same `shadow_length_scale()` the
   buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
   walk through them, deliberately: a parked row along every street would eat the pavements
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and

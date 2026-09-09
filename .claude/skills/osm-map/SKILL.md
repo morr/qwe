@@ -99,8 +99,9 @@ in `CONTEXT.md` and the detail here in the same change.
   cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
   against the order of the points" — is **normalized at parse by reversing the way**
   (`parse_way`, `is_oneway_backward`). One notion of "which way this street runs" instead
-  of two, and nothing downstream has to remember the tag. It is not free: `road_seed` is
-  taken from the first point, so such a way is seeded differently and its row stands
+  of two, and nothing downstream has to remember the tag. It is not free: a street's seed
+  is `seed::seed_from_point` of its **first** point, so such a way is seeded differently
+  and its row stands
   elsewhere than it did — deterministic and reproducible, just not identical. Only the
   highway branch reverses; the rail and waterway branches of the same way ran earlier and
   keep the original order.
@@ -284,6 +285,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 
 ## Rendering
 
+- **One RNG and one point seed for the whole of `map/*`** (`map/seed.rs`) — everything a
+  layer scatters must survive a rebuild: a zoom-bucket crossing, a height-mode switch, a
+  restart. So the layers share two primitives instead of copying them. **`Lcg`** is the
+  Park–Miller (Lehmer) generator of `Village.js` — `seed = 48271·seed mod 2³¹−1`, plus
+  `range`, `gauss3` (a bell on (0,1)) and `bell4` (a bell on (−1,1)); it started in the
+  crown generator and was lifted out when the parked cars became its third caller.
+  **`seed_from_point(Vec2)`** is the seed itself: the object's **own reference point** in
+  centimetres — the first vertex of a footprint, the first point of a street — through three
+  mixing rounds, never the object's index in the extract, which a re-parse is free to move.
+  Callers: `buildings::material::building_seed` (the roof material, the roof shape and, since
+  the height inference, the storeys), `buildings::clutter`, `trees::crown`, `cars`.
+  The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
+  (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
+  them would move every door and every tree in every city.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
@@ -529,9 +544,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the line wanted. On an 8 m street the row sits `8/2 − CURB_GAP − CAR_WIDTH/2 = 2.6 m` off
   the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
   `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
-  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with `OCCUPANCY`
-  `CarStyle::occupancy` (45 % by default) of the places taken (a solid row from junction to
-  junction looks like a dealership)
+  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with
+  `CarStyle::occupancy` (`CAR_OCCUPANCY_DEFAULT`, 45 %) of the places taken (a solid row
+  from junction to junction looks like a dealership)
   and `END_MARGIN` 2 m clear of each end — that margin is only about the drawn ribbon's
   butt, so a car does not hang off it; a junction is a different question, answered below.
   The pitch is walked along the **arclength of the whole street**, not segment by segment:
@@ -550,7 +565,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `is_carriageway` over the **whole** `map.roads` slice (its `breaks` are indexed by the
     road's position in the input, and the participants must be every real street, not only
     the parkable ones: a residential street joining another has to break the row too). A
-    place within `Break::reach + CAR_JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
+    place within `Break::reach + JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
     end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
     ends meeting are not a break at all, which is the half of the defect that tore the row.
   - **A one-way carriageway gets one row, on its right.** Traffic here is right-hand, so on
@@ -576,8 +591,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
     effect is one merged mesh — and `rebuild_cars` is gated on
-    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>)`, one registration, since two in
-    one schedule could both fire in a frame and spawn the layer twice. The invisible case
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)`,
+    one registration, since two in one schedule could both fire in a frame and spawn the
+    layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
+    centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
+    style.smoothing)`, never the raw OSM points), so Smoothing moves the cars with the
+    asphalt. The invisible case
     goes through the same early return as the far zoom bucket: despawn the old layer, build
     no new one, so no second path can forget the despawn.
   - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px, so a
@@ -597,6 +616,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     frame and exits, the way the roof gallery does and for the same reason. It has already
     earned its keep once: the divided-avenue cell was built with the two carriageways
     swapped (left-hand traffic), and the picture said so at a glance.
+    The `panel.rs` and `params.rs` modules repeat identically across galleries — intentionally,
+    so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
+    `examples/demos/gallery_shot.rs`: it holds the frame counts and window-raise logic, both
+    debugged facts (commit 21853a3), and fixes apply there to all galleries at once.
   - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
     45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
     in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
@@ -828,12 +851,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     ≤ `SLAB_MAX_WIDTH` 18 m) at 5 / 9 / 12 storeys with the weights a Russian city has
     (half of them five); a **tower** is compact and large (≥ `TOWER_FOOTPRINT_MIN` 500 m²,
     sides within `TOWER_MAX_RATIO` 1.7) and is mostly nine; a **low** building is
-    ≤ `LOW_FOOTPRINT_MAX` 300 m² at 2–4; everything else large is 2–5 — that last branch
+    ≤ `LOW_FOOTPRINT_MAX` 300 m² at 2–4 (over 300 m²: the area test comes first, so a long
+    thin shed stays low); everything else large is 2–5 — that last branch
     is the most populated one and being generous with it is what made the first version
     come out skyscraping (p90 27 m before the tower table was halved).
   - **Some uses are measured in metres, not storeys**: an industrial hall or a store has
     one tall span, a church has one storey to the cornice, a garage is one box and gets no
     spread at all (a row of garage boxes on a photo is all one height).
+  - **A public building is measured by its use, not its shape** — school, clinic, office
+    (`BuildingUse::Public`) at 2–5 storeys, the same table as «everything else large»
+    but reached before the footprint is consulted: a 900 m² school with a squarish plan
+    would otherwise be a tower.
   - **The slot inside a group is the building's own seed** — the same
     `material::building_seed` that picks the roofing material, so heights survive a mode
     switch, a zoom rebuild and a restart, and two identical footprints in different places
@@ -1012,8 +1040,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     **air-conditioning units** in addition, and a gabled roof gets a **chimney** on the
     ridge — `ridge_of` reads the ridge back out of `GableRoof`'s first slope, since the
     two far corners of `[eave, eave, ridge, ridge]` are exactly it.
-  - **Placement** is a Park–Miller LCG (the crown generator's, copied — `map/trees`
-    keeps its own `pub(super)`) seeded from the roof material's building seed, so the
+  - **Placement** is the shared Park–Miller LCG — `map/seed.rs::Lcg`, one copy for the
+    whole of `map/*` (crowns, this clutter, the parked cars), the crown generator's
+    original lifted out of `map/trees` — seeded from the roof material's building seed
+    (`seed::seed_from_point`, the same door), so the
     equipment survives a mode switch, a zoom-bucket rebuild and a restart in the same
     place. Positions are rolled in the building's own frame (long axis × its
     perpendicular, extent projected from the outline — no second `min_area_rect`),
