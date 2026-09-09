@@ -29,6 +29,7 @@ use super::roofs::min_area_rect;
 use crate::map::SHADOW_DIR;
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
+use crate::map::seed::seed_from_point;
 use crate::settings::ROOF_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/roof.wgsl";
@@ -354,20 +355,11 @@ fn footprint_area(building: &PolyArea) -> f32 {
     crate::map::osm::model::signed_ring_area(&building.outer).abs()
 }
 
-/// Посев дома из его первой вершины — три перемешивающих раунда, чтобы
-/// соседние по координате дома не попадали в один слот таблицы. Сантиметры,
-/// а не метры: два дома на одной улице отличаются десятками сантиметров.
+/// Посев дома — от его первой вершины ([`seed_from_point`]): материал кровли,
+/// оборудование на ней и додуманная этажность держатся на одном числе, и оно
+/// не зависит ни от порядка домов в выгрузке, ни от пересборки слоя.
 pub(super) fn building_seed(building: &PolyArea) -> u32 {
-    let point = building.outer.first().copied().unwrap_or(Vec2::ZERO);
-    let x = (point.x * 100.0) as i32 as u32;
-    let y = (point.y * 100.0) as i32 as u32;
-    let mut hash = x ^ y.rotate_left(16);
-    hash ^= hash >> 16;
-    hash = hash.wrapping_mul(0x7feb_352d);
-    hash ^= hash >> 15;
-    hash = hash.wrapping_mul(0x846c_a68b);
-    hash ^= hash >> 16;
-    hash
+    seed_from_point(building.outer.first().copied().unwrap_or(Vec2::ZERO))
 }
 
 /// Параметры фактуры кровель — юниформ шейдера. Зеркало `RoofParams` в

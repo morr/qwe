@@ -8,6 +8,7 @@ mod meshing;
 pub mod osm;
 mod rail;
 mod roads;
+mod seed;
 mod spawn;
 mod surface;
 mod tram;

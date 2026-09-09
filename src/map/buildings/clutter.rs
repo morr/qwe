@@ -27,6 +27,7 @@ use super::material::{RoofKind, RoofLook};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::seed::Lcg;
 use crate::map::{SHADOW_DIR, shadow_length_scale};
 
 /// Сколько мест перебрать, прежде чем отказаться от коробки. Одна попытка
@@ -91,25 +92,6 @@ pub(super) struct RoofItem {
     height: f32,
     top: Color,
     wall: Color,
-}
-
-/// ГПСЧ Лемера (Park–Miller) — тот же, что раскладывает кроны деревьев.
-struct Lcg(u32);
-
-impl Lcg {
-    fn new(seed: u32) -> Self {
-        Self((seed % 0x7FFF_FFFF).max(1))
-    }
-
-    fn next_f32(&mut self) -> f32 {
-        self.0 = ((u64::from(self.0) * 48271) % 0x7FFF_FFFF) as u32;
-        self.0 as f32 / 2_147_483_647.0
-    }
-
-    /// Число в `[from, to)`.
-    fn range(&mut self, from: f32, to: f32) -> f32 {
-        from + self.next_f32() * (to - from)
-    }
 }
 
 /// Оборудование на плоской кровле дома. `lift` — сдвиг нарисованной кровли

@@ -18,6 +18,7 @@ use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
+use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
@@ -84,21 +85,6 @@ struct Car {
     color: Color,
 }
 
-/// ГПСЧ Лемера (Park–Miller) — тот же, что расставляет кроны и оборудование
-/// на кровле.
-struct Lcg(u32);
-
-impl Lcg {
-    fn new(seed: u32) -> Self {
-        Self((seed % 0x7FFF_FFFF).max(1))
-    }
-
-    fn next_f32(&mut self) -> f32 {
-        self.0 = ((u64::from(self.0) * 48271) % 0x7FFF_FFFF) as u32;
-        self.0 as f32 / 2_147_483_647.0
-    }
-}
-
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
 pub fn rebuild_cars(
     mut commands: Commands,
@@ -145,7 +131,9 @@ fn park_cars(roads: &[RoadLine]) -> Vec<Car> {
         if !parkable(road) {
             continue;
         }
-        let mut rng = Lcg::new(road_seed(road));
+        let mut rng = Lcg::new(seed_from_point(
+            road.points.first().copied().unwrap_or(Vec2::ZERO),
+        ));
         // ряд с каждой стороны: отступ от кромки внутрь проезжей части
         let offset = road.width / 2.0 - CURB_GAP - CAR_WIDTH / 2.0;
         for side in [-1.0, 1.0] {
@@ -218,21 +206,6 @@ fn body(car: &Car, offset: Vec2) -> [Vec2; 4] {
         at + half_length + half_width,
         at - half_length + half_width,
     ]
-}
-
-/// Посев улицы — от её первой точки, как у дверей и кровель: ряд не зависит
-/// ни от порядка улиц в выгрузке, ни от пересборки слоя.
-fn road_seed(road: &RoadLine) -> u32 {
-    let point = road.points.first().copied().unwrap_or(Vec2::ZERO);
-    let x = (point.x * 100.0) as i32 as u32;
-    let y = (point.y * 100.0) as i32 as u32;
-    let mut hash = x ^ y.rotate_left(16);
-    hash ^= hash >> 16;
-    hash = hash.wrapping_mul(0x7feb_352d);
-    hash ^= hash >> 15;
-    hash = hash.wrapping_mul(0x846c_a68b);
-    hash ^= hash >> 16;
-    hash
 }
 
 #[cfg(test)]
