@@ -26,9 +26,10 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::heights::{height_mix, height_or_default};
-pub use self::layers::push_flat_roof;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
+pub use self::layers::{push_flat_roof, push_house};
 use self::material::RoofMaterialHandle;
+pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
 use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
