@@ -30,7 +30,11 @@ pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // сглаженной осевой
 pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
-pub use self::sun::{SunStyle, shadow_dir, shadow_length_scale, sun_light};
+pub use self::sun::{
+    SunOnMap, SunStyle, apply_sun, shadow_dir, shadow_length_scale, sun_light, sun_stretch,
+};
+#[cfg(test)]
+pub(crate) use self::sun::{default_sun, sun_at};
 pub use self::surface::SurfaceStyle;
 pub use self::tram::TramStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
@@ -51,11 +55,12 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
+            .init_resource::<SunStyle>()
+            .init_resource::<SunOnMap>()
             .init_resource::<TreeStyle>()
             .init_resource::<TreeRowStyle>()
             .init_resource::<ConiferField>()
             .init_resource::<ConiferNoiseStyle>()
-            .init_resource::<SunStyle>()
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
@@ -66,12 +71,13 @@ impl Plugin for MapPlugin {
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
             .init_resource::<TramStyle>()
+            .register_type::<SunStyle>()
+            .register_type::<SunOnMap>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
             .register_type::<ConiferNoiseStyle>()
             .register_type::<TreeShape>()
             .register_type::<TreeRowPlacement>()
-            .register_type::<SunStyle>()
             .register_type::<BuildingHeightMode>()
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
@@ -81,7 +87,7 @@ impl Plugin for MapPlugin {
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
             .track_pref::<ConiferNoiseStyle>()
-            .track_pref::<SunStyle>()
+            .track_pref::<SunOnMap>()
             .track_pref::<BuildingHeightMode>()
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
@@ -89,19 +95,33 @@ impl Plugin for MapPlugin {
             .track_pref::<TramStyle>()
             .track_pref::<CarStyle>()
             // материалы поверхностей и кровель — один комплект на всё
-            // приложение, слои всех городов берут хэндлы из него
+            // приложение, слои всех городов берут хэндлы из него.
+            //
+            // Солнце уезжает в глобаль **до** них, и это не порядок ради
+            // порядка: материал кровель строится один раз на всё приложение, а
+            // `apply_sun` из `PreUpdate` в первом прогоне `Main` идёт уже
+            // после `Startup`. Без посева юниформ `light` навсегда остался бы
+            // с компайл-таймовым азимутом, пока пользователь не тронет
+            // ползунок, — блики фальца освещены с 300°, а стены и тени с
+            // сохранённого угла
             .add_systems(
                 Startup,
                 (
-                    surface::init_surface_materials,
-                    buildings::material::init_roof_material,
-                ),
+                    (sun::seed_sun, sun::apply_sun),
+                    (
+                        surface::init_surface_materials,
+                        buildings::material::init_roof_material,
+                    ),
+                )
+                    .chain(),
             )
             // солнце — в глобаль, из которой его читают чистые функции сборки
             // мешей. `PreUpdate` идёт и до `StateTransition` (там строится мир
             // на входе), и до `Update` (там пересобираются слои), так что
-            // всякая сборка кадра видит уже новое солнце
-            .add_systems(PreUpdate, sun::apply_sun)
+            // всякая сборка кадра видит уже новое солнце. Перед записью —
+            // оседание ползунка: пересобирать карту на каждое пройденное
+            // деление слишком дорого
+            .add_systems(PreUpdate, (sun::settle_sun, sun::apply_sun).chain())
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -157,7 +177,7 @@ impl Plugin for MapPlugin {
                             retuned::<TreeStyle>
                                 .or_else(retuned::<TreeRowStyle>)
                                 .or_else(retuned::<ConiferNoiseStyle>)
-                                .or_else(retuned::<SunStyle>),
+                                .or_else(retuned::<SunOnMap>),
                         ),
                     // ступень зума решает, стоит ли на крышах оборудование;
                     // порог редкий, а пересборка слоя — единственный способ его
@@ -166,7 +186,7 @@ impl Plugin for MapPlugin {
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
                         buildings::rebuild_buildings.run_if(
                             retuned::<BuildingHeightMode>
-                                .or_else(retuned::<SunStyle>)
+                                .or_else(retuned::<SunOnMap>)
                                 .or_else(retuned::<buildings::BuildingZoomBucket>),
                         ),
                     )
@@ -188,7 +208,7 @@ impl Plugin for MapPlugin {
                             retuned::<cars::CarZoomBucket>
                                 .or_else(retuned::<CarStyle>)
                                 .or_else(retuned::<RoadStyle>)
-                                .or_else(retuned::<SunStyle>),
+                                .or_else(retuned::<SunOnMap>),
                         ),
                     )
                         .chain()
@@ -197,7 +217,7 @@ impl Plugin for MapPlugin {
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
                     buildings::material::retune_roof_material
-                        .run_if(retuned::<RoofStyle>.or_else(retuned::<SunStyle>)),
+                        .run_if(retuned::<RoofStyle>.or_else(retuned::<SunOnMap>)),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку запускает только её фактическая
                     // смена. Таблицы у путей и трамвая свои, и пороги в них не

@@ -25,6 +25,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+pub use self::clutter::{RoofItem, flat_roof_items, push_items};
 use self::heights::{height_mix, height_or_default};
 pub use self::layers::push_house;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
@@ -33,9 +34,9 @@ pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
-use crate::map::sun_light;
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::map::{SunOnMap, sun_light};
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
@@ -321,7 +322,7 @@ pub fn rebuild_buildings(
     mut materials: ResMut<Assets<ColorMaterial>>,
     roof: Res<RoofMaterialHandle>,
     mode: Res<BuildingHeightMode>,
-    sun: Res<crate::map::SunStyle>,
+    sun: Res<SunOnMap>,
     bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     layers: Query<Entity, With<BuildingLayerTag>>,
@@ -367,7 +368,7 @@ pub fn rebuild_buildings(
 /// миллисекунд. Вернуть его имеет смысл вместе с переносом сдвига в вершинный
 /// шейдер.
 #[derive(Clone, Copy)]
-pub(super) struct Lean {
+pub struct Lean {
     /// Смещение верха на метр нарисованной высоты. Вектором, а не парой
     /// «направление × длина»: у постоянного сдвига это ровно `(0.4, 1)`, и
     /// круг через `normalize`/`length` сдвинул бы его на единицу последнего
