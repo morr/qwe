@@ -391,6 +391,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   boundaries are dashed. Line width `MARKING_WIDTH` 0.15 m but never under 1.3 px,
   anti-aliased over ±0.7 px; faded out when a lane is under ~10 px on screen (`lane width
   / px`). `MARKING_COLOR` is white at 0.85 alpha over the asphalt grey.
+  **Crossings** — the zebra at a junction, and the second thing the break coordinate buys.
+  Bars of `CROSSING_BAR` (0.65 m) at `CROSSING_PITCH` (1.2 m) repeat along `across` — they
+  run *with* the traffic, as a zebra's do — inside a band `CROSSING_INSET` (0.4 m) to
+  `+ CROSSING_DEPTH` (3 m) **into the gap**, with smoothstep ends so the zebra does not
+  break off against the gap edge. Drawing it *inside* the gap is what makes it correct
+  twice over: the lane lines are already off there, so nothing competes, and a gap only
+  exists at a **real junction node** — a dead end's gap has zero width, so a dead end grows
+  no zebra without a single extra check. Faded by the same `pitch / px` rule as the lane
+  lines. **No geometry**: Tula's 618 junctions cost eight lines of shader and not one
+  vertex.
   **Breaks** — the second `Ribbon` component is the signed distance to the nearest
   **marking break** (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At` to
   `push_ribbon_broken`): negative inside a gap, so the line fades at the gap edge
