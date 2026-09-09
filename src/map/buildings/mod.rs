@@ -6,8 +6,9 @@
 //! (`rebuild_buildings`).
 //!
 //! Геометрия разнесена по подмодулям: [`arches`] режет проходы
-//! `building_passage` сквозь стены, [`roofs`] ставит двускатные крыши на
-//! малые дома, [`layers`] собирает сами меши слоёв, [`material`] решает, чем
+//! `building_passage` сквозь стены, [`roofs`] ставит скатные крыши
+//! (двускатные и вальмовые) на малые дома, [`layers`] собирает сами меши
+//! слоёв, [`material`] решает, чем
 //! крыша крыта, [`heights`] — сколько у него этажей, когда OSM молчит, — и
 //! фактуру кровли рисует шейдер её материала.
 
@@ -31,11 +32,11 @@ use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 use self::material::RoofMaterialHandle;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
-use crate::map::SHADOW_DIR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::map::{SunOnMap, sun_light};
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
@@ -321,6 +322,7 @@ pub fn rebuild_buildings(
     mut materials: ResMut<Assets<ColorMaterial>>,
     roof: Res<RoofMaterialHandle>,
     mode: Res<BuildingHeightMode>,
+    sun: Res<SunOnMap>,
     bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     layers: Query<Entity, With<BuildingLayerTag>>,
@@ -328,7 +330,7 @@ pub fn rebuild_buildings(
 ) {
     // ступень зума решает только судьбу оборудования на кровле; тени от неё
     // не зависят, а стоят дороже всего остального вместе взятого
-    let with_shadows = mode.is_changed();
+    let with_shadows = mode.is_changed() || sun.is_changed();
     for entity in &layers {
         commands.entity(entity).despawn();
     }
@@ -366,7 +368,7 @@ pub fn rebuild_buildings(
 /// миллисекунд. Вернуть его имеет смысл вместе с переносом сдвига в вершинный
 /// шейдер.
 #[derive(Clone, Copy)]
-pub(super) struct Lean {
+pub struct Lean {
     /// Смещение верха на метр нарисованной высоты. Вектором, а не парой
     /// «направление × длина»: у постоянного сдвига это ровно `(0.4, 1)`, и
     /// круг через `normalize`/`length` сдвинул бы его на единицу последнего
@@ -452,13 +454,13 @@ fn facade_color(building: &PolyArea) -> Color {
 }
 
 /// Тон поверхности по повороту её наружной нормали (в плане) к свету
-/// `SHADOW_DIR`: к свету — светлее базового на `lit_mix`, от света — темнее
+/// `map::sun_light`: к свету — светлее базового на `lit_mix`, от света — темнее
 /// на `shaded_mix`, в обоих случаях пропорционально косинусу. Одно правило
 /// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
 /// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
 /// `Srgba` в сигнатуре делает пространство явным.
 pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
-    let lit = outward.dot(-SHADOW_DIR);
+    let lit = outward.dot(sun_light());
     if lit >= 0.0 {
         base.mix(&Srgba::WHITE, lit * lit_mix)
     } else {

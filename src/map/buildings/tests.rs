@@ -1,11 +1,16 @@
+//! Солнце — процессная глобаль, а тесты идут параллельными потоками в одном
+//! процессе: каждый тест здесь строит освещённую геометрию, поэтому каждый
+//! берёт `default_sun()` — гард, который держит солнце на дефолте и не пускает
+//! к нему соседа (`map/sun.rs`).
+
 use super::arches::*;
 use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
-use crate::map::SHADOW_DIR;
 use crate::map::osm::fixture;
 use crate::map::osm::model::signed_ring_area;
+use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
 
 fn square() -> Vec<Vec2> {
@@ -40,8 +45,9 @@ fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
 
 #[test]
 fn silhouette_picks_edges_facing_the_shadow() {
+    let _sun = crate::map::default_sun();
     // свет сверху-слева, тень вправо-вниз: силуэт — нижнее и правое рёбра
-    let edges = silhouette_edges(&square(), SHADOW_DIR);
+    let edges = silhouette_edges(&square(), shadow_dir());
     assert_eq!(edges.len(), 2);
     assert!(edges.iter().all(|(a, b)| {
         let bottom = a.y == 0.0 && b.y == 0.0;
@@ -52,10 +58,11 @@ fn silhouette_picks_edges_facing_the_shadow() {
 
 #[test]
 fn silhouette_is_winding_independent() {
+    let _sun = crate::map::default_sun();
     let ccw = square();
     let cw: Vec<Vec2> = square().into_iter().rev().collect();
-    let mut ccw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&ccw, SHADOW_DIR);
-    let mut cw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&cw, SHADOW_DIR)
+    let mut ccw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&ccw, shadow_dir());
+    let mut cw_edges: Vec<(Vec2, Vec2)> = silhouette_edges(&cw, shadow_dir())
         .into_iter()
         .map(|(a, b)| (b, a))
         .collect();
@@ -72,6 +79,7 @@ fn silhouette_is_winding_independent() {
 
 #[test]
 fn extrusion_walls_face_away_from_the_lift() {
+    let _sun = crate::map::default_sun();
     // подъём вверх-вправо: у квадрата видимы южная и западная стены
     let lift = Lean::of().dir();
     assert!(
@@ -92,6 +100,7 @@ fn extrusion_walls_face_away_from_the_lift() {
 
 #[test]
 fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
+    let _sun = crate::map::default_sun();
     let lift = Lean::of().dir();
     let facade = Color::srgb(0.6, 0.6, 0.6);
     let luminance = |color: LinearRgba| color.red + color.green + color.blue;
@@ -108,6 +117,7 @@ fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
 
 #[test]
 fn extrusion_sorts_the_far_end_of_the_lift_first() {
+    let _sun = crate::map::default_sun();
     let north = building(
         square()
             .iter()
@@ -140,6 +150,7 @@ fn extrusion_sorts_the_far_end_of_the_lift_first() {
 
 #[test]
 fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
+    let _sun = crate::map::default_sun();
     let mut house = building(square(), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     let mut church = building(square(), None, AreaKind::Building);
@@ -166,6 +177,7 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
 
 #[test]
 fn the_roof_material_is_stable_and_follows_the_use() {
+    let _sun = crate::map::default_sun();
     let mut house = building(square(), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     // посев берётся от геометрии, а не от места в списке: два прогона дают
@@ -200,6 +212,7 @@ fn the_roof_material_is_stable_and_follows_the_use() {
 
 #[test]
 fn every_vertex_of_a_roofed_layer_carries_a_frame() {
+    let _sun = crate::map::default_sun();
     let mut block = building(oblong(14.0, 40.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
     let builder = extrusion_builder(&[block], &[], detail(false));
@@ -221,19 +234,20 @@ fn oblong(width: f32, length: f32) -> Vec<Vec2> {
 }
 
 #[test]
-fn a_gable_goes_on_houses_and_small_boxes_only() {
+fn a_pitched_roof_goes_on_houses_and_small_boxes_only() {
+    let _sun = crate::map::default_sun();
     let mut house = building(oblong(8.0, 600.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(is_gabled(&house), "a house of any size");
+    assert!(is_pitched(&house), "a house of any size");
     let small = building(square(), None, AreaKind::Building);
-    assert!(is_gabled(&small), "an untagged small box");
+    assert!(is_pitched(&small), "an untagged small box");
     let big = building(oblong(20.0, 20.0), None, AreaKind::Building);
-    assert!(!is_gabled(&big), "an untagged big box");
+    assert!(!is_pitched(&big), "an untagged big box");
     let mut flats = building(square(), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
-    assert!(!is_gabled(&flats));
+    assert!(!is_pitched(&flats));
     let tower = building(square(), None, AreaKind::Kremlin);
-    assert!(!is_gabled(&tower), "the kremlin keeps its flat roof");
+    assert!(!is_pitched(&tower), "the kremlin keeps its flat roof");
     let mut yard = house.clone();
     yard.holes.push(vec![
         Vec2::new(4.0, 2.0),
@@ -241,11 +255,12 @@ fn a_gable_goes_on_houses_and_small_boxes_only() {
         Vec2::new(6.0, 4.0),
         Vec2::new(4.0, 4.0),
     ]);
-    assert!(!is_gabled(&yard), "a courtyard has no ridge");
+    assert!(!is_pitched(&yard), "a courtyard has no ridge");
 }
 
 #[test]
 fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
+    let _sun = crate::map::default_sun();
     // прямоугольник 20 × 6, повёрнутый на 30°, обойдённый по часовой
     let rotate = |p: Vec2| Vec2::from_angle(30f32.to_radians()).rotate(p);
     let mut ring: Vec<Vec2> = oblong(6.0, 20.0).into_iter().map(rotate).collect();
@@ -270,7 +285,8 @@ fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
 }
 
 #[test]
-fn an_l_shaped_house_keeps_a_flat_roof() {
+fn an_l_shaped_house_is_pitched_but_takes_no_gable() {
+    let _sun = crate::map::default_sun();
     let l_shape = vec![
         Vec2::new(0.0, 0.0),
         Vec2::new(12.0, 0.0),
@@ -281,12 +297,13 @@ fn an_l_shaped_house_keeps_a_flat_roof() {
     ];
     let mut house = building(l_shape, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(is_gabled(&house));
+    assert!(is_pitched(&house));
     assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
 }
 
 #[test]
 fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
+    let _sun = crate::map::default_sun();
     let mut flats = building(oblong(8.0, 20.0), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
     assert!(gable_roof(&flats, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
@@ -294,6 +311,7 @@ fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
 
 #[test]
 fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
+    let _sun = crate::map::default_sun();
     let luminance = |color: LinearRgba| color.red + color.green + color.blue;
     let mut house = building(oblong(8.0, 20.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
@@ -318,6 +336,7 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
 
 #[test]
 fn a_house_without_height_stays_low() {
+    let _sun = crate::map::default_sun();
     // квадрат 10 × 10 — мелкое пятно: частный дом это один-два этажа, дом без
     // назначения на таком пятне тоже низкий, но выше. Разбор вывода — в
     // тестах `heights`, здесь достаточно, что дефолт больше не один на всех
@@ -330,6 +349,7 @@ fn a_house_without_height_stays_low() {
 
 #[test]
 fn shadow_length_scales_with_height() {
+    let _sun = crate::map::default_sun();
     let low = building(square(), Some(6.0), AreaKind::Building);
     let high = building(square(), Some(60.0), AreaKind::Building);
     let reach = |list: &[PolyArea]| {
@@ -342,7 +362,7 @@ fn shadow_length_scales_with_height() {
             .to_vec();
         positions
             .iter()
-            .map(|p| Vec2::new(p[0], p[1]).dot(SHADOW_DIR))
+            .map(|p| Vec2::new(p[0], p[1]).dot(shadow_dir()))
             .fold(f32::NEG_INFINITY, f32::max)
     };
     assert!(reach(std::slice::from_ref(&high)) > reach(std::slice::from_ref(&low)) + 10.0);
@@ -350,6 +370,7 @@ fn shadow_length_scales_with_height() {
 
 #[test]
 fn every_mode_builds_geometry_for_mixed_input() {
+    let _sun = crate::map::default_sun();
     let mut with_hole = building(square(), Some(20.0), AreaKind::Building);
     with_hole.holes.push(vec![
         Vec2::new(4.0, 4.0),
@@ -382,6 +403,7 @@ fn every_mode_builds_geometry_for_mixed_input() {
 
 #[test]
 fn the_painter_order_puts_the_far_side_first() {
+    let _sun = crate::map::default_sun();
     // «дальше» — вдоль отклонения верха: верх дальнего дома уезжает на
     // ближний, и ближний обязан лечь поверх, то есть попасть в буфер позже
     let lean = Lean::of();
@@ -421,6 +443,7 @@ fn hip_area(roof: &HipRoof) -> f32 {
 
 #[test]
 fn a_hip_roof_covers_the_footprint_exactly_once() {
+    let _sun = crate::map::default_sun();
     // плоский режим: скаты и площадка конька лежат в одной плоскости, и их
     // площади обязаны сложиться в площадь пятна — ни дыр, ни нахлёстов
     let plot = oblong(10.0, 20.0);
@@ -440,6 +463,7 @@ fn a_hip_roof_covers_the_footprint_exactly_once() {
 
 #[test]
 fn an_l_shaped_house_gets_a_hip_roof_instead_of_a_flat_one() {
+    let _sun = crate::map::default_sun();
     // Г-образный дом двускатную не принимает — прямоугольник торчал бы из
     // него, — и до сих пор оставался плоским среди скатных соседей
     let ell = house(vec![
@@ -470,6 +494,7 @@ fn hip_only(building: &PolyArea, base: Srgba) -> Roofing {
 
 #[test]
 fn the_shadow_length_follows_the_sun_elevation() {
+    let _sun = crate::map::default_sun();
     // 1 / tan 59° — то самое «0.6 метра тени на метр высоты», которое раньше
     // стояло константой без вывода
     let scale = crate::map::shadow_length_scale();
@@ -519,7 +544,7 @@ fn mesh_points(mesh: &Mesh) -> Vec<Vec2> {
 
 /// Свип цепочки силуэта — то, из чего union собирает тело тени.
 fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
-    let offset = SHADOW_DIR * height * crate::map::shadow_length_scale();
+    let offset = shadow_dir() * height * crate::map::shadow_length_scale();
     let mut sweep = chain.to_vec();
     sweep.extend(chain.iter().rev().map(|point| *point + offset));
     sweep
@@ -527,9 +552,10 @@ fn sweep_of(chain: &[Vec2], height: f32) -> Vec<Vec2> {
 
 #[test]
 fn square_shadow_is_one_swept_polygon() {
+    let _sun = crate::map::default_sun();
     // одна цепочка низ+право даёт свип из шести вершин — по вершине на угол
     // цепочки и столько же на сдвинутую копию, без квадов на ребро
-    let chains = silhouette_chains(&square(), SHADOW_DIR);
+    let chains = silhouette_chains(&square(), shadow_dir());
     assert_eq!(chains.len(), 1);
     assert_eq!(chains[0].len() * 2, 6);
 
@@ -551,7 +577,7 @@ fn the_penumbra_stays_off_the_lit_side_and_softens_the_far_edge() {
     let along = |points: &[Vec2]| {
         points
             .iter()
-            .map(|point| point.dot(SHADOW_DIR))
+            .map(|point| point.dot(shadow_dir()))
             .fold((f32::MAX, f32::MIN), |(low, high), value| {
                 (low.min(value), high.max(value))
             })
@@ -575,6 +601,7 @@ fn the_penumbra_stays_off_the_lit_side_and_softens_the_far_edge() {
 
 #[test]
 fn staircase_shadow_has_no_double_darkening() {
+    let _sun = crate::map::default_sun();
     // ступенчатый юго-восточный фасад: раньше квады ступеней перекрывались
     // вдоль тени и полупрозрачность складывалась в полосы. Свип монотонной
     // цепочки покрывает ровно |сдвиг| × перп-протяжённость — без нахлёстов
@@ -588,14 +615,14 @@ fn staircase_shadow_has_no_double_darkening() {
         Vec2::new(12.0, 9.0),
         Vec2::new(0.0, 9.0),
     ];
-    let chains = silhouette_chains(&staircase, SHADOW_DIR);
+    let chains = silhouette_chains(&staircase, shadow_dir());
     assert_eq!(chains.len(), 1, "лестница — одна непрерывная цепочка");
     assert_eq!(chains[0].len(), 7);
 
     // свип цепочки самопересечься не может, поэтому его площадь — ровно
     // «длина сдвига × размах контура поперёк тени»
     let offset_length = 20.0 * crate::map::shadow_length_scale();
-    let perp_span = Vec2::new(12.0, 9.0).dot(SHADOW_DIR.perp());
+    let perp_span = Vec2::new(12.0, 9.0).dot(shadow_dir().perp());
     let sweep = sweep_of(&chains[0], 20.0);
     assert!((signed_ring_area(&sweep).abs() - offset_length * perp_span).abs() < 0.5);
 
@@ -607,6 +634,7 @@ fn staircase_shadow_has_no_double_darkening() {
 
 #[test]
 fn neighbour_shadows_union_without_double_darkening() {
+    let _sun = crate::map::default_sun();
     // два корпуса в ряд: тень левого дотягивается до правого, и без
     // union суммарная площадь меша была бы суммой двух свипов — с
     // перекрытием, читающимся как пятно двойной темноты
@@ -628,6 +656,7 @@ fn neighbour_shadows_union_without_double_darkening() {
 
 #[test]
 fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
+    let _sun = crate::map::default_sun();
     let color = |height, tinted| {
         let b = building(square(), height, AreaKind::Building);
         roof_color(&b, &roof_look(&b), tinted)
@@ -648,6 +677,7 @@ fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
 
 #[test]
 fn the_tint_ramp_darkens_every_palette_colour() {
+    let _sun = crate::map::default_sun();
     // Цель рампы обязана быть темнее любого цвета любой палитры, иначе на
     // высоком доме рампа переворачивается и осветляет: у насыщенной красной
     // черепицы сумма каналов ниже, чем у среднего серого. Проверяется на
@@ -683,6 +713,7 @@ fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {
 /// она действительно идёт сквозь дом.
 #[test]
 fn only_a_building_passage_cuts_an_arch() {
+    let _sun = crate::map::default_sun();
     let house = vec![building(square(), Some(15.0), AreaKind::Building)];
     let through = vec![passage(
         vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)],
@@ -714,6 +745,7 @@ fn only_a_building_passage_cuts_an_arch() {
 /// три метра занимают в настоящей высоте дома.
 #[test]
 fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
+    let _sun = crate::map::default_sun();
     // 40 м высоты, подъём 14 м: арка обязана занять 14 × 3/40 = 1.05 м
     let tall = building(square(), Some(40.0), AreaKind::Building);
     let lift = extrusion_lift(&tall, BuildingHeightMode::Extrusion);
@@ -743,6 +775,7 @@ fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
 /// не ту долю. Проверяем, что доля считается от высоты самого дома.
 #[test]
 fn a_clamped_wall_still_gets_a_proportional_opening() {
+    let _sun = crate::map::default_sun();
     // 4 м высоты: подъём 4 × 0.35 = 1.4 обрезается снизу до 2.5 м
     let low = building(square(), Some(4.0), AreaKind::Building);
     let lift = extrusion_lift(&low, BuildingHeightMode::Extrusion);
@@ -772,6 +805,7 @@ fn a_clamped_wall_still_gets_a_proportional_opening() {
 /// ровно по грани.
 #[test]
 fn an_arch_is_cut_along_the_wall_not_along_the_road() {
+    let _sun = crate::map::default_sun();
     let house = building(square(), Some(15.0), AreaKind::Building);
     // `push_arches` — фасадный режим: полоса сдвинута строго вниз. Косой
     // подъём 2.5D сюда не годится — его x-составляющая растянула бы проём
@@ -803,6 +837,7 @@ fn an_arch_is_cut_along_the_wall_not_along_the_road() {
 /// теперь куски на обеих гранях продолжают друг друга.
 #[test]
 fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
+    let _sun = crate::map::default_sun();
     // южная сторона из двух граней со стыком в (5, 0)
     let house = building(
         vec![
@@ -839,6 +874,7 @@ fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
 /// повисает половиной квада в воздухе за углом.
 #[test]
 fn an_arch_near_a_corner_is_trimmed_to_the_wall() {
+    let _sun = crate::map::default_sun();
     let house = building(square(), Some(15.0), AreaKind::Building);
     // фасадная полоса, как в `an_arch_is_cut_along_the_wall_not_along_the_road`
     let band = Vec2::new(0.0, -3.0);
@@ -867,6 +903,7 @@ fn an_arch_near_a_corner_is_trimmed_to_the_wall() {
 /// ничего — вырез обязан появиться от концов.
 #[test]
 fn an_arch_lying_inside_the_outline_still_cuts_an_opening() {
+    let _sun = crate::map::default_sun();
     // упрощённая геометрия того дома: южная грань y = 0, арка — отрезок
     // от вершины (5, 0) вглубь до вершины (5.2, 14) северной грани
     let house = building(
@@ -903,6 +940,7 @@ fn an_arch_lying_inside_the_outline_still_cuts_an_opening() {
 /// одним длинным и одним коротким сегментом это разные точки.
 #[test]
 fn the_passage_middle_is_measured_along_its_length() {
+    let _sun = crate::map::default_sun();
     let road = passage(
         vec![
             Vec2::new(0.0, 0.0),

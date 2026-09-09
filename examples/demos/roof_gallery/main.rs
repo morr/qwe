@@ -57,9 +57,18 @@
 //! **Панель слева — то, что в игре приходит от самого дома**: высота стен,
 //! поворот длинной оси (по ней повёрнута рамка кровли — швы ковра идут вдоль
 //! конька, рёбра фальца по скату, и на повороте это видно), посев фазы, двор;
-//! плюс единственный игровой ползунок кровель, `RoofStyle::texture`. Дефолт
-//! каждой равен игровому, поэтому отклонение читается как «на столько мы от
-//! игры отошли».
+//! плюс два игровых ползунка — `RoofStyle::texture` и **час съёмки**
+//! (`SunStyle`: азимут и высота солнца). Дефолт каждой равен игровому, поэтому
+//! отклонение читается как «на столько мы от игры отошли».
+//!
+//! **Солнце здесь то же самое, что в городе** — та же процессная глобаль
+//! (`map/sun.rs`), которую читают и шейдер кровли (`RoofParams::light`:
+//! азимут решает, какое ребро фальца блестит, а какое в тени), и тени
+//! оборудования. Высота солнца — единственная ручка витрины, меняющая
+//! **длину**: на 15° тень трубы втрое длиннее её самой, и на этом видно,
+//! обрезана ли она краем кровли (`clutter::shadow_reach`). Игрового оседания
+//! ползунка (`settle_sun`) здесь нет: оно про стомиллисекундную пересборку
+//! города, а витрина пересобирается мгновенно.
 //!
 //! **Под ручками — константы**, прочитанные из самих исходников
 //! (`constants.rs`): фактуры — из `roof.wgsl` (шаг сетки заплат, размер латки,
@@ -118,7 +127,7 @@ use qwe::map::buildings::material::{
 };
 use qwe::map::buildings::{RoofShape, push_house};
 use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
-use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle};
+use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
 use crate::panel::{
@@ -384,6 +393,7 @@ fn main() {
         .init_resource::<View>()
         .init_resource::<Tuning>()
         .init_resource::<RoofStyle>()
+        .init_resource::<SunOnMap>()
         .insert_resource(ClearColor(Ground::default().color()))
         .add_systems(
             Startup,
@@ -392,9 +402,10 @@ fn main() {
                 spawn_labels,
                 spawn_panel,
                 spawn_readout,
-                // тот же старт, что у `MapPlugin`: хэндл материала с силой
-                // фактуры из ресурса
-                init_roof_material,
+                // тот же старт, что у `MapPlugin`: солнце в глобаль, и только
+                // потом хэндл материала — его юниформ `light` берётся из неё
+                // один раз на всё приложение
+                (apply_sun_from_tuning, apply_sun, init_roof_material).chain(),
                 request_shot("ROOF_GALLERY_SHOT"),
             ),
         )
@@ -408,14 +419,22 @@ fn main() {
                 // мир не идёт
                 zoom_to_cursor.run_if(not(hovering_ui)),
                 update_readout,
+                // солнце — в ту же процессную глобаль, из которой его читает
+                // игра, и **до** сборки в этом же кадре. В игре оно едет через
+                // `PreUpdate` и оседание ползунка, здесь источник истины один
+                // (`Tuning`) и ждать нечего: пересборка витрины дешевле города
+                apply_sun_from_tuning,
+                apply_sun,
                 // сетка строится здесь же, а не в `Startup`: на первом кадре
                 // ресурс считается только что добавленным, и условие пускает
                 // ту же сборку, что потом идёт на каждую правку ручки
                 rebuild_roofs.run_if(resource_changed::<Tuning>),
                 (apply_texture, sync_param_rows, sync_reset_button)
                     .run_if(resource_changed::<Tuning>),
-                // юниформ материала, а не пересборка мешей — как в игре
-                retune_roof_material.run_if(resource_changed::<RoofStyle>),
+                // юниформ материала, а не пересборка мешей — как в игре. Солнце
+                // сюда тоже приходит: `light` в `RoofParams` это азимут
+                retune_roof_material
+                    .run_if(resource_changed::<RoofStyle>.or_else(resource_changed::<SunOnMap>)),
                 apply_ground.run_if(resource_changed::<View>),
                 auto_shot.run_if(resource_exists::<ShotRequest>),
             )
@@ -753,6 +772,16 @@ fn cycle_ground(mut view: ResMut<View>) {
 
 fn toggle_captions(mut view: ResMut<View>) {
     view.captions = !view.captions;
+}
+
+/// Ручки солнца — в игровой `SunOnMap`, из которого `apply_sun` кладёт его в
+/// глобаль. Витрина пишет сразу «солнце карты», минуя `SunStyle` и его
+/// оседание: оседание существует ради пересборки города, а не витрины.
+fn apply_sun_from_tuning(tuning: Res<Tuning>, mut sun: ResMut<SunOnMap>) {
+    sun.set_if_neq(SunOnMap(SunStyle {
+        azimuth: tuning.sun_azimuth,
+        elevation: tuning.sun_elevation,
+    }));
 }
 
 /// Подложка и подписи одной системой: чернила зависят от подложки, а видимость

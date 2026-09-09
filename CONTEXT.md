@@ -215,7 +215,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   cell), how much water stands on it, and — on every material — how faded and dirty it is.
   Every flat roof of the city, in both flat modes and 2.5D, is laid by one call —
   **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
-  it, a 0.7 m inset band lit by `SHADOW_DIR`; that is gone, because it is the same
+  it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
   small hip, and a real hip could not be told from a flat roof. Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
@@ -251,18 +251,39 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   not of the frame, so with a camera that pans the fan is only visible around the centre,
   and following the camera is out of reach while the layer is rebuilt on the CPU (tens of
   milliseconds). It belongs with a move of the skew into the vertex shader.
-- **Sun** (`map/mod.rs`) — one light for the whole map, and now with both halves:
-  **`SHADOW_DIR`** (where the shadow points in plan) and **`SUN_ELEVATION_DEG`** (59°, the
-  summer noon of Tula's latitude — the hour a city is photographed from the air), from
-  which **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of
-  height. That 0.6 used to be a bare constant; it is the same number, but it now has a
-  cause, and the way to change it is the elevation.
+- **Sun** (`map/sun.rs`, `SunStyle`) — one light for the whole map, as **two knobs**:
+  **azimuth** (clockwise from north; the default 300° puts the shadow down-right at 30°,
+  the old `SHADOW_DIR` exactly) and **elevation** (default 59°, the summer noon of Tula's
+  latitude — the hour a city is photographed from the air), from which
+  **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of height
+  and **`sun_stretch()`** — the same number relative to that default, which is what every
+  length calibrated at 59° is multiplied by (the buildings' `SHADOW_LENGTH_RANGE`, the
+  crowns' shadow heights). Section *Sun*, persisted, and the same two knobs stand in
+  `roof_gallery`. **It is read through a process global**, not a `Res`, for the
+  same reason the navtile size is (`settings::navtile_size`): `shade_by_light`, the shadow
+  sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
+  the global holds is the ready shadow vector and cotangent, not the two angles: it is read
+  hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are
+  not hoisted out of a loop. **Only `apply_sun` writes it** — once in `Startup` after
+  `seed_sun` (so that `init_roof_material`, which bakes the light into the roof material's
+  uniform for the life of the process, reads the *saved* sun and not the compile-time one),
+  and then every frame in `PreUpdate`. That makes the global readable on the main thread in
+  `Startup` after that pair and between `PreUpdate` and the end of `Update`, and nowhere
+  else (a reader in `PostUpdate`, in the render world or on a worker thread must take
+  **`SunOnMap`** as a resource instead).
+- **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
+  slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
+  it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
+  building layers with their shadows, tree crowns, cars, the roof material's `light`
+  uniform) and that the settings file is written from. One division of the slider costs a
+  full building rebuild with its shadow union, so a drag across the scale would otherwise
+  be seventy of them.
 - **Soft shadow** (`map/buildings/layers.rs::shadow_builder`) — a building's shadow is no
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
   resolution and the sky's fill light, not from the sun's angular size, and is therefore
   chosen by look), outward from the outer ring and into the gap from a hole. Its width is
-  **tapered per vertex by `penumbra()` = the band direction projected on `SHADOW_DIR`**: a
+  **tapered per vertex by `penumbra()` = the band direction projected on `shadow_dir()`**: a
   shadow meets its own building hard and blurs with distance, so the contact edge gets no
   band at all, the far edge the full metre, and a lateral edge grows from one to the other.
   Untapered, the metre also ran along the contact contour and left a soft dark blot on the

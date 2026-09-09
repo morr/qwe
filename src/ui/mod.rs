@@ -33,6 +33,7 @@ mod shell;
 pub mod slider;
 mod speed;
 mod stats;
+mod sun;
 mod surfaces;
 mod theme;
 mod tree_rows;
@@ -457,7 +458,9 @@ impl Plugin for UiPlugin {
             navigation::UiNavigationPlugin,
             buildings::UiBuildingStylePlugin,
             roads::UiRoadStylePlugin,
-            surfaces::UiSurfaceStylePlugin,
+            // кортеж `Plugins` кончается на пятнадцати: секции облика карты
+            // едут вложенным кортежем
+            (surfaces::UiSurfaceStylePlugin, sun::UiSunStylePlugin),
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
             brp::UiBrpBadgePlugin,

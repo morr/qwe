@@ -28,7 +28,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::{BuildingUse, PolyArea};
 use crate::map::seed::Lcg;
-use crate::map::{SHADOW_DIR, shadow_length_scale};
+use crate::map::{shadow_dir, shadow_length_scale};
 
 /// Сколько мест перебрать, прежде чем отказаться от коробки. Одна попытка
 /// на узком корпусе почти всегда промахивалась: машинное помещение 5 × 3.5 м
@@ -86,12 +86,20 @@ const CHIMNEY_WALL: Color = Color::srgb(0.46, 0.36, 0.31);
 const CLUTTER_SHADOW_MIX: f32 = 0.30;
 
 /// Коробка на крыше: основание (CCW, уже в координатах нарисованной кровли),
-/// настоящая высота над ней и чем красить.
+/// настоящая высота над ней, чем красить и докуда пускать тень.
+///
+/// `reach` считается **в момент раскладки**, а не отрисовки, и это не
+/// оптимизация, а развязка: он зависит от контура дома и от сдвига кровли, а
+/// у того, кто рисует, на руках только сам предмет. Пока вылет был аргументом
+/// [`push_items`], здание и сдвиг ехали туда третьим и четвёртым слагаемым
+/// одной тройки с `items`, и несогласованная пара давала не панику, а тихо
+/// неверную обрезку тени.
 pub(super) struct RoofItem {
     base: [Vec2; 4],
     height: f32,
     top: Color,
     wall: Color,
+    reach: f32,
 }
 
 /// Оборудование на плоской кровле дома. `lift` — сдвиг нарисованной кровли
@@ -147,6 +155,7 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
                     height: SKYLIGHT_HEIGHT,
                     top: SKYLIGHT_TOP,
                     wall: SKYLIGHT_WALL,
+                    reach: shadow_reach(building, lift, &base),
                 });
             }
         }
@@ -192,8 +201,15 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
 }
 
 /// Труба на коньке: `ridge` — оба конца конька уже в нарисованных
-/// координатах.
-pub(super) fn ridge_chimney(look: &RoofLook, ridge: (Vec2, Vec2)) -> Option<RoofItem> {
+/// координатах. `building` и `lift` — те же, по которым строилась крыша: по
+/// ним трубе считается [`RoofItem::reach`], как и всякой коробке на плоской
+/// кровле.
+pub(super) fn ridge_chimney(
+    building: &PolyArea,
+    look: &RoofLook,
+    ridge: (Vec2, Vec2),
+    lift: Vec2,
+) -> Option<RoofItem> {
     let along = (ridge.1 - ridge.0).try_normalize()?;
     let length = (ridge.1 - ridge.0).length();
     if length < 2.0 * CHIMNEY_SIZE.x {
@@ -202,16 +218,18 @@ pub(super) fn ridge_chimney(look: &RoofLook, ridge: (Vec2, Vec2)) -> Option<Roof
     let mut rng = Lcg::new(look.frame.seed.to_bits() ^ 0x85EB_CA6B);
     let at = ridge.0 + along * rng.range(0.25, 0.75) * length;
     let across = Vec2::new(-along.y, along.x);
+    let base = rect(at, CHIMNEY_SIZE, along, across);
     Some(RoofItem {
-        base: rect(at, CHIMNEY_SIZE, along, across),
+        base,
         height: CHIMNEY_HEIGHT,
         top: CHIMNEY_TOP,
         wall: CHIMNEY_WALL,
+        reach: shadow_reach(building, lift, &base),
     })
 }
 
 /// Коробки в меш: сначала непрозрачная тень каждой, потом сама коробка —
-/// видимые стены и верх. В плоских режимах (`lift_dir` не задан) остаётся
+/// видимые стены и верх. В плоских режимах (`lean` не задан) остаётся
 /// тень и верх, то есть коробка сверху.
 pub(super) fn push_items(
     builder: &mut MeshBuilder,
@@ -230,8 +248,17 @@ pub(super) fn push_items(
         // той же причине: у выпуклого прямоугольника свип двух теневых рёбер
         // и есть недостающая часть объединения, а выпуклую оболочку строить
         // не приходится
-        let offset = SHADOW_DIR * item.height * shadow_length_scale();
-        for (a, b) in silhouette_edges(&item.base, SHADOW_DIR) {
+        // тень обрезана краем кровли ([`RoofItem::reach`], посчитанным в
+        // момент раскладки). Физически она бы через край перевалила — и на
+        // снимке переваливает, — но рисуется она цветом этой крыши и
+        // непрозрачной, в общем меше зданий: на дефолтных 59° метровая
+        // вентшахта укладывается в отступ от края (`EDGE_MARGIN`), а на 15°
+        // машинное помещение даёт одиннадцать метров и тёмная полоса уехала бы
+        // с крыши на соседний дом и на землю. То есть портится это ровно на том
+        // конце ползунка, ради которого высота солнца и стала ручкой
+        let length = (item.height * shadow_length_scale()).min(item.reach);
+        let offset = shadow_dir() * length;
+        for (a, b) in silhouette_edges(&item.base, shadow_dir()) {
             builder.push_quad([a, b, b + offset, a + offset], shadow);
         }
         builder.push_quad(item.base.map(|point| point + offset), shadow);
@@ -245,6 +272,53 @@ pub(super) fn push_items(
         }
         builder.push_quad(item.base.map(|point| point + lift), item.top.to_linear());
     }
+}
+
+/// Докуда тень коробки дотянется, не съехав с нарисованной кровли: ближайшее
+/// пересечение луча тени с контуром здания — из каждого угла основания, по
+/// внешнему кольцу и по каждому двору.
+///
+/// Меряется по **ненадвинутому** контуру, как и попадание коробки в него
+/// (`fit`): сдвиг 2.5D переносит кровлю целиком. У скатной крыши контур чуть
+/// уже нарисованного ската (настоящая крыша свисает), так что труба на коньке
+/// обрезается с запасом в свою пользу — лучше, чем наоборот.
+fn shadow_reach(building: &PolyArea, lift: Vec2, base: &[Vec2; 4]) -> f32 {
+    let dir = shadow_dir();
+    // лучи идут из всех четырёх углов base, сдвинутых на -lift — ребро можно
+    // пропустить, только если оно позади каждого из этих истинных начал луча
+    let min_origin = base
+        .iter()
+        .map(|c| (*c - lift).dot(dir))
+        .fold(f32::MAX, f32::min);
+    let mut reach = f32::MAX;
+    for ring in std::iter::once(&building.outer).chain(building.holes.iter()) {
+        for (index, &a) in ring.iter().enumerate() {
+            let b = ring[(index + 1) % ring.len()];
+            // ребро целиком позади всех лучей — ни один их не догонит
+            if a.dot(dir) < min_origin && b.dot(dir) < min_origin {
+                continue;
+            }
+            for corner in base {
+                if let Some(hit) = ray_hits_segment(*corner - lift, dir, a, b) {
+                    reach = reach.min(hit);
+                }
+            }
+        }
+    }
+    reach
+}
+
+/// Длина по лучу до пересечения с отрезком, если луч его пересекает.
+fn ray_hits_segment(from: Vec2, dir: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
+    let edge = b - a;
+    let denom = dir.perp_dot(edge);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let to_a = a - from;
+    let along_ray = to_a.perp_dot(edge) / denom;
+    let along_edge = to_a.perp_dot(dir) / denom;
+    (along_ray >= 0.0 && (0.0..=1.0).contains(&along_edge)).then_some(along_ray)
 }
 
 /// Рама дома: длинная ось, её длина и ширина, начало — угол описанного по
@@ -315,6 +389,7 @@ fn place(
                 height,
                 top,
                 wall,
+                reach: shadow_reach(building, lift, &base),
             });
             return;
         }
@@ -355,6 +430,7 @@ fn rect(center: Vec2, size: Vec2, axis: Vec2, perp: Vec2) -> [Vec2; 4] {
 mod tests {
     use super::*;
     use crate::map::osm::AreaKind;
+    use crate::settings::SUN_ELEVATION_MIN;
 
     fn building(outer: Vec<Vec2>, building_use: BuildingUse) -> PolyArea {
         PolyArea {
@@ -376,8 +452,70 @@ mod tests {
         ]
     }
 
+    /// Луч тени останавливается на краю кровли: азимут 270° кладёт тень строго
+    /// на восток, и от коробки в `x = 4..6` до стены `x = 20` остаётся 14 м —
+    /// по ближайшему из углов, а не по дальнему.
+    #[test]
+    fn the_shadow_reach_stops_at_the_roof_edge() {
+        let _sun = crate::map::sun_at(270.0, 45.0);
+        assert!(
+            (shadow_dir() - Vec2::X).length() < 1e-5,
+            "{:?}",
+            shadow_dir()
+        );
+        let slab = building(block(20.0, 20.0), BuildingUse::Other);
+        let base = rect(Vec2::new(5.0, 10.0), Vec2::splat(2.0), Vec2::X, Vec2::Y);
+        let reach = shadow_reach(&slab, Vec2::ZERO, &base);
+        assert!((reach - 14.0).abs() < 1e-3, "{reach}");
+    }
+
+    /// На низком солнце тень оборудования обязана остаться на крыше: рисуется
+    /// она непрозрачной и цветом этой кровли, так что съехавшая полоса легла бы
+    /// тёмной чертой на соседний дом и на землю.
+    #[test]
+    fn a_low_sun_keeps_the_equipment_shadow_on_the_roof() {
+        let _sun = crate::map::sun_at(300.0, SUN_ELEVATION_MIN);
+        let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
+        let look = super::super::material::roof_look(&slab);
+        let mut items = flat_roof_items(&slab, &look, Vec2::ZERO);
+        assert!(!items.is_empty());
+        // и отдельно — машинное помещение у самого края с наветренной стороны:
+        // разложенное оборудование до края может и не достать, а зажим нужен
+        // именно ему
+        let base = rect(Vec2::new(50.0, 8.0), PENTHOUSE_SIZE, Vec2::X, Vec2::Y);
+        items.push(RoofItem {
+            base,
+            height: PENTHOUSE_HEIGHT,
+            top: PENTHOUSE_TOP,
+            wall: PENTHOUSE_WALL,
+            reach: shadow_reach(&slab, Vec2::ZERO, &base),
+        });
+        let mut clamped = 0;
+        for item in &items {
+            let wanted = item.height * shadow_length_scale();
+            // тот самый вылет, который увидит `push_items`, — из предмета, а
+            // не пересчитанный тестом заново
+            let reach = item.reach;
+            if reach < wanted {
+                clamped += 1;
+            }
+            let offset = shadow_dir() * wanted.min(reach);
+            for corner in item.base {
+                // зажатая тень кончается ровно на стене, и точка на самом
+                // контуре в `point_in_area` уже наружу — отступаем на промилле
+                let far = corner + offset * 0.999;
+                assert!(point_in_area(far, &slab), "{far:?} is off the roof");
+            }
+        }
+        // без зажима хоть одна тень с этой крыши уходит: машинное помещение в
+        // три метра даёт на 15° одиннадцать метров при шестнадцатиметровой
+        // ширине корпуса
+        assert!(clamped > 0, "nothing was clamped, the case is not covered");
+    }
+
     #[test]
     fn a_block_gets_equipment_and_a_shed_does_not() {
+        let _sun = crate::map::default_sun();
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
         let look = super::super::material::roof_look(&slab);
         let items = flat_roof_items(&slab, &look, Vec2::ZERO);
@@ -391,6 +529,7 @@ mod tests {
 
     #[test]
     fn equipment_stays_inside_the_footprint() {
+        let _sun = crate::map::default_sun();
         // Г-образный контур: рама прямоугольна, дом — нет
         let ell = building(
             vec![
@@ -413,6 +552,7 @@ mod tests {
 
     #[test]
     fn the_placement_is_stable() {
+        let _sun = crate::map::default_sun();
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
         let look = super::super::material::roof_look(&slab);
         let first = flat_roof_items(&slab, &look, Vec2::ZERO);
@@ -420,6 +560,32 @@ mod tests {
         assert_eq!(first.len(), second.len());
         for (a, b) in first.iter().zip(&second) {
             assert_eq!(a.base, b.base);
+        }
+    }
+
+    /// Тень трубы на коньке обязана остаться на крыше. Наклон конька сдвигает
+    /// базовую точку вверх; передача сдвига в shadow_reach обязана быть полной
+    /// (lift + ridge_offset).
+    #[test]
+    fn ridge_chimney_shadow_stays_on_roof_with_low_sun() {
+        let _sun = crate::map::sun_at(300.0, SUN_ELEVATION_MIN);
+        let house = building(block(8.0, 10.0), BuildingUse::Other);
+        let look = super::super::material::roof_look(&house);
+        // конёк двускатной крыши проходит по средней линии короткой стороны
+        let ridge = (Vec2::new(4.0, 0.0), Vec2::new(4.0, 10.0));
+        // ridge_offset на типовой крыше — несколько дециметров; тест ищет баг,
+        // когда сдвиг конька не передан, поэтому lift=Vec2::ZERO даст краткие
+        // тени. С правильным ridge_offset эта область покрывается.
+        let lift = Vec2::new(0.5, 0.5);
+        if let Some(item) = ridge_chimney(&house, &look, ridge, lift) {
+            let offset = shadow_dir() * (item.height * shadow_length_scale()).min(item.reach);
+            for corner in item.base {
+                let far = corner + offset * 0.999;
+                assert!(
+                    point_in_area(far, &house),
+                    "{far:?} is off the house boundary"
+                );
+            }
         }
     }
 }

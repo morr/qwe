@@ -20,7 +20,7 @@ use super::{
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
-use crate::map::{SHADOW_COLOR, SHADOW_DIR, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
 /// значит закрасить полквартала: карта сверху, а не изометрия. При 0.2
@@ -30,10 +30,18 @@ const FACADE_SCALE: f32 = 0.2;
 /// соседний квартал.
 const FACADE_HEIGHT_RANGE: RangeInclusive<f32> = 1.5..=12.0;
 
-/// Границы длины тени, м: у сарая тень обязана остаться заметной, у башни —
-/// не накрыть полкарты. Сама длина считается из высоты солнца
-/// (`map::shadow_length_scale`): пятиэтажка (15 м) отбрасывает 9 м — тень
-/// перечёркивает типичную улицу (8–16 м), но не глотает соседний квартал.
+/// Границы длины тени, м, **при дефолтном солнце**: у сарая тень обязана
+/// остаться заметной, у башни — не накрыть полкарты. Сама длина считается из
+/// высоты солнца (`map::shadow_length_scale`): пятиэтажка (15 м) отбрасывает
+/// 9 м — тень перечёркивает типичную улицу (8–16 м), но не глотает соседний
+/// квартал.
+///
+/// Границы едут за солнцем (`map::sun_stretch`), и это не украшение: числа
+/// подобраны под `cot 59° = 0.6`, а на 15° масштаб 3.73, и неподвижный
+/// потолок в 45 м уравнял бы по длине тени всё выше 12 м — верхние 10–15 %
+/// домов Тулы, то есть ровно те кварталы, ради которых ползунок и уводят
+/// вниз. На 80° неподвижный пол в 3 м так же съел бы разницу у всего ниже
+/// 17 м.
 const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
 
 /// Высота, на которой рампа тона крыш выходит в максимум: Тула почти вся
@@ -66,7 +74,7 @@ pub(super) const PENUMBRA_WIDTH: f32 = 1.0;
 const WALL_TOP_LIGHTEN: f32 = 0.15;
 /// Насколько стена, повёрнутая прямо к свету, светлее базового тона фасада,
 /// и насколько отвёрнутая — темнее. Свет тот же, что даёт тени
-/// (`SHADOW_DIR`): при косом подъёме западная стена на нём, южная в тени,
+/// (`map::sun_light`): при косом подъёме западная стена на нём, южная в тени,
 /// и без этой разницы две видимые стены сливались бы в один угол.
 const WALL_LIT_MIX: f32 = 0.18;
 const WALL_SHADED_MIX: f32 = 0.22;
@@ -212,14 +220,24 @@ pub(super) fn facade_and_roof_builders(
                     roofs.push_quad(slope, slope_color);
                 }
                 if detail.clutter {
-                    items.extend(ridge_chimney(&look, ridge_of(&roof)));
+                    items.extend(ridge_chimney(
+                        building,
+                        &look,
+                        ridge_of(&roof),
+                        roof.ridge_offset,
+                    ));
                 }
             }
             Roofing::Hip(roof) => {
                 roofs.set_roof(Some(look.frame));
                 push_hip(&mut roofs, &roof);
                 if detail.clutter {
-                    items.extend(ridge_chimney(&look, hip_ridge_ends(&roof)));
+                    items.extend(ridge_chimney(
+                        building,
+                        &look,
+                        hip_ridge_ends(&roof),
+                        roof.ridge_offset,
+                    ));
                 }
             }
             Roofing::Flat => {
@@ -241,7 +259,7 @@ pub(super) fn facade_and_roof_builders(
 /// Не квады на ребро: у ступенчатого фасада квады соседних ступеней
 /// перекрываются вдоль тени, и полупрозрачность складывалась в полосы двойной
 /// темноты. Свип цепочки самопересечься не может: перп-шаг ребра силуэта
-/// равен `outward·SHADOW_DIR > 0`, то есть цепочка монотонна вдоль
+/// равен `outward·shadow_dir() > 0`, то есть цепочка монотонна вдоль
 /// перпендикуляра тени.
 ///
 /// Затем **все** свипы карты объединяются булевым union (`i_overlay`) в набор
@@ -264,11 +282,16 @@ pub(super) fn shadow_builder(
     use i_overlay::float::simplify::SimplifyShape;
 
     let mut sweeps: Vec<Vec<[f32; 2]>> = Vec::new();
+    let stretch = sun_stretch();
+    let (min_length, max_length) = (
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    );
     for building in buildings {
-        let length = (height_or_default(building) * shadow_length_scale())
-            .clamp(*SHADOW_LENGTH_RANGE.start(), *SHADOW_LENGTH_RANGE.end());
-        let offset = SHADOW_DIR * length;
-        for chain in silhouette_chains(&building.outer, SHADOW_DIR) {
+        let length =
+            (height_or_default(building) * shadow_length_scale()).clamp(min_length, max_length);
+        let offset = shadow_dir() * length;
+        for chain in silhouette_chains(&building.outer, shadow_dir()) {
             let mut sweep: Vec<Vec2> = chain.clone();
             sweep.extend(chain.iter().rev().map(|&point| point + offset));
             push_contour(&mut sweeps, sweep);
@@ -340,12 +363,12 @@ pub(super) fn shadow_builder(
 }
 
 /// Доля [`PENUMBRA_WIDTH`], которую кайма получает на вершине, идущей в
-/// сторону `direction`: проекция этого направления на `SHADOW_DIR`.
+/// сторону `direction`: проекция этого направления на [`shadow_dir`].
 ///
 /// Полутень растёт с расстоянием от того, кто отбрасывает тень, а у самой
 /// стены её нет вовсе — тень примыкает к дому жёстко. В объединённой фигуре
 /// это различие читается локально: у ребра примыкания «наружу» смотрит
-/// **против** света (тело тени лежит по `SHADOW_DIR` от него), у дальнего
+/// **против** света (тело тени лежит по `shadow_dir()` от него), у дальнего
 /// края — по свету, у бокового — поперёк. Отсюда и правило: у примыкания
 /// ноль, у дальнего края вся ширина, вдоль боковой стороны — рост от нуля на
 /// углу дома до полной ширины на дальнем конце, ровно как у настоящей
@@ -356,7 +379,7 @@ pub(super) fn shadow_builder(
 /// обведён мягкой каймой — тем самым «контактным затенением», которое из
 /// объединения убрали (`references` в скилле `osm-map`).
 fn penumbra(direction: Vec2) -> f32 {
-    direction.dot(SHADOW_DIR).max(0.0)
+    direction.dot(shadow_dir()).max(0.0)
 }
 
 /// Контур в список для объединения, обходом против часовой стрелки — тем, что
@@ -511,9 +534,11 @@ fn push_house_with_arches(
         }
     }
 
-    let chimney_on = |builder: &mut MeshBuilder, ridge| {
+    let chimney_on = |builder: &mut MeshBuilder, ridge, ridge_offset| {
         if clutter {
-            let chimney: Vec<_> = ridge_chimney(look, ridge).into_iter().collect();
+            let chimney: Vec<_> = ridge_chimney(building, look, ridge, lift + ridge_offset)
+                .into_iter()
+                .collect();
             push_items(builder, &chimney, Some(lean), color);
         }
     };
@@ -540,7 +565,7 @@ fn push_house_with_arches(
             for (slope, slope_color) in roof.slopes {
                 builder.push_quad(slope, slope_color);
             }
-            chimney_on(builder, ridge_of(&roof));
+            chimney_on(builder, ridge_of(&roof), roof.ridge_offset);
             RoofShape::Gable
         }
         Roofing::Hip(roof) => {
@@ -548,8 +573,9 @@ fn push_house_with_arches(
             // торцевая стена кончается на карнизе, как и боковая
             builder.set_roof(Some(look.frame));
             let ridge = hip_ridge_ends(&roof);
+            let ridge_offset = roof.ridge_offset;
             push_hip(builder, &roof);
-            chimney_on(builder, ridge);
+            chimney_on(builder, ridge, ridge_offset);
             RoofShape::Hip
         }
         Roofing::Flat => {
