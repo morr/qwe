@@ -8,6 +8,11 @@
 //! пересборкой (`map::tram::rebuild_tram`, `map::cars::rebuild_cars`). И путь,
 //! и припаркованный ряд стоят на той же проезжей части, так что читаются они
 //! вместе с дорогами, а не отдельными секциями на одну-две строки.
+//!
+//! Ползунок занятости виден, только пока включён слой машин: при `Cars = Off`
+//! ряда на карте нет, и протяжка ползунка гоняла бы пересборку слоя вхолостую
+//! (`rebuild_cars` деспавнит и выходит) и писала бы настройки — то же правило,
+//! что прячет ручки Separation в Nav и ручки поля хвои в Noise.
 
 use bevy::prelude::*;
 
@@ -18,6 +23,10 @@ use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use crate::ui::{PanelCount, UiBuildSet, panel_header};
 
+/// Строка ползунка занятости — по ней видимость следует за тумблером `Cars`.
+#[derive(Component)]
+struct CarOccupancyRow;
+
 pub struct UiRoadStylePlugin;
 
 impl Plugin for UiRoadStylePlugin {
@@ -26,7 +35,13 @@ impl Plugin for UiRoadStylePlugin {
         app.add_knobs::<RoadStyle>()
             .add_knobs::<TramStyle>()
             .add_knobs::<CarStyle>()
-            .add_systems(Startup, build_roads_section.in_set(UiBuildSet::Sections));
+            .add_systems(Startup, build_roads_section.in_set(UiBuildSet::Sections))
+            .add_systems(
+                Update,
+                // без run_if: одна query и сравнение — дешевле, чем следить за
+                // окном `resource_changed` на первом кадре
+                sync_occupancy_row_visibility,
+            );
     }
 }
 
@@ -122,7 +137,7 @@ fn build_roads_section(
             text: |cars| on_off(cars.visible).to_string(),
         },
     );
-    spawn_knob(
+    let occupancy = spawn_knob(
         &mut commands,
         panel,
         "Occupancy",
@@ -134,4 +149,25 @@ fn build_roads_section(
             text: |value| format!("{:.0}%", value * 100.),
         },
     );
+    commands.entity(occupancy).insert(CarOccupancyRow);
+}
+
+/// Занятость живёт при включённом слое машин и уходит из раскладки вместе с
+/// ним: настраивать долю занятых мест, пока ряда на карте нет, нечем — то же
+/// правило, что убирает ручки невыбранного бэкенда в Nav. Строка `Cars`
+/// остаётся: ею слой и возвращают.
+fn sync_occupancy_row_visibility(
+    cars: Res<CarStyle>,
+    mut rows: Query<&mut Node, With<CarOccupancyRow>>,
+) {
+    let display = if cars.visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut rows {
+        if node.display != display {
+            node.display = display;
+        }
+    }
 }
