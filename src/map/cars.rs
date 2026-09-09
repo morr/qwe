@@ -168,7 +168,13 @@ fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks) -> Vec<Car> {
         ));
         // ряд с каждой стороны: отступ от кромки внутрь проезжей части
         let offset = road.width / 2.0 - CURB_GAP - CAR_WIDTH / 2.0;
-        for side in [-1.0, 1.0] {
+        // односторонняя — один ряд, справа по ходу: движение правостороннее, и
+        // у половины разделённого проспекта справа бордюр, а слева
+        // разделительная. Порядок точек way совпадает с направлением потока
+        // (`oneway=-1` развёрнут при разборе), поперечная `across` смотрит
+        // влево, поэтому правая сторона — это `-1`
+        let sides: &[f32] = if road.oneway { &[-1.0] } else { &[-1.0, 1.0] };
+        for &side in sides {
             park_along(
                 &mut cars,
                 road,
@@ -456,6 +462,24 @@ mod tests {
     fn a_street_shorter_than_its_end_margins_stays_empty() {
         let stub = street(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)], 12.0);
         assert!(park(std::slice::from_ref(&stub)).is_empty());
+    }
+
+    #[test]
+    fn a_one_way_carriageway_parks_on_its_right() {
+        // улица на восток: справа по ходу — юг
+        let points = vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)];
+        let mut oneway = street(points.clone(), 12.0);
+        oneway.oneway = true;
+        let cars = park(std::slice::from_ref(&oneway));
+        assert!(!cars.is_empty());
+        for car in &cars {
+            assert!(car.at.y < 0.0, "ряд не с той стороны: {}", car.at);
+        }
+
+        // та же улица без `oneway` — с обеих сторон
+        let both = park(std::slice::from_ref(&street(points, 12.0)));
+        assert!(both.iter().any(|car| car.at.y > 0.0));
+        assert!(both.iter().any(|car| car.at.y < 0.0));
     }
 
     #[test]

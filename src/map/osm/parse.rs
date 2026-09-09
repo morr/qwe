@@ -308,6 +308,14 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             .tags
             .get("bridge")
             .is_some_and(|value| value != "no");
+        // `oneway=-1` — поток против порядка точек; разворачиваем здесь, чтобы
+        // ниже по конвейеру «направление way» и «направление движения» были
+        // одним и тем же. Рельс и водоток той же ноды это не касается: их
+        // ветки отработали выше и взяли `points` в исходном порядке
+        let mut points = points;
+        if is_oneway_backward(&element.tags) {
+            points.reverse();
+        }
         map.roads.push(RoadLine {
             points,
             width,
@@ -446,6 +454,6 @@ mod tests;
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, is_building_passage,
-    is_oneway, is_road_underground, is_roundabout, is_underground, rail_class, road_class,
-    row_spacing, tagged_lanes, water_class, water_width,
+    is_oneway, is_oneway_backward, is_road_underground, is_roundabout, is_underground, rail_class,
+    road_class, row_spacing, tagged_lanes, water_class, water_width,
 };

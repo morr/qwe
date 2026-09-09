@@ -563,7 +563,7 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
     assert_eq!(plain.lanes, None, "без тега — дефолт у рендера");
 
     assert!(road(&[("oneway", "yes")]).oneway);
-    assert!(road(&[("oneway", "-1")]).oneway, "направление не важно");
+    assert!(road(&[("oneway", "-1")]).oneway);
     assert!(!road(&[("oneway", "no")]).oneway);
     assert!(!road(&[("oneway", "reversible")]).oneway);
 
@@ -583,6 +583,32 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
         None,
         "за восемью полосами — не лента, а вся развязка"
     );
+}
+
+/// `oneway=-1` — поток против порядка точек; way разворачивается при разборе,
+/// чтобы «направление way» ниже по конвейеру значило «направление движения».
+#[test]
+fn oneway_backward_reverses_the_way() {
+    let (sw, se, ..) = corners(HALF);
+    let road = |extra: &[(&str, &str)]| {
+        let tags: Vec<(&str, &str)> = [("highway", "residential")]
+            .into_iter()
+            .chain(extra.iter().copied())
+            .collect();
+        Overpass::new(CITY)
+            .way(&tags, vec![sw, se])
+            .parse()
+            .roads
+            .remove(0)
+    };
+
+    let forward = road(&[("oneway", "yes")]);
+    let backward = road(&[("oneway", "-1")]);
+    assert!(backward.oneway);
+    let reversed: Vec<Vec2> = forward.points.iter().rev().copied().collect();
+    for (point, twin) in backward.points.iter().zip(&reversed) {
+        assert!(point.distance(*twin) < 0.01, "{point} / {twin}");
+    }
 }
 
 #[test]

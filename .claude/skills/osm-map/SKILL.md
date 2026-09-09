@@ -89,13 +89,21 @@ in `CONTEXT.md` and the detail here in the same change.
   3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
   z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
-  layers** below). Three more fields feed the **markings** only: `oneway`
-  (`oneway=yes|1|true|-1` — direction is irrelevant, we draw, we don't route;
-  `reversible`/`alternating` are not one-way), `roundabout`
+  layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
+  (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way), `roundabout`
   (`junction=roundabout|circular`, implies `oneway`) and `lanes: Option<u8>` (the `lanes`
   tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag).
   Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
   streets ≥ 8 m, the European cities on about half.
+  **The direction of a one-way way is load-bearing now**, and it did not use to be: the
+  cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
+  against the order of the points" — is **normalized at parse by reversing the way**
+  (`parse_way`, `is_oneway_backward`). One notion of "which way this street runs" instead
+  of two, and nothing downstream has to remember the tag. It is not free: `road_seed` is
+  taken from the first point, so such a way is seeded differently and its row stands
+  elsewhere than it did — deterministic and reproducible, just not identical. Only the
+  highway branch reverses; the rail and waterway branches of the same way ran earlier and
+  keep the original order.
   **Underground road is dropped** (`parse/tags.rs::is_road_underground`) — the same rule rails
   and watercourses have always had, and it was simply missing on the highway branch:
   metro concourses and stairs came out as ordinary alleys drawn over the city (Tokyo
@@ -544,6 +552,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     place within `Break::reach + CAR_JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
     end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
     ends meeting are not a break at all, which is the half of the defect that tore the row.
+  - **A one-way carriageway gets one row, on its right.** Traffic here is right-hand, so on
+    each half of a divided avenue the kerb is on the right and the median on the left; two
+    rows would put a column of cars down the median, and in Tula 145 of 218 `primary` ways
+    are exactly such halves. The same rule is right for an ordinary one-way lane. `across`
+    points left, so the right-hand side is `-1`; the direction it is right of is the way's
+    own point order, which parse has already normalized (see **RoadLine** above).
   - **Not cached, and that is measured, not assumed**: `marking_breaks` costs 0.76 ms of the
     layer's 5.4 ms build on Tula, next to 70 ms for the building layer — a resource cached
     per world load would not pay for itself.

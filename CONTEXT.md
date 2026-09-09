@@ -290,6 +290,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and roundabouts. The pitch is walked along the **whole street's arclength**, not segment
   by segment, and the row **breaks at the junctions the lane markings already know**
   (`junctions::marking_breaks`, plus a 5 m clearance) rather than at the ends of an OSM way.
+  A **one-way** carriageway gets a single row, on its right-hand kerb — which is what stops
+  the two halves of a divided avenue from parking a column down their median, and is why
+  `oneway=-1` is now normalized at parse by reversing the way.
   4.4 × 1.8 m bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
   palette whose shares match what a photo of a Russian city shows (white / silver / grey a
