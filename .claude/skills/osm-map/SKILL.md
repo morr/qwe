@@ -787,7 +787,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     already use (`map::shadow_dir()`, from the upper left at the default sun) the west wall is lit and the south
     wall shaded — three tones, which is what makes a box read as a box in watabou and
     in 2GIS's 3D mode. The visible walls are the edges facing *against* the lift
-    (`silhouette_edges(outer, -extrusion_dir())`), courtyard walls the hole edges facing
+    (`silhouette_edges(outer, -Lean::dir())`), courtyard walls the hole edges facing
     *along* it; each wall's tone comes from `layers.rs::wall_colors` through the shared
     `buildings/mod.rs::shade_by_light` — the facade colour mixed toward white by
     `outward · map::sun_light() × WALL_LIT_MIX` (0.18) when lit, toward black by
@@ -1127,7 +1127,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `ARCH_HEIGHT` (6 real metres — 3 is physical but read as 2 px on a tall slab) as a
   fraction of *that building's* height, `band × 6/height`, never taller than the wall.
   Openings are looked up only on the walls the mode actually draws — `arch_openings`
-  takes a `facing` (2.5D: `-extrusion_dir()`, so south **and** west walls; facade band:
+  takes a `facing` (2.5D: `-Lean::dir()`, so south **and** west walls; facade band:
   south only) — because `push_wall_with_openings` matches an opening to its wall by exact
   edge endpoints, and a wall family the lookup does not know about would draw solid. In
   2.5D the wall is **really cut** (side pieces + a lintel above,
