@@ -24,9 +24,10 @@ pub use self::cars::CarStyle;
 // (`car_gallery` рисует под рядами саму проезжую часть)
 pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
-// `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
-// том же асфальте, что в городе
-pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle};
+// `ROAD_COLOR` и `smooth_path` наружу по той же причине: ряд машин витрины
+// обязан стоять на том же асфальте, что в городе, а асфальт — на той же
+// сглаженной осевой
+pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 pub use self::surface::SurfaceStyle;
 pub use self::tram::TramStyle;
@@ -182,11 +183,16 @@ impl Plugin for MapPlugin {
                     // вовсе; порог у него свой, ближе зданиевого. Тумблер и
                     // ручка занятости идут одной регистрацией через `or_else`:
                     // две в одном расписании могли бы сработать в одном кадре
-                    // и заспавнить слой дважды
+                    // и заспавнить слой дважды. `RoadStyle` здесь же: ряд стоит
+                    // по сглаженной осевой, и смена Smoothing двигает его
+                    // вместе с асфальтом
                     (
                         zoom::update_zoom_bucket::<cars::CarLods>,
-                        cars::rebuild_cars
-                            .run_if(retuned::<cars::CarZoomBucket>.or_else(retuned::<CarStyle>)),
+                        cars::rebuild_cars.run_if(
+                            retuned::<cars::CarZoomBucket>
+                                .or_else(retuned::<CarStyle>)
+                                .or_else(retuned::<RoadStyle>),
+                        ),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

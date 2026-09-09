@@ -19,15 +19,15 @@
 //! Расстановка детерминирована (ГПСЧ Лемера, засеянный первой точкой улицы),
 //! так что от запуска к запуску ряд стоит одинаково. Виден он только вблизи:
 //! [`CarZoomBucket`] снимает слой целиком, когда машина становится мельче
-//! пары пикселей.
+//! шести пикселей.
 
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, RoadLine};
-use crate::map::roads::is_carriageway;
 use crate::map::roads::junctions::{self, MarkingBreaks};
+use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -58,8 +58,9 @@ const END_MARGIN: f32 = 2.0;
 const JUNCTION_CLEARANCE: f32 = 5.0;
 
 /// Палитра кузовов, по долям близкая к тому, что видно на снимке русского
-/// города: белый, серебро и серый — половина ряда, чёрный — четверть,
-/// остальное цветное.
+/// города. Слот выбирается равномерно, поэтому доля цвета — это счёт слотов:
+/// светлого ахроматического (белый, серебро, серый, тёмно-серый) — две пятых,
+/// чёрного — пятая часть, остальное цветное.
 const CAR_COLORS: [Color; 10] = [
     Color::srgb(0.78, 0.78, 0.77),
     Color::srgb(0.72, 0.73, 0.74),
@@ -102,8 +103,8 @@ impl Default for CarStyle {
 pub struct CarLayerTag;
 
 /// Ступени зума слоя машин: ближе порога — ряды на месте, дальше слоя нет
-/// вовсе. Машина в 4.4 м на 0.8 м/px это пять пикселей; ещё дальше ряд
-/// превращается в мерцающий пунктир вдоль улицы.
+/// вовсе. Машина в 4.4 м на 0.8 м/px это пять с половиной пикселей; ещё
+/// дальше ряд превращается в мерцающий пунктир вдоль улицы.
 pub enum CarLods {}
 
 impl ZoomLods for CarLods {
@@ -122,12 +123,16 @@ struct Car {
 }
 
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_cars(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     bucket: Res<CarZoomBucket>,
     style: Res<CarStyle>,
+    // сглаживание осевой: ряд стоит по той же ломаной, по которой `map::roads`
+    // кладёт ленту асфальта
+    road_style: Res<RoadStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
@@ -150,7 +155,7 @@ pub fn rebuild_cars(
     // прежде, чем его заводить
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
-    let cars = park_cars(&map.roads, &junctions, *style);
+    let cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
     let builder = mesh_cars(&cars);
     let count = cars.len();
     let vertices = builder.vertex_count();
@@ -185,9 +190,12 @@ pub fn rebuild_cars(
 /// что и город: про шаг, палитру, разрывы на перекрёстках и правило излома
 /// витрина не знает ничего и знать не должна — иначе она показывает свою
 /// геометрию, а не игровую.
-pub fn cars_mesh(roads: &[RoadLine], style: CarStyle) -> MeshBuilder {
+///
+/// `smoothing` — то же, с чем витрина кладёт под ряд асфальт: осевая у ленты и
+/// у ряда обязана быть одна.
+pub fn cars_mesh(roads: &[RoadLine], style: CarStyle, smoothing: RoadSmoothing) -> MeshBuilder {
     let junctions = junctions::marking_breaks(roads, is_carriageway);
-    mesh_cars(&park_cars(roads, &junctions, style))
+    mesh_cars(&park_cars(roads, &junctions, style, smoothing))
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.
@@ -195,12 +203,22 @@ pub fn cars_mesh(roads: &[RoadLine], style: CarStyle) -> MeshBuilder {
 /// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
 /// поэтому `roads` — весь срез карты, а не отфильтрованный список
 /// парковочных.
-fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks, style: CarStyle) -> Vec<Car> {
+fn park_cars(
+    roads: &[RoadLine],
+    junctions: &MarkingBreaks,
+    style: CarStyle,
+    smoothing: RoadSmoothing,
+) -> Vec<Car> {
     let mut cars = Vec::new();
     for (index, road) in roads.iter().enumerate() {
         if !parkable(road) {
             continue;
         }
+        // осевая та же, по которой `map::roads` строит ленту: по сырым точкам
+        // OSM ряд на изломе съезжает с асфальта на тротуар, потому что Chaikin
+        // срезает вершину на метры. Арок здесь не бывает — `is_carriageway` их
+        // отсеял, — поэтому `smooth_path`, а не `centerline`
+        let centre = smooth_path(&road.points, road.width, smoothing);
         let mut rng = Lcg::new(seed_from_point(
             road.points.first().copied().unwrap_or(Vec2::ZERO),
         ));
@@ -209,13 +227,13 @@ fn park_cars(roads: &[RoadLine], junctions: &MarkingBreaks, style: CarStyle) -> 
         // односторонняя — один ряд, справа по ходу: движение правостороннее, и
         // у половины разделённого проспекта справа бордюр, а слева
         // разделительная. Порядок точек way совпадает с направлением потока
-        // (`oneway=-1` развёрнут при разборе), поперечная `across` смотрит
-        // влево, поэтому правая сторона — это `-1`
+        // (`oneway=-1` развёрнут при разборе), а поперечная в [`park_along`]
+        // (`direction.perp()`) смотрит влево, поэтому правая сторона — `-1`
         let sides: &[f32] = if road.oneway { &[-1.0] } else { &[-1.0, 1.0] };
         for &side in sides {
             park_along(
                 &mut cars,
-                road,
+                &centre,
                 side * offset,
                 &junctions.breaks[index],
                 style.occupancy,
@@ -245,13 +263,13 @@ fn parkable(road: &RoadLine) -> bool {
 /// рвался, то удваивался.
 fn park_along(
     cars: &mut Vec<Car>,
-    road: &RoadLine,
+    points: &[Vec2],
     offset: f32,
     junctions: &[Break],
     occupancy: f32,
     rng: &mut Lcg,
 ) {
-    let (along, total) = arclengths(&road.points);
+    let (along, total) = arclengths(points);
     if total <= 2.0 * END_MARGIN {
         return;
     }
@@ -264,10 +282,10 @@ fn park_along(
     while step <= total - END_MARGIN {
         let at = step;
         step += CAR_PITCH;
-        let Some((point, direction)) = place_on_path(&road.points, &along, at) else {
+        let Some((point, direction)) = place_on_path(points, &along, at) else {
             continue;
         };
-        let place = point + Vec2::new(-direction.y, direction.x) * offset;
+        let place = point + direction.perp() * offset;
         if junctions
             .iter()
             .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
@@ -335,7 +353,7 @@ fn mesh_cars(cars: &[Car]) -> MeshBuilder {
 /// Прямоугольник кузова, сдвинутый на `offset` (для тени — по свету).
 fn body(car: &Car, offset: Vec2) -> [Vec2; 4] {
     let half_length = car.along * (CAR_LENGTH / 2.0);
-    let half_width = Vec2::new(-car.along.y, car.along.x) * (CAR_WIDTH / 2.0);
+    let half_width = car.along.perp() * (CAR_WIDTH / 2.0);
     let at = car.at + offset;
     [
         at - half_length - half_width,
@@ -348,12 +366,8 @@ fn body(car: &Car, offset: Vec2) -> [Vec2; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::fixture;
+    use crate::map::osm::fixture::street;
     use crate::map::roads::junctions::JUNCTION_MARGIN;
-
-    fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
-        fixture::street(points, width)
-    }
 
     /// Расстановка по срезу целиком — так же, как её зовёт пересборка слоя.
     fn park(roads: &[RoadLine]) -> Vec<Car> {
@@ -365,6 +379,7 @@ mod tests {
             roads,
             &junctions::marking_breaks(roads, is_carriageway),
             style,
+            RoadSmoothing::Off,
         )
     }
 
@@ -560,6 +575,50 @@ mod tests {
         assert_eq!(cars.len(), again.len());
         for (car, twin) in cars.iter().zip(&again) {
             assert_eq!(car.at, twin.at);
+        }
+    }
+
+    /// Наименьшее расстояние от точки до ломаной — тем же способом, каким
+    /// глаз проверяет, лежит ли машина на асфальте.
+    fn distance_to_path(points: &[Vec2], at: Vec2) -> f32 {
+        points
+            .windows(2)
+            .map(|link| {
+                let span = link[1] - link[0];
+                let t = (at - link[0]).dot(span) / span.length_squared().max(f32::EPSILON);
+                at.distance(link[0] + span * t.clamp(0.0, 1.0))
+            })
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
+        // излом 30° на звеньях по 40 м: Chaikin срезает вершину на два метра,
+        // и ряд по сырым точкам вставал бы за кромкой
+        let points = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(40.0, 0.0),
+            Vec2::new(40.0 + 40.0 * 0.866, 20.0),
+        ];
+        let road = street(points, 8.0);
+        let style = CarStyle {
+            visible: true,
+            occupancy: 1.0,
+        };
+        let cars = park_cars(
+            std::slice::from_ref(&road),
+            &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
+            style,
+            RoadSmoothing::Light,
+        );
+        assert!(!cars.is_empty());
+        let drawn = smooth_path(&road.points, road.width, RoadSmoothing::Light);
+        for car in &cars {
+            let off = distance_to_path(&drawn, car.at);
+            assert!(
+                off <= road.width / 2.0 - CAR_WIDTH / 2.0 + 0.01,
+                "кузов в {off} м от нарисованной осевой"
+            );
         }
     }
 }

@@ -45,25 +45,30 @@
 mod panel;
 mod params;
 mod scene;
+#[path = "../gallery_shot.rs"]
+mod shot;
 
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::sprite::Anchor;
 use bevy::sprite_render::AlphaMode2d;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
 use qwe::map::cars::cars_mesh;
 use qwe::map::osm::RoadLine;
-use qwe::map::{CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin};
+use qwe::map::{
+    CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, RoadSmoothing,
+    smooth_path,
+};
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
 use crate::panel::{
     spawn_panel, spawn_readout, sync_param_rows, sync_reset_button, update_readout,
 };
 use crate::params::Tuning;
+use crate::shot::{ShotRequest, auto_shot, request_shot};
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 900.0;
@@ -180,7 +185,13 @@ fn main() {
         .insert_resource(ClearColor(Ground::default().color()))
         .add_systems(
             Startup,
-            (spawn_camera, spawn_labels, spawn_panel, spawn_readout),
+            (
+                spawn_camera,
+                spawn_labels,
+                spawn_panel,
+                spawn_readout,
+                request_shot("CAR_GALLERY_SHOT"),
+            ),
         )
         .add_systems(
             Update,
@@ -197,50 +208,11 @@ fn main() {
                 (rebuild_gallery, sync_param_rows, sync_reset_button)
                     .run_if(resource_changed::<Tuning>),
                 apply_ground.run_if(resource_changed::<View>),
-                auto_shot.run_if(|| shot_path().is_some()),
+                auto_shot.run_if(resource_exists::<ShotRequest>),
             )
                 .chain(),
         )
         .run();
-}
-
-/// Куда класть автоснимок витрины, если он заказан переменной окружения.
-fn shot_path() -> Option<String> {
-    std::env::var("CAR_GALLERY_SHOT").ok()
-}
-
-/// Кадр поднятия окна, кадр снимка и кадр выхода — числа и причина те же, что
-/// у витрины кровель: сетка строится в `Update`, а на диск снимок пишет
-/// наблюдатель, а не эта система.
-const SHOT_RAISE_FRAME: u32 = 5;
-const SHOT_FRAME: u32 = 30;
-const SHOT_EXIT_FRAME: u32 = SHOT_FRAME + 30;
-
-/// Снимок витрины и выход — единственный способ посмотреть на неё из сессии:
-/// BRP у примера нет.
-fn auto_shot(
-    mut commands: Commands,
-    mut frame: Local<u32>,
-    mut exit: MessageWriter<AppExit>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
-) {
-    *frame += 1;
-    let Some(path) = shot_path() else {
-        return;
-    };
-    if *frame == SHOT_RAISE_FRAME {
-        // трогаем ровно на одном кадре: всякое взятие `&mut Window` метит его
-        // изменённым, и `changed_windows` перебирал бы окно каждый кадр
-        window.focused = true;
-    }
-    if *frame == SHOT_FRAME {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path));
-    }
-    if *frame == SHOT_EXIT_FRAME {
-        exit.write(AppExit::Success);
-    }
 }
 
 /// Улицы всех клеток в мировых координатах: локальная геометрия клетки,
@@ -373,9 +345,12 @@ fn rebuild_gallery(
 
     let mut asphalt = MeshBuilder::default();
     let road_color = ROAD_COLOR.to_linear();
+    // город кладёт ленту по сглаженной осевой; витрина обязана класть её так
+    // же, иначе показывает не игровую геометрию, а свою
+    let smoothing = RoadSmoothing::default();
     for road in &roads {
         asphalt.push_ribbon(
-            &road.points,
+            &smooth_path(&road.points, road.width, smoothing),
             false,
             road.width,
             road_color,
@@ -390,6 +365,7 @@ fn rebuild_gallery(
             visible: true,
             occupancy: tuning.occupancy,
         },
+        smoothing,
     );
 
     // асфальт непрозрачен, у машин тень полупрозрачна — как в игре, два
