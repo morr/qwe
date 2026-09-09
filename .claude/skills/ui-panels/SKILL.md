@@ -65,13 +65,22 @@ did not fit 1080 px and ran off the top of the screen.
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
   palette, and only the halo is wanted. `Msaa::Off` stays (`camera.rs`), and UI is drawn
   after post-processing, so panels never bloom.
-- **Sun section** (`ui/sun.rs`, Map tab) — two knobs on `map::SunStyle`, azimuth (0–360°,
+- **Sun section** (`ui/sun.rs`, Map tab) — two knobs on `map::SunStyle`, azimuth (0–355°,
   step 5) and elevation (15–80°, step 1). They are the most expensive knobs on the panel:
   a change rebuilds the building layers **including the shadow union**, the tree crowns,
   the car layer and the roof material's uniform, because every one of those bakes the light
-  into vertex colours or geometry. The steps are deliberately coarse for that reason. The
+  into vertex colours or geometry — 120–200 ms on Tula for the buildings alone. So the steps
+  are coarse, and the section is the one place where **the knob's resource is not what the
+  map follows**: the rows write `SunStyle` like any other kit rows, and `map::sun::settle_sun`
+  copies it into `SunOnMap` after 0.35 s of quiet, which is what every rebuild is gated on.
+  Nothing in `ui/` knows about that — the debounce sits between the setting and the map, not
+  inside the panel, precisely so a section stays a section.
+  The azimuth top is 355 and not 360 because 360° is the same sun as 0° — a scale with equal
+  ends gives 73 positions for 72 directions and sticks instead of turning through zero. The
   elevation floor is 15°, not 0: `cot 5°` is 11 metres of shadow per metre of height, and
-  every building would blanket its block.
+  every building would blanket its block; a value from outside the scale (an older
+  `settings.toml`, a BRP write) is clamped on the read, in `SunStyle::elevation()`.
+  The same two knobs stand in the `roof_gallery` example, over the same globals.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
   `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
   `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,
@@ -112,7 +121,7 @@ did not fit 1080 px and ran off the top of the screen.
   `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
   into the Nav tab's crowd groups — they are about movement.
-- **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Noise.
+- **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Sun → Noise.
   **Roads** (`ui/roads.rs`): five cycle rows on `RoadStyle` — joins, smoothing, casing,
   **sidewalks**, **markings** — plus **Tram**, the one row of a *different* resource
   (`TramStyle::visible`, off by default). The

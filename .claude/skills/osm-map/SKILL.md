@@ -692,10 +692,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     wall masks the shadow and a shadow never lands on a same-height roof: the cheap
     stand-in for real height-aware casting; still above the portal and corpses, which
     are outdoors and in shadow by meaning). Per contiguous **silhouette chain** of the
-    footprint (edges whose outward normal faces the 30° light — `map/mod.rs::SHADOW_DIR`,
+    footprint (edges whose outward normal faces the light — `map::shadow_dir()`,
     one source for building and tree shadows alike) one swept
     polygon `[chain, chain + offset reversed]`, offset = height ×
-    **`map::shadow_length_scale()`** clamped to 3–45 m. Not per-edge quads — on staircase
+    **`map::shadow_length_scale()`** clamped to `SHADOW_LENGTH_RANGE` (3–45 m **at the
+    default sun**, both ends multiplied by `map::sun_stretch()`). Not per-edge quads — on staircase
     facades those overlapped
     along the shadow axis and the translucency stacked into stripes; a chain sweep
     cannot self-intersect (a silhouette edge's perp-step equals `outward·d > 0`, so the
@@ -704,11 +705,33 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     first, in `push_contour`) into disjoint shapes-with-holes, so the translucent layer
     never overlaps itself anywhere: no double-darkening between wings of one block or
     neighbouring buildings (unlike tree shadows, which still stack).
-    - **The sun has an elevation now.** `SUN_ELEVATION_DEG` (59°, Tula's summer noon)
-      gives `shadow_length_scale() = cot 59° = 0.601` — numerically the old bare 0.6, but
-      derived, and the elevation is what you change to move it. The azimuth stays
-      `SHADOW_DIR`; together they are the one light every tone on the map answers to
-      (`shade_by_light`, the roof shader's `light` uniform, the clutter shadows).
+    - **The sun is two knobs, not a constant** (`map/sun.rs`, `SunStyle`, section *Sun*).
+      Azimuth (default 300°) and elevation (default 59°, Tula's summer noon) replace what
+      used to be `SHADOW_DIR` and `SUN_ELEVATION_DEG`; the default of each is numerically
+      the old constant, so nothing about the default picture moved. Everything reads it
+      through the process global — `shadow_dir()`, `sun_light()`,
+      `shadow_length_scale() = cot(elevation)` and `sun_stretch()`, the last being that
+      cotangent *relative to the default*, by which every length that was calibrated at
+      59° is multiplied. Those lengths are the point: the clamp above and the crowns'
+      shadow heights are numbers picked by eye at `cot 59° = 0.6`, and a fixed 45 m ceiling
+      would have made every building above 12 m cast the same shadow at 15°.
+      **A shadow length written without `sun_stretch()` is a bug in the making** — it will
+      look right at the default and wrong at both ends of the slider.
+    - **The clamp on the elevation is on the read** (`SunStyle::elevation()`, the
+      `PolymeshDebug::radius()` precedent): the setting is persisted, and `elevation = 0`
+      from a hand-edited `settings.toml` or a BRP write gives an infinite cotangent, i.e.
+      NaN geometry in `earcutr` and `i_overlay`.
+    - **The slider is not the map's sun.** `SunStyle` is what the knob writes; **`SunOnMap`**
+      is what the map is built with, and `settle_sun` (`PreUpdate`) copies one into the
+      other after `SUN_SETTLE` (0.35 s) of quiet. Every rebuild and the prefs write are
+      gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
+      scale is a full building rebuild with its shadow union (120–200 ms) plus 15 k crowns
+      plus the car layer, and there are seventy divisions on the scale.
+    - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
+      is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
+      first `Main` pass is *after* `Startup`: without the seed the `light` uniform would
+      keep the compile-time azimuth for the life of the process, and seam-metal ribs would
+      be lit from 300° while the walls and shadows used the saved angle.
     - **Only the sweeps go into the union.** A **contact skirt** was tried and taken back
       out: every footprint also entered the union expanded outward by 1.1 m, to bind the
       building to the ground with a dark rim the way a photo does and to darken the ground
@@ -745,7 +768,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       takes vertices off the most expensive layer here.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
-      **height mode** changed (`mode.is_changed()`): it does not depend on the roof-clutter
+      **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
+      latter `Res<SunOnMap>`): it does not depend on the roof-clutter
       zoom bucket, and it is the single most expensive thing here — 90 ms of a 116 ms
       build on Tula. `BuildingPlan { mode,
       bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
@@ -1055,11 +1079,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     slab only in a narrow band, so most blocks came out with no penthouse at all.
   - **Shadows are opaque.** The building layer draws without blending, so a translucent
     shadow would not mix; each item's shadow is the roof colour mixed 30 % toward black,
-    swept the item's own height × `SHADOW_LENGTH_SCALE` along `SHADOW_DIR`. The sweep is
+    swept the item's own height × `map::shadow_length_scale()` along `shadow_dir()`. The
+    sweep is
     the two silhouette edges plus the offset rectangle — the same construction the
     buildings' own shadows use, and for the same reason: for a convex base that *is* the
     missing part of the union, and no convex hull has to be built. (The first version
     swept all four edges; two of them were always inside the union.)
+    The length is **cut at the edge of the roof** (`shadow_reach`: the nearest hit of the
+    shadow ray with the outline, from each corner of the base, outer ring and courtyards
+    alike). Physically the shadow would go over the edge, and on a photo it does — but this
+    one is drawn opaque and in *this* roof's colour, inside the merged building mesh, so
+    past the edge it would be a dark bar lying on the neighbour's roof and on the ground.
+    At the default 59° a 1 m shaft fits inside `EDGE_MARGIN` and nothing is cut; at 15° a
+    3 m lift penthouse wants 11 m, i.e. the defect appears exactly at the end of the slider
+    the elevation knob exists for.
   - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
     it cannot be hidden without rebuilding, since it lives in the same merged mesh as
     the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /

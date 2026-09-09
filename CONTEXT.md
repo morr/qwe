@@ -215,7 +215,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   cell), how much water stands on it, and — on every material — how faded and dirty it is.
   Every flat roof of the city, in both flat modes and 2.5D, is laid by one call —
   **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
-  it, a 0.7 m inset band lit by `SHADOW_DIR`; that is gone, because it is the same
+  it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
   small hip, and a real hip could not be told from a flat roof. Strength — `RoofStyle::texture`
   (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
@@ -255,14 +255,26 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **azimuth** (clockwise from north; the default 300° puts the shadow down-right at 30°,
   the old `SHADOW_DIR` exactly) and **elevation** (default 59°, the summer noon of Tula's
   latitude — the hour a city is photographed from the air), from which
-  **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of height.
-  Section *Sun*, persisted. **It is read through a process global**, not a `Res`, for the
+  **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of height
+  and **`sun_stretch()`** — the same number relative to that default, which is what every
+  length calibrated at 59° is multiplied by (the buildings' `SHADOW_LENGTH_RANGE`, the
+  crowns' shadow heights). Section *Sun*, persisted, and the same two knobs stand in
+  `roof_gallery`. **It is read through a process global**, not a `Res`, for the
   same reason the navtile size is (`settings::navtile_size`): `shade_by_light`, the shadow
-  sweep, the roof clutter and the cars are pure functions deep inside mesh building.
-  The rule is the navtile's too — **only `apply_sun` writes it (in `PreUpdate`, before both
-  the world build and the Update rebuilds), and everything that depends on it rebuilds on
-  the same change**: building layers with their shadows, tree crowns, cars, and the roof
-  material's `light` uniform.
+  sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
+  the global holds is the ready shadow vector and cotangent, not the two angles: it is read
+  hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are
+  not hoisted out of a loop. **Only `apply_sun` writes it, in `PreUpdate`** — which makes
+  the global readable on the main thread between `PreUpdate` and the end of `Update`, and
+  nowhere else (a reader in `PostUpdate`, in the render world or on a worker thread must
+  take **`SunOnMap`** as a resource instead).
+- **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
+  slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
+  it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
+  building layers with their shadows, tree crowns, cars, the roof material's `light`
+  uniform) and that the settings file is written from. One division of the slider costs a
+  full building rebuild with its shadow union, so a drag across the scale would otherwise
+  be seventy of them.
 - **Soft shadow** (`map/buildings/layers.rs::shadow_builder`) — a building's shadow is no
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
