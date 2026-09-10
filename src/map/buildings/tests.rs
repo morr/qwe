@@ -314,8 +314,16 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
     let far = cells.iter().fold(0.0_f32, |far, cell| far.max(cell[0]));
     let top = cells.iter().fold(0.0_f32, |top, cell| top.max(cell[1]));
     let bottom = cells.iter().fold(0.0_f32, |low, cell| low.min(cell[1]));
-    // 15 м это пять этажей по три, и верх стены попадает ровно на пятый
-    assert!((top - 5.0).abs() < 1e-3, "верх стены — целый этаж: {top}");
+    // 15 м это пять этажей по три, а **верх стены** приходится выше пятого:
+    // над последним этажом лежит запас под карниз (`PARAPET_CELLS`), и он
+    // настоящий кусок стены, а не полоса, закрашенная внутри верхнего этажа.
+    // Целость счёта это не ломает — она про границы этажей, и пятая по-прежнему
+    // целая.
+    let expected_top = 5.0 + crate::map::meshing::PARAPET_CELLS;
+    assert!(
+        (top - expected_top).abs() < 1e-3,
+        "верх стены — пятый этаж плюс карниз: {top}"
+    );
     assert!(bottom.abs() < 1e-3, "низ стены — ноль: {bottom}");
     // длинная стена 40 м по 3.2 — тринадцать панелей, и её край ровно на них
     assert!(
