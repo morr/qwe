@@ -580,8 +580,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the track of a car — measured with `fract` of the lane index, so every lane gets its
   own pair), **repair patches** (6 m world cells, the top 12 % of a hash go darker: fresh
   bitumen is darker than old) and **kerb dirt** (0.7 m of sand and grit along the edge).
-  Only ribbons that carry lanes get any of it — the parking lot rides the same
-  `SurfaceKind::Street` material and would otherwise grow ruts of its own.
+  Wear rides the **markings code**: the lane count comes from the very
+  `ATTRIBUTE_RIBBON.w` the lane lines read, which `roads::road_markings` fills only for a
+  carriageway of two lanes or more, and only while `RoadStyle.markings` is on. So wear
+  shows up exactly where the lines do — a one-lane street, a markings-off style, and any
+  areal fill of the same `SurfaceKind::Street` material (the parking lot among them,
+  which carries no ribbon at all) all stay flat.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges

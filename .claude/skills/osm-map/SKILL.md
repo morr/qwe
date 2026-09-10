@@ -681,17 +681,27 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   — three effects that keep a road from being one flat tone, all in the **ribbon frame**
   so they follow the lane rather than the compass:
   - **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m either side of each lane's
-    middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +6 %. The lane is found
+    middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +7.5 %. The lane is found
     from `fract` of `(across + half_width) / lane_width`, so **every** lane gets its own
     pair without knowing how many there are;
-  - **repair patches** — 6 m cells hashed by world position, the top 12 % going 9 %
-    darker: fresh bitumen is darker than the old surface around it;
+  - **repair patches** — 6 m cells hashed by world position: the top 8 % of the hash go
+    the full 9 % darker and the 4 % below them ramp into it
+    (`smoothstep(PATCH_THRESHOLD 0.88, 0.92, hash)`), so a patch has no hard edge —
+    fresh bitumen is darker than the old surface around it;
   - **kerb dirt** — 7 % darker over the outer `EDGE_DIRT_REACH` 0.7 m, where the sand
     and grit collect.
-  Everything fades by `visible(...)` like the rest of the surface texture. The block is
-  gated on `lanes >= 1`, which is what keeps it off the **parking lot**: that layer uses
-  the same `Street` material but carries no ribbon, and it would otherwise have grown
-  ruts across the stalls.
+  Everything fades by `visible(...)` like the rest of the surface texture — the ruts by
+  their lane pitch, the patches by their 6 m cell, the kerb dirt by twice its reach
+  (1.4 m), so a band under half a pixel does not flicker along the road edge. The block is
+  gated on `lanes >= 2`, and `lanes` is decoded from the same `ATTRIBUTE_RIBBON.w` the
+  markings ride on: `roads::road_markings` fills it only for a carriageway of two lanes or
+  more, and only while `RoadStyle.markings` is on. So **wear reaches exactly the roads the
+  lane lines reach** — a one-lane street gets none, turning Markings off turns wear off
+  with it, and an areal fill of the same `Street` material carries no ribbon and stays
+  flat — the **parking lot** among them, which shares the material and would otherwise
+  have grown ruts across its stalls. The gate is `>= 2` rather than `>= 1` because
+  `Markings::encode` never carries a single lane: `>= 1` read as a wider rule than the
+  code could ever deliver.
 - **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
