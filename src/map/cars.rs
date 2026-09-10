@@ -24,6 +24,7 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::map::buildings::LayerCost;
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, RoadLine};
 use crate::map::roads::junctions::{self, MarkingBreaks};
@@ -122,6 +123,43 @@ struct Car {
     color: Color,
 }
 
+/// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
+/// `buildings::measure_layers`. Ручки берутся игровые: бенч меряет тот слой,
+/// который город строит на дефолтных настройках, а не произвольный.
+///
+/// Отдаёт число машин и цену теми же [`LayerCost`], что зданиевые слои:
+/// миллисекунды — ровно то, ради чего замер и выносили из живого приложения, а
+/// `breaks` отдельной строкой — та же разбивка, что печатает `rebuild_cars`
+/// (разрывы считаются на каждую пересборку, и это решение перемеряется здесь).
+pub fn measure_cars(roads: &[RoadLine]) -> (usize, Vec<LayerCost>) {
+    let started = std::time::Instant::now();
+    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let breaks_took = started.elapsed();
+    let started = std::time::Instant::now();
+    let cars = park_cars(
+        roads,
+        &junctions,
+        CarStyle::default(),
+        RoadStyle::default().smoothing,
+    );
+    let builder = mesh_cars(&cars);
+    (
+        cars.len(),
+        vec![
+            LayerCost {
+                name: "breaks",
+                vertices: 0,
+                elapsed: breaks_took,
+            },
+            LayerCost {
+                name: "cars",
+                vertices: builder.vertex_count(),
+                elapsed: started.elapsed(),
+            },
+        ],
+    )
+}
+
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
 #[allow(clippy::too_many_arguments)]
 pub fn rebuild_cars(
@@ -150,9 +188,11 @@ pub fn rebuild_cars(
     // обязан прерваться и там, где к жилой улице примыкает другая жилая.
     //
     // Считаются заново на каждую пересборку слоя, а не один раз на загрузку
-    // мира: по Туле это 0.76 мс из 5.4 мс сборки всего слоя — на фоне 70 мс
-    // зданиевого слоя кеш ради этого не окупается, и мерить надо было
-    // прежде, чем его заводить
+    // мира: по Туле это около четверти сборки слоя машин, а весь слой —
+    // проценты от зданиевого, так что кеш ради этого не окупается, и мерить
+    // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
+    // время зависит от App Nap, перемеряет его `measure_cars` из
+    // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
     let cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
@@ -183,8 +223,9 @@ pub fn rebuild_cars(
     );
 }
 
-/// Меш припаркованных рядов по готовому срезу улиц — единственная дверь
-/// наружу, для витрины `examples/demos/car_gallery`.
+/// Меш припаркованных рядов по готовому срезу улиц — дверь наружу для витрины
+/// `examples/demos/car_gallery` (геометрию наружу отдаёт только она; второй
+/// выход, [`measure_cars`], отдаёт не меш, а его цену).
 ///
 /// Открыта затем, что клетки витрины обязаны строиться **теми же вызовами**,
 /// что и город: про шаг, палитру, разрывы на перекрёстках и правило излома

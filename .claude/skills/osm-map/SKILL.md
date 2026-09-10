@@ -299,6 +299,33 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
   (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
   them would move every door and every tree in every city.
+- **Measuring the layer build** — `cargo run --example map_meshing -- [city slug]`
+  (`examples/bench/map_meshing.rs`) prints vertices and milliseconds per layer for every
+  height mode × clutter bucket, plus the car layer in the same `LayerCost` rows with its
+  junction breaks split out (milliseconds too — that is what the bench is for), straight
+  from the Overpass cache
+  with **no window and no GPU**. That is the point of it: on macOS an invisible or
+  minimised window is put under App Nap, and a build that reports 116 ms on an awake screen
+  reports five seconds on a locked one — the `building meshing:` log line is only
+  trustworthy while the screen is awake. `map::measure_layers` / `map::measure_cars` are
+  the entry points; `measure_layers` takes the two decisions the measurement actually reads
+  (height mode + roof clutter), not a `BuildingPlan` — its `shadows` field would have been
+  ignored — and they call exactly the builders `spawn_buildings` calls. **Absolute
+  numbers still depend on the machine's power state** (with the display asleep everything
+  is 2–3× slower), so compare runs, not runs against the log.
+  **Shadows are measured at the default sun.** The sweep length and direction come from the
+  process global of `map/sun.rs`, which in the app only `apply_sun` writes; the bench has no
+  app, so it sets the sun itself — `map::apply_sun_style(SunStyle::default())` — and prints
+  the azimuth/elevation in its header line. The elevation drives `sun_stretch`, i.e. the
+  sweep length and the union's area, so a run that did not state its sun would not be
+  comparable with the next one; the live app builds with the sun from `settings.toml`, which
+  is a second reason a log line and a run are not comparable.
+  **What it covers is the building layers and the cars, and nothing else yet.** The road,
+  rail, tram and surface/tree layers are still measurable only from the app log
+  (`road meshing:`, `rail meshing:`, `tram meshing:`) — the same log line App Nap lies
+  about; there is no `measure_roads` / `measure_rails` / `measure_tram` / `measure_surface`,
+  and adding one is the way to extend the bench when a road-style or surface comparison
+  needs the same treatment.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
@@ -574,9 +601,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     are exactly such halves. The same rule is right for an ordinary one-way lane. `across`
     points left, so the right-hand side is `-1`; the direction it is right of is the way's
     own point order, which parse has already normalized (see **RoadLine** above).
-  - **Not cached, and that is measured, not assumed**: `marking_breaks` costs 0.76 ms of the
-    layer's 5.4 ms build on Tula, next to 70 ms for the building layer — a resource cached
-    per world load would not pay for itself.
+  - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is about a
+    quarter of the car layer's own build, and that whole layer is a few percent of the
+    building layer — a resource cached per world load would not pay for itself. Shares rather
+    than the 0.76 ms of 5.4 ms that stood here: those came from the `cars:` log line, and
+    `measure_cars` in `examples/bench/map_meshing` prints the same split offline.
   Colours are a ten-slot
   palette in the shares a photo shows. Every car casts a shadow through the same
   `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
@@ -725,9 +754,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       is what the map is built with, and `settle_sun` (`PreUpdate`) copies one into the
       other after `SUN_SETTLE` (0.35 s) of quiet. Every rebuild and the prefs write are
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
-      scale is a full building rebuild with its shadow union (77–86 ms on Tula, of which the
-      union is 47–56 — measured on an M1 Max through the slider itself) plus 15 k crowns plus
-      the car layer, and there are seventy divisions on the scale.
+      scale is a full building rebuild with its shadow union — most of it the union — plus
+      15 k crowns plus the car layer, and there are seventy divisions on the scale. (The
+      numbers that stood here, 77–86 ms on Tula with 47–56 of it the union, were read off the
+      `building meshing:` line through the slider itself on an M1 Max: absolute milliseconds
+      from the app are only comparable with each other, since App Nap decides them —
+      `examples/bench/map_meshing` is what re-measures the same build offline.)
     - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
       is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
       first `Main` pass is *after* `Startup`: without the seed the `light` uniform would
@@ -771,8 +803,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
       latter `Res<SunOnMap>`): it does not depend on the roof-clutter
-      zoom bucket, and it is the single most expensive thing here — 90 ms of a 116 ms
-      build on Tula. `BuildingPlan { mode,
+      zoom bucket, and it is the single most expensive thing here — **60–80 % of the whole
+      building build** on Tula (41–46 ms of a 52–70 ms build, by height mode and clutter
+      bucket, in `examples/bench/map_meshing` runs on the `dev` profile — the share is lower
+      the more the facades themselves cost;
+      the 90 ms of 116 that used to stand here came off the `building meshing:` line in
+      the app, where the power state sets the scale, so take the share, not the
+      milliseconds). `BuildingPlan { mode,
       bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
       at seven arguments).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes

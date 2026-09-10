@@ -19,8 +19,11 @@ pub mod trees;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-pub use self::buildings::{BuildingHeightMode, extrusion_lift};
-pub use self::cars::CarStyle;
+// `LayerCost`/`measure_layers` (и `measure_cars` ниже) наружу — офлайн-бенчу
+// `examples/bench/map_meshing`: замер сборки слоёв без мира и без GPU. Форма
+// входа у него своя, не `BuildingPlan`, — см. док `measure_layers`
+pub use self::buildings::{BuildingHeightMode, LayerCost, extrusion_lift, measure_layers};
+pub use self::cars::{CarStyle, measure_cars};
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
 pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
@@ -30,8 +33,11 @@ pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // сглаженной осевой
 pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
+// `apply_sun_style` наружу — тому же офлайн-бенчу: тени он собирает игровым
+// билдером, а солнце тому билдеру приходит процессной глобалью
 pub use self::sun::{
-    SunOnMap, SunStyle, apply_sun, shadow_dir, shadow_length_scale, sun_light, sun_stretch,
+    SunOnMap, SunStyle, apply_sun, apply_sun_style, shadow_dir, shadow_length_scale, sun_light,
+    sun_stretch,
 };
 #[cfg(test)]
 pub(crate) use self::sun::{default_sun, sun_at};

@@ -264,7 +264,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
   the global holds is the ready shadow vector and cotangent, not the two angles: it is read
   hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are
-  not hoisted out of a loop. **Only `apply_sun` writes it** — once in `Startup` after
+  not hoisted out of a loop. **In the app only `apply_sun` writes it** (an offline tool with
+  no app and no schedule — the `map_meshing` bench — writes through `map::apply_sun_style`,
+  the plain function `apply_sun` itself calls) — once in `Startup` after
   `seed_sun` (so that `init_roof_material`, which bakes the light into the roof material's
   uniform for the life of the process, reads the *saved* sun and not the compile-time one),
   and then every frame in `PreUpdate`. That makes the global readable on the main thread in
@@ -412,6 +414,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **CarStyle** sits in the same section for the same reason and with the same shape —
   `visible` (**on** by default) and `occupancy` (the share of parking places taken, 0.45),
   the `Cars` and `Occupancy` rows; a change goes through `rebuild_cars` alone.
+- **map_meshing** (`examples/bench/map_meshing.rs`) — offline measurement of the layer build,
+  `cargo run --example map_meshing -- [city slug]`: vertices and milliseconds per
+  building layer for every height mode × roof-clutter bucket, plus the car layer, straight
+  from the Overpass cache with **no window and no GPU**. `map::measure_layers` /
+  `map::measure_cars` are the entry points and call exactly the builders `spawn_buildings`
+  calls. The missing window is the point: macOS App Nap slows an invisible or minimised
+  one, so the `building meshing:` log line is trustworthy only while the screen is awake —
+  and absolute numbers still follow the machine's power state, which is why a run is
+  compared with a run, never with the log. Run it after touching a building or car layer
+  builder.
 
 ## Navigation
 
