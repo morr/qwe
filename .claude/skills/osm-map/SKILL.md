@@ -38,10 +38,14 @@ in `CONTEXT.md` and the detail here in the same change.
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
   `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
   `amenity=parking` (way+rel),
-  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **9** (v3 added `entrance` nodes, v4 `railway`,
+  `leisure=pitch|track|playground|sports_centre|stadium` (way+rel),
+  `barrier=fence|wall|retaining_wall|hedge` (way), `barrier=city_wall`,
+  `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
+  `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **12** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
-  blocks, v9 `amenity=parking`).
+  blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
+  `barrier` fences, v12 the industrial `man_made` cylinders and pipelines).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -171,7 +175,7 @@ in `CONTEXT.md` and the detail here in the same change.
   would put a box under the circle; it also keeps doors and the navmesh off it, which a
   chimney has no use for. Height comes from `height` only (`structure_height`): a
   chimney has no storeys, so `building:levels` is not consulted. Tula: 8 chimneys (4 of
-  them nodes) and 2 water towers, one carrying a size tag; Berlin 2846 cylinders.
+  them nodes, one carrying a size tag) and 2 water towers; Berlin 2846 cylinders.
 - **PipeLine** — an overhead heating main: `man_made=pipeline` centerline + bundle width
   from `count` (`pipe_width`, 0.7 m per pipe clamped 0.9–4 m; Tula runs pairs on twelve
   ways and fours on six). **The above-ground test is inverted** relative to rails and
@@ -772,7 +776,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     (`Z_INDUSTRY_SHADOW` 4.55, beside the building shadow), `industry_walls` (5.06) and
     `industry_tops` (5.07) — **above** the houses, because a works chimney is taller than
     anything around it and on a photo it covers the neighbouring shed, not the other way
-    round.
+    round. **One rung for all five kinds**, from a 12 m tank to a 60 m chimney, so a low
+    tank covers a tall block too — accepted deliberately: the buildings have no height
+    sort of their own either (one `Z_BUILDING` for the whole layer, order inside the mesh
+    by `Lean::depth`), so a height threshold would split the layer into two meshes and pop
+    at the threshold without solving the general case. That one is the joint painter's
+    sort of buildings and cylinders — separate work, like the cylinder-to-cylinder sort
+    below. Tula ships only chimneys and towers, so the pair never occurs on the shipped
+    data.
   - **The shadow is a sweep, not a shifted disc** (`sweep` — the convex hull of the disc
     and its copy, written out by hand as two half-arcs; the buildings get theirs from
     `i_overlay`). A cylinder is solid from the ground to the top, so every height in
@@ -789,9 +800,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     near end of the silhouette open, and through that hole the cylinder's own base
     shadow showed as a dark half-disc under the chimney. The geometry in one line: the
     silhouette of a leaning cylinder is a stadium — the top circle covers
-    `[|lift|−r, |lift|+r]`, the near half of the wall covers `[−r, |lift|−r]`, together
-    the whole stadium, with no foot piece and no seam. With no lean at all (the flat
-    height modes) nothing is emitted — a cylinder standing straight up shows no wall.
+    `[|lift|−r, |lift|+r]`, the near half of the wall covers `[−r, |lift|]`, and the
+    two overlap into the whole stadium, with no foot piece and no seam. With no lean at
+    all (the flat height modes) nothing is emitted — a cylinder standing straight up
+    shows no wall.
   - **The rim** (`RIM_SHARE` 10 % of the radius, 0.25–1 m, 28 % toward black) is the
     tank's coaming or the chimney's wall thickness. Without it the top reads as a sticker.
   - **The pipeline is a fence one storey up**: line plus shadow, `PIPE_HEIGHT` 3 m,
