@@ -215,6 +215,51 @@ fn wall_columns(a: Vec2, b: Vec2) -> f32 {
     ((b - a).length() / PANEL_WIDTH).round().max(1.0)
 }
 
+/// Где вход стоит на грани `a→b`, в метрах от её начала, — или `None`, если он
+/// не на ней. Конец грани не её: это начало следующей, и вход в общей вершине
+/// (а размеченный в OSM вход стоит именно в вершине) достаётся одной из двух.
+fn door_on_edge(door: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
+    let length = (b - a).length();
+    let along = (b - a).try_normalize()?;
+    let offset = door - a;
+    let at = offset.dot(along);
+    match offset.perp_dot(along).abs() <= DOOR_ON_WALL && (0.0..length).contains(&at) {
+        true => Some(at),
+        false => None,
+    }
+}
+
+/// Чья это дверь: номер грани кольца, которой вход принадлежит.
+///
+/// Одной, а не всякой, что оказалась в допуске. [`DOOR_ON_WALL`] — полметра, а
+/// ступенька контура в OSM бывает и в двадцать сантиметров: вход тогда попадал
+/// сразу на две грани, каждая вдвигала полотно внутрь себя ([`push_doors`] —
+/// дверь у края грани сдвигается, чтобы влезть целиком), и на стене выходило
+/// два полотна рядом при одной двери в данных.
+///
+/// Побеждает **ближайшая** грань, при равенстве — та, что раньше в кольце.
+/// Ничью надо разрешать явно: у вырожденного нулевого уступа расстояние до
+/// обеих граней одинаково с точностью до бита, и «строго ближе» тогда не
+/// отсекает ни одну.
+fn door_edge(ring: &[Vec2], door: Vec2) -> Option<usize> {
+    let mut best: Option<(f32, usize)> = None;
+    for index in 0..ring.len() {
+        let from = ring[index];
+        let to = ring[(index + 1) % ring.len()];
+        if door_on_edge(door, from, to).is_none() {
+            continue;
+        }
+        let Some(along) = (to - from).try_normalize() else {
+            continue;
+        };
+        let across = (door - from).perp_dot(along).abs();
+        if best.is_none_or(|(nearest, _)| across < nearest) {
+            best = Some((across, index));
+        }
+    }
+    best.map(|(_, index)| index)
+}
+
 /// Входы этой стены — **из данных**, а не по броску шейдера.
 ///
 /// Дверь дома придумана не здесь: `osm::entrances` ставит её на грань, которая
@@ -270,14 +315,28 @@ fn push_doors(
     let door_up = storey_up * (size.y / STOREY_HEIGHT).min(1.0);
     let seed = (seed_from_point(a) & 0xff) as f32 / 255.0;
 
-    for &door in &building.entrances {
-        let offset = door - a;
-        let at = offset.dot(along);
-        // грань берёт вход, если он лежит на ней и не в её конце: конец — это
-        // начало следующей грани, и та же дверь досталась бы обеим
-        if offset.perp_dot(along).abs() > DOOR_ON_WALL || at < 0.0 || at >= length {
+    // какая грань кольца чья дверь — считается один раз на дом, а не на стену
+    let owners: Vec<Option<usize>> = building
+        .entrances
+        .iter()
+        .map(|&door| door_edge(&building.outer, door))
+        .collect();
+    let mine = building
+        .outer
+        .iter()
+        .position(|&from| from == a)
+        .filter(|index| building.outer[(index + 1) % building.outer.len()] == b);
+
+    for (&door, owner) in building.entrances.iter().zip(&owners) {
+        // вход принадлежит **одной** грани — ближайшей: у ступеньки контура
+        // мельче полуметра его забирали обе, каждая вдвигала полотно внутрь
+        // себя, и на стене выходила двойная дверь
+        if *owner != mine {
             continue;
         }
+        let Some(at) = door_on_edge(door, a, b) else {
+            continue;
+        };
         let half = size.x / 2.0;
         let center = at.clamp(half, length - half);
         // арка — уже проём во всю стену, второго в нём не бывает

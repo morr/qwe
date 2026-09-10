@@ -384,8 +384,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
   *length* at a measured pitch (`ENTRANCE_SPACING` 25 m, floor `ENTRANCE_MIN_SPACING` 12 m),
-  walls a neighbour stands against get none, and the result is deterministic per building
-  (LCG seeded by its first vertex). **A residential building is counted by its plan and
+  walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
+  a step in the outline rather than a facade and gets none either, and the result is
+  deterministic per building (LCG seeded by its first vertex). **A residential building is counted by its plan and
   height as well** (`plan_sections`, a floor under the cohort): 300 m² of plan per подъезд
   at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
   32 × 32 m block, a hundred flats, with one door, and a volume-linear count would charge

@@ -539,6 +539,44 @@ fn a_warehouse_gets_doors_by_its_walls_not_by_its_floor_plan() {
     );
 }
 
+/// Ступенька контура — не фасад: подъезда на четырёхметровом уступе не бывает,
+/// даже если он ближе всех к дороге. Именно так третий подъезд десятиэтажки
+/// вставал на выступ у угла, пока длинная стена оставалась глухой.
+#[test]
+fn a_step_in_the_outline_is_not_a_facade() {
+    // корпус 60 × 14 с четырёхметровым выступом посреди уличной стены —
+    // выступ ближе к дороге, чем сама стена
+    let mut block = building(
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(128.0, 100.0),
+            Vec2::new(128.0, 96.0),
+            Vec2::new(132.0, 96.0),
+            Vec2::new(132.0, 100.0),
+            Vec2::new(160.0, 100.0),
+            Vec2::new(160.0, 114.0),
+            Vec2::new(100.0, 114.0),
+        ],
+        Some(27.0),
+    );
+    block.building_use = BuildingUse::Apartments;
+    let mut map = MapData {
+        buildings: vec![block],
+        roads: vec![road(vec![Vec2::new(0.0, 90.0), Vec2::new(400.0, 90.0)])],
+        ..Default::default()
+    };
+
+    generate_entrances(&mut map);
+    let doors = &map.buildings[0].entrances;
+    assert!(!doors.is_empty());
+    for door in doors {
+        assert!(
+            (door.y - 96.0).abs() > 0.01,
+            "подъезд на торце уступа: {door:?} из {doors:?}"
+        );
+    }
+}
+
 /// Высота — не поправка, а второй множитель: тот же план, вдвое выше дом —
 /// больше подъездов. Ровно этого не хватало когорте, которая видит длину.
 #[test]

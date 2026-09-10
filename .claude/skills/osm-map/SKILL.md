@@ -1142,7 +1142,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       (the old `GATE_WIDE` 0.62 × `GATE_HIGH` 0.50 was exactly that, 2.0 by 1.5 m).
       A door at a ring **vertex** — which is where every real OSM `entrance` sits — is pushed
       inside the wall by half a leaf, and claimed by the edge it *starts*, so the two walls
-      of a corner do not draw it twice. Cost: eight vertices per door, on drawn walls only.
+      of a corner do not draw it twice. **The claim is by the nearest edge, not by every
+      edge in tolerance** (`closer_edge`): `DOOR_ON_WALL` is half a metre and an OSM step
+      can be twenty centimetres, so both edges took the door, each shifted its leaf inward
+      to make it fit, and the wall came out with two doors side by side under a single
+      gizmo. Cost: eight vertices per door, on drawn walls only.
       **Snapping the leaf to its panel instead was rejected**: it saves the geometry but
       leaves up to ±1.6 m between the drawn door and the entrance — the very gap this
       change exists to close — and packing a column index into the material slot caps out at

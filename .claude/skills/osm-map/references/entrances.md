@@ -98,6 +98,16 @@ whole algorithm:
   p10 is 4.5 m, but a navtile is 2 m, so doors closer than ~10 m resolve to the same
   tile and are not distinct targets. `facade_capacity` caps how many doors one edge
   absorbs so a long facade cannot hoard them.
+- **A step in the outline is not a facade** (`ENTRANCE_MIN_FACADE` 6 m). OSM traces a
+  block with two- to four-metre steps — a stair projection, a bay, the joint between two
+  sections — and such an edge is often *nearer the street* than the wall it steps out of,
+  so it scores first and used to take a подъезд: `facade_capacity` returned at least one
+  door for any length at all. Reported from the map and confirmed by a per-facade dump: a
+  ten-storey block put two doors on its 43 m street wall and the third on a 4 m stub by
+  the corner, while its long wing stayed blank. Below the threshold an edge yields
+  nothing and the doors fall through to the next real wall by score. The last-resort pass
+  (a building with no free wall at all, or one made of nothing but steps — a 3 × 3 kiosk)
+  still allows them, since a building with no door drops out of the wander targets.
 - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
   door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
   a door placed there sits *inside* the neighbour: invisible from the street and

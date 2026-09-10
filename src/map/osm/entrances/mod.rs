@@ -163,7 +163,13 @@ fn fill_building(
         })
         .collect();
     let real = doors.len();
-    place_along(&facades, wanted, Some((index, footprints)), &mut doors);
+    place_along(
+        &facades,
+        wanted,
+        Some((index, footprints)),
+        false,
+        &mut doors,
+    );
 
     if !doors.is_empty() {
         let mut entrances: Vec<Vec2> = doors.iter().map(|door| door.at).collect();
@@ -177,10 +183,11 @@ fn fill_building(
             forced: false,
         });
     }
-    // ни одной свободной стены: дом без двери выпал бы из целей блуждания, так
-    // что ставим её на лучшую грань как раньше
+    // ни одной свободной стены — или дом целиком из ступенек: без двери он
+    // выпал бы из целей блуждания, так что ставим её на лучшую грань, не глядя
+    // ни на соседей, ни на длину
     let mut forced = Vec::new();
-    place_along(&facades, 1, None, &mut forced);
+    place_along(&facades, 1, None, true, &mut forced);
     Some(FilledBuilding {
         entrances: forced.into_iter().map(|door| door.at).collect(),
         // дом с размеченной дверью сюда не доходит, так что счётчик считает
@@ -279,13 +286,29 @@ fn score_facades(ring: &[Vec2], roads: &RoadIndex) -> Vec<Facade> {
     facades
 }
 
+/// Короче этого грань — не фасад, а **ступенька контура**, м. Дом в OSM
+/// обводят с уступами в два-четыре метра (выступ лестничной клетки, эркер,
+/// стык секций), и такая грань нередко оказывается у самой дороги, то есть
+/// первой по оценке. Подъезда на ней не бывает: полотно с откосами это уже два
+/// метра, а сам подъезд — это кусок стены, а не торец уступа. Ровно так третий
+/// подъезд тульской десятиэтажки и вставал на четырёхметровый огрызок, пока
+/// длинное крыло оставалось без дверей.
+const ENTRANCE_MIN_FACADE: f32 = 6.0;
+
 /// Сколько дверей забирает себе одна грань. Сверху — [`ENTRANCE_SPACING`]:
 /// длинный фасад не должен собрать все двери дома в кучу. Снизу — жёсткий
 /// предел по [`ENTRANCE_MIN_SPACING`]: двери раскладываются равномерно с шагом
 /// `length / (take + 1)`, поэтому `take` дверей помещаются только при
 /// `length / (take + 1) >= ENTRANCE_MIN_SPACING`. Одну грань всегда берём хотя
 /// бы под одну дверь — иначе у крошечного дома их не осталось бы вовсе.
-fn facade_capacity(length: f32) -> usize {
+///
+/// `stubs` — брать ли в счёт грани короче [`ENTRANCE_MIN_FACADE`]. В обычном
+/// проходе нет; в запасном, когда дому не досталось ни одной двери, да —
+/// у киоска три на три метра других граней и не бывает.
+fn facade_capacity(length: f32, stubs: bool) -> usize {
+    if !stubs && length < ENTRANCE_MIN_FACADE {
+        return 0;
+    }
     let preferred = (length / ENTRANCE_SPACING).floor() as usize + 1;
     let limit = ((length / ENTRANCE_MIN_SPACING).floor() as usize).saturating_sub(1);
     preferred.min(limit).max(1)
@@ -312,6 +335,7 @@ fn place_along(
     facades: &[Facade],
     wanted: usize,
     neighbours: Option<(usize, &FootprintIndex)>,
+    stubs: bool,
     placed: &mut Vec<Door>,
 ) {
     let minimum_squared = ENTRANCE_MIN_SPACING * ENTRANCE_MIN_SPACING;
@@ -324,7 +348,7 @@ fn place_along(
             continue;
         };
 
-        let take = facade_capacity(facade.length).min(wanted - placed.len());
+        let take = facade_capacity(facade.length, stubs).min(wanted - placed.len());
         let step = facade.length / (take + 1) as f32;
         for slot in 1..=take {
             let point = facade.from + direction * (step * slot as f32);
