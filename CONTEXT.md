@@ -249,9 +249,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   two-sash window per panel, a narrower brick one, a small house window, a full-panel
   glazing strip, a high shed ribbon), and whether the wall has **balconies** at all.
   **Both ends of a wall are their own case, and a cell carries exactly one opening.** The
-  **ground floor** takes no balcony and an entrance instead — a doorway on a fifth of the
-  columns, a shopfront lower and taller than the strip above it, a gate on a shed — over a
-  dark **plinth** band. Above the last storey the wall keeps a **cornice**
+  **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
+  above it — and stands on a dark **plinth** band.
+  **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
+  (`layers::push_doors` over `PolyArea::entrances`, code `12`). The shader used to roll an
+  entrance on a fifth of the ground-floor columns, and that door had nothing to do with the
+  entrance the door gizmo shows and the pawn walks to — the drawn one stood where there is
+  no entrance and the entrance stood on blank wall. So the wall now gets two quads per
+  door: a **patch** over the cells the leaf touches — the wall's own frame and cladding,
+  `WallMark::Solid`, so no window peeks out from behind the leaf — and the **leaf** itself,
+  exactly on the entrance point, with a frame of its own that maps the opening to `[0, 1]²`
+  (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
+  (`layers::door_size` — a подъезд, a house door, shop leaves, a shed gate), so the shader
+  needs no scale of its own. Cost: eight vertices per drawn door, and only on walls the
+  extrusion draws at all. Above the last storey the wall keeps a **cornice**
   (`meshing::PARAPET_CELLS`, 0.15 of a cell) — plain wall with no openings and nothing drawn
   in it, because what the top of a wall needs is *room*, not a stripe: the first attempt
   painted a coping inside the gap that was already there and moved nothing. The room is
@@ -274,10 +285,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   never on a wall narrower than three panels. The shader cannot make that call: it knows
   neither the building's use nor how many storeys the wall has in total. That verdict and
   one more travel as the **seed's own value** (`WallFrame::marked`, `WallMark`): `[0, 1)` is
-  a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a **gable** — which
-  continues the wall's pattern through the eaves, that being why it takes the wall's frame
-  at all, but carries **no openings**, since a window on the triangle would be cut by the
-  slope.
+  a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a wall with **no openings**
+  at all (`Solid`) — two things at once, the **gable** (which continues the wall's pattern
+  through the eaves, that being why it takes the wall's frame at all, but where a window
+  would be cut by the slope) and the **patch under a door**.
   A wall **returns before
   the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
   weathering, so a wall's base colour is still the flat fill of before and only its own seams
@@ -374,8 +385,25 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ~98 % of buildings without one. Doors face the street, the count follows building
   *length* at a measured pitch (`ENTRANCE_SPACING` 25 m, floor `ENTRANCE_MIN_SPACING` 12 m),
   walls a neighbour stands against get none, and the result is deterministic per building
-  (LCG seeded by its first vertex). **Real doors always win.** The `doors` debug toggle
-  draws them.
+  (LCG seeded by its first vertex). **A residential building is counted by its plan and
+  height as well** (`plan_sections`, a floor under the cohort): 300 m² of plan per подъезд
+  at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
+  32 × 32 m block, a hundred flats, with one door, and a volume-linear count would charge
+  for the height twice, since a подъезд is a stack whose own capacity grows with it. It
+  stands down for anything that is not housing, and for a **свечка** — a compact 45 m+
+  tower, where one lobby for the whole building is normal. **Real doors are never moved or dropped — but a
+  half-mapped building is topped up**: one mapped `entrance` used to make the generator skip
+  the building whole, and a London block a quarter of a kilometre long kept its single door.
+  A mapper marking one подъезд and stopping is exactly what the cohort measurement already
+  guards against with its "two doors or more" threshold; the generation now guards against it
+  too, real doors going in first and the cohort adding only what is missing.
+  **A section's подъезд is through** (`through_doors`): a `building=apartments`/`yes`
+  outline at least `THROUGH_MIN_LENGTH` (40 m) long gets the courtyard half of every door,
+  found by a ray inward that must exit `THROUGH_DEPTH_RANGE` (8–20 m) away on a wall facing
+  back. It is the same подъезд, not another one, so the cohort count does not grow — and the
+  depth ceiling is what keeps a **свечка**, a compact new tower with one entrance, from
+  growing a second door on its back. The `doors` debug toggle draws them; they are what
+  `layers::push_doors` puts on the wall.
 - **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons** plus standalone
   surveyed trees and `tree_row` avenues; deterministic LCGs seeded by geometry. **Planting
   runs once at the density ceiling**; the density slider shows a monotone *prefix*

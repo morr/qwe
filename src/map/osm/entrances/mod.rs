@@ -36,7 +36,7 @@ mod index;
 
 use bevy::math::Vec2;
 
-use self::cohorts::{cohort_of, entrance_count, equivalent_length};
+use self::cohorts::{cohort_of, entrance_count, equivalent_length, plan_sections};
 use self::index::{FootprintIndex, RoadIndex, ring_is_ccw};
 use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea};
 use crate::rng::lcg_seeded_by;
@@ -144,7 +144,8 @@ fn fill_building(
     let length = equivalent_length(area, perimeter);
     let cohort = cohort_of(area, length, building.height);
     let mut random = lcg_seeded_by(ring[0]);
-    let wanted = entrance_count(&cohort, length, &mut random);
+    let sections = plan_sections(area, length, building.height, building.building_use);
+    let wanted = entrance_count(&cohort, length, sections, &mut random);
 
     let mut facades = score_facades(ring, roads);
     // лучшая грань — первой; NaN сюда попасть не может, длина и расстояние

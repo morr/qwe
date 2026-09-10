@@ -1120,11 +1120,33 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       rectangle. Different heights are not enough, because an opening owns its reveal and
       sill below it too, so the gap between two would have to allow for the frame; picking
       one of the two is the version that cannot drift.
-    - **A gate is nearly square, and the two fractions are in different units** — width in
-      panels (≈3.2 m), height in storeys (3 m). `GATE_WIDE` 0.72 by `GATE_HIGH` 0.78 is about
-      2.3 × 2.3 m, a garage or small warehouse gate. The first numbers, 0.62 by 0.50, were
-      2.0 m wide by 1.5 m tall — wider than tall, which no gate and no door is, and the lean's
-      threefold vertical squeeze made it read as a letterbox slot.
+    - **A door comes from the data, as geometry** (`layers::push_doors`, code `DOOR_CODE`
+      12), and this is the one opening the shader does not place. It used to roll one on
+      `DOOR_SHARE` (0.24) of the ground-floor columns and a gate on 0.30 of a shed's, which
+      put drawn doors where `osm::entrances` has none and left the real entrance — the point
+      the door gizmo marks and the pawn walks to — on blank wall; on a long London block the
+      dice also put two doors in neighbouring panels.
+      Two quads per door, both pushed **after** the wall they sit on:
+      - a **patch** over the whole cells the leaf touches, carrying the wall's own frame and
+        code so seams and courses run through it, marked `WallMark::Solid` (no openings).
+        It is what stops the cell's window from peeking out beside the leaf: a window is
+        centred in its cell, a door stands where the data put it, and they overlap. Whole
+        cells, not the leaf's span — clipping a window in half looks worse than losing it;
+      - the **leaf**, exactly on the entrance point, with `WallFrame::opening` — a frame
+        with neither storeys nor parapet that maps the quad to `[0, 1]²`, so `doorway_of`
+        draws the leaf at its centre and `DOOR_LEAF_WIDE/HIGH` are fractions of the opening
+        rather than of a cell.
+      **The metres are chosen on the CPU** (`layers::door_size`, by cladding: подъезд
+      1.9 × 2.8 m, house door 1.3 × 2.4, shop leaves 2.4 × 3.0, shed gate 3.2 × 2.9) — a door
+      is a scale ruler, and a gate that is wider than it is tall reads as a letterbox slot
+      (the old `GATE_WIDE` 0.62 × `GATE_HIGH` 0.50 was exactly that, 2.0 by 1.5 m).
+      A door at a ring **vertex** — which is where every real OSM `entrance` sits — is pushed
+      inside the wall by half a leaf, and claimed by the edge it *starts*, so the two walls
+      of a corner do not draw it twice. Cost: eight vertices per door, on drawn walls only.
+      **Snapping the leaf to its panel instead was rejected**: it saves the geometry but
+      leaves up to ±1.6 m between the drawn door and the entrance — the very gap this
+      change exists to close — and packing a column index into the material slot caps out at
+      twelve columns (≈38 m of wall), which is exactly where a second подъезд appears.
     - **A balcony is a stack of bands**, not a box: the slab's shadow on the wall, the bright
       slab edge, the parapet (its tone by its own draw, from light panel to dark sheet), and
       above it either glazing or an open recess in shade. 72 % of a panel, on 58 % of the
@@ -1148,10 +1170,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       pick — plaster, shopfront and shed have no balconies by the meaning of the material,
       and they are exactly what the private sector, the mall and the warehouse get.
     - **The verdict travels as the seed's own value**, not its sign: `WallMark`
-      (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` gable.
-      Three states are needed because *blank* and *gable* are not the same thing — a blank
-      wall (narrow, low, wrong material) still has **windows**, a gable has none, since a
-      window on the triangle would be cut by the slope. The old sign flip could say only one
+      (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` solid.
+      Three states are needed because *blank* and *solid* are not the same thing — a blank
+      wall (narrow, low, wrong material) still has **windows**, a solid one has none. Two
+      surfaces are solid and they are unrelated: the **gable**, where a window would be cut
+      by the slope, and the **patch under a door**. The old sign flip could say only one
       of the two, and needed an idempotency guard on top (the gable marks itself over an
       already-blank wall, and a second negation gave the balconies back); replacing the
       state is the guard.

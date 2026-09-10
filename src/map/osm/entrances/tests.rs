@@ -420,6 +420,21 @@ fn a_building_with_no_road_in_reach_still_gets_a_door() {
     }
 }
 
+/// Дом заданного размера, назначения и высоты у улицы на юге — и сколько
+/// дверей он получил.
+fn doors_of(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> usize {
+    let low = Vec2::new(100.0, 100.0);
+    let mut block = building(rect(low, low + Vec2::new(length, depth)), Some(height));
+    block.building_use = building_use;
+    let mut map = MapData {
+        buildings: vec![block],
+        roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
+        ..Default::default()
+    };
+    generate_entrances(&mut map);
+    map.buildings[0].entrances.len()
+}
+
 /// Дом с улицей на юге: сколько дверей вышло на каждую из длинных стен.
 fn doors_by_side(depth: f32, length: f32, building_use: BuildingUse) -> (usize, usize) {
     let low = Vec2::new(100.0, 100.0);
@@ -462,6 +477,80 @@ fn a_tower_keeps_its_entrances_on_one_side() {
 fn a_shallow_row_is_not_walked_through() {
     let (street, yard) = doors_by_side(5.0, 60.0, BuildingUse::Other);
     assert!(street > 0 && yard == 0, "{street} на улицу, {yard} во двор");
+}
+
+/// Регресс на тульские девятиэтажки у портала: дом 32 × 32 м и 27 м высоты
+/// (тысяча метров плана на девяти этажах — сотня с лишним квартир) получал
+/// **одну** дверь, потому что когорта видит только длину, а «длина» такого
+/// дома — 32 метра, полоса «дом, магазин». Считать подъезды надо по плану.
+#[test]
+fn a_tall_compact_block_gets_a_door_per_section_of_its_plan() {
+    let doors = doors_of(32.0, 32.0, 27.0, BuildingUse::Apartments);
+    assert!(doors >= 3, "девятиэтажка на 1000 м² плана: {doors} дверей");
+}
+
+/// Число входов **не падает** с ростом дома — ни по площади, ни по высоте.
+/// Именно это ломалось: у высокого компактного дома дверей выходило меньше,
+/// чем у низкого длинного вдвое меньшей площади.
+#[test]
+fn the_door_count_never_falls_as_the_building_grows() {
+    let ladder = [
+        // сарай, частный дом, секция, корпус, дом-корабль, и он же выше
+        (8.0, 10.0, 3.0),
+        (10.0, 12.0, 6.0),
+        (14.0, 60.0, 15.0),
+        (16.0, 90.0, 27.0),
+        (16.0, 200.0, 27.0),
+        (16.0, 250.0, 33.0),
+    ];
+    let mut previous = 0;
+    for (depth, length, height) in ladder {
+        let doors = doors_of(depth, length, height, BuildingUse::Apartments);
+        assert!(
+            doors >= previous,
+            "{length} × {depth} × {height} м: {doors} дверей после {previous}"
+        );
+        previous = doors;
+    }
+    assert!(previous >= 8, "дом-корабль получил всего {previous} дверей");
+}
+
+/// Один вход бывает **только** у дома-свечки: компактный план и 15 этажей.
+/// Всё прочее крупное жильё носит несколько подъездов.
+#[test]
+fn only_a_tall_tower_may_keep_a_single_entrance() {
+    // свечка: 25 × 25 м, 50 м высоты — вестибюль на весь дом, вход может быть один
+    let tower = doors_of(25.0, 25.0, 50.0, BuildingUse::Apartments);
+    assert!(tower <= 2, "свечке хватает одного входа, а вышло {tower}");
+
+    // а девятиэтажка того же плана — уже не свечка
+    let block = doors_of(25.0, 25.0, 27.0, BuildingUse::Apartments);
+    assert!(block >= 2, "девятиэтажка получила {block} вход");
+}
+
+/// Правило секций — про **жильё**: у одноэтажного склада в 3000 м² подъездов
+/// не бывает, сколько бы плана он ни занимал.
+#[test]
+fn a_warehouse_gets_doors_by_its_walls_not_by_its_floor_plan() {
+    let shed = doors_of(50.0, 60.0, 6.0, BuildingUse::Industrial);
+    assert!(
+        (1..=4).contains(&shed),
+        "складу насчитали {shed} дверей, как жилым секциям"
+    );
+}
+
+/// Высота — не поправка, а второй множитель: тот же план, вдвое выше дом —
+/// больше подъездов. Ровно этого не хватало когорте, которая видит длину.
+#[test]
+fn height_moves_the_door_count_on_the_same_plan() {
+    let plan = (30.0, 40.0);
+    let low = doors_of(plan.0, plan.1, 15.0, BuildingUse::Apartments);
+    let tall = doors_of(plan.0, plan.1, 27.0, BuildingUse::Apartments);
+    let higher = doors_of(plan.0, plan.1, 51.0, BuildingUse::Apartments);
+    assert!(
+        low < tall && tall < higher,
+        "{low} → {tall} → {higher} дверей на 5, 9 и 17 этажах"
+    );
 }
 
 /// Частный дом сквозным подъездом не обзаводится, какой бы длины ни был.
