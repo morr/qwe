@@ -68,9 +68,10 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
             "industrial" | "warehouse" | "factory" | "hangar" | "manufacture" | "service"
             | "transportation" | "depot" | "storage_tank",
         ) => Some(BuildingUse::Industrial),
-        Some("garage" | "garages" | "carport" | "shed" | "barn" | "roof") => {
-            Some(BuildingUse::Garage)
-        }
+        // множественное число — это весь кооператив одним контуром, и
+        // рисуется он рядами боксов, а не одной коробкой
+        Some("garages") => Some(BuildingUse::GarageBlock),
+        Some("garage" | "carport" | "shed" | "barn" | "roof") => Some(BuildingUse::Garage),
         Some(
             "church" | "cathedral" | "chapel" | "temple" | "mosque" | "synagogue" | "monastery"
             | "religious" | "shrine",

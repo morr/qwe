@@ -14,6 +14,7 @@
 
 mod arches;
 mod clutter;
+mod garages;
 mod heights;
 mod layers;
 pub mod material;
@@ -27,6 +28,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use self::garages::garage_runs;
 use self::heights::{height_mix, height_or_default};
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
 pub use self::layers::{push_house, wall_of};
@@ -383,9 +385,10 @@ pub fn spawn_buildings(
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавило оборудование кровель
     info!(
-        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {}, heights: {})",
+        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {} in garage rows, {}, clutter {}, heights: {})",
         started.elapsed(),
         buildings.len(),
+        garage_runs(buildings).len(),
         mode.label(),
         bucket.index == 0,
         height_mix(buildings),

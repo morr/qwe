@@ -195,9 +195,9 @@ in `CONTEXT.md` and the detail here in the same change.
   everywhere but New York, so what fills it in matters: see **Inferred storeys** under
   Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
-  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks two
-  material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and the
-  **roofing material** (`::kind_of`); neither colour comes from the class itself, both
+  Commercial | Industrial | Garage | GarageBlock | Church | Public | Other`, the class that
+  picks two material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and
+  the **roofing material** (`::kind_of`); neither colour comes from the class itself, both
   come from the chosen material's own palette (**Roof material** under Rendering, bullet
   **The pick**). Two sources in order: `building=*` when the value says something
   (`house`, `apartments`, `garages`, `church`,
@@ -209,7 +209,12 @@ in `CONTEXT.md` and the detail here in the same change.
   takes the private-sector table for a small footprint and the apartment-block one above
   it. The vocabulary covers what a city carries by the hundreds, not the OSM wiki.
   Tula: `yes` 4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
-  garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
+  garage(s) 74, industrial 31, church 17. **`garages` and `garage` are two different
+  classes**, and that is not pedantry: the plural is how OSM maps a *whole cooperative*
+  as one outline (Tula 43 of them, the largest 255 × 51 m), and drawing it as one shed is
+  what made the ГСК look like a hangar — see **the garage row** under Rendering. The
+  singular, together with `carport`/`shed`/`barn`/`roof`, stays one box.
+  The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
   the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
   also one of the two inputs of **Inferred storeys** (the other is the footprint's shape),
@@ -1147,7 +1152,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `surface.wgsl`'s — there is no shader library in the project yet, and importing one
     for four functions costs more than the copy.
   - **The wall is the same mechanism on its own coordinates and its own codes**
-    (`layers.rs::wall_frame`, `meshing::WallFrame`). A 2.5D wall is a **parallelogram** —
+    (`layers.rs::wall_frame`, `meshing::WallFrame` — the same frame the garage ribbon
+    below is measured in). A 2.5D wall is a **parallelogram** —
     base edge `a→b`, side edges along the lean — and what the builder writes into
     `ATTRIBUTE_ROOF` at each of its vertices is where that vertex stands *in it*: **the panel
     number along the base and the storey up the lean**. Both linear in the point, so each is
@@ -1172,9 +1178,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       Foreshortening comes out of that derivative for free: a west wall, squeezed by the
       lean, loses its storeys earlier than a south one without a line of code about it.
     - **`WallKind` is to the wall what `RoofKind` is to the roof**, and the codes are one
-      dictionary in one attribute slot: `0` no texture, `1…6` roofing, `7…11` cladding
-      (`WallKind::code` derives itself from `RoofKind::ALL.len()`, so a new roofing shifts
-      the wall codes and the shader's mirror is edited whole). Five claddings —
+      dictionary in one attribute slot: `0` no texture, `1…6` roofing, `7…8` the two garage
+      runs, `9…13` cladding (`WallKind::code` derives itself from `RoofKind::CODES`, the
+      **last** roofing code rather than the length of `ALL` — the garage runs are outside
+      `ALL` and would otherwise have been overwritten by the claddings — so a new roofing
+      shifts the wall codes and the shader's mirror is edited whole). Five claddings —
       `Panel | Brick | Plaster | Shopfront | Shed` — because panel seams with balconies are
       exactly **one** kind of building, and while the wall was one, a garage and a church
       wore them too.
@@ -1373,6 +1381,76 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     *base colour* of every wall in the city would drift at the city zoom, where the texture
     is supposed to be gone. A wall therefore has **no age** — `roof_age` is the roof's — and
     no grime layer of its own either.
+  - **The garage row is the same mechanism keyed to *geometry*, codes `GarageRow` and
+    `GarageBlock`** (`buildings/garages.rs`). Every other kind is chosen by `BuildingUse`
+    and the building's own seed; these two are chosen by the shape of a **run** of
+    garages, and it is the only place where one building's frame comes from its
+    neighbours:
+    - **Stitching.** Garage footprints whose **outlines** come within `JOIN_GAP` 2 m of
+      each other are joined
+      (union-find over a spatial hash of `CELL` 32 m — each footprint is registered in
+      every cell its inflated box touches, so two close boxes always meet in at least one
+      cell, and the pair test is inside a cell rather than across the city).
+      **The AABB is a prefilter, never the test.** Measuring the gap between bounding
+      boxes is what the first version did, and a ГСК's ribbons run diagonally: the box of
+      a 258 × 8.6 m ribbon at 80° is three times wider than the ribbon and reaches across
+      the drive into its neighbour's. On Tula's Косая Гора cooperative ten parallel
+      ribbons came out as **one** run of 349 × 72 m — whose axis was 7° off their own, so
+      every bay seam stood askew to their walls, and which passed `BLOCK_MIN_WIDTH` on
+      that bogus width and drew aisles across the whole stack. The real test is
+      segment-to-segment distance between the two rings; garages do not nest, so
+      containment need not be considered.
+    - **Qualifying, and into which of the two.** A **cooperative** (`GarageBlock`) is a
+      run made entirely of `building=garages` outlines whose combined `min_area_rect` is
+      at least `BLOCK_MIN_WIDTH` 14 m wide and `BLOCK_MIN_AREA` 400 m² — wide enough to
+      hold rows *and* the drive between them. That test comes first, and it is restricted
+      to the plural tag on purpose: a 30 × 20 m `building=shed` would otherwise get drive
+      aisles invented across it. Otherwise a **ribbon** (`GarageRow`): at least
+      `ROW_MIN_LENGTH` 12 m long (about four boxes — fewer and a comb does not read) and
+      `ROW_MIN_ASPECT` 2.2 times longer than wide (a square patch has no axis, and the
+      cross seam would go at random). Anything else is left alone and drawn as an
+      ordinary small building.
+      The Tula numbers are what forced the two-case split: 43 `building=garages` against
+      32 single `building=garage`, and the plural ones are mostly **blobs** (255 × 51,
+      183 × 69, 170 × 74 m) — whole cooperative territories, not rows.
+    - **What the run hands out**: one axis (along the ribbon), one seed (the **minimum**
+      of the members' seeds, so it does not depend on their order) and **its own cell
+      grid**. The shared seed is the whole point — with per-building seeds every box picked
+      its own material and its own texture phase, and twenty boxes came out as confetti of
+      tile, bitumen and corrugated sheet.
+    - **The grid is the run's own, in whole cells** — the wall's construction
+      (`meshing::WallFrame::run`, `layers::garage_frame`), reached here for the same reason.
+      The bay is `length / round(length / BAY 3.4 m)` and the row
+      `width / round(width / ROW_PITCH 18 m)`, so the pitch is fitted to the run rather
+      than the run to the pitch: a seam lands on **both** ends of the ribbon and an aisle
+      on both edges of the blob. A fixed metre pitch phased to one end — what this was
+      first — leaves a sliver of a bay at the other, and every Tula ribbon has one
+      (74.9 m is 22.04 bays, 258.5 m is 76.03).
+      **`BAY` and `ROW_PITCH` are targets, not divisors**, exactly as `PANEL_WIDTH` is on a
+      wall, and neither number is mirrored in `roof.wgsl` any more: the shader is handed
+      cells and takes `fract` of them.
+    - **What is drawn**: a seam on every bay boundary — the only thing that survives to
+      city zoom, and the thing that makes the ribbon a comb — plus ±10 % of paint tone per
+      bay (hashed from the bay index, so it changes exactly at the seams, like a row of
+      doors), the corrugation of an ordinary garage, and more rust than any other
+      roof gets. A **cooperative** adds to that a **darkened drive** on every row boundary
+      (`ROW_FILL` 0.667 of the row is the two rows of boxes back to back, the rest the
+      aisle) and the back-to-back seam in the
+      middle of each pair, so the blob comes out as a grid of boxes rather than a
+      hangar; the tone hash then keys on the row as well as the bay. The aisle is
+      **shading, not a hole cut in the roof**: cutting it for real means a boolean on the
+      outline, and the walls (built from the outer ring) and the shadow sweep would then
+      disagree with the roof.
+      The `band(coord, period, start, width, px)` helper is the wide-stripe sibling of
+      `stripes` and exists for this drive.
+      Like the wall, the ribbon **leaves the fragment before the common roof pass**
+      (`garage_shade`): it has no roof age, and the one thing it still reads in metres is
+      the rust, which lives on the roof rather than in the run's cells.
+    - **No clutter**: `flat_roof_items` and `ridge_chimney` both refuse both kinds. A
+      ventilation shaft or a chimney on a garage is the generator showing through — and
+      the blobs used to collect *skylight ribbons*, since a 12 000 m² corrugated roof is
+      exactly what that rule looks for.
+    - Tula: **29 buildings** end up in runs.
   - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
     bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
     cell — and that is not repair patches but a **chequerboard across the whole roof**:
@@ -1389,6 +1467,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     A minority-by-dice is right for a feature that is an accident — a repair patch — and
     wrong for one that is construction.) Placement stays a grid (cheap, no extra octaves); the
     pattern does not.
+    The garage bay above is the deliberate exception — there the seam grid *is* the
+    feature, because a row of doors really is one.
   - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
     the same seed** the texture phase rides on, and with a fixed patch share that was the
     missing half of the patch fix: a minority of cells carried a patch, but *the same*

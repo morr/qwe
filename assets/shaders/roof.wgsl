@@ -48,25 +48,30 @@ struct RoofParams {
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: RoofParams;
 
-// Коды материалов — **один словарь на кровлю и стену**, зеркало
-// `material::RoofKind::code` и `material::WallKind::code`. Ноль это «фактуры
-// нет вовсе»: оборудование кровли, кайма.
+// Коды материалов — **один словарь на кровлю, гаражную ленту и стену**,
+// зеркало `material::RoofKind::code` и `material::WallKind::code`. Ноль это
+// «фактуры нет вовсе»: оборудование кровли, кайма.
 const BITUMEN: u32 = 1u;
 const GRAVEL: u32 = 2u;
 const SEAM: u32 = 3u;
 const CORRUGATED: u32 = 4u;
 const TILE: u32 = 5u;
 const MEMBRANE: u32 = 6u;
-const PANEL: u32 = 7u;
-const BRICK: u32 = 8u;
-const PLASTER: u32 = 9u;
-const SHOPFRONT: u32 = 10u;
-const SHED: u32 = 11u;
+// Гаражные ленты — тоже кровля, но выбранная геометрией прогона, а не
+// назначением дома, поэтому в `RoofKind::ALL` их нет, а коды они занимают:
+// облицовки идут следом за **последним** кровельным кодом.
+const GARAGE_ROW: u32 = 7u;
+const GARAGE_BLOCK: u32 = 8u;
+const PANEL: u32 = 9u;
+const BRICK: u32 = 10u;
+const PLASTER: u32 = 11u;
+const SHOPFRONT: u32 = 12u;
+const SHED: u32 = 13u;
 // Дверное полотно — не облицовка, а **свой четырёхугольник** поверх стены
 // (`layers::push_doors`), и клетка у него одна на весь проём: `cell` внутри
 // него это `[0, 1]²` самого полотна. Этажей в нём нет, поэтому и разбирается
 // он раньше стены.
-const DOOR: u32 = 12u;
+const DOOR: u32 = 14u;
 
 // В том же числе, что и код, едет **число этажей** стены: код в остатке от
 // деления, этажи в частном (`meshing::STOREY_STRIDE` — зеркало). Без них
@@ -142,6 +147,18 @@ fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
     let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
     let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
     return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
+}
+
+// Полоса `[start, start + width)` в каждом периоде `period` по координате
+// `coord` — в отличие от `stripes` это широкий диапазон, а не линия: им
+// рисуется проезд между рядами гаражей. Края сглажены по пикселю, и вся
+// сетка гаснет, когда период становится мельче нескольких пикселей.
+fn band(coord: f32, period: f32, start: f32, width: f32, px: f32) -> f32 {
+    let phase = coord - period * floor(coord / period);
+    let edge = 0.6 * px;
+    let low = smoothstep(start - edge, start + edge, phase);
+    let high = 1.0 - smoothstep(start + width - edge, start + width + edge, phase);
+    return low * high * visible(period, px);
 }
 
 // Полоса шириной `width` через каждые `period` по координате `coord`: край
@@ -631,6 +648,58 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
     return out;
 }
 
+// ─── гаражная лента ─────────────────────────────────────────────────────────
+//
+// Гаражная лента, как и стена, считается **в своих ячейках**: `roof.xy` у неё
+// это номер бокса вдоль прогона и номер ряда поперёк (`meshing::WallFrame`),
+// шаг подогнан под саму ленту, и метров шейдеру знать не надо. Тут остаётся
+// только то, что про рисование, в долях ячейки: какую часть периода рядов
+// занимают два ряда боксов спинами (остальное — проезд), ширина шва между
+// боксами и длина волны профлиста.
+const ROW_FILL: f32 = 0.667;
+const BAY_SEAM: f32 = 0.03;
+const BACK_SEAM: f32 = 0.007;
+const GARAGE_RIB: f32 = 0.088;
+
+// Поправка яркости гаражной ленты. `cell` — её собственные координаты: номер
+// бокса вдоль прогона и номер ряда поперёк, оба целые на торцах, поэтому шов
+// приходится ровно на край ленты и обрезанного бокса не бывает. `p` и `px` —
+// мировая точка и метры на пиксель: они нужны одной ржавчине, которая живёт
+// не в ячейках ленты, а на самой кровле.
+fn garage_shade(cell: vec2<f32>, seed: f32, p: vec2<f32>, px: f32, block: bool) -> f32 {
+    let px_cell = vec2<f32>(max(fwidth(cell.x), 1e-4), max(fwidth(cell.y), 1e-4));
+    let bay = floor(cell.x);
+    let inside = fract(cell);
+    var shade = 0.0;
+    var row = 0.0;
+    if block {
+        // Кооператив целиком одним контуром: под ним не ангар, а ряды боксов
+        // с проездами. Проезд рисуется затемнением, а не дыркой в кровле:
+        // сверху щель между двумя рядами и есть тёмная полоса, а вырезать её
+        // по-настоящему значит резать контур булевой операцией и разойтись со
+        // стенами и тенью.
+        shade -= 0.30 * band(cell.y, 1.0, ROW_FILL, 1.0 - ROW_FILL, px_cell.y);
+        // и стык спина к спине посередине пары рядов
+        shade -= 0.09 * stripes(cell.y - ROW_FILL * 0.5, 1.0, BACK_SEAM, px_cell.y);
+        // номер ряда: два ряда на период, и второй начинается на середине
+        // занятой боксами полосы
+        row = floor(cell.y) * 2.0 + f32(inside.y > ROW_FILL * 0.5);
+    }
+    // поперечный шов на каждом боксе — единственное, что от ленты остаётся на
+    // общем плане, и то, что делает из неё гребёнку
+    shade -= 0.17 * stripes(cell.x, 1.0, BAY_SEAM, px_cell.x);
+    // каждый бокс крашен своим хозяином — ±10 % по номеру бокса (и ряда, если
+    // это кооператив); тон держится ровно до шва, поэтому лента и читается
+    // как ряд ворот
+    shade += 0.10 * (hash21(vec2<f32>(bay, row * 13.0 + seed * 53.0)) - 0.5)
+        * visible(1.0, px_cell.x);
+    // под швом — профлист, как и на одиночном гараже
+    shade += 0.10 * cos(TAU * cell.x / GARAGE_RIB) * visible(GARAGE_RIB, px_cell.x);
+    // и ржавчина, которой на ГСК больше, чем на любой другой кровле
+    shade -= 0.06 * fbm3(p + vec2<f32>(67.0, 41.0), 1.6, px);
+    return shade;
+}
+
 // Поправка яркости кровли: сколько её фактура добавляет к вершинному цвету.
 // `uv` — координаты в раме дома (вдоль длинной оси и поперёк), `across` —
 // единичный вектор поперёк рёбер, `p` — мировая точка.
@@ -750,6 +819,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             shade = wall.shade;
             glass = wall.glass;
             sky = wall.sky;
+        } else if kind == GARAGE_ROW || kind == GARAGE_BLOCK {
+            // у гаражной ленты они тоже свои — бокс вдоль и ряд поперёк;
+            // мировая точка нужна ей одной ржавчиной
+            let p = in.world_position;
+            let px = max(max(fwidth(p.x), fwidth(p.y)), 1e-4);
+            shade = garage_shade(in.roof.xy, in.roof.w, p, px, kind == GARAGE_BLOCK);
         } else {
             let p = in.world_position;
             // метров на пиксель; камера без поворота, так что обе производные

@@ -180,9 +180,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   p90 15 m; it is now median 8 m, p90 15 m, and the mix is printed in the `building
   meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
-  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
-  Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
-  above all — from `amenity=*` on the same outline. Each class
+  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
+  Church | Public | Other`, from `building=*` and — whenever that value is outside the
+  vocabulary, `yes` above all — from `amenity=*` on the same outline.
+  **`garages` (plural) is its own class**:
+  OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
+  it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
@@ -204,17 +207,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
   half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded.
+  seeded. (`GarageRow` and `GarageBlock` are two more variants outside that choice, and
+  outside `ALL` with it: they are picked by the *geometry* of a run of garages rather than
+  by use — see **Garage rows** below.)
   The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, and the per-use *wall* colours with them: a wall is picked the same way a
   roof is (**`WallKind`**, below) — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
   mean what the code says they mean: a roof's **long axis**, one value for the whole
-  building, or a wall's own **cell coordinates**, different at every vertex — see
-  `WallFrame` below; the code is **one dictionary for both** — `0` is *no texture* and by
-  now only roof clutter, which rides in the same mesh, `1…6` are the roofings above and
-  `7…11` the wall claddings of `WallKind`, a gable carrying its wall's code as the top of
+  building, or the face's own **cell coordinates**, different at every vertex — a wall's
+  panel and storey, a garage ribbon's bay and row; see `WallFrame` below; the code is **one
+  dictionary for all of them** — `0` is *no texture* and by now only roof clutter, which
+  rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs and
+  `9…13` the wall claddings of `WallKind`, a gable carrying its wall's code as the top of
   the end wall under it). **Roof age** is the
   second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
@@ -253,7 +259,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
   above it — and stands on a dark **plinth** band.
   **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `12`) — a **patch** over the cells
+  (`layers::push_doors` over `PolyArea::entrances`, code `14`) — a **patch** over the cells
   the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
   **leaf** itself on the entrance point, in a frame of its own that maps the opening to
   `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
@@ -306,6 +312,34 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
   per-building body of the 2.5D layer, walls included, because a roof shape does not read
   without them. Detail in the `osm-map` skill.
+- **Garage rows** (`map/buildings/garages.rs`) — a cooperative drawn as **rows of boxes**,
+  not as twenty little houses and not as one giant shed. Garage footprints whose
+  **outlines** come within `JOIN_GAP` (2 m) of each other are stitched into a **run**
+  (union-find over a spatial hash, the bounding boxes only a prefilter — measuring the gap
+  between boxes instead joined ten parallel ribbons of one ГСК across their drives, and a
+  run whose axis is 7° off its ribbons' puts every seam askew to their walls). A run hands
+  every one of its members **one axis, one seed and its own cell grid** —
+  the shared seed is the whole trick: with it the roofs stop being separately coloured
+  and separately ribbed. A run is then one of two things:
+  - a **ribbon** (`RoofKind::GarageRow`) — at least `ROW_MIN_LENGTH` 12 m long and
+    `ROW_MIN_ASPECT` 2.2 times longer than wide. The shader draws a **seam on every bay
+    boundary**, with its own paint tone inside each bay;
+  - a **cooperative** (`RoofKind::GarageBlock`) — a `BuildingUse::GarageBlock` outline at
+    least `BLOCK_MIN_WIDTH` 14 m wide and `BLOCK_MIN_AREA` 400 m² in area, i.e. wide
+    enough to hold rows *and* aisles. It gets the same bay seams plus a **darkened aisle
+    on every row boundary**. The aisle is shading, not a hole cut in the roof — cutting it
+    for real would mean a boolean on the outline and would disagree with the walls and the
+    shadow.
+
+  **The grid is the run's own, in whole cells** — the same construction as a wall's
+  (`WallFrame::run`, `layers::garage_frame`): the bay is the run's length over
+  `round(length / BAY 3.4 m)` and the row its width over `round(width / ROW_PITCH 18 m =
+  two 6 m rows back to back + a 6 m drive)`, so a seam lands on both ends of the ribbon and
+  an aisle on both edges of the blob, and no bay is left cut at a end. The metres stay on
+  the CPU: the shader takes `fract` of what the vertex carries, so `roof.wgsl` mirrors no
+  pitch at all. No new
+  geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
+  refused on both (no penthouse, no vent, no chimney).
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own

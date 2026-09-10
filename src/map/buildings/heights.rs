@@ -89,7 +89,7 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
     let area = signed_ring_area(&building.outer).abs();
 
     match building.building_use {
-        BuildingUse::Garage => GARAGE_HEIGHT,
+        BuildingUse::Garage | BuildingUse::GarageBlock => GARAGE_HEIGHT,
         BuildingUse::House => pick(&HOUSE_HEIGHTS, seed),
         BuildingUse::Church => pick(&CHURCH_HEIGHTS, seed),
         BuildingUse::Industrial => pick(&HALL_HEIGHTS, seed),

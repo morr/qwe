@@ -28,8 +28,13 @@ REF-счётчики; KEPT-строки `cache_audit.py` по кешам v8 не
 Значения `building=*` по кешу Тулы v7 (7465 зданий): `yes` 4004, `house` 2249,
 `apartments` 744, `commercial` 89, `retail` 64, `garages` 42, `service` 39,
 `garage` 32, `industrial` 31, `construction` 22, `church` 17, `school` 16,
-`office` 12, `hospital` 11, `dormitory` 10. `roof:shape` есть у 283 (`flat` 165,
-`hipped` 84), `building:colour` / `roof:colour` у 95 — оба пока не читаются.
+`office` 12, `hospital` 11, `dormitory` 10. **`garages` и `garage` разбираются в
+разные классы** (`BuildingUse::GarageBlock` и `Garage`): множественное число в
+OSM — это весь кооператив одним контуром, в Туле до 255 × 51 м, и рисуется он
+рядами боксов с проездами, а не одним ангаром. По кешу v8 множественных 43.
+
+`roof:shape` есть у 283 (`flat` 165, `hipped` 84), `building:colour` /
+`roof:colour` у 95 — оба пока не читаются.
 
 | | Тула | Париж | Берлин | Лондон | Токио | NY |
 |---|---|---|---|---|---|---|
