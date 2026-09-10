@@ -84,8 +84,11 @@ in `CONTEXT.md` and the detail here in the same change.
   asphalt with stalls painted on it (see **Parking** below). It is tried after the greens
   and **before** the landuse blocks, but the branch is reached only for a polygon that is
   not a building at all: a multi-storey car park carries `building` *and*
-  `amenity=parking`, and it must stay a building. Tula v9: 172 in the bbox, 171 reach
-  `MapData::parking`.
+  `amenity=parking`, and it must stay a building — and a lot whose asphalt is **not on the
+  ground** is dropped by `parking=*` instead (`HIDDEN_PARKING`: `underground`,
+  `multi-storey`, `rooftop`) — an underground car park is its own outline under a yard or
+  a park, with no `building` on it, and drawing it striped would put asphalt on the lawn.
+  Tula v9: 172 in the bbox, 170 reach `MapData::parking`.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
@@ -581,8 +584,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   (`Z_PARKING_LINES` 0.81). The markings go in a **flat-material** layer of their own,
   not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
   not on it, and a 12 cm line is the one thing on this map that must stay pure white.
-  - **The layout is one function**, `stalls(area)`, and the paint and the cars both call
-    it — two independent layouts would put a car across its own line. Rows run along the
+  - **The layout is computed once per world load** into `ParkingLayout` (a resource,
+    filled by `spawn_map` from `stalls(area)` per lot), and the paint and the cars both
+    read it — two independent layouts would put a car across its own line, and recomputing
+    it on every rebuild of the car layer was work the sun slider paid for by the frame.
+    Rows run along the
     **long axis of `min_area_rect`**, the axis a real lot is striped along: `STALL_WIDTH`
     2.6 × `STALL_DEPTH` 5.2 m, two rows back to back, then an `AISLE` of 6 m, and
     `EDGE_MARGIN` 1.2 m in from the edge.
@@ -591,6 +597,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     nothing in the notch, and the OBB rows do not have to match the outline.
   - **`MIN_AREA` 120 m²** — under that the lot gets no paint at all. A yard for four cars
     is not striped in reality, and stripes on a 6 × 10 m patch read as a texture bug.
+    **The stalls themselves stay**: `MIN_AREA` gates `push_markings` only, `fill_lots`
+    reads `stalls()` unfiltered, so a small yard keeps its cars — on unmarked asphalt.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour.
@@ -787,7 +795,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     next to streets hundreds of metres long is otherwise invisible. The `Detail` knob drives
     the street cells, never the stand — the stand shows all three steps at once.
   - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
-    machine, so compare runs against runs): **22 069 cars**, and per detail step
+    machine, so compare runs against runs): **22 069 cars along the kerbs** — the bench
+    does not fill the lots, and they add **5 934** more in the app — and per detail step
     **1 456 k verts / 27 ms** (Full), **485 k / 11 ms** (Silhouette), **220 k / 5 ms**
     (Block). **Those are the mesh rows
     alone**; the two steps in front of them do not depend on the detail and are measured
@@ -811,6 +820,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       construction, and `cars/body.rs::the_outline_is_convex` — an inline `mod tests`, there
       is no `body/tests.rs` — is what keeps it that way.
       Measured: Full 40 → 15 ms, Silhouette 35 → 9 ms, vertices unchanged.
+    - **The lots are outside every one of those numbers.** Measured on the avenues-only
+      run that predates the current kerb rule: 5665 → 11 599 cars and 45 k → 93 k verts
+      once the lots were filled, i.e. ~5 900 cars and ~48 k verts on Tula, at whatever the
+      detail step of the moment costs per car.
   - **The lots are filled by the same pass** (`fill_lots`): every stall from
     `parking::stalls`, `LOT_OCCUPANCY` **55 %** of them taken — a lot is fuller than a
     kerb, and an empty one next to a painted grid reads as unfinished. Seeded per lot

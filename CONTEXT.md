@@ -140,7 +140,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     else, no effect on navigation or planting. **Parking** (`amenity=parking`,
     `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
-    park (`building` + `amenity=parking`) stays a building. Buildings carry
+    park (`building` + `amenity=parking`) stays a building — and a lot whose asphalt is
+    not on the ground (`parking=underground|multi-storey|rooftop`) is no area at all.
+    Buildings carry
     `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
@@ -540,8 +542,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   row of stalls, the way a lot is actually striped: `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2,
   `AISLE` 6.0, `EDGE_MARGIN` 1.2. Every stall is kept only if its **four corners** are
   inside the outline, so an L-shaped lot gets none in the notch; a lot under `MIN_AREA`
-  (120 m²) gets no markings at all — a yard for four cars is not striped. **The markings
-  and the cars read the same `stalls()` list**, or a car would stand across its own line.
+  (120 m²) gets no markings at all — a yard for four cars is not striped, though its
+  stalls stay and cars stand on them. **The markings and the cars read the same
+  `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a
+  car would stand across its own line.
   Tula: 171 lots.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
@@ -576,9 +580,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
   layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
   past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 069
-  cars at 1 456 k verts / 27 ms of mesh on the near step against 220 k / 5 ms on the far one,
+  cars along the kerbs, plus 5 934 in the lots, at 1 456 k verts / 27 ms of mesh on the near
+  step against 220 k / 5 ms on the far one,
   plus the 1 ms of junction breaks and 2 ms of parking every step pays alike
-  (`measure_cars` times them on their own rows — `examples/bench/map_meshing`). Every
+  (`measure_cars` times them on their own rows — `examples/bench/map_meshing`; the lots are
+  not in that bench, its numbers are the kerb row alone). Every
   street shape the row broke on, and every body type on all three detail steps, side by
   side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
