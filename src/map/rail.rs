@@ -45,7 +45,12 @@ pub struct RailPalette {
     pub ballast: Color,
     pub tie: Color,
     pub steel: Color,
-    /// Штриховка дальних ступеней — знак osm-carto поверх балласта.
+    /// Штриховка дальних ступеней поверх балласта. Знак пришёл из osm-carto и
+    /// был там белым; на снимке белая лесенка через весь кадр — самое
+    /// картографическое, что на нём есть, и на первом же закадровом снимке
+    /// станционный парк вышел бликующей решёткой. Поэтому штрих теперь
+    /// **темнее балласта**: сверху путь читается серой лентой с поперечной
+    /// рябью шпал, а не белой лентой.
     pub dash: Color,
 }
 
@@ -54,7 +59,7 @@ const ACTIVE: RailPalette = RailPalette {
     ballast: Color::srgb(0.478, 0.455, 0.427),
     tie: Color::srgb(0.243, 0.196, 0.157),
     steel: Color::srgb(0.792, 0.804, 0.827),
-    dash: Color::srgb(1.0, 1.0, 1.0),
+    dash: Color::srgb(0.329, 0.302, 0.271),
 };
 
 const DISUSED: RailPalette = RailPalette {
@@ -62,7 +67,7 @@ const DISUSED: RailPalette = RailPalette {
     ballast: Color::srgb(0.549, 0.545, 0.482),
     tie: Color::srgb(0.400, 0.361, 0.302),
     steel: Color::srgb(0.545, 0.400, 0.322),
-    dash: Color::srgb(0.867, 0.867, 0.867),
+    dash: Color::srgb(0.435, 0.416, 0.365),
 };
 
 /// Ширина плеча как доля ширины балласта. Призма шире своего верха: у
