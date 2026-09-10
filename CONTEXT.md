@@ -305,10 +305,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Untapered, the metre also ran along the contact contour and left a soft dark blot on the
   sunlit side of every convex corner — the building came out ringed exactly like the
   **contact skirt** that was taken back out of the union. What goes into
-  the union is still the silhouette sweeps and nothing else. The shadow layer now
-  carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
-  it is the most expensive thing the building layers build, and it does not depend on the
-  roof-clutter zoom bucket.
+  the union is still the silhouette sweeps and nothing else. Both shadow layers —
+  ground and roof — carry **`BuildingShadowTag`** rather than `BuildingLayerTag` and are
+  rebuilt only when the height mode or the sun changes: together they are the most
+  expensive thing the building layers build, and they do not depend on the roof-clutter
+  zoom bucket.
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
   (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
   the roof material, parked cars. **The seed is the object's own reference point** — the

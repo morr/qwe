@@ -816,7 +816,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
         contour, and `DrawnBodies` is empty there.
       It rides the same `BuildingShadowTag`, so it rebuilds and despawns with the ground
       shadows, and it is reported separately in the `building meshing:` line
-      (`shadows 91ms + 15ms on roofs`). On Tula it is 2.8 k verts and 15 ms of a 130 ms
+      (`shadows 91ms + 24ms on roofs`). On Tula it is 2.6 k verts and ~24 ms of a ~135 ms
       build, most of that spent rebuilding the sweeps `shadow_builder` has already
       computed — sharing them is the obvious optimisation and changes both signatures.
       **How thin the layer actually is** (Tula, 7643 buildings, measured offline on the
