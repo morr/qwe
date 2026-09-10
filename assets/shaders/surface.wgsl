@@ -7,14 +7,15 @@
 // остаётся невидимым — то самое свойство, ради которого слой дорог плоский.
 //
 // Все октавы шума гасятся по размеру пикселя (`fwidth` мировой координаты):
-// волна короче пары пикселей не сэмплируется, а исчезает, иначе на отдалении
-// зерно превращается в муар и мерцает при движении камеры.
+// короткая волна не сэмплируется, а исчезает (общий `visible` из
+// `shaders/noise.wgsl`, там же и порог), иначе на отдалении зерно
+// превращается в муар и мерцает при движении камеры.
 
 #import bevy_sprite::{
     mesh2d_functions as mesh_functions,
     mesh2d_view_bindings::{view, globals},
 }
-#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, fbm4}
+#import "shaders/noise.wgsl"::{value_noise, visible, fbm3, fbm4}
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
