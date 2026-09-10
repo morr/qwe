@@ -344,6 +344,67 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
     );
 }
 
+/// Где на стене оказались дверные полотна: `x` каждой вершины кода
+/// [`DOOR_CODE`], в порядке сборки.
+fn door_vertices(building: &PolyArea, kind: WallKind) -> Vec<Vec2> {
+    let look = RoofLook::new(RoofKind::Bitumen, Srgba::WHITE, Vec2::X, 0.0);
+    let wall = WallLook::new(kind, Srgba::WHITE);
+    let mut builder = MeshBuilder::with_roof_coords();
+    push_house(
+        &mut builder,
+        building,
+        &look,
+        &wall,
+        look.base,
+        RoofShape::Flat,
+        false,
+    );
+    let frames = builder.roof_coords_for_test().expect("roof coords");
+    builder
+        .positions_for_test()
+        .iter()
+        .zip(frames)
+        .filter(|(_, frame)| unpack_material(frame[2]).0 == DOOR_CODE)
+        .map(|(point, _)| Vec2::new(point[0], point[1]))
+        .collect()
+}
+
+/// Дверь рисуется **там, где стоит вход из данных**, и это вся суть перемены:
+/// пока шейдер разыгрывал вход сам, нарисованная дверь не совпадала ни с
+/// гизмой дверей, ни с точкой, к которой идёт пешка.
+#[test]
+fn a_door_is_drawn_where_the_entrance_stands() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(20.0, 40.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    // южная грань — та, что видна при подъёме вверх-вправо
+    block.entrances = vec![Vec2::new(12.0, 0.0)];
+
+    let doors = door_vertices(&block, WallKind::Panel);
+    assert!(!doors.is_empty(), "вход из данных должен дойти до меша");
+    // низ полотна — на земле, у самого основания стены; верх уехал по
+    // подъёму, и мерить ширину по нему нельзя: стена — параллелограмм
+    let base: Vec<Vec2> = doors.into_iter().filter(|at| at.y.abs() < 1e-3).collect();
+    assert_eq!(base.len(), 2, "у полотна две вершины на земле: {base:?}");
+    let left = base.iter().fold(f32::MAX, |left, at| left.min(at.x));
+    let right = base.iter().fold(f32::MIN, |right, at| right.max(at.x));
+    let half = door_size(WallKind::Panel).x / 2.0;
+    assert!(
+        (left - (12.0 - half)).abs() < 1e-3 && (right - (12.0 + half)).abs() < 1e-3,
+        "полотно стоит на входе: {left}..{right}"
+    );
+}
+
+/// Дома без размеченного входа — а это дом до `osm::entrances` и всякий дом
+/// витрины — не носят дверей вовсе: рисовать нечего.
+#[test]
+fn a_building_without_entrances_gets_no_doors() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(20.0, 40.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    assert!(door_vertices(&block, WallKind::Panel).is_empty());
+}
+
 /// Метки стен одного дома при **заказанной** облицовке. Заказана она потому,
 /// что материал дому выбирает посев, а эти тесты не про лотерею: без заказа
 /// пятиэтажка раз в десять выпадений оказалась бы штукатуркой, и тест про

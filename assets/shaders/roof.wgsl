@@ -62,6 +62,11 @@ const BRICK: u32 = 8u;
 const PLASTER: u32 = 9u;
 const SHOPFRONT: u32 = 10u;
 const SHED: u32 = 11u;
+// Дверное полотно — не облицовка, а **свой четырёхугольник** поверх стены
+// (`layers::push_doors`), и клетка у него одна на весь проём: `cell` внутри
+// него это `[0, 1]²` самого полотна. Этажей в нём нет, поэтому и разбирается
+// он раньше стены.
+const DOOR: u32 = 12u;
 
 // В том же числе, что и код, едет **число этажей** стены: код в остатке от
 // деления, этажи в частном (`meshing::STOREY_STRIDE` — зеркало). Без них
@@ -255,20 +260,17 @@ const BALCONY_GLAZED: f32 = 0.62;
 // Цоколь — доля первого этажа под ним.
 const PLINTH_HIGH: f32 = 0.14;
 
-// Вход на первом этаже: доля столбцов, ширина и высота проёма.
-const DOOR_SHARE: f32 = 0.24;
-const DOOR_WIDE: f32 = 0.30;
-const DOOR_HIGH: f32 = 0.60;
-// Ворота склада — шире двери и **почти квадратные**: доли тут в разных
-// единицах, ширина в панелях (≈3.2 м), высота в этажах (3 м), поэтому 0.72 на
-// 0.78 это примерно 2.3 × 2.3 м — гаражные ворота или небольшие складские.
-// Первая версия была 0.62 на 0.50, то есть 2.0 м в ширину при 1.5 м в высоту:
-// шире, чем выше, чего не бывает ни у одних ворот и ни у одной двери. На
-// экране это тем заметнее, что подъём сжимает стену по высоте втрое, и проём
-// читался щелью почтового ящика.
-const GATE_SHARE: f32 = 0.30;
-const GATE_WIDE: f32 = 0.72;
-const GATE_HIGH: f32 = 0.78;
+// Полотно внутри дверного четырёхугольника — доли **его самого**, а не
+// ячейки стены: сам проём отмерен в метрах на CPU (`layers::door_size`), там
+// же учтено, подъезд это, дверь частного дома, витринные створки или ворота
+// склада. Шейдеру остаётся поле вокруг полотна: по бокам откос, сверху
+// козырёк.
+//
+// Где вход стоит, шейдер не решает — и это главная перемена. Пока он разыгрывал
+// вход на 24 % столбцов первого этажа, нарисованная дверь не имела отношения
+// ни к входу из `osm::entrances`, ни к пешке, которая к нему идёт.
+const DOOR_LEAF_WIDE: f32 = 0.74;
+const DOOR_LEAF_HIGH: f32 = 0.82;
 
 // Швы панели, ряд кирпичной кладки и ребро профлиста — тоже доли ячейки.
 const FLOOR_SEAM: f32 = 0.05;
@@ -423,6 +425,17 @@ fn doorway_of(inside: vec2<f32>, px: vec2<f32>, wide: f32, high: f32) -> Wall {
     return out;
 }
 
+// Вход целиком: четырёхугольник кода `DOOR`, у которого клетка одна на весь
+// проём. Своей координаты вдоль стены у него нет и не нужно — где он стоит,
+// сказала геометрия (`layers::push_doors` кладёт его на вход из
+// `osm::entrances`), а здесь остаётся нарисовать полотно по центру, откос по
+// краям и козырёк сверху. Отсюда и `[0, 1]²`: доли **проёма**, не ячейки
+// стены, — метры проёма отмерены на CPU, шейдеру они не нужны так же, как не
+// нужны ширина панели и высота этажа.
+fn door_shade(cell: vec2<f32>, px: vec2<f32>) -> Wall {
+    return doorway_of(cell, px, DOOR_LEAF_WIDE, DOOR_LEAF_HIGH);
+}
+
 // Что стена делает с пикселем: сперва **рисунок материала** между проёмами —
 // швы панели, ряды кладки, разводы штукатурки, рёбра профлиста, — потом сам
 // проём. Проёмы у одного пикселя не спорят: в ячейке стоит либо балкон, либо
@@ -520,7 +533,9 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
     // свой бросок на ячейку: занавеска в окне, остекление балкона, тон
     // ограждения. По ячейке, а не по столбцу, — в отличие от самого балкона.
     let tone = hash21(vec2<f32>(column, storey) + seed * 53.0);
-    let entrance = hash21(vec2<f32>(column, 7.0) + seed * 71.0);
+    // бросок на столбец — им остался только склад: не всякий пролёт его стены
+    // застеклён
+    let ribbon = hash21(vec2<f32>(column, 7.0) + seed * 71.0);
 
     if kind == PANEL || kind == BRICK {
         let recessed = kind == BRICK;
@@ -536,11 +551,6 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
             out.shade += b.shade;
             out.glass = b.glass;
             out.sky = b.sky;
-        } else if ground && entrance < DOOR_SHARE {
-            let d = doorway_of(inside, px, DOOR_WIDE, DOOR_HIGH);
-            out.shade += d.shade;
-            out.glass = d.glass;
-            out.sky = d.sky;
         } else {
             let w = window_of(inside, px, WINDOW_LOW, WINDOW_HIGH, wide, 2.0, 0.55 + 0.75 * tone);
             out.shade += w.shade;
@@ -550,25 +560,18 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
     } else if kind == PLASTER {
         // Частный дом: окно мелкое, и оно не на всякой панели — простенок
         // между окнами тут шире самого окна.
-        if ground && entrance < DOOR_SHARE {
-            let d = doorway_of(inside, px, DOOR_WIDE * 0.8, DOOR_HIGH);
-            out.shade += d.shade;
-            out.glass = d.glass;
-            out.sky = d.sky;
-        } else {
-            let w = window_of(
-                inside,
-                px,
-                PLASTER_WINDOW_LOW,
-                PLASTER_WINDOW_HIGH,
-                PLASTER_WINDOW_WIDE,
-                2.0,
-                0.45 + 0.8 * tone,
-            );
-            out.shade += w.shade;
-            out.glass = w.glass;
-            out.sky = w.sky;
-        }
+        let w = window_of(
+            inside,
+            px,
+            PLASTER_WINDOW_LOW,
+            PLASTER_WINDOW_HIGH,
+            PLASTER_WINDOW_WIDE,
+            2.0,
+            0.45 + 0.8 * tone,
+        );
+        out.shade += w.shade;
+        out.glass = w.glass;
+        out.sky = w.sky;
     } else if kind == SHOPFRONT {
         // Первый этаж торгового дома — витрина: ниже и выше обычной ленты.
         let lo = select(SHOPFRONT_LOW, 0.08, ground);
@@ -578,23 +581,13 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
         out.glass = w.glass;
         out.sky = w.sky;
     } else if kind == SHED {
-        // Склад: ворота на первом этаже, ленточное окно под карнизом.
-        //
-        // **Ровно один проём на ячейку**, как и у прочих облицовок. Раньше эти
-        // два рисовались независимо, «потому что стоят на разной высоте», — и
-        // это перестало быть правдой в тот момент, когда ленту опустили с 0.60
-        // до 0.45, чтобы она пережила гашение. Створки окна лезли на воротное
-        // полотно, и низ ленты выходил обрубком поверх тёмного прямоугольника.
-        // Разной высоты мало: проёму принадлежит ещё и откос с отливом под ним,
-        // так что зазор между двумя должен быть не нулевым, а с запасом на раму
-        // — надёжнее не оставлять зазора вовсе, а выбирать один из двух.
-        let gate_here = ground && hash21(vec2<f32>(column, 3.0) + seed * 97.0) < GATE_SHARE;
-        if gate_here {
-            let d = doorway_of(inside, px, GATE_WIDE, GATE_HIGH);
-            out.shade += d.shade;
-            out.glass = d.glass;
-            out.sky = d.sky;
-        } else if entrance < SHED_WINDOW_SHARE {
+        // Склад: ленточное окно под карнизом. Ворота сюда больше не входят —
+        // они те же двери, приходят геометрией по входам из `osm::entrances`
+        // (`layers::push_doors`) и ложатся **поверх** этой стены, вместе с
+        // заплатой, которая гасит окно под ними. Пока ворота разыгрывались
+        // здесь, ленту приходилось выбирать «либо-либо» с ними: створки окна
+        // лезли на воротное полотно, и низ ленты выходил обрубком.
+        if ribbon < SHED_WINDOW_SHARE {
             let w = window_of(
                 inside,
                 px,
@@ -713,7 +706,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // сколько в пикселе стекла и какого — у кровли ни того, ни другого
         var glass = 0.0;
         var sky = 0.0;
-        if kind >= PANEL {
+        if kind == DOOR {
+            // проём разбирается **раньше стены**: этажей у него нет, и делить
+            // его клетку на этажи нечем — она вся и есть полотно
+            let px = vec2<f32>(
+                max(fwidth(in.roof.x), 1e-4),
+                max(fwidth(in.roof.y), 1e-4),
+            );
+            let door = door_shade(in.roof.xy, px);
+            shade = door.shade;
+            glass = door.glass;
+            sky = door.sky;
+        } else if kind >= PANEL {
             // у стены координаты уже свои, в вершине; мировая точка, ось дома
             // и фаза по посеву ей не нужны вовсе
             let wall = wall_shade(kind, in.roof.xy, storeys, in.roof.w);

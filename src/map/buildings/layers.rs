@@ -11,13 +11,15 @@ use super::arches::{
     ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::{RoofLook, WallKind, WallLook, building_seed, roof_look, wall_look};
+use super::material::{
+    DOOR_CODE, RoofLook, WallKind, WallLook, building_seed, roof_look, wall_look,
+};
 use super::order::draw_order;
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, WallFrame, WallMark};
+use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, WallFrame, WallMark};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
 use crate::map::seed::seed_from_point;
@@ -187,6 +189,121 @@ fn balconies_fit(building: &PolyArea, kind: WallKind, columns: f32, storeys: f32
 /// помещаются — в этажах и панелях самой стены.
 const BALCONY_STOREYS_MIN: f32 = 4.0;
 const BALCONY_COLUMNS_MIN: f32 = 3.0;
+
+/// Насколько далеко от грани контура может лежать вход, чтобы считаться
+/// стоящим на ней, м. Сгенерированные двери (`osm::entrances`) лежат на грани
+/// точно, размеченные в OSM — в вершине кольца, и полметра тут только на
+/// разнобой координат.
+const DOOR_ON_WALL: f32 = 0.5;
+
+/// Проём входа в метрах: ширина по основанию стены и высота вверх по подъёму,
+/// вместе с обрамлением и козырьком (само полотно шейдер рисует внутри).
+/// Разные они не для разнообразия, а потому что дверь — это масштабная линейка
+/// дома: в подъезд входят по двое, в частный дом по одному, у витрины створки
+/// стеклянные во весь рост, у склада не дверь, а ворота.
+pub(super) fn door_size(kind: WallKind) -> Vec2 {
+    match kind {
+        WallKind::Panel | WallKind::Brick => Vec2::new(1.9, 2.8),
+        WallKind::Plaster => Vec2::new(1.3, 2.4),
+        WallKind::Shopfront => Vec2::new(2.4, 3.0),
+        WallKind::Shed => Vec2::new(3.2, 2.9),
+    }
+}
+
+/// Сколько панелей встанет на эту стену — целое число ([`wall_frame`]).
+fn wall_columns(a: Vec2, b: Vec2) -> f32 {
+    ((b - a).length() / PANEL_WIDTH).round().max(1.0)
+}
+
+/// Входы этой стены — **из данных**, а не по броску шейдера.
+///
+/// Дверь дома придумана не здесь: `osm::entrances` ставит её на грань, которая
+/// смотрит на дорогу, и не ставит на ту, к которой прижат сосед; туда же идёт
+/// пешка (`human::systems::building_target`) и туда же смотрит гизмо дверей.
+/// Пока шейдер сам разыгрывал вход на 24 % панелей первого этажа, все трое
+/// говорили о разных дверях: нарисованная стояла там, где входа нет, а вход —
+/// там, где стена глухая. Поэтому дверь **приходит геометрией**, и панельная
+/// сетка её не двигает: снести полотно к центру ячейки — те же полтора метра
+/// расхождения, ради устранения которых всё и затевалось.
+///
+/// Два четырёхугольника на вход:
+///
+/// * **заплата** — ячейки стены, которые задевает полотно, целиком: рама и код
+///   у неё те же, что у стены (швы и кладка проходят насквозь), но помечена
+///   она [`WallMark::Solid`], то есть без проёмов. Без неё из-за двери
+///   выглядывало бы окно этой ячейки: окно стоит по центру ячейки, а дверь —
+///   где ей велели данные, и они пересекаются;
+/// * **полотно** — ровно проём, со своей рамой в клетку `[0, 1]²`
+///   ([`WallFrame::opening`]) и кодом [`DOOR_CODE`].
+///
+/// Дверь у самого угла (в OSM вход — это вершина кольца, то есть угол дома)
+/// вдвигается внутрь стены целиком: половина полотна, уехавшая на соседнюю
+/// грань, читалась бы как дыра в углу. Угловой вход достаётся **одной** грани —
+/// той, для которой он начало, а не конец.
+#[allow(clippy::too_many_arguments)]
+fn push_doors(
+    builder: &mut MeshBuilder,
+    building: &PolyArea,
+    wall: &WallLook,
+    a: Vec2,
+    b: Vec2,
+    lift: Vec2,
+    storeys: f32,
+    openings: &[ArchOpening],
+    color: LinearRgba,
+) {
+    if building.entrances.is_empty() {
+        return;
+    }
+    let length = (b - a).length();
+    let Some(along) = (b - a).try_normalize() else {
+        return;
+    };
+    let size = door_size(wall.kind);
+    if length < size.x {
+        return;
+    }
+    let columns = wall_columns(a, b);
+    let panel = length / columns;
+    // клетка стены по вертикали — этаж; выше него дверь не поднимается
+    let storey_up = lift / (storeys + PARAPET_CELLS);
+    let door_up = storey_up * (size.y / STOREY_HEIGHT).min(1.0);
+    let seed = (seed_from_point(a) & 0xff) as f32 / 255.0;
+
+    for &door in &building.entrances {
+        let offset = door - a;
+        let at = offset.dot(along);
+        // грань берёт вход, если он лежит на ней и не в её конце: конец — это
+        // начало следующей грани, и та же дверь досталась бы обеим
+        if offset.perp_dot(along).abs() > DOOR_ON_WALL || at < 0.0 || at >= length {
+            continue;
+        }
+        let half = size.x / 2.0;
+        let center = at.clamp(half, length - half);
+        // арка — уже проём во всю стену, второго в нём не бывает
+        if openings.iter().any(|opening| {
+            opening.a == a
+                && opening.b == b
+                && center + half > opening.low
+                && center - half < opening.high
+        }) {
+            continue;
+        }
+
+        let first = ((center - half) / panel).floor().max(0.0) * panel;
+        let last = (((center + half) / panel).ceil().min(columns)) * panel;
+        let (p0, p1) = (a + along * first, a + along * last);
+        builder.set_wall(
+            wall_frame(building, wall, a, b, lift, storeys)
+                .map(|frame| frame.marked(WallMark::Solid)),
+        );
+        builder.push_quad([p0, p1, p1 + storey_up, p0 + storey_up], color);
+
+        let (d0, d1) = (a + along * (center - half), a + along * (center + half));
+        builder.set_wall(WallFrame::opening(d0, d1, door_up, DOOR_CODE, seed));
+        builder.push_quad([d0, d1, d1 + door_up, d0 + door_up], color);
+    }
+}
 
 /// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
 fn push_hip(builder: &mut MeshBuilder, roof: &HipRoof) {
@@ -638,6 +755,11 @@ fn push_house_with_arches(
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
         builder.set_wall(wall_frame(building, wall, a, b, lift, storeys));
         push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
+        // вход ложится поверх стены, которой он принадлежит, — порядок кладки
+        // внутри дома и есть его глубина
+        push_doors(
+            builder, building, wall, a, b, lift, storeys, openings, bottom,
+        );
     }
     // двор: видима внутренняя стена его дальней стороны — та, чья
     // наружная (для кольца дыры) нормаль смотрит по подъёму
@@ -646,6 +768,9 @@ fn push_house_with_arches(
             let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
             builder.set_wall(wall_frame(building, wall, a, b, lift, storeys));
             push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
+            push_doors(
+                builder, building, wall, a, b, lift, storeys, openings, bottom,
+            );
         }
     }
     builder.set_roof(None);
@@ -673,7 +798,7 @@ fn push_house_with_arches(
                 // на треугольнике нет, окно на нём резалось бы скатом
                 builder.set_wall(
                     wall_frame(building, wall, a, b, lift, storeys)
-                        .map(|frame| frame.marked(WallMark::Gable)),
+                        .map(|frame| frame.marked(WallMark::Solid)),
                 );
                 builder.push_polygon(&[a, b, apex], &[], top);
             }

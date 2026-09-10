@@ -83,7 +83,8 @@ use qwe::map::buildings::material::{
     retune_roof_material,
 };
 use qwe::map::buildings::{BuildingHeightMode, RoofShape, extrusion_lift, push_house, wall_of};
-use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
+use qwe::map::osm::entrances::generate_entrances;
+use qwe::map::osm::{AreaKind, BuildingUse, MapData, PolyArea};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
@@ -609,7 +610,8 @@ fn push_cell(
 ) -> RoofShape {
     let area = house(cell.centre, cell.half, rotation, tuning.courtyard)
         .with_height(cell.height())
-        .with_use(cell.building_use);
+        .with_use(cell.building_use)
+        .with_doors();
     let roof_color = GALLERY_ROOF.palette()[0].to_srgba();
     let look = RoofLook::new(GALLERY_ROOF, roof_color, axis, seed);
     push_house(
@@ -689,6 +691,7 @@ fn house(centre: Vec2, half: Vec2, rotation: Rot2, courtyard: f32) -> PolyArea {
 trait HouseExt {
     fn with_height(self, height: f32) -> Self;
     fn with_use(self, building_use: BuildingUse) -> Self;
+    fn with_doors(self) -> Self;
 }
 
 impl HouseExt for PolyArea {
@@ -700,6 +703,20 @@ impl HouseExt for PolyArea {
     fn with_use(mut self, building_use: BuildingUse) -> Self {
         self.building_use = building_use;
         self
+    }
+
+    /// Входы — **игровым генератором** (`osm::entrances`), тем же, что ставит
+    /// двери городу: дверь на стене витрины обязана стоять по тем же правилам,
+    /// иначе витрина врёт ровно про то, ради чего дверь и рисуют. Дорог здесь
+    /// нет, поэтому все грани равны по оценке и вход достаётся первой из них —
+    /// а на длинном корпусе к нему добавляется сквозная пара со двора.
+    fn with_doors(self) -> Self {
+        let mut map = MapData {
+            buildings: vec![self],
+            ..default()
+        };
+        generate_entrances(&mut map);
+        map.buildings.pop().expect("дом вернулся из генератора")
     }
 }
 
