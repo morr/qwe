@@ -34,6 +34,37 @@ fn degenerate_polygon_is_skipped() {
 }
 
 #[test]
+fn convex_contour_is_a_fan_from_its_first_vertex() {
+    let mut builder = MeshBuilder::default();
+    let hexagon = [
+        Vec2::new(2.0, 0.0),
+        Vec2::new(1.0, 2.0),
+        Vec2::new(-1.0, 2.0),
+        Vec2::new(-2.0, 0.0),
+        Vec2::new(-1.0, -2.0),
+        Vec2::new(1.0, -2.0),
+    ];
+    builder.push_convex(&hexagon, LinearRgba::WHITE);
+    assert_eq!(builder.skipped_polygons(), 0);
+    // вершина на точку контура, треугольников на две меньше
+    assert_eq!(builder.positions.len(), 6);
+    assert_eq!(builder.indices.len(), 12);
+    assert_eq!(builder.indices[..3], [0, 1, 2]);
+    // второй контур в том же сборщике считает индексы от своей базы
+    builder.push_convex(&hexagon, LinearRgba::WHITE);
+    assert_eq!(builder.positions.len(), 12);
+    assert_eq!(builder.indices[12..15], [6, 7, 8]);
+}
+
+#[test]
+fn degenerate_convex_contour_is_skipped() {
+    let mut builder = MeshBuilder::default();
+    builder.push_convex(&[Vec2::ZERO, Vec2::new(1.0, 1.0)], LinearRgba::WHITE);
+    assert!(builder.is_empty());
+    assert_eq!(builder.skipped_polygons(), 1);
+}
+
+#[test]
 fn closed_stroke_wraps_around_and_keeps_width() {
     let square = [
         Vec2::new(0.0, 0.0),
