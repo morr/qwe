@@ -420,11 +420,14 @@ fn a_building_with_no_road_in_reach_still_gets_a_door() {
     }
 }
 
-/// Дом заданного размера, назначения и высоты у улицы на юге — и сколько
-/// дверей он получил.
-fn doors_of(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> usize {
-    let low = Vec2::new(100.0, 100.0);
-    let mut block = building(rect(low, low + Vec2::new(length, depth)), Some(height));
+/// Юго-западный угол дома во всех замерах ниже: улица идёт по `y = 95`, то
+/// есть вдоль южной стены.
+const LOW: Vec2 = Vec2::new(100.0, 100.0);
+
+/// Дом заданного размера, назначения и высоты у улицы на юге, с уже
+/// расставленными входами.
+fn block_by_the_street(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> MapData {
+    let mut block = building(rect(LOW, LOW + Vec2::new(length, depth)), Some(height));
     block.building_use = building_use;
     let mut map = MapData {
         buildings: vec![block],
@@ -432,23 +435,24 @@ fn doors_of(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> 
         ..Default::default()
     };
     generate_entrances(&mut map);
-    map.buildings[0].entrances.len()
+    map
 }
 
-/// Дом с улицей на юге: сколько дверей вышло на каждую из длинных стен.
+/// Сколько дверей получил такой дом.
+fn doors_of(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> usize {
+    block_by_the_street(depth, length, height, building_use).buildings[0]
+        .entrances
+        .len()
+}
+
+/// Пятиэтажный дом с улицей на юге: сколько дверей вышло на каждую из длинных
+/// стен.
 fn doors_by_side(depth: f32, length: f32, building_use: BuildingUse) -> (usize, usize) {
-    let low = Vec2::new(100.0, 100.0);
-    let mut block = building(rect(low, low + Vec2::new(length, depth)), Some(15.0));
-    block.building_use = building_use;
-    let mut map = MapData {
-        buildings: vec![block],
-        roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(400.0, 95.0)])],
-        ..Default::default()
-    };
-    generate_entrances(&mut map);
-    let doors = &map.buildings[0].entrances;
-    let side = |y: f32| doors.iter().filter(|at| (at.y - y).abs() < 0.01).count();
-    (side(low.y), side(low.y + depth))
+    let map = block_by_the_street(depth, length, 15.0, building_use);
+    (
+        doors_on(&map, LOW.y).len(),
+        doors_on(&map, LOW.y + depth).len(),
+    )
 }
 
 /// Подъезд панельной секции **сквозной**: та же дверь выходит и во двор, и
