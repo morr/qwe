@@ -599,7 +599,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
     effect is one merged mesh — and `rebuild_cars` is gated on
-    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)`,
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)
+    .or_else(retuned::<SunOnMap>)`,
     one registration, since two in one schedule could both fire in a frame and spawn the
     layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
     centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
