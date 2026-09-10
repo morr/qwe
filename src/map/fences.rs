@@ -129,8 +129,8 @@ fn mesh_fences(fences: &[FenceLine], width: f32) -> MeshBuilder {
     let shadow = SHADOW_COLOR.to_linear();
     for fence in fences {
         let height = match fence.kind {
+            FenceKind::Fence | FenceKind::Wall => FENCE_HEIGHT,
             FenceKind::Hedge => HEDGE_HEIGHT,
-            _ => FENCE_HEIGHT,
         };
         let offset = shadow_dir() * (height * shadow_length_scale());
         let shifted: Vec<Vec2> = fence.points.iter().map(|point| *point + offset).collect();
