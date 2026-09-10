@@ -932,9 +932,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[long axis x, y, material code,
     seed]`). All four numbers are constant over a building, so the attribute is a
     *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
-    every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **not a
-    roof** — walls, gables and roof clutter ride in the same mesh (2.5D is one
-    painter's-order layer) and come out with their vertex colour untouched.
+    every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **no
+    texture** — gables and roof clutter ride in the same mesh (2.5D is one
+    painter's-order layer) and come out with their vertex colour untouched. Walls rode
+    at `0` too until they got a code of their own (`Wall`, below).
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
@@ -955,27 +956,61 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the roof frame to **its own direction**, and that one choice is what makes it work: the
     shader's across-axis then measures distance *from* the wall line, i.e. up the wall, so
     a line of constant `v` is a **floor seam parallel to the eaves**, and `u` runs along the
-    wall for the vertical panel joints. It draws seams every `FLOOR` (1.05 drawn metres —
-    a real 3 m storey × `EXTRUDE_SCALE`), panel joints every `PANEL` (3.2 m) and
-    **balconies** on the cell grid of the two: a cell is one storey by one panel, 58 % of
-    them carry a balcony (hashed from the cell and the building's seed), each filling the
-    lower two thirds of its storey and 62 % of its panel — which is why they come out in
-    **columns**, as they do on a real block, rather than scattered. All of it fades with
-    `visible(FLOOR, px)`: a storey is a fraction of a pixel at city zoom.
+    wall for the vertical panel joints. **Distance from the line is not height**, though,
+    and correcting that is the one thing the branch does before anything else: a 2.5D wall
+    is a parallelogram whose top is shifted by `lift = (EXTRUDE_SKEW, 1) · drawn`, so across
+    its own line it spans `drawn · |(EXTRUDE_SKEW, 1) · across|` — the whole drawn height on
+    a south facade, 0.4 of it on a west one, and nothing at all on a wall running along the
+    lean (which is exactly the edge `silhouette_edges` refuses to draw). Uncorrected, one
+    building showed five storeys on one facade and two on the other. So the branch divides
+    `v` by that factor — `EXTRUDE_SKEW` is mirrored into `roof.wgsl` for it, the way the
+    material codes mirror `RoofKind::code` — and divides `px` by it too, so the grid fades
+    on its *drawn* wavelength rather than on `FLOOR`. It draws seams every `FLOOR` (1.05
+    drawn metres — a real 3 m storey × `EXTRUDE_SCALE`) **whichever way the wall faces**,
+    panel joints every `PANEL` (3.2 m) and
+    **balconies** on the cell grid of the two: a cell is one storey by one panel, each
+    balcony filling the lower two thirds of its storey and 62 % of its panel. 58 % of the
+    **panel columns** carry one, hashed from the column number and the building's seed —
+    that is what makes them come out in **columns** the whole height of the wall, as they do
+    on a real block. Hashing the *cell* is the thing that must not be done here: it is an
+    independent draw per cell, i.e. a chequerboard. **Each of the three terms fades on its
+    own wavelength**, and only two of them share one. `visible` (inside `stripes`, and
+    explicitly on the balcony) is dead once the wavelength is under 1.5 px and full once it
+    is over 4 px, so: the **floor seam** and the **balcony** both go by
+    `visible(FLOOR, px_h)` — `px_h` is the divided pixel, so their threshold **turns with
+    the wall**, `px ≈ 0.7 · |(EXTRUDE_SKEW, 1) · across|` m/px, i.e. 0.70 on a south facade
+    and ≈ 0.28 on a west one, and a west wall therefore loses its storeys while the south
+    one still shows them; the **panel joint** runs along `u`, which the lean does not
+    compress, so it fades on plain `px` at `PANEL / 1.5 ≈ 2.1` m/px — three times further
+    out than the south facade's seam, more than seven times further than the west one's.
+    Between those thresholds a wall is ruled vertically and not horizontally. That is the
+    shipped behaviour, not a claim that it is the right picture: tying all three to the
+    storey would take the joints off the wall while a 3.2 m step is still over a pixel, and
+    which of the two looks right is a question for the eye, not for the code.
+    **The wall leaves `roof_shade` before the common roof pass** — its `if kind == WALL` is
+    the first thing in the function and it `return`s — and that early exit is the whole of
+    what the wall costs: two `stripes` and one hash, the cheap path code `0` used to give it
+    for free. Falling through into the common pass instead would hand every wall pixel
+    `roof_age` and two more `fbm3` per frame, and with them a roof's fade-and-dirt: that
+    octave is 8 m long and `visible` only kills it past ~5 m/px, so the *base colour* of
+    every wall in the city would drift at the city zoom, where the texture is supposed to be
+    gone. A wall therefore has **no age** — `roof_age` is the roof's, and a wall's own seed
+    slice is a different number — and no grime layer of its own either.
     The phase of the seams is global rather than measured from each wall's own base — the
-    starting offset is therefore arbitrary, but it is the *same* for adjacent walls of one
-    building, so a seam does not break at a corner, and that is the only thing an eye can
-    check.
+    starting offset is therefore arbitrary, and it is **not** the same for adjacent walls of
+    one building: at a corner the two walls' seams meet at different heights. Measuring from
+    each wall's own base is what would join them, and that needs a fifth number in
+    `ATTRIBUTE_ROOF` — the wall line's own offset — where all four are taken.
   - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
     bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
     cell — and that is not repair patches but a **chequerboard across the whole roof**:
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
     rule the fix follows, and the same one the asphalt wear and the wall balconies above
-    already follow: only a
-    minority of cells carry the feature (the `share` argument), and inside its cell the
-    feature is smaller than the cell and jittered, so two neighbours never meet at a cell
-    boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
+    already follow: only a minority of cells carry the feature (the `share` argument), and
+    inside its cell the feature is smaller than the cell and jittered, so two neighbours
+    never meet at a cell boundary. Placement stays a grid (cheap, no extra octaves); the
+    pattern does not.
   - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
     the same seed** the texture phase rides on, and with a fixed patch share that was the
     missing half of the patch fix: a minority of cells carried a patch, but *the same*
@@ -984,8 +1019,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     mixed by `age²` — age is uniform, repairs are not; with ⟨age²⟩ = 1/3 the mean share
     lands at 0.12, half the old fixed 0.22, so a patched roof is an event against clean
     neighbours instead of the district's baseline), the ponding amount (0.07 → 0.13) and,
-    on **every** material, the common fade-and-dirt amplitude (×0.75 → ×1.35) — the last
-    one is what makes the age read as age rather than as a patch counter.
+    on **every roofing** material, the common fade-and-dirt amplitude (×0.75 → ×1.35) — the
+    last one is what makes the age read as age rather than as a patch counter. **The wall is
+    not one of them**: it returns from `roof_shade` before the age is ever hashed (see the
+    wall bullet above), so a wall carries neither an age nor the common pass.
     It gets **no vertex attribute of its own**:
     the seed is already a per-building random number the shader hashes several ways
     (`seed·17`, `seed·11`, `seed·37`), the correlation between two patterns of one building
@@ -1060,7 +1097,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
       zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
       panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
-      cell, patch size, the two share ends), shape from `roofs.rs` (fill threshold, hipped
+      cell, patch size, the two share ends, and since the wall texture the storey, the panel
+      width, the three balcony fractions and the mirrored `EXTRUDE_SKEW`: the parser takes
+      *every* `f32` const but `TAU`, a mirror included), shape from `roofs.rs` (fill
+      threshold, hipped
       share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
       (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
       numbers: a mirror would drift on the first edit and the gallery would then lie about

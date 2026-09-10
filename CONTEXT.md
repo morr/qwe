@@ -202,31 +202,45 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
-  Membrane | Wall`, picked deterministically from `BuildingUse` (+ footprint size for the
-  untagged half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded. The colour comes from that material's own palette — **the per-use *roof* colours
+  Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
+  half) and a **seed hashed from the building's first vertex**, as the door generator is
+  seeded. (`RoofKind::Wall` is a seventh variant and no covering at all — a texture code for
+  the walls, kept out of `ALL`, out of that choice and out of the palettes; see below.)
+  The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
-  whole building**; code `0` is *not a roof* — walls and gables ride in the same
-  mesh). **Roof age** is the second thing that seed carries (`roof.wgsl::roof_age`, hashed
-  from it, no attribute of its own): one number per building that sets how many repair
-  patches its bitumen carries (a young roof almost none, an old one a patch per second
-  cell), how much water stands on it, and — on every material — how faded and dirty it is.
+  whole building**; code `0` is *no texture* — gables and roof clutter ride in the same
+  mesh, walls carry the `Wall` code). **Roof age** is the second thing that seed carries
+  (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
+  building that sets how many repair patches its bitumen carries (a young roof almost
+  none, an old one a patch per second cell), how much water stands on it, and — on every
+  **roofing** material — how faded and dirty it is. A wall has no age: it never reaches
+  that common pass (below).
   Every flat roof of the city, in both flat modes and 2.5D, is laid by one call —
   **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
   it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
   small hip, and a real hip could not be told from a flat roof.
   **`Wall` is the same mechanism turned on the walls**: a wall sets the frame to
-  *its own direction*, so the shader's across-axis becomes "up the wall" and the floor seams
-  land parallel to the eaves, and it draws floor seams (1.05 drawn m = one storey), panel
-  joints (3.2 m) and **balconies** on a cell grid — columns, as a panel block has them.
-  Strength — `RoofStyle::texture`
-  (Buildings section, persisted), 0 = the flat fills of before. **A roof is now darker than
-  the walls under it**, deliberately: that is the relation an aerial photo has, and the
-  older "roof lighter than wall" rule is retired with the per-use roof palette. Every
-  material and every palette side by side, with a house per colour from a 30 m block down
+  *its own direction*, so the shader's across-axis becomes "up the wall" — over the lean's
+  own projection on it, since a 2.5D wall is a parallelogram and distance from its line is
+  not height — and the floor seams land parallel to the eaves. It draws floor seams
+  (1.05 drawn m = one storey, whichever way the wall faces), panel joints (3.2 m) and
+  **balconies** on a cell grid — columns, as a panel block has them. **Each term fades on
+  its own wavelength**, not on one shared threshold: the seam and the balcony on the storey
+  measured *up the wall*, so their cut turns with the facade (gone by ≈ 0.7 m/px on a south
+  wall, ≈ 0.28 on a west one), the panel joint on its own 3.2 m against plain `px` — about
+  three times further out, so between the two a wall is ruled vertically only.
+  And it **returns before
+  the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
+  weathering, so a wall's base colour is still the flat fill of before and only its own seams
+  darken — near the cheap path code `0` gave the walls before they had a code of their own.
+  Strength — `RoofStyle::texture` (Buildings section, persisted), 0 = the flat fills of
+  before. **A roof is now darker than the walls under it**, deliberately: that is the
+  relation an aerial photo has, and the older "roof lighter than wall" rule is retired
+  with the per-use roof palette. Every material and every palette side by side, with a
+  house per colour from a 30 m block down
   to an 8 m shed, and above them every *shape* over five outlines:
   `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
   per-building body of the 2.5D layer, walls included, because a roof shape does not read
