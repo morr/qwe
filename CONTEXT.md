@@ -209,9 +209,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
-  (`meshing::ATTRIBUTE_ROOF` = `[long axis x, y, material code, seed]`, **one value for the
-  whole building**; code `0` is *no texture* — gables and roof clutter ride in the same
-  mesh, walls carry the `Wall` code). **Roof age** is the second thing that seed carries
+  (`meshing::ATTRIBUTE_ROOF` = `[axis x, y, material code, seed]`, **one value per face** —
+  the roof's axis is the building's long axis, a wall's its own; code `0` is *no texture*
+  and by now only roof clutter, which rides in the same mesh: walls carry the `Wall` code
+  and so does a **gable**, being the top of the end wall under it). **Roof age** is the
+  second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
   building that sets how many repair patches its bitumen carries (a young roof almost
   none, an old one a patch per second cell), how much water stands on it, and — on every

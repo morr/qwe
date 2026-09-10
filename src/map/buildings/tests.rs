@@ -239,11 +239,11 @@ fn gables_carry_frames_like_walls() {
     house.building_use = BuildingUse::House;
     let builder = extrusion_builder(&[house], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
-    // no vertex should carry code 0: walls and gables both get wall_frame,
-    // equipment (if any) would be missing, but this building has none
+    // нуля не должно быть ни на одной вершине: и стена, и фронтон берут
+    // `wall_frame`, а оборудование кровли на этом доме не стоит (`detail(false)`)
     assert!(
         frames.iter().all(|frame| frame[2] > 0.0),
-        "all vertices should carry a frame code"
+        "у каждой вершины должен быть код рамки"
     );
 }
 

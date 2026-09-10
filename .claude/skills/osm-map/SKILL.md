@@ -929,13 +929,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **The texture** is a `Material2d` in the shape of `SurfaceMaterial`: one material for
     the whole app (`RoofMaterialHandle`, built at `Startup`), a `RoofParams` uniform
     (`light` = `map::sun_light()`, `intensity` = `RoofStyle::texture`) and a per-vertex
-    **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[long axis x, y, material code,
-    seed]`). All four numbers are constant over a building, so the attribute is a
+    **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[axis x, y, material code,
+    seed]`). All four numbers are constant over a **face** — the roof's axis is the
+    building's long axis, a wall's is its own direction — so the attribute is a
     *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **no
-    texture** — gables and roof clutter ride in the same mesh (2.5D is one
-    painter's-order layer) and come out with their vertex colour untouched. Walls rode
-    at `0` too until they got a code of their own (`Wall`, below).
+    texture** — roof clutter rides in the same mesh (2.5D is one
+    painter's-order layer) and comes out with its vertex colour untouched. Walls rode
+    at `0` too until they got a code of their own (`Wall`, below), and so did the
+    **gable**: it is the top of an end wall, takes the same `wall_frame` as the wall
+    under it, and would otherwise break the seams at the eaves.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
