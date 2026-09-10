@@ -1218,6 +1218,28 @@ impl MeshBuilder {
         self.push_quad_gradient(corners, [color; 4]);
     }
 
+    /// **Выпуклый** контур веером из первой вершины.
+    ///
+    /// [`Self::push_polygon`] умеет любой контур с дырами и потому зовёт
+    /// `earcutr`; на десятке вершин это в разы дороже самой укладки, а
+    /// вызывается на каждый кузов машины — двадцать две тысячи раз на город.
+    /// Выпуклость здесь — обязанность вызывающего: на невыпуклом контуре веер
+    /// заедет за его собственный край.
+    pub(crate) fn push_convex(&mut self, outline: &[Vec2], color: LinearRgba) {
+        if outline.len() < 3 {
+            self.skipped_polygons += 1;
+            return;
+        }
+        let base = self.positions.len() as u32;
+        let rgba = color.to_f32_array();
+        for &point in outline {
+            self.push_vertex(point, rgba, NO_RIBBON);
+        }
+        for index in 1..outline.len() as u32 - 1 {
+            self.indices.extend([base, base + index, base + index + 1]);
+        }
+    }
+
     /// Квад с цветом на каждую вершину — для вертикального градиента стен
     /// экструдированных зданий.
     pub(crate) fn push_quad_gradient(&mut self, corners: [Vec2; 4], colors: [LinearRgba; 4]) {
