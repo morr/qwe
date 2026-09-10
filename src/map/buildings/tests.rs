@@ -8,17 +8,23 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
+use crate::map::meshing::unpack_material;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, fixture};
 use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
 
-/// Стена ли это, если смотреть на код материала так, как смотрит шейдер, —
-/// числом с плавающей точкой из вершинного атрибута. Кровля и стена делят
-/// один слот, и разбирать его в каждом тесте по-своему — верный способ
-/// разойтись со словарём.
-fn is_wall(code: f32) -> bool {
-    WallKind::is_code(code.round().max(0.0) as u32)
+/// Стена ли это, если смотреть на слот материала так, как смотрит шейдер, —
+/// числом с плавающей точкой из вершинного атрибута. В слоте лежат два числа
+/// сразу (код и этажность), кровля и стена делят его на двоих, и разбирать
+/// его в каждом тесте по-своему — верный способ разойтись со словарём.
+fn is_wall(slot: f32) -> bool {
+    WallKind::is_code(unpack_material(slot).0)
+}
+
+/// Сколько этажей записано в слоте.
+fn slot_storeys(slot: f32) -> f32 {
+    unpack_material(slot).1
 }
 
 fn square() -> Vec<Vec2> {
@@ -320,6 +326,13 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
     assert!(
         cells.iter().all(|cell| cell[3] >= 0.0),
         "у стен этого дома балконы должны быть"
+    );
+    // Этажность едет в том же слоте, что и код, и должна совпасть с той, по
+    // которой посчитана координата: иначе шейдер поставит карниз не там, где
+    // кончается стена, — а без неё он вовсе не знает, где у стены верх.
+    assert!(
+        cells.iter().all(|cell| slot_storeys(cell[2]) == 5.0),
+        "в слоте материала должны лежать пять этажей"
     );
 }
 

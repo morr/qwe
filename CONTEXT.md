@@ -248,9 +248,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
   two-sash window per panel, a narrower brick one, a small house window, a full-panel
   glazing strip, a high shed ribbon), and whether the wall has **balconies** at all.
-  The **ground floor** is its own case on every cladding: no balcony, and instead an
-  entrance — a doorway on a fifth of the columns, a shopfront lower and taller than the
-  strip above it, a gate on a shed.
+  **Both ends of a wall are their own case, and a cell carries exactly one opening.** The
+  **ground floor** takes no balcony and an entrance instead — a doorway on a fifth of the
+  columns, a shopfront lower and taller than the strip above it, a gate on a shed — over a
+  dark **plinth** band. The top storey ends in a light **cornice** (`PARAPET_HIGH`, the top
+  0.16 of the cell), and no opening's head, reveal included, reaches into it: without one the
+  last window butted straight into the roof, which no photograph shows. Knowing where the top
+  *is* needs the storey count, and that rides in the **material slot** next to the code
+  (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in the quotient, zero on a roof)
+  — the one field with a spare digit, against four bytes per vertex for a fifth float.
   A **balcony** is a stack of bands across 72 % of its panel — the slab's shadow on the wall,
   the bright slab edge, the parapet, and above it either glazing or an open recess in shade —
   on 58 % of the **columns** (a brick building's are recessed loggias, and rarer), so they

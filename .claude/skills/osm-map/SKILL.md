@@ -1080,8 +1080,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       right; centring them on the middle only works for even counts.
     - **The ground floor is its own case on every cladding**: never a balcony, and instead an
       entrance — a doorway on `DOOR_SHARE` of the columns, a shopfront lower and taller than
-      the strip above it, a gate on a shed (which does not compete with the shed's ribbon
-      window: they sit at different heights and both are drawn).
+      the strip above it, a gate on a shed — over a dark **plinth** band, the line that says
+      where the building stops and the ground begins.
+    - **The top storey is the other such case, and it needs the storey count.** A wall ends in
+      a **cornice**: a light coping over the top `PARAPET_HIGH` (0.20) of the last cell with a
+      strong dark seam under it, and no opening's head — reveal included — reaches above 0.80.
+      Without it the last window butted straight into the roof, which no photograph shows.
+      Knowing where the top *is* takes the storey count, and that rides **in the material
+      slot** beside the code: `meshing::STOREY_STRIDE` (16) puts the code in the remainder and
+      the storeys in the quotient, zero on a roof. That slot is the one field with a spare
+      digit; a fifth float in the attribute would cost four bytes on every vertex of the
+      building layer. `meshing::unpack_material` is the Rust mirror and exists only for the
+      test that pins it — in the game the slot is written, and read by the shader alone.
+    - **The seam under the cornice goes through `stripes`, not `cell_band`**, and that is the
+      general rule for a *line* here: `stripes` floors its width at one pixel
+      (`max(width, px)`), `cell_band` does not. A 0.05-cell seam is five drawn centimetres and
+      vanished at every zoom where the wall is visible at all; it took a probe run with the
+      amplitude at 0.9 to tell "the branch never runs" from "the branch is too faint", and it
+      was the second. `cell_band` stays right for a *band* — plinth, parapet, balcony rail —
+      which is thick enough to survive on its own.
+    - **One opening per cell, on every cladding.** The shed briefly had two — a gate and the
+      ribbon window, «because they sit at different heights» — and that stopped being true
+      the moment the ribbon dropped from 0.60 to 0.45 to survive the fade: the window's
+      sashes climbed onto the gate leaf and its bottom row came out as a stump over the dark
+      rectangle. Different heights are not enough, because an opening owns its reveal and
+      sill below it too, so the gap between two would have to allow for the frame; picking
+      one of the two is the version that cannot drift.
+    - **A gate is nearly square, and the two fractions are in different units** — width in
+      panels (≈3.2 m), height in storeys (3 m). `GATE_WIDE` 0.72 by `GATE_HIGH` 0.78 is about
+      2.3 × 2.3 m, a garage or small warehouse gate. The first numbers, 0.62 by 0.50, were
+      2.0 m wide by 1.5 m tall — wider than tall, which no gate and no door is, and the lean's
+      threefold vertical squeeze made it read as a letterbox slot.
     - **A balcony is a stack of bands**, not a box: the slab's shadow on the wall, the bright
       slab edge, the parapet (its tone by its own draw, from light panel to dark sheet), and
       above it either glazing or an open recess in shade. 72 % of a panel, on 58 % of the

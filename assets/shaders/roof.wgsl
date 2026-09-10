@@ -63,6 +63,12 @@ const PLASTER: u32 = 9u;
 const SHOPFRONT: u32 = 10u;
 const SHED: u32 = 11u;
 
+// В том же числе, что и код, едет **число этажей** стены: код в остатке от
+// деления, этажи в частном (`meshing::STOREY_STRIDE` — зеркало). Без них
+// шейдер знал только низ стены и не знал верха, а верх это карниз: верхнее
+// окно упиралось прямо в кровлю.
+const STOREY_STRIDE: u32 = 16u;
+
 const TAU: f32 = 6.283185307;
 
 struct Vertex {
@@ -200,7 +206,7 @@ fn repair_patch(q: vec2<f32>, px: f32, seed: f32, share: f32) -> f32 {
 
 // Окно панельного дома: одно на панель, широкое, с импостом посередине.
 const WINDOW_LOW: f32 = 0.30;
-const WINDOW_HIGH: f32 = 0.76;
+const WINDOW_HIGH: f32 = 0.72;
 const WINDOW_WIDE: f32 = 0.42;
 // Кирпичное окно уже панельного: проём в кладке дорог, и его не расширяют.
 const BRICK_WINDOW_WIDE: f32 = 0.32;
@@ -210,7 +216,7 @@ const PLASTER_WINDOW_HIGH: f32 = 0.72;
 const PLASTER_WINDOW_WIDE: f32 = 0.26;
 // Витраж: остекление почти во всю панель, лентой через этаж.
 const SHOPFRONT_LOW: f32 = 0.18;
-const SHOPFRONT_HIGH: f32 = 0.86;
+const SHOPFRONT_HIGH: f32 = 0.76;
 const SHOPFRONT_WIDE: f32 = 0.90;
 // Профлист: ленточное окно высоко под карнизом, и то не на всякой панели.
 //
@@ -220,7 +226,7 @@ const SHOPFRONT_WIDE: f32 = 0.90;
 // была втрое ниже (0.60…0.82) — и склад стоял глухой коробкой, единственный из
 // пяти облицовок вовсе без рисунка.
 const SHED_WINDOW_LOW: f32 = 0.45;
-const SHED_WINDOW_HIGH: f32 = 0.85;
+const SHED_WINDOW_HIGH: f32 = 0.76;
 const SHED_WINDOW_WIDE: f32 = 0.76;
 const SHED_WINDOW_SHARE: f32 = 0.55;
 
@@ -230,13 +236,23 @@ const MULLION_WIDTH: f32 = 0.018;
 const SILL_HEIGHT: f32 = 0.040;
 const REVEAL_HEIGHT: f32 = 0.070;
 
+// Карниз — светлая полоса по самому верху стены, доля **верхнего** этажа.
+// Стена обязана чем-то кончаться: под ней земля и цоколь, над ней кровля и
+// парапет, и без него верхнее окно упирается в кровлю впритык. Поэтому ни
+// один проём выше `1 - PARAPET_HIGH` не поднимается — верх у всех у них 0.80
+// или ниже, с запасом на раму.
+const PARAPET_HIGH: f32 = 0.20;
+// Период для `stripes`, когда линия нужна ровно одна: заведомо больше любой
+// стены в этажах, так что вторая никуда не попадает.
+const FAR_APART: f32 = 1000.0;
+
 // Балкон снизу вверх: тень плиты на стене, торец плиты, ограждение, а над ним
 // либо остекление, либо открытый провал в тени.
 const BALCONY_WIDE: f32 = 0.72;
 const BALCONY_SLAB_LOW: f32 = 0.07;
 const BALCONY_SLAB_HIGH: f32 = 0.15;
 const BALCONY_RAIL_HIGH: f32 = 0.46;
-const BALCONY_HIGH: f32 = 0.88;
+const BALCONY_HIGH: f32 = 0.74;
 // Доля столбцов с балконом и доля остеклённых среди них.
 const BALCONY_SHARE: f32 = 0.58;
 const BALCONY_GLAZED: f32 = 0.62;
@@ -248,10 +264,16 @@ const PLINTH_HIGH: f32 = 0.14;
 const DOOR_SHARE: f32 = 0.24;
 const DOOR_WIDE: f32 = 0.30;
 const DOOR_HIGH: f32 = 0.60;
-// Ворота склада — шире и ниже двери, и им хватает пятой части столбцов.
+// Ворота склада — шире двери и **почти квадратные**: доли тут в разных
+// единицах, ширина в панелях (≈3.2 м), высота в этажах (3 м), поэтому 0.72 на
+// 0.78 это примерно 2.3 × 2.3 м — гаражные ворота или небольшие складские.
+// Первая версия была 0.62 на 0.50, то есть 2.0 м в ширину при 1.5 м в высоту:
+// шире, чем выше, чего не бывает ни у одних ворот и ни у одной двери. На
+// экране это тем заметнее, что подъём сжимает стену по высоте втрое, и проём
+// читался щелью почтового ящика.
 const GATE_SHARE: f32 = 0.30;
-const GATE_WIDE: f32 = 0.62;
-const GATE_HIGH: f32 = 0.50;
+const GATE_WIDE: f32 = 0.72;
+const GATE_HIGH: f32 = 0.78;
 
 // Швы панели, ряд кирпичной кладки и ребро профлиста — тоже доли ячейки.
 const FLOOR_SEAM: f32 = 0.05;
@@ -416,11 +438,10 @@ fn doorway_of(inside: vec2<f32>, px: vec2<f32>, wide: f32, high: f32) -> Wall {
 // стилистика, а её цена. `roof_age` — возраст **кровли**, у стены его нет; а
 // общая октава кровельного тракта в 8 м гаснет только к `px ≈ 5 м/пиксель`,
 // то есть уводила бы цвет стен и на общем плане, где фактура уже погасла.
-fn wall_shade(kind: u32, cell: vec2<f32>, seed_raw: f32) -> Wall {
+fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
     // Метка поверхности едет посевом (`meshing::WallFrame::encoded_seed`):
     // `[0, 1)` — стена с балконами, `(-2, -1]` — без них, `(-4, -3]` — фронтон.
-    // Шейдеру этого не вывести самому: он не знает ни назначения дома, ни
-    // того, сколько всего этажей у этой стены, — решает
+    // Шейдеру этого не вывести самому: он не знает назначения дома — решает
     // `buildings::layers::balconies_fit`.
     let gable = seed_raw < -2.5;
     let blank = seed_raw < 0.0;
@@ -484,6 +505,27 @@ fn wall_shade(kind: u32, cell: vec2<f32>, seed_raw: f32) -> Wall {
     // своей собственной — иначе на общем плане исчезла бы первой.
     out.shade -= 0.09 * f32(ground) * cell_band(inside.y, -1.0, PLINTH_HIGH, px.y)
         * visible(1.0, px.y);
+
+    // Карниз — то же самое на другом конце стены, и появился он позже цоколя
+    // ровно потому, что верх шейдеру был неизвестен: `storeys` едет в слоте
+    // кода (`STOREY_STRIDE`) как раз ради этой полосы. Без неё верхнее окно
+    // упиралось в кровлю впритык, чего на снимке не бывает: над последним
+    // этажом всегда есть перекрытие и парапет.
+    //
+    // Полоса светлая: парапет стоит **над** линией кровли и ловит свет сверху.
+    // Но светлое на светлой стене само по себе не читается, и работает тут не
+    // полоса, а **шов под ней** — граница, ниже которой начинаются этажи.
+    //
+    // Шов идёт через `stripes`, а не через `cell_band`, и это не вкус: `stripes`
+    // держит линию не тоньше пикселя (`max(width, px)`), а `cell_band` — нет, и
+    // шов в 0.05 ячейки (5 см нарисованных) гас начисто на всяком зуме, где
+    // стену вообще видно. Период заведомо больше любой стены, поэтому линия
+    // одна: та, что приходится на низ парапета.
+    // Амплитуда втрое больше межэтажного шва (0.055) намеренно: конец стены —
+    // событие крупнее, чем стык двух этажей, и на глаз должен быть крупнее.
+    let below_eaves = storeys - cell.y;
+    out.shade += 0.14 * cell_band(below_eaves, -1.0, PARAPET_HIGH, px.y) * visible(1.0, px.y);
+    out.shade -= 0.20 * stripes(below_eaves - PARAPET_HIGH, FAR_APART, FLOOR_SEAM, px.y);
     // свой бросок на ячейку: занавеска в окне, остекление балкона, тон
     // ограждения. По ячейке, а не по столбцу, — в отличие от самого балкона.
     let tone = hash21(vec2<f32>(column, storey) + seed * 53.0);
@@ -545,9 +587,23 @@ fn wall_shade(kind: u32, cell: vec2<f32>, seed_raw: f32) -> Wall {
         out.glass = w.glass;
         out.sky = w.sky;
     } else if kind == SHED {
-        // Склад: ворота внизу и ленточное окно под карнизом — они не спорят
-        // за место по высоте, поэтому на первом этаже бывают оба.
-        if entrance < SHED_WINDOW_SHARE {
+        // Склад: ворота на первом этаже, ленточное окно под карнизом.
+        //
+        // **Ровно один проём на ячейку**, как и у прочих облицовок. Раньше эти
+        // два рисовались независимо, «потому что стоят на разной высоте», — и
+        // это перестало быть правдой в тот момент, когда ленту опустили с 0.60
+        // до 0.45, чтобы она пережила гашение. Створки окна лезли на воротное
+        // полотно, и низ ленты выходил обрубком поверх тёмного прямоугольника.
+        // Разной высоты мало: проёму принадлежит ещё и откос с отливом под ним,
+        // так что зазор между двумя должен быть не нулевым, а с запасом на раму
+        // — надёжнее не оставлять зазора вовсе, а выбирать один из двух.
+        let gate_here = ground && hash21(vec2<f32>(column, 3.0) + seed * 97.0) < GATE_SHARE;
+        if gate_here {
+            let d = doorway_of(inside, px, GATE_WIDE, GATE_HIGH);
+            out.shade += d.shade;
+            out.glass = d.glass;
+            out.sky = d.sky;
+        } else if entrance < SHED_WINDOW_SHARE {
             let w = window_of(
                 inside,
                 px,
@@ -560,12 +616,6 @@ fn wall_shade(kind: u32, cell: vec2<f32>, seed_raw: f32) -> Wall {
             out.shade += w.shade;
             out.glass = w.glass;
             out.sky = w.sky;
-        }
-        if ground && hash21(vec2<f32>(column, 3.0) + seed * 97.0) < GATE_SHARE {
-            let d = doorway_of(inside, px, GATE_WIDE, GATE_HIGH);
-            out.shade += d.shade;
-            out.glass = max(out.glass, d.glass);
-            out.sky = mix(out.sky, d.sky, d.glass);
         }
     }
     return out;
@@ -660,7 +710,12 @@ fn roof_shade(
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var rgb = in.color.rgb;
-    let kind = u32(round(max(in.roof.z, 0.0)));
+    // Слот несёт два числа: код материала в остатке и, у стены, число её
+    // этажей в частном (`meshing::unpack_material` — зеркало). У кровли и у
+    // каймы частное ноль, и деление им ничего не портит.
+    let packed = u32(round(max(in.roof.z, 0.0)));
+    let kind = packed % STOREY_STRIDE;
+    let storeys = f32(packed / STOREY_STRIDE);
 
     if kind != 0u && params.intensity > 0.0 {
         var shade = 0.0;
@@ -670,7 +725,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         if kind >= PANEL {
             // у стены координаты уже свои, в вершине; мировая точка, ось дома
             // и фаза по посеву ей не нужны вовсе
-            let wall = wall_shade(kind, in.roof.xy, in.roof.w);
+            let wall = wall_shade(kind, in.roof.xy, storeys, in.roof.w);
             shade = wall.shade;
             glass = wall.glass;
             sky = wall.sky;
