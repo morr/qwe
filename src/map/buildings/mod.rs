@@ -28,34 +28,28 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::heights::{height_mix, height_or_default};
-pub use self::layers::push_house;
 use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
+pub use self::layers::{push_house, wall_of};
 use self::material::RoofMaterialHandle;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
+use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SunOnMap, sun_light};
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
-/// Палитра **стен** по назначению: тёплые тона у жилья, серые у промзоны и
-/// гаражей, охра у казённых зданий, белёный кирпич у храма.
+/// Цвет **стены** назначением здания больше не задаётся: его выбирает материал
+/// облицовки из своей палитры ([`material::wall_look`]), ровно как это давно
+/// устроено у кровель. Прежние восемь констант — по одной на `BuildingUse` —
+/// красили половину города (`building=yes`) в один тон, и квартал панелек стоял
+/// сплошной заливкой.
 ///
-/// Цвета крыш отсюда ушли в [`material`]: крыша теперь красится своим
-/// материалом (битум, металл, черепица), а не назначением, и прежнее правило
-/// «крыша светлее стены» вместе с ними. На снимке сверху ровно наоборот —
-/// тёмный битумный ковёр на светлой панельной стене, и объём коробки держат
-/// разные тона двух видимых стен, а не контраст с крышей.
-const FACADE_COLOR: Color = Color::srgb(0.663, 0.616, 0.529);
-const HOUSE_FACADE_COLOR: Color = Color::srgb(0.70, 0.60, 0.50);
-const APARTMENTS_FACADE_COLOR: Color = Color::srgb(0.615, 0.575, 0.515);
-const COMMERCIAL_FACADE_COLOR: Color = Color::srgb(0.575, 0.565, 0.545);
-const INDUSTRIAL_FACADE_COLOR: Color = Color::srgb(0.505, 0.505, 0.49);
-const GARAGE_FACADE_COLOR: Color = Color::srgb(0.48, 0.46, 0.43);
-const CHURCH_FACADE_COLOR: Color = Color::srgb(0.93, 0.91, 0.86);
-const PUBLIC_FACADE_COLOR: Color = Color::srgb(0.70, 0.62, 0.45);
+/// Прежнее правило «крыша светлее стены» ушло ещё раньше, вместе с цветом крыш
+/// по назначению. На снимке сверху ровно наоборот — тёмный битумный ковёр на
+/// светлой панельной стене, и объём коробки держат разные тона двух видимых
+/// стен, а не контраст с крышей.
 const KREMLIN_ROOF_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 
@@ -518,24 +512,6 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
     let height = (height_or_default(building) * EXTRUDE_SCALE)
         .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
     Lean::of().lift(height)
-}
-
-/// Базовый цвет стены по типу здания: Кремль — свой, остальные по назначению
-/// (`BuildingUse`). Крыша красится не отсюда, а материалом ([`material`]).
-fn facade_color(building: &PolyArea) -> Color {
-    if building.kind == AreaKind::Kremlin {
-        return KREMLIN_FACADE_COLOR;
-    }
-    match building.building_use {
-        BuildingUse::House => HOUSE_FACADE_COLOR,
-        BuildingUse::Apartments => APARTMENTS_FACADE_COLOR,
-        BuildingUse::Commercial => COMMERCIAL_FACADE_COLOR,
-        BuildingUse::Industrial => INDUSTRIAL_FACADE_COLOR,
-        BuildingUse::Garage => GARAGE_FACADE_COLOR,
-        BuildingUse::Church => CHURCH_FACADE_COLOR,
-        BuildingUse::Public => PUBLIC_FACADE_COLOR,
-        BuildingUse::Other => FACADE_COLOR,
-    }
 }
 
 /// Тон поверхности по повороту её наружной нормали (в плане) к свету

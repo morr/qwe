@@ -11,14 +11,13 @@ use super::arches::{
     ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::{RoofKind, RoofLook, building_seed, roof_look};
+use super::material::{RoofLook, WallKind, WallLook, building_seed, roof_look, wall_look};
 use super::order::draw_order;
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
-    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, facade_color, height_or_default,
-    shade_by_light,
+    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, WallFrame};
+use crate::map::meshing::{MeshBuilder, WallFrame, WallMark};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
 use crate::map::seed::seed_from_point;
@@ -121,38 +120,66 @@ const STOREY_HEIGHT: f32 = 3.0;
 ///
 /// Посев — свой у каждой стены (`seed_from_point` от её начала, тот же
 /// генератор, что у кровель, дверей и машин), а не общий на дом: столбцы
-/// балконов на соседних стенах не должны начинаться одинаково.
-fn wall_frame(building: &PolyArea, a: Vec2, b: Vec2, lift: Vec2, height: f32) -> Option<WallFrame> {
+/// балконов и разброс окон на соседних стенах не должны начинаться одинаково.
+///
+/// **Материал** же, наоборот, общий на дом ([`WallLook`]): у одного здания не
+/// бывает панельного торца и кирпичного фасада, и его код едет в тот же слот
+/// атрибута, где у кровли стоит её материал.
+fn wall_frame(
+    building: &PolyArea,
+    look: &WallLook,
+    a: Vec2,
+    b: Vec2,
+    lift: Vec2,
+    storeys: f32,
+) -> Option<WallFrame> {
     let columns = ((b - a).length() / PANEL_WIDTH).round().max(1.0);
-    let storeys = (height / STOREY_HEIGHT).round().max(1.0);
     let seed = (seed_from_point(a) & 0xff) as f32 / 255.0;
-    let frame = WallFrame::new(a, b, lift, columns, storeys, RoofKind::Wall.code(), seed)?;
-    Some(match balconies_fit(building, columns, storeys) {
+    let frame = WallFrame::new(a, b, lift, columns, storeys, look.kind.code(), seed)?;
+    Some(match balconies_fit(building, look.kind, columns, storeys) {
         true => frame,
-        false => frame.without_balconies(),
+        false => frame.marked(WallMark::Blank),
     })
 }
 
+/// Сколько этажей в этой стене — от **настоящей** высоты дома, а не от
+/// нарисованной: `EXTRUDE_SCALE` сжимает стену вместе с этажами, и считать их
+/// по сжатой значило бы получить полтора этажа у пятиэтажки.
+///
+/// Число целое, и на нём держится вся рама ([`wall_frame`]): верхний этаж
+/// упирается ровно в карниз, а на углу дома обе стены кончаются одинаково.
+fn storeys_of(building: &PolyArea) -> f32 {
+    (height_or_default(building) / STOREY_HEIGHT)
+        .round()
+        .max(1.0)
+}
+
 /// Кому балконы полагаются. Это не про геометрию, а про то, что бывает на
-/// фотографии: балкон — примета **жилого дома в несколько этажей**, и швы
-/// панелей без него встречаются сплошь, а он без них нет.
+/// фотографии: балкон — примета **жилого дома в несколько этажей**, и рисунок
+/// стены без него встречается сплошь, а он без него нет.
 ///
-/// * частный дом, гараж, храм, склад, школа, магазин — не бывает: у первых
-///   двух этажей не хватает, у остальных балконов нет по назначению;
-/// * ниже [`BALCONY_STOREYS_MIN`] — тоже: двухэтажка с рядом балконов во всю
-///   стену читается как ошибка, и на карте это ровно то, что видно первым;
+/// Решает в первую очередь **материал стены**, и это не перекладывание
+/// условия: назначение уже разобрано один раз, когда дому выбирали облицовку
+/// ([`super::material::wall_look`]), и там же учтён рост. Штукатурка достаётся
+/// частному сектору и малоэтажке, витраж — торговому центру, профлист —
+/// складу; балконов нет ни у кого из них по самому смыслу материала. Остаются
+/// панель и кирпич — ровно те две стены, на которых балкон и бывает.
+///
+/// Три ограничения сверх материала:
+///
+/// * **частный дом** — никогда, каким бы ни вышел материал: `building=house`
+///   это отдельный дом с участком, и балкона у него не бывает. Порог
+///   этажности отсекает почти все такие дома и сам, но «почти» тут мало —
+///   пятиэтажный `house` в выгрузке встречается, и балконы на нём читались бы
+///   как ошибка разбора, чем и были бы;
+/// * ниже [`BALCONY_STOREYS_MIN`] — двухэтажка с рядом балконов во всю стену
+///   читается как ошибка, и на карте это видно первым;
 /// * простенок уже [`BALCONY_COLUMNS_MIN`] панелей — торец, глухая стенка
-///   уступа: ряд выступов на трёхметровой полоске не бывает ничем, кроме
-///   узора.
-///
-/// `Other` в список жилых входит: это половина города (`building=yes`), и
-/// среди них панельные дома; те, что не дома, отсекаются высотой — сарай и
-/// пристройка ниже четырёх этажей по любой оценке (`heights.rs`).
-fn balconies_fit(building: &PolyArea, columns: f32, storeys: f32) -> bool {
-    matches!(
-        building.building_use,
-        BuildingUse::Apartments | BuildingUse::Other
-    ) && storeys >= BALCONY_STOREYS_MIN
+///   уступа: ряд выступов на трёхметровой полоске не бывает ничем, кроме узора.
+fn balconies_fit(building: &PolyArea, kind: WallKind, columns: f32, storeys: f32) -> bool {
+    matches!(kind, WallKind::Panel | WallKind::Brick)
+        && building.building_use != BuildingUse::House
+        && storeys >= BALCONY_STOREYS_MIN
         && columns >= BALCONY_COLUMNS_MIN
 }
 
@@ -222,7 +249,7 @@ pub(super) fn push_flat_roof(
 /// значит её настоящая нормаль смотрит против подъёма — это и выбирает
 /// сторону перпендикуляра, обход кольца тут ни при чём.
 pub(super) fn wall_colors(
-    facade: Color,
+    facade: Srgba,
     a: Vec2,
     b: Vec2,
     lift_dir: Vec2,
@@ -232,7 +259,7 @@ pub(super) fn wall_colors(
     if normal.dot(lift_dir) > 0.0 {
         normal = -normal;
     }
-    let bottom = shade_by_light(facade.to_srgba(), normal, WALL_LIT_MIX, WALL_SHADED_MIX);
+    let bottom = shade_by_light(facade, normal, WALL_LIT_MIX, WALL_SHADED_MIX);
     let top = bottom.mix(&Srgba::WHITE, WALL_TOP_LIGHTEN);
     (bottom.into(), top.into())
 }
@@ -248,7 +275,9 @@ pub(super) fn facade_and_roof_builders(
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
     for (index, building) in buildings.iter().enumerate() {
-        let facade_color = facade_color(building);
+        // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
+        // цвет у неё тот же, что был бы у настоящей стены в 2.5D
+        let facade_color = wall_look(building, storeys_of(building)).base;
 
         // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
         // только вдоль южных граней любого полигона. Сдвиг — по высоте из
@@ -262,7 +291,7 @@ pub(super) fn facade_and_roof_builders(
             .iter()
             .map(|hole| hole.iter().map(|p| *p + offset).collect())
             .collect();
-        facades.push_polygon(&facade_outer, &facade_holes, facade_color.to_linear());
+        facades.push_polygon(&facade_outer, &facade_holes, facade_color.into());
         // крыши — отдельный слой поверх фасадов, так что вырезать проём из
         // полосы достаточно: над аркой крыша останется целой сама собой
         if let Some(passages) = arches.get(&index) {
@@ -537,6 +566,7 @@ pub(super) fn extrusion_builder(
             &mut builder,
             building,
             &look,
+            &wall_of(building),
             color,
             RoofShape::Auto,
             detail.clutter,
@@ -551,32 +581,50 @@ pub(super) fn extrusion_builder(
 /// заказанной она равна не всегда: на негодном контуре скатная крыша не
 /// строится, и дом остаётся с плоской.
 ///
-/// Публично, потому что тем же вызовом строит свои дома витрина
-/// `roof_gallery`: форму, материал и цвет она перебирает сама
-/// ([`RoofShape`], [`RoofLook::new`]), а стены, скаты и оборудование обязаны
-/// остаться игровыми. Арок у витрины нет — их знает только городская ветка
-/// ([`push_house_with_arches`]).
+/// Публично, потому что тем же вызовом строят свои дома витрины: форму,
+/// материал кровли и цвет перебирает `roof_gallery` ([`RoofShape`],
+/// [`RoofLook::new`]), облицовку стен — `wall_gallery` ([`WallLook::new`]), а
+/// геометрия, скаты и оборудование обязаны остаться игровыми. Арок у витрин
+/// нет — их знает только городская ветка ([`push_house_with_arches`]).
+///
+/// `wall` — вход, а не вывод из дома, по той же причине, по какой входом стала
+/// `RoofLook`: посевом до всякого сочетания материала с высотой не добраться
+/// (витраж не выпадает частному дому), а витрина обязана показать их все. Что
+/// выбрала бы сама игра, отвечает [`wall_of`].
 pub fn push_house(
     builder: &mut MeshBuilder,
     building: &PolyArea,
     look: &RoofLook,
+    wall: &WallLook,
     color: Srgba,
     shape: RoofShape,
     clutter: bool,
 ) -> RoofShape {
-    push_house_with_arches(builder, building, look, color, shape, clutter, &[])
+    push_house_with_arches(builder, building, look, wall, color, shape, clutter, &[])
 }
 
+/// Облицовка, которую игра выбрала бы этому дому. Витринам — чтобы не
+/// повторять у себя деление высоты на высоту этажа, городу — чтобы не звать
+/// `wall_look` мимо [`storeys_of`].
+pub fn wall_of(building: &PolyArea) -> WallLook {
+    wall_look(building, storeys_of(building))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_house_with_arches(
     builder: &mut MeshBuilder,
     building: &PolyArea,
     look: &RoofLook,
+    wall: &WallLook,
     color: Srgba,
     shape: RoofShape,
     clutter: bool,
     openings: &[ArchOpening],
 ) -> RoofShape {
-    let facade_color = facade_color(building);
+    // этажи считаются от настоящей высоты дома, а не от нарисованной: подъём
+    // сжимает стену вместе с ними
+    let storeys = storeys_of(building);
+    let facade_color = wall.base;
     let lean = Lean::of();
     let lift_dir = lean.dir();
     // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
@@ -586,11 +634,9 @@ fn push_house_with_arches(
     // видимы стены рёбер, смотрящих против подъёма: при сдвиге
     // вверх-вправо — южные и западные
     let seed = building_seed(building);
-    // этажи считаются от настоящей высоты дома, а не от нарисованной
-    let height = height_or_default(building);
     for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-        builder.set_wall(wall_frame(building, a, b, lift, height));
+        builder.set_wall(wall_frame(building, wall, a, b, lift, storeys));
         push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
     }
     // двор: видима внутренняя стена его дальней стороны — та, чья
@@ -598,7 +644,7 @@ fn push_house_with_arches(
     for hole in &building.holes {
         for (a, b) in silhouette_edges(hole, lift_dir) {
             let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-            builder.set_wall(wall_frame(building, a, b, lift, height));
+            builder.set_wall(wall_frame(building, wall, a, b, lift, storeys));
             push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
         }
     }
@@ -622,10 +668,12 @@ fn push_house_with_arches(
                     continue;
                 }
                 let (_, top) = wall_colors(facade_color, a, b, lift_dir);
-                // фронтон продолжает раму стены под ним — иначе швы рвались бы
-                // ровно на карнизе, — но помечен как «над карнизом»
+                // фронтон продолжает раму стены под ним — иначе рисунок рвался
+                // бы ровно на карнизе, — но помечен как «над карнизом»: проёмов
+                // на треугольнике нет, окно на нём резалось бы скатом
                 builder.set_wall(
-                    wall_frame(building, a, b, lift, height).map(WallFrame::without_balconies),
+                    wall_frame(building, wall, a, b, lift, storeys)
+                        .map(|frame| frame.marked(WallMark::Gable)),
                 );
                 builder.push_polygon(&[a, b, apex], &[], top);
             }

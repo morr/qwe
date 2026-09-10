@@ -266,7 +266,7 @@ pub(super) fn push_items(
         let lift = lean.map_or(Vec2::ZERO, |lean| lean.ridge(item.height));
         if let Some(lean) = lean {
             for (a, b) in silhouette_edges(&item.base, -lean.dir()) {
-                let (bottom, top) = wall_colors(item.wall, a, b, lean.dir());
+                let (bottom, top) = wall_colors(item.wall.to_srgba(), a, b, lean.dir());
                 builder.push_quad_gradient([a, b, b + lift, a + lift], [bottom, bottom, top, top]);
             }
         }
