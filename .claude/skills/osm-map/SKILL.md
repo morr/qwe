@@ -769,9 +769,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - Tula: 356 fences, 71 walls, 1 hedge (the audit's `barrier=hedge` row was right that
     live hedges are mapped as `barrier`, not `natural`).
 - **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **12**.
-  Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on the sun
-  and on `BuildingHeightMode` and on nothing else — there is no zoom bucket, because a
+  Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
+  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)` and on nothing else — the
+  settled sun, never `SunStyle`, like every other rebuild — and the system stands on its
+  own rather than in the zoom-bucket chain, because there is no zoom bucket here: a
   cylinder is visible exactly as far as its shadow is.
+  - **"Like a house" is literal, and shared in code**: the cylinder's shadow is drawn in
+    exactly the three modes a house's is (`BuildingHeightMode::casts_shadows()` — the
+    mode list lives there once and both layers ask it; in `Facade` and `Extrusion` a
+    2.5 m chimney is a small circle and nothing else), and its lean comes from
+    `buildings::drawn_lift`, the height-only core of `extrusion_lift`, so the
+    `EXTRUDE_RANGE` clamp is one for roofs and cylinders alike. Without that clamp a
+    60 m chimney lay across the map as an 80 m tube.
   - **A cylinder is three layers, like a house**: `industry_shadows`
     (`Z_INDUSTRY_SHADOW` 4.55, beside the building shadow), `industry_walls` (5.06) and
     `industry_tops` (5.07) — **above** the houses, because a works chimney is taller than
@@ -788,7 +797,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     and its copy, written out by hand as two half-arcs; the buildings get theirs from
     `i_overlay`). A cylinder is solid from the ground to the top, so every height in
     between casts too; a shifted disc would leave the strip between base and shadow
-    empty, which on a 60 m chimney is 36 m of missing shadow.
+    empty, which on a 60 m chimney is 36 m of missing shadow. Its length is the
+    buildings' `SHADOW_LENGTH_RANGE` **multiplied by `sun_stretch()` at both ends**, as
+    every calibrated length here must be: with the bare 3–45 m a 60 m chimney stopped at
+    45 m at 15° while a house of the same height threw 168.
   - **The wall is one quad per facet, each shaded on its own** (`shade_by_light`, mixes
     0.26/0.26 — stronger than a flat house wall's 0.18/0.22, since the gradient has to
     span the whole visible half). That gradient *is* what makes the circle read as a
@@ -1128,9 +1140,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     shadows. Depth is painter's algorithm *inside one
     mesh*: buildings sorted by `Lean::depth`, far first (index-buffer order is raster
     order), so a south-western building correctly overlays its north-eastern neighbour.
-    `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
-    in the shadows and anything that wants to put a marker on the *drawn* building rather
-    than its real outline all go through it. Known limits: units y-sort against
+    `extrusion_lift` is the one door to that vector **for a building** — the extrusion
+    layer, the arch patch in the shadows and anything that wants to put a marker on the
+    *drawn* building rather than its real outline all go through it. It is a thin wrapper
+    over **`drawn_lift(height, mode)`**, the height-only core, which exists because the
+    lean is not the house's alone: the industry cylinders (`map/industry.rs`) have
+    neither an outline nor a `BuildingUse` and take the same scale and the same
+    `EXTRUDE_RANGE` clamp through it. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
     - **`Lean` is a per-building value**, not a global function: direction,
