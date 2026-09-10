@@ -220,8 +220,8 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
     // у стены теперь своя рамка и свой код — по ней шейдер кладёт межэтажные
-    // швы; ноль остаётся тому, у чего фактуры нет вовсе (фронтон,
-    // оборудование), а у этой коробки нет ни того, ни другого
+    // швы; ноль остаётся тому, у чего фактуры нет вовсе (оборудование),
+    // а у этой коробки нет ни того, ни другого
     let wall = RoofKind::Wall.code() as f32;
     assert!(frames.iter().any(|frame| frame[2] == wall), "walls");
     assert!(
@@ -229,6 +229,21 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
             .iter()
             .any(|frame| frame[2] > 0.0 && frame[2] != wall),
         "roof"
+    );
+}
+
+#[test]
+fn gables_carry_frames_like_walls() {
+    let _sun = crate::map::default_sun();
+    let mut house = building(square(), None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    let builder = extrusion_builder(&[house], &[], detail(false));
+    let frames = builder.roof_coords_for_test().expect("roof coords");
+    // no vertex should carry code 0: walls and gables both get wall_frame,
+    // equipment (if any) would be missing, but this building has none
+    assert!(
+        frames.iter().all(|frame| frame[2] > 0.0),
+        "all vertices should carry a frame code"
     );
 }
 
