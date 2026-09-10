@@ -27,6 +27,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
+use super::garages::GarageRun;
 use super::roofs::min_area_rect;
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
@@ -59,6 +60,13 @@ pub enum RoofKind {
     /// балконы. Живёт в том же перечислении и в том же атрибуте, потому что
     /// стены едут в одном меше с крышами и различает их ровно этот код.
     Wall,
+    /// Лента гаражного кооператива: тот же профлист, но со швом на каждом
+    /// боксе и своим тоном краски внутри шва. Ставится не по назначению, а
+    /// по геометрии ряда — см. [`super::garages`].
+    GarageRow,
+    /// Кооператив целиком одним контуром: та же лента, но с **проездами**
+    /// между парами рядов — на снимке ГСК это сетка, а не полоса.
+    GarageBlock,
 }
 
 impl RoofKind {
@@ -94,6 +102,10 @@ impl RoofKind {
             // не кровля и потому не в `ALL`: вариант живёт в перечислении
             // только ради кода фактуры стены в атрибуте
             Self::Wall => "Стена",
+            // выбираются по геометрии ряда, а не по назначению, поэтому
+            // витрина их тоже не перебирает
+            Self::GarageRow => "Гаражная лента",
+            Self::GarageBlock => "Гаражный блок",
         }
     }
 
@@ -111,6 +123,7 @@ impl RoofKind {
             // цвет стены назначает `facade_color`, а не кровельная палитра;
             // `Wall` живёт в этом перечислении только ради кода в атрибуте
             Self::Wall => &BITUMEN_COLORS,
+            Self::GarageRow | Self::GarageBlock => &GARAGE_ROW_COLORS,
         }
     }
 }
@@ -168,6 +181,14 @@ const MEMBRANE_COLORS: [Color; 3] = [
     Color::srgb(0.80, 0.80, 0.78),
     Color::srgb(0.75, 0.76, 0.76),
     Color::srgb(0.84, 0.84, 0.82),
+];
+/// Гаражная лента: оцинковка, шифер, крашеный суриком профлист — цвет один
+/// на весь кооператив, разнобой боксов кладёт шейдер поверх.
+const GARAGE_ROW_COLORS: [Color; 4] = [
+    Color::srgb(0.58, 0.58, 0.57),
+    Color::srgb(0.51, 0.49, 0.46),
+    Color::srgb(0.47, 0.35, 0.29),
+    Color::srgb(0.43, 0.47, 0.46),
 ];
 /// Храм остаётся зелёным, как его рисуют на картах, — но теперь это зелёный
 /// **металл**, с фальцем и бликом. Единственная палитра не по материалу:
@@ -342,7 +363,7 @@ fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
         BuildingUse::Apartments => &APARTMENTS_ROOFS,
         BuildingUse::Commercial => &COMMERCIAL_ROOFS,
         BuildingUse::Industrial => &INDUSTRIAL_ROOFS,
-        BuildingUse::Garage => &GARAGE_ROOFS,
+        BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_ROOFS,
         BuildingUse::Church => return RoofKind::Seam,
         BuildingUse::Public => &PUBLIC_ROOFS,
         // `building=yes` — половина города: мелкая коробка это частный дом,
@@ -367,6 +388,34 @@ fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
         return &CHURCH_ROOF_COLORS;
     }
     kind.palette()
+}
+
+/// Кровля гаражного прогона: цвет и посев — **общие на весь прогон**, ось —
+/// вдоль него, фаза кладёт первый шов на его край. Именно общий посев и
+/// делает из двадцати боксов одну ленту: иначе каждый красится и ребрится
+/// сам по себе.
+pub(super) fn run_look(run: &GarageRun) -> RoofLook {
+    let base = GARAGE_ROW_COLORS[(run.seed >> 8) as usize % GARAGE_ROW_COLORS.len()].to_srgba();
+    let jitter = 1.0 + ((run.seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    let kind = if run.block {
+        RoofKind::GarageBlock
+    } else {
+        RoofKind::GarageRow
+    };
+    RoofLook {
+        kind,
+        base: Srgba {
+            red: base.red * jitter,
+            green: base.green * jitter,
+            blue: base.blue * jitter,
+            alpha: 1.0,
+        },
+        frame: Roof {
+            axis: run.axis,
+            material: kind.code(),
+            seed: run.phase,
+        },
+    }
 }
 
 fn footprint_area(building: &PolyArea) -> f32 {

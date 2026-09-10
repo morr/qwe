@@ -106,6 +106,11 @@ pub(super) struct RoofItem {
 /// над контуром: основания коробок приходят уже сдвинутыми, а попадание в
 /// контур проверяется до сдвига, по настоящему пятну.
 pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) -> Vec<RoofItem> {
+    // на гараже нет ни машинного помещения, ни вентшахты — там нечего
+    // вентилировать, и коробка на боксе сразу выдаёт генератор
+    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) {
+        return Vec::new();
+    }
     let axis = look.frame.axis;
     let perp = Vec2::new(-axis.y, axis.x);
     let Some(frame) = Frame::of(building, axis, perp) else {
@@ -210,6 +215,10 @@ pub(super) fn ridge_chimney(
     ridge: (Vec2, Vec2),
     lift: Vec2,
 ) -> Option<RoofItem> {
+    // печную трубу на гаражном ряду не ставят — там не топят
+    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) {
+        return None;
+    }
     let along = (ridge.1 - ridge.0).try_normalize()?;
     let length = (ridge.1 - ridge.0).length();
     if length < 2.0 * CHIMNEY_SIZE.x {
