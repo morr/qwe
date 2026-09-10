@@ -851,6 +851,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     their own piece; the back edge is ignored, so the order stays complete and someone in
     the cycle is still drawn wrong. The cure for that is a real depth test (`z` from the
     vertex's height), which the merged mesh does not have.
+    - **The same question is asked once more inside a house** — `order.rs::wall_order`,
+      and the walls used to be laid in the order the ring walks them. On a **stepped
+      facade** (the sections of a block offset across the street) that is exactly the
+      wrong order: two neighbouring walls overlap on screen by the width of the step, and
+      the far section, walked later, covered the near one. The comparison here is exact,
+      not sampled, because every wall of one house shares one lift: a wall is a band of
+      constant thickness `|lift|` over its base, so at a shared `u` the wall whose base
+      sits lower in `v` is in front. That relation cannot cycle (the edges of a simple
+      ring do not cross, and three segments pairwise overlapping in `u` share a `u`, where
+      they are strictly ordered), and it goes through the same `topological` as the
+      houses, seeded by the depth of the base's midpoint. Courtyard walls are ordered in
+      the same list. Tula: a wrongly ordered pair on 203 of 7524 buildings; pinned by
+      `the_wall_order_puts_the_stepped_back_section_first`. The roof needs no ordering
+      against the walls — it is drawn last and lies wholly above `base + lift` at every
+      `u` it shares with a wall.
     `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
     in the shadows and anything that wants to put a marker on the *drawn* building rather
     than its real outline all go through it. Known limits: units y-sort against

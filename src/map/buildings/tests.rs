@@ -838,6 +838,75 @@ fn the_order_writes_every_building_once() {
     assert_eq!(seen, (0..list.len()).collect::<Vec<_>>());
 }
 
+/// Дом со ступенчатым фасадом: западная секция выдвинута к зрителю на 3 м,
+/// восточная стоит за ней. Ровно тот случай, на котором обход контура даёт
+/// обратный порядок — южные стены секций встречаются на экране на ширину
+/// ступени.
+fn stepped_facade() -> PolyArea {
+    building(
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(20.0, 0.0),
+            Vec2::new(20.0, 3.0),
+            Vec2::new(40.0, 3.0),
+            Vec2::new(40.0, 20.0),
+            Vec2::new(0.0, 20.0),
+        ],
+        Some(15.0),
+        AreaKind::Building,
+    )
+}
+
+#[test]
+fn the_wall_order_puts_the_stepped_back_section_first() {
+    let _sun = crate::map::default_sun();
+    let stepped = stepped_facade();
+    let lean = Lean::of();
+    let walls = silhouette_edges(&stepped.outer, -lean.dir());
+    // видимы три стены: два южных фасада секций и западный торец
+    let near = walls
+        .iter()
+        .position(|(a, b)| a.y == 0.0 && b.y == 0.0)
+        .expect("near section wall");
+    let far = walls
+        .iter()
+        .position(|(a, b)| a.y == 3.0 && b.y == 3.0)
+        .expect("far section wall");
+    // обход контура кладёт ближнюю раньше дальней — это и есть та ошибка
+    assert!(near < far, "ring order walks the near wall first");
+
+    let lift = extrusion_lift(&stepped, BuildingHeightMode::Extrusion);
+    let order = order::wall_order(&walls, lean, lift);
+    let at = |wall: usize| order.iter().position(|&index| index == wall).unwrap();
+    assert!(
+        at(far) < at(near),
+        "the near wall must cover the far one: {order:?}"
+    );
+    let mut seen = order.clone();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..walls.len()).collect::<Vec<_>>());
+}
+
+#[test]
+fn the_stepped_facade_reaches_the_mesh_near_wall_last() {
+    let _sun = crate::map::default_sun();
+    let stepped = stepped_facade();
+    let mesh = extrusion_builder(&[stepped], &[], detail(false)).build();
+    let points = mesh_points(&mesh);
+    // угол, который есть только у своей стены: (20, 0) — у ближней,
+    // (40, 3) — у дальней
+    let first = |corner: Vec2| {
+        points
+            .iter()
+            .position(|p| p.distance(corner) < 0.01)
+            .unwrap_or_else(|| panic!("no vertex at {corner:?}"))
+    };
+    assert!(
+        first(Vec2::new(40.0, 3.0)) < first(Vec2::new(20.0, 0.0)),
+        "the far section's wall goes into the buffer first"
+    );
+}
+
 fn house(outer: Vec<Vec2>) -> PolyArea {
     let mut house = building(outer, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
