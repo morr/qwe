@@ -108,6 +108,20 @@ whole algorithm:
   nothing and the doors fall through to the next real wall by score. The last-resort pass
   (a building with no free wall at all, or one made of nothing but steps — a 3 × 3 kiosk)
   still allows them, since a building with no door drops out of the wander targets.
+- **An arch is not a wall** (`PassageIndex`) — a `tunnel=building_passage` road runs
+  *through* the building and `buildings::arches` cuts the wall out for its full height, so
+  a door there stands in a hole: `layers::push_doors` refuses to draw a leaf inside an
+  existing opening, and the entrance survived anyway — the `doors` gizmo circling a gap and
+  a pawn walking into it. Every candidate is now dropped within
+  `road.width / 2 + ENTRANCE_ARCH_CLEARANCE` (3 m — about a panel, which is how far the
+  patch around the opening reaches) of a passage centreline, and so is the courtyard twin
+  of a through подъезд, since the far mouth of the same arch is exactly where the ray
+  comes out. Lookups go through the same 60 m grid the road index uses, with each segment
+  registered in the cells of its **inflated** box so one cell lookup answers. The
+  last-resort pass ignores arches like it ignores everything else — a building with no
+  door at all is worse. Passages stay in `RoadIndex` and still score their facade: an arch
+  wall usually *is* the street wall, and the доводка is about where the door lands on it,
+  not about which wall wins.
 - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
   door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
   a door placed there sits *inside* the neighbour: invisible from the street and

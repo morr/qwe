@@ -595,6 +595,49 @@ fn height_moves_the_door_count_on_the_same_plan() {
     );
 }
 
+/// Дверь не ставится в арку. Проезд сквозь дом
+/// (`tunnel=building_passage`) выедает стену на всю высоту, и подъезда в этом
+/// куске нет: `buildings::layers::push_doors` полотна в проёме не кладёт, а
+/// вход всё равно оставался — гизмо рисовало кружок в дыре, и пешка шла туда
+/// же. Дом при этом свои двери получает, они просто отходят от арки.
+#[test]
+fn a_door_does_not_stand_in_an_arch() {
+    let plan = rect(LOW, LOW + Vec2::new(60.0, 20.0));
+    let street = road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)]);
+    // арка посреди южного фасада — ровно там, где стоял бы средний из трёх
+    // подъездов шестидесятиметрового корпуса
+    let arch = fixture::passage(vec![Vec2::new(130.0, 98.0), Vec2::new(130.0, 122.0)], 4.0);
+    let reach = arch.width / 2.0 + ENTRANCE_ARCH_CLEARANCE;
+
+    let mut solid = MapData {
+        buildings: vec![building(plan.clone(), Some(27.0))],
+        roads: vec![street.clone()],
+        ..Default::default()
+    };
+    generate_entrances(&mut solid);
+    let blocked = |doors: &[Vec2]| {
+        doors
+            .iter()
+            .filter(|door| (door.x - 130.0).abs() < reach)
+            .count()
+    };
+    assert!(
+        blocked(&solid.buildings[0].entrances) > 0,
+        "без арки подъезд встаёт ровно посреди фасада: {:?}",
+        solid.buildings[0].entrances
+    );
+
+    let mut pierced = MapData {
+        buildings: vec![building(plan, Some(27.0))],
+        roads: vec![street, arch],
+        ..Default::default()
+    };
+    generate_entrances(&mut pierced);
+    let doors = &pierced.buildings[0].entrances;
+    assert!(!doors.is_empty(), "дом остался без дверей вовсе");
+    assert_eq!(blocked(doors), 0, "подъезд в арке: {doors:?}");
+}
+
 /// Частный дом сквозным подъездом не обзаводится, какой бы длины ни был.
 #[test]
 fn a_private_house_keeps_its_single_side() {

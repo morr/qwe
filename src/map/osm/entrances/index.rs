@@ -83,6 +83,49 @@ fn cell(value: f32, size: f32) -> i32 {
     (value / size).floor() as i32
 }
 
+/// Та же сетка, но из **арок** — дорог с флагом `passage`, проложенных сквозь
+/// дом. Проезд выедает кусок стены на всю её высоту
+/// (`buildings::arches`), и подъезда в этом куске не бывает: снаружи там
+/// дыра, а изнутри — проезжая часть.
+///
+/// Каждый отрезок кладётся в ячейки своего AABB, **раздутого на запрет**
+/// ([`super::ENTRANCE_ARCH_CLEARANCE`] плюс полуширина дороги), поэтому
+/// спрашивать хватает одну ячейку точки.
+pub(super) struct PassageIndex {
+    cells: std::collections::HashMap<(i32, i32), Vec<(Vec2, Vec2, f32)>>,
+}
+
+impl PassageIndex {
+    pub(super) fn build(roads: &[RoadLine]) -> Self {
+        let mut cells: std::collections::HashMap<(i32, i32), Vec<(Vec2, Vec2, f32)>> =
+            std::collections::HashMap::new();
+        for road in roads.iter().filter(|road| road.passage) {
+            let reach = road.width / 2.0 + super::ENTRANCE_ARCH_CLEARANCE;
+            for segment in road.points.windows(2) {
+                let (from, to) = (segment[0], segment[1]);
+                let min = from.min(to) - Vec2::splat(reach);
+                let max = from.max(to) + Vec2::splat(reach);
+                for x in cell(min.x, ROAD_CELL)..=cell(max.x, ROAD_CELL) {
+                    for y in cell(min.y, ROAD_CELL)..=cell(max.y, ROAD_CELL) {
+                        cells.entry((x, y)).or_default().push((from, to, reach));
+                    }
+                }
+            }
+        }
+        Self { cells }
+    }
+
+    /// Стоит ли эта точка в арке или вплотную к ней.
+    pub(super) fn blocks(&self, point: Vec2) -> bool {
+        let key = (cell(point.x, ROAD_CELL), cell(point.y, ROAD_CELL));
+        self.cells
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .any(|&(from, to, reach)| distance_to_segment(point, from, to) < reach)
+    }
+}
+
 /// Равномерная сетка контуров зданий. Нужна, чтобы ответить на вопрос «есть ли
 /// перед этой стеной свободное место»: в плотной застройке дома в OSM стоят
 /// вплотную и даже перекрываются, и дверь, поставленная на общую стену,
