@@ -8,16 +8,19 @@
 //! Места раскладываются **рядами вдоль длинной оси** площадки: ряд мест,
 //! проезд, ряд мест — так их и размечают. Каждое место проверяется на
 //! попадание в контур, поэтому Г-образная стоянка не получает мест поверх
-//! газона, а маленькая (двор на четыре машины) не получает их вовсе.
+//! газона, а площадка, в которую не встаёт ни одно место, — вовсе никаких.
+//! Маленький двор места получает, но не разметку: см. [`MIN_AREA`].
 //!
-//! Разметка и машины делят **один** список мест ([`stalls`]): иначе машина
-//! неминуемо встала бы мимо своей полосы.
+//! Разметка и машины делят **один** список мест: раскладка считается один раз
+//! на загрузку мира в [`ParkingLayout`] (`map::spawn::spawn_map`), а краска
+//! здесь и машины (`map::cars::fill_lots`) её только читают. Две независимые
+//! раскладки поставили бы машину мимо её полосы.
 
 use bevy::prelude::*;
 
 use crate::map::meshing::{MeshBuilder, min_area_rect};
 use crate::map::osm::PolyArea;
-use crate::map::osm::model::point_in_area;
+use crate::map::osm::model::{point_in_area, signed_ring_area};
 
 /// Место, м: легковая машина плюс просвет по обе стороны.
 const STALL_WIDTH: f32 = 2.6;
@@ -29,14 +32,32 @@ const EDGE_MARGIN: f32 = 1.2;
 /// Ширина полосы разметки, м, и её цвет — та же белая краска, что на улице.
 const LINE_WIDTH: f32 = 0.12;
 const LINE_COLOR: Color = Color::srgb(0.82, 0.82, 0.80);
-/// Стоянка мельче этого пятна мест не получает: две машины во дворе никто не
-/// расчерчивает.
+/// Стоянка мельче этого пятна не получает **разметки**: две машины во дворе
+/// никто не расчерчивает. Места на ней остаются — машины на них стоят
+/// (`map::cars::fill_lots`), просто по неразмеченному асфальту.
 const MIN_AREA: f32 = 120.0;
 
 /// Одно место: центр и направление, в котором машина стоит.
 pub struct Stall {
     pub at: Vec2,
     pub along: Vec2,
+}
+
+/// Раскладка всех стоянок карты — по списку мест на контур `MapData::parking`,
+/// в том же порядке.
+///
+/// Кеш здесь окупается там, где у разрывов разметки (`roads::junctions`) не
+/// окупился: вход раскладки — только контуры стоянок, а они меняются лишь со
+/// сменой мира, тогда как слой машин пересобирается на каждое деление ползунка
+/// солнца, зума и стиля дорог. Считать одно и то же по кадру — ровно та работа,
+/// которой быть не должно; плата — резидентные 16 байт на место (Тула ~0.17 МБ).
+#[derive(Resource, Default)]
+pub struct ParkingLayout(pub Vec<Vec<Stall>>);
+
+impl ParkingLayout {
+    pub fn new(lots: &[PolyArea]) -> Self {
+        Self(lots.iter().map(stalls).collect())
+    }
 }
 
 /// Места стоянки — рядами вдоль её длинной оси. Пусто, если площадка мелкая
@@ -94,14 +115,14 @@ fn fits(area: &PolyArea, at: Vec2, along: Vec2, across: Vec2) -> bool {
     .all(|corner| point_in_area(*corner, area))
 }
 
-/// Разметка мест в меш: по полоске между соседними местами и по торцам ряда.
-/// Полоса, а не прямоугольник места: расчерчивают именно границы.
-pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea) {
-    if signed_area(area) < MIN_AREA {
+/// Разметка мест в меш: по полоске между соседними местами. Полоса, а не
+/// прямоугольник места: расчерчивают именно границы.
+pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall]) {
+    if signed_ring_area(&area.outer).abs() < MIN_AREA {
         return;
     }
     let color = LINE_COLOR.to_linear();
-    for stall in stalls(area) {
+    for stall in stalls {
         let along = stall.along;
         let across = Vec2::new(-along.y, along.x);
         let half_depth = along * (STALL_DEPTH / 2.0);
@@ -119,10 +140,6 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea) {
             color,
         );
     }
-}
-
-fn signed_area(area: &PolyArea) -> f32 {
-    crate::map::osm::model::signed_ring_area(&area.outer).abs()
 }
 
 #[cfg(test)]
@@ -154,11 +171,35 @@ mod tests {
     fn a_lot_is_filled_with_rows_of_stalls() {
         let lot = lot(rect(20.0, 40.0));
         let stalls = stalls(&lot);
-        // 40 × 20 держит два ряда спинами и ещё один за проездом
+        // 40 × 20 держит ровно пару рядов спинами: на проезд и следующую пару
+        // нужно 2 · 1.2 + 2 · 5.2 + 6.0 + 5.2 = 24 м поперёк
         assert!(stalls.len() > 20, "{}", stalls.len());
         for stall in &stalls {
             assert!(point_in_area(stall.at, &lot), "{:?}", stall.at);
         }
+    }
+
+    /// Шаг поперёк — пара рядов, проезд, пара рядов; на 40 × 20 из теста выше
+    /// ветка с проездом не исполняется ни разу, поэтому площадка здесь шире.
+    #[test]
+    fn rows_pair_up_with_an_aisle_between_the_pairs() {
+        let lot = lot(rect(30.0, 40.0));
+        let stalls = stalls(&lot);
+        // полосы по глубине (проекция центра на `Stall::along`): их четыре,
+        // и шаги между ними — 5.2, 5.2 + 6.0, 5.2
+        let mut bands: Vec<f32> = Vec::new();
+        for stall in &stalls {
+            let depth = stall.at.dot(stall.along);
+            if !bands.iter().any(|band| (band - depth).abs() < 0.01) {
+                bands.push(depth);
+            }
+        }
+        bands.sort_by(f32::total_cmp);
+        assert_eq!(bands.len(), 4, "{bands:?}");
+        let gaps: Vec<f32> = bands.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        assert!((gaps[0] - STALL_DEPTH).abs() < 0.01, "{gaps:?}");
+        assert!((gaps[1] - (STALL_DEPTH + AISLE)).abs() < 0.01, "{gaps:?}");
+        assert!((gaps[2] - STALL_DEPTH).abs() < 0.01, "{gaps:?}");
     }
 
     #[test]

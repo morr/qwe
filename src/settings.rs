@@ -880,7 +880,9 @@ const _: () = {
     assert!(Z_TREE_ROW_BAND < Z_GRASS);
     assert!(Z_GRASS < Z_SAND);
     assert!(Z_SAND < Z_PARKING);
-    assert!(Z_PARKING < Z_POND);
+    // разметка — поверх своего асфальта и под всем остальным
+    assert!(Z_PARKING < Z_PARKING_LINES);
+    assert!(Z_PARKING_LINES < Z_POND);
     // водоток — волосок над площадной водой, но ниже дорог: переход через
     // русло рисуется поверх воды
     assert!(Z_POND < Z_WATERWAY);

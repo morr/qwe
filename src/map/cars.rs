@@ -26,7 +26,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, PolyArea, RoadLine};
-use crate::map::parking;
+use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
@@ -140,6 +140,7 @@ pub fn rebuild_cars(
     // кладёт ленту асфальта
     road_style: Res<RoadStyle>,
     map: Res<MapData>,
+    layout: Res<ParkingLayout>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
     for entity in &existing {
@@ -162,7 +163,7 @@ pub fn rebuild_cars(
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
     let mut cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
-    cars.extend(fill_lots(&map.parking));
+    cars.extend(fill_lots(&map.parking, &layout.0));
     let builder = mesh_cars(&cars);
     let count = cars.len();
     let vertices = builder.vertex_count();
@@ -253,25 +254,30 @@ fn park_cars(
 
 /// Машины на размеченных стоянках: то же место, что и у разметки
 /// (`map::parking::stalls`), — иначе машина встала бы мимо своей полосы.
-/// Занято меньше половины мест: полная стоянка выглядит как автосалон, а
-/// пустая — как чертёж.
-fn fill_lots(lots: &[PolyArea]) -> Vec<Car> {
+/// Занято чуть больше половины мест ([`LOT_OCCUPANCY`]): полная стоянка
+/// выглядит как автосалон, а пустая — как чертёж.
+fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>]) -> Vec<Car> {
     let mut cars = Vec::new();
-    for lot in lots {
+    for (lot, stalls) in lots.iter().zip(layout) {
         let mut rng = Lcg::new(lot_seed(lot));
-        for stall in parking::stalls(lot) {
+        for stall in stalls {
             if rng.next_f32() >= LOT_OCCUPANCY {
                 continue;
             }
             cars.push(Car {
                 at: stall.at,
                 along: stall.along,
-                color: CAR_COLORS
-                    [(rng.next_f32() * CAR_COLORS.len() as f32) as usize % CAR_COLORS.len()],
+                color: car_color(&mut rng),
             });
         }
     }
     cars
+}
+
+/// Кузов из палитры, слот равномерно: `next_f32` возвращает и единицу, отчего
+/// остаток по длине — не украшение, а защита от выхода за таблицу.
+fn car_color(rng: &mut Lcg) -> Color {
+    CAR_COLORS[(rng.next_f32() * CAR_COLORS.len() as f32) as usize % CAR_COLORS.len()]
 }
 
 /// Посев стоянки — от её первой вершины, тем же [`seed_from_point`], что у
@@ -338,8 +344,7 @@ fn park_along(
         cars.push(Car {
             at: place,
             along: direction,
-            color: CAR_COLORS
-                [(rng.next_f32() * CAR_COLORS.len() as f32) as usize % CAR_COLORS.len()],
+            color: car_color(rng),
         });
     }
 }
