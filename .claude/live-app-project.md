@@ -138,8 +138,18 @@ window would show — **except the UI**, which stays on the main camera
 (`IsDefaultUiCamera` in `camera.rs`) and is out of the frame on purpose: this is a picture
 of the map, not of the app. It lives for `WARMUP_FRAMES` (2) frames and despawns itself.
 
-The file is written asynchronously like every screenshot, so wait for it (`until [ -f x ]`)
-rather than reading it immediately.
+The file is written asynchronously like every screenshot, and — unlike `brp shot` — nothing
+here waits for it. **Wait on the reader, not on the path.** `until [ -f x ]` returns the
+moment the file is created, which is before it holds a whole png: `ls` finds it and `magick
+identify` answers `improper image header`, a line that reads exactly like a broken renderer.
+
+```bash
+rm -f gsk.png                                  # a stale png would pass the test below
+$b event OffscreenShotEvent '{"path":"gsk.png"}'
+until magick identify gsk.png >/dev/null 2>&1; do sleep 0.2; done
+```
+
+The loop body sleeps: `do :; done` spins a core, and this machine is usually compiling.
 
 ## Camera
 
