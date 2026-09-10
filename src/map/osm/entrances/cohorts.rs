@@ -4,6 +4,7 @@
 
 use super::ENTRANCE_SPACING;
 use crate::map::osm::model::BuildingUse;
+use crate::settings::STOREY_HEIGHT;
 
 /// Границы длины здания, м — главная ось когорт. Именно длина, а не площадь,
 /// отвечает на вопрос «сколько подъездов»: внутри одной полосы площади длина
@@ -138,8 +139,6 @@ const ENTRANCE_FLOOR_PLATE: f32 = 300.0;
 /// Этажность, на которой [`ENTRANCE_FLOOR_PLATE`] откалиброван: тульская
 /// девятиэтажка. Выше — подъездов больше, ниже — меньше.
 const SECTION_REFERENCE_STOREYS: f32 = 9.0;
-/// Метров на этаж — то же число, которым парсер переводит `building:levels`.
-const SECTION_STOREY_HEIGHT: f32 = 3.0;
 /// С какой высоты дом считается многоэтажным жилым — тот же порог, по которому
 /// когорта отличает высокие дома.
 const SECTION_MIN_HEIGHT: f32 = COHORT_TALL_HEIGHT;
@@ -192,7 +191,7 @@ pub(super) fn plan_sections(
     if height >= TOWER_MIN_HEIGHT && area <= TOWER_MAX_PLATE && length <= TOWER_MAX_LENGTH {
         return 0;
     }
-    let storeys = height / SECTION_STOREY_HEIGHT;
+    let storeys = height / STOREY_HEIGHT;
     let by_height = (storeys / SECTION_REFERENCE_STOREYS).sqrt();
     (area / ENTRANCE_FLOOR_PLATE * by_height).floor() as usize
 }

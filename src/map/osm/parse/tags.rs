@@ -14,12 +14,7 @@ use crate::map::osm::model::{
     AreaKind, BuildingUse, RailKind, RoadClass, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
-
-/// Метров на этаж, когда в OSM есть только `building:levels`. Без этого
-/// перевода высота была бы почти только у Нью-Йорка: `height` там проставлен у
-/// 97% зданий (LiDAR-импорт), а в Европе его нет и у 2% — там маппят этажи
-/// (Париж 64%, Берлин 59%, Лондон 50%, Тула 31%).
-const METERS_PER_LEVEL: f32 = 3.0;
+use crate::settings::STOREY_HEIGHT;
 
 /// Границы правдоподобия высоты, м. В OSM попадаются и `height=0`, и опечатки
 /// на порядок; всё за пределами трактуем как отсутствие тега — лучше дефолт
@@ -183,7 +178,7 @@ pub(super) fn parse_measure(value: &str) -> Option<f32> {
 
 /// Высота здания в метрах: `height` как есть, иначе этажи
 /// (`building:levels` + `roof:levels`, второй по схеме S3DB в первый не входит)
-/// по [`METERS_PER_LEVEL`]. Оба тега разом почти не встречаются, так что это не
+/// по [`STOREY_HEIGHT`]. Оба тега разом почти не встречаются, так что это не
 /// «уточнение», а две независимые ветки данных.
 pub(super) fn building_height(tags: &HashMap<String, String>) -> Option<f32> {
     let plausible = |meters: f32| BUILDING_HEIGHT_RANGE.contains(&meters).then_some(meters);
@@ -203,7 +198,7 @@ pub(super) fn building_height(tags: &HashMap<String, String>) -> Option<f32> {
         .get("roof:levels")
         .and_then(|value| parse_measure(value))
         .unwrap_or(0.0);
-    plausible((levels + roof_levels) * METERS_PER_LEVEL)
+    plausible((levels + roof_levels) * STOREY_HEIGHT)
 }
 
 /// Ширина и класс по значению highway; `None` — дорогу не рисуем.
