@@ -37,10 +37,11 @@ in `CONTEXT.md` and the detail here in the same change.
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
   `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
-  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **8** (v3 added `entrance` nodes, v4 `railway`,
+  `barrier=city_wall`, `barrier=fence|wall|retaining_wall|hedge` (way — the plot
+  **fences**). The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **9** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
-  blocks).
+  blocks, v9 the fences).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -141,6 +142,10 @@ in `CONTEXT.md` and the detail here in the same change.
   map. **Rails never touch the navmesh** — see the navigation-deep skill.
 - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
   impassable.
+- **FenceLine** — a plot boundary: `points` + `FenceKind: Fence | Wall | Hedge`, from
+  `parse/tags.rs::fence_kind` (`barrier=fence` → `Fence`, `wall|retaining_wall` → `Wall`,
+  `hedge` → `Hedge`). `MapData::fences`, drawn by `map/fences.rs` (**Fences** under
+  Rendering) and touching neither the navmesh nor the simulation.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
   `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
@@ -536,7 +541,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   boundaries *is* the texture of the district.
   - **`FenceLine` is a separate type, not `WallLine` with a flag.** The kremlin wall is
     impassable and goes into the navmesh; a fence is decoration and pawns walk through
-    it. Merging them would one day put 427 impassable lines across the courtyards the
+    it. Merging them would one day put 429 impassable lines across the courtyards the
     whole crowd walks in — the same call as parked cars.
   - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
     nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
@@ -550,8 +555,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     carries `barrier=fence` alongside another feature's tags, and it has to become both.
     With a `return` there Tula lost a block and a park to the fence branch — caught by the
     counts in the `osm map:` line, not by any test, which is why there is a test now.
-  - Tula: 356 fences, 71 walls, 1 hedge (the audit's `barrier=hedge` row was right that
-    live hedges are mapped as `barrier`, not `natural`).
+  - **The shadow is cast by the map's own sun**, so `rebuild_fences` is gated on
+    `retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)` — the general Sun rule
+    below, not an exception to it. Heights are constants of the kind (`FENCE_HEIGHT` 2 m,
+    `HEDGE_HEIGHT` 1.4 m) run through the same `shadow_dir()` / `shadow_length_scale()`
+    the buildings and the cars use.
+  - Tula: **429 lines** — 356 `fence`, 71 `wall` + 1 `retaining_wall` (both drawn as a
+    wall, so 72 walls), 1 `hedge` (the audit was right that live hedges are mapped as
+    `barrier=hedge`, not `natural=hedge` — the latter is zero in all six cities). The
+    audit's `barrier` row says 428 for Tula and is not in conflict: it counts
+    `fence|wall|hedge` and leaves `retaining_wall` out, as its own caption says.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
@@ -683,10 +696,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
   path itself is identical across buckets and LOD switches don't wiggle the track.
   `RailLine::width` from parse is ignored for trams.
-- **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind both zoom LODs. Each
-  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`) and names it with a marker type
-  implementing `ZoomLods` (`RailLods`, `TramLods`, empty enums handing over the
-  `max_zoom`s). `ZoomBucket<T>` is the resource with the current index for that table;
+- **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind every zoom LOD. Each
+  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars' and the
+  roof clutter's are a single threshold each) and names it with a marker type
+  implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`,
+  `BuildingLods` — empty enums handing over the `max_zoom`s). `ZoomBucket<T>` is the
+  resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:
   `update_zoom_bucket::<T>` each Update via `set_if_neq`, so the `retuned`-gated

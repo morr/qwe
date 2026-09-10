@@ -153,6 +153,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD, and is
     drawn only while `TramStyle::visible`.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
+  - **FenceLine** — a plot boundary: `FenceKind: Fence | Wall | Hedge` from
+    `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`). Drawn only
+    (`map/fences.rs`), **never in the navmesh**; the branch falls through, so a way that
+    is both a fence and something else becomes both.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
     watercourse kind that does **not** block the navmesh.
@@ -322,11 +326,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   district that grid of plot boundaries is the texture of the whole district, and without
   it the houses stand in an open field. `FenceLine` is **not** a `WallLine` with a flag:
   the kremlin wall is impassable and enters the navmesh, a fence is decoration and pawns
-  walk through it — 427 lines cutting the blocks would strand the crowd in the courtyards.
+  walk through it — 429 lines cutting the blocks would strand the crowd in the courtyards.
   The parse branch **falls through** (a way tagged both a barrier and something else must
   become both). The drawn width **grows as you zoom out** (`FENCE_LODS`, the tram's trick,
   aiming at ~1.5 screen px) and the layer disappears entirely past 0.9 m/px, where the
-  grid of plots turns to dirt. Tula: 356 fences, 71 walls, 1 hedge.
+  grid of plots turns to dirt. The shadow lives on the map's own sun, so the layer
+  rebuilds on the zoom bucket and on `SunOnMap`, never on the slider. Tula: 429 lines —
+  356 fences, 72 walls (one of them a retaining wall), 1 hedge.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
