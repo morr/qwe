@@ -295,6 +295,7 @@ step when adding one):
 | road layers (sidewalks/alleys/roads/bridges/walls + casings) | `map/roads.rs::spawn_roads` (same helper) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::spawn_rails` |
 | parked cars | `map/cars.rs::rebuild_cars` (through `surface::spawn_layer`) |
+| standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper; shadows spawned directly) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |

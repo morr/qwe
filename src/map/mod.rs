@@ -1,3 +1,4 @@
+mod along;
 // публичен по той же причине, что и `trees`: витрина `roof_gallery` строит
 // свои дома его же вызовами (`push_house`, `RoofShape`, `shape_facts`,
 // `material::RoofLook`)
@@ -16,6 +17,7 @@ mod sun;
 mod surface;
 mod tram;
 pub mod trees;
+mod wagons;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
@@ -65,6 +67,7 @@ impl Plugin for MapPlugin {
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
             .init_resource::<CarStyle>()
+            .init_resource::<wagons::WagonZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -140,6 +143,8 @@ impl Plugin for MapPlugin {
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<cars::CarLods>,
                     cars::rebuild_cars,
+                    zoom::seed_zoom_bucket::<wagons::WagonLods>,
+                    wagons::rebuild_wagons,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -201,7 +206,12 @@ impl Plugin for MapPlugin {
                     // две в одном расписании могли бы сработать в одном кадре
                     // и заспавнить слой дважды. `RoadStyle` здесь же: ряд стоит
                     // по сглаженной осевой, и смена Smoothing двигает его
-                    // вместе с асфальтом
+                    // вместе с асфальтом.
+                    //
+                    // Вагоны (`map::wagons`) — тот же приём и потому та же
+                    // группа, но порог у них свой (вагон втрое длиннее машины
+                    // и виден дальше), ручек стиля нет вовсе, а осевая
+                    // пути не сглаживается — отсюда и короткое условие
                     (
                         zoom::update_zoom_bucket::<cars::CarLods>,
                         cars::rebuild_cars.run_if(
@@ -209,6 +219,10 @@ impl Plugin for MapPlugin {
                                 .or_else(retuned::<CarStyle>)
                                 .or_else(retuned::<RoadStyle>)
                                 .or_else(retuned::<SunOnMap>),
+                        ),
+                        zoom::update_zoom_bucket::<wagons::WagonLods>,
+                        wagons::rebuild_wagons.run_if(
+                            retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
                         ),
                     )
                         .chain()

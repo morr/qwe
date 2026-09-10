@@ -295,7 +295,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   centimetres — the first vertex of a footprint, the first point of a street — through three
   mixing rounds, never the object's index in the extract, which a re-parse is free to move.
   Callers: `buildings::material::building_seed` (the roof material, the roof shape and, since
-  the height inference, the storeys), `buildings::clutter`, `trees::crown`, `cars`.
+  the height inference, the storeys), `buildings::clutter`, `trees::crown`, `cars`, `wagons`.
+  A copy of either primitive is the defect this module exists against, and the wagon layer
+  arrived with both — a private `Lcg` and a `track_seed` two rounds short of
+  `seed_from_point`, under a doc comment claiming it was the streets' own seed.
   The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
   (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
   them would move every door and every tree in every city.
@@ -529,6 +532,49 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
+  place that stayed empty: a station throat. On a photo half of it is standing stock, and
+  without that the yard reads as a track diagram.
+  - **Only service track carries them** (`RailLine::service`, parsed from
+    `service=siding|yard|spur` by `is_service_track`). That is not an approximation, it is
+    the thing that distinguishes a station from a running line on any photo: stock stands
+    on a siding for weeks and on the running line it is either moving or absent.
+    `crossover` is deliberately out of the whitelist — it links two running lines.
+    **`RailKind::Active` on top of that**: a `Disused` track is taken up and a `Tram` one
+    belongs to its own module, so neither holds stock (`a_disused_track_stands_empty`).
+  - **Rakes, not rows**: `RAKE_MIN..=RAKE_MAX` (3–16) cars coupled at `COUPLED_GAP` 0.9 m,
+    then `GAP_MIN..GAP_MAX` (12–90 m) of empty track, seeded from the track's first point
+    through the shared `seed::seed_from_point`. An even row at a fixed pitch reads as a
+    fence. The rake length is a **count**, so `RAKE_MIN`/`RAKE_MAX` are `u32` and the roll
+    is `range(MIN, MAX + 1)`: as `f32` bounds they described a half-open interval and the
+    truncating cast ate the 16-car rake the docs promised.
+  - **Walked along the whole track's arclength**, the same `along::{arclengths,
+    place_on_path}` the cars use (see below), with `TRACK_MIN` 40 m and `END_MARGIN` 12 m
+    measured from the **ends of the track**, not of a link. The `points.windows(2)` walk
+    that stood here first is the very one the cars had already given up, and a yard is not
+    the exception it was assumed to be: on Tula's service track half the links are shorter
+    than `TRACK_MIN` and carry a fifth of the length, 11 tracks of 159 came out empty for
+    that reason alone, and the margin was being kept clear of every interior bend, where
+    there is no switch. The rake phase reset at every vertex on top of that. Curvature is
+    handled the cars' way — a place closer than `WAGON_LENGTH` to the last wagon **placed**
+    is skipped, measured in world distance, since a 13.9 m body has a rigid wheelbase.
+    Pinned by `short_links_carry_the_same_rakes`.
+  - **The shadow is the point**: a 3.8 m body against a 13.9 × 3.1 m footprint throws its
+    shadow by the same `shadow_length_scale()` as the buildings — 3.8 × 0.6 ≈ 2.3 m under
+    the default 59° sun, half a wagon's length once the sun drops to 30° and a whole one at
+    the 15° minimum — and that is what makes a rake read as solid objects rather than paint.
+  - Its own bucket (`WagonZoomBucket`, `WAGON_MAX_ZOOM` 2.0): a 13.9 m wagon is three
+    times a 4.4 m car, and at 2.0 m/px it is the same ~7 screen pixels at which the cars
+    are already dropped — 2.5× further out than `CAR_MAX_ZOOM` 0.8, so sharing
+    `CarZoomBucket` would have hidden the yards early. By the cars' own 5.5 px criterion
+    the wagon threshold would sit at 13.9/5.5 = 2.53 m/px; 2.0 is the conservative side
+    of it. `Z_WAGON` 2.65 — above the rail steel (a wagon stands *on* the rail),
+    below the cars.
+  - **No style resource, unlike the cars.** The layer is decoration and still has no
+    `visible`: it comes off by `WagonZoomBucket` alone. That is a difference from
+    `map/cars.rs` the summary used to deny.
+  - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
+    has been sitting in every cache since v4.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
@@ -556,7 +602,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
   extra rule handles curvature: a place closer than `CAR_LENGTH` to the last car **placed on
   that side** is skipped, measured in world distance so it catches a corner and any other
-  bend alike.
+  bend alike. Both helpers live in **`map/along.rs`** — the walk is a shared primitive the
+  way `map/seed.rs` is, and it moved out of `cars.rs` the moment the wagons became its
+  second caller, since a second copy of this walk is exactly what it exists to prevent.
   - **The row breaks at real junctions, not at way ends.** It used to break at the ends of
     the OSM way, which is wrong in both directions at once: a way cut mid-street by a tag
     change tore the row for no reason, and a way running straight through a crossing parked
