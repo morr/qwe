@@ -296,6 +296,7 @@ step when adding one):
 | rail layers (ballast/ties/steel) | `map/rail.rs::spawn_rails` |
 | parked cars | `map/cars.rs::rebuild_cars` (through `surface::spawn_layer`) |
 | tram mesh | `map/tram.rs::spawn_tram` |
+| fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (through `surface::spawn_layer`) |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper; shadows spawned directly) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
