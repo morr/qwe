@@ -6,7 +6,7 @@
 //! за улицу, а не за оси мира, — на повёрнутой клетке видно и смещение от
 //! кромки, и направление кузовов.
 
-use qwe::map::cars::CarDetail;
+use qwe::map::cars::{self, CarDetail};
 use qwe::settings::{
     CAR_OCCUPANCY_DEFAULT, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP,
 };
@@ -41,12 +41,20 @@ impl Default for Tuning {
 impl Tuning {
     /// Ступень подробности, которой строятся ряды клеток.
     pub(crate) fn car_detail(&self) -> CarDetail {
-        match self.detail as u8 {
-            0 => CarDetail::Full,
-            1 => CarDetail::Silhouette,
-            _ => CarDetail::Block,
-        }
+        detail_at(self.detail)
     }
+}
+
+/// Ступень подробности по значению ручки: 0 — Full, 1 — Silhouette, дальше
+/// Block. Общая для [`Tuning::car_detail`] и [`detail_name`], чтобы ступень
+/// ручки и её подпись не могли разойтись.
+///
+/// Таблица берётся игровая (`cars::detail_for`) — ручка витрины обязана
+/// показывать ту же лестницу, что выбирает зум, а своя копия разошлась бы с
+/// ней на первой же новой ступени. Последняя ступень зума («слоя нет») ручке
+/// не нужна, и `Block` тут — то же, что давала ветка `_`.
+fn detail_at(value: f32) -> CarDetail {
+    cars::detail_for(value as usize).unwrap_or(CarDetail::Block)
 }
 
 /// Одна ручка панели: как её звать, в каких пределах крутить и куда писать.
@@ -66,11 +74,7 @@ fn percent(value: f32) -> String {
 }
 
 fn detail_name(value: f32) -> String {
-    match value as u8 {
-        0 => "Full".to_string(),
-        1 => "Silhouette".to_string(),
-        _ => "Block".to_string(),
-    }
+    format!("{:?}", detail_at(value))
 }
 
 fn degrees(value: f32) -> String {
