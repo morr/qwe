@@ -27,6 +27,18 @@ fn slot_storeys(slot: f32) -> f32 {
     unpack_material(slot).1
 }
 
+/// Помечена ли поверхность как «стена без проёмов» — так, как эту метку
+/// читает шейдер: по знаку и смещению посева (`WallMark::Solid`, зеркало
+/// `roof.wgsl`).
+fn is_solid(seed: f32) -> bool {
+    seed < -2.5
+}
+
+/// Целое ли это число клеток — с допуском на арифметику подъёма.
+fn whole_cells(cells: f32) -> bool {
+    (cells - cells.round()).abs() < 5e-3
+}
+
 fn square() -> Vec<Vec2> {
     vec![
         Vec2::new(0.0, 0.0),
@@ -1465,6 +1477,63 @@ fn an_arch_lying_inside_the_outline_still_cuts_an_opening() {
         .map(|position| position[1])
         .fold(f32::INFINITY, f32::min);
     assert!(bottom.abs() < 0.01, "opening floats at y = {bottom}");
+}
+
+/// Вырез арки шейдеру не виден: окна и балконы он ставит по центру клетки
+/// стены, ничего не зная о дыре, и край проёма резал бы их пополам — и на
+/// простенке сбоку от арки, и на перемычке над ней. Поэтому клетки, которые
+/// проём задел, стена отдаёт ему целиком — заплатой «без проёмов», ровно как
+/// под дверью.
+///
+/// Проверяется это тем же, чем держится вся рама стены: у **всякого** куска
+/// стены, на котором проёмы рисуются, границы обязаны лежать на швах клеток —
+/// целое число панелей вдоль основания и целое число этажей вверх (или самый
+/// верх стены, где над последним этажом лежит запас под карниз).
+#[test]
+fn the_wall_around_an_arch_wears_no_half_windows() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(20.0, 40.0), Some(30.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    // проезд сквозь дом упирается в южную грань на x = 12, между швами
+    let road = passage(vec![Vec2::new(12.0, -2.0), Vec2::new(12.0, 25.0)], true);
+    let lift = extrusion_lift(&block, BuildingHeightMode::Extrusion);
+
+    let builder = extrusion_builder(std::slice::from_ref(&block), &[road], detail(false));
+    let frames = builder.roof_coords_for_test().expect("roof coords");
+    // клетки этой стены: 40 м на целое число панелей, подъём на этажи с
+    // запасом под карниз
+    let panel = 40.0 / wall_columns(40.0);
+    let storeys = 30.0 / crate::settings::STOREY_HEIGHT;
+    let storey = lift.y / (storeys + crate::map::meshing::PARAPET_CELLS);
+
+    let mut patched = 0;
+    for (point, frame) in builder.positions_for_test().iter().zip(frames) {
+        if !is_wall(frame[2]) {
+            continue;
+        }
+        // южная стена: основание на y = 0, верх уехал по подъёму, поэтому
+        // место вдоль стены считается с поправкой на косину
+        let (x, y) = (point[0], point[1]);
+        let along = x - y / lift.y * lift.x;
+        if !(-0.01..=lift.y + 0.01).contains(&y) || !(-0.01..=40.01).contains(&along) {
+            continue;
+        }
+        if is_solid(frame[3]) {
+            patched += 1;
+            continue;
+        }
+        assert!(
+            whole_cells(along / panel),
+            "окно разрезано вдоль: стена с проёмами кончается на {along} м, \
+             панель — {panel} м"
+        );
+        assert!(
+            whole_cells(y / storey) || (y - lift.y).abs() < 0.01,
+            "окно разрезано поперёк: стена с проёмами кончается на {y} м, \
+             этаж — {storey} м"
+        );
+    }
+    assert!(patched > 0, "вокруг арки должна лечь заплата без проёмов");
 }
 
 /// Середина прохода берётся по длине, а не по числу точек: у ломаной с

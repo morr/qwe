@@ -1601,7 +1601,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   2.5D the wall is **really cut** (side pieces + a lintel above,
   `push_wall_with_openings`) so the layers beneath — the road running through, the
   ground — show through the hole, and `shadow_builder` patches the opening with
-  `SHADOW_COLOR` (the lintel shades it; without the patch the hole glows). In facade
+  `SHADOW_COLOR` (the lintel shades it; without the patch the hole glows).
+  **The wall texture does not see that cut, so the cells the opening bites into are
+  handed to it whole** (`WallCells`, `WallMark::Solid` — the very patch a door lays under
+  its leaf): a window sits in the middle of its cell and the shader knows nothing about
+  the hole, so the opening's edge sliced a row of windows in half — on the pier beside the
+  arch and on the lintel above it. Only the *partial* cells are blanked: the ones inside
+  the opening are gone with it, and above and beside the patch the wall is whole, so its
+  windows are complete and stay drawn. What is **not** done is snapping the opening itself
+  to the cell grid: the navmesh is carved by the road's real width, and an arch narrower
+  than its road brings back the very lie arches exist to fix — a pawn walking where a wall
+  is drawn. In facade
   modes the facade band is one earcut polygon, so the opening is *painted* in shaded
   ground colour instead — a stated compromise. What the passage does to the navmesh is
   in the navigation-deep skill.

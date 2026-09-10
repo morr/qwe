@@ -258,7 +258,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **leaf** itself on the entrance point, in a frame of its own that maps the opening to
   `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
   (`layers::door_size` — a подъезд, a house door, shop leaves, a shed gate), so the shader
-  needs no scale of its own. Above the last storey the wall keeps a **cornice**
+  needs no scale of its own. **An arch gets the same patch** (`arches::WallCells`): the
+  opening keeps the road's own width — the navmesh is carved by it — and the whole cells
+  it bites into are laid `Solid` around it, since the shader draws a window in the middle
+  of a cell knowing nothing about the hole. Above the last storey the wall keeps a **cornice**
   (`meshing::PARAPET_CELLS`, 0.15 of a cell) — plain wall with no openings and nothing drawn
   in it, because what the top of a wall needs is *room*, not a stripe. The room is
   geometric: the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, and the
@@ -390,8 +393,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ~98 % of buildings without one. Doors face the street, the count follows building
   *length* at a measured pitch (`ENTRANCE_SPACING` 25 m, floor `ENTRANCE_MIN_SPACING` 12 m),
   walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
-  a step in the outline rather than a facade and gets none either, and the result is
-  deterministic per building (LCG seeded by its first vertex). **A residential building is counted by its plan and
+  a step in the outline rather than a facade and gets none either, **a door never stands in
+  an arch** (`PassageIndex`: a `passage` road eats the wall whole, so the opening plus
+  `ENTRANCE_ARCH_CLEARANCE` (3 m) is out for both the street door and its courtyard twin),
+  and the result is deterministic per building (LCG seeded by its first vertex). **A residential building is counted by its plan and
   height as well** (`plan_sections`, a floor under the cohort): 300 m² of plan per подъезд
   at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
   32 × 32 m block, a hundred flats, with one door, and a volume-linear count would charge
