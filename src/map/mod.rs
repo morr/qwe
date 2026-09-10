@@ -215,8 +215,13 @@ impl Plugin for MapPlugin {
                                 .or_else(retuned::<SunOnMap>),
                         ),
                         zoom::update_zoom_bucket::<fences::FenceLods>,
+                        // забор снимается зумом по своей таблице, а его тень
+                        // живёт по солнцу карты: `SunOnMap`, как у машин и
+                        // зданий, а не ползунок `SunStyle` — иначе слой
+                        // пересобирался бы на каждом делении шкалы и с ещё не
+                        // доехавшим солнцем
                         fences::rebuild_fences.run_if(
-                            retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunStyle>),
+                            retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunOnMap>),
                         ),
                     )
                         .chain()
