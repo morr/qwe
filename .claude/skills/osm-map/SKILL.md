@@ -689,8 +689,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     purpose — that is what stops a tower's wide band from painting over its low neighbour.
   - **Shadows** — facade band plus a long shadow: one translucent merged mesh at
     `Z_BUILDING_SHADOW` (4.5 — *below* every building layer, so a neighbour's roof or
-    wall masks the shadow and a shadow never lands on a same-height roof: the cheap
-    stand-in for real height-aware casting; still above the portal and corpses, which
+    wall masks the shadow; what a **taller** neighbour owes a lower roof is no longer
+    dropped along with it — that piece is the separate `Z_ROOF_SHADOW` layer, see
+    **Shadows on lower roofs** below. Still above the portal and corpses, which
     are outdoors and in shadow by meaning). Per contiguous **silhouette chain** of the
     footprint (edges whose outward normal faces the light — `map::shadow_dir()`,
     one source for building and tree shadows alike) one swept
@@ -775,24 +776,63 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       - for each building, the union of its **taller** neighbours' sweeps
         **intersected with its own footprint** — one `overlay(Intersect, NonZero)` call,
         so overlapping shadows on one roof merge instead of stacking into double darkness;
+      - filled with a plain `push_polygon`, **no `PENUMBRA_WIDTH` band** like the ground
+        sweeps get (see **Soft edge** above) — deliberately: part of the intersection
+        contour is not the shadow's edge but the cut along the roof outline, and a
+        feathered band there would draw a light rim around every roof;
       - a neighbour counts only if it is `SHADOW_MIN_DROP` (3 m) taller. Below that the
         shadow reaches the eaves at most, and the pair test would run for nearly every
         pair in a city where the median height is 8 m;
       - casters come from a grid of sweep boxes (`SHADOW_CELL` 48 m, just over the longest
-        shadow in `SHADOW_LENGTH_RANGE`); the pairwise version would be 58 million tests;
+        shadow `SHADOW_LENGTH_RANGE` gives **at the default sun** — a low sun stretches
+        sweeps past a cell, and that costs selectivity, not correctness: a sweep box is
+        registered in every cell it spans); the pairwise version would be 58 million tests;
       - in 2.5D the result is **lifted by the target's own `Lean`**, so it lands on the
-        roof where that roof is drawn, not where its footprint is.
+        roof where that roof is drawn, not where its footprint is;
+      - and then, in 2.5D, the **drawn bodies of the neighbours the extrusion layer paints
+        *after* the target** are subtracted from it — a third boolean pass,
+        `overlay(Difference, NonZero)` against `DrawnBodies`. This layer is one flat mesh
+        above every building layer, while depth in 2.5D is painter's order *inside one
+        mesh*: without the subtraction a shadow computed for a far roof is drawn over the
+        body of the nearer building that visually hides that roof — a dark blot on a
+        sunlit wall. Three parts of it are load-bearing:
+        - **"after" is the extrusion layer's own key** — a smaller `Lean::depth`, and at
+          equal depth the larger index, the way its stable `sort_by` orders equals. A
+          *taller* neighbour is not automatically an earlier one: the caster is usually
+          drawn first (at the default azimuth 300°), but for a sun anywhere in
+          **(111.8°, 291.8°)** the caster itself is the nearer body and eats its own
+          shadow on the roof, which is correct — you are looking at its wall there.
+        - **a drawn body is the Minkowski sum of the footprint with the lift segment** —
+          the ground contour, the lifted contour, and the sweeps of the silhouette chains
+          along `Lean::dir()`. That is exactly the patch `extrusion_builder` fills with
+          walls and roof, and it is built from the same primitives as a shadow sweep.
+          A courtyard goes into the body whole: it has walls of its own, and
+          over-subtracting the sliver of shadow that would show through the gap is
+          cheaper than leaving a stain on a drawn wall.
+        - **covers are prefiltered by the same `SHADOW_CELL` grid** as the casters, over
+          body boxes instead of sweep boxes (`indices_near`); the pass runs only for a
+          target that has both a shadow and a cover.
+        In the flat modes there is nothing to subtract — a building is drawn on its own
+        contour, and `DrawnBodies` is empty there.
       It rides the same `BuildingShadowTag`, so it rebuilds and despawns with the ground
       shadows, and it is reported separately in the `building meshing:` line
-      (`shadows 91ms + Nms on roofs`) and by the offline bench. Its length clamp rides
-      `map::sun_stretch()` exactly as the ground sweeps do — two halves of one shadow may
-      not be measured differently.
+      (`shadows 91ms + 15ms on roofs`). On Tula it is 2.8 k verts and 15 ms of a 130 ms
+      build, most of that spent rebuilding the sweeps `shadow_builder` has already
+      computed — sharing them is the obvious optimisation and changes both signatures.
+      **How thin the layer actually is** (Tula, 7643 buildings, measured offline on the
+      cached extract): only **522** of them get a roof shadow at all, and **291** of those
+      have a covering body, so the subtraction's boolean pass runs over 3.8 % of the city
+      and costs **~4 ms** — the layer goes 18.9 → 23.8 ms, and it emits *fewer* vertices
+      afterwards (2713 → 2628), because the difference cuts shadow away. Load-time only:
+      nothing here runs per frame.
+      Its length clamp rides `map::sun_stretch()` exactly as the ground sweeps do — two
+      halves of one shadow may not be measured differently.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
       latter `Res<SunOnMap>`): it does not depend on the roof-clutter
-      zoom bucket, and it is the single most expensive thing here — 90 ms of a 116 ms
-      build on Tula. `BuildingPlan { mode,
+      zoom bucket, and it is the single most expensive thing here — 90 ms of a 130 ms
+      build on Tula, of which 15 is the roof layer above. `BuildingPlan { mode,
       bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
       at seven arguments).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
