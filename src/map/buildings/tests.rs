@@ -105,6 +105,185 @@ fn an_equal_neighbour_shades_nothing() {
     assert!(roof_shadow_builder(&[a, b], false).is_empty());
 }
 
+/// Прямоугольник в осях тени: `across` — поперёк `shadow_dir()`, `along` —
+/// вдоль неё, обе пары в метрах от начала координат. Закрутка задаётся явно:
+/// OSM обход колец не нормализует, а тень на кровле обязана выходить
+/// одинаковой при любом.
+fn shadow_rect(across: (f32, f32), along: (f32, f32), ccw: bool) -> Vec<Vec2> {
+    let (side, ahead) = (shadow_dir().perp(), shadow_dir());
+    let corner = |a: f32, b: f32| side * a + ahead * b;
+    let mut ring = vec![
+        corner(across.0, along.0),
+        corner(across.1, along.0),
+        corner(across.1, along.1),
+        corner(across.0, along.1),
+    ];
+    if (signed_ring_area(&ring) > 0.0) != ccw {
+        ring.reverse();
+    }
+    ring
+}
+
+/// Площадь тени на кровлях — тем же счётом по треугольникам, что у наземного
+/// слоя.
+fn roof_shadow_area(list: &[PolyArea]) -> f32 {
+    shadow_area(&roof_shadow_builder(list, false).build())
+}
+
+/// Два каста, чьи тени накрывают одну и ту же часть кровли, обязаны склеиться,
+/// а не погасить друг друга: обход свипа наследует закрутку кольца OSM, и без
+/// нормализации NonZero дал бы на перекрытии обмотку 0 — светлую дыру ровно
+/// там, где тень должна быть сплошной.
+#[test]
+fn casters_of_opposite_winding_merge_instead_of_cancelling() {
+    let _sun = crate::map::default_sun();
+    // два дома по 60 м стоят друг за другом против солнца, их развёртки
+    // накрывают одну полосу кровли низкого соседа: 12 м поперёк × 10 вдоль
+    let near = |ccw| {
+        building(
+            shadow_rect((-6.0, 6.0), (-8.0, 0.0), ccw),
+            Some(60.0),
+            AreaKind::Building,
+        )
+    };
+    let far = |ccw| {
+        building(
+            shadow_rect((-6.0, 6.0), (-30.0, -22.0), ccw),
+            Some(60.0),
+            AreaKind::Building,
+        )
+    };
+    let low = building(
+        shadow_rect((-10.0, 10.0), (2.0, 12.0), true),
+        Some(4.0),
+        AreaKind::Building,
+    );
+
+    let same = roof_shadow_area(&[near(true), far(true), low.clone()]);
+    let opposite = roof_shadow_area(&[near(true), far(false), low]);
+    assert!(
+        (same - 120.0).abs() < 0.5,
+        "две тени на одной кровле обязаны дать её полосу целиком: {same} вместо 120"
+    );
+    assert!(
+        (opposite - same).abs() < 0.5,
+        "закрутка кольца OSM не смеет менять тень: {opposite} против {same}"
+    );
+}
+
+/// Двор в контур дома не входит, и тень туда не ложится — даже когда кольцо
+/// двора закручено так же, как внешнее (в OSM это половина случаев). Слой
+/// лежит выше всех зданиевых, так что залитый двор был бы пятном поверх всего.
+#[test]
+fn a_courtyard_takes_no_roof_shadow() {
+    let _sun = crate::map::default_sun();
+    // широкий высокий сосед накрывает низкую кровлю 20 × 16 целиком
+    let caster = building(
+        shadow_rect((-25.0, 25.0), (-18.0, -12.0), true),
+        Some(60.0),
+        AreaKind::Building,
+    );
+    let with_courtyard = |ccw| {
+        let mut low = building(
+            shadow_rect((-10.0, 10.0), (0.0, 16.0), true),
+            Some(4.0),
+            AreaKind::Building,
+        );
+        low.holes.push(shadow_rect((-3.0, 3.0), (6.0, 12.0), ccw));
+        low
+    };
+    let solid = building(
+        shadow_rect((-10.0, 10.0), (0.0, 16.0), true),
+        Some(4.0),
+        AreaKind::Building,
+    );
+
+    let whole = roof_shadow_area(&[caster.clone(), solid]);
+    assert!(
+        (whole - 320.0).abs() < 0.5,
+        "кровля затенена целиком: {whole}"
+    );
+    // двор 6 × 6 вычитается при любой закрутке своего кольца
+    for ccw in [true, false] {
+        let shaded = roof_shadow_area(&[caster.clone(), with_courtyard(ccw)]);
+        assert!(
+            (shaded - (whole - 36.0)).abs() < 0.5,
+            "тень легла на двор (кольцо ccw = {ccw}): {shaded} вместо {}",
+            whole - 36.0
+        );
+    }
+}
+
+/// Прямоугольный контур по двум углам, обходом против часовой стрелки.
+fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
+    vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
+}
+
+/// Лежит ли точка внутри **нарисованного тела** прямоугольного дома — суммы
+/// Минковского его контура с отрезком подъёма: есть ли доля подъёма
+/// `t ∈ [0, 1]`, при которой точка попадает в сам контур. Обе координаты
+/// подъёма в 2.5D строго положительны (`EXTRUDE_SKEW`, 1), поэтому деление
+/// безопасно. Прямоугольник вызывающий сжимает сам: вершины разности ложатся
+/// ровно **на** границу тела, и строгая проверка обязана их пропустить.
+fn inside_drawn_body(point: Vec2, min: Vec2, max: Vec2, lift: Vec2) -> bool {
+    let low = ((point - max) / lift).max_element().max(0.0);
+    let high = ((point - min) / lift).min_element().min(1.0);
+    low <= high
+}
+
+/// Слой теней на кровлях лежит над всеми зданиевыми, а painter's порядок 2.5D
+/// живёт **внутри одного меша**: тень, посчитанная для дальней кровли, не
+/// смеет лечь на нарисованное тело дома, который эту кровлю закрывает.
+#[test]
+fn a_nearer_body_eats_the_shadow_it_covers() {
+    let _sun = crate::map::default_sun();
+    let target = building(
+        rect(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+        Some(4.0),
+        AreaKind::Building,
+    );
+    // высокий каст стоит против солнца от цели и затеняет её кровлю целиком.
+    // Его собственное тело тоже задевает эту кровлю, но `Lean::depth` у него
+    // **больше**: слой экструзии рисует его раньше цели, цель ложится
+    // поверх — и тень остаётся видна
+    let caster = building(
+        rect(Vec2::new(-26.0, 15.0), Vec2::new(4.0, 45.0)),
+        Some(60.0),
+        AreaKind::Building,
+    );
+    // а третий дом стоит юго-западнее цели: `depth` меньше, рисуется после
+    // неё, и его поднятая кровля накрывает затенённую
+    let cover = building(
+        rect(Vec2::new(0.0, -30.0), Vec2::new(30.0, -2.0)),
+        Some(60.0),
+        AreaKind::Building,
+    );
+
+    let lit = roof_shadow_builder(&[caster.clone(), target.clone()], true).build();
+    let whole = shadow_area(&lit);
+    assert!(
+        (whole - 840.0).abs() < 0.5,
+        "каст затеняет почти всю кровлю 30 × 30, и его собственное тело \
+         (рисуется раньше цели) из неё не вычитается: {whole} вместо 840"
+    );
+
+    let shaded = roof_shadow_builder(&[caster, target, cover.clone()], true).build();
+    let left = shadow_area(&shaded);
+    assert!(
+        (left - 412.6).abs() < 1.0,
+        "тело ближнего дома обязано съесть 427 м² тени: {left} из {whole}"
+    );
+
+    let lift = extrusion_lift(&cover, BuildingHeightMode::Extrusion);
+    let (min, max) = (Vec2::new(0.0, -30.0), Vec2::new(30.0, -2.0));
+    for point in mesh_points(&shaded) {
+        assert!(
+            !inside_drawn_body(point, min + 1e-2, max - 1e-2, lift),
+            "тень легла на нарисованное тело ближнего дома: {point}"
+        );
+    }
+}
+
 #[test]
 fn silhouette_picks_edges_facing_the_shadow() {
     let _sun = crate::map::default_sun();
