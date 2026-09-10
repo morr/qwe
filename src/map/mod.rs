@@ -236,14 +236,19 @@ impl Plugin for MapPlugin {
                         fences::rebuild_fences.run_if(
                             retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunStyle>),
                         ),
-                        // цилиндр промзоны ступени зума не имеет — его видно
-                        // ровно настолько, насколько видна тень, — зато
-                        // кренится он вместе с домами
-                        industry::rebuild_industry
-                            .run_if(retuned::<SunStyle>.or_else(retuned::<BuildingHeightMode>)),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
+                    // цилиндр промзоны ступени зума не имеет — его видно
+                    // ровно настолько, насколько видна тень, — зато кренится
+                    // он вместе с домами. Ступени нет, значит и в связку с
+                    // машинами его класть не за что: слой стоит сам по себе,
+                    // как дороги. Солнце здесь — `SunOnMap`, осевшее, а не
+                    // ползунок: пересборка читает глобали, которые пишет
+                    // `apply_sun` уже по нему
+                    industry::rebuild_industry
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
