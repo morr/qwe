@@ -70,6 +70,10 @@ pub struct SurfaceParams {
     pub marking_width: f32,
     pub marking_dash: f32,
     pub marking_gap: f32,
+    /// Износ покрытия: колеи, заплаты, грязь у бордюра. Ноль — ровный
+    /// асфальт; считается только на лентах с полосами, поэтому стоянка на
+    /// том же материале его не получает.
+    pub wear: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
 }
@@ -89,6 +93,7 @@ impl SurfaceParams {
         marking_width: 0.0,
         marking_dash: MARKING_DASH,
         marking_gap: MARKING_GAP,
+        wear: 0.0,
         intensity: SURFACE_TEXTURE_DEFAULT,
     };
 }
@@ -98,6 +103,9 @@ impl SurfaceParams {
 pub enum SurfaceKind {
     /// Земля под всей картой.
     Ground,
+    /// Двор жилого квартала: трава, но истоптанная и вперемешку с проплешинами
+    /// голой земли — потому и не [`Self::Grass`], у которой рисунок ровнее.
+    Yard,
     Park,
     Wood,
     Grass,
@@ -114,8 +122,9 @@ pub enum SurfaceKind {
 }
 
 impl SurfaceKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Ground,
+        Self::Yard,
         Self::Park,
         Self::Wood,
         Self::Grass,
@@ -138,6 +147,20 @@ impl SurfaceKind {
                 mottle_scale: 80.0,
                 grain_amp: 0.04,
                 grain_scale: 2.4,
+                ..flat
+            },
+            // двор: пятна вдвое крупнее амплитудой, чем у газона, и вдвое
+            // мельче шагом — это и есть разница между лугом и двором, по
+            // которому ходят: проплешины у подъездов, трава по углам
+            Self::Yard => SurfaceParams {
+                tint: Vec4::new(0.08, 0.045, -0.06, 0.0),
+                mottle_amp: 0.105,
+                mottle_scale: 22.0,
+                grain_amp: 0.055,
+                grain_scale: 1.6,
+                speckle_amp: 0.05,
+                speckle_scale: 2.2,
+                speckle_threshold: 0.7,
                 ..flat
             },
             Self::Park => SurfaceParams {
@@ -198,6 +221,7 @@ impl SurfaceKind {
                 grain_amp: 0.04,
                 grain_scale: 1.2,
                 marking_width: MARKING_WIDTH,
+                wear: 1.0,
                 ..flat
             },
             Self::Alley => SurfaceParams {

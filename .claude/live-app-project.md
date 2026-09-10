@@ -32,6 +32,14 @@ config still points at 15703: `BRP_PORT=15704 $b count Human`. A busy *default*
 port only warns and disables BRP (`qwe (no brp)` in the title) — a second window
 started by hand still runs.
 
+**The parallel session is often the previous you.** A session continued after a
+compaction gets a new id, and the background task that launched the app belongs
+to the old one: `TaskStop` answers `Task … is not running` or `No task found with
+ID`, while the app itself is very much alive and holding 15703 — so the relaunch
+panics with the lines above. Stop it the way the app can hear: `$b quit`, then
+`pgrep -f 'target/debug/qwe'` to confirm nothing is left. Same at the end of a
+session: the task list is not the inventory of running apps, `$b procs` is.
+
 ```bash
 $b alive     # alive: qwe 0.1.0 on http://127.0.0.1:15703/ (pid 40321) — pid must be the task's
 $b procs     # both copies, with their ports and start times
@@ -116,6 +124,48 @@ root, overwritten every time, plus a `screenshot.small.png` copy downscaled to 1
 window **must be visible** — `shot` raises it, but a full-screen editor over it still
 wins; a black png means exactly that, not a broken renderer.
 
+### The offscreen shot — when the window cannot be seen
+
+```bash
+$b event OffscreenShotEvent '{}'                                   # 1568×980 from where the camera is
+$b event OffscreenShotEvent '{"at":[2300,1900],"zoom":0.4,"path":"gsk.png"}'
+```
+
+`OffscreenShotEvent` (`dev.rs`) renders the frame into an **offscreen texture** with a
+camera of its own and writes the png without the window server being involved at all. That
+is the difference that matters: a **locked screen, a sleeping display or another window on
+top all make `brp shot` return solid black**, and there is no way to tell that from a
+rendering bug. This one keeps working — check `magick identify -format "%[fx:mean]"`, a
+real frame is around 0.2–0.4.
+
+Every field is optional: `at` (map metres) and `zoom` (metres per frame pixel) default to
+the user camera's, `size` to 1568 × 980 (long edge exactly at the downscale threshold, so
+the file reaches you unsquashed), `path` to `offscreen.png`.
+
+**A `zoom` that differs moves the user camera's zoom for the duration of the shot**, and
+that is deliberate: the zoom-LOD layers (parked cars, roof clutter, rail ties, tram) hold
+**one mesh for every view** and pick their step from `Single<&PanCamera>`, i.e. from the
+user camera. Without the sync a far shot showed rail ties that are not drawn at that scale
+and hid the cars that are. The zoom is restored when the camera despawns; the shot takes
+`WARMUP_FRAMES` (6) frames instead of 2 to let those layers rebuild. The camera carries the same
+post-processing as the real one (bloom), so the picture is what the
+window would show — **except the UI**, which stays on the main camera
+(`IsDefaultUiCamera` in `camera.rs`) and is out of the frame on purpose: this is a picture
+of the map, not of the app. It lives for `WARMUP_FRAMES` (2) frames and despawns itself.
+
+The file is written asynchronously like every screenshot, and — unlike `brp shot` — nothing
+here waits for it. **Wait on the reader, not on the path.** `until [ -f x ]` returns the
+moment the file is created, which is before it holds a whole png: `ls` finds it and `magick
+identify` answers `improper image header`, a line that reads exactly like a broken renderer.
+
+```bash
+rm -f gsk.png                                  # a stale png would pass the test below
+$b event OffscreenShotEvent '{"path":"gsk.png"}'
+until magick identify gsk.png >/dev/null 2>&1; do sleep 0.2; done
+```
+
+The loop body sleeps: `do :; done` spins a core, and this machine is usually compiling.
+
 ## Camera
 
 - `brp cam <x> <y>` moves the camera and sticks — coordinates are map metres, the map is
@@ -164,7 +214,7 @@ No PRNG state is stored anywhere to look at: a pawn carries `PawnId` +
 Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same path
 the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
-Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
+Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.

@@ -37,10 +37,15 @@ in `CONTEXT.md` and the detail here in the same change.
   `landuse=recreation_ground|forest` + `natural=wood`, `natural=tree_row` (way),
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
   `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
-  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **8** (v3 added `entrance` nodes, v4 `railway`,
+  `amenity=parking` (way+rel),
+  `leisure=pitch|track|playground|sports_centre|stadium` (way+rel),
+  `barrier=fence|wall|retaining_wall|hedge` (way), `barrier=city_wall`,
+  `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
+  `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **12** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
-  blocks).
+  blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
+  `barrier` fences, v12 the industrial `man_made` cylinders and pipelines).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -66,7 +71,7 @@ in `CONTEXT.md` and the detail here in the same change.
 
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
-  Industrial`. **Park** is the
+  Industrial | Parking`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
@@ -79,6 +84,21 @@ in `CONTEXT.md` and the detail here in the same change.
   same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
   residential + 35 industrial/garages in the bbox (the audit table), 294 of them
   reach `MapData::landuse`; `commercial`/`retail` are not requested.
+  **Parking** (`amenity=parking`) is the third such non-green class — `MapData::parking`,
+  asphalt with stalls painted on it (see **Parking** below). It is tried after the greens
+  and **before** the landuse blocks, but the branch is reached only for a polygon that is
+  not a building at all: a multi-storey car park carries `building` *and*
+  `amenity=parking`, and it must stay a building. Tula v9: 172 in the bbox, 171 reach
+  `MapData::parking`.
+  **Pitch** (`leisure=pitch|track|playground|sports_centre|stadium`) is the fourth —
+  `MapData::pitches`, a surface plus markings (see **Pitches** below). It is tried after
+  parking and before the landuse blocks, but **after `park`/`garden`**: a park with a
+  pitch drawn on it stays a park, and the pitch arrives as its own way. Alone among the
+  area kinds it **carries a payload**, `PitchKind`, because the sport decides both the
+  colour and the marking and nothing else in the model has one — a field on `PolyArea`
+  (the `building_use` pattern) would be meaningless for every other area kind and would
+  touch all 33 literal constructions in the tests. Tula v10: 128 grounds — 59
+  playgrounds, 48 pitches, 13 tracks, 7 sports centres, 1 stadium.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
@@ -141,6 +161,30 @@ in `CONTEXT.md` and the detail here in the same change.
   map. **Rails never touch the navmesh** — see the navigation-deep skill.
 - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
   impassable.
+- **Structure** — an industrial cylinder: `man_made=storage_tank|silo|chimney|
+  water_tower|gasometer` as centre + radius + height + kind (`StructureKind`). A
+  **whitelist**, for `fence_kind`'s reason and more so: `man_made` is OSM's most mixed
+  key (`surveillance`, `street_cabinet`, `works`, even `bridge` as an outline), and only
+  those five read as a round spot from the air. Comes from a node **and** from a way:
+  a node has no outline, so its radius is the `diameter`/`width` tag or the kind's
+  default (`structure_size` — 2.5 m and 60 m for a chimney, 8 × 12 for a tank, 20 × 30
+  for a gasometer); a way's radius is the **mean distance from the vertex mean**, which
+  is exact on the near-circular ring OSM actually draws and overestimates a rectangular
+  silo block by √2. The way branch **returns** — the opposite of the fence branch —
+  because a chimney tagged `building=yes` is *the same object*, and falling through
+  would put a box under the circle; it also keeps doors and the navmesh off it, which a
+  chimney has no use for. Height comes from `height` only (`structure_height`): a
+  chimney has no storeys, so `building:levels` is not consulted. Tula: 8 chimneys (4 of
+  them nodes, one carrying a size tag) and 2 water towers; Berlin 2846 cylinders.
+- **PipeLine** — an overhead heating main: `man_made=pipeline` centerline + bundle width
+  from `count` (`pipe_width`, 0.7 m per pipe clamped 0.9–4 m; Tula runs pairs on twelve
+  ways and fours on six). **The above-ground test is inverted** relative to rails and
+  waterways: there underground has to be proven (`is_underground`), here *above* ground
+  does — `location=overground|overhead|bridge` and nothing else. An untagged pipeline in
+  OSM is buried, and drawing a silver line across the city over a buried pipe is a
+  bigger lie than losing a trestle whose tag somebody forgot. The branch **falls
+  through** like the fence one: a pipeline crossing a street on a trestle is one way
+  carrying both tags. Tula: 22 of 24 ways kept, 1.2 km.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
   `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
@@ -195,7 +239,8 @@ in `CONTEXT.md` and the detail here in the same change.
   everywhere but New York, so what fills it in matters: see **Inferred storeys** under
   Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
-  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
+  Commercial | Industrial | Garage | GarageBlock | Church | Public | Other`, the class that
+  picks the
   wall colour (`map/buildings/mod.rs::facade_color`) and the **roofing material** the roof
   colour then comes from (**Roof material** under Rendering). Two sources in order:
   `building=*` when the value says something (`house`, `apartments`, `garages`, `church`,
@@ -204,7 +249,12 @@ in `CONTEXT.md` and the detail here in the same change.
   + `amenity=…`. Anything outside the vocabulary is `Other`, the historical beige; the
   vocabulary covers what a city carries by the hundreds, not the OSM wiki. Tula: `yes`
   4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
-  garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
+  garage(s) 74, industrial 31, church 17. **`garages` and `garage` are two different
+  classes**, and that is not pedantry: the plural is how OSM maps a *whole cooperative*
+  as one outline (Tula 43 of them, the largest 255 × 51 m), and drawing it as one shed is
+  what made the ГСК look like a hangar — see **the garage row** under Rendering. The
+  singular, together with `carport`/`shed`/`barn`/`roof`, stays one box.
+  The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
   the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
   also one of the two inputs of **Inferred storeys** (the other is the footprint's shape),
@@ -299,6 +349,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
   (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
   them would move every door and every tree in every city.
+- **Measuring the layer build** — `cargo run --example map_meshing [city]`
+  (`examples/bench/map_meshing.rs`) prints vertices and milliseconds per layer for every
+  height mode × clutter bucket, plus the car layer, straight from the Overpass cache
+  with **no window and no GPU**. That is the point of it: on macOS an invisible or
+  minimised window is put under App Nap, and a build that reports 116 ms on an awake screen
+  reports five seconds on a locked one — the `building meshing:` log line is only
+  trustworthy while the screen is awake. `map::measure_layers` / `map::measure_cars` are
+  the entry points; they call exactly the builders `spawn_buildings` calls. **Absolute
+  numbers still depend on the machine's power state** (with the display asleep everything
+  is 2–3× slower), so compare runs, not runs against the log.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
@@ -308,14 +368,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   over a single white `ColorMaterial`; every layer carrying a roof (`building_roofs`, and
   in 2.5D `building_extruded`, walls included) over the `RoofMaterial` of **Roof
   material**; the **surfaces** — ground, area fills, water, road and
-  alley fills, sidewalks, the tree-row band — over the `SurfaceMaterial` below. ~7000
+  alley fills, sidewalks, parking asphalt (as `SurfaceKind::Street` — it *is* asphalt),
+  the tree-row band — over the `SurfaceMaterial` below. The parking **markings** are the
+  exception that proves the rule: paint over asphalt, so that layer stays on the flat
+  `ColorMaterial`. ~7000
   buildings cost a handful of entities. Trees stay individual entities (see
   `references/trees.md`).
 - **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
   `Material2d` with its own vertex + fragment stage) — procedural texture without a single
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
   **world position**, so two overlapping ribbons of one layer get the same pixel (the
-  junction trick survives). Per `SurfaceKind` (`Ground | Park | Wood | Grass | Sand |
+  junction trick survives). Per `SurfaceKind` (`Ground | Yard | Park | Wood | Grass | Sand |
   Water | Street | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
   octaves of value noise from `mottle_scale` down to an eighth of it, with a per-channel
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
@@ -459,8 +522,64 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
-  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2): a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
+  its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
+  `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
+  (`Z_BRIDGE` 2.2). The **shadow** is the deck's own band, offset along `shadow_dir()` by
+  the deck height through the usual `shadow_length_scale()`, on a blended material of its
+  own (the flat white one would eat the vertex alpha). Nothing else produced it, because
+  the ground shadow layer only knows buildings, and a bridge over the river is the most
+  visible thing on the water. It sits **under** the deck and **over** what the bridge
+  crosses — except a railway, which is drawn above the bridge for its own reasons.
+  Six decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
+  lie, and every one of them was a bug report first:
+
+  - **A span under `SHORT_SPAN` (35 m) has to prove there is a gap under it**
+    (`bridge_casts_shadow` probing `Underneath` every 2 m — water outlines, watercourse
+    channels, rails; **never roads**, because a road is exactly what an approach
+    embankment runs along). Proportional height was not enough on its own: the western
+    approach to the Упа crossing is four ways of 23–30 m carrying `bridge=yes` and
+    `layer=1`, and on the ground it is solid fill, which no tag distinguishes from a
+    span. A long way is never asked — there is no 100 m embankment — which also keeps the
+    probe off the bridges that would cost the most to test. `Underneath` precomputes an
+    AABB per outline for that: the probe is per 2 m of deck and a city carries up to a
+    thousand water outlines.
+  - **The height follows the span** (`bridge_height` = `SPAN_TO_HEIGHT` 1/8 of the length,
+    capped at `BRIDGE_HEIGHT` 6 m, so a span over 48 m is at the ceiling). It was a flat
+    6 m, and OSM hands `bridge=yes` to far more than spans: embankment steps, the pavement
+    beside a flyover, a 4 m plank over a storm drain. A 6 m shadow under a 20 m path that
+    stands on level ground is the loudest lie the map can tell, because **a shadow reads
+    as height** and nothing else on the map states it.
+  - **The centerline is densified to `SHADOW_STEP` (2 m) first** (`densify`). The ramp
+    below lives in the vertices, and **42 of Tula's 61 bridge ways carry exactly two
+    points** — the Упа crossing among them — so every vertex was an end, the rise was zero
+    everywhere, and the shadow landed exactly under the deck, i.e. nowhere. The ways that
+    did have vertices (a 571 m flyover with 42 of them, one per ~14 m) got a shadow that
+    stepped from vertex to vertex in visible teeth.
+  - **The offset ramps from zero at each end** (smoothstep over `RAMP_SHARE` 0.25 of the
+    length capped at `RAMP_MAX` 25 m) — at the abutment the deck is on the ground and
+    casts nothing, and the constant-offset version poked a dark band past the deck onto
+    the street that joins it, which is exactly where a bridge meets a road and where the
+    eye is.
+  - **The rise is clamped by the span left ahead of the shadow** (`room / |offset·t|`,
+    `room` measured to the end the offset points at). The ramp is not enough on its own: a
+    smoothstep climbs faster than the arc advances, so on a short bridge the shadow
+    overtook its own end anyway and lay past the abutment as a wedge — the artifact that
+    survived two rounds of fixing the ramp.
+  - **The band is `SHADOW_SPREAD` (1 m) wider than the deck on each side**, tapering with
+    the same rise. A plate's shadow is its silhouette *translated*, so the offset splits
+    into a crosswise part (the visible strip beside the deck) and a lengthwise one (the
+    band slides along itself and stays under the deck) — a bridge running along the sun
+    azimuth has no crosswise part at all and showed nothing, which is what the footbridges
+    over the ponds did. The fringe is the water the deck cuts off from the sky plus the
+    railing shadow and the slab's thickness, and unlike the offset it barely depends on
+    the height.
+
+  Because the width varies along the band it is **not** a `push_ribbon`: the rails come
+  from `miter_offsets` scaled per point, and go in as one `push_polygon` quad per segment,
+  adjacent quads sharing their edge vertex for vertex so a translucent layer never doubles
+  over itself.
+
+  About the deck itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
   deck. The 2GIS look — the curb bands along both deck edges are what makes a bridge read
   as a bridge, so the curb draws **always**, independent of `RoadStyle::casing`, and is
@@ -496,8 +615,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     *drawing*, not its size: close up the real thing (ties 2.6 × 0.26 m every 65 cm,
     a 1.5 m gauge on every bed with 12 cm rails); by 0.26 m/px the two
     rails no longer separate on screen and are dropped, ties thicken and thin out into
-    hatching; from 0.65 m/px the ties go too and osm-carto's white dash pattern comes
-    back, because a bare grey band reads as another street. `min_bed` floors the ballast
+    hatching; from 0.65 m/px the ties go too and a coarse dash pattern comes
+    back, because a bare grey band reads as another street. That dash was osm-carto's
+    **white** until the first offscreen shot showed what it does to a photo — a white
+    ladder across the whole station throat, the most map-like thing in the frame — and it
+    is now **darker than the ballast**: from the air a track is a grey band with a cross
+    ripple on it, never a white one. `min_bed` floors the ballast
     width on the last two buckets — 5 m is a pixel at city scale, and the track would
     vanish before the roads it crosses. The numbers are derived from the screen size at
     the **worst** (far) edge of each bucket, and they hold on **every** parsed bed width
@@ -529,6 +652,199 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
+  — three effects that keep a road from being one flat tone, all in the **ribbon frame**
+  so they follow the lane rather than the compass:
+  - **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m either side of each lane's
+    middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +6 %. The lane is found
+    from `fract` of `(across + half_width) / lane_width`, so **every** lane gets its own
+    pair without knowing how many there are;
+  - **repair patches** — 6 m cells hashed by world position, the top 12 % going 9 %
+    darker: fresh bitumen is darker than the old surface around it;
+  - **kerb dirt** — 7 % darker over the outer `EDGE_DIRT_REACH` 0.7 m, where the sand
+    and grit collect.
+  Everything fades by `visible(...)` like the rest of the surface texture. The block is
+  gated on `lanes >= 1`, which is what keeps it off the **parking lot**: that layer uses
+  the same `Street` material but carries no ribbon, and it would otherwise have grown
+  ruts across the stalls.
+- **The yard** — two changes that together stop the city from being a beige sheet with
+  buildings on it, and both came from looking at the first offscreen shot (#27):
+  - **The residential block is the yard.** `RESIDENTIAL_COLOR` went from half a tone off
+    the ground to a muted green, and the `landuse` layer split in two (`landuse_yards`
+    with `SurfaceKind::Yard`, `landuse_works` with `Ground`) — one kind for both would
+    have put grass speckle on a concrete yard. **`Yard` is its own kind** rather than
+    `Grass`: the mottle is nearly twice the amplitude at half the wavelength, which is
+    exactly the difference between a meadow and ground people walk over — bare patches by
+    the doors, grass in the corners. With plain `Grass` the block came out as a golf
+    course. Nothing else changed: the roads, the
+    parking, the buildings and the pitches are all drawn *over* the block, so the green
+    only shows where nothing else is, which is exactly where the grass is.
+  - **Worn paths** (`map/paths.rs`) — the desire lines. A straight 1.1 m strip of bare
+    earth from **every OSM entrance to the nearest point of the nearest road**, kept only
+    when that distance is `PATH_MIN` 7 m … `PATH_MAX` 45 m. Under 7 m the strip lives
+    under the facade band; over 45 m a straight line stops being a short cut and becomes
+    an invented route. `Z_WORN_PATH` 0.72, `SurfaceKind::Alley` — a worn path *is* an
+    unpaved alley.
+    - **No path finding, no bends.** The desire line is by definition the straight one
+      people wore instead of the detour; a curve here would be decoration.
+    - **No intersection tests either**, and that is the design: the layer is below the
+      buildings (4.9) and the water (1.0), so a strip that runs across a neighbour's
+      footprint is covered by that neighbour. Testing 11 302 doors against 7 663 outlines
+      to hide what the painter's order already hides would be pure cost.
+    - The nearest road comes from a uniform grid of road segments (`CELL` 24 m, each
+      segment registered in every cell its box touches, so a long span is not lost in the
+      middle); the search walks ⌈45/24⌉ cells each way. Doors are 11 302 and road
+      segments tens of thousands — the pairwise version would be quadratic for nothing.
+- **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
+  actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 0.75 and one
+  markings layer at 0.76, the parking pair's shape exactly: the paint is flat
+  `ColorMaterial`, the surface carries `SurfaceKind::Ground` (a neutral mottle — a
+  football field must not get the street's asphalt grain).
+  - **The kind is decided in three steps** (`parse/tags.rs::pitch_kind`), because `sport`
+    is missing on a quarter of Tula's pitches: `leisure` first (`track` → `Track`,
+    `playground` → `Playground`, `sports_centre`/`stadium` → `Ground`), then `sport` on a
+    `pitch` (soccer/rugby/athletics/… → `Soccer`, everything else → `Hard`), then
+    `surface` (`grass`/`dirt` → `Soccer`, `sand` → `Playground`, else `Hard`). The last
+    fallback is `Hard` on purpose: a nameless yard pitch in a Russian city is an asphalt
+    box far more often than a lawn.
+  - **Colour by kind**, not by tag: the football green is more saturated than a lawn's,
+    the hard court is a blue-grey darker than the street, the track is tartan orange, the
+    playground sandy. One rim (`PITCH_RIM`) for all of them — from above that edge is the
+    shadow of a kerb or a board, not paint.
+  - **Only `Soccer` and `Hard` are marked.** A playground has no markings; a track's run
+    along its oval and would have to follow the outline rather than the frame; a sports
+    centre contains the already-marked pitches. What is drawn: the perimeter, the centre
+    line, the centre circle (`CIRCLE_SHARE` 0.087 of the long side — 9.15 m on a 105 m
+    field, and the same fraction happens to work for a basketball box), and on a field
+    over `PENALTY_MIN_LENGTH` 45 m the two penalty areas.
+  - **The frame gate.** Markings are laid out in the `min_area_rect` frame, and only if
+    the outline fills it to `RECT_FILL_MIN` 0.85 (the gable roof's number, same meaning:
+    "this is a rectangle, not a blob") and the footprint is over `MIN_AREA` 150 m². On an
+    L-shaped patch the centre line would otherwise run across the lawn beside it.
+  - The circle is a 32-gon of quads (`ring`), 1.8 m a side at a 9 m radius — a fraction of
+    a pixel at any zoom where it is visible at all. There is no arc primitive in
+    `MeshBuilder` and this is the only caller that wants one.
+- **Parking** (`map/parking.rs`) — an `amenity=parking` area is drawn as asphalt
+  (`Z_PARKING` 0.8, the `parking` surface layer) with the **stalls painted on it**
+  (`Z_PARKING_LINES` 0.81). The markings go in a **flat-material** layer of their own,
+  not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
+  not on it, and a 12 cm line is the one thing on this map that must stay pure white.
+  - **The layout is one function**, `stalls(area)`, and the paint and the cars both call
+    it — two independent layouts would put a car across its own line. Rows run along the
+    **long axis of `min_area_rect`**, the axis a real lot is striped along: `STALL_WIDTH`
+    2.6 × `STALL_DEPTH` 5.2 m, two rows back to back, then an `AISLE` of 6 m, and
+    `EDGE_MARGIN` 1.2 m in from the edge.
+  - **A stall survives only if all four of its corners are inside the outline**
+    (`fits`, the same test the roof clutter uses for its boxes) — an L-shaped lot gets
+    nothing in the notch, and the OBB rows do not have to match the outline.
+  - **`MIN_AREA` 120 m²** — under that the lot gets no paint at all. A yard for four cars
+    is not striped in reality, and stripes on a 6 × 10 m patch read as a texture bug.
+  - The paint is drawn as the **border between stalls** (one bar to the left of each
+    stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
+    like, and it is cheaper than finding each stall's neighbour.
+  - Tula: **171 lots**. Parking touches neither the navmesh nor tree planting, like the
+    landuse blocks.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge`, added in
+  `QUERY_VERSION` **11**. What is drawn is a thin ribbon **and its shadow**, and the
+  shadow is the point: from above a fence is a 25 cm hair, and on a photo it is the dark
+  thread beside it that you actually see. In a private-house district that grid of plot
+  boundaries *is* the texture of the district.
+  - **`FenceLine` is a separate type, not `WallLine` with a flag.** The kremlin wall is
+    impassable and goes into the navmesh; a fence is decoration and pawns walk through
+    it. Merging them would one day put 427 impassable lines across the courtyards the
+    whole crowd walks in — the same call as parked cars.
+  - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
+    nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
+    exactly the scale a fence has to be visible at; aiming for ~1.5 screen px is the
+    tram's trick and the honest one. The far bucket draws nothing at all, because at city
+    scale the plot grid turns into dirt.
+  - `fence_kind` is a whitelist for the reason every other one is: `barrier=*` also
+    carries `kerb`, `gate`, `bollard`, `block` — points and street furniture, not lines —
+    and `city_wall`, which the branch above already took.
+  - **The branch falls through**, like the rail and tree-row ones: a fenced pitch in OSM
+    is one way carrying `barrier=fence` *and* `leisure=pitch`, and it has to become both.
+    With a `return` there Tula lost three pitches, three parking lots, a block and a park
+    to the fence branch — caught by the counts in the `osm map:` line, not by any test,
+    which is why there is a test now.
+  - Tula: 356 fences, 71 walls, 1 hedge (the audit's `barrier=hedge` row was right that
+    live hedges are mapped as `barrier`, not `natural`).
+- **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **12**.
+  Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
+  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)` and on nothing else — the
+  settled sun, never `SunStyle`, like every other rebuild — and the system stands on its
+  own rather than in the zoom-bucket chain, because there is no zoom bucket here: a
+  cylinder is visible exactly as far as its shadow is.
+  - **"Like a house" is literal, and shared in code**: the cylinder's shadow is drawn in
+    exactly the three modes a house's is (`BuildingHeightMode::casts_shadows()` — the
+    mode list lives there once and both layers ask it; in `Facade` and `Extrusion` a
+    2.5 m chimney is a small circle and nothing else), and its lean comes from
+    `buildings::drawn_lift`, the height-only core of `extrusion_lift`, so the
+    `EXTRUDE_RANGE` clamp is one for roofs and cylinders alike. Without that clamp a
+    60 m chimney lay across the map as an 80 m tube.
+  - **A cylinder is three layers, like a house**: `industry_shadows`
+    (`Z_INDUSTRY_SHADOW` 4.55, beside the building shadow), `industry_walls` (5.06) and
+    `industry_tops` (5.07) — **above** the houses, because a works chimney is taller than
+    anything around it and on a photo it covers the neighbouring shed, not the other way
+    round. **One rung for all five kinds**, from a 12 m tank to a 60 m chimney, so a low
+    tank covers a tall block too — accepted deliberately: the buildings have no height
+    sort of their own either (one `Z_BUILDING` for the whole layer, order inside the mesh
+    by `Lean::depth`), so a height threshold would split the layer into two meshes and pop
+    at the threshold without solving the general case. That one is the joint painter's
+    sort of buildings and cylinders — separate work, like the cylinder-to-cylinder sort
+    below. Tula ships only chimneys and towers, so the pair never occurs on the shipped
+    data.
+  - **The shadow is a sweep, not a shifted disc** (`sweep` — the convex hull of the disc
+    and its copy, written out by hand as two half-arcs; the buildings get theirs from
+    `i_overlay`). A cylinder is solid from the ground to the top, so every height in
+    between casts too; a shifted disc would leave the strip between base and shadow
+    empty, which on a 60 m chimney is 36 m of missing shadow. Its length is the
+    buildings' `SHADOW_LENGTH_RANGE` **multiplied by `sun_stretch()` at both ends**, as
+    every calibrated length here must be: with the bare 3–45 m a 60 m chimney stopped at
+    45 m at 15° while a house of the same height threw 168.
+  - **The wall is one quad per facet, each shaded on its own** (`shade_by_light`, mixes
+    0.26/0.26 — stronger than a flat house wall's 0.18/0.22, since the gradient has to
+    span the whole visible half). That gradient *is* what makes the circle read as a
+    cylinder; a single flat tone reads as a faceted prism. **Only the half turned
+    *away* from the `Lean` is emitted** (`outward · lift < 0`) — the near one. The
+    camera sits at the nadir and the top leans away from it, so what it sees is the
+    near side of the wall, exactly as the building extrusion picks its edges
+    (`silhouette_edges(outer, -lift_dir)`). The far half was drawn first and left the
+    near end of the silhouette open, and through that hole the cylinder's own base
+    shadow showed as a dark half-disc under the chimney. The geometry in one line: the
+    silhouette of a leaning cylinder is a stadium — the top circle covers
+    `[|lift|−r, |lift|+r]`, the near half of the wall covers `[−r, |lift|]`, and the
+    two overlap into the whole stadium, with no foot piece and no seam. With no lean at
+    all (the flat height modes) nothing is emitted — a cylinder standing straight up
+    shows no wall.
+  - **The rim** (`RIM_SHARE` 10 % of the radius, 0.25–1 m, 28 % toward black) is the
+    tank's coaming or the chimney's wall thickness. Without it the top reads as a sticker.
+  - **The pipeline is a fence one storey up**: line plus shadow, `PIPE_HEIGHT` 3 m,
+    `Z_PIPE_SHADOW`/`Z_PIPE` 2.76/2.77 — over the fences (2.75), because a heating main
+    steps over a fence, and under everything taller than its trestles. Shadows first,
+    then all the lines, for the fences' reason.
+  - Both are drawn as **one merged layer each and no painter's sort between structures**:
+    a taller cylinder's wall can therefore be covered by a shorter neighbour's top. With
+    ten of them per city they never meet; a city where they do wants the buildings' sort.
+- **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
+  place that stayed empty: a station throat. On a photo half of it is standing stock, and
+  without that the yard reads as a track diagram.
+  - **Only service track carries them** (`RailLine::service`, parsed from
+    `service=siding|yard|spur` by `is_service_track`). That is not an approximation, it is
+    the thing that distinguishes a station from a running line on any photo: stock stands
+    on a siding for weeks and on the running line it is either moving or absent.
+    `crossover` is deliberately out of the whitelist — it links two running lines.
+  - **Rakes, not rows**: `RAKE_MIN..RAKE_MAX` (3–16) cars coupled at `COUPLED_GAP` 0.9 m,
+    then `GAP_MIN..GAP_MAX` (12–90 m) of empty track, seeded from the track's first point.
+    An even row at a fixed pitch reads as a fence.
+  - **The shadow is the point**: a 3.8 m body against a 13.9 × 3.1 m footprint throws a
+    shadow half as long as the wagon, by the same `shadow_length_scale()` as the buildings,
+    and that is what makes a rake read as solid objects rather than paint.
+  - Its own bucket (`WagonZoomBucket`, `WAGON_MAX_ZOOM` 2.0): a wagon is four times a car
+    and stays legible four times further out, so sharing `CarZoomBucket` would have hidden
+    the yards early. `Z_WAGON` 2.65 — above the rail steel (a wagon stands *on* the rail),
+    below the cars.
+  - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
+    has been sitting in every cache since v4.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
@@ -624,6 +940,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
     in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
     once per rebuild and costs nothing per frame.
+  - **The lots are filled by the same pass** (`fill_lots`): every stall from
+    `parking::stalls`, `LOT_OCCUPANCY` **55 %** of them taken — a lot is fuller than a
+    kerb, and an empty one next to a painted grid reads as unfinished. Seeded per lot
+    (`lot_seed`, its first point) exactly like a street. That share is a constant, not
+    `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
+    lot is a different observation.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark
@@ -767,6 +1089,26 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       been removed. A zero-width vertex degenerates its quad into a triangle (that *is*
       the hard edge); an edge zero at both ends is not emitted at all, so the taper also
       takes vertices off the most expensive layer here.
+    - **Shadows on lower roofs** (`roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05) — the one
+      place this model used to lie outright. The ground layer is **under** every building
+      layer, so a nine-storey block did not darken the five-storey roof next to it, and in
+      a dense block that is the first thing an eye checks. A second, small layer sits
+      **over** the building layers and carries exactly the missing piece:
+      - for each building, the union of its **taller** neighbours' sweeps
+        **intersected with its own footprint** — one `overlay(Intersect, NonZero)` call,
+        so overlapping shadows on one roof merge instead of stacking into double darkness;
+      - a neighbour counts only if it is `SHADOW_MIN_DROP` (3 m) taller. Below that the
+        shadow reaches the eaves at most, and the pair test would run for nearly every
+        pair in a city where the median height is 8 m;
+      - casters come from a grid of sweep boxes (`SHADOW_CELL` 48 m, just over the longest
+        shadow in `SHADOW_LENGTH_RANGE`); the pairwise version would be 58 million tests;
+      - in 2.5D the result is **lifted by the target's own `Lean`**, so it lands on the
+        roof where that roof is drawn, not where its footprint is.
+      It rides the same `BuildingShadowTag`, so it rebuilds and despawns with the ground
+      shadows, and it is reported separately in the `building meshing:` line
+      (`shadows 91ms + Nms on roofs`) and by the offline bench. Its length clamp rides
+      `map::sun_stretch()` exactly as the ground sweeps do — two halves of one shadow may
+      not be measured differently.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
@@ -798,9 +1140,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     shadows. Depth is painter's algorithm *inside one
     mesh*: buildings sorted by `Lean::depth`, far first (index-buffer order is raster
     order), so a south-western building correctly overlays its north-eastern neighbour.
-    `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
-    in the shadows and anything that wants to put a marker on the *drawn* building rather
-    than its real outline all go through it. Known limits: units y-sort against
+    `extrusion_lift` is the one door to that vector **for a building** — the extrusion
+    layer, the arch patch in the shadows and anything that wants to put a marker on the
+    *drawn* building rather than its real outline all go through it. It is a thin wrapper
+    over **`drawn_lift(height, mode)`**, the height-only core, which exists because the
+    lean is not the house's alone: the industry cylinders (`map/industry.rs`) have
+    neither an outline nor a `BuildingUse` and take the same scale and the same
+    `EXTRUDE_RANGE` clamp through it. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
     - **`Lean` is a per-building value**, not a global function: direction,
@@ -948,18 +1294,88 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `|axis · light|`, so ribs pointing at the sun neither highlight nor shade. Every
     octave and every stripe grid fades by `visible(wavelength, px)`, the `surface.wgsl`
     rule, so nothing moirés when zoomed out; at the city zoom the texture is simply gone
-    and only the material's colour is left. The noise helpers are a **copy** of
-    `surface.wgsl`'s — there is no shader library in the project yet, and importing one
-    for four functions costs more than the copy.
+    and only the material's colour is left. The noise helpers come from
+    **`assets/shaders/noise.wgsl`**, imported by path
+    (`#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes, band}`)
+    — they were copied into both shaders until the second copy, and the `visible`
+    rule in particular is one that must not drift.
+  - **The wall is the same mechanism, code `Wall`** (`layers.rs::wall_frame`). A wall sets
+    the roof frame to **its own direction**, and that one choice is what makes it work: the
+    shader's across-axis then measures distance *from* the wall line, i.e. up the wall, so
+    a line of constant `v` is a **floor seam parallel to the eaves**, and `u` runs along the
+    wall for the vertical panel joints. It draws seams every `FLOOR` (1.05 drawn metres —
+    a real 3 m storey × `EXTRUDE_SCALE`), panel joints every `PANEL` (3.2 m) and
+    **balconies** on the cell grid of the two: a cell is one storey by one panel, 58 % of
+    them carry a balcony (hashed from the cell and the building's seed), each filling the
+    lower two thirds of its storey and 62 % of its panel — which is why they come out in
+    **columns**, as they do on a real block, rather than scattered. All of it fades with
+    `visible(FLOOR, px)`: a storey is a fraction of a pixel at city zoom.
+    The phase of the seams is global rather than measured from each wall's own base — the
+    starting offset is therefore arbitrary, but it is the *same* for adjacent walls of one
+    building, so a seam does not break at a corner, and that is the only thing an eye can
+    check.
+  - **The garage row is the same mechanism keyed to *geometry*, codes `GarageRow` and
+    `GarageBlock`** (`buildings/garages.rs`). Every other kind is chosen by `BuildingUse`
+    and the building's own seed; these two are chosen by the shape of a **run** of
+    garages, and it is the only place where one building's frame comes from its
+    neighbours:
+    - **Stitching.** Garage footprints whose AABBs are within `JOIN_GAP` 2 m are joined
+      (union-find over a spatial hash of `CELL` 32 m — each footprint is registered in
+      every cell its inflated box touches, so two close boxes always meet in at least one
+      cell, and the pair test is inside a cell rather than across the city).
+    - **Qualifying, and into which of the two.** A **cooperative** (`GarageBlock`) is a
+      run made entirely of `building=garages` outlines whose combined `min_area_rect` is
+      at least `BLOCK_MIN_WIDTH` 14 m wide and `BLOCK_MIN_AREA` 400 m² — wide enough to
+      hold rows *and* the drive between them. That test comes first, and it is restricted
+      to the plural tag on purpose: a 30 × 20 m `building=shed` would otherwise get drive
+      aisles invented across it. Otherwise a **ribbon** (`GarageRow`): at least
+      `ROW_MIN_LENGTH` 12 m long (about four boxes — fewer and a comb does not read) and
+      `ROW_MIN_ASPECT` 2.2 times longer than wide (a square patch has no axis, and the
+      cross seam would go at random). Anything else is left alone and drawn as an
+      ordinary small building.
+      The Tula numbers are what forced the two-case split: 43 `building=garages` against
+      32 single `building=garage`, and the plural ones are mostly **blobs** (255 × 51,
+      183 × 69, 170 × 74 m) — whole cooperative territories, not rows.
+    - **What the run hands out**: one axis (along the ribbon), one seed (the **minimum**
+      of the members' seeds, so it does not depend on their order) and one **phase**.
+      The shared seed is the whole point — with per-building seeds every box picked its
+      own material and its own texture phase, and twenty boxes came out as confetti of
+      tile, bitumen and corrugated sheet.
+    - **The phase is not random.** The shader computes `u = p·axis + seed·37`, so the seed
+      channel is solved for `u ≡ 0 (mod BAY)` at the ribbon's end: the first seam lands on
+      the end of the run rather than wherever. `BAY` 3.4 m (a 2.5–3 m door plus the pier)
+      is duplicated in `garages.rs` and `roof.wgsl` and must stay in step.
+    - **What is drawn**: a seam every `BAY` — the only thing that survives to city zoom,
+      and the thing that makes the ribbon a comb — plus ±10 % of paint tone per bay
+      (hashed from the bay index, so it changes exactly at the seams, like a row of
+      doors), the 0.30 m corrugation of an ordinary garage, and more rust than any other
+      roof gets. A **cooperative** adds to that a **darkened drive every `ROW_PITCH`
+      (18 m = two 6 m rows back to back + a 6 m aisle)** and the back-to-back seam in the
+      middle of each pair, so the blob comes out as a grid of boxes rather than a
+      hangar; the tone hash then keys on the row as well as the bay. The aisle is
+      **shading, not a hole cut in the roof**: cutting it for real means a boolean on the
+      outline, and the walls (built from the outer ring) and the shadow sweep would then
+      disagree with the roof. `ROW_PITCH` and `ROW_DEPTH` (12 m) live in both
+      `garages.rs` and `roof.wgsl`, like `BAY`.
+      The `band(coord, period, start, width, px)` helper is the wide-stripe sibling of
+      `stripes` and exists for this drive.
+    - **No clutter**: `flat_roof_items` and `ridge_chimney` both refuse both kinds. A
+      ventilation shaft or a chimney on a garage is the generator showing through — and
+      the blobs used to collect *skylight ribbons*, since a 12 000 m² corrugated roof is
+      exactly what that rule looks for.
+    - Tula: **29 buildings** end up in runs.
   - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
     bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
     cell — and that is not repair patches but a **chequerboard across the whole roof**:
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
-    rule the fix follows, and the same one the asphalt wear already followed: only a
+    rule the fix follows, and the same one the asphalt wear and the wall balconies above
+    already follow: only a
     minority of cells carry the feature (the `share` argument), and inside its cell the
     feature is smaller than the cell and jittered, so two neighbours never meet at a cell
     boundary. Placement stays a grid (cheap, no extra octaves); the pattern does not.
+    The garage bay above is the deliberate exception — there the seam grid *is* the
+    feature, because a row of doors really is one.
   - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
     the same seed** the texture phase rides on, and with a fixed patch share that was the
     missing half of the patch fix: a minority of cells carried a patch, but *the same*

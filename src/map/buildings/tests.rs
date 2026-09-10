@@ -8,6 +8,7 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
+use crate::map::meshing::min_area_rect;
 use crate::map::osm::fixture;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::shadow_dir;
@@ -41,6 +42,68 @@ fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
         height,
         entrances: Vec::new(),
     }
+}
+
+/// Тень высокого соседа ложится **на кровлю** низкого, и только на неё: весь
+/// меш обязан лежать внутри контура низкого дома.
+#[test]
+fn a_tall_neighbour_shades_the_lower_roof() {
+    let caster = building(
+        vec![
+            Vec2::new(100.0, 200.0),
+            Vec2::new(130.0, 200.0),
+            Vec2::new(130.0, 230.0),
+            Vec2::new(100.0, 230.0),
+        ],
+        Some(40.0),
+        AreaKind::Building,
+    );
+    // низкий сосед — по ходу тени от высокого (солнце с северо-запада)
+    let along = shadow_dir() * 24.0;
+    let low = building(
+        vec![
+            Vec2::new(100.0, 200.0) + along,
+            Vec2::new(140.0, 200.0) + along,
+            Vec2::new(140.0, 240.0) + along,
+            Vec2::new(100.0, 240.0) + along,
+        ],
+        Some(4.0),
+        AreaKind::Building,
+    );
+    let shaded = roof_shadow_builder(&[caster.clone(), low.clone()], false);
+    assert!(
+        !shaded.is_empty(),
+        "тень высокого соседа не легла на кровлю"
+    );
+    // по рамке контура, а не `point_in_area`: вершины пересечения ложатся
+    // ровно **на** границу, а строгая проверка «внутри» их отвергает
+    let min = low.outer.iter().copied().reduce(Vec2::min).expect("ring");
+    let max = low.outer.iter().copied().reduce(Vec2::max).expect("ring");
+    for point in shaded.positions_for_test() {
+        let at = Vec2::new(point[0], point[1]);
+        assert!(
+            at.cmpge(min - 1e-3).all() && at.cmple(max + 1e-3).all(),
+            "тень вышла за пятно низкого дома: {at} вне {min}..{max}"
+        );
+    }
+
+    // а на кровлю самого высокого — не ложится ничья
+    let alone = roof_shadow_builder(&[caster], false);
+    assert!(alone.is_empty());
+}
+
+/// Сосед той же высоты кровлю не темнит: иначе пара считалась бы для почти
+/// каждой пары домов в городе.
+#[test]
+fn an_equal_neighbour_shades_nothing() {
+    let a = building(square(), Some(20.0), AreaKind::Building);
+    let mut b = a.clone();
+    b.outer = a
+        .outer
+        .iter()
+        .map(|point| *point + shadow_dir() * 12.0)
+        .collect();
+    assert!(roof_shadow_builder(&[a, b], false).is_empty());
 }
 
 #[test]
@@ -219,9 +282,17 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
-    // стены и оборудование — код 0 (фактуры нет), сама кровля — код материала
-    assert!(frames.iter().any(|frame| frame[2] == 0.0), "walls");
-    assert!(frames.iter().any(|frame| frame[2] > 0.0), "roof");
+    // у стены теперь своя рамка и свой код — по ней шейдер кладёт межэтажные
+    // швы; ноль остаётся тому, у чего фактуры нет вовсе (фронтон,
+    // оборудование), а у этой коробки нет ни того, ни другого
+    let wall = RoofKind::Wall.code() as f32;
+    assert!(frames.iter().any(|frame| frame[2] == wall), "walls");
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame[2] > 0.0 && frame[2] != wall),
+        "roof"
+    );
 }
 
 fn oblong(width: f32, length: f32) -> Vec<Vec2> {

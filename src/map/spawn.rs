@@ -12,19 +12,28 @@ use crate::map::buildings::material::RoofMaterialHandle;
 use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
+use crate::map::parking;
+use crate::map::paths;
+use crate::map::pitch;
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND,
-    Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
+    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_PARKING, Z_PARKING_LINES, Z_PITCH,
+    Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
+    Z_WORN_PATH,
 };
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
-/// Кварталы `landuse` — на полтона от земли, не больше: заливка обязана
-/// делить город на жильё и промзону, не споря ни с зеленью, ни с домами.
-/// Жильё чуть светлее и теплее земли, промзона чуть темнее и холоднее.
-const RESIDENTIAL_COLOR: Color = Color::srgb(0.906, 0.886, 0.839);
+/// Кварталы `landuse` делят город на жильё и промзону. Промзона осталась
+/// холодным серым на полтона от земли — там бетон и утоптанная площадка.
+///
+/// Жилой квартал — это **двор**, а не подложка: между домами трава,
+/// вытоптанная у подъездов и проездов, но трава. Прежние полтона от земли
+/// были осторожностью, а на снимке (#27) весь город из-за них лежал ровным
+/// бежевым листом, на котором расставлены дома. Зелень приглушённая, темнее
+/// газона и сильно темнее парка: двор — это не луг.
+const RESIDENTIAL_COLOR: Color = Color::srgb(0.427, 0.451, 0.376);
 const INDUSTRIAL_COLOR: Color = Color::srgb(0.843, 0.843, 0.835);
 pub const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
 /// Лес внутри парка — темнее парковой подложки (osm-carto `#ADD19E`), под ним
@@ -48,6 +57,9 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
+/// Стоянка — асфальт посветлее проезжей части: полотно улицы укатано, а
+/// двор со стоянкой выцветает и пылится.
+const PARKING_COLOR: Color = Color::srgb(0.412, 0.408, 0.404);
 
 /// Кайма площадного слоя вдоль его контура ([`MeshBuilder::push_inset_band`]):
 /// ширина, м, и цвет на самом контуре; к дальнему краю кайма сходит в заливку.
@@ -57,10 +69,11 @@ struct Rim {
 }
 
 /// Мелководье: светлая полоса вдоль берега внутри водного полигона — то, что
-/// делает пруд прудом, а не синим пятном. Три метра: у Упы это шестая часть
-/// ширины, у канала — треть.
+/// делает пруд прудом, а не синим пятном. Шесть метров: на снимке отмель у
+/// берега шире, чем кажется с земли, и трёхметровая кайма читалась просто
+/// кантом полигона, а не мелью.
 const WATER_RIM: Rim = Rim {
-    width: 3.0,
+    width: 6.0,
     edge: Color::srgb(0.78, 0.885, 0.945),
 };
 /// Кромки зелени и песка — та же заливка на несколько процентов темнее:
@@ -81,6 +94,20 @@ const GRASS_RIM: Rim = Rim {
 const SAND_RIM: Rim = Rim {
     width: 2.0,
     edge: Color::srgb(0.913, 0.868, 0.737),
+};
+/// Кромка стоянки — бордюр: чуть светлее её асфальта.
+const PARKING_RIM: Rim = Rim {
+    width: 1.0,
+    edge: Color::srgb(0.478, 0.475, 0.467),
+};
+/// Вытоптанная тропа: голая земля, светлее газона и темнее сухой земли — на
+/// снимке она читается именно как **светлая** линия по тёмной траве.
+const WORN_PATH_COLOR: Color = Color::srgb(0.541, 0.502, 0.435);
+/// Кромка площадки — бортик коробки или бровка поля: темнее любого покрытия,
+/// один на все виды, потому что на снимке это тень борта, а не краска.
+const PITCH_RIM: Rim = Rim {
+    width: 1.0,
+    edge: Color::srgb(0.322, 0.310, 0.286),
 };
 
 /// Полигон слоя с каймой по контуру, дырки включительно (у дырки кайма лежит
@@ -119,15 +146,19 @@ pub fn spawn_map(
     let mut ground = MeshBuilder::with_surface_coords();
     ground.push_rect(Vec2::ZERO, MAP_SIZE, GROUND_COLOR.to_linear());
 
-    // квартал — самая нижняя заливка, на полтона от земли; каймы у него нет
-    // намеренно: кромка спорила бы и с зеленью, и с домами
-    let mut landuse = MeshBuilder::with_surface_coords();
+    // Квартал — самая нижняя заливка; каймы у него нет намеренно: кромка
+    // спорила бы и с зеленью, и с домами. Слоя два, потому что фактура у
+    // жилого и промышленного квартала разная по смыслу: во дворе трава с
+    // проплешинами, в промзоне утоптанная земля, и одна `SurfaceKind` на
+    // оба означала бы траву на бетонной площадке.
+    let mut yards = MeshBuilder::with_surface_coords();
+    let mut works = MeshBuilder::with_surface_coords();
     for area in &map.landuse {
-        let color = match area.kind {
-            AreaKind::Industrial => INDUSTRIAL_COLOR,
-            _ => RESIDENTIAL_COLOR,
+        let (builder, color) = match area.kind {
+            AreaKind::Industrial => (&mut works, INDUSTRIAL_COLOR),
+            _ => (&mut yards, RESIDENTIAL_COLOR),
         };
-        landuse.push_polygon(&area.outer, &area.holes, color.to_linear());
+        builder.push_polygon(&area.outer, &area.holes, color.to_linear());
     }
 
     let mut parks = MeshBuilder::with_surface_coords();
@@ -155,9 +186,40 @@ pub fn spawn_map(
         push_area(&mut water, area, WATER_COLOR, &WATER_RIM);
     }
 
+    // стоянка — асфальт своим слоем: он темнее двора и светлее проезжей
+    // части, а по нему идёт разметка мест (`map::parking`)
+    let mut parking = MeshBuilder::with_surface_coords();
+    for area in &map.parking {
+        push_area(&mut parking, area, PARKING_COLOR, &PARKING_RIM);
+    }
+    let mut parking_lines = MeshBuilder::default();
+    for area in &map.parking {
+        parking::push_markings(&mut parking_lines, area);
+    }
+
+    // тропы — вытоптанные дорожки от подъездов к дорогам (`map::paths`)
+    let mut worn = MeshBuilder::with_surface_coords();
+    let doors: usize = map.buildings.iter().map(|b| b.entrances.len()).sum();
+    let worn_count = paths::push_paths(&mut worn, &map.buildings, &map.roads, WORN_PATH_COLOR);
+    info!("worn paths: {worn_count} of {doors} doors");
+
+    // площадка — покрытие своего цвета, и на нём разметка (`map::pitch`).
+    // Кант тот же, что у прочих зон: у поля на снимке всегда есть кромка
+    let mut pitches = MeshBuilder::with_surface_coords();
+    for area in &map.pitches {
+        let AreaKind::Pitch(kind) = area.kind else {
+            continue;
+        };
+        push_area(&mut pitches, area, pitch::color(kind), &PITCH_RIM);
+    }
+    let mut pitch_lines = MeshBuilder::default();
+    for area in &map.pitches {
+        pitch::push_markings(&mut pitch_lines, area);
+    }
+
     let waterways = mesh_water_lines(&map.water_lines);
 
-    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &water]
+    let skipped: usize = [&yards, &works, &parks, &woods, &grass, &sand, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();
@@ -167,11 +229,15 @@ pub fn spawn_map(
 
     for (builder, z, name, kind) in [
         (ground, Z_GROUND, "ground", SurfaceKind::Ground),
-        (landuse, Z_LANDUSE, "landuse", SurfaceKind::Ground),
+        (works, Z_LANDUSE, "landuse_works", SurfaceKind::Ground),
+        (yards, Z_LANDUSE, "landuse_yards", SurfaceKind::Yard),
         (parks, Z_PARK, "parks", SurfaceKind::Park),
         (woods, Z_WOOD, "woods", SurfaceKind::Wood),
         (grass, Z_GRASS, "grass", SurfaceKind::Grass),
         (sand, Z_SAND, "sand", SurfaceKind::Sand),
+        (worn, Z_WORN_PATH, "worn_paths", SurfaceKind::Alley),
+        (pitches, Z_PITCH, "pitches", SurfaceKind::Ground),
+        (parking, Z_PARKING, "parking", SurfaceKind::Street),
         (water, Z_POND, "water", SurfaceKind::Water),
         (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
     ] {
@@ -194,6 +260,23 @@ pub fn spawn_map(
         *road_style,
         &map,
     );
+
+    // разметка мест и полей — своими мешами поверх покрытия: это белая
+    // краска, а не фактура покрытия, и потому плоский материал
+    for (builder, z, name) in [
+        (pitch_lines, Z_PITCH_LINES, "pitch_lines"),
+        (parking_lines, Z_PARKING_LINES, "parking_lines"),
+    ] {
+        spawn_layer(
+            &mut commands,
+            &mut meshes,
+            builder,
+            z,
+            name,
+            LayerMaterial::Flat(materials.add(Color::WHITE)),
+            (),
+        );
+    }
 
     buildings::spawn_buildings(
         &mut commands,

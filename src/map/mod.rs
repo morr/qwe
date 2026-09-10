@@ -5,9 +5,14 @@ pub mod buildings;
 // публичен по той же причине: витрина `car_gallery` расставляет ряды его же
 // вызовом (`cars_mesh`)
 pub mod cars;
+mod fences;
 pub mod footprint;
+mod industry;
 mod meshing;
 pub mod osm;
+mod parking;
+mod paths;
+mod pitch;
 mod rail;
 mod roads;
 mod seed;
@@ -16,14 +21,19 @@ mod sun;
 mod surface;
 mod tram;
 pub mod trees;
+mod wagons;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-pub use self::buildings::{BuildingHeightMode, extrusion_lift};
-pub use self::cars::CarStyle;
+pub use self::buildings::{
+    BuildingHeightMode, BuildingPlan, BuildingZoomBucket, LayerCost, extrusion_lift, measure_layers,
+};
+pub use self::cars::{CarStyle, measure_cars};
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
-pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
+pub use self::meshing::{
+    MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, min_area_rect, miter_offsets,
+};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` и `smooth_path` наружу по той же причине: ряд машин витрины
 // обязан стоять на том же асфальте, что в городе, а асфальт — на той же
@@ -55,6 +65,7 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
+            .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
             .init_resource::<SunStyle>()
             .init_resource::<SunOnMap>()
             .init_resource::<TreeStyle>()
@@ -65,6 +76,8 @@ impl Plugin for MapPlugin {
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
             .init_resource::<CarStyle>()
+            .init_resource::<wagons::WagonZoomBucket>()
+            .init_resource::<fences::FenceZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -140,6 +153,11 @@ impl Plugin for MapPlugin {
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<cars::CarLods>,
                     cars::rebuild_cars,
+                    zoom::seed_zoom_bucket::<wagons::WagonLods>,
+                    wagons::rebuild_wagons,
+                    zoom::seed_zoom_bucket::<fences::FenceLods>,
+                    fences::rebuild_fences,
+                    industry::rebuild_industry,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -210,9 +228,27 @@ impl Plugin for MapPlugin {
                                 .or_else(retuned::<RoadStyle>)
                                 .or_else(retuned::<SunOnMap>),
                         ),
+                        zoom::update_zoom_bucket::<wagons::WagonLods>,
+                        wagons::rebuild_wagons.run_if(
+                            retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
+                        ),
+                        zoom::update_zoom_bucket::<fences::FenceLods>,
+                        fences::rebuild_fences.run_if(
+                            retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunStyle>),
+                        ),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
+                    // цилиндр промзоны ступени зума не имеет — его видно
+                    // ровно настолько, насколько видна тень, — зато кренится
+                    // он вместе с домами. Ступени нет, значит и в связку с
+                    // машинами его класть не за что: слой стоит сам по себе,
+                    // как дороги. Солнце здесь — `SunOnMap`, осевшее, а не
+                    // ползунок: пересборка читает глобали, которые пишет
+                    // `apply_sun` уже по нему
+                    industry::rebuild_industry
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),

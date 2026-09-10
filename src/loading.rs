@@ -388,7 +388,8 @@ fn poll_job(
             info!(
                 "osm map: {} buildings ({with_height} with height, {entrances} entrances), \
                  {} water, {} waterways ({culverts} culverts), {} parks, {} woods, {} grass, \
-                 {} sand, {} landuse, {} roads, {} rails, {} walls, {} trees",
+                 {} sand, {} landuse, {} parking, {} pitches, {} roads, {} rails, {} walls, \
+                 {} trees",
                 map.buildings.len(),
                 map.water.len(),
                 map.water_lines.len(),
@@ -397,6 +398,8 @@ fn poll_job(
                 map.grass.len(),
                 map.sand.len(),
                 map.landuse.len(),
+                map.parking.len(),
+                map.pitches.len(),
                 map.roads.len(),
                 map.rails.len(),
                 map.walls.len(),

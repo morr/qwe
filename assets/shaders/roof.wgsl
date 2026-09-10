@@ -15,14 +15,12 @@
 // кровли (`roof_age`) — от него зависит, сколько на битуме заплат и насколько
 // всякая кровля выгорела. Без возраста все битумные дома квартала носили ровно
 // одну плотность латок.
-//
-// Шумовые помощники ниже — копия `surface.wgsl`; общей библиотеки шейдеров в
-// проекте пока нет, а тянуть её ради четырёх функций дороже, чем повторить.
 
 #import bevy_sprite::{
     mesh2d_functions as mesh_functions,
     mesh2d_view_bindings::view,
 }
+#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes, band}
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
@@ -49,6 +47,27 @@ const SEAM: u32 = 3u;
 const CORRUGATED: u32 = 4u;
 const TILE: u32 = 5u;
 const MEMBRANE: u32 = 6u;
+const WALL: u32 = 7u;
+const GARAGE_ROW: u32 = 8u;
+const GARAGE_BLOCK: u32 = 9u;
+
+// Шаг бокса гаражного ряда и шаг рядов в кооперативе, м — **зеркало
+// `garages::BAY` и `garages::ROW_PITCH`**. Оттуда же приходит посев: у
+// прогона он не случаен, а подобран так, чтобы первый шов (у ленты
+// поперечный, у кооператива проезд) лёг ровно на его край.
+const BAY: f32 = 3.4;
+const ROW_PITCH: f32 = 18.0;
+// Из них 12 м занимают два ряда боксов спинами, остальное — проезд.
+const ROW_DEPTH: f32 = 12.0;
+
+// Стена: этаж (настоящие 3 м × `EXTRUDE_SCALE` 0.35 — столько её метра
+// нарисовано), ширина панели и балкон в долях этажа. Балкон занимает нижние
+// две трети этажа и половину панели по ширине — как на панельном доме.
+const FLOOR: f32 = 1.05;
+const PANEL: f32 = 3.2;
+const BALCONY_HIGH: f32 = 0.72;
+const BALCONY_LOW: f32 = 0.12;
+const BALCONY_WIDE: f32 = 0.62;
 
 const TAU: f32 = 6.283185307;
 
@@ -82,49 +101,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.color = vertex.color;
     out.roof = vertex.roof;
     return out;
-}
-
-// Хеш вещественной пары в [0, 1) (Dave Hoskins, hash12).
-fn hash21(p: vec2<f32>) -> f32 {
-    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    p3 = p3 + dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-// Value noise, центрированный: [-0.5, 0.5].
-fn value_noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash21(i);
-    let b = hash21(i + vec2<f32>(1.0, 0.0));
-    let c = hash21(i + vec2<f32>(0.0, 1.0));
-    let d = hash21(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) - 0.5;
-}
-
-// Видимость волны длиной `wavelength` при `px` метрах на пиксель.
-fn visible(wavelength: f32, px: f32) -> f32 {
-    return smoothstep(1.5, 4.0, wavelength / px);
-}
-
-// Три октавы от `scale` вниз, ~[-1, 1].
-fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
-    let n0 = value_noise(p / scale) * visible(scale, px);
-    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
-    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
-    return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
-}
-
-// Полоса шириной `width` через каждые `period` по координате `coord`: край
-// сглажен по пикселю, сама линия не тоньше пикселя, и вся сетка гаснет,
-// когда шаг становится мельче нескольких пикселей.
-fn stripes(coord: f32, period: f32, width: f32, px: f32) -> f32 {
-    let phase = coord - period * floor(coord / period + 0.5);
-    let half_width = max(width, px) * 0.5;
-    let edge = 0.6 * px;
-    let line = 1.0 - smoothstep(half_width - edge, half_width + edge, abs(phase));
-    return line * visible(period, px);
 }
 
 // Шаг сетки размещения заплат (м); доля клеток с заплатой — уже не константа,
@@ -252,6 +228,54 @@ fn roof_shade(
     } else if kind == MEMBRANE {
         shade -= 0.05 * stripes(v, 2.0, 0.08, px);
         shade += 0.025 * fbm3(p + vec2<f32>(91.0, 5.0), 1.2, px);
+    } else if kind == GARAGE_ROW || kind == GARAGE_BLOCK {
+        // Гаражная лента. Единственное, что от неё остаётся на общем плане, —
+        // поперечный шов на каждом боксе: он и делает из ленты гребёнку.
+        let bay = floor(u / BAY);
+        var row = 0.0;
+        if kind == GARAGE_BLOCK {
+            // Кооператив целиком одним контуром: под ним не ангар, а ряды
+            // боксов с проездами. Проезд рисуется затемнением, а не дыркой в
+            // кровле: сверху щель между двумя рядами и есть тёмная полоса, а
+            // вырезать её по-настоящему значит резать контур булевой
+            // операцией и разойтись со стенами и тенью.
+            shade -= 0.30 * band(v, ROW_PITCH, ROW_DEPTH, ROW_PITCH - ROW_DEPTH, px);
+            // и стык спина к спине посередине пары рядов
+            shade -= 0.09 * stripes(v - ROW_DEPTH * 0.5, ROW_PITCH, 0.12, px);
+            // номер ряда: два ряда на период, и второй начинается на
+            // середине занятой боксами полосы
+            let cycle = v - ROW_PITCH * floor(v / ROW_PITCH);
+            row = floor(v / ROW_PITCH) * 2.0 + f32(cycle > ROW_DEPTH * 0.5);
+        }
+        shade -= 0.17 * stripes(u, BAY, 0.10, px);
+        // каждый бокс крашен своим хозяином — ±10 % по номеру бокса (и ряда,
+        // если это кооператив); тон держится ровно до шва, поэтому лента и
+        // читается как ряд ворот
+        shade += 0.10 * (hash21(vec2<f32>(bay, row * 13.0 + seed * 53.0)) - 0.5)
+            * visible(BAY, px);
+        // под швом — профлист, как и на одиночном гараже
+        shade += 0.10 * cos(TAU * u / 0.30) * slope_bite * visible(0.30, px);
+        // и ржавчина, которой на ГСК больше, чем на любой другой кровле
+        shade -= 0.06 * fbm3(p + vec2<f32>(67.0, 41.0), 1.6, px);
+    } else if kind == WALL {
+        // ось стены — она сама, поэтому `v` растёт **вверх по стене**, а `u`
+        // идёт вдоль неё: межэтажный шов это линия постоянного `v`
+        shade -= 0.055 * stripes(v, FLOOR, 0.05, px);
+        // вертикальные швы панелей
+        shade -= 0.035 * stripes(u, PANEL, 0.05, px);
+        // балконы: своя ячейка на этаж и панель, часть занята выступом.
+        // Ячейка берётся по **обеим** координатам, так что балконы стоят
+        // столбцами, как на настоящем доме, а не в шахматном порядке
+        let cell = vec2<f32>(floor(u / PANEL), floor(v / FLOOR));
+        let inside = fract(vec2<f32>(u / PANEL, v / FLOOR));
+        let has_balcony = hash21(cell + seed * 29.0) > 0.42;
+        let in_box = inside.y > BALCONY_LOW && inside.y < BALCONY_HIGH
+            && abs(inside.x - 0.5) < BALCONY_WIDE * 0.5;
+        // видно только вблизи: этаж на карте это доли пикселя почти всегда
+        let close = visible(FLOOR, px);
+        shade -= 0.10 * f32(has_balcony && in_box) * close;
+        // и лёгкая грязь по стене
+        shade += 0.02 * fbm3(p + vec2<f32>(57.0, 23.0), 2.0, px);
     }
     return shade;
 }

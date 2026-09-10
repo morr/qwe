@@ -14,6 +14,7 @@
     mesh2d_functions as mesh_functions,
     mesh2d_view_bindings::{view, globals},
 }
+#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, fbm4}
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
@@ -40,6 +41,7 @@ struct SurfaceParams {
     marking_width: f32,
     marking_dash: f32,
     marking_gap: f32,
+    wear: f32,
     intensity: f32,
 }
 
@@ -77,53 +79,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     return out;
 }
 
-// Хеш вещественной пары в [0, 1) (Dave Hoskins, hash12).
-fn hash21(p: vec2<f32>) -> f32 {
-    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    p3 = p3 + dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-// Value noise, центрированный: [-0.5, 0.5]. Центрирован намеренно — погашенная
-// октава тогда вносит ровно ноль, а не сдвигает среднюю яркость с зумом.
-fn value_noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash21(i);
-    let b = hash21(i + vec2<f32>(1.0, 0.0));
-    let c = hash21(i + vec2<f32>(0.0, 1.0));
-    let d = hash21(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) - 0.5;
-}
-
-// Видимость волны длиной `wavelength` при `px` метрах на пиксель: короче
-// полутора пикселей — ноль, длиннее четырёх — единица.
-fn visible(wavelength: f32, px: f32) -> f32 {
-    return smoothstep(1.5, 4.0, wavelength / px);
-}
-
-// Четыре октавы от `scale` вниз (до `scale / 8`), ~[-1, 1] — облачность:
-// от пятен в десятки метров до пятен в несколько. Нормировка — по полным
-// амплитудам, а не по видимым: погашенная октава уменьшает контраст (на
-// отдалении поверхность становится ровнее), но не усиливает оставшиеся.
-fn fbm4(p: vec2<f32>, scale: f32, px: f32) -> f32 {
-    let n0 = value_noise(p / scale) * visible(scale, px);
-    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
-    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
-    let n3 = value_noise(p / (scale * 0.125)) * visible(scale * 0.125, px);
-    return (n0 + 0.5 * n1 + 0.25 * n2 + 0.125 * n3) / 1.875 * 2.0;
-}
-
-// Три октавы (до `scale / 4`) — зерно: рябь в метры и доли метра, видная
-// только вблизи.
-fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
-    let n0 = value_noise(p / scale) * visible(scale, px);
-    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
-    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
-    return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
-}
-
 // Знаковое расстояние до штриха: отрицательно внутри штриха длиной `dash`,
 // начинающегося в нуле каждого периода `dash + gap`.
 fn dash_distance(along: f32, dash: f32, gap: f32) -> f32 {
@@ -133,6 +88,18 @@ fn dash_distance(along: f32, dash: f32, gap: f32) -> f32 {
     let next = abs(phase - period - dash * 0.5) - dash * 0.5;
     return min(here, next);
 }
+
+// Износ асфальта. Колея — в 85 см от середины полосы (колея легковой машины
+// 1.5 м), шириной с покрышку; заплата — клетка в 6 м, свежий битум темнее
+// старого; грязь у бордюра — полоса в 70 см.
+const RUT_OFFSET: f32 = 0.85;
+const RUT_SIGMA: f32 = 0.32;
+const RUT_AMP: f32 = 0.075;
+const PATCH_SCALE: f32 = 6.0;
+const PATCH_SHARE: f32 = 0.88;
+const PATCH_AMP: f32 = 0.09;
+const EDGE_DIRT_REACH: f32 = 0.7;
+const EDGE_DIRT_AMP: f32 = 0.07;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -193,6 +160,37 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let zoom_fade = smoothstep(6.0, 12.0, lane_width / px);
         let mask = on_line * on_dash * gap_fade * zoom_fade * params.marking_color.a * f32(inside);
         rgb = mix(rgb, params.marking_color.rgb, mask);
+    }
+
+    // Износ покрытия — то, из-за чего асфальт на снимке никогда не ровного
+    // тона: колеи под колёсами, тёмные заплаты ремонта и грязь у бордюра.
+    // Считается **в раме ленты**, поэтому колея идёт по полосе, а не по
+    // странам света; ноль полос (стоянка на том же материале) износа не
+    // получает — там своя история.
+    if params.wear > 0.0 && lanes >= 1.0 {
+        let across = in.ribbon.x;
+        let half_width = in.ribbon.z;
+        let lane_width = 2.0 * half_width / lanes;
+        let w = k * params.wear;
+        // две колеи на полосу: колёса идут в 85 см от её середины, и полоса
+        // под ними отполирована до светлого
+        let in_lane = (across + half_width) / lane_width;
+        let from_middle = abs(in_lane - floor(in_lane) - 0.5) * lane_width;
+        let offset = from_middle - RUT_OFFSET;
+        let rut = exp(-offset * offset / (2.0 * RUT_SIGMA * RUT_SIGMA));
+        // гасится по **шагу полосы**, а не по ширине колеи: рисунок повторяется
+        // с полосой, и на спутниковом плане отполированные колеи ещё видны —
+        // это широкая разница тона, а не тонкая линия
+        rgb = rgb * (1.0 + w * RUT_AMP * rut * visible(lane_width, px));
+        // заплаты: свежий битум темнее старого, клетки по мировой координате.
+        // (`patch` — зарезервированное слово WGSL, отсюда `repair`.)
+        let repair = hash21(floor(p / PATCH_SCALE) + 3.7);
+        let fresh = smoothstep(PATCH_SHARE, PATCH_SHARE + 0.04, repair);
+        rgb = rgb * (1.0 - w * PATCH_AMP * fresh * visible(PATCH_SCALE, px));
+        // у бордюра скапливается грязь и песок
+        let to_edge = half_width - abs(across);
+        let dirt = 1.0 - smoothstep(0.0, EDGE_DIRT_REACH, to_edge);
+        rgb = rgb * (1.0 - w * EDGE_DIRT_AMP * dirt);
     }
 
     // слой непрозрачный: вода, дороги и зелень — сплошные заливки

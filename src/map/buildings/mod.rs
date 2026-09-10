@@ -14,6 +14,7 @@
 
 mod arches;
 mod clutter;
+mod garages;
 mod heights;
 mod layers;
 pub mod material;
@@ -26,9 +27,13 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use self::garages::garage_runs;
 use self::heights::{height_mix, height_or_default};
+pub(crate) use self::layers::SHADOW_LENGTH_RANGE;
 pub use self::layers::push_house;
-use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
+use self::layers::{
+    extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
+};
 use self::material::RoofMaterialHandle;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::loading::AppState;
@@ -62,11 +67,15 @@ const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 /// широкая полоса высотки залезала бы на низкого соседа.
 const Z_FACADE: f32 = Z_BUILDING - 0.1;
 
-/// Тени зданий — под всеми зданиевыми слоями (фасады 4.9, крыши и экструзия
-/// 5.0): крыша или стена соседа сама маскирует тень, и тень никогда не
-/// ложится на крышу дома той же высоты — дешёвая замена честному учёту
-/// высот. Выше портала (4) и трупов (3): они на улице и в тени по смыслу.
+/// Тени зданий на земле — под всеми зданиевыми слоями (фасады 4.9, крыши и
+/// экструзия 5.0): крыша или стена соседа сама маскирует тень. Выше портала
+/// (4) и трупов (3): они на улице и в тени по смыслу.
 const Z_BUILDING_SHADOW: f32 = Z_BUILDING - 0.5;
+/// Тени, падающие **на кровли** ([`layers::roof_shadow_builder`]), — наоборот,
+/// над всеми зданиевыми слоями: это единственная часть тени, которая обязана
+/// лежать поверх крыши, стен и оборудования на ней. Волосок над кровлей и всё
+/// ещё ниже юнитов (10).
+const Z_ROOF_SHADOW: f32 = Z_BUILDING + 0.05;
 
 /// Метров подъёма крыши на метр высоты в 2.5D: драматичнее фасадной полосы,
 /// но карта остаётся видом сверху, а не изометрией.
@@ -131,6 +140,16 @@ impl BuildingHeightMode {
             Self::ExtrusionShadowsTint => "2.5D+shadows+tint",
         }
     }
+
+    /// Рисуются ли в этом режиме длинные тени. Спрашивают двое — слой зданий
+    /// и цилиндры промзоны (`map/industry.rs`), которые рисуются как дома, —
+    /// и список режимов обязан быть один на обоих.
+    pub(crate) fn casts_shadows(self) -> bool {
+        matches!(
+            self,
+            Self::Shadows | Self::ShadowsTint | Self::ExtrusionShadowsTint
+        )
+    }
 }
 
 /// Зданиевый слой карты — чтобы пересборка режима знала, что деспавнить.
@@ -180,6 +199,81 @@ pub(super) struct RoofDetail {
     pub(super) tinted: bool,
     /// Оборудование на кровле — по ступени зума.
     pub(super) clutter: bool,
+}
+
+/// Во что обошёлся один слой: имя, вершины, время сборки.
+pub struct LayerCost {
+    pub name: &'static str,
+    pub vertices: usize,
+    pub elapsed: Duration,
+}
+
+/// Сборка зданиевых слоёв **без мира и без ассетов** — для офлайн-замера
+/// (`examples/bench/map_meshing.rs`).
+///
+/// Существует потому, что мерить сборку в живом приложении на macOS нельзя:
+/// невидимому окну система урезает приоритет (App Nap), и те же 116 мс
+/// показывают себя пятью секундами. Здесь нет ни окна, ни GPU — только те же
+/// билдеры, что зовёт `spawn_buildings`.
+pub fn measure_layers(
+    buildings: &[PolyArea],
+    passages: &[RoadLine],
+    plan: BuildingPlan,
+) -> Vec<LayerCost> {
+    let BuildingPlan { mode, bucket, .. } = plan;
+    let detail = RoofDetail {
+        tinted: matches!(
+            mode,
+            BuildingHeightMode::ShadowsTint | BuildingHeightMode::ExtrusionShadowsTint
+        ),
+        clutter: bucket.index == 0,
+    };
+    let mut costs = Vec::new();
+    // замеряется число вершин, а не сам сборщик: у плоского режима билдеров
+    // два, и склеивать их ради замера значило бы мерить ещё и склейку
+    let mut measure = |name, build: &mut dyn FnMut() -> usize| {
+        let started = Instant::now();
+        let vertices = build();
+        costs.push(LayerCost {
+            name,
+            vertices,
+            elapsed: started.elapsed(),
+        });
+    };
+
+    match mode {
+        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
+            measure("extruded", &mut || {
+                extrusion_builder(buildings, passages, detail).vertex_count()
+            });
+        }
+        _ => {
+            measure("facades+roofs", &mut || {
+                let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
+                facades.vertex_count() + roofs.vertex_count()
+            });
+        }
+    }
+    if matches!(
+        mode,
+        BuildingHeightMode::Shadows
+            | BuildingHeightMode::ShadowsTint
+            | BuildingHeightMode::ExtrusionShadowsTint
+    ) {
+        measure("shadows", &mut || {
+            shadow_builder(
+                buildings,
+                passages,
+                mode == BuildingHeightMode::ExtrusionShadowsTint,
+            )
+            .vertex_count()
+        });
+        measure("roof shadows", &mut || {
+            roof_shadow_builder(buildings, mode == BuildingHeightMode::ExtrusionShadowsTint)
+                .vertex_count()
+        });
+    }
+    costs
 }
 
 /// Спавн зданиевых слоёв в выбранном режиме. Вызывается из `spawn_map` при
@@ -267,14 +361,8 @@ pub fn spawn_buildings(
     }
 
     let mut shadow_time = Duration::ZERO;
-    if with_shadows
-        && matches!(
-            mode,
-            BuildingHeightMode::Shadows
-                | BuildingHeightMode::ShadowsTint
-                | BuildingHeightMode::ExtrusionShadowsTint
-        )
-    {
+    let mut roof_shadow_time = Duration::ZERO;
+    if with_shadows && mode.casts_shadows() {
         let shadow_started = Instant::now();
         let shadows = shadow_builder(
             buildings,
@@ -296,14 +384,37 @@ pub fn spawn_buildings(
                 Name::new("building_shadows"),
             ));
         }
+
+        // Тени на кровлях — **над** зданиевыми слоями, а не под ними: это
+        // единственный кусок тени, который обязан лежать поверх крыши.
+        // Своя метка не нужна — деспавнится он вместе с наземным слоем.
+        let roof_started = Instant::now();
+        let on_roofs =
+            roof_shadow_builder(buildings, mode == BuildingHeightMode::ExtrusionShadowsTint);
+        roof_shadow_time = roof_started.elapsed();
+        vertices += on_roofs.vertex_count();
+        if !on_roofs.is_empty() {
+            commands.spawn((
+                BuildingShadowTag,
+                Mesh2d(meshes.add(on_roofs.build())),
+                MeshMaterial2d(materials.add(ColorMaterial {
+                    alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
+                    ..default()
+                })),
+                Transform::from_xyz(0.0, 0.0, Z_ROOF_SHADOW),
+                DespawnOnExit(AppState::Playing),
+                Name::new("roof_shadows"),
+            ));
+        }
     }
 
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавило оборудование кровель
     info!(
-        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {}, heights: {})",
+        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?} + {roof_shadow_time:?} on roofs, {} buildings, {} in garage rows, {}, clutter {}, heights: {})",
         started.elapsed(),
         buildings.len(),
+        garage_runs(buildings).len(),
         mode.label(),
         bucket.index == 0,
         height_mix(buildings),
@@ -424,15 +535,26 @@ pub(super) fn building_center(building: &PolyArea) -> Vec2 {
 /// сдвиг: слой экструзии, заплатка арки в тенях и всякий, кто захочет
 /// поставить метку на нарисованный дом, а не на его настоящий контур.
 pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
+    drawn_lift(height_or_default(building), mode)
+}
+
+/// Подъём верха над контуром для объекта высотой `height`: тот же масштаб и та
+/// же обрезка, что у крыш, и ноль в режимах без экструзии.
+///
+/// Отдельно от [`extrusion_lift`], потому что кренится не только дом: тем же
+/// правилом встают цилиндры промзоны (`map/industry.rs`), у которых нет ни
+/// контура, ни `BuildingUse`. Обрезка [`EXTRUDE_RANGE`] тут и есть главное:
+/// без неё шестидесятиметровая заводская труба ложилась на карту
+/// восьмидесятиметровой трубой.
+pub(crate) fn drawn_lift(height: f32, mode: BuildingHeightMode) -> Vec2 {
     if !matches!(
         mode,
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
     ) {
         return Vec2::ZERO;
     }
-    let height = (height_or_default(building) * EXTRUDE_SCALE)
-        .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    Lean::of().lift(height)
+    let drawn = (height * EXTRUDE_SCALE).clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
+    Lean::of().lift(drawn)
 }
 
 /// Базовый цвет стены по типу здания: Кремль — свой, остальные по назначению
@@ -446,7 +568,7 @@ fn facade_color(building: &PolyArea) -> Color {
         BuildingUse::Apartments => APARTMENTS_FACADE_COLOR,
         BuildingUse::Commercial => COMMERCIAL_FACADE_COLOR,
         BuildingUse::Industrial => INDUSTRIAL_FACADE_COLOR,
-        BuildingUse::Garage => GARAGE_FACADE_COLOR,
+        BuildingUse::Garage | BuildingUse::GarageBlock => GARAGE_FACADE_COLOR,
         BuildingUse::Church => CHURCH_FACADE_COLOR,
         BuildingUse::Public => PUBLIC_FACADE_COLOR,
         BuildingUse::Other => FACADE_COLOR,
@@ -459,7 +581,7 @@ fn facade_color(building: &PolyArea) -> Color {
 /// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
 /// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
 /// `Srgba` в сигнатуре делает пространство явным.
-pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
+pub(crate) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
     let lit = outward.dot(sun_light());
     if lit >= 0.0 {
         base.mix(&Srgba::WHITE, lit * lit_mix)

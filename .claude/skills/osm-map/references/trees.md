@@ -148,8 +148,8 @@ stand, how density works, and which resources restyle them.
   its shadow: long, or plain offset, or — for a conifer — the **cone fan** of shrinking
   silhouettes along the shadow (`drawConiferShadow`), unioned with `i_overlay` so the
   translucent copies never stack into double darkness. `TREE_VARIANTS` unit-radius crown meshes are reused
-  across all trees; per tree — variant, quantized brightness tint (material multiplies
-  vertex colors, so ink stays ink) and radius as `Transform::scale`.
+  across all trees; per tree — variant, quantized brightness tint and radius as
+  `Transform::scale`.
   Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
   **Shadows are one merged mesh** (`tree_shadows`, like `building_shadows`), not an
   entity per tree: the silhouette template of each variant is baked into it with the
@@ -157,6 +157,24 @@ stand, how density works, and which resources restyle them.
   phase, and a thousand of them sharing one z alongside the pawn sprites lose a
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
   item, no blinking (and one draw call instead of hundreds).
+- **The canopy material** (`map/trees/canopy.rs`, shader `assets/shaders/crown.wgsl`) —
+  the crown is drawn by a `Material2d` of its own rather than by `ColorMaterial`, because
+  a flat fill is what made it read as clip art. The geometry is untouched (watabou draws
+  the right *silhouette*); what the shader adds is what a canopy has from above and a
+  drawing does not:
+  - **the ball**: the side facing `map::sun_light` is `LIT` 0.20 brighter and the far
+    side darker, plus a `RIM` 0.10 falloff by radius. It reads the crown-**local**
+    coordinate — the mesh is unit-radius, so that vector *is* the direction from the
+    trunk, and no attribute is needed;
+  - **the leaf ripple**: `fbm3` at a 0.9 m wavelength by **world** position, so two
+    neighbouring trees of the same variant are not copies of each other;
+  - the shade goes cooler and the light warmer, the same tint law as the roofs.
+  The per-tree brightness slot moved from a grey `ColorMaterial` into the uniform, so
+  there are exactly as many materials as before (one per `tint_factors` slot).
+  **The ink is mixed toward the foliage** by `INK_FOLIAGE_MIX` 0.62 in `crown_mesh`:
+  from the air a crown has no outline, it has a shaded edge. This is a code-level mix and
+  not a new `details` default on purpose — that colour is persisted, so a new default
+  would never reach anyone who has already played.
 - **TreeStyle** (resource, BRP-writable) — the watabou «Style settings → Trees» tab:
   `foliage`, `details` (ink), `variance` (brightness spread), `shape`, `conifer_share`
   and `noise_mix` (see Conifer stands below), `density` (planting multiplier, see Tree

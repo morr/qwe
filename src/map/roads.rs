@@ -5,11 +5,13 @@
 //! `map/tram.rs`: у обоих свой стиль и свой зум-LOD, и пересобираются они по
 //! зуму, а не по [`RoadStyle`].
 //!
-//! Мост (`RoadLine::bridge`) уходит из слоёв своего класса в пару
-//! `bridge_casings` + `bridges`: серый бордюр по краям настила (всегда, вне
-//! зависимости от `RoadStyle::casing`) и заливка цветом класса над `Z_ROAD` —
-//! эстакада кроет улицу, которую пересекает, а ровные торцы бордюра читаются
-//! как края настила, вид 2ГИС.
+//! Мост (`RoadLine::bridge`) уходит из слоёв своего класса в тройку
+//! `bridge_shadows` + `bridge_casings` + `bridges`: серый бордюр по краям
+//! настила (всегда, вне зависимости от `RoadStyle::casing`) и заливка цветом
+//! класса над `Z_ROAD` — эстакада кроет улицу, которую пересекает, а ровные
+//! торцы бордюра читаются как края настила, вид 2ГИС. Под ними —
+//! [`push_bridge_shadow`]: единственное на карте, что говорит, что настил
+//! поднят, потому что наземные тени считают только дома.
 //!
 //! Раньше дороги рисовал `MeshBuilder::push_polyline` — свой квад на
 //! сегмент, продлённый с обоих концов на полуширины. Стыков у него нет вообще:
@@ -46,13 +48,233 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::footprint::casing_width;
-use crate::map::meshing::{Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, RoadClass, RoadLine, WallLine};
-use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
-use crate::settings::{
-    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BUILDING, Z_ROAD, Z_ROAD_CASING,
-    Z_SIDEWALK,
+use crate::map::meshing::{
+    Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
+    miter_offsets,
 };
+use crate::map::osm::model::{distance_to_segment, point_in_area, polyline_length};
+use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine, WallLine};
+use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
+use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::settings::{
+    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
+    Z_ROAD_CASING, Z_SIDEWALK,
+};
+
+/// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
+/// **сходящую к нулю у торцов**.
+///
+/// Без схождения тень вылезала на дорогу в месте примыкания: у береговой
+/// опоры настил лежит на земле, и тени там нет вовсе, а сдвинутая на полную
+/// высоту лента выезжала за торец моста и ложилась тёмной полосой поперёк
+/// подходящей улицы. Подъём считается по длине дуги: `RAMP_SHARE` длины с
+/// каждого конца (но не больше `RAMP_MAX`) — это и есть насыпь.
+///
+/// Осевая для этого **догущается** ([`densify`]): подъём живёт в вершинах, а
+/// прямой мост в OSM — это ровно две точки, и обе они торцы. Без догущения
+/// `rise` в обеих ноль, тень ложится точь-в-точь под настил и пропадает
+/// целиком — так мостики через пруд и не отбрасывали тени вовсе, тогда как
+/// изломанный путепровод (вершин много) давал рваную полосу: подъём прыгал от
+/// вершины к вершине.
+///
+/// Подъём вдобавок **зажат остатком пролёта**: если тень едет вдоль моста, то
+/// на расстоянии `at` от торца ей позволено уехать не дальше чем на `at`.
+/// Гладкая насыпь поднимается быстрее, чем набирается длина, и у короткого
+/// моста тень успевала перевалить за торец и лечь тёмным клином на дорогу —
+/// тот самый клин, что торчал из-под каждого мостика через канал.
+fn bridge_shadow_path(points: &[Vec2]) -> Vec<ShadowPoint> {
+    // слипшиеся точки OSM вырождают нормаль стыка — то же, что делает лента
+    let merged = merge_close_points(points, false, SHADOW_STEP / 4.0);
+    let dense = densify(&merged, SHADOW_STEP);
+    if dense.len() < 2 {
+        return Vec::new();
+    }
+    let mut along = Vec::with_capacity(dense.len());
+    let mut travelled = 0.0;
+    for (index, point) in dense.iter().enumerate() {
+        if index > 0 {
+            travelled += point.distance(dense[index - 1]);
+        }
+        along.push(travelled);
+    }
+    let length = travelled;
+    let offset = shadow_dir() * (bridge_height(length) * shadow_length_scale());
+    let ramp = (length * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
+    let last = dense.len() - 1;
+    (0..dense.len())
+        .map(|index| {
+            let (point, at) = (dense[index], along[index]);
+            let raised = (at.min(length - at) / ramp).clamp(0.0, 1.0);
+            // плавно, а не изломом: у настоящей насыпи профиль сглажен
+            let rise = raised * raised * (3.0 - 2.0 * raised);
+            // ход тени вдоль моста и сколько его осталось до торца впереди
+            let tangent = (dense[(index + 1).min(last)] - dense[index.saturating_sub(1)])
+                .normalize_or(Vec2::X);
+            let travel = offset.dot(tangent);
+            let room = if travel > 0.0 { length - at } else { at };
+            let rise = if travel.abs() > f32::EPSILON {
+                rise.min(room / travel.abs())
+            } else {
+                rise
+            };
+            ShadowPoint {
+                at: point + offset * rise,
+                rise,
+            }
+        })
+        .collect()
+}
+
+/// Высота настила над тем, что под ним, м: [`SPAN_TO_HEIGHT`] пролёта, но не
+/// выше [`BRIDGE_HEIGHT`].
+///
+/// Высота росла с пролётом всегда — просто раньше об этом не спрашивали, и
+/// всякий way с `bridge=yes` поднимался на шесть метров. В OSM этот тег носят
+/// не только пролёты: им же размечены сходы с набережной, тротуар вдоль
+/// путепровода, четырёхметровый переход через ливнёвку. Шестиметровая тень от
+/// двадцатиметровой дорожки, под которой на месте ничего нет, — самое заметное
+/// враньё, какое карта может себе позволить, потому что тень читается как
+/// высота.
+fn bridge_height(span: f32) -> f32 {
+    (span * SPAN_TO_HEIGHT).min(BRIDGE_HEIGHT)
+}
+
+/// Отбрасывает ли этот мост тень вообще: пролёт от [`SHORT_SPAN`] — всегда,
+/// короче — только если под ним и правда пусто, то есть вода или рельсы.
+///
+/// Пропорциональной высоты мало. Западный подход к мосту через Упу — это
+/// четыре way по 23–30 м с `bridge=yes` и `layer=1`, а на месте там ровная
+/// земля: насыпь, а не эстакада. Отличить насыпь от пролёта по тегам нельзя,
+/// зато можно спросить, есть ли под ней разрыв. Дороги в этот список не
+/// входят намеренно — именно вдоль дорог и лежат подходы, — а вода и путь под
+/// коротким настилом сомнений не оставляют.
+///
+/// Длинному мосту вопрос не задаётся: на сотне метров насыпи не бывает, а
+/// перебирать контуры воды под каждым из них незачем.
+fn bridge_casts_shadow(points: &[Vec2], underneath: &Underneath) -> bool {
+    if polyline_length(points) >= SHORT_SPAN {
+        return true;
+    }
+    densify(
+        &merge_close_points(points, false, SHADOW_STEP / 4.0),
+        SHADOW_STEP,
+    )
+    .iter()
+    .any(|point| underneath.covers(*point))
+}
+
+/// Что лежит под настилом: контуры воды, русла водотоков и рельсовые пути,
+/// каждый со своим габаритом.
+///
+/// Габарит считается один раз на сборку слоёв, и это не оптимизация впрок:
+/// проба идёт по точке через каждые два метра короткого моста, а контуров воды
+/// в городе бывает под тысячу.
+struct Underneath<'a> {
+    /// Контуры воды — пруд, река, затон.
+    areas: Vec<(Rect, &'a PolyArea)>,
+    /// Русла водотоков и пути: осевая и полуширина.
+    lines: Vec<(Rect, &'a [Vec2], f32)>,
+}
+
+impl<'a> Underneath<'a> {
+    fn new(map: &'a MapData) -> Self {
+        let bounds = |points: &[Vec2], margin: f32| {
+            let (min, max) = points.iter().fold(
+                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+                |(min, max), point| (min.min(*point), max.max(*point)),
+            );
+            Rect::from_corners(min - margin, max + margin)
+        };
+        let channels = map
+            .water_lines
+            .iter()
+            // труба не разрыв: вода идёт под землёй, поверху проходят пешком
+            .filter(|line| !line.tunnel)
+            .map(|line| (line.points.as_slice(), line.width));
+        let rails = map
+            .rails
+            .iter()
+            .map(|rail| (rail.points.as_slice(), rail.width));
+        Self {
+            areas: map
+                .water
+                .iter()
+                .map(|area| (bounds(&area.outer, 0.0), area))
+                .collect(),
+            lines: channels
+                .chain(rails)
+                .map(|(points, width)| (bounds(points, width / 2.0), points, width / 2.0))
+                .collect(),
+        }
+    }
+
+    fn covers(&self, point: Vec2) -> bool {
+        self.areas
+            .iter()
+            .any(|(bounds, area)| bounds.contains(point) && point_in_area(point, area))
+            || self.lines.iter().any(|(bounds, path, half)| {
+                bounds.contains(point)
+                    && path
+                        .windows(2)
+                        .any(|span| distance_to_segment(point, span[0], span[1]) <= *half)
+            })
+    }
+}
+
+/// Точка теневой ленты: куда съехал настил и насколько он в этом месте поднят
+/// (0 у береговой опоры, 1 на полной высоте). Подъём нужен и после сдвига —
+/// им же сходит на нет кайма ([`push_bridge_shadow`]).
+struct ShadowPoint {
+    at: Vec2,
+    rise: f32,
+}
+
+/// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
+/// месте, между ними встают промежуточные. Нужна там, где вдоль ленты меняется
+/// не только направление, но и величина — здесь высота настила.
+fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
+    let Some((last, rest)) = points.split_last() else {
+        return Vec::new();
+    };
+    let mut dense = Vec::with_capacity(rest.len() + 1);
+    for pair in points.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        dense.push(from);
+        let parts = (from.distance(to) / step).ceil().max(1.0);
+        for part in 1..parts as usize {
+            dense.push(from.lerp(to, part as f32 / parts));
+        }
+    }
+    dense.push(*last);
+    dense
+}
+
+/// Доля длины моста, на которой настил поднимается от земли до полной высоты,
+/// потолок этой длины в метрах и шаг, которым осевая догущается под подъём.
+const RAMP_SHARE: f32 = 0.25;
+const RAMP_MAX: f32 = 25.0;
+const SHADOW_STEP: f32 = 2.0;
+
+/// Пролёт, короче которого way с `bridge=yes` считается мостом только над водой
+/// или путями — см. [`bridge_casts_shadow`]. Тридцать пять метров: подходы к
+/// мосту через Упу это 23–30 м, мостик через канал в парке — 39.
+const SHORT_SPAN: f32 = 35.0;
+
+/// Насколько тень настила шире самого настила с каждой стороны, м. Метр — это
+/// тень перил, толщина плиты и полоса воды, которой настил закрыл небо; от
+/// высоты моста, в отличие от сдвига, эта кайма почти не зависит (перила у
+/// пешеходного мостика те же, что у моста через Упу), но вместе с настилом
+/// садится на землю у торцов. См. [`push_bridge_shadow`].
+const SHADOW_SPREAD: f32 = 1.0;
+
+/// Потолок высоты настила над тем, что под ним, м, и высота на метр пролёта.
+/// Длину тени высота даёт тем же котангенсом высоты солнца, что у домов и
+/// вагонов: путепровод над улицей поднят метров на шесть, и тень от него —
+/// самое заметное, что бывает на воде под мостом. Полную высоту набирает
+/// пролёт от 48 м — мост через Упу (137 м) и развязка (571 м) на потолке,
+/// мостик через пруд (14 м) поднят на метр восемьдесят.
+const BRIDGE_HEIGHT: f32 = 6.0;
+const SPAN_TO_HEIGHT: f32 = 1.0 / 8.0;
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли, как на
 /// детальных картах 2ГИС и Яндекса. Белой (osm-carto) она была, пока не
@@ -273,6 +495,12 @@ pub fn spawn_roads(
     // вершинные цвета — плоский материал один, белый; фактурные — по виду
     // поверхности, из `SurfaceMaterials`
     let flat = materials.add(Color::WHITE);
+    // тень моста полупрозрачна, поэтому у неё свой материал с блендингом:
+    // белый непрозрачный съел бы альфу вершинного цвета
+    let shadow = materials.add(ColorMaterial {
+        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
+        ..default()
+    });
     // перекрёстки нужны только разметке: без неё и рвать нечего
     let junctions = style
         .markings
@@ -291,6 +519,9 @@ pub fn spawn_roads(
     // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
     let mut bridge_casings = MeshBuilder::default();
     let mut bridge_fills = MeshBuilder::with_surface_coords();
+    // тень моста — на то, над чем он проходит: воду, дорогу, пути
+    let mut bridge_shadows = MeshBuilder::default();
+    let underneath = Underneath::new(map);
     let mut wall_ribbons = MeshBuilder::default();
 
     for index in order {
@@ -313,6 +544,16 @@ pub fn spawn_roads(
                 2.0 * road.curb_reach(),
                 style.join,
             );
+            // Тень настила — тот же настил, сдвинутый по свету на высоту
+            // моста. Ни один другой слой её не даёт: наземные тени считают
+            // только дома, а мост через Упу — самая заметная вещь на воде.
+            if bridge_casts_shadow(&points, &underneath) {
+                push_bridge_shadow(
+                    &mut bridge_shadows,
+                    &bridge_shadow_path(&points),
+                    road.curb_reach(),
+                );
+            }
             bridge_fills.set_markings(markings);
             push_street_fill(
                 &mut bridge_fills,
@@ -402,6 +643,12 @@ pub fn spawn_roads(
         ),
         (streets, Z_ROAD, "roads", surface(SurfaceKind::Street)),
         (
+            bridge_shadows,
+            Z_BRIDGE_SHADOW,
+            "bridge_shadows",
+            LayerMaterial::Flat(shadow.clone()),
+        ),
+        (
             bridge_casings,
             Z_BRIDGE_CASING,
             "bridge_casings",
@@ -457,6 +704,48 @@ pub fn rebuild_roads(
         *style,
         &map,
     );
+}
+
+/// Тень настила — лента переменной ширины по [`bridge_shadow_path`], **шире
+/// самого настила** на [`SHADOW_SPREAD`] с каждой стороны, и торцы у неё
+/// прямые.
+///
+/// Уширение — не украшение, а единственное, что даёт мосту тень **вдоль
+/// света**. Тень плиты это её силуэт, сдвинутый по солнцу; у ленты сдвиг
+/// раскладывается на поперечную часть (видимая полоса сбоку) и продольную
+/// (лента съезжает сама по себе и остаётся под настилом). Мостики через пруд
+/// на Упе идут ровно по азимуту солнца — поперечной части у них нет, и честная
+/// тень-сдвиг у них невидима до последнего пикселя. На снимке они, однако,
+/// обведены тёмным: вода под настилом не освещена небом, к этому добавляется
+/// тень перил и толщина самой плиты. Это и есть `SHADOW_SPREAD` — кайма,
+/// сходящая к нулю там же, где садится на землю настил.
+///
+/// Торцы прямые (лента режется по вершинам, полудиска нет ни на одном конце):
+/// круглый торец и был тем артефактом, из-за которого тень «оставалась у
+/// дороги» — полудиск радиусом в полширины настила вылезал за прямой срез
+/// моста и ложился на улицу, к которой мост примыкает.
+fn push_bridge_shadow(builder: &mut MeshBuilder, path: &[ShadowPoint], reach: f32) {
+    if path.len() < 2 {
+        return;
+    }
+    let color = SHADOW_COLOR.to_linear();
+    let centers: Vec<Vec2> = path.iter().map(|point| point.at).collect();
+    // единичные нормали стыка: длину каждой задаёт своя полуширина
+    let normals = miter_offsets(&centers, false, 1.0);
+    let rails: Vec<[Vec2; 2]> = path
+        .iter()
+        .zip(&normals)
+        .map(|(point, normal)| {
+            let half = reach + SHADOW_SPREAD * point.rise;
+            [point.at + *normal * half, point.at - *normal * half]
+        })
+        .collect();
+    // по четырёхугольнику на сегмент: соседние делят ребро вершина в вершину,
+    // так что полупрозрачная лента нигде не накладывается сама на себя
+    for pair in rails.windows(2) {
+        let ([left, right], [next_left, next_right]) = (pair[0], pair[1]);
+        builder.push_polygon(&[left, next_left, next_right, right], &[], color);
+    }
 }
 
 /// Бордюр моста: торцы всегда [`RibbonCap::Butt`] — настил кончается ровным

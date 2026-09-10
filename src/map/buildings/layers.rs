@@ -11,13 +11,14 @@ use super::arches::{
     ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::{RoofLook, building_seed, roof_look};
+use super::garages::{GarageRun, garage_runs};
+use super::material::{RoofKind, RoofLook, building_seed, roof_look, run_look};
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
     height_or_default, shade_by_light,
 };
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, Roof};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
@@ -42,7 +43,7 @@ const FACADE_HEIGHT_RANGE: RangeInclusive<f32> = 1.5..=12.0;
 /// домов Тулы, то есть ровно те кварталы, ради которых ползунок и уводят
 /// вниз. На 80° неподвижный пол в 3 м так же съел бы разницу у всего ниже
 /// 17 м.
-const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
+pub(crate) const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
 
 /// Высота, на которой рампа тона крыш выходит в максимум: Тула почти вся
 /// ниже 75 м, и sqrt в формуле отдаёт разрешение диапазону 5–30 м.
@@ -69,6 +70,13 @@ const ROOF_TINT_MAX_MIX: f32 = 0.3;
 /// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
 /// зумах, где тени вообще видны.
 pub(super) const PENUMBRA_WIDTH: f32 = 1.0;
+/// Насколько сосед обязан быть выше, чтобы его тень легла на кровлю, м. Ниже
+/// этого тень попадает разве что на карниз, а считать её пришлось бы для
+/// каждой пары домов одной этажности — то есть почти для всех.
+const SHADOW_MIN_DROP: f32 = 3.0;
+/// Ячейка сетки, по которой ищутся отбрасывающие соседи, м: чуть шире самой
+/// длинной тени (`SHADOW_LENGTH_RANGE`).
+const SHADOW_CELL: f32 = 48.0;
 
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
@@ -93,6 +101,19 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
         }
         _ => look.base,
     }
+}
+
+/// Рамка **стены** для шейдера: ось — сама стена, поэтому «поперёк» в
+/// шейдере оказывается направлением вверх по ней, и межэтажные швы ложатся
+/// параллельно карнизу. Начало отсчёта общее для всей карты, а не своё у
+/// каждой стены: фаза шва от этого произвольна, но одинакова у смежных стен
+/// одного дома — на угле шов не разрывается, а это единственное, что видно.
+fn wall_frame(a: Vec2, b: Vec2, seed: u32) -> Option<Roof> {
+    Some(Roof {
+        axis: (b - a).try_normalize()?,
+        material: RoofKind::Wall.code(),
+        seed: (seed >> 12 & 0xff) as f32 / 255.0,
+    })
 }
 
 /// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
@@ -129,6 +150,17 @@ fn hip_ridge_ends(roof: &HipRoof) -> (Vec2, Vec2) {
 fn ridge_of(roof: &super::roofs::GableRoof) -> (Vec2, Vec2) {
     let [_, _, far, near] = roof.slopes[0].0;
     (near, far)
+}
+
+/// Кровля этого дома: у бокса, вошедшего в гаражный прогон, она берётся
+/// **от прогона**, а не от него самого. В этом весь приём: общий посев и
+/// общая ось превращают двадцать домиков в одну ленту, а по-своему посеянный
+/// бокс красится и ребрится сам по себе.
+fn look_of(building: &PolyArea, run: Option<&GarageRun>) -> RoofLook {
+    match run {
+        Some(run) => run_look(run),
+        None => roof_look(building),
+    }
 }
 
 /// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
@@ -178,6 +210,7 @@ pub(super) fn facade_and_roof_builders(
     detail: RoofDetail,
 ) -> (MeshBuilder, MeshBuilder) {
     let arches = arches_by_building(buildings, passages);
+    let runs = garage_runs(buildings);
     let mut facades = MeshBuilder::default();
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
@@ -204,7 +237,7 @@ pub(super) fn facade_and_roof_builders(
         }
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
-        let look = roof_look(building);
+        let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         let mut items = Vec::new();
         match roofing(
@@ -382,6 +415,148 @@ fn penumbra(direction: Vec2) -> f32 {
     direction.dot(shadow_dir()).max(0.0)
 }
 
+/// Тени, падающие **на кровли**: единственное место, где прежняя модель теней
+/// прямо врала. Теневой слой лежит под всеми зданиевыми, поэтому
+/// девятиэтажка не темнила крышу пятиэтажки под собой, и в плотном квартале
+/// это видно сразу.
+///
+/// Считается ровно то, чего не хватало: пересечение теневой развёртки дома с
+/// **контуром соседа, который ниже**. Ниже — потому что тень на крышу
+/// **выше** отбрасывающего не попадает, а равные по высоте затеняют друг
+/// друга разве что карнизом.
+///
+/// Порядок — по индексу дома, поэтому меш детерминирован.
+pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> MeshBuilder {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+
+    let mut builder = MeshBuilder::default();
+    let color = SHADOW_COLOR.to_linear();
+    let heights: Vec<f32> = buildings.iter().map(height_or_default).collect();
+    // тот же зажим, что у наземных теней, и так же едущий за солнцем: две
+    // половины одной тени не имеют права мериться по-разному
+    let stretch = sun_stretch();
+    let (min_length, max_length) = (
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    );
+    let sweeps: Vec<Vec<Vec<[f32; 2]>>> = buildings
+        .iter()
+        .zip(&heights)
+        .map(|(building, &height)| {
+            let length = (height * shadow_length_scale()).clamp(min_length, max_length);
+            let offset = shadow_dir() * length;
+            silhouette_chains(&building.outer, shadow_dir())
+                .into_iter()
+                .map(|chain| {
+                    let mut sweep: Vec<[f32; 2]> =
+                        chain.iter().map(|point| point.to_array()).collect();
+                    sweep.extend(chain.iter().rev().map(|point| (*point + offset).to_array()));
+                    sweep
+                })
+                .collect()
+        })
+        .collect();
+    let boxes: Vec<(Vec2, Vec2)> = buildings.iter().map(|b| ring_box(&b.outer)).collect();
+    let sweep_boxes: Vec<(Vec2, Vec2)> = sweeps
+        .iter()
+        .map(|shapes| {
+            let points: Vec<Vec2> = shapes
+                .iter()
+                .flatten()
+                .map(|point| Vec2::from_array(*point))
+                .collect();
+            ring_box(&points)
+        })
+        .collect();
+
+    // сетка по развёрткам: тень длиной до 45 м, домов семь с половиной тысяч,
+    // и перебор пар был бы пятьюдесятью миллионами проверок
+    let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, (min, max)) in sweep_boxes.iter().enumerate() {
+        let low = (*min / SHADOW_CELL).floor();
+        let high = (*max / SHADOW_CELL).floor();
+        for x in low.x as i32..=high.x as i32 {
+            for y in low.y as i32..=high.y as i32 {
+                cells.entry((x, y)).or_default().push(index);
+            }
+        }
+    }
+
+    for (target, building) in buildings.iter().enumerate() {
+        let (min, max) = boxes[target];
+        let lift = if extruded {
+            extrusion_lift(building, BuildingHeightMode::Extrusion)
+        } else {
+            Vec2::ZERO
+        };
+        let footprint: Vec<Vec<[f32; 2]>> = std::iter::once(&building.outer)
+            .chain(&building.holes)
+            .map(|ring| ring.iter().map(|point| point.to_array()).collect())
+            .collect();
+
+        let mut casters: Vec<usize> = Vec::new();
+        let low = (min / SHADOW_CELL).floor();
+        let high = (max / SHADOW_CELL).floor();
+        for x in low.x as i32..=high.x as i32 {
+            for y in low.y as i32..=high.y as i32 {
+                let Some(near) = cells.get(&(x, y)) else {
+                    continue;
+                };
+                casters.extend(near.iter().copied().filter(|&caster| {
+                    caster != target
+                        && heights[caster] - heights[target] >= SHADOW_MIN_DROP
+                        && boxes_overlap((min, max), sweep_boxes[caster])
+                }));
+            }
+        }
+        casters.sort_unstable();
+        casters.dedup();
+        if casters.is_empty() {
+            continue;
+        }
+
+        let cast: Vec<Vec<[f32; 2]>> = casters
+            .into_iter()
+            .flat_map(|caster| sweeps[caster].iter().cloned())
+            .collect();
+        // объединение развёрток и пересечение с контуром — за один вызов:
+        // NonZero склеивает перекрывающиеся тени, а Intersect обрезает их по
+        // дому. Без склейки две тени на одной крыше дали бы двойную темноту
+        for shape in cast.overlay(&footprint, OverlayRule::Intersect, FillRule::NonZero) {
+            let mut rings = shape.into_iter().map(|contour| {
+                contour
+                    .into_iter()
+                    .map(|point| Vec2::from_array(point) + lift)
+                    .collect::<Vec<Vec2>>()
+            });
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            let holes: Vec<Vec<Vec2>> = rings.collect();
+            builder.push_polygon(&outer, &holes, color);
+        }
+    }
+    builder
+}
+
+/// Осевой прямоугольник кольца.
+fn ring_box(ring: &[Vec2]) -> (Vec2, Vec2) {
+    let mut min = Vec2::splat(f32::MAX);
+    let mut max = Vec2::splat(f32::MIN);
+    for point in ring {
+        min = min.min(*point);
+        max = max.max(*point);
+    }
+    (min, max)
+}
+
+fn boxes_overlap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
+    a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
+}
+
 /// Контур в список для объединения, обходом против часовой стрелки — тем, что
 /// NonZero считает заливкой. Обход свипа зависит от того, с какой стороны дома
 /// идёт цепочка силуэта, поэтому нормализуется здесь и только здесь.
@@ -447,6 +622,7 @@ pub(super) fn extrusion_builder(
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
+    let runs = garage_runs(buildings);
     let mut order: Vec<usize> = (0..buildings.len()).collect();
     order.sort_by(|&a, &b| {
         let depth = |building: &PolyArea| lean.depth(building_center(building));
@@ -458,7 +634,7 @@ pub(super) fn extrusion_builder(
     let mut builder = MeshBuilder::with_roof_coords();
     for index in order {
         let building = &buildings[index];
-        let look = roof_look(building);
+        let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
@@ -521,8 +697,10 @@ fn push_house_with_arches(
 
     // видимы стены рёбер, смотрящих против подъёма: при сдвиге
     // вверх-вправо — южные и западные
+    let seed = building_seed(building);
     for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+        builder.set_roof(wall_frame(a, b, seed));
         push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
     }
     // двор: видима внутренняя стена его дальней стороны — та, чья
@@ -530,9 +708,11 @@ fn push_house_with_arches(
     for hole in &building.holes {
         for (a, b) in silhouette_edges(hole, lift_dir) {
             let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+            builder.set_roof(wall_frame(a, b, seed));
             push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
         }
     }
+    builder.set_roof(None);
 
     let chimney_on = |builder: &mut MeshBuilder, ridge, ridge_offset| {
         if clutter {
@@ -542,14 +722,7 @@ fn push_house_with_arches(
             push_items(builder, &chimney, Some(lean), color);
         }
     };
-    match roofing_of(
-        shape,
-        building,
-        lift,
-        |rise| lean.ridge(rise),
-        color,
-        building_seed(building),
-    ) {
+    match roofing_of(shape, building, lift, |rise| lean.ridge(rise), color, seed) {
         Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма

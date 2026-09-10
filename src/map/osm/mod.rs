@@ -11,9 +11,9 @@ mod planting;
 
 pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
-    AreaKind, BuildingUse, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, RowTrees,
-    TreeCompose, TreeRow, TreeRowLayout, TreeRowPlacement, WallLine, WaterKind, WaterLine,
-    water_line_caps,
+    AreaKind, BuildingUse, FenceKind, FenceLine, MapData, PipeLine, PitchKind, PolyArea, RailKind,
+    RailLine, RoadClass, RoadLine, RowTrees, Structure, StructureKind, TreeCompose, TreeRow,
+    TreeRowLayout, TreeRowPlacement, WallLine, WaterKind, WaterLine, water_line_caps,
 };
 // потолок плотности считается от минимального зазора посадки, поэтому живёт
 // рядом с ним, а не в `settings.rs`

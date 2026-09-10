@@ -10,8 +10,9 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PolyArea, RailLine, RoadLine, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, point_in_area, point_in_polygon, ring_bounds,
+    AreaKind, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine, Structure, TreeCompose,
+    TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, point_in_area, point_in_polygon,
+    ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -46,6 +47,9 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
                 }
                 if let Some(node) = parse_tree_node(element, &bounds) {
                     map.tree_nodes.push(node);
+                }
+                if let Some(structure) = parse_structure_node(element, &bounds) {
+                    map.structures.push(structure);
                 }
             }
             "way" => parse_way(element, &bounds, &mut map),
@@ -165,6 +169,42 @@ fn parse_entrance(element: &Element, bounds: &GeoBounds) -> Option<Vec2> {
     Some(bounds.project(element.lat?, element.lon?))
 }
 
+/// Нода `man_made=*` → цилиндр промзоны. Контура у ноды нет, поэтому радиус
+/// берётся из тега `diameter`, а если и его нет — типовой для рода
+/// ([`structure_size`]). В Туле нодами размечены четыре заводские трубы из
+/// восьми.
+fn parse_structure_node(element: &Element, bounds: &GeoBounds) -> Option<Structure> {
+    let kind = structure_kind(&element.tags)?;
+    let (radius, height) = structure_size(kind);
+    Some(Structure {
+        at: bounds.project(element.lat?, element.lon?),
+        radius: structure_radius(&element.tags).unwrap_or(radius),
+        height: structure_height(&element.tags).unwrap_or(height),
+        kind,
+    })
+}
+
+/// Way `man_made=*` → тот же цилиндр, но радиус считается по контуру: он
+/// заведомо честнее тега, которого в данных обычно и нет.
+///
+/// Центр — среднее вершин, а не центроид площади: контур цилиндра в OSM
+/// рисуют равномерным многоугольником, на нём это одно и то же, а у
+/// вытянутого контура (силосный корпус, размеченный прямоугольником) среднее
+/// вершин ближе к тому, что глаз считает серединой.
+fn parse_structure_way(element: &Element, points: &[Vec2]) -> Option<Structure> {
+    let kind = structure_kind(&element.tags)?;
+    let ring = as_ring(points)?;
+    let at = ring.iter().sum::<Vec2>() / ring.len() as f32;
+    let spread = ring.iter().map(|point| at.distance(*point)).sum::<f32>() / ring.len() as f32;
+    let (_, height) = structure_size(kind);
+    Some(Structure {
+        at,
+        radius: spread.max(f32::EPSILON),
+        height: structure_height(&element.tags).unwrap_or(height),
+        kind,
+    })
+}
+
 /// Нода `natural=tree` → одиночное дерево. Сажает его (и отсеивает
 /// продублированные процедурной посадкой) `planting::plant_standalone`.
 fn parse_tree_node(element: &Element, bounds: &GeoBounds) -> Option<TreeNode> {
@@ -240,6 +280,8 @@ fn push_area(map: &mut MapData, area: PolyArea) {
         AreaKind::Grass => map.grass.push(area),
         AreaKind::Sand => map.sand.push(area),
         AreaKind::Residential | AreaKind::Industrial => map.landuse.push(area),
+        AreaKind::Parking => map.parking.push(area),
+        AreaKind::Pitch(_) => map.pitches.push(area),
     }
 }
 
@@ -263,6 +305,19 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points: points.clone(),
             width,
             kind,
+            service: is_service_track(&element.tags),
+        });
+    }
+
+    // Надземный трубопровод — теплотрасса на опорах. Тоже до дорог и тоже без
+    // `return`: труба идёт эстакадой над улицей, и такой way в OSM носит оба
+    // тега — стоя после дорожной ветки, она бы до него не добралась.
+    if element.tags.get("man_made").map(String::as_str) == Some("pipeline")
+        && let Some(width) = pipe_width(&element.tags)
+    {
+        map.pipes.push(PipeLine {
+            points: points.clone(),
+            width,
         });
     }
 
@@ -334,6 +389,28 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points,
             width: WALL_WIDTH,
         });
+        return;
+    }
+
+    // Ограда участка — не стена: рисуется, но навмеша не касается. Ветка
+    // **не прерывает разбор**, как рельсовая и аллейная: обнесённое забором
+    // поле в OSM — это один way с `barrier=fence` **и** `leisure=pitch`, и он
+    // обязан стать и оградой, и площадкой. С `return` здесь Тула теряла три
+    // площадки, три стоянки, квартал и парк.
+    if let Some(kind) = fence_kind(&element.tags) {
+        map.fences.push(FenceLine {
+            points: points.clone(),
+            kind,
+        });
+    }
+
+    // Цилиндр промзоны — резервуар, силос, труба, башня. Эта ветка, в
+    // отличие от оградной, **прерывает разбор**: труба, размеченная way с
+    // `building=yes` (в Туле такая одна из восьми), — тот же самый объект, и
+    // коробка под цилиндром была бы им обоим сразу. Заодно у неё не
+    // заводятся ни двери, ни навмеш-препятствие, чего трубе и не нужно.
+    if let Some(structure) = parse_structure_way(element, &points) {
+        map.structures.push(structure);
         return;
     }
 
@@ -453,7 +530,9 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, is_building_passage,
-    is_oneway, is_oneway_backward, is_road_underground, is_roundabout, is_underground, rail_class,
-    road_class, row_spacing, tagged_lanes, water_class, water_width,
+    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, fence_kind,
+    is_building_passage, is_oneway, is_oneway_backward, is_road_underground, is_roundabout,
+    is_service_track, is_underground, pipe_width, rail_class, road_class, row_spacing,
+    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes, water_class,
+    water_width,
 };

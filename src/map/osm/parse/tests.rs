@@ -3,7 +3,9 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{BuildingUse, RailKind, WaterKind, distance_to_segment};
+use crate::map::osm::model::{
+    BuildingUse, FenceKind, PitchKind, RailKind, StructureKind, WaterKind, distance_to_segment,
+};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -291,6 +293,201 @@ fn landuse_blocks_are_their_own_layer_and_never_win_over_green() {
     assert_eq!(map.woods.len(), 1);
     assert_eq!(map.grass.len(), 1);
     assert!(map.buildings.is_empty() && map.parks.is_empty());
+}
+
+#[test]
+fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
+    let map = Overpass::new(CITY)
+        .area(&[("amenity", "parking")], square(CENTER, HALF))
+        // парковочный дом — здание: `building` проверяется раньше
+        .area(
+            &[("building", "yes"), ("amenity", "parking")],
+            square(CENTER, HALF / 4.0),
+        )
+        // озеленённая стоянка всё-таки стоянка: асфальт там главное, а вот
+        // сам сквер с тем же тегом остаётся сквером
+        .area(&[("leisure", "park")], square(CENTER, HALF / 2.0))
+        .parse();
+
+    assert_eq!(map.parking.len(), 1);
+    assert_eq!(map.parking[0].kind, AreaKind::Parking);
+    assert_eq!(map.buildings.len(), 1);
+    assert_eq!(map.parks.len(), 1);
+    // навмеша стоянка не касается — по ней ходят
+    assert!(map.landuse.is_empty());
+}
+
+/// Ограды участков доезжают до `MapData::fences` и не смешиваются со стеной
+/// Кремля: та непроходима и лежит в `walls`.
+#[test]
+fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
+    let (sw, _, ne, _) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(&[("barrier", "fence")], vec![sw, ne])
+        .way(&[("barrier", "wall")], vec![sw, ne])
+        .way(&[("barrier", "hedge")], vec![sw, ne])
+        .way(&[("barrier", "city_wall")], vec![sw, ne])
+        // не линия и не ограда: калитка и бордюр
+        .way(&[("barrier", "gate")], vec![sw, ne])
+        .way(&[("barrier", "kerb")], vec![sw, ne])
+        .parse();
+
+    let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
+    assert_eq!(kinds, [FenceKind::Fence, FenceKind::Wall, FenceKind::Hedge]);
+    assert_eq!(map.walls.len(), 1);
+}
+
+/// Цилиндры промзоны приезжают и нодой, и way. Way с `building=yes` при этом
+/// становится **только** цилиндром: труба, размеченная как здание, — тот же
+/// самый объект, и коробка под кругом была бы им обоим сразу.
+#[test]
+fn a_man_made_cylinder_arrives_instead_of_a_box() {
+    let map = Overpass::new(CITY)
+        // нода: размера в данных нет, берётся типовой для рода
+        .node(&[("man_made", "chimney")], CENTER)
+        // нода с тегом высоты — тег важнее типового
+        .node(&[("man_made", "water_tower"), ("height", "42")], CENTER)
+        // way, размеченный ещё и зданием
+        .area(
+            &[("man_made", "storage_tank"), ("building", "yes")],
+            square(CENTER, 10.0),
+        )
+        // `man_made=*` носит и всякое, что кругом на снимке не читается
+        .node(&[("man_made", "surveillance")], CENTER)
+        .area(&[("man_made", "works")], square(CENTER, HALF))
+        .parse();
+
+    let kinds: Vec<StructureKind> = map
+        .structures
+        .iter()
+        .map(|structure| structure.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            StructureKind::Chimney,
+            StructureKind::WaterTower,
+            StructureKind::Tank
+        ]
+    );
+    assert!(
+        map.buildings.is_empty(),
+        "цилиндр не должен становиться ещё и коробкой"
+    );
+
+    let chimney = map.structures[0];
+    assert_eq!(chimney.height, 60.0, "типовая высота заводской трубы");
+    assert_eq!(map.structures[1].height, 42.0, "тег важнее типовой высоты");
+    // радиус way считается по контуру: у квадрата со стороной 20 м среднее
+    // расстояние до вершин — половина диагонали
+    let tank = map.structures[2];
+    assert!(
+        (tank.radius - 10.0 * 2.0_f32.sqrt()).abs() < 0.5,
+        "{tank:?}"
+    );
+}
+
+/// Радиус ноды берётся из `diameter` (он же `width`: цилиндр меряют поперёк),
+/// а неправдоподобный тег считается отсутствующим — контура у ноды нет,
+/// сверить размер не с чем, и типовой радиус рода честнее круга в гектар.
+#[test]
+fn a_node_cylinder_takes_its_radius_from_the_diameter_tag() {
+    let map = Overpass::new(CITY)
+        .node(&[("man_made", "water_tower"), ("diameter", "12")], CENTER)
+        .node(&[("man_made", "water_tower"), ("width", "12 m")], CENTER)
+        // габарит площадки, записанный в `diameter`, — мимо диапазона
+        .node(&[("man_made", "water_tower"), ("diameter", "260")], CENTER)
+        .parse();
+
+    let (typical, _) = structure_size(StructureKind::WaterTower);
+    let radii: Vec<f32> = map
+        .structures
+        .iter()
+        .map(|structure| structure.radius)
+        .collect();
+    assert_eq!(radii, [6.0, 6.0, typical]);
+}
+
+/// До карты доезжает только **надземный** трубопровод: правило обратное тому,
+/// что у путей и водотоков, потому что труба без `location` в OSM закопана, а
+/// серебристая линия через весь город по закопанной трубе — враньё крупнее,
+/// чем потерянная эстакада без тега.
+#[test]
+fn only_an_overground_pipeline_reaches_the_map() {
+    let (sw, se, ne, nw) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[
+                ("man_made", "pipeline"),
+                ("location", "overground"),
+                ("count", "4"),
+            ],
+            vec![sw, ne],
+        )
+        // эстакада над улицей: way несёт оба тега, и оба обязаны доехать
+        .way(
+            &[
+                ("man_made", "pipeline"),
+                ("location", "overhead"),
+                ("highway", "residential"),
+            ],
+            vec![nw, ne],
+        )
+        // закопанные — мимо: и явно, и по умолчанию
+        .way(&[("man_made", "pipeline")], vec![se, nw])
+        .way(
+            &[("man_made", "pipeline"), ("location", "underground")],
+            vec![sw, se],
+        )
+        .parse();
+
+    assert_eq!(map.pipes.len(), 2);
+    assert!(
+        map.pipes[0].width > map.pipes[1].width,
+        "четвёрка труб шире пары"
+    );
+    assert_eq!(map.roads.len(), 1, "эстакада не должна съедать улицу");
+}
+
+/// Площадки разбираются по `leisure`, а поле — по `sport`/`surface`. Парк со
+/// спортивной площадкой на нём остаётся парком: поле приезжает своим way.
+#[test]
+fn a_leisure_ground_becomes_a_pitch_of_its_own_kind() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("leisure", "pitch"), ("sport", "soccer")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("leisure", "pitch"), ("sport", "basketball")],
+            square(CENTER, HALF),
+        )
+        // без вида спорта решает покрытие, а без покрытия — «коробка»
+        .area(
+            &[("leisure", "pitch"), ("surface", "grass")],
+            square(CENTER, HALF),
+        )
+        .area(&[("leisure", "pitch")], square(CENTER, HALF))
+        .area(&[("leisure", "playground")], square(CENTER, HALF))
+        .area(&[("leisure", "track")], square(CENTER, HALF))
+        // не площадка вовсе: значение вне белого списка
+        .area(&[("leisure", "bandstand")], square(CENTER, HALF))
+        .area(&[("leisure", "park")], square(CENTER, HALF))
+        .parse();
+
+    let kinds: Vec<AreaKind> = map.pitches.iter().map(|area| area.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Pitch(PitchKind::Soccer),
+            AreaKind::Pitch(PitchKind::Hard),
+            AreaKind::Pitch(PitchKind::Soccer),
+            AreaKind::Pitch(PitchKind::Hard),
+            AreaKind::Pitch(PitchKind::Playground),
+            AreaKind::Pitch(PitchKind::Track),
+        ]
+    );
+    assert_eq!(map.parks.len(), 1);
 }
 
 #[test]
@@ -768,6 +965,7 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
         .area(&[("building", "house")], square(CENTER, HALF))
         .area(&[("building", "apartments")], square(CENTER, HALF))
         .area(&[("building", "garages")], square(CENTER, HALF))
+        .area(&[("building", "garage")], square(CENTER, HALF))
         .area(
             &[("building", "yes"), ("amenity", "school")],
             square(CENTER, HALF),
@@ -797,6 +995,8 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
         [
             BuildingUse::House,
             BuildingUse::Apartments,
+            // множественное число — кооператив целиком, единственное — бокс
+            BuildingUse::GarageBlock,
             BuildingUse::Garage,
             BuildingUse::Public,
             // значение вне словаря отдаёт слово `amenity` так же, как `yes`

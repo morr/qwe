@@ -11,7 +11,8 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, RailKind, RoadClass, WaterKind, polyline_length,
+    AreaKind, BuildingUse, FenceKind, PitchKind, RailKind, RoadClass, StructureKind, WaterKind,
+    polyline_length,
 };
 use crate::map::osm::overpass::Element;
 
@@ -40,6 +41,20 @@ const TREE_ROW_SPACING_RANGE: RangeInclusive<f32> = 2.0..=40.0;
 /// вилки (2.5..4): аллейный или одиночный тополь честно бывает крупнее, а вот
 /// `diameter_crown=50` — опечатка.
 const TREE_CROWN_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
+
+/// Границы правдоподобия радиуса промышленного цилиндра, м. Меньше 0.75 (то
+/// есть полтора метра в поперечнике) — столбик, а не сооружение; больше
+/// полусотни (сто метров в поперечнике) не бывает даже у газгольдера, и такое
+/// значение почти всегда означает, что в `width` записали габарит площадки.
+const STRUCTURE_RADIUS_RANGE: RangeInclusive<f32> = 0.75..=50.0;
+
+/// Ширина трубы в связке с её изоляцией, м.
+const PIPE_SPACING: f32 = 0.7;
+
+/// Границы ширины связки, м, — не отбраковка, а зажим: одиночная труба у́же
+/// метра на снимке не читается, а `count=20` — это уже не теплотрасса, а
+/// опечатка, и рисовать её двадцатью трубами незачем.
+const PIPE_WIDTH_RANGE: RangeInclusive<f32> = 0.9..=4.0;
 
 /// Границы правдоподобия ширины русла из тега `width`, м: уже полуметра — не
 /// водоток, а разметочная линия; шире полусотни — либо опечатка, либо ширина
@@ -73,9 +88,10 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
             "industrial" | "warehouse" | "factory" | "hangar" | "manufacture" | "service"
             | "transportation" | "depot" | "storage_tank",
         ) => Some(BuildingUse::Industrial),
-        Some("garage" | "garages" | "carport" | "shed" | "barn" | "roof") => {
-            Some(BuildingUse::Garage)
-        }
+        // множественное число — это весь кооператив одним контуром, и
+        // рисуется он рядами боксов, а не одной коробкой
+        Some("garages") => Some(BuildingUse::GarageBlock),
+        Some("garage" | "carport" | "shed" | "barn" | "roof") => Some(BuildingUse::Garage),
         Some(
             "church" | "cathedral" | "chapel" | "temple" | "mosque" | "synagogue" | "monastery"
             | "religious" | "shrine",
@@ -144,6 +160,19 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     ) || landuse == Some("recreation_ground")
     {
         return Some(AreaKind::Park);
+    }
+    // стоянка — после зелени и до кварталов: `amenity=parking` попадается и
+    // на озеленённых дворах, но асфальт там всё-таки главное. Парковочный
+    // дом (`building=*` + `amenity=parking`) сюда не доходит: здание выше
+    if tags.get("amenity").map(String::as_str) == Some("parking") {
+        return Some(AreaKind::Parking);
+    }
+    // площадка — после стоянки и до кварталов: `leisure=pitch` во дворе
+    // сплошь и рядом лежит внутри `landuse=residential`, и покрытие поля
+    // важнее подложки квартала. Парк проверен выше: `leisure=park` со
+    // спортплощадкой на нём остаётся парком, а поле внутри придёт своим way
+    if let Some(kind) = pitch_kind(tags) {
+        return Some(AreaKind::Pitch(kind));
     }
     // кварталы — последними: у них нет ничего, что перекрыло бы зелень
     match landuse {
@@ -410,6 +439,149 @@ pub(super) fn crown_radius(tags: &HashMap<String, String>) -> Option<f32> {
         .and_then(|value| parse_measure(value))?;
     let radius = diameter / 2.0;
     TREE_CROWN_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
+/// Ограда участка: белый список, как у путей и водотоков. `barrier=*` несёт
+/// ещё и `kerb`, `gate`, `bollard`, `block` — это точки и мелочь, а не линия,
+/// и `city_wall`, который забирает ветка выше: кремлёвская стена
+/// **непроходима**, а забор рисуется и только.
+pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
+    match tags.get("barrier").map(String::as_str)? {
+        "fence" => Some(FenceKind::Fence),
+        "wall" | "retaining_wall" => Some(FenceKind::Wall),
+        "hedge" => Some(FenceKind::Hedge),
+        _ => None,
+    }
+}
+
+/// Промышленный цилиндр: белый список по той же причине, что у оград.
+/// `man_made=*` — самый разношёрстный ключ OSM: под ним и `surveillance`, и
+/// `street_cabinet`, и `pipeline`, и `bridge` (обводка моста контуром), и
+/// `works` на весь завод. Круглым светлым пятном на снимке из всего этого
+/// читаются пятеро.
+pub(super) fn structure_kind(tags: &HashMap<String, String>) -> Option<StructureKind> {
+    match tags.get("man_made").map(String::as_str)? {
+        "storage_tank" => Some(StructureKind::Tank),
+        "silo" => Some(StructureKind::Silo),
+        "chimney" => Some(StructureKind::Chimney),
+        "water_tower" => Some(StructureKind::WaterTower),
+        "gasometer" => Some(StructureKind::Gasometer),
+        _ => None,
+    }
+}
+
+/// Радиус цилиндра из тегов: `diameter` (он же `width` у трубы — её меряют
+/// поперёк) пополам. Значение вне [`STRUCTURE_RADIUS_RANGE`] не зажимается, а
+/// считается отсутствующим — как и всюду в этом файле, дальше берётся типовой
+/// радиус рода ([`structure_size`]).
+pub(super) fn structure_radius(tags: &HashMap<String, String>) -> Option<f32> {
+    let diameter = ["diameter", "width"]
+        .iter()
+        .find_map(|key| tags.get(*key))
+        .and_then(|value| parse_measure(value))?;
+    let radius = diameter / 2.0;
+    STRUCTURE_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
+/// Высота цилиндра из тега `height`. `building:levels` тут не годится:
+/// этажей у трубы не бывает, и [`building_height`] брать целиком незачем.
+pub(super) fn structure_height(tags: &HashMap<String, String>) -> Option<f32> {
+    let meters = tags.get("height").and_then(|value| parse_measure(value))?;
+    BUILDING_HEIGHT_RANGE.contains(&meters).then_some(meters)
+}
+
+/// Ширина связки надземного трубопровода, м, или `None`, если он подземный.
+///
+/// Правило **обратное** тому, что у путей и водотоков: там подземное надо
+/// доказать (`is_underground`), здесь — надземное. В OSM трубопровод без
+/// `location` по умолчанию закопан, и таких большинство; провести через весь
+/// город серебристую линию по закопанной трубе — враньё крупнее, чем потерять
+/// эстакаду, у которой забыли тег.
+///
+/// Ширину даёт `count` — число труб в пучке. В Туле это почти всегда
+/// теплотрасса: пара (подача и обратка) у двенадцати ways, четвёрка у шести.
+pub(super) fn pipe_width(tags: &HashMap<String, String>) -> Option<f32> {
+    let overground = matches!(
+        tags.get("location").map(String::as_str),
+        Some("overground" | "overhead" | "bridge")
+    );
+    if !overground {
+        return None;
+    }
+    let count = tags
+        .get("count")
+        .and_then(|value| parse_measure(value))
+        .unwrap_or(2.0);
+    Some((count * PIPE_SPACING).clamp(*PIPE_WIDTH_RANGE.start(), *PIPE_WIDTH_RANGE.end()))
+}
+
+/// Радиус и высота по умолчанию, м. Нужны почти всегда: из десяти
+/// сооружений Тулы размер указан **у одного**, и это высота трубы. Числа —
+/// типовые для советской промзоны: заводская труба под шестьдесят метров,
+/// водонапорная башня под тридцать, резервуар нефтебазы низкий и широкий.
+///
+/// Радиус из этой пары идёт в дело только у ноды: у way он считается по
+/// контуру, который заведомо честнее.
+pub(super) fn structure_size(kind: StructureKind) -> (f32, f32) {
+    match kind {
+        StructureKind::Tank => (8.0, 12.0),
+        StructureKind::Silo => (4.0, 25.0),
+        StructureKind::Chimney => (2.5, 60.0),
+        StructureKind::WaterTower => (5.0, 28.0),
+        StructureKind::Gasometer => (20.0, 30.0),
+    }
+}
+
+/// Станционный путь: `service=*` есть только у путей, не относящихся к
+/// главному ходу. Белый список, а не «тег есть»: `service=crossover` — это
+/// съезд между главными путями, состав на нём не бросают.
+///
+/// Тег приезжает в кеше и так (`out geom` отдаёт все теги элемента), поэтому
+/// версию запроса поднимать не понадобилось.
+pub(super) fn is_service_track(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("service").map(String::as_str),
+        Some("siding" | "yard" | "spur")
+    )
+}
+
+/// Что за площадка — по `leisure`, а внутри `pitch` по `sport` и `surface`.
+///
+/// Белый список, как у путей и водотоков: `leisure=*` несёт ещё десяток
+/// значений (`fitness_centre`, `dance`, `bandstand`, `marina`), которые
+/// сверху не площадка, а здание или вовсе точка. `park` и `garden` сюда не
+/// доходят — их забирает [`area_kind`] выше.
+///
+/// Вид спорта в OSM проставлен не всегда (в Туле у 37 из 48 полей), поэтому
+/// решение трёхступенчатое: `sport`, потом `surface`, потом «твёрдая
+/// площадка» — в русском дворе безымянное поле это чаще всего асфальтовая
+/// коробка, а не газон.
+pub(super) fn pitch_kind(tags: &HashMap<String, String>) -> Option<PitchKind> {
+    let leisure = tags.get("leisure").map(String::as_str)?;
+    match leisure {
+        "track" => return Some(PitchKind::Track),
+        "playground" => return Some(PitchKind::Playground),
+        "sports_centre" | "stadium" => return Some(PitchKind::Ground),
+        "pitch" => {}
+        _ => return None,
+    }
+    // `sport=soccer;ice_hockey` — тоже поле: берём первое значение
+    let sport = tags
+        .get("sport")
+        .map(String::as_str)
+        .and_then(|value| value.split(';').next());
+    if let Some(sport) = sport {
+        return Some(match sport {
+            "soccer" | "football" | "american_football" | "rugby" | "rugby_union" | "athletics"
+            | "equestrian" | "baseball" | "cricket" | "field_hockey" | "multi" => PitchKind::Soccer,
+            _ => PitchKind::Hard,
+        });
+    }
+    Some(match tags.get("surface").map(String::as_str) {
+        Some("grass" | "dirt" | "ground" | "earth") => PitchKind::Soccer,
+        Some("sand") => PitchKind::Playground,
+        _ => PitchKind::Hard,
+    })
 }
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при
