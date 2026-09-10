@@ -3,7 +3,8 @@
 //! Станционный парк на снимке — это не пустые нитки рельсов, а **составы**:
 //! половина площади любого узла занята стоящими вагонами, и без них горловина
 //! читается как схема, а не как фотография. Приём тот же, что с машинами
-//! ([`super::cars`]), и разница ровно в том, где им стоять.
+//! ([`super::cars`]), но слой проще: ручек стиля у него нет, и снимается он
+//! только ступенью зума.
 //!
 //! Вагоны ставятся **только на служебные пути** (`service=siding|yard|spur`):
 //! на главном ходу состав либо идёт, либо его там нет, а на подъездном он
@@ -17,8 +18,10 @@
 
 use bevy::prelude::*;
 
+use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RailKind, RailLine};
+use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
@@ -31,15 +34,19 @@ const WAGON_WIDTH: f32 = 3.1;
 const WAGON_HEIGHT: f32 = 3.8;
 /// Зазор между вагонами в сцепе, м: автосцепка.
 const COUPLED_GAP: f32 = 0.9;
-/// Сцеп — столько вагонов подряд.
-const RAKE_MIN: f32 = 3.0;
-const RAKE_MAX: f32 = 16.0;
+/// Сцеп — столько вагонов подряд, обе границы включительно. Счёт, а не метры,
+/// поэтому целые: в `f32` верхняя граница не достигалась вовсе — `range` даёт
+/// полуинтервал, и `as` усекал сцеп в 16 вагонов до 15.
+const RAKE_MIN: u32 = 3;
+const RAKE_MAX: u32 = 16;
 /// И столько метров пустого пути после него.
 const GAP_MIN: f32 = 12.0;
 const GAP_MAX: f32 = 90.0;
-/// Ближе этого к торцу пути не ставят: там стрелка.
+/// Ближе этого к торцу пути не ставят: там стрелка. Отсчитывается от торцов
+/// **всего** пути, а не от каждой его вершины — на изгибе стрелки нет.
 const END_MARGIN: f32 = 12.0;
-/// Путь короче этого сцепа не держит.
+/// Путь короче этого сцепа не держит: за вычетом двух отступов от торцов на
+/// нём остаётся меньше двух кузовов.
 const TRACK_MIN: f32 = 40.0;
 
 /// Палитра кузовов: полувагон в ржавчине, крытый в сурике, цистерна светлая,
@@ -59,8 +66,8 @@ const WAGON_COLORS: [Color; 8] = [
 #[derive(Component)]
 pub struct WagonLayerTag;
 
-/// Ступени зума: вагон вчетверо длиннее машины и виден дальше, поэтому порог
-/// свой, а не общий с [`super::cars`].
+/// Ступени зума: вагон втрое длиннее машины, поэтому его порог в 2.5 раза
+/// дальше — свой, а не общий с [`super::cars`].
 pub enum WagonLods {}
 
 impl ZoomLods for WagonLods {
@@ -78,24 +85,6 @@ struct Wagon {
     color: Color,
 }
 
-/// ГПСЧ Лемера — тот же, что расставляет машины и кроны.
-struct Lcg(u32);
-
-impl Lcg {
-    fn new(seed: u32) -> Self {
-        Self((seed % 0x7FFF_FFFF).max(1))
-    }
-
-    fn next_f32(&mut self) -> f32 {
-        self.0 = ((u64::from(self.0) * 48271) % 0x7FFF_FFFF) as u32;
-        self.0 as f32 / 2_147_483_647.0
-    }
-
-    fn range(&mut self, from: f32, to: f32) -> f32 {
-        from + self.next_f32() * (to - from)
-    }
-}
-
 /// Пересборка слоя: по ступени зума и по смене солнца (у вагона своя тень).
 pub fn rebuild_wagons(
     mut commands: Commands,
@@ -111,10 +100,12 @@ pub fn rebuild_wagons(
     if bucket.index > 0 {
         return;
     }
+    let started = std::time::Instant::now();
     let wagons = stable_wagons(&map.rails);
     let builder = mesh_wagons(&wagons);
     let count = wagons.len();
     let vertices = builder.vertex_count();
+    let elapsed = started.elapsed();
     if builder.is_empty() {
         return;
     }
@@ -132,7 +123,7 @@ pub fn rebuild_wagons(
         LayerMaterial::Flat(material),
         WagonLayerTag,
     );
-    info!("wagons: {count} standing ({vertices} verts)");
+    info!("wagons: {count} standing ({vertices} verts) in {elapsed:?}");
 }
 
 /// Составы на всех служебных путях.
@@ -144,42 +135,61 @@ fn stable_wagons(rails: &[RailLine]) -> Vec<Wagon> {
         if rail.kind != RailKind::Active || !rail.service {
             continue;
         }
-        let mut rng = Lcg::new(track_seed(rail));
+        // посев пути — тот же `seed_from_point`, что у улиц и домов: три
+        // перемешивающих раунда затем и нужны, что веер станционных путей идёт
+        // с шагом в метры, а два раунда сводили бы соседей в один слот
+        let mut rng = Lcg::new(seed_from_point(
+            rail.points.first().copied().unwrap_or(Vec2::ZERO),
+        ));
         stand_along(&mut wagons, rail, &mut rng);
     }
     wagons
 }
 
 /// Сцепы вдоль одного пути: сцеп, пустой кусок, сцеп.
+///
+/// Шаг идёт по дуговой координате **всего** пути ([`super::along`]), а не по
+/// каждому его звену порознь: станционный путь размечен в OSM короткими
+/// звеньями на кривых, и обход `points.windows(2)` выбрасывал такие звенья
+/// целиком (в кеше Тулы — половину звеньев и пятую часть длины служебных
+/// путей, а 11 путей из 159 оставались пусты только из-за него), отступал от
+/// каждой внутренней вершины, где никакой стрелки нет, и сбрасывал на ней фазу
+/// сцепа. Тот же обход и по той же причине оставил слой машин
+/// ([`super::cars::park_along`]).
 fn stand_along(wagons: &mut Vec<Wagon>, rail: &RailLine, rng: &mut Lcg) {
-    for pair in rail.points.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
-        let Some(along) = (to - from).try_normalize() else {
-            continue;
-        };
-        let length = from.distance(to);
-        if length < TRACK_MIN {
-            continue;
-        }
-        let pitch = WAGON_LENGTH + COUPLED_GAP;
-        let mut at = END_MARGIN + rng.range(0.0, GAP_MAX);
-        while at + WAGON_LENGTH <= length - END_MARGIN {
-            let rake = rng.range(RAKE_MIN, RAKE_MAX) as usize;
-            for _ in 0..rake {
-                if at + WAGON_LENGTH > length - END_MARGIN {
-                    break;
-                }
-                let color = WAGON_COLORS
-                    [(rng.next_f32() * WAGON_COLORS.len() as f32) as usize % WAGON_COLORS.len()];
-                wagons.push(Wagon {
-                    at: from + along * (at + WAGON_LENGTH / 2.0),
-                    along,
-                    color,
-                });
-                at += pitch;
+    let (along, total) = arclengths(&rail.points);
+    if total < TRACK_MIN {
+        return;
+    }
+    let pitch = WAGON_LENGTH + COUPLED_GAP;
+    let mut at = END_MARGIN + rng.range(0.0, GAP_MAX);
+    // последний **поставленный** вагон: у кузова жёсткая база 13.9 м, и на
+    // изломе пути соседи по сцепу наезжают друг на друга. Проверка по мировому
+    // расстоянию, а не по дуговой координате, — она ловит любую кривизну
+    let mut last: Option<Vec2> = None;
+    while at + WAGON_LENGTH <= total - END_MARGIN {
+        let rake = rng.range(RAKE_MIN as f32, RAKE_MAX as f32 + 1.0) as u32;
+        for _ in 0..rake {
+            if at + WAGON_LENGTH > total - END_MARGIN {
+                break;
             }
-            at += rng.range(GAP_MIN, GAP_MAX);
+            let centre = at + WAGON_LENGTH / 2.0;
+            at += pitch;
+            let Some((point, direction)) = place_on_path(&rail.points, &along, centre) else {
+                continue;
+            };
+            if last.is_some_and(|previous| previous.distance(point) < WAGON_LENGTH) {
+                continue;
+            }
+            last = Some(point);
+            wagons.push(Wagon {
+                at: point,
+                along: direction,
+                color: WAGON_COLORS
+                    [(rng.next_f32() * WAGON_COLORS.len() as f32) as usize % WAGON_COLORS.len()],
+            });
         }
+        at += rng.range(GAP_MIN, GAP_MAX);
     }
 }
 
@@ -207,18 +217,6 @@ fn body(wagon: &Wagon, offset: Vec2) -> [Vec2; 4] {
         at + half_length + half_width,
         at - half_length + half_width,
     ]
-}
-
-/// Посев пути — от его первой точки, как у улиц и домов.
-fn track_seed(rail: &RailLine) -> u32 {
-    let point = rail.points.first().copied().unwrap_or(Vec2::ZERO);
-    let x = (point.x * 100.0) as i32 as u32;
-    let y = (point.y * 100.0) as i32 as u32;
-    let mut hash = x ^ y.rotate_left(16);
-    hash ^= hash >> 16;
-    hash = hash.wrapping_mul(0x7feb_352d);
-    hash ^= hash >> 15;
-    hash
 }
 
 #[cfg(test)]
@@ -253,6 +251,27 @@ mod tests {
     #[test]
     fn a_short_stub_stands_empty() {
         assert!(stable_wagons(&[track(true, 30.0)]).is_empty());
+    }
+
+    /// Тот же путь, разбитый на короткие звенья: геометрия та же, вершин больше.
+    fn chopped(length: f32, links: usize) -> RailLine {
+        let mut rail = track(true, length);
+        rail.points = (0..=links)
+            .map(|index| Vec2::new(100.0 + length * index as f32 / links as f32, 100.0))
+            .collect();
+        rail
+    }
+
+    /// Короткие звенья ломаной ничего не отнимают: сцепы идут по дуговой
+    /// координате **всего** пути, а не по каждому звену порознь. Посегментный
+    /// обход оставлял такой путь пустым целиком — каждое звено короче
+    /// `TRACK_MIN`.
+    #[test]
+    fn short_links_carry_the_same_rakes() {
+        let straight = stable_wagons(&[track(true, 400.0)]);
+        let broken = stable_wagons(&[chopped(400.0, 20)]);
+        assert!(!straight.is_empty());
+        assert_eq!(straight.len(), broken.len());
     }
 
     /// Вагоны идут сцепами: между соседними в сцепе — автосцепка, а не

@@ -896,9 +896,10 @@ const _: () = {
     assert!(Z_RAIL < Z_RAIL_TIE);
     assert!(Z_RAIL_TIE < Z_RAIL_STEEL);
     assert!(Z_RAIL_STEEL < Z_TRAM);
-    // пятно под порталом кроет дороги, но не тела
+    // вагон стоит на рельсе и ниже машины
     assert!(Z_TRAM < Z_WAGON);
     assert!(Z_WAGON < Z_CAR);
+    // пятно под порталом кроет дороги, но не тела
     assert!(Z_CAR < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
@@ -1031,8 +1032,9 @@ pub const CAR_OCCUPANCY_MIN: f32 = 0.0;
 pub const CAR_OCCUPANCY_MAX: f32 = 1.0;
 pub const CAR_OCCUPANCY_STEP: f32 = 0.05;
 
-/// Вагон вчетверо длиннее машины, поэтому и виден вчетверо дальше: свой
-/// порог, а не общий с машинами (`map::wagons`).
+/// Вагон втрое длиннее машины (13.9 м против 4.4), и на 2.0 м/px кузов — это
+/// те же ~7 экранных пикселей, на которых машину уже снимают: порог свой, а не
+/// общий с машинами (`map::wagons`), и в 2.5 раза дальше их 0.8.
 pub const WAGON_MAX_ZOOM: f32 = 2.0;
 
 // --- Солнце карты (`map::sun`) ---

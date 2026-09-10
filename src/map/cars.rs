@@ -24,6 +24,7 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, RoadLine};
 use crate::map::roads::junctions::{self, MarkingBreaks};
@@ -308,32 +309,9 @@ fn park_along(
     }
 }
 
-/// Накопленные длины по точкам ломаной и её полная длина — та же форма, что
-/// у лент в `map::meshing`, но своя: обобщать ради одного вызова нечего.
-fn arclengths(points: &[Vec2]) -> (Vec<f32>, f32) {
-    let mut along = Vec::with_capacity(points.len());
-    let mut total = 0.0;
-    for (index, &point) in points.iter().enumerate() {
-        if index > 0 {
-            total += point.distance(points[index - 1]);
-        }
-        along.push(total);
-    }
-    (along, total)
-}
-
-/// Точка ломаной на дуговой координате `at` и направление звена, на которое
-/// она попала: звено ищется бинарным поиском по `along`, позиция внутри него —
-/// интерполяцией.
-fn place_on_path(points: &[Vec2], along: &[f32], at: f32) -> Option<(Vec2, Vec2)> {
-    let last = points.len().checked_sub(2)?;
-    let index = match along.binary_search_by(|value| value.total_cmp(&at)) {
-        Ok(index) => index.min(last),
-        Err(index) => index.saturating_sub(1).min(last),
-    };
-    let direction = (points[index + 1] - points[index]).try_normalize()?;
-    Some((points[index] + direction * (at - along[index]), direction))
-}
+// Сам обход по дуговой координате (`arclengths` + `place_on_path`) живёт в
+// `map::along`: тот же шаг понадобился вагонам, а второй его копии — ровно
+// того, от чего этот слой уходил, — здесь быть не должно.
 
 /// Меш слоя: сначала **все** тени, потом **все** кузова — тень соседней
 /// машины иначе легла бы поверх кузова той, что нарисована раньше.

@@ -318,17 +318,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
 - **Standing wagons** (`map/wagons.rs`) — a station throat with empty rails reads as a
   diagram; half the area of a real one is taken by standing stock. Same trick as the
-  parked cars, and the whole difference is *where*: wagons go **only on service track**
+  parked cars, aimed at where they stand: wagons go **only on service track**
   (`RailLine::service`, from `service=siding|yard|spur` — `crossover` is a link between
   running lines and nobody parks on it), never on the running line, where a train is
   either moving or absent. They stand in **rakes** — several coupled 13.9 × 3.1 m cars
   with `COUPLED_GAP` 0.9 m between them, then an empty stretch of 12–90 m; an even row at
   a fixed pitch would read as a fence. A 3.8 m body throws a long shadow by the same
-  `shadow_length_scale()` as everything else. Decoration only, like the cars, with a zoom
-  bucket of its own (`WAGON_MAX_ZOOM` 2.0 — a wagon is four times a car and stays
-  legible four times further out) at `Z_WAGON` 2.65, above the steel and below the cars.
-  **No `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the
-  element, so `service` was in the cache all along.
+  `shadow_length_scale()` as everything else. Decoration only, like the cars, but with no
+  style knobs of its own: the layer comes off by zoom alone. They have a zoom bucket of
+  their own (`WAGON_MAX_ZOOM` 2.0 — a wagon is three times a car's length, and
+  2.0 m/px leaves it the same ~7 screen pixels at which a car is already dropped, so the
+  yards survive 2.5× further out than the rows) at `Z_WAGON` 2.65, above the steel and
+  below the cars. **No
+  `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the element,
+  so `service` was in the cache all along.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
