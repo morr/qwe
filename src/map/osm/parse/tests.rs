@@ -325,6 +325,7 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
     let map = Overpass::new(CITY)
         .way(&[("barrier", "fence")], vec![sw, ne])
         .way(&[("barrier", "wall")], vec![sw, ne])
+        .way(&[("barrier", "retaining_wall")], vec![sw, ne])
         .way(&[("barrier", "hedge")], vec![sw, ne])
         .way(&[("barrier", "city_wall")], vec![sw, ne])
         // не линия и не ограда: калитка и бордюр
@@ -333,7 +334,15 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
         .parse();
 
     let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
-    assert_eq!(kinds, [FenceKind::Fence, FenceKind::Wall, FenceKind::Hedge]);
+    assert_eq!(
+        kinds,
+        [
+            FenceKind::Fence,
+            FenceKind::Wall,
+            FenceKind::Wall,
+            FenceKind::Hedge
+        ]
+    );
     assert_eq!(map.walls.len(), 1);
 }
 
@@ -552,6 +561,40 @@ fn trees_keep_the_crown_off_walls_and_kerbs() {
             - path.width / 2.0;
         assert!(kerb > radius, "tree on the kerb at {pos:?}, gap {kerb}");
     }
+}
+
+/// Ветка ограды не прерывает разбор way: обнесённый забором квартал обязан
+/// стать и оградой, и кварталом — с `return` там Тула теряла площади.
+#[test]
+fn a_fenced_block_becomes_both_a_fence_and_a_quarter() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("barrier", "fence"), ("landuse", "residential")],
+            square(CENTER, HALF),
+        )
+        .parse();
+
+    assert_eq!(map.fences.len(), 1);
+    assert_eq!(map.landuse.len(), 1);
+}
+
+/// Ветка ограды стоит **выше** дорожной: забор вдоль тропы висит на том же
+/// way, что и `highway=*`, а дорожная ветка разбор прерывает — ниже неё её
+/// `return` съедал бы такой забор целиком (в Париже и Лондоне по одному
+/// такому way). Один way — и дорожка, и ограда.
+#[test]
+fn a_fenced_path_becomes_both_an_alley_and_a_fence() {
+    let (sw, se, ..) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[("highway", "footway"), ("barrier", "fence")],
+            vec![sw, se],
+        )
+        .parse();
+
+    assert_eq!(map.roads.len(), 1, "дорожка");
+    let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
+    assert_eq!(kinds, [FenceKind::Fence], "ограда");
 }
 
 /// Открытая часть парка — поле: деревья растут только в лесных полигонах,
