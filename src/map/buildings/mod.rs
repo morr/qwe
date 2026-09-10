@@ -139,8 +139,12 @@ pub struct BuildingLayerTag;
 
 /// Теневой слой — своя метка, потому что пересобирается он реже прочих: тени
 /// зависят от режима высот и от `MapData`, но **не** от ступени зума, а их
-/// объединение стоит 90 мс из 115 мс всей сборки. Переход через порог
+/// объединение стоит около трёх четвертей всей сборки. Переход через порог
 /// оборудования на кровле их не трогает.
+///
+/// Доля, а не миллисекунды: абсолютное время зависит от энергетического
+/// состояния машины (App Nap), поэтому перемерять его надо бенчем —
+/// `examples/bench/map_meshing`, — а не строкой `building meshing:` в логе.
 #[derive(Component)]
 pub struct BuildingShadowTag;
 
@@ -196,18 +200,24 @@ pub struct LayerCost {
 /// невидимому окну система урезает приоритет (App Nap), и те же 116 мс
 /// показывают себя пятью секундами. Здесь нет ни окна, ни GPU — только те же
 /// билдеры, что зовёт `spawn_buildings`.
+///
+/// Аргументы — ровно те два решения, которые замер читает: режим высот и
+/// оборудование на кровле. [`BuildingPlan`] здесь не берётся: его третье поле,
+/// `shadows`, для замера не значит ничего — теневой слой мерится всегда, когда
+/// он у режима есть, потому что бенчу нужна полная цена сборки, — и
+/// `shadows: false` молча печатал бы те же числа, что `true`.
 pub fn measure_layers(
     buildings: &[PolyArea],
     passages: &[RoadLine],
-    plan: BuildingPlan,
+    mode: BuildingHeightMode,
+    clutter: bool,
 ) -> Vec<LayerCost> {
-    let BuildingPlan { mode, bucket, .. } = plan;
     let detail = RoofDetail {
         tinted: matches!(
             mode,
             BuildingHeightMode::ShadowsTint | BuildingHeightMode::ExtrusionShadowsTint
         ),
-        clutter: bucket.index == 0,
+        clutter,
     };
     let mut costs = Vec::new();
     // замеряется число вершин, а не сам сборщик: у плоского режима билдеров
@@ -228,7 +238,9 @@ pub fn measure_layers(
                 extrusion_builder(buildings, passages, detail).vertex_count()
             });
         }
-        _ => {
+        BuildingHeightMode::Facade
+        | BuildingHeightMode::Shadows
+        | BuildingHeightMode::ShadowsTint => {
             measure("facades+roofs", &mut || {
                 let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
                 facades.vertex_count() + roofs.vertex_count()
