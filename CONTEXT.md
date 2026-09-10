@@ -649,9 +649,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   speckle, drifting ripple on water) — no textures, no assets, and identical in any two
   overlapping ribbons. **Every octave fades by pixel size** (`fwidth`), so nothing shimmers
   when zoomed out — that rule, and the hash/noise/octave/stripe helpers around it, live in
-  **`assets/shaders/noise.wgsl`** and are imported by both of the project's shaders
-  (`surface`, `roof`). One material per **`SurfaceKind`** (`SurfaceMaterials`, built once at
-  startup); **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
+  **`assets/shaders/noise.wgsl`** and are imported by both map shaders (`surface.wgsl` and
+  `roof.wgsl`; the portal's vortex keeps its own hash and uncentred noise). One material
+  per **`SurfaceKind`** (`SurfaceMaterials`, built once at startup);
+  **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
   0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
   `[across, to-break, half width, markings code]` in metres (*to-break* = signed distance
