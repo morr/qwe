@@ -138,6 +138,16 @@ impl BuildingHeightMode {
             Self::ExtrusionShadowsTint => "2.5D+shadows+tint",
         }
     }
+
+    /// Рисуются ли в этом режиме длинные тени. Спрашивают двое — слой зданий
+    /// и цилиндры промзоны (`map/industry.rs`), которые рисуются как дома, —
+    /// и список режимов обязан быть один на обоих.
+    pub(crate) fn casts_shadows(self) -> bool {
+        matches!(
+            self,
+            Self::Shadows | Self::ShadowsTint | Self::ExtrusionShadowsTint
+        )
+    }
 }
 
 /// Зданиевый слой карты — чтобы пересборка режима знала, что деспавнить.
@@ -249,13 +259,7 @@ pub fn measure_layers(
         Vec::new()
     };
     let started = Instant::now();
-    let sweeps = matches!(
-        mode,
-        BuildingHeightMode::Shadows
-            | BuildingHeightMode::ShadowsTint
-            | BuildingHeightMode::ExtrusionShadowsTint
-    )
-    .then(|| {
+    let sweeps = mode.casts_shadows().then(|| {
         let sweeps = ShadowSweeps::of(buildings);
         costs.push(LayerCost {
             name: "sweeps",
@@ -417,14 +421,7 @@ pub fn spawn_buildings(
     let mut sweep_time = Duration::ZERO;
     let mut shadow_time = Duration::ZERO;
     let mut roof_shadow_time = Duration::ZERO;
-    if with_shadows
-        && matches!(
-            mode,
-            BuildingHeightMode::Shadows
-                | BuildingHeightMode::ShadowsTint
-                | BuildingHeightMode::ExtrusionShadowsTint
-        )
-    {
+    if with_shadows && mode.casts_shadows() {
         // оба теневых слоя красит один полупрозрачный материал, и спавнит их
         // общий `surface::spawn_layer`: он сам отсеивает пустой сборщик,
         // вешает `DespawnOnExit` и `Name`. Не локальное замыкание
@@ -558,7 +555,7 @@ pub struct Lean {
 
 impl Lean {
     /// Отклонение дома.
-    pub(crate) fn of() -> Self {
+    pub(super) fn of() -> Self {
         Self {
             per_meter: Vec2::new(EXTRUDE_SKEW, 1.0),
         }
@@ -570,7 +567,7 @@ impl Lean {
     }
 
     /// Смещение верха для `drawn` нарисованных метров высоты.
-    pub(crate) fn lift(self, drawn: f32) -> Vec2 {
+    pub(super) fn lift(self, drawn: f32) -> Vec2 {
         self.per_meter * drawn
     }
 
