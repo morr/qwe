@@ -529,6 +529,29 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge`, added in
+  `QUERY_VERSION` **9**. What is drawn is a thin ribbon **and its shadow**, and the
+  shadow is the point: from above a fence is a 25 cm hair, and on a photo it is the dark
+  thread beside it that you actually see. In a private-house district that grid of plot
+  boundaries *is* the texture of the district.
+  - **`FenceLine` is a separate type, not `WallLine` with a flag.** The kremlin wall is
+    impassable and goes into the navmesh; a fence is decoration and pawns walk through
+    it. Merging them would one day put 427 impassable lines across the courtyards the
+    whole crowd walks in — the same call as parked cars.
+  - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
+    nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
+    exactly the scale a fence has to be visible at; aiming for ~1.5 screen px is the
+    tram's trick and the honest one. The far bucket draws nothing at all, because at city
+    scale the plot grid turns into dirt.
+  - `fence_kind` is a whitelist for the reason every other one is: `barrier=*` also
+    carries `kerb`, `gate`, `bollard`, `block` — points and street furniture, not lines —
+    and `city_wall`, which the branch above already took.
+  - **The branch falls through**, like the rail and tree-row ones: a way in OSM routinely
+    carries `barrier=fence` alongside another feature's tags, and it has to become both.
+    With a `return` there Tula lost a block and a park to the fence branch — caught by the
+    counts in the `osm map:` line, not by any test, which is why there is a test now.
+  - Tula: 356 fences, 71 walls, 1 hedge (the audit's `barrier=hedge` row was right that
+    live hedges are mapped as `barrier`, not `natural`).
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
