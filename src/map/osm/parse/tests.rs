@@ -3,9 +3,7 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{
-    BuildingUse, FenceKind, RailKind, WaterKind, distance_to_segment,
-};
+use crate::map::osm::model::{BuildingUse, FenceKind, RailKind, WaterKind, distance_to_segment};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
