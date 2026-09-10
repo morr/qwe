@@ -84,8 +84,11 @@ in `CONTEXT.md` and the detail here in the same change.
   asphalt with stalls painted on it (see **Parking** below). It is tried after the greens
   and **before** the landuse blocks, but the branch is reached only for a polygon that is
   not a building at all: a multi-storey car park carries `building` *and*
-  `amenity=parking`, and it must stay a building. Tula v9: 172 in the bbox, 171 reach
-  `MapData::parking`.
+  `amenity=parking`, and it must stay a building — and a lot whose asphalt is **not on the
+  ground** is dropped by `parking=*` instead (`HIDDEN_PARKING`: `underground`,
+  `multi-storey`, `rooftop`) — an underground car park is its own outline under a yard or
+  a park, with no `building` on it, and drawing it striped would put asphalt on the lawn.
+  Tula v9: 172 in the bbox, 170 reach `MapData::parking`.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
   tag is there). See **Building height** below. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
@@ -544,8 +547,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   (`Z_PARKING_LINES` 0.81). The markings go in a **flat-material** layer of their own,
   not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
   not on it, and a 12 cm line is the one thing on this map that must stay pure white.
-  - **The layout is one function**, `stalls(area)`, and the paint and the cars both call
-    it — two independent layouts would put a car across its own line. Rows run along the
+  - **The layout is computed once per world load** into `ParkingLayout` (a resource,
+    filled by `spawn_map` from `stalls(area)` per lot), and the paint and the cars both
+    read it — two independent layouts would put a car across its own line, and recomputing
+    it on every rebuild of the car layer was work the sun slider paid for by the frame.
+    Rows run along the
     **long axis of `min_area_rect`**, the axis a real lot is striped along: `STALL_WIDTH`
     2.6 × `STALL_DEPTH` 5.2 m, two rows back to back, then an `AISLE` of 6 m, and
     `EDGE_MARGIN` 1.2 m in from the edge.
@@ -554,6 +560,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     nothing in the notch, and the OBB rows do not have to match the outline.
   - **`MIN_AREA` 120 m²** — under that the lot gets no paint at all. A yard for four cars
     is not striped in reality, and stripes on a 6 × 10 m patch read as a texture bug.
+    **The stalls themselves stay**: `MIN_AREA` gates `push_markings` only, `fill_lots`
+    reads `stalls()` unfiltered, so a small yard keeps its cars — on unmarked asphalt.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour.
@@ -650,8 +658,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
     `examples/demos/gallery_shot.rs`: it holds the frame counts and window-raise logic, both
     debugged facts (commit 21853a3), and fixes apply there to all galleries at once.
-  - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
-    45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
+  - Tula: **22 022 cars along the kerbs, 176 k verts, 5.4 ms** at the default occupancy,
+    measured before the lots existed — against 5665 / 45 k while only the avenues parked.
+    The **lots add 5 934 more**: that same avenues-only run went 5665 → 11 599 cars and
+    45 k → 93 k verts once they were filled, so the layer carries ~28 k cars / ~224 k verts
+    at the default occupancy. Next to the building layer (730 k verts, 71 ms) and
     in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
     once per rebuild and costs nothing per frame.
   - **The lots are filled by the same pass** (`fill_lots`): every stall from

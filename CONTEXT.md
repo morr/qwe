@@ -140,7 +140,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     else, no effect on navigation or planting. **Parking** (`amenity=parking`,
     `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
-    park (`building` + `amenity=parking`) stays a building. Buildings carry
+    park (`building` + `amenity=parking`) stays a building — and a lot whose asphalt is
+    not on the ground (`parking=underground|multi-storey|rooftop`) is no area at all.
+    Buildings carry
     `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
@@ -328,8 +330,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   row of stalls, the way a lot is actually striped: `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2,
   `AISLE` 6.0, `EDGE_MARGIN` 1.2. Every stall is kept only if its **four corners** are
   inside the outline, so an L-shaped lot gets none in the notch; a lot under `MIN_AREA`
-  (120 m²) gets no markings at all — a yard for four cars is not striped. **The markings
-  and the cars read the same `stalls()` list**, or a car would stand across its own line.
+  (120 m²) gets no markings at all — a yard for four cars is not striped, though its
+  stalls stay and cars stand on them. **The markings and the cars read the same
+  `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a
+  car would stand across its own line.
   Tula: 171 lots.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
@@ -349,11 +353,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
   walk through them, deliberately: a parked row along every street would eat the pavements
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street or
-  per lot, and
-  a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
-  entirely when a car stops being worth six pixels. Tula: 22 022 cars along the kerbs,
-  176 k verts, 5.4 ms to build, plus the lots. Every street shape the row broke on,
-  side by side: `cargo run --example car_gallery`.
+  per lot, and a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops
+  the layer entirely when a car stops being worth six pixels. Tula: 22 022 cars along the
+  kerbs (176 k verts, 5.4 ms to build) plus 5 934 in the lots. Every street shape the row
+  broke on, side by side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,
