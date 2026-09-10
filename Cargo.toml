@@ -29,6 +29,10 @@ path = "examples/demos/roof_gallery/main.rs"
 name = "tree_gallery"
 path = "examples/demos/tree_gallery/main.rs"
 
+[[example]]
+name = "wall_gallery"
+path = "examples/demos/wall_gallery/main.rs"
+
 # acceptance — headless-приёмка: печатает OK/FAILED и код возврата
 [[example]]
 name = "determinism_replay"
