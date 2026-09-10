@@ -832,16 +832,32 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical gradient.
     All building tone mixing — the palette, the `roof_color` ramp, walls, slopes — is
     done in sRGB, so the wall and slope constants compare directly. No facade band, no
-    shadows. Depth is painter's algorithm *inside one
-    mesh*: buildings sorted by `Lean::depth`, far first (index-buffer order is raster
-    order), so a south-western building correctly overlays its north-eastern neighbour.
+    shadows. Depth is painter's algorithm *inside one mesh* (index-buffer order is raster
+    order), and the order comes from **`buildings/order.rs::draw_order`** — a **pairwise**
+    relation, not one key per building. In the lift's own basis (`u` across it, `v` along)
+    a footprint is a set of `v`-segments at every `u`, and the building is drawn from a
+    segment's start to its end plus the lift; at a shared screen point the nearer fragment
+    is the one standing higher, and "higher" is `v` minus the nearest footprint edge below
+    it. So neighbours whose drawn boxes meet (a 48 m grid finds them) are probed at up to
+    16 `u` inside the overlap, whoever covers the other on more of the shared front gets
+    an edge, and the graph is laid out by an iterative DFS seeded with
+    `Lean::depth(centre)` — that key still decides every pair the relation left alone,
+    which is most of the city. **One key per building cannot do this**: an L-shaped house
+    has one wing in front of its neighbour and the other behind it, and its centre (or top
+    point, or corner, or depth − lift) is dragged by the wrong wing — that is how a
+    five-storey wall came to lie over a nine-storey roof (Tula 493864392 over 493864388,
+    pinned by `the_order_puts_the_leaning_neighbour_over_the_wing_it_covers`). What the
+    pairs still cannot do is a **cycle** — interlocked shapes each covering the other on
+    their own piece; the back edge is ignored, so the order stays complete and someone in
+    the cycle is still drawn wrong. The cure for that is a real depth test (`z` from the
+    vertex's height), which the merged mesh does not have.
     `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
     in the shadows and anything that wants to put a marker on the *drawn* building rather
     than its real outline all go through it. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
     - **`Lean` is a per-building value**, not a global function: direction,
-      `lift(drawn)`, `ridge(rise)` and the painter's key `depth(centre)` all come from it,
+      `lift(drawn)`, `ridge(rise)` and the draw order's base key `depth(centre)` all come from it,
       and `layers.rs` builds one per building. It holds **metres of displacement per drawn
       metre as a vector** rather than a `(direction, length)` pair on purpose: the vector
       is exactly `(0.4, 1)`, and a round trip through `normalize` × `length` moves it by

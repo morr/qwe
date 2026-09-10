@@ -17,6 +17,7 @@ mod clutter;
 mod heights;
 mod layers;
 pub mod material;
+mod order;
 mod roofs;
 
 use std::ops::RangeInclusive;

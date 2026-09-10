@@ -277,9 +277,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   oblique skew for every building, which is what a **satellite** frame looks like: 5 km of
   city seen from 500 km up spans fractions of a degree, so the parallax is constant (an
   orthomosaic has none at all). `Lean` is a **per-building value** (metres of displacement
-  per drawn metre of height, held as a vector) and carries the painter's key with it:
-  **the far end of the skew is drawn first**, because the top of a far building is
-  displaced onto a near one. **The sun is independent of it** — the lean is the camera,
+  per drawn metre of height, held as a vector) and carries the **base key of the draw
+  order** with it: **the far end of the skew is written first**, because the top of a far
+  building is displaced onto a near one. That key only settles what nothing else does —
+  who covers whom is decided **pair by pair** (`map/buildings/order.rs::draw_order`,
+  `osm-map` skill), because one number per building cannot say that an L-shaped house has
+  one wing in front of its neighbour and the other behind it. **The sun is independent of it** — the lean is the camera,
   the shadow is the light. A radial lean away from the nadir — the signature of an
   *aircraft* frame — was tried and taken back out: the nadir is the centre of the **map**,
   not of the frame, so with a camera that pans the fan is only visible around the centre,

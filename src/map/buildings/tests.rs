@@ -529,6 +529,85 @@ fn the_painter_order_puts_the_far_side_first() {
     assert_eq!(lean.depth(dir.perp() * 700.0), near);
 }
 
+/// Прямоугольник по двум углам — для домов, у которых важно пятно, а не
+/// форма.
+fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
+    vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)]
+}
+
+/// Тульская пара из отчёта: Г-образная пятиэтажка (её северо-восточное крыло
+/// уходит за соседа) и девятиэтажка к востоку. Числа — пятна 493864392 и
+/// 493864388, сдвинутые в ноль. Высоты в OSM у них не проставлены и в игре
+/// выводятся по форме и посеву; здесь они заданы явно — те самые 15 и 27 м,
+/// чтобы тест держал геометрию, а не таблицу этажности.
+fn leaning_pair() -> (PolyArea, PolyArea) {
+    let low = building(
+        vec![
+            Vec2::new(14.2, 0.9),
+            Vec2::new(4.2, 0.0),
+            Vec2::new(0.0, 42.4),
+            Vec2::new(30.3, 45.4),
+            Vec2::new(31.2, 36.6),
+            Vec2::new(10.9, 34.6),
+        ],
+        Some(15.0),
+        AreaKind::Building,
+    );
+    let tall = building(
+        vec![
+            Vec2::new(44.3, 23.4),
+            Vec2::new(45.1, 6.9),
+            Vec2::new(21.9, 5.7),
+            Vec2::new(20.6, 31.8),
+            Vec2::new(52.5, 33.5),
+            Vec2::new(52.9, 23.8),
+        ],
+        Some(27.0),
+        AreaKind::Building,
+    );
+    (low, tall)
+}
+
+#[test]
+fn the_order_puts_the_leaning_neighbour_over_the_wing_it_covers() {
+    let _sun = crate::map::default_sun();
+    let (low, tall) = leaning_pair();
+    let lean = Lean::of();
+    // случай ловится только тогда, когда прежний ключ на нём и ошибается:
+    // центр пятна девятиэтажки дальше по подъёму, значит она писалась первой
+    assert!(lean.depth(building_center(&tall)) > lean.depth(building_center(&low)));
+    // а кроет она: её кровля поднята на 27 м и ложится на крыло соседа
+    assert_eq!(
+        order::draw_order(&[low.clone(), tall.clone()], lean),
+        vec![0, 1]
+    );
+    // порядок входа на это не влияет — решает геометрия, а не индекс
+    assert_eq!(order::draw_order(&[tall, low], lean), vec![1, 0]);
+}
+
+#[test]
+fn the_order_writes_every_building_once() {
+    let _sun = crate::map::default_sun();
+    let (low, tall) = leaning_pair();
+    let mut list = vec![low, tall];
+    // ряд сцепленных домов: пары спорят друг с другом, и порядок обязан
+    // остаться полным даже там, где отношение зациклилось
+    for step in 1..6 {
+        let shift = Vec2::new(step as f32 * 9.0, step as f32 * 7.0);
+        let mut next = building(
+            rect(shift, shift + Vec2::new(24.0, 18.0)),
+            Some(9.0 * step as f32),
+            AreaKind::Building,
+        );
+        next.building_use = BuildingUse::Apartments;
+        list.push(next);
+    }
+    let order = order::draw_order(&list, Lean::of());
+    let mut seen = order.clone();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..list.len()).collect::<Vec<_>>());
+}
+
 fn house(outer: Vec<Vec2>) -> PolyArea {
     let mut house = building(outer, None, AreaKind::Building);
     house.building_use = BuildingUse::House;

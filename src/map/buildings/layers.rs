@@ -12,10 +12,11 @@ use super::arches::{
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
 use super::material::{RoofKind, RoofLook, building_seed, roof_look};
+use super::order::draw_order;
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
-    BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
-    height_or_default, shade_by_light,
+    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, facade_color, height_or_default,
+    shade_by_light,
 };
 use crate::map::meshing::{MeshBuilder, WallFrame};
 use crate::map::osm::model::signed_ring_area;
@@ -503,8 +504,10 @@ pub(super) fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>
 /// растеризуются в порядке index-буфера, поэтому здания пишутся от дальнего
 /// конца вектора подъёма к ближнему (при косом подъёме вверх-вправо —
 /// с северо-востока на юго-запад, ближнее поверх), на здание сначала стены,
-/// потом крыша. Фасадной полосы в этом режиме нет — её заменяют настоящие
-/// стены; `tinted` включает рампу тона крыш, как в `ShadowsTint`.
+/// потом крыша. Кто кого кроет, решается по парам соседей — [`draw_order`],
+/// там же и почему одного ключа на дом для этого мало. Фасадной полосы в этом
+/// режиме нет — её заменяют настоящие стены; `tinted` включает рампу тона
+/// крыш, как в `ShadowsTint`.
 pub(super) fn extrusion_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
@@ -512,11 +515,7 @@ pub(super) fn extrusion_builder(
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
-    let mut order: Vec<usize> = (0..buildings.len()).collect();
-    order.sort_by(|&a, &b| {
-        let depth = |building: &PolyArea| lean.depth(building_center(building));
-        depth(&buildings[b]).total_cmp(&depth(&buildings[a]))
-    });
+    let order = draw_order(buildings, lean);
 
     // стены и крыши едут одним мешем (painter's порядок общий), так что
     // рамку кровли несёт и он: у стен она нулевая, у крыш своя
