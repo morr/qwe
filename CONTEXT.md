@@ -204,17 +204,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
   half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded. (`RoofKind::Wall` is a seventh variant and no covering at all — a texture code for
-  the walls, kept out of `ALL`, out of that choice and out of the palettes; see below.)
+  seeded.
   The colour comes from that material's own palette — **the per-use *roof* colours
-  are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
+  are gone**, and the per-use *wall* colours with them: a wall is picked the same way a
+  roof is (**`WallKind`**, below) — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
   mean what the code says they mean: a roof's **long axis**, one value for the whole
   building, or a wall's own **cell coordinates**, different at every vertex — see
-  `WallFrame` below; code `0` is *no texture* and by now only roof clutter, which rides in
-  the same mesh: walls carry the `Wall` code and so does a **gable**, being the top of the
-  end wall under it). **Roof age** is the
+  `WallFrame` below; the code is **one dictionary for both** — `0` is *no texture* and by
+  now only roof clutter, which rides in the same mesh, `1…6` are the roofings above and
+  `7…11` the wall claddings of `WallKind`, a gable carrying its wall's code as the top of
+  the end wall under it). **Roof age** is the
   second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
   building that sets how many repair patches its bitumen carries (a young roof almost
@@ -226,7 +227,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
   small hip, and a real hip could not be told from a flat roof.
-  **`Wall` is the same mechanism turned on the walls, and its coordinates are the wall's
+  **A wall is the same mechanism turned on the walls, and its coordinates are the wall's
   own** (`meshing::WallFrame`, `layers::wall_frame`). A wall in 2.5D is a **parallelogram** —
   base edge `a→b`, sides along the lean — and the builder writes, at every one of its
   vertices, where that vertex sits in it: **the panel number and the storey**, counted in
@@ -238,15 +239,56 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   knows none of that and cut panels and balconies wherever a wall happened to end.
   The shader therefore needs no metres, no storey height and no lean: it takes `fract` of
   what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
-  It draws floor seams, panel joints and **balconies** — a balcony fills the lower two
-  thirds of its storey and 62 % of its panel, on 58 % of the **columns**, so they come out
-  in columns the whole height of the wall as they do on a real block.
-  **Who gets balconies is decided on the CPU** (`layers::balconies_fit`) and travels as the
-  **sign of the seed** (`WallFrame::without_balconies`): a private house, a garage, a
-  church, a shed, a school, anything under four storeys and any wall narrower than three
-  panels stays blank, and so does a **gable** — it continues the wall's seams through the
-  eaves, but a balcony there would be cut by the slope. The shader cannot make that call: it
-  knows neither the building's use nor how many storeys the wall has in total.
+  **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
+  Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
+  the slot by the building's seed) except that **height is consulted first**: anything under
+  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`, `Church`,
+  `Industrial` keep their own tables) drops into the low-rise table, because a low
+  building is neither a panel block nor a curtain wall. The cladding decides three things at
+  once — what lies *between* the openings (floor seams and panel joints, brick courses,
+  bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
+  two-sash window per panel, a narrower brick one, a small house window, a full-panel
+  glazing strip, a high shed ribbon), and whether the wall has **balconies** at all.
+  **Both ends of a wall are their own case, and a cell carries exactly one opening.** The
+  **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
+  above it — and stands on a dark **plinth** band.
+  **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
+  (`layers::push_doors` over `PolyArea::entrances`, code `12`) — a **patch** over the cells
+  the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
+  **leaf** itself on the entrance point, in a frame of its own that maps the opening to
+  `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
+  (`layers::door_size` — a подъезд, a house door, shop leaves, a shed gate), so the shader
+  needs no scale of its own. Above the last storey the wall keeps a **cornice**
+  (`meshing::PARAPET_CELLS`, 0.15 of a cell) — plain wall with no openings and nothing drawn
+  in it, because what the top of a wall needs is *room*, not a stripe. The room is
+  geometric: the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, and the
+  invariant it protects is that **storey boundaries stay whole**, not that the wall ends on
+  one. Knowing where the top *is* needs the storey count, and that rides in the **material
+  slot** next to the code (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in
+  the quotient, zero on a roof).
+  A **balcony** is a stack of bands, not a box — the slab's shadow on the wall, the bright
+  slab edge, the parapet, and above it either glazing or an open recess in shade — laid out
+  by the **period of a section**, not by a per-column draw: two filled **columns** out of
+  every four to six, the period and its phase taken from the wall's own seed, so they come
+  out in columns the whole height of the wall and in a repeating step along it, as they do
+  on a real block (a brick wall keeps the period and fills one column of it).
+  **A window is the only thing here that replaces the surface
+  colour instead of correcting it**: the wall hands the fragment three numbers, not one
+  brightness — shade, how much glass, and how much of that glass is sky.
+  **Who gets balconies is decided on the CPU** (`layers::balconies_fit`): only a panel or
+  brick wall, never a `building=house` whatever its cladding, never under four storeys,
+  never on a wall narrower than three panels (that threshold cuts off a **step in the
+  outline**, not an end wall) and **never on a gable end** — a wall standing across the long
+  axis of the building's plan (`layers::plan_long_axis` over `roofs::min_area_rect`, only
+  where the plan is half again longer than it is wide, since a squarish tower has no end).
+  The shader cannot make any of that call: it knows
+  neither the building's use nor how many storeys the wall has in total, and least of all
+  what the building's other walls are. That verdict and
+  one more travel as the **seed's own value** (`WallFrame::marked`, `WallMark`): `[0, 1)` is
+  a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a wall with **no openings**
+  at all (`Solid`) — two things at once, the **gable** (which continues the wall's pattern
+  through the eaves, that being why it takes the wall's frame at all, but where a window
+  would be cut by the slope) and the **patch under a door**.
   A wall **returns before
   the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
   weathering, so a wall's base colour is still the flat fill of before and only its own seams
@@ -282,7 +324,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   building is displaced onto a near one. That key only settles what nothing else does —
   who covers whom is decided **pair by pair** (`map/buildings/order.rs::draw_order`,
   `osm-map` skill), because one number per building cannot say that an L-shaped house has
-  one wing in front of its neighbour and the other behind it. **The sun is independent of it** — the lean is the camera,
+  one wing in front of its neighbour and the other behind it. The same question is asked
+  once more **inside** a house (`order.rs::wall_order`): its visible walls all share one
+  lift, so each is a band of constant thickness over its base, and two of them meet on
+  screen wherever the facade steps — the far one is laid first, where walking the ring laid
+  it last and let a stepped-back section cover the wall in front of it.
+  **The sun is independent of it** — the lean is the camera,
   the shadow is the light. A radial lean away from the nadir — the signature of an
   *aircraft* frame — was tried and taken back out: the nadir is the centre of the **map**,
   not of the frame, so with a camera that pans the fan is only visible around the centre,
@@ -342,9 +389,32 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
   *length* at a measured pitch (`ENTRANCE_SPACING` 25 m, floor `ENTRANCE_MIN_SPACING` 12 m),
-  walls a neighbour stands against get none, and the result is deterministic per building
-  (LCG seeded by its first vertex). **Real doors always win.** The `doors` debug toggle
-  draws them.
+  walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
+  a step in the outline rather than a facade and gets none either, and the result is
+  deterministic per building (LCG seeded by its first vertex). **A residential building is counted by its plan and
+  height as well** (`plan_sections`, a floor under the cohort): 300 m² of plan per подъезд
+  at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
+  32 × 32 m block, a hundred flats, with one door, and a volume-linear count would charge
+  for the height twice, since a подъезд is a stack whose own capacity grows with it. It
+  stands down for anything that is not housing, for anything without a height or under
+  `SECTION_MIN_HEIGHT` (12 m), and for a **свечка** — a compact 45 m+
+  tower, where one lobby for the whole building is normal. **Real doors are never moved or dropped — but a
+  half-mapped building is topped up**: one mapped `entrance` used to make the generator skip
+  the building whole, and a London block a quarter of a kilometre long kept its single door.
+  A mapper marking one подъезд and stopping is exactly what the cohort measurement already
+  guards against with its "two doors or more" threshold; the generation now guards against it
+  too, real doors going in first and the cohort adding only what is missing.
+  **A section's подъезд is through** (`through_doors`): a `building=apartments`/`yes`
+  outline at least `THROUGH_MIN_LENGTH` (40 m) long gets the courtyard half of every door,
+  found by a ray inward that must exit `THROUGH_DEPTH_RANGE` (8–20 m) away on a wall facing
+  back. It is the same подъезд, not another one, so the cohort count does not grow — but the
+  **point count does**: the courtyard leaf is an element of `PolyArea::entrances` in its own
+  right, and nothing in the model tells the two halves apart, so a wander target is drawn
+  from it like any other door, the `doors` gizmo circles it, `layers::push_doors` hangs a
+  leaf on the wall for it, and `generate_entrances` counts these **twins** as a term of their
+  own (inside the `N generated`, with a line saying how many of that N are courtyard halves).
+  The depth ceiling is what keeps a **свечка**, a compact new tower with one entrance, from
+  growing a second door on its back.
 - **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons** plus standalone
   surveyed trees and `tree_row` avenues; deterministic LCGs seeded by geometry. **Planting
   runs once at the density ceiling**; the density slider shows a monotone *prefix*
@@ -355,7 +425,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
-- **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
+- **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
   and roundabouts. The pitch is walked along the **whole street's arclength**, not segment
@@ -364,17 +434,33 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   A **one-way** carriageway gets a single row, on its right-hand kerb — which is what stops
   the two halves of a divided avenue from parking a column down their median, and is why
   `oneway=-1` is now normalized at parse by reversing the way.
-  4.4 × 1.8 m bodies at a 6 m pitch,
+  Bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
   ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
-  fifths, black a fifth, the rest coloured. Each casts its own shadow, by the same `shadow_length_scale()` the
-  buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
+  fifths, black a fifth, the rest coloured — and each turned and shifted a little, because
+  nobody parks by a ruler.
+  **A car is not a rectangle** (`cars/body.rs`): a rounded silhouette with a dark cabin
+  across it — windscreen, roof, backlight — plus mirrors, and its size and the layout of
+  that cabin come from its **body type** (`CarShape`: sedan, hatchback, wagon, crossover,
+  van, in the shares a Russian yard shows). Each casts its own shadow, and it is the
+  buildings' shadow in miniature: the silhouette **swept** by the light — the hull of the
+  outline and the outline moved by `shadow_length_scale()` × the type's own height — so it
+  lies under the car and runs out from beneath it instead of standing apart from it, with a
+  `SHADOW_BLUR` (0.35 m) soft edge tapered by `direction · shadow_dir()` exactly as
+  `buildings::layers::penumbra` tapers: hard where it meets the car, full width at the far
+  end, and no soft ring around the car (that ring is the retired contact skirt). Shadows of
+  neighbouring cars are **not** unioned — at the default sun the sweep is a metre against
+  the six of `CAR_PITCH`. **Decoration only** — cars are in no navmesh and no simulation, and pawns
   walk through them, deliberately: a parked row along every street would eat the pavements
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
-  a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
-  entirely when a car stops being worth six pixels. Tula: 22 022 cars, 176 k verts, 5.4 ms
-  to build (5665 / 45 k while only the avenues parked). Every street shape the row broke on,
-  side by side: `cargo run --example car_gallery`.
+  a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
+  layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
+  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 069
+  cars at 1 456 k verts / 27 ms of mesh on the near step against 220 k / 5 ms on the far one,
+  plus the 1 ms of junction breaks and 2 ms of parking every step pays alike
+  (`measure_cars` times them on their own rows — `examples/bench/map_meshing`). Every
+  street shape the row broke on, and every body type on all three detail steps, side by
+  side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,

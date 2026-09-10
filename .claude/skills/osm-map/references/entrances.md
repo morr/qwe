@@ -14,7 +14,10 @@ counts per city live in `osm-coverage.md` next to this file.
 dropped with a count on stderr. Overpass emits nodes before ways, so entrances are
 buffered through the element loop and attached after it. Coverage is thin everywhere
 (Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — hence the generator
-below. Real OSM doors always win: generation only runs on buildings that got none.
+below. Real OSM doors always win *as points*: they are never moved and never dropped.
+They no longer stop the generator, though — a building mapped with one door is a
+building mapped **halfway**, and it gets the rest of its cohort (see "topped up, not
+skipped" below).
 
 ## Generated entrances
 
@@ -95,6 +98,16 @@ whole algorithm:
   p10 is 4.5 m, but a navtile is 2 m, so doors closer than ~10 m resolve to the same
   tile and are not distinct targets. `facade_capacity` caps how many doors one edge
   absorbs so a long facade cannot hoard them.
+- **A step in the outline is not a facade** (`ENTRANCE_MIN_FACADE` 6 m). OSM traces a
+  block with two- to four-metre steps — a stair projection, a bay, the joint between two
+  sections — and such an edge is often *nearer the street* than the wall it steps out of,
+  so it scores first and used to take a подъезд: `facade_capacity` returned at least one
+  door for any length at all. Reported from the map and confirmed by a per-facade dump: a
+  ten-storey block put two doors on its 43 m street wall and the third on a 4 m stub by
+  the corner, while its long wing stayed blank. Below the threshold an edge yields
+  nothing and the doors fall through to the next real wall by score. The last-resort pass
+  (a building with no free wall at all, or one made of nothing but steps — a 3 × 3 kiosk)
+  still allows them, since a building with no door drops out of the wander targets.
 - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
   door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
   a door placed there sits *inside* the neighbour: invisible from the street and
@@ -108,6 +121,64 @@ whole algorithm:
   traced over as a block-wide outline) still gets one door on its best facade — it
   would otherwise vanish as a wander target — and the count of those is logged
   (`N buildings have no free wall for a door`).
+- **A residential building is also counted by its plan and its height**
+  (`plan_sections`), and that count is a **floor** under everything else — applied after
+  the cohort ceiling, because the ceiling is drawn by length bands and is exactly what
+  cannot see storeys. The cohort's blind spot was reported from the map: a Tula
+  nine-storey 32 × 32 m block — a thousand square metres of plan, a hundred-odd flats —
+  has an "equivalent length" of 32 m, lands in the *house / shop* band (mean 1.35) and
+  came out with **one** door. The measurement barely contains such buildings: подъезды
+  are enumerated exhaustively in Tula, and Tula's nine-storey blocks are long, where the
+  pitch law already works.
+  `ENTRANCE_FLOOR_PLATE` is 300 m² of plan per подъезд **at nine storeys** — four flats
+  and a stair-and-lift core — which on a 12–14 m deep section reproduces the measured
+  21–25 m pitch, so the new floor and the old pitch law agree where both apply.
+  **Height enters as a square root**, not linearly: flats are plan × storeys, but a
+  подъезд is a *stack*, so its own capacity grows with height too and a volume-linear
+  count would charge for the height twice (a 200 m block would want a door every eight
+  metres). It cannot cancel out either — a taller building spends more of its plan on a
+  wider core with two lifts — so `sqrt(storeys / 9)`: 0.75 at five storeys, 1.0 at nine,
+  1.37 at seventeen, 1.67 at twenty-five.
+  Three exemptions: **not housing** (`Apartments` and `Other` only — a school, a mall or a
+  warehouse is entered through its walls, not through stacks of flats); **not tall
+  enough** — no height in the data at all, or under `SECTION_MIN_HEIGHT` (12 m, the same
+  `COHORT_TALL_HEIGHT` by which the cohort tells a tall building from a low one), since a
+  stack of flats is what the rule counts and a three-storey outline has none; and the
+  **свечка**, a compact new tower (`TOWER_MIN_HEIGHT` 45 m with a plan under 900 m² and
+  under 35 m long), where one lobby for the whole building is normal and the rule stands
+  down.
+- **A half-mapped building is topped up, not skipped.** A building with any mapped
+  `entrance` used to be passed over whole, so a London block a quarter of a kilometre
+  long kept the single door its mapper had marked before losing interest — the very
+  behaviour the "two doors or more" threshold above guards the *measurement* against,
+  left unguarded in the *generation*. Mapped doors now go into `place_along` as
+  already-placed points: `wanted` is how many doors the building should end up with, the
+  real ones count towards it and hold their spacing, and the generator only fills what is
+  missing. Real doors are never moved and never dropped, and they stay first in the list.
+  Only the added ones are counted as generated in the log line.
+- **A section's подъезд is through** (`through_doors`) — a panel section has two doors per
+  подъезд, street and courtyard, standing opposite each other, and on an aerial photo
+  that pairing is plain. It is **the same подъезд**, so the cohort count does not grow: the
+  twin is added after placement, not asked for. **The point count does grow**, and nothing
+  in the model tells the two apart: the courtyard leaf goes into `PolyArea::entrances` as an
+  element of its own, and every consumer reads that list as entry points — a pawn's
+  destination "into this building" is drawn from it uniformly (`human::building_target`, so
+  half a long block's wander targets are now in the yard), the load line sums its length, the
+  `doors` gizmo circles each point and `layers::push_doors` hangs a leaf on the wall for each.
+  That is accepted, not overlooked — a подъезд really is entered from the yard as often as
+  from the street — and until the model carries a pair (`at` + `through`) rather than a point,
+  `generate_entrances` at least counts the twins as a term of their own: they are inside the
+  `N generated` of the log line, and a second stderr line says how many of that N are
+  courtyard halves rather than invented подъезды. A ray goes from each door into the
+  building along its facade's inward normal, and the exit point qualifies only if it is
+  `THROUGH_DEPTH_RANGE` (8–20 m) away on a wall facing back (`dot < -0.7`) and free of
+  neighbours by the same clearance probe. Both ends of the range earn their keep: below
+  8 m is a garage box, not a подъезд (a 100 × 4 m garage row is exactly the long-but-shallow
+  shape the length gate alone would let through), and above 20 m is a **свечка** — a
+  compact new tower, whose entrance is often single, and a second door on its back would
+  read as a bug. `through_entrances` gates on use as well (`Apartments` or `Other` — the
+  latter because `building=yes` is half the city and holds its panel blocks) and on
+  `THROUGH_MIN_LENGTH` 40 m, below which the building is a house, not a section.
 - **Determinism** — the count is the only random draw (`floor(mean)` plus one more with
   probability `frac(mean)`, which reproduces the cohort mean exactly), and its LCG is
   seeded from the building's own first vertex — same family as tree planting. A given

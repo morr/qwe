@@ -11,18 +11,20 @@ use super::arches::{
     ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::material::{RoofKind, RoofLook, building_seed, roof_look};
-use super::order::draw_order;
-use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
-use super::{
-    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, facade_color, height_or_default,
-    shade_by_light,
+use super::material::{
+    DOOR_CODE, RoofLook, WallKind, WallLook, building_seed, roof_look, wall_look,
 };
-use crate::map::meshing::{MeshBuilder, WallFrame};
+use super::order::{draw_order, wall_order};
+use super::roofs::{HipRoof, RoofShape, Roofing, min_area_rect, roofing, roofing_of};
+use super::{
+    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
+};
+use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, WallFrame, WallMark};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
 use crate::map::seed::seed_from_point;
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
+use crate::settings::STOREY_HEIGHT;
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
 /// значит закрасить полквартала: карта сверху, а не изометрия. При 0.2
@@ -102,10 +104,75 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
 /// панель шире или уже трёх метров с небольшим, зато их целое число.
 const PANEL_WIDTH: f32 = 3.2;
 
-/// Высота этажа, м — настоящая, а не нарисованная: этажи считаются от высоты
-/// дома, а `EXTRUDE_SCALE` сжимает их вместе со всей стеной. То же число, по
-/// которому парсер переводит `building:levels` в метры.
-const STOREY_HEIGHT: f32 = 3.0;
+/// Одна стена дома до того, как из неё сделали [`WallFrame`]: отрезок
+/// основания, подъём и число этажей. Четвёрка ездит вместе через [`wall_frame`],
+/// [`push_doors`] и оба цикла [`push_house_with_arches`], и метрика стены —
+/// сколько на ней панелей и каким посевом она разыграна — считается по ней же,
+/// а не собирается заново у каждого, кому понадобилась.
+struct WallSpan {
+    /// Начало грани; от неё же и посев ([`WallSpan::seed`]).
+    a: Vec2,
+    b: Vec2,
+    /// Подъём: вектор от основания стены до карниза (`extrusion_lift`).
+    lift: Vec2,
+    /// Этажей в доме — целое число ([`storeys_of`]).
+    storeys: f32,
+    /// Длинная ось плана этого дома — единственное, что стена знает про
+    /// **остальные** стены того же дома, и по чему только и отличается
+    /// длинный фасад от торца ([`WallSpan::gable_end`]). `None` — либо у
+    /// плана нет длинной стороны ([`plan_long_axis`]), либо балконов этому
+    /// дому не полагается и ось считать не стали.
+    long_axis: Option<Vec2>,
+}
+
+impl WallSpan {
+    fn new(a: Vec2, b: Vec2, lift: Vec2, storeys: f32, long_axis: Option<Vec2>) -> Self {
+        Self {
+            a,
+            b,
+            lift,
+            storeys,
+            long_axis,
+        }
+    }
+
+    /// Длина основания, м.
+    fn length(&self) -> f32 {
+        (self.b - self.a).length()
+    }
+
+    /// **Торец** ли эта стена — стоит ли она поперёк длинной оси плана.
+    ///
+    /// Это и есть противопоставление, которого в коде не было: у панельной
+    /// секции балконы идут по длинному фасаду, а торец — глухая плита, и
+    /// отличить одно от другого по ширине самой стены нельзя. Торец настоящей
+    /// секции — её глубина, 12–14 м, то есть четыре панели, и порог ширины
+    /// ([`BALCONY_COLUMNS_MIN`]) его пропускает; он отсекает не торец, а
+    /// ступеньку контура.
+    ///
+    /// Поперёк — с запасом в [`GABLE_END_COS_MAX`]: на непрямоугольном плане
+    /// «короткая сторона» смысла не имеет, и косая стена остаётся фасадом,
+    /// то есть при сомнении всё остаётся как было.
+    fn gable_end(&self) -> bool {
+        let (Some(axis), Some(along)) = (self.long_axis, (self.b - self.a).try_normalize()) else {
+            return false;
+        };
+        along.dot(axis).abs() <= GABLE_END_COS_MAX
+    }
+
+    /// Сколько панелей встанет на эту стену — целое число ([`wall_frame`]).
+    fn columns(&self) -> f32 {
+        (self.length() / PANEL_WIDTH).round().max(1.0)
+    }
+
+    /// Посев этой стены, `[0, 1)` — от её начала ([`seed_from_point`]). Одним
+    /// местом, потому что дверь обязана взять **тот же** посев, что и стена под
+    /// ней ([`push_doors`]): разойдись они, и полотно перестало бы держаться
+    /// того же разброса, что рисунок вокруг него.
+    fn seed(&self) -> f32 {
+        (seed_from_point(self.a) & 0xff) as f32 / 255.0
+    }
+}
 
 /// Рама **стены** для шейдера: её собственные координаты — номер панели вдоль
 /// основания и этаж вверх по подъёму ([`WallFrame`]).
@@ -121,45 +188,296 @@ const STOREY_HEIGHT: f32 = 3.0;
 ///
 /// Посев — свой у каждой стены (`seed_from_point` от её начала, тот же
 /// генератор, что у кровель, дверей и машин), а не общий на дом: столбцы
-/// балконов на соседних стенах не должны начинаться одинаково.
-fn wall_frame(building: &PolyArea, a: Vec2, b: Vec2, lift: Vec2, height: f32) -> Option<WallFrame> {
-    let columns = ((b - a).length() / PANEL_WIDTH).round().max(1.0);
-    let storeys = (height / STOREY_HEIGHT).round().max(1.0);
-    let seed = (seed_from_point(a) & 0xff) as f32 / 255.0;
-    let frame = WallFrame::new(a, b, lift, columns, storeys, RoofKind::Wall.code(), seed)?;
-    Some(match balconies_fit(building, columns, storeys) {
+/// балконов и разброс окон на соседних стенах не должны начинаться одинаково.
+///
+/// **Материал** же, наоборот, общий на дом ([`WallLook`]): у одного здания не
+/// бывает панельного торца и кирпичного фасада, и его код едет в тот же слот
+/// атрибута, где у кровли стоит её материал.
+fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<WallFrame> {
+    let columns = span.columns();
+    let frame = WallFrame::new(
+        span.a,
+        span.b,
+        span.lift,
+        columns,
+        span.storeys,
+        look.kind.code(),
+        span.seed(),
+    )?;
+    let balconies = balconies_fit(building, look.kind, columns, span);
+    Some(match balconies {
         true => frame,
-        false => frame.without_balconies(),
+        false => frame.marked(WallMark::Blank),
     })
 }
 
+/// Сколько этажей в этой стене — от **настоящей** высоты дома, а не от
+/// нарисованной: `EXTRUDE_SCALE` сжимает стену вместе с этажами, и считать их
+/// по сжатой значило бы получить полтора этажа у пятиэтажки.
+///
+/// Число целое, и на нём держится вся рама ([`wall_frame`]): верхний этаж
+/// упирается ровно в карниз, а на углу дома обе стены кончаются одинаково.
+fn storeys_of(building: &PolyArea) -> f32 {
+    (height_or_default(building) / STOREY_HEIGHT)
+        .round()
+        .max(1.0)
+}
+
 /// Кому балконы полагаются. Это не про геометрию, а про то, что бывает на
-/// фотографии: балкон — примета **жилого дома в несколько этажей**, и швы
-/// панелей без него встречаются сплошь, а он без них нет.
+/// фотографии: балкон — примета **жилого дома в несколько этажей**, и рисунок
+/// стены без него встречается сплошь, а он без него нет.
 ///
-/// * частный дом, гараж, храм, склад, школа, магазин — не бывает: у первых
-///   двух этажей не хватает, у остальных балконов нет по назначению;
-/// * ниже [`BALCONY_STOREYS_MIN`] — тоже: двухэтажка с рядом балконов во всю
-///   стену читается как ошибка, и на карте это ровно то, что видно первым;
-/// * простенок уже [`BALCONY_COLUMNS_MIN`] панелей — торец, глухая стенка
-///   уступа: ряд выступов на трёхметровой полоске не бывает ничем, кроме
-///   узора.
+/// Решает в первую очередь **материал стены**, и это не перекладывание
+/// условия: назначение уже разобрано один раз, когда дому выбирали облицовку
+/// ([`super::material::wall_look`]), и там же учтён рост. Штукатурка достаётся
+/// частному сектору и малоэтажке, витраж — торговому центру, профлист —
+/// складу; балконов нет ни у кого из них по самому смыслу материала. Остаются
+/// панель и кирпич — ровно те две стены, на которых балкон и бывает.
 ///
-/// `Other` в список жилых входит: это половина города (`building=yes`), и
-/// среди них панельные дома; те, что не дома, отсекаются высотой — сарай и
-/// пристройка ниже четырёх этажей по любой оценке (`heights.rs`).
-fn balconies_fit(building: &PolyArea, columns: f32, storeys: f32) -> bool {
-    matches!(
-        building.building_use,
-        BuildingUse::Apartments | BuildingUse::Other
-    ) && storeys >= BALCONY_STOREYS_MIN
+/// Четыре ограничения сверх материала:
+///
+/// * **частный дом** — никогда, каким бы ни вышел материал: `building=house`
+///   это отдельный дом с участком, и балкона у него не бывает. Порог
+///   этажности отсекает почти все такие дома и сам, но «почти» тут мало —
+///   пятиэтажный `house` в выгрузке встречается, и балконы на нём читались бы
+///   как ошибка разбора, чем и были бы;
+/// * ниже [`BALCONY_STOREYS_MIN`] — двухэтажка с рядом балконов во всю стену
+///   читается как ошибка, и на карте это видно первым;
+/// * простенок уже [`BALCONY_COLUMNS_MIN`] панелей — **ступенька контура**,
+///   глухая стенка уступа: ряд выступов на трёхметровой полоске не бывает
+///   ничем, кроме узора. Порог ширины отсекает только её и торцем не
+///   притворяется — четыре панели глубокой секции он пропускает;
+/// * **торец** ([`WallSpan::gable_end`]) — стена поперёк длинной оси плана.
+///   Это и есть «глухие торцы»: балконы идут по длинному фасаду, а торец их
+///   не несёт, оставаясь при этом стеной с окнами ([`WallMark::Blank`], а не
+///   `Solid`).
+fn balconies_fit(building: &PolyArea, kind: WallKind, columns: f32, span: &WallSpan) -> bool {
+    balcony_house(building, kind, span.storeys)
         && columns >= BALCONY_COLUMNS_MIN
+        && !span.gable_end()
+}
+
+/// Дом, у которого балкон бывает вообще: материал, назначение, рост — то, что
+/// не зависит от отдельной стены. Спрашивается это дважды, и второй раз до
+/// стен: длинную ось плана ([`plan_long_axis`]) считать незачем, если балконов
+/// не будет ни на одной из них ([`push_house_with_arches`]).
+fn balcony_house(building: &PolyArea, kind: WallKind, storeys: f32) -> bool {
+    matches!(kind, WallKind::Panel | WallKind::Brick)
+        && building.building_use != BuildingUse::House
+        && storeys >= BALCONY_STOREYS_MIN
+}
+
+/// Длинная ось плана — та самая, вдоль которой стоит длинный фасад, и `None`,
+/// если у плана длинной стороны нет.
+///
+/// Ось берётся у **минимального описанного прямоугольника** (`min_area_rect`,
+/// первое ребро вдоль длинной оси) — того же, по которому идёт конёк
+/// двускатной крыши и фактура кровли, так что второго понятия «как этот дом
+/// повёрнут» в проекте не заводится.
+///
+/// Отношение сторон — оговорка, без которой правило врёт: у башни в плане
+/// квадрат, короткой стороны у неё нет, и объявить две её стены торцами
+/// значило бы снять балконы с половины дома по броску округления. Порог
+/// [`GABLE_PLAN_RATIO_MIN`] проходит панельная секция (12–14 м на 35 и
+/// длиннее — это 2.5 и выше) и не проходит башня
+/// (`heights::TOWER_MAX_RATIO` — 1.7).
+fn plan_long_axis(ring: &[Vec2]) -> Option<Vec2> {
+    let rect = min_area_rect(ring)?;
+    let long = rect[1] - rect[0];
+    let short = (rect[2] - rect[1]).length();
+    let axis = long.try_normalize()?;
+    (short > 0.0 && long.length() / short >= GABLE_PLAN_RATIO_MIN).then_some(axis)
 }
 
 /// С какого этажа дом носит балконы и с какой ширины стены они на ней
 /// помещаются — в этажах и панелях самой стены.
-const BALCONY_STOREYS_MIN: f32 = 4.0;
+///
+/// Порог этажности — **та же** граница, по которой стене выбирают облицовку
+/// ([`super::material`] читает эту константу как `LOW_RISE_STOREYS`): ниже неё
+/// дом малоэтажный, а малоэтажному не достаётся ни панель, ни витраж, то есть
+/// и балконам не с чего взяться. Одно число на оба правила, а не два
+/// совпадающих: правка одного молча развела бы их. Объявлено оно здесь, потому
+/// что витрина стен вычитывает пороги балконов прямо из этого файла
+/// (`examples/demos/wall_gallery/constants.rs`).
+pub(super) const BALCONY_STOREYS_MIN: f32 = 4.0;
 const BALCONY_COLUMNS_MIN: f32 = 3.0;
+
+/// Во сколько раз план должен быть длиннее, чем шире, чтобы у него **был**
+/// торец ([`plan_long_axis`]). Ниже порога дом в плане квадратный, длинного
+/// фасада у него нет, и все его стены — фасады.
+const GABLE_PLAN_RATIO_MIN: f32 = 1.5;
+/// Насколько стена считается стоящей поперёк длинной оси: косинус угла между
+/// ними ([`WallSpan::gable_end`]). 0.5 — это 60°, то есть торцем становится
+/// стена, отклонившаяся от поперечника не больше чем на 30°; всё, что косее,
+/// остаётся фасадом с балконами, как было до правила торцов.
+const GABLE_END_COS_MAX: f32 = 0.5;
+
+/// Насколько далеко от грани контура может лежать вход, чтобы считаться
+/// стоящим на ней, м. Сгенерированные двери (`osm::entrances`) лежат на грани
+/// точно, размеченные в OSM — в вершине кольца, и полметра тут только на
+/// разнобой координат.
+const DOOR_ON_WALL: f32 = 0.5;
+
+/// Проём входа в метрах: ширина по основанию стены и высота вверх по подъёму,
+/// вместе с обрамлением и козырьком (само полотно шейдер рисует внутри).
+/// Разные они не для разнообразия, а потому что дверь — это масштабная линейка
+/// дома: в подъезд входят по двое, в частный дом по одному, у витрины створки
+/// стеклянные во весь рост, у склада не дверь, а ворота.
+pub(super) fn door_size(kind: WallKind) -> Vec2 {
+    match kind {
+        WallKind::Panel | WallKind::Brick => Vec2::new(1.9, 2.8),
+        WallKind::Plaster => Vec2::new(1.3, 2.4),
+        WallKind::Shopfront => Vec2::new(2.4, 3.0),
+        WallKind::Shed => Vec2::new(3.2, 2.9),
+    }
+}
+
+/// Где вход стоит на грани `a→b`, в метрах от её начала, — или `None`, если он
+/// не на ней. Конец грани не её: это начало следующей, и вход в общей вершине
+/// (а размеченный в OSM вход стоит именно в вершине) достаётся одной из двух.
+fn door_on_edge(door: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
+    let length = (b - a).length();
+    let along = (b - a).try_normalize()?;
+    let offset = door - a;
+    let at = offset.dot(along);
+    match offset.perp_dot(along).abs() <= DOOR_ON_WALL && (0.0..length).contains(&at) {
+        true => Some(at),
+        false => None,
+    }
+}
+
+/// Чья это дверь: номер грани кольца, которой вход принадлежит.
+///
+/// Одной, а не всякой, что оказалась в допуске. [`DOOR_ON_WALL`] — полметра, а
+/// ступенька контура в OSM бывает и в двадцать сантиметров: вход тогда попадал
+/// сразу на две грани, каждая вдвигала полотно внутрь себя ([`push_doors`] —
+/// дверь у края грани сдвигается, чтобы влезть целиком), и на стене выходило
+/// два полотна рядом при одной двери в данных.
+///
+/// Побеждает **ближайшая** грань, при равенстве — та, что раньше в кольце.
+/// Ничью надо разрешать явно: у вырожденного нулевого уступа расстояние до
+/// обеих граней одинаково с точностью до бита, и «строго ближе» тогда не
+/// отсекает ни одну.
+fn door_edge(ring: &[Vec2], door: Vec2) -> Option<usize> {
+    let mut best: Option<(f32, usize)> = None;
+    for index in 0..ring.len() {
+        let from = ring[index];
+        let to = ring[(index + 1) % ring.len()];
+        if door_on_edge(door, from, to).is_none() {
+            continue;
+        }
+        let Some(along) = (to - from).try_normalize() else {
+            continue;
+        };
+        let across = (door - from).perp_dot(along).abs();
+        if best.is_none_or(|(nearest, _)| across < nearest) {
+            best = Some((across, index));
+        }
+    }
+    best.map(|(_, index)| index)
+}
+
+/// Входы этой стены — **из данных**, а не по броску шейдера.
+///
+/// Дверь дома придумана не здесь: `osm::entrances` ставит её на грань, которая
+/// смотрит на дорогу, и не ставит на ту, к которой прижат сосед; туда же идёт
+/// пешка (`human::systems::building_target`) и туда же смотрит гизмо дверей.
+/// Пока шейдер сам разыгрывал вход на 24 % панелей первого этажа, все трое
+/// говорили о разных дверях: нарисованная стояла там, где входа нет, а вход —
+/// там, где стена глухая. Поэтому дверь **приходит геометрией**, и панельная
+/// сетка её не двигает: снести полотно к центру ячейки — те же полтора метра
+/// расхождения, ради устранения которых всё и затевалось.
+///
+/// Два четырёхугольника на вход:
+///
+/// * **заплата** — ячейки стены, которые задевает полотно, целиком: рама и код
+///   у неё те же, что у стены (швы и кладка проходят насквозь), но помечена
+///   она [`WallMark::Solid`], то есть без проёмов. Без неё из-за двери
+///   выглядывало бы окно этой ячейки: окно стоит по центру ячейки, а дверь —
+///   где ей велели данные, и они пересекаются;
+/// * **полотно** — ровно проём, со своей рамой в клетку `[0, 1]²`
+///   ([`WallFrame::opening`]) и кодом [`DOOR_CODE`].
+///
+/// Дверь у самого угла (в OSM вход — это вершина кольца, то есть угол дома)
+/// вдвигается внутрь стены целиком: половина полотна, уехавшая на соседнюю
+/// грань, читалась бы как дыра в углу. Угловой вход достаётся **одной** грани —
+/// той, для которой он начало, а не конец.
+fn push_doors(
+    builder: &mut MeshBuilder,
+    building: &PolyArea,
+    wall: &WallLook,
+    span: &WallSpan,
+    openings: &[ArchOpening],
+    color: LinearRgba,
+) {
+    if building.entrances.is_empty() {
+        return;
+    }
+    let length = span.length();
+    let Some(along) = (span.b - span.a).try_normalize() else {
+        return;
+    };
+    let size = door_size(wall.kind);
+    if length < size.x {
+        return;
+    }
+    let columns = span.columns();
+    let panel = length / columns;
+    // клетка стены по вертикали — этаж; выше него дверь не поднимается
+    let storey_up = span.lift / (span.storeys + PARAPET_CELLS);
+    let door_up = storey_up * (size.y / STOREY_HEIGHT).min(1.0);
+    let seed = span.seed();
+
+    // заплата у всех дверей этой стены одна: рама самой стены, помеченная
+    // «без проёмов». От двери она не зависит, а `push_doors` зовут на каждую
+    // грань силуэта — считать её внутри цикла значило бы пересчитывать посев
+    // и раскладку балконов на каждый вход
+    let patch = wall_frame(building, wall, span).map(|frame| frame.marked(WallMark::Solid));
+    // номер этой грани в кольце — по нему и решается, чья дверь
+    let mine = building
+        .outer
+        .iter()
+        .position(|&from| from == span.a)
+        .filter(|index| building.outer[(index + 1) % building.outer.len()] == span.b);
+
+    for &door in &building.entrances {
+        // сперва дешёвая проверка «эта дверь вообще на этой грани»: `door_edge`
+        // обходит всё кольцо, и звать его на каждый вход каждой стены незачем
+        let Some(at) = door_on_edge(door, span.a, span.b) else {
+            continue;
+        };
+        // вход принадлежит **одной** грани — ближайшей: у ступеньки контура
+        // мельче полуметра его забирали обе, каждая вдвигала полотно внутрь
+        // себя, и на стене выходила двойная дверь
+        if door_edge(&building.outer, door) != mine {
+            continue;
+        }
+        let half = size.x / 2.0;
+        let center = at.clamp(half, length - half);
+        // арка — уже проём во всю стену, второго в нём не бывает
+        if openings.iter().any(|opening| {
+            opening.a == span.a
+                && opening.b == span.b
+                && center + half > opening.low
+                && center - half < opening.high
+        }) {
+            continue;
+        }
+
+        let first = ((center - half) / panel).floor().max(0.0) * panel;
+        let last = (((center + half) / panel).ceil().min(columns)) * panel;
+        let (p0, p1) = (span.a + along * first, span.a + along * last);
+        builder.set_wall(patch);
+        builder.push_quad([p0, p1, p1 + storey_up, p0 + storey_up], color);
+
+        let (d0, d1) = (
+            span.a + along * (center - half),
+            span.a + along * (center + half),
+        );
+        builder.set_wall(WallFrame::opening(d0, d1, door_up, DOOR_CODE, seed));
+        builder.push_quad([d0, d1, d1 + door_up, d0 + door_up], color);
+    }
+}
 
 /// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
 fn push_hip(builder: &mut MeshBuilder, roof: &HipRoof) {
@@ -222,7 +540,7 @@ pub(super) fn push_flat_roof(
 /// значит её настоящая нормаль смотрит против подъёма — это и выбирает
 /// сторону перпендикуляра, обход кольца тут ни при чём.
 pub(super) fn wall_colors(
-    facade: Color,
+    facade: Srgba,
     a: Vec2,
     b: Vec2,
     lift_dir: Vec2,
@@ -232,7 +550,7 @@ pub(super) fn wall_colors(
     if normal.dot(lift_dir) > 0.0 {
         normal = -normal;
     }
-    let bottom = shade_by_light(facade.to_srgba(), normal, WALL_LIT_MIX, WALL_SHADED_MIX);
+    let bottom = shade_by_light(facade, normal, WALL_LIT_MIX, WALL_SHADED_MIX);
     let top = bottom.mix(&Srgba::WHITE, WALL_TOP_LIGHTEN);
     (bottom.into(), top.into())
 }
@@ -248,7 +566,9 @@ pub(super) fn facade_and_roof_builders(
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
     for (index, building) in buildings.iter().enumerate() {
-        let facade_color = facade_color(building);
+        // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
+        // цвет у неё тот же, что был бы у настоящей стены в 2.5D
+        let facade_color = wall_look(building, storeys_of(building)).base;
 
         // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
         // только вдоль южных граней любого полигона. Сдвиг — по высоте из
@@ -262,7 +582,7 @@ pub(super) fn facade_and_roof_builders(
             .iter()
             .map(|hole| hole.iter().map(|p| *p + offset).collect())
             .collect();
-        facades.push_polygon(&facade_outer, &facade_holes, facade_color.to_linear());
+        facades.push_polygon(&facade_outer, &facade_holes, facade_color.into());
         // крыши — отдельный слой поверх фасадов, так что вырезать проём из
         // полосы достаточно: над аркой крыша останется целой сама собой
         if let Some(passages) = arches.get(&index) {
@@ -537,6 +857,7 @@ pub(super) fn extrusion_builder(
             &mut builder,
             building,
             &look,
+            &wall_of(building),
             color,
             RoofShape::Auto,
             detail.clutter,
@@ -551,56 +872,82 @@ pub(super) fn extrusion_builder(
 /// заказанной она равна не всегда: на негодном контуре скатная крыша не
 /// строится, и дом остаётся с плоской.
 ///
-/// Публично, потому что тем же вызовом строит свои дома витрина
-/// `roof_gallery`: форму, материал и цвет она перебирает сама
-/// ([`RoofShape`], [`RoofLook::new`]), а стены, скаты и оборудование обязаны
-/// остаться игровыми. Арок у витрины нет — их знает только городская ветка
-/// ([`push_house_with_arches`]).
+/// Публично, потому что тем же вызовом строят свои дома витрины: форму,
+/// материал кровли и цвет перебирает `roof_gallery` ([`RoofShape`],
+/// [`RoofLook::new`]), облицовку стен — `wall_gallery` ([`WallLook::new`]), а
+/// геометрия, скаты и оборудование обязаны остаться игровыми. Арок у витрин
+/// нет — их знает только городская ветка ([`push_house_with_arches`]).
+///
+/// `wall` — вход, а не вывод из дома, по той же причине, по какой входом стала
+/// `RoofLook`: посевом до всякого сочетания материала с высотой не добраться
+/// (витраж не выпадает частному дому), а витрина обязана показать их все. Что
+/// выбрала бы сама игра, отвечает [`wall_of`].
 pub fn push_house(
     builder: &mut MeshBuilder,
     building: &PolyArea,
     look: &RoofLook,
+    wall: &WallLook,
     color: Srgba,
     shape: RoofShape,
     clutter: bool,
 ) -> RoofShape {
-    push_house_with_arches(builder, building, look, color, shape, clutter, &[])
+    push_house_with_arches(builder, building, look, wall, color, shape, clutter, &[])
 }
 
+/// Облицовка, которую игра выбрала бы этому дому. Витринам — чтобы не
+/// повторять у себя деление высоты на высоту этажа, городу — чтобы не звать
+/// `wall_look` мимо [`storeys_of`].
+pub fn wall_of(building: &PolyArea) -> WallLook {
+    wall_look(building, storeys_of(building))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_house_with_arches(
     builder: &mut MeshBuilder,
     building: &PolyArea,
     look: &RoofLook,
+    wall: &WallLook,
     color: Srgba,
     shape: RoofShape,
     clutter: bool,
     openings: &[ArchOpening],
 ) -> RoofShape {
-    let facade_color = facade_color(building);
+    // этажи считаются от настоящей высоты дома, а не от нарисованной: подъём
+    // сжимает стену вместе с ними
+    let storeys = storeys_of(building);
+    let facade_color = wall.base;
     let lean = Lean::of();
     let lift_dir = lean.dir();
     // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
     let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+    // длинная ось плана — одна на дом, и считается она только там, где может
+    // что-то решить: перебор рёбер в `min_area_rect` квадратичный, а на складе,
+    // частном доме и малоэтажке торец от фасада всё равно ничем не отличается
+    let long_axis = balcony_house(building, wall.kind, storeys)
+        .then(|| plan_long_axis(&building.outer))
+        .flatten();
     builder.set_roof(None);
 
     // видимы стены рёбер, смотрящих против подъёма: при сдвиге
-    // вверх-вправо — южные и западные
+    // вверх-вправо — южные и западные; двор добавляет к ним внутреннюю стену
+    // своей дальней стороны — ту, чья наружная (для кольца дыры) нормаль
+    // смотрит по подъёму
     let seed = building_seed(building);
-    // этажи считаются от настоящей высоты дома, а не от нарисованной
-    let height = height_or_default(building);
-    for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
-        let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-        builder.set_wall(wall_frame(building, a, b, lift, height));
-        push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
-    }
-    // двор: видима внутренняя стена его дальней стороны — та, чья
-    // наружная (для кольца дыры) нормаль смотрит по подъёму
+    let mut walls = silhouette_edges(&building.outer, -lift_dir);
     for hole in &building.holes {
-        for (a, b) in silhouette_edges(hole, lift_dir) {
-            let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-            builder.set_wall(wall_frame(building, a, b, lift, height));
-            push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
-        }
+        walls.extend(silhouette_edges(hole, lift_dir));
+    }
+    // ...и кладутся они по глубине, а не по обходу контура: у дома со
+    // ступенчатым фасадом соседние стены перекрываются на экране
+    for index in wall_order(&walls, lean, lift) {
+        let (a, b) = walls[index];
+        let span = WallSpan::new(a, b, lift, storeys, long_axis);
+        let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
+        builder.set_wall(wall_frame(building, wall, &span));
+        push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
+        // вход ложится поверх стены, которой он принадлежит, — порядок кладки
+        // внутри дома и есть его глубина
+        push_doors(builder, building, wall, &span, openings, bottom);
     }
     builder.set_roof(None);
 
@@ -622,10 +969,12 @@ fn push_house_with_arches(
                     continue;
                 }
                 let (_, top) = wall_colors(facade_color, a, b, lift_dir);
-                // фронтон продолжает раму стены под ним — иначе швы рвались бы
-                // ровно на карнизе, — но помечен как «над карнизом»
+                // фронтон продолжает раму стены под ним — иначе рисунок рвался
+                // бы ровно на карнизе, — но помечен как «над карнизом»: проёмов
+                // на треугольнике нет, окно на нём резалось бы скатом
+                let span = WallSpan::new(a, b, lift, storeys, long_axis);
                 builder.set_wall(
-                    wall_frame(building, a, b, lift, height).map(WallFrame::without_balconies),
+                    wall_frame(building, wall, &span).map(|frame| frame.marked(WallMark::Solid)),
                 );
                 builder.push_polygon(&[a, b, apex], &[], top);
             }

@@ -8,10 +8,24 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
-use crate::map::osm::fixture;
+use crate::map::meshing::unpack_material;
 use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::{AreaKind, BuildingUse, fixture};
 use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
+
+/// Стена ли это, если смотреть на слот материала так, как смотрит шейдер, —
+/// числом с плавающей точкой из вершинного атрибута. В слоте лежат два числа
+/// сразу (код и этажность), кровля и стена делят его на двоих, и разбирать
+/// его в каждом тесте по-своему — верный способ разойтись со словарём.
+fn is_wall(slot: f32) -> bool {
+    WallKind::is_code(unpack_material(slot).0)
+}
+
+/// Сколько этажей записано в слоте.
+fn slot_storeys(slot: f32) -> f32 {
+    unpack_material(slot).1
+}
 
 fn square() -> Vec<Vec2> {
     vec![
@@ -102,14 +116,14 @@ fn extrusion_walls_face_away_from_the_lift() {
 fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
     let _sun = crate::map::default_sun();
     let lift = Lean::of().dir();
-    let facade = Color::srgb(0.6, 0.6, 0.6);
+    let facade = Srgba::new(0.6, 0.6, 0.6, 1.0);
     let luminance = |color: LinearRgba| color.red + color.green + color.blue;
     // свет из верхнего левого угла: западная стена (нормаль −X) освещена,
     // южная (нормаль −Y) в тени
     let (west, _) = wall_colors(facade, Vec2::new(0.0, 10.0), Vec2::ZERO, lift);
     let (south, _) = wall_colors(facade, Vec2::ZERO, Vec2::new(10.0, 0.0), lift);
-    assert!(luminance(west) > luminance(facade.to_linear()));
-    assert!(luminance(south) < luminance(facade.to_linear()));
+    assert!(luminance(west) > luminance(facade.into()));
+    assert!(luminance(south) < luminance(facade.into()));
     // обход ребра тон не меняет
     let (west_reversed, _) = wall_colors(facade, Vec2::ZERO, Vec2::new(0.0, 10.0), lift);
     assert_eq!(west, west_reversed);
@@ -160,11 +174,14 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
     let mut kremlin = building(square(), None, AreaKind::Kremlin);
     kremlin.building_use = BuildingUse::Church;
 
-    // цвет стены — по назначению, и Кремль вне этой развилки
-    assert_ne!(facade_color(&house), facade_color(&industrial));
-    assert_ne!(facade_color(&church), facade_color(&house));
+    // Стена — тоже по материалу, как и крыша: у частного дома штукатурка или
+    // кирпич, у склада профлист, у храма побелка, и совпасть им неоткуда.
+    // Этажность на этой развилке одна на всех — сравниваются назначения.
+    let wall = |b: &PolyArea| wall_look(b, 2.0).base;
+    assert_ne!(wall(&house), wall(&industrial));
+    assert_ne!(wall(&church), wall(&house));
     let kremlin_plain = building(square(), None, AreaKind::Kremlin);
-    assert_eq!(facade_color(&kremlin), facade_color(&kremlin_plain));
+    assert_eq!(wall(&kremlin), wall(&kremlin_plain));
 
     // а крыша — по материалу: у частного дома черепица или металл, у
     // промзоны профлист или битум, и одинаковыми они не выходят
@@ -219,15 +236,14 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
-    // у стены теперь своя рамка и свой код — по ней шейдер кладёт межэтажные
-    // швы; ноль остаётся тому, у чего фактуры нет вовсе (оборудование),
-    // а у этой коробки нет ни того, ни другого
-    let wall = RoofKind::Wall.code() as f32;
-    assert!(frames.iter().any(|frame| frame[2] == wall), "walls");
+    // у стены своя рамка и свой код — по ней шейдер кладёт швы и проёмы; ноль
+    // остаётся тому, у чего фактуры нет вовсе (оборудование), а у этой коробки
+    // нет ни того, ни другого
+    assert!(frames.iter().any(|frame| is_wall(frame[2])), "walls");
     assert!(
         frames
             .iter()
-            .any(|frame| frame[2] > 0.0 && frame[2] != wall),
+            .any(|frame| frame[2] > 0.0 && !is_wall(frame[2])),
         "roof"
     );
 }
@@ -245,6 +261,7 @@ fn gables_carry_frames_like_walls() {
         &mut builder,
         &house,
         &look,
+        &WallLook::new(WallKind::Plaster, Srgba::WHITE),
         look.base,
         RoofShape::Gable,
         false,
@@ -261,13 +278,24 @@ fn gables_carry_frames_like_walls() {
     // нуля — и швы всё равно продолжают стенные: верх стены приходится ровно
     // на целый этаж, а целое смещение сетке безразлично.
     //
-    // Помечен он, как всякая глухая стена, знаком посева.
-    let wall = RoofKind::Wall.code() as f32;
+    // Метка едет посевом: у стены без балконов он в `(-2, -1]`, у фронтона в
+    // `(-4, -3]` — на нём нет и окон, они резались бы скатом.
+    let marks: Vec<f32> = frames
+        .iter()
+        .filter(|frame| is_wall(frame[2]))
+        .map(|frame| frame[3])
+        .collect();
     assert!(
-        frames
-            .iter()
-            .all(|frame| frame[2] != wall || frame[3] < 0.0),
+        marks.iter().all(|seed| *seed < 0.0),
         "у частного дома в два этажа балконов нет ни на стене, ни на фронтоне"
+    );
+    assert!(
+        marks.iter().any(|seed| *seed < -2.5),
+        "фронтон помечен своей меткой, а не общей «без балконов»"
+    );
+    assert!(
+        marks.iter().any(|seed| (-2.5..0.0).contains(seed)),
+        "стена под ним — обычная глухая, окна на ней есть"
     );
 }
 
@@ -280,26 +308,130 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
     block.building_use = BuildingUse::Apartments;
     let builder = extrusion_builder(&[block], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
-    let wall = RoofKind::Wall.code() as f32;
-    let cells: Vec<[f32; 4]> = frames.iter().copied().filter(|f| f[2] == wall).collect();
+    let cells: Vec<[f32; 4]> = frames.iter().copied().filter(|f| is_wall(f[2])).collect();
     assert!(!cells.is_empty(), "стены должны нести свою раму");
 
     let far = cells.iter().fold(0.0_f32, |far, cell| far.max(cell[0]));
     let top = cells.iter().fold(0.0_f32, |top, cell| top.max(cell[1]));
     let bottom = cells.iter().fold(0.0_f32, |low, cell| low.min(cell[1]));
-    // 15 м это пять этажей по три, и верх стены попадает ровно на пятый
-    assert!((top - 5.0).abs() < 1e-3, "верх стены — целый этаж: {top}");
+    // 15 м это пять этажей по три, а **верх стены** приходится выше пятого:
+    // над последним этажом лежит запас под карниз (`PARAPET_CELLS`), и он
+    // настоящий кусок стены, а не полоса, закрашенная внутри верхнего этажа.
+    // Целость счёта это не ломает — она про границы этажей, и пятая по-прежнему
+    // целая.
+    let expected_top = 5.0 + crate::map::meshing::PARAPET_CELLS;
+    assert!(
+        (top - expected_top).abs() < 1e-3,
+        "верх стены — пятый этаж плюс карниз: {top}"
+    );
     assert!(bottom.abs() < 1e-3, "низ стены — ноль: {bottom}");
     // длинная стена 40 м по 3.2 — тринадцать панелей, и её край ровно на них
     assert!(
         (far - 13.0).abs() < 1e-3,
         "край стены — целая панель: {far}"
     );
-    // пятиэтажный жилой дом — как раз тот, у кого балконы бывают
+    // пятиэтажный жилой дом — как раз тот, у кого балконы бывают, и рама несёт
+    // это положительным посевом. По **длинному фасаду**: у дома 20 на 40 есть
+    // и торец, а он глухой — про него отдельный тест
+    // (`a_gable_end_carries_no_balconies`), здесь же речь про целость ячеек
     assert!(
-        cells.iter().all(|cell| cell[3] >= 0.0),
-        "у стен этого дома балконы должны быть"
+        cells.iter().any(|cell| cell[3] >= 0.0),
+        "у длинного фасада этого дома балконы должны быть"
     );
+    // Этажность едет в том же слоте, что и код, и должна совпасть с той, по
+    // которой посчитана координата: иначе шейдер поставит карниз не там, где
+    // кончается стена, — а без неё он вовсе не знает, где у стены верх.
+    assert!(
+        cells.iter().all(|cell| slot_storeys(cell[2]) == 5.0),
+        "в слоте материала должны лежать пять этажей"
+    );
+}
+
+/// Где на стене оказались дверные полотна: `x` каждой вершины кода
+/// [`DOOR_CODE`], в порядке сборки.
+fn door_vertices(building: &PolyArea, kind: WallKind) -> Vec<Vec2> {
+    let look = RoofLook::new(RoofKind::Bitumen, Srgba::WHITE, Vec2::X, 0.0);
+    let wall = WallLook::new(kind, Srgba::WHITE);
+    let mut builder = MeshBuilder::with_roof_coords();
+    push_house(
+        &mut builder,
+        building,
+        &look,
+        &wall,
+        look.base,
+        RoofShape::Flat,
+        false,
+    );
+    let frames = builder.roof_coords_for_test().expect("roof coords");
+    builder
+        .positions_for_test()
+        .iter()
+        .zip(frames)
+        .filter(|(_, frame)| unpack_material(frame[2]).0 == DOOR_CODE)
+        .map(|(point, _)| Vec2::new(point[0], point[1]))
+        .collect()
+}
+
+/// Дверь рисуется **там, где стоит вход из данных**, и это вся суть перемены:
+/// пока шейдер разыгрывал вход сам, нарисованная дверь не совпадала ни с
+/// гизмой дверей, ни с точкой, к которой идёт пешка.
+#[test]
+fn a_door_is_drawn_where_the_entrance_stands() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(20.0, 40.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    // южная грань — та, что видна при подъёме вверх-вправо
+    block.entrances = vec![Vec2::new(12.0, 0.0)];
+
+    let doors = door_vertices(&block, WallKind::Panel);
+    assert!(!doors.is_empty(), "вход из данных должен дойти до меша");
+    // низ полотна — на земле, у самого основания стены; верх уехал по
+    // подъёму, и мерить ширину по нему нельзя: стена — параллелограмм
+    let base: Vec<Vec2> = doors.into_iter().filter(|at| at.y.abs() < 1e-3).collect();
+    assert_eq!(base.len(), 2, "у полотна две вершины на земле: {base:?}");
+    let left = base.iter().fold(f32::MAX, |left, at| left.min(at.x));
+    let right = base.iter().fold(f32::MIN, |right, at| right.max(at.x));
+    let half = door_size(WallKind::Panel).x / 2.0;
+    assert!(
+        (left - (12.0 - half)).abs() < 1e-3 && (right - (12.0 + half)).abs() < 1e-3,
+        "полотно стоит на входе: {left}..{right}"
+    );
+}
+
+/// Дома без размеченного входа — а это дом до `osm::entrances` и всякий дом
+/// витрины — не носят дверей вовсе: рисовать нечего.
+#[test]
+fn a_building_without_entrances_gets_no_doors() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(20.0, 40.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    assert!(door_vertices(&block, WallKind::Panel).is_empty());
+}
+
+/// Метки стен одного дома при **заказанной** облицовке. Заказана она потому,
+/// что материал дому выбирает посев, а эти тесты не про лотерею: без заказа
+/// пятиэтажка раз в десять выпадений оказалась бы штукатуркой, и тест про
+/// балконы падал бы по причине, к балконам отношения не имеющей.
+fn wall_marks(building: &PolyArea, kind: WallKind) -> Vec<f32> {
+    let look = RoofLook::new(RoofKind::Bitumen, Srgba::WHITE, Vec2::X, 0.0);
+    let wall = WallLook::new(kind, Srgba::WHITE);
+    let mut builder = MeshBuilder::with_roof_coords();
+    push_house(
+        &mut builder,
+        building,
+        &look,
+        &wall,
+        look.base,
+        RoofShape::Flat,
+        false,
+    );
+    builder
+        .roof_coords_for_test()
+        .expect("roof coords")
+        .iter()
+        .filter(|frame| is_wall(frame[2]))
+        .map(|frame| frame[3])
+        .collect()
 }
 
 /// Балкон — примета жилого дома в несколько этажей, а не всякой стены: на
@@ -307,35 +439,172 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
 #[test]
 fn balconies_skip_low_houses_and_narrow_walls() {
     let _sun = crate::map::default_sun();
-    let wall = RoofKind::Wall.code() as f32;
-    let marks = |building: PolyArea| -> Vec<f32> {
-        let builder = extrusion_builder(&[building], &[], detail(false));
-        builder
-            .roof_coords_for_test()
-            .expect("roof coords")
-            .iter()
-            .filter(|frame| frame[2] == wall)
-            .map(|frame| frame[3])
-            .collect()
-    };
 
     // частный дом: два этажа, балконам взяться неоткуда
     let mut house = building(oblong(9.0, 18.0), Some(6.0), AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(marks(house).iter().all(|seed| *seed < 0.0), "частный дом");
+    assert!(
+        wall_marks(&house, WallKind::Panel)
+            .iter()
+            .all(|seed| *seed < 0.0),
+        "частный дом"
+    );
 
-    // тот же дом ростом с пятиэтажку — балконы появляются
+    // тот же дом ростом с пятиэтажку — балконы появляются. По длинному фасаду:
+    // короткая сторона у этого плана уже торец, и о ней отдельный тест
+    // (`a_gable_end_carries_no_balconies`)
     let mut block = building(oblong(9.0, 18.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
-    assert!(marks(block).iter().all(|seed| *seed >= 0.0), "пятиэтажка");
+    assert!(
+        wall_marks(&block, WallKind::Panel)
+            .iter()
+            .any(|seed| *seed >= 0.0),
+        "пятиэтажка"
+    );
 
-    // а вот торец в две панели остаётся глухим и у неё: длинная стена (40 м,
-    // 13 панелей) балконы несёт, короткая (6 м, 2 панели) — нет
-    let mut stepped = building(oblong(6.0, 40.0), Some(15.0), AreaKind::Building);
+    // а вот простенок в две панели остаётся глухим и у неё. План тут нарочно
+    // почти квадратный (8 на 6 — меньше `GABLE_PLAN_RATIO_MIN`), торцов у него
+    // нет вовсе, и порог ширины отвечает за эту стену один: 8 м — три панели,
+    // балконы есть; 6 м — две, балконов нет
+    let mut stepped = building(oblong(6.0, 8.0), Some(15.0), AreaKind::Building);
     stepped.building_use = BuildingUse::Apartments;
-    let seeds = marks(stepped);
-    assert!(seeds.iter().any(|seed| *seed >= 0.0), "длинная стена");
-    assert!(seeds.iter().any(|seed| *seed < 0.0), "узкий торец");
+    let seeds = wall_marks(&stepped, WallKind::Panel);
+    assert!(seeds.iter().any(|seed| *seed >= 0.0), "стена в три панели");
+    assert!(
+        seeds.iter().any(|seed| *seed < 0.0),
+        "простенок в две панели"
+    );
+}
+
+/// «Глухие торцы» из постановки: у панельной секции балконы идут по **длинному
+/// фасаду**, а торец их не несёт. Отличает их не ширина стены — торец секции
+/// это её глубина, 12–14 м, то есть четыре панели, и порог
+/// `BALCONY_COLUMNS_MIN` его пропускает, — а то, что торец стоит поперёк
+/// длинной оси плана.
+#[test]
+fn a_gable_end_carries_no_balconies() {
+    let _sun = crate::map::default_sun();
+
+    // секция 13 × 44 м: торец вчетверо шире порога ширины и всё равно глухой
+    let mut section = building(oblong(13.0, 44.0), Some(15.0), AreaKind::Building);
+    section.building_use = BuildingUse::Apartments;
+    let seeds = wall_marks(&section, WallKind::Panel);
+    assert!(seeds.iter().any(|seed| *seed >= 0.0), "длинный фасад");
+    assert!(seeds.iter().any(|seed| *seed < 0.0), "торец секции");
+
+    // а у башни торца нет: план квадратный, длинного фасада в нём не выделить,
+    // и балконы несут все стены — иначе половина дома глохла бы по броску
+    // округления
+    let mut tower = building(oblong(24.0, 30.0), Some(27.0), AreaKind::Building);
+    tower.building_use = BuildingUse::Apartments;
+    assert!(
+        wall_marks(&tower, WallKind::Panel)
+            .iter()
+            .all(|seed| *seed >= 0.0),
+        "башня"
+    );
+}
+
+/// Пятиэтажка `building=house` — та самая, на которой порог этажности не
+/// срабатывает, а балконов всё равно не бывает: `house` это отдельный дом с
+/// участком, и ряд балконов на нём читался бы как ошибка разбора.
+#[test]
+fn a_tall_house_still_gets_no_balconies() {
+    let _sun = crate::map::default_sun();
+    let mut mansion = building(oblong(12.0, 30.0), Some(15.0), AreaKind::Building);
+    mansion.building_use = BuildingUse::House;
+    assert!(
+        wall_marks(&mansion, WallKind::Panel)
+            .iter()
+            .all(|seed| *seed < 0.0),
+        "у `building=house` балконов нет ни при какой высоте"
+    );
+}
+
+/// Балкон полагается панели и кирпичу, и только им: штукатурка, витраж и
+/// профлист — это частный сектор, торговля и склад, где балкона не бывает по
+/// самому смыслу материала.
+#[test]
+fn only_panel_and_brick_carry_balconies() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(12.0, 40.0), Some(27.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    for kind in WallKind::ALL {
+        let marks = wall_marks(&block, kind);
+        assert!(!marks.is_empty(), "стены должны нести раму: {kind:?}");
+        let with = marks.iter().any(|seed| *seed >= 0.0);
+        let expected = matches!(kind, WallKind::Panel | WallKind::Brick);
+        assert_eq!(with, expected, "балконы у {kind:?}");
+    }
+}
+
+/// Облицовку выбирают назначение и **рост**, причём рост первым: низкий дом не
+/// бывает ни панельным, ни витражным, чем бы он ни был по тегу.
+#[test]
+fn the_cladding_follows_the_use_and_the_height() {
+    let _sun = crate::map::default_sun();
+    let of = |use_: BuildingUse, height: f32| {
+        let mut area = building(oblong(14.0, 40.0), Some(height), AreaKind::Building);
+        area.building_use = use_;
+        wall_of(&area).kind
+    };
+    // Кремль кирпичный, храм белёный — оба мимо таблиц, как и у кровель
+    let mut kremlin = building(oblong(14.0, 40.0), Some(12.0), AreaKind::Kremlin);
+    kremlin.building_use = BuildingUse::Church;
+    assert_eq!(wall_of(&kremlin).kind, WallKind::Brick, "Кремль");
+    assert_eq!(of(BuildingUse::Church, 12.0), WallKind::Plaster, "храм");
+
+    // частный дом и гараж идут по своим таблицам мимо развилки по росту, и
+    // панели среди них нет ни в одном слоте
+    for height in [6.0, 27.0] {
+        assert_ne!(of(BuildingUse::House, height), WallKind::Panel, "дом");
+        assert_ne!(of(BuildingUse::Garage, height), WallKind::Panel, "гараж");
+    }
+
+    // а всё остальное низкое уходит в малоэтажную таблицу, где панели тоже нет
+    for use_ in [
+        BuildingUse::Apartments,
+        BuildingUse::Commercial,
+        BuildingUse::Public,
+        BuildingUse::Other,
+    ] {
+        assert_ne!(of(use_, 6.0), WallKind::Panel, "низкий {use_:?}");
+    }
+}
+
+/// Все пять облицовок обязаны встречаться в городе. Тест не про красоту: он
+/// ловит и мёртвый слот в таблице, и слабый разбор посева — сетка домов ровным
+/// шагом это ровно тот вход, на котором плохо перемешанный хеш выстраивается в
+/// узор, и в витрине это выглядело бы как «на девяти этажах всегда
+/// штукатурка».
+#[test]
+fn every_cladding_reaches_the_city() {
+    let _sun = crate::map::default_sun();
+    let mut seen: Vec<WallKind> = Vec::new();
+    for row in 0..12 {
+        for column in 0..12 {
+            let at = Vec2::new(column as f32 * 31.0, row as f32 * 23.0);
+            let outer: Vec<Vec2> = oblong(14.0, 40.0).into_iter().map(|p| p + at).collect();
+            // назначения по кругу, высоты по кругу — так перебираются обе
+            // развилки сразу
+            let mut area = building(outer, Some([6.0, 15.0, 27.0][row % 3]), AreaKind::Building);
+            area.building_use = [
+                BuildingUse::House,
+                BuildingUse::Apartments,
+                BuildingUse::Commercial,
+                BuildingUse::Industrial,
+                BuildingUse::Public,
+                BuildingUse::Other,
+            ][column % 6];
+            let kind = wall_of(&area).kind;
+            if !seen.contains(&kind) {
+                seen.push(kind);
+            }
+        }
+    }
+    for kind in WallKind::ALL {
+        assert!(seen.contains(&kind), "{kind:?} не встретилась ни разу");
+    }
 }
 
 fn oblong(width: f32, length: f32) -> Vec<Vec2> {
@@ -606,6 +875,75 @@ fn the_order_writes_every_building_once() {
     let mut seen = order.clone();
     seen.sort_unstable();
     assert_eq!(seen, (0..list.len()).collect::<Vec<_>>());
+}
+
+/// Дом со ступенчатым фасадом: западная секция выдвинута к зрителю на 3 м,
+/// восточная стоит за ней. Ровно тот случай, на котором обход контура даёт
+/// обратный порядок — южные стены секций встречаются на экране на ширину
+/// ступени.
+fn stepped_facade() -> PolyArea {
+    building(
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(20.0, 0.0),
+            Vec2::new(20.0, 3.0),
+            Vec2::new(40.0, 3.0),
+            Vec2::new(40.0, 20.0),
+            Vec2::new(0.0, 20.0),
+        ],
+        Some(15.0),
+        AreaKind::Building,
+    )
+}
+
+#[test]
+fn the_wall_order_puts_the_stepped_back_section_first() {
+    let _sun = crate::map::default_sun();
+    let stepped = stepped_facade();
+    let lean = Lean::of();
+    let walls = silhouette_edges(&stepped.outer, -lean.dir());
+    // видимы три стены: два южных фасада секций и западный торец
+    let near = walls
+        .iter()
+        .position(|(a, b)| a.y == 0.0 && b.y == 0.0)
+        .expect("near section wall");
+    let far = walls
+        .iter()
+        .position(|(a, b)| a.y == 3.0 && b.y == 3.0)
+        .expect("far section wall");
+    // обход контура кладёт ближнюю раньше дальней — это и есть та ошибка
+    assert!(near < far, "ring order walks the near wall first");
+
+    let lift = extrusion_lift(&stepped, BuildingHeightMode::Extrusion);
+    let order = order::wall_order(&walls, lean, lift);
+    let at = |wall: usize| order.iter().position(|&index| index == wall).unwrap();
+    assert!(
+        at(far) < at(near),
+        "the near wall must cover the far one: {order:?}"
+    );
+    let mut seen = order.clone();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..walls.len()).collect::<Vec<_>>());
+}
+
+#[test]
+fn the_stepped_facade_reaches_the_mesh_near_wall_last() {
+    let _sun = crate::map::default_sun();
+    let stepped = stepped_facade();
+    let mesh = extrusion_builder(&[stepped], &[], detail(false)).build();
+    let points = mesh_points(&mesh);
+    // угол, который есть только у своей стены: (20, 0) — у ближней,
+    // (40, 3) — у дальней
+    let first = |corner: Vec2| {
+        points
+            .iter()
+            .position(|p| p.distance(corner) < 0.01)
+            .unwrap_or_else(|| panic!("no vertex at {corner:?}"))
+    };
+    assert!(
+        first(Vec2::new(40.0, 3.0)) < first(Vec2::new(20.0, 0.0)),
+        "the far section's wall goes into the buffer first"
+    );
 }
 
 fn house(outer: Vec<Vec2>) -> PolyArea {

@@ -1,5 +1,6 @@
-//! Витрина припаркованных машин: восемь форм улицы, на которых ряд ломался, —
-//! разом на одном экране, с ручкой занятости и поворотом сцены.
+//! Витрина припаркованных машин: восемь форм улицы, на которых ряд ломался, и
+//! девятой клеткой — стенд кузовов, — разом на одном экране, с ручкой
+//! занятости, ступенью подробности и поворотом сцены.
 //!
 //! Ряд вдоль улицы устроен просто, а ломается сложно — и ломается не на
 //! прямой, а на форме: на ломаной, чьи звенья короче отступа; на изломе, где
@@ -9,7 +10,9 @@
 //! ради чего он на карте есть.
 //!
 //! Поэтому клетки витрины — **не** красивые улицы, а перечень случаев: под
-//! каждой написано, что именно на ней надо увидеть ([`scene`]).
+//! каждой написано, что именно на ней надо увидеть ([`scene`]). Девятая клетка
+//! отвечает на другой вопрос — не «где стоит ряд», а «что в нём стоит»: пять
+//! типов кузова на три ступени подробности ([`stand`]).
 //!
 //! **Геометрия здесь та же, что в игре, а не её копия.** Машины кладёт
 //! [`cars_mesh`] — одна дверь наружу, за которой остались и шаг, и палитра, и
@@ -47,6 +50,7 @@ mod params;
 mod scene;
 #[path = "../gallery_shot.rs"]
 mod shot;
+mod stand;
 
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
@@ -244,7 +248,8 @@ fn gallery_roads(tuning: &Tuning) -> Vec<RoadLine> {
 /// Считается по шагу сетки, а не по геометрии: клетки разного размера, и
 /// кадрировать по самой длинной улице значило бы прижать соседние к краю.
 fn grid_rect() -> Rect {
-    let last = scene::cells().len().saturating_sub(1);
+    // последняя ячейка сетки — стенд кузовов, он идёт следом за клетками-улицами
+    let last = scene::cells().len();
     let half = scene::CELL_PITCH / 2.0;
     // верх сетки — первая клетка с местом под её заголовок, низ — последняя с
     // местом под её подпись; ряды идут вниз, поэтому y у них разного знака
@@ -326,6 +331,72 @@ fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>, view: Res<View
             CAPTION_FONT,
         ));
     }
+    spawn_stand_labels(&mut commands, &font, &view);
+}
+
+/// Подписи стенда кузовов: заголовок, тип под каждым столбцом и ступень
+/// подробности слева от каждой строки. Стенд увеличен трансформом, а подписи
+/// — нет, поэтому их места считаются из тех же координат стенда, умноженных
+/// на его масштаб.
+fn spawn_stand_labels(commands: &mut Commands, font: &Handle<Font>, view: &View) {
+    let index = scene::cells().len();
+    let centre = scene::centre(index);
+    let half = stand::half_size() * stand::SCALE;
+    let label = |text: String, at: Vec2, size: f32, anchor: Anchor| {
+        (
+            Caption,
+            Text2d::new(text),
+            label_font(font, size),
+            TextColor(view.ground.ink()),
+            anchor,
+            view.visibility(),
+            Transform::from_translation(at.extend(Z_CAPTION)).with_scale(Vec3::splat(TEXT_SCALE)),
+        )
+    };
+    commands.spawn(label(
+        format!("{}. Кузова (×{:.0})", index + 1, stand::SCALE),
+        centre + Vec2::new(0.0, scene::HEADER_RISE),
+        HEADER_FONT,
+        Anchor::CENTER,
+    ));
+    commands.spawn(label(
+        "тип кузова выпадает ГПСЧ; здесь он заказан, чтобы увидеть все пять".to_string(),
+        centre - Vec2::new(0.0, scene::CAPTION_DROP),
+        CAPTION_FONT,
+        Anchor::CENTER,
+    ));
+    let gap = CAPTION_FONT * TEXT_SCALE;
+    // ступени — заголовками над столбцами, типы — словом слева от строки,
+    // прижатым к стенду правым краем.
+    //
+    // Правый край подписи типа стоит на 126 м от центра ячейки (полустенд
+    // 118.8 плюс отступ), а граница ячейки — на 150: под слово остаётся 24 м, и
+    // самые длинные («Универсал», «Кроссовер») в них не помещаются — заходят в
+    // поле соседней ячейки метров на десять. Так и оставлено: поле там пустое
+    // (клетка-улица кончается в 100 м от своего центра, а её подписи — заголовок
+    // и примечание — стоят по центру и не дотягиваются), а обе альтернативы
+    // портят сам стенд: мельче он не нужен (`stand::SCALE` — лупа над машиной в
+    // 4.5 м рядом с улицами в сотни), а подпись типа над каждой машиной левого
+    // столбца легла бы на асфальт стенда и сломала сравнение трёх ступеней
+    // подряд, ради которого стенд и заведён.
+    for (column, detail) in stand::DETAILS.iter().enumerate() {
+        let at = stand::at(column, 0) * stand::SCALE;
+        commands.spawn(label(
+            format!("{detail:?}"),
+            centre + Vec2::new(at.x, half.y + gap),
+            CAPTION_FONT,
+            Anchor::CENTER,
+        ));
+    }
+    for (row, (_, name)) in stand::SHAPES.iter().enumerate() {
+        let at = stand::at(0, row) * stand::SCALE;
+        commands.spawn(label(
+            name.to_string(),
+            centre + Vec2::new(-half.x - gap, at.y),
+            CAPTION_FONT,
+            Anchor::CENTER_RIGHT,
+        ));
+    }
 }
 
 /// Пересборка витрины под текущие ручки: асфальт своим мешем, машины —
@@ -366,6 +437,7 @@ fn rebuild_gallery(
             occupancy: tuning.occupancy,
         },
         smoothing,
+        tuning.car_detail(),
     );
 
     // асфальт непрозрачен, у машин тень полупрозрачна — как в игре, два
@@ -377,7 +449,7 @@ fn rebuild_gallery(
     });
     for (builder, z, material, name) in [
         (asphalt, Z_ROAD, flat, "gallery_roads"),
-        (cars, Z_CARS, blended, "gallery_cars"),
+        (cars, Z_CARS, blended.clone(), "gallery_cars"),
     ] {
         if builder.is_empty() {
             continue;
@@ -390,6 +462,17 @@ fn rebuild_gallery(
             Name::new(name),
         ));
     }
+
+    // стенд кузовов — та же геометрия, увеличенная трансформом: ручка
+    // подробности его не касается, на нём все три ступени сразу
+    let centre = scene::centre(scene::cells().len());
+    commands.spawn((
+        GalleryLayer,
+        Mesh2d(meshes.add(stand::mesh().build())),
+        MeshMaterial2d(blended),
+        Transform::from_translation(centre.extend(Z_CARS)).with_scale(Vec3::splat(stand::SCALE)),
+        Name::new("gallery_stand"),
+    ));
 }
 
 /// Подпись шрифтом панелей игры: во встроенном шрифте bevy кириллицы нет.

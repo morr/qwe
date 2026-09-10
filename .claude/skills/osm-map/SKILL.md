@@ -187,7 +187,7 @@ in `CONTEXT.md` and the detail here in the same change.
 
 - **Building height** (`parse/tags.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
-  LiDAR import) or else `building:levels` + `roof:levels` × `METERS_PER_LEVEL` (3 m)
+  LiDAR import) or else `building:levels` + `roof:levels` × `settings::STOREY_HEIGHT` (3 m)
   (Paris 64%, Berlin 59%, London 50%, Tula 31%, **Tokyo 5%**). `parse_measure` handles
   the tag-value zoo — `12`, `12.5`, `12,5`, `12 m`, `3;4`, `40'6"`. Anything outside
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
@@ -195,15 +195,20 @@ in `CONTEXT.md` and the detail here in the same change.
   everywhere but New York, so what fills it in matters: see **Inferred storeys** under
   Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
-  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
-  wall colour (`map/buildings/mod.rs::facade_color`) and the **roofing material** the roof
-  colour then comes from (**Roof material** under Rendering). Two sources in order:
-  `building=*` when the value says something (`house`, `apartments`, `garages`, `church`,
+  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks two
+  material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and the
+  **roofing material** (`::kind_of`); neither colour comes from the class itself, both
+  come from the chosen material's own palette (**Roof material** under Rendering, bullet
+  **The pick**). Two sources in order: `building=*` when the value says something
+  (`house`, `apartments`, `garages`, `church`,
   `school`, …), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
   `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
-  + `amenity=…`. Anything outside the vocabulary is `Other`, the historical beige; the
-  vocabulary covers what a city carries by the hundreds, not the OSM wiki. Tula: `yes`
-  4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
+  + `amenity=…`. Anything outside the vocabulary is `Other`, and `Other` is read by shape
+  rather than left flat: the wall takes the apartment-block table (height having spoken
+  first — under `LOW_RISE_STOREYS` it is the low-rise one whatever the tag), the roof
+  takes the private-sector table for a small footprint and the apartment-block one above
+  it. The vocabulary covers what a city carries by the hundreds, not the OSM wiki.
+  Tula: `yes` 4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
   garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
   the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
@@ -556,7 +561,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
-- **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
+- **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
   the very predicate that decides where a sidewalk and lane markings go, opened up for this
@@ -568,10 +573,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
   photo shows the housing blocks parked solid. `STREET_MIN_WIDTH` (8 m) lets
   `residential`/`unclassified`/`living_street` in and keeps `service` out, which is exactly
-  the line wanted. On an 8 m street the row sits `8/2 − CURB_GAP − CAR_WIDTH/2 = 2.6 m` off
-  the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
-  `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
-  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with
+  the line wanted. On an 8 m street a sedan's row sits `8/2 − CURB_GAP − 1.8/2 = 2.6 m` off
+  the axis (a van's own 1.95 m width narrows that to 2.53 m — the offset is per-body, not a
+  constant, same as the length below), leaving 3.4 m of carriageway between the two rows for
+  a sedan — a yard, and it is pinned by
+  `a_residential_street_gets_a_row`. Bodies of the size their **type** says (`CarShape`,
+  4.4 × 1.8 m for a sedan up to 5.3 × 1.95 for a van)
+  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half of **that** body in from the kerb — the
+  type is therefore rolled before the place, so a van stands as close to the kerb as a
+  sedan does — with
   `CarStyle::occupancy` (`CAR_OCCUPANCY_DEFAULT`, 45 %) of the places taken (a solid row
   from junction to junction looks like a dealership)
   and `END_MARGIN` 2 m clear of each end — that margin is only about the drawn ribbon's
@@ -581,9 +591,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `points.windows(2)` walk dropped every such link whole (51 % of Tula's segments, 35 % of
   its length) and reset the step at every vertex, so the row tore or doubled across a bend.
   `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
-  extra rule handles curvature: a place closer than `CAR_LENGTH` to the last car **placed on
-  that side** is skipped, measured in world distance so it catches a corner and any other
-  bend alike.
+  extra rule handles curvature: a place closer than **half the two bodies' lengths together**
+  to the last car **placed on that side** is skipped, measured in world distance so it catches
+  a corner and any other bend alike. The half-sum, not the new body's own length, is where two
+  bodies nose to tail actually stop overlapping — while every car was the same 4.4 m the two
+  were the same number, and with five `CarShape`s they part: a hatchback behind a van passed
+  the own-length check overlapping it by up to 0.7 m. So `last` carries the length of the car
+  it points at, not only its point. The place is recorded **before** the `PARK_SLOP` shift,
+  because that shift is rolled after the check and pulling its roll forward would move the
+  RNG stream and reposition every row in the city; it is 0.12 m across the row, and
+  `cars_never_overlap_on_a_sharp_bend` carries it as the tolerance on the half-sum.
+  - **Nobody parks by a ruler**, and a row that does reads as warehouse markings rather than
+    a yard: every car is turned by `PARK_SKEW_DEGREES` (2.5°) and shifted across by
+    `PARK_SLOP` (0.12 m), both through the LCG's `bell4` — a bell, so most of the row is
+    almost straight and the odd car is visibly askew. Both numbers are small on purpose:
+    `CURB_GAP` (0.5 m) has to swallow the skew, or a corner of a body ends up on the lane
+    markings.
   - **The row breaks at real junctions, not at way ends.** It used to break at the ends of
     the OSM way, which is wrong in both directions at once: a way cut mid-street by a tag
     change tore the row for no reason, and a way running straight through a crossing parked
@@ -601,18 +624,79 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     are exactly such halves. The same rule is right for an ordinary one-way lane. `across`
     points left, so the right-hand side is `-1`; the direction it is right of is the way's
     own point order, which parse has already normalized (see **RoadLine** above).
-  - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is about a
-    quarter of the car layer's own build, and that whole layer is a few percent of the
-    building layer — a resource cached per world load would not pay for itself. Shares rather
-    than the 0.76 ms of 5.4 ms that stood here: those came from the `cars:` log line, and
-    `measure_cars` in `examples/bench/map_meshing` prints the same split offline.
+  - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is the
+    `breaks` row's 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
+    its near one, and the layer itself is well under the building layer's 79 — a resource
+    cached per world load would not pay for itself. The rows come from `measure_cars` in
+    `examples/bench/map_meshing`; the 0.76 ms of 5.4 ms that stood here came off the `cars:`
+    log line, which App Nap decides, and lumped the parking in with the mesh.
   Colours are a ten-slot
   palette in the shares a photo shows. Every car casts a shadow through the same
-  `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
+  `map::shadow_length_scale()` as the buildings — its length by the **type's own height**
+  (1.5 m for a saloon, 2.3 for a van), which is why the van's shadow is visibly the longer
+  one — and the mesh draws **all shadows first,
   then all bodies** — otherwise a car's shadow lands on top of the neighbour drawn before
   it. The layer is one merged **blended** mesh (the shadow is translucent, the body is not)
   at `Z_CAR` 2.7, above the tram and the rails (a car parks on the asphalt over the tracks)
   and below the portal stain.
+  - **The shadow is a swept silhouette, the way a building's is** (`body::push_shadow` +
+    `body::sweep`) — the hull of the outline and the outline moved by the light, i.e. the
+    Minkowski sum with the segment `[0, offset]`, so the shadow starts **under** the car and
+    runs out from beneath it. What stood here before was the silhouette *translated* by the
+    same offset, and at a low sun that copy detaches completely: a van at 15° is moved
+    8.6 m, four times its own length, leaving the car and a separate dark patch beside it.
+    At the default 59° the offset is 0.9 m and the two constructions differ only in the two
+    notches at the flanks — which is why the defect was invisible until the elevation slider
+    existed. The hull is built by an O(n) walk (an edge whose outward normal faces the light
+    moves, the rest stay, and the two vertices in between carry both copies), never a sort;
+    convexity is what `push_convex` needs and `the_shadow_sweep_is_convex` pins over the
+    whole azimuth × elevation grid, `the_shadow_stays_under_the_car` pins the attachment.
+  - **The edge is soft, by the buildings' own taper** — a `SHADOW_BLUR` (0.35 m) band
+    fading to zero alpha, its width at each vertex `direction · shadow_dir()` clamped at
+    zero, exactly `buildings::layers::penumbra`: hard where the shadow meets the car,
+    full width at the far end, growing along the flanks. A metre there against a third of
+    one here, because a building's shadow is three to ten times longer. Two consequences
+    of that taper are load-bearing: the near edges collapse and **are not emitted at all**,
+    which halves the band's vertices, and the car does **not** end up ringed by a soft
+    fringe — that ring is the "contact skirt" the building shadows took out for reading as
+    a grubby outline, and twenty-two thousand outlined cars would read the same way.
+    The band is `Full` only: past `CAR_DETAIL_MAX_ZOOM` 0.35 m is under two pixels, and it
+    costs four times the vertices of the shadow itself.
+  - **The shadow's own contour is coarser than the body's** — `SHADOW_CORNERS`, the body's
+    six-per-side outline with the two middle vertices dropped. Dropped rather than
+    recomputed: a subset of a convex polygon's vertices is convex and lies inside it, so the
+    shadow cannot poke out from under the body it should be hidden by.
+  - **Shadows of neighbouring cars are not unioned**, unlike the buildings' — at the
+    default sun the sweep is about a metre and `CAR_PITCH` is six, so there is nothing to
+    overlap, and `i_overlay` over 22 k cars would cost more than the whole layer. At a low
+    sun a row's shadows do overlap and stack into double-dark patches; that is the stated
+    price.
+  - **What a car is drawn as** (`cars/body.rs`) — from above a car is **not a rectangle**:
+    it is a rounded silhouette with a dark cabin across the middle — windscreen, roof,
+    backlight. Those three cross bands are what make the patch on the asphalt read as a car;
+    the colour is second, and the flat coloured rectangle that stood here read as a crate
+    precisely because it had none of them. Six points a side make the outline (nose and tail
+    narrower than the midships by `Profile::nose` / `tail`), then the cabin is three quads —
+    windscreen in `GLASS_FRONT` (lighter: the sky is in it), roof in the body colour
+    lightened by `ROOF_LIGHTEN` (it faces straight up, so it is the brightest place on the
+    car), backlight in the darker `GLASS_BACK` — and a pair of mirrors, the cheapest sign
+    that the patch has a front. Painter's order inside the one merged mesh, as everywhere
+    in `map`: the cabin is pushed after the body it lies on.
+  - **The type is `CarShape`**, a ten-slot table in the shares a Russian yard shows (three
+    sedans, three hatchbacks, a wagon, two crossovers, a van), and it decides both the
+    metres (length, width, height) and the layout of the cabin **in fractions of them** —
+    a sedan has a long boot, a hatchback only the overhang behind its backlight, a van's roof
+    starts right behind the windscreen. Fractions rather than metres, so a body is described
+    once and scales with its own size.
+    **What the table actually delivers, in metres of boot** (`(backlight + 0.5) × length`):
+    sedan 0.66, hatch 0.43, crossover 0.41, wagon 0.23, van 0.16 — so «a hatchback has none
+    at all», which stood here and in `body.rs`'s module doc, overstated it: the hatchback's
+    boot is two thirds of the sedan's, not zero, and `the_cabin_runs_from_nose_to_tail_in_order`
+    forbids a zero (it requires `backlight > -0.5`). **It is a near-zoom difference**: the
+    `Full` step runs from `MIN_ZOOM` 0.05 m/px out to `CAR_DETAIL_MAX_ZOOM` 0.18, and sedan
+    against hatchback is 13 px of boot against 9 at the near end but 3.7 against 2.4 at the
+    far one — at the far edge of `Full` only the van and (weakly) the wagon are told apart by
+    the cabin, and the rest of the row differs by its colour and its length.
   - **Decoration, and deliberately so**: cars touch neither the navmesh nor the simulation
     and pawns walk through them. A parked row along every street would otherwise eat the
     pavements the entire crowd walks on.
@@ -628,16 +712,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     asphalt. The invisible case
     goes through the same early return as the far zoom bucket: despawn the old layer, build
     no new one, so no second path can forget the despawn.
-  - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px, so a
-    4.4 m car is never under ~6 px): past the threshold the layer is not drawn at all, which
-    is cheaper than any LOD of the drawing itself. Seeded per street (its first point,
-    like doors and roofs), so the row is the same across rebuilds.
+  - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`), and since the body has detail in
+    it the table is no longer one threshold but four: `CAR_DETAIL_MAX_ZOOM` (0.18 m/px, a
+    24-px car — glass and mirrors still read) → `CarDetail::Full`, `CAR_SILHOUETTE_MAX_ZOOM`
+    (0.4) → `Silhouette` (the outline alone, since a windscreen there is under a pixel),
+    `CAR_MAX_ZOOM` (0.8, a 4.4 m car at ~6 px) → `Block`, the plain rectangle, and past it
+    no layer at all — still cheaper than any LOD of the drawing. `detail_for` is the one
+    place the bucket index becomes a drawing, and the ladder only ever drops vertices.
+    **The layer is built for the whole city, not for the frame**, so the detailed bucket
+    pays for all 22 k cars at once: a one-off hitch on the threshold crossing, of the same
+    nature as `RAIL_LODS`'s deepest bucket, which is what `CAR_DETAIL_MAX_ZOOM` is chosen to
+    keep rare. Seeded per street (its first point, like doors and roofs), so the row is the
+    same across rebuilds.
   - **The gallery** — `cargo run --example car_gallery` (`examples/demos/car_gallery/`, the
     shape of `roof_gallery`): eight cells, and they are **not** pretty streets but the list
     of shapes the row used to break on — straight, a ten-link polyline, a 90° bend, a T and
     a four-way crossing, a divided avenue, an 8 m residential street, a `service` drive and
     a bridge (both empty). Under each one, in the caption, what it is there to show. It may
-    not roll its own geometry: `cars_mesh` is the one door out of `map/cars.rs` and the
+    not roll its own geometry: `cars_mesh` is the one door out of `map/cars/` and the
     cells are described with the very `osm::fixture` the parse tests use, so a cell and a
     test talk about the same object. Its own is only the asphalt underneath, drawn with
     `MeshBuilder::push_ribbon` in the game's `ROAD_COLOR` — the brightness step between a
@@ -649,10 +741,41 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
     `examples/demos/gallery_shot.rs`: it holds the frame counts and window-raise logic, both
     debugged facts (commit 21853a3), and fixes apply there to all galleries at once.
-  - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
-    45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
-    in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
-    once per rebuild and costs nothing per frame.
+  - **The ninth cell is the stand** (`car_gallery/stand.rs`) — five body types × three
+    detail steps, and it answers the other question: not *where* a row stands but *what*
+    stands in it. Neither is readable off a street — the type falls out of the LCG and a van
+    may simply not turn up — so this is the one place in the gallery where the type is
+    **ordered** rather than rolled, exactly as the roof gallery orders a material
+    (`RoofLook::new`) because the seed cannot reach every combination. The geometry is still
+    the game's (`body::push_body` / `push_shadow`, the very calls the city layer makes) and
+    still in metres; only the transform magnifies it (`stand::SCALE`), since a 4.5 m car
+    next to streets hundreds of metres long is otherwise invisible. The `Detail` knob drives
+    the street cells, never the stand — the stand shows all three steps at once.
+  - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
+    machine, so compare runs against runs): **22 069 cars**, and per detail step
+    **1 456 k verts / 27 ms** (Full), **485 k / 11 ms** (Silhouette), **220 k / 5 ms**
+    (Block). **Those are the mesh rows
+    alone**; the two steps in front of them do not depend on the detail and are measured
+    once each — `breaks` 1 ms (`marking_breaks`) and `parking` 2 ms (`park_cars`) — so a
+    rebuild is 30 ms at the near step and 8 ms at the far one.
+    **The swept shadow is what most of the near step's growth bought** (971 k / 15 ms
+    before it, on the same machine and the same run of the buildings' 785 k / 79 ms): the
+    sweep's hull is two vertices *cheaper* than the translated copy was — which is why
+    Silhouette went *down* from 529 k — and the whole of the +485 k is the soft edge, six
+    band quads per car at the near step alone. Keep `parking` on its own
+    timer: while it sat inside the mesh timer the layer's milliseconds compared with
+    nothing — not with the `cars:` line the app logs (which has always included it), and
+    not with the older single-row runs. Next to the building layer
+    (785 k verts, 78 ms — the same run, see **What it costs** under Roof clutter) and above
+    the rail layer's deepest bucket (673 k, 23 ms) — still a
+    layer built once per rebuild that costs nothing per frame.
+    - **The body outline goes through `MeshBuilder::push_convex`, not `push_polygon`**, and
+      that is most of those milliseconds: `push_polygon` calls `earcutr`, which on a
+      12-vertex contour costs several times the laying-out itself and runs twice per car
+      (body and shadow), 22 k cars over. The fan is correct because the outline is convex by
+      construction, and `cars/body.rs::the_outline_is_convex` — an inline `mod tests`, there
+      is no `body/tests.rs` — is what keeps it that way.
+      Measured: Full 40 → 15 ms, Silhouette 35 → 9 ms, vertices unchanged.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark
@@ -851,6 +974,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     their own piece; the back edge is ignored, so the order stays complete and someone in
     the cycle is still drawn wrong. The cure for that is a real depth test (`z` from the
     vertex's height), which the merged mesh does not have.
+    - **The same question is asked once more inside a house** — `order.rs::wall_order`,
+      and the walls used to be laid in the order the ring walks them. On a **stepped
+      facade** (the sections of a block offset across the street) that is exactly the
+      wrong order: two neighbouring walls overlap on screen by the width of the step, and
+      the far section, walked later, covered the near one. The comparison here is exact,
+      not sampled, because every wall of one house shares one lift: a wall is a band of
+      constant thickness `|lift|` over its base, so at a shared `u` the wall whose base
+      sits lower in `v` is in front. That relation cannot cycle (the edges of a simple
+      ring do not cross, and three segments pairwise overlapping in `u` share a `u`, where
+      they are strictly ordered), and it goes through the same `topological` as the
+      houses, seeded by the depth of the base's midpoint. Courtyard walls are ordered in
+      the same list. Tula: a wrongly ordered pair on 203 of 7524 buildings; pinned by
+      `the_wall_order_puts_the_stepped_back_section_first`. The roof needs no ordering
+      against the walls — it is drawn last and lies wholly above `base + lift` at every
+      `u` it shares with a wall.
     `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
     in the shadows and anything that wants to put a marker on the *drawn* building rather
     than its real outline all go through it. Known limits: units y-sort against
@@ -989,9 +1127,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **no
     texture** — roof clutter rides in the same mesh (2.5D is one
     painter's-order layer) and comes out with its vertex colour untouched. Walls rode
-    at `0` too until they got a code of their own (`Wall`, below), and so did the
+    at `0` too until they got codes of their own (`WallKind`, below), and so did the
     **gable**: it is the top of an end wall, takes the same `wall_frame` as the wall
-    under it, and would otherwise break the seams at the eaves.
+    under it, and would otherwise break the pattern at the eaves.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
@@ -1008,7 +1146,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     and only the material's colour is left. The noise helpers are a **copy** of
     `surface.wgsl`'s — there is no shader library in the project yet, and importing one
     for four functions costs more than the copy.
-  - **The wall is the same mechanism, code `Wall`, but on its own coordinates**
+  - **The wall is the same mechanism on its own coordinates and its own codes**
     (`layers.rs::wall_frame`, `meshing::WallFrame`). A 2.5D wall is a **parallelogram** —
     base edge `a→b`, side edges along the lean — and what the builder writes into
     `ATTRIBUTE_ROOF` at each of its vertices is where that vertex stands *in it*: **the panel
@@ -1033,25 +1171,197 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       same number is cells per pixel, which is how each grid fades (`visible(1.0, px_cell)`).
       Foreshortening comes out of that derivative for free: a west wall, squeezed by the
       lean, loses its storeys earlier than a south one without a line of code about it.
-    - **Balconies** fill the lower two thirds of a storey and 62 % of a panel; 58 % of the
-      **columns** carry one, hashed from the column number and the wall's seed — a column the
-      whole height of the wall, as on a real block. Hashing the *cell* is the thing that must
-      not be done here: that is an independent draw per cell, i.e. a chequerboard.
-    - **Who gets balconies is a CPU decision** (`layers::balconies_fit`), and it travels as
-      the **sign of the seed** (`WallFrame::without_balconies`) because there is no fifth
-      number in the attribute and the coordinates must stay untouched. Blank: a private
-      house, garage, church, industrial shed, school or shop (`BuildingUse`), anything under
-      `BALCONY_STOREYS_MIN` 4 storeys, any wall under `BALCONY_COLUMNS_MIN` 3 panels wide,
-      and every **gable** — it continues the wall's seams through the eaves (that is why it
-      shares the wall's frame at all), but a balcony there would be cut by the slope. The
-      shader cannot decide any of it: it knows neither the use of the building nor how many
-      storeys the wall has in total. `Other` counts as residential on purpose — it is half
-      the city (`building=yes`) and holds its panel blocks; what is not a block is filtered
-      by the storey floor, since a shed comes out under four storeys by any estimate
-      (`heights.rs`).
+    - **`WallKind` is to the wall what `RoofKind` is to the roof**, and the codes are one
+      dictionary in one attribute slot: `0` no texture, `1…6` roofing, `7…11` cladding
+      (`WallKind::code` derives itself from `RoofKind::ALL.len()`, so a new roofing shifts
+      the wall codes and the shader's mirror is edited whole). Five claddings —
+      `Panel | Brick | Plaster | Shopfront | Shed` — because panel seams with balconies are
+      exactly **one** kind of building, and while the wall was one, a garage and a church
+      wore them too.
+    - **The pick** (`material::wall_look`) is `roof_look`'s twin — a ten-slot table per
+      `BuildingUse`, the slot from the building's seed, the colour from the material's own
+      palette plus ±3 % — with one difference: **height is consulted before the tag.**
+      Anything under `LOW_RISE_STOREYS` (4) that is not already `House`, `Garage`, `Church`
+      or `Industrial` drops into `LOW_RISE_WALLS`, because a low building is neither a panel
+      block nor a curtain wall whatever OSM calls it. The seed is read from **other bytes**
+      than the roof's (`>> 4`, `>> 12`, `>> 20` against the roof's raw, `>> 8`, `>> 16`):
+      the two materials must be independent, or every panel block would also be under one
+      bitumen. Kremlin is brick, `Church` whitewash — the same two exceptions the roof has,
+      in the same order.
+    - **Wall colours are calibrated the other way from roofs**: a wall is **lighter than its
+      roof**, which is what holds the 2.5D box together (dark bitumen over light panel), so
+      panel and plaster live in 0.66–0.86 and only `Shopfront` is deliberately darker — and
+      it goes to shopping centres, of which a district has a couple. Spread follows the roof
+      rule: tight in value and wide in hue for mass housing, bright and many-hued for the
+      private sector, where ochre, whitewashed brick and blue plaster stand fence to fence.
+      The **per-use facade colours are gone**; they painted half the city (`building=yes`)
+      in one tone.
+    - **What each cladding draws between the openings**: panel — floor seams, panel joints
+      and a ±2 % tone jitter per *cell* (a chequerboard is the right answer here, the wall
+      really is assembled from separately cast slabs); brick — courses at a twelfth of a
+      storey, so they fade first and leave an even tone; plaster — `fbm3` streaks and no
+      seam at all; shopfront — a spandrel band between the glazing strips; shed —
+      corrugation ribs at a sixteenth of a panel plus a faint eaves line.
+    - **A window is the only thing here that replaces the surface colour instead of
+      correcting it.** Glass is not plaster some per cent darker, so `wall_shade` returns
+      three numbers (`Wall { shade, glass, sky }`) and the fragment `mix`es toward
+      `mix(GLASS_ROOM, GLASS_SKY, sky)` — both **linear** constants, because the vertex
+      colour here is linear (`wall_colors` returns `LinearRgba`). `sky` rises up the pane
+      (dark room below, reflected sky above), dips under the lintel for the reveal shadow,
+      and is scaled by a per-window `tone`: a curtain, an open sash, dirty glass. Without
+      that per-window draw a row of windows reads as a stencil.
+    - **The opening is what a cladding is really about**: a two-sash window per panel (0.42
+      of the panel, 0.30…0.72 of the storey), a narrower brick one, a small house window on
+      plaster, a full-panel glazing strip on a shopfront, a high narrow ribbon on 55 % of a
+      shed's panels. Mullions are placed **from the left edge of the opening**
+      (`stripes(inside.x - 0.5 + half, wide / panes, …)`), so any pane count comes out
+      right; centring them on the middle only works for even counts.
+    - **The ground floor is its own case on every cladding**: never a balcony, a shopfront
+      lower and taller there than the strip above it, and over it all a dark **plinth** band,
+      the line that says where the building stops and the ground begins. The entrance is
+      *not* drawn here — it comes as geometry from the data (the door bullet below); the
+      shader rolls no doorway of its own on any cladding.
+    - **The top of a wall needs room, not a stripe.** A wall is drawn exactly
+      `storeys × 3 m` and a real building is not: above the last storey sit the ceiling, the
+      roof slab and the parapet, and without them the top window butts straight into the roof.
+      The first fix drew a **cornice** — a light coping with a dark seam — and changed
+      nothing, because it painted inside the same `1 - WINDOW_HIGH` that was already there:
+      the gap stayed identical to the pixel and one more line appeared. It was reported as
+      exactly that and taken back out.
+      What works is `meshing::PARAPET_CELLS` (0.15): the frame runs the storey coordinate to
+      `storeys + PARAPET_CELLS`, and everything above the last whole storey is **plain wall
+      with no openings** — nothing is drawn there at all. Whole cells survive, because the
+      invariant is that *storey boundaries* are whole, not that the wall ends on one; the
+      cost is the drawn storey shrinking by `1/(storeys + 0.15)`, 1.5 % on a nine-storey
+      block. Measured on the frame the report came from: blank wall above the top window
+      0.25 → 0.44 drawn metres, five screen pixels to nine at 0.05 m/px.
+      The check that openings stop at `storeys` is not belt-and-braces: a window starts at
+      0.30 of a storey and misses 0.15 on its own, but a **balcony** starts at 0.01, and its
+      slab shadow and slab edge would climb into the cornice.
+    - **Knowing where the top is takes the storey count**, and that rides **in the material
+      slot** beside the code: `meshing::STOREY_STRIDE` (16) puts the code in the remainder and
+      the storeys in the quotient, zero on a roof. That slot is the one field with a spare
+      digit; a fifth float in the attribute would cost four bytes on every vertex of the
+      building layer. `meshing::unpack_material` is the Rust mirror and exists only for the
+      test that pins it — in the game the slot is written, and read by the shader alone.
+    - **A *line* goes through `stripes`, never `cell_band`** — learned from the cornice seam
+      before it was removed, and it still holds for every line here: `stripes` floors its
+      width at one pixel (`max(width, px)`), `cell_band` does not, so a 0.05-cell seam (five
+      drawn centimetres) vanishes at every zoom where the wall is visible at all. It took a
+      probe run with the amplitude at 0.9 to tell "the branch never runs" from "the branch is
+      too faint", and it was the second — worth remembering as the way to split those two.
+      `cell_band` stays right for a *band* — plinth, balcony rail — which is thick enough to
+      survive on its own.
+    - **One opening per cell, on every cladding.** The shed briefly had two — a gate and the
+      ribbon window, «because they sit at different heights» — and that stopped being true
+      the moment the ribbon dropped from 0.60 to 0.45 to survive the fade: the window's
+      sashes climbed onto the gate leaf and its bottom row came out as a stump over the dark
+      rectangle. Different heights are not enough, because an opening owns its reveal and
+      sill below it too, so the gap between two would have to allow for the frame; picking
+      one of the two is the version that cannot drift.
+    - **A door comes from the data, as geometry** (`layers::push_doors`, code `DOOR_CODE`
+      12), and this is the one opening the shader does not place. It used to roll one on
+      `DOOR_SHARE` (0.24) of the ground-floor columns and a gate on 0.30 of a shed's, which
+      put drawn doors where `osm::entrances` has none and left the real entrance — the point
+      the door gizmo marks and the pawn walks to — on blank wall; on a long London block the
+      dice also put two doors in neighbouring panels.
+      Two quads per door, both pushed **after** the wall they sit on:
+      - a **patch** over the whole cells the leaf touches, carrying the wall's own frame and
+        code so seams and courses run through it, marked `WallMark::Solid` (no openings).
+        It is what stops the cell's window from peeking out beside the leaf: a window is
+        centred in its cell, a door stands where the data put it, and they overlap. Whole
+        cells, not the leaf's span — clipping a window in half looks worse than losing it;
+      - the **leaf**, exactly on the entrance point, with `WallFrame::opening` — a frame
+        with neither storeys nor parapet that maps the quad to `[0, 1]²`, so `doorway_of`
+        draws the leaf at its centre and `DOOR_LEAF_WIDE/HIGH` are fractions of the opening
+        rather than of a cell.
+      **The metres are chosen on the CPU** (`layers::door_size`, by cladding: подъезд
+      1.9 × 2.8 m, house door 1.3 × 2.4, shop leaves 2.4 × 3.0, shed gate 3.2 × 2.9) — a door
+      is a scale ruler, and a gate that is wider than it is tall reads as a letterbox slot
+      (the old `GATE_WIDE` 0.62 × `GATE_HIGH` 0.50 was exactly that, 2.0 by 1.5 m).
+      A door at a ring **vertex** — which is where every real OSM `entrance` sits — is pushed
+      inside the wall by half a leaf, and claimed by the edge it *starts*, so the two walls
+      of a corner do not draw it twice. **The claim is by the nearest edge, not by every
+      edge in tolerance** (`layers::door_edge`, ties to the earlier edge in the ring):
+      `DOOR_ON_WALL` is half a metre and an OSM step
+      can be twenty centimetres, so both edges took the door, each shifted its leaf inward
+      to make it fit, and the wall came out with two doors side by side under a single
+      gizmo. Cost: eight vertices per door, on drawn walls only.
+      **Snapping the leaf to its panel instead was rejected**: it saves the geometry but
+      leaves up to ±1.6 m between the drawn door and the entrance — the very gap this
+      change exists to close — and packing a column index into the material slot caps out at
+      twelve columns (≈38 m of wall), which is exactly where a second подъезд appears.
+    - **A balcony is a stack of bands**, not a box: the slab's shadow on the wall, the bright
+      slab edge, the parapet (its tone by its own draw, from light panel to dark sheet), and
+      above it either glazing or an open recess in shade. 72 % of a panel, and along the wall
+      **by the period of a section**: `(column + phase) % period < BALCONY_FILLED`, the
+      period 4–6 panels (`BALCONY_PERIOD_MIN` + `BALCONY_PERIOD_SPAN`) and the phase both
+      rolled from the **wall's** seed, two filled columns in it — a column the whole height of
+      the wall, as on a real block, and a repeating step between columns.
+      **A share is not a row**, and that is what the period fixes: the first version drew
+      each column independently at 58 %, which on a ten-panel wall routinely gives three
+      balconies in a row and then two blanks — a scattering with no step, exactly what the
+      spec's «регулярным рядом» is not. The share is still a majority-ish (2 of 4–6), so
+      nothing about the *density* changed; the dice survive only as the phase, so that two
+      walls meeting at a corner do not start alike.
+      Hashing the *cell* for **existence** is the
+      thing that must not be done either: that is an independent draw per cell, i.e. a
+      chequerboard; hashing it for *glazed or open* is fine and is what varies a column.
+      A brick building's balconies are **recessed loggias** — no slab overhang, no bright
+      edge, a deeper shade — and rarer: the same period with `BALCONY_FILLED_RECESSED` (1)
+      column of it filled.
+      **Two sashes, not four.** The lean squeezes the wall threefold vertically, so a
+      balcony on screen is a ribbon four times wider than it is tall; cut into four it read
+      as a scatter of dots. A balcony must read as *bands*, and anything chopping the ribbon
+      crossways eats them.
+    - **Who gets balconies is a CPU decision** (`layers::balconies_fit`): only `Panel` or
+      `Brick`, never a `building=house` (the storey floor catches almost all of them, but a
+      five-storey `house` does occur in the extract, and balconies on it would read as a
+      parse error, which is what they would be), never under `BALCONY_STOREYS_MIN` 4
+      storeys, never on a wall under `BALCONY_COLUMNS_MIN` 3 panels wide, and never on a
+      **gable end**. The shader cannot
+      decide any of it: it knows neither the use of the building nor how many storeys the
+      wall has in total. Note what moved: the *use* filter now mostly lives in the cladding
+      pick — plaster, shopfront and shed have no balconies by the meaning of the material,
+      and they are exactly what the private sector, the mall and the warehouse get.
+    - **A gable end is a direction, not a width** (`layers::plan_long_axis`,
+      `WallSpan::gable_end`). «Глухие торцы» stood for a while as `BALCONY_COLUMNS_MIN`, and
+      that threshold cannot say it: a real panel section is 12–14 m deep (the measurement is
+      in `references/entrances.md`), which is four panels — over the threshold, so every
+      gable end wore balconies like a facade, and the words «long facade» and «gable end»
+      existed nowhere in the code. What the width threshold actually cuts off is a **step in
+      the outline** — a three-metre sliver of wall where a row of projections could only read
+      as a pattern — and it stays for that.
+      The end is told from the facade by the **long axis of the plan**: `roofs::min_area_rect`
+      (already computed for hipped roofs and the roof texture, so no second notion of "which
+      way this building faces"), its first edge being the long one, and a wall counts as an
+      end when its own direction is within 60° of the cosine of that axis
+      (`GABLE_END_COS_MAX` 0.5, i.e. no more than 30° off the perpendicular).
+      **The aspect-ratio guard is the load-bearing half**: on a plan that is not elongated a
+      "short side" means nothing, so `plan_long_axis` returns `None` under
+      `GABLE_PLAN_RATIO_MIN` (1.5) and *every* wall keeps its balconies — a tower
+      (`heights::TOWER_MAX_RATIO` 1.7 the other way) would otherwise lose half its walls on a
+      rounding, while a section (12–14 m by 35+, ratio 2.5 and up) is well clear of it. An
+      oblique wall of a non-rectangular plan is likewise left a facade: when in doubt,
+      nothing changes.
+      The axis is computed **once per building and only when the building could carry
+      balconies at all** (`balcony_house` — material, use, storeys), because `min_area_rect`
+      is quadratic in the ring's vertices; it rides to each wall in `WallSpan::long_axis`.
+      The end is marked `WallMark::Blank`, not `Solid` — it keeps its windows, since a blank
+      wall and a windowless one are not the same thing (the bullet below).
+    - **The verdict travels as the seed's own value**, not its sign: `WallMark`
+      (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` solid.
+      Three states are needed because *blank* and *solid* are not the same thing — a blank
+      wall (narrow, low, wrong material) still has **windows**, a solid one has none. Two
+      surfaces are solid and they are unrelated: the **gable**, where a window would be cut
+      by the slope, and the **patch under a door**. The old sign flip could say only one
+      of the two, and needed an idempotency guard on top (the gable marks itself over an
+      already-blank wall, and a second negation gave the balconies back); replacing the
+      state is the guard.
     - **The seed is per wall**, `seed_from_point(a)` — the generator the roofs, doors and
       parked cars already share — not the building's: the balcony columns of two adjacent
-      walls must not start alike.
+      walls must not start alike. The **cladding**, on the contrary, is per building: one
+      house does not have a panel end and a brick front.
     **The wall leaves the fragment before the common roof pass** — `wall_shade` is a branch
     of its own in `fragment`, not a case inside `roof_shade` — and that early exit is the
     whole of what the wall costs: two `stripes` and one hash, against the cheap path code `0`
@@ -1070,9 +1380,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     of cells carry the feature (the `share` argument), and
     inside its cell the feature is smaller than the cell and jittered, so two neighbours
     never meet at a cell boundary. (The **wall balconies** above keep only the second half of
-    that rule — a balcony is smaller than its cell — and deliberately break the first: they
-    are on 58 % of the columns, because a panel block's balconies are a majority and a
-    *column* of them is the pattern, not a scattering.) Placement stays a grid (cheap, no extra octaves); the
+    that rule — a balcony is smaller than its cell — and deliberately break the first twice
+    over: they are on about half the columns, because a panel block's balconies are a
+    majority and a *column* of them is the pattern, not a scattering; and which columns is
+    not a draw at all but the **period of a section**, because the pattern there is a step.
+    A minority-by-dice is right for a feature that is an accident — a repair patch — and
+    wrong for one that is construction.) Placement stays a grid (cheap, no extra octaves); the
     pattern does not.
   - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
     the same seed** the texture phase rides on, and with a fixed patch share that was the
@@ -1159,11 +1472,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       shadow to move). The readout at the bottom right
       prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
       zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
-      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
-      cell, patch size, the two share ends, and of the wall texture the part that is about
-      drawing: the three balcony fractions and the two seam widths, all in fractions of a
-      cell; the parser takes *every* `f32` const there but `TAU`), shape from `roofs.rs`
-      (fill threshold, hipped
+      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` and
+      shape from `roofs.rs` (fill threshold, hipped
       share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
       (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
       numbers: a mirror would drift on the first edit and the gallery would then lie about
@@ -1178,6 +1488,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     - `ROOF_GALLERY_SHOT=path.png` takes one frame and exits. The example has no BRP, and a
       screen grab over another window comes out black, so this is the only way a session
       without the window in front of it can look at its own work.
+    - **`roof.wgsl` holds two textures, and the two galleries split it by the section
+      banner** (`─── стена`): the roof gallery parses everything **before** it, the wall
+      gallery everything **after**. A name list would have to be extended on every new
+      constant; the banner sits exactly where the meaning changes. Both halves are pinned by
+      a test that the other half's constants did *not* come through — an empty or
+      over-full group is a parser drift, not a fact about the code.
+  - **The wall gallery** — `cargo run --example wall_gallery`
+    (`examples/demos/wall_gallery/`), and it answers the two halves of "what is a wall" in
+    two grids, because *what it is made of* and *who gets it* are decided by different code
+    from different inputs.
+    - **Claddings, left** — a row per `WallKind` and, in the row, the **storey ladder**
+      2 / 4 / 5 / 9 / 16. The ladder is not evenly spaced: 2 is the low-rise that never has
+      balconies, 4 is `BALCONY_STOREYS_MIN` exactly — the first storey count that does — 5
+      and 9 are the mass housing, and 16 shows that the pattern *repeats by storey* rather
+      than stretching. Colours cycle through the material's palette, so a row is also a look
+      at its spread.
+    - **Uses, right** — a row per `BuildingUse`, two houses in it (2 and 9 storeys), and the
+      cladding is chosen by the **game** (`wall_of`), not ordered by the gallery. It is the
+      only place the whole rule is visible at once: the tag picks the table, the height
+      picks the branch inside it, and one `commercial` comes out brick at two storeys and
+      glass at nine. The caption under a house is the material that actually came back.
+    - **The readout prints the storey in pixels**, not only metres per pixel: a wall is
+      measured in cells and every fade is keyed to them, and a storey is `STOREY_HEIGHT`
+      metres already squeezed by the lean — so metres per pixel alone does not say when a
+      window is due to vanish. It comes from `extrusion_lift` on a probe building rather
+      than from a copy of `EXTRUDE_SCALE`, which is private and would drift.
+    - Like the roof gallery, it may **not** roll its own geometry: every house goes through
+      `push_house`. The cladding grid orders its material (`WallLook::new`) because the seed
+      cannot reach every combination — a curtain wall never lands on a private house — and
+      the use grid orders nothing at all.
+    - `WALL_GALLERY_SHOT=path.png` takes one frame and exits, same as the roof gallery's.
 - **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".
@@ -1232,10 +1573,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `retuned` gate the height mode uses (one registration with `or_else`, deliberately:
     two registrations of `rebuild_buildings` in one schedule could both fire in one
     frame and spawn the layer twice).
-  - **What it costs** (Tula, 7643 buildings, 2.5D+shadows+tint, M1 Max): 603 018 verts /
-    69 ms with clutter against 279 186 / 58 ms without — one hitch on the threshold
-    crossing, in the same class as the rail layer's deepest bucket (673 k / 23 ms). Most
-    of it is the shafts: every flat roof gets at least one, and a shaft is 6 quads.
+  - **What it costs** (Tula, 7643 buildings, 2.5D+shadows+tint, from
+    `examples/bench/map_meshing` on the `dev` profile): 785 044 verts / 78 ms with clutter
+    against 461 212 / 65 ms without — one hitch on the threshold crossing, in the same
+    class as the rail layer's deepest bucket (673 k / 23 ms). Most of it is the shafts:
+    every flat roof gets at least one, and a shaft is 6 quads. The 603 018 / 279 186 that
+    stood here is an older build of the layer (the gap is 182 026 verts in **both** clutter
+    buckets, so it sits in the walls and roofs, not in the clutter or the shadows), and the
+    car section's aside — which name-drops this very layer — disagreed with it by a third.
+    One bench run prints buildings and cars together, so
+    **re-measuring one aside means writing down the other**; both now come off the same
+    run.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment

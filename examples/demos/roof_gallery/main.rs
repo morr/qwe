@@ -125,7 +125,7 @@ use qwe::map::buildings::material::{
     CHURCH_ROOF_COLORS, RoofKind, RoofLook, RoofMaterial, RoofMaterialHandle, init_roof_material,
     retune_roof_material,
 };
-use qwe::map::buildings::{RoofShape, push_house};
+use qwe::map::buildings::{RoofShape, push_house, wall_of};
 use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -292,11 +292,6 @@ fn blocks() -> Vec<Block> {
                 RoofKind::Corrugated => "волна 30 см по скату",
                 RoofKind::Tile => "ряды вдоль конька",
                 RoofKind::Membrane => "ПВХ, полотнища 2 м",
-                // сюда не доходит: `Wall` не материал кровли и не в `ALL`,
-                // а витрина перебирает именно `ALL`. Рука названа явно, а не
-                // `_`, чтобы новый **материал** нельзя было добавить в `ALL`
-                // без подписи — компилятор остаётся чек-листом
-                RoofKind::Wall => "",
             },
             palette: kind.palette(),
         })
@@ -625,10 +620,13 @@ fn rebuild_roofs(
         let look = RoofLook::new(SHAPE_ROOF, shape_color, axis, next_seed());
         // оборудование включено: труба на коньке — часть того, как читается
         // скатная крыша, и ставит её то же правило, что в городе
+        // облицовку витрина кровель не перебирает — берёт ту, что выбрала бы
+        // сама игра: стена тут подпорка, на которой стоит крыша
         let drawn = push_house(
             &mut builder,
             &cell.area,
             &look,
+            &wall_of(&cell.area),
             shape_color,
             cell.shape,
             true,
@@ -643,10 +641,12 @@ fn rebuild_roofs(
             // фактуру, а скат увёл бы половину кровли из-под взгляда.
             // Оборудования по той же причине нет: шахты и будки закрывают
             // ровно то, ради чего сюда смотрят
+            let house = material_house(&cell, rotation, &tuning);
             push_house(
                 &mut builder,
-                &material_house(&cell, rotation, &tuning),
+                &house,
                 &look,
+                &wall_of(&house),
                 cell.color,
                 RoofShape::Flat,
                 false,

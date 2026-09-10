@@ -12,10 +12,19 @@
 //! ([`crate::map::meshing::ATTRIBUTE_ROOF`]).
 //!
 //! Стены едут в том же меше, что и крыши (2.5D — один слой с painter's
-//! порядком), поэтому в перечислении живёт и **не кровля**: у стены свой код
-//! ([`RoofKind::Wall`]) и своя фактура — межэтажные швы, швы плит, балконы.
-//! Фронтон — верх той же стены, и рамку берёт её же. Код `0` остаётся тому, у
-//! чего фактуры нет вовсе: оборудованию кровли и кайме.
+//! порядком), поэтому **код материала в атрибуте — один словарь на двоих**:
+//! `0` это «фактуры нет вовсе» (оборудование кровли, кайма), `1…6` — кровля
+//! ([`RoofKind`]), `7…11` — стена ([`WallKind`]), `12` — дверное полотно
+//! ([`DOOR_CODE`]). Фронтон — верх той же стены и рамку берёт её же.
+//!
+//! Стена устроена по образцу кровли и выбирается тем же способом: таблица
+//! материалов по назначению дома, слот в ней по посеву от первой вершины
+//! контура, цвет — из палитры выбранного материала ([`wall_look`]). Отчего их
+//! несколько, а не одна: панельные швы с балконами это ровно **один** тип
+//! дома, а город состоит не из него. Кирпич, штукатурка частного сектора,
+//! витраж торгового центра и профлист склада отличаются и рисунком проёмов, и
+//! тем, что между ними, — а пока стена была одна, панельные швы носил весь
+//! город, гараж и церковь включительно.
 
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
@@ -38,8 +47,8 @@ const SHADER_PATH: &str = "shaders/roof.wgsl";
 
 /// Чем крыша покрыта. Код материала (`code`) едет в вершинный атрибут и
 /// разбирается шейдером; ноль занят «без фактуры» (оборудование кровли,
-/// кайма), поэтому коды начинаются с единицы. Стена — не ноль, а свой код
-/// ([`Self::Wall`]), и фронтон вместе с ней.
+/// кайма), поэтому коды начинаются с единицы. Стена — не ноль и не кровля, а
+/// продолжение того же словаря ([`WallKind`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RoofKind {
     /// Рулонный битумный ковёр: швы через метр, заплаты ремонта, лужи.
@@ -55,10 +64,6 @@ pub enum RoofKind {
     Tile,
     /// ПВХ-мембрана: светлая, почти ровная, широкие полотнища. Новые ТЦ.
     Membrane,
-    /// Не кровля вовсе, а **стена**: межэтажные швы, вертикальные швы плит и
-    /// балконы. Живёт в том же перечислении и в том же атрибуте, потому что
-    /// стены едут в одном меше с крышами и различает их ровно этот код.
-    Wall,
 }
 
 impl RoofKind {
@@ -76,10 +81,13 @@ impl RoofKind {
     /// Код для [`ATTRIBUTE_ROOF`]; `0` — вершина без фактуры.
     ///
     /// Код **позиционный** — номер варианта плюс единица, — а его зеркало это
-    /// набор констант `roof.wgsl` (`BITUMEN = 1u` … `WALL = 7u`). Значит,
-    /// вариант можно только дописать в конец: вставка в середину молча
-    /// сдвинет коды всех, кто ниже, и шейдер начнёт класть чужую фактуру.
-    pub fn code(self) -> u32 {
+    /// набор констант `roof.wgsl` (`BITUMEN = 1u` … `MEMBRANE = 6u`, дальше
+    /// стены). Значит, вариант можно только дописать в конец: вставка в
+    /// середину молча сдвинет коды всех, кто ниже, и шейдер начнёт класть
+    /// чужую фактуру. Коды стен ([`WallKind::code`]) идут следом за последним
+    /// кровельным, так что дописанная кровля сдвигает и их — зеркало в
+    /// шейдере одно, и правится оно целиком.
+    pub const fn code(self) -> u32 {
         self as u32 + 1
     }
 
@@ -91,9 +99,6 @@ impl RoofKind {
             Self::Corrugated => "Профлист",
             Self::Tile => "Черепица",
             Self::Membrane => "Мембрана",
-            // не кровля и потому не в `ALL`: вариант живёт в перечислении
-            // только ради кода фактуры стены в атрибуте
-            Self::Wall => "Стена",
         }
     }
 
@@ -108,12 +113,150 @@ impl RoofKind {
             Self::Corrugated => &CORRUGATED_COLORS,
             Self::Tile => &TILE_COLORS,
             Self::Membrane => &MEMBRANE_COLORS,
-            // цвет стены назначает `facade_color`, а не кровельная палитра;
-            // `Wall` живёт в этом перечислении только ради кода в атрибуте
-            Self::Wall => &BITUMEN_COLORS,
         }
     }
 }
+
+/// Чем облицована стена: не «из чего дом построен», а **что видно снаружи** и
+/// как на этом расставлены проёмы. Материал решает и рисунок между окнами
+/// (швы плит, ряды кирпича, рёбра профлиста), и сами окна, и бывают ли на
+/// этой стене балконы.
+///
+/// Коды продолжают кровельные — один словарь в одном числе атрибута, — а
+/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 7u` … `SHED = 11u`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WallKind {
+    /// Панель: межэтажные швы, вертикальные швы плит, окно на панель и
+    /// столбцы балконов. Типовая многоэтажка — то, чем была единственная
+    /// стена до появления остальных.
+    Panel,
+    /// Кирпич: ряды кладки вместо швов, окно уже панельного, с перемычкой и
+    /// отливом; балконы реже и утоплены — лоджией, а не выступом.
+    Brick,
+    /// Штукатурка: гладкая стена в пятнах, окна мелкие и редкие, балконов
+    /// нет. Частный сектор, малоэтажная застройка, храм.
+    Plaster,
+    /// Витраж: сплошное остекление лентами через этаж, между ними глухой
+    /// пояс, вертикальные импосты. Торговый центр, офис, новая общественная
+    /// коробка.
+    Shopfront,
+    /// Профлист: вертикальные рёбра во всю стену, ленточное окно под
+    /// карнизом да ворота внизу. Склад, промка, гаражный ряд.
+    Shed,
+}
+
+impl WallKind {
+    /// Исчерпывающий список — по нему идёт витрина `wall_gallery`.
+    pub const ALL: [Self; 5] = [
+        Self::Panel,
+        Self::Brick,
+        Self::Plaster,
+        Self::Shopfront,
+        Self::Shed,
+    ];
+
+    /// Код для [`ATTRIBUTE_ROOF`]: продолжение кровельного словаря, поэтому
+    /// он **выводится** из числа кровельных материалов, а не пишется числом.
+    /// Дописанная кровля сдвинет коды стен — и это правильно: зеркало в
+    /// `roof.wgsl` одно на весь словарь и правится целиком.
+    pub const fn code(self) -> u32 {
+        RoofKind::ALL.len() as u32 + 1 + self as u32
+    }
+
+    /// Стена ли это. Коды приходят из вершинного атрибута числом с плавающей
+    /// точкой, и разбирать их порознь в тестах и в шейдере — верный способ
+    /// разойтись; вопрос «стена или кровля» задаётся здесь.
+    pub fn is_code(code: u32) -> bool {
+        code >= Self::Panel.code() && code <= Self::Shed.code()
+    }
+}
+
+/// Код дверного полотна — последний в том же словаре, сразу за облицовками.
+///
+/// Дверь не облицовка и не кровля: это **отдельный четырёхугольник** поверх
+/// стены, со своей рамой в клетку `[0, 1]²` ([`WallFrame::opening`]), и код ей
+/// нужен ровно затем, чтобы шейдер узнал полотно и не искал в нём ни этажей,
+/// ни панельных швов. Ставит её `buildings::layers::push_doors` по входам из
+/// `osm::entrances` — там же, где их видит гизмо дверей и куда идут пешки.
+///
+/// [`WallFrame::opening`]: crate::map::meshing::WallFrame::opening
+pub const DOOR_CODE: u32 = WallKind::Shed.code() + 1;
+
+impl WallKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Panel => "Панель",
+            Self::Brick => "Кирпич",
+            Self::Plaster => "Штукатурка",
+            Self::Shopfront => "Витраж",
+            Self::Shed => "Профлист",
+        }
+    }
+
+    /// Палитра материала — как у кровель, дом выбирает свой цвет посевом.
+    /// Кремль и храм красятся не по ней ([`wall_palette`]).
+    pub fn palette(self) -> &'static [Color] {
+        match self {
+            Self::Panel => &PANEL_WALL_COLORS,
+            Self::Brick => &BRICK_WALL_COLORS,
+            Self::Plaster => &PLASTER_WALL_COLORS,
+            Self::Shopfront => &SHOPFRONT_WALL_COLORS,
+            Self::Shed => &SHED_WALL_COLORS,
+        }
+    }
+}
+
+/// Палитры стен. Светлота выверена по тому же правилу, что и кровельная, но с
+/// обратным знаком: **стена светлее своей крыши**, и это не стиль, а то, что
+/// держит коробку 2.5D — тёмный битум над светлой панелью. Отсюда и границы:
+/// панель и штукатурка живут в 0.66–0.86, кирпич опускается до 0.5 только на
+/// тёмно-красном, и один лишь витраж заведомо темнее кровли — но он достаётся
+/// торговым центрам, которых в квартале единицы.
+///
+/// Разброс внутри палитры — тот же приём, что у кровель: **много тона, мало
+/// светлоты** у типовой застройки (соседние панельки отличаются оттенком) и
+/// наоборот у частного сектора, где через забор стоят охра, белёный кирпич и
+/// голубая штукатурка.
+const PANEL_WALL_COLORS: [Color; 6] = [
+    Color::srgb(0.78, 0.76, 0.71),
+    Color::srgb(0.74, 0.73, 0.72),
+    Color::srgb(0.80, 0.77, 0.68),
+    Color::srgb(0.72, 0.74, 0.74),
+    Color::srgb(0.76, 0.71, 0.66),
+    Color::srgb(0.70, 0.72, 0.70),
+];
+const BRICK_WALL_COLORS: [Color; 6] = [
+    // силикатный белый — половина тульских кирпичных домов
+    Color::srgb(0.80, 0.79, 0.74),
+    Color::srgb(0.74, 0.72, 0.66),
+    // красный керамический и его выцветшие оттенки
+    Color::srgb(0.63, 0.42, 0.34),
+    Color::srgb(0.70, 0.50, 0.40),
+    Color::srgb(0.55, 0.38, 0.32),
+    Color::srgb(0.72, 0.62, 0.50),
+];
+const PLASTER_WALL_COLORS: [Color; 7] = [
+    Color::srgb(0.86, 0.84, 0.78),
+    Color::srgb(0.82, 0.75, 0.60),
+    Color::srgb(0.78, 0.72, 0.66),
+    Color::srgb(0.72, 0.76, 0.70),
+    Color::srgb(0.70, 0.75, 0.80),
+    Color::srgb(0.84, 0.72, 0.62),
+    Color::srgb(0.66, 0.64, 0.60),
+];
+const SHOPFRONT_WALL_COLORS: [Color; 4] = [
+    Color::srgb(0.52, 0.56, 0.60),
+    Color::srgb(0.60, 0.62, 0.64),
+    Color::srgb(0.46, 0.52, 0.58),
+    Color::srgb(0.64, 0.64, 0.62),
+];
+const SHED_WALL_COLORS: [Color; 5] = [
+    Color::srgb(0.68, 0.69, 0.70),
+    Color::srgb(0.56, 0.62, 0.70),
+    Color::srgb(0.52, 0.60, 0.52),
+    Color::srgb(0.72, 0.66, 0.56),
+    Color::srgb(0.62, 0.60, 0.58),
+];
 
 /// Палитры материалов — по несколько правдоподобных цветов на каждый, дом
 /// выбирает свой посевом. Светлота выверена по спутниковому снимку Тулы
@@ -372,6 +515,194 @@ fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
 fn footprint_area(building: &PolyArea) -> f32 {
     crate::map::osm::model::signed_ring_area(&building.outer).abs()
 }
+
+/// Стена дома глазами отрисовки: чем облицована и какого от этого цвета.
+/// Рамку ([`crate::map::meshing::WallFrame`]) собирает уже `layers.rs` — она
+/// у каждой стены своя, а вид у всего дома один.
+#[derive(Clone, Copy, Debug)]
+pub struct WallLook {
+    pub kind: WallKind,
+    pub base: Srgba,
+}
+
+impl WallLook {
+    /// Стена, заданная напрямую: материал и цвет. Игра оба выводит из дома
+    /// ([`wall_look`]) — витрина `wall_gallery` перебирает ими все материалы
+    /// и все их палитры.
+    pub fn new(kind: WallKind, base: Srgba) -> Self {
+        Self { kind, base }
+    }
+}
+
+/// Стена этого дома: материал по назначению, этажности и посеву, цвет из
+/// палитры материала.
+///
+/// Посев — тот же [`building_seed`], что у кровли, но разобранный **другими**
+/// байтами: материал стены и материал кровли должны быть независимы, иначе
+/// панельные дома окажутся ещё и все под одним битумом.
+///
+/// `storeys` приходит извне, а не считается здесь, потому что этажи — это
+/// высота, поделённая на высоту этажа, и делит её `layers.rs`; дублировать то
+/// же деление значит однажды разойтись с ним.
+pub(super) fn wall_look(building: &PolyArea, storeys: f32) -> WallLook {
+    let seed = building_seed(building);
+    let kind = wall_kind_of(building, storeys, seed >> 4);
+    let palette = wall_palette(building, kind);
+    let base = palette[(seed >> 12) as usize % palette.len()].to_srgba();
+    // ±3 % яркости поверх выбранного цвета — как у кровель: два дома одной
+    // палитры и одного слота всё-таки не близнецы
+    let jitter = 1.0 + ((seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    WallLook::new(
+        kind,
+        Srgba {
+            red: base.red * jitter,
+            green: base.green * jitter,
+            blue: base.blue * jitter,
+            alpha: 1.0,
+        },
+    )
+}
+
+/// Материал стены этого дома.
+///
+/// Порядок проверок здесь обратный кровельному, и намеренно: кровлю решает
+/// назначение, а стену — сперва **рост**. Низкий дом не бывает ни панельным,
+/// ни витражным, чем бы он ни был по тегу: у панели с балконами нет этажей,
+/// у витража — высоты, ради которой его вешают. Поэтому всё ниже
+/// [`LOW_RISE_STOREYS`] уходит в частный сектор, а таблица по назначению
+/// разбирает то, что осталось.
+fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
+    if building.kind == AreaKind::Kremlin {
+        return WallKind::Brick;
+    }
+    let table: &[WallKind] = match building.building_use {
+        BuildingUse::House => &HOUSE_WALLS,
+        BuildingUse::Garage => &GARAGE_WALLS,
+        BuildingUse::Church => return WallKind::Plaster,
+        BuildingUse::Industrial => &INDUSTRIAL_WALLS,
+        _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
+        BuildingUse::Apartments => &APARTMENTS_WALLS,
+        BuildingUse::Commercial => &COMMERCIAL_WALLS,
+        BuildingUse::Public => &PUBLIC_WALLS,
+        // `building=yes` — половина города, и это ровно тот случай, где
+        // этажность уже всё сказала: то, что доросло досюда, — корпус
+        BuildingUse::Other => &APARTMENTS_WALLS,
+    };
+    table[seed as usize % table.len()]
+}
+
+/// Ниже скольких этажей дом считается малоэтажным, чем бы он ни был по тегу.
+/// Тот же порог, по которому `layers.rs` не даёт стене балконов, — и это одна
+/// константа, а не совпадающее число: одна граница, один смысл «панельного
+/// дома тут нет».
+const LOW_RISE_STOREYS: f32 = super::layers::BALCONY_STOREYS_MIN;
+
+/// Таблицы материалов стен — по десять слотов, чтобы читались как проценты,
+/// ровно как кровельные.
+const HOUSE_WALLS: [WallKind; 10] = [
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Shed,
+];
+const LOW_RISE_WALLS: [WallKind; 10] = [
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Shed,
+    WallKind::Shopfront,
+];
+const APARTMENTS_WALLS: [WallKind; 10] = [
+    WallKind::Panel,
+    WallKind::Panel,
+    WallKind::Panel,
+    WallKind::Panel,
+    WallKind::Panel,
+    WallKind::Panel,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Plaster,
+];
+const COMMERCIAL_WALLS: [WallKind; 10] = [
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Panel,
+];
+const PUBLIC_WALLS: [WallKind; 10] = [
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Panel,
+];
+const INDUSTRIAL_WALLS: [WallKind; 10] = [
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Panel,
+];
+const GARAGE_WALLS: [WallKind; 10] = [
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Plaster,
+];
+
+/// Палитра цвета стены: Кремль и храм — своё, остальные по материалу. То же
+/// правило и тот же порядок, что у [`palette`] для кровли.
+fn wall_palette(building: &PolyArea, kind: WallKind) -> &'static [Color] {
+    if building.kind == AreaKind::Kremlin {
+        return std::slice::from_ref(&super::KREMLIN_FACADE_COLOR);
+    }
+    if building.building_use == BuildingUse::Church {
+        return &CHURCH_WALL_COLORS;
+    }
+    kind.palette()
+}
+
+/// Храм белёный, и это не оттенок штукатурки, а её отсутствие: побелка по
+/// кирпичу почти без тона.
+const CHURCH_WALL_COLORS: [Color; 3] = [
+    Color::srgb(0.93, 0.91, 0.86),
+    Color::srgb(0.90, 0.88, 0.85),
+    Color::srgb(0.88, 0.86, 0.78),
+];
 
 /// Посев дома — от его первой вершины ([`seed_from_point`]): материал кровли,
 /// оборудование на ней и додуманная этажность держатся на одном числе, и оно

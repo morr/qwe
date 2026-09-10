@@ -22,6 +22,18 @@ fn road(points: Vec<Vec2>) -> RoadLine {
     fixture::street(points, 8.0)
 }
 
+/// Двери первого дома, вышедшие на **одну** стену. Шаг подъездов меряется по
+/// одной стороне: у корпуса подъезд сквозной, и его дворовая половина стоит
+/// напротив уличной, то есть в тех же метрах длины дома.
+fn doors_on(map: &MapData, y: f32) -> Vec<Vec2> {
+    map.buildings[0]
+        .entrances
+        .iter()
+        .copied()
+        .filter(|door| (door.y - y).abs() < 0.01)
+        .collect()
+}
+
 /// Дом стоит между двух улиц, но одна из них вплотную к южной грани, а
 /// вторая далеко на севере: дверь обязана выйти на ближнюю.
 #[test]
@@ -118,19 +130,55 @@ fn a_building_keeps_its_entrances_regardless_of_its_neighbours() {
     assert_eq!(solo.buildings[0].entrances, crowded.buildings[1].entrances);
 }
 
-/// Размеченные в OSM двери генератор не трогает.
+/// Размеченную в OSM дверь генератор не двигает и не выбрасывает: она стоит
+/// на своём месте и идёт первой.
 #[test]
-fn real_entrances_are_left_alone() {
+fn a_real_entrance_stays_where_it_was_mapped() {
+    let real = Vec2::new(110.0, 100.0);
     let mut house = building(rect(Vec2::new(100.0, 100.0), Vec2::new(120.0, 120.0)), None);
-    house.entrances = vec![Vec2::new(110.0, 100.0)];
+    house.entrances = vec![real];
     let mut map = MapData {
         buildings: vec![house],
         roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(400.0, 95.0)])],
         ..Default::default()
     };
 
-    assert_eq!(generate_entrances(&mut map), 0);
-    assert_eq!(map.buildings[0].entrances, vec![Vec2::new(110.0, 100.0)]);
+    generate_entrances(&mut map);
+    assert_eq!(map.buildings[0].entrances[0], real);
+}
+
+/// Регресс на лондонский квартал: дом в четверть километра, а вход в нём
+/// размечен **один** — и такой дом генератор пропускал целиком, оставляя дверь
+/// одну на все 250 метров. Разметка в OSM бросается на полпути сплошь и рядом
+/// (тот же порог «не меньше двух дверей» стоит и в замере когорт), так что
+/// одна размеченная дверь — это не «дом размечен», а «дом размечен наполовину».
+#[test]
+fn a_block_mapped_with_one_door_gets_the_rest() {
+    let real = Vec2::new(120.0, 100.0);
+    // 250 × 16 = 4000 м², 9 этажей
+    let mut block = building(
+        rect(Vec2::new(100.0, 100.0), Vec2::new(350.0, 116.0)),
+        Some(27.0),
+    );
+    block.entrances = vec![real];
+    let mut map = MapData {
+        buildings: vec![block],
+        roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
+        ..Default::default()
+    };
+
+    assert!(generate_entrances(&mut map) >= 5);
+    let street = doors_on(&map, 100.0);
+    assert!(street.contains(&real), "{street:?}");
+    assert!(street.len() >= 6, "250 m block got {} doors", street.len());
+    for (index, &door) in street.iter().enumerate() {
+        for &other in &street[index + 1..] {
+            assert!(
+                door.distance(other) >= ENTRANCE_MIN_SPACING,
+                "doors too close: {door:?} vs {other:?}"
+            );
+        }
+    }
 }
 
 /// Когорты: сарай получает одну дверь, многоэтажный корпус — несколько, и
@@ -197,8 +245,10 @@ fn a_long_slab_gets_more_doors_than_a_compact_building_of_the_same_area() {
 
     generate_entrances(&mut slab);
     generate_entrances(&mut compact);
-    let slab_doors = &slab.buildings[0].entrances;
-    let compact_doors = &compact.buildings[0].entrances;
+    // считаем по уличной стене: у корпуса подъезд сквозной, и его дворовая
+    // половина — та же дверь, а не лишняя
+    let slab_doors = doors_on(&slab, 100.0);
+    let compact_doors = doors_on(&compact, 100.0);
 
     assert!(
         slab_doors.len() > compact_doors.len(),
@@ -207,11 +257,11 @@ fn a_long_slab_gets_more_doors_than_a_compact_building_of_the_same_area() {
         compact_doors.len()
     );
     assert!(slab_doors.len() >= 3, "{slab_doors:?}");
-    // все двери длинного дома — на южном фасаде, вдоль улицы
-    for door in slab_doors {
+    // и ни одна дверь не ушла на торец: подъезды стоят вдоль длинных стен
+    for door in &slab.buildings[0].entrances {
         assert!(
-            (door.y - 100.0).abs() < 0.01,
-            "slab door off the street facade: {door:?}"
+            (door.y - 100.0).abs() < 0.01 || (door.y - 114.0).abs() < 0.01,
+            "slab door off the long facades: {door:?}"
         );
     }
 }
@@ -232,7 +282,7 @@ fn a_giant_slab_does_not_get_a_door_once_per_hundred_metres() {
     };
 
     generate_entrances(&mut map);
-    let doors = &map.buildings[0].entrances;
+    let doors = doors_on(&map, 100.0);
     assert!(
         doors.len() >= 6,
         "250 m slab got only {} doors",
@@ -267,7 +317,7 @@ fn the_pitch_between_doors_holds_across_building_sizes() {
             ..Default::default()
         };
         generate_entrances(&mut map);
-        let doors = map.buildings[0].entrances.len();
+        let doors = doors_on(&map, 100.0).len();
         let pitch = length / doors as f32;
         assert!(
             (15.0..=45.0).contains(&pitch),
@@ -368,4 +418,186 @@ fn a_building_with_no_road_in_reach_still_gets_a_door() {
             "{entrance:?}"
         );
     }
+}
+
+/// Юго-западный угол дома во всех замерах ниже: улица идёт по `y = 95`, то
+/// есть вдоль южной стены.
+const LOW: Vec2 = Vec2::new(100.0, 100.0);
+
+/// Дом заданного размера, назначения и высоты у улицы на юге, с уже
+/// расставленными входами.
+fn block_by_the_street(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> MapData {
+    let mut block = building(rect(LOW, LOW + Vec2::new(length, depth)), Some(height));
+    block.building_use = building_use;
+    let mut map = MapData {
+        buildings: vec![block],
+        roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
+        ..Default::default()
+    };
+    generate_entrances(&mut map);
+    map
+}
+
+/// Сколько дверей получил такой дом.
+fn doors_of(depth: f32, length: f32, height: f32, building_use: BuildingUse) -> usize {
+    block_by_the_street(depth, length, height, building_use).buildings[0]
+        .entrances
+        .len()
+}
+
+/// Пятиэтажный дом с улицей на юге: сколько дверей вышло на каждую из длинных
+/// стен.
+fn doors_by_side(depth: f32, length: f32, building_use: BuildingUse) -> (usize, usize) {
+    let map = block_by_the_street(depth, length, 15.0, building_use);
+    (
+        doors_on(&map, LOW.y).len(),
+        doors_on(&map, LOW.y + depth).len(),
+    )
+}
+
+/// Подъезд панельной секции **сквозной**: та же дверь выходит и во двор, и
+/// стоит она ровно напротив уличной.
+#[test]
+fn a_section_opens_into_its_courtyard_too() {
+    let (street, yard) = doors_by_side(14.0, 60.0, BuildingUse::Apartments);
+    assert!(
+        street > 0 && yard == street,
+        "{street} на улицу, {yard} во двор"
+    );
+}
+
+/// Дом-свечка: квадратная высотка обходится **одним** входом, и приделывать
+/// ему второй с изнанки нельзя — на сорок метров вглубь подъезд не бывает
+/// сквозным.
+#[test]
+fn a_tower_keeps_its_entrances_on_one_side() {
+    let (street, yard) = doors_by_side(44.0, 44.0, BuildingUse::Apartments);
+    assert!(street > 0 && yard == 0, "{street} на улицу, {yard} во двор");
+}
+
+/// Гаражный ряд длинный, но пройти его насквозь нечем: четыре метра глубины —
+/// это бокс, а не подъезд.
+#[test]
+fn a_shallow_row_is_not_walked_through() {
+    let (street, yard) = doors_by_side(5.0, 60.0, BuildingUse::Other);
+    assert!(street > 0 && yard == 0, "{street} на улицу, {yard} во двор");
+}
+
+/// Регресс на тульские девятиэтажки у портала: дом 32 × 32 м и 27 м высоты
+/// (тысяча метров плана на девяти этажах — сотня с лишним квартир) получал
+/// **одну** дверь, потому что когорта видит только длину, а «длина» такого
+/// дома — 32 метра, полоса «дом, магазин». Считать подъезды надо по плану.
+#[test]
+fn a_tall_compact_block_gets_a_door_per_section_of_its_plan() {
+    let doors = doors_of(32.0, 32.0, 27.0, BuildingUse::Apartments);
+    assert!(doors >= 3, "девятиэтажка на 1000 м² плана: {doors} дверей");
+}
+
+/// Число входов **не падает** с ростом дома — ни по площади, ни по высоте.
+/// Именно это ломалось: у высокого компактного дома дверей выходило меньше,
+/// чем у низкого длинного вдвое меньшей площади.
+#[test]
+fn the_door_count_never_falls_as_the_building_grows() {
+    let ladder = [
+        // сарай, частный дом, секция, корпус, дом-корабль, и он же выше
+        (8.0, 10.0, 3.0),
+        (10.0, 12.0, 6.0),
+        (14.0, 60.0, 15.0),
+        (16.0, 90.0, 27.0),
+        (16.0, 200.0, 27.0),
+        (16.0, 250.0, 33.0),
+    ];
+    let mut previous = 0;
+    for (depth, length, height) in ladder {
+        let doors = doors_of(depth, length, height, BuildingUse::Apartments);
+        assert!(
+            doors >= previous,
+            "{length} × {depth} × {height} м: {doors} дверей после {previous}"
+        );
+        previous = doors;
+    }
+    assert!(previous >= 8, "дом-корабль получил всего {previous} дверей");
+}
+
+/// Один вход бывает **только** у дома-свечки: компактный план и 15 этажей.
+/// Всё прочее крупное жильё носит несколько подъездов.
+#[test]
+fn only_a_tall_tower_may_keep_a_single_entrance() {
+    // свечка: 25 × 25 м, 50 м высоты — вестибюль на весь дом, вход может быть один
+    let tower = doors_of(25.0, 25.0, 50.0, BuildingUse::Apartments);
+    assert!(tower <= 2, "свечке хватает одного входа, а вышло {tower}");
+
+    // а девятиэтажка того же плана — уже не свечка
+    let block = doors_of(25.0, 25.0, 27.0, BuildingUse::Apartments);
+    assert!(block >= 2, "девятиэтажка получила {block} вход");
+}
+
+/// Правило секций — про **жильё**: у одноэтажного склада в 3000 м² подъездов
+/// не бывает, сколько бы плана он ни занимал.
+#[test]
+fn a_warehouse_gets_doors_by_its_walls_not_by_its_floor_plan() {
+    let shed = doors_of(50.0, 60.0, 6.0, BuildingUse::Industrial);
+    assert!(
+        (1..=4).contains(&shed),
+        "складу насчитали {shed} дверей, как жилым секциям"
+    );
+}
+
+/// Ступенька контура — не фасад: подъезда на четырёхметровом уступе не бывает,
+/// даже если он ближе всех к дороге. Именно так третий подъезд десятиэтажки
+/// вставал на выступ у угла, пока длинная стена оставалась глухой.
+#[test]
+fn a_step_in_the_outline_is_not_a_facade() {
+    // корпус 60 × 14 с четырёхметровым выступом посреди уличной стены —
+    // выступ ближе к дороге, чем сама стена
+    let mut block = building(
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(128.0, 100.0),
+            Vec2::new(128.0, 96.0),
+            Vec2::new(132.0, 96.0),
+            Vec2::new(132.0, 100.0),
+            Vec2::new(160.0, 100.0),
+            Vec2::new(160.0, 114.0),
+            Vec2::new(100.0, 114.0),
+        ],
+        Some(27.0),
+    );
+    block.building_use = BuildingUse::Apartments;
+    let mut map = MapData {
+        buildings: vec![block],
+        roads: vec![road(vec![Vec2::new(0.0, 90.0), Vec2::new(400.0, 90.0)])],
+        ..Default::default()
+    };
+
+    generate_entrances(&mut map);
+    let doors = &map.buildings[0].entrances;
+    assert!(!doors.is_empty());
+    for door in doors {
+        assert!(
+            (door.y - 96.0).abs() > 0.01,
+            "подъезд на торце уступа: {door:?} из {doors:?}"
+        );
+    }
+}
+
+/// Высота — не поправка, а второй множитель: тот же план, вдвое выше дом —
+/// больше подъездов. Ровно этого не хватало когорте, которая видит длину.
+#[test]
+fn height_moves_the_door_count_on_the_same_plan() {
+    let plan = (30.0, 40.0);
+    let low = doors_of(plan.0, plan.1, 15.0, BuildingUse::Apartments);
+    let tall = doors_of(plan.0, plan.1, 27.0, BuildingUse::Apartments);
+    let higher = doors_of(plan.0, plan.1, 51.0, BuildingUse::Apartments);
+    assert!(
+        low < tall && tall < higher,
+        "{low} → {tall} → {higher} дверей на 5, 9 и 17 этажах"
+    );
+}
+
+/// Частный дом сквозным подъездом не обзаводится, какой бы длины ни был.
+#[test]
+fn a_private_house_keeps_its_single_side() {
+    let (street, yard) = doors_by_side(12.0, 45.0, BuildingUse::House);
+    assert!(street > 0 && yard == 0, "{street} на улицу, {yard} во двор");
 }
