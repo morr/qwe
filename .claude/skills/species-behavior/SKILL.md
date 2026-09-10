@@ -642,7 +642,10 @@ the component, not the sprite. The two:
   changed (`Local<f32>` holds the last one). Thousands of sprite writes per wheel click,
   not per frame.
 
-Both return early when there is no `Camera2d`, which is the same contract as the atlas:
+Both ask for the **user's** camera — `With<Camera2d>` *and* `With<PanCamera>`, because a
+`dev::OffscreenShotEvent` puts a second `Camera2d` in the world for three frames and a
+`Single` matching two entities is skipped without a word. Both return early when there is
+no such camera, which is the same contract as the atlas:
 without a renderer (replay, tests) `Silhouettes` stays `None`, `sprite()` hands back a
 plain square `Sprite`, and **that is not an error**. `HumanPlugin` / `DemonPlugin` /
 `PortalPlugin` only `init_resource::<Silhouettes>()`; `SilhouettePlugin` is what fills it,

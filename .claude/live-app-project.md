@@ -132,11 +132,14 @@ real frame is around 0.2–0.4.
 
 Every field is optional: `at` (map metres) and `zoom` (metres per frame pixel) default to
 the user camera's, `size` to 1568 × 980 (long edge exactly at the downscale threshold, so
-the file reaches you unsquashed), `path` to `offscreen.png`. The camera carries the same
-post-processing as the real one (bloom), so the picture is what the
-window would show — **except the UI**, which stays on the main camera
-(`IsDefaultUiCamera` in `camera.rs`) and is out of the frame on purpose: this is a picture
-of the map, not of the app. It lives for `WARMUP_FRAMES` (2) frames and despawns itself.
+the file reaches you unsquashed), `path` to `offscreen.png`. The camera carries the real
+camera's HDR and bloom, so the picture is what the window would show **minus everything
+drawn as UI** — on purpose: this is a picture of the map, not of the app. UI renders to the
+default UI camera, which targets the window, while this one targets a texture. That is the
+panels, and it is also the **vignette** (`post.rs` draws it as a UI node), so the corners of
+the png are lighter than the corners of the window — not a broken vignette. It is captured on frame `WARMUP_FRAMES` (2) and despawns a
+frame after that, not at the capture: the camera is what draws into the shot's texture, so
+it has to outlive the request.
 
 The file is written asynchronously like every screenshot, and — unlike `brp shot` — nothing
 here waits for it. **Wait on the reader, not on the path.** `until [ -f x ]` returns the
