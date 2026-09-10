@@ -24,6 +24,9 @@ RAIL_OK = {
     "rail", "light_rail", "narrow_gauge", "subway", "tram",
     "abandoned", "disused", "razed", "dismantled",
 }
+# parse/tags.rs::is_service_track — станционный путь, на нём стоят вагоны.
+# Белый список, а не «тег есть»: `service=crossover` — съезд между главными путями.
+SERVICE_OK = {"siding", "yard", "spur"}
 # parse.rs::water_class — линейные водотоки; `riverbank` тут не значится,
 # это площадь и её забирает area_kind
 WATER_OK = {"river", "canal", "weir", "stream", "brook", "ditch", "drain"}
@@ -122,6 +125,10 @@ def analyse(path):
                     dropped[f"way railway={railway}"] += 1
                 elif underground(tags):
                     dropped[f"way railway={railway} (под землёй)"] += 1
+                elif tags.get("service") in SERVICE_OK:
+                    # тот же элемент, только с пометкой: сумма двух строк `rail *`
+                    # по-прежнему сходится с REF-счётчиком всех `railway`
+                    kept[f"rail {railway} (станционный)"] += 1
                 else:
                     kept[f"rail {railway}"] += 1
             if tags.get("natural") == "tree_row":
