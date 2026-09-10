@@ -803,9 +803,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
       latter `Res<SunOnMap>`): it does not depend on the roof-clutter
-      zoom bucket, and it is the single most expensive thing here — **two thirds to three
-      quarters of the whole building build** on Tula (43–45 ms of a 53–72 ms build, by height
-      mode and clutter bucket, in one `examples/bench/map_meshing` run on the `dev` profile;
+      zoom bucket, and it is the single most expensive thing here — **60–80 % of the whole
+      building build** on Tula (41–46 ms of a 52–70 ms build, by height mode and clutter
+      bucket, in `examples/bench/map_meshing` runs on the `dev` profile — the share is lower
+      the more the facades themselves cost;
       the 90 ms of 116 that used to stand here came off the `building meshing:` line in
       the app, where the power state sets the scale, so take the share, not the
       milliseconds). `BuildingPlan { mode,
