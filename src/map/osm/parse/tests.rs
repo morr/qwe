@@ -302,8 +302,7 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
             &[("building", "yes"), ("amenity", "parking")],
             square(CENTER, HALF / 4.0),
         )
-        // озеленённая стоянка всё-таки стоянка: асфальт там главное, а вот
-        // сам сквер с тем же тегом остаётся сквером
+        // сквер внутри стоянки — отдельный контур и остаётся сквером
         .area(&[("leisure", "park")], square(CENTER, HALF / 2.0))
         .parse();
 
@@ -311,7 +310,29 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
     assert_eq!(map.parking[0].kind, AreaKind::Parking);
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.parks.len(), 1);
-    // навмеша стоянка не касается — по ней ходят
+    // в кварталы стоянка не падает: до ветки `landuse` дело не доходит
+    assert!(map.landuse.is_empty());
+}
+
+#[test]
+fn an_underground_car_park_is_not_asphalt_over_the_lawn() {
+    let map = Overpass::new(CITY)
+        // подземный паркинг нарисован своим контуром под сквером, без `building`
+        .area(
+            &[("amenity", "parking"), ("parking", "underground")],
+            square(CENTER, HALF / 2.0),
+        )
+        .area(&[("leisure", "park")], square(CENTER, HALF))
+        // многоуровневый паркинг без `building` — тот же случай, только над двором
+        .area(
+            &[("amenity", "parking"), ("parking", "multi-storey")],
+            square(CENTER + Vec2::splat(HALF * 2.0), HALF / 2.0),
+        )
+        .parse();
+
+    assert!(map.parking.is_empty());
+    assert_eq!(map.parks.len(), 1);
+    // контур ушёл дальше по цепочке и без `landuse` не нарисовался вовсе
     assert!(map.landuse.is_empty());
 }
 
