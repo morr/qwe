@@ -295,10 +295,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   roof-clutter zoom bucket.
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
   (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
-  the roof material, parked cars. **The seed is the object's own reference point** — the
+  the roof material, parked cars, standing wagons. **The seed is the object's own reference
+  point** — the
   first vertex of a footprint, the first point of a street — never its index in the extract,
   so a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage
   (doors, tree planting) keeps its own point-seeded `rng::lcg_seeded_by`.
+- **Arclength walk** (`map/along.rs`) — `arclengths` + `place_on_path`, the one walk along a
+  polyline's **whole** length, shared by every layer that places objects along linear
+  geometry (parked cars, standing wagons) the way `map/seed.rs` shares the RNG. The defect
+  it exists against is a per-link `points.windows(2)` walk: a city polyline's link is
+  routinely shorter than two end margins, so such a walk drops the link whole, resets the
+  step at every vertex and keeps a margin clear of every interior bend. Curvature stays the
+  caller's problem — checked by **world** distance to the last object placed, never by the
+  arc coordinate.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -323,7 +332,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   running lines and nobody parks on it), never on the running line, where a train is
   either moving or absent. They stand in **rakes** — several coupled 13.9 × 3.1 m cars
   with `COUPLED_GAP` 0.9 m between them, then an empty stretch of 12–90 m; an even row at
-  a fixed pitch would read as a fence. A 3.8 m body throws a long shadow by the same
+  a fixed pitch would read as a fence. The rakes are stepped along the **whole track's**
+  arclength (**Arclength walk** above), so the end margin is kept clear of the track's ends
+  — where the switch is — and not of every bend in it. A 3.8 m body throws a long shadow by the same
   `shadow_length_scale()` as everything else. Decoration only, like the cars, but with no
   style knobs of its own: the layer comes off by zoom alone. They have a zoom bucket of
   their own (`WAGON_MAX_ZOOM` 2.0 — a wagon is three times a car's length, and
@@ -335,7 +346,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
-  and roundabouts. The pitch is walked along the **whole street's arclength**, not segment
+  and roundabouts. The pitch is walked along the **whole street's arclength** (**Arclength
+  walk** above), not segment
   by segment, and the row **breaks at the junctions the lane markings already know**
   (`junctions::marking_breaks`, plus a 5 m clearance) rather than at the ends of an OSM way.
   A **one-way** carriageway gets a single row, on its right-hand kerb — which is what stops
