@@ -3,7 +3,7 @@
 // `material::RoofLook`)
 pub mod buildings;
 // публичен по той же причине: витрина `car_gallery` расставляет ряды его же
-// вызовом (`cars_mesh`)
+// вызовом (`cars_mesh`), а стенд кузовов рисует машины его же `body`
 pub mod cars;
 pub mod footprint;
 mod meshing;

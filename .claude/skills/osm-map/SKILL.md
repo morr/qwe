@@ -556,7 +556,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
-- **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
+- **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
   the very predicate that decides where a sidewalk and lane markings go, opened up for this
@@ -570,8 +570,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `residential`/`unclassified`/`living_street` in and keeps `service` out, which is exactly
   the line wanted. On an 8 m street the row sits `8/2 − CURB_GAP − CAR_WIDTH/2 = 2.6 m` off
   the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
-  `a_residential_street_gets_a_row`. 4.4 × 1.8 m bodies
-  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half a body in from the kerb, with
+  `a_residential_street_gets_a_row`. Bodies of the size their **type** says (`CarShape`,
+  4.4 × 1.8 m for a sedan up to 5.3 × 1.95 for a van)
+  at `CAR_PITCH` 6 m, offset `CURB_GAP` + half of **that** body in from the kerb — the
+  type is therefore rolled before the place, so a van stands as close to the kerb as a
+  sedan does — with
   `CarStyle::occupancy` (`CAR_OCCUPANCY_DEFAULT`, 45 %) of the places taken (a solid row
   from junction to junction looks like a dealership)
   and `END_MARGIN` 2 m clear of each end — that margin is only about the drawn ribbon's
@@ -581,9 +584,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `points.windows(2)` walk dropped every such link whole (51 % of Tula's segments, 35 % of
   its length) and reset the step at every vertex, so the row tore or doubled across a bend.
   `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
-  extra rule handles curvature: a place closer than `CAR_LENGTH` to the last car **placed on
-  that side** is skipped, measured in world distance so it catches a corner and any other
-  bend alike.
+  extra rule handles curvature: a place closer than the car's **own length** to the last car
+  **placed on that side** is skipped, measured in world distance so it catches a corner and
+  any other bend alike.
+  - **Nobody parks by a ruler**, and a row that does reads as warehouse markings rather than
+    a yard: every car is turned by `PARK_SKEW_DEGREES` (2.5°) and shifted across by
+    `PARK_SLOP` (0.12 m), both through the LCG's `bell4` — a bell, so most of the row is
+    almost straight and the odd car is visibly askew. Both numbers are small on purpose:
+    `CURB_GAP` (0.5 m) has to swallow the skew, or a corner of a body ends up on the lane
+    markings.
   - **The row breaks at real junctions, not at way ends.** It used to break at the ends of
     the OSM way, which is wrong in both directions at once: a way cut mid-street by a tag
     change tore the row for no reason, and a way running straight through a crossing parked
@@ -608,11 +617,30 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `measure_cars` in `examples/bench/map_meshing` prints the same split offline.
   Colours are a ten-slot
   palette in the shares a photo shows. Every car casts a shadow through the same
-  `map::shadow_length_scale()` as the buildings, and the mesh draws **all shadows first,
+  `map::shadow_length_scale()` as the buildings — its length by the **type's own height**
+  (1.5 m for a saloon, 2.3 for a van), which is why the van's shadow is visibly the longer
+  one — and the mesh draws **all shadows first,
   then all bodies** — otherwise a car's shadow lands on top of the neighbour drawn before
   it. The layer is one merged **blended** mesh (the shadow is translucent, the body is not)
   at `Z_CAR` 2.7, above the tram and the rails (a car parks on the asphalt over the tracks)
   and below the portal stain.
+  - **What a car is drawn as** (`cars/body.rs`) — from above a car is **not a rectangle**:
+    it is a rounded silhouette with a dark cabin across the middle — windscreen, roof,
+    backlight. Those three cross bands are what make the patch on the asphalt read as a car;
+    the colour is second, and the flat coloured rectangle that stood here read as a crate
+    precisely because it had none of them. Six points a side make the outline (nose and tail
+    narrower than the midships by `Profile::nose` / `tail`), then the cabin is three quads —
+    windscreen in `GLASS_FRONT` (lighter: the sky is in it), roof in the body colour
+    lightened by `ROOF_LIGHTEN` (it faces straight up, so it is the brightest place on the
+    car), backlight in the darker `GLASS_BACK` — and a pair of mirrors, the cheapest sign
+    that the patch has a front. Painter's order inside the one merged mesh, as everywhere
+    in `map`: the cabin is pushed after the body it lies on.
+  - **The type is `CarShape`**, a ten-slot table in the shares a Russian yard shows (three
+    sedans, three hatchbacks, a wagon, two crossovers, a van), and it decides both the
+    metres (length, width, height) and the layout of the cabin **in fractions of them** —
+    a sedan has a long boot, a hatchback none at all, a van's roof starts right behind the
+    windscreen. Fractions rather than metres, so a body is described once and scales with
+    its own size.
   - **Decoration, and deliberately so**: cars touch neither the navmesh nor the simulation
     and pawns walk through them. A parked row along every street would otherwise eat the
     pavements the entire crowd walks on.
@@ -628,16 +656,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     asphalt. The invisible case
     goes through the same early return as the far zoom bucket: despawn the old layer, build
     no new one, so no second path can forget the despawn.
-  - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px, so a
-    4.4 m car is never under ~6 px): past the threshold the layer is not drawn at all, which
-    is cheaper than any LOD of the drawing itself. Seeded per street (its first point,
-    like doors and roofs), so the row is the same across rebuilds.
+  - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`), and since the body has detail in
+    it the table is no longer one threshold but four: `CAR_DETAIL_MAX_ZOOM` (0.18 m/px, a
+    24-px car — glass and mirrors still read) → `CarDetail::Full`, `CAR_SILHOUETTE_MAX_ZOOM`
+    (0.4) → `Silhouette` (the outline alone, since a windscreen there is under a pixel),
+    `CAR_MAX_ZOOM` (0.8, a 4.4 m car at ~6 px) → `Block`, the plain rectangle, and past it
+    no layer at all — still cheaper than any LOD of the drawing. `detail_for` is the one
+    place the bucket index becomes a drawing, and the ladder only ever drops vertices.
+    **The layer is built for the whole city, not for the frame**, so the detailed bucket
+    pays for all 22 k cars at once: a one-off hitch on the threshold crossing, of the same
+    nature as `RAIL_LODS`'s deepest bucket, which is what `CAR_DETAIL_MAX_ZOOM` is chosen to
+    keep rare. Seeded per street (its first point, like doors and roofs), so the row is the
+    same across rebuilds.
   - **The gallery** — `cargo run --example car_gallery` (`examples/demos/car_gallery/`, the
     shape of `roof_gallery`): eight cells, and they are **not** pretty streets but the list
     of shapes the row used to break on — straight, a ten-link polyline, a 90° bend, a T and
     a four-way crossing, a divided avenue, an 8 m residential street, a `service` drive and
     a bridge (both empty). Under each one, in the caption, what it is there to show. It may
-    not roll its own geometry: `cars_mesh` is the one door out of `map/cars.rs` and the
+    not roll its own geometry: `cars_mesh` is the one door out of `map/cars/` and the
     cells are described with the very `osm::fixture` the parse tests use, so a cell and a
     test talk about the same object. Its own is only the asphalt underneath, drawn with
     `MeshBuilder::push_ribbon` in the game's `ROAD_COLOR` — the brightness step between a
@@ -649,10 +685,28 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
     `examples/demos/gallery_shot.rs`: it holds the frame counts and window-raise logic, both
     debugged facts (commit 21853a3), and fixes apply there to all galleries at once.
-  - Tula: **22 022 cars, 176 k verts, 5.4 ms** at the default occupancy — against 5665 /
-    45 k while only the avenues parked. Next to the building layer (730 k verts, 71 ms) and
-    in the same class as the rail layer (129 k, 5.4 ms), so still cheap; the layer is built
-    once per rebuild and costs nothing per frame.
+  - **The ninth cell is the stand** (`car_gallery/stand.rs`) — five body types × three
+    detail steps, and it answers the other question: not *where* a row stands but *what*
+    stands in it. Neither is readable off a street — the type falls out of the LCG and a van
+    may simply not turn up — so this is the one place in the gallery where the type is
+    **ordered** rather than rolled, exactly as the roof gallery orders a material
+    (`RoofLook::new`) because the seed cannot reach every combination. The geometry is still
+    the game's (`body::push_body` / `push_shadow`, the very calls the city layer makes) and
+    still in metres; only the transform magnifies it (`stand::SCALE`), since a 4.5 m car
+    next to streets hundreds of metres long is otherwise invisible. The `Detail` knob drives
+    the street cells, never the stand — the stand shows all three steps at once.
+  - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
+    machine, so compare runs against runs): **22 078 cars**, and per detail step
+    **971 k verts / 15 ms** (Full), **529 k / 9 ms** (Silhouette), **176 k / 4 ms** (Block —
+    the layer as it was before the body had any drawing in it). Next to the building layer
+    (785 k verts, 66 ms) and above the rail layer's deepest bucket (673 k, 23 ms) — still a
+    layer built once per rebuild that costs nothing per frame.
+    - **The body outline goes through `MeshBuilder::push_convex`, not `push_polygon`**, and
+      that is most of those milliseconds: `push_polygon` calls `earcutr`, which on a
+      12-vertex contour costs several times the laying-out itself and runs twice per car
+      (body and shadow), 22 k cars over. The fan is correct because the outline is convex by
+      construction, and `body/tests.rs::the_outline_is_convex` is what keeps it that way.
+      Measured: Full 40 → 15 ms, Silhouette 35 → 9 ms, vertices unchanged.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark

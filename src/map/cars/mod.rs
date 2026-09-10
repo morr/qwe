@@ -32,15 +32,15 @@ use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
-use crate::settings::{CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, Z_CAR};
+use crate::map::{shadow_dir, shadow_length_scale};
+use crate::settings::{
+    CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR,
+};
 
-/// Габарит легковой машины, м — «Логан» с точностью до сантиметров.
-const CAR_LENGTH: f32 = 4.4;
-const CAR_WIDTH: f32 = 1.8;
-/// Высота машины, м: по ней считается длина её тени, тем же котангенсом
-/// высоты солнца, что у домов.
-const CAR_HEIGHT: f32 = 1.5;
+pub mod body;
+
+pub use body::{Car, CarDetail, CarShape};
+
 /// Шаг парковочного места вдоль улицы, м: машина плюс просвет.
 const CAR_PITCH: f32 = 6.0;
 /// Насколько край машины отступает от кромки проезжей части, м. Ноль —
@@ -52,28 +52,17 @@ const CURB_GAP: f32 = 0.5;
 /// знает — way кончается где угодно, а перекрёсток восстанавливается по
 /// общим нодам (`map::roads::junctions`).
 const END_MARGIN: f32 = 2.0;
+/// Небрежность парковки: разброс угла, градусы, и поперечного отступа, м.
+/// Ряд, выровненный по линейке, читается как разметка склада, а не как двор;
+/// оба числа малы нарочно — машина не должна вылезти на разметку или на
+/// тротуар (полметра `CURB_GAP` держит и перекос).
+const PARK_SKEW_DEGREES: f32 = 2.5;
+const PARK_SLOP: f32 = 0.12;
 /// Насколько ряд не доходит до перекрёстка, м, сверх полуширины самой широкой
 /// из сошедшихся дорог (`Break::reach`): ближе пяти метров к перекрёстку не
 /// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
 /// те же пять пустых метров, что и на настоящем узле.
 const JUNCTION_CLEARANCE: f32 = 5.0;
-
-/// Палитра кузовов, по долям близкая к тому, что видно на снимке русского
-/// города. Слот выбирается равномерно, поэтому доля цвета — это счёт слотов:
-/// светлого ахроматического (белый, серебро, серый, тёмно-серый) — две пятых,
-/// чёрного — пятая часть, остальное цветное.
-const CAR_COLORS: [Color; 10] = [
-    Color::srgb(0.78, 0.78, 0.77),
-    Color::srgb(0.72, 0.73, 0.74),
-    Color::srgb(0.60, 0.61, 0.62),
-    Color::srgb(0.46, 0.47, 0.48),
-    Color::srgb(0.16, 0.16, 0.17),
-    Color::srgb(0.20, 0.20, 0.21),
-    Color::srgb(0.22, 0.27, 0.38),
-    Color::srgb(0.45, 0.14, 0.13),
-    Color::srgb(0.29, 0.33, 0.28),
-    Color::srgb(0.55, 0.50, 0.42),
-];
 
 /// Ручки слоя машин: строки `Cars` и `Occupancy` секции Roads
 /// (`ui/roads.rs`) — путь и машины стоят на одной проезжей части, так что
@@ -103,24 +92,41 @@ impl Default for CarStyle {
 #[derive(Component)]
 pub struct CarLayerTag;
 
-/// Ступени зума слоя машин: ближе порога — ряды на месте, дальше слоя нет
-/// вовсе. Машина в 4.4 м на 0.8 м/px это пять с половиной пикселей; ещё
-/// дальше ряд превращается в мерцающий пунктир вдоль улицы.
+/// Ступени зума слоя машин: не размер машины, а **подробность кузова** —
+/// вблизи стёкла и зеркала ([`CarDetail::Full`]), дальше силуэт со
+/// скруглениями, ещё дальше габаритный прямоугольник, за `CAR_MAX_ZOOM`
+/// слоя нет вовсе. Машина в 4.4 м на 0.8 м/px это пять с половиной
+/// пикселей; ещё дальше ряд превращается в мерцающий пунктир вдоль улицы.
+///
+/// Ступени идут только на убывание вершин, и слой строится на **весь**
+/// город, а не на кадр: подробный кузов на всех двадцати двух тысячах машин
+/// — это разовый хитч на пересечении порога, той же природы, что у рельсов
+/// (`RAIL_LODS`), и порог `CAR_DETAIL_MAX_ZOOM` выбран так, чтобы платить за
+/// него только там, где деталь видно.
 pub enum CarLods {}
 
 impl ZoomLods for CarLods {
     fn max_zooms() -> impl Iterator<Item = f32> {
-        [CAR_MAX_ZOOM, f32::INFINITY].into_iter()
+        [
+            CAR_DETAIL_MAX_ZOOM,
+            CAR_SILHOUETTE_MAX_ZOOM,
+            CAR_MAX_ZOOM,
+            f32::INFINITY,
+        ]
+        .into_iter()
     }
 }
 
 pub type CarZoomBucket = ZoomBucket<CarLods>;
 
-/// Одна машина: центр, направление вдоль кузова и цвет.
-struct Car {
-    at: Vec2,
-    along: Vec2,
-    color: Color,
+/// Подробность кузова на ступени зума; последняя ступень — слоя нет.
+fn detail_for(bucket: usize) -> Option<CarDetail> {
+    match bucket {
+        0 => Some(CarDetail::Full),
+        1 => Some(CarDetail::Silhouette),
+        2 => Some(CarDetail::Block),
+        _ => None,
+    }
 }
 
 /// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
@@ -131,33 +137,39 @@ struct Car {
 /// миллисекунды — ровно то, ради чего замер и выносили из живого приложения, а
 /// `breaks` отдельной строкой — та же разбивка, что печатает `rebuild_cars`
 /// (разрывы считаются на каждую пересборку, и это решение перемеряется здесь).
+///
+/// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
+/// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
+/// видна в тех же числах, что и цена зданиевых слоёв.
 pub fn measure_cars(roads: &[RoadLine]) -> (usize, Vec<LayerCost>) {
     let started = std::time::Instant::now();
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let breaks_took = started.elapsed();
-    let started = std::time::Instant::now();
     let cars = park_cars(
         roads,
         &junctions,
         CarStyle::default(),
         RoadStyle::default().smoothing,
     );
-    let builder = mesh_cars(&cars);
-    (
-        cars.len(),
-        vec![
-            LayerCost {
-                name: "breaks",
-                vertices: 0,
-                elapsed: breaks_took,
-            },
-            LayerCost {
-                name: "cars",
-                vertices: builder.vertex_count(),
-                elapsed: started.elapsed(),
-            },
-        ],
-    )
+    let mut costs = vec![LayerCost {
+        name: "breaks",
+        vertices: 0,
+        elapsed: breaks_took,
+    }];
+    for (name, detail) in [
+        ("cars full", CarDetail::Full),
+        ("cars silhouette", CarDetail::Silhouette),
+        ("cars block", CarDetail::Block),
+    ] {
+        let started = std::time::Instant::now();
+        let builder = mesh_cars(&cars, detail);
+        costs.push(LayerCost {
+            name,
+            vertices: builder.vertex_count(),
+            elapsed: started.elapsed(),
+        });
+    }
+    (cars.len(), costs)
 }
 
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
@@ -180,9 +192,9 @@ pub fn rebuild_cars(
     // выключенный слой проходит тем же путём, что и снятый зумом: деспавн
     // старого и никакой сборки нового — второй ветки, которая могла бы забыть
     // деспавн, нет
-    if bucket.index > 0 || !style.visible {
+    let Some(detail) = detail_for(bucket.index).filter(|_| style.visible) else {
         return;
-    }
+    };
     let started = std::time::Instant::now();
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
     // обязан прерваться и там, где к жилой улице примыкает другая жилая.
@@ -196,7 +208,7 @@ pub fn rebuild_cars(
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
     let cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
-    let builder = mesh_cars(&cars);
+    let builder = mesh_cars(&cars, detail);
     let count = cars.len();
     let vertices = builder.vertex_count();
     let elapsed = started.elapsed();
@@ -218,7 +230,7 @@ pub fn rebuild_cars(
         CarLayerTag,
     );
     info!(
-        "cars: {count} parked ({vertices} verts) in {elapsed:?} (junctions {}, {breaks_took:?})",
+        "cars: {count} parked, {detail:?} ({vertices} verts) in {elapsed:?} (junctions {}, {breaks_took:?})",
         junctions.junctions,
     );
 }
@@ -233,10 +245,16 @@ pub fn rebuild_cars(
 /// геометрию, а не игровую.
 ///
 /// `smoothing` — то же, с чем витрина кладёт под ряд асфальт: осевая у ленты и
-/// у ряда обязана быть одна.
-pub fn cars_mesh(roads: &[RoadLine], style: CarStyle, smoothing: RoadSmoothing) -> MeshBuilder {
+/// у ряда обязана быть одна; `detail` — ступень подробности, которую в игре
+/// выдаёт зум, а витрина показывает все три рядом.
+pub fn cars_mesh(
+    roads: &[RoadLine],
+    style: CarStyle,
+    smoothing: RoadSmoothing,
+    detail: CarDetail,
+) -> MeshBuilder {
     let junctions = junctions::marking_breaks(roads, is_carriageway);
-    mesh_cars(&park_cars(roads, &junctions, style, smoothing))
+    mesh_cars(&park_cars(roads, &junctions, style, smoothing), detail)
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.
@@ -263,8 +281,6 @@ fn park_cars(
         let mut rng = Lcg::new(seed_from_point(
             road.points.first().copied().unwrap_or(Vec2::ZERO),
         ));
-        // ряд с каждой стороны: отступ от кромки внутрь проезжей части
-        let offset = road.width / 2.0 - CURB_GAP - CAR_WIDTH / 2.0;
         // односторонняя — один ряд, справа по ходу: движение правостороннее, и
         // у половины разделённого проспекта справа бордюр, а слева
         // разделительная. Порядок точек way совпадает с направлением потока
@@ -275,7 +291,8 @@ fn park_cars(
             park_along(
                 &mut cars,
                 &centre,
-                side * offset,
+                road.width / 2.0,
+                side,
                 &junctions.breaks[index],
                 style.occupancy,
                 &mut rng,
@@ -295,17 +312,22 @@ fn parkable(road: &RoadLine) -> bool {
 }
 
 /// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по **всей** ломаной улицы, со
-/// сдвигом `offset` поперёк и с пропусками.
+/// сдвигом от кромки поперёк и с пропусками. `side` — знак поперечной
+/// (`-1` — правая сторона по ходу), `half_road` — полуширина проезжей части,
+/// от которой ряд и отступает: отступ считается по габариту **этой** машины,
+/// так что фургон стоит к бордюру так же вплотную, как седан.
 ///
 /// Шаг идёт по дуговой координате целой улицы, а не по каждому её звену
 /// порознь: звено ломаной в городе сплошь и рядом короче двух отступов, и
 /// пошаговый обход `windows(2)` выбрасывал их целиком (в кеше Тулы — половину
 /// сегментов и треть длины), а на каждой вершине сбрасывал шаг, отчего ряд то
 /// рвался, то удваивался.
+#[allow(clippy::too_many_arguments)]
 fn park_along(
     cars: &mut Vec<Car>,
     points: &[Vec2],
-    offset: f32,
+    half_road: f32,
+    side: f32,
     junctions: &[Break],
     occupancy: f32,
     rng: &mut Lcg,
@@ -326,25 +348,34 @@ fn park_along(
         let Some((point, direction)) = place_on_path(points, &along, at) else {
             continue;
         };
-        let place = point + direction.perp() * offset;
+        // тип кузова выбирается до места, а не после: отступ от кромки идёт от
+        // габарита именно этой машины, и у фургона он свой
+        let shape = CarShape::from_share(rng.next_f32());
+        let across = direction.perp() * side;
+        let offset = half_road - CURB_GAP - shape.width() / 2.0;
+        let place = point + across * offset;
         if junctions
             .iter()
             .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
         {
             continue;
         }
-        if last.is_some_and(|previous| previous.distance(place) < CAR_LENGTH) {
+        if last.is_some_and(|previous| previous.distance(place) < shape.length()) {
             continue;
         }
         if rng.next_f32() >= occupancy {
             continue;
         }
         last = Some(place);
+        // машину ставят руками, и на снимке города ни один ряд не выровнен по
+        // линейке: колокол `bell4` даёт мелкую небрежность у большинства и
+        // заметный перекос у единиц
+        let skew = Rot2::degrees(rng.bell4() * PARK_SKEW_DEGREES);
         cars.push(Car {
-            at: place,
-            along: direction,
-            color: CAR_COLORS
-                [(rng.next_f32() * CAR_COLORS.len() as f32) as usize % CAR_COLORS.len()],
+            at: place + across * (rng.bell4() * PARK_SLOP),
+            along: skew * direction,
+            color: body::color_from_share(rng.next_f32()),
+            shape,
         });
     }
 }
@@ -378,30 +409,19 @@ fn place_on_path(points: &[Vec2], along: &[f32], at: f32) -> Option<(Vec2, Vec2)
 
 /// Меш слоя: сначала **все** тени, потом **все** кузова — тень соседней
 /// машины иначе легла бы поверх кузова той, что нарисована раньше.
-fn mesh_cars(cars: &[Car]) -> MeshBuilder {
+///
+/// Длина тени — по высоте **этой** машины (у фургона она заметно длиннее) и
+/// по тому же котангенсу высоты солнца, которым меряются тени домов.
+fn mesh_cars(cars: &[Car], detail: CarDetail) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
-    let shadow = SHADOW_COLOR.to_linear();
-    let offset = shadow_dir() * (CAR_HEIGHT * shadow_length_scale());
+    let stretch = shadow_dir() * shadow_length_scale();
     for car in cars {
-        builder.push_quad(body(car, offset), shadow);
+        body::push_shadow(&mut builder, car, stretch * car.shape.height(), detail);
     }
     for car in cars {
-        builder.push_quad(body(car, Vec2::ZERO), car.color.to_linear());
+        body::push_body(&mut builder, car, detail);
     }
     builder
-}
-
-/// Прямоугольник кузова, сдвинутый на `offset` (для тени — по свету).
-fn body(car: &Car, offset: Vec2) -> [Vec2; 4] {
-    let half_length = car.along * (CAR_LENGTH / 2.0);
-    let half_width = car.along.perp() * (CAR_WIDTH / 2.0);
-    let at = car.at + offset;
-    [
-        at - half_length - half_width,
-        at + half_length - half_width,
-        at + half_length + half_width,
-        at - half_length + half_width,
-    ]
 }
 
 #[cfg(test)]
@@ -429,14 +449,34 @@ mod tests {
         let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
         let cars = park(std::slice::from_ref(&road));
         assert!(!cars.is_empty());
-        // ряды по обе стороны осевой, внутри проезжей части
-        let offset = road.width / 2.0 - CURB_GAP - CAR_WIDTH / 2.0;
+        // ряды по обе стороны осевой, внутри проезжей части: отступ считается
+        // по габариту этой машины, плюс небрежность парковки
         assert!(cars.iter().any(|car| car.at.y > 0.0));
         assert!(cars.iter().any(|car| car.at.y < 0.0));
         for car in &cars {
-            assert!((car.at.y.abs() - offset).abs() < 0.01, "{}", car.at.y);
+            let offset = road.width / 2.0 - CURB_GAP - car.shape.width() / 2.0;
+            assert!(
+                (car.at.y.abs() - offset).abs() <= PARK_SLOP + 0.01,
+                "{}",
+                car.at.y
+            );
             assert!(car.at.x >= END_MARGIN - 0.01 && car.at.x <= 200.0 - END_MARGIN + 0.01);
         }
+    }
+
+    /// Таблица зума и лестница подробности — об одном и том же: у каждой
+    /// ступени `CarLods` своя подробность, и только у последней её нет
+    /// (слоя там не строят вовсе).
+    #[test]
+    fn the_zoom_table_and_the_detail_ladder_agree() {
+        let steps = CarLods::max_zooms().count();
+        for bucket in 0..steps - 1 {
+            assert!(
+                detail_for(bucket).is_some(),
+                "ступень {bucket} без подробности"
+            );
+        }
+        assert!(detail_for(steps - 1).is_none(), "последняя ступень рисует");
     }
 
     #[test]
@@ -458,7 +498,7 @@ mod tests {
         // и ряды на ней не наезжают на осевую: между ними остаётся проезд
         for car in &cars {
             assert!(
-                car.at.y.abs() - CAR_WIDTH / 2.0 > 0.5,
+                car.at.y.abs() - car.shape.width() / 2.0 > 0.5,
                 "ряд на осевой: {}",
                 car.at.y
             );
@@ -500,11 +540,14 @@ mod tests {
         );
         let cars = park(std::slice::from_ref(&road));
         assert!(cars.len() > 10, "{}", cars.len());
+        // просвет — по длине самой короткой машины витрины: правило меряет
+        // длину той, что ставится, и небрежность парковки её чуть сдвигает
+        let shortest = CarShape::Hatch.length() - 2.0 * PARK_SLOP;
         for (index, car) in cars.iter().enumerate() {
             for other in &cars[index + 1..] {
                 let gap = car.at.distance(other.at);
                 assert!(
-                    gap >= CAR_LENGTH - 0.01,
+                    gap >= shortest - 0.01,
                     "{gap} м между {} и {}",
                     car.at,
                     other.at
@@ -657,7 +700,7 @@ mod tests {
         for car in &cars {
             let off = distance_to_path(&drawn, car.at);
             assert!(
-                off <= road.width / 2.0 - CAR_WIDTH / 2.0 + 0.01,
+                off <= road.width / 2.0 - car.shape.width() / 2.0 + 0.01,
                 "кузов в {off} м от нарисованной осевой"
             );
         }
