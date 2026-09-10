@@ -324,7 +324,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   building is displaced onto a near one. That key only settles what nothing else does —
   who covers whom is decided **pair by pair** (`map/buildings/order.rs::draw_order`,
   `osm-map` skill), because one number per building cannot say that an L-shaped house has
-  one wing in front of its neighbour and the other behind it. **The sun is independent of it** — the lean is the camera,
+  one wing in front of its neighbour and the other behind it. The same question is asked
+  once more **inside** a house (`order.rs::wall_order`): its visible walls all share one
+  lift, so each is a band of constant thickness over its base, and two of them meet on
+  screen wherever the facade steps — the far one is laid first, where walking the ring laid
+  it last and let a stepped-back section cover the wall in front of it.
+  **The sun is independent of it** — the lean is the camera,
   the shadow is the light. A radial lean away from the nadir — the signature of an
   *aircraft* frame — was tried and taken back out: the nadir is the centre of the **map**,
   not of the frame, so with a camera that pans the fan is only visible around the centre,

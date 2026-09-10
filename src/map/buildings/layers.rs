@@ -14,7 +14,7 @@ use super::clutter::{flat_roof_items, push_items, ridge_chimney};
 use super::material::{
     DOOR_CODE, RoofLook, WallKind, WallLook, building_seed, roof_look, wall_look,
 };
-use super::order::draw_order;
+use super::order::{draw_order, wall_order};
 use super::roofs::{HipRoof, RoofShape, Roofing, min_area_rect, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
@@ -929,9 +929,18 @@ fn push_house_with_arches(
     builder.set_roof(None);
 
     // видимы стены рёбер, смотрящих против подъёма: при сдвиге
-    // вверх-вправо — южные и западные
+    // вверх-вправо — южные и западные; двор добавляет к ним внутреннюю стену
+    // своей дальней стороны — ту, чья наружная (для кольца дыры) нормаль
+    // смотрит по подъёму
     let seed = building_seed(building);
-    for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
+    let mut walls = silhouette_edges(&building.outer, -lift_dir);
+    for hole in &building.holes {
+        walls.extend(silhouette_edges(hole, lift_dir));
+    }
+    // ...и кладутся они по глубине, а не по обходу контура: у дома со
+    // ступенчатым фасадом соседние стены перекрываются на экране
+    for index in wall_order(&walls, lean, lift) {
+        let (a, b) = walls[index];
         let span = WallSpan::new(a, b, lift, storeys, long_axis);
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
         builder.set_wall(wall_frame(building, wall, &span));
@@ -939,17 +948,6 @@ fn push_house_with_arches(
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
         push_doors(builder, building, wall, &span, openings, bottom);
-    }
-    // двор: видима внутренняя стена его дальней стороны — та, чья
-    // наружная (для кольца дыры) нормаль смотрит по подъёму
-    for hole in &building.holes {
-        for (a, b) in silhouette_edges(hole, lift_dir) {
-            let span = WallSpan::new(a, b, lift, storeys, long_axis);
-            let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-            builder.set_wall(wall_frame(building, wall, &span));
-            push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
-            push_doors(builder, building, wall, &span, openings, bottom);
-        }
     }
     builder.set_roof(None);
 
