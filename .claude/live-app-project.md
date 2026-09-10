@@ -132,7 +132,14 @@ real frame is around 0.2–0.4.
 
 Every field is optional: `at` (map metres) and `zoom` (metres per frame pixel) default to
 the user camera's, `size` to 1568 × 980 (long edge exactly at the downscale threshold, so
-the file reaches you unsquashed), `path` to `offscreen.png`. The camera carries the same
+the file reaches you unsquashed), `path` to `offscreen.png`.
+
+**A `zoom` that differs moves the user camera's zoom for the duration of the shot**, and
+that is deliberate: the zoom-LOD layers (parked cars, roof clutter, rail ties, tram) hold
+**one mesh for every view** and pick their step from `Single<&PanCamera>`, i.e. from the
+user camera. Without the sync a far shot showed rail ties that are not drawn at that scale
+and hid the cars that are. The zoom is restored when the camera despawns; the shot takes
+`WARMUP_FRAMES` (6) frames instead of 2 to let those layers rebuild. The camera carries the same
 post-processing as the real one (bloom), so the picture is what the
 window would show — **except the UI**, which stays on the main camera
 (`IsDefaultUiCamera` in `camera.rs`) and is out of the frame on purpose: this is a picture
