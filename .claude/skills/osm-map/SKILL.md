@@ -349,7 +349,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 - **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
   polygon is followed, in the same builder, by a gradient band along its outer ring and
   along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
-  gets a lighter **shore** (`WATER_RIM`, 3 m), park / wood / grass / sand an edge a few
+  gets a lighter **shore** (`WATER_RIM`, 6 m — at 3 m it read as the polygon's edging
+  rather than as a shoal), park / wood / grass / sand an edge a few
   percent darker than the fill (`*_RIM`, 2–3 m; the wood's the widest and darkest — shade
   under the canopy edge). The far edge is built from `miter_offsets` on the ring, with the
   side chosen by the ring's signed area (`outside` flips it for holes, whose band lies in
@@ -459,8 +460,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
-  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2): a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
+  its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
+  `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
+  (`Z_BRIDGE` 2.2). The **shadow** is the deck's own ribbon offset by `BRIDGE_HEIGHT`
+  (6 m) through the usual `shadow_length_scale()`, on a blended material of its own (the
+  flat white one would eat the vertex alpha): nothing else produced it, because the
+  ground shadow layer only knows buildings, and a bridge over the river is the most
+  visible thing on the water. It sits **under** the deck and **over** what the bridge
+  crosses — except a railway, which is drawn above the bridge for its own reasons.
+  About the pair itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
   deck. The 2GIS look — the curb bands along both deck edges are what makes a bridge read
   as a bridge, so the curb draws **always**, independent of `RoadStyle::casing`, and is
@@ -591,7 +599,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
     effect is one merged mesh — and `rebuild_cars` is gated on
-    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)`,
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)
+    .or_else(retuned::<SunOnMap>)`,
     one registration, since two in one schedule could both fire in a frame and spawn the
     layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
     centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
@@ -727,7 +736,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
       scale is a full building rebuild with its shadow union (77–86 ms on Tula, of which the
       union is 47–56 — measured on an M1 Max through the slider itself) plus 15 k crowns plus
-      the car layer, and there are seventy divisions on the scale.
+      the car layer plus the road layers (the `road meshing:` line: 230–460 k verts in
+      5–12 ms), and there are seventy divisions on the scale.
+      **The road layers are in that list because of the bridge shadow**, and it is the
+      only thing in them the sun moves: its offset is baked into the merged mesh, so
+      `rebuild_roads` is gated on `retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)`.
+      With `RoadStyle` alone that one shadow kept the sun the city loaded with while every
+      other shadow on the map followed the knob.
     - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
       is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
       first `Main` pass is *after* `Startup`: without the seed the `light` uniform would

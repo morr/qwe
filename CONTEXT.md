@@ -56,7 +56,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
   parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
-  alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
+  alley casings → alleys → road casings → roads → bridge shadows → bridge casings →
+  bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
@@ -274,7 +275,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
   slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
   it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
-  building layers with their shadows, tree crowns, cars, the roof material's `light`
+  building layers with their shadows, tree crowns, cars, the road layers (the bridge
+  shadow is baked into that mesh), the roof material's `light`
   uniform) and that the settings file is written from. One division of the slider costs a
   full building rebuild with its shadow union, so a drag across the scale would otherwise
   be seventy of them.
@@ -316,6 +318,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
+  same shadow every other object does: its own ribbon, offset by `BRIDGE_HEIGHT` (6 m)
+  through `shadow_length_scale()`, drawn under the bridge and over whatever it crosses.
+  Nothing else produced it — the ground shadow layer only knows buildings — and a bridge
+  over the river is the most visible thing there is on water.
 - **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
@@ -373,7 +380,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
   polygon carries a gradient band along its contour, holes included: water a lighter
-  **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
+  **shore** (6 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
   median strip never bleeds its rim onto the road.
