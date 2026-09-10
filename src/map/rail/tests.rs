@@ -51,7 +51,7 @@ fn rail_lods_step_up_with_zoom() {
 }
 
 /// Три рисунка сменяют друг друга ровно в одну сторону: конструкция целиком →
-/// балласт со шпалами → знак osm-carto. Ни на одной ступени путь не остаётся
+/// балласт со шпалами → пунктирный знак. Ни на одной ступени путь не остаётся
 /// голой лентой и ни на одной шпалы не смешиваются со штриховкой.
 #[test]
 fn rail_detail_falls_away_with_zoom() {
@@ -173,6 +173,28 @@ fn rail_marks_stay_legible_on_screen() {
                 "bucket {index}, bed {nominal}: dash under a pixel"
             );
         }
+    }
+}
+
+/// Штрих дальних ступеней темнее балласта, по которому он идёт, на **каждой**
+/// палитре. Белым (как в osm-carto) он выходил лесенкой через весь станционный
+/// парк — самым картографическим, что есть в кадре.
+///
+/// И темнее он ровно на шпалу: штрих — это те же шпалы, которых на этих
+/// ступенях уже не рисуют, поэтому на пороге зума метка не светлеет скачком.
+#[test]
+fn the_far_dash_stays_darker_than_its_ballast() {
+    for (name, palette) in [("active", &ACTIVE), ("disused", &DISUSED)] {
+        assert!(
+            palette.dash.luminance() < palette.ballast.luminance(),
+            "{name}: dash {} is not darker than its ballast {}",
+            palette.dash.luminance(),
+            palette.ballast.luminance()
+        );
+        assert_eq!(
+            palette.dash, palette.tie,
+            "{name}: the far dash drifted off its own tie colour"
+        );
     }
 }
 
