@@ -25,6 +25,11 @@ const SHADER_SOURCE: &str = include_str!("../../../assets/shaders/roof.wgsl");
 /// Исходник правил облицовки — оттуда же и тем же способом.
 const LAYERS_SOURCE: &str = include_str!("../../../src/map/buildings/layers.rs");
 
+/// Высота этажа лежит не в правилах облицовки, а среди общих единиц: по ней
+/// парсер переводит `building:levels` в метры, а стена переводит обратно, и
+/// объявлена она поэтому одна на всех (`settings.rs`). Читается так же.
+const SETTINGS_SOURCE: &str = include_str!("../../../src/settings.rs");
+
 /// Заголовок стенной половины шейдера. Зеркало того же разреза в
 /// `roof_gallery/constants.rs`: та витрина берёт всё **до** него, эта — всё
 /// **после**, и вместе они покрывают файл ровно один раз.
@@ -41,7 +46,8 @@ pub(crate) fn shader_constants() -> Vec<(&'static str, &'static str)> {
 }
 
 /// Пороги, по которым стене достаются балконы, и метрика ячейки — из
-/// `layers.rs`. Без них картинка не отвечает на «почему на этом доме их нет».
+/// `layers.rs` и `settings.rs`. Без них картинка не отвечает на «почему на этом
+/// доме их нет».
 pub(crate) fn rule_constants() -> Vec<(&'static str, &'static str)> {
     const SHOWN: [&str; 4] = [
         "PANEL_WIDTH",
@@ -51,13 +57,21 @@ pub(crate) fn rule_constants() -> Vec<(&'static str, &'static str)> {
     ];
     LAYERS_SOURCE
         .lines()
+        .chain(SETTINGS_SOURCE.lines())
         .filter_map(|line| parse_const(line, ": f32 = "))
         .filter(|(name, _)| SHOWN.contains(name))
         .collect()
 }
 
 fn parse_const<'a>(line: &'a str, kind: &str) -> Option<(&'a str, &'a str)> {
-    let (name, value) = line.trim().strip_prefix("const ")?.split_once(kind)?;
+    // видимость перед `const` бывает любая (`pub`, `pub(super)`) и к значению
+    // отношения не имеет
+    let declaration = line
+        .trim()
+        .split_once("const ")
+        .filter(|(before, _)| before.is_empty() || before.starts_with("pub"))
+        .map(|(_, declaration)| declaration)?;
+    let (name, value) = declaration.split_once(kind)?;
     Some((name, value.strip_suffix(';')?))
 }
 
@@ -74,7 +88,7 @@ mod tests {
     #[test]
     fn the_wall_constants_are_read_from_the_shader() {
         let constants = shader_constants();
-        for expected in ["WINDOW_WIDE", "BALCONY_SHARE", "BRICK_COURSE"] {
+        for expected in ["WINDOW_WIDE", "BALCONY_FILLED", "BRICK_COURSE"] {
             assert!(
                 constants.iter().any(|(name, _)| *name == expected),
                 "в стенной половине `roof.wgsl` не нашлось {expected}: {constants:?}"
@@ -87,14 +101,16 @@ mod tests {
         );
     }
 
-    /// То же и по той же причине для порогов балконов.
+    /// То же и по той же причине для порогов балконов. `STOREY_HEIGHT` лежит в
+    /// другом файле, чем остальные три, — без него из группы молча пропала бы
+    /// строка, а не появилась бы ошибка.
     #[test]
     fn the_balcony_rules_are_read_from_the_source() {
         let constants = rule_constants();
-        for expected in ["PANEL_WIDTH", "BALCONY_STOREYS_MIN"] {
+        for expected in ["PANEL_WIDTH", "BALCONY_STOREYS_MIN", "STOREY_HEIGHT"] {
             assert!(
                 constants.iter().any(|(name, _)| *name == expected),
-                "в `layers.rs` не нашлось {expected}: {constants:?}"
+                "в исходниках правил не нашлось {expected}: {constants:?}"
             );
         }
     }

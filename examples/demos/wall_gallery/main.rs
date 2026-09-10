@@ -86,6 +86,7 @@ use qwe::map::buildings::{BuildingHeightMode, RoofShape, extrusion_lift, push_ho
 use qwe::map::osm::entrances::generate_entrances;
 use qwe::map::osm::{AreaKind, BuildingUse, MapData, PolyArea};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
+use qwe::settings::STOREY_HEIGHT;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
 use crate::panel::{
@@ -108,10 +109,6 @@ const STOREY_LADDER: [u32; 5] = [2, 4, 5, 9, 16];
 /// высокий. Развилка `LOW_RISE_STOREYS` лежит между ними, и в этом весь смысл
 /// пары — один тег даёт разные стены.
 const USE_LADDER: [u32; 2] = [2, 9];
-
-/// Высота этажа, м, — та же, по которой `layers.rs` считает их число. Здесь
-/// она нужна в обратную сторону: из этажей получить высоту дома.
-const STOREY_HEIGHT: f32 = 3.0;
 
 /// Ширина дома в долях длины: длинная ось должна быть заметно длинной, иначе
 /// не разглядеть, что окна идут вдоль неё рядом, а не решёткой.
@@ -517,7 +514,8 @@ fn rebuild_walls(
         let seed = (tuning.seed + index as f32 * PHASE_STEP).fract();
         index += 1;
         let wall = cell.wall.expect("в сетке материалов облицовка заказана");
-        let drawn = push_cell(&mut builder, cell, &wall, rotation, axis, seed, &tuning);
+        let area = cell_house(cell, rotation, &tuning);
+        let drawn = push_cell(&mut builder, &area, &wall, axis, seed);
         let base = cell.centre.y - cell.half.y;
         spawn_caption(
             &mut commands,
@@ -554,11 +552,9 @@ fn rebuild_walls(
         let seed = (tuning.seed + index as f32 * PHASE_STEP).fract();
         index += 1;
         // здесь витрина ничего не заказывает: что выбрала бы игра, то и стоит
-        let house = house(cell.centre, cell.half, rotation, tuning.courtyard)
-            .with_height(cell.height())
-            .with_use(cell.building_use);
-        let wall = wall_of(&house);
-        push_cell(&mut builder, cell, &wall, rotation, axis, seed, &tuning);
+        let area = cell_house(cell, rotation, &tuning);
+        let wall = wall_of(&area);
+        push_cell(&mut builder, &area, &wall, axis, seed);
         let base = cell.centre.y - cell.half.y;
         spawn_caption(
             &mut commands,
@@ -599,24 +595,27 @@ fn rebuild_walls(
 
 /// Один дом витрины в меш. Крыша заказана плоской, оборудования нет — витрина
 /// про стены, и всё, что стоит на кровле, здесь только мешает.
-fn push_cell(
-    builder: &mut MeshBuilder,
-    cell: &Cell,
-    wall: &WallLook,
-    rotation: Rot2,
-    axis: Vec2,
-    seed: f32,
-    tuning: &Tuning,
-) -> RoofShape {
-    let area = house(cell.centre, cell.half, rotation, tuning.courtyard)
+/// Дом этой клетки — один на обе стороны дела: по нему выбирают облицовку и
+/// его же кладут в меш. Двери входят в него, потому что рисуется он с ними.
+fn cell_house(cell: &Cell, rotation: Rot2, tuning: &Tuning) -> PolyArea {
+    house(cell.centre, cell.half, rotation, tuning.courtyard)
         .with_height(cell.height())
         .with_use(cell.building_use)
-        .with_doors();
+        .with_doors()
+}
+
+fn push_cell(
+    builder: &mut MeshBuilder,
+    area: &PolyArea,
+    wall: &WallLook,
+    axis: Vec2,
+    seed: f32,
+) -> RoofShape {
     let roof_color = GALLERY_ROOF.palette()[0].to_srgba();
     let look = RoofLook::new(GALLERY_ROOF, roof_color, axis, seed);
     push_house(
         builder,
-        &area,
+        area,
         &look,
         wall,
         roof_color,

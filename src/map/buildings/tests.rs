@@ -330,10 +330,13 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
         (far - 13.0).abs() < 1e-3,
         "край стены — целая панель: {far}"
     );
-    // пятиэтажный жилой дом — как раз тот, у кого балконы бывают
+    // пятиэтажный жилой дом — как раз тот, у кого балконы бывают, и рама несёт
+    // это положительным посевом. По **длинному фасаду**: у дома 20 на 40 есть
+    // и торец, а он глухой — про него отдельный тест
+    // (`a_gable_end_carries_no_balconies`), здесь же речь про целость ячеек
     assert!(
-        cells.iter().all(|cell| cell[3] >= 0.0),
-        "у стен этого дома балконы должны быть"
+        cells.iter().any(|cell| cell[3] >= 0.0),
+        "у длинного фасада этого дома балконы должны быть"
     );
     // Этажность едет в том же слоте, что и код, и должна совпасть с той, по
     // которой посчитана координата: иначе шейдер поставит карниз не там, где
@@ -447,23 +450,59 @@ fn balconies_skip_low_houses_and_narrow_walls() {
         "частный дом"
     );
 
-    // тот же дом ростом с пятиэтажку — балконы появляются
+    // тот же дом ростом с пятиэтажку — балконы появляются. По длинному фасаду:
+    // короткая сторона у этого плана уже торец, и о ней отдельный тест
+    // (`a_gable_end_carries_no_balconies`)
     let mut block = building(oblong(9.0, 18.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
     assert!(
         wall_marks(&block, WallKind::Panel)
             .iter()
-            .all(|seed| *seed >= 0.0),
+            .any(|seed| *seed >= 0.0),
         "пятиэтажка"
     );
 
-    // а вот торец в две панели остаётся глухим и у неё: длинная стена (40 м,
-    // 13 панелей) балконы несёт, короткая (6 м, 2 панели) — нет
-    let mut stepped = building(oblong(6.0, 40.0), Some(15.0), AreaKind::Building);
+    // а вот простенок в две панели остаётся глухим и у неё. План тут нарочно
+    // почти квадратный (8 на 6 — меньше `GABLE_PLAN_RATIO_MIN`), торцов у него
+    // нет вовсе, и порог ширины отвечает за эту стену один: 8 м — три панели,
+    // балконы есть; 6 м — две, балконов нет
+    let mut stepped = building(oblong(6.0, 8.0), Some(15.0), AreaKind::Building);
     stepped.building_use = BuildingUse::Apartments;
     let seeds = wall_marks(&stepped, WallKind::Panel);
-    assert!(seeds.iter().any(|seed| *seed >= 0.0), "длинная стена");
-    assert!(seeds.iter().any(|seed| *seed < 0.0), "узкий торец");
+    assert!(seeds.iter().any(|seed| *seed >= 0.0), "стена в три панели");
+    assert!(
+        seeds.iter().any(|seed| *seed < 0.0),
+        "простенок в две панели"
+    );
+}
+
+/// «Глухие торцы» из постановки: у панельной секции балконы идут по **длинному
+/// фасаду**, а торец их не несёт. Отличает их не ширина стены — торец секции
+/// это её глубина, 12–14 м, то есть четыре панели, и порог
+/// `BALCONY_COLUMNS_MIN` его пропускает, — а то, что торец стоит поперёк
+/// длинной оси плана.
+#[test]
+fn a_gable_end_carries_no_balconies() {
+    let _sun = crate::map::default_sun();
+
+    // секция 13 × 44 м: торец вчетверо шире порога ширины и всё равно глухой
+    let mut section = building(oblong(13.0, 44.0), Some(15.0), AreaKind::Building);
+    section.building_use = BuildingUse::Apartments;
+    let seeds = wall_marks(&section, WallKind::Panel);
+    assert!(seeds.iter().any(|seed| *seed >= 0.0), "длинный фасад");
+    assert!(seeds.iter().any(|seed| *seed < 0.0), "торец секции");
+
+    // а у башни торца нет: план квадратный, длинного фасада в нём не выделить,
+    // и балконы несут все стены — иначе половина дома глохла бы по броску
+    // округления
+    let mut tower = building(oblong(24.0, 30.0), Some(27.0), AreaKind::Building);
+    tower.building_use = BuildingUse::Apartments;
+    assert!(
+        wall_marks(&tower, WallKind::Panel)
+            .iter()
+            .all(|seed| *seed >= 0.0),
+        "башня"
+    );
 }
 
 /// Пятиэтажка `building=house` — та самая, на которой порог этажности не

@@ -223,6 +223,9 @@ const PLASTER_WINDOW_WIDE: f32 = 0.26;
 const SHOPFRONT_LOW: f32 = 0.18;
 const SHOPFRONT_HIGH: f32 = 0.76;
 const SHOPFRONT_WIDE: f32 = 0.90;
+// Первый этаж торгового дома — сама витрина: ниже и выше ленты над ней.
+const SHOPFRONT_GROUND_LOW: f32 = 0.08;
+const SHOPFRONT_GROUND_HIGH: f32 = 0.78;
 // Профлист: ленточное окно высоко под карнизом, и то не на всякой панели.
 //
 // Лента высокая нарочно. Всё, что на стене **ниже трети ячейки**, на рабочем
@@ -253,8 +256,20 @@ const BALCONY_SLAB_LOW: f32 = 0.07;
 const BALCONY_SLAB_HIGH: f32 = 0.15;
 const BALCONY_RAIL_HIGH: f32 = 0.46;
 const BALCONY_HIGH: f32 = 0.80;
-// Доля столбцов с балконом и доля остеклённых среди них.
-const BALCONY_SHARE: f32 = 0.58;
+// Шаг балконов вдоль стены — период секции, а не доля столбцов. Панельный дом
+// собран из секций: пара балконных столбцов, между ними лестничная клетка, и
+// период повторяется по всему фасаду. Доля без периода даёт россыпь — три
+// балкона подряд, потом две пустые панели, — а «регулярный ряд» это шаг.
+// Период — 4…6 панелей (`BALCONY_PERIOD_MIN` плюс один из
+// `BALCONY_PERIOD_SPAN` вариантов) от посева стены, заполнено в нём
+// `BALCONY_FILLED` столбцов подряд.
+const BALCONY_PERIOD_MIN: f32 = 4.0;
+const BALCONY_PERIOD_SPAN: f32 = 3.0;
+const BALCONY_FILLED: f32 = 2.0;
+// Кирпич: тот же период, заполненный реже — лоджии на кирпичном доме не идут
+// сплошной парой.
+const BALCONY_FILLED_RECESSED: f32 = 1.0;
+// Доля остеклённых среди балконов.
 const BALCONY_GLAZED: f32 = 0.62;
 
 // Цоколь — доля первого этажа под ним.
@@ -299,6 +314,14 @@ struct Wall {
     glass: f32,
     // чего в этом стекле больше: неба (1) или тёмной комнаты (0)
     sky: f32,
+}
+
+// Проём поверх рисунка материала. Складывается только яркость: рама, откос и
+// отлив — поправка к тому, что стена уже нарисовала, а стекло её **заменяет**,
+// и накапливать его не с чем. Проём в ячейке один (см. `wall_shade`), так что
+// спорить за `glass` и `sky` некому.
+fn with_opening(base: Wall, opening: Wall) -> Wall {
+    return Wall(base.shade + opening.shade, opening.glass, opening.sky);
 }
 
 // Полоса по одной координате: 1 между `lo` и `hi`, края размыты по пикселю.
@@ -539,47 +562,50 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
 
     if kind == PANEL || kind == BRICK {
         let recessed = kind == BRICK;
-        // Бросок идёт по **номеру панели**, а не по всей ячейке: хеш от обеих
-        // координат — независимый бросок на каждую, то есть шахматный порядок,
-        // а на жилом доме балконы стоят столбцом во всю высоту.
-        let column_share = select(BALCONY_SHARE, BALCONY_SHARE * 0.62, recessed);
-        let balcony_here = !blank && !ground
-            && hash21(vec2<f32>(column, 0.0) + seed * 29.0) < column_share;
+        // Балконы стоят **шагом секции**, а не броском на столбец: бросок с
+        // долей 0.58 давал россыпь, в которой шаг между столбцами не
+        // повторяется, а панельный дом читается именно повтором. Период и фаза
+        // — от посева **стены** (одно число на всю стену, не на панель), и
+        // фазе бросок и остался: без неё две стены одного угла начинались бы
+        // одинаково. Номер панели тут — координата в периоде, а не ключ хеша,
+        // поэтому столбец балконов идёт во всю высоту стены, как и был.
+        let period = BALCONY_PERIOD_MIN
+            + floor(hash21(vec2<f32>(0.0, 3.0) + seed * 29.0) * BALCONY_PERIOD_SPAN);
+        let phase = floor(hash21(vec2<f32>(1.0, 3.0) + seed * 37.0) * period);
+        let filled = select(BALCONY_FILLED, BALCONY_FILLED_RECESSED, recessed);
+        let balcony_here = !blank && !ground && (column + phase) % period < filled;
         let wide = select(WINDOW_WIDE, BRICK_WINDOW_WIDE, recessed);
         if balcony_here {
-            let b = balcony_of(inside, px, tone < BALCONY_GLAZED, recessed, tone);
-            out.shade += b.shade;
-            out.glass = b.glass;
-            out.sky = b.sky;
+            out = with_opening(out, balcony_of(inside, px, tone < BALCONY_GLAZED, recessed, tone));
         } else {
-            let w = window_of(inside, px, WINDOW_LOW, WINDOW_HIGH, wide, 2.0, 0.55 + 0.75 * tone);
-            out.shade += w.shade;
-            out.glass = w.glass;
-            out.sky = w.sky;
+            out = with_opening(
+                out,
+                window_of(inside, px, WINDOW_LOW, WINDOW_HIGH, wide, 2.0, 0.55 + 0.75 * tone),
+            );
         }
     } else if kind == PLASTER {
         // Частный дом: окно мелкое, и оно не на всякой панели — простенок
         // между окнами тут шире самого окна.
-        let w = window_of(
-            inside,
-            px,
-            PLASTER_WINDOW_LOW,
-            PLASTER_WINDOW_HIGH,
-            PLASTER_WINDOW_WIDE,
-            2.0,
-            0.45 + 0.8 * tone,
+        out = with_opening(
+            out,
+            window_of(
+                inside,
+                px,
+                PLASTER_WINDOW_LOW,
+                PLASTER_WINDOW_HIGH,
+                PLASTER_WINDOW_WIDE,
+                2.0,
+                0.45 + 0.8 * tone,
+            ),
         );
-        out.shade += w.shade;
-        out.glass = w.glass;
-        out.sky = w.sky;
     } else if kind == SHOPFRONT {
         // Первый этаж торгового дома — витрина: ниже и выше обычной ленты.
-        let lo = select(SHOPFRONT_LOW, 0.08, ground);
-        let hi = select(SHOPFRONT_HIGH, 0.78, ground);
-        let w = window_of(inside, px, lo, hi, SHOPFRONT_WIDE, 3.0, 0.75 + 0.4 * tone);
-        out.shade += w.shade;
-        out.glass = w.glass;
-        out.sky = w.sky;
+        let lo = select(SHOPFRONT_LOW, SHOPFRONT_GROUND_LOW, ground);
+        let hi = select(SHOPFRONT_HIGH, SHOPFRONT_GROUND_HIGH, ground);
+        out = with_opening(
+            out,
+            window_of(inside, px, lo, hi, SHOPFRONT_WIDE, 3.0, 0.75 + 0.4 * tone),
+        );
     } else if kind == SHED {
         // Склад: ленточное окно под карнизом. Ворота сюда больше не входят —
         // они те же двери, приходят геометрией по входам из `osm::entrances`
@@ -588,18 +614,18 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
         // здесь, ленту приходилось выбирать «либо-либо» с ними: створки окна
         // лезли на воротное полотно, и низ ленты выходил обрубком.
         if ribbon < SHED_WINDOW_SHARE {
-            let w = window_of(
-                inside,
-                px,
-                SHED_WINDOW_LOW,
-                SHED_WINDOW_HIGH,
-                SHED_WINDOW_WIDE,
-                4.0,
-                0.5 + 0.5 * tone,
+            out = with_opening(
+                out,
+                window_of(
+                    inside,
+                    px,
+                    SHED_WINDOW_LOW,
+                    SHED_WINDOW_HIGH,
+                    SHED_WINDOW_WIDE,
+                    4.0,
+                    0.5 + 0.5 * tone,
+                ),
             );
-            out.shade += w.shade;
-            out.glass = w.glass;
-            out.sky = w.sky;
         }
     }
     return out;
