@@ -1348,11 +1348,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       other after `SUN_SETTLE` (0.35 s) of quiet. Every rebuild and the prefs write are
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
       scale is a full building rebuild with its shadow union — most of it the union — plus
-      15 k crowns plus the car layer, and there are seventy divisions on the scale. (The
-      numbers that stood here, 77–86 ms on Tula with 47–56 of it the union, were read off the
-      `building meshing:` line through the slider itself on an M1 Max: absolute milliseconds
-      from the app are only comparable with each other, since App Nap decides them —
-      `examples/bench/map_meshing` is what re-measures the same build offline.)
+      15 k crowns plus the car layer plus the road layers, and there are seventy divisions
+      on the scale. (The numbers that stood here, 77–86 ms on Tula with 47–56 of it the
+      union, were read off the `building meshing:` line through the slider itself on an
+      M1 Max: absolute milliseconds from the app are only comparable with each other, since
+      App Nap decides them — `examples/bench/map_meshing` is what re-measures the same build
+      offline. The road layers' 230–460 k verts in 5–12 ms come off the `road meshing:`
+      line the same way.)
+      **The road layers are in that list because of the bridge shadow**, and it is the
+      only thing in them the sun moves: its offset is baked into the merged mesh, so
+      `rebuild_roads` is gated on `retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)`.
+      With `RoadStyle` alone that one shadow kept the sun the city loaded with while every
+      other shadow on the map followed the knob.
     - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
       is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
       first `Main` pass is *after* `Startup`: without the seed the `light` uniform would
