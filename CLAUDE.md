@@ -298,6 +298,7 @@ step when adding one):
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
 | industry layers (pipes + cylinder shadow/wall/top) | `map/industry.rs::rebuild_industry` (same helper) |
 | tram mesh | `map/tram.rs::spawn_tram` |
+| fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (through `surface::spawn_layer`) |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
