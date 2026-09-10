@@ -58,8 +58,8 @@ in `main.rs`.
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   pitches → pitch markings → parking → parking markings → water → waterways →
   sidewalks → alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → cars → pipe shadows (2.76) → pipes (2.77) →
-  portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
+  → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
+  pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
   → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
@@ -676,6 +676,17 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   below the cars. **No
   `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the element,
   so `service` was in the cache all along.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge` as a line and,
+  more to the point, **its shadow**: from above a fence is a quarter-metre hair, and what
+  actually carries it on a photo is the dark thread lying beside it. In a private-house
+  district that grid of plot boundaries is the texture of the whole district, and without
+  it the houses stand in an open field. `FenceLine` is **not** a `WallLine` with a flag:
+  the kremlin wall is impassable and enters the navmesh, a fence is decoration and pawns
+  walk through it — 427 lines cutting the blocks would strand the crowd in the courtyards.
+  The parse branch **falls through** (a way tagged both a barrier and something else must
+  become both). The drawn width **grows as you zoom out** (`FENCE_LODS`, the tram's trick,
+  aiming at ~1.5 screen px) and the layer disappears entirely past 0.9 m/px, where the
+  grid of plots turns to dirt. Tula: 356 fences, 71 walls, 1 hedge.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
