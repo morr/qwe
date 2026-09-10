@@ -989,9 +989,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **no
     texture** — roof clutter rides in the same mesh (2.5D is one
     painter's-order layer) and comes out with its vertex colour untouched. Walls rode
-    at `0` too until they got a code of their own (`Wall`, below), and so did the
+    at `0` too until they got codes of their own (`WallKind`, below), and so did the
     **gable**: it is the top of an end wall, takes the same `wall_frame` as the wall
-    under it, and would otherwise break the seams at the eaves.
+    under it, and would otherwise break the pattern at the eaves.
   - **What the shader draws**, by world position rotated into the building's long axis
     (`min_area_rect`'s first edge), phase-shifted by the seed so neighbours' seams do not
     line up: bitumen — 0.95 m roll seams, scattered repair patches (as many as the roof's
@@ -1008,7 +1008,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     and only the material's colour is left. The noise helpers are a **copy** of
     `surface.wgsl`'s — there is no shader library in the project yet, and importing one
     for four functions costs more than the copy.
-  - **The wall is the same mechanism, code `Wall`, but on its own coordinates**
+  - **The wall is the same mechanism on its own coordinates and its own codes**
     (`layers.rs::wall_frame`, `meshing::WallFrame`). A 2.5D wall is a **parallelogram** —
     base edge `a→b`, side edges along the lean — and what the builder writes into
     `ATTRIBUTE_ROOF` at each of its vertices is where that vertex stands *in it*: **the panel
@@ -1033,25 +1033,89 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       same number is cells per pixel, which is how each grid fades (`visible(1.0, px_cell)`).
       Foreshortening comes out of that derivative for free: a west wall, squeezed by the
       lean, loses its storeys earlier than a south one without a line of code about it.
-    - **Balconies** fill the lower two thirds of a storey and 62 % of a panel; 58 % of the
-      **columns** carry one, hashed from the column number and the wall's seed — a column the
-      whole height of the wall, as on a real block. Hashing the *cell* is the thing that must
-      not be done here: that is an independent draw per cell, i.e. a chequerboard.
-    - **Who gets balconies is a CPU decision** (`layers::balconies_fit`), and it travels as
-      the **sign of the seed** (`WallFrame::without_balconies`) because there is no fifth
-      number in the attribute and the coordinates must stay untouched. Blank: a private
-      house, garage, church, industrial shed, school or shop (`BuildingUse`), anything under
-      `BALCONY_STOREYS_MIN` 4 storeys, any wall under `BALCONY_COLUMNS_MIN` 3 panels wide,
-      and every **gable** — it continues the wall's seams through the eaves (that is why it
-      shares the wall's frame at all), but a balcony there would be cut by the slope. The
-      shader cannot decide any of it: it knows neither the use of the building nor how many
-      storeys the wall has in total. `Other` counts as residential on purpose — it is half
-      the city (`building=yes`) and holds its panel blocks; what is not a block is filtered
-      by the storey floor, since a shed comes out under four storeys by any estimate
-      (`heights.rs`).
+    - **`WallKind` is to the wall what `RoofKind` is to the roof**, and the codes are one
+      dictionary in one attribute slot: `0` no texture, `1…6` roofing, `7…11` cladding
+      (`WallKind::code` derives itself from `RoofKind::ALL.len()`, so a new roofing shifts
+      the wall codes and the shader's mirror is edited whole). Five claddings —
+      `Panel | Brick | Plaster | Shopfront | Shed` — because panel seams with balconies are
+      exactly **one** kind of building, and while the wall was one, a garage and a church
+      wore them too.
+    - **The pick** (`material::wall_look`) is `roof_look`'s twin — a ten-slot table per
+      `BuildingUse`, the slot from the building's seed, the colour from the material's own
+      palette plus ±3 % — with one difference: **height is consulted before the tag.**
+      Anything under `LOW_RISE_STOREYS` (4) that is not already `House`, `Garage`, `Church`
+      or `Industrial` drops into `LOW_RISE_WALLS`, because a low building is neither a panel
+      block nor a curtain wall whatever OSM calls it. The seed is read from **other bytes**
+      than the roof's (`>> 4`, `>> 12`, `>> 20` against the roof's raw, `>> 8`, `>> 16`):
+      the two materials must be independent, or every panel block would also be under one
+      bitumen. Kremlin is brick, `Church` whitewash — the same two exceptions the roof has,
+      in the same order.
+    - **Wall colours are calibrated the other way from roofs**: a wall is **lighter than its
+      roof**, which is what holds the 2.5D box together (dark bitumen over light panel), so
+      panel and plaster live in 0.66–0.86 and only `Shopfront` is deliberately darker — and
+      it goes to shopping centres, of which a district has a couple. Spread follows the roof
+      rule: tight in value and wide in hue for mass housing, bright and many-hued for the
+      private sector, where ochre, whitewashed brick and blue plaster stand fence to fence.
+      The **per-use facade colours are gone**; they painted half the city (`building=yes`)
+      in one tone.
+    - **What each cladding draws between the openings**: panel — floor seams, panel joints
+      and a ±2 % tone jitter per *cell* (a chequerboard is the right answer here, the wall
+      really is assembled from separately cast slabs); brick — courses at a twelfth of a
+      storey, so they fade first and leave an even tone; plaster — `fbm3` streaks and no
+      seam at all; shopfront — a spandrel band between the glazing strips; shed —
+      corrugation ribs at a sixteenth of a panel plus a faint eaves line.
+    - **A window is the only thing here that replaces the surface colour instead of
+      correcting it.** Glass is not plaster some per cent darker, so `wall_shade` returns
+      three numbers (`Wall { shade, glass, sky }`) and the fragment `mix`es toward
+      `mix(GLASS_ROOM, GLASS_SKY, sky)` — both **linear** constants, because the vertex
+      colour here is linear (`wall_colors` returns `LinearRgba`). `sky` rises up the pane
+      (dark room below, reflected sky above), dips under the lintel for the reveal shadow,
+      and is scaled by a per-window `tone`: a curtain, an open sash, dirty glass. Without
+      that per-window draw a row of windows reads as a stencil.
+    - **The opening is what a cladding is really about**: a two-sash window per panel (0.42
+      of the panel, 0.30…0.76 of the storey), a narrower brick one, a small house window on
+      plaster, a full-panel glazing strip on a shopfront, a high narrow ribbon on 55 % of a
+      shed's panels. Mullions are placed **from the left edge of the opening**
+      (`stripes(inside.x - 0.5 + half, wide / panes, …)`), so any pane count comes out
+      right; centring them on the middle only works for even counts.
+    - **The ground floor is its own case on every cladding**: never a balcony, and instead an
+      entrance — a doorway on `DOOR_SHARE` of the columns, a shopfront lower and taller than
+      the strip above it, a gate on a shed (which does not compete with the shed's ribbon
+      window: they sit at different heights and both are drawn).
+    - **A balcony is a stack of bands**, not a box: the slab's shadow on the wall, the bright
+      slab edge, the parapet (its tone by its own draw, from light panel to dark sheet), and
+      above it either glazing or an open recess in shade. 72 % of a panel, on 58 % of the
+      **columns**, hashed from the column number and the wall's seed — a column the whole
+      height of the wall, as on a real block. Hashing the *cell* for **existence** is the
+      thing that must not be done: that is an independent draw per cell, i.e. a
+      chequerboard; hashing it for *glazed or open* is fine and is what varies a column.
+      A brick building's balconies are **recessed loggias** — no slab overhang, no bright
+      edge, a deeper shade — and rarer (0.62 of the panel share).
+      **Two sashes, not four.** The lean squeezes the wall threefold vertically, so a
+      balcony on screen is a ribbon four times wider than it is tall; cut into four it read
+      as a scatter of dots. A balcony must read as *bands*, and anything chopping the ribbon
+      crossways eats them.
+    - **Who gets balconies is a CPU decision** (`layers::balconies_fit`): only `Panel` or
+      `Brick`, never a `building=house` (the storey floor catches almost all of them, but a
+      five-storey `house` does occur in the extract, and balconies on it would read as a
+      parse error, which is what they would be), never under `BALCONY_STOREYS_MIN` 4
+      storeys, never on a wall under `BALCONY_COLUMNS_MIN` 3 panels wide. The shader cannot
+      decide any of it: it knows neither the use of the building nor how many storeys the
+      wall has in total. Note what moved: the *use* filter now mostly lives in the cladding
+      pick — plaster, shopfront and shed have no balconies by the meaning of the material,
+      and they are exactly what the private sector, the mall and the warehouse get.
+    - **The verdict travels as the seed's own value**, not its sign: `WallMark`
+      (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` gable.
+      Three states are needed because *blank* and *gable* are not the same thing — a blank
+      wall (narrow, low, wrong material) still has **windows**, a gable has none, since a
+      window on the triangle would be cut by the slope. The old sign flip could say only one
+      of the two, and needed an idempotency guard on top (the gable marks itself over an
+      already-blank wall, and a second negation gave the balconies back); replacing the
+      state is the guard.
     - **The seed is per wall**, `seed_from_point(a)` — the generator the roofs, doors and
       parked cars already share — not the building's: the balcony columns of two adjacent
-      walls must not start alike.
+      walls must not start alike. The **cladding**, on the contrary, is per building: one
+      house does not have a panel end and a brick front.
     **The wall leaves the fragment before the common roof pass** — `wall_shade` is a branch
     of its own in `fragment`, not a case inside `roof_shade` — and that early exit is the
     whole of what the wall costs: two `stripes` and one hash, against the cheap path code `0`
@@ -1159,11 +1223,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       shadow to move). The readout at the bottom right
       prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
       zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
-      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` (patch
-      cell, patch size, the two share ends, and of the wall texture the part that is about
-      drawing: the three balcony fractions and the two seam widths, all in fractions of a
-      cell; the parser takes *every* `f32` const there but `TAU`), shape from `roofs.rs`
-      (fill threshold, hipped
+      panel lists the **tuning constants** of both halves — texture from `roof.wgsl` and
+      shape from `roofs.rs` (fill threshold, hipped
       share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
       (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
       numbers: a mirror would drift on the first edit and the gallery would then lie about
@@ -1178,6 +1239,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     - `ROOF_GALLERY_SHOT=path.png` takes one frame and exits. The example has no BRP, and a
       screen grab over another window comes out black, so this is the only way a session
       without the window in front of it can look at its own work.
+    - **`roof.wgsl` holds two textures, and the two galleries split it by the section
+      banner** (`─── стена`): the roof gallery parses everything **before** it, the wall
+      gallery everything **after**. A name list would have to be extended on every new
+      constant; the banner sits exactly where the meaning changes. Both halves are pinned by
+      a test that the other half's constants did *not* come through — an empty or
+      over-full group is a parser drift, not a fact about the code.
+  - **The wall gallery** — `cargo run --example wall_gallery`
+    (`examples/demos/wall_gallery/`), and it answers the two halves of "what is a wall" in
+    two grids, because *what it is made of* and *who gets it* are decided by different code
+    from different inputs.
+    - **Claddings, left** — a row per `WallKind` and, in the row, the **storey ladder**
+      2 / 4 / 5 / 9 / 16. The ladder is not evenly spaced: 2 is the low-rise that never has
+      balconies, 4 is `BALCONY_STOREYS_MIN` exactly — the first storey count that does — 5
+      and 9 are the mass housing, and 16 shows that the pattern *repeats by storey* rather
+      than stretching. Colours cycle through the material's palette, so a row is also a look
+      at its spread.
+    - **Uses, right** — a row per `BuildingUse`, two houses in it (2 and 9 storeys), and the
+      cladding is chosen by the **game** (`wall_of`), not ordered by the gallery. It is the
+      only place the whole rule is visible at once: the tag picks the table, the height
+      picks the branch inside it, and one `commercial` comes out brick at two storeys and
+      glass at nine. The caption under a house is the material that actually came back.
+    - **The readout prints the storey in pixels**, not only metres per pixel: a wall is
+      measured in cells and every fade is keyed to them, and a storey is `STOREY_HEIGHT`
+      metres already squeezed by the lean — so metres per pixel alone does not say when a
+      window is due to vanish. It comes from `extrusion_lift` on a probe building rather
+      than from a copy of `EXTRUDE_SCALE`, which is private and would drift.
+    - Like the roof gallery, it may **not** roll its own geometry: every house goes through
+      `push_house`. The cladding grid orders its material (`WallLook::new`) because the seed
+      cannot reach every combination — a curtain wall never lands on a private house — and
+      the use grid orders nothing at all.
+    - `WALL_GALLERY_SHOT=path.png` takes one frame and exits, same as the roof gallery's.
 - **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".

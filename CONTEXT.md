@@ -204,17 +204,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
   half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded. (`RoofKind::Wall` is a seventh variant and no covering at all — a texture code for
-  the walls, kept out of `ALL`, out of that choice and out of the palettes; see below.)
+  seeded.
   The colour comes from that material's own palette — **the per-use *roof* colours
-  are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
+  are gone**, and the per-use *wall* colours with them: a wall is picked the same way a
+  roof is (**`WallKind`**, below) — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
   mean what the code says they mean: a roof's **long axis**, one value for the whole
   building, or a wall's own **cell coordinates**, different at every vertex — see
-  `WallFrame` below; code `0` is *no texture* and by now only roof clutter, which rides in
-  the same mesh: walls carry the `Wall` code and so does a **gable**, being the top of the
-  end wall under it). **Roof age** is the
+  `WallFrame` below; the code is **one dictionary for both** — `0` is *no texture* and by
+  now only roof clutter, which rides in the same mesh, `1…6` are the roofings above and
+  `7…11` the wall claddings of `WallKind`, a gable carrying its wall's code as the top of
+  the end wall under it). **Roof age** is the
   second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
   building that sets how many repair patches its bitumen carries (a young roof almost
@@ -226,7 +227,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
   small hip, and a real hip could not be told from a flat roof.
-  **`Wall` is the same mechanism turned on the walls, and its coordinates are the wall's
+  **A wall is the same mechanism turned on the walls, and its coordinates are the wall's
   own** (`meshing::WallFrame`, `layers::wall_frame`). A wall in 2.5D is a **parallelogram** —
   base edge `a→b`, sides along the lean — and the builder writes, at every one of its
   vertices, where that vertex sits in it: **the panel number and the storey**, counted in
@@ -238,15 +239,35 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   knows none of that and cut panels and balconies wherever a wall happened to end.
   The shader therefore needs no metres, no storey height and no lean: it takes `fract` of
   what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
-  It draws floor seams, panel joints and **balconies** — a balcony fills the lower two
-  thirds of its storey and 62 % of its panel, on 58 % of the **columns**, so they come out
-  in columns the whole height of the wall as they do on a real block.
-  **Who gets balconies is decided on the CPU** (`layers::balconies_fit`) and travels as the
-  **sign of the seed** (`WallFrame::without_balconies`): a private house, a garage, a
-  church, a shed, a school, anything under four storeys and any wall narrower than three
-  panels stays blank, and so does a **gable** — it continues the wall's seams through the
-  eaves, but a balcony there would be cut by the slope. The shader cannot make that call: it
-  knows neither the building's use nor how many storeys the wall has in total.
+  **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
+  Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
+  the slot by the building's seed) except that **height is consulted first**: anything under
+  `LOW_RISE_STOREYS` (4) drops into the low-rise table whatever its tag says, because a low
+  building is neither a panel block nor a curtain wall. The cladding decides three things at
+  once — what lies *between* the openings (floor seams and panel joints, brick courses,
+  bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
+  two-sash window per panel, a narrower brick one, a small house window, a full-panel
+  glazing strip, a high shed ribbon), and whether the wall has **balconies** at all.
+  The **ground floor** is its own case on every cladding: no balcony, and instead an
+  entrance — a doorway on a fifth of the columns, a shopfront lower and taller than the
+  strip above it, a gate on a shed.
+  A **balcony** is a stack of bands across 72 % of its panel — the slab's shadow on the wall,
+  the bright slab edge, the parapet, and above it either glazing or an open recess in shade —
+  on 58 % of the **columns** (a brick building's are recessed loggias, and rarer), so they
+  come out in columns the whole height of the wall as they do on a real block.
+  **A window is the only thing here that replaces the surface colour instead of correcting
+  it** — glass is not plaster some per cent darker — so the wall hands the fragment three
+  numbers, not one brightness: shade, how much glass, and how much of that glass is sky
+  rather than the dark room behind it.
+  **Who gets balconies is decided on the CPU** (`layers::balconies_fit`): only a panel or
+  brick wall, never a `building=house` whatever its cladding, never under four storeys and
+  never on a wall narrower than three panels. The shader cannot make that call: it knows
+  neither the building's use nor how many storeys the wall has in total. That verdict and
+  one more travel as the **seed's own value** (`WallFrame::marked`, `WallMark`): `[0, 1)` is
+  a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a **gable** — which
+  continues the wall's pattern through the eaves, that being why it takes the wall's frame
+  at all, but carries **no openings**, since a window on the triangle would be cut by the
+  slope.
   A wall **returns before
   the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
   weathering, so a wall's base colour is still the flat fill of before and only its own seams
