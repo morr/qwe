@@ -398,6 +398,7 @@ pub fn spawn_roads(
         &alleys,
         &street_casings,
         &streets,
+        &bridge_shadows,
         &bridge_casings,
         &bridge_fills,
         &wall_ribbons,
