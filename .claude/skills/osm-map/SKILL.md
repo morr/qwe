@@ -634,6 +634,38 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   it. The layer is one merged **blended** mesh (the shadow is translucent, the body is not)
   at `Z_CAR` 2.7, above the tram and the rails (a car parks on the asphalt over the tracks)
   and below the portal stain.
+  - **The shadow is a swept silhouette, the way a building's is** (`body::push_shadow` +
+    `body::sweep`) — the hull of the outline and the outline moved by the light, i.e. the
+    Minkowski sum with the segment `[0, offset]`, so the shadow starts **under** the car and
+    runs out from beneath it. What stood here before was the silhouette *translated* by the
+    same offset, and at a low sun that copy detaches completely: a van at 15° is moved
+    8.6 m, four times its own length, leaving the car and a separate dark patch beside it.
+    At the default 59° the offset is 0.9 m and the two constructions differ only in the two
+    notches at the flanks — which is why the defect was invisible until the elevation slider
+    existed. The hull is built by an O(n) walk (an edge whose outward normal faces the light
+    moves, the rest stay, and the two vertices in between carry both copies), never a sort;
+    convexity is what `push_convex` needs and `the_shadow_sweep_is_convex` pins over the
+    whole azimuth × elevation grid, `the_shadow_stays_under_the_car` pins the attachment.
+  - **The edge is soft, by the buildings' own taper** — a `SHADOW_BLUR` (0.35 m) band
+    fading to zero alpha, its width at each vertex `direction · shadow_dir()` clamped at
+    zero, exactly `buildings::layers::penumbra`: hard where the shadow meets the car,
+    full width at the far end, growing along the flanks. A metre there against a third of
+    one here, because a building's shadow is three to ten times longer. Two consequences
+    of that taper are load-bearing: the near edges collapse and **are not emitted at all**,
+    which halves the band's vertices, and the car does **not** end up ringed by a soft
+    fringe — that ring is the "contact skirt" the building shadows took out for reading as
+    a grubby outline, and twenty-two thousand outlined cars would read the same way.
+    The band is `Full` only: past `CAR_DETAIL_MAX_ZOOM` 0.35 m is under two pixels, and it
+    costs four times the vertices of the shadow itself.
+  - **The shadow's own contour is coarser than the body's** — `SHADOW_CORNERS`, the body's
+    six-per-side outline with the two middle vertices dropped. Dropped rather than
+    recomputed: a subset of a convex polygon's vertices is convex and lies inside it, so the
+    shadow cannot poke out from under the body it should be hidden by.
+  - **Shadows of neighbouring cars are not unioned**, unlike the buildings' — at the
+    default sun the sweep is about a metre and `CAR_PITCH` is six, so there is nothing to
+    overlap, and `i_overlay` over 22 k cars would cost more than the whole layer. At a low
+    sun a row's shadows do overlap and stack into double-dark patches; that is the stated
+    price.
   - **What a car is drawn as** (`cars/body.rs`) — from above a car is **not a rectangle**:
     it is a rounded silhouette with a dark cabin across the middle — windscreen, roof,
     backlight. Those three cross bands are what make the patch on the asphalt read as a car;
@@ -716,11 +748,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the street cells, never the stand — the stand shows all three steps at once.
   - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
     machine, so compare runs against runs): **22 069 cars**, and per detail step
-    **971 k verts / 15 ms** (Full), **529 k / 9 ms** (Silhouette), **176 k / 4 ms** (Block —
-    the layer as it was before the body had any drawing in it). **Those are the mesh rows
+    **1 456 k verts / 27 ms** (Full), **485 k / 11 ms** (Silhouette), **220 k / 5 ms**
+    (Block). **Those are the mesh rows
     alone**; the two steps in front of them do not depend on the detail and are measured
     once each — `breaks` 1 ms (`marking_breaks`) and `parking` 2 ms (`park_cars`) — so a
-    rebuild is 18 ms at the near step and 7 ms at the far one. Keep `parking` on its own
+    rebuild is 30 ms at the near step and 8 ms at the far one.
+    **The swept shadow is what most of the near step's growth bought** (971 k / 15 ms
+    before it, on the same machine and the same run of the buildings' 785 k / 79 ms): the
+    sweep's hull is two vertices *cheaper* than the translated copy was — which is why
+    Silhouette went *down* from 529 k — and the whole of the +485 k is the soft edge, six
+    band quads per car at the near step alone. Keep `parking` on its own
     timer: while it sat inside the mesh timer the layer's milliseconds compared with
     nothing — not with the `cars:` line the app logs (which has always included it), and
     not with the older single-row runs. Next to the building layer

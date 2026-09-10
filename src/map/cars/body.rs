@@ -22,6 +22,10 @@
 //! 13 пикселей багажника против 9 у ближнего края и 3.7 против 2.4 у
 //! дальнего, где кабиной различимы уже только фургон и, слабее, универсал.
 //!
+//! Тень — [`push_shadow`]: силуэт, **заметённый** по свету от самой машины, а
+//! не его копия на отлёте, и с мягким краем. Это та же тень, что у домов, и
+//! сделана она тем же способом.
+//!
 //! Подробность — [`CarDetail`], её выбирает ступень зума слоя
 //! ([`super::CarLods`]). Дальше всех стоит `Block`, тот самый прямоугольник:
 //! на пяти пикселях длины ни скругление, ни стёкла не читаются, а вершины
@@ -191,6 +195,38 @@ struct Profile {
     backlight: f32,
 }
 
+/// Борт кузова в долях, от носа к корме: `x` вдоль (нос `+0.5`), `y` — доля
+/// полуширины. Торцы берутся из профиля, скругления общие — они про форму
+/// легковой машины вообще, а не про её тип.
+fn body_side(profile: &Profile) -> [(f32, f32); 6] {
+    [
+        (0.500, profile.nose),
+        (0.455, 0.93),
+        (0.330, 1.00),
+        (-0.330, 1.00),
+        (-0.455, 0.94),
+        (-0.500, profile.tail),
+    ]
+}
+
+/// Точки борта, по которым обводится тень: те же вершины кузова, из которых
+/// выкинуты две средние. Вершина стоит четырёх вершин меша в кайме на каждую
+/// из двадцати двух тысяч машин города, а край тени растушёван, и мидель на
+/// нём всё равно не читается.
+///
+/// Именно **выкинуты**, а не пересчитаны: подмножество вершин выпуклого
+/// контура выпукло и лежит внутри него, так что тень заведомо не вылезает
+/// из-под кузова там, где должна им закрываться.
+const SHADOW_CORNERS: [usize; 4] = [0, 1, 4, 5];
+
+/// Ширина мягкого края тени, м. Не физическая полутень — угловой размер
+/// солнца дал бы на такой длине миллиметры, — а то, чем край тени размыт на
+/// снимке: разрешением кадра и светом неба. Поэтому и подбирается видом:
+/// треть метра — это 2–7 экранных пикселей на ступени `Full`. У зданий то же
+/// число — метр (`buildings::layers::PENUMBRA_WIDTH`), и оно втрое больше,
+/// потому что и тень там втрое-вдесятеро длиннее.
+const SHADOW_BLUR: f32 = 0.35;
+
 /// Полуширина кабины у переднего края лобового стекла и у крыши: сверху
 /// остекление сужается к крыше, а по бокам от него остаются стойки и двери
 /// цвета кузова.
@@ -242,26 +278,35 @@ impl Car {
             + self.along.perp() * (y * profile.width / 2.0)
     }
 
-    /// Контур кузова: правый борт от носа к корме, потом левый обратно.
-    /// Шесть точек на борт — скруглений ровно столько, сколько видно на
-    /// экране в самом ближнем бакете, где машина длиной под сотню пикселей.
-    fn outline(&self, profile: &Profile, offset: Vec2) -> Vec<Vec2> {
-        let side = [
-            (0.500, profile.nose),
-            (0.455, 0.93),
-            (0.330, 1.00),
-            (-0.330, 1.00),
-            (-0.455, 0.94),
-            (-0.500, profile.tail),
-        ];
+    /// Контур по точкам борта: правый борт от носа к корме, потом левый
+    /// обратно.
+    fn ring(&self, profile: &Profile, side: &[(f32, f32)], offset: Vec2) -> Vec<Vec2> {
         let mut points = Vec::with_capacity(side.len() * 2);
-        for &(x, y) in &side {
+        for &(x, y) in side {
             points.push(self.point(profile, offset, x, y));
         }
         for &(x, y) in side.iter().rev() {
             points.push(self.point(profile, offset, x, -y));
         }
         points
+    }
+
+    /// Контур кузова. Шесть точек на борт — скруглений ровно столько, сколько
+    /// видно на экране в самом ближнем бакете, где машина длиной под сотню
+    /// пикселей.
+    fn outline(&self, profile: &Profile, offset: Vec2) -> Vec<Vec2> {
+        self.ring(profile, &body_side(profile), offset)
+    }
+
+    /// Контур, которым машина отбрасывает тень: на `Block` — габаритный
+    /// прямоугольник, иначе силуэт по [`SHADOW_CORNERS`].
+    fn shadow_contour(&self, profile: &Profile, detail: CarDetail) -> Vec<Vec2> {
+        if detail == CarDetail::Block {
+            return self.block(profile, Vec2::ZERO).to_vec();
+        }
+        let side = body_side(profile);
+        let corners: Vec<(f32, f32)> = SHADOW_CORNERS.iter().map(|&at| side[at]).collect();
+        self.ring(profile, &corners, Vec2::ZERO)
     }
 
     /// Прямоугольник габарита — им рисуется и дальний бакет, и тень под ним.
@@ -275,19 +320,79 @@ impl Car {
     }
 }
 
-/// Тень машины: тот же силуэт, сдвинутый по свету. На `Block` — габаритный
-/// прямоугольник: тень размыта сама по себе, и скругление в ней не читается
-/// уже там, где ещё читается в кузове.
+/// Тень машины — **заметённый по свету силуэт**, лежащий под ней, и мягкий
+/// край у него. Ровно так устроена тень дома
+/// (`map::buildings::layers::shadow_builder`) и оборудования на его крыше:
+/// силуэт заметается по свету, а не копируется на отлёте.
+///
+/// Копия на отлёте — то, что здесь стояло раньше, — при низком солнце
+/// отрывается от машины совсем: `offset` считается высотой кузова на
+/// котангенс высоты солнца, и у фургона при 15° это 8.6 м, вчетверо длиннее
+/// его самого. На асфальте оставались машина и отдельное тёмное пятно в
+/// стороне. При дефолтном солнце (59°) сдвиг — 0.9 м, копия ещё налезает на
+/// кузов, и разница со свипом там только в двух вырезах по бокам.
+///
+/// Кайма (`SHADOW_BLUR`) сужается к машине по тому же правилу, что у зданий
+/// ([`crate::map::buildings::layers`]`::penumbra`): у самого кузова тень
+/// примыкает жёстко, размывается она с удалением от того, кто её отбрасывает.
+/// Обвести машину мягкой каймой по всему кругу — то самое «контактное
+/// затенение», которое из теней зданий убрали: город вышел обведён грязной
+/// каймой, и двадцать две тысячи обведённых машин читались бы так же.
+///
+/// Кайма — только на `Full`: за `CAR_DETAIL_MAX_ZOOM` (0.18 м/px) треть метра
+/// это уже два пикселя и меньше, а стоит кайма вчетверо больше вершин, чем
+/// сама тень. Половину из них снимает сам скос: у рёбер, глядящих против
+/// света, ширина схлопывается в ноль, и такое ребро не кладётся вовсе.
 pub fn push_shadow(builder: &mut MeshBuilder, car: &Car, offset: Vec2, detail: CarDetail) {
     let profile = car.shape.profile();
-    match detail {
-        CarDetail::Block => {
-            builder.push_quad(car.block(&profile, offset), SHADOW_COLOR.to_linear())
-        }
-        CarDetail::Full | CarDetail::Silhouette => {
-            builder.push_convex(&car.outline(&profile, offset), SHADOW_COLOR.to_linear())
+    let color = SHADOW_COLOR.to_linear();
+    let cast = sweep(&car.shadow_contour(&profile, detail), offset);
+    builder.push_convex(&cast, color);
+    if detail != CarDetail::Full {
+        return;
+    }
+    let fade = LinearRgba {
+        alpha: 0.0,
+        ..color
+    };
+    let light = offset.normalize_or_zero();
+    builder.push_inset_band_tapered(
+        &cast,
+        SHADOW_BLUR,
+        true,
+        |direction| direction.dot(light).max(0.0),
+        color,
+        fade,
+    );
+}
+
+/// Свип выпуклого контура по свету: оболочка контура и его копии, сдвинутой
+/// на `offset`, — ровно то, что накрывает тень.
+///
+/// Строится обходом, без сортировки: ребро, чья внешняя нормаль смотрит по
+/// свету, уезжает на `offset`, остальные остаются на месте, а в двух
+/// вершинах, где одно сменяется другим, оболочка переходит из одной копии в
+/// другую. Это сумма Минковского контура с отрезком `[0, offset]`, поэтому
+/// на выпуклом контуре результат выпуклый — на это опирается `push_convex`.
+/// Нулевой `offset` (солнце в зените) даёт обратно сам контур.
+fn sweep(outline: &[Vec2], offset: Vec2) -> Vec<Vec2> {
+    let count = outline.len();
+    // контур обходится против часовой, значит внешняя нормаль ребра смотрит
+    // вправо от него; ребро отбрасывает тень наружу, когда она смотрит по свету
+    let casts = |at: usize| {
+        let edge = outline[(at + 1) % count] - outline[at];
+        Vec2::new(edge.y, -edge.x).dot(offset) > 0.0
+    };
+    let mut hull = Vec::with_capacity(count + 2);
+    for (at, &point) in outline.iter().enumerate() {
+        match (casts((at + count - 1) % count), casts(at)) {
+            (false, false) => hull.push(point),
+            (true, true) => hull.push(point + offset),
+            (false, true) => hull.extend([point, point + offset]),
+            (true, false) => hull.extend([point + offset, point]),
         }
     }
+    hull
 }
 
 /// Кузов со всем, что на нём видно на этой ступени подробности.
@@ -372,6 +477,7 @@ fn lighten(color: Color, amount: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::{SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN};
 
     /// Кузов вписан в свой габарит, а зеркала — единственное, что из него
     /// торчит: слой ставит машины по габариту, и вылезший борт заехал бы на
@@ -436,6 +542,87 @@ mod tests {
                     && profile.backlight > -0.5,
                 "{shape:?}: разметка кабины не по порядку"
             );
+        }
+    }
+
+    /// Машина на месте, для тестов геометрии.
+    fn parked(shape: CarShape) -> Car {
+        Car {
+            at: Vec2::new(7.0, -3.0),
+            along: Vec2::new(0.8, 0.6),
+            color: Color::WHITE,
+            shape,
+        }
+    }
+
+    /// Сдвиг тени на всех углах солнца, которые допускают ползунки секции
+    /// Sun: азимут по кругу, высота — от предельно низкой до полуденной.
+    fn sun_offsets(height: f32) -> impl Iterator<Item = Vec2> {
+        (0..24).flat_map(move |step| {
+            let direction = Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0);
+            [
+                SUN_ELEVATION_MIN,
+                30.0,
+                SUN_ELEVATION_DEFAULT,
+                SUN_ELEVATION_MAX,
+            ]
+            .into_iter()
+            .map(move |elevation| direction * (height / elevation.to_radians().tan()))
+        })
+    }
+
+    /// Оболочка тени выпуклая на любом солнце — на это опирается
+    /// `push_convex`: на вогнутом контуре веер из первой вершины заедет за
+    /// собственный край, а в полупрозрачном слое такое наложение читается
+    /// пятном двойной темноты.
+    #[test]
+    fn the_shadow_sweep_is_convex() {
+        for shape in SHAPES {
+            let car = parked(shape);
+            let profile = shape.profile();
+            for detail in [CarDetail::Full, CarDetail::Silhouette, CarDetail::Block] {
+                let contour = car.shadow_contour(&profile, detail);
+                for offset in sun_offsets(shape.height()) {
+                    let hull = sweep(&contour, offset);
+                    for corner in 0..hull.len() {
+                        let previous = hull[(corner + hull.len() - 1) % hull.len()];
+                        let point = hull[corner];
+                        let next = hull[(corner + 1) % hull.len()];
+                        let turn = (point - previous).perp_dot(next - point);
+                        assert!(
+                            turn >= -1e-3,
+                            "{shape:?}/{detail:?} при сдвиге {offset}: вогнутость в {point}, {turn}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Тень примыкает к машине, а не лежит отдельным пятном в стороне: весь
+    /// силуэт кузова накрыт оболочкой при любом солнце. Ради этого тень и
+    /// заметается, а не сдвигается копией, — при 15° копия уходит от фургона
+    /// на четыре его длины.
+    #[test]
+    fn the_shadow_stays_under_the_car() {
+        for shape in SHAPES {
+            let car = parked(shape);
+            let profile = shape.profile();
+            let contour = car.shadow_contour(&profile, CarDetail::Full);
+            for offset in sun_offsets(shape.height()) {
+                let hull = sweep(&contour, offset);
+                for &point in &contour {
+                    for corner in 0..hull.len() {
+                        let from = hull[corner];
+                        let to = hull[(corner + 1) % hull.len()];
+                        let side = (to - from).perp_dot(point - from);
+                        assert!(
+                            side >= -1e-3,
+                            "{shape:?} при сдвиге {offset}: {point} вне тени, {side}"
+                        );
+                    }
+                }
+            }
         }
     }
 

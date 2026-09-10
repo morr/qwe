@@ -431,15 +431,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **A car is not a rectangle** (`cars/body.rs`): a rounded silhouette with a dark cabin
   across it — windscreen, roof, backlight — plus mirrors, and its size and the layout of
   that cabin come from its **body type** (`CarShape`: sedan, hatchback, wagon, crossover,
-  van, in the shares a Russian yard shows). Each casts its own shadow, by the same
-  `shadow_length_scale()` the
-  buildings use and by its own type's height. **Decoration only** — cars are in no navmesh and no simulation, and pawns
+  van, in the shares a Russian yard shows). Each casts its own shadow, and it is the
+  buildings' shadow in miniature: the silhouette **swept** by the light — the hull of the
+  outline and the outline moved by `shadow_length_scale()` × the type's own height — so it
+  lies under the car and runs out from beneath it instead of standing apart from it, with a
+  `SHADOW_BLUR` (0.35 m) soft edge tapered by `direction · shadow_dir()` exactly as
+  `buildings::layers::penumbra` tapers: hard where it meets the car, full width at the far
+  end, and no soft ring around the car (that ring is the retired contact skirt). Shadows of
+  neighbouring cars are **not** unioned — at the default sun the sweep is a metre against
+  the six of `CAR_PITCH`. **Decoration only** — cars are in no navmesh and no simulation, and pawns
   walk through them, deliberately: a parked row along every street would eat the pavements
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
   a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
   layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
   past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 069
-  cars at 971 k verts / 15 ms of mesh on the near step against 176 k / 4 ms on the far one,
+  cars at 1 456 k verts / 27 ms of mesh on the near step against 220 k / 5 ms on the far one,
   plus the 1 ms of junction breaks and 2 ms of parking every step pays alike
   (`measure_cars` times them on their own rows — `examples/bench/map_meshing`). Every
   street shape the row broke on, and every body type on all three detail steps, side by
