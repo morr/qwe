@@ -112,6 +112,28 @@ fn parses_rails_and_drops_station_furniture() {
 }
 
 #[test]
+fn service_tracks_are_the_siding_the_yard_and_the_spur() {
+    let (sw, se, ne, nw) = corners(HALF);
+    // станционные пути белого списка, съезд между главными ходами и сам
+    // главный ход без `service` вовсе
+    let map = Overpass::new(CITY)
+        .way(&[("railway", "rail"), ("service", "siding")], vec![sw, ne])
+        .way(&[("railway", "rail"), ("service", "yard")], vec![sw, se])
+        .way(&[("railway", "rail"), ("service", "spur")], vec![se, nw])
+        .way(
+            &[("railway", "rail"), ("service", "crossover")],
+            vec![nw, ne],
+        )
+        .way(&[("railway", "rail")], vec![sw, nw])
+        .parse();
+
+    let service: Vec<bool> = map.rails.iter().map(|rail| rail.service).collect();
+    // белый список, а не «тег есть»: на съезде между главными ходами состав
+    // не бросают, и стоянка вагонов туда не приходит
+    assert_eq!(service, vec![true, true, true, false, false]);
+}
+
+#[test]
 fn underground_tracks_are_not_drawn() {
     let (sw, se, ne, nw) = corners(HALF);
     // подземные размечены по-разному: тоннелем, отрицательным слоем или обоими
