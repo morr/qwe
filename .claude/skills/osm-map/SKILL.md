@@ -349,7 +349,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 - **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
   polygon is followed, in the same builder, by a gradient band along its outer ring and
   along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
-  gets a lighter **shore** (`WATER_RIM`, 3 m), park / wood / grass / sand an edge a few
+  gets a lighter **shore** (`WATER_RIM`, 6 m — at 3 m it read as the polygon's edging
+  rather than as a shoal), park / wood / grass / sand an edge a few
   percent darker than the fill (`*_RIM`, 2–3 m; the wood's the widest and darkest — shade
   under the canopy edge). The far edge is built from `miter_offsets` on the ring, with the
   side chosen by the ring's signed area (`outside` flips it for holes, whose band lies in

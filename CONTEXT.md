@@ -56,7 +56,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
   parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
-  alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
+  alley casings → alleys → road casings → roads → bridge shadows → bridge casings →
+  bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
@@ -379,7 +380,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
   polygon carries a gradient band along its contour, holes included: water a lighter
-  **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
+  **shore** (6 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
   median strip never bleeds its rim onto the road.
