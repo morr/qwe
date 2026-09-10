@@ -387,6 +387,27 @@ fn a_man_made_cylinder_arrives_instead_of_a_box() {
     );
 }
 
+/// Радиус ноды берётся из `diameter` (он же `width`: цилиндр меряют поперёк),
+/// а неправдоподобный тег считается отсутствующим — контура у ноды нет,
+/// сверить размер не с чем, и типовой радиус рода честнее круга в гектар.
+#[test]
+fn a_node_cylinder_takes_its_radius_from_the_diameter_tag() {
+    let map = Overpass::new(CITY)
+        .node(&[("man_made", "water_tower"), ("diameter", "12")], CENTER)
+        .node(&[("man_made", "water_tower"), ("width", "12 m")], CENTER)
+        // габарит площадки, записанный в `diameter`, — мимо диапазона
+        .node(&[("man_made", "water_tower"), ("diameter", "260")], CENTER)
+        .parse();
+
+    let (typical, _) = structure_size(StructureKind::WaterTower);
+    let radii: Vec<f32> = map
+        .structures
+        .iter()
+        .map(|structure| structure.radius)
+        .collect();
+    assert_eq!(radii, [6.0, 6.0, typical]);
+}
+
 /// До карты доезжает только **надземный** трубопровод: правило обратное тому,
 /// что у путей и водотоков, потому что труба без `location` в OSM закопана, а
 /// серебристая линия через весь город по закопанной трубе — враньё крупнее,
