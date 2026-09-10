@@ -829,6 +829,9 @@ pub const Z_TRAM: f32 = 2.6;
 /// Припаркованные машины (`map::cars`) — выше трамвая и рельсов (машина
 /// стоит на асфальте поверх путей), ниже пятна портала и всего живого.
 pub const Z_CAR: f32 = 2.7;
+/// Ограды участков (`map::fences`) — над машинами: забор стоит на земле, но
+/// пересекает и двор, и обочину, а спорить ему не с чем.
+pub const Z_FENCE: f32 = 2.75;
 /// Выжженная земля под порталом: над дорогами (перекрёсток обуглен), под
 /// трупами (тела на пятне видны).
 pub const Z_PORTAL_STAIN: f32 = 2.8;
@@ -895,7 +898,8 @@ const _: () = {
     assert!(Z_RAIL_STEEL < Z_TRAM);
     // пятно под порталом кроет дороги, но не тела
     assert!(Z_TRAM < Z_CAR);
-    assert!(Z_CAR < Z_PORTAL_STAIN);
+    assert!(Z_CAR < Z_FENCE);
+    assert!(Z_FENCE < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
     assert!(Z_CORPSE < Z_PORTAL);
     assert!(Z_PORTAL < Z_BUILDING);

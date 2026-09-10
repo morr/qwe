@@ -3,7 +3,7 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{BuildingUse, RailKind, WaterKind, distance_to_segment};
+use crate::map::osm::model::{BuildingUse, FenceKind, RailKind, WaterKind, distance_to_segment};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -355,6 +355,69 @@ fn trees_keep_the_crown_off_walls_and_kerbs() {
             - path.width / 2.0;
         assert!(kerb > radius, "tree on the kerb at {pos:?}, gap {kerb}");
     }
+}
+
+/// Ограды участков доезжают до `MapData::fences` и не смешиваются со стеной
+/// Кремля: та непроходима и лежит в `walls`.
+#[test]
+fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
+    let (sw, _, ne, _) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(&[("barrier", "fence")], vec![sw, ne])
+        .way(&[("barrier", "wall")], vec![sw, ne])
+        .way(&[("barrier", "retaining_wall")], vec![sw, ne])
+        .way(&[("barrier", "hedge")], vec![sw, ne])
+        .way(&[("barrier", "city_wall")], vec![sw, ne])
+        // не линия и не ограда: калитка и бордюр
+        .way(&[("barrier", "gate")], vec![sw, ne])
+        .way(&[("barrier", "kerb")], vec![sw, ne])
+        .parse();
+
+    let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            FenceKind::Fence,
+            FenceKind::Wall,
+            FenceKind::Wall,
+            FenceKind::Hedge
+        ]
+    );
+    assert_eq!(map.walls.len(), 1);
+}
+
+/// Ветка ограды не прерывает разбор way: обнесённый забором квартал обязан
+/// стать и оградой, и кварталом — с `return` там Тула теряла площади.
+#[test]
+fn a_fenced_block_becomes_both_a_fence_and_a_quarter() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("barrier", "fence"), ("landuse", "residential")],
+            square(CENTER, HALF),
+        )
+        .parse();
+
+    assert_eq!(map.fences.len(), 1);
+    assert_eq!(map.landuse.len(), 1);
+}
+
+/// Ветка ограды стоит **выше** дорожной: забор вдоль тропы висит на том же
+/// way, что и `highway=*`, а дорожная ветка разбор прерывает — ниже неё её
+/// `return` съедал бы такой забор целиком (в Париже и Лондоне по одному
+/// такому way). Один way — и дорожка, и ограда.
+#[test]
+fn a_fenced_path_becomes_both_an_alley_and_a_fence() {
+    let (sw, se, ..) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[("highway", "footway"), ("barrier", "fence")],
+            vec![sw, se],
+        )
+        .parse();
+
+    assert_eq!(map.roads.len(), 1, "дорожка");
+    let kinds: Vec<FenceKind> = map.fences.iter().map(|fence| fence.kind).collect();
+    assert_eq!(kinds, [FenceKind::Fence], "ограда");
 }
 
 /// Открытая часть парка — поле: деревья растут только в лесных полигонах,

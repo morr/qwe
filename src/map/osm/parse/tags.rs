@@ -11,7 +11,7 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, RailKind, RoadClass, WaterKind, polyline_length,
+    AreaKind, BuildingUse, FenceKind, RailKind, RoadClass, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 
@@ -410,6 +410,19 @@ pub(super) fn crown_radius(tags: &HashMap<String, String>) -> Option<f32> {
         .and_then(|value| parse_measure(value))?;
     let radius = diameter / 2.0;
     TREE_CROWN_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
+/// Ограда участка: белый список, как у путей и водотоков. `barrier=*` несёт
+/// ещё и `kerb`, `gate`, `bollard`, `block` — это точки и мелочь, а не линия,
+/// и `city_wall`, который забирает ветка выше: кремлёвская стена
+/// **непроходима**, а забор рисуется и только.
+pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
+    match tags.get("barrier").map(String::as_str)? {
+        "fence" => Some(FenceKind::Fence),
+        "wall" | "retaining_wall" => Some(FenceKind::Wall),
+        "hedge" => Some(FenceKind::Hedge),
+        _ => None,
+    }
 }
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при
