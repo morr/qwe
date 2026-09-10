@@ -68,14 +68,3 @@ fn stripes(coord: f32, period: f32, width: f32, px: f32) -> f32 {
     let line = 1.0 - smoothstep(half_width - edge, half_width + edge, abs(phase));
     return line * visible(period, px);
 }
-
-// Полоса `[start, start + width)` в каждом периоде `period` по координате
-// `coord` — в отличие от `stripes` это широкий диапазон, а не линия: им
-// рисуется проезд между рядами гаражей.
-fn band(coord: f32, period: f32, start: f32, width: f32, px: f32) -> f32 {
-    let phase = coord - period * floor(coord / period);
-    let edge = 0.6 * px;
-    let low = smoothstep(start - edge, start + edge, phase);
-    let high = 1.0 - smoothstep(start + width - edge, start + width + edge, phase);
-    return low * high * visible(period, px);
-}
