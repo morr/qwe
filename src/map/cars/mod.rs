@@ -120,7 +120,11 @@ impl ZoomLods for CarLods {
 pub type CarZoomBucket = ZoomBucket<CarLods>;
 
 /// Подробность кузова на ступени зума; последняя ступень — слоя нет.
-fn detail_for(bucket: usize) -> Option<CarDetail> {
+///
+/// Публична ради витрины (`examples/demos/car_gallery`): её ручка `Detail`
+/// показывает те же ступени, что выбирает зум, и вторая копия этой таблицы
+/// разошлась бы с игрой на первой же новой ступени.
+pub fn detail_for(bucket: usize) -> Option<CarDetail> {
     match bucket {
         0 => Some(CarDetail::Full),
         1 => Some(CarDetail::Silhouette),
@@ -135,8 +139,16 @@ fn detail_for(bucket: usize) -> Option<CarDetail> {
 ///
 /// Отдаёт число машин и цену теми же [`LayerCost`], что зданиевые слои:
 /// миллисекунды — ровно то, ради чего замер и выносили из живого приложения, а
-/// `breaks` отдельной строкой — та же разбивка, что печатает `rebuild_cars`
-/// (разрывы считаются на каждую пересборку, и это решение перемеряется здесь).
+/// `breaks` и `parking` отдельными строками — та же разбивка, что печатает
+/// `rebuild_cars` (разрывы считаются на каждую пересборку, и это решение
+/// перемеряется здесь).
+///
+/// Расстановка стоит своей строки, а не молчания: `park_cars` — это проход по
+/// всем улицам города с бинарным поиском по дуговой координате и несколькими
+/// бросками ГПСЧ на место, и от ступени подробности она не зависит, поэтому
+/// меряется один раз. Без неё строка `cars *` мерила бы одну укладку меша, и
+/// её миллисекунды нельзя было бы сравнить ни с логом `rebuild_cars`, ни с
+/// прежним замером, где расстановка входила в общее время.
 ///
 /// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
 /// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
@@ -145,17 +157,26 @@ pub fn measure_cars(roads: &[RoadLine]) -> (usize, Vec<LayerCost>) {
     let started = std::time::Instant::now();
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let breaks_took = started.elapsed();
+    let started = std::time::Instant::now();
     let cars = park_cars(
         roads,
         &junctions,
         CarStyle::default(),
         RoadStyle::default().smoothing,
     );
-    let mut costs = vec![LayerCost {
-        name: "breaks",
-        vertices: 0,
-        elapsed: breaks_took,
-    }];
+    let parking_took = started.elapsed();
+    let mut costs = vec![
+        LayerCost {
+            name: "breaks",
+            vertices: 0,
+            elapsed: breaks_took,
+        },
+        LayerCost {
+            name: "parking",
+            vertices: 0,
+            elapsed: parking_took,
+        },
+    ];
     for (name, detail) in [
         ("cars full", CarDetail::Full),
         ("cars silhouette", CarDetail::Silhouette),
@@ -322,7 +343,6 @@ fn parkable(road: &RoadLine) -> bool {
 /// пошаговый обход `windows(2)` выбрасывал их целиком (в кеше Тулы — половину
 /// сегментов и треть длины), а на каждой вершине сбрасывал шаг, отчего ряд то
 /// рвался, то удваивался.
-#[allow(clippy::too_many_arguments)]
 fn park_along(
     cars: &mut Vec<Car>,
     points: &[Vec2],
@@ -336,11 +356,15 @@ fn park_along(
     if total <= 2.0 * END_MARGIN {
         return;
     }
-    // последняя **поставленная** машина этой стороны: на изломе внутренний
-    // ряд сжимается, и место, наехавшее на соседа, пропускается. Проверка по
-    // мировому расстоянию, а не по дуговой координате, — она ловит и излом,
-    // и любую другую кривизну
-    let mut last: Option<Vec2> = None;
+    // последняя **поставленная** машина этой стороны — точка и её длина: на
+    // изломе внутренний ряд сжимается, и место, наехавшее на соседа,
+    // пропускается. Проверка по мировому расстоянию, а не по дуговой
+    // координате, — она ловит и излом, и любую другую кривизну. Длина нужна
+    // потому, что два кузова длиной `a` и `b`, стоящие носом к корме,
+    // перекрываются ближе полусуммы; пока габарит был один, полусумма и была
+    // этой единственной длиной, а с пятью типами хэтчбек за фургоном проезжал
+    // проверку с наложением до 0.7 м
+    let mut last: Option<(Vec2, f32)> = None;
     let mut step = END_MARGIN;
     while step <= total - END_MARGIN {
         let at = step;
@@ -360,13 +384,20 @@ fn park_along(
         {
             continue;
         }
-        if last.is_some_and(|previous| previous.distance(place) < shape.length()) {
+        if last.is_some_and(|(previous, previous_length)| {
+            previous.distance(place) < (previous_length + shape.length()) / 2.0
+        }) {
             continue;
         }
         if rng.next_f32() >= occupancy {
             continue;
         }
-        last = Some(place);
+        // запоминается место **до** поперечной небрежности ниже, и это
+        // сознательно: `PARK_SLOP` разыгрывается после проверки, а перенести
+        // его бросок выше — сдвинуть поток ГПСЧ и переставить весь город.
+        // Сдвиг идёт поперёк ряда и не более чем на 0.12 м, так что вдоль
+        // улицы он почти ничего не значит; тест на изломе держит этот допуск
+        last = Some((place, shape.length()));
         // машину ставят руками, и на снимке города ни один ряд не выровнен по
         // линейке: колокол `bell4` даёт мелкую небрежность у большинства и
         // заметный перекос у единиц
@@ -540,17 +571,21 @@ mod tests {
         );
         let cars = park(std::slice::from_ref(&road));
         assert!(cars.len() > 10, "{}", cars.len());
-        // просвет — по длине самой короткой машины витрины: правило меряет
-        // длину той, что ставится, и небрежность парковки её чуть сдвигает
-        let shortest = CarShape::Hatch.length() - 2.0 * PARK_SLOP;
+        // просвет — по **полусумме** длин пары: именно на ней два кузова,
+        // стоящие носом к корме, и перестают перекрываться. Небрежность
+        // парковки (`PARK_SLOP`, поперёк ряда) разыгрывается после проверки и
+        // может сдвинуть навстречу обе машины, отсюда допуск в два слопа
         for (index, car) in cars.iter().enumerate() {
             for other in &cars[index + 1..] {
                 let gap = car.at.distance(other.at);
+                let apart = (car.shape.length() + other.shape.length()) / 2.0 - 2.0 * PARK_SLOP;
                 assert!(
-                    gap >= shortest - 0.01,
-                    "{gap} м между {} и {}",
+                    gap >= apart - 0.01,
+                    "{gap} м между {} ({:?}) и {} ({:?})",
                     car.at,
-                    other.at
+                    car.shape,
+                    other.at,
+                    other.shape
                 );
             }
         }

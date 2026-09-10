@@ -568,8 +568,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
   photo shows the housing blocks parked solid. `STREET_MIN_WIDTH` (8 m) lets
   `residential`/`unclassified`/`living_street` in and keeps `service` out, which is exactly
-  the line wanted. On an 8 m street the row sits `8/2 − CURB_GAP − CAR_WIDTH/2 = 2.6 m` off
-  the axis, leaving 3.4 m of carriageway between the two rows — a yard, and it is pinned by
+  the line wanted. On an 8 m street a sedan's row sits `8/2 − CURB_GAP − 1.8/2 = 2.6 m` off
+  the axis (a van's own 1.95 m width narrows that to 2.53 m — the offset is per-body, not a
+  constant, same as the length below), leaving 3.4 m of carriageway between the two rows for
+  a sedan — a yard, and it is pinned by
   `a_residential_street_gets_a_row`. Bodies of the size their **type** says (`CarShape`,
   4.4 × 1.8 m for a sedan up to 5.3 × 1.95 for a van)
   at `CAR_PITCH` 6 m, offset `CURB_GAP` + half of **that** body in from the kerb — the
@@ -584,9 +586,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `points.windows(2)` walk dropped every such link whole (51 % of Tula's segments, 35 % of
   its length) and reset the step at every vertex, so the row tore or doubled across a bend.
   `arclengths` + `place_on_path` (binary search, then interpolation) replace it, and one
-  extra rule handles curvature: a place closer than the car's **own length** to the last car
-  **placed on that side** is skipped, measured in world distance so it catches a corner and
-  any other bend alike.
+  extra rule handles curvature: a place closer than **half the two bodies' lengths together**
+  to the last car **placed on that side** is skipped, measured in world distance so it catches
+  a corner and any other bend alike. The half-sum, not the new body's own length, is where two
+  bodies nose to tail actually stop overlapping — while every car was the same 4.4 m the two
+  were the same number, and with five `CarShape`s they part: a hatchback behind a van passed
+  the own-length check overlapping it by up to 0.7 m. So `last` carries the length of the car
+  it points at, not only its point. The place is recorded **before** the `PARK_SLOP` shift,
+  because that shift is rolled after the check and pulling its roll forward would move the
+  RNG stream and reposition every row in the city; it is 0.12 m across the row, and
+  `cars_never_overlap_on_a_sharp_bend` carries it as the tolerance on the half-sum.
   - **Nobody parks by a ruler**, and a row that does reads as warehouse markings rather than
     a yard: every car is turned by `PARK_SKEW_DEGREES` (2.5°) and shifted across by
     `PARK_SLOP` (0.12 m), both through the LCG's `bell4` — a bell, so most of the row is
@@ -610,11 +619,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     are exactly such halves. The same rule is right for an ordinary one-way lane. `across`
     points left, so the right-hand side is `-1`; the direction it is right of is the way's
     own point order, which parse has already normalized (see **RoadLine** above).
-  - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is about a
-    quarter of the car layer's own build, and that whole layer is a few percent of the
-    building layer — a resource cached per world load would not pay for itself. Shares rather
-    than the 0.76 ms of 5.4 ms that stood here: those came from the `cars:` log line, and
-    `measure_cars` in `examples/bench/map_meshing` prints the same split offline.
+  - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is the
+    `breaks` row's 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
+    its near one, and the layer itself is well under the building layer's 79 — a resource
+    cached per world load would not pay for itself. The rows come from `measure_cars` in
+    `examples/bench/map_meshing`; the 0.76 ms of 5.4 ms that stood here came off the `cars:`
+    log line, which App Nap decides, and lumped the parking in with the mesh.
   Colours are a ten-slot
   palette in the shares a photo shows. Every car casts a shadow through the same
   `map::shadow_length_scale()` as the buildings — its length by the **type's own height**
@@ -638,9 +648,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **The type is `CarShape`**, a ten-slot table in the shares a Russian yard shows (three
     sedans, three hatchbacks, a wagon, two crossovers, a van), and it decides both the
     metres (length, width, height) and the layout of the cabin **in fractions of them** —
-    a sedan has a long boot, a hatchback none at all, a van's roof starts right behind the
-    windscreen. Fractions rather than metres, so a body is described once and scales with
-    its own size.
+    a sedan has a long boot, a hatchback only the overhang behind its backlight, a van's roof
+    starts right behind the windscreen. Fractions rather than metres, so a body is described
+    once and scales with its own size.
+    **What the table actually delivers, in metres of boot** (`(backlight + 0.5) × length`):
+    sedan 0.66, hatch 0.43, crossover 0.41, wagon 0.23, van 0.16 — so «a hatchback has none
+    at all», which stood here and in `body.rs`'s module doc, overstated it: the hatchback's
+    boot is two thirds of the sedan's, not zero, and `the_cabin_runs_from_nose_to_tail_in_order`
+    forbids a zero (it requires `backlight > -0.5`). **It is a near-zoom difference**: the
+    `Full` step runs from `MIN_ZOOM` 0.05 m/px out to `CAR_DETAIL_MAX_ZOOM` 0.18, and sedan
+    against hatchback is 13 px of boot against 9 at the near end but 3.7 against 2.4 at the
+    far one — at the far edge of `Full` only the van and (weakly) the wagon are told apart by
+    the cabin, and the rest of the row differs by its colour and its length.
   - **Decoration, and deliberately so**: cars touch neither the navmesh nor the simulation
     and pawns walk through them. A parked row along every street would otherwise eat the
     pavements the entire crowd walks on.
@@ -696,16 +715,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     next to streets hundreds of metres long is otherwise invisible. The `Detail` knob drives
     the street cells, never the stand — the stand shows all three steps at once.
   - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
-    machine, so compare runs against runs): **22 078 cars**, and per detail step
+    machine, so compare runs against runs): **22 069 cars**, and per detail step
     **971 k verts / 15 ms** (Full), **529 k / 9 ms** (Silhouette), **176 k / 4 ms** (Block —
-    the layer as it was before the body had any drawing in it). Next to the building layer
-    (785 k verts, 66 ms) and above the rail layer's deepest bucket (673 k, 23 ms) — still a
+    the layer as it was before the body had any drawing in it). **Those are the mesh rows
+    alone**; the two steps in front of them do not depend on the detail and are measured
+    once each — `breaks` 1 ms (`marking_breaks`) and `parking` 2 ms (`park_cars`) — so a
+    rebuild is 18 ms at the near step and 7 ms at the far one. Keep `parking` on its own
+    timer: while it sat inside the mesh timer the layer's milliseconds compared with
+    nothing — not with the `cars:` line the app logs (which has always included it), and
+    not with the older single-row runs. Next to the building layer
+    (785 k verts, 78 ms — the same run, see **What it costs** under Roof clutter) and above
+    the rail layer's deepest bucket (673 k, 23 ms) — still a
     layer built once per rebuild that costs nothing per frame.
     - **The body outline goes through `MeshBuilder::push_convex`, not `push_polygon`**, and
       that is most of those milliseconds: `push_polygon` calls `earcutr`, which on a
       12-vertex contour costs several times the laying-out itself and runs twice per car
       (body and shadow), 22 k cars over. The fan is correct because the outline is convex by
-      construction, and `body/tests.rs::the_outline_is_convex` is what keeps it that way.
+      construction, and `cars/body.rs::the_outline_is_convex` — an inline `mod tests`, there
+      is no `body/tests.rs` — is what keeps it that way.
       Measured: Full 40 → 15 ms, Silhouette 35 → 9 ms, vertices unchanged.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
@@ -1444,10 +1471,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `retuned` gate the height mode uses (one registration with `or_else`, deliberately:
     two registrations of `rebuild_buildings` in one schedule could both fire in one
     frame and spawn the layer twice).
-  - **What it costs** (Tula, 7643 buildings, 2.5D+shadows+tint, M1 Max): 603 018 verts /
-    69 ms with clutter against 279 186 / 58 ms without — one hitch on the threshold
-    crossing, in the same class as the rail layer's deepest bucket (673 k / 23 ms). Most
-    of it is the shafts: every flat roof gets at least one, and a shaft is 6 quads.
+  - **What it costs** (Tula, 7643 buildings, 2.5D+shadows+tint, from
+    `examples/bench/map_meshing` on the `dev` profile): 785 044 verts / 78 ms with clutter
+    against 461 212 / 65 ms without — one hitch on the threshold crossing, in the same
+    class as the rail layer's deepest bucket (673 k / 23 ms). Most of it is the shafts:
+    every flat roof gets at least one, and a shaft is 6 quads. The 603 018 / 279 186 that
+    stood here is an older build of the layer (the gap is 182 026 verts in **both** clutter
+    buckets, so it sits in the walls and roofs, not in the clutter or the shadows), and the
+    car section's aside — which name-drops this very layer — disagreed with it by a third.
+    One bench run prints buildings and cars together, so
+    **re-measuring one aside means writing down the other**; both now come off the same
+    run.
 - **Arch rendering** (`buildings/arches.rs::arch_openings` + `push_wall_with_openings`) —
   a building `passage` (арка) is also cut out of the *drawn* building. The opening is a
   rectangle **in the wall plane**, found from the passage's **endpoints**, not by segment

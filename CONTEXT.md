@@ -438,8 +438,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
   a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
   layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
-  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 078
-  cars at 971 k verts / 15 ms on the near step against 176 k / 4 ms on the far one. Every
+  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 069
+  cars at 971 k verts / 15 ms of mesh on the near step against 176 k / 4 ms on the far one,
+  plus the 1 ms of junction breaks and 2 ms of parking every step pays alike
+  (`measure_cars` times them on their own rows — `examples/bench/map_meshing`). Every
   street shape the row broke on, and every body type on all three detail steps, side by
   side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
