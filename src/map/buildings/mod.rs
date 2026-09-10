@@ -140,6 +140,16 @@ impl BuildingHeightMode {
             Self::ExtrusionShadowsTint => "2.5D+shadows+tint",
         }
     }
+
+    /// Рисуются ли в этом режиме длинные тени. Спрашивают двое — слой зданий
+    /// и цилиндры промзоны (`map/industry.rs`), которые рисуются как дома, —
+    /// и список режимов обязан быть один на обоих.
+    pub(crate) fn casts_shadows(self) -> bool {
+        matches!(
+            self,
+            Self::Shadows | Self::ShadowsTint | Self::ExtrusionShadowsTint
+        )
+    }
 }
 
 /// Зданиевый слой карты — чтобы пересборка режима знала, что деспавнить.
@@ -352,14 +362,7 @@ pub fn spawn_buildings(
 
     let mut shadow_time = Duration::ZERO;
     let mut roof_shadow_time = Duration::ZERO;
-    if with_shadows
-        && matches!(
-            mode,
-            BuildingHeightMode::Shadows
-                | BuildingHeightMode::ShadowsTint
-                | BuildingHeightMode::ExtrusionShadowsTint
-        )
-    {
+    if with_shadows && mode.casts_shadows() {
         let shadow_started = Instant::now();
         let shadows = shadow_builder(
             buildings,
@@ -486,7 +489,7 @@ pub struct Lean {
 
 impl Lean {
     /// Отклонение дома.
-    pub(crate) fn of() -> Self {
+    pub(super) fn of() -> Self {
         Self {
             per_meter: Vec2::new(EXTRUDE_SKEW, 1.0),
         }
@@ -498,7 +501,7 @@ impl Lean {
     }
 
     /// Смещение верха для `drawn` нарисованных метров высоты.
-    pub(crate) fn lift(self, drawn: f32) -> Vec2 {
+    pub(super) fn lift(self, drawn: f32) -> Vec2 {
         self.per_meter * drawn
     }
 

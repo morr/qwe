@@ -1,4 +1,5 @@
 use super::*;
+use crate::settings::{SUN_AZIMUTH_DEFAULT, SUN_ELEVATION_MIN};
 
 fn structure(kind: StructureKind, radius: f32, height: f32) -> Structure {
     Structure {
@@ -32,6 +33,7 @@ fn the_sweep_covers_both_ends_and_stays_a_stadium() {
 /// только по тени, и тень обязана быть много длиннее самого кружка.
 #[test]
 fn a_chimney_is_mostly_its_own_shadow() {
+    let _sun = crate::map::default_sun();
     let chimney = structure(StructureKind::Chimney, 2.5, 60.0);
     let mut builder = MeshBuilder::default();
     push_shadow(&mut builder, &chimney);
@@ -45,6 +47,44 @@ fn a_chimney_is_mostly_its_own_shadow() {
         reach > 8.0 * chimney.radius,
         "the shadow reaches only {reach} m"
     );
+}
+
+/// Зажим длины едет за солнцем — та же поправка, что у домов
+/// (`SHADOW_LENGTH_RANGE` подобран под `cot 59°`). Без неё тень
+/// шестидесятиметровой трубы на низком солнце упиралась бы в неподвижные
+/// сорок пять метров, пока тень дома той же высоты уходит на сто шестьдесят
+/// восемь.
+#[test]
+fn the_shadow_clamp_rides_the_sun() {
+    let _sun = crate::map::sun_at(SUN_AZIMUTH_DEFAULT, SUN_ELEVATION_MIN);
+    let chimney = structure(StructureKind::Chimney, 2.5, 60.0);
+    let mut builder = MeshBuilder::default();
+    push_shadow(&mut builder, &chimney);
+
+    let reach = builder
+        .positions_for_test()
+        .iter()
+        .map(|position| Vec2::new(position[0], position[1]).length())
+        .fold(0.0_f32, f32::max);
+    let wanted = chimney.height * shadow_length_scale();
+    assert!(
+        (reach - (wanted + chimney.radius)).abs() < 0.5,
+        "the shadow reaches {reach} m, the sun asks for {wanted}"
+    );
+}
+
+/// Тень цилиндра живёт по домовому правилу: в режимах без длинных теней слой
+/// теней пуст, иначе через промзону лежала бы сорокаметровая тень трубы на
+/// карте, где ни один дом тени не отбрасывает.
+#[test]
+fn a_mode_without_house_shadows_gets_no_cylinder_shadow() {
+    for mode in BuildingHeightMode::ALL {
+        let mut builder = MeshBuilder::default();
+        if mode.casts_shadows() {
+            push_shadow(&mut builder, &structure(StructureKind::Chimney, 2.5, 60.0));
+        }
+        assert_eq!(builder.is_empty(), !mode.casts_shadows(), "{mode:?}");
+    }
 }
 
 /// Стеной становится половина, обращённая **против** крена: с этой стороны

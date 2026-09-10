@@ -7,7 +7,10 @@
 //! в три метра теряется, а тень от него уходит на полста метров через всю
 //! площадку, и именно по ней глаз опознаёт трубу.
 //!
-//! Поэтому цилиндр рисуется тремя слоями, как дом: тень, видимая стена, верх.
+//! Поэтому цилиндр рисуется тремя слоями, как дом: тень, видимая стена, верх, —
+//! и «как дом» здесь буквально: тень его есть ровно в тех режимах
+//! `BuildingHeightMode`, где рисуется домовая (`casts_shadows`), а стена — там,
+//! где дом накренён.
 //! Стена берётся тем же отклонением верха ([`drawn_lift`]), что и у домов
 //! (включая обрезку высоты: без неё труба ложится на карту трубой), — иначе
 //! цилиндр стоял бы плоским кругом среди накренённых коробок, — и
@@ -33,7 +36,7 @@ use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, Structure, StructureKind};
 use crate::map::surface::{self, LayerMaterial};
-use crate::map::{BuildingHeightMode, SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::{BuildingHeightMode, SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
 use crate::settings::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
 
 /// Сторон в круге. Двадцать четыре: у резервуара в двадцать метров это грань
@@ -119,7 +122,9 @@ pub fn rebuild_industry(
     let mut walls = MeshBuilder::default();
     let mut tops = MeshBuilder::default();
     for structure in &map.structures {
-        push_shadow(&mut shadows, structure);
+        if mode.casts_shadows() {
+            push_shadow(&mut shadows, structure);
+        }
         let lift = drawn_lift(structure.height, *mode);
         push_wall(&mut walls, structure, lift);
         push_top(&mut tops, structure, lift);
@@ -187,9 +192,17 @@ fn push_pipe(builder: &mut MeshBuilder, points: &[Vec2], width: f32, color: Colo
 /// верха, поэтому тень его силуэта это не сдвинутый круг, а оболочка круга и
 /// сдвинутого круга разом. Тем же свипом рисуются тени домов, только там его
 /// считает `i_overlay` по контуру, а у круга он выписывается руками.
+///
+/// Зажим длины — тот же `SHADOW_LENGTH_RANGE`, что у домов, и, как у них,
+/// растянутый по высоте солнца ([`sun_stretch`]): числа подобраны под
+/// `cot 59°`, и неподвижный потолок в сорок пять метров на низком солнце
+/// уравнял бы тень трубы с тенью пятиэтажки.
 fn push_shadow(builder: &mut MeshBuilder, structure: &Structure) {
-    let length = (structure.height * shadow_length_scale())
-        .clamp(*SHADOW_LENGTH_RANGE.start(), *SHADOW_LENGTH_RANGE.end());
+    let stretch = sun_stretch();
+    let length = (structure.height * shadow_length_scale()).clamp(
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    );
     let offset = shadow_dir() * length;
     builder.push_polygon(
         &sweep(structure.at, structure.radius, offset),
