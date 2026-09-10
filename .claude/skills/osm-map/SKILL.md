@@ -565,7 +565,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour.
-  - Tula: **171 lots**. Parking touches neither the navmesh nor tree planting, like the
+  - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
+    `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
 - **Parked cars** (`map/cars.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
