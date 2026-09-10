@@ -122,6 +122,7 @@ pub fn spawn_map(
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
+    mut parking_layout: ResMut<parking::ParkingLayout>,
 ) {
     // земля — квад на всю карту тем же фактурным материалом, что и прочие
     // поверхности: спрайту с плоским цветом фактуру не положить
@@ -170,14 +171,15 @@ pub fn spawn_map(
     for area in &map.parking {
         push_area(&mut parking, area, PARKING_COLOR, &PARKING_RIM);
     }
+    *parking_layout = parking::ParkingLayout::new(&map.parking);
     let mut parking_lines = MeshBuilder::default();
-    for area in &map.parking {
-        parking::push_markings(&mut parking_lines, area);
+    for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
+        parking::push_markings(&mut parking_lines, area, stalls);
     }
 
     let waterways = mesh_water_lines(&map.water_lines);
 
-    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &water]
+    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &parking, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();

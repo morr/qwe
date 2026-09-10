@@ -27,7 +27,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::map::buildings::LayerCost;
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::{MapData, PolyArea, RoadLine};
-use crate::map::parking;
+use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
@@ -211,6 +211,7 @@ pub fn rebuild_cars(
     // кладёт ленту асфальта
     road_style: Res<RoadStyle>,
     map: Res<MapData>,
+    layout: Res<ParkingLayout>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
     for entity in &existing {
@@ -235,7 +236,7 @@ pub fn rebuild_cars(
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
     let mut cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
-    cars.extend(fill_lots(&map.parking));
+    cars.extend(fill_lots(&map.parking, &layout.0));
     let builder = mesh_cars(&cars, detail);
     let count = cars.len();
     let vertices = builder.vertex_count();
@@ -332,13 +333,13 @@ fn park_cars(
 
 /// Машины на размеченных стоянках: то же место, что и у разметки
 /// (`map::parking::stalls`), — иначе машина встала бы мимо своей полосы.
-/// Занято меньше половины мест: полная стоянка выглядит как автосалон, а
-/// пустая — как чертёж.
-fn fill_lots(lots: &[PolyArea]) -> Vec<Car> {
+/// Занято чуть больше половины мест ([`LOT_OCCUPANCY`]): полная стоянка
+/// выглядит как автосалон, а пустая — как чертёж.
+fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>]) -> Vec<Car> {
     let mut cars = Vec::new();
-    for lot in lots {
+    for (lot, stalls) in lots.iter().zip(layout) {
         let mut rng = Lcg::new(lot_seed(lot));
-        for stall in parking::stalls(lot) {
+        for stall in stalls {
             if rng.next_f32() >= LOT_OCCUPANCY {
                 continue;
             }

@@ -74,6 +74,7 @@ impl Plugin for MapPlugin {
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
             .init_resource::<CarStyle>()
+            .init_resource::<parking::ParkingLayout>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
