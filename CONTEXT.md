@@ -546,7 +546,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   stalls stay and cars stand on them. **The markings and the cars read the same
   `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a
   car would stand across its own line.
-  Tula: 171 lots.
+  Tula: 170 lots.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
