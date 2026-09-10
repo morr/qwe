@@ -500,8 +500,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     back, because a bare grey band reads as another street. That dash was osm-carto's
     **white** until the first offscreen shot showed what it does to a photo — a white
     ladder across the whole station throat, the most map-like thing in the frame — and it
-    is now **darker than the ballast**: from the air a track is a grey band with a cross
-    ripple on it, never a white one. `min_bed` floors the ballast
+    is now **darker than the ballast**: the ties are already gone on these buckets, so
+    from the air a track is a grey band with a dark dash running **along** its middle —
+    a mark of the track itself, never a white one. Its colour is exactly
+    `RailPalette::tie` of its own palette (active 0.243/0.196/0.157, disused
+    0.400/0.361/0.302) — the dash *is* the ties that stopped being drawn, so the mark
+    does not brighten in a step at the threshold, and the tone is all the sign has: on
+    the last bucket the dash is `min_bed` 9 m × `width_scale` 0.5 ÷ `MAX_ZOOM` 4.5 =
+    exactly 1 px wide. That is why the contrast was bought back with the colour rather
+    than by widening `width_scale` — the pixel arithmetic of this paragraph stays put.
+    `min_bed` floors the ballast
     width on the last two buckets — 5 m is a pixel at city scale, and the track would
     vanish before the roads it crosses. The numbers are derived from the screen size at
     the **worst** (far) edge of each bucket, and they hold on **every** parsed bed width
@@ -509,8 +517,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     ~1 px. The second number that must hold across buckets is the **tie duty cycle**,
     ~40% (the real 0.26 m in 0.65) — measured live: at 31% the ties stop being a texture,
     become sparse marks, and the two white rails outweigh them into a ladder. Both,
-    plus the one-way progression (detail only ever falls away) and that ties and dashes
-    never coexist, are pinned by `rail/tests.rs`.
+    plus the one-way progression (detail only ever falls away), that ties and dashes
+    never coexist, and that the dash of **every** palette is its own tie colour and so
+    darker than its own ballast, are pinned by `rail/tests.rs`.
   - **What a bucket costs** (Tula, 69 km of non-tram track inside the map, measured on
     an M1 Max from the `rail meshing:` log line): bucket 4 45 k verts / 1 ms, bucket 2
     131 k / 3 ms, bucket 1 298 k / 9 ms, bucket 0 673 k / 23 ms — a one-off hitch on the
@@ -634,7 +643,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   red, 2GIS blue) and we take 2GIS's blue, since red on this map already means kremlin
   wall. Line and ties share one colour, so both go in one mesh (`TramLayerTag`, `Z_TRAM`
   2.6 — above the rail steel at crossings, name `tram`) — self-overlap costs nothing,
-  and there is no white dash layer for a tram. The tie primitive is
+  and there is no dash layer for a tram. The tie primitive is
   `MeshBuilder::push_ticks`: the same arclength walk as `push_dashes`, but each mark is
   a perpendicular bar rather than a piece of the path, and the first one is offset half
   a step so a bar never lands exactly on a way endpoint and pairs into a cross at joins.
