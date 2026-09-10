@@ -602,7 +602,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     points left, so the right-hand side is `-1`; the direction it is right of is the way's
     own point order, which parse has already normalized (see **RoadLine** above).
   - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is about a
-    seventh of the car layer's own build, and that whole layer is a few percent of the
+    quarter of the car layer's own build, and that whole layer is a few percent of the
     building layer — a resource cached per world load would not pay for itself. Shares rather
     than the 0.76 ms of 5.4 ms that stood here: those came from the `cars:` log line, and
     `measure_cars` in `examples/bench/map_meshing` prints the same split offline.
@@ -803,9 +803,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       rather than `BuildingLayerTag`, and `rebuild_buildings` despawns it only when the
       **height mode or the sun** changed (`mode.is_changed() || sun.is_changed()`, the
       latter `Res<SunOnMap>`): it does not depend on the roof-clutter
-      zoom bucket, and it is the single most expensive thing here — **about three quarters of
-      the whole building build** on Tula (272 ms of 352 in one `examples/bench/map_meshing`
-      run; the 90 ms of 116 that used to stand here came off the `building meshing:` line in
+      zoom bucket, and it is the single most expensive thing here — **two thirds to three
+      quarters of the whole building build** on Tula (43–45 ms of a 53–72 ms build, by height
+      mode and clutter bucket, in one `examples/bench/map_meshing` run on the `dev` profile;
+      the 90 ms of 116 that used to stand here came off the `building meshing:` line in
       the app, where the power state sets the scale, so take the share, not the
       milliseconds). `BuildingPlan { mode,
       bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
