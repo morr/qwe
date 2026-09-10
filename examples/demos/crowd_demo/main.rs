@@ -81,6 +81,7 @@ mod metrics;
 mod panel;
 mod scenario;
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{Diagnostic, RegisterDiagnostic};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
@@ -429,6 +430,12 @@ pub(crate) fn enter_live(mut next: ResMut<NextState<PlayPhase>>) {
 pub(crate) fn spawn_camera(mut commands: Commands, config: Res<DemoConfig>) {
     commands.spawn((
         Camera2d,
+        // `PanCamera` — маркер «камера пользователя», по которому фильтруют
+        // `separate_pawns` и диспетчер путей: закадровый снимок игры поднимает
+        // вторую `Camera2d`, и без фильтра `Single` матчил бы две. Стенд не
+        // поднимает `PanCameraPlugin` и панорамы не имеет вовсе (зум — свой
+        // `zoom_camera`), так что компонент стоит здесь именно как маркер
+        PanCamera::default(),
         Projection::Orthographic(OrthographicProjection {
             near: -1000.0,
             far: 1000.0,

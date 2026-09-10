@@ -11,6 +11,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::image::Image;
 use bevy::prelude::*;
@@ -32,6 +33,10 @@ const OFFSCREEN_SIZE: UVec2 = UVec2::new(1568, 980);
 /// то, чтобы цель вообще появилась в графе рендера, второй — на сам кадр;
 /// снимать в тот же кадр, в который камера создана, значит снять пустоту.
 const WARMUP_FRAMES: u32 = 2;
+/// Нижняя граница стороны кадра, px: `size` приходит из BRP, а текстура с
+/// нулевой стороной — ошибка валидации wgpu, то есть падение по чужому вводу.
+/// 16 — заведомо безопасный минимум, замером он не выбирался.
+const OFFSCREEN_MIN_SIDE: u32 = 16;
 
 #[derive(Event, Reflect, Debug, Default)]
 #[reflect(Event)]
@@ -39,7 +44,7 @@ pub struct TakeScreenshotEvent;
 
 /// Закадровый снимок: кадр рисуется во внеэкранную текстуру и кладётся в файл,
 /// минуя окно. Все поля необязательны — пустое событие снимает `offscreen.png`
-/// 1600 × 1000 с текущей позиции камеры и текущим зумом:
+/// [`OFFSCREEN_SIZE`] (1568 × 980) с текущей позиции камеры и текущим зумом:
 ///
 /// ```text
 /// brp event OffscreenShotEvent '{"at":[2300,1900],"zoom":0.4,"path":"gsk.png"}'
@@ -147,15 +152,24 @@ fn on_take_screenshot(_event: On<TakeScreenshotEvent>, mut commands: Commands) {
 
 /// Своя камера во внеэкранную текстуру. Пост-обработка у неё та же, что у
 /// пользовательской (`post::camera_post_process`), иначе снимок показывал бы
-/// не то, что видно на экране: без bloom и без фотопрохода.
+/// не то, что видно на экране: без bloom портал, ореолы демонов и искры душ
+/// теряют свечение. Виньетка (`post.rs`) в кадр не попадает — она UI-нода и
+/// живёт на камере панелей.
 fn on_offscreen_shot(
     event: On<OffscreenShotEvent>,
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    camera: Single<(&Transform, &Projection), With<Camera2d>>,
+    // не просто `With<Camera2d>`: закадровая камера, которую этот же обсервер
+    // и спавнит, тоже `Camera2d`, и пока она жива (три кадра) `Single` матчил
+    // бы две сущности. Обсервер при этом **молча** пропускается — второе
+    // событие подряд не оставляло ни файла, ни строки в логе
+    camera: Single<(&Transform, &Projection), (With<Camera2d>, With<PanCamera>)>,
 ) {
     let (transform, projection) = *camera;
-    let size = event.size.unwrap_or(OFFSCREEN_SIZE).max(UVec2::splat(16));
+    let size = event
+        .size
+        .unwrap_or(OFFSCREEN_SIZE)
+        .max(UVec2::splat(OFFSCREEN_MIN_SIDE));
     let at = event.at.unwrap_or(transform.translation.truncate());
     let zoom = event.zoom.unwrap_or(transform.scale.x).max(f32::EPSILON);
     let path = event.path.clone().unwrap_or(OFFSCREEN_PATH.to_string());
@@ -180,8 +194,11 @@ fn on_offscreen_shot(
     commands.spawn((
         Camera2d,
         Camera {
-            // раньше пользовательской: у той порядок по умолчанию (0), и две
-            // камеры с одним порядком — повод для предупреждения движка
+            // раньше пользовательской в общем порядке отрисовки. Это не
+            // защита от предупреждения о неоднозначности: `sort_cameras`
+            // (bevy_render) ключует его парой (order, target), а цели здесь
+            // разные — окно и текстура, так что одинаковый порядок движок бы
+            // и не заметил
             order: -1,
             ..default()
         },

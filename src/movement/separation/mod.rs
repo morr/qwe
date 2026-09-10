@@ -39,6 +39,7 @@
 //! трупом неподвижно (mobility 0), но толпу от себя отталкивает. Трупы вне
 //! механизма по построению — у них нет `SimPosition`.
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
@@ -645,7 +646,7 @@ pub fn separate_pawns(
     navmesh: Res<crate::navigation::ArcNavmesh>,
     mut humans: ResMut<SpatialGrid<Human>>,
     demons: Res<SpatialGrid<Demon>>,
-    camera: Single<&Transform, With<Camera2d>>,
+    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut out: SeparationOutput,
     mut pawns: Query<

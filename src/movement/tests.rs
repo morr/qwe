@@ -166,6 +166,7 @@ fn a_pawn_deeper_than_the_search_radius_is_left_alone() {
 
 // --- спасение впереди диспетчера ---
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::window::PrimaryWindow;
 
 use super::components::UrgentPath;
@@ -177,13 +178,17 @@ use super::pathfinding::dispatch_pathfinding_requests;
 ///
 /// Вторая пешка — контроль: она стоит на проходимом, её заявка обязана уехать
 /// в таск. Без неё тест проходил бы и в случае, когда диспетчер вовсе не
-/// отработал (например, не нашёлся `Single<&Window>`).
+/// отработал (например, не нашёлся `Single<&Window>` или камера пользователя —
+/// оба параметра при провале валидации молча снимают систему с кадра).
 #[test]
 fn the_rescue_beats_the_dispatcher_to_a_trapped_pawns_request() {
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
     let app = &mut app_with_block();
     app.world_mut().spawn((Window::default(), PrimaryWindow));
-    app.world_mut().spawn(Camera2d);
+    // `PanCamera` — маркер «камера пользователя»: диспетчер фильтрует по нему,
+    // чтобы не поймать закадровую камеру снимка (`dev.rs`). Без маркера
+    // `Single` не находит камеру вовсе, и срабатывает контроль ниже
+    app.world_mut().spawn((Camera2d, PanCamera::default()));
     // тот же порядок, что и в `MovementPlugin`
     app.add_systems(
         Update,

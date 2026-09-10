@@ -1,3 +1,4 @@
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::window::PrimaryWindow;
@@ -275,7 +276,7 @@ pub fn toggle_draw_move_paths(mut draw: ResMut<DrawMovePaths>) {
 
 pub fn draw_move_paths(
     draw: Res<DrawMovePaths>,
-    camera: Single<&Transform, With<Camera2d>>,
+    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut gizmos: Gizmos,
     query: Query<(&SimPosition, &Movable), With<MovableStateMovingTag>>,
