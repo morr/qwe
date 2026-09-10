@@ -734,7 +734,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
       scale is a full building rebuild with its shadow union (77–86 ms on Tula, of which the
       union is 47–56 — measured on an M1 Max through the slider itself) plus 15 k crowns plus
-      the car layer, and there are seventy divisions on the scale.
+      the car layer plus the road layers (the `road meshing:` line: 230–460 k verts in
+      5–12 ms), and there are seventy divisions on the scale.
+      **The road layers are in that list because of the bridge shadow**, and it is the
+      only thing in them the sun moves: its offset is baked into the merged mesh, so
+      `rebuild_roads` is gated on `retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)`.
+      With `RoadStyle` alone that one shadow kept the sun the city loaded with while every
+      other shadow on the map followed the knob.
     - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
       is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
       first `Main` pass is *after* `Startup`: without the seed the `light` uniform would

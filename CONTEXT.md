@@ -274,7 +274,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
   slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
   it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
-  building layers with their shadows, tree crowns, cars, the roof material's `light`
+  building layers with their shadows, tree crowns, cars, the road layers (the bridge
+  shadow is baked into that mesh), the roof material's `light`
   uniform) and that the settings file is written from. One division of the slider costs a
   full building rebuild with its shadow union, so a drag across the scale would otherwise
   be seventy of them.
