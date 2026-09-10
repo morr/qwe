@@ -149,9 +149,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     drawing style; underground track is dropped. The rail branch of `parse_way` runs before
     `highway` and falls through — a way can be both street and track. A non-tram track is
     drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
-    and two steel rails on the gauge, thinned out by **rail zoom LOD** into osm-carto's
-    dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD, and is
-    drawn only while `TramStyle::visible`.
+    and two steel rails on the gauge, thinned out by **rail zoom LOD** into a dashed
+    symbol darker than its ballast on the city-wide view. Tram is `map/tram.rs`, with its
+    own LOD, and is drawn only while `TramStyle::visible`.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
