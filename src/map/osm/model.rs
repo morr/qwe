@@ -127,8 +127,9 @@ pub struct RailLine {
     pub points: Vec<Vec2>,
     pub width: f32,
     pub kind: RailKind,
-    /// Служебный путь (`service=siding|yard|spur|crossover`) — то есть
-    /// станционный, а не главный ход. Рисуется он так же, но **вагоны стоят
+    /// Служебный путь (`service=siding|yard|spur`, см. `is_service_track`) —
+    /// то есть станционный, а не главный ход; `service=crossover` не в счёт,
+    /// это съезд между главными путями. Рисуется он так же, но **вагоны стоят
     /// только на нём** (`map::wagons`): на главном ходу состав либо идёт,
     /// либо его там нет, а на подъездном он стоит неделями.
     pub service: bool,
