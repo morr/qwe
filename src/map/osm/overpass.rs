@@ -72,7 +72,8 @@ const QUERY_VERSION: u32 = 11;
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
 /// (`amenity=parking`), спортивные и детские площадки (`leisure=*`),
-/// промышленные сооружения (`man_made=*`), аллеи,
+/// промышленные цилиндры и надземные трубопроводы
+/// (`man_made=storage_tank|silo|chimney|water_tower|gasometer|pipeline`), аллеи,
 /// одиночные деревья, стены Кремля, входы в здания.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
