@@ -242,7 +242,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
   Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
   the slot by the building's seed) except that **height is consulted first**: anything under
-  `LOW_RISE_STOREYS` (4) drops into the low-rise table whatever its tag says, because a low
+  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`, `Church`,
+  `Industrial` keep their own tables) drops into the low-rise table, because a low
   building is neither a panel block nor a curtain wall. The cladding decides three things at
   once — what lies *between* the openings (floor seams and panel joints, brick courses,
   bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
@@ -252,38 +253,37 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
   above it — and stands on a dark **plinth** band.
   **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `12`). The shader used to roll an
-  entrance on a fifth of the ground-floor columns, and that door had nothing to do with the
-  entrance the door gizmo shows and the pawn walks to — the drawn one stood where there is
-  no entrance and the entrance stood on blank wall. So the wall now gets two quads per
-  door: a **patch** over the cells the leaf touches — the wall's own frame and cladding,
-  `WallMark::Solid`, so no window peeks out from behind the leaf — and the **leaf** itself,
-  exactly on the entrance point, with a frame of its own that maps the opening to `[0, 1]²`
-  (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
+  (`layers::push_doors` over `PolyArea::entrances`, code `12`) — a **patch** over the cells
+  the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
+  **leaf** itself on the entrance point, in a frame of its own that maps the opening to
+  `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
   (`layers::door_size` — a подъезд, a house door, shop leaves, a shed gate), so the shader
-  needs no scale of its own. Cost: eight vertices per drawn door, and only on walls the
-  extrusion draws at all. Above the last storey the wall keeps a **cornice**
+  needs no scale of its own. Above the last storey the wall keeps a **cornice**
   (`meshing::PARAPET_CELLS`, 0.15 of a cell) — plain wall with no openings and nothing drawn
-  in it, because what the top of a wall needs is *room*, not a stripe: the first attempt
-  painted a coping inside the gap that was already there and moved nothing. The room is
-  geometric — the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, so whole
-  storey boundaries survive and only the drawn storey shrinks by 1/(storeys + 0.15).
-  Knowing where the top *is* needs the storey count, and that rides in the **material slot**
-  next to the code (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in the
-  quotient, zero on a roof) — the one field with a spare digit, against four bytes per vertex
-  for a fifth float.
-  A **balcony** is a stack of bands across 72 % of its panel — the slab's shadow on the wall,
-  the bright slab edge, the parapet, and above it either glazing or an open recess in shade —
-  on 58 % of the **columns** (a brick building's are recessed loggias, and rarer), so they
-  come out in columns the whole height of the wall as they do on a real block.
-  **A window is the only thing here that replaces the surface colour instead of correcting
-  it** — glass is not plaster some per cent darker — so the wall hands the fragment three
-  numbers, not one brightness: shade, how much glass, and how much of that glass is sky
-  rather than the dark room behind it.
+  in it, because what the top of a wall needs is *room*, not a stripe. The room is
+  geometric: the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, and the
+  invariant it protects is that **storey boundaries stay whole**, not that the wall ends on
+  one. Knowing where the top *is* needs the storey count, and that rides in the **material
+  slot** next to the code (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in
+  the quotient, zero on a roof).
+  A **balcony** is a stack of bands, not a box — the slab's shadow on the wall, the bright
+  slab edge, the parapet, and above it either glazing or an open recess in shade — laid out
+  by the **period of a section**, not by a per-column draw: two filled **columns** out of
+  every four to six, the period and its phase taken from the wall's own seed, so they come
+  out in columns the whole height of the wall and in a repeating step along it, as they do
+  on a real block (a brick wall keeps the period and fills one column of it).
+  **A window is the only thing here that replaces the surface
+  colour instead of correcting it**: the wall hands the fragment three numbers, not one
+  brightness — shade, how much glass, and how much of that glass is sky.
   **Who gets balconies is decided on the CPU** (`layers::balconies_fit`): only a panel or
-  brick wall, never a `building=house` whatever its cladding, never under four storeys and
-  never on a wall narrower than three panels. The shader cannot make that call: it knows
-  neither the building's use nor how many storeys the wall has in total. That verdict and
+  brick wall, never a `building=house` whatever its cladding, never under four storeys,
+  never on a wall narrower than three panels (that threshold cuts off a **step in the
+  outline**, not an end wall) and **never on a gable end** — a wall standing across the long
+  axis of the building's plan (`layers::plan_long_axis` over `roofs::min_area_rect`, only
+  where the plan is half again longer than it is wide, since a squarish tower has no end).
+  The shader cannot make any of that call: it knows
+  neither the building's use nor how many storeys the wall has in total, and least of all
+  what the building's other walls are. That verdict and
   one more travel as the **seed's own value** (`WallFrame::marked`, `WallMark`): `[0, 1)` is
   a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a wall with **no openings**
   at all (`Solid`) — two things at once, the **gable** (which continues the wall's pattern
@@ -391,7 +391,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
   32 × 32 m block, a hundred flats, with one door, and a volume-linear count would charge
   for the height twice, since a подъезд is a stack whose own capacity grows with it. It
-  stands down for anything that is not housing, and for a **свечка** — a compact 45 m+
+  stands down for anything that is not housing, for anything without a height or under
+  `SECTION_MIN_HEIGHT` (12 m), and for a **свечка** — a compact 45 m+
   tower, where one lobby for the whole building is normal. **Real doors are never moved or dropped — but a
   half-mapped building is topped up**: one mapped `entrance` used to make the generator skip
   the building whole, and a London block a quarter of a kilometre long kept its single door.
@@ -401,10 +402,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **A section's подъезд is through** (`through_doors`): a `building=apartments`/`yes`
   outline at least `THROUGH_MIN_LENGTH` (40 m) long gets the courtyard half of every door,
   found by a ray inward that must exit `THROUGH_DEPTH_RANGE` (8–20 m) away on a wall facing
-  back. It is the same подъезд, not another one, so the cohort count does not grow — and the
-  depth ceiling is what keeps a **свечка**, a compact new tower with one entrance, from
-  growing a second door on its back. The `doors` debug toggle draws them; they are what
-  `layers::push_doors` puts on the wall.
+  back. It is the same подъезд, not another one, so the cohort count does not grow — but the
+  **point count does**: the courtyard leaf is an element of `PolyArea::entrances` in its own
+  right, and nothing in the model tells the two halves apart, so a wander target is drawn
+  from it like any other door, the `doors` gizmo circles it, `layers::push_doors` hangs a
+  leaf on the wall for it, and `generate_entrances` counts these **twins** as a term of their
+  own (inside the `N generated`, with a line saying how many of that N are courtyard halves).
+  The depth ceiling is what keeps a **свечка**, a compact new tower with one entrance, from
+  growing a second door on its back.
 - **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons** plus standalone
   surveyed trees and `tree_row` avenues; deterministic LCGs seeded by geometry. **Planting
   runs once at the density ceiling**; the density slider shows a monotone *prefix*

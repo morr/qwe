@@ -187,7 +187,7 @@ in `CONTEXT.md` and the detail here in the same change.
 
 - **Building height** (`parse/tags.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
-  LiDAR import) or else `building:levels` + `roof:levels` × `METERS_PER_LEVEL` (3 m)
+  LiDAR import) or else `building:levels` + `roof:levels` × `settings::STOREY_HEIGHT` (3 m)
   (Paris 64%, Berlin 59%, London 50%, Tula 31%, **Tokyo 5%**). `parse_measure` handles
   the tag-value zoo — `12`, `12.5`, `12,5`, `12 m`, `3;4`, `40'6"`. Anything outside
   `BUILDING_HEIGHT_RANGE` (2–600 m) counts as *no tag*: OSM carries both `height=0` and
@@ -195,15 +195,20 @@ in `CONTEXT.md` and the detail here in the same change.
   everywhere but New York, so what fills it in matters: see **Inferred storeys** under
   Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
-  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks the
-  wall colour (`map/buildings/mod.rs::facade_color`) and the **roofing material** the roof
-  colour then comes from (**Roof material** under Rendering). Two sources in order:
-  `building=*` when the value says something (`house`, `apartments`, `garages`, `church`,
+  Commercial | Industrial | Garage | Church | Public | Other`, the class that picks two
+  material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and the
+  **roofing material** (`::kind_of`); neither colour comes from the class itself, both
+  come from the chosen material's own palette (**Roof material** under Rendering, bullet
+  **The pick**). Two sources in order: `building=*` when the value says something
+  (`house`, `apartments`, `garages`, `church`,
   `school`, …), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
   `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
-  + `amenity=…`. Anything outside the vocabulary is `Other`, the historical beige; the
-  vocabulary covers what a city carries by the hundreds, not the OSM wiki. Tula: `yes`
-  4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
+  + `amenity=…`. Anything outside the vocabulary is `Other`, and `Other` is read by shape
+  rather than left flat: the wall takes the apartment-block table (height having spoken
+  first — under `LOW_RISE_STOREYS` it is the low-rise one whatever the tag), the roof
+  takes the private-sector table for a small footprint and the apartment-block one above
+  it. The vocabulary covers what a city carries by the hundreds, not the OSM wiki.
+  Tula: `yes` 4004 of 7465, `house` 2249, `apartments` 744, commercial/retail/office 165,
   garage(s) 74, industrial 31, church 17. The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
   the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
@@ -1073,15 +1078,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       and is scaled by a per-window `tone`: a curtain, an open sash, dirty glass. Without
       that per-window draw a row of windows reads as a stencil.
     - **The opening is what a cladding is really about**: a two-sash window per panel (0.42
-      of the panel, 0.30…0.76 of the storey), a narrower brick one, a small house window on
+      of the panel, 0.30…0.72 of the storey), a narrower brick one, a small house window on
       plaster, a full-panel glazing strip on a shopfront, a high narrow ribbon on 55 % of a
       shed's panels. Mullions are placed **from the left edge of the opening**
       (`stripes(inside.x - 0.5 + half, wide / panes, …)`), so any pane count comes out
       right; centring them on the middle only works for even counts.
-    - **The ground floor is its own case on every cladding**: never a balcony, and instead an
-      entrance — a doorway on `DOOR_SHARE` of the columns, a shopfront lower and taller than
-      the strip above it, a gate on a shed — over a dark **plinth** band, the line that says
-      where the building stops and the ground begins.
+    - **The ground floor is its own case on every cladding**: never a balcony, a shopfront
+      lower and taller there than the strip above it, and over it all a dark **plinth** band,
+      the line that says where the building stops and the ground begins. The entrance is
+      *not* drawn here — it comes as geometry from the data (the door bullet below); the
+      shader rolls no doorway of its own on any cladding.
     - **The top of a wall needs room, not a stripe.** A wall is drawn exactly
       `storeys × 3 m` and a real building is not: above the last storey sit the ceiling, the
       roof slab and the parapet, and without them the top window butts straight into the roof.
@@ -1143,7 +1149,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       A door at a ring **vertex** — which is where every real OSM `entrance` sits — is pushed
       inside the wall by half a leaf, and claimed by the edge it *starts*, so the two walls
       of a corner do not draw it twice. **The claim is by the nearest edge, not by every
-      edge in tolerance** (`closer_edge`): `DOOR_ON_WALL` is half a metre and an OSM step
+      edge in tolerance** (`layers::door_edge`, ties to the earlier edge in the ring):
+      `DOOR_ON_WALL` is half a metre and an OSM step
       can be twenty centimetres, so both edges took the door, each shifted its leaf inward
       to make it fit, and the wall came out with two doors side by side under a single
       gizmo. Cost: eight vertices per door, on drawn walls only.
@@ -1153,13 +1160,23 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       twelve columns (≈38 m of wall), which is exactly where a second подъезд appears.
     - **A balcony is a stack of bands**, not a box: the slab's shadow on the wall, the bright
       slab edge, the parapet (its tone by its own draw, from light panel to dark sheet), and
-      above it either glazing or an open recess in shade. 72 % of a panel, on 58 % of the
-      **columns**, hashed from the column number and the wall's seed — a column the whole
-      height of the wall, as on a real block. Hashing the *cell* for **existence** is the
-      thing that must not be done: that is an independent draw per cell, i.e. a
+      above it either glazing or an open recess in shade. 72 % of a panel, and along the wall
+      **by the period of a section**: `(column + phase) % period < BALCONY_FILLED`, the
+      period 4–6 panels (`BALCONY_PERIOD_MIN` + `BALCONY_PERIOD_SPAN`) and the phase both
+      rolled from the **wall's** seed, two filled columns in it — a column the whole height of
+      the wall, as on a real block, and a repeating step between columns.
+      **A share is not a row**, and that is what the period fixes: the first version drew
+      each column independently at 58 %, which on a ten-panel wall routinely gives three
+      balconies in a row and then two blanks — a scattering with no step, exactly what the
+      spec's «регулярным рядом» is not. The share is still a majority-ish (2 of 4–6), so
+      nothing about the *density* changed; the dice survive only as the phase, so that two
+      walls meeting at a corner do not start alike.
+      Hashing the *cell* for **existence** is the
+      thing that must not be done either: that is an independent draw per cell, i.e. a
       chequerboard; hashing it for *glazed or open* is fine and is what varies a column.
       A brick building's balconies are **recessed loggias** — no slab overhang, no bright
-      edge, a deeper shade — and rarer (0.62 of the panel share).
+      edge, a deeper shade — and rarer: the same period with `BALCONY_FILLED_RECESSED` (1)
+      column of it filled.
       **Two sashes, not four.** The lean squeezes the wall threefold vertically, so a
       balcony on screen is a ribbon four times wider than it is tall; cut into four it read
       as a scatter of dots. A balcony must read as *bands*, and anything chopping the ribbon
@@ -1168,11 +1185,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       `Brick`, never a `building=house` (the storey floor catches almost all of them, but a
       five-storey `house` does occur in the extract, and balconies on it would read as a
       parse error, which is what they would be), never under `BALCONY_STOREYS_MIN` 4
-      storeys, never on a wall under `BALCONY_COLUMNS_MIN` 3 panels wide. The shader cannot
+      storeys, never on a wall under `BALCONY_COLUMNS_MIN` 3 panels wide, and never on a
+      **gable end**. The shader cannot
       decide any of it: it knows neither the use of the building nor how many storeys the
       wall has in total. Note what moved: the *use* filter now mostly lives in the cladding
       pick — plaster, shopfront and shed have no balconies by the meaning of the material,
       and they are exactly what the private sector, the mall and the warehouse get.
+    - **A gable end is a direction, not a width** (`layers::plan_long_axis`,
+      `WallSpan::gable_end`). «Глухие торцы» stood for a while as `BALCONY_COLUMNS_MIN`, and
+      that threshold cannot say it: a real panel section is 12–14 m deep (the measurement is
+      in `references/entrances.md`), which is four panels — over the threshold, so every
+      gable end wore balconies like a facade, and the words «long facade» and «gable end»
+      existed nowhere in the code. What the width threshold actually cuts off is a **step in
+      the outline** — a three-metre sliver of wall where a row of projections could only read
+      as a pattern — and it stays for that.
+      The end is told from the facade by the **long axis of the plan**: `roofs::min_area_rect`
+      (already computed for hipped roofs and the roof texture, so no second notion of "which
+      way this building faces"), its first edge being the long one, and a wall counts as an
+      end when its own direction is within 60° of the cosine of that axis
+      (`GABLE_END_COS_MAX` 0.5, i.e. no more than 30° off the perpendicular).
+      **The aspect-ratio guard is the load-bearing half**: on a plan that is not elongated a
+      "short side" means nothing, so `plan_long_axis` returns `None` under
+      `GABLE_PLAN_RATIO_MIN` (1.5) and *every* wall keeps its balconies — a tower
+      (`heights::TOWER_MAX_RATIO` 1.7 the other way) would otherwise lose half its walls on a
+      rounding, while a section (12–14 m by 35+, ratio 2.5 and up) is well clear of it. An
+      oblique wall of a non-rectangular plan is likewise left a facade: when in doubt,
+      nothing changes.
+      The axis is computed **once per building and only when the building could carry
+      balconies at all** (`balcony_house` — material, use, storeys), because `min_area_rect`
+      is quadratic in the ring's vertices; it rides to each wall in `WallSpan::long_axis`.
+      The end is marked `WallMark::Blank`, not `Solid` — it keeps its windows, since a blank
+      wall and a windowless one are not the same thing (the bullet below).
     - **The verdict travels as the seed's own value**, not its sign: `WallMark`
       (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` solid.
       Three states are needed because *blank* and *solid* are not the same thing — a blank
@@ -1204,9 +1247,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     of cells carry the feature (the `share` argument), and
     inside its cell the feature is smaller than the cell and jittered, so two neighbours
     never meet at a cell boundary. (The **wall balconies** above keep only the second half of
-    that rule — a balcony is smaller than its cell — and deliberately break the first: they
-    are on 58 % of the columns, because a panel block's balconies are a majority and a
-    *column* of them is the pattern, not a scattering.) Placement stays a grid (cheap, no extra octaves); the
+    that rule — a balcony is smaller than its cell — and deliberately break the first twice
+    over: they are on about half the columns, because a panel block's balconies are a
+    majority and a *column* of them is the pattern, not a scattering; and which columns is
+    not a draw at all but the **period of a section**, because the pattern there is a step.
+    A minority-by-dice is right for a feature that is an accident — a repair patch — and
+    wrong for one that is construction.) Placement stays a grid (cheap, no extra octaves); the
     pattern does not.
   - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
     the same seed** the texture phase rides on, and with a fixed patch share that was the

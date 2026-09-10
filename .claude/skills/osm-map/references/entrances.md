@@ -139,8 +139,11 @@ whole algorithm:
   metres). It cannot cancel out either — a taller building spends more of its plan on a
   wider core with two lifts — so `sqrt(storeys / 9)`: 0.75 at five storeys, 1.0 at nine,
   1.37 at seventeen, 1.67 at twenty-five.
-  Two exemptions: **not housing** (`Apartments` and `Other` only — a school, a mall or a
-  warehouse is entered through its walls, not through stacks of flats) and the
+  Three exemptions: **not housing** (`Apartments` and `Other` only — a school, a mall or a
+  warehouse is entered through its walls, not through stacks of flats); **not tall
+  enough** — no height in the data at all, or under `SECTION_MIN_HEIGHT` (12 m, the same
+  `COHORT_TALL_HEIGHT` by which the cohort tells a tall building from a low one), since a
+  stack of flats is what the rule counts and a three-storey outline has none; and the
   **свечка**, a compact new tower (`TOWER_MIN_HEIGHT` 45 m with a plan under 900 m² and
   under 35 m long), where one lobby for the whole building is normal and the rule stands
   down.
@@ -148,7 +151,7 @@ whole algorithm:
   `entrance` used to be passed over whole, so a London block a quarter of a kilometre
   long kept the single door its mapper had marked before losing interest — the very
   behaviour the "two doors or more" threshold above guards the *measurement* against,
-  left ungurded in the *generation*. Mapped doors now go into `place_along` as
+  left unguarded in the *generation*. Mapped doors now go into `place_along` as
   already-placed points: `wanted` is how many doors the building should end up with, the
   real ones count towards it and hold their spacing, and the generator only fills what is
   missing. Real doors are never moved and never dropped, and they stay first in the list.
@@ -156,7 +159,17 @@ whole algorithm:
 - **A section's подъезд is through** (`through_doors`) — a panel section has two doors per
   подъезд, street and courtyard, standing opposite each other, and on an aerial photo
   that pairing is plain. It is **the same подъезд**, so the cohort count does not grow: the
-  twin is added after placement, not asked for. A ray goes from each door into the
+  twin is added after placement, not asked for. **The point count does grow**, and nothing
+  in the model tells the two apart: the courtyard leaf goes into `PolyArea::entrances` as an
+  element of its own, and every consumer reads that list as entry points — a pawn's
+  destination "into this building" is drawn from it uniformly (`human::building_target`, so
+  half a long block's wander targets are now in the yard), the load line sums its length, the
+  `doors` gizmo circles each point and `layers::push_doors` hangs a leaf on the wall for each.
+  That is accepted, not overlooked — a подъезд really is entered from the yard as often as
+  from the street — and until the model carries a pair (`at` + `through`) rather than a point,
+  `generate_entrances` at least counts the twins as a term of their own: they are inside the
+  `N generated` of the log line, and a second stderr line says how many of that N are
+  courtyard halves rather than invented подъезды. A ray goes from each door into the
   building along its facade's inward normal, and the exit point qualifies only if it is
   `THROUGH_DEPTH_RANGE` (8–20 m) away on a wall facing back (`dot < -0.7`) and free of
   neighbours by the same clearance probe. Both ends of the range earn their keep: below
