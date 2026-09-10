@@ -28,10 +28,11 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::heights::{height_mix, height_or_default};
 pub use self::layers::push_house;
-use self::layers::{extrusion_builder, facade_and_roof_builders, shadow_builder};
+use self::layers::{
+    extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
+};
 use self::material::RoofMaterialHandle;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
-use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, BuildingUse, MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerMaterial};
@@ -62,11 +63,15 @@ const KREMLIN_FACADE_COLOR: Color = Color::srgb(0.42, 0.18, 0.15);
 /// широкая полоса высотки залезала бы на низкого соседа.
 const Z_FACADE: f32 = Z_BUILDING - 0.1;
 
-/// Тени зданий — под всеми зданиевыми слоями (фасады 4.9, крыши и экструзия
-/// 5.0): крыша или стена соседа сама маскирует тень, и тень никогда не
-/// ложится на крышу дома той же высоты — дешёвая замена честному учёту
-/// высот. Выше портала (4) и трупов (3): они на улице и в тени по смыслу.
+/// Тени зданий на земле — под всеми зданиевыми слоями (фасады 4.9, крыши и
+/// экструзия 5.0): крыша или стена соседа сама маскирует тень. Выше портала
+/// (4) и трупов (3): они на улице и в тени по смыслу.
 const Z_BUILDING_SHADOW: f32 = Z_BUILDING - 0.5;
+/// Тени, падающие **на кровли** ([`layers::roof_shadow_builder`]), — наоборот,
+/// над всеми зданиевыми слоями: это единственная часть тени, которая обязана
+/// лежать поверх крыши, стен и оборудования на ней. Волосок над кровлей и всё
+/// ещё ниже юнитов (10).
+const Z_ROOF_SHADOW: f32 = Z_BUILDING + 0.05;
 
 /// Метров подъёма крыши на метр высоты в 2.5D: драматичнее фасадной полосы,
 /// но карта остаётся видом сверху, а не изометрией.
@@ -267,6 +272,7 @@ pub fn spawn_buildings(
     }
 
     let mut shadow_time = Duration::ZERO;
+    let mut roof_shadow_time = Duration::ZERO;
     if with_shadows
         && matches!(
             mode,
@@ -275,6 +281,14 @@ pub fn spawn_buildings(
                 | BuildingHeightMode::ExtrusionShadowsTint
         )
     {
+        // оба теневых слоя красит один полупрозрачный материал, и спавнит их
+        // общий `surface::spawn_layer`: он сам отсеивает пустой сборщик,
+        // вешает `DespawnOnExit` и `Name`. Не локальное замыкание
+        // `spawn_layer` — у теней своя метка `BuildingShadowTag`
+        let translucent = materials.add(ColorMaterial {
+            alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
+            ..default()
+        });
         let shadow_started = Instant::now();
         let shadows = shadow_builder(
             buildings,
@@ -283,25 +297,39 @@ pub fn spawn_buildings(
         );
         shadow_time = shadow_started.elapsed();
         vertices += shadows.vertex_count();
-        if !shadows.is_empty() {
-            commands.spawn((
-                BuildingShadowTag,
-                Mesh2d(meshes.add(shadows.build())),
-                MeshMaterial2d(materials.add(ColorMaterial {
-                    alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-                    ..default()
-                })),
-                Transform::from_xyz(0.0, 0.0, Z_BUILDING_SHADOW),
-                DespawnOnExit(AppState::Playing),
-                Name::new("building_shadows"),
-            ));
-        }
+        surface::spawn_layer(
+            commands,
+            meshes,
+            shadows,
+            Z_BUILDING_SHADOW,
+            "building_shadows",
+            LayerMaterial::Flat(translucent.clone()),
+            BuildingShadowTag,
+        );
+
+        // Тени на кровлях — **над** зданиевыми слоями, а не под ними: это
+        // единственный кусок тени, который обязан лежать поверх крыши.
+        // Своя метка не нужна — деспавнится он вместе с наземным слоем.
+        let roof_started = Instant::now();
+        let on_roofs =
+            roof_shadow_builder(buildings, mode == BuildingHeightMode::ExtrusionShadowsTint);
+        roof_shadow_time = roof_started.elapsed();
+        vertices += on_roofs.vertex_count();
+        surface::spawn_layer(
+            commands,
+            meshes,
+            on_roofs,
+            Z_ROOF_SHADOW,
+            "roof_shadows",
+            LayerMaterial::Flat(translucent),
+            BuildingShadowTag,
+        );
     }
 
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавило оборудование кровель
     info!(
-        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?}, {} buildings, {}, clutter {}, heights: {})",
+        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?} + {roof_shadow_time:?} on roofs, {} buildings, {}, clutter {}, heights: {})",
         started.elapsed(),
         buildings.len(),
         mode.label(),

@@ -58,10 +58,10 @@ in `main.rs`.
   parks → woods → tree-row band casing → tree-row band → grass → sand → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
-  units → souls (18) → tree shadows → trees (20). Three live in their own modules:
-  `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
-  (`map/roads.rs`). Units are y-sorted: `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR`
-  (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
+  roof shadows (5.05) → units → souls (18) → tree shadows → trees (20). Four live in their
+  own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
+  (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
+  `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
   y ≤ MAP_SIZE.y** — a bigger map once sank northern units under roads.
 
 ## App lifecycle
@@ -226,6 +226,22 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
   per-building body of the 2.5D layer, walls included, because a roof shape does not read
   without them. Detail in the `osm-map` skill.
+- **Roof shadows** (`map/buildings/layers.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
+  — the one place the shadow model used to lie outright. The ground shadow layer sits
+  **under** every building layer, so a nine-storey block did not darken the five-storey
+  roof beside it. This second, small layer sits **over** them and carries exactly the
+  missing piece: for each building, its **taller** neighbours' shadow sweeps clipped to
+  its own footprint — merged, not stacked, so two shadows on one roof are not double
+  darkness. A neighbour casts only if it is `SHADOW_MIN_DROP` (3 m) taller; in 2.5D the
+  result is lifted by the target's own `Lean`, so it lands on the roof as drawn — and the
+  **drawn bodies** of the neighbours 2.5D paints *after* the target (smaller `Lean::depth`)
+  are then subtracted from it: the layer is flat and above every building layer, while
+  depth is painter's order *inside one mesh*, so without that a far roof's shadow would
+  darken the body of the nearer building that hides that roof. Filled
+  hard, no `PENUMBRA_WIDTH` band — part of the intersection contour is the cut along the
+  roof outline, not the shadow's edge, and a feathered band there would ring every roof.
+  It rides `BuildingShadowTag` with the ground shadows, so the two rebuild and despawn
+  together. Detail in the `osm-map` skill.
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own
@@ -289,10 +305,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Untapered, the metre also ran along the contact contour and left a soft dark blot on the
   sunlit side of every convex corner — the building came out ringed exactly like the
   **contact skirt** that was taken back out of the union. What goes into
-  the union is still the silhouette sweeps and nothing else. The shadow layer now
-  carries its own **`BuildingShadowTag`** and is rebuilt only when the height mode changes:
-  it is the most expensive thing the building layers build, and it does not depend on the
-  roof-clutter zoom bucket.
+  the union is still the silhouette sweeps and nothing else. Both shadow layers —
+  ground and roof — carry **`BuildingShadowTag`** rather than `BuildingLayerTag` and are
+  rebuilt only when the height mode or the sun changes: together they are the most
+  expensive thing the building layers build, and they do not depend on the roof-clutter
+  zoom bucket.
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
   (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
   the roof material, parked cars. **The seed is the object's own reference point** — the

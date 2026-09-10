@@ -2,6 +2,7 @@
 //! 2.5D-экструзия. Каждый билдер отдаёт готовый [`MeshBuilder`], а какие из
 //! них спавнить в текущем режиме — решает `spawn_buildings` в родителе.
 
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 use bevy::color::Mix;
@@ -18,7 +19,7 @@ use super::{
     height_or_default, shade_by_light,
 };
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, PolyArea, RoadLine};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
 
@@ -69,6 +70,16 @@ const ROOF_TINT_MAX_MIX: f32 = 0.3;
 /// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
 /// зумах, где тени вообще видны.
 pub(super) const PENUMBRA_WIDTH: f32 = 1.0;
+/// Насколько сосед обязан быть выше, чтобы его тень легла на кровлю, м. Ниже
+/// этого тень попадает разве что на карниз, а считать её пришлось бы для
+/// каждой пары домов одной этажности — то есть почти для всех.
+const SHADOW_MIN_DROP: f32 = 3.0;
+/// Ячейка сетки, по которой ищутся отбрасывающие соседи, м: чуть шире самой
+/// длинной тени, какую даёт `SHADOW_LENGTH_RANGE` **при дефолтном солнце**.
+/// Низкое солнце растягивает развёртку за пределы ячейки
+/// (`map::sun_stretch`), и это стоит избирательности, а не правильности:
+/// коробка развёртки лежит в каждой ячейке, которую задевает.
+const SHADOW_CELL: f32 = 48.0;
 
 /// Осветление верхних вершин стены — дешёвый вертикальный градиент.
 const WALL_TOP_LIGHTEN: f32 = 0.15;
@@ -382,6 +393,281 @@ fn penumbra(direction: Vec2) -> f32 {
     direction.dot(shadow_dir()).max(0.0)
 }
 
+/// Тени, падающие **на кровли**: единственное место, где прежняя модель теней
+/// прямо врала. Теневой слой лежит под всеми зданиевыми, поэтому
+/// девятиэтажка не темнила крышу пятиэтажки под собой, и в плотном квартале
+/// это видно сразу.
+///
+/// Считается ровно то, чего не хватало: пересечение теневой развёртки дома с
+/// **контуром соседа, который ниже**. Ниже — потому что тень на крышу
+/// **выше** отбрасывающего не попадает, а равные по высоте затеняют друг
+/// друга разве что карнизом.
+///
+/// Порядок — по индексу дома, поэтому меш детерминирован.
+///
+/// Из готового пятна вычитаются **нарисованные тела** соседей, которых слой
+/// экструзии рисует после цели ([`DrawnBodies`]). Слой лежит над всеми
+/// зданиевыми, а painter's порядок 2.5D живёт **внутри одного меша**: без
+/// вычитания тень, посчитанная для дальней кровли, легла бы тёмным пятном на
+/// стену ближнего дома, который эту кровлю визуально закрывает. В плоских
+/// режимах вычитать нечего — там дом рисуется на своём контуре.
+///
+/// Заливка — жёсткий `push_polygon`, без каймы `PENUMBRA_WIDTH`, которую несёт
+/// наземная тень. Не забыто: часть контура пересечения — это не край тени, а
+/// линия обреза по контуру кровли (`Intersect` с footprint), и растушёвка там
+/// нарисовала бы светлый ободок по периметру каждой крыши.
+pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> MeshBuilder {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+
+    let mut builder = MeshBuilder::default();
+    let color = SHADOW_COLOR.to_linear();
+    let heights: Vec<f32> = buildings.iter().map(height_or_default).collect();
+    // тот же зажим, что у наземных теней, и так же едущий за солнцем: две
+    // половины одной тени не имеют права мериться по-разному
+    let stretch = sun_stretch();
+    let (min_length, max_length) = (
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    );
+    // через `push_contour`, ровно как наземные свипы: обход свипа наследует
+    // закрутку кольца OSM (`silhouette_chains` берёт её знаком), а закрутку
+    // колец OSM никто не нормализует. Два каста с разной закруткой дали бы в
+    // NonZero обмотку 0 на перекрытии — светлую дыру ровно там, где тени
+    // обязаны склеиться
+    let sweeps: Vec<Vec<Vec<[f32; 2]>>> = buildings
+        .iter()
+        .zip(&heights)
+        .map(|(building, &height)| {
+            let length = (height * shadow_length_scale()).clamp(min_length, max_length);
+            let offset = shadow_dir() * length;
+            let mut shapes: Vec<Vec<[f32; 2]>> = Vec::new();
+            for chain in silhouette_chains(&building.outer, shadow_dir()) {
+                let mut sweep: Vec<Vec2> = chain.clone();
+                sweep.extend(chain.iter().rev().map(|&point| point + offset));
+                push_contour(&mut shapes, sweep);
+            }
+            shapes
+        })
+        .collect();
+    let boxes: Vec<(Vec2, Vec2)> = buildings.iter().map(|b| ring_bounds(&b.outer)).collect();
+    let sweep_boxes: Vec<(Vec2, Vec2)> = sweeps
+        .iter()
+        .map(|shapes| {
+            let points: Vec<Vec2> = shapes
+                .iter()
+                .flatten()
+                .map(|point| Vec2::from_array(*point))
+                .collect();
+            ring_bounds(&points)
+        })
+        .collect();
+
+    // сетка по развёрткам: тень длиной до 45 м, домов семь с половиной тысяч,
+    // и перебор пар был бы пятьюдесятью миллионами проверок. Порядок обхода
+    // `cells` нигде не используется (только `get` по ключу, а отобранные
+    // соседи потом сортируются), поэтому `HashMap` детерминизму меша не мешает
+    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, bounds) in sweep_boxes.iter().enumerate() {
+        for cell in cells_of(*bounds) {
+            cells.entry(cell).or_default().push(index);
+        }
+    }
+    // тела соседей по той же сетке: они не отбрасывают тень, а съедают её
+    let bodies = DrawnBodies::of(buildings, &boxes, extruded);
+
+    for (target, building) in buildings.iter().enumerate() {
+        let (min, max) = boxes[target];
+        let lift = if extruded {
+            extrusion_lift(building, BuildingHeightMode::Extrusion)
+        } else {
+            Vec2::ZERO
+        };
+        // двор в контур дома не входит: без обратного обхода дырки NonZero
+        // насчитал бы внутри неё обмотку ±2 и залил бы двор тенью
+        let mut footprint: Vec<Vec<[f32; 2]>> = Vec::new();
+        push_contour(&mut footprint, building.outer.clone());
+        for hole in &building.holes {
+            push_hole(&mut footprint, hole.clone());
+        }
+
+        let mut casters = indices_near(&cells, (min, max));
+        casters.retain(|&caster| {
+            caster != target
+                && heights[caster] - heights[target] >= SHADOW_MIN_DROP
+                && boxes_overlap((min, max), sweep_boxes[caster])
+        });
+        if casters.is_empty() {
+            continue;
+        }
+
+        let cast: Vec<Vec<[f32; 2]>> = casters
+            .into_iter()
+            .flat_map(|caster| sweeps[caster].iter().cloned())
+            .collect();
+        // объединение развёрток и пересечение с контуром — за один вызов:
+        // NonZero склеивает перекрывающиеся тени, а Intersect обрезает их по
+        // дому. Без склейки две тени на одной крыше дали бы двойную темноту
+        let mut shapes = cast.overlay(&footprint, OverlayRule::Intersect, FillRule::NonZero);
+        if shapes.is_empty() {
+            continue;
+        }
+        // в нарисованное пространство: тень ложится туда, где кровля
+        // нарисована, а не туда, где лежит её футпринт
+        for shape in &mut shapes {
+            for contour in shape.iter_mut() {
+                for point in contour.iter_mut() {
+                    *point = [point[0] + lift.x, point[1] + lift.y];
+                }
+            }
+        }
+
+        // и вычесть тела соседей, которые рисуются после цели: слой лежит над
+        // всеми зданиевыми, а painter's порядок 2.5D живёт внутри одного меша
+        let covers = bodies.covering(buildings, target, (min + lift, max + lift));
+        if !covers.is_empty() {
+            let flat: Vec<Vec<[f32; 2]>> = shapes.into_iter().flatten().collect();
+            shapes = flat.overlay(&covers, OverlayRule::Difference, FillRule::NonZero);
+        }
+
+        for shape in shapes {
+            let mut rings = shape.into_iter().map(|contour| {
+                contour
+                    .into_iter()
+                    .map(Vec2::from_array)
+                    .collect::<Vec<Vec2>>()
+            });
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            let holes: Vec<Vec<Vec2>> = rings.collect();
+            builder.push_polygon(&outer, &holes, color);
+        }
+    }
+    builder
+}
+
+/// Пересекаются ли два AABB (`ring_bounds`): касание считается пересечением —
+/// префильтр обязан ошибаться в сторону «да».
+fn boxes_overlap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
+    a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
+}
+
+/// Ячейки сетки [`SHADOW_CELL`], которые задевает рамка.
+fn cells_of((min, max): (Vec2, Vec2)) -> impl Iterator<Item = (i32, i32)> {
+    let low = (min / SHADOW_CELL).floor().as_ivec2();
+    let high = (max / SHADOW_CELL).floor().as_ivec2();
+    (low.x..=high.x).flat_map(move |x| (low.y..=high.y).map(move |y| (x, y)))
+}
+
+/// Индексы из сетки, чьи ячейки задевает рамка: отсортированы и без повторов,
+/// поэтому порядок обхода `HashMap` наружу не протекает и меш остаётся
+/// детерминированным.
+fn indices_near(cells: &HashMap<(i32, i32), Vec<usize>>, bounds: (Vec2, Vec2)) -> Vec<usize> {
+    let mut found: Vec<usize> = cells_of(bounds)
+        .filter_map(|cell| cells.get(&cell))
+        .flatten()
+        .copied()
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// Нарисованные тела домов в 2.5D — то, чем сосед закрывает чужую кровлю.
+///
+/// Тело дома — сумма Минковского его контура с отрезком подъёма `[0, lift]`:
+/// снизу настоящий контур, сверху поднятый, между ними свипы силуэтных
+/// цепочек по направлению подъёма. Ровно то пятно, в котором
+/// [`extrusion_builder`] рисует стены и крышу этого дома.
+///
+/// В плоских режимах пусто: подъёма нет, дом рисуется на своём контуре, и
+/// накрыть кровлю соседа ему нечем.
+#[derive(Default)]
+struct DrawnBodies {
+    lifts: Vec<Vec2>,
+    /// Ключ painter's сортировки [`extrusion_builder`]: меньше — рисуется
+    /// позже, поверх.
+    depths: Vec<f32>,
+    boxes: Vec<(Vec2, Vec2)>,
+    cells: HashMap<(i32, i32), Vec<usize>>,
+}
+
+impl DrawnBodies {
+    fn of(buildings: &[PolyArea], boxes: &[(Vec2, Vec2)], extruded: bool) -> Self {
+        if !extruded {
+            return Self::default();
+        }
+        let lean = Lean::of();
+        let lifts: Vec<Vec2> = buildings
+            .iter()
+            .map(|building| extrusion_lift(building, BuildingHeightMode::Extrusion))
+            .collect();
+        let depths: Vec<f32> = buildings
+            .iter()
+            .map(|building| lean.depth(building_center(building)))
+            .collect();
+        let boxes: Vec<(Vec2, Vec2)> = boxes
+            .iter()
+            .zip(&lifts)
+            .map(|(&(min, max), &lift)| (min.min(min + lift), max.max(max + lift)))
+            .collect();
+        let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (index, bounds) in boxes.iter().enumerate() {
+            for cell in cells_of(*bounds) {
+                cells.entry(cell).or_default().push(index);
+            }
+        }
+        Self {
+            lifts,
+            depths,
+            boxes,
+            cells,
+        }
+    }
+
+    /// Контуры тел, которые рисуются **после** `target` и задевают `bounds`
+    /// (рамку уже поднятой тени).
+    ///
+    /// «После» — меньший `Lean::depth`, а при равном — больший индекс: именно
+    /// так расставляет равных стабильная сортировка в [`extrusion_builder`].
+    ///
+    /// Двор соседа в тело входит целиком: у двора есть свои стены, и вычесть
+    /// лишнее (тень, которую было бы видно сквозь просвет) дешевле, чем
+    /// оставить тёмное пятно на нарисованной стене.
+    fn covering(
+        &self,
+        buildings: &[PolyArea],
+        target: usize,
+        bounds: (Vec2, Vec2),
+    ) -> Vec<Vec<[f32; 2]>> {
+        let direction = Lean::of().dir();
+        let mut covers: Vec<Vec<[f32; 2]>> = Vec::new();
+        for cover in indices_near(&self.cells, bounds) {
+            // сама цель отсеивается тем же правилом: у равных ключей ближе
+            // тот, чей индекс больше, а больше себя он не бывает
+            let later = self.depths[cover] < self.depths[target]
+                || (self.depths[cover] == self.depths[target] && cover > target);
+            if !later || !boxes_overlap(bounds, self.boxes[cover]) {
+                continue;
+            }
+            let (outer, lift) = (&buildings[cover].outer, self.lifts[cover]);
+            for chain in silhouette_chains(outer, direction) {
+                let mut sweep: Vec<Vec2> = chain.clone();
+                sweep.extend(chain.iter().rev().map(|&point| point + lift));
+                push_contour(&mut covers, sweep);
+            }
+            push_contour(&mut covers, outer.clone());
+            push_contour(
+                &mut covers,
+                outer.iter().map(|&point| point + lift).collect(),
+            );
+        }
+        covers
+    }
+}
+
 /// Контур в список для объединения, обходом против часовой стрелки — тем, что
 /// NonZero считает заливкой. Обход свипа зависит от того, с какой стороны дома
 /// идёт цепочка силуэта, поэтому нормализуется здесь и только здесь.
@@ -393,6 +679,18 @@ fn push_contour(contours: &mut Vec<Vec<[f32; 2]>>, mut ring: Vec<Vec2>) {
         ring.reverse();
     }
     contours.push(ring.into_iter().map(|point| [point.x, point.y]).collect());
+}
+
+/// Дыра контура — тот же контур обратным обходом: при NonZero он гасит заливку
+/// внутреннего кармана (двора), в который тень попасть не может. Тот же приём
+/// и тот же довод, что у `navigation::polymesh::build::push_hole`.
+fn push_hole(contours: &mut Vec<Vec<[f32; 2]>>, ring: Vec<Vec2>) {
+    let count = contours.len();
+    push_contour(contours, ring);
+    // вырожденное кольцо `push_contour` отбрасывает — разворачивать нечего
+    if let Some(hole) = contours.get_mut(count) {
+        hole.reverse();
+    }
 }
 
 /// Непрерывные (циклически) цепочки рёбер-силуэта кольца — рёбер, чья
