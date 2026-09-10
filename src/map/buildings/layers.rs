@@ -17,9 +17,10 @@ use super::{
     BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, facade_color,
     height_or_default, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, Roof};
+use crate::map::meshing::{MeshBuilder, WallFrame};
 use crate::map::osm::model::signed_ring_area;
-use crate::map::osm::{AreaKind, PolyArea, RoadLine};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
+use crate::map::seed::seed_from_point;
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
 
 /// Доля реальной высоты, уходящая в полосу фасада. Рисовать все 60 м башни —
@@ -95,33 +96,69 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
     }
 }
 
-/// Рамка **стены** для шейдера: ось — сама стена, поэтому «поперёк» в
-/// шейдере оказывается направлением вверх по ней, и межэтажные швы ложатся
-/// параллельно карнизу. Сколько метров высоты укладывается в это «поперёк»,
-/// зависит от разворота стены — ракурс сжимает торец сильнее фасада, — и на
-/// этот множитель шейдер делит сам (`EXTRUDE_SKEW`, ветка `WALL` в
-/// `roof.wgsl`); иначе торец показал бы вдвое с лишним меньше этажей, чем
-/// фасад того же дома.
+/// Ширина панели, м — по основанию стены. Не делитель, а **цель**: сколько
+/// панелей встанет на эту стену, решает округление, поэтому на своей стене
+/// панель шире или уже трёх метров с небольшим, зато их целое число.
+const PANEL_WIDTH: f32 = 3.2;
+
+/// Высота этажа, м — настоящая, а не нарисованная: этажи считаются от высоты
+/// дома, а `EXTRUDE_SCALE` сжимает их вместе со всей стеной. То же число, по
+/// которому парсер переводит `building:levels` в метры.
+const STOREY_HEIGHT: f32 = 3.0;
+
+/// Рама **стены** для шейдера: её собственные координаты — номер панели вдоль
+/// основания и этаж вверх по подъёму ([`WallFrame`]).
 ///
-/// Начало отсчёта общее для всей карты, а не своё у каждой стены: фаза шва
-/// от этого произвольна и у смежных стен одного дома **разная** — на угле
-/// шов идёт со сдвигом по высоте. Отсчёт от собственного основания стены
-/// (тогда бы сходился) требует пятого числа в атрибуте: `ATTRIBUTE_ROOF`
-/// занят весь, а базовой линии стены шейдеру взять больше неоткуда.
+/// Считать стену глобальной сеткой нельзя, и это не про точность, а про то,
+/// что видно: сетка, не знающая, где стена кончается, режет у её края панель
+/// и балкон пополам, а на угле дома швы двух стен сходятся на разной высоте.
+/// Поэтому счёт идёт **в ячейках самой стены**: число панелей и этажей целое,
+/// так что крайняя панель всегда целая, верхний этаж упирается ровно в
+/// карниз, а на угле оба соседа заканчиваются целой панелью и целым этажом.
+/// Шейдеру после этого не нужны ни ширина панели, ни высота этажа, ни косина
+/// подъёма — только дробная часть координаты.
 ///
-/// Посев — байты 12–19 посева дома, и байт взят со сдвигом потому, что целых
-/// свободных в нём уже нет: младший разобран на слот материала, следующий на
-/// цвет палитры, 16–23 на джиттер яркости, старший на фазу и возраст кровли
-/// (`material.rs`). Половина битов пересекается с джиттером — тем же доводом,
-/// что и в [`RoofLook::new`]: корреляция столбцов балконов с оттенком кровли
-/// того же дома глазом не читается.
-fn wall_frame(a: Vec2, b: Vec2, seed: u32) -> Option<Roof> {
-    Some(Roof {
-        axis: (b - a).try_normalize()?,
-        material: RoofKind::Wall.code(),
-        seed: (seed >> 12 & 0xff) as f32 / 255.0,
+/// Посев — свой у каждой стены (`seed_from_point` от её начала, тот же
+/// генератор, что у кровель, дверей и машин), а не общий на дом: столбцы
+/// балконов на соседних стенах не должны начинаться одинаково.
+fn wall_frame(building: &PolyArea, a: Vec2, b: Vec2, lift: Vec2, height: f32) -> Option<WallFrame> {
+    let columns = ((b - a).length() / PANEL_WIDTH).round().max(1.0);
+    let storeys = (height / STOREY_HEIGHT).round().max(1.0);
+    let seed = (seed_from_point(a) & 0xff) as f32 / 255.0;
+    let frame = WallFrame::new(a, b, lift, columns, storeys, RoofKind::Wall.code(), seed)?;
+    Some(match balconies_fit(building, columns, storeys) {
+        true => frame,
+        false => frame.without_balconies(),
     })
 }
+
+/// Кому балконы полагаются. Это не про геометрию, а про то, что бывает на
+/// фотографии: балкон — примета **жилого дома в несколько этажей**, и швы
+/// панелей без него встречаются сплошь, а он без них нет.
+///
+/// * частный дом, гараж, храм, склад, школа, магазин — не бывает: у первых
+///   двух этажей не хватает, у остальных балконов нет по назначению;
+/// * ниже [`BALCONY_STOREYS_MIN`] — тоже: двухэтажка с рядом балконов во всю
+///   стену читается как ошибка, и на карте это ровно то, что видно первым;
+/// * простенок уже [`BALCONY_COLUMNS_MIN`] панелей — торец, глухая стенка
+///   уступа: ряд выступов на трёхметровой полоске не бывает ничем, кроме
+///   узора.
+///
+/// `Other` в список жилых входит: это половина города (`building=yes`), и
+/// среди них панельные дома; те, что не дома, отсекаются высотой — сарай и
+/// пристройка ниже четырёх этажей по любой оценке (`heights.rs`).
+fn balconies_fit(building: &PolyArea, columns: f32, storeys: f32) -> bool {
+    matches!(
+        building.building_use,
+        BuildingUse::Apartments | BuildingUse::Other
+    ) && storeys >= BALCONY_STOREYS_MIN
+        && columns >= BALCONY_COLUMNS_MIN
+}
+
+/// С какого этажа дом носит балконы и с какой ширины стены они на ней
+/// помещаются — в этажах и панелях самой стены.
+const BALCONY_STOREYS_MIN: f32 = 4.0;
+const BALCONY_COLUMNS_MIN: f32 = 3.0;
 
 /// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
 fn push_hip(builder: &mut MeshBuilder, roof: &HipRoof) {
@@ -550,9 +587,11 @@ fn push_house_with_arches(
     // видимы стены рёбер, смотрящих против подъёма: при сдвиге
     // вверх-вправо — южные и западные
     let seed = building_seed(building);
+    // этажи считаются от настоящей высоты дома, а не от нарисованной
+    let height = height_or_default(building);
     for (a, b) in silhouette_edges(&building.outer, -lift_dir) {
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-        builder.set_roof(wall_frame(a, b, seed));
+        builder.set_wall(wall_frame(building, a, b, lift, height));
         push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
     }
     // двор: видима внутренняя стена его дальней стороны — та, чья
@@ -560,7 +599,7 @@ fn push_house_with_arches(
     for hole in &building.holes {
         for (a, b) in silhouette_edges(hole, lift_dir) {
             let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-            builder.set_roof(wall_frame(a, b, seed));
+            builder.set_wall(wall_frame(building, a, b, lift, height));
             push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
         }
     }
@@ -584,7 +623,11 @@ fn push_house_with_arches(
                     continue;
                 }
                 let (_, top) = wall_colors(facade_color, a, b, lift_dir);
-                builder.set_roof(wall_frame(a, b, seed));
+                // фронтон продолжает раму стены под ним — иначе швы рвались бы
+                // ровно на карнизе, — но помечен как «над карнизом»
+                builder.set_wall(
+                    wall_frame(building, a, b, lift, height).map(WallFrame::without_balconies),
+                );
                 builder.push_polygon(&[a, b, apex], &[], top);
             }
             builder.set_roof(Some(look.frame));

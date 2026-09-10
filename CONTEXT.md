@@ -209,10 +209,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, `facade_color` is what `BuildingUse` still picks — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
-  (`meshing::ATTRIBUTE_ROOF` = `[axis x, y, material code, seed]`, **one value per face** —
-  the roof's axis is the building's long axis, a wall's its own; code `0` is *no texture*
-  and by now only roof clutter, which rides in the same mesh: walls carry the `Wall` code
-  and so does a **gable**, being the top of the end wall under it). **Roof age** is the
+  (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
+  mean what the code says they mean: a roof's **long axis**, one value for the whole
+  building, or a wall's own **cell coordinates**, different at every vertex — see
+  `WallFrame` below; code `0` is *no texture* and by now only roof clutter, which rides in
+  the same mesh: walls carry the `Wall` code and so does a **gable**, being the top of the
+  end wall under it). **Roof age** is the
   second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
   building that sets how many repair patches its bitumen carries (a young roof almost
@@ -224,17 +226,28 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
   construction as a hip's slopes and only narrower — from the air every panel block wore a
   small hip, and a real hip could not be told from a flat roof.
-  **`Wall` is the same mechanism turned on the walls**: a wall sets the frame to
-  *its own direction*, so the shader's across-axis becomes "up the wall" — over the lean's
-  own projection on it, since a 2.5D wall is a parallelogram and distance from its line is
-  not height — and the floor seams land parallel to the eaves. It draws floor seams
-  (1.05 drawn m = one storey, whichever way the wall faces), panel joints (3.2 m) and
-  **balconies** on a cell grid — columns, as a panel block has them. **Each term fades on
-  its own wavelength**, not on one shared threshold: the seam and the balcony on the storey
-  measured *up the wall*, so their cut turns with the facade (gone by ≈ 0.7 m/px on a south
-  wall, ≈ 0.28 on a west one), the panel joint on its own 3.2 m against plain `px` — about
-  three times further out, so between the two a wall is ruled vertically only.
-  And it **returns before
+  **`Wall` is the same mechanism turned on the walls, and its coordinates are the wall's
+  own** (`meshing::WallFrame`, `layers::wall_frame`). A wall in 2.5D is a **parallelogram** —
+  base edge `a→b`, sides along the lean — and the builder writes, at every one of its
+  vertices, where that vertex sits in it: **the panel number and the storey**, counted in
+  cells rather than metres. The counts are whole (a wall's length over a 3.2 m target panel,
+  its height over a 3 m storey, both rounded, at least one), and that is the whole point:
+  the edge panel is never cut, the top storey ends exactly at the eaves, a balcony sitting
+  inside its cell cannot reach the wall's edge, and at a corner both walls end on a whole
+  panel and a whole storey, so their seams meet. A global metre grid — what this was first —
+  knows none of that and cut panels and balconies wherever a wall happened to end.
+  The shader therefore needs no metres, no storey height and no lean: it takes `fract` of
+  what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
+  It draws floor seams, panel joints and **balconies** — a balcony fills the lower two
+  thirds of its storey and 62 % of its panel, on 58 % of the **columns**, so they come out
+  in columns the whole height of the wall as they do on a real block.
+  **Who gets balconies is decided on the CPU** (`layers::balconies_fit`) and travels as the
+  **sign of the seed** (`WallFrame::without_balconies`): a private house, a garage, a
+  church, a shed, a school, anything under four storeys and any wall narrower than three
+  panels stays blank, and so does a **gable** — it continues the wall's seams through the
+  eaves, but a balcony there would be cut by the slope. The shader cannot make that call: it
+  knows neither the building's use nor how many storeys the wall has in total.
+  A wall **returns before
   the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
   weathering, so a wall's base colour is still the flat fill of before and only its own seams
   darken — near the cheap path code `0` gave the walls before they had a code of their own.
