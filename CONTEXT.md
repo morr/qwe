@@ -425,7 +425,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
-- **Parked cars** (`map/cars.rs`) — a row of cars along every **carriageway**: the same
+- **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
   and roundabouts. The pitch is walked along the **whole street's arclength**, not segment
@@ -434,17 +434,33 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   A **one-way** carriageway gets a single row, on its right-hand kerb — which is what stops
   the two halves of a divided avenue from parking a column down their median, and is why
   `oneway=-1` is now normalized at parse by reversing the way.
-  4.4 × 1.8 m bodies at a 6 m pitch,
+  Bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
   ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
-  fifths, black a fifth, the rest coloured. Each casts its own shadow, by the same `shadow_length_scale()` the
-  buildings use. **Decoration only** — cars are in no navmesh and no simulation, and pawns
+  fifths, black a fifth, the rest coloured — and each turned and shifted a little, because
+  nobody parks by a ruler.
+  **A car is not a rectangle** (`cars/body.rs`): a rounded silhouette with a dark cabin
+  across it — windscreen, roof, backlight — plus mirrors, and its size and the layout of
+  that cabin come from its **body type** (`CarShape`: sedan, hatchback, wagon, crossover,
+  van, in the shares a Russian yard shows). Each casts its own shadow, and it is the
+  buildings' shadow in miniature: the silhouette **swept** by the light — the hull of the
+  outline and the outline moved by `shadow_length_scale()` × the type's own height — so it
+  lies under the car and runs out from beneath it instead of standing apart from it, with a
+  `SHADOW_BLUR` (0.35 m) soft edge tapered by `direction · shadow_dir()` exactly as
+  `buildings::layers::penumbra` tapers: hard where it meets the car, full width at the far
+  end, and no soft ring around the car (that ring is the retired contact skirt). Shadows of
+  neighbouring cars are **not** unioned — at the default sun the sweep is a metre against
+  the six of `CAR_PITCH`. **Decoration only** — cars are in no navmesh and no simulation, and pawns
   walk through them, deliberately: a parked row along every street would eat the pavements
   the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street, and
-  a zoom bucket of its own (`CarZoomBucket`, `CAR_MAX_ZOOM` 0.8 m/px) drops the layer
-  entirely when a car stops being worth six pixels. Tula: 22 022 cars, 176 k verts, 5.4 ms
-  to build (5665 / 45 k while only the avenues parked). Every street shape the row broke on,
-  side by side: `cargo run --example car_gallery`.
+  a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
+  layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
+  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 069
+  cars at 1 456 k verts / 27 ms of mesh on the near step against 220 k / 5 ms on the far one,
+  plus the 1 ms of junction breaks and 2 ms of parking every step pays alike
+  (`measure_cars` times them on their own rows — `examples/bench/map_meshing`). Every
+  street shape the row broke on, and every body type on all three detail steps, side by
+  side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,
