@@ -693,18 +693,19 @@ fn entrances_attach_to_the_building_whose_outline_they_sit_on() {
 
     assert_eq!(map.buildings.len(), 1);
     // main и staircase — на контуре; no и garage отброшены как значения,
-    // а «yes» в центре квартала ни одной вершине не соответствует
+    // а «yes» в центре квартала ни одной вершине не соответствует.
+    //
+    // Считается тут **разбор**, а не итоговое число дверей: к размеченным
+    // генератор дописывает недостающие по когорте (`entrances/`), и на
+    // отброшенных значениях это не сказывается никак.
     let entrances = &map.buildings[0].entrances;
-    assert_eq!(entrances.len(), 2, "{entrances:?}");
-    for entrance in entrances {
-        assert!(
-            map.buildings[0]
-                .outer
-                .iter()
-                .any(|vertex| vertex.distance(*entrance) < 0.01),
-            "entrance off the outline: {entrance:?}"
-        );
-    }
+    let at = |point: Vec2| entrances.iter().any(|door| door.distance(point) < 0.01);
+    assert!(at(sw) && at(se), "{entrances:?}");
+    assert!(!at(ne) && !at(nw), "отброшенное значение стало дверью");
+    assert!(
+        !entrances.iter().any(|door| door.distance(CENTER) < 0.01),
+        "вход в стороне от контура достался зданию"
+    );
 }
 
 /// Две ноды `entrance` в одной точке — обычное дело в Париже; на карте
@@ -718,7 +719,12 @@ fn entrances_at_the_same_point_collapse_into_one() {
         .area(&[("building", "yes")], square(CENTER, HALF))
         .parse();
 
-    assert_eq!(map.buildings[0].entrances.len(), 1);
+    let doubled = map.buildings[0]
+        .entrances
+        .iter()
+        .filter(|door| door.distance(sw) < 0.01)
+        .count();
+    assert_eq!(doubled, 1, "{:?}", map.buildings[0].entrances);
 }
 
 /// Здание без размеченных в OSM входов не остаётся без двери: их
