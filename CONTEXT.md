@@ -251,12 +251,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **Both ends of a wall are their own case, and a cell carries exactly one opening.** The
   **ground floor** takes no balcony and an entrance instead — a doorway on a fifth of the
   columns, a shopfront lower and taller than the strip above it, a gate on a shed — over a
-  dark **plinth** band. The top storey ends in a light **cornice** (`PARAPET_HIGH`, the top
-  0.16 of the cell), and no opening's head, reveal included, reaches into it: without one the
-  last window butted straight into the roof, which no photograph shows. Knowing where the top
-  *is* needs the storey count, and that rides in the **material slot** next to the code
-  (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in the quotient, zero on a roof)
-  — the one field with a spare digit, against four bytes per vertex for a fifth float.
+  dark **plinth** band. Above the last storey the wall keeps a **cornice**
+  (`meshing::PARAPET_CELLS`, 0.15 of a cell) — plain wall with no openings and nothing drawn
+  in it, because what the top of a wall needs is *room*, not a stripe: the first attempt
+  painted a coping inside the gap that was already there and moved nothing. The room is
+  geometric — the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, so whole
+  storey boundaries survive and only the drawn storey shrinks by 1/(storeys + 0.15).
+  Knowing where the top *is* needs the storey count, and that rides in the **material slot**
+  next to the code (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in the
+  quotient, zero on a roof) — the one field with a spare digit, against four bytes per vertex
+  for a fifth float.
   A **balcony** is a stack of bands across 72 % of its panel — the slab's shadow on the wall,
   the bright slab edge, the parapet, and above it either glazing or an open recess in shade —
   on 58 % of the **columns** (a brick building's are recessed loggias, and rarer), so they

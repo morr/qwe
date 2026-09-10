@@ -1082,23 +1082,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       entrance — a doorway on `DOOR_SHARE` of the columns, a shopfront lower and taller than
       the strip above it, a gate on a shed — over a dark **plinth** band, the line that says
       where the building stops and the ground begins.
-    - **The top storey is the other such case, and it needs the storey count.** A wall ends in
-      a **cornice**: a light coping over the top `PARAPET_HIGH` (0.20) of the last cell with a
-      strong dark seam under it, and no opening's head — reveal included — reaches above 0.80.
-      Without it the last window butted straight into the roof, which no photograph shows.
-      Knowing where the top *is* takes the storey count, and that rides **in the material
+    - **The top of a wall needs room, not a stripe.** A wall is drawn exactly
+      `storeys × 3 m` and a real building is not: above the last storey sit the ceiling, the
+      roof slab and the parapet, and without them the top window butts straight into the roof.
+      The first fix drew a **cornice** — a light coping with a dark seam — and changed
+      nothing, because it painted inside the same `1 - WINDOW_HIGH` that was already there:
+      the gap stayed identical to the pixel and one more line appeared. It was reported as
+      exactly that and taken back out.
+      What works is `meshing::PARAPET_CELLS` (0.15): the frame runs the storey coordinate to
+      `storeys + PARAPET_CELLS`, and everything above the last whole storey is **plain wall
+      with no openings** — nothing is drawn there at all. Whole cells survive, because the
+      invariant is that *storey boundaries* are whole, not that the wall ends on one; the
+      cost is the drawn storey shrinking by `1/(storeys + 0.15)`, 1.5 % on a nine-storey
+      block. Measured on the frame the report came from: blank wall above the top window
+      0.25 → 0.44 drawn metres, five screen pixels to nine at 0.05 m/px.
+      The check that openings stop at `storeys` is not belt-and-braces: a window starts at
+      0.30 of a storey and misses 0.15 on its own, but a **balcony** starts at 0.01, and its
+      slab shadow and slab edge would climb into the cornice.
+    - **Knowing where the top is takes the storey count**, and that rides **in the material
       slot** beside the code: `meshing::STOREY_STRIDE` (16) puts the code in the remainder and
       the storeys in the quotient, zero on a roof. That slot is the one field with a spare
       digit; a fifth float in the attribute would cost four bytes on every vertex of the
       building layer. `meshing::unpack_material` is the Rust mirror and exists only for the
       test that pins it — in the game the slot is written, and read by the shader alone.
-    - **The seam under the cornice goes through `stripes`, not `cell_band`**, and that is the
-      general rule for a *line* here: `stripes` floors its width at one pixel
-      (`max(width, px)`), `cell_band` does not. A 0.05-cell seam is five drawn centimetres and
-      vanished at every zoom where the wall is visible at all; it took a probe run with the
-      amplitude at 0.9 to tell "the branch never runs" from "the branch is too faint", and it
-      was the second. `cell_band` stays right for a *band* — plinth, parapet, balcony rail —
-      which is thick enough to survive on its own.
+    - **A *line* goes through `stripes`, never `cell_band`** — learned from the cornice seam
+      before it was removed, and it still holds for every line here: `stripes` floors its
+      width at one pixel (`max(width, px)`), `cell_band` does not, so a 0.05-cell seam (five
+      drawn centimetres) vanishes at every zoom where the wall is visible at all. It took a
+      probe run with the amplitude at 0.9 to tell "the branch never runs" from "the branch is
+      too faint", and it was the second — worth remembering as the way to split those two.
+      `cell_band` stays right for a *band* — plinth, balcony rail — which is thick enough to
+      survive on its own.
     - **One opening per cell, on every cladding.** The shed briefly had two — a gate and the
       ribbon window, «because they sit at different heights» — and that stopped being true
       the moment the ribbon dropped from 0.60 to 0.45 to survive the fade: the window's
