@@ -33,7 +33,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::height_or_default;
-use super::layers::silhouette_edges;
+use super::layers::{WallSpan, silhouette_edges};
 use crate::map::SHADOW_COLOR;
 use crate::map::meshing::{MeshBuilder, WallFrame};
 use crate::map::osm::model::{
@@ -167,6 +167,21 @@ pub(super) struct WallCells {
     pub(super) storey: Vec2,
 }
 
+impl WallCells {
+    /// Клетки, которые задел проём `low..high`, — целые панели вокруг него, за
+    /// концы стены длиной `length` не выходящие. Клетку стена отдаёт проёму
+    /// целиком: окно стоит по её центру, шейдер про вырез не знает, и край
+    /// проёма резал бы ряд окон пополам. По этой же границе кроится заплата
+    /// двери (`layers::push_doors`) — одна конструкция на оба проёма, и счёт
+    /// у неё поэтому один.
+    pub(super) fn block(&self, low: f32, high: f32, length: f32) -> (f32, f32) {
+        (
+            ((low / self.panel).floor() * self.panel).max(0.0),
+            ((high / self.panel).ceil() * self.panel).min(length),
+        )
+    }
+}
+
 /// Стена с проёмами: боковые куски во всю высоту, перемычка над каждой аркой и
 /// **заплата** вокруг выреза. Это настоящий вырез — в дыру просвечивают нижние
 /// слои (дорога, проложенная сквозь дом, тень), а не закраска цветом земли.
@@ -177,14 +192,20 @@ pub(super) struct WallCells {
 /// бы ряд окон пополам. Клетки **внутри** проёма выброшены вместе с ним, а
 /// выше и по бокам от заплаты стена целая — там окна полные, и гасить их
 /// незачем.
+///
+/// Два проезда, выходящие в одну грань ближе панели друг от друга, кроятся
+/// **одной** заплатой на обоих: у каждого своя дыра, между ними простенок по
+/// настоящим краям вырезов. Своя заплата у каждого замуровала бы соседа —
+/// простенок первого лёг бы поперёк второго проёма, а навмеш прорезан обоими.
 pub(super) fn push_wall_with_openings(
     builder: &mut MeshBuilder,
-    (a, b): (Vec2, Vec2),
-    lift: Vec2,
+    span: &WallSpan,
     cells: &WallCells,
     openings: &[ArchOpening],
-    (bottom, top): (LinearRgba, LinearRgba),
+    bottom: LinearRgba,
+    top: LinearRgba,
 ) {
+    let (a, b, lift) = (span.a, span.b, span.lift);
     let mut cuts: Vec<&ArchOpening> = openings
         .iter()
         .filter(|opening| opening.a == a && opening.b == b)
@@ -219,17 +240,32 @@ pub(super) fn push_wall_with_openings(
     };
 
     let mut cursor: f32 = 0.0;
-    for cut in cuts {
-        if cut.high <= cursor {
-            continue;
-        }
+    let mut rest: &[&ArchOpening] = &cuts;
+    while !rest.is_empty() {
         // клетки, которые проём задел: целые панели вокруг него и целые этажи
-        // под перемычкой — за эту границу заплата не выходит
-        let block = (
-            (cut.low / cells.panel).floor() * cells.panel,
-            ((cut.high / cells.panel).ceil() * cells.panel).min(length),
-        );
-        let storeys = (cut.sill.length() / cells.storey.length()).ceil();
+        // под перемычкой — за эту границу заплата не выходит. Соседний проезд,
+        // попавший в те же панели, идёт с ним одной группой под одной заплатой:
+        // отдать блок первому вырезу и пропустить второй значило бы замуровать
+        // его простенком, а навмеш прорезан обоими
+        let mut block = cells.block(rest[0].low, rest[0].high, length);
+        let mut group = 1;
+        while let Some(next) = rest.get(group) {
+            let reach = cells.block(next.low, next.high, length);
+            if reach.0 >= block.1 {
+                break;
+            }
+            block.1 = block.1.max(reach.1);
+            group += 1;
+        }
+        let (group_cuts, tail) = rest.split_at(group);
+        rest = tail;
+
+        let start = block.0.max(cursor);
+        // перемычка у группы общая, поэтому этажи — по самому высокому вырезу
+        let storeys = group_cuts
+            .iter()
+            .map(|cut| (cut.sill.length() / cells.storey.length()).ceil())
+            .fold(0.0, f32::max);
         let over = match cells.storey * storeys {
             up if up.length() >= height => lift,
             up => up,
@@ -237,13 +273,18 @@ pub(super) fn push_wall_with_openings(
 
         // стена слева от заплаты и над ней — обычная, с окнами
         builder.set_wall(cells.frame);
-        piece(builder, cursor, block.0.max(cursor), Vec2::ZERO, lift);
-        piece(builder, block.0.max(cursor), block.1, over, lift);
-        // и заплата: два простенка во всю высоту выреза и перемычка над ним
+        piece(builder, cursor, start, Vec2::ZERO, lift);
+        piece(builder, start, block.1, over, lift);
+        // и заплата: простенки по краям группы и между её вырезами, перемычка
+        // над каждым вырезом
         builder.set_wall(cells.patch);
-        piece(builder, block.0.max(cursor), cut.low, Vec2::ZERO, over);
-        piece(builder, cut.high, block.1, Vec2::ZERO, over);
-        piece(builder, cut.low, cut.high, cut.sill, over);
+        let mut edge = start;
+        for cut in group_cuts {
+            piece(builder, edge, cut.low, Vec2::ZERO, over);
+            piece(builder, cut.low.max(edge), cut.high, cut.sill, over);
+            edge = cut.high.max(edge);
+        }
+        piece(builder, edge, block.1, Vec2::ZERO, over);
 
         cursor = block.1.max(cursor);
     }

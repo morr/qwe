@@ -8,7 +8,7 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
-use crate::map::meshing::unpack_material;
+use crate::map::meshing::{WallMark, unpack_material};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, fixture};
 use crate::map::shadow_dir;
@@ -28,10 +28,11 @@ fn slot_storeys(slot: f32) -> f32 {
 }
 
 /// Помечена ли поверхность как «стена без проёмов» — так, как эту метку
-/// читает шейдер: по знаку и смещению посева (`WallMark::Solid`, зеркало
-/// `roof.wgsl`).
+/// читает шейдер, но через продакшн-разбор ([`WallMark::of_seed`], зеркало
+/// `roof.wgsl::wall_shade`): порог кодировки лежит там, а повторить его здесь
+/// своим литералом — верный способ разойтись со словарём.
 fn is_solid(seed: f32) -> bool {
-    seed < -2.5
+    WallMark::of_seed(seed) == WallMark::Solid
 }
 
 /// Целое ли это число клеток — с допуском на арифметику подъёма.
@@ -1503,7 +1504,8 @@ fn the_wall_around_an_arch_wears_no_half_windows() {
     // клетки этой стены: 40 м на целое число панелей, подъём на этажи с
     // запасом под карниз
     let panel = 40.0 / wall_columns(40.0);
-    let storeys = 30.0 / crate::settings::STOREY_HEIGHT;
+    // этажей столько же, сколько насчитал бы `storeys_of`, — целое число
+    let storeys = (30.0 / crate::settings::STOREY_HEIGHT).round().max(1.0);
     let storey = lift.y / (storeys + crate::map::meshing::PARAPET_CELLS);
 
     let mut patched = 0;
@@ -1534,6 +1536,73 @@ fn the_wall_around_an_arch_wears_no_half_windows() {
         );
     }
     assert!(patched > 0, "вокруг арки должна лечь заплата без проёмов");
+}
+
+/// Два проезда, выходящие в одну грань в пределах одних панелей, — это два
+/// выреза, а не один. Заплата кроится по целым панелям, и соседний проём,
+/// попавший в тот же блок, отбрасывался целиком: простенок первой арки заливал
+/// его сплошной стеной, хотя навмеш прорезан обоими проездами.
+#[test]
+fn two_arches_in_one_panel_block_each_keep_their_opening() {
+    let _sun = crate::map::default_sun();
+    let (a, b) = (Vec2::ZERO, Vec2::new(40.0, 0.0));
+    let lift = Vec2::new(0.0, 12.0);
+    let cells = WallCells {
+        frame: None,
+        patch: None,
+        panel: 3.2,
+        storey: Vec2::new(0.0, 3.0),
+    };
+    let sill = Vec2::new(0.0, 2.0);
+    // второй проезд целиком внутри блока панелей первого: 6.2 < ceil(4.0 / 3.2) * 3.2
+    let openings = vec![
+        ArchOpening {
+            a,
+            b,
+            low: 0.5,
+            high: 4.0,
+            sill,
+        },
+        ArchOpening {
+            a,
+            b,
+            low: 5.0,
+            high: 6.2,
+            sill,
+        },
+    ];
+    let span = WallSpan::new(a, b, lift, 4.0, None);
+
+    let mut builder = MeshBuilder::default();
+    push_wall_with_openings(
+        &mut builder,
+        &span,
+        &cells,
+        &openings,
+        LinearRgba::WHITE,
+        LinearRgba::WHITE,
+    );
+
+    // ни один кусок стены не лежит поперёк проёма ниже его перемычки
+    for quad in builder.positions_for_test().chunks(4) {
+        let (from, to) = quad
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(low, high), point| {
+                (low.min(point[0]), high.max(point[0]))
+            });
+        let base = quad.iter().fold(f32::MAX, |low, point| low.min(point[1]));
+        if base >= sill.y - 0.01 {
+            continue;
+        }
+        for opening in &openings {
+            assert!(
+                from >= opening.high - 0.01 || to <= opening.low + 0.01,
+                "стена {from}..{to} лежит поперёк проёма {}..{}",
+                opening.low,
+                opening.high
+            );
+        }
+    }
 }
 
 /// Середина прохода берётся по длине, а не по числу точек: у ломаной с
