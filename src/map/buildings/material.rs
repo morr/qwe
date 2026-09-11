@@ -586,11 +586,11 @@ fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
 pub(super) fn run_look(run: &GarageRun) -> RoofLook {
     let base = GARAGE_ROW_COLORS[(run.seed >> 8) as usize % GARAGE_ROW_COLORS.len()].to_srgba();
     let jitter = 1.0 + ((run.seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
-    let kind = if run.block {
-        RoofKind::GarageBlock
-    } else {
-        RoofKind::GarageRow
-    };
+    // материал — по самому большому куску: у буквы Г одно крыло может быть
+    // кооперативом, а другое лентой, и на кровле это видно по каждому куску
+    // отдельно (`layers::garage_frame` берёт код у него), но `RoofKind` дома
+    // один — им выбираются палитра и оборудование на кровле
+    let kind = run_kind(run.main().block);
     RoofLook {
         kind,
         base: Srgba {
@@ -600,11 +600,20 @@ pub(super) fn run_look(run: &GarageRun) -> RoofLook {
             alpha: 1.0,
         },
         frame: Roof {
-            axis: run.axis,
+            axis: run.main().axis,
             material: kind.code(),
             seed: garage_seed(run),
         },
-        run: Some(*run),
+        run: Some(run.clone()),
+    }
+}
+
+/// Чем крыт гаражный кусок: кооператив рисуется рядами с проездами, лента —
+/// одной гребёнкой боксов.
+pub(super) fn run_kind(block: bool) -> RoofKind {
+    match block {
+        true => RoofKind::GarageBlock,
+        false => RoofKind::GarageRow,
     }
 }
 
