@@ -395,7 +395,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `fbm4` (four octaves), `fbm3` (three) and `stripes` — and each shader imports by path
   only the names it calls (`#import "shaders/noise.wgsl"::{value_noise, visible, fbm3,
   fbm4}` here — the hash reaches it inside `value_noise`; `roof.wgsl` takes its own
-  subset), so a rule that must not drift is kept in one place.
+  subset), so a rule that must not drift is kept in one place. **Only what both shaders
+  call moves there**: `dash_distance` (lane dashes) stays in `surface.wgsl` and `band`
+  (the drive between garage rows) in `roof.wgsl`, each with a single consumer — a helper
+  calling the library is not itself a reason to move it into the library.
   Materials are built once (`SurfaceMaterials`, `Startup`) and
   shared by every city; `SurfaceStyle::texture` (section **Surfaces**, `ui/surfaces.rs`,
   persisted) rewrites the `intensity` uniform of each and rebuilds nothing.
