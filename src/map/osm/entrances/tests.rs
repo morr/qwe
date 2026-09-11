@@ -595,6 +595,194 @@ fn height_moves_the_door_count_on_the_same_plan() {
     );
 }
 
+/// Дверь не ставится в арку. Проезд сквозь дом
+/// (`tunnel=building_passage`) выедает стену на всю высоту, и подъезда в этом
+/// куске нет: `buildings::layers::push_doors` полотна в проёме не кладёт, а
+/// вход всё равно оставался — гизмо рисовало кружок в дыре, и пешка шла туда
+/// же. Дом при этом свои двери получает, они просто отходят от арки.
+#[test]
+fn a_door_does_not_stand_in_an_arch() {
+    let plan = rect(LOW, LOW + Vec2::new(60.0, 20.0));
+    let street = road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)]);
+    // арка посреди южного фасада — ровно там, где стоял бы средний из трёх
+    // подъездов шестидесятиметрового корпуса
+    let arch = fixture::passage(vec![Vec2::new(130.0, 98.0), Vec2::new(130.0, 122.0)], 4.0);
+    let reach = arch.width / 2.0 + ENTRANCE_ARCH_CLEARANCE;
+
+    let mut solid = MapData {
+        buildings: vec![building(plan.clone(), Some(27.0))],
+        roads: vec![street.clone()],
+        ..Default::default()
+    };
+    generate_entrances(&mut solid);
+    let blocked = |doors: &[Vec2]| {
+        doors
+            .iter()
+            .filter(|door| (door.x - 130.0).abs() < reach)
+            .count()
+    };
+    assert!(
+        blocked(&solid.buildings[0].entrances) > 0,
+        "без арки подъезд встаёт ровно посреди фасада: {:?}",
+        solid.buildings[0].entrances
+    );
+
+    let mut pierced = MapData {
+        buildings: vec![building(plan, Some(27.0))],
+        roads: vec![street, arch],
+        ..Default::default()
+    };
+    generate_entrances(&mut pierced);
+    let doors = &pierced.buildings[0].entrances;
+    assert!(!doors.is_empty(), "дом остался без дверей вовсе");
+    assert_eq!(blocked(doors), 0, "подъезд в арке: {doors:?}");
+}
+
+/// Тот же запрет с дворовой стороны. Арка наискось: её уличное устье снимает
+/// первый из трёх подъездов, а дворовое приходится ровно напротив третьего —
+/// туда, куда сквозной подъезд вывел бы вторую створку. Саму уличную дверь
+/// такая арка не задевает, `place_along` её пропускает, так что дворовый конец
+/// проверяется только в `through_doors`.
+#[test]
+fn a_through_door_does_not_come_out_in_the_far_mouth_of_an_arch() {
+    let plan = rect(LOW, LOW + Vec2::new(60.0, 20.0));
+    let street = road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)]);
+    // уклон 2:3: на южной стене (y = 100) осевая арки стоит на x = 115, на
+    // северной (y = 120) — на x = 145
+    let arch = fixture::passage(vec![Vec2::new(112.0, 98.0), Vec2::new(148.0, 122.0)], 4.0);
+    let reach = arch.width / 2.0 + ENTRANCE_ARCH_CLEARANCE;
+
+    let mut map = MapData {
+        buildings: vec![building(plan, Some(27.0))],
+        roads: vec![street, arch],
+        ..Default::default()
+    };
+    generate_entrances(&mut map);
+
+    let street_doors = doors_on(&map, LOW.y);
+    let yard_doors = doors_on(&map, LOW.y + 20.0);
+    assert!(
+        street_doors
+            .iter()
+            .any(|door| (door.x - 145.0).abs() < 0.01),
+        "уличной двери напротив дворового устья нет, проверять нечего: {street_doors:?}"
+    );
+    assert!(
+        yard_doors.iter().any(|door| (door.x - 130.0).abs() < 0.01),
+        "дом выпал из сквозной когорты, проверять нечего: {yard_doors:?}"
+    );
+    assert!(
+        !yard_doors.iter().any(|door| (door.x - 145.0).abs() < reach),
+        "дворовая створка в арке: {yard_doors:?}"
+    );
+}
+
+/// Запасной проход тоже обходит арку — и это два уровня отката, а не отказ от
+/// двери. Дом зажат соседями с трёх сторон, четвёртую грань пробивает проезд,
+/// то есть обычный проход не находит ни одной точки. Дверь дом получает
+/// (без неё он выпал бы из целей блуждания), но не в проёме: свободные точки
+/// среди перебираемых ещё есть, и запасной проход берёт их.
+#[test]
+fn the_last_resort_door_steps_out_of_the_arch() {
+    // 10 × 10: каждая грань отдаёт ровно одну точку — свою середину
+    let hemmed = building(rect(LOW, LOW + Vec2::splat(10.0)), Some(3.0));
+    // арка вдоль x = 105 — через середины южной и северной граней
+    let arch = fixture::passage(vec![Vec2::new(105.0, 97.0), Vec2::new(105.0, 113.0)], 3.0);
+    let reach = arch.width / 2.0 + ENTRANCE_ARCH_CLEARANCE;
+    let mut map = MapData {
+        buildings: vec![
+            hemmed,
+            // соседи вплотную к северной, восточной и западной граням
+            building(rect(Vec2::new(100.0, 111.0), Vec2::new(112.0, 120.0)), None),
+            building(rect(Vec2::new(111.0, 100.0), Vec2::new(120.0, 110.0)), None),
+            building(rect(Vec2::new(90.0, 100.0), Vec2::new(99.0, 110.0)), None),
+        ],
+        roads: vec![
+            road(vec![Vec2::new(0.0, 95.0), Vec2::new(400.0, 95.0)]),
+            arch,
+        ],
+        ..Default::default()
+    };
+
+    generate_entrances(&mut map);
+    let doors = &map.buildings[0].entrances;
+    assert!(!doors.is_empty(), "зажатый дом остался без двери вовсе");
+    for door in doors {
+        assert!(
+            (door.x - 105.0).abs() >= reach,
+            "запасной проход поставил дверь в арку: {door:?} из {doors:?}"
+        );
+    }
+}
+
+/// Размеченная в OSM дверь, пришедшаяся на арку, выбрасывается: полотна в
+/// проёме всё равно не будет (`layers::push_doors`), а вход бы остался — гизмо
+/// кружило бы вокруг дыры, пешка шла бы в дыру. Двигать размеченную дверь
+/// по-прежнему нельзя: вторая, та же и на том же месте
+/// (`a_real_entrance_stays_where_it_was_mapped` проверяет это отдельно).
+///
+/// Второй дом в карте — тот случай, ради которого счёт придуманных дверей
+/// насыщающий: обе его размеченные двери в арке, когорта дописывает одну, и
+/// список выходит **короче** исходного.
+#[test]
+fn a_mapped_entrance_in_an_arch_is_dropped() {
+    let kept = Vec2::new(105.0, 100.0);
+    let in_arch = Vec2::new(130.0, 100.0);
+    let mut block = building(rect(LOW, LOW + Vec2::new(60.0, 20.0)), Some(27.0));
+    block.entrances = vec![kept, in_arch];
+    let arch = fixture::passage(vec![Vec2::new(130.0, 98.0), Vec2::new(130.0, 122.0)], 4.0);
+
+    // сарай, у которого в арке **обе** размеченные двери
+    let mut shed = building(
+        rect(Vec2::new(200.0, 100.0), Vec2::new(210.0, 110.0)),
+        Some(3.0),
+    );
+    shed.entrances = vec![Vec2::new(205.0, 100.0), Vec2::new(205.0, 110.0)];
+    let shed_arch = fixture::passage(vec![Vec2::new(205.0, 97.0), Vec2::new(205.0, 113.0)], 3.0);
+
+    let reach = arch.width / 2.0 + ENTRANCE_ARCH_CLEARANCE;
+    let shed_reach = shed_arch.width / 2.0 + ENTRANCE_ARCH_CLEARANCE;
+    let mut map = MapData {
+        buildings: vec![block, shed],
+        roads: vec![
+            road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)]),
+            arch,
+            shed_arch,
+        ],
+        ..Default::default()
+    };
+
+    generate_entrances(&mut map);
+
+    let doors = &map.buildings[0].entrances;
+    assert!(
+        doors.contains(&kept),
+        "размеченную дверь сдвинули: {doors:?}"
+    );
+    for door in doors {
+        assert!(
+            (door.x - 130.0).abs() >= reach,
+            "размеченная дверь осталась в арке: {door:?} из {doors:?}"
+        );
+    }
+
+    let shed_doors = &map.buildings[1].entrances;
+    // ровно одна: обе размеченные ушли, когорта сарая дописывает одну — то есть
+    // список **короче** исходного, и без `saturating_sub` счёт придуманных
+    // дверей здесь паникует
+    assert_eq!(
+        shed_doors.len(),
+        1,
+        "сарай должен остаться с одной дописанной дверью: {shed_doors:?}"
+    );
+    for door in shed_doors {
+        assert!(
+            (door.x - 205.0).abs() >= shed_reach,
+            "дверь сарая в арке: {door:?} из {shed_doors:?}"
+        );
+    }
+}
+
 /// Частный дом сквозным подъездом не обзаводится, какой бы длины ни был.
 #[test]
 fn a_private_house_keeps_its_single_side() {

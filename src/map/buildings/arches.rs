@@ -11,6 +11,16 @@
 //! обрезан `EXTRUDE_RANGE`, и у сарая или башни нарисованный метр стоит не
 //! тех же 0.35 настоящих.
 //!
+//! Ни то ни другое **не подгоняется под клетки стены**, и это осознанно:
+//! навмеш прорезан настоящей шириной дороги, и проём уже неё вернул бы ровно
+//! ту ложь, ради которой арки и появились, — пешка идёт там, где нарисована
+//! стена. Вместо этого клетки, которые проём задел, отдаются ему целиком:
+//! вокруг выреза кладётся **заплата** ([`WallCells`], `WallMark::Solid`) —
+//! те же швы и та же кладка, но без окон и балконов. Иначе окно, стоящее по
+//! центру клетки, обрезалось бы краем проёма: шейдер о вырезе не знает, он
+//! красит ту клетку, которая до него доехала. Ровно так же устроена дверь
+//! (`layers::push_doors`) — одна конструкция на оба проёма.
+//!
 //! Стена ищется не пересечением дороги с контуром, а от **концов** прохода: в
 //! OSM арку сплошь и рядом размечают отрезком от вершины контура до вершины
 //! контура (арка 485488257 в Туле — ровно такая), то есть дорога лежит внутри
@@ -23,9 +33,9 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::height_or_default;
-use super::layers::silhouette_edges;
+use super::layers::{WallSpan, silhouette_edges};
 use crate::map::SHADOW_COLOR;
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, WallFrame};
 use crate::map::osm::model::{
     closest_on_segment, point_at_arc_length, point_in_area, polyline_length, ring_bounds,
 };
@@ -139,22 +149,68 @@ pub(super) fn arch_openings(
     openings
 }
 
-/// Стена с проёмами: боковые куски во всю высоту и перемычка над каждой
-/// аркой. Это **настоящий вырез** — в дыру просвечивают нижние слои (дорога,
-/// проложенная сквозь дом, тень), а не закраска цветом земли.
+/// Клетки той стены, в которой кроится проём: её рама, та же рама «без
+/// проёмов» под заплату и размер клетки по обеим осям (панель вдоль основания,
+/// этаж вверх по подъёму).
+///
+/// Собирает это `layers::wall_cells` — там и живёт вся арифметика панелей и
+/// этажей; сюда четвёрка приезжает готовой, потому что резать по клеткам
+/// приходится ровно здесь.
+pub(super) struct WallCells {
+    /// Рама стены — рисунок материала, окна, балконы.
+    pub(super) frame: Option<WallFrame>,
+    /// Она же, помеченная `WallMark::Solid`: швы и кладка те же, проёмов нет.
+    pub(super) patch: Option<WallFrame>,
+    /// Ширина панели этой стены, м вдоль основания.
+    pub(super) panel: f32,
+    /// Этаж стены — вектор вверх по подъёму.
+    pub(super) storey: Vec2,
+}
+
+impl WallCells {
+    /// Клетки, которые задел проём `low..high`, — целые панели вокруг него, за
+    /// концы стены длиной `length` не выходящие. Клетку стена отдаёт проёму
+    /// целиком: окно стоит по её центру, шейдер про вырез не знает, и край
+    /// проёма резал бы ряд окон пополам. По этой же границе кроится заплата
+    /// двери (`layers::push_doors`) — одна конструкция на оба проёма, и счёт
+    /// у неё поэтому один.
+    pub(super) fn block(&self, low: f32, high: f32, length: f32) -> (f32, f32) {
+        (
+            ((low / self.panel).floor() * self.panel).max(0.0),
+            ((high / self.panel).ceil() * self.panel).min(length),
+        )
+    }
+}
+
+/// Стена с проёмами: боковые куски во всю высоту, перемычка над каждой аркой и
+/// **заплата** вокруг выреза. Это настоящий вырез — в дыру просвечивают нижние
+/// слои (дорога, проложенная сквозь дом, тень), а не закраска цветом земли.
+///
+/// Заплата — те клетки, которые проём задел не целиком: простенок сбоку от
+/// арки шириной меньше панели и перемычка высотой меньше этажа. Окно стоит по
+/// центру клетки, шейдер про вырез не знает, и без заплаты край проёма резал
+/// бы ряд окон пополам. Клетки **внутри** проёма выброшены вместе с ним, а
+/// выше и по бокам от заплаты стена целая — там окна полные, и гасить их
+/// незачем.
+///
+/// Два проезда, выходящие в одну грань ближе панели друг от друга, кроятся
+/// **одной** заплатой на обоих: у каждого своя дыра, между ними простенок по
+/// настоящим краям вырезов. Своя заплата у каждого замуровала бы соседа —
+/// простенок первого лёг бы поперёк второго проёма, а навмеш прорезан обоими.
 pub(super) fn push_wall_with_openings(
     builder: &mut MeshBuilder,
-    a: Vec2,
-    b: Vec2,
-    lift: Vec2,
+    span: &WallSpan,
+    cells: &WallCells,
     openings: &[ArchOpening],
     bottom: LinearRgba,
     top: LinearRgba,
 ) {
+    let (a, b, lift) = (span.a, span.b, span.lift);
     let mut cuts: Vec<&ArchOpening> = openings
         .iter()
         .filter(|opening| opening.a == a && opening.b == b)
         .collect();
+    builder.set_wall(cells.frame);
     if cuts.is_empty() {
         builder.push_quad_gradient([a, b, b + lift, a + lift], [bottom, bottom, top, top]);
         return;
@@ -165,32 +221,75 @@ pub(super) fn push_wall_with_openings(
         return;
     };
     let length = (b - a).length();
-    let piece = |builder: &mut MeshBuilder, from: f32, to: f32| {
-        if to - from < 0.01 {
+    let height = lift.length();
+    // цвет стены на этой высоте — тот же градиент, что у целой стены
+    let shade = |up: Vec2| match height > 0.0 {
+        true => bottom.mix(&top, (up.length() / height).clamp(0.0, 1.0)),
+        false => bottom,
+    };
+    let piece = |builder: &mut MeshBuilder, from: f32, to: f32, low: Vec2, high: Vec2| {
+        if to - from < 0.01 || (high - low).length() < 0.01 {
             return;
         }
         let (p0, p1) = (a + along * from, a + along * to);
-        builder.push_quad_gradient([p0, p1, p1 + lift, p0 + lift], [bottom, bottom, top, top]);
+        let (under, over) = (shade(low), shade(high));
+        builder.push_quad_gradient(
+            [p0 + low, p1 + low, p1 + high, p0 + high],
+            [under, under, over, over],
+        );
     };
 
-    let mut cursor = 0.0;
-    for cut in cuts {
-        piece(builder, cursor, cut.low);
-        // перемычка над проёмом; цвет её низа — градиент стены на этой высоте
-        let fraction = if lift.length_squared() > 0.0 {
-            (cut.sill.length() / lift.length()).clamp(0.0, 1.0)
-        } else {
-            0.0
+    let mut cursor: f32 = 0.0;
+    let mut rest: &[&ArchOpening] = &cuts;
+    while !rest.is_empty() {
+        // клетки, которые проём задел: целые панели вокруг него и целые этажи
+        // под перемычкой — за эту границу заплата не выходит. Соседний проезд,
+        // попавший в те же панели, идёт с ним одной группой под одной заплатой:
+        // отдать блок первому вырезу и пропустить второй значило бы замуровать
+        // его простенком, а навмеш прорезан обоими
+        let mut block = cells.block(rest[0].low, rest[0].high, length);
+        let mut group = 1;
+        while let Some(next) = rest.get(group) {
+            let reach = cells.block(next.low, next.high, length);
+            if reach.0 >= block.1 {
+                break;
+            }
+            block.1 = block.1.max(reach.1);
+            group += 1;
+        }
+        let (group_cuts, tail) = rest.split_at(group);
+        rest = tail;
+
+        let start = block.0.max(cursor);
+        // перемычка у группы общая, поэтому этажи — по самому высокому вырезу
+        let storeys = group_cuts
+            .iter()
+            .map(|cut| (cut.sill.length() / cells.storey.length()).ceil())
+            .fold(0.0, f32::max);
+        let over = match cells.storey * storeys {
+            up if up.length() >= height => lift,
+            up => up,
         };
-        let sill_color = bottom.mix(&top, fraction);
-        let (p0, p1) = (a + along * cut.low, a + along * cut.high);
-        builder.push_quad_gradient(
-            [p0 + cut.sill, p1 + cut.sill, p1 + lift, p0 + lift],
-            [sill_color, sill_color, top, top],
-        );
-        cursor = cut.high.max(cursor);
+
+        // стена слева от заплаты и над ней — обычная, с окнами
+        builder.set_wall(cells.frame);
+        piece(builder, cursor, start, Vec2::ZERO, lift);
+        piece(builder, start, block.1, over, lift);
+        // и заплата: простенки по краям группы и между её вырезами, перемычка
+        // над каждым вырезом
+        builder.set_wall(cells.patch);
+        let mut edge = start;
+        for cut in group_cuts {
+            piece(builder, edge, cut.low, Vec2::ZERO, over);
+            piece(builder, cut.low.max(edge), cut.high, cut.sill, over);
+            edge = cut.high.max(edge);
+        }
+        piece(builder, edge, block.1, Vec2::ZERO, over);
+
+        cursor = block.1.max(cursor);
     }
-    piece(builder, cursor, length);
+    builder.set_wall(cells.frame);
+    piece(builder, cursor, length, Vec2::ZERO, lift);
 }
 
 /// Фасадные режимы: полоса фасада — один earcut-полигон на всё здание, и

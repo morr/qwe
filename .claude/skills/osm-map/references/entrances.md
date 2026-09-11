@@ -14,7 +14,9 @@ counts per city live in `osm-coverage.md` next to this file.
 dropped with a count on stderr. Overpass emits nodes before ways, so entrances are
 buffered through the element loop and attached after it. Coverage is thin everywhere
 (Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — hence the generator
-below. Real OSM doors always win *as points*: they are never moved and never dropped.
+below. Real OSM doors always win *as points*: they are never moved. They are dropped in
+exactly one case — a door that falls in an **arch** goes, because there is no wall there to
+hang it on (see "An arch is not a wall" below).
 They no longer stop the generator, though — a building mapped with one door is a
 building mapped **halfway**, and it gets the rest of its cohort (see "topped up, not
 skipped" below).
@@ -108,6 +110,32 @@ whole algorithm:
   nothing and the doors fall through to the next real wall by score. The last-resort pass
   (a building with no free wall at all, or one made of nothing but steps — a 3 × 3 kiosk)
   still allows them, since a building with no door drops out of the wander targets.
+- **An arch is not a wall** (`PassageIndex`) — a `tunnel=building_passage` road runs
+  *through* the building and `buildings::arches` cuts the wall out for its full height, so
+  a door there stands in a hole: `layers::push_doors` refuses to draw a leaf inside an
+  existing opening, and the entrance survived anyway — the `doors` gizmo circling a gap and
+  a pawn walking into it. Every candidate is now dropped within
+  `road.width / 2 + ENTRANCE_ARCH_CLEARANCE` (3 m — about a panel, which is how far the
+  patch around the opening reaches) of a passage centreline, and so is the courtyard twin
+  of a through подъезд, since the far mouth of the same arch is exactly where the ray
+  comes out. Lookups go through the same 60 m grid the road index uses, with each segment
+  registered in the cells of its **inflated** box so one cell lookup answers. **The arch is
+  the one rule the last-resort pass keeps**, and that is what makes the fallback two-level
+  (`Pass::LastResort` → `Pass::Forced`): the pass drops the neighbour probe and the
+  edge-length threshold, but it walks several points on several edges
+  (`facade_capacity(.., stubs = true)`), so skipping the ones in a passage costs nothing
+  while a door in a hole is not drawn at all. Only when *every* point of *every* edge is in
+  an arch does `Pass::Forced` place the door regardless — a building with no door at all is
+  worse. **A door mapped in OSM is measured against the arch as well**, and this is the one
+  thing about a real door the generator may change: OSM puts the ends of a
+  `building_passage` on the outline's own vertices (`buildings::arches`), which is exactly
+  where an `entrance=*` node sits, so the two do coincide — rarely in the Tula extract, but
+  at the same cost, a gap with a gizmo circling it. Such a door is **dropped, never moved**
+  (moving a surveyed point is what this generator must not do), it stops counting towards
+  `wanted`, and the cohort tops the building up on a free wall.
+  Passages stay in `RoadIndex` and still score their facade: an arch
+  wall usually *is* the street wall, and the доводка is about where the door lands on it,
+  not about which wall wins.
 - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
   door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
   a door placed there sits *inside* the neighbour: invisible from the street and
@@ -154,8 +182,11 @@ whole algorithm:
   left unguarded in the *generation*. Mapped doors now go into `place_along` as
   already-placed points: `wanted` is how many doors the building should end up with, the
   real ones count towards it and hold their spacing, and the generator only fills what is
-  missing. Real doors are never moved and never dropped, and they stay first in the list.
-  Only the added ones are counted as generated in the log line.
+  missing. Real doors are never moved and they stay first in the list; the one that is
+  dropped is a door in an arch. Only the added ones are counted as generated in the log
+  line — and that subtraction is **saturating**, because a building whose mapped doors all
+  went into an arch ends up with a shorter list than it started with, which is zero
+  generated, not a negative count.
 - **A section's подъезд is through** (`through_doors`) — a panel section has two doors per
   подъезд, street and courtyard, standing opposite each other, and on an aerial photo
   that pairing is plain. It is **the same подъезд**, so the cohort count does not grow: the

@@ -1352,9 +1352,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     - **The verdict travels as the seed's own value**, not its sign: `WallMark`
       (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` solid.
       Three states are needed because *blank* and *solid* are not the same thing — a blank
-      wall (narrow, low, wrong material) still has **windows**, a solid one has none. Two
-      surfaces are solid and they are unrelated: the **gable**, where a window would be cut
-      by the slope, and the **patch under a door**. The old sign flip could say only one
+      wall (narrow, low, wrong material) still has **windows**, a solid one has none. Three
+      surfaces are solid: the **gable**, where a window would be cut by the slope, and the
+      two patches of one construction — **under a door** and **around an arch**
+      (`WallCells`), where a cell is handed whole to an opening the shader knows nothing
+      about. Gable and patch are unrelated: the old sign flip could say only one
       of the two, and needed an idempotency guard on top (the gable marks itself over an
       already-blank wall, and a second negation gave the balconies back); replacing the
       state is the guard.
@@ -1601,7 +1603,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   2.5D the wall is **really cut** (side pieces + a lintel above,
   `push_wall_with_openings`) so the layers beneath — the road running through, the
   ground — show through the hole, and `shadow_builder` patches the opening with
-  `SHADOW_COLOR` (the lintel shades it; without the patch the hole glows). In facade
-  modes the facade band is one earcut polygon, so the opening is *painted* in shaded
-  ground colour instead — a stated compromise. What the passage does to the navmesh is
-  in the navigation-deep skill.
+  `SHADOW_COLOR` (the lintel shades it; without the patch the hole glows).
+  **The wall texture does not see that cut, so the cells the opening bites into are
+  handed to it whole** (`WallCells`, `WallMark::Solid` — the very patch a door lays under
+  its leaf; it is built by `layers::wall_cells`, so the panel and storey arithmetic stays
+  with the wall and `arches` only cuts): a window sits in the middle of its cell and the
+  shader knows nothing about the hole, so the opening's edge sliced a row of windows in
+  half — on the pier beside the arch and on the lintel above it. Only the *partial* cells
+  are blanked: the ones inside the opening are gone with it, and above and beside the
+  patch the wall is whole, so its windows are complete and stay drawn. What is **not**
+  done is snapping the opening itself to the cell grid: the navmesh is carved by the
+  road's real width, and an arch narrower than its road brings back the very lie arches
+  exist to fix — a pawn walking where a wall is drawn. In facade modes the facade band is
+  one earcut polygon, so the opening is *painted* in shaded ground colour instead — a
+  stated compromise. What the passage does to the navmesh is in the navigation-deep
+  skill.

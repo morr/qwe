@@ -19,9 +19,11 @@
 //!   приходится 4.4 входа у сарая и 0.65 у вокзала — линейная плотность не
 //!   годится, нужны когорты.
 //!
-//! Плюс одно требование, которое замером не выводится, а следует из здравого
+//! Плюс два требования, которые замером не выводятся, а следуют из здравого
 //! смысла и из того, что в OSM дома сплошь и рядом стоят вплотную: **дверь не
-//! ставится в стену, к которой прижат сосед** — см. [`FootprintIndex`].
+//! ставится в стену, к которой прижат сосед** ([`FootprintIndex`]), и **дверь
+//! не ставится в арку** ([`PassageIndex`]) — проезд сквозь дом выедает кусок
+//! стены на всю высоту, и подъезда в этом куске не бывает.
 //!
 //! Генерация детерминирована: LCG засеян геометрией самого здания, поэтому
 //! дверь одного и того же дома оказывается на одном и том же месте при каждом
@@ -37,7 +39,7 @@ mod index;
 use bevy::math::Vec2;
 
 use self::cohorts::{cohort_of, entrance_count, equivalent_length, plan_sections};
-use self::index::{FootprintIndex, RoadIndex, ring_is_ccw};
+use self::index::{FootprintIndex, PassageIndex, RoadIndex, ring_is_ccw};
 use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea};
 use crate::rng::lcg_seeded_by;
 use crate::settings::navtile_size;
@@ -64,6 +66,19 @@ fn entrance_clearance() -> f32 {
     navtile_size()
 }
 
+/// Насколько дверь держится от края арки, м. Проезд сквозь дом
+/// (`tunnel=building_passage`) выедает кусок стены целиком, и подъезда там не
+/// бывает — ни в самом проёме, ни впритык к нему: полотно двери с откосами
+/// это уже два метра, а вокруг проёма лежит заплата
+/// (`buildings::arches::push_wall_with_openings`) — задетые не целиком клетки
+/// помечены `Solid`, — так что глухая полоса без окон уходит от края проёма ещё
+/// почти на панель. Три метра — примерно эта панель и есть.
+///
+/// Без правила дверь вставала посреди арки: `push_doors` полотна там не
+/// рисует (проём во всю стену уже есть), а гизмо и пешка — по данным, так что
+/// вход оставался, но на карте его было не видно, и пешка шла в дыру.
+const ENTRANCE_ARCH_CLEARANCE: f32 = 3.0;
+
 /// Грань контура, оценённая на пригодность под вход.
 struct Facade {
     from: Vec2,
@@ -88,11 +103,15 @@ struct Facade {
 /// той же природы, что и порог «не меньше двух дверей» в замере когорт: маппер
 /// сплошь и рядом ставит один вход и бросает. Замер от такой разметки
 /// защищался, а генерация — нет, и лондонский квартал в четверть километра
-/// оставался с единственной дверью. Настоящие двери по-прежнему **не двигаются
-/// и не выбрасываются**: они идут первыми, а когорта лишь дописывает недостающее.
+/// оставался с единственной дверью. Настоящие двери по-прежнему **не двигаются**:
+/// они идут первыми, а когорта лишь дописывает недостающее. Выбрасывается из них
+/// ровно одна разновидность — дверь, пришедшаяся на арку: стены в проёме нет, и
+/// полотна там не будет, как бы дверь ни была размечена ([`PassageIndex`]).
 pub fn generate_entrances(map: &mut MapData) -> usize {
     let roads = RoadIndex::build(&map.roads);
     let footprints = FootprintIndex::build(&map.buildings);
+    // арки: проезд сквозь дом — это дыра в стене, а не место для подъезда
+    let passages = PassageIndex::build(&map.roads);
 
     // двери сначала считаются по неизменной карте — каждому зданию нужны
     // контуры соседей, — и только потом раскладываются по зданиям
@@ -104,7 +123,7 @@ pub fn generate_entrances(map: &mut MapData) -> usize {
         if building.kind != AreaKind::Building {
             continue;
         }
-        let Some(doors) = fill_building(index, building, &roads, &footprints) else {
+        let Some(doors) = fill_building(index, building, &roads, &footprints, &passages) else {
             continue;
         };
         walled_in += usize::from(doors.forced);
@@ -120,9 +139,13 @@ pub fn generate_entrances(map: &mut MapData) -> usize {
 
     let mut generated = 0;
     for (index, entrances) in filled {
-        // размеченные в OSM двери входят в этот список первыми и никуда не
-        // делись — придуманными считаются только дописанные
-        generated += entrances.len() - map.buildings[index].entrances.len();
+        // размеченные в OSM двери входят в этот список первыми — придуманными
+        // считаются только дописанные. Вычитание **насыщающее**: дверь,
+        // выброшенную из арки, список не содержит, и у дома с двумя такими
+        // дверями он короче исходного — это ноль придуманных, а не минус один
+        generated += entrances
+            .len()
+            .saturating_sub(map.buildings[index].entrances.len());
         map.buildings[index].entrances = entrances;
     }
 
@@ -152,6 +175,7 @@ fn fill_building(
     building: &PolyArea,
     roads: &RoadIndex,
     footprints: &FootprintIndex,
+    passages: &PassageIndex,
 ) -> Option<FilledBuilding> {
     let ring = &building.outer;
     if ring.len() < 3 {
@@ -173,18 +197,27 @@ fn fill_building(
     // всегда конечны
     facades.sort_by(|a, b| a.score.total_cmp(&b.score));
 
-    // размеченные двери — первыми и неприкосновенными; нормаль каждой берётся
-    // у ближайшей к ней грани, чтобы и она могла пройти домом насквозь
+    // размеченные двери — первыми и неподвижными; нормаль каждой берётся у
+    // ближайшей к ней грани, чтобы и она могла пройти домом насквозь. Двигать
+    // их нельзя, но пришедшуюся на арку приходится выбросить: стены там нет
+    // вовсе, и в OSM узел `entrance=*` вполне может стоять на той же вершине
+    // контура, где кончается проезд (`buildings::arches`)
     let mut doors: Vec<Door> = building
         .entrances
         .iter()
+        .filter(|&&at| !passages.blocks(at))
         .map(|&at| Door {
             at,
             outward: facade_outward(ring, at),
         })
         .collect();
     let real = doors.len();
-    place_along(&facades, wanted, Pass::Walls(index, footprints), &mut doors);
+    place_along(
+        &facades,
+        wanted,
+        Pass::Walls(index, footprints, passages),
+        &mut doors,
+    );
 
     if !doors.is_empty() {
         let mut entrances: Vec<Vec2> = doors.iter().map(|door| door.at).collect();
@@ -192,7 +225,7 @@ fn fill_building(
         // короткий дом сюда не попадают — см. [`THROUGH_MIN_LENGTH`]
         let mut through = 0;
         if through_entrances(building, length) {
-            let twins = through_doors(ring, &doors, index, footprints);
+            let twins = through_doors(ring, &doors, index, footprints, passages);
             through = twins.len();
             entrances.extend(twins);
         }
@@ -204,15 +237,24 @@ fn fill_building(
     }
     // ни одной свободной стены — или дом целиком из ступенек: без двери он
     // выпал бы из целей блуждания, так что ставим её на лучшую грань, не глядя
-    // ни на соседей, ни на длину
+    // ни на соседей, ни на длину. Арку запасной проход всё же обходит:
+    // перебрать есть что, а дверь в проёме не рисуется вовсе
     let mut forced = Vec::new();
-    place_along(&facades, 1, Pass::LastResort, &mut forced);
+    place_along(&facades, 1, Pass::LastResort(passages), &mut forced);
+    if forced.is_empty() {
+        // и только если свободной от арки точки не нашлось ни одной — любая:
+        // дом, пробитый проездом насквозь и зажатый соседями, всё равно должен
+        // остаться целью блуждания
+        place_along(&facades, 1, Pass::Forced, &mut forced);
+    }
     Some(FilledBuilding {
         entrances: forced.into_iter().map(|door| door.at).collect(),
         // единственная дверь на глухой стене насквозь не идёт
         through: 0,
-        // дом с размеченной дверью сюда не доходит, так что счётчик считает
-        // именно глухие дома, а не всякий бездверный случай
+        // дом с уцелевшей размеченной дверью сюда не доходит, так что счётчик
+        // считает именно глухие дома, а не всякий бездверный случай — и дом,
+        // у которого единственную размеченную дверь съела арка, он считает
+        // глухим по праву: свободной стены у него и правда не нашлось
         forced: real == 0,
     })
 }
@@ -346,7 +388,7 @@ fn facade_capacity(length: f32, stubs: bool) -> usize {
 /// придуманными.
 fn place_along(facades: &[Facade], wanted: usize, pass: Pass<'_>, placed: &mut Vec<Door>) {
     let minimum_squared = ENTRANCE_MIN_SPACING * ENTRANCE_MIN_SPACING;
-    let stubs = matches!(pass, Pass::LastResort);
+    let stubs = !matches!(pass, Pass::Walls(..));
 
     for facade in facades {
         if placed.len() >= wanted {
@@ -368,10 +410,12 @@ fn place_along(facades: &[Facade], wanted: usize, pass: Pass<'_>, placed: &mut V
                 continue;
             }
             let blocked = match pass {
-                Pass::Walls(owner, footprints) => {
+                Pass::Walls(owner, footprints, passages) => {
                     footprints.is_covered(point + facade.outward * entrance_clearance(), owner)
+                        || passages.blocks(point)
                 }
-                Pass::LastResort => false,
+                Pass::LastResort(passages) => passages.blocks(point),
+                Pass::Forced => false,
             };
             if blocked {
                 continue;
@@ -384,20 +428,31 @@ fn place_along(facades: &[Facade], wanted: usize, pass: Pass<'_>, placed: &mut V
     }
 }
 
-/// Который это проход по граням — обычный или запасной. Два признака здесь
-/// всегда идут вместе, поэтому и параметр один.
+/// Который это проход по граням. Их три, и это **два уровня отката**, а не
+/// один: обычный смотрит на всё, запасной отпускает соседа и порог длины грани,
+/// но арку держит, и только последний не запрещает ничего. Три признака —
+/// сосед, арка, ступенька контура — поэтому и разошлись по вариантам.
 #[derive(Clone, Copy)]
 enum Pass<'a> {
-    /// Обычный: свой номер и индекс контуров. Каждая точка проверяется на
-    /// [`entrance_clearance`] наружу, и место, накрытое чужим домом,
+    /// Обычный: свой номер, индекс контуров и индекс арок. Точка проверяется
+    /// на [`entrance_clearance`] наружу, и место, накрытое чужим домом,
     /// пропускается: стена, к которой сосед стоит вплотную, — глухая, дверь на
-    /// ней смотрит в чужой фасад. Занятая грань просто не отдаёт дверей, и они
-    /// достаются следующей по оценке. Ступенька контура двери не берёт — см.
-    /// [`ENTRANCE_MIN_FACADE`].
-    Walls(usize, &'a FootprintIndex<'a>),
+    /// ней смотрит в чужой фасад. И на [`ENTRANCE_ARCH_CLEARANCE`] от проезда
+    /// сквозь дом — там стены нет вовсе. Занятая грань просто не отдаёт
+    /// дверей, и они достаются следующей по оценке. Ступенька контура двери не
+    /// берёт — см. [`ENTRANCE_MIN_FACADE`].
+    Walls(usize, &'a FootprintIndex<'a>, &'a PassageIndex),
     /// Запасной, для дома, у которого свободной стены не нашлось вовсе: ни
-    /// оглядки на соседей, ни порога длины грани — дверь нужна любая.
-    LastResort,
+    /// оглядки на соседей, ни порога длины грани. Арку он всё же обходит —
+    /// выбор здесь не двоичный: `facade_capacity(.., stubs = true)` даёт
+    /// несколько точек на нескольких гранях, и пропустить среди них попавшие в
+    /// проём ничего не стоит, а дверь в проёме не рисуется вовсе
+    /// ([`ENTRANCE_ARCH_CLEARANCE`]).
+    LastResort(&'a PassageIndex),
+    /// Последний: не запрещено ничего. Сюда доходит дом, у которого в арке
+    /// оказалась каждая точка каждой грани; без двери он выпал бы из целей
+    /// блуждания, и это хуже двери в проёме.
+    Forced,
 }
 
 /// Поставленный вход: где он и куда смотрит. Нормаль нужна ровно затем, чтобы
@@ -446,6 +501,7 @@ fn through_doors(
     doors: &[Door],
     index: usize,
     footprints: &FootprintIndex,
+    passages: &PassageIndex,
 ) -> Vec<Vec2> {
     let mut twins = Vec::new();
     let minimum_squared = ENTRANCE_MIN_SPACING * ENTRANCE_MIN_SPACING;
@@ -460,6 +516,12 @@ fn through_doors(
             continue;
         }
         if footprints.is_covered(exit + outward * entrance_clearance(), index) {
+            continue;
+        }
+        // дворовый конец арки — та же дыра в стене, что и уличный, и
+        // проверять его надо отдельно: сюда луч приходит от двери, которая
+        // сама через `place_along` уже прошла
+        if passages.blocks(exit) {
             continue;
         }
         if doors

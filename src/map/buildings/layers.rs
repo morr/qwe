@@ -8,7 +8,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{
-    ArchOpening, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
+    ArchOpening, WallCells, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
 use super::material::{
@@ -104,17 +104,32 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
 /// панель шире или уже трёх метров с небольшим, зато их целое число.
 const PANEL_WIDTH: f32 = 3.2;
 
+/// Сколько панелей встанет на стену такой длины — целое число, и оно же
+/// делитель её собственной сетки: панель это `length / wall_columns(length)`.
+///
+/// Наружу — ради проверки: тест меряет клетку тем же делителем, что и стена
+/// (`WallSpan::columns`), и убеждается, что ни один проём не разрезал её
+/// пополам. Самим заплатам вокруг проёмов функция не нужна — им размер клетки
+/// приезжает готовым в [`WallCells`].
+pub(super) fn wall_columns(length: f32) -> f32 {
+    (length / PANEL_WIDTH).round().max(1.0)
+}
+
 /// Одна стена дома до того, как из неё сделали [`WallFrame`]: отрезок
 /// основания, подъём и число этажей. Четвёрка ездит вместе через [`wall_frame`],
 /// [`push_doors`] и оба цикла [`push_house_with_arches`], и метрика стены —
 /// сколько на ней панелей и каким посевом она разыграна — считается по ней же,
 /// а не собирается заново у каждого, кому понадобилась.
-struct WallSpan {
+///
+/// Основание с подъёмом ездят и к `arches::push_wall_with_openings` — стена,
+/// в которой он режет проёмы, это ровно эта тройка, и разбирать её по
+/// одноимённым параметрам значило бы дать перепутать их местами.
+pub(super) struct WallSpan {
     /// Начало грани; от неё же и посев ([`WallSpan::seed`]).
-    a: Vec2,
-    b: Vec2,
+    pub(super) a: Vec2,
+    pub(super) b: Vec2,
     /// Подъём: вектор от основания стены до карниза (`extrusion_lift`).
-    lift: Vec2,
+    pub(super) lift: Vec2,
     /// Этажей в доме — целое число ([`storeys_of`]).
     storeys: f32,
     /// Длинная ось плана этого дома — единственное, что стена знает про
@@ -126,7 +141,7 @@ struct WallSpan {
 }
 
 impl WallSpan {
-    fn new(a: Vec2, b: Vec2, lift: Vec2, storeys: f32, long_axis: Option<Vec2>) -> Self {
+    pub(super) fn new(a: Vec2, b: Vec2, lift: Vec2, storeys: f32, long_axis: Option<Vec2>) -> Self {
         Self {
             a,
             b,
@@ -162,7 +177,7 @@ impl WallSpan {
 
     /// Сколько панелей встанет на эту стену — целое число ([`wall_frame`]).
     fn columns(&self) -> f32 {
-        (self.length() / PANEL_WIDTH).round().max(1.0)
+        wall_columns(self.length())
     }
 
     /// Посев этой стены, `[0, 1)` — от её начала ([`seed_from_point`]). Одним
@@ -209,6 +224,22 @@ fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<W
         true => frame,
         false => frame.marked(WallMark::Blank),
     })
+}
+
+/// Клетки этой стены — всё, что нужно, чтобы выкроить в ней проём: рама,
+/// заплата и размер клетки по обеим осям.
+///
+/// Арке этого хватает целиком ([`push_wall_with_openings`]), и арифметика
+/// панелей с этажами остаётся здесь: [`WallSpan`] знает и то и другое, а
+/// `arches` — только грань, в которой режет.
+fn wall_cells(building: &PolyArea, look: &WallLook, span: &WallSpan) -> WallCells {
+    let frame = wall_frame(building, look, span);
+    WallCells {
+        frame,
+        patch: frame.map(|frame| frame.marked(WallMark::Solid)),
+        panel: span.length() / span.columns(),
+        storey: span.lift / (span.storeys + PARAPET_CELLS),
+    }
 }
 
 /// Сколько этажей в этой стене — от **настоящей** высоты дома, а не от
@@ -407,6 +438,7 @@ fn push_doors(
     building: &PolyArea,
     wall: &WallLook,
     span: &WallSpan,
+    cells: &WallCells,
     openings: &[ArchOpening],
     color: LinearRgba,
 ) {
@@ -421,18 +453,13 @@ fn push_doors(
     if length < size.x {
         return;
     }
-    let columns = span.columns();
-    let panel = length / columns;
-    // клетка стены по вертикали — этаж; выше него дверь не поднимается
-    let storey_up = span.lift / (span.storeys + PARAPET_CELLS);
-    let door_up = storey_up * (size.y / STOREY_HEIGHT).min(1.0);
+    // клетки стены у двери и у арки одни и те же: панель вдоль основания,
+    // этаж вверх по подъёму, и та же заплата «без проёмов». Выше этажа дверь
+    // не поднимается
+    let door_up = cells.storey * (size.y / STOREY_HEIGHT).min(1.0);
     let seed = span.seed();
+    let patch = cells.patch;
 
-    // заплата у всех дверей этой стены одна: рама самой стены, помеченная
-    // «без проёмов». От двери она не зависит, а `push_doors` зовут на каждую
-    // грань силуэта — считать её внутри цикла значило бы пересчитывать посев
-    // и раскладку балконов на каждый вход
-    let patch = wall_frame(building, wall, span).map(|frame| frame.marked(WallMark::Solid));
     // номер этой грани в кольце — по нему и решается, чья дверь
     let mine = building
         .outer
@@ -464,11 +491,12 @@ fn push_doors(
             continue;
         }
 
-        let first = ((center - half) / panel).floor().max(0.0) * panel;
-        let last = (((center + half) / panel).ceil().min(columns)) * panel;
+        // клетки, которые задело полотно, достаются ему целиком — тем же
+        // счётом, каким кроится заплата арки ([`WallCells::block`])
+        let (first, last) = cells.block(center - half, center + half, length);
         let (p0, p1) = (span.a + along * first, span.a + along * last);
         builder.set_wall(patch);
-        builder.push_quad([p0, p1, p1 + storey_up, p0 + storey_up], color);
+        builder.push_quad([p0, p1, p1 + cells.storey, p0 + cells.storey], color);
 
         let (d0, d1) = (
             span.a + along * (center - half),
@@ -943,11 +971,11 @@ fn push_house_with_arches(
         let (a, b) = walls[index];
         let span = WallSpan::new(a, b, lift, storeys, long_axis);
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-        builder.set_wall(wall_frame(building, wall, &span));
-        push_wall_with_openings(builder, a, b, lift, openings, bottom, top);
+        let cells = wall_cells(building, wall, &span);
+        push_wall_with_openings(builder, &span, &cells, openings, bottom, top);
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
-        push_doors(builder, building, wall, &span, openings, bottom);
+        push_doors(builder, building, wall, &span, &cells, openings, bottom);
     }
     builder.set_roof(None);
 
