@@ -245,6 +245,7 @@ fn note(kind: WallKind) -> &'static str {
         WallKind::Plaster => "гладкая, мелкие окна, балконов нет",
         WallKind::Shopfront => "лента остекления, витрина на первом этаже",
         WallKind::Shed => "рёбра профлиста, окно под карнизом, ворота внизу",
+        WallKind::GarageDoors => "створка в каждом боксе, окон нет вовсе",
     }
 }
 
@@ -254,14 +255,18 @@ fn use_label(building_use: BuildingUse) -> &'static str {
         BuildingUse::Apartments => "Многоквартирный",
         BuildingUse::Commercial => "Торговля, офис",
         BuildingUse::Industrial => "Промзона, склад",
-        BuildingUse::Garage => "Гараж, сарай",
+        // кооператив целиком и одиночный бокс облицованы одинаково: рядами
+        // боксов ГСК делает кровля, а не стена
+        BuildingUse::Garage | BuildingUse::GarageBlock => "Гараж, сарай",
         BuildingUse::Church => "Храм",
         BuildingUse::Public => "Общественное",
         BuildingUse::Other => "building=yes",
     }
 }
 
-/// Все назначения по порядку — исчерпывающий список, тот же, что у парсера.
+/// Все назначения по порядку — тот же список, что у парсера, минус
+/// `GarageBlock`: облицовку он берёт ту же, что одиночный бокс, и отдельный
+/// ряд вышел бы копией соседнего.
 const USES: [BuildingUse; 8] = [
     BuildingUse::House,
     BuildingUse::Apartments,

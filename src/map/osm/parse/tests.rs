@@ -774,6 +774,7 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
         .area(&[("building", "house")], square(CENTER, HALF))
         .area(&[("building", "apartments")], square(CENTER, HALF))
         .area(&[("building", "garages")], square(CENTER, HALF))
+        .area(&[("building", "garage")], square(CENTER, HALF))
         .area(
             &[("building", "yes"), ("amenity", "school")],
             square(CENTER, HALF),
@@ -803,6 +804,8 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
         [
             BuildingUse::House,
             BuildingUse::Apartments,
+            // множественное число — кооператив целиком, единственное — бокс
+            BuildingUse::GarageBlock,
             BuildingUse::Garage,
             BuildingUse::Public,
             // значение вне словаря отдаёт слово `amenity` так же, как `yes`

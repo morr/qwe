@@ -180,9 +180,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   p90 15 m; it is now median 8 m, p90 15 m, and the mix is printed in the `building
   meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
-  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | Church | Public |
-  Other`, from `building=*` and — whenever that value is outside the vocabulary, `yes`
-  above all — from `amenity=*` on the same outline. Each class
+  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
+  Church | Public | Other`, from `building=*` and — whenever that value is outside the
+  vocabulary, `yes` above all — from `amenity=*` on the same outline.
+  **`garages` (plural) is its own class**:
+  OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
+  it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
@@ -204,17 +207,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
   Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
   half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded.
+  seeded. (`GarageRow` and `GarageBlock` are two more variants outside that choice, and
+  outside `ALL` with it: they are picked by the *geometry* of a run of garages rather than
+  by use — see **Garage rows** below.)
   The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, and the per-use *wall* colours with them: a wall is picked the same way a
   roof is (**`WallKind`**, below) — and the texture from
   **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
   mean what the code says they mean: a roof's **long axis**, one value for the whole
-  building, or a wall's own **cell coordinates**, different at every vertex — see
-  `WallFrame` below; the code is **one dictionary for both** — `0` is *no texture* and by
-  now only roof clutter, which rides in the same mesh, `1…6` are the roofings above and
-  `7…11` the wall claddings of `WallKind`, a gable carrying its wall's code as the top of
+  building, or the face's own **cell coordinates**, different at every vertex — a wall's
+  panel and storey, a garage ribbon's bay and row; see `WallFrame` below; the code is **one
+  dictionary for all of them** — `0` is *no texture* and by now only roof clutter, which
+  rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs,
+  `9…14` the wall claddings of `WallKind` and `15` a door leaf, a gable carrying its
+  wall's code as the top of
   the end wall under it). **Roof age** is the
   second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
@@ -241,7 +248,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
   **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
   Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
-  the slot by the building's seed) except that **height is consulted first**: anything under
+  the slot by the building's seed), plus `GarageDoors`, which no table reaches: it is
+  picked by the **geometry of a garage run**, like that run's roofing — see **Garage
+  rows**. Otherwise **height is consulted first**: anything under
   `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`, `Church`,
   `Industrial` keep their own tables) drops into the low-rise table, because a low
   building is neither a panel block nor a curtain wall. The cladding decides three things at
@@ -253,7 +262,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
   above it — and stands on a dark **plinth** band.
   **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `12`) — a **patch** over the cells
+  (`layers::push_doors` over `PolyArea::entrances`, code `15`) — a **patch** over the cells
   the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
   **leaf** itself on the entrance point, in a frame of its own that maps the opening to
   `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
@@ -306,6 +315,90 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
   per-building body of the 2.5D layer, walls included, because a roof shape does not read
   without them. Detail in the `osm-map` skill.
+- **Garage rows** (`map/buildings/garages.rs`) — a cooperative drawn as **rows of boxes**,
+  not as twenty little houses and not as one giant shed. Garage footprints whose
+  **outlines** come within `JOIN_GAP` (2 m) of each other are stitched into a **run**
+  (union-find over a spatial hash, the bounding boxes only a prefilter — measuring the gap
+  between boxes instead joined ten parallel ribbons of one ГСК across their drives, and a
+  run whose axis is 7° off its ribbons' puts every seam askew to their walls). A run hands
+  every one of its members **one seed** —
+  the shared seed is the whole trick: with it the roofs stop being separately coloured
+  and separately ribbed.
+
+  **The geometry, though, belongs to the piece, not to the run** (`GarageRect`): each
+  outline is **cut into near-rectangular pieces** (`split_rings`), and the axis, the cell
+  grid and a share of the roof are each piece's own. An outline is cut at a **reflex
+  vertex, along its own wall** (a chord to the nearest edge, never an infinite line —
+  that would shred a comb into strips joined by zero-width bridges), and only while the
+  piece fills its `min_area_rect` worse than `RECT_FILL` 0.90 and a cut improves it. The
+  pieces tile the outline exactly, so the roof is laid one piece at a time and nothing has
+  to be clipped or glued. This is what an L-shaped ГСК needs: its own `min_area_rect` is
+  80 % empty, so one axis for the whole letter stood askew to the walls of both wings, its
+  aisles ran across the letter, and the ribbon/cooperative thresholds were measured on a
+  rectangle that was mostly air.
+
+  **A piece whose own shape does not read as a garage is answered by whether the outline
+  was cut.** An uncut one is a 3 × 6 box in a stitched ribbon: it reads as a ribbon only
+  together with its neighbours, so it takes their grid — that is what a run is for, and
+  its own long axis would run *across* the ribbon it stands in. An offcut of a cut outline
+  — a four-metre tooth of a comb, a wedge beside a wing — gets **no garage drawn on it at
+  all** (`GarageRect::plain`): no bay comb on its roof, no gates on its walls, just
+  corrugated sheet in the run's own colour. There is nowhere to get an axis for a
+  near-square scrap, and a borrowed one turns its comb across its own walls and cuts the
+  end gates in half. A piece that does read as a garage is then one of two things:
+  - a **ribbon** (`RoofKind::GarageRow`) — at least `ROW_MIN_LENGTH` 12 m long and
+    `ROW_MIN_ASPECT` 2.2 times longer than wide. The shader draws a **seam on every bay
+    boundary**, with its own paint tone inside each bay;
+  - a **cooperative** (`RoofKind::GarageBlock`) — a `BuildingUse::GarageBlock` piece at
+    least `BLOCK_MIN_WIDTH` 14 m wide and `BLOCK_MIN_AREA` 400 m² in area, i.e. wide
+    enough to hold rows *and* aisles. It gets the same bay seams plus a **darkened aisle
+    on every row boundary**. The aisle is shading, not a hole cut in the roof — cutting it
+    for real would mean a boolean on the outline and would disagree with the walls and the
+    shadow.
+
+  Whether the *run* is a garage at all is still decided for the group as a whole (a
+  stitched ribbon of plain boxes reads as a ribbon only together) **or** by any one of its
+  pieces (a letter Г reads only by its wings).
+
+  **The wall of a run is the same thing said from the side** — cladding
+  `WallKind::GarageDoors` (`layers::wall_of_run`): a **gate in every cell**, the cell being
+  the bay rather than the 3.2 m panel, so a gate stands under its own roof seam. It is as
+  wide as a car and nearly as tall as the wall, starts at the ground, and has no window and
+  no balcony beside it; the OSM-entrance leaf is skipped there, the gates already being
+  every door this building has. Without it a ribbon wore the ordinary tables — a 75 m ГСК
+  came out a brick apartment wall with two rows of windows and three подъезд doors.
+  **Gates go only on the walls running along their piece's axis** (`layers::garage_cells`):
+  you drive in from the drive, and the cross wall is a party wall. The end is measured in
+  the piece's **rows** instead of its bays and marked `WallMark::Solid`, i.e. no openings
+  at all. Nothing could say this before the cut: cladding is chosen for a whole
+  building, so a gate stood on the 8 m end too, two of them meeting at the corner.
+
+  **A garage wall is measured by its piece's bay, not by the constant `BAY`**, so a gate
+  stands under its own roof seam by construction rather than by coincidence: the wall of a
+  piece is as long as the piece, so the same pitch from the same corner gives the same
+  boundaries. The *phase* is deliberately not taken from the piece — the wall still holds
+  a whole number of cells that end on its own corners, as every other wall does, because a
+  wall sitting on the piece's phase begins and ends mid-cell and its end gates come out
+  sliced in half. For the same reason the visible walls of a cut outline are taken **piece
+  by piece** (`layers::garage_walls`, the chord itself excluded — it is inside the
+  building): a chord cuts an outline edge in two, and one wall cannot carry two pieces'
+  grids.
+
+  **The grid is the piece's own, in whole cells** — the same construction as a wall's
+  (`WallFrame::run`, `layers::garage_frame`): the bay is the piece's length over
+  `floor(length / BAY 3.9 m — the widest car the game draws plus its open doors and a
+  pier)` and the row its width over `floor(width / ROW_PITCH 18 m =
+  two 6 m rows back to back + a 6 m drive)`, so a seam lands on both ends of the ribbon and
+  an aisle on both edges of the blob, and no bay is left cut at a end.
+  **Down, not to the nearest**: rounding up makes the bay *narrower* than the measure —
+  by a third at a length just over one and a half bays, 2.6 m instead of 3.9 — and neither
+  a car nor the gate drawn above it fits such a cell. The remainder is spread evenly over
+  **all** the bays of that piece rather than left to the end one; a row of identical gates
+  is what a ГСК is read by. The metres stay on
+  the CPU: the shader takes `fract` of what the vertex carries, so `roof.wgsl` mirrors no
+  pitch at all. No new
+  geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
+  refused on both (no penthouse, no vent, no chimney).
 - **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
   penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
   industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own

@@ -11,15 +11,17 @@ use super::arches::{
     ArchOpening, WallCells, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
+use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs, point_to_segment};
 use super::material::{
-    DOOR_CODE, RoofLook, WallKind, WallLook, building_seed, roof_look, wall_look,
+    DOOR_CODE, RoofKind, RoofLook, WallKind, WallLook, building_seed, roof_look, run_kind,
+    run_look, run_wall_look, wall_look,
 };
 use super::order::{draw_order, wall_order};
 use super::roofs::{HipRoof, RoofShape, Roofing, min_area_rect, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, WallFrame, WallMark};
+use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
 use crate::map::seed::seed_from_point;
@@ -104,15 +106,28 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
 /// панель шире или уже трёх метров с небольшим, зато их целое число.
 const PANEL_WIDTH: f32 = 3.2;
 
-/// Сколько панелей встанет на стену такой длины — целое число, и оно же
-/// делитель её собственной сетки: панель это `length / wall_columns(length)`.
+/// Ширина ячейки стены, м, по облицовке. У всех она панельная, у гаражного
+/// ряда — **бокс** ([`garages::BAY`]): ворота стоят по одной на бокс, и мерить
+/// их стену панелями значило бы разойтись с гребёнкой боксов на её же кровле.
+fn cell_width(kind: WallKind) -> f32 {
+    match kind {
+        WallKind::GarageDoors => BAY,
+        _ => PANEL_WIDTH,
+    }
+}
+
+/// Сколько ячеек встанет на стену такой длины — целое число, и оно же делитель
+/// её собственной сетки: ячейка это `length / wall_columns(length, kind)`.
+/// Ширина ячейки — по облицовке ([`cell_width`]), поэтому у гаражного ряда
+/// счёт идёт боксами, и тот же счёт уезжает в [`WallCells::panel`]: заплаты
+/// вокруг арок и дверей кроятся ровно тем же шагом, что и ворота.
 ///
 /// Наружу — ради проверки: тест меряет клетку тем же делителем, что и стена
 /// (`WallSpan::columns`), и убеждается, что ни один проём не разрезал её
 /// пополам. Самим заплатам вокруг проёмов функция не нужна — им размер клетки
 /// приезжает готовым в [`WallCells`].
-pub(super) fn wall_columns(length: f32) -> f32 {
-    (length / PANEL_WIDTH).round().max(1.0)
+pub(super) fn wall_columns(length: f32, kind: WallKind) -> f32 {
+    (length / cell_width(kind)).round().max(1.0)
 }
 
 /// Одна стена дома до того, как из неё сделали [`WallFrame`]: отрезок
@@ -175,9 +190,10 @@ impl WallSpan {
         along.dot(axis).abs() <= GABLE_END_COS_MAX
     }
 
-    /// Сколько панелей встанет на эту стену — целое число ([`wall_frame`]).
-    fn columns(&self) -> f32 {
-        wall_columns(self.length())
+    /// Сколько ячеек встанет на эту стену — целое число ([`wall_frame`]);
+    /// ширина ячейки у гаражного ряда своя ([`cell_width`]).
+    fn columns(&self, kind: WallKind) -> f32 {
+        wall_columns(self.length(), kind)
     }
 
     /// Посев этой стены, `[0, 1)` — от её начала ([`seed_from_point`]). Одним
@@ -209,7 +225,7 @@ impl WallSpan {
 /// бывает панельного торца и кирпичного фасада, и его код едет в тот же слот
 /// атрибута, где у кровли стоит её материал.
 fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<WallFrame> {
-    let columns = span.columns();
+    let columns = span.columns(look.kind);
     let frame = WallFrame::new(
         span.a,
         span.b,
@@ -232,14 +248,132 @@ fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<W
 /// Арке этого хватает целиком ([`push_wall_with_openings`]), и арифметика
 /// панелей с этажами остаётся здесь: [`WallSpan`] знает и то и другое, а
 /// `arches` — только грань, в которой режет.
+///
+/// Ячейка — по облицовке ([`cell_width`]), а не всегда панель: у гаражного ряда
+/// это бокс прогона, и заплата вокруг проёма кроится тем же счётом, каким на
+/// этой стене стоят ворота.
 fn wall_cells(building: &PolyArea, look: &WallLook, span: &WallSpan) -> WallCells {
     let frame = wall_frame(building, look, span);
     WallCells {
         frame,
         patch: frame.map(|frame| frame.marked(WallMark::Solid)),
-        panel: span.length() / span.columns(),
+        panel: span.length() / span.columns(look.kind),
         storey: span.lift / (span.storeys + PARAPET_CELLS),
     }
+}
+
+/// Видимые стены гаражного контура — **по куску за раз**, а не по целому
+/// кольцу.
+///
+/// Разрез идёт хордой, и она рассекает ребро контура: западная стена буквы Г
+/// длиной в 52 м лежит на двух кусках сразу, по 8 и 44 м. Целой ей достаётся
+/// сетка одного из них, и на второй половине ворота уезжают от гребёнки над
+/// ними — та самая ошибка, ради которой стена и села на сетку куска. Кусок
+/// же уже несёт своё кольцо, разрезанное там, где надо: его силуэт и есть
+/// список стен, каждая со своим куском.
+///
+/// Хорда стеной не считается: она внутри дома, и снаружи её нет. Отличается
+/// она ровно тем, что не лежит на исходном контуре.
+fn garage_walls(run: &GarageRun, outer: &[Vec2], facing: Vec2) -> Vec<(Vec2, Vec2)> {
+    run.rects
+        .iter()
+        .flat_map(|rect| {
+            silhouette_edges(&rect.ring, facing)
+                .into_iter()
+                .filter(|(a, b)| on_ring(outer, (*a + *b) / 2.0))
+        })
+        .collect()
+}
+
+/// Лежит ли точка на кольце — этим настоящая стена и отличается от хорды
+/// разреза.
+fn on_ring(ring: &[Vec2], point: Vec2) -> bool {
+    let count = ring.len();
+    (0..count).any(|at| point_to_segment(point, ring[at], ring[(at + 1) % count]) < 1e-3)
+}
+
+/// Клетки гаражной стены — **шагом своего куска**, а не общей меркой [`BAY`].
+///
+/// Ворота обязаны стоять под своим же швом кровли, и до сих пор это держалось
+/// на совпадении: кровля считается шагом куска (`bay`), стена — шагом
+/// `длина / round(длина / BAY)`. Две сетки сходятся только там, где длина
+/// стены равна длине куска; у разрезанного контура стена вдвое короче, и
+/// гребёнка на кровле разъезжалась с воротами под ней тем сильнее, чем дальше
+/// от начала.
+///
+/// Шаг берётся у куска, **фаза — нет**: клеток на стене целое число и
+/// кончаются они ровно на её углах, как у всякой другой стены ([`wall_frame`]).
+/// Посаженная на фазу куска стена начинается и кончается посреди клетки, и
+/// крайние ворота выходят обрезанными — по половине створки на каждом зубе
+/// гребёнки. Длинному фасаду фаза и не нужна: его длина и есть длина куска,
+/// поэтому тот же шаг от того же угла даёт те же границы.
+///
+/// Поперечная стена — **торец**: ворот на ней нет ([`WallMark::Solid`]), и
+/// меряется она рядами, а не боксами. У ленты ряд один на всю ширину, так что
+/// торец — одна клетка без единого шва внутри; у кооператива на нём видны те
+/// же границы рядов, что идут по кровле.
+///
+/// `None` — стена не гаражная, или кусок к ней не повёрнут (косая грань
+/// контура): тогда считает [`wall_cells`], как считал.
+fn garage_cells(
+    building: &PolyArea,
+    look: &RoofLook,
+    wall: &WallLook,
+    span: &WallSpan,
+) -> Option<WallCells> {
+    if wall.kind != WallKind::GarageDoors {
+        return None;
+    }
+    let run = look.run.as_ref()?;
+    let along = (span.b - span.a).try_normalize()?;
+    let rect = run.holder((span.a + span.b) / 2.0);
+    // кривой обрезок: ворот на нём не рисуется вовсе — ни целых, ни половинок
+    if rect.plain {
+        let cells = wall_cells(building, wall, span);
+        return Some(WallCells {
+            frame: cells.patch,
+            ..cells
+        });
+    }
+    let facade = rect.faces_the_drive(along);
+    let (direction, pitch) = match facade {
+        true => (rect.axis, rect.bay),
+        false => (Vec2::new(-rect.axis.y, rect.axis.x), rect.row),
+    };
+    // косая грань не лежит ни вдоль, ни поперёк — её сетке неоткуда взяться
+    let turn = along.dot(direction);
+    if turn.abs() < FACADE_COS || pitch <= 0.0 {
+        return None;
+    }
+    // Ячеек на стене — целое число, и кончаются они ровно на её углах. Фаза
+    // куска сюда не едет намеренно: посаженная на неё стена начинается и
+    // кончается посреди ячейки, и крайние ворота выходили обрезанными с обоих
+    // концов — по половинке створки на каждом зубе гребёнки. Целое число, как
+    // у всякой другой стены (`wall_frame`); от куска берётся **шаг**, и этого
+    // достаточно: у длинного фасада его длина и есть длина куска, так что
+    // гребёнка над ним идёт тем же шагом от того же угла.
+    let columns = (span.length() / pitch).round().max(1.0);
+    let frame = WallFrame::new(
+        span.a,
+        span.b,
+        span.lift,
+        columns,
+        span.storeys,
+        wall.kind.code(),
+        span.seed(),
+    )?;
+    // балконов на гараже не бывает ни на фасаде, ни на торце; торцу вдобавок
+    // не полагается ни одного проёма
+    let patch = frame.marked(WallMark::Solid);
+    Some(WallCells {
+        frame: Some(match facade {
+            true => frame.marked(WallMark::Blank),
+            false => patch,
+        }),
+        patch: Some(patch),
+        panel: span.length() / columns,
+        storey: span.lift / (span.storeys + PARAPET_CELLS),
+    })
 }
 
 /// Сколько этажей в этой стене — от **настоящей** высоты дома, а не от
@@ -360,6 +494,10 @@ pub(super) fn door_size(kind: WallKind) -> Vec2 {
         WallKind::Plaster => Vec2::new(1.3, 2.4),
         WallKind::Shopfront => Vec2::new(2.4, 3.0),
         WallKind::Shed => Vec2::new(3.2, 2.9),
+        // ворота рисует сама облицовка, по створке на бокс; сюда эта стена не
+        // доходит ([`push_doors`]), и размер тут только чтобы `match` остался
+        // исчерпывающим
+        WallKind::GarageDoors => Vec2::new(3.0, 2.5),
     }
 }
 
@@ -442,7 +580,10 @@ fn push_doors(
     openings: &[ArchOpening],
     color: LinearRgba,
 ) {
-    if building.entrances.is_empty() {
+    // У гаражного ряда вход в каждом боксе, и рисует их сама облицовка —
+    // отдельное полотно по входу из OSM встало бы поверх створки соседним
+    // прямоугольником другого размера.
+    if building.entrances.is_empty() || wall.kind == WallKind::GarageDoors {
         return;
     }
     let length = span.length();
@@ -543,6 +684,17 @@ fn ridge_of(roof: &super::roofs::GableRoof) -> (Vec2, Vec2) {
     (near, far)
 }
 
+/// Кровля этого дома: у бокса, вошедшего в гаражный прогон, она берётся
+/// **от прогона**, а не от него самого. В этом весь приём: общий посев и
+/// общая ось превращают двадцать домиков в одну ленту, а по-своему посеянный
+/// бокс красится и ребрится сам по себе.
+fn look_of(building: &PolyArea, run: Option<&GarageRun>) -> RoofLook {
+    match run {
+        Some(run) => run_look(run),
+        None => roof_look(building),
+    }
+}
+
 /// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
 /// материала. Ровно это игра кладёт на всякий дом без скатной крыши — и в
 /// плоских режимах, где `outer` это сам контур, и в 2.5D, где он уже поднят
@@ -559,9 +711,63 @@ pub(super) fn push_flat_roof(
     outer: &[Vec2],
     holes: &[Vec<Vec2>],
     color: Srgba,
+    lift: Vec2,
 ) {
-    builder.set_roof(Some(look.frame));
+    let Some(run) = look.run.as_ref() else {
+        builder.set_roof(Some(look.frame));
+        builder.push_polygon(outer, holes, color.into());
+        return;
+    };
+    // гаражный контур считается в ячейках, как стена: рамка у каждой вершины
+    // своя, и мировая точка с осью шейдеру не нужны. Ячейки эти — **куска**,
+    // а не дома, поэтому и кровля кладётся по куску за раз: куски покрывают
+    // контур целиком и без нахлёста
+    if run.rects.len() > 1 {
+        for rect in &run.rects {
+            match rect.plain {
+                // кривой обрезок: гребёнки боксов на нём нет вовсе, только
+                // профлист того же цвета, что у соседей по контуру
+                true => builder.set_roof(Some(plain_garage_roof(look))),
+                false => builder.set_wall(garage_frame(rect, look.frame.seed, lift)),
+            }
+            let ring: Vec<Vec2> = rect.ring.iter().map(|at| *at + lift).collect();
+            builder.push_polygon(&ring, &[], color.into());
+        }
+        return;
+    }
+    // один кусок — значит резать было нечего, и контур кладётся как пришёл:
+    // с дворами, которых у куска не бывает
+    builder.set_wall(garage_frame(run.main(), look.frame.seed, lift));
     builder.push_polygon(outer, holes, color.into());
+}
+
+/// Кровля куска, на котором гаража **не рисуется**: тот же профлист, каким
+/// крыт гараж, в том же цвете и с той же фазой — но обычной рамкой по мировой
+/// точке, без единой ячейки бокса. Так и выглядит зуб гребёнки в четыре
+/// метра: кусок кровли, а не отдельный гараж поперёк соседей.
+fn plain_garage_roof(look: &RoofLook) -> Roof {
+    Roof {
+        axis: look.frame.axis,
+        material: RoofKind::Corrugated.code(),
+        seed: look.frame.seed,
+    }
+}
+
+/// Рама **гаражного куска** для шейдера: номер бокса вдоль него и номер ряда
+/// поперёк, оба целые на торцах ([`WallFrame::run`]).
+///
+/// `lift` — сдвиг, с которым кровля этого дома уже легла в меш (в плоских
+/// режимах ноль, в 2.5D подъём стен): рама обязана считаться в той же
+/// системе, в какой лежат вершины, иначе швы уедут от дома.
+fn garage_frame(rect: &GarageRect, seed: f32, lift: Vec2) -> Option<WallFrame> {
+    WallFrame::run(
+        rect.origin + lift,
+        rect.axis,
+        rect.bay,
+        rect.row,
+        run_kind(rect.block).code(),
+        seed,
+    )
 }
 
 /// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
@@ -590,6 +796,7 @@ pub(super) fn facade_and_roof_builders(
     detail: RoofDetail,
 ) -> (MeshBuilder, MeshBuilder) {
     let arches = arches_by_building(buildings, passages);
+    let runs = garage_runs(buildings);
     let mut facades = MeshBuilder::default();
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
@@ -618,7 +825,7 @@ pub(super) fn facade_and_roof_builders(
         }
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
-        let look = roof_look(building);
+        let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         let mut items = Vec::new();
         match roofing(
@@ -655,7 +862,14 @@ pub(super) fn facade_and_roof_builders(
                 }
             }
             Roofing::Flat => {
-                push_flat_roof(&mut roofs, &look, &building.outer, &building.holes, color);
+                push_flat_roof(
+                    &mut roofs,
+                    &look,
+                    &building.outer,
+                    &building.holes,
+                    color,
+                    Vec2::ZERO,
+                );
                 if detail.clutter {
                     items = flat_roof_items(building, &look, Vec2::ZERO);
                 }
@@ -864,13 +1078,14 @@ pub(super) fn extrusion_builder(
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
     let order = draw_order(buildings, lean);
+    let runs = garage_runs(buildings);
 
     // стены и крыши едут одним мешем (painter's порядок общий), так что
     // рамку кровли несёт и он: у стен она нулевая, у крыш своя
     let mut builder = MeshBuilder::with_roof_coords();
     for index in order {
         let building = &buildings[index];
-        let look = roof_look(building);
+        let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
@@ -885,7 +1100,7 @@ pub(super) fn extrusion_builder(
             &mut builder,
             building,
             &look,
-            &wall_of(building),
+            &wall_of_run(building, runs.get(&index)),
             color,
             RoofShape::Auto,
             detail.clutter,
@@ -929,6 +1144,18 @@ pub fn wall_of(building: &PolyArea) -> WallLook {
     wall_look(building, storeys_of(building))
 }
 
+/// То же, но с оглядкой на гаражный прогон: бокс, вошедший в него, одет в
+/// **ворота** ([`WallKind::GarageDoors`]) — по створке на ячейку, и ячейка тут
+/// его собственная, размером с бокс. Кровля этого дома берётся от прогона
+/// ровно так же ([`look_of`]), и обе стороны коробки говорят тогда одно и то
+/// же: сверху гребёнка боксов, сбоку ряд ворот.
+fn wall_of_run(building: &PolyArea, run: Option<&GarageRun>) -> WallLook {
+    match run {
+        Some(run) => run_wall_look(run),
+        None => wall_of(building),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_house_with_arches(
     builder: &mut MeshBuilder,
@@ -961,7 +1188,13 @@ fn push_house_with_arches(
     // своей дальней стороны — ту, чья наружная (для кольца дыры) нормаль
     // смотрит по подъёму
     let seed = building_seed(building);
-    let mut walls = silhouette_edges(&building.outer, -lift_dir);
+    // у разрезанного гаражного контура стены берутся по куску за раз: хорда
+    // разреза рассекает ребро, и целой стене досталась бы сетка одного куска
+    // на обе половины
+    let mut walls = match look.run.as_ref().filter(|run| run.rects.len() > 1) {
+        Some(run) => garage_walls(run, &building.outer, -lift_dir),
+        None => silhouette_edges(&building.outer, -lift_dir),
+    };
     for hole in &building.holes {
         walls.extend(silhouette_edges(hole, lift_dir));
     }
@@ -971,7 +1204,10 @@ fn push_house_with_arches(
         let (a, b) = walls[index];
         let span = WallSpan::new(a, b, lift, storeys, long_axis);
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
-        let cells = wall_cells(building, wall, &span);
+        // гаражная стена считается в ячейках своего куска: ворота обязаны
+        // встать под собственный шов кровли, а на торце их нет вовсе
+        let cells = garage_cells(building, look, wall, &span)
+            .unwrap_or_else(|| wall_cells(building, wall, &span));
         push_wall_with_openings(builder, &span, &cells, openings, bottom, top);
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
@@ -1030,7 +1266,7 @@ fn push_house_with_arches(
                 .iter()
                 .map(|hole| hole.iter().map(|p| *p + lift).collect())
                 .collect();
-            push_flat_roof(builder, look, &roof_outer, &roof_holes, color);
+            push_flat_roof(builder, look, &roof_outer, &roof_holes, color, lift);
             if clutter {
                 let items = flat_roof_items(building, look, lift);
                 push_items(builder, &items, Some(lean), color);

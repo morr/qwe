@@ -36,6 +36,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
+use super::garages::GarageRun;
 use super::roofs::min_area_rect;
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
@@ -64,11 +65,20 @@ pub enum RoofKind {
     Tile,
     /// ПВХ-мембрана: светлая, почти ровная, широкие полотнища. Новые ТЦ.
     Membrane,
+    /// Лента гаражного кооператива: тот же профлист, но со швом на каждом
+    /// боксе и своим тоном краски внутри шва. Ставится не по назначению, а
+    /// по геометрии прогона — см. [`super::garages`].
+    GarageRow,
+    /// Кооператив целиком одним контуром: та же лента, но с **проездами**
+    /// между парами рядов — на снимке ГСК это сетка, а не полоса.
+    GarageBlock,
 }
 
 impl RoofKind {
-    /// Исчерпывающий список материалов — по нему идёт витрина
-    /// `roof_gallery`.
+    /// Исчерпывающий список **материалов** — по нему идёт витрина
+    /// `roof_gallery`. Гаражных лент тут нет: их выбирает не назначение дома
+    /// с посевом, а геометрия прогона ([`super::garages`]), и перебрать их
+    /// витрина всё равно не может.
     pub const ALL: [Self; 6] = [
         Self::Bitumen,
         Self::Gravel,
@@ -81,8 +91,8 @@ impl RoofKind {
     /// Код для [`ATTRIBUTE_ROOF`]; `0` — вершина без фактуры.
     ///
     /// Код **позиционный** — номер варианта плюс единица, — а его зеркало это
-    /// набор констант `roof.wgsl` (`BITUMEN = 1u` … `MEMBRANE = 6u`, дальше
-    /// стены). Значит, вариант можно только дописать в конец: вставка в
+    /// набор констант `roof.wgsl` (`BITUMEN = 1u` … `GARAGE_BLOCK = 8u`,
+    /// дальше стены). Значит, вариант можно только дописать в конец: вставка в
     /// середину молча сдвинет коды всех, кто ниже, и шейдер начнёт класть
     /// чужую фактуру. Коды стен ([`WallKind::code`]) идут следом за последним
     /// кровельным, так что дописанная кровля сдвигает и их — зеркало в
@@ -90,6 +100,12 @@ impl RoofKind {
     pub const fn code(self) -> u32 {
         self as u32 + 1
     }
+
+    /// Сколько кодов занято кровлями. Считается по **последнему варианту**, а
+    /// не по длине [`Self::ALL`], и это не мелочь: гаражные ленты в `ALL` не
+    /// входят, а коды занимают, и стены, отсчитанные от длины списка, легли
+    /// бы прямо на них.
+    pub const CODES: u32 = Self::GarageBlock.code();
 
     pub fn label(self) -> &'static str {
         match self {
@@ -99,6 +115,10 @@ impl RoofKind {
             Self::Corrugated => "Профлист",
             Self::Tile => "Черепица",
             Self::Membrane => "Мембрана",
+            // выбираются по геометрии прогона, а не по назначению, поэтому в
+            // `ALL` их нет и витрина их не перебирает
+            Self::GarageRow => "Гаражная лента",
+            Self::GarageBlock => "Гаражный блок",
         }
     }
 
@@ -113,6 +133,7 @@ impl RoofKind {
             Self::Corrugated => &CORRUGATED_COLORS,
             Self::Tile => &TILE_COLORS,
             Self::Membrane => &MEMBRANE_COLORS,
+            Self::GarageRow | Self::GarageBlock => &GARAGE_ROW_COLORS,
         }
     }
 }
@@ -123,7 +144,8 @@ impl RoofKind {
 /// этой стене балконы.
 ///
 /// Коды продолжают кровельные — один словарь в одном числе атрибута, — а
-/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 7u` … `SHED = 11u`).
+/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `GARAGE_DOORS =
+/// 14u`, за ними `DOOR = 15u`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WallKind {
     /// Панель: межэтажные швы, вертикальные швы плит, окно на панель и
@@ -143,31 +165,44 @@ pub enum WallKind {
     /// Профлист: вертикальные рёбра во всю стену, ленточное окно под
     /// карнизом да ворота внизу. Склад, промка, гаражный ряд.
     Shed,
+    /// Ворота: створка в **каждой** ячейке и ничего больше — ни окна, ни
+    /// балкона. Стена гаражного прогона, и выбирается она не по назначению
+    /// дома, а по геометрии — как и кровля прогона ([`super::garages`]):
+    /// ячейка тут не панель в 3.2 м, а сам бокс, поэтому створка приходится
+    /// ровно под шов на кровле, и ряд ворот с рядом боксов говорят одно и то
+    /// же.
+    GarageDoors,
 }
 
 impl WallKind {
     /// Исчерпывающий список — по нему идёт витрина `wall_gallery`.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Panel,
         Self::Brick,
         Self::Plaster,
         Self::Shopfront,
         Self::Shed,
+        Self::GarageDoors,
     ];
 
     /// Код для [`ATTRIBUTE_ROOF`]: продолжение кровельного словаря, поэтому
-    /// он **выводится** из числа кровельных материалов, а не пишется числом.
-    /// Дописанная кровля сдвинет коды стен — и это правильно: зеркало в
-    /// `roof.wgsl` одно на весь словарь и правится целиком.
+    /// он **выводится** из числа кровельных кодов ([`RoofKind::CODES`]), а не
+    /// пишется числом. Дописанная кровля сдвинет коды стен — и это правильно:
+    /// зеркало в `roof.wgsl` одно на весь словарь и правится целиком.
     pub const fn code(self) -> u32 {
-        RoofKind::ALL.len() as u32 + 1 + self as u32
+        RoofKind::CODES + 1 + self as u32
     }
+
+    /// Сколько кодов занято облицовками — по **последнему** варианту, тем же
+    /// правилом, что и [`RoofKind::CODES`]: от него отсчитывается дверь, и
+    /// дописанная облицовка обязана её подвинуть, а не наехать на неё.
+    pub const CODES: u32 = Self::GarageDoors.code();
 
     /// Стена ли это. Коды приходят из вершинного атрибута числом с плавающей
     /// точкой, и разбирать их порознь в тестах и в шейдере — верный способ
     /// разойтись; вопрос «стена или кровля» задаётся здесь.
     pub fn is_code(code: u32) -> bool {
-        code >= Self::Panel.code() && code <= Self::Shed.code()
+        code >= Self::Panel.code() && code <= Self::CODES
     }
 }
 
@@ -180,7 +215,7 @@ impl WallKind {
 /// `osm::entrances` — там же, где их видит гизмо дверей и куда идут пешки.
 ///
 /// [`WallFrame::opening`]: crate::map::meshing::WallFrame::opening
-pub const DOOR_CODE: u32 = WallKind::Shed.code() + 1;
+pub const DOOR_CODE: u32 = WallKind::CODES + 1;
 
 impl WallKind {
     pub fn label(self) -> &'static str {
@@ -190,6 +225,7 @@ impl WallKind {
             Self::Plaster => "Штукатурка",
             Self::Shopfront => "Витраж",
             Self::Shed => "Профлист",
+            Self::GarageDoors => "Ворота",
         }
     }
 
@@ -202,6 +238,7 @@ impl WallKind {
             Self::Plaster => &PLASTER_WALL_COLORS,
             Self::Shopfront => &SHOPFRONT_WALL_COLORS,
             Self::Shed => &SHED_WALL_COLORS,
+            Self::GarageDoors => &GARAGE_WALL_COLORS,
         }
     }
 }
@@ -258,6 +295,16 @@ const SHED_WALL_COLORS: [Color; 5] = [
     Color::srgb(0.62, 0.60, 0.58),
 ];
 
+/// Стена гаражного прогона: побелка, силикатный кирпич, крашеный простенок
+/// между воротами. Светлее самих створок, которые шейдер кладёт поверх, —
+/// иначе ряд ворот не читается вовсе.
+const GARAGE_WALL_COLORS: [Color; 4] = [
+    Color::srgb(0.74, 0.72, 0.67),
+    Color::srgb(0.70, 0.68, 0.64),
+    Color::srgb(0.72, 0.69, 0.62),
+    Color::srgb(0.66, 0.66, 0.64),
+];
+
 /// Палитры материалов — по несколько правдоподобных цветов на каждый, дом
 /// выбирает свой посевом. Светлота выверена по спутниковому снимку Тулы
 /// **на общем плане**, где фактура уже погашена и от кровли остаётся один
@@ -311,6 +358,19 @@ const MEMBRANE_COLORS: [Color; 3] = [
     Color::srgb(0.80, 0.80, 0.78),
     Color::srgb(0.75, 0.76, 0.76),
     Color::srgb(0.84, 0.84, 0.82),
+];
+/// Гаражная лента: оцинковка, шифер, крашеный суриком профлист — цвет один
+/// на весь кооператив, разнобой боксов кладёт шейдер поверх.
+///
+/// Темнее прочих кровельных палитр на четверть, и это не вкус: на первом
+/// закадровом снимке лента вышла почти белой полосой рядом с асфальтом в
+/// 0.35. Гаражная кровля — это шифер и ржавая оцинковка, то есть тон между
+/// битумом и асфальтом, а не свежий металл.
+const GARAGE_ROW_COLORS: [Color; 4] = [
+    Color::srgb(0.45, 0.45, 0.44),
+    Color::srgb(0.41, 0.39, 0.36),
+    Color::srgb(0.40, 0.30, 0.25),
+    Color::srgb(0.36, 0.39, 0.38),
 ];
 /// Храм остаётся зелёным, как его рисуют на картах, — но теперь это зелёный
 /// **металл**, с фальцем и бликом. Единственная палитра не по материалу:
@@ -414,6 +474,10 @@ pub struct RoofLook {
     pub base: Srgba,
     /// Что уходит в [`ATTRIBUTE_ROOF`] на каждой вершине кровли.
     pub frame: Roof,
+    /// Гаражный прогон, если дом в него вошёл: у ленты кровля считается не по
+    /// мировой точке и оси, а **в ячейках прогона** — по боксу вдоль и ряду
+    /// поперёк, — и рамку каждой вершине даёт он (`layers::garage_frame`).
+    pub(super) run: Option<GarageRun>,
 }
 
 impl RoofLook {
@@ -437,6 +501,7 @@ impl RoofLook {
                 material: kind.code(),
                 seed,
             },
+            run: None,
         }
     }
 }
@@ -485,7 +550,7 @@ fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
         BuildingUse::Apartments => &APARTMENTS_ROOFS,
         BuildingUse::Commercial => &COMMERCIAL_ROOFS,
         BuildingUse::Industrial => &INDUSTRIAL_ROOFS,
-        BuildingUse::Garage => &GARAGE_ROOFS,
+        BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_ROOFS,
         BuildingUse::Church => return RoofKind::Seam,
         BuildingUse::Public => &PUBLIC_ROOFS,
         // `building=yes` — половина города: мелкая коробка это частный дом,
@@ -510,6 +575,71 @@ fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
         return &CHURCH_ROOF_COLORS;
     }
     kind.palette()
+}
+
+/// Кровля гаражного прогона: цвет и посев — **общие на весь прогон**. Именно
+/// общий посев и делает из двадцати боксов одну ленту: иначе каждый красится
+/// и ребрится сам по себе.
+///
+/// Рамка тут номинальная: у гаражной ленты координаты вершине приходят из её
+/// собственных ячеек (`layers::garage_frame`), а не из мировой точки и оси.
+pub(super) fn run_look(run: &GarageRun) -> RoofLook {
+    let base = GARAGE_ROW_COLORS[(run.seed >> 8) as usize % GARAGE_ROW_COLORS.len()].to_srgba();
+    let jitter = 1.0 + ((run.seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    // материал — по самому большому куску: у буквы Г одно крыло может быть
+    // кооперативом, а другое лентой, и на кровле это видно по каждому куску
+    // отдельно (`layers::garage_frame` берёт код у него), но `RoofKind` дома
+    // один — им выбираются палитра и оборудование на кровле
+    let kind = run_kind(run.main().block);
+    RoofLook {
+        kind,
+        base: Srgba {
+            red: base.red * jitter,
+            green: base.green * jitter,
+            blue: base.blue * jitter,
+            alpha: 1.0,
+        },
+        frame: Roof {
+            axis: run.main().axis,
+            material: kind.code(),
+            seed: garage_seed(run),
+        },
+        run: Some(run.clone()),
+    }
+}
+
+/// Чем крыт гаражный кусок: кооператив рисуется рядами с проездами, лента —
+/// одной гребёнкой боксов.
+pub(super) fn run_kind(block: bool) -> RoofKind {
+    match block {
+        true => RoofKind::GarageBlock,
+        false => RoofKind::GarageRow,
+    }
+}
+
+/// Стена гаражного прогона: ворота, и цвет простенка тоже общий на прогон.
+/// Выбирается она по геометрии, а не по назначению дома, поэтому мимо
+/// [`wall_look`] и его таблиц — как и кровля прогона.
+pub(super) fn run_wall_look(run: &GarageRun) -> WallLook {
+    let palette = GARAGE_WALL_COLORS;
+    let base = palette[(run.seed >> 12) as usize % palette.len()].to_srgba();
+    let jitter = 1.0 + ((run.seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    WallLook::new(
+        WallKind::GarageDoors,
+        Srgba {
+            red: base.red * jitter,
+            green: base.green * jitter,
+            blue: base.blue * jitter,
+            alpha: 1.0,
+        },
+    )
+}
+
+/// Посев прогона в том виде, в каком его читает шейдер: доля единицы. Им
+/// разнесены тона краски соседних лент — цвет уже выбран по тому же посеву,
+/// но два прогона одного цвета не должны ещё и краситься одинаково.
+pub(super) fn garage_seed(run: &GarageRun) -> f32 {
+    (run.seed & 0xff) as f32 / 255.0
 }
 
 fn footprint_area(building: &PolyArea) -> f32 {
@@ -577,7 +707,7 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
     }
     let table: &[WallKind] = match building.building_use {
         BuildingUse::House => &HOUSE_WALLS,
-        BuildingUse::Garage => &GARAGE_WALLS,
+        BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_WALLS,
         BuildingUse::Church => return WallKind::Plaster,
         BuildingUse::Industrial => &INDUSTRIAL_WALLS,
         _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
