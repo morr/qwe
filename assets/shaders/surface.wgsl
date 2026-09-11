@@ -7,13 +7,15 @@
 // остаётся невидимым — то самое свойство, ради которого слой дорог плоский.
 //
 // Все октавы шума гасятся по размеру пикселя (`fwidth` мировой координаты):
-// волна короче пары пикселей не сэмплируется, а исчезает, иначе на отдалении
-// зерно превращается в муар и мерцает при движении камеры.
+// короткая волна не сэмплируется, а исчезает (общий `visible` из
+// `shaders/noise.wgsl`, там же и порог), иначе на отдалении зерно
+// превращается в муар и мерцает при движении камеры.
 
 #import bevy_sprite::{
     mesh2d_functions as mesh_functions,
     mesh2d_view_bindings::{view, globals},
 }
+#import "shaders/noise.wgsl"::{value_noise, visible, fbm3, fbm4}
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
@@ -75,53 +77,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.color = vertex.color;
     out.ribbon = vertex.ribbon;
     return out;
-}
-
-// Хеш вещественной пары в [0, 1) (Dave Hoskins, hash12).
-fn hash21(p: vec2<f32>) -> f32 {
-    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    p3 = p3 + dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-// Value noise, центрированный: [-0.5, 0.5]. Центрирован намеренно — погашенная
-// октава тогда вносит ровно ноль, а не сдвигает среднюю яркость с зумом.
-fn value_noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash21(i);
-    let b = hash21(i + vec2<f32>(1.0, 0.0));
-    let c = hash21(i + vec2<f32>(0.0, 1.0));
-    let d = hash21(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) - 0.5;
-}
-
-// Видимость волны длиной `wavelength` при `px` метрах на пиксель: короче
-// полутора пикселей — ноль, длиннее четырёх — единица.
-fn visible(wavelength: f32, px: f32) -> f32 {
-    return smoothstep(1.5, 4.0, wavelength / px);
-}
-
-// Четыре октавы от `scale` вниз (до `scale / 8`), ~[-1, 1] — облачность:
-// от пятен в десятки метров до пятен в несколько. Нормировка — по полным
-// амплитудам, а не по видимым: погашенная октава уменьшает контраст (на
-// отдалении поверхность становится ровнее), но не усиливает оставшиеся.
-fn fbm4(p: vec2<f32>, scale: f32, px: f32) -> f32 {
-    let n0 = value_noise(p / scale) * visible(scale, px);
-    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
-    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
-    let n3 = value_noise(p / (scale * 0.125)) * visible(scale * 0.125, px);
-    return (n0 + 0.5 * n1 + 0.25 * n2 + 0.125 * n3) / 1.875 * 2.0;
-}
-
-// Три октавы (до `scale / 4`) — зерно: рябь в метры и доли метра, видная
-// только вблизи.
-fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
-    let n0 = value_noise(p / scale) * visible(scale, px);
-    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
-    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
-    return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
 }
 
 // Знаковое расстояние до штриха: отрицательно внутри штриха длиной `dash`,

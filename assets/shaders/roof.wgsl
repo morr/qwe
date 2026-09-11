@@ -14,21 +14,19 @@
 // Фактура считается по **мировой** координате, повёрнутой в длинную ось дома
 // (`meshing::ATTRIBUTE_ROOF`): швы ковра и рёбра фальца идут вдоль стен, а не
 // по странам света, и при этом два треугольника одной крыши красятся
-// согласованно без развёртки. Октавы гасятся по размеру пикселя (`fwidth`),
-// как в `surface.wgsl`: волна короче пары пикселей исчезает, а не муарит.
+// согласованно без развёртки. Октавы гасятся по размеру пикселя (`fwidth`)
+// общим `visible` из `shaders/noise.wgsl`: короткая волна исчезает, а не муарит.
 //
 // Посев дома (`ATTRIBUTE_ROOF.w`) несёт два смысла: фазу фактуры и **возраст**
 // кровли (`roof_age`) — от него зависит, сколько на битуме заплат и насколько
 // всякая кровля выгорела. Без возраста все битумные дома квартала носили ровно
 // одну плотность латок.
-//
-// Шумовые помощники ниже — копия `surface.wgsl`; общей библиотеки шейдеров в
-// проекте пока нет, а тянуть её ради четырёх функций дороже, чем повторить.
 
 #import bevy_sprite::{
     mesh2d_functions as mesh_functions,
     mesh2d_view_bindings::view,
 }
+#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes}
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
@@ -120,59 +118,17 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     return out;
 }
 
-// Хеш вещественной пары в [0, 1) (Dave Hoskins, hash12).
-fn hash21(p: vec2<f32>) -> f32 {
-    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    p3 = p3 + dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-// Value noise, центрированный: [-0.5, 0.5].
-fn value_noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash21(i);
-    let b = hash21(i + vec2<f32>(1.0, 0.0));
-    let c = hash21(i + vec2<f32>(0.0, 1.0));
-    let d = hash21(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) - 0.5;
-}
-
-// Видимость волны длиной `wavelength` при `px` метрах на пиксель.
-fn visible(wavelength: f32, px: f32) -> f32 {
-    return smoothstep(1.5, 4.0, wavelength / px);
-}
-
-// Три октавы от `scale` вниз, ~[-1, 1].
-fn fbm3(p: vec2<f32>, scale: f32, px: f32) -> f32 {
-    let n0 = value_noise(p / scale) * visible(scale, px);
-    let n1 = value_noise(p / (scale * 0.5)) * visible(scale * 0.5, px);
-    let n2 = value_noise(p / (scale * 0.25)) * visible(scale * 0.25, px);
-    return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75 * 2.0;
-}
-
 // Полоса `[start, start + width)` в каждом периоде `period` по координате
 // `coord` — в отличие от `stripes` это широкий диапазон, а не линия: им
 // рисуется проезд между рядами гаражей. Края сглажены по пикселю, и вся
 // сетка гаснет, когда период становится мельче нескольких пикселей.
+// Зовёт её только этот файл, поэтому она и осталась тут, а не в библиотеке.
 fn band(coord: f32, period: f32, start: f32, width: f32, px: f32) -> f32 {
     let phase = coord - period * floor(coord / period);
     let edge = 0.6 * px;
     let low = smoothstep(start - edge, start + edge, phase);
     let high = 1.0 - smoothstep(start + width - edge, start + width + edge, phase);
     return low * high * visible(period, px);
-}
-
-// Полоса шириной `width` через каждые `period` по координате `coord`: край
-// сглажен по пикселю, сама линия не тоньше пикселя, и вся сетка гаснет,
-// когда шаг становится мельче нескольких пикселей.
-fn stripes(coord: f32, period: f32, width: f32, px: f32) -> f32 {
-    let phase = coord - period * floor(coord / period + 0.5);
-    let half_width = max(width, px) * 0.5;
-    let edge = 0.6 * px;
-    let line = 1.0 - smoothstep(half_width - edge, half_width + edge, abs(phase));
-    return line * visible(period, px);
 }
 
 // Шаг сетки размещения заплат (м); доля клеток с заплатой — уже не константа,

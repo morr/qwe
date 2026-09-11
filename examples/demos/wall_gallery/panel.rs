@@ -167,7 +167,7 @@ fn spawn_constant_row(commands: &mut Commands, panel: Entity, name: &str, value:
 }
 
 /// Плашка с масштабом — внизу справа, подальше от панели. Не подсказка по
-/// клавишам, а измерение: правило гашения в `roof.wgsl` задано в пикселях, и
+/// клавишам, а измерение: правило гашения в `noise.wgsl` задано в пикселях, и
 /// без числа на экране «окна пропали» не отличить от «фактура выключена».
 pub(crate) fn spawn_readout(mut commands: Commands, assets: Res<AssetServer>) {
     commands.spawn((

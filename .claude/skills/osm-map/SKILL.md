@@ -390,7 +390,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
   contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
   a faded octave shifts no brightness, and zooming out makes a surface smoother, never
-  brighter or shimmering. Materials are built once (`SurfaceMaterials`, `Startup`) and
+  brighter or shimmering. That rule is **not this shader's own**: the shared library
+  `assets/shaders/noise.wgsl` holds all six helpers — `hash21`, `value_noise`, `visible`,
+  `fbm4` (four octaves), `fbm3` (three) and `stripes` — and each shader imports by path
+  only the names it calls (`#import "shaders/noise.wgsl"::{value_noise, visible, fbm3,
+  fbm4}` here — the hash reaches it inside `value_noise`; `roof.wgsl` takes its own
+  subset), so a rule that must not drift is kept in one place. **Only what both shaders
+  call moves there**: `dash_distance` (lane dashes) stays in `surface.wgsl` and `band`
+  (the drive between garage rows) in `roof.wgsl`, each with a single consumer — a helper
+  calling the library is not itself a reason to move it into the library.
+  Materials are built once (`SurfaceMaterials`, `Startup`) and
   shared by every city; `SurfaceStyle::texture` (section **Surfaces**, `ui/surfaces.rs`,
   persisted) rewrites the `intensity` uniform of each and rebuilds nothing.
   **This is the map's only grain.** A second one — `map/grain.rs`, a map-sized sprite
@@ -1293,11 +1302,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `u`)** — the first version had the corrugation along the ridge, and water would have
     run along the rib rather than down it. Rib lighting is scaled by
     `|axis · light|`, so ribs pointing at the sun neither highlight nor shade. Every
-    octave and every stripe grid fades by `visible(wavelength, px)`, the `surface.wgsl`
+    octave and every stripe grid fades by `visible(wavelength, px)`, the `noise.wgsl`
     rule, so nothing moirés when zoomed out; at the city zoom the texture is simply gone
-    and only the material's colour is left. The noise helpers are a **copy** of
-    `surface.wgsl`'s — there is no shader library in the project yet, and importing one
-    for four functions costs more than the copy.
+    and only the material's colour is left. The noise helpers come from
+    **`assets/shaders/noise.wgsl`** — its full set is named under **Surface material**
+    above — and this shader imports by path the subset it calls
+    (`#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes}`)
+    — until this extraction each of the two shaders carried its own copy and the copies
+    had already drifted in their comments; the `visible` rule in particular must not.
   - **The wall is the same mechanism on its own coordinates and its own codes**
     (`layers.rs::wall_frame`, `meshing::WallFrame` — the same frame the garage ribbon
     below is measured in). A 2.5D wall is a **parallelogram** —

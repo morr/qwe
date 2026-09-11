@@ -167,7 +167,7 @@ fn spawn_constant_row(commands: &mut Commands, panel: Entity, name: &str, value:
 }
 
 /// Плашка с масштабом — внизу справа, подальше от панели. Не подсказка по
-/// клавишам, а измерение: правило гашения октав в `roof.wgsl` задано в
+/// клавишам, а измерение: правило гашения октав в `noise.wgsl` задано в
 /// пикселях, и без числа на экране «фактура пропала» не отличить от «фактура
 /// выключена».
 pub(crate) fn spawn_readout(mut commands: Commands, assets: Res<AssetServer>) {
@@ -190,7 +190,7 @@ pub(crate) fn spawn_readout(mut commands: Commands, assets: Res<AssetServer>) {
 /// **логических** точках, а `fwidth` в шейдере меряет физический пиксель,
 /// отсюда деление на `scale_factor`. Всё, что короче полутора пикселей,
 /// шейдер гасит полностью, всё, что длиннее четырёх, показывает целиком
-/// (`visible` в `roof.wgsl`) — эти два числа плашка и печатает.
+/// (`visible` в `noise.wgsl`) — эти два числа плашка и печатает.
 pub(crate) fn update_readout(
     camera: Single<&Transform, With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
