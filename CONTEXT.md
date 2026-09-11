@@ -289,9 +289,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   what the building's other walls are. That verdict and
   one more travel as the **seed's own value** (`WallFrame::marked`, `WallMark`): `[0, 1)` is
   a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a wall with **no openings**
-  at all (`Solid`) — two things at once, the **gable** (which continues the wall's pattern
+  at all (`Solid`) — three things at once, the **gable** (which continues the wall's pattern
   through the eaves, that being why it takes the wall's frame at all, but where a window
-  would be cut by the slope) and the **patch under a door**.
+  would be cut by the slope) and the two patches of one construction, **under a door** and
+  **around an arch**.
   A wall **returns before
   the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
   weathering, so a wall's base colour is still the flat fill of before and only its own seams
@@ -395,7 +396,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
   a step in the outline rather than a facade and gets none either, **a door never stands in
   an arch** (`PassageIndex`: a `passage` road eats the wall whole, so the opening plus
-  `ENTRANCE_ARCH_CLEARANCE` (3 m) is out for both the street door and its courtyard twin),
+  `ENTRANCE_ARCH_CLEARANCE` (3 m) is out for the street door, for its courtyard twin and for
+  a door **mapped in OSM** alike — and for the last-resort pass too, which drops every other
+  rule but this one; only a building whose every candidate point is in an arch gets a door
+  there anyway),
   and the result is deterministic per building (LCG seeded by its first vertex). **A residential building is counted by its plan and
   height as well** (`plan_sections`, a floor under the cohort): 300 m² of plan per подъезд
   at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
@@ -403,7 +407,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   for the height twice, since a подъезд is a stack whose own capacity grows with it. It
   stands down for anything that is not housing, for anything without a height or under
   `SECTION_MIN_HEIGHT` (12 m), and for a **свечка** — a compact 45 m+
-  tower, where one lobby for the whole building is normal. **Real doors are never moved or dropped — but a
+  tower, where one lobby for the whole building is normal. **Real doors are never moved — the
+  one dropped is a door in an arch, where there is no wall to hang it on — and a
   half-mapped building is topped up**: one mapped `entrance` used to make the generator skip
   the building whole, and a London block a quarter of a kilometre long kept its single door.
   A mapper marking one подъезд and stopping is exactly what the cohort measurement already
