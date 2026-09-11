@@ -556,6 +556,31 @@ pub fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
     point.distance(closest_on_segment(point, from, to))
 }
 
+/// Ячейка равномерной сетки, в которую попадает координата.
+pub fn grid_cell(value: f32, size: f32) -> i32 {
+    (value / size).floor() as i32
+}
+
+/// Значение кладётся во **все** ячейки, которые пересекает его AABB — общий
+/// инвариант каждой равномерной сетки в проекте (три сетки генератора дверей,
+/// сетка дорог у троп): спрашивающему тогда хватает одной ячейки точки, и
+/// ничего на границе ячеек не теряется. Живёт здесь, а не у первого
+/// потребителя, именно поэтому — сетку заводит не один модуль, а ошибка на
+/// границе ячеек чинилась бы в каждом отдельно.
+pub fn put_in_cells<T: Copy>(
+    cells: &mut std::collections::HashMap<(i32, i32), Vec<T>>,
+    min: Vec2,
+    max: Vec2,
+    size: f32,
+    value: T,
+) {
+    for x in grid_cell(min.x, size)..=grid_cell(max.x, size) {
+        for y in grid_cell(min.y, size)..=grid_cell(max.y, size) {
+            cells.entry((x, y)).or_default().push(value);
+        }
+    }
+}
+
 /// Длина ломаной — сумма её звеньев.
 pub fn polyline_length(points: &[Vec2]) -> f32 {
     points
