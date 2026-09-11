@@ -595,7 +595,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the ground to a muted green, and the `landuse` layer split in two (`landuse_yards`
     with `SurfaceKind::Yard`, `landuse_works` with `Ground`) — one kind for both would
     have put grass speckle on a concrete yard. **`Yard` is its own kind** rather than
-    `Grass`: the mottle is nearly twice the amplitude at half the wavelength, which is
+    `Grass`: the mottle is 0.105 against 0.06 of amplitude on a 22 m wavelength against
+    30 (and the speckle is sparser and higher-threshold), which is
     exactly the difference between a meadow and ground people walk over — bare patches by
     the doors, grass in the corners. With plain `Grass` the block came out as a golf
     course. Nothing else changed: the roads, the
