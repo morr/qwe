@@ -203,9 +203,9 @@ pub fn spawn_map(
     let skipped: usize = [
         &landuse, &parks, &woods, &grass, &sand, &pitches, &parking, &water,
     ]
-        .iter()
-        .map(|builder| builder.skipped_polygons())
-        .sum();
+    .iter()
+    .map(|builder| builder.skipped_polygons())
+    .sum();
     if skipped > 0 {
         warn!("map meshing: {skipped} degenerate polygons skipped");
     }
