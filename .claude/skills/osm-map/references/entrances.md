@@ -13,7 +13,7 @@ counts per city live in `osm-coverage.md` next to this file.
 65% of Paris's. The rest are orphans (porch nodes, buildings outside the bbox) and are
 dropped with a count on stderr. Overpass emits nodes before ways, so entrances are
 buffered through the element loop and attached after it. Coverage is thin everywhere
-(Tula 431 doors / 6946 buildings; NY and Tokyo ~300 city-wide) — hence the generator
+(Tula 491 doors / 7 723 buildings; NY and Tokyo ~300 city-wide) — hence the generator
 below. Real OSM doors always win *as points*: they are never moved. They are dropped in
 exactly one case — a door that falls in an **arch** goes, because there is no wall there to
 hang it on (see "An arch is not a wall" below).

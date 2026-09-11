@@ -201,8 +201,11 @@ pub fn spawn_map(
     // тропы — вытоптанные дорожки от подъездов к дорогам (`map::paths`)
     let mut worn = MeshBuilder::with_surface_coords();
     let doors: usize = map.buildings.iter().map(|b| b.entrances.len()).sum();
-    let worn_count = paths::push_paths(&mut worn, &map.buildings, &map.roads, WORN_PATH_COLOR);
-    info!("worn paths: {worn_count} of {doors} doors");
+    let worn_paths = paths::push_paths(&mut worn, &map.buildings, &map.roads, WORN_PATH_COLOR);
+    info!(
+        "worn paths: {} of {doors} doors ({} at the kerb, {} too far, {} with no road in reach)",
+        worn_paths.count, worn_paths.too_short, worn_paths.too_far, worn_paths.no_road
+    );
 
     // площадка — покрытие своего цвета, и на нём разметка (`map::pitch`).
     // Кант тот же, что у прочих зон: у поля на снимке всегда есть кромка

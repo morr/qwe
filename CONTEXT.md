@@ -543,14 +543,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
 - **Worn paths** (`map/paths.rs`) — the desire lines of a courtyard: a straight strip of
-  bare earth from **each OSM entrance to the nearest point of the nearest road**, 1.1 m
-  wide, drawn only when that distance is between `PATH_MIN` 7 m and `PATH_MAX` 45 m
-  (shorter hides under the facade band, longer is a route rather than a short cut).
+  bare earth from **each OSM entrance to the nearest kerb of the nearest road**, 1.1 m
+  wide. `RoadLine` carries the *centreline* and the width apart, so the strip is cut short
+  by `width / 2`: the part over the roadway is hidden by the road layer anyway, and
+  measuring it counted paths nothing could see. The **visible** length must be at least
+  `PATH_MIN` 7 m (shorter reads as a smudge rather than a line — and what is left of it
+  goes under the facade band, which covers the *south* approaches only, and under the
+  roadway); `PATH_MAX` 45 m is measured **to the axis**, because that is the distance the
+  search window is complete for (longer is a route rather than a short cut).
   `Z_WORN_PATH` 0.72 — over any greenery, under the pitches and the parking. No path
   finding and no bends: the desire line *is* the straight one people wore instead of the
   detour. Nothing checks whether a path crosses a building or water either — the layer is
-  below both, so the crossing part is covered by them. Tula: 11 302 entrances, of which
-  the ones in courtyards get a path.
+  below both, so the crossing part is covered by them. Tula: 13 579 entrances, of which
+  the ones in courtyards get a path; the log line splits the rest by **why** — at the
+  kerb, too far, or no road in reach.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 0.75 with the markings at 0.76. What a
   courtyard is *made of* on a photo: a green football field with white lines, a blue
