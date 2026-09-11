@@ -74,9 +74,12 @@ in `CONTEXT.md` and the detail here in the same change.
   but Wood stays open ground — that is what makes the open half of a park read as a
   field, the way it does on OSM. **Residential** (`landuse=residential`) and
   **Industrial** (`landuse=industrial|garages`) are the *blocks* — `MapData::landuse`,
-  one merged layer at `Z_LANDUSE` (0.25) between the ground mesh and the parks, half
-  a tone off the ground colour (warmer/lighter for housing, greyer for industry) so the
-  city stops being one flat sheet. `area_kind` tries them **last**: any green tag on the
+  **two** merged layers between the ground mesh and the parks — `landuse_works` at
+  `Z_LANDUSE` (0.25) in the earth colour, `landuse_yards` a hair above it at
+  `Z_LANDUSE_YARD` (0.26) in the muted green (see **The yard** below). The hair is not
+  cosmetic: they are two opaque meshes with different materials, the two tags do overlap
+  in OSM, and at an equal depth the phase queue would decide which fill wins rather than
+  the map. `area_kind` tries them **last**: any green tag on the
   same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
   residential + 35 industrial/garages in the bbox (the audit table), 294 of them
   reach `MapData::landuse`; `commercial`/`retail` are not requested.
@@ -375,7 +378,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `Material2d` with its own vertex + fragment stage) — procedural texture without a single
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
   **world position**, so two overlapping ribbons of one layer get the same pixel (the
-  junction trick survives). Per `SurfaceKind` (`Ground | Park | Wood | Grass | Sand |
+  junction trick survives). Per `SurfaceKind` (`Ground | Yard | Park | Wood | Grass | Sand |
   Water | Street | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
   octaves of value noise from `mottle_scale` down to an eighth of it, with a per-channel
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
@@ -589,6 +592,61 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+- **The yard** — two changes that together stop the city from being a beige sheet with
+  buildings on it, and both came from looking at the first offscreen shot (#27):
+  - **The residential block is the yard.** `RESIDENTIAL_COLOR` went from half a tone off
+    the ground to a muted green, and the `landuse` layer split in two (`landuse_yards`
+    with `SurfaceKind::Yard`, `landuse_works` with `Ground`) — one kind for both would
+    have put grass speckle on a concrete yard. **`Yard` is its own kind** rather than
+    `Grass`: the mottle is 0.105 against 0.06 of amplitude on a 22 m wavelength against
+    30 (and the speckle is sparser and higher-threshold), which is
+    exactly the difference between a meadow and ground people walk over — bare patches by
+    the doors, grass in the corners. With plain `Grass` the block came out as a golf
+    course. Nothing else changed: the roads, the
+    parking, the buildings and the pitches are all drawn *over* the block, so the green
+    only shows where nothing else is, which is exactly where the grass is.
+  - **Worn paths** (`map/paths.rs`) — the desire lines. A straight 1.1 m strip of bare
+    earth from **every OSM entrance to the nearest kerb of the nearest road**.
+    `Z_WORN_PATH` 0.72, `SurfaceKind::Alley` — a worn path *is* an unpaved alley.
+    - **To the kerb, not to the axis**, and the two thresholds are therefore measured on
+      different things. `RoadLine` is a centreline plus a `width` (primary 16 m, and a
+      carriageway carries sidewalks on top of that), and the road layer draws over the
+      path, so the part of a strip within `width / 2` of the axis is invisible. The grid
+      carries each segment's **half-width**, `push_paths` shortens the strip to
+      `axis − along · half_width`, and **`PATH_MIN` 7 m gates the visible remainder** — a
+      door 8 m from the axis of a 16 m trunk road now wears nothing, where it used to be
+      drawn entirely under the asphalt and counted. **`PATH_MAX` 45 m still measures to
+      the axis**: the ⌈45/24⌉-cell search window is complete for exactly that distance,
+      and a limit the window cannot back up would be a lie.
+    - Under 7 m a strip six of its own widths long reads as a smudge rather than a line,
+      and what is left of it is eaten by the facade band and the roadway; over 45 m a
+      straight line stops being a short cut and becomes an invented route.
+    - **The facade band covers the south approaches only** — it is the outline offset
+      *downwards* (`buildings/layers.rs`, `offset = (0, -facade_height)`), so for a door
+      on a north, east or west face it hides nothing. "Under 7 m the strip lives under the
+      facade band" was the branch's own wording and holds for about a quarter of the
+      doors; the threshold does not rest on it.
+    - **The log splits the rejections** (`WornPaths { count, too_short, too_far, no_road }`):
+      `worn paths: N of M doors (K at the kerb, L too far, P with no road in reach)`. One
+      number could not tell "this door opens straight onto the street" from "nobody walks
+      that far" — two different observations about the city.
+    - **No path finding, no bends.** The desire line is by definition the straight one
+      people wore instead of the detour; a curve here would be decoration.
+    - **No intersection tests either**, and that is the design: the layer is below the
+      buildings (4.9) and the water (1.0), so a strip that runs across a neighbour's
+      footprint is covered by that neighbour. Testing 13 579 doors against 7 723 outlines
+      to hide what the painter's order already hides would be pure cost.
+    - The nearest road comes from a uniform grid of road segments (`CELL` 24 m, each
+      segment registered in every cell its box touches, so a long span is not lost in the
+      middle); the search walks ⌈45/24⌉ cells each way. Doors are 13 579 and road
+      segments tens of thousands — the pairwise version would be quadratic for nothing.
+      **It is its own grid, not the door generator's `RoadIndex`**, and deliberately: that
+      one is a 60 m cell walked ring by ring with an early exit out to 240 m, this one a
+      24 m cell and a fixed window at `PATH_MAX`. What they share is the one thing that
+      must not be written twice — `model::put_in_cells` / `grid_cell`, the invariant that
+      a value lies in **every** cell its AABB touches, so asking costs one cell lookup and
+      nothing is lost on a cell boundary. Every uniform grid in the project is built with
+      it (the three in `osm/entrances/index.rs` and this one).
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
   actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 0.75 and one
   markings layer at 0.76, the parking pair's shape exactly: the paint is flat

@@ -783,9 +783,17 @@ pub const RESCUE_SEARCH_TILES: i32 = 16;
 
 // --- Z-слои (см. y-сортировку юнитов) ---
 pub const Z_GROUND: f32 = 0.0;
-/// Кварталы `landuse` — между голой землёй и парками: заливка едва отличима
-/// от земли и обязана лежать под любой зеленью.
+/// Кварталы `landuse` — между голой землёй и парками: и двор, и промзона
+/// обязаны лежать под любой зеленью и под всем, что по кварталу проложено.
+/// Промзона (`landuse_works`) лежит на этой отметке.
 pub const Z_LANDUSE: f32 = 0.25;
+/// Двор (`landuse_yards`) — волосок над промзоной: с тех пор как квартал
+/// разъехался надвое, это два непрозрачных меша с разными материалами, и там,
+/// где `landuse=residential` пересекается с `landuse=industrial|garages`,
+/// порядок двух заливок не должен зависеть от случая (при равной глубине его
+/// решает очередь фазы, а не данные карты). Волосок именно под двором, потому
+/// что таков порядок в списке слоёв `map/spawn.rs`: двор кроет промзону.
+pub const Z_LANDUSE_YARD: f32 = 0.26;
 pub const Z_PARK: f32 = 0.5;
 /// Лес, луга и песок лежат внутри парковых полигонов — поверх заливки парка.
 pub const Z_WOOD: f32 = 0.55;
@@ -797,6 +805,9 @@ pub const Z_TREE_ROW_BAND_CASING: f32 = 0.56;
 pub const Z_TREE_ROW_BAND: f32 = 0.57;
 pub const Z_GRASS: f32 = 0.6;
 pub const Z_SAND: f32 = 0.7;
+/// Вытоптанная тропа (`map::paths`) — поверх любой зелени, но под площадкой
+/// и стоянкой: тропа идёт по газону, а не по корту.
+pub const Z_WORN_PATH: f32 = 0.72;
 /// Спортивная и детская площадка (`map::pitch`) — поверх зелени, но под
 /// стоянкой: площадку во дворе размечают на газоне или на асфальте, а
 /// парковочный карман у неё всегда сверху.
@@ -889,13 +900,15 @@ pub const Z_CONIFER_NOISE_OVERLAY: f32 = 21.0;
 const _: () = {
     // площадные заливки: земля → парк → лес → трава → песок → вода
     assert!(Z_GROUND < Z_LANDUSE);
-    assert!(Z_LANDUSE < Z_PARK);
+    assert!(Z_LANDUSE < Z_LANDUSE_YARD);
+    assert!(Z_LANDUSE_YARD < Z_PARK);
     assert!(Z_PARK < Z_WOOD);
     assert!(Z_WOOD < Z_TREE_ROW_BAND_CASING);
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);
     assert!(Z_TREE_ROW_BAND < Z_GRASS);
     assert!(Z_GRASS < Z_SAND);
-    assert!(Z_SAND < Z_PITCH);
+    assert!(Z_SAND < Z_WORN_PATH);
+    assert!(Z_WORN_PATH < Z_PITCH);
     // разметка — поверх своего покрытия и под всем остальным
     assert!(Z_PITCH < Z_PITCH_LINES);
     assert!(Z_PITCH_LINES < Z_PARKING);

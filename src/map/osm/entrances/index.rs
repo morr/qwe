@@ -5,8 +5,8 @@
 use bevy::math::Vec2;
 
 use crate::map::osm::model::{
-    AreaKind, PolyArea, RoadLine, closest_on_segment, distance_to_segment, point_in_area,
-    ring_bounds, signed_ring_area,
+    AreaKind, PolyArea, RoadLine, closest_on_segment, distance_to_segment, grid_cell,
+    point_in_area, put_in_cells, ring_bounds, signed_ring_area,
 };
 
 /// Сторона ячейки индекса дорог, м.
@@ -47,7 +47,7 @@ impl RoadIndex {
     /// найденное расстояние заведомо меньше, чем всё, что может лежать в
     /// следующем кольце.
     pub(super) fn nearest(&self, point: Vec2) -> Option<(Vec2, f32)> {
-        let (cx, cy) = (cell(point.x, ROAD_CELL), cell(point.y, ROAD_CELL));
+        let (cx, cy) = (grid_cell(point.x, ROAD_CELL), grid_cell(point.y, ROAD_CELL));
         let mut best: Option<(Vec2, f32)> = None;
 
         for ring in 0..=ROAD_SEARCH_RINGS {
@@ -71,27 +71,6 @@ impl RoadIndex {
             }
         }
         best
-    }
-}
-
-fn cell(value: f32, size: f32) -> i32 {
-    (value / size).floor() as i32
-}
-
-/// Значение кладётся во **все** ячейки, которые пересекает его AABB — общий
-/// инвариант всех трёх сеток этого модуля: спрашивающему тогда хватает одной
-/// ячейки точки, и ничего на границе ячеек не теряется.
-fn put_in_cells<T: Copy>(
-    cells: &mut std::collections::HashMap<(i32, i32), Vec<T>>,
-    min: Vec2,
-    max: Vec2,
-    size: f32,
-    value: T,
-) {
-    for x in cell(min.x, size)..=cell(max.x, size) {
-        for y in cell(min.y, size)..=cell(max.y, size) {
-            cells.entry((x, y)).or_default().push(value);
-        }
     }
 }
 
@@ -125,7 +104,7 @@ impl PassageIndex {
 
     /// Стоит ли эта точка в арке или вплотную к ней.
     pub(super) fn blocks(&self, point: Vec2) -> bool {
-        let key = (cell(point.x, ROAD_CELL), cell(point.y, ROAD_CELL));
+        let key = (grid_cell(point.x, ROAD_CELL), grid_cell(point.y, ROAD_CELL));
         self.cells
             .get(&key)
             .into_iter()
@@ -161,7 +140,10 @@ impl<'a> FootprintIndex<'a> {
     /// Точка занята чужим домом? Свой дом (`owner`) не в счёт — дверь стоит на
     /// его собственной стене.
     pub(super) fn is_covered(&self, point: Vec2, owner: usize) -> bool {
-        let key = (cell(point.x, FOOTPRINT_CELL), cell(point.y, FOOTPRINT_CELL));
+        let key = (
+            grid_cell(point.x, FOOTPRINT_CELL),
+            grid_cell(point.y, FOOTPRINT_CELL),
+        );
         self.cells
             .get(&key)
             .into_iter()

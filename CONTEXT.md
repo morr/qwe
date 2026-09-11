@@ -54,11 +54,10 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
-  parks → woods → tree-row band casing → tree-row band → grass → sand → pitches → pitch
-  markings → parking → parking
-  markings → water → waterways → sidewalks →
-  alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
+  landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
+  worn paths → pitches → pitch markings → parking → parking markings → water → waterways →
+  sidewalks → alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1
@@ -137,8 +136,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
     **only Wood carries trees**;
-    Residential/Industrial are the `landuse` **blocks** — a faint fill under everything
-    else, no effect on navigation or planting. **Parking** (`amenity=parking`,
+    Residential/Industrial are the `landuse` **blocks** — the fill under everything else,
+    no effect on navigation or planting. **A residential block is drawn as a yard**: a
+    muted green, its own layer with its own `SurfaceKind::Yard` texture (patchier than
+    grass: bare ground by the doors), because between the houses there is grass, and the
+    older half-tone-off-the-ground fill was what made the whole city read as one beige
+    sheet with buildings placed on it. Industrial keeps the cold grey.
+    **Parking** (`amenity=parking`,
     `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
     park (`building` + `amenity=parking`) stays a building — and a lot whose asphalt is
@@ -538,6 +542,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
+- **Worn paths** (`map/paths.rs`) — the desire lines of a courtyard: a straight strip of
+  bare earth from **each OSM entrance to the nearest kerb of the nearest road**, 1.1 m
+  wide. `RoadLine` carries the *centreline* and the width apart, so the strip is cut short
+  by `width / 2`: the part over the roadway is hidden by the road layer anyway, and
+  measuring it counted paths nothing could see. The **visible** length must be at least
+  `PATH_MIN` 7 m (shorter reads as a smudge rather than a line — and what is left of it
+  goes under the facade band, which covers the *south* approaches only, and under the
+  roadway); `PATH_MAX` 45 m is measured **to the axis**, because that is the distance the
+  search window is complete for (longer is a route rather than a short cut).
+  `Z_WORN_PATH` 0.72 — over any greenery, under the pitches and the parking. No path
+  finding and no bends: the desire line *is* the straight one people wore instead of the
+  detour. Nothing checks whether a path crosses a building or water either — the layer is
+  below both, so the crossing part is covered by them. Tula: 13 579 entrances, of which
+  the ones in courtyards get a path; the log line splits the rest by **why** — at the
+  kerb, too far, or no road in reach.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 0.75 with the markings at 0.76. What a
   courtyard is *made of* on a photo: a green football field with white lines, a blue
