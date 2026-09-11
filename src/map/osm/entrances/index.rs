@@ -36,12 +36,7 @@ impl RoadIndex {
                 let (from, to) = (segment[0], segment[1]);
                 let min = from.min(to);
                 let max = from.max(to);
-                // отрезок кладётся во все ячейки, которые пересекает его AABB
-                for x in cell(min.x, ROAD_CELL)..=cell(max.x, ROAD_CELL) {
-                    for y in cell(min.y, ROAD_CELL)..=cell(max.y, ROAD_CELL) {
-                        cells.entry((x, y)).or_default().push((from, to));
-                    }
-                }
+                put_in_cells(&mut cells, min, max, ROAD_CELL, (from, to));
             }
         }
         Self { cells }
@@ -83,6 +78,23 @@ fn cell(value: f32, size: f32) -> i32 {
     (value / size).floor() as i32
 }
 
+/// Значение кладётся во **все** ячейки, которые пересекает его AABB — общий
+/// инвариант всех трёх сеток этого модуля: спрашивающему тогда хватает одной
+/// ячейки точки, и ничего на границе ячеек не теряется.
+fn put_in_cells<T: Copy>(
+    cells: &mut std::collections::HashMap<(i32, i32), Vec<T>>,
+    min: Vec2,
+    max: Vec2,
+    size: f32,
+    value: T,
+) {
+    for x in cell(min.x, size)..=cell(max.x, size) {
+        for y in cell(min.y, size)..=cell(max.y, size) {
+            cells.entry((x, y)).or_default().push(value);
+        }
+    }
+}
+
 /// Та же сетка, но из **арок** — дорог с флагом `passage`, проложенных сквозь
 /// дом. Проезд выедает кусок стены на всю её высоту
 /// (`buildings::arches`), и подъезда в этом куске не бывает: снаружи там
@@ -105,11 +117,7 @@ impl PassageIndex {
                 let (from, to) = (segment[0], segment[1]);
                 let min = from.min(to) - Vec2::splat(reach);
                 let max = from.max(to) + Vec2::splat(reach);
-                for x in cell(min.x, ROAD_CELL)..=cell(max.x, ROAD_CELL) {
-                    for y in cell(min.y, ROAD_CELL)..=cell(max.y, ROAD_CELL) {
-                        cells.entry((x, y)).or_default().push((from, to, reach));
-                    }
-                }
+                put_in_cells(&mut cells, min, max, ROAD_CELL, (from, to, reach));
             }
         }
         Self { cells }
@@ -145,11 +153,7 @@ impl<'a> FootprintIndex<'a> {
                 continue;
             }
             let (min, max) = ring_bounds(&building.outer);
-            for x in cell(min.x, FOOTPRINT_CELL)..=cell(max.x, FOOTPRINT_CELL) {
-                for y in cell(min.y, FOOTPRINT_CELL)..=cell(max.y, FOOTPRINT_CELL) {
-                    cells.entry((x, y)).or_default().push(index);
-                }
-            }
+            put_in_cells(&mut cells, min, max, FOOTPRINT_CELL, index);
         }
         Self { cells, buildings }
     }
