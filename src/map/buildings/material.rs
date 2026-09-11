@@ -144,7 +144,8 @@ impl RoofKind {
 /// этой стене балконы.
 ///
 /// Коды продолжают кровельные — один словарь в одном числе атрибута, — а
-/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `SHED = 13u`).
+/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `GARAGE_DOORS =
+/// 14u`, за ними `DOOR = 15u`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WallKind {
     /// Панель: межэтажные швы, вертикальные швы плит, окно на панель и
@@ -164,16 +165,24 @@ pub enum WallKind {
     /// Профлист: вертикальные рёбра во всю стену, ленточное окно под
     /// карнизом да ворота внизу. Склад, промка, гаражный ряд.
     Shed,
+    /// Ворота: створка в **каждой** ячейке и ничего больше — ни окна, ни
+    /// балкона. Стена гаражного прогона, и выбирается она не по назначению
+    /// дома, а по геометрии — как и кровля прогона ([`super::garages`]):
+    /// ячейка тут не панель в 3.2 м, а сам бокс, поэтому створка приходится
+    /// ровно под шов на кровле, и ряд ворот с рядом боксов говорят одно и то
+    /// же.
+    GarageDoors,
 }
 
 impl WallKind {
     /// Исчерпывающий список — по нему идёт витрина `wall_gallery`.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Panel,
         Self::Brick,
         Self::Plaster,
         Self::Shopfront,
         Self::Shed,
+        Self::GarageDoors,
     ];
 
     /// Код для [`ATTRIBUTE_ROOF`]: продолжение кровельного словаря, поэтому
@@ -184,11 +193,16 @@ impl WallKind {
         RoofKind::CODES + 1 + self as u32
     }
 
+    /// Сколько кодов занято облицовками — по **последнему** варианту, тем же
+    /// правилом, что и [`RoofKind::CODES`]: от него отсчитывается дверь, и
+    /// дописанная облицовка обязана её подвинуть, а не наехать на неё.
+    pub const CODES: u32 = Self::GarageDoors.code();
+
     /// Стена ли это. Коды приходят из вершинного атрибута числом с плавающей
     /// точкой, и разбирать их порознь в тестах и в шейдере — верный способ
     /// разойтись; вопрос «стена или кровля» задаётся здесь.
     pub fn is_code(code: u32) -> bool {
-        code >= Self::Panel.code() && code <= Self::Shed.code()
+        code >= Self::Panel.code() && code <= Self::CODES
     }
 }
 
@@ -201,7 +215,7 @@ impl WallKind {
 /// `osm::entrances` — там же, где их видит гизмо дверей и куда идут пешки.
 ///
 /// [`WallFrame::opening`]: crate::map::meshing::WallFrame::opening
-pub const DOOR_CODE: u32 = WallKind::Shed.code() + 1;
+pub const DOOR_CODE: u32 = WallKind::CODES + 1;
 
 impl WallKind {
     pub fn label(self) -> &'static str {
@@ -211,6 +225,7 @@ impl WallKind {
             Self::Plaster => "Штукатурка",
             Self::Shopfront => "Витраж",
             Self::Shed => "Профлист",
+            Self::GarageDoors => "Ворота",
         }
     }
 
@@ -223,6 +238,7 @@ impl WallKind {
             Self::Plaster => &PLASTER_WALL_COLORS,
             Self::Shopfront => &SHOPFRONT_WALL_COLORS,
             Self::Shed => &SHED_WALL_COLORS,
+            Self::GarageDoors => &GARAGE_WALL_COLORS,
         }
     }
 }
@@ -277,6 +293,16 @@ const SHED_WALL_COLORS: [Color; 5] = [
     Color::srgb(0.52, 0.60, 0.52),
     Color::srgb(0.72, 0.66, 0.56),
     Color::srgb(0.62, 0.60, 0.58),
+];
+
+/// Стена гаражного прогона: побелка, силикатный кирпич, крашеный простенок
+/// между воротами. Светлее самих створок, которые шейдер кладёт поверх, —
+/// иначе ряд ворот не читается вовсе.
+const GARAGE_WALL_COLORS: [Color; 4] = [
+    Color::srgb(0.74, 0.72, 0.67),
+    Color::srgb(0.70, 0.68, 0.64),
+    Color::srgb(0.72, 0.69, 0.62),
+    Color::srgb(0.66, 0.66, 0.64),
 ];
 
 /// Палитры материалов — по несколько правдоподобных цветов на каждый, дом
@@ -580,6 +606,24 @@ pub(super) fn run_look(run: &GarageRun) -> RoofLook {
         },
         run: Some(*run),
     }
+}
+
+/// Стена гаражного прогона: ворота, и цвет простенка тоже общий на прогон.
+/// Выбирается она по геометрии, а не по назначению дома, поэтому мимо
+/// [`wall_look`] и его таблиц — как и кровля прогона.
+pub(super) fn run_wall_look(run: &GarageRun) -> WallLook {
+    let palette = GARAGE_WALL_COLORS;
+    let base = palette[(run.seed >> 12) as usize % palette.len()].to_srgba();
+    let jitter = 1.0 + ((run.seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    WallLook::new(
+        WallKind::GarageDoors,
+        Srgba {
+            red: base.red * jitter,
+            green: base.green * jitter,
+            blue: base.blue * jitter,
+            alpha: 1.0,
+        },
+    )
 }
 
 /// Посев прогона в том виде, в каком его читает шейдер: доля единицы. Им

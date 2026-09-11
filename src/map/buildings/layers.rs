@@ -11,10 +11,10 @@ use super::arches::{
     ArchOpening, WallCells, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
 use super::clutter::{flat_roof_items, push_items, ridge_chimney};
-use super::garages::{GarageRun, garage_runs};
+use super::garages::{BAY, GarageRun, garage_runs};
 use super::material::{
     DOOR_CODE, RoofLook, WallKind, WallLook, building_seed, garage_seed, roof_look, run_look,
-    wall_look,
+    run_wall_look, wall_look,
 };
 use super::order::{draw_order, wall_order};
 use super::roofs::{HipRoof, RoofShape, Roofing, min_area_rect, roofing, roofing_of};
@@ -106,15 +106,28 @@ pub(super) fn roof_color(building: &PolyArea, look: &RoofLook, tinted: bool) -> 
 /// панель шире или уже трёх метров с небольшим, зато их целое число.
 const PANEL_WIDTH: f32 = 3.2;
 
-/// Сколько панелей встанет на стену такой длины — целое число, и оно же
-/// делитель её собственной сетки: панель это `length / wall_columns(length)`.
+/// Ширина ячейки стены, м, по облицовке. У всех она панельная, у гаражного
+/// ряда — **бокс** ([`garages::BAY`]): ворота стоят по одной на бокс, и мерить
+/// их стену панелями значило бы разойтись с гребёнкой боксов на её же кровле.
+fn cell_width(kind: WallKind) -> f32 {
+    match kind {
+        WallKind::GarageDoors => BAY,
+        _ => PANEL_WIDTH,
+    }
+}
+
+/// Сколько ячеек встанет на стену такой длины — целое число, и оно же делитель
+/// её собственной сетки: ячейка это `length / wall_columns(length, kind)`.
+/// Ширина ячейки — по облицовке ([`cell_width`]), поэтому у гаражного ряда
+/// счёт идёт боксами, и тот же счёт уезжает в [`WallCells::panel`]: заплаты
+/// вокруг арок и дверей кроятся ровно тем же шагом, что и ворота.
 ///
 /// Наружу — ради проверки: тест меряет клетку тем же делителем, что и стена
 /// (`WallSpan::columns`), и убеждается, что ни один проём не разрезал её
 /// пополам. Самим заплатам вокруг проёмов функция не нужна — им размер клетки
 /// приезжает готовым в [`WallCells`].
-pub(super) fn wall_columns(length: f32) -> f32 {
-    (length / PANEL_WIDTH).round().max(1.0)
+pub(super) fn wall_columns(length: f32, kind: WallKind) -> f32 {
+    (length / cell_width(kind)).round().max(1.0)
 }
 
 /// Одна стена дома до того, как из неё сделали [`WallFrame`]: отрезок
@@ -177,9 +190,10 @@ impl WallSpan {
         along.dot(axis).abs() <= GABLE_END_COS_MAX
     }
 
-    /// Сколько панелей встанет на эту стену — целое число ([`wall_frame`]).
-    fn columns(&self) -> f32 {
-        wall_columns(self.length())
+    /// Сколько ячеек встанет на эту стену — целое число ([`wall_frame`]);
+    /// ширина ячейки у гаражного ряда своя ([`cell_width`]).
+    fn columns(&self, kind: WallKind) -> f32 {
+        wall_columns(self.length(), kind)
     }
 
     /// Посев этой стены, `[0, 1)` — от её начала ([`seed_from_point`]). Одним
@@ -211,7 +225,7 @@ impl WallSpan {
 /// бывает панельного торца и кирпичного фасада, и его код едет в тот же слот
 /// атрибута, где у кровли стоит её материал.
 fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<WallFrame> {
-    let columns = span.columns();
+    let columns = span.columns(look.kind);
     let frame = WallFrame::new(
         span.a,
         span.b,
@@ -234,12 +248,16 @@ fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<W
 /// Арке этого хватает целиком ([`push_wall_with_openings`]), и арифметика
 /// панелей с этажами остаётся здесь: [`WallSpan`] знает и то и другое, а
 /// `arches` — только грань, в которой режет.
+///
+/// Ячейка — по облицовке ([`cell_width`]), а не всегда панель: у гаражного ряда
+/// это бокс прогона, и заплата вокруг проёма кроится тем же счётом, каким на
+/// этой стене стоят ворота.
 fn wall_cells(building: &PolyArea, look: &WallLook, span: &WallSpan) -> WallCells {
     let frame = wall_frame(building, look, span);
     WallCells {
         frame,
         patch: frame.map(|frame| frame.marked(WallMark::Solid)),
-        panel: span.length() / span.columns(),
+        panel: span.length() / span.columns(look.kind),
         storey: span.lift / (span.storeys + PARAPET_CELLS),
     }
 }
@@ -362,6 +380,10 @@ pub(super) fn door_size(kind: WallKind) -> Vec2 {
         WallKind::Plaster => Vec2::new(1.3, 2.4),
         WallKind::Shopfront => Vec2::new(2.4, 3.0),
         WallKind::Shed => Vec2::new(3.2, 2.9),
+        // ворота рисует сама облицовка, по створке на бокс; сюда эта стена не
+        // доходит ([`push_doors`]), и размер тут только чтобы `match` остался
+        // исчерпывающим
+        WallKind::GarageDoors => Vec2::new(3.0, 2.5),
     }
 }
 
@@ -444,7 +466,10 @@ fn push_doors(
     openings: &[ArchOpening],
     color: LinearRgba,
 ) {
-    if building.entrances.is_empty() {
+    // У гаражного ряда вход в каждом боксе, и рисует их сама облицовка —
+    // отдельное полотно по входу из OSM встало бы поверх створки соседним
+    // прямоугольником другого размера.
+    if building.entrances.is_empty() || wall.kind == WallKind::GarageDoors {
         return;
     }
     let length = span.length();
@@ -932,7 +957,7 @@ pub(super) fn extrusion_builder(
             &mut builder,
             building,
             &look,
-            &wall_of(building),
+            &wall_of_run(building, runs.get(&index)),
             color,
             RoofShape::Auto,
             detail.clutter,
@@ -974,6 +999,18 @@ pub fn push_house(
 /// `wall_look` мимо [`storeys_of`].
 pub fn wall_of(building: &PolyArea) -> WallLook {
     wall_look(building, storeys_of(building))
+}
+
+/// То же, но с оглядкой на гаражный прогон: бокс, вошедший в него, одет в
+/// **ворота** ([`WallKind::GarageDoors`]) — по створке на ячейку, и ячейка тут
+/// его собственная, размером с бокс. Кровля этого дома берётся от прогона
+/// ровно так же ([`look_of`]), и обе стороны коробки говорят тогда одно и то
+/// же: сверху гребёнка боксов, сбоку ряд ворот.
+fn wall_of_run(building: &PolyArea, run: Option<&GarageRun>) -> WallLook {
+    match run {
+        Some(run) => run_wall_look(run),
+        None => wall_of(building),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

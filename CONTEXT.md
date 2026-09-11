@@ -219,8 +219,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   building, or the face's own **cell coordinates**, different at every vertex — a wall's
   panel and storey, a garage ribbon's bay and row; see `WallFrame` below; the code is **one
   dictionary for all of them** — `0` is *no texture* and by now only roof clutter, which
-  rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs and
-  `9…13` the wall claddings of `WallKind`, a gable carrying its wall's code as the top of
+  rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs,
+  `9…14` the wall claddings of `WallKind` and `15` a door leaf, a gable carrying its
+  wall's code as the top of
   the end wall under it). **Roof age** is the
   second thing that seed carries
   (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
@@ -247,7 +248,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
   **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
   Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
-  the slot by the building's seed) except that **height is consulted first**: anything under
+  the slot by the building's seed), plus `GarageDoors`, which no table reaches: it is
+  picked by the **geometry of a garage run**, like that run's roofing — see **Garage
+  rows**. Otherwise **height is consulted first**: anything under
   `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`, `Church`,
   `Industrial` keep their own tables) drops into the low-rise table, because a low
   building is neither a panel block nor a curtain wall. The cladding decides three things at
@@ -259,7 +262,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
   above it — and stands on a dark **plinth** band.
   **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `14`) — a **patch** over the cells
+  (`layers::push_doors` over `PolyArea::entrances`, code `15`) — a **patch** over the cells
   the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
   **leaf** itself on the entrance point, in a frame of its own that maps the opening to
   `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
@@ -331,9 +334,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     for real would mean a boolean on the outline and would disagree with the walls and the
     shadow.
 
+  **The wall of a run is the same thing said from the side** — cladding
+  `WallKind::GarageDoors` (`layers::wall_of_run`): a **gate in every cell**, the cell being
+  the bay rather than the 3.2 m panel, so a gate stands under its own roof seam. It is as
+  wide as a car and nearly as tall as the wall, starts at the ground, and has no window and
+  no balcony beside it; the OSM-entrance leaf is skipped there, the gates already being
+  every door this building has. Without it a ribbon wore the ordinary tables — a 75 m ГСК
+  came out a brick apartment wall with two rows of windows and three подъезд doors.
+
   **The grid is the run's own, in whole cells** — the same construction as a wall's
   (`WallFrame::run`, `layers::garage_frame`): the bay is the run's length over
-  `round(length / BAY 3.4 m)` and the row its width over `round(width / ROW_PITCH 18 m =
+  `round(length / BAY 3.9 m — the widest car the game draws plus its open doors and a
+  pier)` and the row its width over `round(width / ROW_PITCH 18 m =
   two 6 m rows back to back + a 6 m drive)`, so a seam lands on both ends of the ribbon and
   an aisle on both edges of the blob, and no bay is left cut at a end. The metres stay on
   the CPU: the shader takes `fract` of what the vertex carries, so `roof.wgsl` mirrors no

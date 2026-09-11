@@ -360,6 +360,41 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
     );
 }
 
+/// Бокс гаражного прогона одет в **ворота**, и ячейка его стены — сам бокс, а
+/// не панель в 3.2 м: створка обязана прийтись под свой шов на кровле.
+/// Отдельного полотна по входу из OSM у него при этом нет — ворота уже в
+/// каждой ячейке.
+#[test]
+fn a_garage_run_wears_gates_measured_in_bays() {
+    let _sun = crate::map::default_sun();
+    let mut ribbon = building(oblong(8.0, 40.0), None, AreaKind::Building);
+    ribbon.building_use = BuildingUse::GarageBlock;
+    ribbon.entrances = vec![Vec2::new(12.0, 0.0)];
+    let builder = extrusion_builder(&[ribbon], &[], detail(false));
+    let frames = builder.roof_coords_for_test().expect("roof coords");
+
+    let gates: Vec<[f32; 4]> = frames
+        .iter()
+        .copied()
+        .filter(|frame| unpack_material(frame[2]).0 == WallKind::GarageDoors.code())
+        .collect();
+    assert!(!gates.is_empty(), "стены прогона одеты в ворота");
+    assert!(
+        frames
+            .iter()
+            .all(|frame| unpack_material(frame[2]).0 != DOOR_CODE),
+        "отдельного полотна по входу у гаража нет: створка уже в каждом боксе"
+    );
+    // 40 м по 3.9 — десять боксов, и край стены приходится ровно на десятый
+    let far = gates.iter().fold(0.0_f32, |far, gate| far.max(gate[0]));
+    assert!((far - 10.0).abs() < 1e-3, "край стены — целый бокс: {far}");
+    // гараж в один этаж, и балконов ему не полагается — посев отрицательный
+    assert!(
+        gates.iter().all(|gate| gate[3] < 0.0),
+        "балконов на гараже не бывает"
+    );
+}
+
 /// Где на стене оказались дверные полотна: `x` каждой вершины кода
 /// [`DOOR_CODE`], в порядке сборки.
 fn door_vertices(building: &PolyArea, kind: WallKind) -> Vec<Vec2> {
@@ -585,11 +620,16 @@ fn the_cladding_follows_the_use_and_the_height() {
     }
 }
 
-/// Все пять облицовок обязаны встречаться в городе. Тест не про красоту: он
-/// ловит и мёртвый слот в таблице, и слабый разбор посева — сетка домов ровным
-/// шагом это ровно тот вход, на котором плохо перемешанный хеш выстраивается в
-/// узор, и в витрине это выглядело бы как «на девяти этажах всегда
-/// штукатурка».
+/// Каждая облицовка **из таблиц** обязана встречаться в городе. Тест не про
+/// красоту: он ловит и мёртвый слот в таблице, и слабый разбор посева — сетка
+/// домов ровным шагом это ровно тот вход, на котором плохо перемешанный хеш
+/// выстраивается в узор, и в витрине это выглядело бы как «на девяти этажах
+/// всегда штукатурка».
+///
+/// Ворота из перебора исключены, и по той же причине, по какой гаражные ленты
+/// не входят в `RoofKind::ALL`: их выбирает **геометрия прогона**
+/// (`layers::wall_of_run`), а не назначение дома, так что через `wall_of` они
+/// не приходят никогда.
 #[test]
 fn every_cladding_reaches_the_city() {
     let _sun = crate::map::default_sun();
@@ -616,6 +656,9 @@ fn every_cladding_reaches_the_city() {
         }
     }
     for kind in WallKind::ALL {
+        if kind == WallKind::GarageDoors {
+            continue;
+        }
         assert!(seen.contains(&kind), "{kind:?} не встретилась ни разу");
     }
 }
@@ -1503,7 +1546,9 @@ fn the_wall_around_an_arch_wears_no_half_windows() {
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // клетки этой стены: 40 м на целое число панелей, подъём на этажи с
     // запасом под карниз
-    let panel = 40.0 / wall_columns(40.0);
+    // облицовка тут любая, кроме гаражной: боксом ячейку меряет только
+    // `WallKind::GarageDoors`, у всех остальных она панельная
+    let panel = 40.0 / wall_columns(40.0, WallKind::Panel);
     // этажей столько же, сколько насчитал бы `storeys_of`, — целое число
     let storeys = (30.0 / crate::settings::STOREY_HEIGHT).round().max(1.0);
     let storey = lift.y / (storeys + crate::map::meshing::PARAPET_CELLS);

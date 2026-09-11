@@ -245,6 +245,7 @@ fn note(kind: WallKind) -> &'static str {
         WallKind::Plaster => "гладкая, мелкие окна, балконов нет",
         WallKind::Shopfront => "лента остекления, витрина на первом этаже",
         WallKind::Shed => "рёбра профлиста, окно под карнизом, ворота внизу",
+        WallKind::GarageDoors => "створка в каждом боксе, окон нет вовсе",
     }
 }
 

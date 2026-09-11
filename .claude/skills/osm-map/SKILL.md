@@ -1179,13 +1179,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       lean, loses its storeys earlier than a south one without a line of code about it.
     - **`WallKind` is to the wall what `RoofKind` is to the roof**, and the codes are one
       dictionary in one attribute slot: `0` no texture, `1…6` roofing, `7…8` the two garage
-      runs, `9…13` cladding (`WallKind::code` derives itself from `RoofKind::CODES`, the
+      runs, `9…14` cladding, `15` the door leaf (`WallKind::code` derives itself from
+      `RoofKind::CODES`, the
       **last** roofing code rather than the length of `ALL` — the garage runs are outside
-      `ALL` and would otherwise have been overwritten by the claddings — so a new roofing
-      shifts the wall codes and the shader's mirror is edited whole). Five claddings —
-      `Panel | Brick | Plaster | Shopfront | Shed` — because panel seams with balconies are
+      `ALL` and would otherwise have been overwritten by the claddings — and `DOOR_CODE`
+      derives from `WallKind::CODES` the same way, so a new roofing shifts the wall codes,
+      a new cladding shifts the door, and the shader's mirror is edited whole).
+      Six claddings —
+      `Panel | Brick | Plaster | Shopfront | Shed | GarageDoors` — because panel seams with
+      balconies are
       exactly **one** kind of building, and while the wall was one, a garage and a church
-      wore them too.
+      wore them too. Five of them are chosen by the tables below; **`GarageDoors` is chosen
+      by geometry**, like the garage runs on the roof — `layers::wall_of_run` puts it on
+      every box of a run and nothing else can reach it, which is why
+      `every_cladding_reaches_the_city` skips it.
     - **The pick** (`material::wall_look`) is `roof_look`'s twin — a ten-slot table per
       `BuildingUse`, the slot from the building's seed, the colour from the material's own
       palette plus ±3 % — with one difference: **height is consulted before the tag.**
@@ -1420,7 +1427,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       tile, bitumen and corrugated sheet.
     - **The grid is the run's own, in whole cells** — the wall's construction
       (`meshing::WallFrame::run`, `layers::garage_frame`), reached here for the same reason.
-      The bay is `length / round(length / BAY 3.4 m)` and the row
+      The bay is `length / round(length / BAY 3.9 m)` and the row
       `width / round(width / ROW_PITCH 18 m)`, so the pitch is fitted to the run rather
       than the run to the pitch: a seam lands on **both** ends of the ribbon and an aisle
       on both edges of the blob. A fixed metre pitch phased to one end — what this was
@@ -1446,6 +1453,24 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       Like the wall, the ribbon **leaves the fragment before the common roof pass**
       (`garage_shade`): it has no roof age, and the one thing it still reads in metres is
       the rust, which lives on the roof rather than in the run's cells.
+    - **The wall of a run is the ribbon's other half** (`WallKind::GarageDoors`,
+      `layers::wall_of_run`, `roof.wgsl::gate_of`) — and it has to be, because from the
+      south a ГСК is *read by its gates* the way it is read from above by its comb. Until
+      it existed a garage box took the ordinary cladding tables: on a 75 m ribbon that
+      came out as a brick apartment wall with two rows of windows and three подъезд doors.
+      The cell of that wall is the **bay** rather than the 3.2 m panel
+      (`layers::cell_width`), so a gate stands under its own roof seam; a gate is
+      `GATE_WIDE` 0.78 × `GATE_HIGH` 0.80 of it — a garage door is as wide as a car and
+      nearly as tall as the wall, and the ordinary door beside it is a slit — it starts at
+      the ground (no threshold, you drive in), carries the sections of a roller door and a
+      lintel over it, and is painted per bay by its owner. There are no windows and no
+      balconies on it at all, and `push_doors` returns early: an OSM entrance would
+      otherwise put a second, differently sized leaf over a gate that is already there.
+    - **The bay is measured against the cars the game draws** (`CarShape`, 1.72–1.95 m
+      wide): the widest one plus half a metre each side for the doors plus a pier is
+      `1.95 + 2 × 0.55 + 0.4 ≈ 3.9 m`, which is `BAY`. The 3.4 m it was first is the
+      physical floor — a van fits with nothing to spare — and on the map that read as too
+      fine a comb.
     - **No clutter**: `flat_roof_items` and `ridge_chimney` both refuse both kinds. A
       ventilation shaft or a chimney on a garage is the generator showing through — and
       the blobs used to collect *skylight ribbons*, since a 12 000 m² corrugated roof is
