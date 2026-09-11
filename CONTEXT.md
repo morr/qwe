@@ -54,10 +54,10 @@ in `main.rs`.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
-  parks → woods → tree-row band casing → tree-row band → grass → sand → worn paths →
-  pitches → pitch markings → parking → parking markings → water → waterways → sidewalks →
-  alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
+  landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
+  worn paths → pitches → pitch markings → parking → parking markings → water → waterways →
+  sidewalks → alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
   `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9 (`map/buildings/mod.rs`), `Z_WALL` 5.1

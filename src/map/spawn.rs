@@ -19,9 +19,9 @@ use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_PARKING, Z_PARKING_LINES, Z_PITCH,
-    Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
-    Z_WORN_PATH,
+    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PARKING_LINES,
+    Z_PITCH, Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY,
+    Z_WOOD, Z_WORN_PATH,
 };
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
@@ -233,7 +233,7 @@ pub fn spawn_map(
     for (builder, z, name, kind) in [
         (ground, Z_GROUND, "ground", SurfaceKind::Ground),
         (works, Z_LANDUSE, "landuse_works", SurfaceKind::Ground),
-        (yards, Z_LANDUSE, "landuse_yards", SurfaceKind::Yard),
+        (yards, Z_LANDUSE_YARD, "landuse_yards", SurfaceKind::Yard),
         (parks, Z_PARK, "parks", SurfaceKind::Park),
         (woods, Z_WOOD, "woods", SurfaceKind::Wood),
         (grass, Z_GRASS, "grass", SurfaceKind::Grass),

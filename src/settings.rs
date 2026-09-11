@@ -785,7 +785,15 @@ pub const RESCUE_SEARCH_TILES: i32 = 16;
 pub const Z_GROUND: f32 = 0.0;
 /// Кварталы `landuse` — между голой землёй и парками: и двор, и промзона
 /// обязаны лежать под любой зеленью и под всем, что по кварталу проложено.
+/// Промзона (`landuse_works`) лежит на этой отметке.
 pub const Z_LANDUSE: f32 = 0.25;
+/// Двор (`landuse_yards`) — волосок над промзоной: с тех пор как квартал
+/// разъехался надвое, это два непрозрачных меша с разными материалами, и там,
+/// где `landuse=residential` пересекается с `landuse=industrial|garages`,
+/// порядок двух заливок не должен зависеть от случая (при равной глубине его
+/// решает очередь фазы, а не данные карты). Волосок именно под двором, потому
+/// что таков порядок в списке слоёв `map/spawn.rs`: двор кроет промзону.
+pub const Z_LANDUSE_YARD: f32 = 0.26;
 pub const Z_PARK: f32 = 0.5;
 /// Лес, луга и песок лежат внутри парковых полигонов — поверх заливки парка.
 pub const Z_WOOD: f32 = 0.55;
@@ -892,7 +900,8 @@ pub const Z_CONIFER_NOISE_OVERLAY: f32 = 21.0;
 const _: () = {
     // площадные заливки: земля → парк → лес → трава → песок → вода
     assert!(Z_GROUND < Z_LANDUSE);
-    assert!(Z_LANDUSE < Z_PARK);
+    assert!(Z_LANDUSE < Z_LANDUSE_YARD);
+    assert!(Z_LANDUSE_YARD < Z_PARK);
     assert!(Z_PARK < Z_WOOD);
     assert!(Z_WOOD < Z_TREE_ROW_BAND_CASING);
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);

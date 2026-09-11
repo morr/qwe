@@ -74,9 +74,12 @@ in `CONTEXT.md` and the detail here in the same change.
   but Wood stays open ground — that is what makes the open half of a park read as a
   field, the way it does on OSM. **Residential** (`landuse=residential`) and
   **Industrial** (`landuse=industrial|garages`) are the *blocks* — `MapData::landuse`,
-  one merged layer at `Z_LANDUSE` (0.25) between the ground mesh and the parks, half
-  a tone off the ground colour (warmer/lighter for housing, greyer for industry) so the
-  city stops being one flat sheet. `area_kind` tries them **last**: any green tag on the
+  **two** merged layers between the ground mesh and the parks — `landuse_works` at
+  `Z_LANDUSE` (0.25) in the earth colour, `landuse_yards` a hair above it at
+  `Z_LANDUSE_YARD` (0.26) in the muted green (see **The yard** below). The hair is not
+  cosmetic: they are two opaque meshes with different materials, the two tags do overlap
+  in OSM, and at an equal depth the phase queue would decide which fill wins rather than
+  the map. `area_kind` tries them **last**: any green tag on the
   same polygon wins. They touch neither the navmesh nor tree planting. Tula v8: 264
   residential + 35 industrial/garages in the bbox (the audit table), 294 of them
   reach `MapData::landuse`; `commercial`/`retail` are not requested.
