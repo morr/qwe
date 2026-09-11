@@ -12,12 +12,13 @@ use crate::map::buildings::material::RoofMaterialHandle;
 use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
+use crate::map::parking;
 use crate::map::roads::{self, RoadSmoothing, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
 use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_POND, Z_SAND, Z_TREE_ROW_BAND,
-    Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
+    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_PARK, Z_PARKING, Z_PARKING_LINES, Z_POND, Z_SAND,
+    Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD,
 };
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
@@ -48,6 +49,9 @@ const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
+/// Стоянка — асфальт посветлее проезжей части: полотно улицы укатано, а
+/// двор со стоянкой выцветает и пылится.
+const PARKING_COLOR: Color = Color::srgb(0.412, 0.408, 0.404);
 
 /// Кайма площадного слоя вдоль его контура ([`MeshBuilder::push_inset_band`]):
 /// ширина, м, и цвет на самом контуре; к дальнему краю кайма сходит в заливку.
@@ -82,6 +86,11 @@ const SAND_RIM: Rim = Rim {
     width: 2.0,
     edge: Color::srgb(0.913, 0.868, 0.737),
 };
+/// Кромка стоянки — бордюр: чуть светлее её асфальта.
+const PARKING_RIM: Rim = Rim {
+    width: 1.0,
+    edge: Color::srgb(0.478, 0.475, 0.467),
+};
 
 /// Полигон слоя с каймой по контуру, дырки включительно (у дырки кайма лежит
 /// снаружи её контура — внутри заливки). Кайма кладётся после заливки в тот
@@ -113,6 +122,7 @@ pub fn spawn_map(
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
+    mut parking_layout: ResMut<parking::ParkingLayout>,
 ) {
     // земля — квад на всю карту тем же фактурным материалом, что и прочие
     // поверхности: спрайту с плоским цветом фактуру не положить
@@ -155,9 +165,21 @@ pub fn spawn_map(
         push_area(&mut water, area, WATER_COLOR, &WATER_RIM);
     }
 
+    // стоянка — асфальт своим слоем: он темнее двора и светлее проезжей
+    // части, а по нему идёт разметка мест (`map::parking`)
+    let mut parking = MeshBuilder::with_surface_coords();
+    for area in &map.parking {
+        push_area(&mut parking, area, PARKING_COLOR, &PARKING_RIM);
+    }
+    *parking_layout = parking::ParkingLayout::new(&map.parking);
+    let mut parking_lines = MeshBuilder::default();
+    for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
+        parking::push_markings(&mut parking_lines, area, stalls);
+    }
+
     let waterways = mesh_water_lines(&map.water_lines);
 
-    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &water]
+    let skipped: usize = [&landuse, &parks, &woods, &grass, &sand, &parking, &water]
         .iter()
         .map(|builder| builder.skipped_polygons())
         .sum();
@@ -172,6 +194,7 @@ pub fn spawn_map(
         (woods, Z_WOOD, "woods", SurfaceKind::Wood),
         (grass, Z_GRASS, "grass", SurfaceKind::Grass),
         (sand, Z_SAND, "sand", SurfaceKind::Sand),
+        (parking, Z_PARKING, "parking", SurfaceKind::Street),
         (water, Z_POND, "water", SurfaceKind::Water),
         (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
     ] {
@@ -193,6 +216,18 @@ pub fn spawn_map(
         &surfaces,
         *road_style,
         &map,
+    );
+
+    // разметка мест — своим мешем поверх асфальта стоянки: это белая краска,
+    // а не фактура покрытия, и потому плоский материал
+    spawn_layer(
+        &mut commands,
+        &mut meshes,
+        parking_lines,
+        Z_PARKING_LINES,
+        "parking_lines",
+        LayerMaterial::Flat(materials.add(Color::WHITE)),
+        (),
     );
 
     buildings::spawn_buildings(

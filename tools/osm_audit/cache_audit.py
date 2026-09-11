@@ -46,6 +46,13 @@ def area_kind(tags):
         return "wood"
     if tags.get("leisure") in ("park", "garden") or landuse == "recreation_ground":
         return "park"
+    # стоянка — после зелени и до кварталов; парковочный дом сюда не доходит,
+    # `building` забрал его выше
+    # HIDDEN_PARKING из parse/tags.rs: сверху этих стоянок не видно
+    if tags.get("amenity") == "parking" and tags.get("parking") not in (
+        "underground", "multi-storey", "rooftop",
+    ):
+        return "parking"
     if landuse == "residential":
         return "residential"
     if landuse in ("industrial", "garages"):

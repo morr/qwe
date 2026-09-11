@@ -8,6 +8,7 @@ pub mod cars;
 pub mod footprint;
 mod meshing;
 pub mod osm;
+mod parking;
 mod rail;
 mod roads;
 mod seed;
@@ -26,7 +27,9 @@ pub use self::buildings::{BuildingHeightMode, LayerCost, extrusion_lift, measure
 pub use self::cars::{CarStyle, measure_cars};
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
-pub use self::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
+pub use self::meshing::{
+    MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, min_area_rect, miter_offsets,
+};
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` и `smooth_path` наружу по той же причине: ряд машин витрины
 // обязан стоять на том же асфальте, что в городе, а асфальт — на той же
@@ -71,6 +74,7 @@ impl Plugin for MapPlugin {
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
             .init_resource::<CarStyle>()
+            .init_resource::<parking::ParkingLayout>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()

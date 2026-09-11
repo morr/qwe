@@ -27,6 +27,16 @@ const BUILDING_HEIGHT_RANGE: RangeInclusive<f32> = 2.0..=600.0;
 /// `service`, `exit`) — дверь как дверь.
 pub(super) const NON_WALKABLE_ENTRANCES: [&str; 3] = ["no", "garage", "emergency"];
 
+/// Значения `parking=*`, которых на снимке сверху нет: асфальт лежит под землёй
+/// или на крыше, а контур в OSM нарисован по двору, газону или самому дому над
+/// ним. Нарисовать такой контур лентой с разметкой и машинами — ровно та
+/// неправдоподобность, против которой заведено это направление. Считано по
+/// Overpass: `underground` — Париж 11, Берлин 22, Лондон 10, NY 3, Токио 2;
+/// `multi-storey` — Берлин 3, Тула 1; `rooftop` — Берлин 1. Парного
+/// `location=underground` на таких контурах нет ни в одном из шести городов,
+/// поэтому смотрится только `parking`.
+const HIDDEN_PARKING: [&str; 3] = ["underground", "multi-storey", "rooftop"];
+
 /// Границы правдоподобия шага посадки аллеи, м: ниже кроны сливаются в живую
 /// изгородь, выше — это уже не ряд, а отдельные деревья.
 const TREE_ROW_SPACING_RANGE: RangeInclusive<f32> = 2.0..=40.0;
@@ -140,6 +150,17 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     ) || landuse == Some("recreation_ground")
     {
         return Some(AreaKind::Park);
+    }
+    // стоянка — после зелени и до кварталов: зелёный тег на том же контуре
+    // выигрывает (сквер с парковкой по краю остаётся сквером), а вот двор
+    // `landuse=residential` — нет, там асфальт главное. Парковочный дом
+    // (`building=*` + `amenity=parking`) сюда не доходит: здание выше
+    if tags.get("amenity").map(String::as_str) == Some("parking")
+        && !tags
+            .get("parking")
+            .is_some_and(|value| HIDDEN_PARKING.contains(&value.as_str()))
+    {
+        return Some(AreaKind::Parking);
     }
     // кварталы — последними: у них нет ничего, что перекрыло бы зелень
     match landuse {

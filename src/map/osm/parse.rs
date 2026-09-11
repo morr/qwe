@@ -240,6 +240,7 @@ fn push_area(map: &mut MapData, area: PolyArea) {
         AreaKind::Grass => map.grass.push(area),
         AreaKind::Sand => map.sand.push(area),
         AreaKind::Residential | AreaKind::Industrial => map.landuse.push(area),
+        AreaKind::Parking => map.parking.push(area),
     }
 }
 

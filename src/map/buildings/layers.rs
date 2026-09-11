@@ -17,11 +17,11 @@ use super::material::{
     run_look, run_wall_look, wall_look,
 };
 use super::order::{draw_order, wall_order};
-use super::roofs::{HipRoof, RoofShape, Roofing, min_area_rect, roofing, roofing_of};
+use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark};
+use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
 use crate::map::seed::seed_from_point;

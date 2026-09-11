@@ -1346,6 +1346,50 @@ impl MeshBuilder {
     }
 }
 
+/// Минимальный по площади описанный прямоугольник кольца, CCW, первое ребро
+/// вдоль длинной оси. У такого прямоугольника одна сторона лежит на ребре
+/// выпуклой оболочки, а рёбра оболочки — подмножество рёбер контура, так что
+/// перебор направлений всех рёбер находит оптимум без построения оболочки:
+/// контуров тысячи, вершин в каждом — единицы.
+pub fn min_area_rect(ring: &[Vec2]) -> Option<[Vec2; 4]> {
+    if ring.len() < 3 {
+        return None;
+    }
+    let mut best: Option<(f32, Vec2, Vec2, Vec2)> = None;
+    for i in 0..ring.len() {
+        let Some(u) = (ring[(i + 1) % ring.len()] - ring[i]).try_normalize() else {
+            continue;
+        };
+        let v = Vec2::new(-u.y, u.x);
+        let (mut u_min, mut u_max, mut v_min, mut v_max) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for point in ring {
+            let (pu, pv) = (point.dot(u), point.dot(v));
+            u_min = u_min.min(pu);
+            u_max = u_max.max(pu);
+            v_min = v_min.min(pv);
+            v_max = v_max.max(pv);
+        }
+        let area = (u_max - u_min) * (v_max - v_min);
+        if best.is_none_or(|(best_area, ..)| area < best_area) {
+            best = Some((area, u, Vec2::new(u_min, v_min), Vec2::new(u_max, v_max)));
+        }
+    }
+    let (_, u, low, high) = best?;
+    let v = Vec2::new(-u.y, u.x);
+    let corner = |pu: f32, pv: f32| u * pu + v * pv;
+    let mut rect = [
+        corner(low.x, low.y),
+        corner(high.x, low.y),
+        corner(high.x, high.y),
+        corner(low.x, high.y),
+    ];
+    // длинная ось первой: у CCW-квадрата сдвиг на одну вершину сохраняет обход
+    if high.x - low.x < high.y - low.y {
+        rect.rotate_left(1);
+    }
+    Some(rect)
+}
+
 /// Площадь замкнутого контура по формуле шнурков, со знаком: положительна при
 /// обходе против часовой стрелки. Делить на два обязательно — на «площадь /
 /// периметр» как на толщину контура опирается зажим каймы
