@@ -56,9 +56,7 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse blocks →
   parks → woods → tree-row band casing → tree-row band → grass → sand → worn paths →
-  pitches → pitch
-  markings → parking → parking
-  markings → water → waterways → sidewalks →
+  pitches → pitch markings → parking → parking markings → water → waterways → sidewalks →
   alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
   units → souls (18) → tree shadows → trees (20). Three live in their own modules:
@@ -141,9 +139,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     Residential/Industrial are the `landuse` **blocks** — the fill under everything else,
     no effect on navigation or planting. **A residential block is drawn as a yard**: a
     muted green, its own layer with its own `SurfaceKind::Yard` texture (patchier than
-    grass: bare ground by the doors), because between the houses there
-    is grass, and the older half-tone-off-the-ground fill was what made the whole city
-    read as one beige sheet with buildings placed on it. Industrial keeps the cold grey. **Parking** (`amenity=parking`,
+    grass: bare ground by the doors), because between the houses there is grass, and the
+    older half-tone-off-the-ground fill was what made the whole city read as one beige
+    sheet with buildings placed on it. Industrial keeps the cold grey.
+    **Parking** (`amenity=parking`,
     `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
     park (`building` + `amenity=parking`) stays a building — and a lot whose asphalt is
