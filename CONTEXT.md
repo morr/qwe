@@ -542,12 +542,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
-  **The crown is coloured by a material of its own** (`map/trees/canopy.rs`, shader
-  `crown.wgsl`), not by a flat fill: the side facing the sun is lighter, the far side
-  darker with a falloff by radius, and a leaf ripple by world position keeps two
-  neighbouring trees of one variant from being copies. The ink of the outline and the
-  hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from the air a crown has no
-  outline, it has a shaded edge. Detail in the `osm-map` skill's `references/trees.md`.
+  **The crown is coloured by a material of its own**, **`CrownMaterial`**
+  (`map/trees/canopy.rs`, shader `crown.wgsl`), not by a flat fill: the side facing the
+  sun is lighter, the far side darker with a falloff by radius, and a leaf ripple by
+  world position keeps two neighbouring trees of one variant from being copies. The ink
+  of the outline and the hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from
+  the air a crown has no outline, it has a shaded edge. Detail in the `osm-map` skill's
+  `references/trees.md`.
 - **Worn paths** (`map/paths.rs`) — the desire lines of a courtyard: a straight strip of
   bare earth from **each OSM entrance to the nearest kerb of the nearest road**, 1.1 m
   wide. `RoadLine` carries the *centreline* and the width apart, so the strip is cut short
@@ -655,9 +656,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   speckle, drifting ripple on water) — no textures, no assets, and identical in any two
   overlapping ribbons. **Every octave fades by pixel size** (`fwidth`), so nothing shimmers
   when zoomed out — that rule, and the hash/noise/octave/stripe helpers around it, live in
-  **`assets/shaders/noise.wgsl`** and are imported by both map shaders (`surface.wgsl` and
-  `roof.wgsl`; the portal's vortex keeps its own hash and uncentred noise). One material
-  per **`SurfaceKind`** (`SurfaceMaterials`, built once at startup);
+  **`assets/shaders/noise.wgsl`** and are imported by all three map shaders (`surface.wgsl`,
+  `roof.wgsl` and the crown's `crown.wgsl`; the portal's vortex keeps its own hash and
+  uncentred noise). One material per **`SurfaceKind`** (`SurfaceMaterials`, built once at
+  startup);
   **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
   0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**

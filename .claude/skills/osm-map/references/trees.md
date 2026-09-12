@@ -157,20 +157,35 @@ stand, how density works, and which resources restyle them.
   phase, and a thousand of them sharing one z alongside the pawn sprites lose a
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
   item, no blinking (and one draw call instead of hundreds).
-- **The canopy material** (`map/trees/canopy.rs`, shader `assets/shaders/crown.wgsl`) —
+- **The canopy material — `CrownMaterial`** (`map/trees/canopy.rs`, shader
+  `assets/shaders/crown.wgsl`, registered as a `Material2dPlugin` in `map/mod.rs`) —
   the crown is drawn by a `Material2d` of its own rather than by `ColorMaterial`, because
   a flat fill is what made it read as clip art. The geometry is untouched (watabou draws
   the right *silhouette*); what the shader adds is what a canopy has from above and a
   drawing does not:
   - **the ball**: the side facing `map::sun_light` is `LIT` 0.20 brighter and the far
-    side darker, plus a `RIM` 0.10 falloff by radius. It reads the crown-**local**
-    coordinate — the mesh is unit-radius, so that vector *is* the direction from the
-    trunk, and no attribute is needed;
-  - **the leaf ripple**: `fbm3` at a 0.9 m wavelength by **world** position, so two
-    neighbouring trees of the same variant are not copies of each other;
-  - the shade goes cooler and the light warmer, the same tint law as the roofs.
-  The per-tree brightness slot moved from a grey `ColorMaterial` into the uniform, so
-  there are exactly as many materials as before (one per `tint_factors` slot).
+    side darker, plus a `RIM` 0.10 falloff by the **square** of the radius. It reads the
+    crown-**local** coordinate — the mesh is unit-radius, so that vector *is* the
+    direction from the trunk, and no attribute is needed;
+  - **the leaf ripple**: `fbm3` at a `LEAF_SCALE` 0.9 m wavelength by **world** position,
+    `LEAF_AMP` 0.16 of shade, so two neighbouring trees of the same variant are not
+    copies of each other — **up close only**. `visible` fades the top octave out between
+    0.225 and 0.6 m/px and the lower ones earlier, so from about 0.6 m/px the ripple is
+    gone and same-variant crowns are twins again (the ball is lit off the local
+    coordinate, which is identical for all of them). That is the intended trade: the
+    defect this shader answers is «вблизи это клипарт»;
+  - the shade goes cooler and the light warmer, the same tint law as the roofs
+    (`vec3(0.30, 0.10, -0.25)` against the roof's `(0.35, 0.15, -0.30)` — a touch gentler,
+    a canopy is not a roof slope).
+  All four ride one **`shading`** uniform, fed from `settings::CROWN_SHADING` (1.0) by
+  `CrownMaterial::of` itself. It is deliberately **not** a slider — the canopy is lit
+  exactly as much as everything else on the map, and a knob for it would be a knob for
+  «switch the sun off for trees» — so the zero case is unreachable and the shader does
+  not branch on it.
+  The per-tree brightness slot moved from a grey `ColorMaterial` into the uniform's
+  **`brightness`** (never `tint`: in this project that word is the hue shift, as in
+  `SurfaceParams::tint` and the shader's own local), so there are exactly as many
+  materials as before (one per `tint_factors` slot).
   **The ink is mixed toward the foliage** by `INK_FOLIAGE_MIX` 0.62 in `crown_mesh`:
   from the air a crown has no outline, it has a shaded edge. This is a code-level mix and
   not a new `details` default on purpose — that colour is persisted, so a new default
