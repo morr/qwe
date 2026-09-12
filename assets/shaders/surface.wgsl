@@ -42,6 +42,7 @@ struct SurfaceParams {
     marking_width: f32,
     marking_dash: f32,
     marking_gap: f32,
+    wear: f32,
     intensity: f32,
 }
 
@@ -88,6 +89,15 @@ fn dash_distance(along: f32, dash: f32, gap: f32) -> f32 {
     let next = abs(phase - period - dash * 0.5) - dash * 0.5;
     return min(here, next);
 }
+
+// Износ асфальта. Колея — в 85 см от середины полосы (колея легковой машины
+// 1.5 м); это широкая разница тона (σ 32 см, то есть около 75 см в полувысоте),
+// а не тонкая линия по ширине покрышки. Грязь у бордюра — полоса в 70 см.
+const RUT_OFFSET: f32 = 0.85;
+const RUT_SIGMA: f32 = 0.32;
+const RUT_AMP: f32 = 0.075;
+const EDGE_DIRT_REACH: f32 = 0.7;
+const EDGE_DIRT_AMP: f32 = 0.07;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -148,6 +158,45 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let zoom_fade = smoothstep(6.0, 12.0, lane_width / px);
         let mask = on_line * on_dash * gap_fade * zoom_fade * params.marking_color.a * f32(inside);
         rgb = mix(rgb, params.marking_color.rgb, mask);
+    }
+
+    // Износ покрытия — то, из-за чего асфальт на снимке никогда не ровного
+    // тона: колеи под колёсами и грязь у бордюра. Заплаты ремонта тут были и
+    // убраны: клетка мировой сетки, залитая ровным тоном, — это шахматка по
+    // сторонам света, а не заплата; см. `CONTEXT.md`.
+    // Считается **в раме ленты**, поэтому колея идёт по полосе, а не по
+    // странам света — и едет на том же коде `ribbon.w`, что и разметка: полосы
+    // приходят только с размеченной проезжей части от двух полос и только пока
+    // включена галочка «Markings». Значит, износ виден ровно там же, где линии;
+    // однополосная улица и площадная заливка того же материала (у неё ленты
+    // нет вовсе) остаются ровными. Гейт `>= 2`, а не `>= 1`: единица в
+    // `Markings::encode` не приходит никогда.
+    if params.wear > 0.0 && lanes >= 2.0 {
+        let across = in.ribbon.x;
+        let half_width = in.ribbon.z;
+        let lane_width = 2.0 * half_width / lanes;
+        // Износ гаснет в разрыве у перекрёстка тем же `to_break`, что и линии.
+        // Без этого обе улицы тянут свои колеи через перекрёсток, а бордюрная
+        // кайма режет чужое полотно поперёк — бордюра там нет, и колеи там нет
+        // тоже: машина поперёк перекрёстка едет где придётся.
+        let w = k * params.wear * smoothstep(0.0, 1.0, in.ribbon.y);
+        // две колеи на полосу: колёса идут в 85 см от её середины, и полоса
+        // под ними отполирована до светлого
+        let in_lane = (across + half_width) / lane_width;
+        let from_middle = abs(in_lane - floor(in_lane) - 0.5) * lane_width;
+        let offset = from_middle - RUT_OFFSET;
+        let rut = exp(-offset * offset / (2.0 * RUT_SIGMA * RUT_SIGMA));
+        // гасится по **шагу полосы**, а не по ширине колеи: рисунок повторяется
+        // с полосой, и на спутниковом плане отполированные колеи ещё видны —
+        // это широкая разница тона, а не тонкая линия
+        rgb = rgb * (1.0 + w * RUT_AMP * rut * visible(lane_width, px));
+        // у бордюра скапливается грязь и песок. Гасится как волна в 1.4 м
+        // (переход от тёмного к светлому — половина периода): на общем плане
+        // полоса в 70 см уже пикселя, и без гашения край дороги мерцал бы при
+        // панорамировании — ровно то, против чего написано правило в шапке
+        let to_edge = half_width - abs(across);
+        let dirt = 1.0 - smoothstep(0.0, EDGE_DIRT_REACH, to_edge);
+        rgb = rgb * (1.0 - w * EDGE_DIRT_AMP * dirt * visible(2.0 * EDGE_DIRT_REACH, px));
     }
 
     // слой непрозрачный: вода, дороги и зелень — сплошные заливки
