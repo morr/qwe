@@ -702,7 +702,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 
   Both remaining effects fade by `visible(...)` like the rest of the surface texture — the
   ruts by their lane pitch, the kerb dirt by twice its reach
-  (1.4 m), so a band under half a pixel does not flicker along the road edge. The block is
+  (1.4 m), so a band under half a pixel does not flicker along the road edge.
+
+  **And both fade out in a junction gap**, by the very `smoothstep(0, 1, to_break)` the
+  lane dashes use — the second component of `ATTRIBUTE_RIBBON`, negative inside a gap.
+  Reported from a screenshot of a four-way crossing: the roads are independent overlapping
+  ribbons, so each was drawing its own wear across the other. The kerb dirt was the
+  louder half — a dark band along a street's edge carried straight over the crossing
+  street's asphalt, where there is no kerb — and the ruts the subtler, two lanes' polished
+  bands meeting at right angles in the middle of the junction. Neither is a thing that
+  happens: traffic fans out over a crossing and polishes nothing, and the grit collects
+  where the kerb is. The gate costs one `smoothstep` on the amplitude that scales all of
+  it, so the fade is shared. The block is
   gated on `lanes >= 2`, and `lanes` is decoded from the same `ATTRIBUTE_RIBBON.w` the
   markings ride on: `roads::road_markings` fills it only for a carriageway of two lanes or
   more, and only while `RoadStyle.markings` is on. So **wear reaches exactly the roads the

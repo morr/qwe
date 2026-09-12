@@ -175,7 +175,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let across = in.ribbon.x;
         let half_width = in.ribbon.z;
         let lane_width = 2.0 * half_width / lanes;
-        let w = k * params.wear;
+        // Износ гаснет в разрыве у перекрёстка тем же `to_break`, что и линии.
+        // Без этого обе улицы тянут свои колеи через перекрёсток, а бордюрная
+        // кайма режет чужое полотно поперёк — бордюра там нет, и колеи там нет
+        // тоже: машина поперёк перекрёстка едет где придётся.
+        let w = k * params.wear * smoothstep(0.0, 1.0, in.ribbon.y);
         // две колеи на полосу: колёса идут в 85 см от её середины, и полоса
         // под ними отполирована до светлого
         let in_lane = (across + half_width) / lane_width;

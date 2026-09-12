@@ -587,6 +587,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   places a feature, it never *is* the feature**), and it read as badly on asphalt. Don't
   reintroduce a per-cell fill; a patch has to be a jittered shape inside its cell, in the
   lane's own frame.
+  Both **fade out in a junction gap** by the same `to_break` the lane dashes use: a
+  crossing has no kerb to collect grit along and no lane to polish a rut down, and without
+  the gate the two streets drew their ruts straight through each other and each ran its
+  kerb dirt across the other's asphalt.
   Wear rides the **markings code**: the lane count comes from the very
   `ATTRIBUTE_RIBBON.w` the lane lines read, which `roads::road_markings` fills only for a
   carriageway of two lanes or more, and only while `RoadStyle.markings` is on. So wear
