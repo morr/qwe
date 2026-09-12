@@ -602,8 +602,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
-- **The yard** — two changes that together stop the city from being a beige sheet with
-  buildings on it, and both came from looking at the first offscreen shot (#27):
+- **The yard** — what stops the city from being a beige sheet with buildings on it; it
+  came from looking at the first offscreen shot (#27):
   - **The residential block is the yard.** `RESIDENTIAL_COLOR` went from half a tone off
     the ground to a muted green, and the `landuse` layer split in two (`landuse_yards`
     with `SurfaceKind::Yard`, `landuse_works` with `Ground`) — one kind for both would
@@ -615,48 +615,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     course. Nothing else changed: the roads, the
     parking, the buildings and the pitches are all drawn *over* the block, so the green
     only shows where nothing else is, which is exactly where the grass is.
-  - **Worn paths** (`map/paths.rs`) — the desire lines. A straight 1.1 m strip of bare
-    earth from **every OSM entrance to the nearest kerb of the nearest road**.
-    `Z_WORN_PATH` 0.72, `SurfaceKind::Alley` — a worn path *is* an unpaved alley.
-    - **To the kerb, not to the axis**, and the two thresholds are therefore measured on
-      different things. `RoadLine` is a centreline plus a `width` (primary 16 m, and a
-      carriageway carries sidewalks on top of that), and the road layer draws over the
-      path, so the part of a strip within `width / 2` of the axis is invisible. The grid
-      carries each segment's **half-width**, `push_paths` shortens the strip to
-      `axis − along · half_width`, and **`PATH_MIN` 7 m gates the visible remainder** — a
-      door 8 m from the axis of a 16 m trunk road now wears nothing, where it used to be
-      drawn entirely under the asphalt and counted. **`PATH_MAX` 45 m still measures to
-      the axis**: the ⌈45/24⌉-cell search window is complete for exactly that distance,
-      and a limit the window cannot back up would be a lie.
-    - Under 7 m a strip six of its own widths long reads as a smudge rather than a line,
-      and what is left of it is eaten by the facade band and the roadway; over 45 m a
-      straight line stops being a short cut and becomes an invented route.
-    - **The facade band covers the south approaches only** — it is the outline offset
-      *downwards* (`buildings/layers.rs`, `offset = (0, -facade_height)`), so for a door
-      on a north, east or west face it hides nothing. "Under 7 m the strip lives under the
-      facade band" was the branch's own wording and holds for about a quarter of the
-      doors; the threshold does not rest on it.
-    - **The log splits the rejections** (`WornPaths { count, too_short, too_far, no_road }`):
-      `worn paths: N of M doors (K at the kerb, L too far, P with no road in reach)`. One
-      number could not tell "this door opens straight onto the street" from "nobody walks
-      that far" — two different observations about the city.
-    - **No path finding, no bends.** The desire line is by definition the straight one
-      people wore instead of the detour; a curve here would be decoration.
-    - **No intersection tests either**, and that is the design: the layer is below the
-      buildings (4.9) and the water (1.0), so a strip that runs across a neighbour's
-      footprint is covered by that neighbour. Testing 13 579 doors against 7 723 outlines
-      to hide what the painter's order already hides would be pure cost.
-    - The nearest road comes from a uniform grid of road segments (`CELL` 24 m, each
-      segment registered in every cell its box touches, so a long span is not lost in the
-      middle); the search walks ⌈45/24⌉ cells each way. Doors are 13 579 and road
-      segments tens of thousands — the pairwise version would be quadratic for nothing.
-      **It is its own grid, not the door generator's `RoadIndex`**, and deliberately: that
-      one is a 60 m cell walked ring by ring with an early exit out to 240 m, this one a
-      24 m cell and a fixed window at `PATH_MAX`. What they share is the one thing that
-      must not be written twice — `model::put_in_cells` / `grid_cell`, the invariant that
-      a value lies in **every** cell its AABB touches, so asking costs one cell lookup and
-      nothing is lost on a cell boundary. Every uniform grid in the project is built with
-      it (the three in `osm/entrances/index.rs` and this one).
+  - **Worn paths were tried here and removed.** A straight 1.1 m strip of bare earth from
+    every OSM entrance to the nearest kerb of the nearest road (`map/paths.rs`,
+    `Z_WORN_PATH` 0.72) — the desire lines. On the city it looked bad and was taken out
+    by the author's call; the commits describing it are history, not a missing file.
+    Don't reintroduce a straight door-to-road strip. `model::put_in_cells` / `grid_cell`
+    stay — they are the door generator's own (`osm/entrances/index.rs`), extracted while
+    this layer existed and its only surviving trace.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
   actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 0.75 and one
   markings layer at 0.76, the parking pair's shape exactly: the paint is flat
