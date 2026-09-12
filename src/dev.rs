@@ -29,10 +29,11 @@ const OFFSCREEN_PATH: &str = "offscreen.png";
 /// граница, за которой картинку всё равно ужмут при чтении, так что кадр
 /// доезжает до глаз без пережатия.
 const OFFSCREEN_SIZE: UVec2 = UVec2::new(1568, 980);
-/// Сколько кадров дать камере отрисоваться, прежде чем снимать. Один кадр на
-/// то, чтобы цель вообще появилась в графе рендера, второй — на сам кадр;
-/// снимать в тот же кадр, в который камера создана, значит снять пустоту.
-const WARMUP_FRAMES: u32 = 2;
+/// Сколько кадров дать камере отрисоваться, прежде чем снимать. Одного мало:
+/// первый уходит на то, чтобы цель вообще появилась в графе рендера, второй —
+/// на сам кадр; а когда снимок ещё и двигает зум пользовательской камеры (см.
+/// [`on_offscreen_shot`]), несколько кадров нужны слоям с зум-LOD на пересборку.
+const WARMUP_FRAMES: u32 = 6;
 /// Нижняя граница стороны кадра, px: `size` приходит из BRP, а текстура с
 /// нулевой стороной — ошибка валидации wgpu, то есть падение по чужому вводу.
 /// 16 — заведомо безопасный минимум, замером он не выбирался.
@@ -71,6 +72,9 @@ struct OffscreenCamera {
     target: Handle<Image>,
     path: String,
     frames: u32,
+    /// Зум пользовательской камеры до снимка — вернуть, когда снято.
+    /// `None` — зум не трогали.
+    restore_zoom: Option<f32>,
 }
 
 /// Тестовый агент навигации: спавнится в `from` и идёт в `to` (метры).
@@ -160,12 +164,13 @@ fn on_offscreen_shot(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     // не просто `With<Camera2d>`: закадровая камера, которую этот же обсервер
-    // и спавнит, тоже `Camera2d`, и пока она жива (три кадра) `Single` матчил
-    // бы две сущности. Обсервер при этом **молча** пропускается — второе
-    // событие подряд не оставляло ни файла, ни строки в логе
-    camera: Single<(&Transform, &Projection), (With<Camera2d>, With<PanCamera>)>,
+    // и спавнит, тоже `Camera2d`, и пока она жива (несколько кадров) `Single`
+    // матчил бы две сущности. Обсервер при этом **молча** пропускается — второе
+    // событие подряд не оставляло ни файла, ни строки в логе. Здесь фильтр
+    // держит уже сам `&mut PanCamera`: он есть только у камеры пользователя
+    camera: Single<(&mut Transform, &Projection, &mut PanCamera), With<Camera2d>>,
 ) {
-    let (transform, projection) = *camera;
+    let (mut transform, projection, mut controller) = camera.into_inner();
     let size = event
         .size
         .unwrap_or(OFFSCREEN_SIZE)
@@ -173,6 +178,17 @@ fn on_offscreen_shot(
     let at = event.at.unwrap_or(transform.translation.truncate());
     let zoom = event.zoom.unwrap_or(transform.scale.x).max(f32::EPSILON);
     let path = event.path.clone().unwrap_or(OFFSCREEN_PATH.to_string());
+
+    // Ступени зум-LOD (машины, оборудование на кровле, шпалы) считаются по
+    // **пользовательской** камере: у слоёв один меш на всех, и своей ступени
+    // у второго вида быть не может. Поэтому снимок с другим зумом на время
+    // переставляет зум той камеры — иначе кадр показывал бы шпалы там, где
+    // их на таком плане не рисуют, и не показывал бы там, где рисуют.
+    let restore_zoom = (zoom != transform.scale.x).then_some(transform.scale.x);
+    if restore_zoom.is_some() {
+        transform.scale = Vec3::splat(zoom);
+        controller.zoom_factor = zoom;
+    }
 
     let mut image = Image::new_fill(
         Extent3d {
@@ -212,6 +228,7 @@ fn on_offscreen_shot(
             target,
             path,
             frames: 0,
+            restore_zoom,
         },
         Name::new("offscreen_camera"),
     ));
@@ -224,7 +241,14 @@ fn on_offscreen_shot(
 /// движка: `prepare_screenshots` подменяет выходное вложение цели своей
 /// текстурой на тот кадр, в котором снимок запрошен, — то есть рисует в неё
 /// **сама камера**, и если её в этом кадре уже нет, в файл уходит чистый ноль.
-fn capture_offscreen(mut commands: Commands, mut cameras: Query<(Entity, &mut OffscreenCamera)>) {
+fn capture_offscreen(
+    mut commands: Commands,
+    mut cameras: Query<(Entity, &mut OffscreenCamera)>,
+    // камера пользователя: у закадровой `PanCamera` нет, так что сама выборка
+    // и есть фильтр
+    main: Single<(&mut Transform, &mut PanCamera), With<Camera2d>>,
+) {
+    let (mut transform, mut controller) = main.into_inner();
     for (entity, mut shot) in &mut cameras {
         shot.frames += 1;
         match shot.frames.cmp(&WARMUP_FRAMES) {
@@ -234,7 +258,15 @@ fn capture_offscreen(mut commands: Commands, mut cameras: Query<(Entity, &mut Of
                     .spawn(Screenshot::image(shot.target.clone()))
                     .observe(save_to_disk(shot.path.clone()));
             }
-            std::cmp::Ordering::Greater => commands.entity(entity).despawn(),
+            std::cmp::Ordering::Greater => {
+                // зум вернуть только теперь: слои с зум-LOD пересобираются по
+                // нему, и ранний возврат успел бы попасть в снимаемый кадр
+                if let Some(zoom) = shot.restore_zoom {
+                    transform.scale = Vec3::splat(zoom);
+                    controller.zoom_factor = zoom;
+                }
+                commands.entity(entity).despawn();
+            }
         }
     }
 }

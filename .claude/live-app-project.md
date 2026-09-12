@@ -137,9 +137,16 @@ camera's HDR and bloom, so the picture is what the window would show **minus eve
 drawn as UI** — on purpose: this is a picture of the map, not of the app. UI renders to the
 default UI camera, which targets the window, while this one targets a texture. That is the
 panels, and it is also the **vignette** (`post.rs` draws it as a UI node), so the corners of
-the png are lighter than the corners of the window — not a broken vignette. It is captured on frame `WARMUP_FRAMES` (2) and despawns a
+the png are lighter than the corners of the window — not a broken vignette. It is captured on frame `WARMUP_FRAMES` (6) and despawns a
 frame after that, not at the capture: the camera is what draws into the shot's texture, so
 it has to outlive the request.
+
+**A `zoom` that differs moves the user camera's zoom for the duration of the shot**, and
+that is deliberate: the zoom-LOD layers (parked cars, roof clutter, rail ties, tram) hold
+**one mesh for every view** and pick their step from `Single<&PanCamera>`, i.e. from the
+user camera. Without the sync a far shot showed rail ties that are not drawn at that scale
+and hid the cars that are. The zoom is restored when the shot's camera despawns, and
+`WARMUP_FRAMES` is 6 rather than 2 precisely to give those layers the frames to rebuild.
 
 The file is written asynchronously like every screenshot, and — unlike `brp shot` — nothing
 here waits for it. **Wait on the reader, not on the path.** `until [ -f x ]` returns the
