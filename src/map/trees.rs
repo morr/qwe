@@ -25,9 +25,7 @@ use crate::map::SHADOW_COLOR;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
-use crate::settings::{
-    CROWN_TEXTURE, TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW,
-};
+use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -292,11 +290,7 @@ pub fn spawn_trees(
     let tints: Vec<Handle<CrownMaterial>> = style
         .tint_factors()
         .iter()
-        .map(|&factor| {
-            materials
-                .crowns
-                .add(CrownMaterial::of(factor, CROWN_TEXTURE))
-        })
+        .map(|&factor| materials.crowns.add(CrownMaterial::of(factor)))
         .collect();
 
     let mut shadows = MeshBuilder::default();

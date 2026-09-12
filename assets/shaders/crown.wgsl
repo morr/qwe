@@ -28,12 +28,13 @@
 #import bevy_render::color_operations::linear_rgb_to_oklab
 #endif
 
-// Зеркало `trees::CrownParamsUniform` — порядок полей обязан совпадать.
+// Зеркало `canopy::CrownUniform` — порядок полей обязан совпадать.
 struct CrownUniform {
     light: vec2<f32>,
     // множитель яркости этого дерева (`TreeStyle::tint_factors`)
-    tint: f32,
-    intensity: f32,
+    brightness: f32,
+    // сила освещения полога и ряби листвы (`settings::CROWN_SHADING`)
+    shading: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CrownUniform;
@@ -78,23 +79,23 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    var rgb = in.color.rgb * params.tint;
+    var rgb = in.color.rgb * params.brightness;
 
-    if params.intensity > 0.0 {
-        let p = in.world_position;
-        let px = max(max(fwidth(p.x), fwidth(p.y)), 1e-4);
-        // сторона к солнцу светлее, противоположная темнее; у края добавляется
-        // падение по радиусу — крона всё-таки шар, а не блин
-        let lit = dot(in.local, params.light);
-        let reach = length(in.local);
-        var shade = LIT * lit - RIM * reach * reach;
-        // рябь отдельных ветвей — по мировой точке, поэтому два дерева одного
-        // варианта рядом не выглядят копиями
-        shade += LEAF_AMP * fbm3(p + vec2<f32>(31.0, 17.0), LEAF_SCALE, px);
-        // тень внутри полога холоднее, свет теплее — как и на кровле
-        let tint = vec3<f32>(0.30, 0.10, -0.25) * shade;
-        rgb = rgb * (1.0 + params.intensity * (vec3<f32>(shade) + tint));
-    }
+    let p = in.world_position;
+    let px = max(max(fwidth(p.x), fwidth(p.y)), 1e-4);
+    // сторона к солнцу светлее, противоположная темнее; у края добавляется
+    // падение по радиусу — крона всё-таки шар, а не блин
+    let lit = dot(in.local, params.light);
+    // падение квадратичное по радиусу, так что берётся сразу квадрат
+    // расстояния: корень из `length` пришлось бы тут же возводить обратно
+    let reach_sq = dot(in.local, in.local);
+    var shade = LIT * lit - RIM * reach_sq;
+    // рябь отдельных ветвей — по мировой точке, поэтому два дерева одного
+    // варианта рядом не выглядят копиями
+    shade += LEAF_AMP * fbm3(p + vec2<f32>(31.0, 17.0), LEAF_SCALE, px);
+    // тень внутри полога холоднее, свет теплее — как и на кровле
+    let tint = vec3<f32>(0.30, 0.10, -0.25) * shade;
+    rgb = rgb * (1.0 + params.shading * (vec3<f32>(shade) + tint));
 
     var output_color = vec4<f32>(rgb, in.color.a);
 #ifdef TONEMAP_IN_SHADER

@@ -24,6 +24,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::map::sun_light;
+use crate::settings::CROWN_SHADING;
 
 const SHADER_PATH: &str = "shaders/crown.wgsl";
 
@@ -34,10 +35,11 @@ pub struct CrownUniform {
     /// Направление **на солнце** в плане — то же, что у кровель.
     pub light: Vec2,
     /// Множитель яркости этого дерева: раньше он был серым цветом
-    /// `ColorMaterial`, теперь число в юниформе.
-    pub tint: f32,
-    /// Сила освещения и ряби; ноль возвращает прежнюю плоскую заливку.
-    pub intensity: f32,
+    /// `ColorMaterial`, теперь число в юниформе. Не путать с локальной `tint`
+    /// в шейдере — та, как и у кровель, сдвиг тона.
+    pub brightness: f32,
+    /// Сила освещения полога и ряби листвы — [`CROWN_SHADING`].
+    pub shading: f32,
 }
 
 /// Материал кроны. Своего ресурса-ползунка у него нет: полог освещён ровно
@@ -51,12 +53,12 @@ pub struct CrownMaterial {
 
 impl CrownMaterial {
     /// Материал слота яркости.
-    pub fn of(tint: f32, intensity: f32) -> Self {
+    pub fn of(brightness: f32) -> Self {
         Self {
             params: CrownUniform {
                 light: sun_light(),
-                tint,
-                intensity,
+                brightness,
+                shading: CROWN_SHADING,
             },
         }
     }
