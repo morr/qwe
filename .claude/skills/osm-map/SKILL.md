@@ -678,20 +678,30 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
-  — three effects that keep a road from being one flat tone, all in the **ribbon frame**
+  — two effects that keep a road from being one flat tone, both in the **ribbon frame**
   so they follow the lane rather than the compass:
   - **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m either side of each lane's
     middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +7.5 %. The lane is found
     from `fract` of `(across + half_width) / lane_width`, so **every** lane gets its own
     pair without knowing how many there are;
-  - **repair patches** — 6 m cells hashed by world position: the top 8 % of the hash go
-    the full 9 % darker and the 4 % below them ramp into it
-    (`smoothstep(PATCH_THRESHOLD 0.88, 0.92, hash)`), so a patch has no hard edge —
-    fresh bitumen is darker than the old surface around it;
   - **kerb dirt** — 7 % darker over the outer `EDGE_DIRT_REACH` 0.7 m, where the sand
     and grit collect.
-  Everything fades by `visible(...)` like the rest of the surface texture — the ruts by
-  their lane pitch, the patches by their 6 m cell, the kerb dirt by twice its reach
+
+  **Repair patches were the third and are gone.** A 6 m cell of the *world* grid was
+  hashed and, above a threshold, darkened whole; the `smoothstep` softened the hash, not
+  the shape, so the patch's edge was exactly the cell boundary. What that draws is a
+  chequerboard oriented to the compass: right angles, two chosen neighbours fused into one
+  block, and a staircase of squares across any street that is not axis-aligned. It is
+  literally the construction **A cell grid places a feature, it never *is* the feature**
+  was written against after the same mistake on the roofs, and the claim standing here
+  that wear "already follows" that rule was false. Taken out by the author's call on the
+  picture. The way back in, if it is wanted: the cell must be the *lane's* cell (the
+  ribbon frame, so the grid turns with the road), and inside it the patch must be a
+  rectangle smaller than the cell with a jittered centre and size, a crisp saw-cut edge
+  and a seam — not a fill of the cell.
+
+  Both remaining effects fade by `visible(...)` like the rest of the surface texture — the
+  ruts by their lane pitch, the kerb dirt by twice its reach
   (1.4 m), so a band under half a pixel does not flicker along the road edge. The block is
   gated on `lanes >= 2`, and `lanes` is decoded from the same `ATTRIBUTE_RIBBON.w` the
   markings ride on: `roads::road_markings` fills it only for a carriageway of two lanes or
@@ -1719,7 +1729,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     cell — and that is not repair patches but a **chequerboard across the whole roof**:
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
-    rule the fix follows, and the same one the asphalt wear already follows: only a minority
+    rule the fix follows — and the one the **asphalt patches** broke a second time, which
+    is why they are gone (**Asphalt wear** above): only a minority
     of cells carry the feature (the `share` argument), and
     inside its cell the feature is smaller than the cell and jittered, so two neighbours
     never meet at a cell boundary. (The **wall balconies** above keep only the second half of

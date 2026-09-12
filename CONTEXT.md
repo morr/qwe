@@ -575,11 +575,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   car would stand across its own line.
   Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
-  never one tone. Three things in the **ribbon frame**, so they follow the lane and not
+  never one tone. Two things in the **ribbon frame**, so they follow the lane and not
   the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
   the track of a car — measured with `fract` of the lane index, so every lane gets its
-  own pair), **repair patches** (6 m world cells, the top 12 % of a hash go darker: fresh
-  bitumen is darker than old) and **kerb dirt** (0.7 m of sand and grit along the edge).
+  own pair) and **kerb dirt** (0.7 m of sand and grit along the edge).
+  **Repair patches were tried here and removed.** A 6 m world cell whose hash cleared a
+  threshold was darkened whole — which is a chequerboard aligned to the compass, not a
+  patch: the edge is the cell boundary, two chosen neighbours fuse into a right-angled
+  block, and on a diagonal street the stack of squares steps across the lane. It is the
+  very construction `repair_patch` on the roofs was rewritten to stop doing (**A cell grid
+  places a feature, it never *is* the feature**), and it read as badly on asphalt. Don't
+  reintroduce a per-cell fill; a patch has to be a jittered shape inside its cell, in the
+  lane's own frame.
   Wear rides the **markings code**: the lane count comes from the very
   `ATTRIBUTE_RIBBON.w` the lane lines read, which `roads::road_markings` fills only for a
   carriageway of two lanes or more, and only while `RoadStyle.markings` is on. So wear
