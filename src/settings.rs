@@ -805,9 +805,6 @@ pub const Z_TREE_ROW_BAND_CASING: f32 = 0.56;
 pub const Z_TREE_ROW_BAND: f32 = 0.57;
 pub const Z_GRASS: f32 = 0.6;
 pub const Z_SAND: f32 = 0.7;
-/// Вытоптанная тропа (`map::paths`) — поверх любой зелени, но под площадкой
-/// и стоянкой: тропа идёт по газону, а не по корту.
-pub const Z_WORN_PATH: f32 = 0.72;
 /// Спортивная и детская площадка (`map::pitch`) — поверх зелени, но под
 /// стоянкой: площадку во дворе размечают на газоне или на асфальте, а
 /// парковочный карман у неё всегда сверху.
@@ -907,8 +904,7 @@ const _: () = {
     assert!(Z_TREE_ROW_BAND_CASING < Z_TREE_ROW_BAND);
     assert!(Z_TREE_ROW_BAND < Z_GRASS);
     assert!(Z_GRASS < Z_SAND);
-    assert!(Z_SAND < Z_WORN_PATH);
-    assert!(Z_WORN_PATH < Z_PITCH);
+    assert!(Z_SAND < Z_PITCH);
     // разметка — поверх своего покрытия и под всем остальным
     assert!(Z_PITCH < Z_PITCH_LINES);
     assert!(Z_PITCH_LINES < Z_PARKING);
@@ -956,6 +952,10 @@ const _: () = {
 // --- Деревья (кроны в стиле Watabou, см. .claude/skills/osm-map/references/tree-algo.md) ---
 /// Сколько уникальных геометрий крон переиспользуется на все деревья.
 pub const TREE_VARIANTS: usize = 12;
+/// Сила освещения полога и ряби листвы (`map::trees::canopy`). Не ползунок:
+/// крона освещена ровно настолько, насколько освещено всё остальное на карте,
+/// а отдельная ручка на это была бы ручкой «выключить солнце для деревьев».
+pub const CROWN_SHADING: f32 = 1.0;
 /// Толщина чернильного контура кроны, доля радиуса (у watabou ~1/8 радиуса).
 pub const TREE_OUTLINE_STROKE: f32 = 0.12;
 /// Толщина внутренних пунктирных дуг, доля радиуса — вдвое тоньше контура.

@@ -14,7 +14,10 @@
 //! **Геометрия здесь та же, что в игре, а не её копия.** Клетку собирает
 //! [`crown_variant`] — ровно тот вызов, которым `spawn_trees` набивает свой пул
 //! вариантов. Тени тоже кладутся как в игре: один слитый меш на всю витрину
-//! через `MeshBuilder::push_template`, а не сущность на дерево.
+//! через `MeshBuilder::push_template`, а не сущность на дерево. И материал тот
+//! же: крону красит игровой [`CrownMaterial`] — тем же вызовом
+//! `CrownMaterial::of(factor)`, что и `spawn_trees`, — так что
+//! освещение полога и рябь листвы здесь ровно те, что на карте.
 //!
 //! **Панель слева — ручки самой генерации** (`CrownParams`, разбор — в
 //! `params.rs`): число вершин базы, джиттер радиуса, крупность выступов,
@@ -27,8 +30,8 @@
 //! (`TreeStyle::variance`) — и единственная, чей дефолт витрины расходится с
 //! игрой: ноль вместо игровых 0.35, потому что одинаковая зелень у всех клеток
 //! честнее показывает форму. Отсюда и подпись кнопки: «Сброс», а не «Сброс к
-//! игре», — она возвращает витрину к её дефолту, то есть к игровой геометрии
-//! с плоским цветом.
+//! игре», — она возвращает витрину к её дефолту: игровая геометрия и игровой
+//! материал кроны, только зелень у всех клеток одна и та же.
 //!
 //! Что видно в каждой клетке:
 //!
@@ -41,7 +44,10 @@
 //!   штампованным.
 //!
 //! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin`, ни
-//! `CameraPlugin` — читать и писать `settings.toml` тут нечему. Колесо при
+//! `CameraPlugin` — читать и писать `settings.toml` тут нечему. Материал кроны
+//! при этом игровой: `Material2dPlugin::<CrownMaterial>` плюс то же солнце в
+//! глобали (`SunOnMap` + `apply_sun` в `Startup`), из которой `CrownMaterial::of`
+//! берёт свой `light` в момент сборки материала. Колесо при
 //! этом крутит игровая `camera::zoom_to_cursor` под своим гейтом
 //! `not(hovering_ui)`: из модуля взяты две функции, плагин с его настройками —
 //! нет.
@@ -66,11 +72,13 @@ use bevy::feathers::constants::fonts;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
+use bevy::sprite_render::Material2dPlugin;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
-use qwe::map::trees::crown_variant;
+use qwe::map::trees::{CrownMaterial, TreeMaterials, crown_variant};
 use qwe::map::{
-    GROUND_COLOR, MeshBuilder, PARK_COLOR, SHADOW_COLOR, TreeShape, TreeStyle, WOOD_COLOR,
+    GROUND_COLOR, MeshBuilder, PARK_COLOR, SHADOW_COLOR, SunOnMap, TreeShape, TreeStyle,
+    WOOD_COLOR, apply_sun,
 };
 use qwe::settings::TREE_VARIANTS;
 
@@ -183,6 +191,8 @@ fn main() {
                 }),
         )
         .add_plugins(PanCameraPlugin)
+        // материал кроны — игровой, вместе с его шейдером и юниформом
+        .add_plugins(Material2dPlugin::<CrownMaterial>::default())
         // киты панели игры — кнопки, ползунки, тема. Заодно и шрифт: во
         // встроенном `default_font` кириллицы нет, и подписи выходят
         // квадратиками, а feathers несёт в себе Fira Sans, на котором написаны
@@ -191,8 +201,14 @@ fn main() {
         .init_resource::<Ground>()
         .init_resource::<Show>()
         .init_resource::<Tuning>()
+        .init_resource::<SunOnMap>()
         .insert_resource(ClearColor(Ground::default().color()))
-        .add_systems(Startup, (spawn_camera, spawn_labels, spawn_panel))
+        // солнце — в глобаль до первой сборки крон: `CrownMaterial::of` читает
+        // его один раз, в момент создания материала, а не каждый кадр
+        .add_systems(
+            Startup,
+            (spawn_camera, spawn_labels, spawn_panel, apply_sun),
+        )
         .add_systems(
             Update,
             (
@@ -326,7 +342,7 @@ fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>) {
 fn rebuild_crowns(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut materials: TreeMaterials,
     tuning: Res<Tuning>,
     show: Res<Show>,
     existing: Query<Entity, With<CrownTag>>,
@@ -335,16 +351,18 @@ fn rebuild_crowns(
         commands.entity(entity).despawn();
     }
 
-    // цвета листвы и чернил — игровые: витрина показывает геометрию, а палитра
+    // цвета листвы и чернил — игровые: своей палитры у витрины нет, а игровая
     // и так крутится в панели Trees самой игры
     let style = TreeStyle {
         variance: tuning.variance,
         ..default()
     };
-    let tints: Vec<Handle<ColorMaterial>> = style
+    // множитель яркости — в юниформе, как в игре: цвет кроны считает шейдер
+    // (`crown.wgsl`), и слотов ровно столько же
+    let tints: Vec<Handle<CrownMaterial>> = style
         .tint_factors()
         .iter()
-        .map(|&factor| materials.add(Color::srgb(factor, factor, factor)))
+        .map(|&factor| materials.crowns.add(CrownMaterial::of(factor)))
         .collect();
     let mut shadows = MeshBuilder::default();
 
@@ -370,7 +388,7 @@ fn rebuild_crowns(
         CrownTag,
         ShadowLayer,
         Mesh2d(meshes.add(shadows.build())),
-        MeshMaterial2d(materials.add(SHADOW_COLOR)),
+        MeshMaterial2d(materials.flat.add(SHADOW_COLOR)),
         Transform::from_xyz(0.0, 0.0, 0.5),
         visibility(show.shadows),
         Name::new("tree_shadows"),

@@ -9,7 +9,6 @@ pub mod footprint;
 mod meshing;
 pub mod osm;
 mod parking;
-mod paths;
 mod pitch;
 mod rail;
 mod roads;
@@ -66,6 +65,7 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
+            .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
             .init_resource::<SunStyle>()
             .init_resource::<SunOnMap>()
             .init_resource::<TreeStyle>()
