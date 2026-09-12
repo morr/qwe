@@ -267,6 +267,13 @@ pub fn measure_layers(
             )
             .vertex_count()
         });
+        // тени на кровлях — свой ряд, а не слагаемое в чужом: слой лежит над
+        // зданиевыми, строится другим сборщиком и стоит своих миллисекунд,
+        // причём `spawn_buildings` печатает их отдельно тем же образом
+        measure("roof shadows", &mut || {
+            roof_shadow_builder(buildings, mode == BuildingHeightMode::ExtrusionShadowsTint)
+                .vertex_count()
+        });
     }
     costs
 }
