@@ -3,6 +3,7 @@
 //! хвои отдельными мешами.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -80,7 +81,7 @@ pub(super) fn render_grid(mut gizmos: Gizmos) {
 /// тысяч, и гизмо на всю карту разом кладёт кадр.
 pub(super) fn render_doors(
     map: Res<MapData>,
-    camera: Single<&Transform, With<Camera2d>>,
+    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut gizmos: Gizmos,
 ) {

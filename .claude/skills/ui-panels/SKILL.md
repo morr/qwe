@@ -473,6 +473,24 @@ did not fit 1080 px and ran off the top of the screen.
   determinism restart request use it; do not hand-roll
   `resource_changed::<T>.and_then(not(resource_added::<T>))` again.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
+  **`OffscreenShotEvent`** → a second camera rendering into an offscreen texture, so a
+  covered or locked screen no longer means a black png (details in
+  `.claude/live-app-project.md`). Four consequences for this layer. **The main camera
+  carries `IsDefaultUiCamera`** — it *names* the UI's camera instead of leaving it to
+  bevy's fallback, which takes the highest-order camera **targeting the primary window**
+  (`bevy_ui/src/ui_node.rs::DefaultUiCamera::get`). The offscreen camera targets an image,
+  so that filter drops it before any order is compared and it was never a candidate: the
+  marker is a statement of intent against a future second *window* camera, **not** what
+  keeps the panels out of the shot. **What keeps them out is being UI at all** — and that
+  takes the **vignette** (`post.rs`) with them, so an offscreen png has lighter corners
+  than the window; do not read that as a broken vignette. **And for the few frames of a
+  shot there are two `Camera2d`s**, so a query for the user's camera must carry
+  `With<PanCamera>` — a bare `Single<…, With<Camera2d>>` matches both and its system is
+  skipped without a word (`ui/debug/overlays.rs::render_doors` among them). **A shot with
+  its own zoom moves the user camera's zoom** (`Transform::scale` *and*
+  `PanCamera::zoom_factor`) for those frames and puts it back afterwards: the zoom-LOD
+  layers hold one mesh for every view and read their step from that camera, so a far shot
+  would otherwise show the near-zoom detail.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.

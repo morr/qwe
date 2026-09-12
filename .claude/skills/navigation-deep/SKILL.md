@@ -214,6 +214,14 @@ question:
 **Do not unify them.** The warmup margin in particular is deliberately the strictest: it
 counts what the player can actually see, not what the dispatcher is willing to serve early.
 
+**Every one of them asks for the camera as `Single<&Transform, (With<Camera2d>,
+With<PanCamera>)>`**, and the `PanCamera` half is load-bearing: a `dev::OffscreenShotEvent`
+raises a second `Camera2d` for three frames, and a `Single` matching two entities makes the
+executor skip the system **silently** — three frames with no dispatch and, at 30×, dozens of
+ticks with no separation, every time a screenshot is taken. A headless world that runs these
+systems (`tests/movement.rs`, `crowd_demo`) must put `PanCamera` on its camera for the same
+reason it already spawns a `PrimaryWindow`.
+
 ## Backends & the pipeline
 
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable resource, cycled

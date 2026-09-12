@@ -19,6 +19,7 @@
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -461,8 +462,13 @@ fn downsample(width: u32, height: u32, data: &[u8]) -> (u32, u32, Vec<u8>) {
     (w2, h2, out)
 }
 
-/// Зум камеры — метров в логическом пикселе; `None` без камеры (реплей).
-fn camera_zoom(camera: Option<Single<&Transform, With<Camera2d>>>) -> Option<f32> {
+/// Зум камеры пользователя — метров в логическом пикселе; `None` без камеры
+/// (реплей). Фильтр `With<PanCamera>` отсекает закадровую камеру снимка
+/// (`dev.rs`): без него `Single` на её три кадра матчил бы две сущности, и обе
+/// системы размера остались бы без зума.
+fn camera_zoom(
+    camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
+) -> Option<f32> {
     camera.map(|camera| camera.scale.x)
 }
 
@@ -470,7 +476,7 @@ fn camera_zoom(camera: Option<Single<&Transform, With<Camera2d>>>) -> Option<f32
 /// зум — иначе пешка, родившаяся на дальнем плане, ждала бы первого щелчка
 /// колеса.
 pub fn size_fresh_silhouettes(
-    camera: Option<Single<&Transform, With<Camera2d>>>,
+    camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
     mut fresh: Query<(&Silhouette, &mut Sprite), Changed<Silhouette>>,
 ) {
     let Some(zoom) = camera_zoom(camera) else {
@@ -484,7 +490,7 @@ pub fn size_fresh_silhouettes(
 /// Полный проход по всем силуэтам — только на смену зума: тысячи записей в
 /// `Sprite` за щелчок колеса, а не за кадр.
 pub fn resize_silhouettes_on_zoom(
-    camera: Option<Single<&Transform, With<Camera2d>>>,
+    camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
     mut last_zoom: Local<f32>,
     mut all: Query<(&Silhouette, &mut Sprite)>,
 ) {

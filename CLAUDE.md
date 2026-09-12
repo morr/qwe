@@ -309,10 +309,11 @@ step when adding one):
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |
 | test walker | `dev.rs::on_spawn_test_walker` |
 
-Not world entities, and deliberately without the component: the camera (`camera.rs`), the
-UI panels (`ui/*`, hidden/shown via `GameUiRoot`), the loader screen (`loading.rs`, has
-its own despawn on `PlayPhase::Live`), the vignette node (`post.rs`, a UI node that lives
-across cities).
+Not world entities, and deliberately without the component: the cameras — the main one
+(`camera.rs`) and the offscreen-shot camera (`dev.rs::on_offscreen_shot`, which despawns
+itself a frame after the capture) — the UI panels (`ui/*`, hidden/shown via `GameUiRoot`),
+the loader screen (`loading.rs`, has its own despawn on `PlayPhase::Live`), the vignette
+node (`post.rs`, a UI node that lives across cities).
 
 The rule is backed at runtime by `loading.rs::warn_leftover_world_entities`: on every
 entry into `Loading` it warns about anything that still has a `Transform` and is neither a

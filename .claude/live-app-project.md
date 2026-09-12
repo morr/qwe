@@ -116,6 +116,51 @@ root, overwritten every time, plus a `screenshot.small.png` copy downscaled to 1
 window **must be visible** — `shot` raises it, but a full-screen editor over it still
 wins; a black png means exactly that, not a broken renderer.
 
+### The offscreen shot — when the window cannot be seen
+
+```bash
+$b event OffscreenShotEvent '{}'                                   # 1568×980 from where the camera is
+$b event OffscreenShotEvent '{"at":[2300,1900],"zoom":0.4,"path":"gsk.png"}'
+```
+
+`OffscreenShotEvent` (`dev.rs`) renders the frame into an **offscreen texture** with a
+camera of its own and writes the png without the window server being involved at all. That
+is the difference that matters: a **locked screen, a sleeping display or another window on
+top all make `brp shot` return solid black**, and there is no way to tell that from a
+rendering bug. This one keeps working — check `magick identify -format "%[fx:mean]"`, a
+real frame is around 0.2–0.4.
+
+Every field is optional: `at` (map metres) and `zoom` (metres per frame pixel) default to
+the user camera's, `size` to 1568 × 980 (long edge exactly at the downscale threshold, so
+the file reaches you unsquashed), `path` to `offscreen.png`. The camera carries the real
+camera's HDR and bloom, so the picture is what the window would show **minus everything
+drawn as UI** — on purpose: this is a picture of the map, not of the app. UI renders to the
+default UI camera, which targets the window, while this one targets a texture. That is the
+panels, and it is also the **vignette** (`post.rs` draws it as a UI node), so the corners of
+the png are lighter than the corners of the window — not a broken vignette. It is captured on frame `WARMUP_FRAMES` (6) and despawns a
+frame after that, not at the capture: the camera is what draws into the shot's texture, so
+it has to outlive the request.
+
+**A `zoom` that differs moves the user camera's zoom for the duration of the shot**, and
+that is deliberate: the zoom-LOD layers (parked cars, roof clutter, rail ties, tram) hold
+**one mesh for every view** and pick their step from `Single<&PanCamera>`, i.e. from the
+user camera. Without the sync a far shot showed rail ties that are not drawn at that scale
+and hid the cars that are. The zoom is restored when the shot's camera despawns, and
+`WARMUP_FRAMES` is 6 rather than 2 precisely to give those layers the frames to rebuild.
+
+The file is written asynchronously like every screenshot, and — unlike `brp shot` — nothing
+here waits for it. **Wait on the reader, not on the path.** `until [ -f x ]` returns the
+moment the file is created, which is before it holds a whole png: `ls` finds it and `magick
+identify` answers `improper image header`, a line that reads exactly like a broken renderer.
+
+```bash
+rm -f gsk.png                                  # a stale png would pass the test below
+$b event OffscreenShotEvent '{"path":"gsk.png"}'
+until magick identify gsk.png >/dev/null 2>&1; do sleep 0.2; done
+```
+
+The loop body sleeps: `do :; done` spins a core, and this machine is usually compiling.
+
 ## Camera
 
 - `brp cam <x> <y>` moves the camera and sticks — coordinates are map metres, the map is
@@ -164,7 +209,7 @@ No PRNG state is stored anywhere to look at: a pawn carries `PawnId` +
 Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same path
 the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
-Events — `TakeScreenshotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
+Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.

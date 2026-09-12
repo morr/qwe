@@ -1164,6 +1164,20 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   through the type registry, **never a list**, so a new tunable is covered the day it is
   declared.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
+  **`OffscreenShotEvent`** → the same frame rendered into an **offscreen texture** by a
+  camera of its own, with its own centre, zoom and size, and written without the window
+  server: a locked screen or a covering window turns the ordinary screenshot solid black
+  and this one still works. It carries the real camera's **bloom**, but nothing drawn as UI:
+  UI renders to the default UI camera, and that one targets the *window*, so the panels
+  **and the vignette** (`post.rs` draws it as a UI node) are out of the frame and its
+  corners are lighter than the window's. `IsDefaultUiCamera` on the main camera names that
+  camera outright instead of leaving it to bevy's fallback; it is not what keeps the UI out
+  of the shot. A **differing zoom is applied to the user camera for the duration of the
+  shot**, because the zoom-LOD layers keep one mesh for all views and read their step from
+  that camera; it is put back when the shot's camera despawns. For the frames of a shot the
+  world holds a **second `Camera2d`**, so every query for the user's camera filters by
+  **`With<PanCamera>`** — a bare `Single<…, With<Camera2d>>` then matches two entities and
+  is skipped silently.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.

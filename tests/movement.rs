@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -409,6 +410,9 @@ fn spawn_overlapping_pair(app: &mut App) -> (Entity, Entity) {
         .spawn((bevy::window::Window::default(), bevy::window::PrimaryWindow));
     app.world_mut().spawn((
         Camera2d,
+        // `PanCamera` — маркер «камера пользователя»: расталкивание фильтрует
+        // по нему, чтобы не поймать закадровую камеру снимка (`dev.rs`)
+        PanCamera::default(),
         // зум обязан быть мельче `SEPARATION_MAX_ZOOM` = 0.75, иначе
         // расталкивание выключается само
         Transform::from_translation(centre.extend(0.0)).with_scale(Vec3::splat(0.1)),
@@ -514,6 +518,7 @@ fn a_held_pawn_within_rest_distance_arrives() {
         .spawn((bevy::window::Window::default(), bevy::window::PrimaryWindow));
     app.world_mut().spawn((
         Camera2d,
+        PanCamera::default(),
         Transform::from_translation(target.extend(0.0)).with_scale(Vec3::splat(0.1)),
     ));
 

@@ -2,6 +2,7 @@
 //! → `Playing`. Мир (карта, навигация, население) строится в
 //! `OnEnter(Playing)`, когда `MapData` уже вставлена.
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
@@ -455,7 +456,7 @@ fn poll_job(
 fn poll_warmup(
     time: Res<Time<Real>>,
     mut progress: ResMut<WarmupProgress>,
-    camera: Single<&Transform, With<Camera2d>>,
+    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
     window: Single<&Window, With<PrimaryWindow>>,
     pending: Query<
         (&SimPosition, Has<UrgentPath>),
