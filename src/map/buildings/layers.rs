@@ -20,8 +20,7 @@ use super::material::{
 use super::order::{draw_order, wall_order};
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
-    BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, height_or_default,
-    shade_by_light,
+    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
@@ -1216,9 +1215,11 @@ fn indices_near(cells: &HashMap<(i32, i32), Vec<usize>>, bounds: (Vec2, Vec2)) -
 #[derive(Default)]
 struct DrawnBodies {
     lifts: Vec<Vec2>,
-    /// Ключ painter's сортировки [`extrusion_builder`]: меньше — рисуется
-    /// позже, поверх.
-    depths: Vec<f32>,
+    /// Место дома в [`draw_order`]: больше — рисуется позже, поверх. Не
+    /// `Lean::depth` центра: одним числом на дом отношение «кто кого кроет»
+    /// не выражается (см. модуль [`super::order`]), а спрашивается здесь
+    /// ровно оно.
+    rank: Vec<usize>,
     boxes: Vec<(Vec2, Vec2)>,
     cells: HashMap<(i32, i32), Vec<usize>>,
 }
@@ -1228,15 +1229,17 @@ impl DrawnBodies {
         if !extruded {
             return Self::default();
         }
-        let lean = Lean::of();
         let lifts: Vec<Vec2> = buildings
             .iter()
             .map(|building| extrusion_lift(building, BuildingHeightMode::Extrusion))
             .collect();
-        let depths: Vec<f32> = buildings
-            .iter()
-            .map(|building| lean.depth(building_center(building)))
-            .collect();
+        // тот же порядок, что кладёт меш экструзии, — второй раз: сборщики
+        // друг друга не зовут, а разделить порядок значит поменять обе
+        // сигнатуры, ровно как с развёртками теней
+        let mut rank = vec![0usize; buildings.len()];
+        for (place, &index) in draw_order(buildings, Lean::of()).iter().enumerate() {
+            rank[index] = place;
+        }
         let boxes: Vec<(Vec2, Vec2)> = boxes
             .iter()
             .zip(&lifts)
@@ -1250,7 +1253,7 @@ impl DrawnBodies {
         }
         Self {
             lifts,
-            depths,
+            rank,
             boxes,
             cells,
         }
@@ -1259,8 +1262,13 @@ impl DrawnBodies {
     /// Контуры тел, которые рисуются **после** `target` и задевают `bounds`
     /// (рамку уже поднятой тени).
     ///
-    /// «После» — меньший `Lean::depth`, а при равном — больший индекс: именно
-    /// так расставляет равных стабильная сортировка в [`extrusion_builder`].
+    /// «После» — дальше по [`draw_order`], тому самому списку, которым
+    /// [`extrusion_builder`] кладёт дома в меш. У равных ключей и у пары,
+    /// которую отношение не связало, это по-прежнему база того же порядка —
+    /// глубина центра, — но пару, которую база расставляет неверно (крыло
+    /// Г-образного дома перед соседом, а центр за ним), `draw_order` уже
+    /// перевернул, и вычитание обязано идти за ним, иначе тень остаётся на
+    /// нарисованной стене ровно там, где порядок и чинили.
     ///
     /// Двор соседа в тело входит целиком: у двора есть свои стены, и вычесть
     /// лишнее (тень, которую было бы видно сквозь просвет) дешевле, чем
@@ -1274,10 +1282,9 @@ impl DrawnBodies {
         let direction = Lean::of().dir();
         let mut covers: Vec<Vec<[f32; 2]>> = Vec::new();
         for cover in indices_near(&self.cells, bounds) {
-            // сама цель отсеивается тем же правилом: у равных ключей ближе
-            // тот, чей индекс больше, а больше себя он не бывает
-            let later = self.depths[cover] < self.depths[target]
-                || (self.depths[cover] == self.depths[target] && cover > target);
+            // сама цель отсеивается тем же правилом: место в порядке у неё
+            // одно, а строго дальше себя она не стоит
+            let later = self.rank[cover] > self.rank[target];
             if !later || !boxes_overlap(bounds, self.boxes[cover]) {
                 continue;
             }

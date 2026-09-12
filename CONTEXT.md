@@ -62,8 +62,9 @@ in `main.rs`.
   roof shadows (5.05) → units → souls (18) → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
-  `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z range must stay above buildings (5) for any
-  y ≤ MAP_SIZE.y** — a bigger map once sank northern units under roads.
+  `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
+  range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
+  northern units under roads.
 
 ## App lifecycle
 
@@ -421,7 +422,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   its own footprint — merged, not stacked, so two shadows on one roof are not double
   darkness. A neighbour casts only if it is `SHADOW_MIN_DROP` (3 m) taller; in 2.5D the
   result is lifted by the target's own `Lean`, so it lands on the roof as drawn — and the
-  **drawn bodies** of the neighbours 2.5D paints *after* the target (smaller `Lean::depth`)
+  **drawn bodies** of the neighbours 2.5D paints *after* the target (later in
+  `order::draw_order`, not by the base key under it)
   are then subtracted from it: the layer is flat and above every building layer, while
   depth is painter's order *inside one mesh*, so without that a far roof's shadow would
   darken the body of the nearer building that hides that roof. Filled

@@ -1124,8 +1124,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
         mesh*: without the subtraction a shadow computed for a far roof is drawn over the
         body of the nearer building that visually hides that roof — a dark blot on a
         sunlit wall. Three parts of it are load-bearing:
-        - **"after" is the extrusion layer's own key** — a smaller `Lean::depth`, and at
-          equal depth the larger index, the way its stable `sort_by` orders equals. A
+        - **"after" is the extrusion layer's own order** — a later place in
+          `order::draw_order`, the very list `extrusion_builder` lays the mesh by, and
+          **not** the base key `Lean::depth(centre)` under it. The pairs the two disagree
+          on are exactly the ones `draw_order` exists for — an L-shaped house with one
+          wing in front of its neighbour and the other behind it — and they are exactly
+          the pairs whose drawn bodies overlap, i.e. the ones this pass is asked about.
+          `roof_shadow_builder` therefore builds the order a second time (the sweeps are
+          rebuilt twice for the same reason; sharing either changes both signatures). A
           *taller* neighbour is not automatically an earlier one: the caster is usually
           drawn first (at the default azimuth 300°), but for a sun anywhere in
           **(111.8°, 291.8°)** the caster itself is the nearer body and eats its own
@@ -1143,16 +1149,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
         In the flat modes there is nothing to subtract — a building is drawn on its own
         contour, and `DrawnBodies` is empty there.
       It rides the same `BuildingShadowTag`, so it rebuilds and despawns with the ground
-      shadows, and it is reported separately in the `building meshing:` line
-      (`shadows 91ms + 24ms on roofs`). On Tula it is 2.6 k verts and ~24 ms of a ~135 ms
-      build, most of that spent rebuilding the sweeps `shadow_builder` has already
-      computed — sharing them is the obvious optimisation and changes both signatures.
-      **How thin the layer actually is** (Tula, 7643 buildings, measured offline on the
-      cached extract): only **522** of them get a roof shadow at all, and **291** of those
-      have a covering body, so the subtraction's boolean pass runs over 3.8 % of the city
-      and costs **~4 ms** — the layer goes 18.9 → 23.8 ms, and it emits *fewer* vertices
-      afterwards (2713 → 2628), because the difference cuts shadow away. Load-time only:
-      nothing here runs per frame.
+      shadows, and it is reported separately both in the `building meshing:` line
+      (`shadows 44ms + 32ms on roofs`) and as its own `roof shadows` row in
+      `examples/bench/map_meshing`.
+      **What it costs** (Tula, 7723 buildings, `dev` profile, one machine — compare runs
+      against runs): **~2 k verts** and **32 ms of a 115 ms** build in
+      2.5D+shadows+tint, **16–18 ms of ~81** in the flat shadow modes, where there are no
+      bodies to subtract. Two thirds of the picture is bought by the sweeps and one third
+      by the order:
+      - most of the time is **not** the intersections but rebuilding the sweeps of all
+        7723 buildings — the work `shadow_builder` is doing right next door;
+      - and in 2.5D **~9 ms of the 32 is `draw_order`, built a second time** for the
+        cover test (23 ms without it).
+      Sharing either with `extrusion_builder` is the obvious optimisation and changes both
+      signatures; it is left for later. Load-time only — nothing here runs per frame.
       Its length clamp rides `map::sun_stretch()` exactly as the ground sweeps do — two
       halves of one shadow may not be measured differently.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
