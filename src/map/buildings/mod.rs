@@ -31,10 +31,11 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use self::garages::garage_runs;
 use self::heights::{height_mix, height_or_default};
 use self::layers::{
-    extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
+    ShadowSweeps, extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
 };
 pub use self::layers::{push_house, wall_of};
 use self::material::RoofMaterialHandle;
+use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, PolyArea, RoadLine};
@@ -226,6 +227,43 @@ pub fn measure_layers(
         clutter,
     };
     let mut costs = Vec::new();
+
+    // общие входы слоёв — порядок отрисовки и теневые развёртки: их строят
+    // один раз на сборку и делят между сборщиками, поэтому у каждого свой
+    // ряд, ровно как `breaks` и `parking` у слоя машин. Вершин они не дают:
+    // это не меш, а вход
+    let started = Instant::now();
+    let order = if matches!(
+        mode,
+        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
+    ) {
+        let order = draw_order(buildings, Lean::of());
+        costs.push(LayerCost {
+            name: "order",
+            vertices: 0,
+            elapsed: started.elapsed(),
+        });
+        order
+    } else {
+        Vec::new()
+    };
+    let started = Instant::now();
+    let sweeps = matches!(
+        mode,
+        BuildingHeightMode::Shadows
+            | BuildingHeightMode::ShadowsTint
+            | BuildingHeightMode::ExtrusionShadowsTint
+    )
+    .then(|| {
+        let sweeps = ShadowSweeps::of(buildings);
+        costs.push(LayerCost {
+            name: "sweeps",
+            vertices: 0,
+            elapsed: started.elapsed(),
+        });
+        sweeps
+    });
+
     // замеряется число вершин, а не сам сборщик: у плоского режима билдеров
     // два, и склеивать их ради замера значило бы мерить ещё и склейку
     let mut measure = |name, build: &mut dyn FnMut() -> usize| {
@@ -241,7 +279,7 @@ pub fn measure_layers(
     match mode {
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
             measure("extruded", &mut || {
-                extrusion_builder(buildings, passages, detail).vertex_count()
+                extrusion_builder(buildings, passages, detail, &order).vertex_count()
             });
         }
         BuildingHeightMode::Facade
@@ -253,16 +291,14 @@ pub fn measure_layers(
             });
         }
     }
-    if matches!(
-        mode,
-        BuildingHeightMode::Shadows
-            | BuildingHeightMode::ShadowsTint
-            | BuildingHeightMode::ExtrusionShadowsTint
-    ) {
+    // развёртки есть ровно у теневых режимов — тем же приёмом, каким порядок
+    // отрисовки служит кровельному слою признаком 2.5D
+    if let Some(sweeps) = &sweeps {
         measure("shadows", &mut || {
             shadow_builder(
                 buildings,
                 passages,
+                sweeps,
                 mode == BuildingHeightMode::ExtrusionShadowsTint,
             )
             .vertex_count()
@@ -271,8 +307,12 @@ pub fn measure_layers(
         // зданиевыми, строится другим сборщиком и стоит своих миллисекунд,
         // причём `spawn_buildings` печатает их отдельно тем же образом
         measure("roof shadows", &mut || {
-            roof_shadow_builder(buildings, mode == BuildingHeightMode::ExtrusionShadowsTint)
-                .vertex_count()
+            roof_shadow_builder(
+                buildings,
+                sweeps,
+                (mode == BuildingHeightMode::ExtrusionShadowsTint).then_some(order.as_slice()),
+            )
+            .vertex_count()
         });
     }
     costs
@@ -320,8 +360,21 @@ pub fn spawn_buildings(
         );
     };
 
-    match mode {
-        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
+    // порядок отрисовки строится один раз на сборку слоя и достаётся обоим,
+    // кому он нужен: мешу экструзии, который кладёт по нему дома, и теням на
+    // кровлях, которые им же вычитают тела соседей, нарисованных после цели.
+    // Второй вызов стоил на Туле 9 мс из 31, во столько обходились кровельные
+    // тени; без него ряд даёт 20 (`examples/bench/map_meshing`, где порядок
+    // печатается своим рядом `order`). Он же признак 2.5D — в плоских режимах
+    // его никто не строит и накрывать кровлю соседа нечем
+    let order = matches!(
+        mode,
+        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
+    )
+    .then(|| draw_order(buildings, Lean::of()));
+
+    match &order {
+        Some(order) => {
             let detail = RoofDetail {
                 tinted: mode == BuildingHeightMode::ExtrusionShadowsTint,
                 clutter: bucket.index == 0,
@@ -329,15 +382,13 @@ pub fn spawn_buildings(
             spawn_layer(
                 commands,
                 meshes,
-                extrusion_builder(buildings, passages, detail),
+                extrusion_builder(buildings, passages, detail, order),
                 Z_BUILDING,
                 "building_extruded",
                 LayerMaterial::Roof(roof.handle()),
             );
         }
-        BuildingHeightMode::Facade
-        | BuildingHeightMode::Shadows
-        | BuildingHeightMode::ShadowsTint => {
+        None => {
             let detail = RoofDetail {
                 tinted: mode == BuildingHeightMode::ShadowsTint,
                 clutter: bucket.index == 0,
@@ -362,6 +413,7 @@ pub fn spawn_buildings(
         }
     }
 
+    let mut sweep_time = Duration::ZERO;
     let mut shadow_time = Duration::ZERO;
     let mut roof_shadow_time = Duration::ZERO;
     if with_shadows
@@ -380,10 +432,18 @@ pub fn spawn_buildings(
             alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
             ..default()
         });
+        // развёртки — общие для обоих теневых слоёв: свип на цепочку силуэта
+        // каждого дома, и раньше их строил каждый сборщик у себя. На кровлях
+        // это была большая часть цены слоя
+        let sweep_started = Instant::now();
+        let sweeps = ShadowSweeps::of(buildings);
+        sweep_time = sweep_started.elapsed();
+
         let shadow_started = Instant::now();
         let shadows = shadow_builder(
             buildings,
             passages,
+            &sweeps,
             mode == BuildingHeightMode::ExtrusionShadowsTint,
         );
         shadow_time = shadow_started.elapsed();
@@ -402,8 +462,7 @@ pub fn spawn_buildings(
         // единственный кусок тени, который обязан лежать поверх крыши.
         // Своя метка не нужна — деспавнится он вместе с наземным слоем.
         let roof_started = Instant::now();
-        let on_roofs =
-            roof_shadow_builder(buildings, mode == BuildingHeightMode::ExtrusionShadowsTint);
+        let on_roofs = roof_shadow_builder(buildings, &sweeps, order.as_deref());
         roof_shadow_time = roof_started.elapsed();
         vertices += on_roofs.vertex_count();
         surface::spawn_layer(
@@ -420,7 +479,7 @@ pub fn spawn_buildings(
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавило оборудование кровель
     info!(
-        "building meshing: {vertices} verts in {:?} (shadows {shadow_time:?} + {roof_shadow_time:?} on roofs, {} buildings, {} in garage rows, {}, clutter {}, heights: {})",
+        "building meshing: {vertices} verts in {:?} (shadows {sweep_time:?} sweeps + {shadow_time:?} on ground + {roof_shadow_time:?} on roofs, {} buildings, {} in garage rows, {}, clutter {}, heights: {})",
         started.elapsed(),
         buildings.len(),
         garage_runs(buildings).len(),

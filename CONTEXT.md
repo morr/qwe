@@ -423,7 +423,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   darkness. A neighbour casts only if it is `SHADOW_MIN_DROP` (3 m) taller; in 2.5D the
   result is lifted by the target's own `Lean`, so it lands on the roof as drawn — and the
   **drawn bodies** of the neighbours 2.5D paints *after* the target (later in
-  `order::draw_order`, not by the base key under it)
+  `order::draw_order`, not by the base key under it — the order is built **once** per
+  layer build and passed to the extrusion mesh and to this layer alike)
   are then subtracted from it: the layer is flat and above every building layer, while
   depth is painter's order *inside one mesh*, so without that a far roof's shadow would
   darken the body of the nearer building that hides that roof. Filled
@@ -504,7 +505,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Untapered, the metre also ran along the contact contour and left a soft dark blot on the
   sunlit side of every convex corner — the building came out ringed exactly like the
   **contact skirt** that was taken back out of the union. What goes into
-  the union is still the silhouette sweeps and nothing else. Both shadow layers —
+  the union is still the silhouette sweeps and nothing else — and those sweeps are
+  **built once per layer build** (`layers.rs::ShadowSweeps`) and handed to both shadow
+  layers: the ground one reads them flat, the roof one grouped by building. Both shadow layers —
   ground and roof — carry **`BuildingShadowTag`** rather than `BuildingLayerTag` and are
   rebuilt only when the height mode or the sun changes: together they are the most
   expensive thing the building layers build, and they do not depend on the roof-clutter

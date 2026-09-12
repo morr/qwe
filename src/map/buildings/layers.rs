@@ -17,7 +17,7 @@ use super::material::{
     DOOR_CODE, RoofKind, RoofLook, WallKind, WallLook, building_seed, roof_look, run_kind,
     run_look, run_wall_look, wall_look,
 };
-use super::order::{draw_order, wall_order};
+use super::order::wall_order;
 use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
@@ -893,15 +893,81 @@ pub(super) fn facade_and_roof_builders(
     (facades, roofs)
 }
 
-/// Тени зданий: на каждую непрерывную цепочку рёбер-силуэта внешнего кольца —
-/// **один** свип-полигон `[цепочка, цепочка + сдвиг в обратном порядке]`.
-/// Не квады на ребро: у ступенчатого фасада квады соседних ступеней
-/// перекрываются вдоль тени, и полупрозрачность складывалась в полосы двойной
-/// темноты. Свип цепочки самопересечься не может: перп-шаг ребра силуэта
-/// равен `outward·shadow_dir() > 0`, то есть цепочка монотонна вдоль
-/// перпендикуляра тени.
+/// Теневые развёртки всех домов карты — **считанные один раз** на сборку
+/// слоя и поделённые между обоими теневыми сборщиками.
 ///
-/// Затем **все** свипы карты объединяются булевым union (`i_overlay`) в набор
+/// Развёртка дома — по свип-полигону на каждую непрерывную цепочку
+/// рёбер-силуэта внешнего кольца: `[цепочка, цепочка + сдвиг в обратном
+/// порядке]`, где сдвиг — высота дома через `shadow_length_scale()`, зажатая в
+/// [`SHADOW_LENGTH_RANGE`] (обе границы едут за `sun_stretch()`). Не квады на
+/// ребро: у ступенчатого фасада квады соседних ступеней перекрываются вдоль
+/// тени, и полупрозрачность складывалась в полосы двойной темноты. Свип
+/// цепочки самопересечься не может: перп-шаг ребра силуэта равен
+/// `outward·shadow_dir() > 0`, то есть цепочка монотонна вдоль перпендикуляра
+/// тени.
+///
+/// Это ровно то же вычисление, которое [`shadow_builder`] и
+/// [`roof_shadow_builder`] делали каждый у себя, — два прохода по семи с
+/// половиной тысячам домов ради одной и той же геометрии. Цена прохода на
+/// Туле — 2 мс (`examples/bench/map_meshing`, ряд `sweeps`), и ровно на эти
+/// 2 мс похудел каждый из двух теневых рядов.
+///
+/// Нужны они в **разной форме**: наземному слою — плоским списком на весь
+/// город (он идёт одним `simplify_shape` в общее объединение), кровельному —
+/// по домам (у каждого своя рамка, свои отбрасывающие соседи и своё
+/// пересечение с контуром цели). Поэтому хранится плоский список, а
+/// группировку несёт [`ShadowSweeps::spans`] — так наземный слой получает
+/// готовый срез без склейки, а кровельный не платит за неё вовсе.
+///
+/// Порядок контуров в плоском списке — по домам и внутри дома по цепочкам,
+/// тот же, что складывался раньше; обход каждого нормализован к CCW в
+/// [`push_contour`].
+pub(super) struct ShadowSweeps {
+    contours: Vec<Vec<[f32; 2]>>,
+    /// На дом — полуинтервал его контуров в `contours`.
+    spans: Vec<(usize, usize)>,
+}
+
+impl ShadowSweeps {
+    pub(super) fn of(buildings: &[PolyArea]) -> Self {
+        let stretch = sun_stretch();
+        let (min_length, max_length) = (
+            *SHADOW_LENGTH_RANGE.start() * stretch,
+            *SHADOW_LENGTH_RANGE.end() * stretch,
+        );
+        let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
+        let mut spans = Vec::with_capacity(buildings.len());
+        for building in buildings {
+            let start = contours.len();
+            let length =
+                (height_or_default(building) * shadow_length_scale()).clamp(min_length, max_length);
+            let offset = shadow_dir() * length;
+            for chain in silhouette_chains(&building.outer, shadow_dir()) {
+                let mut sweep: Vec<Vec2> = chain.clone();
+                sweep.extend(chain.iter().rev().map(|&point| point + offset));
+                push_contour(&mut contours, sweep);
+            }
+            spans.push((start, contours.len()));
+        }
+        Self { contours, spans }
+    }
+
+    /// Все развёртки карты подряд — то, что уходит в объединение наземного
+    /// слоя.
+    fn all(&self) -> &[Vec<[f32; 2]>] {
+        &self.contours
+    }
+
+    /// Развёртка одного дома.
+    fn of_building(&self, index: usize) -> &[Vec<[f32; 2]>] {
+        let (start, end) = self.spans[index];
+        &self.contours[start..end]
+    }
+}
+
+/// Тени зданий на земле. Развёртки приходят готовыми ([`ShadowSweeps`] — там
+/// же, почему свип на цепочку силуэта, а не квад на ребро), и **все** свипы
+/// карты объединяются булевым union (`i_overlay`) в набор
 /// непересекающихся фигур с дырками: тени смежных корпусов и соседних зданий
 /// перекрываются на земле, а любое наложение внутри одного полупрозрачного
 /// слоя читается как пятно двойной темноты. После union альфа везде ровно
@@ -915,27 +981,11 @@ pub(super) fn facade_and_roof_builders(
 pub(super) fn shadow_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
+    sweeps: &ShadowSweeps,
     extruded: bool,
 ) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
-
-    let mut sweeps: Vec<Vec<[f32; 2]>> = Vec::new();
-    let stretch = sun_stretch();
-    let (min_length, max_length) = (
-        *SHADOW_LENGTH_RANGE.start() * stretch,
-        *SHADOW_LENGTH_RANGE.end() * stretch,
-    );
-    for building in buildings {
-        let length =
-            (height_or_default(building) * shadow_length_scale()).clamp(min_length, max_length);
-        let offset = shadow_dir() * length;
-        for chain in silhouette_chains(&building.outer, shadow_dir()) {
-            let mut sweep: Vec<Vec2> = chain.clone();
-            sweep.extend(chain.iter().rev().map(|&point| point + offset));
-            push_contour(&mut sweeps, sweep);
-        }
-    }
 
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
@@ -947,7 +997,7 @@ pub(super) fn shadow_builder(
         alpha: 0.0,
         ..color
     };
-    for shape in sweeps.simplify_shape(FillRule::NonZero) {
+    for shape in sweeps.all().simplify_shape(FillRule::NonZero) {
         let mut rings = shape.into_iter().map(|contour| {
             contour
                 .into_iter()
@@ -1037,14 +1087,22 @@ fn penumbra(direction: Vec2) -> f32 {
 /// экструзии рисует после цели ([`DrawnBodies`]). Слой лежит над всеми
 /// зданиевыми, а painter's порядок 2.5D живёт **внутри одного меша**: без
 /// вычитания тень, посчитанная для дальней кровли, легла бы тёмным пятном на
-/// стену ближнего дома, который эту кровлю визуально закрывает. В плоских
-/// режимах вычитать нечего — там дом рисуется на своём контуре.
+/// стену ближнего дома, который эту кровлю визуально закрывает.
+///
+/// `order` — тот самый список, которым [`extrusion_builder`] кладёт дома в
+/// меш, и он же признак 2.5D: строит его вызывающий, один раз на сборку слоя,
+/// и отдаёт обоим. `None` — плоский режим: подъёма нет, дом рисуется на своём
+/// контуре, и вычитать нечего.
 ///
 /// Заливка — жёсткий `push_polygon`, без каймы `PENUMBRA_WIDTH`, которую несёт
 /// наземная тень. Не забыто: часть контура пересечения — это не край тени, а
 /// линия обреза по контуру кровли (`Intersect` с footprint), и растушёвка там
 /// нарисовала бы светлый ободок по периметру каждой крыши.
-pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> MeshBuilder {
+pub(super) fn roof_shadow_builder(
+    buildings: &[PolyArea],
+    sweeps: &ShadowSweeps,
+    order: Option<&[usize]>,
+) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::core::overlay_rule::OverlayRule;
     use i_overlay::float::single::SingleFloatOverlay;
@@ -1052,38 +1110,12 @@ pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> Mes
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
     let heights: Vec<f32> = buildings.iter().map(height_or_default).collect();
-    // тот же зажим, что у наземных теней, и так же едущий за солнцем: две
-    // половины одной тени не имеют права мериться по-разному
-    let stretch = sun_stretch();
-    let (min_length, max_length) = (
-        *SHADOW_LENGTH_RANGE.start() * stretch,
-        *SHADOW_LENGTH_RANGE.end() * stretch,
-    );
-    // через `push_contour`, ровно как наземные свипы: обход свипа наследует
-    // закрутку кольца OSM (`silhouette_chains` берёт её знаком), а закрутку
-    // колец OSM никто не нормализует. Два каста с разной закруткой дали бы в
-    // NonZero обмотку 0 на перекрытии — светлую дыру ровно там, где тени
-    // обязаны склеиться
-    let sweeps: Vec<Vec<Vec<[f32; 2]>>> = buildings
-        .iter()
-        .zip(&heights)
-        .map(|(building, &height)| {
-            let length = (height * shadow_length_scale()).clamp(min_length, max_length);
-            let offset = shadow_dir() * length;
-            let mut shapes: Vec<Vec<[f32; 2]>> = Vec::new();
-            for chain in silhouette_chains(&building.outer, shadow_dir()) {
-                let mut sweep: Vec<Vec2> = chain.clone();
-                sweep.extend(chain.iter().rev().map(|&point| point + offset));
-                push_contour(&mut shapes, sweep);
-            }
-            shapes
-        })
-        .collect();
+    let extruded = order.is_some();
     let boxes: Vec<(Vec2, Vec2)> = buildings.iter().map(|b| ring_bounds(&b.outer)).collect();
-    let sweep_boxes: Vec<(Vec2, Vec2)> = sweeps
-        .iter()
-        .map(|shapes| {
-            let points: Vec<Vec2> = shapes
+    let sweep_boxes: Vec<(Vec2, Vec2)> = (0..buildings.len())
+        .map(|index| {
+            let points: Vec<Vec2> = sweeps
+                .of_building(index)
                 .iter()
                 .flatten()
                 .map(|point| Vec2::from_array(*point))
@@ -1103,7 +1135,7 @@ pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> Mes
         }
     }
     // тела соседей по той же сетке: они не отбрасывают тень, а съедают её
-    let bodies = DrawnBodies::of(buildings, &boxes, extruded);
+    let bodies = DrawnBodies::of(buildings, &boxes, order);
 
     for (target, building) in buildings.iter().enumerate() {
         let (min, max) = boxes[target];
@@ -1132,7 +1164,7 @@ pub(super) fn roof_shadow_builder(buildings: &[PolyArea], extruded: bool) -> Mes
 
         let cast: Vec<Vec<[f32; 2]>> = casters
             .into_iter()
-            .flat_map(|caster| sweeps[caster].iter().cloned())
+            .flat_map(|caster| sweeps.of_building(caster).iter().cloned())
             .collect();
         // объединение развёрток и пересечение с контуром — за один вызов:
         // NonZero склеивает перекрывающиеся тени, а Intersect обрезает их по
@@ -1215,7 +1247,7 @@ fn indices_near(cells: &HashMap<(i32, i32), Vec<usize>>, bounds: (Vec2, Vec2)) -
 #[derive(Default)]
 struct DrawnBodies {
     lifts: Vec<Vec2>,
-    /// Место дома в [`draw_order`]: больше — рисуется позже, поверх. Не
+    /// Место дома в [`super::order::draw_order`]: больше — рисуется позже, поверх. Не
     /// `Lean::depth` центра: одним числом на дом отношение «кто кого кроет»
     /// не выражается (см. модуль [`super::order`]), а спрашивается здесь
     /// ровно оно.
@@ -1225,19 +1257,20 @@ struct DrawnBodies {
 }
 
 impl DrawnBodies {
-    fn of(buildings: &[PolyArea], boxes: &[(Vec2, Vec2)], extruded: bool) -> Self {
-        if !extruded {
+    fn of(buildings: &[PolyArea], boxes: &[(Vec2, Vec2)], order: Option<&[usize]>) -> Self {
+        // порядок есть ровно в 2.5D: в плоских режимах его никто не строит, и
+        // накрывать кровлю соседа там нечем
+        let Some(order) = order else {
             return Self::default();
-        }
+        };
         let lifts: Vec<Vec2> = buildings
             .iter()
             .map(|building| extrusion_lift(building, BuildingHeightMode::Extrusion))
             .collect();
-        // тот же порядок, что кладёт меш экструзии, — второй раз: сборщики
-        // друг друга не зовут, а разделить порядок значит поменять обе
-        // сигнатуры, ровно как с развёртками теней
+        // тот самый список, которым `extrusion_builder` кладёт дома в меш, —
+        // он строится один раз на сборку слоя и достаётся обоим
         let mut rank = vec![0usize; buildings.len()];
-        for (place, &index) in draw_order(buildings, Lean::of()).iter().enumerate() {
+        for (place, &index) in order.iter().enumerate() {
             rank[index] = place;
         }
         let boxes: Vec<(Vec2, Vec2)> = boxes
@@ -1262,7 +1295,7 @@ impl DrawnBodies {
     /// Контуры тел, которые рисуются **после** `target` и задевают `bounds`
     /// (рамку уже поднятой тени).
     ///
-    /// «После» — дальше по [`draw_order`], тому самому списку, которым
+    /// «После» — дальше по [`super::order::draw_order`], тому самому списку, которым
     /// [`extrusion_builder`] кладёт дома в меш. У равных ключей и у пары,
     /// которую отношение не связало, это по-прежнему база того же порядка —
     /// глубина центра, — но пару, которую база расставляет неверно (крыло
@@ -1372,24 +1405,29 @@ pub(super) fn silhouette_chains(ring: &[Vec2], direction: Vec2) -> Vec<Vec<Vec2>
 /// растеризуются в порядке index-буфера, поэтому здания пишутся от дальнего
 /// конца вектора подъёма к ближнему (при косом подъёме вверх-вправо —
 /// с северо-востока на юго-запад, ближнее поверх), на здание сначала стены,
-/// потом крыша. Кто кого кроет, решается по парам соседей — [`draw_order`],
-/// там же и почему одного ключа на дом для этого мало. Фасадной полосы в этом
-/// режиме нет — её заменяют настоящие стены; `tinted` включает рампу тона
-/// крыш, как в `ShadowsTint`.
+/// потом крыша. Кто кого кроет, решается по парам соседей — [`super::order::draw_order`],
+/// там же и почему одного ключа на дом для этого мало.
+///
+/// `order` — вход, а не своё вычисление: тот же список нужен теням на кровлях,
+/// чтобы вычесть из них тела соседей, нарисованных после цели
+/// ([`DrawnBodies`]), и строит его один раз на сборку слоя вызывающий.
+///
+/// Фасадной полосы в этом режиме нет — её заменяют настоящие стены; `tinted`
+/// включает рампу тона крыш, как в `ShadowsTint`.
 pub(super) fn extrusion_builder(
     buildings: &[PolyArea],
     passages: &[RoadLine],
     detail: RoofDetail,
+    order: &[usize],
 ) -> MeshBuilder {
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
-    let order = draw_order(buildings, lean);
     let runs = garage_runs(buildings);
 
     // стены и крыши едут одним мешем (painter's порядок общий), так что
     // рамку кровли несёт и он: у стен она нулевая, у крыш своя
     let mut builder = MeshBuilder::with_roof_coords();
-    for index in order {
+    for &index in order {
         let building = &buildings[index];
         let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);

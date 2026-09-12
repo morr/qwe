@@ -929,7 +929,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     timer: while it sat inside the mesh timer the layer's milliseconds compared with
     nothing — not with the `cars:` line the app logs (which has always included it), and
     not with the older single-row runs. Next to the building layer
-    (785 k verts, 78 ms — the same run, see **What it costs** under Roof clutter) and above
+    (792 k verts, 101 ms — the same run, see **What it costs** under Roof clutter) and above
     the rail layer's deepest bucket (673 k, 23 ms) — still a
     layer built once per rebuild that costs nothing per frame.
     - **The body outline goes through `MeshBuilder::push_convex`, not `push_polygon`**, and
@@ -1130,8 +1130,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
           on are exactly the ones `draw_order` exists for — an L-shaped house with one
           wing in front of its neighbour and the other behind it — and they are exactly
           the pairs whose drawn bodies overlap, i.e. the ones this pass is asked about.
-          `roof_shadow_builder` therefore builds the order a second time (the sweeps are
-          rebuilt twice for the same reason; sharing either changes both signatures). A
+          `roof_shadow_builder` therefore needs that very list, and is **handed** it: the
+          order is built once per layer build by the caller (`spawn_buildings`, and
+          `measure_layers` as its own bench row) and passed to `extrusion_builder` and to
+          this layer alike — the sweeps travel the same way (`ShadowSweeps`). The
+          `Option<&[usize]>` it arrives in *is* the 2.5D flag: no order, no lift, no drawn
+          bodies, nothing to subtract. A
           *taller* neighbour is not automatically an earlier one: the caster is usually
           drawn first (at the default azimuth 300°), but for a sun anywhere in
           **(111.8°, 291.8°)** the caster itself is the nearer body and eats its own
@@ -1150,19 +1154,27 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
         contour, and `DrawnBodies` is empty there.
       It rides the same `BuildingShadowTag`, so it rebuilds and despawns with the ground
       shadows, and it is reported separately both in the `building meshing:` line
-      (`shadows 44ms + 32ms on roofs`) and as its own `roof shadows` row in
-      `examples/bench/map_meshing`.
+      (`shadows 2ms sweeps + 41ms on ground + 20ms on roofs`) and as its own `roof shadows`
+      row in `examples/bench/map_meshing`, where the two shared steps in front of it —
+      `order` and `sweeps` — have rows of their own, the way the car layer's `breaks` and
+      `parking` do.
       **What it costs** (Tula, 7723 buildings, `dev` profile, one machine — compare runs
-      against runs): **~2 k verts** and **32 ms of a 115 ms** build in
-      2.5D+shadows+tint, **16–18 ms of ~81** in the flat shadow modes, where there are no
-      bodies to subtract. Two thirds of the picture is bought by the sweeps and one third
-      by the order:
-      - most of the time is **not** the intersections but rebuilding the sweeps of all
-        7723 buildings — the work `shadow_builder` is doing right next door;
-      - and in 2.5D **~9 ms of the 32 is `draw_order`, built a second time** for the
-        cover test (23 ms without it).
-      Sharing either with `extrusion_builder` is the obvious optimisation and changes both
-      signatures; it is left for later. Load-time only — nothing here runs per frame.
+      against runs): **~2 k verts** and **20 ms of a 101 ms** build in
+      2.5D+shadows+tint, **14–15 ms of ~78** in the flat shadow modes, where there are no
+      bodies to subtract. The five milliseconds between the two are the drawn bodies; the
+      fifteen underneath them are the intersections.
+      **Two things it used to compute a second time, and no longer does** — both are built
+      once per layer build by the caller and handed to every layer that needs them:
+      - the **order** (`draw_order`), **9 ms**, shared with `extrusion_builder`. This is
+        the larger half of the saving: the roof-shadow row went **31 → 20 ms** in 2.5D;
+      - the **sweeps** (`ShadowSweeps`), **2 ms** for all 7723 buildings, shared with
+        `shadow_builder`. It came off both rows — ground shadows 44 → 41 ms, roof shadows
+        17 → 15 in the flat modes. The claim that stood here, that rebuilding the sweeps
+        was two thirds of this layer's cost, was **measured wrong**: they are cheap, and
+        what the row is actually made of is the intersections.
+      Together, on the default mode: **114 → 101 ms**, with the vertex count identical to
+      the digit — this was a move of the computation, not a change of the rules. Load-time
+      only — nothing here runs per frame.
       Its length clamp rides `map::sun_stretch()` exactly as the ground sweeps do — two
       halves of one shadow may not be measured differently.
     - **The shadow layer rebuilds on its own schedule.** It carries `BuildingShadowTag`
@@ -2010,12 +2022,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `retuned` gate the height mode uses (one registration with `or_else`, deliberately:
     two registrations of `rebuild_buildings` in one schedule could both fire in one
     frame and spawn the layer twice).
-  - **What it costs** (Tula, 7643 buildings, 2.5D+shadows+tint, from
-    `examples/bench/map_meshing` on the `dev` profile): 785 044 verts / 78 ms with clutter
-    against 461 212 / 65 ms without — one hitch on the threshold crossing, in the same
+  - **What it costs** (Tula, 7723 buildings, 2.5D+shadows+tint, from
+    `examples/bench/map_meshing` on the `dev` profile): 792 147 verts / 101 ms with clutter
+    against 468 867 / 89 ms without — one hitch on the threshold crossing, in the same
     class as the rail layer's deepest bucket (673 k / 23 ms). Most of it is the shafts:
-    every flat roof gets at least one, and a shaft is 6 quads. The 603 018 / 279 186 that
-    stood here is an older build of the layer (the gap is 182 026 verts in **both** clutter
+    every flat roof gets at least one, and a shaft is 6 quads. The 78 / 65 ms that stood
+    here came off a run that predates the roof-shadow layer in its current shape (and the
+    sharing of the sweeps and the draw order, which took 13 ms back off these very
+    numbers — see **Shadows on lower roofs**); the vertex counts moved only by the 80
+    buildings the parse gained. The 603 018 / 279 186 that
+    stood here before that is an older build of the layer (the gap is 182 026 verts in **both** clutter
     buckets, so it sits in the walls and roofs, not in the clutter or the shadows), and the
     car section's aside — which name-drops this very layer — disagreed with it by a third.
     One bench run prints buildings and cars together, so
