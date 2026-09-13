@@ -328,7 +328,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   centimetres — the first vertex of a footprint, the first point of a street — through three
   mixing rounds, never the object's index in the extract, which a re-parse is free to move.
   Callers: `buildings::material::building_seed` (the roof material, the roof shape and, since
-  the height inference, the storeys), `buildings::clutter`, `trees::crown`, `cars`.
+  the height inference, the storeys), `buildings::clutter`, `trees::crown`, `cars`, `wagons`.
+  A copy of either primitive is the defect this module exists against, and the wagon layer
+  arrived with both — a private `Lcg` and a `track_seed` two rounds short of
+  `seed_from_point`, under a doc comment claiming it was the streets' own seed.
   The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
   (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
   them would move every door and every tree in every city.
@@ -723,6 +726,73 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   have grown ruts across its stalls. The gate is `>= 2` rather than `>= 1` because
   `Markings::encode` never carries a single lane: `>= 1` read as a wider rule than the
   code could ever deliver.
+- **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
+  place that stayed empty: a station throat. On a photo half of it is standing stock, and
+  without that the yard reads as a track diagram.
+  - **Only service track carries them** (`RailLine::service: Option<ServiceTrack>`,
+    `Siding | Yard | Spur`, parsed from `service=siding|yard|spur` by `service_track`).
+    Stock on the running line is either moving or absent.
+    `crossover` is deliberately out of the whitelist — it links two running lines.
+    **`RailKind::Active` on top of that**: a `Disused` track is taken up and a `Tram` one
+    belongs to its own module, so neither holds stock (`a_disused_track_stands_empty`).
+  - **But service track is not a station, and density follows the place.** The first
+    version stood rakes at one rate on every service track — ~73 % of its length, ~3.4 k
+    wagons on Tula — and the author's verdict was "far too many; many where the trains
+    stand, at stations, almost none on an ordinary track". The tag cannot say it: a spur to
+    a plant, a lone dead end and a park of sidings carry the same `service`, and Tula's
+    spurs are the longest group (72 ways, 24 km). What does say it is **the fan**: a station
+    is a bundle of parallel tracks metres apart, a spur runs alone. So every rake first asks
+    `Fan::width_at` how many **other** `Active` tracks (running lines included — a passing
+    loop beside a double-track main *is* a station) pass within `FAN_REACH` 12 m of its
+    middle, and stands with the share `FAN_FILL[width.min(3)]` = 1.4 % / 7 % / 28 % / 52.5 %,
+    times `class_fill` (`Spur` 0.5, the others 1). The row was 2 / 10 / 40 / 75 % first
+    (1195 wagons on Tula) and was scaled by 0.7 whole on the author's "30 % fewer" — the
+    ratio between a park and a lone track was right, the total was not. 12 m and not 9 because the spacing in a
+    park is 5.3–6.5 m, and the edge track of a fan must see its *two* neighbours (5.3, 10.6).
+    One neighbour does not make a station — it is a loop beside the main or two parallel
+    plant spurs. A rake that does not stand leaves its own span empty, so the phase of the
+    rakes along a track does not depend on which of them stood.
+    Measured on the Tula cache (service track inside the map, km by neighbour count
+    0/1/2/3+): sidings 0.0/1.1/3.1/15.9, yard tracks 1.1/2.6/5.3/8.8, spurs 5.3/3.7/2.9/3.8.
+    **The index is a grid**, `FAN_CELL` 32 m, each segment registered in every cell its box
+    inflated by `FAN_REACH` touches, so a query reads one cell; it is rebuilt with the layer,
+    queried once per rake. Pinned by `a_lone_track_stands_almost_empty`,
+    `a_spur_stands_thinner_than_a_siding`, `the_fan_counts_other_stock_tracks_within_reach`.
+    **Rejected: `railway=station` / `landuse=railway`** — neither is in the query (a
+    `QUERY_VERSION` bump), and a station node does not say where the station ends.
+  - **Rakes, not rows**: `RAKE_MIN..=RAKE_MAX` (3–16) cars coupled at `COUPLED_GAP` 0.9 m,
+    then `GAP_MIN..GAP_MAX` (12–90 m) of empty track, seeded from the track's first point
+    through the shared `seed::seed_from_point`. An even row at a fixed pitch reads as a
+    fence. The rake length is a **count**, so `RAKE_MIN`/`RAKE_MAX` are `u32` and the roll
+    is `range(MIN, MAX + 1)`: as `f32` bounds they described a half-open interval and the
+    truncating cast ate the 16-car rake the docs promised.
+  - **Walked along the whole track's arclength**, the same `along::{arclengths,
+    place_on_path}` the cars use (see below), with `TRACK_MIN` 40 m and `END_MARGIN` 12 m
+    measured from the **ends of the track**, not of a link. The `points.windows(2)` walk
+    that stood here first is the very one the cars had already given up, and a yard is not
+    the exception it was assumed to be: on Tula's service track half the links are shorter
+    than `TRACK_MIN` and carry a fifth of the length, 11 tracks of 159 came out empty for
+    that reason alone, and the margin was being kept clear of every interior bend, where
+    there is no switch. The rake phase reset at every vertex on top of that. Curvature is
+    handled the cars' way — a place closer than `WAGON_LENGTH` to the last wagon **placed**
+    is skipped, measured in world distance, since a 13.9 m body has a rigid wheelbase.
+    Pinned by `short_links_carry_the_same_rakes`.
+  - **The shadow is the point**: a 3.8 m body against a 13.9 × 3.1 m footprint throws its
+    shadow by the same `shadow_length_scale()` as the buildings — 3.8 × 0.6 ≈ 2.3 m under
+    the default 59° sun, half a wagon's length once the sun drops to 30° and a whole one at
+    the 15° minimum — and that is what makes a rake read as solid objects rather than paint.
+  - Its own bucket (`WagonZoomBucket`, `WAGON_MAX_ZOOM` 2.0): a 13.9 m wagon is three
+    times a 4.4 m car, and at 2.0 m/px it is the same ~7 screen pixels at which the cars
+    are already dropped — 2.5× further out than `CAR_MAX_ZOOM` 0.8, so sharing
+    `CarZoomBucket` would have hidden the yards early. By the cars' own 5.5 px criterion
+    the wagon threshold would sit at 13.9/5.5 = 2.53 m/px; 2.0 is the conservative side
+    of it. `Z_WAGON` 2.65 — above the rail steel (a wagon stands *on* the rail),
+    below the cars.
+  - **No style resource, unlike the cars.** The layer is decoration and still has no
+    `visible`: it comes off by `WagonZoomBucket` alone. That is a difference from
+    `map/cars/` the summary used to deny.
+  - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
+    has been sitting in every cache since v4.
 - **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
@@ -763,6 +833,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   because that shift is rolled after the check and pulling its roll forward would move the
   RNG stream and reposition every row in the city; it is 0.12 m across the row, and
   `cars_never_overlap_on_a_sharp_bend` carries it as the tolerance on the half-sum.
+  Both helpers live in **`map/along.rs`** — the walk is a shared primitive the
+  way `map/seed.rs` is, and it moved out of `cars.rs` the moment the wagons became its
+  second caller, since a second copy of this walk is exactly what it exists to prevent.
   - **Nobody parks by a ruler**, and a row that does reads as warehouse markings rather than
     a yard: every car is turned by `PARK_SKEW_DEGREES` (2.5°) and shifted across by
     `PARK_SLOP` (0.12 m), both through the LCG's `bell4` — a bell, so most of the row is
