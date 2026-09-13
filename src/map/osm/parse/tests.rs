@@ -3,7 +3,9 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
-use crate::map::osm::model::{BuildingUse, PitchKind, RailKind, WaterKind, distance_to_segment};
+use crate::map::osm::model::{
+    BuildingUse, PitchKind, RailKind, ServiceTrack, WaterKind, distance_to_segment,
+};
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -127,10 +129,19 @@ fn service_tracks_are_the_siding_the_yard_and_the_spur() {
         .way(&[("railway", "rail")], vec![sw, nw])
         .parse();
 
-    let service: Vec<bool> = map.rails.iter().map(|rail| rail.service).collect();
+    let service: Vec<Option<ServiceTrack>> = map.rails.iter().map(|rail| rail.service).collect();
     // белый список, а не «тег есть»: на съезде между главными ходами состав
     // не бросают, и стоянка вагонов туда не приходит
-    assert_eq!(service, vec![true, true, true, false, false]);
+    assert_eq!(
+        service,
+        vec![
+            Some(ServiceTrack::Siding),
+            Some(ServiceTrack::Yard),
+            Some(ServiceTrack::Spur),
+            None,
+            None
+        ]
+    );
 }
 
 #[test]

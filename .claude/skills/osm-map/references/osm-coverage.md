@@ -37,7 +37,7 @@ REF-счётчики; KEPT-строки `cache_audit.py` по кешам v8 не
 sports_centre|stadium` (покрытие по виду спорта + разметка, с кеша v10),
 стены Кремля, деревья трёх источников (лес, аллеи `natural=tree_row`,
 одиночные ноды `natural=tree`), вагоны на станционных путях
-(`service=siding|yard|spur`, белый список `parse/tags.rs::is_service_track`;
+(`service=siding|yard|spur`, белый список `parse/tags.rs::service_track`;
 `crossover` не берём — это съезд между главными путями). Тег лежал в кеше с v4
 (`out geom` отдаёт все теги элемента), перекачки не потребовалось.
 

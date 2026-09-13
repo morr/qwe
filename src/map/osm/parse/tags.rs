@@ -11,7 +11,7 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, PitchKind, RailKind, RoadClass, WaterKind, polyline_length,
+    AreaKind, BuildingUse, PitchKind, RailKind, RoadClass, ServiceTrack, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -263,17 +263,19 @@ pub(super) fn rail_class(railway: &str) -> Option<(f32, RailKind)> {
     })
 }
 
-/// Станционный путь: `service=*` есть только у путей, не относящихся к
+/// Служебный путь: `service=*` есть только у путей, не относящихся к
 /// главному ходу. Белый список, а не «тег есть»: `service=crossover` — это
 /// съезд между главными путями, состав на нём не бросают.
 ///
 /// Тег приезжает в кеше и так (`out geom` отдаёт все теги элемента), поэтому
 /// версию запроса поднимать не понадобилось.
-pub(super) fn is_service_track(tags: &HashMap<String, String>) -> bool {
-    matches!(
-        tags.get("service").map(String::as_str),
-        Some("siding" | "yard" | "spur")
-    )
+pub(super) fn service_track(tags: &HashMap<String, String>) -> Option<ServiceTrack> {
+    Some(match tags.get("service").map(String::as_str)? {
+        "siding" => ServiceTrack::Siding,
+        "yard" => ServiceTrack::Yard,
+        "spur" => ServiceTrack::Spur,
+        _ => return None,
+    })
 }
 
 /// Ширина по умолчанию и род по значению `waterway`; `None` — не водоток.

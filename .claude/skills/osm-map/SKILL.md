@@ -729,13 +729,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 - **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
   place that stayed empty: a station throat. On a photo half of it is standing stock, and
   without that the yard reads as a track diagram.
-  - **Only service track carries them** (`RailLine::service`, parsed from
-    `service=siding|yard|spur` by `is_service_track`). That is not an approximation, it is
-    the thing that distinguishes a station from a running line on any photo: stock stands
-    on a siding for weeks and on the running line it is either moving or absent.
+  - **Only service track carries them** (`RailLine::service: Option<ServiceTrack>`,
+    `Siding | Yard | Spur`, parsed from `service=siding|yard|spur` by `service_track`).
+    Stock on the running line is either moving or absent.
     `crossover` is deliberately out of the whitelist — it links two running lines.
     **`RailKind::Active` on top of that**: a `Disused` track is taken up and a `Tram` one
     belongs to its own module, so neither holds stock (`a_disused_track_stands_empty`).
+  - **But service track is not a station, and density follows the place.** The first
+    version stood rakes at one rate on every service track — ~73 % of its length, ~3.4 k
+    wagons on Tula — and the author's verdict was "far too many; many where the trains
+    stand, at stations, almost none on an ordinary track". The tag cannot say it: a spur to
+    a plant, a lone dead end and a park of sidings carry the same `service`, and Tula's
+    spurs are the longest group (72 ways, 24 km). What does say it is **the fan**: a station
+    is a bundle of parallel tracks metres apart, a spur runs alone. So every rake first asks
+    `Fan::width_at` how many **other** `Active` tracks (running lines included — a passing
+    loop beside a double-track main *is* a station) pass within `FAN_REACH` 12 m of its
+    middle, and stands with the share `FAN_FILL[width.min(3)]` = 2 % / 10 % / 40 % / 75 %,
+    times `class_fill` (`Spur` 0.5, the others 1). 12 m and not 9 because the spacing in a
+    park is 5.3–6.5 m, and the edge track of a fan must see its *two* neighbours (5.3, 10.6).
+    One neighbour does not make a station — it is a loop beside the main or two parallel
+    plant spurs. A rake that does not stand leaves its own span empty, so the phase of the
+    rakes along a track does not depend on which of them stood.
+    Measured on the Tula cache (service track inside the map, km by neighbour count
+    0/1/2/3+): sidings 0.0/1.1/3.1/15.9, yard tracks 1.1/2.6/5.3/8.8, spurs 5.3/3.7/2.9/3.8.
+    **The index is a grid**, `FAN_CELL` 32 m, each segment registered in every cell its box
+    inflated by `FAN_REACH` touches, so a query reads one cell; it is rebuilt with the layer,
+    queried once per rake. Pinned by `a_lone_track_stands_almost_empty`,
+    `a_spur_stands_thinner_than_a_siding`, `the_fan_counts_other_stock_tracks_within_reach`.
+    **Rejected: `railway=station` / `landuse=railway`** — neither is in the query (a
+    `QUERY_VERSION` bump), and a station node does not say where the station ends.
   - **Rakes, not rows**: `RAKE_MIN..=RAKE_MAX` (3–16) cars coupled at `COUPLED_GAP` 0.9 m,
     then `GAP_MIN..GAP_MAX` (12–90 m) of empty track, seeded from the track's first point
     through the shared `seed::seed_from_point`. An even row at a fixed pitch reads as a
