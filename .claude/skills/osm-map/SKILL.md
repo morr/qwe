@@ -766,7 +766,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     below the cars.
   - **No style resource, unlike the cars.** The layer is decoration and still has no
     `visible`: it comes off by `WagonZoomBucket` alone. That is a difference from
-    `map/cars.rs` the summary used to deny.
+    `map/cars/` the summary used to deny.
   - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
     has been sitting in every cache since v4.
 - **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
