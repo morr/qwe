@@ -59,6 +59,25 @@ fn detail(tinted: bool) -> RoofDetail {
     }
 }
 
+/// Наземные тени тестовому списку домов. Развёртки строит вызывающий: в игре
+/// это делает `spawn_buildings`, один раз на оба теневых слоя.
+fn ground_shadows(list: &[PolyArea], passages: &[RoadLine], extruded: bool) -> MeshBuilder {
+    shadow_builder(list, passages, &ShadowSweeps::of(list), extruded)
+}
+
+/// Тени на кровлях. `extruded` — 2.5D, и порядок отрисовки строится здесь
+/// ровно потому, что в игре его делят меш экструзии и этот слой.
+fn roof_shadows(list: &[PolyArea], extruded: bool) -> MeshBuilder {
+    let order = extruded.then(|| order::draw_order(list, Lean::of()));
+    roof_shadow_builder(list, &ShadowSweeps::of(list), order.as_deref())
+}
+
+/// Меш 2.5D-экструзии — с тем же порядком отрисовки, который в игре достаётся
+/// заодно и теням на кровлях.
+fn extruded_mesh(list: &[PolyArea], passages: &[RoadLine], detail: RoofDetail) -> MeshBuilder {
+    extrusion_builder(list, passages, detail, &order::draw_order(list, Lean::of()))
+}
+
 fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
     PolyArea {
         outer,
@@ -67,6 +86,242 @@ fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
         building_use: BuildingUse::Other,
         height,
         entrances: Vec::new(),
+    }
+}
+
+/// Тень высокого соседа ложится **на кровлю** низкого, и только на неё: весь
+/// меш обязан лежать внутри контура низкого дома.
+#[test]
+fn a_tall_neighbour_shades_the_lower_roof() {
+    let caster = building(
+        vec![
+            Vec2::new(100.0, 200.0),
+            Vec2::new(130.0, 200.0),
+            Vec2::new(130.0, 230.0),
+            Vec2::new(100.0, 230.0),
+        ],
+        Some(40.0),
+        AreaKind::Building,
+    );
+    // низкий сосед — по ходу тени от высокого (солнце с северо-запада)
+    let along = shadow_dir() * 24.0;
+    let low = building(
+        vec![
+            Vec2::new(100.0, 200.0) + along,
+            Vec2::new(140.0, 200.0) + along,
+            Vec2::new(140.0, 240.0) + along,
+            Vec2::new(100.0, 240.0) + along,
+        ],
+        Some(4.0),
+        AreaKind::Building,
+    );
+    let shaded = roof_shadows(&[caster.clone(), low.clone()], false);
+    assert!(
+        !shaded.is_empty(),
+        "тень высокого соседа не легла на кровлю"
+    );
+    // по рамке контура, а не `point_in_area`: вершины пересечения ложатся
+    // ровно **на** границу, а строгая проверка «внутри» их отвергает
+    let min = low.outer.iter().copied().reduce(Vec2::min).expect("ring");
+    let max = low.outer.iter().copied().reduce(Vec2::max).expect("ring");
+    for point in shaded.positions_for_test() {
+        let at = Vec2::new(point[0], point[1]);
+        assert!(
+            at.cmpge(min - 1e-3).all() && at.cmple(max + 1e-3).all(),
+            "тень вышла за пятно низкого дома: {at} вне {min}..{max}"
+        );
+    }
+
+    // а на кровлю самого высокого — не ложится ничья
+    let alone = roof_shadows(&[caster], false);
+    assert!(alone.is_empty());
+}
+
+/// Сосед той же высоты кровлю не темнит: иначе пара считалась бы для почти
+/// каждой пары домов в городе.
+#[test]
+fn an_equal_neighbour_shades_nothing() {
+    let a = building(square(), Some(20.0), AreaKind::Building);
+    let mut b = a.clone();
+    b.outer = a
+        .outer
+        .iter()
+        .map(|point| *point + shadow_dir() * 12.0)
+        .collect();
+    assert!(roof_shadows(&[a, b], false).is_empty());
+}
+
+/// Прямоугольник в осях тени: `across` — поперёк `shadow_dir()`, `along` —
+/// вдоль неё, обе пары в метрах от начала координат. Закрутка задаётся явно:
+/// OSM обход колец не нормализует, а тень на кровле обязана выходить
+/// одинаковой при любом.
+fn shadow_rect(across: (f32, f32), along: (f32, f32), ccw: bool) -> Vec<Vec2> {
+    let (side, ahead) = (shadow_dir().perp(), shadow_dir());
+    let corner = |a: f32, b: f32| side * a + ahead * b;
+    let mut ring = vec![
+        corner(across.0, along.0),
+        corner(across.1, along.0),
+        corner(across.1, along.1),
+        corner(across.0, along.1),
+    ];
+    if (signed_ring_area(&ring) > 0.0) != ccw {
+        ring.reverse();
+    }
+    ring
+}
+
+/// Площадь тени на кровлях — тем же счётом по треугольникам, что у наземного
+/// слоя.
+fn roof_shadow_area(list: &[PolyArea]) -> f32 {
+    shadow_area(&roof_shadows(list, false).build())
+}
+
+/// Два каста, чьи тени накрывают одну и ту же часть кровли, обязаны склеиться,
+/// а не погасить друг друга: обход свипа наследует закрутку кольца OSM, и без
+/// нормализации NonZero дал бы на перекрытии обмотку 0 — светлую дыру ровно
+/// там, где тень должна быть сплошной.
+#[test]
+fn casters_of_opposite_winding_merge_instead_of_cancelling() {
+    let _sun = crate::map::default_sun();
+    // два дома по 60 м стоят друг за другом против солнца, их развёртки
+    // накрывают одну полосу кровли низкого соседа: 12 м поперёк × 10 вдоль
+    let near = |ccw| {
+        building(
+            shadow_rect((-6.0, 6.0), (-8.0, 0.0), ccw),
+            Some(60.0),
+            AreaKind::Building,
+        )
+    };
+    let far = |ccw| {
+        building(
+            shadow_rect((-6.0, 6.0), (-30.0, -22.0), ccw),
+            Some(60.0),
+            AreaKind::Building,
+        )
+    };
+    let low = building(
+        shadow_rect((-10.0, 10.0), (2.0, 12.0), true),
+        Some(4.0),
+        AreaKind::Building,
+    );
+
+    let same = roof_shadow_area(&[near(true), far(true), low.clone()]);
+    let opposite = roof_shadow_area(&[near(true), far(false), low]);
+    assert!(
+        (same - 120.0).abs() < 0.5,
+        "две тени на одной кровле обязаны дать её полосу целиком: {same} вместо 120"
+    );
+    assert!(
+        (opposite - same).abs() < 0.5,
+        "закрутка кольца OSM не смеет менять тень: {opposite} против {same}"
+    );
+}
+
+/// Двор в контур дома не входит, и тень туда не ложится — даже когда кольцо
+/// двора закручено так же, как внешнее (в OSM это половина случаев). Слой
+/// лежит выше всех зданиевых, так что залитый двор был бы пятном поверх всего.
+#[test]
+fn a_courtyard_takes_no_roof_shadow() {
+    let _sun = crate::map::default_sun();
+    // широкий высокий сосед накрывает низкую кровлю 20 × 16 целиком
+    let caster = building(
+        shadow_rect((-25.0, 25.0), (-18.0, -12.0), true),
+        Some(60.0),
+        AreaKind::Building,
+    );
+    let with_courtyard = |ccw| {
+        let mut low = building(
+            shadow_rect((-10.0, 10.0), (0.0, 16.0), true),
+            Some(4.0),
+            AreaKind::Building,
+        );
+        low.holes.push(shadow_rect((-3.0, 3.0), (6.0, 12.0), ccw));
+        low
+    };
+    let solid = building(
+        shadow_rect((-10.0, 10.0), (0.0, 16.0), true),
+        Some(4.0),
+        AreaKind::Building,
+    );
+
+    let whole = roof_shadow_area(&[caster.clone(), solid]);
+    assert!(
+        (whole - 320.0).abs() < 0.5,
+        "кровля затенена целиком: {whole}"
+    );
+    // двор 6 × 6 вычитается при любой закрутке своего кольца
+    for ccw in [true, false] {
+        let shaded = roof_shadow_area(&[caster.clone(), with_courtyard(ccw)]);
+        assert!(
+            (shaded - (whole - 36.0)).abs() < 0.5,
+            "тень легла на двор (кольцо ccw = {ccw}): {shaded} вместо {}",
+            whole - 36.0
+        );
+    }
+}
+
+/// Лежит ли точка внутри **нарисованного тела** прямоугольного дома — суммы
+/// Минковского его контура с отрезком подъёма: есть ли доля подъёма
+/// `t ∈ [0, 1]`, при которой точка попадает в сам контур. Обе координаты
+/// подъёма в 2.5D строго положительны (`EXTRUDE_SKEW`, 1), поэтому деление
+/// безопасно. Прямоугольник вызывающий сжимает сам: вершины разности ложатся
+/// ровно **на** границу тела, и строгая проверка обязана их пропустить.
+fn inside_drawn_body(point: Vec2, min: Vec2, max: Vec2, lift: Vec2) -> bool {
+    let low = ((point - max) / lift).max_element().max(0.0);
+    let high = ((point - min) / lift).min_element().min(1.0);
+    low <= high
+}
+
+/// Слой теней на кровлях лежит над всеми зданиевыми, а painter's порядок 2.5D
+/// живёт **внутри одного меша**: тень, посчитанная для дальней кровли, не
+/// смеет лечь на нарисованное тело дома, который эту кровлю закрывает.
+#[test]
+fn a_nearer_body_eats_the_shadow_it_covers() {
+    let _sun = crate::map::default_sun();
+    let target = building(
+        rect(Vec2::ZERO, Vec2::new(30.0, 30.0)),
+        Some(4.0),
+        AreaKind::Building,
+    );
+    // высокий каст стоит против солнца от цели и затеняет её кровлю почти
+    // целиком. Своё нарисованное тело он уносит на северо-восток, кровли не
+    // задевает, и в `draw_order` остаётся раньше цели: тень видна вся
+    let caster = building(
+        rect(Vec2::new(-40.0, 15.0), Vec2::new(-10.0, 45.0)),
+        Some(60.0),
+        AreaKind::Building,
+    );
+    // а третий дом стоит юго-западнее цели: в `draw_order` он позже неё, и
+    // его поднятая кровля накрывает затенённую
+    let cover = building(
+        rect(Vec2::new(0.0, -30.0), Vec2::new(30.0, -2.0)),
+        Some(60.0),
+        AreaKind::Building,
+    );
+
+    let lit = roof_shadows(&[caster.clone(), target.clone()], true).build();
+    let whole = shadow_area(&lit);
+    assert!(
+        (whole - 628.7).abs() < 0.5,
+        "каст затеняет полосу кровли в 21 м шириной, срезанную наискось \
+         дальним краем развёртки, и его собственное тело (рисуется раньше \
+         цели) из неё не вычитается: {whole} вместо 628.7"
+    );
+
+    let shaded = roof_shadows(&[caster, target, cover.clone()], true).build();
+    let left = shadow_area(&shaded);
+    assert!(
+        (left - 346.2).abs() < 1.0,
+        "тело ближнего дома обязано съесть 282 м² тени: {left} из {whole}"
+    );
+
+    let lift = extrusion_lift(&cover, BuildingHeightMode::Extrusion);
+    let (min, max) = (Vec2::new(0.0, -30.0), Vec2::new(30.0, -2.0));
+    for point in mesh_points(&shaded) {
+        assert!(
+            !inside_drawn_body(point, min + 1e-2, max - 1e-2, lift),
+            "тень легла на нарисованное тело ближнего дома: {point}"
+        );
     }
 }
 
@@ -155,7 +410,7 @@ fn extrusion_sorts_the_far_end_of_the_lift_first() {
     );
     let south = building(square(), Some(3.0), AreaKind::Building);
     let positions = |list: &[PolyArea]| {
-        extrusion_builder(list, &[], detail(false))
+        extruded_mesh(list, &[], detail(false))
             .build()
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -245,7 +500,7 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     let _sun = crate::map::default_sun();
     let mut block = building(oblong(14.0, 40.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
-    let builder = extrusion_builder(&[block], &[], detail(false));
+    let builder = extruded_mesh(&[block], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // атрибут обязан быть у каждой вершины, иначе меш материал не примет
     assert_eq!(frames.len(), builder.vertex_count());
@@ -319,7 +574,7 @@ fn a_wall_holds_a_whole_number_of_panels_and_storeys() {
     let _sun = crate::map::default_sun();
     let mut block = building(oblong(20.0, 40.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
-    let builder = extrusion_builder(&[block], &[], detail(false));
+    let builder = extruded_mesh(&[block], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
     let cells: Vec<[f32; 4]> = frames.iter().copied().filter(|f| is_wall(f[2])).collect();
     assert!(!cells.is_empty(), "стены должны нести свою раму");
@@ -370,7 +625,7 @@ fn a_garage_run_wears_gates_measured_in_bays() {
     let mut ribbon = building(oblong(8.0, 40.0), None, AreaKind::Building);
     ribbon.building_use = BuildingUse::GarageBlock;
     ribbon.entrances = vec![Vec2::new(12.0, 0.0)];
-    let builder = extrusion_builder(&[ribbon], &[], detail(false));
+    let builder = extruded_mesh(&[ribbon], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
 
     let gates: Vec<[f32; 4]> = frames
@@ -430,7 +685,7 @@ fn a_garage_wall_holds_whole_gates() {
         AreaKind::Building,
     );
     bent.building_use = BuildingUse::GarageBlock;
-    let builder = extrusion_builder(&[bent], &[], detail(false));
+    let builder = extruded_mesh(&[bent], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
 
     let gates: Vec<[f32; 4]> = frames
@@ -466,7 +721,7 @@ fn a_gate_stands_under_its_own_roof_seam() {
         .bay;
     assert!((bay - 5.0).abs() < 1e-3, "шаг бокса ленты: {bay}");
 
-    let builder = extrusion_builder(&[ribbon], &[], detail(false));
+    let builder = extruded_mesh(&[ribbon], &[], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
     let points = builder.positions_for_test();
 
@@ -895,7 +1150,7 @@ fn shadow_length_scales_with_height() {
     let low = building(square(), Some(6.0), AreaKind::Building);
     let high = building(square(), Some(60.0), AreaKind::Building);
     let reach = |list: &[PolyArea]| {
-        let mesh = shadow_builder(list, &[], false).build();
+        let mesh = ground_shadows(list, &[], false).build();
         let positions = mesh
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -931,14 +1186,14 @@ fn every_mode_builds_geometry_for_mixed_input() {
     assert!(!roofs.is_empty());
     assert_eq!(facades.skipped_polygons(), 0);
 
-    let shadows = shadow_builder(&list, &[], false);
+    let shadows = ground_shadows(&list, &[], false);
     assert!(!shadows.is_empty());
 
-    let extruded = extrusion_builder(&list, &[], detail(false));
+    let extruded = extruded_mesh(&list, &[], detail(false));
     assert!(!extruded.is_empty());
     assert_eq!(extruded.skipped_polygons(), 0);
     // комбинированный режим: рампа меняет цвета, но не геометрию
-    let tinted = extrusion_builder(&list, &[], detail(true));
+    let tinted = extruded_mesh(&list, &[], detail(true));
     assert!(!tinted.is_empty());
     assert_eq!(tinted.skipped_polygons(), 0);
 }
@@ -1089,7 +1344,7 @@ fn the_wall_order_puts_the_stepped_back_section_first() {
 fn the_stepped_facade_reaches_the_mesh_near_wall_last() {
     let _sun = crate::map::default_sun();
     let stepped = stepped_facade();
-    let mesh = extrusion_builder(&[stepped], &[], detail(false)).build();
+    let mesh = extruded_mesh(&[stepped], &[], detail(false)).build();
     let points = mesh_points(&mesh);
     // угол, который есть только у своей стены: (20, 0) — у ближней,
     // (40, 3) — у дальней
@@ -1252,7 +1507,7 @@ fn square_shadow_is_one_swept_polygon() {
     // и в самом слое тело тени — ровно этот свип: у одного дома объединять
     // нечего, а мягкий край альфу тела не трогает
     let list = [building(square(), Some(15.0), AreaKind::Building)];
-    let mesh = shadow_builder(&list, &[], false).build();
+    let mesh = ground_shadows(&list, &[], false).build();
     let expected = signed_ring_area(&sweep_of(&chains[0], 15.0)).abs();
     assert!((shadow_area(&mesh) - expected).abs() < 0.5, "{expected}");
 }
@@ -1263,7 +1518,7 @@ fn the_penumbra_stays_off_the_lit_side_and_softens_the_far_edge() {
     // обводила дом мягким пятном с солнечной стороны — тем самым контактным
     // затенением, которое из объединения убрали
     let list = [building(square(), Some(15.0), AreaKind::Building)];
-    let mesh = shadow_builder(&list, &[], false).build();
+    let mesh = ground_shadows(&list, &[], false).build();
     let along = |points: &[Vec2]| {
         points
             .iter()
@@ -1318,7 +1573,7 @@ fn staircase_shadow_has_no_double_darkening() {
 
     // и ровно столько же в слое: union не съел свип и не удвоил его
     let list = [building(staircase, Some(20.0), AreaKind::Building)];
-    let mesh = shadow_builder(&list, &[], false).build();
+    let mesh = ground_shadows(&list, &[], false).build();
     assert!((shadow_area(&mesh) - offset_length * perp_span).abs() < 0.5);
 }
 
@@ -1335,9 +1590,9 @@ fn neighbour_shadows_union_without_double_darkening() {
         AreaKind::Building,
     );
     let alone =
-        |b: &PolyArea| shadow_area(&shadow_builder(std::slice::from_ref(b), &[], false).build());
+        |b: &PolyArea| shadow_area(&ground_shadows(std::slice::from_ref(b), &[], false).build());
     let separate = alone(&left) + alone(&right);
-    let together = shadow_area(&shadow_builder(&[left, right], &[], false).build());
+    let together = shadow_area(&ground_shadows(&[left, right], &[], false).build());
     assert!(
         together < separate - 1.0,
         "union must remove the overlap: {together} vs {separate}"
@@ -1418,14 +1673,14 @@ fn only_a_building_passage_cuts_an_arch() {
         true,
     )];
 
-    let solid = extrusion_builder(&house, &[], detail(false)).vertex_count();
-    assert!(extrusion_builder(&house, &through, detail(false)).vertex_count() > solid);
+    let solid = extruded_mesh(&house, &[], detail(false)).vertex_count();
+    assert!(extruded_mesh(&house, &through, detail(false)).vertex_count() > solid);
     assert_eq!(
-        extrusion_builder(&house, &alongside, detail(false)).vertex_count(),
+        extruded_mesh(&house, &alongside, detail(false)).vertex_count(),
         solid
     );
     assert_eq!(
-        extrusion_builder(&house, &elsewhere, detail(false)).vertex_count(),
+        extruded_mesh(&house, &elsewhere, detail(false)).vertex_count(),
         solid
     );
 }
@@ -1645,7 +1900,7 @@ fn the_wall_around_an_arch_wears_no_half_windows() {
     let road = passage(vec![Vec2::new(12.0, -2.0), Vec2::new(12.0, 25.0)], true);
     let lift = extrusion_lift(&block, BuildingHeightMode::Extrusion);
 
-    let builder = extrusion_builder(std::slice::from_ref(&block), &[road], detail(false));
+    let builder = extruded_mesh(std::slice::from_ref(&block), &[road], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");
     // клетки этой стены: 40 м на целое число панелей, подъём на этажи с
     // запасом под карниз
