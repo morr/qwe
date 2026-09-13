@@ -636,7 +636,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   running line, where a train is either moving or absent. **Service track is not yet a
   station**, and density follows the place: a station is a **fan** — the number of other
   active tracks within `FAN_REACH` 12 m of a rake's middle — and each rake stands with the
-  share `FAN_FILL` gives that width (0 / 1 / 2 / 3+ neighbours: 2 % / 10 % / 40 % / 75 %),
+  share `FAN_FILL` gives that width (0 / 1 / 2 / 3+ neighbours: 1.4 % / 7 % / 28 % / 52.5 %),
   halved on a `Spur`. A park fills, a lone spur to a plant stays almost empty. They stand in **rakes** — several coupled 13.9 × 3.1 m cars
   with `COUPLED_GAP` 0.9 m between them, then an empty stretch of 12–90 m; an even row at
   a fixed pitch would read as a fence. The rakes are stepped along the **whole track's**

@@ -744,8 +744,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     is a bundle of parallel tracks metres apart, a spur runs alone. So every rake first asks
     `Fan::width_at` how many **other** `Active` tracks (running lines included — a passing
     loop beside a double-track main *is* a station) pass within `FAN_REACH` 12 m of its
-    middle, and stands with the share `FAN_FILL[width.min(3)]` = 2 % / 10 % / 40 % / 75 %,
-    times `class_fill` (`Spur` 0.5, the others 1). 12 m and not 9 because the spacing in a
+    middle, and stands with the share `FAN_FILL[width.min(3)]` = 1.4 % / 7 % / 28 % / 52.5 %,
+    times `class_fill` (`Spur` 0.5, the others 1). The row was 2 / 10 / 40 / 75 % first
+    (1195 wagons on Tula) and was scaled by 0.7 whole on the author's "30 % fewer" — the
+    ratio between a park and a lone track was right, the total was not. 12 m and not 9 because the spacing in a
     park is 5.3–6.5 m, and the edge track of a fan must see its *two* neighbours (5.3, 10.6).
     One neighbour does not make a station — it is a loop beside the main or two parallel
     plant spurs. A rake that does not stand leaves its own span empty, so the phase of the
