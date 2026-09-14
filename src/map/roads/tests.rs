@@ -505,3 +505,70 @@ fn road_style_defaults_draw_sidewalks_and_markings() {
     assert!(style.sidewalks);
     assert!(style.markings);
 }
+
+/// Мост с тротуаром — два параллельных way, и ядра их теней перекрываются:
+/// каждое на [`SHADOW_SPREAD`] шире своего настила. Ядра объединены, но кайма
+/// кладётся от рельсов своей ленты — и рельс одного моста лежит внутри ядра
+/// другого. Кайма оттуда легла бы поверх уже закрашенного союза полосой
+/// двойной темноты с жёсткой линией по рельсу.
+#[test]
+fn a_bridge_penumbra_never_lies_over_a_neighbours_core() {
+    let reach = 2.5;
+    // три метра между осями: ядра по 3.5 м в полуширину накрывают друг друга
+    let decks = [
+        [Vec2::ZERO, Vec2::new(80.0, 0.0)],
+        [Vec2::new(0.0, 3.0), Vec2::new(80.0, 3.0)],
+    ];
+    let bands: Vec<ShadowBand> = decks.iter().map(|deck| band(deck, reach)).collect();
+    let cores: Vec<Vec<Vec2>> = bands
+        .iter()
+        .map(|shadow| {
+            let edges = shadow_edges(shadow);
+            edges
+                .iter()
+                .map(|edge| edge.left)
+                .chain(edges.iter().rev().map(|edge| edge.right))
+                .collect()
+        })
+        .collect();
+    // сцена честная: посреди моста рельс каждой ленты и правда в ядре соседа
+    for (own, shadow) in bands.iter().enumerate() {
+        let edges = shadow_edges(shadow);
+        let middle = &edges[edges.len() / 2];
+        assert!(
+            [middle.left, middle.right]
+                .iter()
+                .any(|rail| point_in_polygon(*rail, &cores[1 - own])),
+            "the cores of the two bridges do not overlap"
+        );
+    }
+
+    let mut builder = MeshBuilder::default();
+    push_bridge_shadows(&mut builder, &bands);
+
+    let mut faded = 0;
+    for (position, color) in builder
+        .positions_for_test()
+        .iter()
+        .zip(builder.colors_for_test())
+    {
+        // прозрачная вершина бывает только на внешнем крае каймы
+        if color[3] != 0.0 {
+            continue;
+        }
+        faded += 1;
+        let point = Vec2::new(position[0], position[1]);
+        // у устоя кайма схлопнута на свой же рельс — граница своего ядра не
+        // в счёт, в счёт только глубина
+        let buried = cores.iter().any(|core| {
+            let ring: Vec<Vec2> = core.iter().chain(core.first()).copied().collect();
+            point_in_polygon(point, core) && distance_to_path(point, &ring) > 0.01
+        });
+        assert!(
+            !buried,
+            "a penumbra lip lies inside a shadow core at {point}"
+        );
+    }
+    // наружные каймы пары остались: пропускается только погребённая
+    assert!(faded > 0, "the pair lost its outer penumbra too");
+}

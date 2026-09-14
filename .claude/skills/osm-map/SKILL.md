@@ -713,7 +713,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   width is `rise`, the local height of the deck over the ground, and the union output is
   contours with no `rise` on them. Dropping the taper instead is the option that costs
   more (see the previous bullet). Two neighbours' bands may therefore overlap each other —
-  the price the building shadows already state and accept, since both fade to zero.
+  the price the building shadows already state and accept, since both fade to zero. A penumbra
+  buried in a neighbour's core is not laid.
 
   About the deck itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey

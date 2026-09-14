@@ -52,7 +52,9 @@ use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
     miter_offsets,
 };
-use crate::map::osm::model::{distance_to_segment, point_in_area, polyline_length};
+use crate::map::osm::model::{
+    distance_to_segment, point_in_area, point_in_polygon, polyline_length,
+};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
@@ -335,8 +337,6 @@ fn component_root(parent: &mut [usize], mut node: usize) -> usize {
 /// Длинному мосту вопрос не задаётся: на сотне метров насыпи не бывает, а
 /// перебирать контуры воды под каждым из них незачем.
 fn probe_underneath(points: &[Vec2], underneath: &Underneath) -> bool {
-    densify(
-        &merge_close_points(points, false, SHADOW_STEP / 4.0),
     deck_centerline(points)
         .iter()
         .any(|point| underneath.covers(*point))
@@ -346,6 +346,8 @@ fn probe_underneath(points: &[Vec2], underneath: &Underneath) -> bool {
 /// склеены (они вырождают нормаль стыка — то же, что делает лента), остальное
 /// догущено до [`SHADOW_STEP`].
 fn deck_centerline(points: &[Vec2]) -> Vec<Vec2> {
+    densify(
+        &merge_close_points(points, false, SHADOW_STEP / 4.0),
         SHADOW_STEP,
     )
 }
@@ -985,7 +987,8 @@ fn bridge_penumbra(span: f32) -> f32 {
 /// лежит на земле, и метр мягкой тени вокруг его торца это ровно та «грязная
 /// обводка», ради избавления от которой у зданий убирали контактную юбку.
 /// Перекрытие двух кайм друг с другом карта уже разрешает явно (тени зданий:
-/// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»).
+/// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»). Кайма,
+/// чья внешняя кромка лежит внутри ядра соседней ленты, не кладётся.
 fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
@@ -996,6 +999,21 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
         ..color
     };
     let edges: Vec<Vec<ShadowEdge>> = bands.iter().map(shadow_edges).collect();
+
+    // ядра лент для проверки погружения каймы
+    let cores: Vec<Vec<Vec2>> = edges
+        .iter()
+        .map(|band| {
+            if band.len() < 2 {
+                Vec::new()
+            } else {
+                band.iter()
+                    .map(|edge| edge.left)
+                    .chain(band.iter().rev().map(|edge| edge.right))
+                    .collect()
+            }
+        })
+        .collect();
 
     // контур ленты — левый рельс вперёд, правый назад
     let contours: Vec<Vec<[f32; 2]>> = edges
@@ -1022,7 +1040,7 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
         builder.push_polygon(&outer, &holes, color);
     }
 
-    for band in &edges {
+    for (own, band) in edges.iter().enumerate() {
         for pair in band.windows(2) {
             let (near, far) = (&pair[0], &pair[1]);
             // у устоя кайма схлопнута с обеих сторон — квада там нет вовсе
@@ -1035,6 +1053,18 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
                 } else {
                     (near.right, far.right)
                 };
+                let lip =
+                    (from + near.normal * (side * near.blur) + to + far.normal * (side * far.blur))
+                        / 2.0;
+                // кайма, чья внешняя кромка лежит в ядре соседа, легла бы
+                // поверх уже закрашенного союза двойной темнотой
+                let buried = cores
+                    .iter()
+                    .enumerate()
+                    .any(|(other, ring)| other != own && point_in_polygon(lip, ring));
+                if buried {
+                    continue;
+                }
                 builder.push_quad_gradient(
                     [
                         from,
