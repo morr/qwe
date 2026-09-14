@@ -1,5 +1,4 @@
 use super::*;
-use crate::map::area_cut::OutsideRun;
 use crate::map::osm::fixture::{rect, square, water_area};
 use crate::map::osm::model::polyline_length;
 
@@ -72,8 +71,8 @@ fn pond(x: f32) -> PolyArea {
     water_area(square(on_x(x), 50.0), Vec::new())
 }
 
-fn runs(path: &[Vec2], water: &[PolyArea]) -> Vec<OutsideRun> {
-    AreaIndex::new(water).outside_runs(path, REACH)
+fn runs(path: &[Vec2], water: &[PolyArea]) -> Vec<OpenRun> {
+    WaterIndex::new(water).open_runs(path, REACH)
 }
 
 fn close(a: Vec2, b: Vec2) -> bool {

@@ -873,8 +873,8 @@ fn a_bridge_and_an_arch_outrank_the_underground_rule() {
     );
 }
 
-/// Проезд стоянки помечен — по флагу `map::roads` не рисует его внутри стоянки;
-/// прочие `service` (дворовый въезд, сквозная дорога) остаются обычной дорогой.
+/// Проезд стоянки помечен — по флагу раскладка мест (`map::parking`) не выбивает
+/// места под ним; прочие `service` (дворовый въезд, сквозная дорога) выбивают.
 #[test]
 fn a_parking_aisle_is_marked_and_a_driveway_is_not() {
     let (sw, se, ..) = corners(HALF);

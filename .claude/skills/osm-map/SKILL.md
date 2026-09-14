@@ -549,7 +549,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     (13 of Tula's open channel ends lie inside a water polygon, most of them the Упа's
     own centreline inside its `riverbank`), and there its light edges would be two shoal
     lines across deep water, while across the bank rim its deep middle cut the shoal with
-    a rectangle — the artifact reported. So `area_cut::AreaIndex::outside_runs` cuts the smoothed
+    a rectangle — the artifact reported. So `WaterIndex::open_runs` cuts the smoothed
     axis at every water outline (edges in a 32 m grid; inside/outside asked once per
     stretch between crossings, not per link) and keeps the dry stretches; each **cut end
     reaches `WATER_SHORE_WIDTH` past the bank** (along the axis, straight on past its
@@ -915,9 +915,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     alleys, and OSM routinely runs yard footways straight across a field — reported
     from a screenshot of a Tula courtyard where the paths cut the pitch into pieces. On
     a photo the field is whole and the path stops at its edge. Render-only: a pitch
-    blocks nothing on the navmesh, so pawns still walk the path across it. The price is
-    stated: parking (0.8) now lies under a pitch where the two overlap, which the data
-    almost never does.
+    blocks nothing on the navmesh, so pawns still walk the path across it. Parking lies
+    over the roads too, one hair lower (see **Parking**), so where a lot and a pitch
+    overlap the pitch wins.
   - **The kind is decided in three steps** (`parse/tags.rs::pitch_kind`), because `sport`
     is missing on a quarter of Tula's pitches: `leisure` first (`track` → `Track`,
     `playground` → `Playground`, `sports_centre`/`stadium` → `Ground`), then `sport` on a
@@ -943,8 +943,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     a pixel at any zoom where it is visible at all. There is no arc primitive in
     `MeshBuilder` and this is the only caller that wants one.
 - **Parking** (`map/parking.rs`) — an `amenity=parking` area is drawn as asphalt
-  (`Z_PARKING` 0.8, the `parking` surface layer) with the **stalls painted on it**
-  (`Z_PARKING_LINES` 0.81). The markings go in a **flat-material** layer of their own,
+  (`Z_PARKING` 2.001, the `parking` surface layer) with the **stalls painted on it**
+  (`Z_PARKING_LINES` 2.002). The markings go in a **flat-material** layer of their own,
   not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
   not on it, and a 12 cm line is the one thing on this map that must stay pure white.
   - **The layout is computed once per world load** into `ParkingLayout` (a resource,
@@ -965,28 +965,31 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour.
-  - **The OSM aisles are not drawn inside the lot** (`RoadLine::parking_aisle` from
-    `service=parking_aisle`, cut in `spawn_roads` by `area_cut::AreaIndex::outside_runs`
-    with reach 0 — the very cutter the channel mouths use, lifted out of `map/water.rs`
-    when this became its second caller). The lot's asphalt *is* the aisle, and a light
-    grey ribbon over it cut the stall rows — reported from a screenshot, where a painted
-    car stood across one. Outside the lot the entry is drawn up to the outline, the cut
-    end a `Butt` (a round cap would poke a light tongue into the darker lot). Lifting the
-    whole lot over the road layers was the rejected alternative: a lot outline that
-    overlaps a real street would swallow that street's markings and sidewalk. The stall
-    layout still ignores where OSM's aisle ran — its own `AISLE` gaps stand in for it.
-    Render-only: the navmesh, doors and tree planting still see the aisle as a road.
-    Tula: 90 aisle ways.
+  - **The lot lies over every road ribbon and sidewalk** (`Z_PARKING` above `Z_ROAD`,
+    under the pitch and water). OSM runs aisles, entries and footways into and through
+    a lot, and a light ribbon over the lot's asphalt cut the stall rows — reported from
+    screenshots. With the lot on top its own outline clips every ribbon exactly, and
+    the lot's asphalt *is* the aisle.
+    **Cutting the ribbon's axis at the outline was tried first and removed**: a ribbon
+    has width, so the cut left a round cap poking into the lot where an aisle ends on
+    the outline, a square end beside a pointed lot corner, a step where an aisle running
+    along the edge crosses it, and the light ribbon of a road that crosses the lot. The
+    price of the lot on top is stated: an outline mapped over a real carriageway hides
+    that stretch of asphalt, markings and sidewalk — the kerb cars lie above (`Z_CAR`)
+    and stay. Render-only: the navmesh, doors and tree planting still see every road.
+    `RoadLine::parking_aisle` (`service=parking_aisle`, Tula 90 ways) survives for the
+    stall rule below. The stall layout still ignores where OSM's aisle ran — its own
+    `AISLE` gaps stand in for it.
   - **No stall stands under a road that crosses the lot** (`ParkingLayout::new(lots,
     roads)`, `Crossing::covers`). OSM lot outlines are sometimes drawn crooked and swallow
     a real street — Tula's big lot by the eastern roundabout has a one-way
     `highway=service` (`maxspeed=60`, no `service=*`, way 498649803) running through it —
-    and the rows, laid by the lot's own rectangle, put cars across it. **Such a road is
-    not hidden**: it is a road, not an aisle, and hiding every `highway=service` inside a
-    lot was tried and rejected for exactly that. Instead a stall is dropped when the road
+    and the rows, laid by the lot's own rectangle, put cars across it. The lot covers the
+    road's ribbon; what is left of the road is an empty lane of the lot's asphalt, which
+    reads as an aisle. A stall is dropped when the road
     axis crosses the stall rectangle grown by the road's half width (Liang–Barsky; the
     square corner is slightly stricter than true distance). Bridges pass over the lot and
-    aisles are hidden, so neither drops stalls. Roads are prefiltered per lot by AABB.
+    the lot's own aisles are its `AISLE` gaps, so neither drops stalls. Roads are prefiltered per lot by AABB.
     Since markings and cars read the same layout, the paint goes with the cars.
   - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the

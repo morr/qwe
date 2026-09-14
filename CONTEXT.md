@@ -619,7 +619,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   lawn. Tula: 128 in the bbox, 118 reach `MapData::pitches` — the rest carry `building=*`
   as well and stay buildings.
 - **Parking lots** (`map/parking.rs`) — an `AreaKind::Parking` area is asphalt
-  (`Z_PARKING` 0.8) with its **stalls drawn on it** (`Z_PARKING_LINES` 0.81, a flat
+  (`Z_PARKING` 2.001, **over every road ribbon and sidewalk**, under pitches and water)
+  with its **stalls drawn on it** (`Z_PARKING_LINES` 2.002, a flat
   material, no procedural texture on top of paint). `stalls(area)` lays them out in rows
   along the **long axis of the area's `min_area_rect`** — a row of stalls, an aisle, a
   row of stalls, the way a lot is actually striped: `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2,
@@ -629,12 +630,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   stalls stay and cars stand on them. **The markings and the cars read the same
   `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a
   car would stand across its own line.
-  **A parking aisle is not drawn inside its lot** (`RoadLine::parking_aisle`,
-  `service=parking_aisle`): the lot's asphalt *is* the aisle, and the ribbon cut the
-  stall rows; outside the lot the entry is drawn up to the edge with a flat end.
-  Render-only. **No stall stands under any other road crossing the lot** — a crooked
-  OSM outline can swallow a real street, and that street stays drawn. Tula: 170 lots,
-  90 aisle ways.
+  The lot lying over the roads is what hides the OSM aisles, entries and footways
+  running into it: its own outline clips every ribbon exactly, and the lot's asphalt
+  *is* the aisle. **No stall stands under a road crossing the lot** except its own
+  aisles (`RoadLine::parking_aisle`, `service=parking_aisle`) and bridges — a crooked
+  OSM outline can swallow a real street, which then reads as an empty lane of the lot.
+  Render-only. Tula: 170 lots, 90 aisle ways.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. Two things in the **ribbon frame**, so they follow the lane and not
   the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
