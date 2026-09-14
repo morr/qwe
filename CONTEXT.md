@@ -821,14 +821,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   grain sprite** — a map-sized tiled noise sprite, proposed and then dropped in the merge
   that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
-  polygon carries a gradient band along its contour, holes included: water a lighter
-  **shore** (6 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
+  polygon carries a gradient band along its contour, holes included: park / grass / wood /
+  sand an edge a few percent darker (2–3 m). Same
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
-  median strip never bleeds its rim onto the road. A **waterway ribbon** carries the same
-  shore on its edges, but from the shader (`surface.wgsl`, by the ribbon's `across`,
-  clamped by the same 0.6 of its half width) — one colour and one width, so the shoal
-  turns from a pond into its channel without a seam.
+  median strip never bleeds its rim onto the road.
+- **Shoal** (`map/waterways.rs::mesh_water_areas`) — water has **no rim**: its lighter
+  shore is a **distance field to the nearest bank**, `WATER_SHORE_COLOR` on the bank to
+  `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m), over all water polygons **unioned** first.
+  A narrow arm stays shallow across its whole width, and two polygons of one river meeting
+  at a border get no shoal along it. A **waterway ribbon** carries the same field on its
+  edges from the shader (`surface.wgsl`, by the ribbon's `across`), so the shoal turns
+  from a pond into its channel without a seam.
 - **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
   passage; bridges included) is asphalt grey and gets a light **sidewalk band** at
   `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a

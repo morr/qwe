@@ -2,6 +2,69 @@ use super::*;
 use crate::map::osm::fixture::{square, water_area};
 use crate::map::osm::model::polyline_length;
 
+/// Вершины меша воды с долей глубины: 0 — цвет берега, 1 — полная глубина.
+fn depths(builder: &MeshBuilder) -> Vec<(Vec2, f32)> {
+    let shore = WATER_SHORE_COLOR.to_linear().red;
+    let deep = WATER_COLOR.to_linear().red;
+    builder
+        .positions_for_test()
+        .iter()
+        .zip(builder.colors_for_test())
+        .map(|(position, color)| {
+            (
+                Vec2::new(position[0], position[1]),
+                (color[0] - shore) / (deep - shore),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_shoal_runs_from_the_bank_to_full_depth() {
+    let found = depths(&mesh_water_areas(&[pond(0.0)]));
+    let on_bank =
+        |point: Vec2| (point.x.abs() - 50.0).abs() < 1e-2 || (point.y.abs() - 50.0).abs() < 1e-2;
+    assert!(found.iter().any(|&(point, _)| on_bank(point)));
+    for &(point, depth) in &found {
+        assert!((-1e-3..=1.0 + 1e-3).contains(&depth), "{point} at {depth}");
+        if on_bank(point) {
+            assert!(depth < 1e-3, "a bank vertex {point} is {depth} deep");
+        }
+    }
+    assert!(found.iter().any(|&(_, depth)| depth > 1.0 - 1e-3));
+}
+
+#[test]
+fn two_ponds_sharing_a_border_have_no_shoal_across_it() {
+    // рукав упирается в реку общей границей x = 50: вдоль неё берега нет
+    let arm = water_area(square(on_x(100.0), 50.0), Vec::new());
+    let found = depths(&mesh_water_areas(&[pond(0.0), arm]));
+    for &(point, depth) in &found {
+        if (point.x - 50.0).abs() < 1e-2 && point.y.abs() < 40.0 {
+            assert!(depth > 0.5, "the seam at {point} is only {depth} deep");
+        }
+    }
+}
+
+#[test]
+fn a_narrow_arm_never_reaches_full_depth() {
+    // 8 м поперёк: до берега не дальше 4 м, а полная глубина — на шести
+    let strip = water_area(
+        vec![
+            Vec2::new(-4.0, -60.0),
+            Vec2::new(4.0, -60.0),
+            Vec2::new(4.0, 60.0),
+            Vec2::new(-4.0, 60.0),
+        ],
+        Vec::new(),
+    );
+    let found = depths(&mesh_water_areas(&[strip]));
+    assert!(!found.is_empty());
+    let deepest = found.iter().map(|&(_, depth)| depth).fold(0.0, f32::max);
+    assert!(deepest < 4.0 / WATER_SHORE_WIDTH + 0.1, "{deepest}");
+    assert!(deepest > 0.5, "{deepest}");
+}
+
 const REACH: f32 = 6.0;
 
 fn on_x(x: f32) -> Vec2 {

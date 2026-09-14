@@ -45,7 +45,6 @@ struct SurfaceParams {
     marking_gap: f32,
     wear: f32,
     shore_width: f32,
-    shore_share: f32,
     intensity: f32,
 }
 
@@ -111,18 +110,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var rgb = in.color.rgb;
 
-    // отмель на кромках ленты русла — до всякого шума, как и вершинная кайма
-    // полигона, которую она продолжает: линейно от цвета берега на краю к
-    // цвету ленты на глубине `shore_width`, зажатой долей полуширины. Вдоль
-    // ленты гаснет в разрыве на конце, отрезанном берегом площадной воды
-    // (`map::waterways`): там полигон под лентой у той же глубины того же
-    // цвета. Площадная заливка ленты не несёт (полуширина ноль) — её отмель
-    // лежит геометрией
+    // отмель на кромках ленты русла — до всякого шума, как и вершинный цвет
+    // площадной воды, который она продолжает: то же поле расстояний до берега,
+    // линейно от цвета берега на краю к цвету ленты на глубине `shore_width`.
+    // Узкий ручей поэтому светлый по всей ширине — мелкий, как и узкий рукав
+    // полигоном. Вдоль ленты гаснет в разрыве на конце, отрезанном берегом
+    // площадной воды (`map::waterways`): там вода под лентой у той же глубины
+    // того же цвета. Площадная заливка ленты не несёт (полуширина ноль) — её
+    // отмель лежит геометрией
     let shore_half = in.ribbon.z;
     if params.shore_width > 0.0 && shore_half > 0.0 {
-        let reach = min(params.shore_width, params.shore_share * shore_half);
         let to_edge = shore_half - abs(in.ribbon.x);
-        let across = 1.0 - clamp(to_edge / reach, 0.0, 1.0);
+        let across = 1.0 - clamp(to_edge / params.shore_width, 0.0, 1.0);
         let along = clamp(1.0 + in.ribbon.y / params.shore_width, 0.0, 1.0);
         rgb = mix(rgb, params.shore_color.rgb, across * along);
     }

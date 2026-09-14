@@ -369,10 +369,8 @@ const MAX_ARC_STEPS: usize = 12;
 
 /// Кайма контура ([`MeshBuilder::push_inset_band`]) не шире этой доли его
 /// толщины (`площадь / периметр`): у полосы толщина — половина ширины, и кайма
-/// в 0.6 её с каждой стороны оставляет посреди полосы просвет заливки. Тем же
-/// правилом зажата отмель на кромках ленты русла (`surface.wgsl`): у ленты
-/// толщина — её полуширина.
-pub const RIM_THICKNESS_SHARE: f32 = 0.6;
+/// в 0.6 её с каждой стороны оставляет посреди полосы просвет заливки.
+const RIM_THICKNESS_SHARE: f32 = 0.6;
 /// Кайма тоньше не кладётся: не видна, а квадов на контур — столько же.
 const MIN_RIM_WIDTH: f32 = 0.2;
 
@@ -582,23 +580,42 @@ impl MeshBuilder {
     /// Полигон с дырками через earcut. Вырожденный/кривой — пропуск со
     /// счётчиком, один плохой контур OSM не должен ронять всю карту.
     pub fn push_polygon(&mut self, outer: &[Vec2], holes: &[Vec<Vec2>], color: LinearRgba) {
-        if outer.len() < 3 {
+        let holes: Vec<(&[Vec2], LinearRgba)> =
+            holes.iter().map(|hole| (hole.as_slice(), color)).collect();
+        self.push_polygon_graded((outer, color), &holes);
+    }
+
+    /// Полигон с дырками, у которого **каждое кольцо своего цвета**: цвет
+    /// вершины — цвет её кольца, и между кольцами GPU тянет линейный градиент.
+    /// Так кладётся отмель площадной воды (`map::waterways`): полоса между
+    /// двумя вложенными офсетами берега — внешнее кольцо светлее, дырка
+    /// темнее. Треугольник, чьи три вершины легли на одно кольцо, закрашен
+    /// ровно — на полосе в полметра это ошибка меньше одной ступени.
+    pub fn push_polygon_graded(
+        &mut self,
+        outer: (&[Vec2], LinearRgba),
+        holes: &[(&[Vec2], LinearRgba)],
+    ) {
+        if outer.0.len() < 3 {
             self.skipped_polygons += 1;
             return;
         }
 
-        let mut coordinates: Vec<f64> =
-            Vec::with_capacity((outer.len() + holes.iter().map(Vec::len).sum::<usize>()) * 2);
+        let count = outer.0.len() + holes.iter().map(|hole| hole.0.len()).sum::<usize>();
+        let mut coordinates: Vec<f64> = Vec::with_capacity(count * 2);
+        let mut colors: Vec<[f32; 4]> = Vec::with_capacity(count);
         let mut hole_starts = Vec::with_capacity(holes.len());
-        for point in outer {
+        for point in outer.0 {
             coordinates.push(point.x as f64);
             coordinates.push(point.y as f64);
+            colors.push(outer.1.to_f32_array());
         }
-        for hole in holes {
+        for (hole, color) in holes {
             hole_starts.push(coordinates.len() / 2);
-            for point in hole {
+            for point in *hole {
                 coordinates.push(point.x as f64);
                 coordinates.push(point.y as f64);
+                colors.push(color.to_f32_array());
             }
         }
 
@@ -612,8 +629,7 @@ impl MeshBuilder {
         }
 
         let base = self.positions.len() as u32;
-        let rgba = color.to_f32_array();
-        for chunk in coordinates.chunks_exact(2) {
+        for (chunk, rgba) in coordinates.chunks_exact(2).zip(colors) {
             self.push_vertex(Vec2::new(chunk[0] as f32, chunk[1] as f32), rgba, NO_RIBBON);
         }
         self.indices

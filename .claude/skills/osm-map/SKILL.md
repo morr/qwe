@@ -474,9 +474,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   *to-break* is under **Markings → Breaks** below.
 - **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
   polygon is followed, in the same builder, by a gradient band along its outer ring and
-  along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
-  gets a lighter **shore** (`WATER_RIM`, 6 m — at 3 m it read as the polygon's edging
-  rather than as a shoal), park / wood / grass / sand an edge a few
+  along every hole: `edge` colour on the contour, the fill colour at the far edge. Park /
+  wood / grass / sand get an edge a few
   percent darker than the fill (`*_RIM`, 2–3 m; the wood's the widest and darkest — shade
   under the canopy edge). The far edge is built from `miter_offsets` on the ring, with the
   side chosen by the ring's signed area (`outside` flips it for holes, whose band lies in
@@ -485,7 +484,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   2 m rim on a 1.5 m median never pokes out onto the road — and nothing under
   `MIN_RIM_WIDTH` (0.2 m) is pushed at all. Holes take the width the outer ring settled
   on. No z-slot: opaque 2D meshes test depth with `GreaterEqual`, so within one mesh the
-  band pushed after the fill wins.
+  band pushed after the fill wins. **Water is not rimmed** — see **Shoal**.
+- **Shoal** (`map/waterways.rs::mesh_water_areas`, the `water` layer at `Z_POND`) — the
+  light shallows of area water, as a **distance field to the nearest bank**: the colour at
+  a point depends only on how far the nearest bank is, `WATER_SHORE_COLOR` on it and
+  `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m — at 3 m it read as the polygon's edging rather
+  than as a shoal). It used to be the rim above (`WATER_RIM`), and the rim failed twice on
+  the Упа's southern arm, both reported from one screenshot: the arm is its own
+  multipolygon (19415535) butting into the river's (19409693) with **a shared border
+  across the mouth**, and each laid its light rim along it — a shoal line across open
+  water; and the rim's thickness clamp (0.6 × area / perimeter) darkened the 18 m arm
+  toward its middle faster than a real channel shallows, so the river's shoal stopped at
+  the mouth instead of running on into the arm.
+  - **Union first** (`i_overlay`, NonZero, outer rings oriented CCW and holes CW — OSM's
+    order is arbitrary and NonZero only merges consistent windings): the shared border is
+    gone before anything is laid.
+  - **Then nested inward offsets** (`OutlineOffset::outline`, negative offset, `Round`
+    joins, `SHOAL_STEP` 0.5 m, twelve levels), each always taken from level 0 rather than
+    from the previous one, so errors do not accumulate. The band between depth `d` and
+    `d + step` is one earcut polygon whose **outer ring carries colour(d) and holes
+    colour(d + step)** (`MeshBuilder::push_polygon_graded`), so the GPU interpolates the
+    gradient across the band. A narrow place's offset vanishes on its own, and the
+    innermost level left is filled flat with its own depth's colour — the middle of an
+    8 m arm is 4 m deep, never full depth.
+  - **The band is assembled from rings, not by boolean difference**: a difference would
+    lose which vertex came from which level, and the level *is* the colour. An inner shape
+    lies inside exactly one outer shape (not in its holes — a lake on an island is someone
+    else's); its outer ring is a hole of the band, and each of its holes surrounds an
+    island, making a separate band piece with that island as its hole.
+  - A triangle whose three vertices sit on one ring is flat-coloured; on a 0.5 m band that
+    error is under one step.
+  - Cost: logged as `water meshing:`.
 - **Waterways** (`map/waterways.rs`, the `waterways` layer at `Z_WATERWAY` 2.02,
   `SurfaceKind::Water`) — the open channels, and two decisions, both from screenshots
   of the Упа's southern arm (`waterway=river` 221646296 at `cam 4366 3254`):
@@ -508,10 +537,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `stream` at (3681, 70), one footway on the `weir` at (5251, 2546); every other
     crossing carries `bridge=yes`). Cutting the road at the crossing was rejected for
     that very screenshot — there was no crossing to cut.
-  - **The mouth.** The channel ribbon has its own **shore** — the polygon rim's colour
-    (`WATER_SHORE_COLOR`) and width (`WATER_SHORE_WIDTH` 6 m), clamped by
-    `RIM_THICKNESS_SHARE` of the half width, so 2.4 m on an 8 m river — laid in
-    `surface.wgsl` by the ribbon's `across`, since a ribbon has no ring to inset. That is
+  - **The mouth.** The channel ribbon has its own **shore** — the same distance field as
+    the **Shoal** (`WATER_SHORE_COLOR`, `WATER_SHORE_WIDTH` 6 m, unclamped, so a 2.5 m
+    stream is pale across its whole width like a narrow arm) — laid in
+    `surface.wgsl` by the ribbon's `across`, since a ribbon has no ring to offset. That is
     not enough on its own: an OSM channel runs on **inside** the area water it flows into
     (13 of Tula's open channel ends lie inside a water polygon, most of them the Упа's
     own centreline inside its `riverbank`), and there its light edges would be two shoal
@@ -522,8 +551,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     reaches `WATER_SHORE_WIDTH` past the bank** (along the axis, straight on past its
     end) with a `Butt` cap and a `Break` of that reach. *To-break* then runs 0 → −6 m
     over the reach, and the shader fades the channel shore by it — linearly, exactly as
-    the polygon rim fades from the bank inwards, so at every depth the channel edge and
-    the rim beside it have one colour and the shoal turns into the channel without a seam.
+    the shoal fades from the bank inwards, so at every depth the channel edge and
+    the water beside it have one colour and the shoal turns into the channel without a seam.
     Two guards: water narrower than two reaches between two dry stretches does not cut
     (the reaches would overlap into a seam mid-channel), and an uncut ribbon still goes
     through `RibbonBreaks::At(&[])`, never `Ends` — `Ends` measures to the ribbon's own
