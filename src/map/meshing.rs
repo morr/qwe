@@ -1563,6 +1563,38 @@ fn project_onto_path(path: &[Vec2], along: &[f32], point: Vec2) -> f32 {
     best.1
 }
 
+/// Свип выпуклого контура по свету: оболочка контура и его копии, сдвинутой
+/// на `offset`, — ровно то, что накрывает тень. Общий для машин
+/// (`cars/body.rs`) и оград (`fences.rs`): тень начинается **под** объектом и
+/// вытекает из-под него, а не лежит сдвинутой копией в стороне.
+///
+/// Строится обходом, без сортировки: ребро, чья внешняя нормаль смотрит по
+/// свету, уезжает на `offset`, остальные остаются на месте, а в двух
+/// вершинах, где одно сменяется другим, оболочка переходит из одной копии в
+/// другую. Это сумма Минковского контура с отрезком `[0, offset]`, поэтому
+/// на выпуклом контуре результат выпуклый — на это опирается `push_convex`.
+/// Контур — против часовой. Нулевой `offset` (солнце в зените) даёт обратно
+/// сам контур.
+pub fn sweep_convex(outline: &[Vec2], offset: Vec2) -> Vec<Vec2> {
+    let count = outline.len();
+    // контур обходится против часовой, значит внешняя нормаль ребра смотрит
+    // вправо от него; ребро отбрасывает тень наружу, когда она смотрит по свету
+    let casts = |at: usize| {
+        let edge = outline[(at + 1) % count] - outline[at];
+        Vec2::new(edge.y, -edge.x).dot(offset) > 0.0
+    };
+    let mut hull = Vec::with_capacity(count + 2);
+    for (at, &point) in outline.iter().enumerate() {
+        match (casts((at + count - 1) % count), casts(at)) {
+            (false, false) => hull.push(point),
+            (true, true) => hull.push(point + offset),
+            (false, true) => hull.extend([point, point + offset]),
+            (true, false) => hull.extend([point + offset, point]),
+        }
+    }
+    hull
+}
+
 /// Miter-офсет вершины ломаной: вектор от точки пути до края ленты полуширины
 /// `half_width`, по биссектрисе излома, с ограничением [`MITER_LIMIT`] на
 /// острых стыках. Край ленты — `path[i] ± offsets[i]`. Общий и для отрисовки

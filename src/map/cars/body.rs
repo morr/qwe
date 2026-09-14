@@ -34,7 +34,7 @@
 use bevy::prelude::*;
 
 use crate::map::SHADOW_COLOR;
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, sweep_convex};
 
 /// Тип кузова. Доли в списке — то, как часто он встречается во дворе
 /// русского города: половина — седаны и хэтчбеки, кроссоверов заметно
@@ -346,7 +346,7 @@ impl Car {
 pub fn push_shadow(builder: &mut MeshBuilder, car: &Car, offset: Vec2, detail: CarDetail) {
     let profile = car.shape.profile();
     let color = SHADOW_COLOR.to_linear();
-    let cast = sweep(&car.shadow_contour(&profile, detail), offset);
+    let cast = sweep_convex(&car.shadow_contour(&profile, detail), offset);
     builder.push_convex(&cast, color);
     if detail != CarDetail::Full {
         return;
@@ -364,35 +364,6 @@ pub fn push_shadow(builder: &mut MeshBuilder, car: &Car, offset: Vec2, detail: C
         color,
         fade,
     );
-}
-
-/// Свип выпуклого контура по свету: оболочка контура и его копии, сдвинутой
-/// на `offset`, — ровно то, что накрывает тень.
-///
-/// Строится обходом, без сортировки: ребро, чья внешняя нормаль смотрит по
-/// свету, уезжает на `offset`, остальные остаются на месте, а в двух
-/// вершинах, где одно сменяется другим, оболочка переходит из одной копии в
-/// другую. Это сумма Минковского контура с отрезком `[0, offset]`, поэтому
-/// на выпуклом контуре результат выпуклый — на это опирается `push_convex`.
-/// Нулевой `offset` (солнце в зените) даёт обратно сам контур.
-fn sweep(outline: &[Vec2], offset: Vec2) -> Vec<Vec2> {
-    let count = outline.len();
-    // контур обходится против часовой, значит внешняя нормаль ребра смотрит
-    // вправо от него; ребро отбрасывает тень наружу, когда она смотрит по свету
-    let casts = |at: usize| {
-        let edge = outline[(at + 1) % count] - outline[at];
-        Vec2::new(edge.y, -edge.x).dot(offset) > 0.0
-    };
-    let mut hull = Vec::with_capacity(count + 2);
-    for (at, &point) in outline.iter().enumerate() {
-        match (casts((at + count - 1) % count), casts(at)) {
-            (false, false) => hull.push(point),
-            (true, true) => hull.push(point + offset),
-            (false, true) => hull.extend([point, point + offset]),
-            (true, false) => hull.extend([point + offset, point]),
-        }
-    }
-    hull
 }
 
 /// Кузов со всем, что на нём видно на этой ступени подробности.
@@ -583,7 +554,7 @@ mod tests {
             for detail in [CarDetail::Full, CarDetail::Silhouette, CarDetail::Block] {
                 let contour = car.shadow_contour(&profile, detail);
                 for offset in sun_offsets(shape.height()) {
-                    let hull = sweep(&contour, offset);
+                    let hull = sweep_convex(&contour, offset);
                     for corner in 0..hull.len() {
                         let previous = hull[(corner + hull.len() - 1) % hull.len()];
                         let point = hull[corner];
@@ -610,7 +581,7 @@ mod tests {
             let profile = shape.profile();
             let contour = car.shadow_contour(&profile, CarDetail::Full);
             for offset in sun_offsets(shape.height()) {
-                let hull = sweep(&contour, offset);
+                let hull = sweep_convex(&contour, offset);
                 for &point in &contour {
                     for corner in 0..hull.len() {
                         let from = hull[corner];
