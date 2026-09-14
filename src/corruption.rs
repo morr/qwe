@@ -38,6 +38,22 @@ impl Corruption {
             .filter(|&&progress| progress >= 1.0)
             .count()
     }
+
+    /// Район на **фронте**: сам ещё не осквернён, а хоть один сосед уже —
+    /// то есть скверна упирается в него прямо сейчас. Бастион такого района
+    /// держит поле; его и осаждает Громила (`demon::besiege`), его и
+    /// подсвечивает слой осады (`ui::siege`).
+    pub fn on_front(&self, districts: &Districts, district: DistrictId) -> bool {
+        !self.is_corrupted(district)
+            && districts
+                .districts
+                .get(district as usize)
+                .is_some_and(|own| {
+                    own.neighbours
+                        .iter()
+                        .any(|&neighbour| self.is_corrupted(neighbour))
+                })
+    }
 }
 
 /// Район только что осквернён.

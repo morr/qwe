@@ -56,17 +56,7 @@ pub fn besiege(
     let front: Vec<FrontBastion> = bastions
         .iter()
         .filter(|(_, bastion, _, ruined)| {
-            !ruined
-                && !corruption.is_corrupted(bastion.district)
-                && districts
-                    .districts
-                    .get(bastion.district as usize)
-                    .is_some_and(|district| {
-                        district
-                            .neighbours
-                            .iter()
-                            .any(|&neighbour| corruption.is_corrupted(neighbour))
-                    })
+            !ruined && corruption.on_front(&districts, bastion.district)
         })
         .map(|(entity, bastion, transform, _)| FrontBastion {
             entity,
