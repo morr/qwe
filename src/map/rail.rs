@@ -56,28 +56,33 @@ pub struct RailPalette {
     /// Значение — **ровно [`RailPalette::tie`] своей палитры**, и это не
     /// совпадение: на ступени 2 поперёк того же балласта лежат эти самые
     /// шпалы, так что на пороге зума метка не светлеет скачком, а продолжает
-    /// их собой. Меняешь шпалу — меняй и штрих. Разойтись им особенно нечем:
+    /// их собой. Поэтому обе стоят на одной константе палитры (`*_TIE`), и
+    /// разойтись им нельзя по построению. Запаса на расхождение и нет:
     /// на последней ступени штрих шириной ровно в пиксель ([`RAIL_LODS`]),
     /// и весь знак держится на разнице тона с балластом.
     pub dash: Color,
 }
 
+/// Шпала действующего пути — она же его дальний штрих, см. [`RailPalette::dash`].
+const ACTIVE_TIE: Color = Color::srgb(0.243, 0.196, 0.157);
+
 const ACTIVE: RailPalette = RailPalette {
     shoulder: Color::srgb(0.376, 0.357, 0.325),
     ballast: Color::srgb(0.478, 0.455, 0.427),
-    tie: Color::srgb(0.243, 0.196, 0.157),
+    tie: ACTIVE_TIE,
     steel: Color::srgb(0.792, 0.804, 0.827),
-    // цвет шпалы, см. `RailPalette::dash`
-    dash: Color::srgb(0.243, 0.196, 0.157),
+    dash: ACTIVE_TIE,
 };
+
+/// Шпала заброшенного пути — она же его дальний штрих, см. [`RailPalette::dash`].
+const DISUSED_TIE: Color = Color::srgb(0.400, 0.361, 0.302);
 
 const DISUSED: RailPalette = RailPalette {
     shoulder: Color::srgb(0.451, 0.451, 0.400),
     ballast: Color::srgb(0.549, 0.545, 0.482),
-    tie: Color::srgb(0.400, 0.361, 0.302),
+    tie: DISUSED_TIE,
     steel: Color::srgb(0.545, 0.400, 0.322),
-    // цвет шпалы, см. `RailPalette::dash`
-    dash: Color::srgb(0.400, 0.361, 0.302),
+    dash: DISUSED_TIE,
 };
 
 /// Ширина плеча как доля ширины балласта. Призма шире своего верха: у
