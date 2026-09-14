@@ -26,6 +26,10 @@ name = "roof_gallery"
 path = "examples/demos/roof_gallery/main.rs"
 
 [[example]]
+name = "temple_gallery"
+path = "examples/demos/temple_gallery/main.rs"
+
+[[example]]
 name = "tree_gallery"
 path = "examples/demos/tree_gallery/main.rs"
 
