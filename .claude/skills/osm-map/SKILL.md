@@ -1485,8 +1485,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     field of cars read as a dealership — the author's call from a screenshot. A yard
     is still fuller than a kerb, and an empty one next to a painted grid reads as
     unfinished. Seeded per lot
-    (`lot_seed`, its first point) exactly like a street. That share is a constant, not
-    `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
+    (`lot_seed`, its first point) exactly like a street. That curve is built from
+    constants, not from `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
     lot is a different observation.
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the

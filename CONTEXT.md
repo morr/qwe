@@ -56,8 +56,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  pitches → pitch markings → parking → parking markings → sidewalks → alley casings →
-  alleys → road casings → roads → water (2.01) → waterways (2.02) → bridge shadows →
+  sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → parking
+  markings → pitches (2.003) → pitch markings → water (2.01) → waterways (2.02) → bridge shadows →
   bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
@@ -605,8 +605,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the air a crown has no outline, it has a shaded edge. Detail in the `osm-map` skill's
   `references/trees.md`.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
-  playground|sports_centre|stadium`), `Z_PITCH` 2.003 with the markings at 2.006 — **over every road ribbon**, under
-  water: OSM runs yard footways across a field, and on a photo the field is whole. What a
+  playground|sports_centre|stadium`), `Z_PITCH` 2.003 with the markings at 2.006 —
+  **over every road ribbon** and parking, under water: OSM runs yard footways across a
+  field, and on a photo the field is whole. What a
   courtyard is *made of* on a photo: a green football field with white lines, a blue
   basketball box, the rust-orange oval of a running track, the sandy patch of a
   playground. `PitchKind: Soccer | Hard | Track | Playground | Ground` decides the
