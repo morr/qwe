@@ -55,8 +55,8 @@ fn main() {
         .unwrap_or(0.2);
 
     println!("rss at start: {}", rss());
-    let map = common::load_map(CITY);
-    let navmesh = common::build_navmesh(&map, CITY);
+    let mut map = common::load_map(CITY);
+    let navmesh = common::build_navmesh(&mut map, CITY);
     println!("rss after navmesh: {}", rss());
 
     let started = Instant::now();

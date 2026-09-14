@@ -188,6 +188,34 @@ pub struct WallLine {
     pub width: f32,
 }
 
+/// Что за ограда — она же способ отрисовки (`map::fences`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FenceKind {
+    /// `barrier=fence` — доска, штакетник, профнастил.
+    Fence,
+    /// `barrier=wall|retaining_wall` — бетон или кирпич, светлее и шире.
+    Wall,
+    /// `barrier=hedge` — живая изгородь, зелёная и мягкая.
+    Hedge,
+}
+
+/// Ограда участка: полилиния и её род.
+///
+/// Отдельный тип, а не [`WallLine`] с полем: стена Кремля непроходима
+/// **сплошь**, а ограда — с проёмами. Сквозь ограду проходят дороги
+/// (`footprint::fence_gaps` — калитка тропинки, въезд проезда), и у неё
+/// бывают калитки, которых нет в OSM (`gates`). Стену, которую пересекла
+/// тропа, никто не открывает.
+#[derive(Debug, Clone)]
+pub struct FenceLine {
+    pub points: Vec<Vec2>,
+    pub kind: FenceKind,
+    /// Калитки по умолчанию — точки на осевой, добавленные при загрузке, где
+    /// ограда отрезала от города участок с дверями
+    /// (`Navmesh::open_sealed_fences`). После разбора пусто.
+    pub gates: Vec<Vec2>,
+}
+
 /// Род промышленного сооружения — он же радиус и высота по умолчанию, когда в
 /// данных нет ни контура, ни тегов размера.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -502,6 +530,9 @@ pub struct MapData {
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
+    /// Ограды участков (`barrier=fence|wall|retaining_wall|hedge`) — в навмеш
+    /// попадают с проёмами дорог и калитками: см. [`FenceLine`].
+    pub fences: Vec<FenceLine>,
     /// Резервуары, силосы, трубы, башни (`man_made=*`) — только рисуются,
     /// навмеш не трогают: см. [`Structure`].
     pub structures: Vec<Structure>,

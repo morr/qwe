@@ -30,8 +30,8 @@ use bevy::prelude::*;
 use serde_json::{Value, json};
 
 use super::model::{
-    AreaKind, BuildingUse, MapData, PolyArea, RailKind, RailLine, RoadClass, RoadLine, WallLine,
-    WaterKind, WaterLine,
+    AreaKind, BuildingUse, FenceKind, FenceLine, MapData, PolyArea, RailKind, RailLine, RoadClass,
+    RoadLine, WallLine, WaterKind, WaterLine,
 };
 use super::overpass::GeoBounds;
 use crate::city::City;
@@ -258,6 +258,22 @@ pub fn wall(points: Vec<Vec2>, width: f32) -> WallLine {
     WallLine { points, width }
 }
 
+pub fn fence(points: Vec<Vec2>) -> FenceLine {
+    FenceLine {
+        points,
+        kind: FenceKind::Fence,
+        gates: Vec::new(),
+    }
+}
+
+/// Тропинка — аллея шириной `footway` (3.5 м).
+pub fn footway(points: Vec<Vec2>) -> RoadLine {
+    RoadLine {
+        class: RoadClass::Alley,
+        ..street(points, 3.5)
+    }
+}
+
 /// Полустрона двора [`crowded_yard`], м.
 const YARD_HALF: f32 = 60.0;
 
@@ -356,6 +372,17 @@ pub struct TinyCity {
     pub island: Vec2,
     /// Вода вокруг острова.
     pub island_water: Vec2,
+
+    /// Перед калиткой огороженного участка, на тропинке.
+    pub fenced_street: Vec2,
+    /// Двор участка за калиткой тропинки.
+    pub fenced_yard: Vec2,
+    /// Точка на самой ограде — блок в обоих заполнениях.
+    pub fence_line: Vec2,
+    /// Двор глухого участка с домом и дверью: открыт калиткой по умолчанию.
+    pub sealed_yard: Vec2,
+    /// Щель за глухой оградой без дверей и меньше порога — остаётся отрезанной.
+    pub sealed_sliver: Vec2,
 }
 
 /// Ширина реки и сухопутного моста подобраны так, чтобы полосы (настил,
@@ -420,6 +447,26 @@ pub fn tiny_city() -> TinyCity {
         20.0,
     ));
 
+    // Ограды. Стороны участков — на нечётных метрах: осевая проходит через
+    // центр тайла, и проба на заборе однозначна для сетки. Первый участок —
+    // с калиткой тропинки; второй — глухой, но с дверью дома внутри, его
+    // открывает калитка по умолчанию; третий — глухая щель 10 × 10 м без
+    // дверей, меньше порога, и отрезанной она остаётся
+    let plot = |center: Vec2, half: f32| fence(closed(square(center, half)));
+    map.fences.push(plot(Vec2::new(401.0, 2801.0), 30.0));
+    map.roads.push(footway(vec![
+        Vec2::new(331.0, 2801.0),
+        Vec2::new(401.0, 2801.0),
+    ]));
+    map.fences.push(plot(Vec2::new(401.0, 3301.0), 30.0));
+    let mut house = building(
+        rect(Vec2::new(391.0, 3291.0), Vec2::new(411.0, 3311.0)),
+        vec![],
+    );
+    house.entrances.push(Vec2::new(401.0, 3291.0));
+    map.buildings.push(house);
+    map.fences.push(plot(Vec2::new(601.0, 3301.0), 5.0));
+
     let curb = crate::map::footprint::bridge_curb_width(8.0);
     TinyCity {
         map,
@@ -447,5 +494,11 @@ pub fn tiny_city() -> TinyCity {
         island_bank: Vec2::new(1800.0, 2350.0),
         island: Vec2::new(1870.0, 2850.0),
         island_water: Vec2::new(1600.0, 2600.0),
+
+        fenced_street: Vec2::new(340.0, 2801.0),
+        fenced_yard: Vec2::new(415.0, 2815.0),
+        fence_line: Vec2::new(371.0, 2821.0),
+        sealed_yard: Vec2::new(380.0, 3320.0),
+        sealed_sliver: Vec2::new(601.0, 3301.0),
     }
 }

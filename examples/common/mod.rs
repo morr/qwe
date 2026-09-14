@@ -33,11 +33,13 @@ pub fn load_map(city: City) -> MapData {
 /// Сеточный navmesh — ровно как в игре, вместе с отсечением недостижимого от
 /// портала: цели инструмента обязаны выбираться по той же проходимости, иначе
 /// он меряет не ту карту.
-pub fn build_navmesh(map: &MapData, city: City) -> Navmesh {
+pub fn build_navmesh(map: &mut MapData, city: City) -> Navmesh {
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(map);
     let portal =
         snap_portal_position(&navmesh, city.portal_hint()).expect("no clear spot for portal");
+    // калитки оград пишутся в карту — меш, построенный из неё после, их увидит
+    navmesh.open_sealed_fences(map, portal);
     navmesh.prune_unreachable(world_to_tile(portal));
     navmesh
 }

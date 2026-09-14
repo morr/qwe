@@ -24,7 +24,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
-use crate::map::osm::model::{MapData, PolyArea, RoadLine, WallLine, WaterLine};
+use crate::map::osm::model::{FenceLine, MapData, PolyArea, RoadLine, WallLine, WaterLine};
 use crate::settings::{
     POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_CHUNK_TARGET_METERS,
     POLYMESH_FLAT_CHUNK_METERS,
@@ -316,6 +316,7 @@ struct PolymeshInput {
     water: Vec<PolyArea>,
     water_lines: Vec<WaterLine>,
     walls: Vec<WallLine>,
+    fences: Vec<FenceLine>,
     roads: Vec<RoadLine>,
 }
 
@@ -326,6 +327,7 @@ impl PolymeshInput {
             water: map.water.clone(),
             water_lines: map.water_lines.clone(),
             walls: map.walls.clone(),
+            fences: map.fences.clone(),
             roads: map.roads.clone(),
         }
     }

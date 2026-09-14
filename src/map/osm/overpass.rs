@@ -66,18 +66,23 @@ impl GeoBounds {
 /// `landuse=residential|industrial|garages`. v9 — стоянки `amenity=parking`,
 /// v10 — спортивные и детские площадки `leisure=*`, v11 — промзона: цилиндры
 /// `man_made=storage_tank|silo|chimney|water_tower|gasometer` и надземные
-/// трубопроводы `man_made=pipeline`. v13 — `driving_side` границы страны (v12
-/// занята соседней веткой: два разных запроса под одним номером делили бы один
-/// кеш).
-const QUERY_VERSION: u32 = 13;
+/// трубопроводы `man_made=pipeline`. v13 — `driving_side` границы страны.
+/// v14 — ограды участков `barrier=fence|wall|retaining_wall|hedge`.
+///
+/// v12 не использована: номер был занят этой же веткой оград, пока она ждала
+/// очереди, а в master первым уехал `driving_side`. Номер обязан **расти**, а
+/// не занимать оставленную дыру: выгрузка v13 уже лежит на дисках без
+/// `barrier`, и ограды на ней молча вышли бы пустыми.
+const QUERY_VERSION: u32 = 14;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
 /// (`amenity=parking`), спортивные и детские площадки (`leisure=*`),
 /// промышленные цилиндры и надземные трубопроводы
-/// (`man_made=storage_tank|silo|chimney|water_tower|gasometer|pipeline`), аллеи,
-/// одиночные деревья, стены Кремля, входы в здания — и отдельным `out tags`
-/// границы с `driving_side`, внутри которых лежит центр карты.
+/// (`man_made=storage_tank|silo|chimney|water_tower|gasometer|pipeline`),
+/// ограды участков (`barrier=*`), аллеи, одиночные деревья, стены Кремля,
+/// входы в здания — и отдельным `out tags` границы с `driving_side`, внутри
+/// которых лежит центр карты.
 ///
 /// Границы идут вторым выводом, а не в общий `out geom`: геометрия границы
 /// страны весит мегабайты, а нужен от неё один тег. `is_in` работает по
@@ -124,6 +129,7 @@ pub fn overpass_query(city: City) -> String {
   way["leisure"~"^(pitch|track|playground|sports_centre|stadium)$"]({bbox});
   relation["leisure"~"^(pitch|track|playground|sports_centre|stadium)$"]({bbox});
   way["barrier"="city_wall"]({bbox});
+  way["barrier"~"^(fence|wall|retaining_wall|hedge)$"]({bbox});
   way["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer|pipeline)$"]({bbox});
   node["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer)$"]({bbox});
   node["entrance"]({bbox});

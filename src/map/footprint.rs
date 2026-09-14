@@ -14,12 +14,15 @@
 //! блокирует проходимость, и нарисованная полоса обязана совпадать с
 //! заблокированной по построению.
 
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 use bevy::prelude::*;
 
 use super::meshing::miter_offsets;
-use super::osm::model::{RoadLine, WallLine, WaterLine, distance_to_segment, ring_bounds};
+use super::osm::model::{
+    FenceLine, RoadLine, WallLine, WaterLine, closest_on_segment, distance_to_segment, ring_bounds,
+};
 use crate::settings::PASSAGE_MAX_WIDTH;
 
 /// Насколько близко точка одной ломаной должна лежать к другой ломаной,
@@ -173,6 +176,331 @@ impl WallLine {
     }
 }
 
+/// Физическая толщина ограды, м — то, что перекрывает навмеш. Не ширина
+/// отрисовки: та растёт с зумом (`fences::FENCE_LODS`, 0.25 → 1.3 м) ради
+/// экранных пикселей, а забор на земле от зума толще не становится. Сетке
+/// толщина почти безразлична — непроходимость держит цепочка тайлов по осевой
+/// (`Navmesh::set_polyline`), — а полигональному мешу она даёт контур,
+/// который потом раздувается на радиус агента.
+pub const FENCE_BAND_WIDTH: f32 = 0.3;
+
+impl FenceLine {
+    pub fn band(&self) -> Band {
+        Band {
+            line: self.points.clone(),
+            width: FENCE_BAND_WIDTH,
+        }
+    }
+}
+
+/// Проём в ограде: точка на осевой забора, где его пересекает дорога, и
+/// полудлина проёма вдоль забора, м.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FenceGap {
+    pub at: Vec2,
+    pub reach: f32,
+}
+
+/// Ширина калитки по умолчанию (`FenceLine::gates`), м — ширина тропинки
+/// `footway`: калитка, через которую в OSM никто не провёл дорогу, — это
+/// калитка для пешехода.
+pub const FENCE_GATE_WIDTH: f32 = 3.5;
+
+/// Во сколько раз косое пересечение может удлинить проём против поперечного.
+/// Дорога под углом θ занимает на заборе `ширина / sin θ`, и на почти
+/// параллельном пересечении это число уходит в бесконечность — а проём длиной
+/// в квартал уже не калитка.
+const GAP_OBLIQUITY_MAX: f32 = 2.0;
+
+/// Сторона ячейки индекса отрезков дорог для поиска проёмов, м. Ответ от неё не
+/// зависит — отрезок регистрируется во всех ячейках своей коробки, — только
+/// скорость.
+const GAP_CELL: f32 = 32.0;
+
+/// Проёмы всех оград: где сквозь забор проходит дорога.
+///
+/// **Проём даёт только пересечение осевых**, не близость лент. Дорога вдоль
+/// забора в метре от него — обычная улица частного сектора — своей номинальной
+/// лентой в 8–16 м накрывает забор на всём протяжении, и правило «лента
+/// накрыла — открыто» сняло бы все заборы вдоль улиц, оставив только те, что в
+/// глубине кварталов. Осевая же идёт по середине проезда, и на заборе она
+/// оказывается только там, где через него действительно ходят: калитка
+/// (тропинка `footway`), въезд (`service`), а в OSM и общий узел дороги с
+/// забором — тоже пересечение.
+///
+/// Второй случай — **торец дороги у забора**: тропа, доведённая до калитки и
+/// там оборванная, осевой забор не пересекает, но упирается в него. Её конец
+/// ближе полуширины к осевой ограды — проём в ближайшей точке.
+///
+/// **Мосты не режут**: пролёт идёт над оградой, а не сквозь неё. Совпадающие
+/// осевые (забор, нанесённый на тот же way, что и тропа) пересечением не
+/// считаются — у параллельных отрезков его нет.
+///
+/// Третий — **калитки по умолчанию** (`FenceLine::gates`), шириной
+/// [`FENCE_GATE_WIDTH`]: их находит сетка при загрузке, а проёмами они
+/// становятся здесь, для обоих заполнений сразу.
+///
+/// Индекс — `[номер ограды] → проёмы`, в порядке `fences`.
+pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>> {
+    let cell_of = |point: Vec2| (point / GAP_CELL).floor().as_ivec2();
+    // отрезки дорог по ячейкам своих коробок: дорог десятки тысяч, оград сотни,
+    // и перебор пар «забор × дорога» мерил бы расстояния впустую
+    let mut cells: HashMap<IVec2, Vec<(u32, u32)>> = HashMap::new();
+    for (road_index, road) in roads.iter().enumerate() {
+        if road.bridge {
+            continue;
+        }
+        for (segment, pair) in road.points.windows(2).enumerate() {
+            let (min, max) = (
+                cell_of(pair[0].min(pair[1]) - road.width),
+                cell_of(pair[0].max(pair[1]) + road.width),
+            );
+            for x in min.x..=max.x {
+                for y in min.y..=max.y {
+                    cells
+                        .entry(IVec2::new(x, y))
+                        .or_default()
+                        .push((road_index as u32, segment as u32));
+                }
+            }
+        }
+    }
+    fences
+        .iter()
+        .map(|fence| {
+            let mut gaps: Vec<FenceGap> = Vec::new();
+            for &at in &fence.gates {
+                push_gap(
+                    &mut gaps,
+                    FenceGap {
+                        at,
+                        reach: FENCE_GATE_WIDTH / 2.0,
+                    },
+                );
+            }
+            let mut seen: Vec<(u32, u32)> = Vec::new();
+            for pair in fence.points.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let Some(along) = (b - a).try_normalize() else {
+                    continue;
+                };
+                let (min, max) = (cell_of(a.min(b)), cell_of(a.max(b)));
+                seen.clear();
+                for x in min.x..=max.x {
+                    for y in min.y..=max.y {
+                        let Some(candidates) = cells.get(&IVec2::new(x, y)) else {
+                            continue;
+                        };
+                        for &key in candidates {
+                            if seen.contains(&key) {
+                                continue;
+                            }
+                            seen.push(key);
+                            let road = &roads[key.0 as usize];
+                            let (c, d) =
+                                (road.points[key.1 as usize], road.points[key.1 as usize + 1]);
+                            let Some(direction) = (d - c).try_normalize() else {
+                                continue;
+                            };
+                            let sin = along.perp_dot(direction).abs();
+                            let reach = road.width / 2.0 / sin.max(1.0 / GAP_OBLIQUITY_MAX);
+                            if let Some(at) = segment_crossing(a, b, c, d) {
+                                push_gap(&mut gaps, FenceGap { at, reach });
+                            }
+                            let last = road.points.len() - 2;
+                            for (end, is_end) in [(c, key.1 == 0), (d, key.1 as usize == last)] {
+                                if !is_end {
+                                    continue;
+                                }
+                                let at = closest_on_segment(end, a, b);
+                                if at.distance(end) <= road.width / 2.0 {
+                                    push_gap(&mut gaps, FenceGap { at, reach });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            gaps
+        })
+        .collect()
+}
+
+/// Проём, совпавший с уже найденным (общий узел двух отрезков забора даёт
+/// одно и то же пересечение дважды), не дублируется — остаётся шире из двух.
+fn push_gap(gaps: &mut Vec<FenceGap>, gap: FenceGap) {
+    if let Some(same) = gaps
+        .iter_mut()
+        .find(|known| known.at.distance(gap.at) < JOIN_EPSILON)
+    {
+        same.reach = same.reach.max(gap.reach);
+    } else {
+        gaps.push(gap);
+    }
+}
+
+/// Точка пересечения отрезков `a→b` и `c→d`, концы включительно. Параллельные
+/// и совпадающие отрезки пересечения не имеют.
+fn segment_crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<Vec2> {
+    let (r, s) = (b - a, d - c);
+    let denominator = r.perp_dot(s);
+    if denominator.abs() <= f32::EPSILON * r.length() * s.length() {
+        return None;
+    }
+    let t = (c - a).perp_dot(s) / denominator;
+    let u = (c - a).perp_dot(r) / denominator;
+    const SLACK: f32 = 1e-4;
+    ((-SLACK..=1.0 + SLACK).contains(&t) && (-SLACK..=1.0 + SLACK).contains(&u)).then(|| a + r * t)
+}
+
+/// Как далеко искать проезжую часть от кандидата в калитку, м. Дальше — «улицы
+/// рядом нет», и все такие кандидаты равны.
+const STREET_REACH: f32 = 96.0;
+
+/// Кромки проезжих частей (`roads::is_carriageway`) — для вопроса «где у
+/// огороженного участка сторона к улице». Калитка по умолчанию встаёт туда:
+/// вход в школу или на завод делают с большой дороги, а не с тропинки на
+/// задах, даже если тропинка ближе к достижимому.
+pub struct StreetEdges<'a> {
+    roads: &'a [RoadLine],
+    cells: HashMap<IVec2, Vec<(u32, u32)>>,
+}
+
+impl<'a> StreetEdges<'a> {
+    pub fn build(roads: &'a [RoadLine]) -> Self {
+        let mut cells: HashMap<IVec2, Vec<(u32, u32)>> = HashMap::new();
+        for (index, road) in roads.iter().enumerate() {
+            if !super::roads::is_carriageway(road) {
+                continue;
+            }
+            for (segment, pair) in road.points.windows(2).enumerate() {
+                let min = street_cell(pair[0].min(pair[1]));
+                let max = street_cell(pair[0].max(pair[1]));
+                for x in min.x..=max.x {
+                    for y in min.y..=max.y {
+                        cells
+                            .entry(IVec2::new(x, y))
+                            .or_default()
+                            .push((index as u32, segment as u32));
+                    }
+                }
+            }
+        }
+        Self { roads, cells }
+    }
+
+    /// Расстояние от точки до кромки ближайшей проезжей части (осевая минус
+    /// полширины, не меньше нуля), не дальше [`STREET_REACH`] — иначе
+    /// `STREET_REACH`. Кромка, а не осевая: широкая улица притягивает сильнее.
+    pub fn distance(&self, point: Vec2) -> f32 {
+        let (min, max) = (
+            street_cell(point - STREET_REACH),
+            street_cell(point + STREET_REACH),
+        );
+        let mut best = STREET_REACH;
+        for x in min.x..=max.x {
+            for y in min.y..=max.y {
+                let Some(segments) = self.cells.get(&IVec2::new(x, y)) else {
+                    continue;
+                };
+                for &(road, segment) in segments {
+                    let road = &self.roads[road as usize];
+                    let (a, b) = (
+                        road.points[segment as usize],
+                        road.points[segment as usize + 1],
+                    );
+                    let edge = (distance_to_segment(point, a, b) - road.width / 2.0).max(0.0);
+                    best = best.min(edge);
+                }
+            }
+        }
+        best
+    }
+}
+
+fn street_cell(point: Vec2) -> IVec2 {
+    (point / GAP_CELL).floor().as_ivec2()
+}
+
+/// Ограда, как она стоит: осевая, из которой вынуто всё, что лежит внутри
+/// кругов проёмов, — куски между проёмами, каждый своей ломаной.
+///
+/// Круг тот же, что вычитает полигональный меш (`gap_outline`), так что
+/// нарисованный проём и проём, через который ходят, — одно место. Сетка режет
+/// шире на диагональ тайла, но это поправка растеризации, а не футпринта (как
+/// `− tile·√2` у настила моста). Кусок короче [`MIN_FENCE_PIECE`] не
+/// рисуется: огрызок забора в полметра у края калитки — это шум, а не столб.
+pub fn fence_pieces(fence: &FenceLine, gaps: &[FenceGap]) -> Vec<Vec<Vec2>> {
+    fn close(current: &mut Vec<Vec2>, pieces: &mut Vec<Vec<Vec2>>) {
+        let length: f32 = current
+            .windows(2)
+            .map(|pair| pair[0].distance(pair[1]))
+            .sum();
+        if current.len() >= 2 && length >= MIN_FENCE_PIECE {
+            pieces.push(std::mem::take(current));
+        } else {
+            current.clear();
+        }
+    }
+    let mut pieces: Vec<Vec<Vec2>> = Vec::new();
+    let mut current: Vec<Vec2> = Vec::new();
+    for pair in fence.points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        // интервалы параметра звена, накрытые проёмами, — пересечение звена с
+        // каждым кругом
+        let mut covered: Vec<(f32, f32)> = gaps
+            .iter()
+            .filter_map(|gap| segment_in_circle(a, b, gap.at, gap.reach))
+            .collect();
+        covered.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut t = 0.0;
+        for (from, to) in covered {
+            if from > t {
+                if current.is_empty() {
+                    current.push(a.lerp(b, t));
+                }
+                current.push(a.lerp(b, from));
+                close(&mut current, &mut pieces);
+            } else if !current.is_empty() {
+                close(&mut current, &mut pieces);
+            }
+            t = t.max(to);
+        }
+        if t < 1.0 {
+            if current.is_empty() {
+                current.push(a.lerp(b, t));
+            }
+            current.push(b);
+        } else {
+            close(&mut current, &mut pieces);
+        }
+    }
+    close(&mut current, &mut pieces);
+    pieces
+}
+
+/// Кусок ограды короче этого, м, после разрезки проёмами не рисуется.
+const MIN_FENCE_PIECE: f32 = 0.5;
+
+/// Часть звена `a→b` внутри круга — интервал параметра `[from, to]` в
+/// `0..=1`; `None`, если звено круга не касается.
+fn segment_in_circle(a: Vec2, b: Vec2, center: Vec2, radius: f32) -> Option<(f32, f32)> {
+    let d = b - a;
+    let f = a - center;
+    let (qa, qb, qc) = (d.dot(d), 2.0 * f.dot(d), f.dot(f) - radius * radius);
+    if qa <= f32::EPSILON {
+        return None;
+    }
+    let discriminant = qb * qb - 4.0 * qa * qc;
+    if discriminant <= 0.0 {
+        return None;
+    }
+    let root = discriminant.sqrt();
+    let from = ((-qb - root) / (2.0 * qa)).max(0.0);
+    let to = ((-qb + root) / (2.0 * qa)).min(1.0);
+    (from < to).then_some((from, to))
+}
+
 /// Входы решения «какая часть бордюра составного моста открыта»: мосты и
 /// примыкающие к ним не-мосты, отобранные одним предикатом ([`ways_joined`])
 /// для обеих заливок.
@@ -241,6 +569,59 @@ impl<'a> CurbCoverage<'a> {
 mod tests {
     use super::*;
     use crate::map::osm::fixture;
+
+    fn length(piece: &[Vec2]) -> f32 {
+        piece.windows(2).map(|pair| pair[0].distance(pair[1])).sum()
+    }
+
+    /// Тропинка поперёк забора: проём на пересечении осевых, забор рисуется
+    /// двумя кусками, обрезанными ровно по кругу проёма.
+    #[test]
+    fn a_footway_splits_the_drawn_fence_at_its_gap() {
+        let fence = fixture::fence(vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0)]);
+        let road = fixture::footway(vec![Vec2::new(20.0, -10.0), Vec2::new(20.0, 10.0)]);
+        let gaps = &fence_gaps(std::slice::from_ref(&fence), &[road])[0];
+        assert_eq!(gaps.len(), 1);
+        assert!(gaps[0].at.distance(Vec2::new(20.0, 0.0)) < 1e-3);
+        let pieces = fence_pieces(&fence, gaps);
+        assert_eq!(pieces.len(), 2);
+        let reach = gaps[0].reach;
+        assert!((pieces[0].last().unwrap().x - (20.0 - reach)).abs() < 1e-3);
+        assert!((pieces[1].first().unwrap().x - (20.0 + reach)).abs() < 1e-3);
+    }
+
+    /// Улица вдоль забора его не режет — ни в навмеше, ни на картинке.
+    #[test]
+    fn a_street_along_the_fence_leaves_no_gap() {
+        let fence = fixture::fence(vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0)]);
+        let road = fixture::street(vec![Vec2::new(-10.0, 4.0), Vec2::new(50.0, 4.0)], 16.0);
+        assert!(fence_gaps(std::slice::from_ref(&fence), &[road])[0].is_empty());
+    }
+
+    /// Проём на изломе режет оба звена, а кольцо ограды с калиткой остаётся
+    /// ломаной без калитки: длина кусков — периметр минус проём. Огрызок короче
+    /// полуметра у края не рисуется.
+    #[test]
+    fn a_gate_at_a_corner_cuts_both_links_and_drops_the_stub() {
+        let fence = fixture::fence(fixture::closed(fixture::square(Vec2::ZERO, 10.0)));
+        let gate = FenceGap {
+            at: Vec2::new(-10.0, -10.0),
+            reach: 1.75,
+        };
+        let pieces = fence_pieces(&fence, &[gate]);
+        let total: f32 = pieces.iter().map(|piece| length(piece)).sum();
+        assert!((total - (80.0 - 2.0 * 1.75)).abs() < 1e-3, "{total}");
+
+        // за проёмом остаётся 0.3 м забора — не рисуется
+        let stub = FenceGap {
+            at: Vec2::new(19.0, 0.0),
+            reach: 0.7,
+        };
+        let line = fixture::fence(vec![Vec2::new(0.0, 0.0), Vec2::new(20.0, 0.0)]);
+        let pieces = fence_pieces(&line, &[stub]);
+        assert_eq!(pieces.len(), 1);
+        assert!((pieces[0][1].x - 18.3).abs() < 1e-3);
+    }
 
     /// Общий узел посреди одной из ways ловится с любой стороны — ровно ради
     /// этого случая предикат симметричен.

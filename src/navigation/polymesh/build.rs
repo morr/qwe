@@ -12,7 +12,7 @@ use i_overlay::float::single::SingleFloatOverlay;
 use super::seams::{SeamPoints, chunk_outline, node_world, quantized, seam_points};
 use super::stitch::{components_of, stitch_chunks};
 use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid};
-use crate::map::footprint::CurbCoverage;
+use crate::map::footprint::{CurbCoverage, fence_gaps};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::{merge_close_points, miter_offsets};
 use crate::settings::{
@@ -210,6 +210,30 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
         let band = wall.band();
         if let Some(ring) = ribbon_outline(&band.line, band.width) {
             push_contour(&mut blockers, ring);
+        }
+    }
+    // ограды — полоса минус проёмы дорог (`footprint::fence_gaps`), одной
+    // разностью на все. Проём не уходит в общие прорезы: те вычитаются из
+    // объединения всех препятствий и открыли бы дом или воду, которых тропа
+    // касается; здесь он вынимается только из самого забора — маска сетки
+    // (`Navmesh::fill_fences`) делает то же самое по тайлам
+    let gaps = fence_gaps(&input.fences, &input.roads);
+    let mut fences: Vec<Vec<[f32; 2]>> = Vec::new();
+    let mut openings: Vec<Vec<[f32; 2]>> = Vec::new();
+    for (fence, gaps) in input.fences.iter().zip(&gaps) {
+        let band = fence.band();
+        if let Some(ring) = ribbon_outline(&band.line, band.width) {
+            push_contour(&mut fences, ring);
+        }
+        for gap in gaps {
+            push_contour(&mut openings, gap_outline(gap.at, gap.reach));
+        }
+    }
+    if openings.is_empty() {
+        blockers.extend(fences);
+    } else {
+        for shape in fences.overlay(&openings, OverlayRule::Difference, FillRule::NonZero) {
+            blockers.extend(shape);
         }
     }
     // бордюры мостов — те же две полосы, что рисует рендер
@@ -432,6 +456,23 @@ fn oriented(mut ring: Vec<Vec2>) -> Vec<[f32; 2]> {
         ring.reverse();
     }
     ring.into_iter().map(|point| [point.x, point.y]).collect()
+}
+
+/// Сторон у многоугольника проёма в ограде.
+const GAP_SIDES: usize = 16;
+
+/// Проём в ограде — круг радиуса `reach` вокруг точки пересечения, тот же, по
+/// которому сетка вынимает тайлы из маски заборов (без её запаса на
+/// растеризацию). Многоугольник описан вокруг круга, а не вписан: вписанный
+/// оставлял бы у забора волосок барьера по краю проёма.
+fn gap_outline(at: Vec2, reach: f32) -> Vec<Vec2> {
+    let circumscribed = reach / (std::f32::consts::PI / GAP_SIDES as f32).cos();
+    (0..GAP_SIDES)
+        .map(|side| {
+            let angle = side as f32 * std::f32::consts::TAU / GAP_SIDES as f32;
+            at + Vec2::from_angle(angle) * circumscribed
+        })
+        .collect()
 }
 
 /// То же с отбраковкой вырожденных колец, прямо в накопитель.

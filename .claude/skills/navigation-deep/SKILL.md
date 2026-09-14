@@ -55,9 +55,81 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
   block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
-  strips back** (`bridge=yes` roads) → buildings block → walls block → **building
-  passages carve back through them**. Without bridges the Упа river bisects the map and
-  no cross-river path exists.
+  strips back** (`bridge=yes` roads) → buildings block → walls block → **fences block,
+  minus their gaps** → **building passages carve back through them**. Without bridges the
+  Упа river bisects the map and no cross-river path exists. In code the fill is three
+  steps — `fill_base` (everything up to the walls), `fill_fences`, `carve_passages` —
+  because `open_sealed_fences` re-lays the last two on a clone of the first instead of
+  refilling the city.
+- **Fences block, with gaps** (`Navmesh::fill_fences`, `footprint::fence_gaps`). A fence
+  used to be pure decoration; now its band (`FENCE_BAND_WIDTH` 0.3 m — physical, not the
+  zoom-grown drawn ribbon; the grid barely cares, the 4-connected centerline chain is what
+  blocks) is impassable except at a **gap** `{ at, reach }`:
+  - **a non-bridge road whose centerline crosses the fence**, reach `width/2 / sin θ`
+    (obliquity capped at 2×) — a footway through a gate, a service drive into a yard, a
+    shared OSM node;
+  - **a road ending on the fence** (its end within half its width of the centerline) — a
+    path drawn up to the gate and stopped there;
+  - **a default gate** (below), reach `FENCE_GATE_WIDTH / 2` (a 3.5 m footway).
+  **Never band overlap**: the trap of this rule is a street running alongside a fence, whose
+  nominal 8–16 m ribbon covers the fence end to end — an overlap rule would have removed
+  every fence along every street and kept only those deep inside the blocks
+  (`a_street_along_the_fence_leaves_it_whole`). Bridges cut nothing: the span passes over.
+  Roads are found through a 32 m cell index of their segments (6 ms on Tula).
+  **The gap is cut out of the fence mask, never carved into the grid** — the bridge-curb
+  idiom: `visit_polyline` collects the fence's tiles, the ones within `reach + tile·√2` of a
+  gap are dropped, the rest are blocked. Carving the road would reopen the house or water it
+  touches (`a_gate_does_not_open_the_house_behind_it`). The `tile·√2` margin is not taste:
+  a fence is a 4-connected staircase, and one tile taken out of a slanted one leaves its
+  neighbours touching through the hole — `a_footway_through_the_fence_opens_a_gate` runs
+  five angles for that reason. The polygonal mesh does the same in vectors: all fence
+  ribbons **minus** 16-gon gap discs (circumscribed, so no hair of barrier survives at the
+  edge), one `Difference` into the blockers — never into the carves, which are subtracted
+  from the union of everything. **The renderer draws the same gaps**
+  (`footprint::fence_pieces` over the same discs, osm-map skill) — the grid alone cuts
+  `tile·√2` wider, a rasterisation allowance like the bridge deck's.
+- **Default gates** (`Navmesh::open_sealed_fences`, stored in `FenceLine::gates`). OSM
+  rarely maps a gate, and schools, churches and works are fenced whole: with road gaps alone
+  Tula's prune went **9 942 → 45 302** tiles (+35 360, ~14 ha) and **50 buildings** lost
+  every reachable door — 257 pockets, 214 of them slivers under 25 tiles, the bulk a dozen
+  fenced grounds of 1–9.5 k tiles. The author chose a default gate over leaving it or over
+  dropping gapless fences. The rule:
+  - runs in the load thread **between fill and prune**, from the snapped portal;
+  - a **pocket** is a component passable now, reachable without fences, unreachable with
+    them; it gets a gate if it **holds a door** (a door tile or its 8 neighbours — the
+    `find_passable_tile_near` circle) or is at least `SEALED_POCKET_MIN_AREA` **400 m²**
+    (metres, so the navtile cycler does not change which yards open). A door-less sliver
+    between a fence and a blank wall stays cut off;
+  - **a door the fence closed point-blank** (all nine tiles blocked, but reachable without
+    fences) gets one too — no pocket exists there, and five Tula houses were lost that way;
+  - the gate tile is a fence-only tile (blocked now, passable without fences) on the
+    pocket's edge, **preferring one that already touches the reachable side** — a double
+    fence therefore opens the inner one first and the next round the outer
+    (`GATE_ROUNDS` 6) — and among those **the one nearest a carriageway's edge**
+    (`footprint::StreetEdges`: `roads::is_carriageway` segments in 32 m cells, the
+    centerline distance minus half the width, capped at `STREET_REACH` 96 m; the key is in
+    decimetres so it stays an integer, ties by tile index). Without it the gate went to the
+    lowest tile index — on Tula's school ground that was the back corner by a footpath,
+    and the author's report was «логичнее делать вход ближе к большой дороге»: a school or
+    a works is entered from the street (`a_sealed_plot_gets_its_gate_on_the_street_side`);
+  - the gate point is the nearest point of the nearest fence, written into
+    **`MapData`**, not the grid — `fence_gaps` reads it, so the polygonal mesh built later
+    from the same map has the same gates (pinned by
+    `parity_tests::fences_block_and_gates_open_in_both_fills`);
+  - the grid after a round is `base.clone()` + `fill_fences` + `carve_passages`, and
+    reachability grows from the new gates (`extend_reachable`) rather than being
+    re-flooded: a gate only ever opens tiles.
+  - **two gates of one round stand at least `GATE_SPACING` 10 m apart**: neighbouring
+    pockets of a round are usually pieces of one yard cut by a door or a bend, and they
+    pick neighbouring tiles — without the spacing Tula got five gates 2–3 m apart, one
+    ten-metre breach. A pocket the neighbour's gate did not open is taken by the next round.
+  Tula with gates: **72 gates, prune 9 942 → 10 772 (+830), no building loses its last
+  door**; 166 door-less pockets stay cut off, 157 of them under 25 tiles. Cost: **~124 ms**
+  at the project's `opt-level = 1`, most of it the one full flood (a tight index-arithmetic
+  `flood`; the iterator version was three times slower) — the no-fence reachability is
+  grown from it through the fence tiles rather than flooded again. Offline:
+  `cargo run --example fence_prune_audit -- [city]` builds the map with and without
+  fences and prints exactly these numbers.
 - **Bridge curbs are impassable** — the same two bands the renderer draws
   (`RoadLine::curb_bands` in `map/footprint.rs`: edge centerlines from `miter_offsets` +
   curb width, one construction for the grid fill, the mesh build and the renderer, so

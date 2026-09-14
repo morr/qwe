@@ -58,8 +58,8 @@ in `main.rs`.
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   pitches → pitch markings → parking → parking markings → water → waterways →
   sidewalks → alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → cars → pipe shadows (2.76) → pipes (2.77) →
-  portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
+  → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
+  pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
   → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
@@ -174,6 +174,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     dashed symbol on the city-wide view. Tram is `map/tram.rs`, with its own LOD, and is
     drawn only while `TramStyle::visible`.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
+  - **FenceLine** — a plot boundary: `FenceKind: Fence | Wall | Hedge` from
+    `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`), plus the
+    **default gates** the load adds (`gates`). Drawn by `map/fences.rs`; **impassable in
+    the navmesh with gaps** (`FENCE_BAND_WIDTH` 0.3 m — the physical thickness, not the
+    zoom-grown drawn width; see **Fence gap** under Navigation). The branch falls through,
+    so a way that is both a fence and something else becomes both.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
     watercourse kind that does **not** block the navmesh.
@@ -676,6 +682,25 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   below the cars. **No
   `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the element,
   so `service` was in the cache all along.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge` as a line and,
+  more to the point, **its shadow**: from above a fence is a quarter-metre hair, and what
+  actually carries it on a photo is the dark band running out from under it. In a
+  private-house district that grid of plot boundaries is the texture of the whole district,
+  and without it the houses stand in an open field. The shadow is a **sweep** (the
+  Minkowski sum of the ribbon with the light segment, `meshing::sweep_convex` over each
+  link and joint — the cars' construction) and the sweeps of all fences are **unioned**,
+  unlike the cars': plot fences stand back to back, and at a low sun their translucent
+  shadows would stack. `FenceLine` is **not** a `WallLine` with a flag: the kremlin wall is
+  impassable end to end, a fence has gaps — roads through it and default gates (see
+  **Fence gap** and **Default gate** under Navigation) — and **a gap is drawn as a gap**:
+  the line and the shadow are laid from `footprint::fence_pieces`, the fence minus the
+  same gap discs the navmesh opens. The parse branch **falls through**
+  (a way tagged both a barrier and something else must become both). The drawn width
+  **grows as you zoom out** (`FENCE_LODS`, the tram's trick, aiming at ~1.5 screen px) and
+  the layer disappears entirely past 0.9 m/px, where the grid of plots turns to dirt. The
+  shadow lives on the map's own sun, so the layer rebuilds on the zoom bucket and on
+  `SunOnMap`, never on the slider. Tula: 429 lines — 356 fences, 72 walls (one of them a
+  retaining wall), 1 hedge.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
@@ -823,8 +848,19 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
   block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
-  strips back** → buildings block → walls block → **building passages carve back through
-  them**. Without bridges the Упа river bisects the map and no cross-river path exists.
+  strips back** → buildings block → walls block → **fences block, minus their gaps** →
+  **building passages carve back through them**. Without bridges the Упа river bisects the
+  map and no cross-river path exists.
+- **Fence gap** (`footprint::fence_gaps`) — where a fence stays open: a non-bridge road
+  whose **centerline crosses** the fence or **ends on it**, and a **default gate**. Never
+  mere band overlap — a street running along a fence covers it end to end with its nominal
+  width. A gap is cut **out of the fence mask**, never carved into the grid, so it cannot
+  open the house or water it touches.
+- **Default gate** (`FenceLine::gates`, `Navmesh::open_sealed_fences`) — a 3.5 m gate the
+  load thread opens between fill and prune where a fence cut off a pocket that holds a door
+  or is at least 400 m², on the fence side **nearest a carriageway**: OSM rarely maps
+  gates, and schools, churches and works are fenced whole — and entered from the street. Stored in `MapData`, so the polygonal mesh, built later from it, gets the same
+  gates.
 - **Bridge curbs are impassable** — the same two bands the renderer draws; on dry spans they
   stop a pawn stepping off the deck sideways.
 - **Linear waterways block, unlike rails** — water is crossed by bridge, not waded;

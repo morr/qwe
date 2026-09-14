@@ -30,9 +30,12 @@ struct BuiltCity {
 }
 
 fn built_city() -> BuiltCity {
-    let city = tiny_city();
+    let mut city = tiny_city();
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&city.map);
+    // калитки по умолчанию ложатся в карту до постройки меша — как в игре,
+    // где меш строится из `MapData`, уже прошедшей поток загрузки
+    navmesh.open_sealed_fences(&mut city.map, city.portal);
     navmesh.prune_unreachable(world_to_tile(city.portal));
     let mesh = build_polymesh_from_map(&city.map, AGENT_RADIUS).expect("постройка не отменялась");
     BuiltCity {
@@ -132,6 +135,28 @@ fn an_island_hole_is_opened_by_its_bridge_in_both_fills() {
     let built = built_city();
     assert_both_reach(&built, built.city.island_bank, built.city.island, "остров");
     assert_both_blocked(&built, built.city.island_water, "вода вокруг острова");
+}
+
+/// Ограда перекрывает оба заполнения, тропинка делает в ней калитку, глухой
+/// участок с дверью открывает калитка по умолчанию, а щель без дверей остаётся
+/// отрезанной — одними и теми же проёмами в сетке и в меше.
+#[test]
+fn fences_block_and_gates_open_in_both_fills() {
+    let built = built_city();
+    assert_both_blocked(&built, built.city.fence_line, "ограда");
+    assert_both_reach(
+        &built,
+        built.city.fenced_street,
+        built.city.fenced_yard,
+        "калитка тропинки",
+    );
+    assert_both_reach(
+        &built,
+        built.city.portal,
+        built.city.sealed_yard,
+        "калитка по умолчанию",
+    );
+    assert_both_blocked(&built, built.city.sealed_sliver, "глухая щель");
 }
 
 /// Сквозной маршрут через полкарты: мост, открытые зоны и арка одним путём.

@@ -6,6 +6,7 @@ pub mod buildings;
 // публичен по той же причине: витрина `car_gallery` расставляет ряды его же
 // вызовом (`cars_mesh`), а стенд кузовов рисует машины его же `body`
 pub mod cars;
+mod fences;
 pub mod footprint;
 mod industry;
 mod meshing;
@@ -82,6 +83,7 @@ impl Plugin for MapPlugin {
             .init_resource::<CarStyle>()
             .init_resource::<wagons::WagonZoomBucket>()
             .init_resource::<parking::ParkingLayout>()
+            .init_resource::<fences::FenceZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<SurfaceStyle>()
@@ -162,6 +164,8 @@ impl Plugin for MapPlugin {
                     cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<wagons::WagonLods>,
                     wagons::rebuild_wagons,
+                    zoom::seed_zoom_bucket::<fences::FenceLods>,
+                    fences::rebuild_fences,
                     industry::rebuild_industry,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
@@ -241,6 +245,15 @@ impl Plugin for MapPlugin {
                         zoom::update_zoom_bucket::<wagons::WagonLods>,
                         wagons::rebuild_wagons.run_if(
                             retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
+                        ),
+                        zoom::update_zoom_bucket::<fences::FenceLods>,
+                        // забор снимается зумом по своей таблице, а его тень
+                        // живёт по солнцу карты: `SunOnMap`, как у машин и
+                        // зданий, а не ползунок `SunStyle` — иначе слой
+                        // пересобирался бы на каждом делении шкалы и с ещё не
+                        // доехавшим солнцем
+                        fences::rebuild_fences.run_if(
+                            retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunOnMap>),
                         ),
                     )
                         .chain()

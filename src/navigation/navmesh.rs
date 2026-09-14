@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
-use crate::map::footprint::distance_to_polyline;
+use crate::map::footprint::{FENCE_GATE_WIDTH, StreetEdges, distance_to_polyline, fence_gaps};
 use crate::map::osm::model::{
     MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
 };
@@ -143,9 +143,10 @@ impl Navmesh {
     }
 
     /// Заполнение из OSM-карты. Порядок важен: мосты прорезают проходимые
-    /// коридоры поверх воды (иначе Упа разрезает карту надвое), здания и стены
-    /// блокируют уже после, а арки прорезаются последними — их смысл именно в
-    /// том, чтобы пробить только что заблокированный дом.
+    /// коридоры поверх воды (иначе Упа разрезает карту надвое), здания, стены и
+    /// ограды (с проёмами, [`Self::fill_fences`]) блокируют уже после, а арки
+    /// прорезаются последними — их смысл именно в том, чтобы пробить только что
+    /// заблокированный дом.
     ///
     /// Бордюры мостов ([`RoadLine::curb_bands`]) непроходимы: с моста не сходят
     /// вбок через перила. Поверх воды это ничего не меняет (вода уже
@@ -162,6 +163,15 @@ impl Navmesh {
     /// (`WaterLine::tunnel`) — под дорогой ручей чаще убран в культверт, чем
     /// перекрыт мостом.
     pub fn fill_from_mapdata(&mut self, map: &MapData) {
+        self.fill_base(map);
+        self.fill_fences(map);
+        self.carve_passages(map);
+    }
+
+    /// Заливка до оград: вода, водотоки, бордюры и настилы мостов, здания,
+    /// стены. Ограды и арки идут поверх неё, и [`Self::open_sealed_fences`]
+    /// перекладывает их на эту же основу, не заливая город заново.
+    fn fill_base(&mut self, map: &MapData) {
         // сетка переживает смену города: без сброса на новой карте остались
         // бы дома и прунинг старой. Здесь же подхватывается текущий размер
         // навтайла — дефолтная аллокация при `init_resource` сделана до
@@ -343,9 +353,304 @@ impl Navmesh {
             let band = wall.band();
             self.set_polyline(&band.line, band.width, false);
         }
+    }
+
+    /// Арки режутся последними — после зданий, стен и оград: весь смысл в том,
+    /// чтобы пробить только что залитый квартал.
+    fn carve_passages(&mut self, map: &MapData) {
         for road in map.roads.iter().filter(|road| road.passage) {
             let band = road.passage_band();
             self.set_polyline(&band.line, band.width, true);
+        }
+    }
+
+    /// Калитки по умолчанию: ограда, которая отрезала от портала участок с
+    /// дверями или просто крупный, получает одну калитку — там, где до
+    /// достижимой стороны ближе всего. Возвращает число открытых калиток.
+    ///
+    /// Калитку в OSM размечают редко, а огораживают целиком школы, церкви и
+    /// промзоны. Только по проёмам дорог Тула теряла в прунинге 35 тыс. тайлов
+    /// (~14 га) и 50 домов оставались без единой достижимой двери — к ним не
+    /// ходила ни одна пешка. Щель между забором и стеной дома без дверей
+    /// остаётся отрезанной: калитка там ничего бы не дала.
+    ///
+    /// Калитка записывается **в саму ограду** (`FenceLine::gates`), а не в
+    /// сетку: проёмы читает [`fence_gaps`], и полигональный меш, который
+    /// строится из той же `MapData` позже, получает те же калитки — два
+    /// заполнения говорят об одном заборе.
+    ///
+    /// Вызывается после заливки и до прунинга, со снапнутым порталом. Раунды —
+    /// ради двойных оград: калитка во внутренней сливает карман с полосой между
+    /// заборами, и следующий раунд открывает внешнюю.
+    pub fn open_sealed_fences(&mut self, map: &mut MapData, portal: Vec2) -> usize {
+        let Some(start) = self.index_of(self.to_tile(portal)) else {
+            return 0;
+        };
+        if map.fences.is_empty() {
+            return 0;
+        }
+        let mut base = self.clone();
+        base.fill_base(map);
+        let mut bare = base.clone();
+        bare.carve_passages(map);
+        let pocket_min_tiles =
+            (SEALED_POCKET_MIN_AREA / (self.tile_size * self.tile_size)) as usize;
+        let doors = self.door_groups(map);
+        let mut door_tiles = vec![false; self.passable.len()];
+        for &tile in doors.iter().flatten() {
+            door_tiles[tile] = true;
+        }
+        // тайл, закрытый только оградой: без оград он проходим
+        let fenced = |grid: &Self, index: usize| !grid.passable[index] && bare.passable[index];
+        let limit = self.tile_size * SQRT_2;
+        let streets = StreetEdges::build(&map.roads);
+
+        let mut reachable = vec![false; self.passable.len()];
+        self.flood(&self.passable, &mut reachable, vec![start]);
+        // достижимое без оград — то же достижимое, доросшее сквозь тайлы оград:
+        // второй полный обход сетки стоил бы столько же, сколько первый
+        let mut reachable_bare = reachable.clone();
+        let seeds: Vec<usize> = (0..self.passable.len())
+            .filter(|&index| {
+                fenced(self, index) && self.neighbours(index).any(|next| reachable[next])
+            })
+            .collect();
+        self.flood(&bare.passable, &mut reachable_bare, seeds);
+        let mut opened = 0;
+        for _ in 0..GATE_ROUNDS {
+            // тайл ограды, в котором открыть калитку: из кандидатов — тот, что
+            // уже касается достижимого; при двойной ограде такого нет, и
+            // открывается внутренняя, а внешнюю откроет следующий раунд
+            // из касающихся — ближайший к кромке проезжей части: вход в
+            // огороженную школу делают с улицы, а не с тропинки на задах
+            // (дециметры — чтобы ключ был целым и порядок не зависел от
+            // сравнения float); равные — по номеру тайла
+            let pick = |candidates: &mut dyn Iterator<Item = usize>| {
+                candidates.min_by_key(|&tile| {
+                    let touches = self.neighbours(tile).any(|next| reachable[next]);
+                    let street = (streets.distance(self.index_center(tile)) * 10.0) as u32;
+                    (!touches, street, tile)
+                })
+            };
+            let mut gate_tiles: Vec<usize> = Vec::new();
+            // карманы: проходимо и достижимо без оград, но не с ними
+            let cut =
+                |index: usize| self.passable[index] && reachable_bare[index] && !reachable[index];
+            let mut seen = vec![false; self.passable.len()];
+            for index in 0..self.passable.len() {
+                if seen[index] || !cut(index) {
+                    continue;
+                }
+                let pocket = self.component(index, &cut, &mut seen);
+                let holds_door = pocket.iter().any(|&tile| door_tiles[tile]);
+                if !holds_door && pocket.len() < pocket_min_tiles {
+                    continue;
+                }
+                let mut candidates = pocket
+                    .iter()
+                    .flat_map(|&tile| self.neighbours(tile))
+                    .filter(|&tile| fenced(self, tile));
+                gate_tiles.extend(pick(&mut candidates));
+            }
+            // дверь, которую ограда закрыла вплотную: ни один тайл у двери не
+            // проходим, но без оград она была достижима — карманов тут нет,
+            // забор лёг прямо на её тайлы
+            for group in &doors {
+                let reached = group.iter().any(|&tile| reachable[tile]);
+                let was_reached = group.iter().any(|&tile| reachable_bare[tile]);
+                if reached || !was_reached || group.iter().any(|&tile| self.passable[tile]) {
+                    continue;
+                }
+                let mut candidates = group.iter().copied().filter(|&tile| fenced(self, tile));
+                gate_tiles.extend(pick(&mut candidates));
+            }
+
+            let mut added: Vec<Vec2> = Vec::new();
+            for tile in gate_tiles {
+                let Some((fence, at)) = nearest_fence_point(map, self.index_center(tile), limit)
+                else {
+                    continue;
+                };
+                // соседние карманы одного раунда — обычно куски одного двора,
+                // разрезанного дверью или изломом, и тайлы для калиток они
+                // выбирают рядом: без разноса пять калиток легли на Туле через
+                // 2–3 м в один десятиметровый пролом. Лишний карман, который
+                // соседняя калитка не открыла, подберёт следующий раунд
+                if added.iter().any(|gate| gate.distance(at) < GATE_SPACING) {
+                    continue;
+                }
+                let known = &mut map.fences[fence].gates;
+                if known
+                    .iter()
+                    .all(|gate| gate.distance(at) > FENCE_GATE_WIDTH / 2.0)
+                {
+                    known.push(at);
+                    added.push(at);
+                }
+            }
+            if added.is_empty() {
+                break;
+            }
+            opened += added.len();
+            // калитки только открывают: заливка оград поверх той же основы
+            // даёт сетку, где проходимого стало больше и ничего не закрылось,
+            // поэтому достижимость дорастает от калиток, а не считается заново
+            *self = base.clone();
+            self.fill_fences(map);
+            self.carve_passages(map);
+            self.extend_reachable(&mut reachable, &added, FENCE_GATE_WIDTH / 2.0 + limit);
+        }
+        opened
+    }
+
+    /// Дорастить достижимость после того, как у точек `around` открылись
+    /// тайлы: обход стартует от проходимых тайлов в радиусе, которые касаются
+    /// уже достижимого.
+    fn extend_reachable(&self, reachable: &mut [bool], around: &[Vec2], radius: f32) {
+        let mut seeds = Vec::new();
+        for &point in around {
+            let (min, max) = (self.to_tile(point - radius), self.to_tile(point + radius));
+            for x in min.x..=max.x {
+                for y in min.y..=max.y {
+                    if let Some(index) = self.index(x, y)
+                        && self.passable[index]
+                        && !reachable[index]
+                        && self.neighbours(index).any(|next| reachable[next])
+                    {
+                        seeds.push(index);
+                    }
+                }
+            }
+        }
+        self.flood(&self.passable, reachable, seeds);
+    }
+
+    /// Обход по 4-связности — связности прунинга: от `seeds` по тайлам,
+    /// проходимым в `passable`, всё достигнутое метится в `reachable`.
+    /// Индексная арифметика вместо [`Self::neighbours`] — сетка на 5 млн
+    /// тайлов, и на `opt-level = 1` итераторы соседей стоили обходу втрое.
+    fn flood(&self, passable: &[bool], reachable: &mut [bool], seeds: Vec<usize>) {
+        let height = self.grid_size.y as usize;
+        let len = passable.len();
+        let mut stack = Vec::with_capacity(seeds.len().max(1024));
+        for seed in seeds {
+            if passable[seed] && !reachable[seed] {
+                reachable[seed] = true;
+                stack.push(seed);
+            }
+        }
+        while let Some(index) = stack.pop() {
+            let y = index % height;
+            let neighbours = [
+                index.checked_sub(height),
+                (index + height < len).then_some(index + height),
+                (y > 0).then(|| index - 1),
+                (y + 1 < height).then_some(index + 1),
+            ];
+            for next in neighbours.into_iter().flatten() {
+                if passable[next] && !reachable[next] {
+                    reachable[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+    }
+
+    fn index_of(&self, tile: IVec2) -> Option<usize> {
+        self.index(tile.x, tile.y)
+    }
+
+    fn index_center(&self, index: usize) -> Vec2 {
+        let (x, y) = (
+            index as i32 / self.grid_size.y,
+            index as i32 % self.grid_size.y,
+        );
+        (Vec2::new(x as f32, y as f32) + 0.5) * self.tile_size
+    }
+
+    /// Четыре соседа по стороне — связность прунинга.
+    fn neighbours(&self, index: usize) -> impl Iterator<Item = usize> + '_ {
+        let (x, y) = (
+            index as i32 / self.grid_size.y,
+            index as i32 % self.grid_size.y,
+        );
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .into_iter()
+            .filter_map(move |(dx, dy)| self.index(x + dx, y + dy))
+    }
+
+    /// Связная компонента `mask` от `start`; обойдённое метится в `seen`.
+    fn component(
+        &self,
+        start: usize,
+        mask: &impl Fn(usize) -> bool,
+        seen: &mut [bool],
+    ) -> Vec<usize> {
+        seen[start] = true;
+        let mut tiles = vec![start];
+        let mut cursor = 0;
+        while cursor < tiles.len() {
+            let index = tiles[cursor];
+            cursor += 1;
+            for next in self.neighbours(index) {
+                if !seen[next] && mask(next) {
+                    seen[next] = true;
+                    tiles.push(next);
+                }
+            }
+        }
+        tiles
+    }
+
+    /// Тайлы у каждой двери: тайл двери и восемь соседей — тот же круг, в
+    /// котором цель ищет `find_passable_tile_near`.
+    fn door_groups(&self, map: &MapData) -> Vec<Vec<usize>> {
+        map.buildings
+            .iter()
+            .flat_map(|building| &building.entrances)
+            .map(|&door| {
+                let tile = self.to_tile(door);
+                (-1..=1)
+                    .flat_map(|dx| (-1..=1).map(move |dy| (dx, dy)))
+                    .filter_map(|(dx, dy)| self.index(tile.x + dx, tile.y + dy))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Ограды участков перекрывают сетку, а дороги, проходящие сквозь них,
+    /// делают проёмы (`footprint::fence_gaps`).
+    ///
+    /// Проём режется **в маске заборов**, а не прорезкой по сетке: сначала
+    /// собираются тайлы оград, из них вычитаются тайлы проёмов, и только
+    /// остаток блокируется. Прорезать дорогой всю сетку нельзя — это сняло бы
+    /// блокировку зданий и воды там, где тропа их касается; маска открывает
+    /// ровно то, что закрыл бы сам забор (приём маски бордюров выше).
+    ///
+    /// Радиус проёма в тайлах — полудлина проёма плюс диагональ тайла. Забор
+    /// растеризован 4-связной цепочкой, и на косой линии вынутый из неё один
+    /// тайл щели не даёт: соседи по лесенке смыкаются через него углами.
+    /// Диагональ — тот же запас на блуждание тайловых центров, что у прорезки
+    /// настила моста.
+    fn fill_fences(&mut self, map: &MapData) {
+        let gaps = fence_gaps(&map.fences, &map.roads);
+        let margin = self.tile_size * SQRT_2;
+        let mut blocked: Vec<usize> = Vec::new();
+        for (fence, gaps) in map.fences.iter().zip(&gaps) {
+            let band = fence.band();
+            let tile_size = self.tile_size;
+            self.visit_polyline(&band.line, band.width, &mut |grid, x, y| {
+                let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
+                let in_gap = gaps
+                    .iter()
+                    .any(|gap| center.distance(gap.at) <= gap.reach + margin);
+                if !in_gap && let Some(index) = grid.index(x, y) {
+                    blocked.push(index);
+                }
+            });
+        }
+        for index in blocked {
+            self.passable[index] = false;
         }
     }
 
@@ -585,6 +890,33 @@ struct CurbTile {
     owners: Vec<u32>,
     /// Накрыт панелью примыкающей обычной дороги.
     road: bool,
+}
+
+/// Отрезанный оградой карман без дверей получает калитку, только если он не
+/// меньше этой площади, м²: щель между забором и глухой стеной дома калитки не
+/// стоит. В метрах, а не в тайлах, — чтобы переключатель навтайла не менял,
+/// какие дворы открыты.
+const SEALED_POCKET_MIN_AREA: f32 = 400.0;
+
+/// Потолок раундов [`Navmesh::open_sealed_fences`]: каждая вложенная ограда
+/// стоит раунда, а город, где их больше, — это уже не калитки.
+const GATE_ROUNDS: usize = 6;
+
+/// Ближе этого, м, две калитки одного раунда не ставятся — см.
+/// [`Navmesh::open_sealed_fences`].
+const GATE_SPACING: f32 = 10.0;
+
+/// Ближайшая к `point` точка ограды и номер ограды — не дальше диагонали
+/// навтайла (`limit`): тайл, для которого ищется калитка, лежит на заборе по
+/// построению.
+fn nearest_fence_point(map: &MapData, point: Vec2, limit: f32) -> Option<(usize, Vec2)> {
+    map.fences
+        .iter()
+        .enumerate()
+        .filter(|(_, fence)| fence.points.len() >= 2)
+        .map(|(index, fence)| (index, closest_point_on_polyline(point, &fence.points)))
+        .filter(|(_, at)| at.distance(point) <= limit)
+        .min_by(|a, b| a.1.distance(point).total_cmp(&b.1.distance(point)))
 }
 
 /// Ближайшая к `point` точка ломаной.

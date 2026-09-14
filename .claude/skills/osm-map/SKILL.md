@@ -39,14 +39,18 @@ in `CONTEXT.md` and the detail here in the same change.
   `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
   `amenity=parking` (way+rel),
   `leisure=pitch|track|playground|sports_centre|stadium` (way+rel),
-  `barrier=city_wall`,
+  `barrier=city_wall`, `barrier=fence|wall|retaining_wall|hedge` (way — the plot
+  **fences**),
   `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
   `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **13** (v3 added `entrance` nodes, v4 `railway`,
+  `City`'s geo center. `QUERY_VERSION` is **14** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
   blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
-  industrial `man_made` cylinders and pipelines, v13 `driving_side`; v12 belongs to a
-  sibling branch — two different queries under one number would share a cache).
+  industrial `man_made` cylinders and pipelines, v13 `driving_side`, v14 the fences;
+  **v12 is skipped** — the fence branch held that number while it waited its turn and
+  `driving_side` reached master first, and the number may only ever **grow**: a v13
+  cache is already on disk without `barrier`, and reusing the gap would have served the
+  fence layer an extract that has none, silently).
 - **Driving side** — a second output after `out geom`: `is_in(lat,lon)` at the city's geo
   center → `rel(pivot)["driving_side"]` → `out tags`. The tag is not on roads: OSM puts it
   on the **country boundary** and everything inside inherits it (Tula's v11 bbox cache
@@ -177,6 +181,13 @@ in `CONTEXT.md` and the detail here in the same change.
   map. **Rails never touch the navmesh** — see the navigation-deep skill.
 - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
   impassable.
+- **FenceLine** — a plot boundary: `points` + `FenceKind: Fence | Wall | Hedge`, from
+  `parse/tags.rs::fence_kind` (`barrier=fence` → `Fence`, `wall|retaining_wall` → `Wall`,
+  `hedge` → `Hedge`). `MapData::fences`, drawn by `map/fences.rs` (**Fences** under
+  Rendering). **It blocks the navmesh, with gaps**: `FenceLine::band` is the physical
+  `FENCE_BAND_WIDTH` 0.3 m, and `footprint::fence_gaps` opens it where a road passes
+  through; `gates` holds the **default gates** the load thread adds — empty after parse.
+  Both are the navigation-deep skill's (**Fences block, with gaps**).
 - **Structure** — an industrial cylinder: `man_made=storage_tank|silo|chimney|
   water_tower|gasometer` as centre + radius + height + kind (`StructureKind`). A
   **whitelist**, for `rail_class`'s reason and more so: `man_made` is OSM's most mixed
@@ -329,7 +340,7 @@ new JSON literal. Coverage of tags overall is the audit in `references/osm-cover
 `map/footprint.rs` — the strips linear geometry occupies on the ground, one construction
 for every consumer: `Band { line, width, role }` built by `RoadLine::{deck_band,
 curb_bands, passage_band}`, `WaterLine::channel_band` (`None` for culverts) and
-`WallLine::band`. The width policy lives here too — `casing_width` (8%, 0.3–1 m) and
+`WallLine::band`, `FenceLine::band` (plus `fence_gaps`, the openings in it). The width policy lives here too — `casing_width` (8%, 0.3–1 m) and
 `bridge_curb_width` (12%, 0.8–2 m; ranges deliberately disjoint so a curb always
 out-sticks a casing) — because a curb is not just paint: the same band blocks the
 navmesh, and the drawn strip must match the blocked one by construction. Bands carry
@@ -903,6 +914,70 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `map/cars/` the summary used to deny.
   - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
     has been sitting in every cache since v4.
+- **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge`, added in
+  `QUERY_VERSION` **14**. What is drawn is a thin ribbon **and its shadow**, and the
+  shadow is the point: from above a fence is a 25 cm hair, and on a photo it is the dark
+  thread beside it that you actually see. In a private-house district that grid of plot
+  boundaries *is* the texture of the district.
+  - **`FenceLine` is a separate type, not `WallLine` with a flag.** The kremlin wall is
+    impassable end to end; a fence blocks the navmesh **with gaps** — a road through it,
+    a default gate — at its physical 0.3 m, not at the drawn width below. It used to be
+    pure decoration, on the argument that 429 lines across the courtyards would strand
+    the crowd; that argument is exactly what the gaps and the default gates answer (the
+    measurement is in the navigation-deep skill). **The gaps are drawn as gaps**, by the
+    author's call: `mesh_fences` cuts every fence with `footprint::fence_pieces` — the
+    polyline minus the gap discs, the very discs the polygonal mesh subtracts — and lays
+    both the shadow and the ribbon from the pieces, so no fence is drawn across a path a
+    pawn walks. A leftover under `MIN_FENCE_PIECE` 0.5 m at a gap edge is not drawn. The
+    gaps are recomputed on every rebuild (`fence_gaps`, 6 ms on Tula) rather than cached:
+    the layer rebuilds on a zoom crossing or a settled sun, not per frame.
+  - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
+    nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
+    exactly the scale a fence has to be visible at; aiming for ~1.5 screen px is the
+    tram's trick and the honest one. The far bucket draws nothing at all, because at city
+    scale the plot grid turns into dirt.
+  - `fence_kind` is a whitelist for the reason every other one is: `barrier=*` also
+    carries `kerb`, `gate`, `bollard`, `block` — points and street furniture, not lines —
+    and `city_wall`, which the branch above already took.
+  - **The branch falls through**, like the rail and tree-row ones: a way in OSM routinely
+    carries `barrier=fence` alongside another feature's tags, and it has to become both.
+    With a `return` there Tula lost a block and a park to the fence branch — caught by the
+    counts in the `osm map:` line, not by any test, which is why there is a test now
+    (`a_fenced_block_becomes_both_a_fence_and_a_quarter`).
+  - **And it stands *above* the road branch**, beside the rail, tree-row and waterway
+    ones — the road branch does `return`, and a fence mapped along a path rides the very
+    same way as its `highway=*` (Paris and London carry one such way each). Below the
+    road branch that `return` ate the fence whole; pinned by
+    `a_fenced_path_becomes_both_an_alley_and_a_fence`. The industry cylinder is the
+    opposite case and sits lower, where its own `return` is what is wanted.
+  - **The shadow is cast by the map's own sun**, so `rebuild_fences` is gated on
+    `retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)` — the general Sun rule
+    below, not an exception to it. Heights are constants of the kind (`FENCE_HEIGHT` 2 m,
+    `HEDGE_HEIGHT` 1.4 m) run through the same `shadow_dir()` / `shadow_length_scale()`
+    the buildings and the cars use.
+  - **The shadow is a sweep, not a shifted copy** (`fences::push_shadows`). The copy that
+    stood here first — the ribbon moved by `shadow_dir() × height × cot(elevation)` — is
+    the defect the cars and the bridge shadow had already been through: at 15° a 2 m fence
+    is moved 7.4 m, and against a 0.25–1.3 m ribbon that reads as a second fence beside the
+    first. The sweep is the Minkowski sum of the ribbon with `[0, offset]`, so the shadow
+    starts **under** the fence. The ribbon is not convex, so it is swept piecewise: each
+    link's rectangle and each vertex's octagon (the `Round` joins and caps the ribbon is
+    drawn with) through **`meshing::sweep_convex`** — the cars' hull walk, lifted out of
+    `cars/body.rs` when this became its second caller. It is swept at the **drawn** width
+    of the bucket: a fence parallel to the light casts a shadow exactly as wide as the line.
+  - **The sweeps are unioned** (`i_overlay`, `simplify_shape` NonZero), unlike the cars'.
+    Two reasons, both about translucency: a link's and a joint's sweep overlap at every
+    bend, and plot fences stand back to back, so at a low sun neighbouring shadows lie on
+    each other along their whole length. The union removes both; the cars can skip it
+    because their pitch is six metres and their count is 22 k. After the union each
+    contour gets the cars' `SHADOW_BLUR` (0.35 m) band, tapered by `direction ·
+    shadow_dir()` — hard at the fence, soft at the far edge. **Shadows first, lines last**
+    still holds: the whole union goes into the mesh before any ribbon.
+  - Tula: **429 lines** — 356 `fence`, 71 `wall` + 1 `retaining_wall` (both drawn as a
+    wall, so 72 walls), 1 `hedge` (the audit was right that live hedges are mapped as
+    `barrier=hedge`, not `natural=hedge` — the latter is zero in all six cities). The
+    audit's `barrier` row says 428 for Tula and is not in conflict: it counts
+    `fence|wall|hedge` and leaves `retaining_wall` out, as its own caption says.
 - **Parked cars** (`map/cars/`, the layer in `mod.rs` and the drawing in `body.rs`) — the second most recognisable thing on an aerial photo
   after the roofs themselves: a street with not one car on it reads as a drawing whatever
   it is painted. A row goes along **both sides of every carriageway** — `roads::is_carriageway`,
@@ -993,7 +1068,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   at `Z_CAR` 2.7, above the tram and the rails (a car parks on the asphalt over the tracks)
   and below the portal stain.
   - **The shadow is a swept silhouette, the way a building's is** (`body::push_shadow` +
-    `body::sweep`) — the hull of the outline and the outline moved by the light, i.e. the
+    `meshing::sweep_convex`, shared with the fences since) — the hull of the outline and the outline moved by the light, i.e. the
     Minkowski sum with the segment `[0, offset]`, so the shadow starts **under** the car and
     runs out from beneath it. What stood here before was the silhouette *translated* by the
     same offset, and at a low sun that copy detaches completely: a van at 15° is moved
@@ -1176,10 +1251,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
   path itself is identical across buckets and LOD switches don't wiggle the track.
   `RailLine::width` from parse is ignored for trams.
-- **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind both zoom LODs. Each
-  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`) and names it with a marker type
-  implementing `ZoomLods` (`RailLods`, `TramLods`, empty enums handing over the
-  `max_zoom`s). `ZoomBucket<T>` is the resource with the current index for that table;
+- **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind every zoom LOD. Each
+  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars' and the
+  roof clutter's are a single threshold each) and names it with a marker type
+  implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`,
+  `BuildingLods` — empty enums handing over the `max_zoom`s). `ZoomBucket<T>` is the
+  resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:
   `update_zoom_bucket::<T>` each Update via `set_if_neq`, so the `retuned`-gated

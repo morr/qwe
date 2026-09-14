@@ -35,8 +35,8 @@ const FAILURES: [(Vec2, Vec2); 2] = [
 ];
 
 fn main() {
-    let map = common::load_map(CITY);
-    let _navmesh = common::build_navmesh(&map, CITY);
+    let mut map = common::load_map(CITY);
+    let _navmesh = common::build_navmesh(&mut map, CITY);
     let started = Instant::now();
     let build = build_polymesh_from_map(&map, RADIUS).expect("build was not cancelled");
     println!("polymesh built in {:?}", started.elapsed());

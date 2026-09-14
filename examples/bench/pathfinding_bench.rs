@@ -96,7 +96,7 @@ fn main() {
         None => ALL_ALGORITHMS.to_vec(),
     };
 
-    let map = common::load_map(CITY);
+    let mut map = common::load_map(CITY);
     println!(
         "map: {} buildings, {} roads, {} water, {} parks",
         map.buildings.len(),
@@ -105,7 +105,7 @@ fn main() {
         map.parks.len()
     );
 
-    let navmesh = build_navmesh(&map);
+    let navmesh = build_navmesh(&mut map);
     let tasks = Arc::new(generate_tasks(&map, &navmesh, task_count));
     println!(
         "tasks: {} (seed {SEED:#x}), threads: {threads}\n",
@@ -147,9 +147,9 @@ fn parse_algorithm(name: &str) -> PathfindingAlgorithm {
     }
 }
 
-/// Та же последовательность, что и в `NavigationPlugin`: заливка, снап портала,
-/// прунинг недостижимого.
-fn build_navmesh(map: &MapData) -> Navmesh {
+/// Та же последовательность, что и в потоке загрузки: заливка, снап портала,
+/// калитки оград, прунинг недостижимого.
+fn build_navmesh(map: &mut MapData) -> Navmesh {
     let mut navmesh = Navmesh::default();
 
     let started = Instant::now();
@@ -158,6 +158,7 @@ fn build_navmesh(map: &MapData) -> Navmesh {
 
     let portal =
         snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
+    navmesh.open_sealed_fences(map, portal);
     let started = Instant::now();
     let pruned = navmesh.prune_unreachable(world_to_tile(portal));
     println!(
