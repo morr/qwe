@@ -271,6 +271,7 @@ fn back_to_wander(commands: &mut Commands, entity: Entity) {
 }
 
 /// Наблюдатель убийства: человек становится трупом, демон — в Devour.
+#[allow(clippy::too_many_arguments)]
 pub fn on_demon_caught_human(
     event: On<DemonCaughtHumanEvent>,
     mut commands: Commands,
