@@ -81,6 +81,44 @@ fn parses_building_road_and_multipolygon() {
     assert!(point_in_area(CENTER + Vec2::new(0.0, 40.0), water));
 }
 
+/// Сторона движения — с границы, в которой лежит карта: так её отдаёт
+/// `out tags` после `is_in`, relation без членов. Из нескольких границ
+/// побеждает самая мелкая, без тега — правостороннее.
+#[test]
+fn takes_the_driving_side_from_the_innermost_boundary() {
+    let country = |side| {
+        [
+            ("boundary", "administrative"),
+            ("admin_level", "2"),
+            ("driving_side", side),
+        ]
+    };
+    let left = Overpass::new(CITY).relation(&country("left"), &[]).parse();
+    assert_eq!(left.traffic_side, TrafficSide::Left);
+
+    // регион после страны и перед ней: порядок в ответе ничего не решает
+    let region = [
+        ("boundary", "administrative"),
+        ("admin_level", "4"),
+        ("driving_side", "left"),
+    ];
+    let after = Overpass::new(CITY)
+        .relation(&country("right"), &[])
+        .relation(&region, &[])
+        .parse();
+    assert_eq!(after.traffic_side, TrafficSide::Left);
+    let before = Overpass::new(CITY)
+        .relation(&region, &[])
+        .relation(&country("right"), &[])
+        .parse();
+    assert_eq!(before.traffic_side, TrafficSide::Left);
+
+    let untagged = Overpass::new(CITY)
+        .relation(&[("boundary", "administrative"), ("admin_level", "2")], &[])
+        .parse();
+    assert_eq!(untagged.traffic_side, TrafficSide::Right);
+}
+
 #[test]
 fn parses_rails_and_drops_station_furniture() {
     let (sw, se, ne, nw) = corners(HALF);

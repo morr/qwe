@@ -10,8 +10,9 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, MapData, PipeLine, PolyArea, RailLine, RoadLine, Structure, TreeCompose, TreeNode,
-    TreeRow, TreeRowLayout, WallLine, WaterLine, point_in_area, point_in_polygon, ring_bounds,
+    AreaKind, MapData, PipeLine, PolyArea, RailLine, RoadLine, Structure, TrafficSide, TreeCompose,
+    TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, point_in_area, point_in_polygon,
+    ring_bounds,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 
@@ -33,6 +34,12 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let bounds = GeoBounds::for_city(city);
 
     let mut map = MapData::default();
+    match driving_side(&response.elements) {
+        Some(side) => map.traffic_side = side,
+        // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
+        // стороны движения всё равно рисуется
+        None => eprintln!("osm parse: no driving_side in the answer, assuming right-hand traffic"),
+    }
     let mut skipped_open_rings = 0usize;
     // Overpass отдаёт ноды раньше way, так что здания на этот момент ещё не
     // разобраны: копим входы и раскладываем по домам после цикла
@@ -419,6 +426,34 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             entrances: Vec::new(),
         },
     );
+}
+
+/// Сторона движения — `driving_side` на административной границе, внутри
+/// которой лежит центр карты (запрос `is_in` в `overpass_query`). На дорогах
+/// тег почти не ставят: в OSM он живёт на стране и наследуется всем внутри.
+///
+/// Границ с тегом может прийти несколько (страна и заморская территория,
+/// регион-исключение внутри страны) — берётся самая мелкая, с наибольшим
+/// `admin_level`. Непонятное значение пропускается, как отсутствие тега.
+fn driving_side(elements: &[Element]) -> Option<TrafficSide> {
+    elements
+        .iter()
+        .filter(|element| element.kind == "relation")
+        .filter_map(|element| {
+            let side = match element.tags.get("driving_side")?.as_str() {
+                "right" => TrafficSide::Right,
+                "left" => TrafficSide::Left,
+                _ => return None,
+            };
+            let level = element
+                .tags
+                .get("admin_level")
+                .and_then(|level| level.parse::<u8>().ok())
+                .unwrap_or(0);
+            Some((level, side))
+        })
+        .max_by_key(|(level, _)| *level)
+        .map(|(_, side)| side)
 }
 
 fn parse_relation(

@@ -71,7 +71,7 @@ fn main() {
 
     // машины — тем же форматом и с теми же миллисекундами: слой сравнивается
     // со зданиевыми (он на порядок дешевле, и это надо видеть, а не помнить)
-    let (cars, costs) = measure_cars(&map.roads);
+    let (cars, costs) = measure_cars(&map.roads, map.traffic_side);
     let (vertices, elapsed, breakdown) = totals(&costs);
     println!(
         "{:>18} {cars:>8} cars {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]",

@@ -42,10 +42,19 @@ in `CONTEXT.md` and the detail here in the same change.
   `barrier=city_wall`,
   `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
   `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **11** (v3 added `entrance` nodes, v4 `railway`,
+  `City`'s geo center. `QUERY_VERSION` is **13** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
   blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
-  industrial `man_made` cylinders and pipelines).
+  industrial `man_made` cylinders and pipelines, v13 `driving_side`; v12 belongs to a
+  sibling branch — two different queries under one number would share a cache).
+- **Driving side** — a second output after `out geom`: `is_in(lat,lon)` at the city's geo
+  center → `rel(pivot)["driving_side"]` → `out tags`. The tag is not on roads: OSM puts it
+  on the **country boundary** and everything inside inherits it (Tula's v11 bbox cache
+  carries zero). `out tags`, never `out geom` — a country's border geometry is megabytes.
+  `is_in` needs areas, which not every mirror builds; an empty answer leaves
+  `MapData::traffic_side` at `TrafficSide::Right` and logs it (`parse.rs::driving_side`,
+  the innermost `admin_level` wins). Verified on `maps.mail.ru`: UK and Japan `left`,
+  Russia `right`.
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -954,12 +963,20 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     place within `Break::reach + JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
     end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
     ends meeting are not a break at all, which is the half of the defect that tore the row.
-  - **A one-way carriageway gets one row, on its right.** Traffic here is right-hand, so on
-    each half of a divided avenue the kerb is on the right and the median on the left; two
-    rows would put a column of cars down the median, and in Tula 145 of 218 `primary` ways
-    are exactly such halves. The same rule is right for an ordinary one-way lane. `across`
-    points left, so the right-hand side is `-1`; the direction it is right of is the way's
-    own point order, which parse has already normalized (see **RoadLine** above).
+  - **A one-way carriageway gets one row, on the kerb of the driving side**
+    (`MapData::traffic_side`, see **Driving side** above; `TrafficSide::kerb`). With
+    right-hand traffic, each half of a divided avenue has the kerb on the right and the
+    median on the left; two rows would put a column of cars down the median, and in Tula
+    145 of 218 `primary` ways are exactly such halves. London and Tokyo mirror it. The same
+    rule is right for an ordinary one-way lane. `across` points left, so the right-hand
+    side is `-1`; the direction it is right of is the way's own point order, which parse
+    has already normalized (see **RoadLine** above).
+  - **A car faces the traffic of its own kerb.** The row on the driving-side kerb points
+    along the way, the opposite row against it — before this every car on the map faced
+    the way's point order, so half of every two-way street was parked nose to the traffic.
+    The side order of a two-way street (`[-1, 1]`) does **not** depend on the driving side,
+    because it decides the RNG stream: the traffic side turns a row, it never moves one
+    (`the_traffic_side_turns_the_row_without_moving_it`).
   - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is the
     `breaks` row's 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
     its near one, and the layer itself is well under the building layer's 79 — a resource

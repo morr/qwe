@@ -12,7 +12,7 @@ mod planting;
 pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
     AreaKind, BuildingUse, MapData, PipeLine, PitchKind, PolyArea, RailKind, RailLine, RoadClass,
-    RoadLine, RowTrees, ServiceTrack, Structure, StructureKind, TreeCompose, TreeRow,
+    RoadLine, RowTrees, ServiceTrack, Structure, StructureKind, TrafficSide, TreeCompose, TreeRow,
     TreeRowLayout, TreeRowPlacement, WallLine, WaterKind, WaterLine, water_line_caps,
 };
 // потолок плотности считается от минимального зазора посадки, поэтому живёт

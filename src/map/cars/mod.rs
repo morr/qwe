@@ -27,7 +27,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::buildings::LayerCost;
 use crate::map::meshing::{Break, MeshBuilder};
-use crate::map::osm::{MapData, PolyArea, RoadLine};
+use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
@@ -160,7 +160,7 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 /// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
 /// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
 /// видна в тех же числах, что и цена зданиевых слоёв.
-pub fn measure_cars(roads: &[RoadLine]) -> (usize, Vec<LayerCost>) {
+pub fn measure_cars(roads: &[RoadLine], traffic: TrafficSide) -> (usize, Vec<LayerCost>) {
     let started = std::time::Instant::now();
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let breaks_took = started.elapsed();
@@ -170,6 +170,7 @@ pub fn measure_cars(roads: &[RoadLine]) -> (usize, Vec<LayerCost>) {
         &junctions,
         CarStyle::default(),
         RoadStyle::default().smoothing,
+        traffic,
     );
     let parking_took = started.elapsed();
     let mut costs = vec![
@@ -236,7 +237,13 @@ pub fn rebuild_cars(
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
-    let mut cars = park_cars(&map.roads, &junctions, *style, road_style.smoothing);
+    let mut cars = park_cars(
+        &map.roads,
+        &junctions,
+        *style,
+        road_style.smoothing,
+        map.traffic_side,
+    );
     cars.extend(fill_lots(&map.parking, &layout.0));
     let builder = mesh_cars(&cars, detail);
     let count = cars.len();
@@ -281,10 +288,14 @@ pub fn cars_mesh(
     roads: &[RoadLine],
     style: CarStyle,
     smoothing: RoadSmoothing,
+    traffic: TrafficSide,
     detail: CarDetail,
 ) -> MeshBuilder {
     let junctions = junctions::marking_breaks(roads, is_carriageway);
-    mesh_cars(&park_cars(roads, &junctions, style, smoothing), detail)
+    mesh_cars(
+        &park_cars(roads, &junctions, style, smoothing, traffic),
+        detail,
+    )
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.
@@ -297,8 +308,10 @@ fn park_cars(
     junctions: &MarkingBreaks,
     style: CarStyle,
     smoothing: RoadSmoothing,
+    traffic: TrafficSide,
 ) -> Vec<Car> {
     let mut cars = Vec::new();
+    let kerb = traffic.kerb();
     for (index, road) in roads.iter().enumerate() {
         if !parkable(road) {
             continue;
@@ -311,18 +324,28 @@ fn park_cars(
         let mut rng = Lcg::new(seed_from_point(
             road.points.first().copied().unwrap_or(Vec2::ZERO),
         ));
-        // односторонняя — один ряд, справа по ходу: движение правостороннее, и
-        // у половины разделённого проспекта справа бордюр, а слева
+        // односторонняя — один ряд, у бордюра своей стороны движения: у
+        // половины разделённого проспекта там бордюр, а с другой стороны
         // разделительная. Порядок точек way совпадает с направлением потока
         // (`oneway=-1` развёрнут при разборе), а поперечная в [`park_along`]
-        // (`direction.perp()`) смотрит влево, поэтому правая сторона — `-1`
-        let sides: &[f32] = if road.oneway { &[-1.0] } else { &[-1.0, 1.0] };
+        // (`direction.perp()`) смотрит влево, поэтому сторона — знак
+        // `TrafficSide::kerb`.
+        //
+        // Нос машины смотрит по потоку своей полосы: у бордюра стороны
+        // движения — по ходу way, у противоположного — против. Порядок сторон
+        // двусторонней улицы не зависит от `traffic`: он решает поток ГПСЧ, и
+        // от стороны движения ряд не должен переставляться, только
+        // разворачиваться
+        let sides: &[f32] = if road.oneway { &[kerb] } else { &[-1.0, 1.0] };
         for &side in sides {
             park_along(
                 &mut cars,
                 &centre,
                 road.width / 2.0,
-                side,
+                Kerb {
+                    side,
+                    heading: if side == kerb { 1.0 } else { -1.0 },
+                },
                 &junctions.breaks[index],
                 style.occupancy,
                 &mut rng,
@@ -370,11 +393,19 @@ fn parkable(road: &RoadLine) -> bool {
     is_carriageway(road) && !road.bridge && !road.roundabout
 }
 
+/// Бордюр, вдоль которого стоит ряд.
+#[derive(Clone, Copy)]
+struct Kerb {
+    /// Знак поперечной `direction.perp()`: `-1` — правая сторона по ходу way.
+    side: f32,
+    /// Куда смотрит нос: `1` — по ходу way, `-1` — против.
+    heading: f32,
+}
+
 /// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по **всей** ломаной улицы, со
-/// сдвигом от кромки поперёк и с пропусками. `side` — знак поперечной
-/// (`-1` — правая сторона по ходу), `half_road` — полуширина проезжей части,
-/// от которой ряд и отступает: отступ считается по габариту **этой** машины,
-/// так что фургон стоит к бордюру так же вплотную, как седан.
+/// сдвигом от кромки поперёк и с пропусками. `half_road` — полуширина
+/// проезжей части, от которой ряд и отступает: отступ считается по габариту
+/// **этой** машины, так что фургон стоит к бордюру так же вплотную, как седан.
 ///
 /// Шаг идёт по дуговой координате целой улицы, а не по каждому её звену
 /// порознь: звено ломаной в городе сплошь и рядом короче двух отступов, и
@@ -385,7 +416,7 @@ fn park_along(
     cars: &mut Vec<Car>,
     points: &[Vec2],
     half_road: f32,
-    side: f32,
+    kerb: Kerb,
     junctions: &[Break],
     occupancy: f32,
     rng: &mut Lcg,
@@ -413,7 +444,7 @@ fn park_along(
         // тип кузова выбирается до места, а не после: отступ от кромки идёт от
         // габарита именно этой машины, и у фургона он свой
         let shape = CarShape::from_share(rng.next_f32());
-        let across = direction.perp() * side;
+        let across = direction.perp() * kerb.side;
         let offset = half_road - CURB_GAP - shape.width() / 2.0;
         let place = point + across * offset;
         if junctions
@@ -442,7 +473,7 @@ fn park_along(
         let skew = Rot2::degrees(rng.bell4() * PARK_SKEW_DEGREES);
         cars.push(Car {
             at: place + across * (rng.bell4() * PARK_SLOP),
-            along: skew * direction,
+            along: skew * (direction * kerb.heading),
             color: body::color_from_share(rng.next_f32()),
             shape,
         });
@@ -491,11 +522,16 @@ mod tests {
     }
 
     fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
+        park_driving(roads, style, TrafficSide::Right)
+    }
+
+    fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
         park_cars(
             roads,
             &junctions::marking_breaks(roads, is_carriageway),
             style,
             RoadSmoothing::Off,
+            traffic,
         )
     }
 
@@ -688,6 +724,82 @@ mod tests {
         assert!(both.iter().any(|car| car.at.y < 0.0));
     }
 
+    /// Нос машины — по потоку её полосы: при правостороннем движении южный
+    /// ряд улицы на восток смотрит на восток, северный — на запад, при
+    /// левостороннем наоборот. Перекос парковки — градусы, так что знак
+    /// проекции на ось улицы он не меняет.
+    #[test]
+    fn cars_face_the_traffic_of_their_own_kerb() {
+        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        for (traffic, south_heading) in [(TrafficSide::Right, 1.0), (TrafficSide::Left, -1.0)] {
+            let cars = park_driving(std::slice::from_ref(&road), CarStyle::default(), traffic);
+            assert!(cars.iter().any(|car| car.at.y > 0.0));
+            assert!(cars.iter().any(|car| car.at.y < 0.0));
+            for car in &cars {
+                let expected = if car.at.y < 0.0 {
+                    south_heading
+                } else {
+                    -south_heading
+                };
+                assert!(
+                    car.along.x * expected > 0.9,
+                    "{traffic:?}: машина в {} смотрит {}",
+                    car.at,
+                    car.along
+                );
+            }
+        }
+    }
+
+    /// Сторона движения переворачивает машины, но не переставляет их: поток
+    /// ГПСЧ от неё не зависит, и двусторонняя улица Лондона стоит теми же
+    /// местами, что и такая же в Туле.
+    #[test]
+    fn the_traffic_side_turns_the_row_without_moving_it() {
+        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        let right = park_driving(
+            std::slice::from_ref(&road),
+            CarStyle::default(),
+            TrafficSide::Right,
+        );
+        let left = park_driving(
+            std::slice::from_ref(&road),
+            CarStyle::default(),
+            TrafficSide::Left,
+        );
+        assert_eq!(right.len(), left.len());
+        for (a, b) in right.iter().zip(&left) {
+            assert_eq!(a.at, b.at);
+            assert!(
+                (a.along + b.along).length() < 1e-5,
+                "{} {}",
+                a.along,
+                b.along
+            );
+        }
+    }
+
+    #[test]
+    fn a_left_hand_one_way_carriageway_parks_on_its_left() {
+        // улица на восток: слева по ходу — север, и носы по ходу
+        let mut oneway = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        oneway.oneway = true;
+        let cars = park_driving(
+            std::slice::from_ref(&oneway),
+            CarStyle::default(),
+            TrafficSide::Left,
+        );
+        assert!(!cars.is_empty());
+        for car in &cars {
+            assert!(car.at.y > 0.0, "ряд не с той стороны: {}", car.at);
+            assert!(
+                car.along.x > 0.9,
+                "машина смотрит против потока: {}",
+                car.along
+            );
+        }
+    }
+
     #[test]
     fn occupancy_zero_parks_nothing() {
         let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
@@ -753,6 +865,7 @@ mod tests {
             &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
             style,
             RoadSmoothing::Light,
+            TrafficSide::Right,
         );
         assert!(!cars.is_empty());
         let drawn = smooth_path(&road.points, road.width, RoadSmoothing::Light);
