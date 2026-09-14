@@ -26,7 +26,6 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::buildings::LayerCost;
-use crate::map::footprint::bridge_curb_width;
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
@@ -425,7 +424,7 @@ impl<'a> BridgeDeck<'a> {
         if !road.bridge || road.points.is_empty() {
             return None;
         }
-        let reach = road.width / 2.0 + bridge_curb_width(road.width) + JUNCTION_CLEARANCE;
+        let reach = road.curb_reach() + JUNCTION_CLEARANCE;
         let (min, max) = road.points.iter().fold(
             (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
             |(min, max), &point| (min.min(point), max.max(point)),
@@ -663,7 +662,7 @@ mod tests {
         bridge.bridge = true;
         let cars = park(&[through.clone(), bridge.clone()]);
 
-        let cleared = 16.0 / 2.0 + bridge_curb_width(16.0) + JUNCTION_CLEARANCE;
+        let cleared = bridge.curb_reach() + JUNCTION_CLEARANCE;
         for car in &cars {
             assert!(
                 (car.at.x - 100.0).abs() >= cleared - 0.01,
