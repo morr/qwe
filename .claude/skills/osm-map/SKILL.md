@@ -592,7 +592,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the ground shadow layer only knows buildings, and a bridge over the river is the most
   visible thing on the water. It sits **under** the deck and **over** what the bridge
   crosses — except a railway, which is drawn above the bridge for its own reasons.
-  Seven decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
+  Eight decisions in `bridge_shadow_path` / `push_bridge_shadows` make it read instead of
   lie, and every one of them was a bug report first:
 
   - **A bridge is a connected chain of ways, not one way** (`Bridges`, `BridgeSpan`).
@@ -671,10 +671,45 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     railing shadow and the slab's thickness, and unlike the offset it barely depends on
     the height.
 
+  - **The edge is soft, and the width comes from the span** (`bridge_penumbra`). Every
+    other shadow on the map fades at its edge — buildings `PENUMBRA_WIDTH` 1 m, cars and
+    fences `SHADOW_BLUR` 0.35 — and the deck's was a hard cut. The law is the one the car
+    already states: «a house's is a metre, three times ours, **because its shadow is three
+    to ten times longer**» — so the width is a share (`PENUMBRA_SHARE` 0.3) of the
+    shadow's *own* length, i.e. of `bridge_height(span) × shadow_length_scale()`, not a
+    constant. A bridge is the tallest thing casting a shadow here and the most varied (a
+    2 m plank over a pond against a 6 m flyover), which is exactly why a constant is
+    wrong. The ends of the clamp are the two numbers already on the map:
+    `PENUMBRA_MIN` 0.35 (nothing here has a softer edge than a parked car) and
+    `PENUMBRA_MAX` 1.0 (nothing has a softer one than a house). So a 16 m footbridge gets
+    0.36 m, a 40 m bridge 0.9, anything over 44 m the ceiling. The ends do **not** ride
+    the sun — they are constants of neighbouring layers — while the share does, through
+    `shadow_length_scale()`: a low sun lengthens the shadow and softens its edge.
+    - **It tapers by `rise`, not by direction.** Buildings, cars and fences taper theirs
+      by `direction · shadow_dir()` because those objects stand *on the ground*: their
+      shadow is hard where it meets the object and soft at the far end. A deck is a plate
+      *in the air*, so every point of its outline casts from the same height and the
+      penumbra is uniform all the way round — except at the abutments, where the deck
+      sits down and `rise` is zero. A directional taper would put a metre of soft shadow
+      past one deck end onto the street, which is the contact skirt the buildings removed.
+
   Because the width varies along the band it is **not** a `push_ribbon`: the rails come
-  from `miter_offsets` scaled per point, and go in as one `push_polygon` quad per segment,
-  adjacent quads sharing their edge vertex for vertex so a translucent layer never doubles
-  over itself.
+  from `miter_offsets` scaled per point, and the core goes in as one `push_polygon` quad
+  per segment, adjacent quads sharing their edge vertex for vertex so one band never
+  doubles over itself. The penumbra is two more quad strips along those same rails
+  (`push_quad_gradient`, opaque on the rail, alpha 0 at the outer lip), and a segment
+  whose rise is zero at both ends emits none.
+
+  **The cores of all bridges are unioned** (`i_overlay`, NonZero — the buildings' and the
+  fences' construction), and that is measured, not precautionary: OSM maps a road bridge's
+  pavement as a **parallel way of its own** carrying the same `bridge=yes`, and on Tula
+  **28 pairs of different bridges** have shadow cores that overlap. In a translucent layer
+  that reads as a strip of double darkness running the whole length of the bridge.
+  **The penumbra is laid per bridge, before the union**, and cannot be moved after it: its
+  width is `rise`, the local height of the deck over the ground, and the union output is
+  contours with no `rise` on them. Dropping the taper instead is the option that costs
+  more (see the previous bullet). Two neighbours' bands may therefore overlap each other —
+  the price the building shadows already state and accept, since both fade to zero.
 
   About the deck itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey

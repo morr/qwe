@@ -707,8 +707,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
   crosses. Nothing else produced it — the ground shadow layer only knows buildings — and a
-  bridge over the river is the most visible thing there is on water. Six rules make it
-  read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadow`:
+  bridge over the river is the most visible thing there is on water. Seven rules make it
+  read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadows`:
   **a bridge is a chain of ways, not one way** (`Bridges`) — OSM cuts a bridge up, and
   Tula's 61 bridge ways are 56 bridges, the Упа crossing alone being 424 + 95 + 299 m;
   the ways are glued **end to end** (`JOIN_EPSILON`, never `ways_joined`, which answers
@@ -729,9 +729,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   faster than the arc advances — pushes the shadow past the deck's end as a dark wedge on
   the street it joins; and the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on
   each side, because a plate's shadow is its own silhouette translated, so a bridge
-  running along the sun hides all of it under itself. The centerline is densified to
+  running along the sun hides all of it under itself; and **the edge is soft**, like every
+  other shadow on the map — a band fading to zero alpha, `PENUMBRA_SHARE` (0.3) of the
+  shadow's own length clamped between the car's 0.35 m and the house's 1 m, tapering with
+  the same rise, so a footbridge is blurred less than a flyover and an abutment gets no
+  halo. The centerline is densified to
   `SHADOW_STEP` (2 m) first: the ramp lives in the vertices, and 42 of Tula's 61 bridges
-  are two-point ways whose every vertex is an end.
+  are two-point ways whose every vertex is an end. The **cores are unioned**
+  (`i_overlay`, NonZero — the buildings' and fences' trick): OSM maps a bridge's pavement
+  as a parallel way of its own, and 28 pairs of Tula's bridges shadow each other into a
+  band of double darkness. The penumbra is laid per bridge, before the union, because its
+  width comes from the rise the union throws away — overlapping bands are the price, the
+  one the buildings already pay.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges

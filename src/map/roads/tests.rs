@@ -21,6 +21,16 @@ fn lone(points: &[Vec2]) -> BridgeSpan {
     }
 }
 
+/// Готовая теневая лента одинокого моста.
+fn band(points: &[Vec2], reach: f32) -> ShadowBand {
+    let deck = lone(points);
+    ShadowBand {
+        path: bridge_shadow_path(points, &deck),
+        reach,
+        penumbra: bridge_penumbra(deck.span),
+    }
+}
+
 /// Карта из одних мостовых ways — вход [`Bridges`].
 fn bridge_map(decks: Vec<RoadLine>) -> MapData {
     MapData {
@@ -190,11 +200,7 @@ fn a_bridge_along_the_sun_is_still_outlined() {
     let deck = [Vec2::ZERO, along];
     let reach = 2.55;
     let mut builder = MeshBuilder::default();
-    push_bridge_shadow(
-        &mut builder,
-        &bridge_shadow_path(&deck, &lone(&deck)),
-        reach,
-    );
+    push_bridge_shadows(&mut builder, &[band(&deck, reach)]);
 
     // ширину меряем поперёк моста — по проекции на нормаль его направления
     let across = along.normalize().perp();
@@ -218,6 +224,70 @@ fn a_bridge_along_the_sun_is_still_outlined() {
         ends < reach + 0.5,
         "the band still flares where the deck sits on the ground ({ends} m)"
     );
+}
+
+/// Край тени у всех, кто её отбрасывает, мягкий — у домов, машин и оград, — а
+/// у настила был жёстким. И кайма ему нужна своя: мост из них самый высокий,
+/// а правило карты (`cars/body.rs::SHADOW_BLUR`) — «кайма тем шире, чем
+/// длиннее сама тень».
+#[test]
+fn the_shadow_edge_fades_and_dies_at_the_abutment() {
+    let deck = [Vec2::ZERO, Vec2::new(0.0, 80.0)];
+    let reach = 2.55;
+    let mut builder = MeshBuilder::default();
+    push_bridge_shadows(&mut builder, &[band(&deck, reach)]);
+
+    let penumbra = bridge_penumbra(polyline_length(&deck));
+    // ширину меряем от самой ленты: она вся сдвинута по свету вбок, и ось
+    // моста ей уже не центр
+    let path = bridge_shadow_path(&deck, &lone(&deck));
+    let centers: Vec<Vec2> = path.iter().map(|point| point.at).collect();
+    let tips = [centers[0], centers[centers.len() - 1]];
+    let (mut faded, mut ends) = (0.0_f32, 0.0_f32);
+    for (position, color) in builder
+        .positions_for_test()
+        .iter()
+        .zip(builder.colors_for_test())
+    {
+        let point = Vec2::new(position[0], position[1]);
+        let side = distance_to_path(point, &centers);
+        if tips.iter().any(|tip| point.distance(*tip) < 2.0) {
+            ends = ends.max(side);
+        } else if color[3] == 0.0 {
+            // прозрачная вершина бывает только на внешнем крае каймы
+            faded = faded.max(side);
+        }
+    }
+    // кайма ушла за ядро ленты, и её внешний край прозрачен
+    assert!(
+        faded > reach + SHADOW_SPREAD,
+        "the band has no faded outer edge ({faded} m)"
+    );
+    assert!(
+        faded < reach + SHADOW_SPREAD + penumbra + 0.05,
+        "the faded edge runs past the penumbra ({faded} m)"
+    );
+    // а у устоя, где настил лежит на земле, каймы нет вовсе: мягкий ореол
+    // вокруг торца — это та самая контактная юбка, которую убирали у зданий
+    assert!(
+        ends < reach + 0.5,
+        "the penumbra flares where the deck sits on the ground ({ends} m)"
+    );
+}
+
+/// Ширина каймы — доля длины собственной тени, зажатая между каймой машины и
+/// каймой дома: мостик через пруд и путепровод размыты по-разному.
+#[test]
+fn the_penumbra_follows_the_span() {
+    let (short, long) = (bridge_penumbra(16.0), bridge_penumbra(40.0));
+    assert!(
+        short < long,
+        "a 16 m footbridge is blurred like a 40 m one ({short} vs {long} m)"
+    );
+    // концы — константы соседних слоёв, и за них она не выходит
+    assert_eq!(bridge_penumbra(1.0), PENUMBRA_MIN);
+    assert_eq!(bridge_penumbra(600.0), PENUMBRA_MAX);
+    assert!((PENUMBRA_MIN..=PENUMBRA_MAX).contains(&short));
 }
 
 /// Западный подход к мосту через Упу — это четыре way по 23–30 м с

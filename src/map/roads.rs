@@ -10,7 +10,7 @@
 //! настила (всегда, вне зависимости от `RoadStyle::casing`) и заливка цветом
 //! класса над `Z_ROAD` — эстакада кроет улицу, которую пересекает, а ровные
 //! торцы бордюра читаются как края настила, вид 2ГИС. Под ними —
-//! [`push_bridge_shadow`]: единственное на карте, что говорит, что настил
+//! [`push_bridge_shadows`]: единственное на карте, что говорит, что настил
 //! поднят, потому что наземные тени считают только дома.
 //!
 //! Раньше дороги рисовал `MeshBuilder::push_polyline` — свой квад на
@@ -402,7 +402,7 @@ impl<'a> Underneath<'a> {
 
 /// Точка теневой ленты: куда съехал настил и насколько он в этом месте поднят
 /// (0 у береговой опоры, 1 на полной высоте). Подъём нужен и после сдвига —
-/// им же сходит на нет кайма ([`push_bridge_shadow`]).
+/// им же сходит на нет и уширение, и полутень ([`push_bridge_shadows`]).
 struct ShadowPoint {
     at: Vec2,
     rise: f32,
@@ -443,7 +443,7 @@ const SHORT_SPAN: f32 = 35.0;
 /// тень перил, толщина плиты и полоса воды, которой настил закрыл небо; от
 /// высоты моста, в отличие от сдвига, эта кайма почти не зависит (перила у
 /// пешеходного мостика те же, что у моста через Упу), но вместе с настилом
-/// садится на землю у торцов. См. [`push_bridge_shadow`].
+/// садится на землю у торцов. См. [`push_bridge_shadows`].
 const SHADOW_SPREAD: f32 = 1.0;
 
 /// Потолок высоты настила над тем, что под ним, м, и высота на метр пролёта.
@@ -698,8 +698,10 @@ pub fn spawn_roads(
     // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
     let mut bridge_casings = MeshBuilder::default();
     let mut bridge_fills = MeshBuilder::with_surface_coords();
-    // тень моста — на то, над чем он проходит: воду, дорогу, пути
+    // тень моста — на то, над чем он проходит: воду, дорогу, пути. Ленты
+    // копятся и кладутся разом: их ядра объединяются (`push_bridge_shadows`)
     let mut bridge_shadows = MeshBuilder::default();
+    let mut shadow_bands: Vec<ShadowBand> = Vec::new();
     // мост — цепочка ways, и тень считается по всей цепочке
     let bridges = Bridges::new(map);
     let mut wall_ribbons = MeshBuilder::default();
@@ -728,11 +730,11 @@ pub fn spawn_roads(
             // моста. Ни один другой слой её не даёт: наземные тени считают
             // только дома, а мост через Упу — самая заметная вещь на воде.
             if let Some(deck) = bridges.span(index).filter(|deck| deck.casts) {
-                push_bridge_shadow(
-                    &mut bridge_shadows,
-                    &bridge_shadow_path(&points, deck),
-                    road.curb_reach(),
-                );
+                shadow_bands.push(ShadowBand {
+                    path: bridge_shadow_path(&points, deck),
+                    reach: road.curb_reach(),
+                    penumbra: bridge_penumbra(deck.span),
+                });
             }
             bridge_fills.set_markings(markings);
             push_street_fill(
@@ -775,6 +777,8 @@ pub fn spawn_roads(
             breaks,
         );
     }
+
+    push_bridge_shadows(&mut bridge_shadows, &shadow_bands);
 
     for wall in walls {
         push_ribbon(
@@ -887,9 +891,58 @@ pub fn rebuild_roads(
     );
 }
 
-/// Тень настила — лента переменной ширины по [`bridge_shadow_path`], **шире
-/// самого настила** на [`SHADOW_SPREAD`] с каждой стороны, и торцы у неё
-/// прямые.
+/// Теневая лента одного моста, готовая к укладке: путь, полуширина настила и
+/// ширина полутени на полном подъёме.
+struct ShadowBand {
+    path: Vec<ShadowPoint>,
+    reach: f32,
+    penumbra: f32,
+}
+
+/// Край теневой ленты в одной точке пути.
+struct ShadowEdge {
+    left: Vec2,
+    right: Vec2,
+    /// единичная нормаль стыка, наружу слева
+    normal: Vec2,
+    /// ширина полутени здесь — ноль у устоя, полная на пролёте
+    blur: f32,
+}
+
+/// Ширина мягкого края тени настила, м.
+///
+/// Не физическая полутень — угловой размер солнца дал бы на такой длине
+/// сантиметры, — а то, чем край тени размыт на снимке: разрешением кадра и
+/// светом неба. Правило у карты уже есть, и оно сформулировано в машинном
+/// `cars/body.rs::SHADOW_BLUR`: «у зданий метр, и он втрое больше, **потому
+/// что и тень там втрое-вдесятеро длиннее**». Значит кайма — доля **длины
+/// собственной тени**, то есть высоты настила через `shadow_length_scale()`,
+/// а не константа, как у машины и забора, у которых высота одна на всех.
+///
+/// Мост тут самый высокий из всех, кто отбрасывает тень на этой карте, и
+/// самый разный: от двухметрового мостика через пруд до шестиметрового
+/// путепровода. Поэтому доля, а концы — два числа, которые на карте уже
+/// стоят: [`PENUMBRA_MIN`] — кайма машины и забора (мягче на этой карте не
+/// размыт никакой край), [`PENUMBRA_MAX`] — кайма дома
+/// (`buildings::layers::PENUMBRA_WIDTH`, мягче не бывает вовсе). Между ними
+/// доля и работает: пролёт 16 м — 0.36 м каймы, 40 м — 0.9, от 44 м и выше —
+/// потолок. Концы у солнца не едут (это константы соседних слоёв), а сама
+/// доля едет: на низком солнце тень длиннее, и край у неё мягче.
+const PENUMBRA_SHARE: f32 = 0.3;
+const PENUMBRA_MIN: f32 = 0.35;
+const PENUMBRA_MAX: f32 = 1.0;
+
+/// Ширина полутени для моста с таким пролётом — см. [`PENUMBRA_SHARE`].
+fn bridge_penumbra(span: f32) -> f32 {
+    let length = bridge_height(span) * shadow_length_scale();
+    (length * PENUMBRA_SHARE).clamp(PENUMBRA_MIN, PENUMBRA_MAX)
+}
+
+/// Тени всех мостов разом: **объединённые** ядра ([`ShadowBand`]) плюс мягкая
+/// кайма по краю каждой ленты.
+///
+/// Ядро ленты — переменной ширины по [`bridge_shadow_path`], **шире самого
+/// настила** на [`SHADOW_SPREAD`] с каждой стороны, и торцы у неё прямые.
 ///
 /// Уширение — не украшение, а единственное, что даёт мосту тень **вдоль
 /// света**. Тень плиты это её силуэт, сдвинутый по солнцу; у ленты сдвиг
@@ -905,28 +958,108 @@ pub fn rebuild_roads(
 /// круглый торец и был тем артефактом, из-за которого тень «оставалась у
 /// дороги» — полудиск радиусом в полширины настила вылезал за прямой срез
 /// моста и ложился на улицу, к которой мост примыкает.
-fn push_bridge_shadow(builder: &mut MeshBuilder, path: &[ShadowPoint], reach: f32) {
-    if path.len() < 2 {
-        return;
-    }
+///
+/// **Ядра объединяются булевым union** (`i_overlay`, NonZero — приём теней
+/// зданий и оград), и это не про запас: на Туле **28 пар разных мостов**
+/// накрывают друг друга тенями. Так OSM размечает мост с тротуаром — отдельным
+/// параллельным way с тем же `bridge=yes`, — и в полупрозрачном слое такая пара
+/// читается полосой двойной темноты вдоль всего моста. Сама с собой одна лента
+/// не пересекается (соседние квады делят ребро вершина в вершину), так что
+/// союз нужен именно ради соседей.
+///
+/// **Кайма при этом кладётся от каждой ленты своей**, до объединения, и вот
+/// почему её нельзя считать от контура союза: её ширина берётся из `rise`,
+/// то есть из того, насколько настил в этой точке поднят над землёй, а союз
+/// эту величину теряет. Отказаться от `rise` тоже нельзя — у устоя настил
+/// лежит на земле, и метр мягкой тени вокруг его торца это ровно та «грязная
+/// обводка», ради избавления от которой у зданий убирали контактную юбку.
+/// Перекрытие двух кайм друг с другом карта уже разрешает явно (тени зданий:
+/// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»).
+fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::float::simplify::SimplifyShape;
+
     let color = SHADOW_COLOR.to_linear();
-    let centers: Vec<Vec2> = path.iter().map(|point| point.at).collect();
+    let fade = LinearRgba {
+        alpha: 0.0,
+        ..color
+    };
+    let edges: Vec<Vec<ShadowEdge>> = bands.iter().map(shadow_edges).collect();
+
+    // контур ленты — левый рельс вперёд, правый назад
+    let contours: Vec<Vec<[f32; 2]>> = edges
+        .iter()
+        .filter(|band| band.len() >= 2)
+        .map(|band| {
+            band.iter()
+                .map(|edge| edge.left.to_array())
+                .chain(band.iter().rev().map(|edge| edge.right.to_array()))
+                .collect()
+        })
+        .collect();
+    for shape in contours.simplify_shape(FillRule::NonZero) {
+        let mut rings = shape.into_iter().map(|contour| {
+            contour
+                .into_iter()
+                .map(Vec2::from_array)
+                .collect::<Vec<Vec2>>()
+        });
+        let Some(outer) = rings.next() else {
+            continue;
+        };
+        let holes: Vec<Vec<Vec2>> = rings.collect();
+        builder.push_polygon(&outer, &holes, color);
+    }
+
+    for band in &edges {
+        for pair in band.windows(2) {
+            let (near, far) = (&pair[0], &pair[1]);
+            // у устоя кайма схлопнута с обеих сторон — квада там нет вовсе
+            if near.blur <= 0.0 && far.blur <= 0.0 {
+                continue;
+            }
+            for side in [1.0_f32, -1.0] {
+                let (from, to) = if side > 0.0 {
+                    (near.left, far.left)
+                } else {
+                    (near.right, far.right)
+                };
+                builder.push_quad_gradient(
+                    [
+                        from,
+                        from + near.normal * (side * near.blur),
+                        to + far.normal * (side * far.blur),
+                        to,
+                    ],
+                    [color, fade, fade, color],
+                );
+            }
+        }
+    }
+}
+
+/// Края ленты: рельсы, нормаль стыка и ширина полутени в каждой точке пути.
+/// Общие у контура и у каймы, чтобы кайма садилась ровно на край ядра.
+fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
+    if band.path.len() < 2 {
+        return Vec::new();
+    }
+    let centers: Vec<Vec2> = band.path.iter().map(|point| point.at).collect();
     // единичные нормали стыка: длину каждой задаёт своя полуширина
     let normals = miter_offsets(&centers, false, 1.0);
-    let rails: Vec<[Vec2; 2]> = path
+    band.path
         .iter()
         .zip(&normals)
         .map(|(point, normal)| {
-            let half = reach + SHADOW_SPREAD * point.rise;
-            [point.at + *normal * half, point.at - *normal * half]
+            let half = band.reach + SHADOW_SPREAD * point.rise;
+            ShadowEdge {
+                left: point.at + *normal * half,
+                right: point.at - *normal * half,
+                normal: *normal,
+                blur: band.penumbra * point.rise,
+            }
         })
-        .collect();
-    // по четырёхугольнику на сегмент: соседние делят ребро вершина в вершину,
-    // так что полупрозрачная лента нигде не накладывается сама на себя
-    for pair in rails.windows(2) {
-        let ([left, right], [next_left, next_right]) = (pair[0], pair[1]);
-        builder.push_polygon(&[left, next_left, next_right, right], &[], color);
-    }
+        .collect()
 }
 
 /// Бордюр моста: торцы всегда [`RibbonCap::Butt`] — настил кончается ровным
