@@ -592,13 +592,44 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the ground shadow layer only knows buildings, and a bridge over the river is the most
   visible thing on the water. It sits **under** the deck and **over** what the bridge
   crosses — except a railway, which is drawn above the bridge for its own reasons.
-  Six decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
+  Seven decisions in `bridge_shadow_path` / `push_bridge_shadow` make it read instead of
   lie, and every one of them was a bug report first:
 
+  - **A bridge is a connected chain of ways, not one way** (`Bridges`, `BridgeSpan`).
+    OSM cuts a bridge into pieces at every tag change: Tula's **61 bridge ways are 56
+    bridges**, and 8 of those ways are glued into 3 — the Упа crossing 424 + 95 + 299 m
+    (818 m), a footway 34 + 129 + 22 m (185 m), and 39 + 4 m. Per-way the shadow lied
+    twice over: the ramp below fired at every *internal* joint, where the deck is at full
+    height, so the shadow dipped under the deck twice in the middle of an 818 m bridge;
+    and `SHORT_SPAN` was applied to the piece, so a 22 m middle section of a 185 m bridge
+    was interrogated as a footbridge and could lose its shadow outright.
+    - **Glued end to end, not by `ways_joined`.** That predicate answers «do these two
+      polylines touch anywhere» — it is what decides whether a road joins a bridge for
+      the curb — and here it is wrong in both directions: on Tula it would fuse **two
+      pairs of footbridges that merely cross**, and a way-end landing in the *middle* of
+      another bridge (Tula has none, but nothing in the data forbids it) would turn a
+      branch into a continuation. What is matched is endpoint against endpoint, at the
+      same `JOIN_EPSILON` (0.5 m) — the tolerance is the price of the projection, and
+      that part is shared.
+    - **The geometry is not glued — the arithmetic is.** Two reasons, and either alone
+      is enough: pieces of one bridge may differ in width (one polyline cannot carry
+      two decks), and **three way-ends meet at one node** on Tula's own fork, the slip
+      road of the Упа interchange, where the three pieces are not a chain at all. So a
+      way keeps its own points and its own width, and takes from its bridge two numbers:
+      the **span** (the sum over the whole connected component) and, per end, the
+      distance to the nearest **free end** through the neighbouring ways. A fork costs
+      that model nothing: the distance runs along the shortest of the three branches,
+      the node is not a free end, and the deck there stays up.
+    - Distances come from relaxing over the way-graph until it converges (tens of edges
+      — a priority queue would be ceremony). A component with **no** free end at all — a
+      ring flyover — comes out at infinity, i.e. fully raised everywhere, which is right:
+      it never sits down on the ground.
   - **A span under `SHORT_SPAN` (35 m) has to prove there is a gap under it**
-    (`bridge_casts_shadow` probing `Underneath` every 2 m — water outlines, watercourse
+    (`probe_underneath` over `Underneath` every 2 m — water outlines, watercourse
     channels, rails; **never roads**, because a road is exactly what an approach
-    embankment runs along). Proportional height was not enough on its own: the western
+    embankment runs along). The question is put to the **whole chain** and answered once
+    for it, so a piece over dry land next to a piece over the river keeps the river's
+    answer. Proportional height was not enough on its own: the western
     approach to the Упа crossing is four ways of 23–30 m carrying `bridge=yes` and
     `layer=1`, and on the ground it is solid fill, which no tag distinguishes from a
     span. A long way is never asked — there is no 100 m embankment — which also keeps the
@@ -617,13 +648,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     everywhere, and the shadow landed exactly under the deck, i.e. nowhere. The ways that
     did have vertices (a 571 m flyover with 42 of them, one per ~14 m) got a shadow that
     stepped from vertex to vertex in visible teeth.
-  - **The offset ramps from zero at each end** (smoothstep over `RAMP_SHARE` 0.25 of the
-    length capped at `RAMP_MAX` 25 m) — at the abutment the deck is on the ground and
-    casts nothing, and the constant-offset version poked a dark band past the deck onto
-    the street that joins it, which is exactly where a bridge meets a road and where the
-    eye is.
+  - **The offset ramps from zero at each free end of the chain** (smoothstep over
+    `RAMP_SHARE` 0.25 of the **span** capped at `RAMP_MAX` 25 m) — at the abutment the
+    deck is on the ground and casts nothing, and the constant-offset version poked a dark
+    band past the deck onto the street that joins it, which is exactly where a bridge
+    meets a road and where the eye is. The distance a point measures is its own arclength
+    **plus what lies beyond its way's joint** (`BridgeSpan::from_start` / `from_end`), so
+    an internal joint never ramps and the rise runs continuously across it — both ways
+    read the same number at the node they share.
   - **The rise is clamped by the span left ahead of the shadow** (`room / |offset·t|`,
-    `room` measured to the end the offset points at). The ramp is not enough on its own: a
+    `room` measured through the chain to the end the offset points at). The ramp is not
+    enough on its own: a
     smoothstep climbs faster than the arc advances, so on a short bridge the shadow
     overtook its own end anyway and lay past the abutment as a wedge — the artifact that
     survived two rounds of fixing the ramp.

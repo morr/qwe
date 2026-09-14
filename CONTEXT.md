@@ -707,16 +707,24 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
   crosses. Nothing else produced it — the ground shadow layer only knows buildings — and a
-  bridge over the river is the most visible thing there is on water. Five rules make it
+  bridge over the river is the most visible thing there is on water. Six rules make it
   read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadow`:
+  **a bridge is a chain of ways, not one way** (`Bridges`) — OSM cuts a bridge up, and
+  Tula's 61 bridge ways are 56 bridges, the Упа crossing alone being 424 + 95 + 299 m;
+  the ways are glued **end to end** (`JOIN_EPSILON`, never `ways_joined`, which answers
+  «do these touch anywhere» and would fuse two footbridges that merely cross), and what
+  is glued is the *arithmetic* — the span and the distance to the nearest free end —
+  never the geometry, since pieces differ in width and three way-ends meet at one node on
+  Tula's own fork;
   **height follows the span** (`SPAN_TO_HEIGHT` 1/8, capped at `BRIDGE_HEIGHT` 6 m) —
   OSM's `bridge=yes` also marks embankment steps and pavements that span nothing, and a
   6 m shadow under a 20 m path is the loudest lie a map can tell, because a shadow reads
   as height; **a span under `SHORT_SPAN` (35 m) has to prove there is a gap under it** —
   water or rail, never a road, since a road is exactly what an approach embankment runs
-  along (`bridge_casts_shadow` over `Underneath`); **the offset tapers to zero at the
-  abutments** (`RAMP_SHARE` 0.25 of the length or `RAMP_MAX` 25 m, whichever is shorter),
-  where the deck lies on the ground;
+  along (`probe_underneath` over `Underneath`, asked of the whole chain); **the offset
+  tapers to zero at the free ends of the chain** (`RAMP_SHARE` 0.25 of the span or
+  `RAMP_MAX` 25 m, whichever is shorter), where the deck lies on the ground — at an
+  internal joint it stays up, which is what the chain is for;
   **the rise is additionally clamped by the span left ahead**, or the ramp — which climbs
   faster than the arc advances — pushes the shadow past the deck's end as a dark wedge on
   the street it joins; and the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on

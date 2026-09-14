@@ -47,7 +47,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::map::footprint::casing_width;
+use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
     miter_offsets,
@@ -62,13 +62,21 @@ use crate::settings::{
 };
 
 /// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
-/// **сходящую к нулю у торцов**.
+/// **сходящую к нулю у свободных торцов моста** ([`BridgeSpan`]).
 ///
 /// Без схождения тень вылезала на дорогу в месте примыкания: у береговой
 /// опоры настил лежит на земле, и тени там нет вовсе, а сдвинутая на полную
 /// высоту лента выезжала за торец моста и ложилась тёмной полосой поперёк
 /// подходящей улицы. Подъём считается по длине дуги: `RAMP_SHARE` длины с
 /// каждого конца (но не больше `RAMP_MAX`) — это и есть насыпь.
+///
+/// **Расстояние до торца меряется по всему мосту, а не по этому way.** Мост в
+/// OSM нарезан: переход через Упу — три way (424 + 95 + 299 м), и у каждого
+/// внутреннего стыка настил идёт на полной высоте. Меряя от торцов куска,
+/// рампа отрабатывала на каждом стыке, и тень дважды проваливалась под настил
+/// посреди восьмисотметрового моста. `from_start`/`from_end` — это путь до
+/// ближайшего свободного торца **через соседние ways**, поэтому у внутреннего
+/// стыка он велик и подъём там равен единице.
 ///
 /// Осевая для этого **догущается** ([`densify`]): подъём живёт в вершинах, а
 /// прямой мост в OSM — это ровно две точки, и обе они торцы. Без догущения
@@ -81,8 +89,9 @@ use crate::settings::{
 /// на расстоянии `at` от торца ей позволено уехать не дальше чем на `at`.
 /// Гладкая насыпь поднимается быстрее, чем набирается длина, и у короткого
 /// моста тень успевала перевалить за торец и лечь тёмным клином на дорогу —
-/// тот самый клин, что торчал из-под каждого мостика через канал.
-fn bridge_shadow_path(points: &[Vec2]) -> Vec<ShadowPoint> {
+/// тот самый клин, что торчал из-под каждого мостика через канал. Остаток
+/// тоже считается по всему мосту.
+fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
     // слипшиеся точки OSM вырождают нормаль стыка — то же, что делает лента
     let merged = merge_close_points(points, false, SHADOW_STEP / 4.0);
     let dense = densify(&merged, SHADOW_STEP);
@@ -98,20 +107,24 @@ fn bridge_shadow_path(points: &[Vec2]) -> Vec<ShadowPoint> {
         along.push(travelled);
     }
     let length = travelled;
-    let offset = shadow_dir() * (bridge_height(length) * shadow_length_scale());
-    let ramp = (length * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
+    let offset = shadow_dir() * (bridge_height(deck.span) * shadow_length_scale());
+    let ramp = (deck.span * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
     let last = dense.len() - 1;
     (0..dense.len())
         .map(|index| {
             let (point, at) = (dense[index], along[index]);
-            let raised = (at.min(length - at) / ramp).clamp(0.0, 1.0);
+            // до свободного торца моста в обе стороны: по этому куску плюс то,
+            // что за его стыком
+            let behind = deck.from_start + at;
+            let ahead = deck.from_end + (length - at);
+            let raised = (behind.min(ahead) / ramp).clamp(0.0, 1.0);
             // плавно, а не изломом: у настоящей насыпи профиль сглажен
             let rise = raised * raised * (3.0 - 2.0 * raised);
             // ход тени вдоль моста и сколько его осталось до торца впереди
             let tangent = (dense[(index + 1).min(last)] - dense[index.saturating_sub(1)])
                 .normalize_or(Vec2::X);
             let travel = offset.dot(tangent);
-            let room = if travel > 0.0 { length - at } else { at };
+            let room = if travel > 0.0 { ahead } else { behind };
             let rise = if travel.abs() > f32::EPSILON {
                 rise.min(room / travel.abs())
             } else {
@@ -139,22 +152,188 @@ fn bridge_height(span: f32) -> f32 {
     (span * SPAN_TO_HEIGHT).min(BRIDGE_HEIGHT)
 }
 
-/// Отбрасывает ли этот мост тень вообще: пролёт от [`SHORT_SPAN`] — всегда,
-/// короче — только если под ним и правда пусто, то есть вода или рельсы.
+/// Место одного мостового way в своём мосту.
 ///
-/// Пропорциональной высоты мало. Западный подход к мосту через Упу — это
-/// четыре way по 23–30 м с `bridge=yes` и `layer=1`, а на месте там ровная
-/// земля: насыпь, а не эстакада. Отличить насыпь от пролёта по тегам нельзя,
-/// зато можно спросить, есть ли под ней разрыв. Дороги в этот список не
-/// входят намеренно — именно вдоль дорог и лежат подходы, — а вода и путь под
-/// коротким настилом сомнений не оставляют.
+/// `span` — длина **всего** моста, `from_start`/`from_end` — кратчайший путь
+/// от торцов этого куска до ближайшего свободного торца моста
+/// (бесконечность, если свободного торца нет вовсе — кольцевая эстакада
+/// нигде не садится на землю, и подъём у неё везде полный). `casts` —
+/// решение целого моста, а не куска.
+///
+/// Кратчайший путь от дальнего узла может вести **назад по этому же куску** —
+/// у первого way цепочки 60 + 30 + 60 он и ведёт, давая 60, а не 90. Двойного
+/// счёта из этого не выходит: расстояние до земли берётся как минимум из двух
+/// сторон, и тот же самый маршрут уже учтён со стороны `from_start`.
+#[derive(Clone, Copy, Debug)]
+struct BridgeSpan {
+    span: f32,
+    from_start: f32,
+    from_end: f32,
+    casts: bool,
+}
+
+/// Мосты карты: **связные цепочки** мостовых ways, а не отдельные ways.
+///
+/// Мост в OSM нарезан — Тула: 61 мостовой way, из них 8 сцеплены в 3 моста
+/// (424 + 95 + 299 = 818 м переход через Упу, 34 + 129 + 22 = 185 м и
+/// 39 + 4 = 43 м), итого 56 мостов. Считая каждый way отдельным мостом, тень
+/// врала дважды: рампа отрабатывала на каждом внутреннем стыке (тень
+/// проваливалась под настил посреди длинного моста), а [`SHORT_SPAN`]
+/// применялся к куску — 22-метровая середина 185-метрового моста проверялась
+/// как отдельный мостик и могла остаться без тени вовсе.
+///
+/// **Склейка — по торцам, а не [`crate::map::footprint::ways_joined`].** Тот
+/// предикат отвечает на другой вопрос — «есть ли у этих ломаных общая точка
+/// вообще», — и им же меряется примыкание дороги к мосту для бордюра. Здесь
+/// он ошибается в обе стороны: на Туле он склеил бы две пары пешеходных
+/// мостиков, которые всего лишь пересекаются, а T-образное примыкание торца к
+/// середине чужого моста (на Туле таких нет, но данные их не запрещают)
+/// превратило бы ветку в продолжение. Сходятся именно **торцы** — с тем же
+/// допуском [`JOIN_EPSILON`], потому что это цена проекции.
+///
+/// **Геометрия при этом не склеивается.** Куски одного моста бывают разной
+/// ширины, и одной ломаной их не описать; а главное — в узле сходятся и три
+/// конца сразу (на Туле ровно один такой: 424 + 95 + 299 сходятся в одной
+/// точке, это съезд развязки, а не цепочка). Поэтому склеивается не путь, а
+/// **счёт**: длина моста и расстояние до свободного торца. Развилке это ничего
+/// не стоит — у трёхконцевого узла путь до свободного торца просто идёт по
+/// самой короткой из трёх веток, и настил на развилке остаётся поднятым, как
+/// ему и положено.
+struct Bridges {
+    /// На индекс дороги; `None` — не мост.
+    spans: Vec<Option<BridgeSpan>>,
+}
+
+impl Bridges {
+    fn new(map: &MapData) -> Self {
+        let mut spans = vec![None; map.roads.len()];
+        let decks: Vec<usize> = map
+            .roads
+            .iter()
+            .enumerate()
+            .filter(|(_, road)| road.bridge && road.points.len() >= 2)
+            .map(|(index, _)| index)
+            .collect();
+        if decks.is_empty() {
+            return Self { spans };
+        }
+        // узлы — склеенные торцы; их вдвое больше ways, перебор квадратичен и
+        // на шести десятках мостов не стоит ничего
+        let mut nodes: Vec<Vec2> = Vec::new();
+        let node_at = |nodes: &mut Vec<Vec2>, point: Vec2| {
+            if let Some(found) = nodes
+                .iter()
+                .position(|known| known.distance(point) < JOIN_EPSILON)
+            {
+                return found;
+            }
+            nodes.push(point);
+            nodes.len() - 1
+        };
+        let mut ends: Vec<[usize; 2]> = Vec::with_capacity(decks.len());
+        let mut lengths: Vec<f32> = Vec::with_capacity(decks.len());
+        for &index in &decks {
+            let points = &map.roads[index].points;
+            let (first, last) = (points[0], points[points.len() - 1]);
+            ends.push([node_at(&mut nodes, first), node_at(&mut nodes, last)]);
+            lengths.push(polyline_length(points));
+        }
+
+        // компоненты связности по узлам — это и есть мосты
+        let mut parent: Vec<usize> = (0..nodes.len()).collect();
+        for [first, second] in &ends {
+            let (a, b) = (find(&mut parent, *first), find(&mut parent, *second));
+            if a != b {
+                parent[a] = b;
+            }
+        }
+        let roots: Vec<usize> = (0..nodes.len())
+            .map(|node| find(&mut parent, node))
+            .collect();
+
+        let mut degree = vec![0_usize; nodes.len()];
+        let mut span = vec![0.0_f32; nodes.len()];
+        for (deck, [first, second]) in ends.iter().enumerate() {
+            degree[*first] += 1;
+            degree[*second] += 1;
+            span[roots[*first]] += lengths[deck];
+        }
+
+        // Путь до ближайшего свободного торца. Граф крошечный (десятки рёбер),
+        // поэтому расслабление до сходимости, а не очередь с приоритетом.
+        let mut to_free: Vec<f32> = degree
+            .iter()
+            .map(|&count| if count == 1 { 0.0 } else { f32::INFINITY })
+            .collect();
+        for _ in 0..=decks.len() {
+            let mut moved = false;
+            for (deck, [first, second]) in ends.iter().enumerate() {
+                for (from, to) in [(*first, *second), (*second, *first)] {
+                    let through = to_free[from] + lengths[deck];
+                    if through < to_free[to] {
+                        to_free[to] = through;
+                        moved = true;
+                    }
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+
+        // Есть ли под мостом разрыв — вопрос всему мосту сразу: кусок над
+        // сушей рядом с куском над водой обязан получить ту же тень.
+        let underneath = Underneath::new(map);
+        let mut casts: Vec<bool> = span.iter().map(|&length| length >= SHORT_SPAN).collect();
+        for (deck, &index) in decks.iter().enumerate() {
+            let root = roots[ends[deck][0]];
+            if casts[root] {
+                continue;
+            }
+            casts[root] = probe_underneath(&map.roads[index].points, &underneath);
+        }
+
+        for (deck, &index) in decks.iter().enumerate() {
+            let [first, second] = ends[deck];
+            let root = roots[first];
+            spans[index] = Some(BridgeSpan {
+                span: span[root],
+                from_start: to_free[first],
+                from_end: to_free[second],
+                casts: casts[root],
+            });
+        }
+        Self { spans }
+    }
+
+    fn span(&self, road: usize) -> Option<&BridgeSpan> {
+        self.spans[road].as_ref()
+    }
+}
+
+/// Корень компоненты со сжатием пути.
+fn find(parent: &mut [usize], mut node: usize) -> usize {
+    while parent[node] != node {
+        parent[node] = parent[parent[node]];
+        node = parent[node];
+    }
+    node
+}
+
+/// Есть ли под этим настилом разрыв — проба по точке через каждые
+/// [`SHADOW_STEP`] метров.
+///
+/// Спрашивают только у короткого моста. Пропорциональной высоты мало:
+/// западный подход к мосту через Упу — это четыре way по 23–30 м с
+/// `bridge=yes` и `layer=1`, а на месте там ровная земля: насыпь, а не
+/// эстакада. Отличить насыпь от пролёта по тегам нельзя, зато можно спросить,
+/// есть ли под ней разрыв. Дороги в этот список не входят намеренно — именно
+/// вдоль дорог и лежат подходы, — а вода и путь под коротким настилом
+/// сомнений не оставляют.
 ///
 /// Длинному мосту вопрос не задаётся: на сотне метров насыпи не бывает, а
 /// перебирать контуры воды под каждым из них незачем.
-fn bridge_casts_shadow(points: &[Vec2], underneath: &Underneath) -> bool {
-    if polyline_length(points) >= SHORT_SPAN {
-        return true;
-    }
+fn probe_underneath(points: &[Vec2], underneath: &Underneath) -> bool {
     densify(
         &merge_close_points(points, false, SHADOW_STEP / 4.0),
         SHADOW_STEP,
@@ -521,7 +700,8 @@ pub fn spawn_roads(
     let mut bridge_fills = MeshBuilder::with_surface_coords();
     // тень моста — на то, над чем он проходит: воду, дорогу, пути
     let mut bridge_shadows = MeshBuilder::default();
-    let underneath = Underneath::new(map);
+    // мост — цепочка ways, и тень считается по всей цепочке
+    let bridges = Bridges::new(map);
     let mut wall_ribbons = MeshBuilder::default();
 
     for index in order {
@@ -547,10 +727,10 @@ pub fn spawn_roads(
             // Тень настила — тот же настил, сдвинутый по свету на высоту
             // моста. Ни один другой слой её не даёт: наземные тени считают
             // только дома, а мост через Упу — самая заметная вещь на воде.
-            if bridge_casts_shadow(&points, &underneath) {
+            if let Some(deck) = bridges.span(index).filter(|deck| deck.casts) {
                 push_bridge_shadow(
                     &mut bridge_shadows,
-                    &bridge_shadow_path(&points),
+                    &bridge_shadow_path(&points, deck),
                     road.curb_reach(),
                 );
             }
