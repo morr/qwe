@@ -31,6 +31,11 @@ fn band(points: &[Vec2], reach: f32) -> ShadowBand {
     }
 }
 
+/// Точка на оси x — нарезанные мосты тестов лежат вдоль неё.
+fn on_x(x: f32) -> Vec2 {
+    Vec2::new(x, 0.0)
+}
+
 /// Карта из одних мостовых ways — вход [`Bridges`].
 fn bridge_map(decks: Vec<RoadLine>) -> MapData {
     MapData {
@@ -234,14 +239,14 @@ fn a_bridge_along_the_sun_is_still_outlined() {
 fn the_shadow_edge_fades_and_dies_at_the_abutment() {
     let deck = [Vec2::ZERO, Vec2::new(0.0, 80.0)];
     let reach = 2.55;
+    let shadow = band(&deck, reach);
     let mut builder = MeshBuilder::default();
-    push_bridge_shadows(&mut builder, &[band(&deck, reach)]);
+    push_bridge_shadows(&mut builder, std::slice::from_ref(&shadow));
 
-    let penumbra = bridge_penumbra(polyline_length(&deck));
+    let penumbra = shadow.penumbra;
     // ширину меряем от самой ленты: она вся сдвинута по свету вбок, и ось
     // моста ей уже не центр
-    let path = bridge_shadow_path(&deck, &lone(&deck));
-    let centers: Vec<Vec2> = path.iter().map(|point| point.at).collect();
+    let centers: Vec<Vec2> = shadow.path.iter().map(|point| point.at).collect();
     let tips = [centers[0], centers[centers.len() - 1]];
     let (mut faded, mut ends) = (0.0_f32, 0.0_f32);
     for (position, color) in builder
@@ -332,11 +337,10 @@ fn a_short_bridge_needs_a_gap_under_it() {
 /// проваливается под настил посреди восьмисотметрового моста.
 #[test]
 fn a_glued_bridge_ramps_only_at_its_outer_ends() {
-    let at = |x: f32| Vec2::new(x, 0.0);
     let map = bridge_map(vec![
-        fixture::bridge(vec![at(0.0), at(60.0)], 12.0),
-        fixture::bridge(vec![at(60.0), at(90.0)], 12.0),
-        fixture::bridge(vec![at(90.0), at(150.0)], 12.0),
+        fixture::bridge(vec![on_x(0.0), on_x(60.0)], 12.0),
+        fixture::bridge(vec![on_x(60.0), on_x(90.0)], 12.0),
+        fixture::bridge(vec![on_x(90.0), on_x(150.0)], 12.0),
     ]);
     let bridges = Bridges::new(&map);
 
@@ -366,12 +370,11 @@ fn a_glued_bridge_ramps_only_at_its_outer_ends() {
 /// шести и дала бы вдвое более короткую тень, чем её же соседи.
 #[test]
 fn a_glued_bridge_takes_its_height_from_the_whole_span() {
-    let at = |x: f32| Vec2::new(x, 0.0);
-    let piece = vec![at(60.0), at(90.0)];
+    let piece = vec![on_x(60.0), on_x(90.0)];
     let map = bridge_map(vec![
-        fixture::bridge(vec![at(0.0), at(60.0)], 12.0),
+        fixture::bridge(vec![on_x(0.0), on_x(60.0)], 12.0),
         fixture::bridge(piece.clone(), 12.0),
-        fixture::bridge(vec![at(90.0), at(150.0)], 12.0),
+        fixture::bridge(vec![on_x(90.0), on_x(150.0)], 12.0),
     ]);
     let glued = *Bridges::new(&map).span(1).unwrap();
     assert_eq!(glued.span, 150.0);
@@ -391,12 +394,11 @@ fn a_glued_bridge_takes_its_height_from_the_whole_span() {
 /// моста — не мостик, и спрашивать у неё про разрыв под настилом нельзя.
 #[test]
 fn a_short_piece_of_a_long_bridge_keeps_its_shadow() {
-    let at = |x: f32| Vec2::new(x, 0.0);
-    let stub = vec![at(0.0), at(20.0)];
+    let stub = vec![on_x(0.0), on_x(20.0)];
     // по сухой земле: разрыва под настилом нет ни у куска, ни у моста
     let glued = bridge_map(vec![
         fixture::bridge(stub.clone(), 3.5),
-        fixture::bridge(vec![at(20.0), at(80.0)], 3.5),
+        fixture::bridge(vec![on_x(20.0), on_x(80.0)], 3.5),
     ]);
     assert!(Bridges::new(&glued).span(0).unwrap().casts);
 
