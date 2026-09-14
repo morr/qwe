@@ -931,7 +931,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **The branch falls through**, like the rail and tree-row ones: a way in OSM routinely
     carries `barrier=fence` alongside another feature's tags, and it has to become both.
     With a `return` there Tula lost a block and a park to the fence branch — caught by the
-    counts in the `osm map:` line, not by any test, which is why there is a test now.
+    counts in the `osm map:` line, not by any test, which is why there is a test now
+    (`a_fenced_block_becomes_both_a_fence_and_a_quarter`).
+  - **And it stands *above* the road branch**, beside the rail, tree-row and waterway
+    ones — the road branch does `return`, and a fence mapped along a path rides the very
+    same way as its `highway=*` (Paris and London carry one such way each). Below the
+    road branch that `return` ate the fence whole; pinned by
+    `a_fenced_path_becomes_both_an_alley_and_a_fence`. The industry cylinder is the
+    opposite case and sits lower, where its own `return` is what is wanted.
   - **The shadow is cast by the map's own sun**, so `rebuild_fences` is gated on
     `retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)` — the general Sun rule
     below, not an exception to it. Heights are constants of the kind (`FENCE_HEIGHT` 2 m,
