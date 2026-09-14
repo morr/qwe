@@ -633,16 +633,25 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the last bucket the dash is `min_bed` 9 m × `width_scale` 0.5 ÷ `MAX_ZOOM` 4.5 =
     exactly 1 px wide. That is why the contrast was bought back with the colour rather
     than by widening `width_scale` — the pixel arithmetic of this paragraph stays put.
+    Since the tone is all the sign has, "darker" is not enough and the test pins a
+    **floor on the contrast**: WCAG `(L + 0.05)` ratio of ballast to dash over bevy's
+    linear `luminance()`, at least `MIN_DASH_CONTRAST` 1.75. A plain luminance
+    difference is blind here — ~0.143 on both palettes — while the ratio shows the
+    disused track's real, thinner margin: active 2.69, disused 1.90. The floor lets the
+    disused tie lighten by 0.02 per sRGB channel (1.76) and fails at 0.03 (1.69), so
+    greying that palette further has to move its ballast with it.
     `min_bed` floors the ballast width on the last two buckets — 5 m is a pixel at city
-    scale, and the track would vanish before the roads it crosses. The numbers are derived from the screen size at
-    the **worst** (far) edge of each bucket, and they hold on **every** parsed bed width
-    (5 / 4 / 3.5 m), not only the mainline's: tie spacing never below ~6 px, no mark below
-    ~1 px. The second number that must hold across buckets is the **tie duty cycle**,
-    ~40% (the real 0.26 m in 0.65) — measured live: at 31% the ties stop being a texture,
-    become sparse marks, and the two white rails outweigh them into a ladder. Both,
-    plus the one-way progression (detail only ever falls away), that ties and dashes
-    never coexist, and that the dash of **every** palette is its own tie colour and so
-    darker than its own ballast, are pinned by `rail/tests.rs`.
+    scale, and the track would vanish before the roads it crosses. The numbers are
+    derived from the screen size at the **worst** (far) edge of each bucket, and they
+    hold on **every** parsed bed width (5 / 4 / 3.5 m), not only the mainline's: tie
+    spacing never below ~6 px, no mark below ~1 px. The second number that must hold
+    across buckets is the **tie duty cycle**, ~40% (the real 0.26 m in 0.65) — measured
+    live: at 31% the ties stop being a texture, become sparse marks, and the two white
+    rails outweigh them into a ladder. Both, plus the one-way progression (detail only
+    ever falls away), that ties and dashes never coexist, and that the dash of **every**
+    palette clears that contrast floor against its own ballast, are pinned by
+    `rail/tests.rs`. That the dash *is* the tie colour is not a test but a construction:
+    both fields of a palette are one `*_TIE` constant.
   - **What a bucket costs** (Tula, 69 km of non-tram track inside the map, measured on
     an M1 Max from the `rail meshing:` log line): bucket 4 45 k verts / 1 ms, bucket 2
     131 k / 3 ms, bucket 1 298 k / 9 ms, bucket 0 673 k / 23 ms — a one-off hitch on the
