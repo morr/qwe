@@ -47,6 +47,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::map::area_cut::AreaIndex;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
@@ -716,6 +717,8 @@ pub fn spawn_roads(
     let mut shadow_bands: Vec<ShadowBand> = Vec::new();
     // мост — цепочка ways, и тень считается по всей цепочке
     let bridges = Bridges::new(map);
+    // стоянки — чтобы резать их проезды по контуру
+    let lots = AreaIndex::new(&map.parking);
     let mut wall_ribbons = MeshBuilder::default();
 
     for index in order {
@@ -763,6 +766,34 @@ pub fn spawn_roads(
             RoadClass::Street => (&mut street_casings, &mut streets),
             RoadClass::Alley => (&mut alley_casings, &mut alleys),
         };
+        if road.parking_aisle {
+            // Проезд стоянки внутри её контура не рисуется: асфальт стоянки и
+            // есть проезд, а лента поверх него резала ряды мест. Снаружи — въезд
+            // до края стоянки, отрезанный конец ровный, без полудиска
+            fill.set_markings(None);
+            for run in lots.outside_runs(&points, 0.0) {
+                if style.casing {
+                    let width = road.width + 2.0 * casing_width(road.width);
+                    push_cut_ribbon(
+                        casing,
+                        &run.points,
+                        width,
+                        casing_color.to_linear(),
+                        style.join,
+                        run.clipped,
+                    );
+                }
+                push_cut_ribbon(
+                    fill,
+                    &run.points,
+                    road.width,
+                    color.to_linear(),
+                    style.join,
+                    run.clipped,
+                );
+            }
+            continue;
+        }
         if style.sidewalks
             && is_carriageway(road)
             && let Some(sidewalk) = sidewalk_width(road.width)
@@ -1137,6 +1168,25 @@ pub fn push_ribbon(
         return builder.push_polyline(points, width, color);
     };
     builder.push_ribbon(points, false, width, color, join, cap);
+}
+
+/// Лента куска дороги, отрезанного контуром: отрезанный конец (`clipped`,
+/// `[начало, конец]`) — ровный `Butt`, чтобы не торчать полудиском за край,
+/// остальные — как у стиля. При `Square` торцов нет вовсе, остаётся
+/// `push_polyline` с его выносом на полширины.
+fn push_cut_ribbon(
+    builder: &mut MeshBuilder,
+    points: &[Vec2],
+    width: f32,
+    color: LinearRgba,
+    join: RoadJoin,
+    clipped: [bool; 2],
+) {
+    let Some((join, cap)) = join.ribbon_shape() else {
+        return builder.push_polyline(points, width, color);
+    };
+    let caps = clipped.map(|cut| if cut { RibbonCap::Butt } else { cap });
+    builder.push_ribbon_capped(points, false, width, color, join, caps);
 }
 
 /// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При

@@ -549,7 +549,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     (13 of Tula's open channel ends lie inside a water polygon, most of them the Упа's
     own centreline inside its `riverbank`), and there its light edges would be two shoal
     lines across deep water, while across the bank rim its deep middle cut the shoal with
-    a rectangle — the artifact reported. So `WaterIndex::open_runs` cuts the smoothed
+    a rectangle — the artifact reported. So `area_cut::AreaIndex::outside_runs` cuts the smoothed
     axis at every water outline (edges in a 32 m grid; inside/outside asked once per
     stretch between crossings, not per link) and keeps the dry stretches; each **cut end
     reaches `WATER_SHORE_WIDTH` past the bank** (along the axis, straight on past its
@@ -965,6 +965,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour.
+  - **The OSM aisles are not drawn inside the lot** (`RoadLine::parking_aisle` from
+    `service=parking_aisle`, cut in `spawn_roads` by `area_cut::AreaIndex::outside_runs`
+    with reach 0 — the very cutter the channel mouths use, lifted out of `map/water.rs`
+    when this became its second caller). The lot's asphalt *is* the aisle, and a light
+    grey ribbon over it cut the stall rows — reported from a screenshot, where a painted
+    car stood across one. Outside the lot the entry is drawn up to the outline, the cut
+    end a `Butt` (a round cap would poke a light tongue into the darker lot). Lifting the
+    whole lot over the road layers was the rejected alternative: a lot outline that
+    overlaps a real street would swallow that street's markings and sidewalk. The stall
+    layout still ignores where OSM's aisle ran — its own `AISLE` gaps stand in for it.
+    Render-only: the navmesh, doors and tree planting still see the aisle as a road.
+    Tula: 90 aisle ways.
   - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.

@@ -1,4 +1,5 @@
 mod along;
+mod area_cut;
 // публичен по той же причине, что и `trees`: витрина `roof_gallery` строит
 // свои дома его же вызовами (`push_house`, `RoofShape`, `shape_facts`,
 // `material::RoofLook`)

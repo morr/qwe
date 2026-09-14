@@ -629,7 +629,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   stalls stay and cars stand on them. **The markings and the cars read the same
   `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a
   car would stand across its own line.
-  Tula: 170 lots.
+  **A parking aisle is not drawn inside its lot** (`RoadLine::parking_aisle`,
+  `service=parking_aisle`): the lot's asphalt *is* the aisle, and the ribbon cut the
+  stall rows; outside the lot the entry is drawn up to the edge with a flat end.
+  Render-only. Tula: 170 lots, 90 aisle ways.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. Two things in the **ribbon frame**, so they follow the lane and not
   the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —

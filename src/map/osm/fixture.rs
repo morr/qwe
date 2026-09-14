@@ -221,6 +221,7 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         oneway: false,
         roundabout: false,
         lanes: None,
+        parking_aisle: false,
     }
 }
 
