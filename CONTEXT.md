@@ -57,7 +57,8 @@ in `main.rs`.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   pitches → pitch markings → parking → parking markings → water → waterways →
-  sidewalks → alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
+  sidewalks → alley casings → alleys → road casings → roads → bridge shadows →
+  bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
@@ -502,7 +503,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
   slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
   it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
-  building layers with their shadows, tree crowns, cars, the roof material's `light`
+  building layers with their shadows, tree crowns, cars, the road layers (the bridge
+  shadow is baked into that mesh), the roof material's `light`
   uniform) and that the settings file is written from. One division of the slider costs a
   full building rebuild with its shadow union, so a drag across the scale would otherwise
   be seventy of them.
@@ -701,6 +703,44 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shadow lives on the map's own sun, so the layer rebuilds on the zoom bucket and on
   `SunOnMap`, never on the slider. Tula: 429 lines — 356 fences, 72 walls (one of them a
   retaining wall), 1 hedge.
+- **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
+  same shadow every other object does: its own band, offset through
+  `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
+  crosses. Nothing else produced it — the ground shadow layer only knows buildings — and a
+  bridge over the river is the most visible thing there is on water. Seven rules make it
+  read rather than lie, all in `bridge_shadow_path` / `push_bridge_shadows`:
+  **a bridge is a chain of ways, not one way** (`Bridges`) — OSM cuts a bridge up, and
+  Tula's 61 bridge ways are 56 bridges, the Упа crossing alone being 424 + 95 + 299 m;
+  the ways are glued **end to end** (`JOIN_EPSILON`, never `ways_joined`, which answers
+  «do these touch anywhere» and would fuse two footbridges that merely cross), and what
+  is glued is the *arithmetic* — the span and the distance to the nearest free end —
+  never the geometry, since pieces differ in width and three way-ends meet at one node on
+  Tula's own fork;
+  **height follows the span** (`SPAN_TO_HEIGHT` 1/8, capped at `BRIDGE_HEIGHT` 6 m) —
+  OSM's `bridge=yes` also marks embankment steps and pavements that span nothing, and a
+  6 m shadow under a 20 m path is the loudest lie a map can tell, because a shadow reads
+  as height; **a span under `SHORT_SPAN` (35 m) has to prove there is a gap under it** —
+  water or rail, never a road, since a road is exactly what an approach embankment runs
+  along (`probe_underneath` over `Underneath`, asked of the whole chain); **the offset
+  tapers to zero at the free ends of the chain** (`RAMP_SHARE` 0.25 of the span or
+  `RAMP_MAX` 25 m, whichever is shorter), where the deck lies on the ground — at an
+  internal joint it stays up, which is what the chain is for;
+  **the rise is additionally clamped by the span left ahead**, or the ramp — which climbs
+  faster than the arc advances — pushes the shadow past the deck's end as a dark wedge on
+  the street it joins; and the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on
+  each side, because a plate's shadow is its own silhouette translated, so a bridge
+  running along the sun hides all of it under itself; and **the edge is soft**, like every
+  other shadow on the map — a band fading to zero alpha, `PENUMBRA_SHARE` (0.3) of the
+  shadow's own length clamped between the car's 0.35 m and the house's 1 m, tapering with
+  the same rise, so a footbridge is blurred less than a flyover and an abutment gets no
+  halo. The centerline is densified to
+  `SHADOW_STEP` (2 m) first: the ramp lives in the vertices, and 42 of Tula's 61 bridges
+  are two-point ways whose every vertex is an end. The **cores are unioned**
+  (`i_overlay`, NonZero — the buildings' and fences' trick): OSM maps a bridge's pavement
+  as a parallel way of its own, and 28 pairs of Tula's bridges shadow each other into a
+  band of double darkness. The penumbra is laid per bridge, before the union, because its
+  width comes from the rise the union throws away — overlapping bands are the price, the
+  one the buildings already pay.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
@@ -784,7 +824,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
   polygon carries a gradient band along its contour, holes included: water a lighter
-  **shore** (3 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
+  **shore** (6 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
   median strip never bleeds its rim onto the road.

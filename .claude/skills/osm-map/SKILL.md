@@ -473,7 +473,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 - **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
   polygon is followed, in the same builder, by a gradient band along its outer ring and
   along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
-  gets a lighter **shore** (`WATER_RIM`, 3 m), park / wood / grass / sand an edge a few
+  gets a lighter **shore** (`WATER_RIM`, 6 m — at 3 m it read as the polygon's edging
+  rather than as a shoal), park / wood / grass / sand an edge a few
   percent darker than the fill (`*_RIM`, 2–3 m; the wood's the widest and darkest — shade
   under the canopy edge). The far edge is built from `miter_offsets` on the ring, with the
   side chosen by the ring's signed area (`outside` flips it for holes, whose band lies in
@@ -583,8 +584,134 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   and none of them may shift because the drawing changed. `smooth_path` is shared with
   the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
-  its class layers for the pair `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
-  (`Z_BRIDGE` 2.2): a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
+  its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
+  `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
+  (`Z_BRIDGE` 2.2). The **shadow** is the deck's own band, offset along `shadow_dir()` by
+  the deck height through the usual `shadow_length_scale()`, on a blended material of its
+  own (the flat white one would eat the vertex alpha). Nothing else produced it, because
+  the ground shadow layer only knows buildings, and a bridge over the river is the most
+  visible thing on the water. It sits **under** the deck and **over** what the bridge
+  crosses — except a railway, which is drawn above the bridge for its own reasons.
+  Eight decisions in `bridge_shadow_path` / `push_bridge_shadows` make it read instead of
+  lie, and every one of them was a bug report first:
+
+  - **A bridge is a connected chain of ways, not one way** (`Bridges`, `BridgeSpan`).
+    OSM cuts a bridge into pieces at every tag change: Tula's **61 bridge ways are 56
+    bridges**, and 8 of those ways are glued into 3 — the Упа crossing 424 + 95 + 299 m
+    (818 m), a footway 34 + 129 + 22 m (185 m), and 39 + 4 m. Per-way the shadow lied
+    twice over: the ramp below fired at every *internal* joint, where the deck is at full
+    height, so the shadow dipped under the deck twice in the middle of an 818 m bridge;
+    and `SHORT_SPAN` was applied to the piece, so a 22 m middle section of a 185 m bridge
+    was interrogated as a footbridge and could lose its shadow outright.
+    - **Glued end to end, not by `ways_joined`.** That predicate answers «do these two
+      polylines touch anywhere» — it is what decides whether a road joins a bridge for
+      the curb — and here it is wrong in both directions: on Tula it would fuse **two
+      pairs of footbridges that merely cross**, and a way-end landing in the *middle* of
+      another bridge (Tula has none, but nothing in the data forbids it) would turn a
+      branch into a continuation. What is matched is endpoint against endpoint, at the
+      same `JOIN_EPSILON` (0.5 m) — the tolerance is the price of the projection, and
+      that part is shared.
+    - **The geometry is not glued — the arithmetic is.** Two reasons, and either alone
+      is enough: pieces of one bridge may differ in width (one polyline cannot carry
+      two decks), and **three way-ends meet at one node** on Tula's own fork, the slip
+      road of the Упа interchange, where the three pieces are not a chain at all. So a
+      way keeps its own points and its own width, and takes from its bridge two numbers:
+      the **span** (the sum over the whole connected component) and, per end, the
+      distance to the nearest **free end** through the neighbouring ways. A fork costs
+      that model nothing: the distance runs along the shortest of the three branches,
+      the node is not a free end, and the deck there stays up.
+    - Distances come from relaxing over the way-graph until it converges (tens of edges
+      — a priority queue would be ceremony). A component with **no** free end at all — a
+      ring flyover — comes out at infinity, i.e. fully raised everywhere, which is right:
+      it never sits down on the ground.
+  - **A span under `SHORT_SPAN` (35 m) has to prove there is a gap under it**
+    (`probe_underneath` over `Underneath` every 2 m — water outlines, watercourse
+    channels, rails; **never roads**, because a road is exactly what an approach
+    embankment runs along). The question is put to the **whole chain** and answered once
+    for it, so a piece over dry land next to a piece over the river keeps the river's
+    answer. Proportional height was not enough on its own: the western
+    approach to the Упа crossing is four ways of 23–30 m carrying `bridge=yes` and
+    `layer=1`, and on the ground it is solid fill, which no tag distinguishes from a
+    span. A long way is never asked — there is no 100 m embankment — which also keeps the
+    probe off the bridges that would cost the most to test. `Underneath` precomputes an
+    AABB per outline for that: the probe is per 2 m of deck and a city carries up to a
+    thousand water outlines.
+  - **The height follows the span** (`bridge_height` = `SPAN_TO_HEIGHT` 1/8 of the length,
+    capped at `BRIDGE_HEIGHT` 6 m, so a span over 48 m is at the ceiling). It was a flat
+    6 m, and OSM hands `bridge=yes` to far more than spans: embankment steps, the pavement
+    beside a flyover, a 4 m plank over a storm drain. A 6 m shadow under a 20 m path that
+    stands on level ground is the loudest lie the map can tell, because **a shadow reads
+    as height** and nothing else on the map states it.
+  - **The centerline is densified to `SHADOW_STEP` (2 m) first** (`densify`). The ramp
+    below lives in the vertices, and **42 of Tula's 61 bridge ways carry exactly two
+    points** — the Упа crossing among them — so every vertex was an end, the rise was zero
+    everywhere, and the shadow landed exactly under the deck, i.e. nowhere. The ways that
+    did have vertices (a 571 m flyover with 42 of them, one per ~14 m) got a shadow that
+    stepped from vertex to vertex in visible teeth.
+  - **The offset ramps from zero at each free end of the chain** (smoothstep over
+    `RAMP_SHARE` 0.25 of the **span** capped at `RAMP_MAX` 25 m) — at the abutment the
+    deck is on the ground and casts nothing, and the constant-offset version poked a dark
+    band past the deck onto the street that joins it, which is exactly where a bridge
+    meets a road and where the eye is. The distance a point measures is its own arclength
+    **plus what lies beyond its way's joint** (`BridgeSpan::from_start` / `from_end`), so
+    an internal joint never ramps and the rise runs continuously across it — both ways
+    read the same number at the node they share.
+  - **The rise is clamped by the span left ahead of the shadow** (`room / |offset·t|`,
+    `room` measured through the chain to the end the offset points at). The ramp is not
+    enough on its own: a
+    smoothstep climbs faster than the arc advances, so on a short bridge the shadow
+    overtook its own end anyway and lay past the abutment as a wedge — the artifact that
+    survived two rounds of fixing the ramp.
+  - **The band is `SHADOW_SPREAD` (1 m) wider than the deck on each side**, tapering with
+    the same rise. A plate's shadow is its silhouette *translated*, so the offset splits
+    into a crosswise part (the visible strip beside the deck) and a lengthwise one (the
+    band slides along itself and stays under the deck) — a bridge running along the sun
+    azimuth has no crosswise part at all and showed nothing, which is what the footbridges
+    over the ponds did. The fringe is the water the deck cuts off from the sky plus the
+    railing shadow and the slab's thickness, and unlike the offset it barely depends on
+    the height.
+
+  - **The edge is soft, and the width comes from the span** (`bridge_penumbra`). Every
+    other shadow on the map fades at its edge — buildings `PENUMBRA_WIDTH` 1 m, cars and
+    fences `SHADOW_BLUR` 0.35 — and the deck's was a hard cut. The law is the one the car
+    already states: «a house's is a metre, three times ours, **because its shadow is three
+    to ten times longer**» — so the width is a share (`PENUMBRA_SHARE` 0.3) of the
+    shadow's *own* length, i.e. of `bridge_height(span) × shadow_length_scale()`, not a
+    constant. A bridge is the tallest thing casting a shadow here and the most varied (a
+    2 m plank over a pond against a 6 m flyover), which is exactly why a constant is
+    wrong. The ends of the clamp are the two numbers already on the map:
+    `PENUMBRA_MIN` 0.35 (nothing here has a softer edge than a parked car) and
+    `PENUMBRA_MAX` 1.0 (nothing has a softer one than a house). So a 16 m footbridge gets
+    0.36 m, a 40 m bridge 0.9, anything over 44 m the ceiling. The ends do **not** ride
+    the sun — they are constants of neighbouring layers — while the share does, through
+    `shadow_length_scale()`: a low sun lengthens the shadow and softens its edge.
+    - **It tapers by `rise`, not by direction.** Buildings, cars and fences taper theirs
+      by `direction · shadow_dir()` because those objects stand *on the ground*: their
+      shadow is hard where it meets the object and soft at the far end. A deck is a plate
+      *in the air*, so every point of its outline casts from the same height and the
+      penumbra is uniform all the way round — except at the abutments, where the deck
+      sits down and `rise` is zero. A directional taper would put a metre of soft shadow
+      past one deck end onto the street, which is the contact skirt the buildings removed.
+
+  Because the width varies along the band it is **not** a `push_ribbon`: the rails come
+  from `miter_offsets` scaled per point, and the core goes in as one `push_polygon` quad
+  per segment, adjacent quads sharing their edge vertex for vertex so one band never
+  doubles over itself. The penumbra is two more quad strips along those same rails
+  (`push_quad_gradient`, opaque on the rail, alpha 0 at the outer lip), and a segment
+  whose rise is zero at both ends emits none.
+
+  **The cores of all bridges are unioned** (`i_overlay`, NonZero — the buildings' and the
+  fences' construction), and that is measured, not precautionary: OSM maps a road bridge's
+  pavement as a **parallel way of its own** carrying the same `bridge=yes`, and on Tula
+  **28 pairs of different bridges** have shadow cores that overlap. In a translucent layer
+  that reads as a strip of double darkness running the whole length of the bridge.
+  **The penumbra is laid per bridge, before the union**, and cannot be moved after it: its
+  width is `rise`, the local height of the deck over the ground, and the union output is
+  contours with no `rise` on them. Dropping the taper instead is the option that costs
+  more (see the previous bullet). Two neighbours' bands may therefore overlap each other —
+  the price the building shadows already state and accept, since both fade to zero.
+
+  About the deck itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
   deck. The 2GIS look — the curb bands along both deck edges are what makes a bridge read
   as a bridge, so the curb draws **always**, independent of `RoadStyle::casing`, and is
@@ -1153,7 +1280,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
     effect is one merged mesh — and `rebuild_cars` is gated on
-    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)`,
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)
+    .or_else(retuned::<SunOnMap>)`,
     one registration, since two in one schedule could both fire in a frame and spawn the
     layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
     centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
@@ -1341,11 +1469,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       other after `SUN_SETTLE` (0.35 s) of quiet. Every rebuild and the prefs write are
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
       scale is a full building rebuild with its shadow union — most of it the union — plus
-      15 k crowns plus the car layer, and there are seventy divisions on the scale. (The
-      numbers that stood here, 77–86 ms on Tula with 47–56 of it the union, were read off the
-      `building meshing:` line through the slider itself on an M1 Max: absolute milliseconds
-      from the app are only comparable with each other, since App Nap decides them —
-      `examples/bench/map_meshing` is what re-measures the same build offline.)
+      15 k crowns plus the car layer plus the road layers, and there are seventy divisions
+      on the scale. (The numbers that stood here, 77–86 ms on Tula with 47–56 of it the
+      union, were read off the `building meshing:` line through the slider itself on an
+      M1 Max: absolute milliseconds from the app are only comparable with each other, since
+      App Nap decides them — `examples/bench/map_meshing` is what re-measures the same build
+      offline. The road layers' 230–460 k verts in 5–12 ms come off the `road meshing:`
+      line the same way.)
+      **The road layers are in that list because of the bridge shadow**, and it is the
+      only thing in them the sun moves: its offset is baked into the merged mesh, so
+      `rebuild_roads` is gated on `retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)`.
+      With `RoadStyle` alone that one shadow kept the sun the city loaded with while every
+      other shadow on the map followed the knob.
     - **The global is seeded in `Startup`, before `init_roof_material`.** The roof material
       is built once for the whole app and `apply_sun` runs in `PreUpdate`, which in the
       first `Main` pass is *after* `Startup`: without the seed the `light` uniform would
