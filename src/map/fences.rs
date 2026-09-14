@@ -6,22 +6,27 @@
 //! `retaining_wall` рисуется стеной) и одна живая изгородь.
 //!
 //! Забор сверху — это волосок в четверть метра, и держится он на снимке
-//! **тенью**: собственная линия почти не видна, а тень от неё лежит рядом
-//! тёмной ниткой. Поэтому рисуются обе, и тень — первой.
+//! **тенью**: собственная линия почти не видна, а тень от неё вытекает
+//! из-под неё тёмной полосой. Поэтому рисуются обе, и тень — первой.
 //!
 //! Ширина линии растёт с отдалением ([`FENCE_LODS`], приём трамвая): четверть
 //! метра — это меньше пикселя уже на 0.3 м/px, то есть ровно там, где забор
 //! обязан быть виден. Целиться в ~1.5 экранных пикселя честнее, чем рисовать
 //! честные 25 см и не показать ничего.
 //!
-//! **Навмеша заборы не касаются.** Настоящий забор непроходим, но 429 линий,
-//! режущих кварталы, отрезали бы дворы от улиц, а толпа ходит именно там; та
-//! же причина, по которой сквозь машины ходят насквозь.
+//! **Нарисованная ограда и непроходимая — одна и та же.** В навмеше ограда
+//! лежит со своей физической толщиной (`footprint::FENCE_BAND_WIDTH`), а не с
+//! шириной ленты на экране, и с проёмами там, где сквозь неё идёт дорога или
+//! открыта калитка по умолчанию (`footprint::fence_gaps`,
+//! `Navmesh::open_sealed_fences`). Здесь в тех же проёмах нет ни линии, ни
+//! тени (`footprint::fence_pieces`): сплошной забор поперёк тропинки, по
+//! которой идут пешки, врал бы о проходимости.
 
 use bevy::prelude::*;
 
-use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{FenceKind, FenceLine, MapData};
+use crate::map::footprint::{fence_gaps, fence_pieces};
+use crate::map::meshing::{MeshBuilder, sweep_convex};
+use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::roads::{RoadJoin, push_ribbon};
 use crate::map::surface::{self, LayerMaterial};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -98,7 +103,7 @@ pub fn rebuild_fences(
     if width <= 0.0 {
         return;
     }
-    let builder = mesh_fences(&map.fences, width);
+    let builder = mesh_fences(&map.fences, &map.roads, width);
     let vertices = builder.vertex_count();
     if builder.is_empty() {
         return;
@@ -125,31 +130,131 @@ pub fn rebuild_fences(
 
 /// Сначала все тени, потом все линии: иначе тень одного забора легла бы на
 /// соседний — то же правило, что у машин и вагонов.
-fn mesh_fences(fences: &[FenceLine], width: f32) -> MeshBuilder {
+///
+/// Рисуется ограда **с проёмами**: там, где сквозь неё идёт дорога или открыта
+/// калитка по умолчанию, нет ни линии, ни тени — это те же проёмы, через
+/// которые ходят пешки (`footprint::fence_gaps` / `fence_pieces`), и
+/// нарисованный сплошной забор поперёк тропинки врал бы о проходимости.
+fn mesh_fences(fences: &[FenceLine], roads: &[RoadLine], width: f32) -> MeshBuilder {
+    let gaps = fence_gaps(fences, roads);
+    let pieces: Vec<(FenceKind, Vec<Vec2>)> = fences
+        .iter()
+        .zip(&gaps)
+        .flat_map(|(fence, gaps)| {
+            fence_pieces(fence, gaps)
+                .into_iter()
+                .map(|piece| (fence.kind, piece))
+        })
+        .collect();
     let mut builder = MeshBuilder::default();
-    let shadow = SHADOW_COLOR.to_linear();
-    for fence in fences {
-        let height = match fence.kind {
-            FenceKind::Fence | FenceKind::Wall => FENCE_HEIGHT,
-            FenceKind::Hedge => HEDGE_HEIGHT,
-        };
-        let offset = shadow_dir() * (height * shadow_length_scale());
-        let shifted: Vec<Vec2> = fence.points.iter().map(|point| *point + offset).collect();
-        push_ribbon(&mut builder, &shifted, width, shadow, RoadJoin::Round);
-    }
-    for fence in fences {
-        let color = match fence.kind {
+    push_shadows(&mut builder, &pieces, width);
+    for (kind, points) in &pieces {
+        let color = match kind {
             FenceKind::Fence => FENCE_COLOR,
             FenceKind::Wall => WALL_COLOR,
             FenceKind::Hedge => HEDGE_COLOR,
         };
         push_ribbon(
             &mut builder,
-            &fence.points,
+            points,
             width,
             color.to_linear(),
             RoadJoin::Round,
         );
     }
     builder
+}
+
+/// Мягкий край тени, м — машинный (`cars/body.rs::SHADOW_BLUR`): тень забора
+/// того же порядка длины, что у машины, а не у дома с его метровой каймой.
+const SHADOW_BLUR: f32 = 0.35;
+
+/// Сторон у многоугольника, которым приближён круглый стык и торец ленты.
+const JOINT_SIDES: usize = 8;
+
+/// Тень всех оград — одной объединённой фигурой с мягким краем.
+///
+/// **Свип, а не сдвиг.** Забор — стенка высотой `h` и толщиной в ленту, и
+/// тень от неё — сумма Минковского ленты с отрезком света `[0, offset]`: она
+/// начинается **под** забором и вытекает из-под него. Сдвинутая копия ленты,
+/// что стояла здесь, при солнце 15° уезжала от двухметрового забора на 7.4 м
+/// — при ширине ленты в четверть метра это вторая ограда рядом, а не тень.
+/// Лента не выпукла, поэтому свип собирается по кускам, каждый из которых
+/// выпуклый: прямоугольник каждого звена и многоугольник каждого узла (круглые
+/// стыки и торцы ленты, `RoadJoin::Round`), и каждый заметается
+/// [`sweep_convex`] — тем же обходом, что у машин.
+///
+/// **Куски объединяются**, в отличие от машин: полупрозрачный слой, в котором
+/// тень звена и тень узла накладываются, темнел бы пятном на каждом изломе, а
+/// в частном секторе заборы стоят вплотную по границам участков, и при низком
+/// солнце тени соседних оград ложатся друг на друга по всей длине. Объединение
+/// (`i_overlay`, NonZero) снимает и то и другое разом — приём теней зданий.
+///
+/// Кайма сужается к забору по правилу зданий и машин: доля ширины на вершине
+/// — проекция её направления на свет, у основания ноль.
+fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], width: f32) {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::float::simplify::SimplifyShape;
+
+    let light = shadow_dir();
+    let half = width / 2.0;
+    let joint: Vec<Vec2> = (0..JOINT_SIDES)
+        .map(|side| {
+            let angle = side as f32 * std::f32::consts::TAU / JOINT_SIDES as f32;
+            Vec2::from_angle(angle) * half
+        })
+        .collect();
+    let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
+    let mut push = |outline: &[Vec2], offset: Vec2| {
+        contours.push(
+            sweep_convex(outline, offset)
+                .iter()
+                .map(Vec2::to_array)
+                .collect(),
+        );
+    };
+    for (kind, points) in pieces {
+        let height = match kind {
+            FenceKind::Fence | FenceKind::Wall => FENCE_HEIGHT,
+            FenceKind::Hedge => HEDGE_HEIGHT,
+        };
+        let offset = light * (height * shadow_length_scale());
+        for pair in points.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let Some(along) = (b - a).try_normalize() else {
+                continue;
+            };
+            let across = along.perp() * half;
+            // против часовой: `perp` поворачивает направление звена влево
+            push(&[a - across, b - across, b + across, a + across], offset);
+        }
+        for &point in points {
+            let polygon: Vec<Vec2> = joint.iter().map(|&corner| point + corner).collect();
+            push(&polygon, offset);
+        }
+    }
+
+    let color = SHADOW_COLOR.to_linear();
+    let fade = LinearRgba {
+        alpha: 0.0,
+        ..color
+    };
+    let penumbra = |direction: Vec2| direction.dot(light).max(0.0);
+    for shape in contours.simplify_shape(FillRule::NonZero) {
+        let mut rings = shape.into_iter().map(|contour| {
+            contour
+                .into_iter()
+                .map(Vec2::from_array)
+                .collect::<Vec<Vec2>>()
+        });
+        let Some(outer) = rings.next() else {
+            continue;
+        };
+        let holes: Vec<Vec<Vec2>> = rings.collect();
+        builder.push_polygon(&outer, &holes, color);
+        builder.push_inset_band_tapered(&outer, SHADOW_BLUR, true, penumbra, color, fade);
+        for hole in &holes {
+            builder.push_inset_band_tapered(hole, SHADOW_BLUR, false, penumbra, color, fade);
+        }
+    }
 }

@@ -26,6 +26,7 @@ fn input_with(roads: Vec<RoadLine>) -> PolymeshInput {
             tunnel: false,
         }],
         walls: vec![],
+        fences: vec![],
         roads,
     }
 }
@@ -89,6 +90,7 @@ fn a_route_crosses_chunks_through_the_only_gap_in_a_wall() {
             water: vec![],
             water_lines: vec![],
             walls,
+            fences: vec![],
             roads: vec![],
         }
     };
@@ -134,6 +136,7 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
         water: vec![],
         water_lines: vec![],
         walls: vec![],
+        fences: vec![],
         roads: vec![],
     };
     let mesh = build_polymesh(&input, 1.0, None, None).expect("not cancelled");
@@ -186,6 +189,7 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
         water: vec![river.clone()],
         water_lines: vec![],
         walls: vec![],
+        fences: vec![],
         roads,
     };
 
@@ -252,6 +256,7 @@ fn a_chunk_fully_covered_by_an_obstacle_builds_an_empty_layer() {
         water: vec![],
         water_lines: vec![],
         walls: vec![],
+        fences: vec![],
         roads: vec![],
     };
     let mesh = build_polymesh(&input, 0.2, None, Some(CHUNK_METERS)).expect("not cancelled");
@@ -387,6 +392,7 @@ fn a_snapped_start_stays_in_the_path_as_its_own_waypoint() {
         water: vec![],
         water_lines: vec![],
         walls: vec![],
+        fences: vec![],
         roads: vec![],
     };
     let mesh = build_polymesh(&input, 1.0, None, None).expect("not cancelled");

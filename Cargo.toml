@@ -53,6 +53,10 @@ path = "examples/bench/polymesh_bench.rs"
 
 # audit — офлайн-разбор геометрии меша, печатает отчёт
 [[example]]
+name = "fence_prune_audit"
+path = "examples/audit/fence_prune_audit.rs"
+
+[[example]]
 name = "polymesh_corner_audit"
 path = "examples/audit/polymesh_corner_audit.rs"
 

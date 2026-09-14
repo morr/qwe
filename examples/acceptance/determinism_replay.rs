@@ -69,7 +69,7 @@ fn main() {
     // JSON читается один раз, а `MapData` разбирается заново для каждого
     // прогона: она не `Clone`, а ресурс нужен каждому приложению свой
     let json = load_json();
-    let navmesh = build_navmesh(&parse_map(&json));
+    let navmesh = build_navmesh(parse_map(&json));
     let portal = snap_portal_position(&navmesh, CITY.portal_hint()).expect("no spot for portal");
     let app = |seed| replay_app(parse_map(&json), navmesh.clone(), portal, seed, HUMAN_COUNT);
 
@@ -145,11 +145,14 @@ fn parse_map(json: &str) -> MapData {
 }
 
 /// Та же последовательность, что и в загрузке игры: заливка, снап портала,
-/// прунинг недостижимого.
-fn build_navmesh(map: &MapData) -> Navmesh {
+/// калитки оград, прунинг недостижимого. Калитки ложатся в эту копию карты,
+/// а не в ту, что уходит в приложение, — прогон идёт по плоской сетке, и меш,
+/// которому они нужны, в нём не строится.
+fn build_navmesh(mut map: MapData) -> Navmesh {
     let mut navmesh = Navmesh::default();
-    navmesh.fill_from_mapdata(map);
+    navmesh.fill_from_mapdata(&map);
     let portal = snap_portal_position(&navmesh, CITY.portal_hint()).expect("no spot for portal");
+    navmesh.open_sealed_fences(&mut map, portal);
     let pruned = navmesh.prune_unreachable(world_to_tile(portal));
     println!("navmesh: pruned {pruned} unreachable tiles, portal at {portal:?}");
     navmesh

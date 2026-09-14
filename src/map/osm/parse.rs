@@ -363,6 +363,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         map.fences.push(FenceLine {
             points: points.clone(),
             kind,
+            gates: Vec::new(),
         });
     }
 

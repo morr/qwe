@@ -99,7 +99,7 @@ pub fn start_load_thread(job: MapLoadJob, navmesh: Arc<RwLock<Navmesh>>, city: C
 /// загрузки показывал, чем поток занят.
 fn build_navmesh(
     job: &MapLoadJob,
-    map: MapData,
+    mut map: MapData,
     arc_navmesh: &RwLock<Navmesh>,
     city: City,
 ) -> LoadedWorld {
@@ -131,6 +131,16 @@ fn build_navmesh(
             hint
         }
     };
+
+    // калитки — до прунинга и со снапнутым порталом: ограда, отрезавшая
+    // участок с дверями, открывается раньше, чем его выбросят. Пишутся в
+    // `map`, чтобы полигональный меш позже прочитал те же калитки
+    let started = std::time::Instant::now();
+    let gates = navmesh.open_sealed_fences(&mut map, portal);
+    info!(
+        "navmesh: opened {gates} fence gates in {:?}",
+        started.elapsed()
+    );
 
     job.set(JobState::Pruning);
     let started = std::time::Instant::now();

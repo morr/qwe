@@ -46,8 +46,8 @@ fn main() {
         .map(|value| value.parse().expect("radius must be a number"))
         .unwrap_or(0.4);
 
-    let map = common::load_map(CITY);
-    let navmesh = common::build_navmesh(&map, CITY);
+    let mut map = common::load_map(CITY);
+    let navmesh = common::build_navmesh(&mut map, CITY);
     let build = build_polymesh_from_map(&map, radius).expect("build was not cancelled");
     let (grid, chunk_size) = build.chunks();
     println!(
