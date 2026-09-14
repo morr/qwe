@@ -28,7 +28,7 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use crate::loading::AppState;
 use crate::map::buildings::material::RoofMaterial;
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
-use crate::map::spawn::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
+use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::settings::SURFACE_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/surface.wgsl";
@@ -54,8 +54,8 @@ pub struct SurfaceParams {
     pub tint: Vec4,
     pub marking_color: Vec4,
     /// Цвет отмели на кромке ленты (линейный; `a` не читается). Только у воды:
-    /// площадной воде отмель кладёт кайма полигона, а ленте русла — шейдер по
-    /// её координате поперёк, см. `shore_width`.
+    /// площадной воде отмель кладёт геометрия (`water::mesh_water_areas`),
+    /// а ленте русла — шейдер по её координате поперёк, см. `shore_width`.
     pub shore_color: Vec4,
     /// Амплитуда крупной «облачности» яркости и её шаг, м.
     pub mottle_amp: f32,
@@ -83,9 +83,9 @@ pub struct SurfaceParams {
     /// Отмель на кромках ленты, м (ноль — без отмели): от цвета
     /// `shore_color` на краю к вершинному цвету ленты на этой глубине — то же
     /// поле расстояний до берега, что у площадной воды
-    /// (`waterways::mesh_water_areas`). Вдоль ленты отмель гаснет в разрыве
+    /// (`water::mesh_water_areas`). Вдоль ленты отмель гаснет в разрыве
     /// («до разрыва» от нуля до минус `shore_width`): разрыв ставится только на
-    /// конце, отрезанном берегом площадной воды (`map::waterways`), и вода под
+    /// конце, отрезанном берегом площадной воды (`map::water`), и вода под
     /// ним — у той же глубины тот же цвет. Площадная заливка ленты не несёт
     /// (полуширина ноль) и отмели от шейдера не получает.
     pub shore_width: f32,

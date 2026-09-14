@@ -56,8 +56,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  pitches → pitch markings → parking → parking markings →
-  sidewalks → alley casings → alleys → road casings → roads → water (2.01) → waterways (2.02) → bridge shadows →
+  pitches → pitch markings → parking → parking markings → sidewalks → alley casings →
+  alleys → road casings → roads → water (2.01) → waterways (2.02) → bridge shadows →
   bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
@@ -188,7 +188,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     so a way that is both a fence and something else becomes both.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
-    watercourse kind that does **not** block the navmesh. Drawn (`map/waterways.rs`) only
+    watercourse kind that does **not** block the navmesh. Drawn (`map/water.rs`) only
     **outside area water**: the axis is cut at every water outline, and a cut end — a
     **mouth** — reaches `WATER_SHORE_WIDTH` (6 m) past the bank so the channel's own shore
     fades out exactly as the polygon's does. Render-only; the navmesh still blocks the
@@ -826,7 +826,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
   median strip never bleeds its rim onto the road.
-- **Shoal** (`map/waterways.rs::mesh_water_areas`) — water has **no rim**: its lighter
+- **Shoal** (`map/water.rs::mesh_water_areas`) — water has **no rim**: its lighter
   shore is a **distance field to the nearest bank**, `WATER_SHORE_COLOR` on the bank to
   `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m), over all water polygons **unioned** first.
   A narrow arm stays shallow across its whole width, and two polygons of one river meeting

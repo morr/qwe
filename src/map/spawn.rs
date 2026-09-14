@@ -17,7 +17,7 @@ use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
-use crate::map::waterways;
+use crate::map::water::{mesh_water_areas, mesh_water_lines};
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PARKING_LINES,
     Z_PITCH, Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY,
@@ -56,17 +56,6 @@ const TREE_ROW_CASING_COLOR: Color = Color::srgb(0.565, 0.729, 0.510);
 const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
-pub const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
-/// Цвет отмели на самом берегу — у площадной воды и у кромок ленты русла
-/// (`surface.wgsl`) один: отмель заворачивает из реки в русло, и два разных
-/// цвета дали бы шов ровно на устье.
-pub const WATER_SHORE_COLOR: Color = Color::srgb(0.78, 0.885, 0.945);
-/// Глубина отмели, м: на таком расстоянии от берега цвет доходит до
-/// `WATER_COLOR`. Шесть: на снимке отмель у берега шире, чем кажется с земли,
-/// и трёхметровая читалась просто кантом полигона, а не мелью. Та же ширина —
-/// заход ленты русла за берег площадной воды (`map::waterways`): на нём кромки
-/// ленты гаснут вместе с отмелью берега.
-pub const WATER_SHORE_WIDTH: f32 = 6.0;
 /// Стоянка — асфальт посветлее проезжей части: полотно улицы укатано, а
 /// двор со стоянкой выцветает и пылится.
 const PARKING_COLOR: Color = Color::srgb(0.412, 0.408, 0.404);
@@ -182,9 +171,9 @@ pub fn spawn_map(
     }
 
     // вода — не каймой по контуру, как зелень: отмель у неё — расстояние до
-    // ближайшего берега по всем полигонам сразу (`waterways::mesh_water_areas`)
+    // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
     let water_started = std::time::Instant::now();
-    let water = waterways::mesh_water_areas(&map.water);
+    let water = mesh_water_areas(&map.water);
     info!(
         "water meshing: {} areas, {} verts in {:.1?}",
         map.water.len(),
@@ -218,13 +207,13 @@ pub fn spawn_map(
         pitch::push_markings(&mut pitch_lines, area);
     }
 
-    let started = std::time::Instant::now();
-    let waterways = waterways::mesh_water_lines(&map.water_lines, &map.water);
+    let waterways_started = std::time::Instant::now();
+    let waterways = mesh_water_lines(&map.water_lines, &map.water);
     info!(
         "waterways meshing: {} ways against {} water areas in {:.1?}",
         map.water_lines.len(),
         map.water.len(),
-        started.elapsed()
+        waterways_started.elapsed()
     );
 
     let skipped: usize = [

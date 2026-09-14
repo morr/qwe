@@ -22,7 +22,7 @@ mod surface;
 mod tram;
 pub mod trees;
 mod wagons;
-mod waterways;
+mod water;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;

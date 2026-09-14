@@ -1,5 +1,6 @@
-//! Лента открытых русел (`waterways`) — отдельным слоем над дорогами, но под
-//! мостами, и **с вырезом там, где русло лежит внутри площадной воды**.
+//! Вода карты: площадная ([`mesh_water_areas`], слой `water`) и лента открытых
+//! русел ([`mesh_water_lines`], слой `waterways`) — отдельным слоем над дорогами,
+//! но под мостами, и **с вырезом там, где русло лежит внутри площадной воды**.
 //!
 //! Русло в OSM — осевая линия, и она не знает о полигоне реки, в который
 //! впадает: осевая Упы идёт внутри своего же `riverbank` на всём протяжении, а
@@ -31,7 +32,19 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
 use crate::map::roads::{self, RoadSmoothing};
-use crate::map::spawn::{WATER_COLOR, WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
+
+/// Цвет глубокой воды — площадной и ленты русла.
+pub const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
+/// Цвет отмели на самом берегу — у площадной воды и у кромок ленты русла
+/// (`surface.wgsl`) один: отмель заворачивает из реки в русло, и два разных
+/// цвета дали бы шов ровно на устье.
+pub const WATER_SHORE_COLOR: Color = Color::srgb(0.78, 0.885, 0.945);
+/// Глубина отмели, м: на таком расстоянии от берега цвет доходит до
+/// `WATER_COLOR`. Шесть: на снимке отмель у берега шире, чем кажется с земли,
+/// и трёхметровая читалась просто кантом полигона, а не мелью. Та же ширина —
+/// заход ленты русла за берег площадной воды ([`mesh_water_lines`]): на нём
+/// кромки ленты гаснут вместе с отмелью берега.
+pub const WATER_SHORE_WIDTH: f32 = 6.0;
 
 /// Шаг поля отмели, м: столько между двумя соседними офсетами берега. Внутри
 /// полосы цвет тянется градиентом, так что шаг решает не ступеньку, а то,
@@ -44,6 +57,9 @@ const SHOAL_ARC: f32 = 0.25;
 
 /// Кольца одной фигуры `i_overlay`: внешнее первым, дальше дырки.
 type Shape = Vec<Vec<[f32; 2]>>;
+
+/// Та же фигура в `Vec2`: внешнее кольцо и дырки ([`rings`]).
+type Rings = (Vec<Vec2>, Vec<Vec<Vec2>>);
 
 /// Площадная вода одним мешем: заливка и **отмель как поле расстояний до
 /// берега** — цвет в точке зависит только от того, как далеко до ближайшего
@@ -133,10 +149,10 @@ fn push_shoal_band(
     inner: &[Shape],
     inner_color: LinearRgba,
 ) {
-    let inner: Vec<(Vec<Vec2>, Vec<Vec<Vec2>>)> = inner.iter().map(rings).collect();
+    let inner: Vec<Rings> = inner.iter().map(rings).collect();
     for shape in shapes {
         let (outer, holes) = rings(shape);
-        let nested: Vec<&(Vec<Vec2>, Vec<Vec<Vec2>>)> = inner
+        let nested: Vec<&Rings> = inner
             .iter()
             // в дырке внешней фигуры лежит уже чужая вода — озеро на острове
             .filter(|(ring, _)| {
@@ -176,7 +192,7 @@ fn push_shoal_band(
 }
 
 /// Кольца фигуры `i_overlay` в `Vec2`: внешнее и дырки.
-fn rings(shape: &Shape) -> (Vec<Vec2>, Vec<Vec<Vec2>>) {
+fn rings(shape: &Shape) -> Rings {
     let mut contours = shape.iter().map(|contour| {
         contour
             .iter()

@@ -1,5 +1,5 @@
 use super::*;
-use crate::map::osm::fixture::{square, water_area};
+use crate::map::osm::fixture::{rect, square, water_area};
 use crate::map::osm::model::polyline_length;
 
 /// Вершины меша воды с долей глубины: 0 — цвет берега, 1 — полная глубина.
@@ -50,12 +50,7 @@ fn two_ponds_sharing_a_border_have_no_shoal_across_it() {
 fn a_narrow_arm_never_reaches_full_depth() {
     // 8 м поперёк: до берега не дальше 4 м, а полная глубина — на шести
     let strip = water_area(
-        vec![
-            Vec2::new(-4.0, -60.0),
-            Vec2::new(4.0, -60.0),
-            Vec2::new(4.0, 60.0),
-            Vec2::new(-4.0, 60.0),
-        ],
+        rect(Vec2::new(-4.0, -60.0), Vec2::new(4.0, 60.0)),
         Vec::new(),
     );
     let found = depths(&mesh_water_areas(&[strip]));
@@ -138,12 +133,7 @@ fn a_centerline_inside_its_own_river_is_not_drawn() {
 fn a_strip_of_water_narrower_than_two_shores_does_not_cut() {
     // протока 8 м поперёк русла: заходы по 6 м с двух сторон легли бы внахлёст
     let strip = water_area(
-        vec![
-            Vec2::new(-4.0, -50.0),
-            Vec2::new(4.0, -50.0),
-            Vec2::new(4.0, 50.0),
-            Vec2::new(-4.0, 50.0),
-        ],
+        rect(Vec2::new(-4.0, -50.0), Vec2::new(4.0, 50.0)),
         Vec::new(),
     );
     let path = [on_x(-100.0), on_x(100.0)];

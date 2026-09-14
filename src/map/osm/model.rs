@@ -311,7 +311,7 @@ const WATER_JOIN_EPSILON: f32 = 0.1;
 /// заливка навмеша меряет то же расстояние до отрезка, ещё и глушил бы вход в
 /// культверт кругом непроходимых тайлов).
 ///
-/// Правило одно на отрисовку (`waterways::mesh_water_lines`) и на заливку сетки
+/// Правило одно на отрисовку (`water::mesh_water_lines`) и на заливку сетки
 /// (`Navmesh::fill_from_mapdata`) — иначе слои разъедутся ровно на этот полудиск.
 pub fn water_line_caps(line: &WaterLine, lines: &[WaterLine]) -> [bool; 2] {
     let joins_culvert = |point: Vec2| {

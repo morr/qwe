@@ -214,10 +214,11 @@ in `CONTEXT.md` and the detail here in the same change.
   carrying both tags. Tula: 22 of 24 ways kept, 1.2 km.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
-  `Z_WATERWAY` (see **Waterways** under Rendering). Widths are drawing widths, not hydrology: OSM draws as a line what is
-  too narrow for a polygon, so a `river` line is narrower than the Упа (which is an
-  area). A plausible `width` tag (`WATER_WIDTH_RANGE`, 0.5..50 m) overrides the class
-  default. `parse/tags.rs::water_class` is a **whitelist** for the same reason `rail_class` is:
+  `Z_WATERWAY` (see **Waterways** under Rendering). Widths are drawing widths, not
+  hydrology: OSM draws as a line what is too narrow for a polygon, so a `river` line is
+  narrower than the Упа (which is an area). A plausible `width` tag
+  (`WATER_WIDTH_RANGE`, 0.5..50 m) overrides the class default.
+  `parse/tags.rs::water_class` is a **whitelist** for the same reason `rail_class` is:
   `waterway=*` also carries `riverbank` (that one is an area, and `area_kind` claims
   it), `dam`, `dock`, `lock_gate`, `waterfall`. Like the rail and tree-row branches,
   the waterway branch in `parse_way` runs before `highway` and **falls through** — a
@@ -233,7 +234,7 @@ in `CONTEXT.md` and the detail here in the same change.
   channel into several ways and the two caps meeting in a shared node fuse the joint;
   past a portal there is no more water, and the half-disk would jut into dry land and
   (the grid fill measures the same distance-to-segment) plug the culvert mouth with a
-  semicircle of blocked tiles. One rule, both layers: `waterways::mesh_water_lines` and
+  semicircle of blocked tiles. One rule, both layers: `water::mesh_water_lines` and
   `Navmesh::fill_from_mapdata`. The **mouth** — where the drawing cuts the channel at an
   area-water outline — is the opposite case: render-only, and the grid keeps its caps
   (the polygon blocks those tiles anyway).
@@ -412,7 +413,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   about; there is no `measure_roads` / `measure_rails` / `measure_tram` / `measure_surface`,
   and adding one is the way to extend the bench when a road-style or surface comparison
   needs the same treatment.
-- **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
+- **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, water and waterways in
+  `map/water.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
   sidewalks, alleys, roads, rail layers, tram, building layers, walls): `MeshBuilder`
@@ -437,7 +439,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
   (three octaves from `grain_scale` down to a quarter), **speckle** (a thresholded noise
   field → sparse dark dots, grass tufts and undergrowth on Park/Grass/Wood), **drift** (the
-  mottle slides with `globals.time` — only Water), and the **markings** block (Street —
+  mottle slides with `globals.time` — only Water), **shore** (`shore_color` /
+  `shore_width` — only Water: the channel ribbon's shoal by its `across`, see
+  **Waterways**), and the **markings** block (Street —
   a bridge deck is the same kind and carries its street's lines; a footbridge in the same
   mesh has no markings code and stays bare). The zoom rule is one function,
   `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
@@ -464,8 +468,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   pixel size.
   The material demands the **`Ribbon` vertex attribute** (`meshing::ATTRIBUTE_RIBBON`,
   `[across, to-break, half width, markings code]` in metres: *to-break* is the signed
-  distance to the nearest marking break, the code is `Markings::encode`, `lanes·2 +
-  oneway`, 0 for none) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
+  distance to the nearest break — a marking break on a street, a mouth on a channel —
+  the code is `Markings::encode`, `lanes·2 + oneway`, 0 for none) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
   `push_ribbon` / `push_ribbon_broken` fill it from the ribbon frame (quads: ±half width;
   join fans: the outer side; round caps: the projection onto the normal, with *to-break*
   extrapolated past the node along the last quad's slope), polygons get zeros. It costs
@@ -485,7 +489,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `MIN_RIM_WIDTH` (0.2 m) is pushed at all. Holes take the width the outer ring settled
   on. No z-slot: opaque 2D meshes test depth with `GreaterEqual`, so within one mesh the
   band pushed after the fill wins. **Water is not rimmed** — see **Shoal**.
-- **Shoal** (`map/waterways.rs::mesh_water_areas`, the `water` layer at `Z_POND`) — the
+- **Shoal** (`map/water.rs::mesh_water_areas`, the `water` layer at `Z_POND`) — the
   light shallows of area water, as a **distance field to the nearest bank**: the colour at
   a point depends only on how far the nearest bank is, `WATER_SHORE_COLOR` on it and
   `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m — at 3 m it read as the polygon's edging rather
@@ -515,7 +519,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - A triangle whose three vertices sit on one ring is flat-coloured; on a 0.5 m band that
     error is under one step.
   - Cost: logged as `water meshing:`.
-- **Waterways** (`map/waterways.rs`, the `waterways` layer at `Z_WATERWAY` 2.02,
+- **Waterways** (`map/water.rs::mesh_water_lines`, the `waterways` layer at `Z_WATERWAY` 2.02,
   `SurfaceKind::Water`) — the open channels, and two decisions, both from screenshots
   of the Упа's southern arm (`waterway=river` 221646296 at `cam 4366 3254`):
   - **Water lies over every road ribbon and under the bridge shadow — both layers**:
