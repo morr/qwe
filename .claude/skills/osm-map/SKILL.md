@@ -907,10 +907,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     stay — they are the door generator's own (`osm/entrances/index.rs`), extracted while
     this layer existed and its only surviving trace.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
-  actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 0.75 and one
-  markings layer at 0.76, the parking pair's shape exactly: the paint is flat
+  actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 2.003 and one
+  markings layer at 2.006, the parking pair's shape exactly: the paint is flat
   `ColorMaterial`, the surface carries `SurfaceKind::Ground` (a neutral mottle — a
   football field must not get the street's asphalt grain).
+  - **Over every road ribbon, under water.** It sat at 0.75, under the sidewalks and
+    alleys, and OSM routinely runs yard footways straight across a field — reported
+    from a screenshot of a Tula courtyard where the paths cut the pitch into pieces. On
+    a photo the field is whole and the path stops at its edge. Render-only: a pitch
+    blocks nothing on the navmesh, so pawns still walk the path across it. The price is
+    stated: parking (0.8) now lies under a pitch where the two overlap, which the data
+    almost never does.
   - **The kind is decided in three steps** (`parse/tags.rs::pitch_kind`), because `sport`
     is missing on a quarter of Tula's pitches: `leisure` first (`track` → `Track`,
     `playground` → `Playground`, `sports_centre`/`stadium` → `Ground`), then `sport` on a

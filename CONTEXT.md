@@ -605,7 +605,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the air a crown has no outline, it has a shaded edge. Detail in the `osm-map` skill's
   `references/trees.md`.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
-  playground|sports_centre|stadium`), `Z_PITCH` 0.75 with the markings at 0.76. What a
+  playground|sports_centre|stadium`), `Z_PITCH` 2.003 with the markings at 2.006 — **over every road ribbon**, under
+  water: OSM runs yard footways across a field, and on a photo the field is whole. What a
   courtyard is *made of* on a photo: a green football field with white lines, a blue
   basketball box, the rust-orange oval of a running track, the sandy patch of a
   playground. `PitchKind: Soccer | Hard | Track | Playground | Ground` decides the
