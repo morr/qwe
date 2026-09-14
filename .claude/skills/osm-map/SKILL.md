@@ -756,10 +756,25 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   code could ever deliver.
 - **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **11**.
   Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
-  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)` and on nothing else — the
-  settled sun, never `SunStyle`, like every other rebuild — and the system stands on its
-  own rather than in the zoom-bucket chain, because there is no zoom bucket here: a
-  cylinder is visible exactly as far as its shadow is.
+  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>).or_else(retuned::<IndustryStyle>)`
+  and on nothing else — the settled sun, never `SunStyle`, like every other rebuild — and
+  the system stands on its own rather than in the zoom-bucket chain, because there is no
+  zoom bucket here: a cylinder is visible exactly as far as its shadow is.
+  **One registration carrying all three conditions, never three registrations**: the layer
+  arrived with its `rebuild_industry` listed twice in `Update`, and two copies of one
+  system in one schedule can both fire in a frame — the second despawns by a query taken
+  before the first one's commands were applied, so the layer is spawned twice. That is the
+  same trap the buildings' `or_else` chain is written against.
+  - **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
+    the `Industry` row of the **Buildings** section (`ui/buildings.rs`), the tram's
+    arrangement exactly, and for the tram's reason: its own resource rather than a
+    `BuildingHeightMode` case, so a toggle rebuilds this layer instead of remeshing every
+    building layer. Off, because a city carries a dozen cylinders standing on its edges
+    while a chimney's shadow runs fifty metres — at the city zoom that is a dark streak
+    from nothing visible. The invisible case goes through the same rebuild — despawn the
+    old layer, build no new one — so there is no second path that could forget the
+    despawn. It is read with the buildings and not with the roads because a cylinder
+    stands on the ground and leans by the very `drawn_lift` a house does.
   - **"Like a house" is literal, and shared in code**: the cylinder's shadow is drawn in
     exactly the three modes a house's is (`BuildingHeightMode::casts_shadows()` — the
     mode list lives there once and both layers ask it; in `Facade` and `Extrusion` a

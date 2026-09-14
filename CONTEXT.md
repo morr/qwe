@@ -645,6 +645,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   it. **Only an explicitly above-ground pipeline is kept** (`location=
   overground|overhead|bridge`) — the inverse of the rail and waterway rule, because an
   untagged pipeline in OSM is buried. Neither touches the navmesh, like the trees.
+  **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
+  the `Industry` row of the Buildings section, the tram's arrangement exactly: its own
+  resource, so a toggle rebuilds this layer and nothing else.
   Tula: 8 chimneys, 2 water towers, 22 pipelines (1.2 km); Berlin has 2846
   cylinders.
 - **Standing wagons** (`map/wagons.rs`) — a station throat with empty rails reads as a
@@ -790,6 +793,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **CarStyle** sits in the same section for the same reason and with the same shape —
   `visible` (**on** by default) and `occupancy` (the share of parking places taken, 0.45),
   the `Cars` and `Occupancy` rows; a change goes through `rebuild_cars` alone.
+  **IndustryStyle** is the third of that kind — `visible` alone, **off** by default, the
+  `Industry` row of the **Buildings** section (a cylinder stands on the ground and leans
+  with the houses, so it is read with them); a change goes through `rebuild_industry`
+  alone.
 - **map_meshing** (`examples/bench/map_meshing.rs`) — offline measurement of the layer build,
   `cargo run --example map_meshing -- [city slug]`: vertices and milliseconds per
   building layer for every height mode × roof-clutter bucket, plus the car layer, straight

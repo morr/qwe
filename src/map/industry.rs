@@ -30,6 +30,7 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
@@ -69,6 +70,24 @@ const PIPE_COLOR: Color = Color::srgb(0.678, 0.671, 0.643);
 #[derive(Component)]
 pub struct IndustryLayerTag;
 
+/// Единственная ручка промзоны — рисовать её или нет; строка `Industry` в
+/// секции Buildings (`ui/buildings.rs`), пишется и по BRP, сохраняется между
+/// запусками. Правка пересобирает только слой промзоны
+/// ([`rebuild_industry`]) — держать тумблер в
+/// [`BuildingHeightMode`](crate::map::BuildingHeightMode) значило бы гнать
+/// полную пересборку зданиевых слоёв на каждое переключение цилиндров.
+///
+/// **Выключена по умолчанию**, по той же причине, что и трамвай: цилиндров на
+/// город десяток, стоят они по окраинным площадкам, а тень трубы уходит на
+/// полста метров и на общем плане читается пятном неизвестно от чего —
+/// промзона включается, когда на неё смотрят.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "industry")]
+pub struct IndustryStyle {
+    pub visible: bool,
+}
+
 /// Тон верха и стены. Металл резервуара светлый и холодный, бетон трубы
 /// тёмный и тёплый — на снимке это два разных материала, и на общем плане
 /// только по тону их и различить.
@@ -97,10 +116,17 @@ pub fn rebuild_industry(
     mut materials: ResMut<Assets<ColorMaterial>>,
     map: Res<MapData>,
     mode: Res<BuildingHeightMode>,
+    style: Res<IndustryStyle>,
     existing: Query<Entity, With<IndustryLayerTag>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
+    }
+    // выключенный слой идёт через ту же пересборку, что и трамвай: деспавн
+    // старого и никакого нового — второй дороги, на которой можно забыть
+    // деспавн, тогда просто нет
+    if !style.visible {
+        return;
     }
     if map.structures.is_empty() && map.pipes.is_empty() {
         return;

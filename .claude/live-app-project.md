@@ -205,7 +205,7 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
-`RoadStyle`, `CarStyle`, `SurfaceStyle`,
+`RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`.
@@ -262,6 +262,7 @@ $b res set RoadStyle .sidewalks false             # тротуары / разм�
 $b res set RoadStyle .markings false
 $b res set CarStyle .visible false                # слой припаркованных машин
 $b res set CarStyle .occupancy 1.0                # …и доля занятых мест, 0..1
+$b res set IndustryStyle .visible true            # промзона: цилиндры и теплотрассы (по умолчанию off)
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
