@@ -129,8 +129,25 @@ did not fit 1080 px and ran off the top of the screen.
   click steps down; `Primary` while paused. It reads `Pointer<Click>` itself instead of
   `Activate`, which fires for *any* mouse button and would make one right click move both
   ways.
-- **Sim tab** (`ui/stats.rs`) — three sections. **World**: `Deterministic` and the `Seed`
-  field + `new`. **Demon**: the three `DemonStyle` knobs — **Max demons** (0…500, step 5),
+- **Sim tab** (`ui/stats.rs`, `ui/siege.rs`) — four sections. **World**: `Deterministic` and the `Seed`
+  field + `new`. **Siege** (`ui/siege.rs`): four `On`/`Off` cycle rows on `SiegeView`
+  (persisted, group `siege`, all on by default) — what of the M1 siege is drawn on the map.
+  **Territory** — one sprite over `MAP_SIZE` at `Z_TERRITORY` (5.32, between the polymesh
+  overlay and the district debug overlay), a texel per label-raster cell (8 m), sampled
+  **linear** so a district reads as a stain, not as pixels; colour by `territory_color`, in
+  order: corrupted — the portal's violet at 0.42, growing — the same violet 0.08 → 0.34 by
+  progress, **held** (on the front with a standing bastion, `Corruption::on_front` +
+  `BastionsStanding`) — amber, the heart's district — gold, else transparent. The
+  texel → district map is built once per `Districts`, and the texture is rebuilt only when
+  the FNV key (progress in 16 shades + held flag per district) changes, and not more
+  often than every 0.25 s of **real** time — at 30× districts cross a shade nearly every
+  frame. **Health bars** — two child sprites per bastion (`On<Add, Bastion>`: a dark back
+  and a fill, 18 × 4 m over the marker), shown only while wounded and not a ruin; resized
+  on `Changed<Health>`. **Front** — a gizmo ring around each standing bastion on the front,
+  the very set `demon::besiege` targets. **Siege lines** — a gizmo arrow from each Brute to
+  its `AttackTarget`. All four are `Update` cosmetics under `in_state(Playing)`; the
+  simulation never reads them. The HUD counters gained two rows next to `To heart`:
+  **Corrupted** (`N / districts`) and **Bastions** (`standing / total`). **Demon**: the three `DemonStyle` knobs — **Max demons** (0…500, step 5),
   **Speed** (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows
   print as percent, a bare `1.3` on the panel says nothing. **Spawn every** stood here
   until the interval spawner went (M1: demons are bought with souls, not dripped). **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a

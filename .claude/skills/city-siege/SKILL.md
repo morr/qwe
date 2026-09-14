@@ -91,6 +91,16 @@ a restart replays the census on the same ticks, and corruption (which will read 
 stays inside the run fingerprint. Not run state — it recounts itself within a second of
 any restart, so it has no `WorldStarted` observer.
 
+## What the player sees (`ui/siege.rs`)
+
+The siege layer is drawn for the player by `SiegeView` (Sim tab → Siege; mechanism in the
+`ui-panels` skill): territory by corruption progress, amber where a standing bastion holds
+the front, the heart gold; bars over wounded bastions; rings around front bastions; arrows
+from Brutes to their targets; `Corrupted` / `Bastions` rows in the HUD. **The front** is
+one predicate, `Corruption::on_front(districts, district)` — uncorrupted with a corrupted
+neighbour — shared by the ring, the amber territory and `demon::besiege`, so what is drawn
+as the front is exactly what the Brutes go for.
+
 ## Debug overlay (`ui/debug/overlays.rs::sync_district_overlay`)
 
 `DebugDistricts` (Debug tab, row `Districts`; hotkey `T`; persisted like the other

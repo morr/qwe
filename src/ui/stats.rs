@@ -51,6 +51,10 @@ enum StatRow {
     /// Переходов от скверны до сердца (`Corruption::to_heart`); `-` — сердца
     /// нет или оно отрезано.
     ToHeart,
+    /// Осквернённых районов из всех: `12 / 161`.
+    Corrupted,
+    /// Стоящих бастионов из всех: `140 / 157`.
+    Bastions,
 }
 
 /// Кнопка призыва — на самой кнопке (гасится, когда душ не хватает).
@@ -197,7 +201,7 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
     row
 }
 
-/// HUD-блок счётчиков: три живых числа прогона поверх карты, **вне** вкладок.
+/// HUD-блок счётчиков: живые числа прогона поверх карты, **вне** вкладок.
 ///
 /// Не в секции World вкладки Sim, хотя они и про прогон: за счётчиками смотрят
 /// непрерывно, и прятать их за выбором вкладки значило бы смотреть на симуляцию
@@ -225,6 +229,8 @@ fn render_hud_counters(mut commands: Commands, panes: Res<SettingsPanes>) {
                 count_row("Demons", StatRow::Demons),
                 count_row("Souls", StatRow::Souls),
                 count_row("To heart", StatRow::ToHeart),
+                count_row("Corrupted", StatRow::Corrupted),
+                count_row("Bastions", StatRow::Bastions),
             ],
         ))
         .id();
@@ -417,6 +423,8 @@ fn sync_world_counts(
     demons: Query<&DemonKind, With<Demon>>,
     souls: Res<Souls>,
     corruption: Res<crate::corruption::Corruption>,
+    districts: Res<crate::district::Districts>,
+    bastions: Query<Has<crate::bastion::RuinTag>, With<crate::bastion::Bastion>>,
     mut labels: Query<(&StatRow, &mut Text)>,
 ) {
     for (row, mut text) in &mut labels {
@@ -433,6 +441,12 @@ fn sync_world_counts(
             StatRow::ToHeart => corruption
                 .to_heart
                 .map_or_else(|| "-".to_string(), |hops| hops.to_string()),
+            StatRow::Corrupted => format!("{} / {}", corruption.corrupted(), districts.len()),
+            StatRow::Bastions => {
+                let ruined = bastions.iter().filter(|&ruined| ruined).count();
+                let total = bastions.iter().len();
+                format!("{} / {total}", total - ruined)
+            }
         };
         text.set_if_neq(Text(value));
     }

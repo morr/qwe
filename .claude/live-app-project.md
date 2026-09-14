@@ -298,6 +298,9 @@ $b res set DebugDoors .0 true         # tuple structs: field .0
 $b res set DebugGrid .0 true
 $b res set DebugNavmesh .0 true       # grid overlay: the `Show` row under Algo: Navmesh
 $b res set DebugDistricts .0 true     # district overlay (hotkey T); `res get Districts` for the model
+$b res set SiegeView .territory false # siege layer (Sim tab, Siege): territory / health_bars / front / siege_lines
+# to see a health bar without waiting for a Brute: wound a bastion by hand (full type path)
+$b insert <bastion> '{"qwe::combat::Health":{"hp":110.0,"max":261.5}}'
 $b res set PolymeshDebug .enabled true            # Algo: Navmesh (false) ⇄ Polymesh (true)
 $b res set PolymeshDebug .show false              # polymesh overlay off, routing untouched
 $b res set DrawMovePaths .0 true

@@ -28,6 +28,7 @@ mod outcome;
 mod roads;
 mod rows;
 mod shell;
+mod siege;
 // `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
 // нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
 // поднять не может — он тянет панели, карту и настройки
@@ -463,9 +464,13 @@ impl Plugin for UiPlugin {
             (surfaces::UiSurfaceStylePlugin, sun::UiSunStylePlugin),
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
-            // и плашки поверх карты — тоже вложенным: плашка исхода была
+            // и слой M1 поверх карты — тоже вложенным: плашка исхода была
             // шестнадцатой
-            (brp::UiBrpBadgePlugin, outcome::UiOutcomePlugin),
+            (
+                brp::UiBrpBadgePlugin,
+                outcome::UiOutcomePlugin,
+                siege::UiSiegePlugin,
+            ),
         ))
         .add_systems(Update, apply_panel_font)
         .add_systems(

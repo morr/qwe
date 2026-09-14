@@ -1738,6 +1738,13 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
   spawned by one system per section plugin.
+- **Siege view** (`SiegeView`, `ui/siege.rs`, Sim tab → Siege) — the M1 siege drawn for the
+  player, all four parts toggleable: **territory** (corrupted districts violet, growing ones
+  paler, a district **held** by a standing bastion on the front amber, the heart gold),
+  **health bars** over wounded bastions, a ring around **front** bastions
+  (`Corruption::on_front` — the same predicate the Brute's ladder uses) and **siege lines**
+  from each Brute to its target. Cosmetic only; the district debug overlay (T) stays for
+  district borders.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

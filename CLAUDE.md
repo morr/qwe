@@ -323,6 +323,9 @@ step when adding one):
 | bastions (and ruins — same entity, retagged) | `bastion/mod.rs::spawn_bastions` |
 | navmesh overlay | `ui/debug/overlays.rs::sync_navmesh_overlay` |
 | conifer noise overlay | `ui/debug/overlays.rs::sync_conifer_noise_overlay` |
+| district overlay | `ui/debug/overlays.rs::sync_district_overlay` |
+| siege territory layer | `ui/siege.rs::sync_territory_layer` |
+| bastion health bar (back + fill) — **children** of the bastion, no component of their own: despawn is recursive | `ui/siege.rs::attach_health_bar` |
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |
 | test walker | `dev.rs::on_spawn_test_walker` |
 
