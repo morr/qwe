@@ -58,8 +58,10 @@ in `main.rs`.
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   pitches → pitch markings → parking → parking markings → water → waterways →
   sidewalks → alley casings → alleys → road casings → roads → bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → cars → portal stain → corpses → portal → buildings (5) →
-  roof shadows (5.05) → units → souls (18) → tree shadows → trees (20). Four live in their
+  → rail ties → rail steel → tram → cars → pipe shadows (2.76) → pipes (2.77) →
+  portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
+  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
+  → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
@@ -628,6 +630,26 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shows up exactly where the lines do — a one-lane street, a markings-off style, and any
   areal fill of the same `SurfaceKind::Street` material (the parking lot among them,
   which carries no ribbon at all) all stay flat.
+- **Industry** (`map/industry.rs`) — what gives an industrial belt away from the air is
+  not the sheds (those are the same boxes as everywhere) but **round spots and their
+  shadows**, and the overhead heating main. `MapData::structures` holds the cylinders
+  (`man_made=storage_tank|silo|chimney|water_tower|gasometer`, `Structure`: centre,
+  radius, height, kind) — each drawn as three layers the way a house is: the shadow (the
+  **sweep** of its disc along the light, not a shifted disc — a cylinder is solid from
+  the ground up), the visible wall (the **near** half — the one turned away from the same
+  `Lean` the houses use, since the top leans away from the camera — one quad per facet
+  shaded by `shade_by_light`, which is what makes it read round instead of faceted) and the top with a darker rim. A chimney is a 2.5 m circle nobody
+  would notice and a 36 m shadow everybody does. `MapData::pipes` holds the overhead
+  pipelines (`man_made=pipeline`, `PipeLine`) — a line and its shadow, but on 3 m
+  trestles, so it steps over everything standing on the ground rather than stopping at
+  it. **Only an explicitly above-ground pipeline is kept** (`location=
+  overground|overhead|bridge`) — the inverse of the rail and waterway rule, because an
+  untagged pipeline in OSM is buried. Neither touches the navmesh, like the trees.
+  **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
+  the `Industry` row of the Buildings section, the tram's arrangement exactly: its own
+  resource, so a toggle rebuilds this layer and nothing else.
+  Tula: 8 chimneys, 2 water towers, 22 pipelines (1.2 km); Berlin has 2846
+  cylinders.
 - **Standing wagons** (`map/wagons.rs`) — a station throat with empty rails reads as a
   diagram; half the area of a real one is taken by standing stock. Same trick as the
   parked cars, aimed at where they stand: wagons go **only on service track**
@@ -771,6 +793,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **CarStyle** sits in the same section for the same reason and with the same shape —
   `visible` (**on** by default) and `occupancy` (the share of parking places taken, 0.45),
   the `Cars` and `Occupancy` rows; a change goes through `rebuild_cars` alone.
+  **IndustryStyle** is the third of that kind — `visible` alone, **off** by default, the
+  `Industry` row of the **Buildings** section (a cylinder stands on the ground and leans
+  with the houses, so it is read with them); a change goes through `rebuild_industry`
+  alone.
 - **map_meshing** (`examples/bench/map_meshing.rs`) — offline measurement of the layer build,
   `cargo run --example map_meshing -- [city slug]`: vertices and milliseconds per
   building layer for every height mode × roof-clutter bucket, plus the car layer, straight

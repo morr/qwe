@@ -11,7 +11,8 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, PitchKind, RailKind, RoadClass, ServiceTrack, WaterKind, polyline_length,
+    AreaKind, BuildingUse, PitchKind, RailKind, RoadClass, ServiceTrack, StructureKind, WaterKind,
+    polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -45,6 +46,20 @@ const TREE_ROW_SPACING_RANGE: RangeInclusive<f32> = 2.0..=40.0;
 /// вилки (2.5..4): аллейный или одиночный тополь честно бывает крупнее, а вот
 /// `diameter_crown=50` — опечатка.
 const TREE_CROWN_RADIUS_RANGE: RangeInclusive<f32> = 1.5..=8.0;
+
+/// Границы правдоподобия радиуса промышленного цилиндра, м. Меньше 0.75 (то
+/// есть полтора метра в поперечнике) — столбик, а не сооружение; больше
+/// полусотни (сто метров в поперечнике) не бывает даже у газгольдера, и такое
+/// значение почти всегда означает, что в `width` записали габарит площадки.
+const STRUCTURE_RADIUS_RANGE: RangeInclusive<f32> = 0.75..=50.0;
+
+/// Ширина трубы в связке с её изоляцией, м.
+const PIPE_SPACING: f32 = 0.7;
+
+/// Границы ширины связки, м, — не отбраковка, а зажим: одиночная труба у́же
+/// метра на снимке не читается, а `count=20` — это уже не теплотрасса, а
+/// опечатка, и рисовать её двадцатью трубами незачем.
+const PIPE_WIDTH_RANGE: RangeInclusive<f32> = 0.9..=4.0;
 
 /// Границы правдоподобия ширины русла из тега `width`, м: уже полуметра — не
 /// водоток, а разметочная линия; шире полусотни — либо опечатка, либо ширина
@@ -449,6 +464,84 @@ pub(super) fn crown_radius(tags: &HashMap<String, String>) -> Option<f32> {
         .and_then(|value| parse_measure(value))?;
     let radius = diameter / 2.0;
     TREE_CROWN_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
+/// Промышленный цилиндр: белый список, как у путей и водотоков.
+/// `man_made=*` — самый разношёрстный ключ OSM: под ним и `surveillance`, и
+/// `street_cabinet`, и `pipeline`, и `bridge` (обводка моста контуром), и
+/// `works` на весь завод. Круглым светлым пятном на снимке из всего этого
+/// читаются пятеро.
+pub(super) fn structure_kind(tags: &HashMap<String, String>) -> Option<StructureKind> {
+    match tags.get("man_made").map(String::as_str)? {
+        "storage_tank" => Some(StructureKind::Tank),
+        "silo" => Some(StructureKind::Silo),
+        "chimney" => Some(StructureKind::Chimney),
+        "water_tower" => Some(StructureKind::WaterTower),
+        "gasometer" => Some(StructureKind::Gasometer),
+        _ => None,
+    }
+}
+
+/// Радиус цилиндра из тегов: `diameter` (он же `width` у трубы — её меряют
+/// поперёк) пополам. Значение вне [`STRUCTURE_RADIUS_RANGE`] не зажимается, а
+/// считается отсутствующим — как и всюду в этом файле, дальше берётся типовой
+/// радиус рода ([`structure_size`]).
+pub(super) fn structure_radius(tags: &HashMap<String, String>) -> Option<f32> {
+    let diameter = ["diameter", "width"]
+        .iter()
+        .find_map(|key| tags.get(*key))
+        .and_then(|value| parse_measure(value))?;
+    let radius = diameter / 2.0;
+    STRUCTURE_RADIUS_RANGE.contains(&radius).then_some(radius)
+}
+
+/// Высота цилиндра из тега `height`. `building:levels` тут не годится:
+/// этажей у трубы не бывает, и [`building_height`] брать целиком незачем.
+pub(super) fn structure_height(tags: &HashMap<String, String>) -> Option<f32> {
+    let meters = tags.get("height").and_then(|value| parse_measure(value))?;
+    BUILDING_HEIGHT_RANGE.contains(&meters).then_some(meters)
+}
+
+/// Ширина связки надземного трубопровода, м, или `None`, если он подземный.
+///
+/// Правило **обратное** тому, что у путей и водотоков: там подземное надо
+/// доказать (`is_underground`), здесь — надземное. В OSM трубопровод без
+/// `location` по умолчанию закопан, и таких большинство; провести через весь
+/// город серебристую линию по закопанной трубе — враньё крупнее, чем потерять
+/// эстакаду, у которой забыли тег.
+///
+/// Ширину даёт `count` — число труб в пучке. В Туле это почти всегда
+/// теплотрасса: пара (подача и обратка) у двенадцати ways, четвёрка у шести.
+pub(super) fn pipe_width(tags: &HashMap<String, String>) -> Option<f32> {
+    let overground = matches!(
+        tags.get("location").map(String::as_str),
+        Some("overground" | "overhead" | "bridge")
+    );
+    if !overground {
+        return None;
+    }
+    let count = tags
+        .get("count")
+        .and_then(|value| parse_measure(value))
+        .unwrap_or(2.0);
+    Some((count * PIPE_SPACING).clamp(*PIPE_WIDTH_RANGE.start(), *PIPE_WIDTH_RANGE.end()))
+}
+
+/// Радиус и высота по умолчанию, м. Нужны почти всегда: из десяти
+/// сооружений Тулы размер указан **у одного**, и это высота трубы. Числа —
+/// типовые для советской промзоны: заводская труба под шестьдесят метров,
+/// водонапорная башня под тридцать, резервуар нефтебазы низкий и широкий.
+///
+/// Радиус из этой пары идёт в дело только у ноды: у way он считается по
+/// контуру, который заведомо честнее.
+pub(super) fn structure_size(kind: StructureKind) -> (f32, f32) {
+    match kind {
+        StructureKind::Tank => (8.0, 12.0),
+        StructureKind::Silo => (4.0, 25.0),
+        StructureKind::Chimney => (2.5, 60.0),
+        StructureKind::WaterTower => (5.0, 28.0),
+        StructureKind::Gasometer => (20.0, 30.0),
+    }
 }
 
 /// Что за площадка — по `leisure`, а внутри `pitch` по `sport` и `surface`.

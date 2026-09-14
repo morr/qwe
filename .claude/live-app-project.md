@@ -32,6 +32,14 @@ config still points at 15703: `BRP_PORT=15704 $b count Human`. A busy *default*
 port only warns and disables BRP (`qwe (no brp)` in the title) — a second window
 started by hand still runs.
 
+**The parallel session is often the previous you.** A session continued after a
+compaction gets a new id, and the background task that launched the app belongs
+to the old one: `TaskStop` answers `Task … is not running` or `No task found with
+ID`, while the app itself is very much alive and holding 15703 — so the relaunch
+panics with the lines above. Stop it the way the app can hear: `$b quit`, then
+`pgrep -f 'target/debug/qwe'` to confirm nothing is left. Same at the end of a
+session: the task list is not the inventory of running apps, `$b procs` is.
+
 ```bash
 $b alive     # alive: qwe 0.1.0 on http://127.0.0.1:15703/ (pid 40321) — pid must be the task's
 $b procs     # both copies, with their ports and start times
@@ -197,7 +205,7 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
-`RoadStyle`, `CarStyle`, `SurfaceStyle`,
+`RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`.
@@ -254,6 +262,7 @@ $b res set RoadStyle .sidewalks false             # тротуары / разм�
 $b res set RoadStyle .markings false
 $b res set CarStyle .visible false                # слой припаркованных машин
 $b res set CarStyle .occupancy 1.0                # …и доля занятых мест, 0..1
+$b res set IndustryStyle .visible true            # промзона: цилиндры и теплотрассы (по умолчанию off)
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 

@@ -7,6 +7,7 @@ pub mod buildings;
 // вызовом (`cars_mesh`), а стенд кузовов рисует машины его же `body`
 pub mod cars;
 pub mod footprint;
+mod industry;
 mod meshing;
 pub mod osm;
 mod parking;
@@ -28,6 +29,7 @@ pub use self::buildings::material::RoofStyle;
 // входа у него своя, не `BuildingPlan`, — см. док `measure_layers`
 pub use self::buildings::{BuildingHeightMode, LayerCost, extrusion_lift, measure_layers};
 pub use self::cars::{CarStyle, measure_cars};
+pub use self::industry::IndustryStyle;
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
 pub use self::meshing::{
@@ -86,6 +88,7 @@ impl Plugin for MapPlugin {
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
             .init_resource::<TramStyle>()
+            .init_resource::<IndustryStyle>()
             .register_type::<SunStyle>()
             .register_type::<SunOnMap>()
             .register_type::<TreeStyle>()
@@ -98,6 +101,7 @@ impl Plugin for MapPlugin {
             .register_type::<RoadStyle>()
             .register_type::<SurfaceStyle>()
             .register_type::<TramStyle>()
+            .register_type::<IndustryStyle>()
             .register_type::<CarStyle>()
             .track_pref::<TreeStyle>()
             .track_pref::<TreeRowStyle>()
@@ -108,6 +112,7 @@ impl Plugin for MapPlugin {
             .track_pref::<RoadStyle>()
             .track_pref::<SurfaceStyle>()
             .track_pref::<TramStyle>()
+            .track_pref::<IndustryStyle>()
             .track_pref::<CarStyle>()
             // материалы поверхностей и кровель — один комплект на всё
             // приложение, слои всех городов берут хэндлы из него.
@@ -157,6 +162,7 @@ impl Plugin for MapPlugin {
                     cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<wagons::WagonLods>,
                     wagons::rebuild_wagons,
+                    industry::rebuild_industry,
                     zoom::seed_zoom_bucket::<rail::RailLods>,
                     rail::rebuild_rails,
                     zoom::seed_zoom_bucket::<tram::TramLods>,
@@ -239,6 +245,25 @@ impl Plugin for MapPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
+                    // цилиндр промзоны ступени зума не имеет — его видно
+                    // ровно настолько, насколько видна тень, — зато кренится
+                    // он вместе с домами. Ступени нет, значит и в связку с
+                    // машинами его класть не за что: слой стоит сам по себе,
+                    // как дороги. Солнце здесь — `SunOnMap`, осевшее, а не
+                    // ползунок: пересборка читает глобали, которые пишет
+                    // `apply_sun` уже по нему, плюс тумблер видимости.
+                    //
+                    // Одна регистрация на три условия, а не три регистрации:
+                    // две копии одной системы в одном расписании могут сработать
+                    // в одном кадре обе, и слой отспавнится дважды — деспавн
+                    // второй копии идёт по данным до применения команд первой
+                    industry::rebuild_industry
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(
+                            retuned::<SunOnMap>
+                                .or_else(retuned::<BuildingHeightMode>)
+                                .or_else(retuned::<IndustryStyle>),
+                        ),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),

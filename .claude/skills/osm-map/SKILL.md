@@ -38,10 +38,14 @@ in `CONTEXT.md` and the detail here in the same change.
   `natural=tree` (node), `landuse=grass|meadow` / `natural=grassland|meadow`,
   `natural=sand|beach`, `landuse=residential|industrial|garages` (way+rel),
   `amenity=parking` (way+rel),
-  `barrier=city_wall`. The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **9** (v3 added `entrance` nodes, v4 `railway`,
+  `leisure=pitch|track|playground|sports_centre|stadium` (way+rel),
+  `barrier=city_wall`,
+  `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
+  `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **11** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
-  blocks, v9 `amenity=parking`).
+  blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
+  industrial `man_made` cylinders and pipelines).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here — Berlin took 19 s through it
@@ -164,6 +168,30 @@ in `CONTEXT.md` and the detail here in the same change.
   map. **Rails never touch the navmesh** — see the navigation-deep skill.
 - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
   impassable.
+- **Structure** — an industrial cylinder: `man_made=storage_tank|silo|chimney|
+  water_tower|gasometer` as centre + radius + height + kind (`StructureKind`). A
+  **whitelist**, for `rail_class`'s reason and more so: `man_made` is OSM's most mixed
+  key (`surveillance`, `street_cabinet`, `works`, even `bridge` as an outline), and only
+  those five read as a round spot from the air. Comes from a node **and** from a way:
+  a node has no outline, so its radius is the `diameter`/`width` tag or the kind's
+  default (`structure_size` — 2.5 m and 60 m for a chimney, 8 × 12 for a tank, 20 × 30
+  for a gasometer); a way's radius is the **mean distance from the vertex mean**, which
+  is exact on the near-circular ring OSM actually draws and overestimates a rectangular
+  silo block by √2. The way branch **returns** — the opposite of the pipeline one below —
+  because a chimney tagged `building=yes` is *the same object*, and falling through
+  would put a box under the circle; it also keeps doors and the navmesh off it, which a
+  chimney has no use for. Height comes from `height` only (`structure_height`): a
+  chimney has no storeys, so `building:levels` is not consulted. Tula: 8 chimneys (4 of
+  them nodes, one carrying a size tag) and 2 water towers; Berlin 2846 cylinders.
+- **PipeLine** — an overhead heating main: `man_made=pipeline` centerline + bundle width
+  from `count` (`pipe_width`, 0.7 m per pipe clamped 0.9–4 m; Tula runs pairs on twelve
+  ways and fours on six). **The above-ground test is inverted** relative to rails and
+  waterways: there underground has to be proven (`is_underground`), here *above* ground
+  does — `location=overground|overhead|bridge` and nothing else. An untagged pipeline in
+  OSM is buried, and drawing a silver line across the city over a buried pipe is a
+  bigger lie than losing a trestle whose tag somebody forgot. The branch **falls
+  through** like the rail and tree-row ones: a pipeline crossing a street on a trestle is one way
+  carrying both tags. Tula: 22 of 24 ways kept, 1.2 km.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
   `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
@@ -726,6 +754,79 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   have grown ruts across its stalls. The gate is `>= 2` rather than `>= 1` because
   `Markings::encode` never carries a single lane: `>= 1` read as a wider rule than the
   code could ever deliver.
+- **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **11**.
+  Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
+  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>).or_else(retuned::<IndustryStyle>)`
+  and on nothing else — the settled sun, never `SunStyle`, like every other rebuild — and
+  the system stands on its own rather than in the zoom-bucket chain, because there is no
+  zoom bucket here: a cylinder is visible exactly as far as its shadow is.
+  **One registration carrying all three conditions, never three registrations**: the layer
+  arrived with its `rebuild_industry` listed twice in `Update`, and two copies of one
+  system in one schedule can both fire in a frame — the second despawns by a query taken
+  before the first one's commands were applied, so the layer is spawned twice. That is the
+  same trap the buildings' `or_else` chain is written against.
+  - **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
+    the `Industry` row of the **Buildings** section (`ui/buildings.rs`), the tram's
+    arrangement exactly, and for the tram's reason: its own resource rather than a
+    `BuildingHeightMode` case, so a toggle rebuilds this layer instead of remeshing every
+    building layer. Off, because a city carries a dozen cylinders standing on its edges
+    while a chimney's shadow runs fifty metres — at the city zoom that is a dark streak
+    from nothing visible. The invisible case goes through the same rebuild — despawn the
+    old layer, build no new one — so there is no second path that could forget the
+    despawn. It is read with the buildings and not with the roads because a cylinder
+    stands on the ground and leans by the very `drawn_lift` a house does.
+  - **"Like a house" is literal, and shared in code**: the cylinder's shadow is drawn in
+    exactly the three modes a house's is (`BuildingHeightMode::casts_shadows()` — the
+    mode list lives there once and both layers ask it; in `Facade` and `Extrusion` a
+    2.5 m chimney is a small circle and nothing else), and its lean comes from
+    `buildings::drawn_lift`, the height-only core of `extrusion_lift`, so the
+    `EXTRUDE_RANGE` clamp is one for roofs and cylinders alike. Without that clamp a
+    60 m chimney lay across the map as an 80 m tube.
+  - **A cylinder is three layers, like a house**: `industry_shadows`
+    (`Z_INDUSTRY_SHADOW` 4.55, beside the building shadow), `industry_walls` (5.06) and
+    `industry_tops` (5.07) — **above** the houses, because a works chimney is taller than
+    anything around it and on a photo it covers the neighbouring shed, not the other way
+    round. **One rung for all five kinds**, from a 12 m tank to a 60 m chimney, so a low
+    tank covers a tall block too — accepted deliberately: the buildings have no height
+    sort of their own either (one `Z_BUILDING` for the whole layer, order inside the mesh
+    by `Lean::depth`), so a height threshold would split the layer into two meshes and pop
+    at the threshold without solving the general case. That one is the joint painter's
+    sort of buildings and cylinders — separate work, like the cylinder-to-cylinder sort
+    below. Tula ships only chimneys and towers, so the pair never occurs on the shipped
+    data.
+  - **The shadow is a sweep, not a shifted disc** (`sweep` — the convex hull of the disc
+    and its copy, written out by hand as two half-arcs; the buildings get theirs from
+    `i_overlay`). A cylinder is solid from the ground to the top, so every height in
+    between casts too; a shifted disc would leave the strip between base and shadow
+    empty, which on a 60 m chimney is 36 m of missing shadow. Its length is the
+    buildings' `SHADOW_LENGTH_RANGE` **multiplied by `sun_stretch()` at both ends**, as
+    every calibrated length here must be: with the bare 3–45 m a 60 m chimney stopped at
+    45 m at 15° while a house of the same height threw 168.
+  - **The wall is one quad per facet, each shaded on its own** (`shade_by_light`, mixes
+    0.26/0.26 — stronger than a flat house wall's 0.18/0.22, since the gradient has to
+    span the whole visible half). That gradient *is* what makes the circle read as a
+    cylinder; a single flat tone reads as a faceted prism. **Only the half turned
+    *away* from the `Lean` is emitted** (`outward · lift < 0`) — the near one. The
+    camera sits at the nadir and the top leans away from it, so what it sees is the
+    near side of the wall, exactly as the building extrusion picks its edges
+    (`silhouette_edges(outer, -lift_dir)`). The far half was drawn first and left the
+    near end of the silhouette open, and through that hole the cylinder's own base
+    shadow showed as a dark half-disc under the chimney. The geometry in one line: the
+    silhouette of a leaning cylinder is a stadium — the top circle covers
+    `[|lift|−r, |lift|+r]`, the near half of the wall covers `[−r, |lift|]`, and the
+    two overlap into the whole stadium, with no foot piece and no seam. With no lean at
+    all (the flat height modes) nothing is emitted — a cylinder standing straight up
+    shows no wall.
+  - **The rim** (`RIM_SHARE` 10 % of the radius, 0.25–1 m, 28 % toward black) is the
+    tank's coaming or the chimney's wall thickness. Without it the top reads as a sticker.
+  - **The pipeline is a line one storey up**: line plus shadow, `PIPE_HEIGHT` 3 m,
+    `Z_PIPE_SHADOW`/`Z_PIPE` 2.76/2.77 — over everything standing on the ground (the
+    parked cars at 2.7), because a heating main on trestles steps over it, and under
+    everything taller than those trestles. **All the shadows first, then all the lines**,
+    the parked cars' rule: otherwise one main's shadow lands on the main drawn before it.
+  - Both are drawn as **one merged layer each and no painter's sort between structures**:
+    a taller cylinder's wall can therefore be covered by a shorter neighbour's top. With
+    ten of them per city they never meet; a city where they do wants the buildings' sort.
 - **Standing wagons** (`map/wagons.rs`) — the same generator as the cars, aimed at the one
   place that stayed empty: a station throat. On a photo half of it is standing stock, and
   without that the yard reads as a track diagram.
@@ -1317,9 +1418,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       `the_wall_order_puts_the_stepped_back_section_first`. The roof needs no ordering
       against the walls — it is drawn last and lies wholly above `base + lift` at every
       `u` it shares with a wall.
-    `extrusion_lift` is the one door to that vector — the extrusion layer, the arch patch
-    in the shadows and anything that wants to put a marker on the *drawn* building rather
-    than its real outline all go through it. Known limits: units y-sort against
+    `extrusion_lift` is the one door to that vector **for a building** — the extrusion
+    layer, the arch patch in the shadows and anything that wants to put a marker on the
+    *drawn* building rather than its real outline all go through it. It is a thin wrapper
+    over **`drawn_lift(height, mode)`**, the height-only core, which exists because the
+    lean is not the house's alone: the industry cylinders (`map/industry.rs`) have
+    neither an outline nor a `BuildingUse` and take the same scale and the same
+    `EXTRUDE_RANGE` clamp through it. Known limits: units y-sort against
     flat z=5 and can draw over a tall roof they are "behind"; kremlin wall polylines
     (z 5.1) draw over nearby lifted roofs.
     - **`Lean` is a per-building value**, not a global function: direction,

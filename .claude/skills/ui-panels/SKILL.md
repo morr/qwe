@@ -122,6 +122,13 @@ did not fit 1080 px and ran off the top of the screen.
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
   into the Nav tab's crowd groups — they are about movement.
 - **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Sun → Noise.
+  **Buildings** (`ui/buildings.rs`): the `Height` cycler on `BuildingHeightMode`, the
+  `Roof texture` knob on `RoofStyle` (a uniform, so the drag rebuilds nothing) and
+  **Industry** — `IndustryStyle::visible`, **off** by default, the section's one row of a
+  foreign resource, exactly the shape `Tram` has in Roads and for the same reason: a
+  `BuildingHeightMode` case would remesh every building layer on a toggle whose only
+  effect is one merged mesh (`map::industry::rebuild_industry`). It is read with the
+  buildings because a cylinder stands on the ground and leans by the houses' own lift.
   **Roads** (`ui/roads.rs`): five cycle rows on `RoadStyle` — joins, smoothing, casing,
   **sidewalks**, **markings** — plus **Tram**, the one row of a *different* resource
   (`TramStyle::visible`, off by default). The

@@ -30,6 +30,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::garages::garage_runs;
 use self::heights::{height_mix, height_or_default};
+pub(crate) use self::layers::SHADOW_LENGTH_RANGE;
 use self::layers::{
     ShadowSweeps, extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
 };
@@ -136,6 +137,16 @@ impl BuildingHeightMode {
             Self::Extrusion => "2.5D",
             Self::ExtrusionShadowsTint => "2.5D+shadows+tint",
         }
+    }
+
+    /// Рисуются ли в этом режиме длинные тени. Спрашивают двое — слой зданий
+    /// и цилиндры промзоны (`map/industry.rs`), которые рисуются как дома, —
+    /// и список режимов обязан быть один на обоих.
+    pub(crate) fn casts_shadows(self) -> bool {
+        matches!(
+            self,
+            Self::Shadows | Self::ShadowsTint | Self::ExtrusionShadowsTint
+        )
     }
 }
 
@@ -248,13 +259,7 @@ pub fn measure_layers(
         Vec::new()
     };
     let started = Instant::now();
-    let sweeps = matches!(
-        mode,
-        BuildingHeightMode::Shadows
-            | BuildingHeightMode::ShadowsTint
-            | BuildingHeightMode::ExtrusionShadowsTint
-    )
-    .then(|| {
+    let sweeps = mode.casts_shadows().then(|| {
         let sweeps = ShadowSweeps::of(buildings);
         costs.push(LayerCost {
             name: "sweeps",
@@ -416,14 +421,7 @@ pub fn spawn_buildings(
     let mut sweep_time = Duration::ZERO;
     let mut shadow_time = Duration::ZERO;
     let mut roof_shadow_time = Duration::ZERO;
-    if with_shadows
-        && matches!(
-            mode,
-            BuildingHeightMode::Shadows
-                | BuildingHeightMode::ShadowsTint
-                | BuildingHeightMode::ExtrusionShadowsTint
-        )
-    {
+    if with_shadows && mode.casts_shadows() {
         // оба теневых слоя красит один полупрозрачный материал, и спавнит их
         // общий `surface::spawn_layer`: он сам отсеивает пустой сборщик,
         // вешает `DespawnOnExit` и `Name`. Не локальное замыкание
@@ -603,15 +601,26 @@ pub(super) fn building_center(building: &PolyArea) -> Vec2 {
 /// сдвиг: слой экструзии, заплатка арки в тенях и всякий, кто захочет
 /// поставить метку на нарисованный дом, а не на его настоящий контур.
 pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
+    drawn_lift(height_or_default(building), mode)
+}
+
+/// Подъём верха над контуром для объекта высотой `height`: тот же масштаб и та
+/// же обрезка, что у крыш, и ноль в режимах без экструзии.
+///
+/// Отдельно от [`extrusion_lift`], потому что кренится не только дом: тем же
+/// правилом встают цилиндры промзоны (`map/industry.rs`), у которых нет ни
+/// контура, ни `BuildingUse`. Обрезка [`EXTRUDE_RANGE`] тут и есть главное:
+/// без неё шестидесятиметровая заводская труба ложилась на карту
+/// восьмидесятиметровой трубой.
+pub(crate) fn drawn_lift(height: f32, mode: BuildingHeightMode) -> Vec2 {
     if !matches!(
         mode,
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
     ) {
         return Vec2::ZERO;
     }
-    let height = (height_or_default(building) * EXTRUDE_SCALE)
-        .clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
-    Lean::of().lift(height)
+    let drawn = (height * EXTRUDE_SCALE).clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
+    Lean::of().lift(drawn)
 }
 
 /// Тон поверхности по повороту её наружной нормали (в плане) к свету
@@ -620,7 +629,7 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
 /// для стен и скатов. Смешивание — в sRGB, в котором заданы вся палитра и
 /// рампа `roof_color`: одинаковая константа даёт одинаковый видимый шаг, а
 /// `Srgba` в сигнатуре делает пространство явным.
-pub(super) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
+pub(crate) fn shade_by_light(base: Srgba, outward: Vec2, lit_mix: f32, shaded_mix: f32) -> Srgba {
     let lit = outward.dot(sun_light());
     if lit >= 0.0 {
         base.mix(&Srgba::WHITE, lit * lit_mix)

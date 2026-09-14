@@ -1,13 +1,19 @@
 //! Панель режима отображения высоты зданий: одна строка-кнопка, листающая
 //! `BuildingHeightMode` по кругу (фасадная полоса → тени → тени+тон → 2.5D).
 //! Правка ресурса пересобирает зданиевые слои (`map::buildings::rebuild_buildings`).
+//!
+//! Последняя строка секции — промзона (`IndustryStyle`, выключена по
+//! умолчанию): у неё свой ресурс со своей пересборкой
+//! (`map::industry::rebuild_industry`), как у трамвая в Roads. Цилиндр стоит
+//! на земле и кренится тем же наклоном, что и дом, — читается он вместе со
+//! зданиями, а не отдельной секцией на одну строку.
 
 use bevy::prelude::*;
 
-use crate::map::{BuildingHeightMode, RoofStyle};
+use crate::map::{BuildingHeightMode, IndustryStyle, RoofStyle};
 use crate::settings::{ROOF_TEXTURE_MAX, ROOF_TEXTURE_MIN, ROOF_TEXTURE_STEP};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
-use crate::ui::rows::ROW_LEFT_PX;
+use crate::ui::rows::{ROW_LEFT_PX, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use crate::ui::{PanelCount, UiBuildSet, panel_header};
 
@@ -18,6 +24,7 @@ impl Plugin for UiBuildingStylePlugin {
         // подпись вслед за ресурсом — и на клик по кнопке, и на правку по BRP
         app.add_knobs::<BuildingHeightMode>()
             .add_knobs::<RoofStyle>()
+            .add_knobs::<IndustryStyle>()
             .add_systems(
                 Startup,
                 build_buildings_section.in_set(UiBuildSet::Sections),
@@ -30,6 +37,7 @@ fn build_buildings_section(
     panes: Res<SettingsPanes>,
     mode: Res<BuildingHeightMode>,
     roofs: Res<RoofStyle>,
+    industry: Res<IndustryStyle>,
 ) {
     let panel = spawn_section(
         &mut commands,
@@ -63,6 +71,18 @@ fn build_buildings_section(
             set: |style, value| style.texture = value,
             range: (ROOF_TEXTURE_MIN, ROOF_TEXTURE_MAX, ROOF_TEXTURE_STEP),
             text: |value| format!("{:.0}%", value * 100.),
+        },
+    );
+
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Industry",
+        ROW_LEFT_PX,
+        &*industry,
+        CycleBinding {
+            cycle: |industry| industry.visible = !industry.visible,
+            text: |industry| on_off(industry.visible).to_string(),
         },
     );
 }

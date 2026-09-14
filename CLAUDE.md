@@ -36,7 +36,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | any git operation — staging, committing, branching, rebasing, history | `git` |
 | running the app, BRP, screenshots, the trace log | `live-app` |
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
-| `map/*` — the OSM pipeline (`map/osm/*`), the map's light (`sun`) and every layer (`meshing`, `spawn`, `surface`, `roads`, `rail`, `tram`, `cars`, `trees`, `buildings`, `footprint`, `seed`) | `osm-map` |
+| `map/*` — the OSM pipeline (`map/osm/*`), the map's light (`sun`) and every layer (`meshing`, `spawn`, `surface`, `roads`, `rail`, `tram`, `cars`, `industry`, `trees`, `buildings`, `footprint`, `seed`) | `osm-map` |
 | `navigation/*`, `movement/*` (incl. separation, slots, the navtile size), `tests/{navigation,movement}.rs` | `navigation-deep` |
 | `rng.rs`, `determinism/*`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
 | `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `tests/spatial.rs` | `species-behavior` |
@@ -296,6 +296,7 @@ step when adding one):
 | rail layers (ballast/ties/steel) | `map/rail.rs::spawn_rails` |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layer`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
+| industry layers (pipes + cylinder shadow/wall/top) | `map/industry.rs::rebuild_industry` (same helper) |
 | tram mesh | `map/tram.rs::spawn_tram` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
