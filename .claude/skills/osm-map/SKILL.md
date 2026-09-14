@@ -214,10 +214,11 @@ in `CONTEXT.md` and the detail here in the same change.
   carrying both tags. Tula: 22 of 24 ways kept, 1.2 km.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
-  `Z_WATERWAY`. Widths are drawing widths, not hydrology: OSM draws as a line what is
-  too narrow for a polygon, so a `river` line is narrower than the Упа (which is an
-  area). A plausible `width` tag (`WATER_WIDTH_RANGE`, 0.5..50 m) overrides the class
-  default. `parse/tags.rs::water_class` is a **whitelist** for the same reason `rail_class` is:
+  `Z_WATERWAY` (see **Waterways** under Rendering). Widths are drawing widths, not
+  hydrology: OSM draws as a line what is too narrow for a polygon, so a `river` line is
+  narrower than the Упа (which is an area). A plausible `width` tag
+  (`WATER_WIDTH_RANGE`, 0.5..50 m) overrides the class default.
+  `parse/tags.rs::water_class` is a **whitelist** for the same reason `rail_class` is:
   `waterway=*` also carries `riverbank` (that one is an area, and `area_kind` claims
   it), `dam`, `dock`, `lock_gate`, `waterfall`. Like the rail and tree-row branches,
   the waterway branch in `parse_way` runs before `highway` and **falls through** — a
@@ -233,8 +234,10 @@ in `CONTEXT.md` and the detail here in the same change.
   channel into several ways and the two caps meeting in a shared node fuse the joint;
   past a portal there is no more water, and the half-disk would jut into dry land and
   (the grid fill measures the same distance-to-segment) plug the culvert mouth with a
-  semicircle of blocked tiles. One rule, both layers: `spawn::mesh_water_lines` and
-  `Navmesh::fill_from_mapdata`.
+  semicircle of blocked tiles. One rule, both layers: `water::mesh_water_lines` and
+  `Navmesh::fill_from_mapdata`. The **mouth** — where the drawing cuts the channel at an
+  area-water outline — is the opposite case: render-only, and the grid keeps its caps
+  (the polygon blocks those tiles anyway).
 - **TreeRow** — `natural=tree_row`: an avenue's centerline polyline plus what the data
   itself knows about the planting — `spacing: Option<f32>` (from `spacing`, or the row
   length spread over `count` / `tree:count`) and `radius: Option<f32>` (half
@@ -410,7 +413,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   about; there is no `measure_roads` / `measure_rails` / `measure_tram` / `measure_surface`,
   and adding one is the way to extend the bench when a road-style or surface comparison
   needs the same treatment.
-- **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, road layers in `map/roads.rs`,
+- **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, water and waterways in
+  `map/water.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
   sidewalks, alleys, roads, rail layers, tram, building layers, walls): `MeshBuilder`
@@ -435,7 +439,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
   (three octaves from `grain_scale` down to a quarter), **speckle** (a thresholded noise
   field → sparse dark dots, grass tufts and undergrowth on Park/Grass/Wood), **drift** (the
-  mottle slides with `globals.time` — only Water), and the **markings** block (Street —
+  mottle slides with `globals.time` — only Water), **shore** (`shore_color` /
+  `shore_width` — only Water: the channel ribbon's shoal by its `across`, see
+  **Waterways**), and the **markings** block (Street —
   a bridge deck is the same kind and carries its street's lines; a footbridge in the same
   mesh has no markings code and stays bare). The zoom rule is one function,
   `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
@@ -462,8 +468,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   pixel size.
   The material demands the **`Ribbon` vertex attribute** (`meshing::ATTRIBUTE_RIBBON`,
   `[across, to-break, half width, markings code]` in metres: *to-break* is the signed
-  distance to the nearest marking break, the code is `Markings::encode`, `lanes·2 +
-  oneway`, 0 for none) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
+  distance to the nearest break — a marking break on a street, a mouth on a channel —
+  the code is `Markings::encode`, `lanes·2 + oneway`, 0 for none) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
   `push_ribbon` / `push_ribbon_broken` fill it from the ribbon frame (quads: ±half width;
   join fans: the outer side; round caps: the projection onto the normal, with *to-break*
   extrapolated past the node along the last quad's slope), polygons get zeros. It costs
@@ -472,9 +478,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   *to-break* is under **Markings → Breaks** below.
 - **Rims** (`map/spawn.rs::push_area` over `MeshBuilder::push_inset_band`) — each area
   polygon is followed, in the same builder, by a gradient band along its outer ring and
-  along every hole: `edge` colour on the contour, the fill colour at the far edge. Water
-  gets a lighter **shore** (`WATER_RIM`, 6 m — at 3 m it read as the polygon's edging
-  rather than as a shoal), park / wood / grass / sand an edge a few
+  along every hole: `edge` colour on the contour, the fill colour at the far edge. Park /
+  wood / grass / sand get an edge a few
   percent darker than the fill (`*_RIM`, 2–3 m; the wood's the widest and darkest — shade
   under the canopy edge). The far edge is built from `miter_offsets` on the ring, with the
   side chosen by the ring's signed area (`outside` flips it for holes, whose band lies in
@@ -483,7 +488,82 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   2 m rim on a 1.5 m median never pokes out onto the road — and nothing under
   `MIN_RIM_WIDTH` (0.2 m) is pushed at all. Holes take the width the outer ring settled
   on. No z-slot: opaque 2D meshes test depth with `GreaterEqual`, so within one mesh the
-  band pushed after the fill wins.
+  band pushed after the fill wins. **Water is not rimmed** — see **Shoal**.
+- **Shoal** (`map/water.rs::mesh_water_areas`, the `water` layer at `Z_POND`) — the
+  light shallows of area water, as a **distance field to the nearest bank**: the colour at
+  a point depends only on how far the nearest bank is, `WATER_SHORE_COLOR` on it and
+  `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m — at 3 m it read as the polygon's edging rather
+  than as a shoal). It used to be the rim above (`WATER_RIM`), and the rim failed twice on
+  the Упа's southern arm, both reported from one screenshot: the arm is its own
+  multipolygon (19415535) butting into the river's (19409693) with **a shared border
+  across the mouth**, and each laid its light rim along it — a shoal line across open
+  water; and the rim's thickness clamp (0.6 × area / perimeter) darkened the 18 m arm
+  toward its middle faster than a real channel shallows, so the river's shoal stopped at
+  the mouth instead of running on into the arm.
+  - **Union first** (`i_overlay`, NonZero, outer rings oriented CCW and holes CW — OSM's
+    order is arbitrary and NonZero only merges consistent windings): the shared border is
+    gone before anything is laid.
+  - **Then nested inward offsets** (`OutlineOffset::outline`, negative offset, `Round`
+    joins, `SHOAL_STEP` 0.5 m, twelve levels), each always taken from level 0 rather than
+    from the previous one, so errors do not accumulate. The band between depth `d` and
+    `d + step` is one earcut polygon whose **outer ring carries colour(d) and holes
+    colour(d + step)** (`MeshBuilder::push_polygon_graded`), so the GPU interpolates the
+    gradient across the band. A narrow place's offset vanishes on its own, and the
+    innermost level left is filled flat with its own depth's colour — the middle of an
+    8 m arm is 4 m deep, never full depth.
+  - **The band is assembled from rings, not by boolean difference**: a difference would
+    lose which vertex came from which level, and the level *is* the colour. An inner shape
+    lies inside exactly one outer shape (not in its holes — a lake on an island is someone
+    else's); its outer ring is a hole of the band, and each of its holes surrounds an
+    island, making a separate band piece with that island as its hole.
+  - A triangle whose three vertices sit on one ring is flat-coloured; on a 0.5 m band that
+    error is under one step.
+  - Cost: logged as `water meshing:`.
+- **Waterways** (`map/water.rs::mesh_water_lines`, the `waterways` layer at `Z_WATERWAY` 2.02,
+  `SurfaceKind::Water`) — the open channels, and two decisions, both from screenshots
+  of the Упа's southern arm (`waterway=river` 221646296 at `cam 4366 3254`):
+  - **Water lies over every road ribbon and under the bridge shadow — both layers**:
+    area water at `Z_POND` 2.01, the channels a hair above it. They used to sit at
+    1.0 / 1.05, under sidewalks, alleys and roads, and the embankment footways of that
+    arm lay *on* the water for 1–3 m along it — not across it: none of them crosses,
+    their axes run 2.6–4.5 m from the channel's. The rule now is the author's: **a road
+    lies over water only as a bridge**. It is also what the navmesh says — area water
+    and an open channel both block, a road carves nothing, only a bridge does — so a
+    street drawn over water lied twice.
+    **Both layers, because OSM maps a narrow arm either way**, and the first version of
+    this fix moved only the channel and missed it: the arm at the arrow is *also* a
+    multipolygon `natural=water` (relation 19415535, 18 m across), so the clipped channel
+    left the polygon showing, still under the footways. Found by sinking the `alleys`
+    layer's `Transform` over BRP (the water came back) and lifting `waterways` to z 10
+    (nothing changed — the blue was not the ribbon).
+    The price is stated, not hidden: water cuts an embankment sidewalk or footway mapped
+    against the bank, and a street over a culvert OSM does not mark (Tula: one `path` ×
+    `stream` at (3681, 70), one footway on the `weir` at (5251, 2546); every other
+    crossing carries `bridge=yes`). Cutting the road at the crossing was rejected for
+    that very screenshot — there was no crossing to cut.
+  - **The mouth.** The channel ribbon has its own **shore** — the same distance field as
+    the **Shoal** (`WATER_SHORE_COLOR`, `WATER_SHORE_WIDTH` 6 m, unclamped, so a 2.5 m
+    stream is pale across its whole width like a narrow arm) — laid in
+    `surface.wgsl` by the ribbon's `across`, since a ribbon has no ring to offset. That is
+    not enough on its own: an OSM channel runs on **inside** the area water it flows into
+    (13 of Tula's open channel ends lie inside a water polygon, most of them the Упа's
+    own centreline inside its `riverbank`), and there its light edges would be two shoal
+    lines across deep water, while across the bank rim its deep middle cut the shoal with
+    a rectangle — the artifact reported. So `WaterIndex::open_runs` cuts the smoothed
+    axis at every water outline (edges in a 32 m grid; inside/outside asked once per
+    stretch between crossings, not per link) and keeps the dry stretches; each **cut end
+    reaches `WATER_SHORE_WIDTH` past the bank** (along the axis, straight on past its
+    end) with a `Butt` cap and a `Break` of that reach. *To-break* then runs 0 → −6 m
+    over the reach, and the shader fades the channel shore by it — linearly, exactly as
+    the shoal fades from the bank inwards, so at every depth the channel edge and
+    the water beside it have one colour and the shoal turns into the channel without a seam.
+    Two guards: water narrower than two reaches between two dry stretches does not cut
+    (the reaches would overlap into a seam mid-channel), and an uncut ribbon still goes
+    through `RibbonBreaks::At(&[])`, never `Ends` — `Ends` measures to the ribbon's own
+    ends and would fade the shore at every channel end on dry land too.
+  - **Render-only.** The navmesh blocks the polygon and the whole channel band as before;
+    the caps rule it shares with the drawing (`water_line_caps`) is untouched.
+  - Cost: one pass per open channel at load, logged as `waterways meshing:`.
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
   Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
   brightness step between them is what reads as the kerb) — a **carriageway**

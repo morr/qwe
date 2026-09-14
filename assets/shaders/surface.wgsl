@@ -31,6 +31,7 @@
 struct SurfaceParams {
     tint: vec4<f32>,
     marking_color: vec4<f32>,
+    shore_color: vec4<f32>,
     mottle_amp: f32,
     mottle_scale: f32,
     grain_amp: f32,
@@ -43,6 +44,7 @@ struct SurfaceParams {
     marking_dash: f32,
     marking_gap: f32,
     wear: f32,
+    shore_width: f32,
     intensity: f32,
 }
 
@@ -107,6 +109,22 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let k = params.intensity;
 
     var rgb = in.color.rgb;
+
+    // отмель на кромках ленты русла — до всякого шума, как и вершинный цвет
+    // площадной воды, который она продолжает: то же поле расстояний до берега,
+    // линейно от цвета берега на краю к цвету ленты на глубине `shore_width`.
+    // Узкий ручей поэтому светлый по всей ширине — мелкий, как и узкий рукав
+    // полигоном. Вдоль ленты гаснет в разрыве на конце, отрезанном берегом
+    // площадной воды (`map::waterways`): там вода под лентой у той же глубины
+    // того же цвета. Площадная заливка ленты не несёт (полуширина ноль) — её
+    // отмель лежит геометрией
+    let shore_half = in.ribbon.z;
+    if params.shore_width > 0.0 && shore_half > 0.0 {
+        let to_edge = shore_half - abs(in.ribbon.x);
+        let across = 1.0 - clamp(to_edge / params.shore_width, 0.0, 1.0);
+        let along = clamp(1.0 + in.ribbon.y / params.shore_width, 0.0, 1.0);
+        rgb = mix(rgb, params.shore_color.rgb, across * along);
+    }
 
     // крупная «облачность»: яркость плюс тёплый/холодный сдвиг тона. Дрейф —
     // только у воды (у прочих `drift` ноль): рябь медленно плывёт по глади

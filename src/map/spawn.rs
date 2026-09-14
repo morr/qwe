@@ -10,13 +10,14 @@ use bevy::prelude::*;
 
 use crate::map::buildings::material::RoofMaterialHandle;
 use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
-use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow, WaterLine, water_line_caps};
+use crate::map::meshing::MeshBuilder;
+use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
-use crate::map::roads::{self, RoadSmoothing, RoadStyle};
+use crate::map::roads::{self, RoadStyle};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::trees::TreeRowStyle;
+use crate::map::water::{mesh_water_areas, mesh_water_lines};
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PARKING_LINES,
     Z_PITCH, Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY,
@@ -55,7 +56,6 @@ const TREE_ROW_CASING_COLOR: Color = Color::srgb(0.565, 0.729, 0.510);
 const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
-const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
 /// Стоянка — асфальт посветлее проезжей части: полотно улицы укатано, а
 /// двор со стоянкой выцветает и пылится.
 const PARKING_COLOR: Color = Color::srgb(0.412, 0.408, 0.404);
@@ -67,14 +67,6 @@ struct Rim {
     edge: Color,
 }
 
-/// Мелководье: светлая полоса вдоль берега внутри водного полигона — то, что
-/// делает пруд прудом, а не синим пятном. Шесть метров: на снимке отмель у
-/// берега шире, чем кажется с земли, и трёхметровая кайма читалась просто
-/// кантом полигона, а не мелью.
-const WATER_RIM: Rim = Rim {
-    width: 6.0,
-    edge: Color::srgb(0.78, 0.885, 0.945),
-};
 /// Кромки зелени и песка — та же заливка на несколько процентов темнее:
 /// полигон читается как вырезанная фигура, а не как пятно, разлитое по земле.
 /// У леса кромка шире и темнее — под пологом у края тень.
@@ -178,10 +170,16 @@ pub fn spawn_map(
         push_area(&mut sand, area, SAND_COLOR, &SAND_RIM);
     }
 
-    let mut water = MeshBuilder::with_surface_coords();
-    for area in &map.water {
-        push_area(&mut water, area, WATER_COLOR, &WATER_RIM);
-    }
+    // вода — не каймой по контуру, как зелень: отмель у неё — расстояние до
+    // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
+    let water_started = std::time::Instant::now();
+    let water = mesh_water_areas(&map.water);
+    info!(
+        "water meshing: {} areas, {} verts in {:.1?}",
+        map.water.len(),
+        water.vertex_count(),
+        water_started.elapsed()
+    );
 
     // стоянка — асфальт своим слоем: он темнее двора и светлее проезжей
     // части, а по нему идёт разметка мест (`map::parking`)
@@ -209,7 +207,14 @@ pub fn spawn_map(
         pitch::push_markings(&mut pitch_lines, area);
     }
 
-    let waterways = mesh_water_lines(&map.water_lines);
+    let waterways_started = std::time::Instant::now();
+    let waterways = mesh_water_lines(&map.water_lines, &map.water);
+    info!(
+        "waterways meshing: {} ways against {} water areas in {:.1?}",
+        map.water_lines.len(),
+        map.water.len(),
+        waterways_started.elapsed()
+    );
 
     let skipped: usize = [
         &yards, &works, &parks, &woods, &grass, &sand, &pitches, &parking, &water,
@@ -284,36 +289,6 @@ pub fn spawn_map(
         &map.buildings,
         &map.roads,
     );
-}
-
-/// Лента открытых русел одним мешем. **Трубы не рисуются вовсе**: под землёй
-/// воды не видно, а пунктир вдоль улицы читался как ручей поверх неё. Тем, что
-/// человек проходит там, где на карте «ручей», управляет не эта отрисовка, а
-/// её отсутствие: русло обрывается на портале культверта и продолжается за ним
-/// (`water_line_caps`), и между порталами воды на карте просто нет.
-fn mesh_water_lines(lines: &[WaterLine]) -> MeshBuilder {
-    let color = WATER_COLOR.to_linear();
-    let mut open = MeshBuilder::with_surface_coords();
-
-    for line in lines.iter().filter(|line| !line.tunnel) {
-        // сглаживание как у дорог: русло в OSM — ломаная по точкам съёмки, и на
-        // её изломах лента без сглаживания заметно гранёная
-        let points = roads::smooth_path(&line.points, line.width, RoadSmoothing::Light);
-        // круглые стыки, и круглые торцы там, где вода продолжается: два way
-        // одного русла встречаются в общем узле, и полудиски на торцах
-        // сливаются в непрерывную реку. Портал культверта — исключение: за ним
-        // воды нет, и полудиск торчал бы на полуширину русла в сухую землю
-        let caps = water_line_caps(line, lines).map(|round| {
-            if round {
-                RibbonCap::Round
-            } else {
-                RibbonCap::Butt
-            }
-        });
-        open.push_ribbon_capped(&points, false, line.width, color, RibbonJoin::Round, caps);
-    }
-
-    open
 }
 
 /// Зелёная полоса под аллеей — чтобы пересборка стиля знала, что деспавнить.

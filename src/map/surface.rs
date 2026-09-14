@@ -28,6 +28,7 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use crate::loading::AppState;
 use crate::map::buildings::material::RoofMaterial;
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
+use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::settings::SURFACE_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/surface.wgsl";
@@ -52,6 +53,10 @@ pub struct SurfaceParams {
     /// переливается жёлто-зелёным и сине-зелёным, а не только светлее/темнее.
     pub tint: Vec4,
     pub marking_color: Vec4,
+    /// Цвет отмели на кромке ленты (линейный; `a` не читается). Только у воды:
+    /// площадной воде отмель кладёт геометрия (`water::mesh_water_areas`),
+    /// а ленте русла — шейдер по её координате поперёк, см. `shore_width`.
+    pub shore_color: Vec4,
     /// Амплитуда крупной «облачности» яркости и её шаг, м.
     pub mottle_amp: f32,
     pub mottle_scale: f32,
@@ -75,6 +80,15 @@ pub struct SurfaceParams {
     /// лишь с размеченной проезжей части от двух полос — площадная заливка
     /// того же материала ленты не несёт и износа не получает.
     pub wear: f32,
+    /// Отмель на кромках ленты, м (ноль — без отмели): от цвета
+    /// `shore_color` на краю к вершинному цвету ленты на этой глубине — то же
+    /// поле расстояний до берега, что у площадной воды
+    /// (`water::mesh_water_areas`). Вдоль ленты отмель гаснет в разрыве
+    /// («до разрыва» от нуля до минус `shore_width`): разрыв ставится только на
+    /// конце, отрезанном берегом площадной воды (`map::water`), и вода под
+    /// ним — у той же глубины тот же цвет. Площадная заливка ленты не несёт
+    /// (полуширина ноль) и отмели от шейдера не получает.
+    pub shore_width: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
 }
@@ -83,6 +97,7 @@ impl SurfaceParams {
     const FLAT: Self = Self {
         tint: Vec4::ZERO,
         marking_color: Vec4::ZERO,
+        shore_color: Vec4::ZERO,
         mottle_amp: 0.0,
         mottle_scale: 1.0,
         grain_amp: 0.0,
@@ -95,6 +110,7 @@ impl SurfaceParams {
         marking_dash: MARKING_DASH,
         marking_gap: MARKING_GAP,
         wear: 0.0,
+        shore_width: 0.0,
         intensity: SURFACE_TEXTURE_DEFAULT,
     };
 }
@@ -214,6 +230,8 @@ impl SurfaceKind {
                 grain_amp: 0.025,
                 grain_scale: 3.0,
                 drift: 0.6,
+                shore_color: Vec4::from_array(WATER_SHORE_COLOR.to_linear().to_f32_array()),
+                shore_width: WATER_SHORE_WIDTH,
                 ..flat
             },
             // асфальт: заплаты в десятки метров и мелкое зерно покрытия
