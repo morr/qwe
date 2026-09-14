@@ -632,10 +632,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   car would stand across its own line.
   The lot lying over the roads is what hides the OSM aisles, entries and footways
   running into it: its own outline clips every ribbon exactly, and the lot's asphalt
-  *is* the aisle. **No stall stands under a road crossing the lot** except its own
-  aisles (`RoadLine::parking_aisle`, `service=parking_aisle`) and bridges — a crooked
-  OSM outline can swallow a real street, which then reads as an empty lane of the lot.
-  Render-only. Tula: 170 lots, 90 aisle ways.
+  *is* the aisle. The stall layout knows nothing of roads — a road hidden under the lot
+  leaves no gap in the rows. Render-only. Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. Two things in the **ribbon frame**, so they follow the lane and not
   the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —

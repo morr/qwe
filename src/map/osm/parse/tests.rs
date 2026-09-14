@@ -873,17 +873,6 @@ fn a_bridge_and_an_arch_outrank_the_underground_rule() {
     );
 }
 
-/// Проезд стоянки помечен — по флагу раскладка мест (`map::parking`) не выбивает
-/// места под ним; прочие `service` (дворовый въезд, сквозная дорога) выбивают.
-#[test]
-fn a_parking_aisle_is_marked_and_a_driveway_is_not() {
-    let (sw, se, ..) = corners(HALF);
-    let road = |tags: &[(&str, &str)]| Overpass::new(CITY).way(tags, vec![sw, se]).parse().roads;
-    assert!(road(&[("highway", "service"), ("service", "parking_aisle")])[0].parking_aisle);
-    assert!(!road(&[("highway", "service"), ("service", "driveway")])[0].parking_aisle);
-    assert!(!road(&[("highway", "service")])[0].parking_aisle);
-}
-
 /// Односторонность, кольцо и число полос — то, по чему рисуется разметка.
 #[test]
 fn oneway_roundabout_and_lanes_reach_the_road() {

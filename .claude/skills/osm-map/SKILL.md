@@ -977,20 +977,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     price of the lot on top is stated: an outline mapped over a real carriageway hides
     that stretch of asphalt, markings and sidewalk — the kerb cars lie above (`Z_CAR`)
     and stay. Render-only: the navmesh, doors and tree planting still see every road.
-    `RoadLine::parking_aisle` (`service=parking_aisle`, Tula 90 ways) survives for the
-    stall rule below. The stall layout still ignores where OSM's aisle ran — its own
-    `AISLE` gaps stand in for it.
-  - **No stall stands under a road that crosses the lot** (`ParkingLayout::new(lots,
-    roads)`, `Crossing::covers`). OSM lot outlines are sometimes drawn crooked and swallow
-    a real street — Tula's big lot by the eastern roundabout has a one-way
-    `highway=service` (`maxspeed=60`, no `service=*`, way 498649803) running through it —
-    and the rows, laid by the lot's own rectangle, put cars across it. The lot covers the
-    road's ribbon; what is left of the road is an empty lane of the lot's asphalt, which
-    reads as an aisle. A stall is dropped when the road
-    axis crosses the stall rectangle grown by the road's half width (Liang–Barsky; the
-    square corner is slightly stricter than true distance). Bridges pass over the lot and
-    the lot's own aisles are its `AISLE` gaps, so neither drops stalls. Roads are prefiltered per lot by AABB.
-    Since markings and cars read the same layout, the paint goes with the cars.
+  - **The stall layout knows nothing of roads**, and must not. While the road ribbons
+    were still drawn over the lot, stalls under a crossing road were dropped (Tula's big
+    lot by the eastern roundabout has a one-way `highway=service`, way 498649803, mapped
+    through it); with the lot on top that road is hidden, and the dropped stalls read as
+    an unexplained empty band across the rows — the author's call from a screenshot, and
+    the rule came out together with the `RoadLine::parking_aisle` flag it needed. The
+    layout's own `AISLE` gaps stand in for the OSM aisles.
   - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.

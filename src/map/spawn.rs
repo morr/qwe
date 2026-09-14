@@ -187,7 +187,7 @@ pub fn spawn_map(
     for area in &map.parking {
         push_area(&mut parking, area, PARKING_COLOR, &PARKING_RIM);
     }
-    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    *parking_layout = parking::ParkingLayout::new(&map.parking);
     let mut parking_lines = MeshBuilder::default();
     for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
         parking::push_markings(&mut parking_lines, area, stalls);

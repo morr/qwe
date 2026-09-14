@@ -401,7 +401,6 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
             lanes: tagged_lanes(&element.tags),
-            parking_aisle: element.tags.get("service").map(String::as_str) == Some("parking_aisle"),
         });
         return;
     }
