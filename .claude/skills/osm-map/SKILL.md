@@ -1132,12 +1132,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the very predicate that decides where a sidewalk and lane markings go, opened up for this
   — minus a bridge (nobody parks on one) and a roundabout (you drive it, you don't park on
   it), both excluded by `parkable` rather than by the predicate, which markings still need
-  them in. **Nor does a row stand where a street crosses a bridge** (`BridgeDeck`): a
-  street under a bridge, or one butting into its side, shares no node with it, so
-  `marking_breaks` sees no junction — and `Z_CAR` lies above `Z_BRIDGE`, so the car was
-  drawn on the deck. A place within the deck's half width + `bridge_curb_width` +
-  `JUNCTION_CLEARANCE` of a bridge centreline is dropped, like a junction's; bridges are
-  prefiltered per street by AABB. The threshold that stood here before was `road.width >= 9 m`, and it was reading
+  them in. The threshold that stood here before was `road.width >= 9 m`, and it was reading
   the wrong thing: `RoadLine::width` is a **drawing constant of the class**
   (`primary` 16, `tertiary` 10, `residential` 8, `service` 5), never a measured street
   width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
@@ -1191,6 +1186,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     place within `Break::reach + JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
     end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
     ends meeting are not a break at all, which is the half of the defect that tore the row.
+  - **Nor does a row stand where a street crosses a bridge** (`BridgeDeck`, pinned by
+    `a_street_crossing_a_bridge_clears_the_row_under_the_deck`). A street under a bridge,
+    or one butting into its side, shares no node with it, so `marking_breaks` sees no
+    junction — and `Z_CAR` lies above `Z_BRIDGE`, so the car was drawn on the deck. A place
+    within the deck's half width + `bridge_curb_width` + `JUNCTION_CLEARANCE` of a bridge
+    centreline is dropped, the way a junction's is; the bridges are prefiltered per street
+    by their AABB (grown by the street's width), so a place tests only the decks near it.
+    Past the gap the RNG stream differs, exactly as past a junction.
   - **A one-way carriageway gets one row, on the kerb of the driving side**
     (`MapData::traffic_side`, see **Driving side** above; `TrafficSide::kerb`). With
     right-hand traffic, each half of a divided avenue has the kerb on the right and the
