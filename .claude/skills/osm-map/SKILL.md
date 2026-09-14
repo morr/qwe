@@ -633,9 +633,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the last bucket the dash is `min_bed` 9 m × `width_scale` 0.5 ÷ `MAX_ZOOM` 4.5 =
     exactly 1 px wide. That is why the contrast was bought back with the colour rather
     than by widening `width_scale` — the pixel arithmetic of this paragraph stays put.
-    `min_bed` floors the ballast
-    width on the last two buckets — 5 m is a pixel at city scale, and the track would
-    vanish before the roads it crosses. The numbers are derived from the screen size at
+    `min_bed` floors the ballast width on the last two buckets — 5 m is a pixel at city
+    scale, and the track would vanish before the roads it crosses. The numbers are derived from the screen size at
     the **worst** (far) edge of each bucket, and they hold on **every** parsed bed width
     (5 / 4 / 3.5 m), not only the mainline's: tie spacing never below ~6 px, no mark below
     ~1 px. The second number that must hold across buckets is the **tie duty cycle**,
