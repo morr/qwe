@@ -31,6 +31,11 @@ fn band(points: &[Vec2], reach: f32) -> ShadowBand {
     }
 }
 
+/// Точка на оси x — нарезанные мосты тестов лежат вдоль неё.
+fn on_x(x: f32) -> Vec2 {
+    Vec2::new(x, 0.0)
+}
+
 /// Карта из одних мостовых ways — вход [`Bridges`].
 fn bridge_map(decks: Vec<RoadLine>) -> MapData {
     MapData {
@@ -234,14 +239,14 @@ fn a_bridge_along_the_sun_is_still_outlined() {
 fn the_shadow_edge_fades_and_dies_at_the_abutment() {
     let deck = [Vec2::ZERO, Vec2::new(0.0, 80.0)];
     let reach = 2.55;
+    let shadow = band(&deck, reach);
     let mut builder = MeshBuilder::default();
-    push_bridge_shadows(&mut builder, &[band(&deck, reach)]);
+    push_bridge_shadows(&mut builder, std::slice::from_ref(&shadow));
 
-    let penumbra = bridge_penumbra(polyline_length(&deck));
+    let penumbra = shadow.penumbra;
     // ширину меряем от самой ленты: она вся сдвинута по свету вбок, и ось
     // моста ей уже не центр
-    let path = bridge_shadow_path(&deck, &lone(&deck));
-    let centers: Vec<Vec2> = path.iter().map(|point| point.at).collect();
+    let centers: Vec<Vec2> = shadow.path.iter().map(|point| point.at).collect();
     let tips = [centers[0], centers[centers.len() - 1]];
     let (mut faded, mut ends) = (0.0_f32, 0.0_f32);
     for (position, color) in builder
@@ -332,11 +337,10 @@ fn a_short_bridge_needs_a_gap_under_it() {
 /// проваливается под настил посреди восьмисотметрового моста.
 #[test]
 fn a_glued_bridge_ramps_only_at_its_outer_ends() {
-    let at = |x: f32| Vec2::new(x, 0.0);
     let map = bridge_map(vec![
-        fixture::bridge(vec![at(0.0), at(60.0)], 12.0),
-        fixture::bridge(vec![at(60.0), at(90.0)], 12.0),
-        fixture::bridge(vec![at(90.0), at(150.0)], 12.0),
+        fixture::bridge(vec![on_x(0.0), on_x(60.0)], 12.0),
+        fixture::bridge(vec![on_x(60.0), on_x(90.0)], 12.0),
+        fixture::bridge(vec![on_x(90.0), on_x(150.0)], 12.0),
     ]);
     let bridges = Bridges::new(&map);
 
@@ -366,12 +370,11 @@ fn a_glued_bridge_ramps_only_at_its_outer_ends() {
 /// шести и дала бы вдвое более короткую тень, чем её же соседи.
 #[test]
 fn a_glued_bridge_takes_its_height_from_the_whole_span() {
-    let at = |x: f32| Vec2::new(x, 0.0);
-    let piece = vec![at(60.0), at(90.0)];
+    let piece = vec![on_x(60.0), on_x(90.0)];
     let map = bridge_map(vec![
-        fixture::bridge(vec![at(0.0), at(60.0)], 12.0),
+        fixture::bridge(vec![on_x(0.0), on_x(60.0)], 12.0),
         fixture::bridge(piece.clone(), 12.0),
-        fixture::bridge(vec![at(90.0), at(150.0)], 12.0),
+        fixture::bridge(vec![on_x(90.0), on_x(150.0)], 12.0),
     ]);
     let glued = *Bridges::new(&map).span(1).unwrap();
     assert_eq!(glued.span, 150.0);
@@ -391,12 +394,11 @@ fn a_glued_bridge_takes_its_height_from_the_whole_span() {
 /// моста — не мостик, и спрашивать у неё про разрыв под настилом нельзя.
 #[test]
 fn a_short_piece_of_a_long_bridge_keeps_its_shadow() {
-    let at = |x: f32| Vec2::new(x, 0.0);
-    let stub = vec![at(0.0), at(20.0)];
+    let stub = vec![on_x(0.0), on_x(20.0)];
     // по сухой земле: разрыва под настилом нет ни у куска, ни у моста
     let glued = bridge_map(vec![
         fixture::bridge(stub.clone(), 3.5),
-        fixture::bridge(vec![at(20.0), at(80.0)], 3.5),
+        fixture::bridge(vec![on_x(20.0), on_x(80.0)], 3.5),
     ]);
     assert!(Bridges::new(&glued).span(0).unwrap().casts);
 
@@ -502,4 +504,71 @@ fn road_style_defaults_draw_sidewalks_and_markings() {
     let style = RoadStyle::default();
     assert!(style.sidewalks);
     assert!(style.markings);
+}
+
+/// Мост с тротуаром — два параллельных way, и ядра их теней перекрываются:
+/// каждое на [`SHADOW_SPREAD`] шире своего настила. Ядра объединены, но кайма
+/// кладётся от рельсов своей ленты — и рельс одного моста лежит внутри ядра
+/// другого. Кайма оттуда легла бы поверх уже закрашенного союза полосой
+/// двойной темноты с жёсткой линией по рельсу.
+#[test]
+fn a_bridge_penumbra_never_lies_over_a_neighbours_core() {
+    let reach = 2.5;
+    // три метра между осями: ядра по 3.5 м в полуширину накрывают друг друга
+    let decks = [
+        [Vec2::ZERO, Vec2::new(80.0, 0.0)],
+        [Vec2::new(0.0, 3.0), Vec2::new(80.0, 3.0)],
+    ];
+    let bands: Vec<ShadowBand> = decks.iter().map(|deck| band(deck, reach)).collect();
+    let cores: Vec<Vec<Vec2>> = bands
+        .iter()
+        .map(|shadow| {
+            let edges = shadow_edges(shadow);
+            edges
+                .iter()
+                .map(|edge| edge.left)
+                .chain(edges.iter().rev().map(|edge| edge.right))
+                .collect()
+        })
+        .collect();
+    // сцена честная: посреди моста рельс каждой ленты и правда в ядре соседа
+    for (own, shadow) in bands.iter().enumerate() {
+        let edges = shadow_edges(shadow);
+        let middle = &edges[edges.len() / 2];
+        assert!(
+            [middle.left, middle.right]
+                .iter()
+                .any(|rail| point_in_polygon(*rail, &cores[1 - own])),
+            "the cores of the two bridges do not overlap"
+        );
+    }
+
+    let mut builder = MeshBuilder::default();
+    push_bridge_shadows(&mut builder, &bands);
+
+    let mut faded = 0;
+    for (position, color) in builder
+        .positions_for_test()
+        .iter()
+        .zip(builder.colors_for_test())
+    {
+        // прозрачная вершина бывает только на внешнем крае каймы
+        if color[3] != 0.0 {
+            continue;
+        }
+        faded += 1;
+        let point = Vec2::new(position[0], position[1]);
+        // у устоя кайма схлопнута на свой же рельс — граница своего ядра не
+        // в счёт, в счёт только глубина
+        let buried = cores.iter().any(|core| {
+            let ring: Vec<Vec2> = core.iter().chain(core.first()).copied().collect();
+            point_in_polygon(point, core) && distance_to_path(point, &ring) > 0.01
+        });
+        assert!(
+            !buried,
+            "a penumbra lip lies inside a shadow core at {point}"
+        );
+    }
+    // наружные каймы пары остались: пропускается только погребённая
+    assert!(faded > 0, "the pair lost its outer penumbra too");
 }

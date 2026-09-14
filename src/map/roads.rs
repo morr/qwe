@@ -52,7 +52,9 @@ use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
     miter_offsets,
 };
-use crate::map::osm::model::{distance_to_segment, point_in_area, polyline_length};
+use crate::map::osm::model::{
+    distance_to_segment, point_in_area, point_in_polygon, polyline_length,
+};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
@@ -71,10 +73,10 @@ use crate::settings::{
 /// каждого конца (но не больше `RAMP_MAX`) — это и есть насыпь.
 ///
 /// **Расстояние до торца меряется по всему мосту, а не по этому way.** Мост в
-/// OSM нарезан: переход через Упу — три way (424 + 95 + 299 м), и у каждого
-/// внутреннего стыка настил идёт на полной высоте. Меряя от торцов куска,
-/// рампа отрабатывала на каждом стыке, и тень дважды проваливалась под настил
-/// посреди восьмисотметрового моста. `from_start`/`from_end` — это путь до
+/// OSM нарезан: развязка Оружейного моста — три way (424 + 95 + 299 м),
+/// сходящиеся в одном узле, и в этом узле настил идёт на полной высоте. Меряя
+/// от торцов куска, рампа отрабатывала в узле у каждого из трёх кусков, и тень
+/// проваливалась под настил посреди развязки. `from_start`/`from_end` — это путь до
 /// ближайшего свободного торца **через соседние ways**, поэтому у внутреннего
 /// стыка он велик и подъём там равен единице.
 ///
@@ -92,9 +94,7 @@ use crate::settings::{
 /// тот самый клин, что торчал из-под каждого мостика через канал. Остаток
 /// тоже считается по всему мосту.
 fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
-    // слипшиеся точки OSM вырождают нормаль стыка — то же, что делает лента
-    let merged = merge_close_points(points, false, SHADOW_STEP / 4.0);
-    let dense = densify(&merged, SHADOW_STEP);
+    let dense = deck_centerline(points);
     if dense.len() < 2 {
         return Vec::new();
     }
@@ -175,7 +175,7 @@ struct BridgeSpan {
 /// Мосты карты: **связные цепочки** мостовых ways, а не отдельные ways.
 ///
 /// Мост в OSM нарезан — Тула: 61 мостовой way, из них 8 сцеплены в 3 моста
-/// (424 + 95 + 299 = 818 м переход через Упу, 34 + 129 + 22 = 185 м и
+/// (424 + 95 + 299 = 818 м развязка Оружейного моста, 34 + 129 + 22 = 185 м и
 /// 39 + 4 = 43 м), итого 56 мостов. Считая каждый way отдельным мостом, тень
 /// врала дважды: рампа отрабатывала на каждом внутреннем стыке (тень
 /// проваливалась под настил посреди длинного моста), а [`SHORT_SPAN`]
@@ -242,13 +242,16 @@ impl Bridges {
         // компоненты связности по узлам — это и есть мосты
         let mut parent: Vec<usize> = (0..nodes.len()).collect();
         for [first, second] in &ends {
-            let (a, b) = (find(&mut parent, *first), find(&mut parent, *second));
+            let (a, b) = (
+                component_root(&mut parent, *first),
+                component_root(&mut parent, *second),
+            );
             if a != b {
                 parent[a] = b;
             }
         }
         let roots: Vec<usize> = (0..nodes.len())
-            .map(|node| find(&mut parent, node))
+            .map(|node| component_root(&mut parent, node))
             .collect();
 
         let mut degree = vec![0_usize; nodes.len()];
@@ -312,7 +315,7 @@ impl Bridges {
 }
 
 /// Корень компоненты со сжатием пути.
-fn find(parent: &mut [usize], mut node: usize) -> usize {
+fn component_root(parent: &mut [usize], mut node: usize) -> usize {
     while parent[node] != node {
         parent[node] = parent[parent[node]];
         node = parent[node];
@@ -324,7 +327,7 @@ fn find(parent: &mut [usize], mut node: usize) -> usize {
 /// [`SHADOW_STEP`] метров.
 ///
 /// Спрашивают только у короткого моста. Пропорциональной высоты мало:
-/// западный подход к мосту через Упу — это четыре way по 23–30 м с
+/// западный подход к мосту через Упу на Советской — это четыре way по 23–30 м с
 /// `bridge=yes` и `layer=1`, а на месте там ровная земля: насыпь, а не
 /// эстакада. Отличить насыпь от пролёта по тегам нельзя, зато можно спросить,
 /// есть ли под ней разрыв. Дороги в этот список не входят намеренно — именно
@@ -334,12 +337,19 @@ fn find(parent: &mut [usize], mut node: usize) -> usize {
 /// Длинному мосту вопрос не задаётся: на сотне метров насыпи не бывает, а
 /// перебирать контуры воды под каждым из них незачем.
 fn probe_underneath(points: &[Vec2], underneath: &Underneath) -> bool {
+    deck_centerline(points)
+        .iter()
+        .any(|point| underneath.covers(*point))
+}
+
+/// Осевая настила, по которой идут и тень, и проба: слипшиеся точки OSM
+/// склеены (они вырождают нормаль стыка — то же, что делает лента), остальное
+/// догущено до [`SHADOW_STEP`].
+fn deck_centerline(points: &[Vec2]) -> Vec<Vec2> {
     densify(
         &merge_close_points(points, false, SHADOW_STEP / 4.0),
         SHADOW_STEP,
     )
-    .iter()
-    .any(|point| underneath.covers(*point))
 }
 
 /// Что лежит под настилом: контуры воды, русла водотоков и рельсовые пути,
@@ -434,9 +444,10 @@ const RAMP_SHARE: f32 = 0.25;
 const RAMP_MAX: f32 = 25.0;
 const SHADOW_STEP: f32 = 2.0;
 
-/// Пролёт, короче которого way с `bridge=yes` считается мостом только над водой
-/// или путями — см. [`bridge_casts_shadow`]. Тридцать пять метров: подходы к
-/// мосту через Упу это 23–30 м, мостик через канал в парке — 39.
+/// Пролёт, короче которого мост ([`Bridges`] — связные мостовые ways, а не
+/// один way) считается мостом только над водой или путями — см.
+/// [`probe_underneath`]. Тридцать пять метров: подходы к мосту через Упу на
+/// Советской это 23–30 м, мостик через канал в парке — 39.
 const SHORT_SPAN: f32 = 35.0;
 
 /// Насколько тень настила шире самого настила с каждой стороны, м. Метр — это
@@ -450,7 +461,8 @@ const SHADOW_SPREAD: f32 = 1.0;
 /// Длину тени высота даёт тем же котангенсом высоты солнца, что у домов и
 /// вагонов: путепровод над улицей поднят метров на шесть, и тень от него —
 /// самое заметное, что бывает на воде под мостом. Полную высоту набирает
-/// пролёт от 48 м — мост через Упу (137 м) и развязка (571 м) на потолке,
+/// пролёт от 48 м — мост через Упу на Советской (137 м) и Оружейный мост
+/// (571 м) на потолке,
 /// мостик через пруд (14 м) поднят на метр восемьдесят.
 const BRIDGE_HEIGHT: f32 = 6.0;
 const SPAN_TO_HEIGHT: f32 = 1.0 / 8.0;
@@ -963,9 +975,10 @@ fn bridge_penumbra(span: f32) -> f32 {
 /// зданий и оград), и это не про запас: на Туле **28 пар разных мостов**
 /// накрывают друг друга тенями. Так OSM размечает мост с тротуаром — отдельным
 /// параллельным way с тем же `bridge=yes`, — и в полупрозрачном слое такая пара
-/// читается полосой двойной темноты вдоль всего моста. Сама с собой одна лента
-/// не пересекается (соседние квады делят ребро вершина в вершину), так что
-/// союз нужен именно ради соседей.
+/// читается полосой двойной темноты вдоль всего моста. Одна лента — это один
+/// контур (левый рельс вперёд, правый назад), и её собственное самокасание на
+/// крутом повороте NonZero закрашивает один раз, так что союз нужен именно
+/// ради соседей.
 ///
 /// **Кайма при этом кладётся от каждой ленты своей**, до объединения, и вот
 /// почему её нельзя считать от контура союза: её ширина берётся из `rise`,
@@ -974,7 +987,8 @@ fn bridge_penumbra(span: f32) -> f32 {
 /// лежит на земле, и метр мягкой тени вокруг его торца это ровно та «грязная
 /// обводка», ради избавления от которой у зданий убирали контактную юбку.
 /// Перекрытие двух кайм друг с другом карта уже разрешает явно (тени зданий:
-/// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»).
+/// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»). Кайма,
+/// чья внешняя кромка лежит внутри ядра соседней ленты, не кладётся.
 fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
@@ -985,6 +999,21 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
         ..color
     };
     let edges: Vec<Vec<ShadowEdge>> = bands.iter().map(shadow_edges).collect();
+
+    // ядра лент для проверки погружения каймы
+    let cores: Vec<Vec<Vec2>> = edges
+        .iter()
+        .map(|band| {
+            if band.len() < 2 {
+                Vec::new()
+            } else {
+                band.iter()
+                    .map(|edge| edge.left)
+                    .chain(band.iter().rev().map(|edge| edge.right))
+                    .collect()
+            }
+        })
+        .collect();
 
     // контур ленты — левый рельс вперёд, правый назад
     let contours: Vec<Vec<[f32; 2]>> = edges
@@ -1011,7 +1040,7 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
         builder.push_polygon(&outer, &holes, color);
     }
 
-    for band in &edges {
+    for (own, band) in edges.iter().enumerate() {
         for pair in band.windows(2) {
             let (near, far) = (&pair[0], &pair[1]);
             // у устоя кайма схлопнута с обеих сторон — квада там нет вовсе
@@ -1024,6 +1053,18 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
                 } else {
                     (near.right, far.right)
                 };
+                let lip =
+                    (from + near.normal * (side * near.blur) + to + far.normal * (side * far.blur))
+                        / 2.0;
+                // кайма, чья внешняя кромка лежит в ядре соседа, легла бы
+                // поверх уже закрашенного союза двойной темнотой
+                let buried = cores
+                    .iter()
+                    .enumerate()
+                    .any(|(other, ring)| other != own && point_in_polygon(lip, ring));
+                if buried {
+                    continue;
+                }
                 builder.push_quad_gradient(
                     [
                         from,
