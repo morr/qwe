@@ -977,6 +977,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     layout still ignores where OSM's aisle ran — its own `AISLE` gaps stand in for it.
     Render-only: the navmesh, doors and tree planting still see the aisle as a road.
     Tula: 90 aisle ways.
+  - **No stall stands under a road that crosses the lot** (`ParkingLayout::new(lots,
+    roads)`, `Crossing::covers`). OSM lot outlines are sometimes drawn crooked and swallow
+    a real street — Tula's big lot by the eastern roundabout has a one-way
+    `highway=service` (`maxspeed=60`, no `service=*`, way 498649803) running through it —
+    and the rows, laid by the lot's own rectangle, put cars across it. **Such a road is
+    not hidden**: it is a road, not an aisle, and hiding every `highway=service` inside a
+    lot was tried and rejected for exactly that. Instead a stall is dropped when the road
+    axis crosses the stall rectangle grown by the road's half width (Liang–Barsky; the
+    square corner is slightly stricter than true distance). Bridges pass over the lot and
+    aisles are hidden, so neither drops stalls. Roads are prefiltered per lot by AABB.
+    Since markings and cars read the same layout, the paint goes with the cars.
   - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
@@ -1471,8 +1482,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       once the lots were filled, i.e. ~5 900 cars and ~48 k verts on Tula, at whatever the
       detail step of the moment costs per car.
   - **The lots are filled by the same pass** (`fill_lots`): every stall from
-    `parking::stalls`, `LOT_OCCUPANCY` **55 %** of them taken — a lot is fuller than a
-    kerb, and an empty one next to a painted grid reads as unfinished. Seeded per lot
+    `ParkingLayout`, a share of them taken **that falls with the lot's size**
+    (`lot_occupancy`): `LOT_OCCUPANCY_SMALL` 50 % up to `LOT_SMALL_STALLS` 20 stalls,
+    `LOT_OCCUPANCY_LARGE` 12 % from `LOT_LARGE_STALLS` 400, by the log of the stall count
+    in between. It was a flat 55 %, and on a mall lot of hundreds of stalls that solid
+    field of cars read as a dealership — the author's call from a screenshot. A yard
+    is still fuller than a kerb, and an empty one next to a painted grid reads as
+    unfinished. Seeded per lot
     (`lot_seed`, its first point) exactly like a street. That share is a constant, not
     `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
     lot is a different observation.

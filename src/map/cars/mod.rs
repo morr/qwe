@@ -66,11 +66,18 @@ const PARK_SLOP: f32 = 0.12;
 /// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
 /// те же пять пустых метров, что и на настоящем узле.
 const JUNCTION_CLEARANCE: f32 = 5.0;
-/// Какая доля мест занята на **размеченной стоянке** — там машин больше, чем
-/// вдоль улицы, но не под завязку. Своя константа, а не ползунок
-/// `CarStyle::occupancy`: тот про рваный ряд у бордюра, а полупустая стоянка
-/// — это другое наблюдение, и крутить их вместе нечем.
-const LOT_OCCUPANCY: f32 = 0.55;
+/// Какая доля мест занята на **размеченной стоянке**, от малой к большой
+/// ([`lot_occupancy`]). Двор на пару десятков мест заставлен наполовину, а
+/// стоянка торгового центра на сотни мест почти пуста: забитым её видно только
+/// в час пик, и сплошное поле машин читалось автосалоном. Свои константы, а не
+/// ползунок `CarStyle::occupancy`: тот про рваный ряд у бордюра, а полупустая
+/// стоянка — это другое наблюдение, и крутить их вместе нечем.
+const LOT_OCCUPANCY_SMALL: f32 = 0.5;
+const LOT_OCCUPANCY_LARGE: f32 = 0.12;
+/// Мест на стоянке, до которых заполненность ещё [`LOT_OCCUPANCY_SMALL`], и от
+/// которых уже [`LOT_OCCUPANCY_LARGE`]; между ними — по логарифму числа мест.
+const LOT_SMALL_STALLS: f32 = 20.0;
+const LOT_LARGE_STALLS: f32 = 400.0;
 
 /// Ручки слоя машин: строки `Cars` и `Occupancy` секции Roads
 /// (`ui/roads.rs`) — путь и машины стоят на одной проезжей части, так что
@@ -369,14 +376,15 @@ fn park_cars(
 
 /// Машины на размеченных стоянках: то же место, что и у разметки
 /// (`map::parking::stalls`), — иначе машина встала бы мимо своей полосы.
-/// Занято чуть больше половины мест ([`LOT_OCCUPANCY`]): полная стоянка
+/// Занята доля мест по размеру стоянки ([`lot_occupancy`]): полная стоянка
 /// выглядит как автосалон, а пустая — как чертёж.
 fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>]) -> Vec<Car> {
     let mut cars = Vec::new();
     for (lot, stalls) in lots.iter().zip(layout) {
         let mut rng = Lcg::new(lot_seed(lot));
+        let occupancy = lot_occupancy(stalls.len());
         for stall in stalls {
-            if rng.next_f32() >= LOT_OCCUPANCY {
+            if rng.next_f32() >= occupancy {
                 continue;
             }
             cars.push(Car {
@@ -388,6 +396,15 @@ fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>]) -> Vec<Car> {
         }
     }
     cars
+}
+
+/// Доля занятых мест на стоянке из `stalls` мест: чем стоянка больше, тем она
+/// пустее. По логарифму — разница между двором на 20 мест и на 40 заметна, а
+/// между стоянками на 400 и 800 уже нет.
+fn lot_occupancy(stalls: usize) -> f32 {
+    let t = ((stalls as f32).max(1.0) / LOT_SMALL_STALLS).ln()
+        / (LOT_LARGE_STALLS / LOT_SMALL_STALLS).ln();
+    LOT_OCCUPANCY_SMALL + (LOT_OCCUPANCY_LARGE - LOT_OCCUPANCY_SMALL) * t.clamp(0.0, 1.0)
 }
 
 /// Посев стоянки — от её первой вершины, тем же [`seed_from_point`], что у
@@ -589,6 +606,18 @@ mod tests {
     use super::*;
     use crate::map::osm::fixture::street;
     use crate::map::roads::junctions::JUNCTION_MARGIN;
+
+    /// Большая стоянка пустее малой, и доля не выходит за свои края.
+    #[test]
+    fn a_bigger_lot_is_emptier() {
+        assert_eq!(lot_occupancy(5), LOT_OCCUPANCY_SMALL);
+        assert!((lot_occupancy(5000) - LOT_OCCUPANCY_LARGE).abs() < 1e-6);
+        let shares: Vec<f32> = [20, 50, 100, 200, 400].map(lot_occupancy).to_vec();
+        assert!(
+            shares.windows(2).all(|pair| pair[1] < pair[0]),
+            "{shares:?}"
+        );
+    }
 
     /// Расстановка по срезу целиком — так же, как её зовёт пересборка слоя.
     fn park(roads: &[RoadLine]) -> Vec<Car> {

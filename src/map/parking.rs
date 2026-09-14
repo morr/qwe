@@ -19,8 +19,8 @@
 use bevy::prelude::*;
 
 use crate::map::meshing::{MeshBuilder, min_area_rect};
-use crate::map::osm::PolyArea;
-use crate::map::osm::model::{point_in_area, signed_ring_area};
+use crate::map::osm::model::{point_in_area, ring_bounds, signed_ring_area};
+use crate::map::osm::{PolyArea, RoadLine};
 
 /// Место, м: легковая машина плюс просвет по обе стороны.
 const STALL_WIDTH: f32 = 2.6;
@@ -55,9 +55,106 @@ pub struct Stall {
 pub struct ParkingLayout(pub Vec<Vec<Stall>>);
 
 impl ParkingLayout {
-    pub fn new(lots: &[PolyArea]) -> Self {
-        Self(lots.iter().map(stalls).collect())
+    /// Места всех стоянок, **кроме тех, что легли под дорогу**. Контур
+    /// стоянки в OSM бывает нарисован криво и накрывает настоящую улицу — в Туле
+    /// так через большую стоянку у развязки идёт односторонняя дорога, — а
+    /// ряды мест о дорогах не знают, и машины вставали поперёк неё. Проезд
+    /// самой стоянки (`parking_aisle`) не в счёт: он внутри стоянки не рисуется,
+    /// и ряды стоят по своей сетке. Мост тоже: он над стоянкой.
+    pub fn new(lots: &[PolyArea], roads: &[RoadLine]) -> Self {
+        let crossings: Vec<Crossing> = roads
+            .iter()
+            .filter(|road| !road.bridge && !road.parking_aisle)
+            .filter_map(Crossing::of)
+            .collect();
+        Self(
+            lots.iter()
+                .map(|lot| {
+                    let (min, max) = ring_bounds(&lot.outer);
+                    let near: Vec<&Crossing> = crossings
+                        .iter()
+                        .filter(|road| road.min.cmple(max).all() && road.max.cmpge(min).all())
+                        .collect();
+                    let mut found = stalls(lot);
+                    found.retain(|stall| !near.iter().any(|road| road.covers(stall)));
+                    found
+                })
+                .collect(),
+        )
     }
+}
+
+/// Дорога, под которой мест не бывает: осевая, полуширина и AABB, раздутый на
+/// полуширину и полдлины места — чтобы стоянку спрашивали только о дорогах
+/// рядом.
+struct Crossing<'a> {
+    points: &'a [Vec2],
+    half_width: f32,
+    min: Vec2,
+    max: Vec2,
+}
+
+impl<'a> Crossing<'a> {
+    fn of(road: &'a RoadLine) -> Option<Self> {
+        if road.points.len() < 2 {
+            return None;
+        }
+        let half_width = road.width / 2.0;
+        let (min, max) = ring_bounds(&road.points);
+        let grow = Vec2::splat(half_width + STALL_DEPTH);
+        Some(Self {
+            points: &road.points,
+            half_width,
+            min: min - grow,
+            max: max + grow,
+        })
+    }
+
+    /// Лента дороги задевает место. Место — прямоугольник в своей рамке
+    /// (поперёк — ширина места, вдоль машины — глубина), раздутый на
+    /// полуширину дороги; задевает, если осевая пересекает раздутый
+    /// прямоугольник. На углах это чуть строже честного расстояния (квадратный
+    /// угол вместо скругления) — лишнее место у кромки дороги не жалко.
+    fn covers(&self, stall: &Stall) -> bool {
+        let length_axis = stall.along;
+        let width_axis = Vec2::new(-length_axis.y, length_axis.x);
+        let half = Vec2::new(
+            STALL_WIDTH / 2.0 + self.half_width,
+            STALL_DEPTH / 2.0 + self.half_width,
+        );
+        let local = |point: Vec2| {
+            let offset = point - stall.at;
+            Vec2::new(offset.dot(width_axis), offset.dot(length_axis))
+        };
+        self.points
+            .windows(2)
+            .any(|pair| segment_hits_box(local(pair[0]), local(pair[1]), half))
+    }
+}
+
+/// Отрезок пересекает прямоугольник `[-half, half]` (Лианг–Барски).
+fn segment_hits_box(from: Vec2, to: Vec2, half: Vec2) -> bool {
+    let span = to - from;
+    let (mut enter, mut exit) = (0.0_f32, 1.0_f32);
+    for axis in 0..2 {
+        let (start, delta, limit) = (from[axis], span[axis], half[axis]);
+        if delta == 0.0 {
+            if start.abs() > limit {
+                return false;
+            }
+            continue;
+        }
+        let (mut near, mut far) = ((-limit - start) / delta, (limit - start) / delta);
+        if near > far {
+            std::mem::swap(&mut near, &mut far);
+        }
+        enter = enter.max(near);
+        exit = exit.min(far);
+        if enter > exit {
+            return false;
+        }
+    }
+    true
 }
 
 /// Места стоянки — рядами вдоль её длинной оси. Пусто, если площадка мелкая
@@ -221,6 +318,41 @@ mod tests {
         ]);
         for stall in stalls(&ell) {
             assert!(point_in_area(stall.at, &ell), "{:?}", stall.at);
+        }
+    }
+
+    /// Дорога через стоянку (кривой контур в OSM) выбивает места под своей
+    /// лентой и не трогает остальные; проезд самой стоянки и мост — не выбивают.
+    #[test]
+    fn a_road_across_the_lot_takes_the_stalls_under_it() {
+        use crate::map::osm::fixture::{bridge, street};
+
+        let lot = lot(rect(30.0, 60.0));
+        let all = stalls(&lot).len();
+        let road = street(vec![Vec2::new(30.0, -10.0), Vec2::new(30.0, 40.0)], 5.0);
+        let crossed =
+            &ParkingLayout::new(std::slice::from_ref(&lot), std::slice::from_ref(&road)).0[0];
+        assert!(crossed.len() < all, "{} of {all}", crossed.len());
+        assert!(crossed.len() > all / 2, "{} of {all}", crossed.len());
+        for stall in crossed {
+            // места у дороги — не ближе полуширины места и дороги к оси
+            assert!(
+                (stall.at.x - 30.0).abs() >= STALL_WIDTH / 2.0 + 2.5 - 0.01,
+                "{:?}",
+                stall.at
+            );
+        }
+
+        let aisle = RoadLine {
+            parking_aisle: true,
+            ..road.clone()
+        };
+        let over = bridge(road.points.clone(), 5.0);
+        for spared in [aisle, over] {
+            assert_eq!(
+                ParkingLayout::new(std::slice::from_ref(&lot), &[spared]).0[0].len(),
+                all
+            );
         }
     }
 }

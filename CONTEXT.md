@@ -632,7 +632,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **A parking aisle is not drawn inside its lot** (`RoadLine::parking_aisle`,
   `service=parking_aisle`): the lot's asphalt *is* the aisle, and the ribbon cut the
   stall rows; outside the lot the entry is drawn up to the edge with a flat end.
-  Render-only. Tula: 170 lots, 90 aisle ways.
+  Render-only. **No stall stands under any other road crossing the lot** — a crooked
+  OSM outline can swallow a real street, and that street stays drawn. Tula: 170 lots,
+  90 aisle ways.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. Two things in the **ribbon frame**, so they follow the lane and not
   the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
@@ -759,7 +761,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
   fifths, black a fifth, the rest coloured — and each turned and shifted a little, because
   nobody parks by a ruler. Cars also **fill the lots** — `fill_lots` takes the stalls above
-  and occupies `LOT_OCCUPANCY` (55 %) of them, a lot being fuller than a kerb.
+  and occupies a share that **falls with the lot's size** (`lot_occupancy`: 50 % on a
+  yard of ≤ 20 stalls down to 12 % from 400, by the log of the stall count) — a full mall
+  lot reads as a dealership.
   **A car is not a rectangle** (`cars/body.rs`): a rounded silhouette with a dark cabin
   across it — windscreen, roof, backlight — plus mirrors, and its size and the layout of
   that cabin come from its **body type** (`CarShape`: sedan, hatchback, wagon, crossover,
