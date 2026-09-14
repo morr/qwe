@@ -403,9 +403,35 @@ impl Default for TreeCompose {
     }
 }
 
+/// По какой стороне дороги идёт поток — тег `driving_side` на границе страны
+/// (`parse::driving_side`). Решает, у какого бордюра стоит ряд односторонней
+/// улицы и куда смотрят носы припаркованных машин (`map::cars`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TrafficSide {
+    #[default]
+    Right,
+    Left,
+}
+
+impl TrafficSide {
+    /// Знак поперечной `direction.perp()` (она смотрит влево по ходу), на
+    /// которой лежит бордюр своей полосы: при правостороннем движении это
+    /// правая сторона, `-1`.
+    pub fn kerb(self) -> f32 {
+        match self {
+            Self::Right => -1.0,
+            Self::Left => 1.0,
+        }
+    }
+}
+
 /// Распарсенная карта; остаётся ресурсом после спавна — для отладки.
 #[derive(Resource, Debug, Default)]
 pub struct MapData {
+    /// Сторона движения страны, в которой лежит карта. Без тега в ответе
+    /// (зеркало без областей, `is_in` пуст) — правостороннее, с предупреждением
+    /// при разборе.
+    pub traffic_side: TrafficSide,
     pub buildings: Vec<PolyArea>,
     pub water: Vec<PolyArea>,
     pub parks: Vec<PolyArea>,

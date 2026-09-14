@@ -61,7 +61,7 @@ use bevy::sprite_render::AlphaMode2d;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
 use qwe::map::cars::cars_mesh;
-use qwe::map::osm::RoadLine;
+use qwe::map::osm::{RoadLine, TrafficSide};
 use qwe::map::{
     CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, RoadSmoothing,
     smooth_path,
@@ -437,6 +437,9 @@ fn rebuild_gallery(
             occupancy: tuning.occupancy,
         },
         smoothing,
+        // клетки витрины нарисованы под правостороннее движение (разделённый
+        // проспект — встречными половинами справа)
+        TrafficSide::Right,
         tuning.car_detail(),
     );
 

@@ -64,13 +64,21 @@ impl GeoBounds {
 /// v3 — ноды `entrance`. v4 — ways `railway`. v5 — ways `natural=tree_row`.
 /// v6 — ноды `natural=tree`. v7 — линейные `waterway`. v8 — кварталы
 /// `landuse=residential|industrial|garages`. v9 — стоянки `amenity=parking`,
-/// v10 — спортивные и детские площадки `leisure=*`.
-const QUERY_VERSION: u32 = 10;
+/// v10 — спортивные и детские площадки `leisure=*`. v13 — `driving_side`
+/// границы страны (v11 и v12 заняты соседними ветками: два разных запроса под
+/// одним номером делили бы один кеш).
+const QUERY_VERSION: u32 = 13;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
 /// (`amenity=parking`), спортивные и детские площадки (`leisure=*`), аллеи,
-/// одиночные деревья, стены Кремля, входы в здания.
+/// одиночные деревья, стены Кремля, входы в здания — и отдельным `out tags`
+/// границы с `driving_side`, внутри которых лежит центр карты.
+///
+/// Границы идут вторым выводом, а не в общий `out geom`: геометрия границы
+/// страны весит мегабайты, а нужен от неё один тег. `is_in` работает по
+/// областям, которые строит не всякое зеркало; без них вывод пуст, и разбор
+/// берёт правостороннее движение.
 pub fn overpass_query(city: City) -> String {
     let GeoBounds {
         south,
@@ -80,6 +88,8 @@ pub fn overpass_query(city: City) -> String {
         ..
     } = GeoBounds::for_city(city);
     let bbox = format!("{south},{west},{north},{east}");
+    let center = city.geo_center();
+    let (lat, lon) = (center.x, center.y);
     format!(
         r#"[out:json][timeout:120];
 (
@@ -113,6 +123,9 @@ pub fn overpass_query(city: City) -> String {
   node["entrance"]({bbox});
 );
 out geom;
+is_in({lat},{lon})->.here;
+rel(pivot.here)["driving_side"];
+out tags;
 "#
     )
 }

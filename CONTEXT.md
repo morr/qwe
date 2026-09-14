@@ -124,7 +124,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
   bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS` are tried in
   order. **Bump `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**
-  (currently 7), or existing caches keep serving extracts that lack them.
+  (currently 13), or existing caches keep serving extracts that lack them.
+- **Driving side** (`TrafficSide: Right | Left`, `MapData::traffic_side`) — the
+  `driving_side` tag of the country boundary the map's centre lies in, asked by `is_in` as a
+  second `out tags` output (the tag is not on roads). No answer means `Right`. Read only by
+  the parked cars.
 - **Cache** — `assets/osm/{slug}_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored);
   the parameters live in the file name, so changing them invalidates it. Written only after
   a successful parse; the second launch never touches the network. `prune_stale_caches()`
@@ -657,9 +661,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   walk** above), not segment
   by segment, and the row **breaks at the junctions the lane markings already know**
   (`junctions::marking_breaks`, plus a 5 m clearance) rather than at the ends of an OSM way.
-  A **one-way** carriageway gets a single row, on its right-hand kerb — which is what stops
-  the two halves of a divided avenue from parking a column down their median, and is why
-  `oneway=-1` is now normalized at parse by reversing the way.
+  A **one-way** carriageway gets a single row, on the kerb of the **driving side** — which is
+  what stops the two halves of a divided avenue from parking a column down their median, and
+  is why `oneway=-1` is now normalized at parse by reversing the way. Every car **faces the
+  traffic of its own kerb**: along the way on the driving-side kerb, against it on the other.
   Bodies at a 6 m pitch,
   45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
   ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
