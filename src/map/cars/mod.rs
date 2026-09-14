@@ -26,7 +26,9 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::buildings::LayerCost;
+use crate::map::footprint::bridge_curb_width;
 use crate::map::meshing::{Break, MeshBuilder};
+use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
@@ -312,10 +314,18 @@ fn park_cars(
 ) -> Vec<Car> {
     let mut cars = Vec::new();
     let kerb = traffic.kerb();
+    let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
+    let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
         if !parkable(road) {
             continue;
         }
+        near.clear();
+        near.extend(
+            decks
+                .iter()
+                .filter(|deck| deck.near(&road.points, road.width)),
+        );
         // осевая та же, по которой `map::roads` строит ленту: по сырым точкам
         // OSM ряд на изломе съезжает с асфальта на тротуар, потому что Chaikin
         // срезает вершину на метры. Арок здесь не бывает — `is_carriageway` их
@@ -346,7 +356,10 @@ fn park_cars(
                     side,
                     heading: if side == kerb { 1.0 } else { -1.0 },
                 },
-                &junctions.breaks[index],
+                &Clearings {
+                    junctions: &junctions.breaks[index],
+                    decks: &near,
+                },
                 style.occupancy,
                 &mut rng,
             );
@@ -393,6 +406,66 @@ fn parkable(road: &RoadLine) -> bool {
     is_carriageway(road) && !road.bridge && !road.roundabout
 }
 
+/// Полотно моста, от которого ряд держится на [`JUNCTION_CLEARANCE`] — улица
+/// под мостом или упёршаяся в его бок. Общей ноды с мостом у такой улицы нет
+/// (`junctions` про неё не знает), а слой машин (`Z_CAR`) лежит **над**
+/// мостом, так что машина посреди перекрёстка с мостом рисовалась бы прямо на
+/// его асфальте.
+struct BridgeDeck<'a> {
+    points: &'a [Vec2],
+    /// Полуширина полотна с бортиком (внешняя кромка нарисованного) плюс
+    /// клиренс.
+    reach: f32,
+    min: Vec2,
+    max: Vec2,
+}
+
+impl<'a> BridgeDeck<'a> {
+    fn of(road: &'a RoadLine) -> Option<Self> {
+        if !road.bridge || road.points.is_empty() {
+            return None;
+        }
+        let reach = road.width / 2.0 + bridge_curb_width(road.width) + JUNCTION_CLEARANCE;
+        let (min, max) = road.points.iter().fold(
+            (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+            |(min, max), &point| (min.min(point), max.max(point)),
+        );
+        Some(Self {
+            points: &road.points,
+            reach,
+            min: min - reach,
+            max: max + reach,
+        })
+    }
+
+    /// Может ли полотно задеть ряд вдоль этой ломаной, — префильтр по рамкам,
+    /// чтобы на каждое место не проверять все мосты города.
+    fn near(&self, points: &[Vec2], margin: f32) -> bool {
+        points.windows(2).any(|pair| {
+            let (lo, hi) = (pair[0].min(pair[1]), pair[0].max(pair[1]));
+            lo.x <= self.max.x + margin
+                && hi.x >= self.min.x - margin
+                && lo.y <= self.max.y + margin
+                && hi.y >= self.min.y - margin
+        })
+    }
+
+    fn covers(&self, place: Vec2) -> bool {
+        match self.points {
+            [single] => place.distance(*single) < self.reach,
+            points => points
+                .windows(2)
+                .any(|pair| distance_to_segment(place, pair[0], pair[1]) < self.reach),
+        }
+    }
+}
+
+/// Где ряду стоять нельзя: перекрёстки этой улицы и мосты рядом с ней.
+struct Clearings<'a> {
+    junctions: &'a [Break],
+    decks: &'a [&'a BridgeDeck<'a>],
+}
+
 /// Бордюр, вдоль которого стоит ряд.
 #[derive(Clone, Copy)]
 struct Kerb {
@@ -417,7 +490,7 @@ fn park_along(
     points: &[Vec2],
     half_road: f32,
     kerb: Kerb,
-    junctions: &[Break],
+    clearings: &Clearings,
     occupancy: f32,
     rng: &mut Lcg,
 ) {
@@ -447,9 +520,11 @@ fn park_along(
         let across = direction.perp() * kerb.side;
         let offset = half_road - CURB_GAP - shape.width() / 2.0;
         let place = point + across * offset;
-        if junctions
+        if clearings
+            .junctions
             .iter()
             .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
+            || clearings.decks.iter().any(|deck| deck.covers(place))
         {
             continue;
         }
@@ -578,6 +653,35 @@ mod tests {
         let mut bridge = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 14.0);
         bridge.bridge = true;
         assert!(park(std::slice::from_ref(&bridge)).is_empty());
+    }
+
+    #[test]
+    fn a_street_crossing_a_bridge_clears_the_row_under_the_deck() {
+        // улица проходит под мостом: общей ноды нет, перекрёстка тоже
+        let through = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
+        let mut bridge = street(vec![Vec2::new(100.0, -80.0), Vec2::new(100.0, 80.0)], 16.0);
+        bridge.bridge = true;
+        let cars = park(&[through.clone(), bridge.clone()]);
+
+        let cleared = 16.0 / 2.0 + bridge_curb_width(16.0) + JUNCTION_CLEARANCE;
+        for car in &cars {
+            assert!(
+                (car.at.x - 100.0).abs() >= cleared - 0.01,
+                "машина на мосту: {}",
+                car.at
+            );
+        }
+        assert!(cars.iter().any(|car| car.at.x > 130.0));
+        assert!(cars.iter().any(|car| car.at.x < 70.0));
+
+        // первый ряд до моста стоит ровно как без него (после пропуска поток
+        // ГПСЧ уже другой — так же, как за перекрёстком, и второй ряд идёт
+        // по тому же потоку следом)
+        let alone = park(std::slice::from_ref(&through));
+        let far = |car: &&Car| car.at.x <= 100.0 - cleared - 10.0 && car.at.y < 0.0;
+        let with: Vec<_> = cars.iter().filter(far).map(|car| car.at).collect();
+        let without: Vec<_> = alone.iter().filter(far).map(|car| car.at).collect();
+        assert_eq!(with, without);
     }
 
     #[test]

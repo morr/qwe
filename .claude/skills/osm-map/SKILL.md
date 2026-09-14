@@ -1132,7 +1132,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the very predicate that decides where a sidewalk and lane markings go, opened up for this
   — minus a bridge (nobody parks on one) and a roundabout (you drive it, you don't park on
   it), both excluded by `parkable` rather than by the predicate, which markings still need
-  them in. The threshold that stood here before was `road.width >= 9 m`, and it was reading
+  them in. **Nor does a row stand where a street crosses a bridge** (`BridgeDeck`): a
+  street under a bridge, or one butting into its side, shares no node with it, so
+  `marking_breaks` sees no junction — and `Z_CAR` lies above `Z_BRIDGE`, so the car was
+  drawn on the deck. A place within the deck's half width + `bridge_curb_width` +
+  `JUNCTION_CLEARANCE` of a bridge centreline is dropped, like a junction's; bridges are
+  prefiltered per street by AABB. The threshold that stood here before was `road.width >= 9 m`, and it was reading
   the wrong thing: `RoadLine::width` is a **drawing constant of the class**
   (`primary` 16, `tertiary` 10, `residential` 8, `service` 5), never a measured street
   width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
