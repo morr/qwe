@@ -56,8 +56,8 @@ in `main.rs`.
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  pitches → pitch markings → parking → parking markings → water → waterways →
-  sidewalks → alley casings → alleys → road casings → roads → bridge shadows →
+  pitches → pitch markings → parking → parking markings →
+  sidewalks → alley casings → alleys → road casings → roads → water (2.01) → waterways (2.02) → bridge shadows →
   bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
@@ -67,7 +67,12 @@ in `main.rs`.
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
-  northern units under roads.
+  northern units under roads. **Invariant: a road lies over water only as a bridge** —
+  area water and open waterways both sit above every road ribbon and below the bridge
+  shadow, because the navmesh blocks both and only a bridge carves them (a narrow river
+  arm is mapped as a ribbon or as a polygon, so one rule covers both); the price is
+  water cutting an embankment sidewalk or footway mapped against the bank, and a street
+  over an unmapped culvert.
 
 ## App lifecycle
 
@@ -183,7 +188,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     so a way that is both a fence and something else becomes both.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
-    watercourse kind that does **not** block the navmesh.
+    watercourse kind that does **not** block the navmesh. Drawn (`map/waterways.rs`) only
+    **outside area water**: the axis is cut at every water outline, and a cut end — a
+    **mouth** — reaches `WATER_SHORE_WIDTH` (6 m) past the bank so the channel's own shore
+    fades out exactly as the polygon's does. Render-only; the navmesh still blocks the
+    whole channel band.
   - **TreeRow** / **TreeNode** — `natural=tree_row` avenues and single surveyed
     `natural=tree` trees, with optional `spacing`/`radius` from tags.
   - **trees / tree_appears_at** — what the renderer reads; `compose_trees` merges forest +
@@ -816,7 +825,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **shore** (6 m), park / grass / wood / sand an edge a few percent darker (2–3 m). Same
   mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
   no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
-  median strip never bleeds its rim onto the road.
+  median strip never bleeds its rim onto the road. A **waterway ribbon** carries the same
+  shore on its edges, but from the shader (`surface.wgsl`, by the ribbon's `across`,
+  clamped by the same 0.6 of its half width) — one colour and one width, so the shoal
+  turns from a pond into its channel without a seam.
 - **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
   passage; bridges included) is asphalt grey and gets a light **sidewalk band** at
   `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
