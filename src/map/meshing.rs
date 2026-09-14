@@ -1682,7 +1682,7 @@ pub fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) ->
 
 /// Сколько хорд нужно дуге радиуса `radius` на `sweep` радиан, чтобы стрелка
 /// хорды осталась в пределах [`ARC_TOLERANCE`].
-fn arc_steps(radius: f32, sweep: f32) -> usize {
+pub(crate) fn arc_steps(radius: f32, sweep: f32) -> usize {
     let max_step = if radius > ARC_TOLERANCE {
         2.0 * (1.0 - ARC_TOLERANCE / radius).acos()
     } else {

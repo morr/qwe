@@ -632,14 +632,68 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   either line, which the node rule cannot do wrong. A service drive or a footway joining a
   street is not a participant and leaves the street's line whole. Count and time are in
   the `road meshing:` log line (`junctions N`).
-  **Junction geometry is still not computed**: roads are independent polylines drawn
-  overlapping in one opaque layer, and `Round` caps are what makes a junction *look*
+  **Junction geometry is still not computed as a union**: roads are independent polylines
+  drawn overlapping in one opaque layer, and `Round` caps are what makes a junction *look*
   joined — the caps of the ways meeting at a node overlap into a rounded blob, exactly
   how osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
   round`). The fill order is **narrow first, wide last** (`spawn_roads` sorts by width), so
   the main road's fill and its gapped line lie over the side street's cap. This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
+- **The drawn network** (`map/roads/network.rs`, `map/roads/corners.rs`) — what the ribbons
+  are laid *from* is not quite `MapData::roads`, and the difference is four render-only
+  corrections, all built on **`RoadNodes`** (every node two roads of any class share, same
+  5 cm key as the junctions, `junctions::node_key`). None of them moves `RoadLine::points`:
+  the navmesh, doors, trees, arches and the parked cars still read OSM as it is. All four
+  are counted in the `road meshing:` line, with the time spent before the first ribbon.
+  - **Pinned nodes.** `centerline` smooths with `smooth_pinned`, and Chaikin leaves every
+    shared node in place. Before, a bend of the through road at a junction was cut by a
+    chord up to a road width long, and the side street's end — which sits on the OSM node
+    — hung beside the drawn asphalt or stuck out past its far edge. `smooth_path` (rails,
+    tram, tree-row band, cars) pins nothing, as before. **The cars do not pin**, so near a
+    bent junction a row walks a chord the ribbon no longer draws; the junction clearance
+    (`reach + 5 m`) covers most of it, and making the cars read `RoadNodes` is the way to
+    close the rest.
+  - **Driveway crossings** (`driveway_crossings`) — an `Alley` way under
+    `CROSSING_MAX_LENGTH` 20 m whose **both** ends are ends of (non-bridge) streets is drawn
+    as a `Street` at the narrower street's width. Found from a screenshot on проспект Ленина
+    (Tula ways 4175 → 4176 → 80, `cam 3265 357`): a service drive, ten metres of `footway`
+    across the pavement, the drive again — the sand ribbon lay under the asphalt and cut a
+    strip of ground across the entry. A crosswalk is safe from the rule by construction: its
+    ends are on pavement footways and it crosses the carriageway with an interior node.
+    The substitution is `drawn: Vec<&RoadLine>` in `spawn_roads`, and everything below reads
+    `drawn`, not `map.roads`. Tula: 8.
+  - **Stitches** (`stitches`) — a loose end (not closed, not a bridge or a passage, no other
+    road at its node that **carries** it: a street is carried only by a street, an alley by
+    anything) looks ahead for the nearest centreline of a road it may join: the closest
+    point on each segment within 60° of its heading, and the heading's ray hit, scored by the
+    gap to that road's **edge**, ≤ `STITCH_MAX_GAP` 6 m. If the end already lies inside a
+    carrying ribbon, nothing is done. The stitched point is pulled back by
+    `own half − target half` when the own ribbon is wider, so its round cap does not poke
+    past the far edge; the segment is probed every metre against buildings and water (a grid
+    of their AABBs, 32 m), and a drive that ends at a garage wall stays ended. The point is
+    appended to the drawn path (`Stitches::apply`), so the sidewalk band follows too. The
+    markings see nothing of it: the end's dead-end break stands and the extension is
+    past it. Tula: 39.
+  - **Kerb returns** (`kerb_returns`) — the rounded corner of a junction. At every shared
+    node, arms are collected from the **drawn** paths (pinned, so the node is a vertex of
+    each): a direction to the first vertex at least 0.5 m away and the straight **run** to
+    it. Arms of one class are sorted by angle, and between neighbours 25°–155° apart the
+    corner of the two facing edges is found, a circle of radius `0.6 × (half + half)`
+    clamped 1.5–9 m is fitted tangent to both, and the wedge `[corner, tangent, arc…,
+    tangent]` goes into that class's fill builder **before any ribbon** — ribbons and their
+    markings then lie over it, and since it is pushed with no ribbon coords it carries no
+    wear or markings of its own. Two clamps: the tangent never runs past an arm's straight
+    run (past the next vertex the edge has turned), and when **both** roads carry a
+    sidewalk, `r ≤ 3.4 × the narrower sidewalk` — the arc's nearest point to the corner is
+    `r·(1 − 1/√2)` inside it, and beyond `s·√2/(√2 − 1)` the wedge would show past both
+    sidewalks on the ground. With one sidewalk or none, a flare over the ground is exactly
+    what a drive's kerb return looks like and is left alone. It is pushed as a **fan from
+    the corner** (`push_convex`), which is correct although the wedge is concave: the arc
+    between the tangent points is precisely the part of the circle visible from the corner.
+    The sidewalk band's own outer corner stays square — rounding it is a subtraction the
+    additive layers cannot do. Mixed-class arms get nothing: a grey wedge over a sand
+    footway would read as asphalt spilled onto the path. Tula: 8220.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —
@@ -648,12 +702,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
     with *both ends* extended by half a width; no joins at all, which is what produced
     the notches on bends and the wedges at junctions), `Miter`, `Round` (default).
-  - **smoothing** — Chaikin corner-cutting on the centerline, `Off` (default) / 1 / 2
-    iterations. Only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the cut length is
-    clamped to the road width, so the drawn line never leaves the OSM data by more than
-    a road width. `passage` roads are never smoothed — their endpoints are pinned to
-    building outline vertices that `arch_openings` looks the arch up by. Off by default
-    because OSM itself keeps its corners sharp.
+  - **smoothing** — Chaikin corner-cutting on the centerline, `Off` / `Light` (default,
+    1 iteration) / `Strong` (2). Only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the
+    cut length is clamped to the road width, so the drawn line never leaves the OSM data by
+    more than a road width. `passage` roads are never smoothed — their endpoints are pinned
+    to building outline vertices that `arch_openings` looks the arch up by — and a node
+    shared with another road is never cut (see **The drawn network** above).
   - **casing** — a darker outline, its own merged layer at `Z_ALLEY_CASING` (1.4) /
     `Z_ROAD_CASING` (1.9), width `+2·casing_width` (8% of the road, 0.3–1 m). Both fills
     (1.5 / 2.0) sit above both casings on purpose: otherwise a casing would cut every

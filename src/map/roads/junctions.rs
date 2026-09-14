@@ -21,6 +21,15 @@ use crate::map::osm::RoadLine;
 /// на всех своих ways, квантование лишь страхует от округления.
 const NODE_GRID: f32 = 0.05;
 
+/// Ключ узла — квантованная точка. Один на всех, кто восстанавливает узлы
+/// по совпадению координат (`roads/network.rs`, `roads/corners.rs`).
+pub(super) fn node_key(point: Vec2) -> (i32, i32) {
+    (
+        (point.x / NODE_GRID).round() as i32,
+        (point.y / NODE_GRID).round() as i32,
+    )
+}
+
 /// Запас разрыва за краем поперечной улицы, м: линия кончается чуть раньше,
 /// чем начинается перекрёсток, как стоп-линия перед ним.
 pub const JUNCTION_MARGIN: f32 = 1.0;
@@ -56,12 +65,8 @@ pub fn marking_breaks(
         let closed = road.points[0] == road.points[last];
         for (vertex, &point) in road.points.iter().enumerate() {
             let end = !closed && (vertex == 0 || vertex == last);
-            let key = (
-                (point.x / NODE_GRID).round() as i32,
-                (point.y / NODE_GRID).round() as i32,
-            );
             nodes
-                .entry(key)
+                .entry(node_key(point))
                 .or_insert_with(|| (point, Vec::new()))
                 .1
                 .push(Visit { road: index, end });

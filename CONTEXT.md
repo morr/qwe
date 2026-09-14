@@ -634,7 +634,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The lot lying over the roads is what hides the OSM aisles, entries and footways
   running into it: its own outline clips every ribbon exactly, and the lot's asphalt
   *is* the aisle. The stall layout knows nothing of roads — a road hidden under the lot
-  leaves no gap in the rows. Render-only. Tula: 170 lots.
+  leaves no gap in the rows. **The lot's asphalt is the road's** — `PARKING_COLOR` *is*
+  `roads::ROAD_COLOR`, on the same `SurfaceKind::Street` material, so a lot lying over
+  its street reads as one surface; a tone of its own drew a patch at every lot.
+  Render-only. Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. Two things in the **ribbon frame**, so they follow the lane and not
   the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
@@ -803,12 +806,36 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees stay
   individual entities; tree and building **shadows** are each one merged mesh. **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
-  geometry is not computed** — overlapping `Round` caps in one opaque layer are what makes
-  them look joined; **keep the road layer opaque, and its colour a function of world
-  position only** (a flat colour or the surface shader, never a per-way tint). What *is*
-  computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or more
-  carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids, but
-  a shared node projects to the same point on every way. They feed the markings only.
+  geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are
+  what makes them look joined; **keep the road layer opaque, and its colour a function of
+  world position only** (a flat colour or the surface shader, never a per-way tint). What
+  *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
+  more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
+  but a shared node projects to the same point on every way. They feed the markings.
+  Three render-only fixes sit on the same node match (`map/roads/network.rs`,
+  `RoadNodes` — every node shared by two roads of any class), and none of them touches
+  `RoadLine::points`, the navmesh, doors or cars:
+  - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street
+    still ends exactly on the through road's drawn centreline.
+  - **Kerb return** (`map/roads/corners.rs`) — the rounded corner between two
+    neighbouring arms of a shared node of **one class** (street–street, alley–alley):
+    the concave wedge between the two facing ribbon edges and an arc tangent to both,
+    pushed into that class's fill layer *before* any ribbon, so every ribbon (and its
+    markings) lies over it. Radius 0.6 × the sum of half widths (1.5–9 m), capped at
+    3.4 sidewalk widths when both roads carry one (past that the wedge would show on the
+    lawn beyond both sidewalks), and by the straight run of each arm; arms 25°–155°
+    apart only. None under `RoadJoin::Square`.
+  - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
+    with no other road at its node that could carry it) up to the centreline of the
+    nearest road **ahead** of it (within 60° of its heading), when that road's edge is at
+    most `STITCH_MAX_GAP` 6 m away and the segment crosses no building or water. A street
+    is carried only by a street — a drive ending on a footway still hangs, since the sand
+    ribbon lies under the asphalt; a footway is carried by anything.
+  - **Driveway crossing** — a footway way under 20 m both of whose ends are **ends of
+    streets**: how OSM maps a drive crossing the pavement (drive, `footway` across the
+    pavement, drive again). It is drawn as asphalt at the narrower drive's width. A
+    crosswalk is not one: its ends lie on pavement footways.
+  Tula: 8220 kerb returns, 39 stitches, 8 driveway crossings, in the `road meshing:` line.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
@@ -842,7 +869,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   edges from the shader (`surface.wgsl`, by the ribbon's `across`), so the shoal turns
   from a pond into its channel without a seam.
 - **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
-  passage; bridges included) is asphalt grey and gets a light **sidewalk band** at
+  passage; bridges included) is asphalt grey (`ROAD_COLOR`, a neutral mid grey — the
+  weathered asphalt of an aerial photo, not the pale blue-grey of a 2GIS map) and gets a
+  light **sidewalk band** at
   `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
   casing), width `sidewalk_width` (22 %, 1.2–3 m per side) — **never a bridge deck**,
   which leaves for its own layers before the band is pushed and has its curb instead.

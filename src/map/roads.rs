@@ -47,6 +47,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use self::network::RoadNodes;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
@@ -467,14 +468,17 @@ const SHADOW_SPREAD: f32 = 1.0;
 const BRIDGE_HEIGHT: f32 = 6.0;
 const SPAN_TO_HEIGHT: f32 = 1.0 / 8.0;
 
-/// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли, как на
-/// детальных картах 2ГИС и Яндекса. Белой (osm-carto) она была, пока не
-/// появилась разметка: белую линию на белом не видно, а на сером сетка улиц
-/// вдобавок перестаёт сливаться с дворами.
+/// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
+/// (osm-carto) она была, пока не появилась разметка: белую линию на белом не
+/// видно. Потом была светло-голубовато-серой (0.655, как на детальных картах
+/// 2ГИС), и это картографический тон, а не снимок: у выветренного асфальта на
+/// аэрофото нейтральный серый около середины шкалы, и ступень до светлого
+/// бетонного тротуара там заметно больше. Тот же тон у стоянок
+/// (`spawn::PARKING_COLOR`) — они лежат поверх улиц одним полотном с ними.
 /// Открыт наружу витрине машин: ряд обязан стоять на том же асфальте, что в
 /// городе, — на своём сером ступень яркости между кузовом и покрытием была бы
 /// не та.
-pub const ROAD_COLOR: Color = Color::srgb(0.655, 0.66, 0.675);
+pub const ROAD_COLOR: Color = Color::srgb(0.545, 0.545, 0.55);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
@@ -501,7 +505,7 @@ const ONEWAY_METERS_PER_LANE: f32 = 4.5;
 /// Кант дороги — затемнённая заливка, как у osm-carto (улица в тёмном канте);
 /// темнее асфальта. Отдельным слоем под заливкой: заливки всех дорог кроют
 /// канты всех дорог, поэтому кант никогда не режет перекрёсток пополам.
-const ROAD_CASING_COLOR: Color = Color::srgb(0.45, 0.45, 0.46);
+const ROAD_CASING_COLOR: Color = Color::srgb(0.40, 0.40, 0.41);
 const ALLEY_CASING_COLOR: Color = Color::srgb(0.729, 0.678, 0.549);
 
 /// Стены Кремля поверх зданий.
@@ -696,9 +700,6 @@ pub fn spawn_roads(
     let junctions = style
         .markings
         .then(|| junctions::marking_breaks(roads, is_carriageway));
-    // широкие улицы поверх узких — см. доку модуля
-    let mut order: Vec<usize> = (0..roads.len()).collect();
-    order.sort_by(|&a, &b| roads[a].width.total_cmp(&roads[b].width));
 
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alley_casings = MeshBuilder::default();
@@ -718,13 +719,76 @@ pub fn spawn_roads(
     let bridges = Bridges::new(map);
     let mut wall_ribbons = MeshBuilder::default();
 
+    let nodes = RoadNodes::new(roads);
+    // Дороги так, как они рисуются: переезд через тротуар — асфальтом
+    // проезда, а не песочной дорожкой (`network::driveway_crossings`).
+    let crossings: Vec<(usize, RoadLine)> = network::driveway_crossings(roads, &nodes)
+        .into_iter()
+        .map(|(index, width)| {
+            let crossing = RoadLine {
+                class: RoadClass::Street,
+                width,
+                ..roads[index].clone()
+            };
+            (index, crossing)
+        })
+        .collect();
+    let mut drawn: Vec<&RoadLine> = roads.iter().collect();
+    for (index, crossing) in &crossings {
+        drawn[*index] = crossing;
+    }
+    let stitches = network::stitches(&drawn, map, &nodes);
+    let paths: Vec<Cow<[Vec2]>> = drawn
+        .iter()
+        .map(|road| centerline(road, style.smoothing, &nodes))
+        .collect();
+    // широкие улицы поверх узких — см. доку модуля
+    let mut order: Vec<usize> = (0..roads.len()).collect();
+    order.sort_by(|&a, &b| drawn[a].width.total_cmp(&drawn[b].width));
+    // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
+    // скругление, а не наоборот, и разметка остаётся целой. `Square` оставлен
+    // ради сравнения с прежней картинкой — скруглений у него нет.
+    let kerb_returns = if style.join == RoadJoin::Square {
+        Vec::new()
+    } else {
+        let rounded: Vec<Option<&[Vec2]>> = drawn
+            .iter()
+            .zip(&paths)
+            .map(|(road, path)| (!road.bridge && !road.passage).then_some(path.as_ref()))
+            .collect();
+        corners::kerb_returns(&drawn, &rounded, &nodes, |road| {
+            (style.sidewalks && is_carriageway(road))
+                .then(|| sidewalk_width(road.width))
+                .flatten()
+        })
+    };
+    for (class, outline) in &kerb_returns {
+        let (builder, color) = match class {
+            RoadClass::Street => (&mut streets, ROAD_COLOR),
+            RoadClass::Alley => (&mut alleys, ALLEY_COLOR),
+        };
+        // Скругление не выпукло, но веер из его первой вершины — угла краёв —
+        // верен: дуга между точками касания и есть та часть окружности, что
+        // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
+        // больше самой укладки.
+        builder.push_convex(outline, color.to_linear());
+    }
+    let network_time = started.elapsed();
+
     for index in order {
-        let road = &roads[index];
+        let road = drawn[index];
         let (casing_color, color) = match road.class {
             RoadClass::Street => (ROAD_CASING_COLOR, ROAD_COLOR),
             RoadClass::Alley => (ALLEY_CASING_COLOR, ALLEY_COLOR),
         };
-        let points = centerline(road, style.smoothing);
+        // стежок до дороги, до которой OSM торец не довёл (`roads/network.rs`)
+        let points: Cow<[Vec2]> = if stitches.touches(index) {
+            let mut stitched = paths[index].to_vec();
+            stitches.apply(index, &mut stitched);
+            Cow::Owned(stitched)
+        } else {
+            Cow::Borrowed(paths[index].as_ref())
+        };
         // разметка и её разрывы — только пока она включена
         let (markings, breaks) = match &junctions {
             Some(found) => (road_markings(road), found.breaks[index].as_slice()),
@@ -868,7 +932,7 @@ pub fn spawn_roads(
     }
 
     info!(
-        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {}, junctions {})",
+        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {}, junctions {}, kerb returns {}, stitches {}, driveway crossings {}; {:?} of it before the ribbons)",
         started.elapsed(),
         style.join,
         style.smoothing,
@@ -876,6 +940,10 @@ pub fn spawn_roads(
         style.sidewalks,
         style.markings,
         junctions.as_ref().map_or(0, |found| found.junctions),
+        kerb_returns.len(),
+        stitches.count,
+        crossings.len(),
+        network_time,
     );
 }
 
@@ -1166,24 +1234,45 @@ fn push_street_fill(
 /// Осевая, по которой строится лента. Без сглаживания — прямо точки OSM, без
 /// копирования. Арки (`passage`) не сглаживаются никогда: их концы приколоты к
 /// вершинам контура здания, по ним `arches::arch_openings` ищет проём в стене.
-fn centerline(road: &RoadLine, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
+///
+/// **Общие узлы с другими дорогами тоже не сглаживаются** ([`RoadNodes`]): на
+/// узле кончается поперечная улица и сходятся лучи скругления бордюра
+/// (`roads/corners.rs`). Сдвинь хорда сквозную дорогу с узла — торец
+/// поперечной повис бы в метре от её асфальта или вылез за дальний край.
+fn centerline<'a>(
+    road: &'a RoadLine,
+    smoothing: RoadSmoothing,
+    nodes: &RoadNodes,
+) -> Cow<'a, [Vec2]> {
     if road.passage {
         return Cow::Borrowed(&road.points);
     }
-    smooth_path(&road.points, road.width, smoothing)
+    smooth_pinned(&road.points, road.width, smoothing, |point| {
+        nodes.is_shared(point)
+    })
 }
 
 /// Сглаживание осевой на копии — общее для дорог, рельсов и зелёной полосы под
 /// аллеей (`map::spawn`). Длина среза зажата шириной ленты, поэтому ширина
 /// здесь параметр, а не константа.
 pub fn smooth_path(points: &[Vec2], width: f32, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
+    smooth_pinned(points, width, smoothing, |_| false)
+}
+
+/// [`smooth_path`], не трогающее вершины, для которых `pinned` — да.
+fn smooth_pinned(
+    points: &[Vec2],
+    width: f32,
+    smoothing: RoadSmoothing,
+    pinned: impl Fn(Vec2) -> bool + Copy,
+) -> Cow<'_, [Vec2]> {
     let iterations = smoothing.iterations();
     if iterations == 0 || points.len() < 3 {
         return Cow::Borrowed(points);
     }
     let mut path = points.to_vec();
     for _ in 0..iterations {
-        path = chaikin(&path, width);
+        path = chaikin(&path, width, pinned);
     }
     Cow::Owned(path)
 }
@@ -1192,12 +1281,16 @@ pub fn smooth_path(points: &[Vec2], width: f32, smoothing: RoadSmoothing) -> Cow
 /// сегментах. Срезаются только изломы круче [`MIN_SMOOTH_ANGLE`], а длина
 /// среза зажата шириной дороги — иначе на длинных сегментах осевая уезжает от
 /// данных OSM на десятки метров и дорога перестаёт совпадать с домами.
-/// Концы пути закреплены.
-fn chaikin(points: &[Vec2], width: f32) -> Vec<Vec2> {
+/// Концы пути и вершины, для которых `pinned` — да, закреплены.
+fn chaikin(points: &[Vec2], width: f32, pinned: impl Fn(Vec2) -> bool) -> Vec<Vec2> {
     let mut path = Vec::with_capacity(points.len() * 2);
     path.push(points[0]);
     for index in 1..points.len() - 1 {
         let (previous, corner, next) = (points[index - 1], points[index], points[index + 1]);
+        if pinned(corner) {
+            path.push(corner);
+            continue;
+        }
         let (Some(incoming), Some(outgoing)) = (
             (corner - previous).try_normalize(),
             (next - corner).try_normalize(),
@@ -1222,6 +1315,9 @@ fn chaikin(points: &[Vec2], width: f32) -> Vec<Vec2> {
 /// рваться на тех же перекрёстках, на которых рвётся разметка, и второго
 /// восстановления узлов по общим нодам заводить незачем.
 pub(super) mod junctions;
+
+mod corners;
+mod network;
 
 #[cfg(test)]
 mod tests;
