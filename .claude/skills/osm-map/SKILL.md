@@ -591,16 +591,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   own (the flat white one would eat the vertex alpha). Nothing else produced it, because
   the ground shadow layer only knows buildings, and a bridge over the river is the most
   visible thing on the water. It sits **under** the deck and **over** what the bridge
-  crosses — except a railway, which is drawn above the bridge for its own reasons.
-  Eight decisions in `bridge_shadow_path` / `push_bridge_shadows` make it read instead of
+  crosses — except what the z ladder draws above bridges: the rails (a tram on a bridge
+  must stay visible), the tram line, wagons, parked cars, fences.
+  Eight decisions in `map/roads.rs` (`Bridges`, `probe_underneath`, `bridge_height`,
+  `bridge_shadow_path`, `bridge_penumbra`, `push_bridge_shadows`) make it read instead of
   lie, and every one of them was a bug report first:
 
   - **A bridge is a connected chain of ways, not one way** (`Bridges`, `BridgeSpan`).
     OSM cuts a bridge into pieces at every tag change: Tula's **61 bridge ways are 56
-    bridges**, and 8 of those ways are glued into 3 — the Упа crossing 424 + 95 + 299 m
-    (818 m), a footway 34 + 129 + 22 m (185 m), and 39 + 4 m. Per-way the shadow lied
-    twice over: the ramp below fired at every *internal* joint, where the deck is at full
-    height, so the shadow dipped under the deck twice in the middle of an 818 m bridge;
+    bridges**, and 8 of those ways are glued into 3 — the Оружейный мост interchange
+    424 + 95 + 299 m (818 m, a fork: three ways meeting at one node), a footway
+    34 + 129 + 22 m (185 m), and 39 + 4 m. Per-way the shadow lied twice over: the ramp
+    below fired at every *internal* node, where the deck is at full height, so the shadow
+    dipped under the deck at the interchange's fork and at both joints of the footway;
     and `SHORT_SPAN` was applied to the piece, so a 22 m middle section of a 185 m bridge
     was interrogated as a footbridge and could lose its shadow outright.
     - **Glued end to end, not by `ways_joined`.** That predicate answers «do these two
@@ -613,8 +616,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       that part is shared.
     - **The geometry is not glued — the arithmetic is.** Two reasons, and either alone
       is enough: pieces of one bridge may differ in width (one polyline cannot carry
-      two decks), and **three way-ends meet at one node** on Tula's own fork, the slip
-      road of the Упа interchange, where the three pieces are not a chain at all. So a
+      two decks), and **three way-ends meet at one node** on Tula's own fork, the
+      Оружейный мост interchange above, where the three pieces are not a chain at all. So a
       way keeps its own points and its own width, and takes from its bridge two numbers:
       the **span** (the sum over the whole connected component) and, per end, the
       distance to the nearest **free end** through the neighbouring ways. A fork costs
@@ -630,7 +633,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     embankment runs along). The question is put to the **whole chain** and answered once
     for it, so a piece over dry land next to a piece over the river keeps the river's
     answer. Proportional height was not enough on its own: the western
-    approach to the Упа crossing is four ways of 23–30 m carrying `bridge=yes` and
+    approach to the Упа bridge on Советская улица is four ways of 23–30 m carrying `bridge=yes` and
     `layer=1`, and on the ground it is solid fill, which no tag distinguishes from a
     span. A long way is never asked — there is no 100 m embankment — which also keeps the
     probe off the bridges that would cost the most to test. `Underneath` precomputes an
@@ -644,7 +647,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     as height** and nothing else on the map states it.
   - **The centerline is densified to `SHADOW_STEP` (2 m) first** (`densify`). The ramp
     below lives in the vertices, and **42 of Tula's 61 bridge ways carry exactly two
-    points** — the Упа crossing among them — so every vertex was an end, the rise was zero
+    points** — the 137 m Упа bridge on Советская among them — so every vertex was an end, the rise was zero
     everywhere, and the shadow landed exactly under the deck, i.e. nowhere. The ways that
     did have vertices (a 571 m flyover with 42 of them, one per ~14 m) got a shadow that
     stepped from vertex to vertex in visible teeth.
@@ -694,9 +697,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       past one deck end onto the street, which is the contact skirt the buildings removed.
 
   Because the width varies along the band it is **not** a `push_ribbon`: the rails come
-  from `miter_offsets` scaled per point, and the core goes in as one `push_polygon` quad
-  per segment, adjacent quads sharing their edge vertex for vertex so one band never
-  doubles over itself. The penumbra is two more quad strips along those same rails
+  from `miter_offsets` scaled per point (`shadow_edges`), and the core is the closed
+  contour of those rails — the left one forward, the right one back — handed to the union
+  below and pushed as `push_polygon` per union shape. The penumbra is two quad strips along
+  those same rails
   (`push_quad_gradient`, opaque on the rail, alpha 0 at the outer lip), and a segment
   whose rise is zero at both ends emits none.
 
@@ -1477,7 +1481,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       other after `SUN_SETTLE` (0.35 s) of quiet. Every rebuild and the prefs write are
       gated on `retuned::<SunOnMap>`, never on `SunStyle` — one division of the azimuth
       scale is a full building rebuild with its shadow union — most of it the union — plus
-      15 k crowns plus the car layer plus the road layers, and there are seventy divisions
+      15 k crowns plus the car, wagon, fence and industry layers plus the road layers,
+      and there are seventy divisions
       on the scale. (The numbers that stood here, 77–86 ms on Tula with 47–56 of it the
       union, were read off the `building meshing:` line through the slider itself on an
       M1 Max: absolute milliseconds from the app are only comparable with each other, since
