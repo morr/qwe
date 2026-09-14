@@ -339,7 +339,13 @@ dozens of pawns, 96 ticks, ~1 s in `cargo test`); the example runs Tula with 20 
 for minutes.
 
 Three claims: the same seed replays tick for tick, a ragged frame rate does not change the
-run, a different seed does.
+run, a different seed does. Two more hold the summon inside the contract
+(`run_with_summon`: souls granted and `SummonRequested { Brute }` written between frames after
+tick 10, one Brute asserted alive): **`a_summon_replays_at_any_frame_rate`** — steady and
+ragged frames give one fingerprint — and **`a_restart_forgets_the_summon`** — a restart after
+the summon replays the run that never had one, so the Brute and `Souls` do not outlive the
+reset. The yard has no districts, so the Brute only wanders there; the siege end to end is
+the M1 stand (`m1_win`), which is minutes, not a test.
 
 Two things make it bite, both learned the hard way:
 
