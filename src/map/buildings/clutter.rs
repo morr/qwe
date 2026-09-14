@@ -21,12 +21,12 @@
 use bevy::color::Mix;
 use bevy::prelude::*;
 
-use super::Lean;
 use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
+use super::{Lean, fortress};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, signed_ring_area};
-use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::Lcg;
 use crate::map::{shadow_dir, shadow_length_scale};
 
@@ -71,6 +71,17 @@ const SKYLIGHT_SECOND_WIDTH: f32 = 22.0;
 const CHIMNEY_SIZE: Vec2 = Vec2::new(0.8, 0.8);
 const CHIMNEY_HEIGHT: f32 = 1.4;
 
+/// Зубец крепостной стены: вдоль ребра, поперёк и в высоту, м, шаг по ребру и
+/// отступ от наружной грани. Кремлёвский «ласточкин хвост» — зубец в
+/// человеческий рост и полтора метра по фронту; развилку на его верху сверху
+/// не разглядеть, и рисуется он коробкой.
+const MERLON_SIZE: Vec2 = Vec2::new(1.3, 0.7);
+const MERLON_HEIGHT: f32 = 1.9;
+const MERLON_PITCH: f32 = 2.6;
+const MERLON_INSET: f32 = 0.05;
+const MERLON_TOP: Color = Color::srgb(0.64, 0.38, 0.30);
+const MERLON_WALL: Color = Color::srgb(0.62, 0.34, 0.27);
+
 /// Цвета оборудования: оцинковка и бетон, всё в холодном сером. Фонарь
 /// светлее и голубее — это стекло; труба кирпичная.
 const EQUIPMENT_TOP: Color = Color::srgb(0.60, 0.60, 0.59);
@@ -108,7 +119,7 @@ pub(super) struct RoofItem {
 pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) -> Vec<RoofItem> {
     // на гараже нет ни машинного помещения, ни вентшахты — там нечего
     // вентилировать, и коробка на боксе сразу выдаёт генератор
-    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) {
+    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) || is_landmark(building) {
         return Vec::new();
     }
     let axis = look.frame.axis;
@@ -205,6 +216,63 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
     items
 }
 
+/// Храм и крепость: вентшахта на боевом ходу или печная труба на вальме храма
+/// выдают генератор ровно так же, как коробка на гаражном боксе. Над ними
+/// стоит своё — главы и зубцы.
+fn is_landmark(building: &PolyArea) -> bool {
+    building.kind == AreaKind::Kremlin || matches!(building.building_use, BuildingUse::Church(_))
+}
+
+/// Зубцы по верху крепостной стены — вдоль каждого ребра контура прясла, с
+/// шагом [`MERLON_PITCH`]: с воздуха стена кремля узнаётся по пунктиру зубцов
+/// и их коротким теням на боевом ходу. Башне (`fortress::is_tower`) зубцов не
+/// положено — она под шатром.
+pub(super) fn merlons(building: &PolyArea, lift: Vec2) -> Vec<RoofItem> {
+    if building.kind != AreaKind::Kremlin || fortress::is_tower(building) {
+        return Vec::new();
+    }
+    let orientation = signed_ring_area(&building.outer).signum();
+    let ring = &building.outer;
+    let mut items = Vec::new();
+    for index in 0..ring.len() {
+        let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+        let length = a.distance(b);
+        let Some(along) = (b - a).try_normalize() else {
+            continue;
+        };
+        // внутрь контура — левый перпендикуляр у CCW-кольца
+        let left = Vec2::new(-along.y, along.x);
+        let inward = left * orientation;
+        let count = (length / MERLON_PITCH).floor() as usize;
+        if count == 0 {
+            continue;
+        }
+        // зубцы расставлены от середины ребра, чтобы на обоих концах остался
+        // одинаковый зазор до угла
+        let start = (length - (count - 1) as f32 * MERLON_PITCH) / 2.0;
+        for slot in 0..count {
+            let center = a
+                + along * (start + slot as f32 * MERLON_PITCH)
+                + inward * (MERLON_SIZE.y / 2.0 + MERLON_INSET);
+            // основание против часовой при любом обходе кольца: пара
+            // `along`/`left` правая
+            let base = rect(center, MERLON_SIZE, along, left);
+            if !base.iter().all(|corner| point_in_area(*corner, building)) {
+                continue;
+            }
+            let lifted = base.map(|corner| corner + lift);
+            items.push(RoofItem {
+                base: lifted,
+                height: MERLON_HEIGHT,
+                top: MERLON_TOP,
+                wall: MERLON_WALL,
+                reach: shadow_reach(building, lift, &lifted),
+            });
+        }
+    }
+    items
+}
+
 /// Труба на коньке: `ridge` — оба конца конька уже в нарисованных
 /// координатах. `building` и `lift` — те же, по которым строилась крыша: по
 /// ним трубе считается [`RoofItem::reach`], как и всякой коробке на плоской
@@ -216,7 +284,7 @@ pub(super) fn ridge_chimney(
     lift: Vec2,
 ) -> Option<RoofItem> {
     // печную трубу на гаражном ряду не ставят — там не топят
-    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) {
+    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) || is_landmark(building) {
         return None;
     }
     let along = (ridge.1 - ridge.0).try_normalize()?;

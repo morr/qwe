@@ -68,17 +68,19 @@ const SHED: u32 = 13u;
 // Ворота гаражного ряда: створка в каждой ячейке, и ячейка тут — бокс, а не
 // панель. Тоже облицовка, но выбранная геометрией прогона, как и его кровля.
 const GARAGE_DOORS: u32 = 14u;
+// Стена храма: ярус вместо этажа и арочные окна вместо жилых.
+const SACRED: u32 = 15u;
 // Дверное полотно — не облицовка, а **свой четырёхугольник** поверх стены
 // (`layers::push_doors`), и клетка у него одна на весь проём: `cell` внутри
 // него это `[0, 1]²` самого полотна. Этажей в нём нет, поэтому и разбирается
 // он раньше стены.
-const DOOR: u32 = 15u;
+const DOOR: u32 = 16u;
 
 // В том же числе, что и код, едет **число этажей** стены: код в остатке от
 // деления, этажи в частном (`meshing::STOREY_STRIDE` — зеркало). Без них
 // шейдер знал только низ стены и не знал верха, а верх это карниз: верхнее
 // окно упиралось прямо в кровлю.
-const STOREY_STRIDE: u32 = 16u;
+const STOREY_STRIDE: u32 = 32u;
 
 const TAU: f32 = 6.283185307;
 
@@ -213,6 +215,16 @@ const SHED_WINDOW_LOW: f32 = 0.45;
 const SHED_WINDOW_HIGH: f32 = 0.76;
 const SHED_WINDOW_WIDE: f32 = 0.76;
 const SHED_WINDOW_SHARE: f32 = 0.55;
+// Храм: высокое узкое окно с полуциркульной аркой, одно на ячейку. Ячейка у
+// храма шире панели и выше этажа (`layers::SACRED_BAY`, `SACRED_TIER` — 4 на
+// 6 м), и `SACRED_ASPECT` — их отношение: без него арка в долях ячейки вышла
+// бы эллипсом, сплюснутым по высоте.
+const SACRED_WINDOW_LOW: f32 = 0.24;
+const SACRED_WINDOW_HIGH: f32 = 0.80;
+const SACRED_WINDOW_WIDE: f32 = 0.26;
+const SACRED_ASPECT: f32 = 0.667;
+// Тяга — светлый карниз по верху каждого яруса.
+const SACRED_CORNICE: f32 = 0.035;
 
 // Рама проёма, импост, отлив под окном и тень откоса под перемычкой.
 const FRAME_WIDTH: f32 = 0.030;
@@ -361,6 +373,36 @@ fn window_of(
     let up = clamp((inside.y - lo) / max(hi - lo, 1e-3), 0.0, 1.0);
     let reveal = 1.0 - 0.7 * cell_band(inside.y, hi - REVEAL_HEIGHT, hi + 1.0, px.y);
     out.sky = clamp(mix(0.10, 0.85, up) * tone * reveal, 0.0, 1.0);
+    return out;
+}
+
+// Арочное окно храма: прямой проём до пяты арки и полуциркуль над ней. Ширина
+// проёма на высоте `inside.y` сужается по окружности, радиус которой — половина
+// ширины, пересчитанная в доли высоты ячейки (`SACRED_ASPECT`). Переплёта нет:
+// на узком храмовом окне он сверху не читается и только дробил бы стекло.
+fn arched_window_of(inside: vec2<f32>, px: vec2<f32>, tone: f32) -> Wall {
+    var out = Wall(0.0, 0.0, 0.0);
+    let lo = SACRED_WINDOW_LOW;
+    let hi = SACRED_WINDOW_HIGH;
+    let seen = visible(hi - lo, px.y) * visible(SACRED_WINDOW_WIDE, px.x);
+    if seen <= 0.0 {
+        return out;
+    }
+    let half = SACRED_WINDOW_WIDE * 0.5;
+    let rise = half * SACRED_ASPECT;
+    let spring = hi - rise;
+    let x = inside.x - 0.5;
+    let over = max(inside.y - spring, 0.0) / rise;
+    let reach = half * sqrt(max(1.0 - over * over, 0.0));
+    let pane = cell_band(x, -reach, reach, px.x) * cell_band(inside.y, lo, hi, px.y);
+    // светлый наличник вокруг проёма — по той же арке, шире на раму
+    let framed = reach + FRAME_WIDTH;
+    let outer = cell_band(x, -framed, framed, px.x)
+        * cell_band(inside.y, lo - FRAME_WIDTH, hi + FRAME_WIDTH * SACRED_ASPECT, px.y);
+    out.shade += 0.07 * (outer - pane) * seen;
+    out.glass = pane * seen;
+    let up = clamp((inside.y - lo) / (hi - lo), 0.0, 1.0);
+    out.sky = clamp(mix(0.05, 0.55, up) * tone, 0.0, 1.0);
     return out;
 }
 
@@ -531,6 +573,10 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
         // гребёнку на кровле над ним, и линия под карнизом
         out.shade -= 0.045 * stripes(cell.x, 1.0, 0.04, px.x);
         out.shade -= 0.030 * stripes(cell.y, 1.0, 0.03, px.y);
+    } else if kind == SACRED {
+        // ровная побелка с лёгкими разводами и тяга по верху яруса
+        out.shade += 0.025 * fbm3(cell + seed * 19.0, 0.9, coarse);
+        out.shade += 0.06 * stripes(cell.y, 1.0, SACRED_CORNICE, px.y);
     }
 
     // Фронтон — верх той же стены, и рисунок материала на нём продолжается,
@@ -627,6 +673,9 @@ fn wall_shade(kind: u32, cell: vec2<f32>, storeys: f32, seed_raw: f32) -> Wall {
         // бывает, а ячейка тут и есть бокс (`layers::cell_width`), так что
         // створка приходится ровно под свой шов на кровле.
         out = with_opening(out, gate_of(inside, px, tone));
+    } else if kind == SACRED {
+        // Храм: одно высокое арочное окно на ячейку, и никаких жилых окон.
+        out = with_opening(out, arched_window_of(inside, px, 0.4 + 0.6 * tone));
     } else if kind == SHED {
         // Склад: ленточное окно под карнизом. Ворота сюда больше не входят —
         // они те же двери, приходят геометрией по входам из `osm::entrances`

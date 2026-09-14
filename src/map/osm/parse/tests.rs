@@ -4,9 +4,16 @@ use super::*;
 use super::tags::{building_height, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
 use crate::map::osm::model::{
-    BuildingUse, FenceKind, PitchKind, RailKind, ServiceTrack, StructureKind, WaterKind,
-    distance_to_segment,
+    BuildingUse, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack, StructureKind,
+    WaterKind, distance_to_segment,
 };
+
+/// Храм, чья вера досталась ему от города без размеченных храмов.
+const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
+    faith: Faith::Western,
+    form: SacredForm::Nave,
+    complex: 0,
+});
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
@@ -1129,7 +1136,18 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
         )
         .parse();
 
-    let uses: Vec<BuildingUse> = map.buildings.iter().map(|b| b.building_use).collect();
+    // посев храма зависит от вершин контура — здесь сравниваются только классы
+    let uses: Vec<BuildingUse> = map
+        .buildings
+        .iter()
+        .map(|b| match b.building_use {
+            BuildingUse::Church(sacred) => BuildingUse::Church(Sacred {
+                complex: 0,
+                ..sacred
+            }),
+            other => other,
+        })
+        .collect();
     assert_eq!(
         uses,
         [
@@ -1141,9 +1159,11 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
             BuildingUse::Public,
             // значение вне словаря отдаёт слово `amenity` так же, как `yes`
             BuildingUse::Public,
-            BuildingUse::Church,
+            // вера не размечена ни у одного храма города — западная
+            // (`parse::resolve_faiths`)
+            WESTERN_CHURCH,
             // `building=*` со смыслом сильнее `amenity`
-            BuildingUse::Church,
+            WESTERN_CHURCH,
             BuildingUse::Other,
         ]
     );
@@ -1220,4 +1240,204 @@ fn parses_standalone_tree_nodes() {
     assert_eq!(map.trees.len(), 1);
     assert_eq!(map.trees[0].1, 5.0);
     assert_eq!(map.tree_appears_at[0], 0.0);
+}
+
+/// Вера храма: по `religion` с `denomination`, а без них — по тегу здания.
+/// Колокольня — башня храма, барабан с `roof:shape=onion` — глава.
+#[test]
+fn a_place_of_worship_carries_its_faith_and_its_form() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "russian_orthodox"),
+            ],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "catholic"),
+            ],
+            square(CENTER + Vec2::new(300.0, 0.0), HALF),
+        )
+        .area(
+            &[("building", "mosque")],
+            square(CENTER + Vec2::new(600.0, 0.0), HALF),
+        )
+        .area(
+            &[
+                ("building", "yes"),
+                ("amenity", "place_of_worship"),
+                ("religion", "jewish"),
+            ],
+            square(CENTER + Vec2::new(900.0, 0.0), HALF),
+        )
+        .area(
+            &[("building", "temple"), ("religion", "buddhist")],
+            square(CENTER + Vec2::new(1200.0, 0.0), HALF),
+        )
+        .area(
+            &[
+                ("building", "yes"),
+                ("man_made", "tower"),
+                ("tower:type", "bell_tower"),
+            ],
+            square(CENTER + Vec2::new(0.0, 300.0), 5.0),
+        )
+        .area(
+            &[("building", "cathedral"), ("roof:shape", "onion")],
+            square(CENTER + Vec2::new(0.0, -300.0), 5.0),
+        )
+        .parse();
+
+    let sacred: Vec<Sacred> = map
+        .buildings
+        .iter()
+        .map(|building| match building.building_use {
+            BuildingUse::Church(sacred) => sacred,
+            other => panic!("not a church: {other:?}"),
+        })
+        .collect();
+    let faiths: Vec<Faith> = sacred.iter().map(|s| s.faith).collect();
+    // башня и глава своей веры не несут, храма вокруг них нет — их вера это
+    // большинство города; православный и католический тут поровну, и при
+    // равенстве берётся западная
+    assert_eq!(
+        faiths,
+        [
+            Faith::Orthodox,
+            Faith::Western,
+            Faith::Muslim,
+            Faith::Jewish,
+            Faith::Eastern,
+            Faith::Western,
+            Faith::Western,
+        ]
+    );
+    assert_eq!(sacred[0].form, SacredForm::Nave);
+    assert_eq!(sacred[5].form, SacredForm::Tower);
+    assert_eq!(sacred[6].form, SacredForm::Dome);
+}
+
+/// Часть храма без веры берёт её у храма, в котором стоит, — а не у города.
+#[test]
+fn a_part_of_a_church_takes_the_faith_of_its_church() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[
+                ("building", "cathedral"),
+                ("amenity", "place_of_worship"),
+                ("religion", "christian"),
+                ("denomination", "russian_orthodox"),
+            ],
+            square(CENTER, 20.0),
+        )
+        .area(
+            &[("building", "cathedral"), ("roof:shape", "onion")],
+            square(CENTER, 5.0),
+        )
+        // два западных храма в городе: большинство — не православное
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "catholic"),
+            ],
+            square(CENTER + Vec2::new(400.0, 0.0), 20.0),
+        )
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "lutheran"),
+            ],
+            square(CENTER + Vec2::new(800.0, 0.0), 20.0),
+        )
+        .parse();
+    let (BuildingUse::Church(host), BuildingUse::Church(part)) =
+        (map.buildings[0].building_use, map.buildings[1].building_use)
+    else {
+        panic!("both are churches");
+    };
+    assert_eq!(part.faith, Faith::Orthodox);
+    assert_eq!(part.form, SacredForm::Dome);
+    // и красится часть вместе со своим храмом
+    assert_eq!(part.complex, host.complex);
+    let BuildingUse::Church(stranger) = map.buildings[2].building_use else {
+        panic!("a church");
+    };
+    assert_ne!(stranger.complex, host.complex);
+}
+
+/// Колокольня рядом с храмом, а не внутри него, — тоже его часть.
+#[test]
+fn a_bell_tower_beside_a_church_is_painted_with_it() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "russian_orthodox"),
+            ],
+            square(CENTER, 20.0),
+        )
+        .area(
+            &[("building", "yes"), ("tower:type", "bell_tower")],
+            square(CENTER + Vec2::new(0.0, 30.0), 5.0),
+        )
+        .parse();
+    let (BuildingUse::Church(church), BuildingUse::Church(tower)) =
+        (map.buildings[0].building_use, map.buildings[1].building_use)
+    else {
+        panic!("both are churches");
+    };
+    assert_eq!(tower.complex, church.complex);
+    assert_eq!(tower.faith, Faith::Orthodox);
+}
+
+/// Крепость узнаётся не только по `historic`: у Тульского кремля стена —
+/// `building=wall`, башни — `man_made=tower` с `tower:type=defensive`. Низкая
+/// `building=wall` — ограда, и кремлём не становится.
+#[test]
+fn a_fortress_is_told_by_its_wall_and_its_defensive_towers() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("building", "wall"), ("height", "12.7")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[
+                ("building", "yes"),
+                ("man_made", "tower"),
+                ("tower:type", "defensive"),
+            ],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "yes"), ("historic", "citywalls")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "wall"), ("height", "2")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "yes"), ("man_made", "tower")],
+            square(CENTER, HALF),
+        )
+        .parse();
+    let kinds: Vec<AreaKind> = map.buildings.iter().map(|b| b.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Kremlin,
+            AreaKind::Kremlin,
+            AreaKind::Kremlin,
+            AreaKind::Building,
+            AreaKind::Building,
+        ]
+    );
 }

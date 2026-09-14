@@ -10,11 +10,12 @@ use super::planting::plant_trees;
 use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine, Structure, TrafficSide,
-    TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, point_in_area,
-    point_in_polygon, ring_bounds,
+    AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
+    Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
+    point_in_area, point_in_polygon, ring_bounds, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
+use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
 const WALL_WIDTH: f32 = 3.0;
@@ -72,6 +73,11 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let drowned = drop_buildings_in_water(&mut map);
     if drowned > 0 {
         eprintln!("osm parse: {drowned} buildings dropped as standing entirely in water");
+    }
+
+    let guessed = resolve_faiths(&mut map.buildings);
+    if guessed > 0 {
+        eprintln!("osm parse: {guessed} places of worship took their faith from the city");
     }
 
     let orphaned = attach_entrances(&mut map, &entrances);
@@ -163,6 +169,120 @@ fn drop_buildings_in_water(map: &mut MapData) -> usize {
         })
     });
     before - buildings.len()
+}
+
+/// Как далеко от храма ещё стоит его часть — колокольня рядом, придел, м.
+const CHURCH_PART_REACH: f32 = 30.0;
+
+/// Храмы собираются из частей: у каждой — свой **храм** ([`Sacred::complex`])
+/// и вера. Возвращает, скольким храмам веру пришлось взять у города.
+///
+/// OSM рисует собор то одним контуром, то общим контуром и частями
+/// (`building:part`, барабаны с `roof:shape=onion`, колокольня рядом), и у
+/// частей своих тегов почти нет. В Туле так размечен Успенский собор кремля:
+/// вера — на общем контуре, а три главы и колокольня — отдельными контурами
+/// без неё, и каждая часть выбирала себе цвет сама — розовый барабан рядом с
+/// белым и бирюзовая глава рядом с золотой.
+///
+/// * **Хозяин части** — самый крупный из храмов крупнее неё, в контуре
+///   которого стоит её центр, а если такого нет — ближайший из них не дальше
+///   [`CHURCH_PART_REACH`] (колокольня стоит рядом, а не внутри). Храм без
+///   хозяина — сам себе храм.
+/// * **Посев храма** — от первой вершины хозяина: им красятся все части.
+/// * **Вера** — своя, если размечена; иначе хозяина; иначе большинства храмов
+///   города: христианский храм без деноминации в Туле православный, а в Берлине
+///   кирха. При равенстве, и в городе без единого размеченного храма, —
+///   [`Faith::Western`], самый распространённый в OSM вид церкви.
+fn resolve_faiths(buildings: &mut [PolyArea]) -> usize {
+    struct Church {
+        index: usize,
+        faith: Faith,
+        area: f32,
+        center: Vec2,
+        bounds: (Vec2, Vec2),
+    }
+    let churches: Vec<Church> = buildings
+        .iter()
+        .enumerate()
+        .filter_map(|(index, building)| match building.building_use {
+            BuildingUse::Church(sacred) => {
+                let bounds = ring_bounds(&building.outer);
+                Some(Church {
+                    index,
+                    faith: sacred.faith,
+                    area: signed_ring_area(&building.outer).abs(),
+                    center: (bounds.0 + bounds.1) * 0.5,
+                    bounds,
+                })
+            }
+            _ => None,
+        })
+        .collect();
+
+    let (orthodox, western) = churches
+        .iter()
+        .fold((0, 0), |(o, w), church| match church.faith {
+            Faith::Orthodox => (o + 1, w),
+            Faith::Western => (o, w + 1),
+            _ => (o, w),
+        });
+    let majority = if orthodox > western {
+        Faith::Orthodox
+    } else {
+        Faith::Western
+    };
+
+    // хозяин — по снимку до записи: часть не должна стать хозяином по
+    // собственной, только что выданной вере
+    let hosts: Vec<Option<usize>> = churches
+        .iter()
+        .map(|part| {
+            let larger = churches
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other.index != part.index && other.area > part.area);
+            let inside = larger
+                .clone()
+                .filter(|(_, other)| {
+                    part.center.cmpge(other.bounds.0).all()
+                        && part.center.cmple(other.bounds.1).all()
+                        && point_in_polygon(part.center, &buildings[other.index].outer)
+                })
+                .max_by(|a, b| a.1.area.total_cmp(&b.1.area));
+            inside
+                .or_else(|| {
+                    larger
+                        .map(|(at, other)| {
+                            let nearest = part.center.clamp(other.bounds.0, other.bounds.1);
+                            (at, nearest.distance(part.center))
+                        })
+                        .filter(|(_, distance)| *distance <= CHURCH_PART_REACH)
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(at, _)| (at, &churches[at]))
+                })
+                .map(|(at, _)| at)
+        })
+        .collect();
+
+    let mut guessed = 0;
+    for (church, host) in churches.iter().zip(&hosts) {
+        let host = host.map(|at| &churches[at]);
+        let faith = match (church.faith, host.map(|host| host.faith)) {
+            (Faith::Unknown, Some(faith)) if faith != Faith::Unknown => faith,
+            (Faith::Unknown, _) => {
+                guessed += 1;
+                majority
+            }
+            (faith, _) => faith,
+        };
+        let anchor = host.map_or(church.index, |host| host.index);
+        let complex = seed_from_point(buildings[anchor].outer.first().copied().unwrap_or_default());
+        if let BuildingUse::Church(sacred) = &mut buildings[church.index].building_use {
+            sacred.faith = faith;
+            sacred.complex = complex;
+        }
+    }
+    guessed
 }
 
 /// Нода `entrance=*` → позиция на карте. Не вход или значение из

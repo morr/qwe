@@ -179,7 +179,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     and two steel rails on the gauge, thinned out by **rail zoom LOD** into a dashed
     symbol darker than its ballast on the city-wide view. Tram is `map/tram.rs`, with its
     own LOD, and is drawn only while `TramStyle::visible`.
-  - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
+  - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
+    no fortress building stands on it** (`roads.rs::Fortresses`): Tula maps its wall as a
+    `building=wall` and its towers as buildings too, and the ribbon over them read as a
+    dark-orange outline. The navmesh still blocks the whole line.
   - **FenceLine** — a plot boundary: `FenceKind: Fence | Wall | Hedge` from
     `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`), plus the
     **default gates** the load adds (`gates`). Drawn by `map/fences.rs`; **impassable in
@@ -218,8 +221,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
-  Church | Public | Other`, from `building=*` and — whenever that value is outside the
+  Church(Sacred) | Public | Other`, from `building=*` and — whenever that value is outside the
   vocabulary, `yes` above all — from `amenity=*` on the same outline.
+  **`Sacred { faith, form }`** rides inside `Church`, the `Pitch(PitchKind)` pattern:
+  **`Faith: Orthodox | Western | Muslim | Jewish | Eastern | Unknown`** from `religion` +
+  `denomination` (or the building tag — `mosque`, `synagogue`), and **`SacredForm: Nave |
+  Tower | Dome`** — a bell tower or minaret (`tower:type`), a drum under a cupola
+  (`roof:shape=onion|dome`, the one place `roof:shape` is read). `Unknown` does not survive
+  the parse: **`parse::resolve_faiths`** gives a part the faith of the church it belongs to
+  (the largest church holding it, or the nearest within 30 m), and anything else the city's
+  majority (ties → `Western`). The same pass fills **`Sacred::complex`** — the seed of the
+  whole church, so a cathedral and its drums and bell tower share one palette.
+  **Fortress** — `AreaKind::Kremlin` is told not only by `historic=citywalls|castle|…` but by
+  `building=wall` ≥ 6 m and `man_made=tower` + `tower:type=defensive` (Tula carries no
+  `historic` at all); a compact footprint is a **fortress tower**, a thin one a wall
+  (`buildings/fortress.rs::is_tower`).
   **`garages` (plural) is its own class**:
   OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
   it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
@@ -233,8 +249,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
   (they used to stay flat among pitched neighbours). Which of the two a house takes is its
   own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
-  and its clutter. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
-  with its colour. **`RoofShape`** is the same three as an *input*: the city never asks for
+  and its clutter. Courtyard buildings stay flat. A **tent** (`TentRoof`, faces to one apex)
+  is the fourth kind and no house ever gets it: a church and a fortress are *assigned* their
+  roof (**`LandmarkRoof`** — `temples::roof_form` by faith, `fortress::roof_form`: tent on a
+  tower, flat walkway on a wall), stepping down where the outline refuses.
+  **`RoofShape`** is the same kinds as an *input*: the city never asks for
   one, `roof_gallery` does, to stand one outline under all three — and a refusal there stays
   a refusal instead of being swapped for another shape the way `roofing` swaps it.
   **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, hip inset,
@@ -313,8 +332,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   geometric: the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, and the
   invariant it protects is that **storey boundaries stay whole**, not that the wall ends on
   one. Knowing where the top *is* needs the storey count, and that rides in the **material
-  slot** next to the code (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in
+  slot** next to the code (`meshing::STOREY_STRIDE` 32: code in the remainder, storeys in
   the quotient, zero on a roof).
+  **`WallKind::Sacred`** is a church's wall: a 6 m **tier** instead of a storey, a 4 m cell,
+  and one tall **arched** window per cell — never a dwelling window. A **fortress** wall is
+  brick marked `WallMark::Solid` everywhere: no window, no door.
+- **Crown** (`map/buildings/temples.rs`) — what stands **above a church's roof**, laid out on
+  the plan's minimum-area rectangle with the long axis turned east: onion cupolas on drums
+  (one on a chapel, five on a large Orthodox church by seed) and a tent-roofed bell tower at
+  the west end of a "ship"; a spire tower at a Western church's west front; a hemisphere dome
+  and corner minarets on a mosque; a low dome on a large synagogue. A cupola is a **stack of
+  slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
+  compression, so it reads as an onion, not a ball; crowns cast ground shadow to their real
+  top (`temples::shadow_casters` → `ShadowSweeps`). A fortress wall carries **merlons**
+  (`clutter::merlons`, zoom-gated like all clutter). Verified in `temple_gallery`.
   A **balcony** is a stack of bands, not a box — the slab's shadow on the wall, the bright
   slab edge, the parapet, and above it either glazing or an open recess in shade — laid out
   by the **period of a section**, not by a per-column draw: two filled **columns** out of

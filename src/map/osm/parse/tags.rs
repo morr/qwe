@@ -11,8 +11,8 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, FenceKind, PitchKind, RailKind, RoadClass, ServiceTrack, StructureKind,
-    WaterKind, polyline_length,
+    AreaKind, BuildingUse, Faith, FenceKind, PitchKind, RailKind, RoadClass, Sacred, SacredForm,
+    ServiceTrack, StructureKind, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -99,8 +99,8 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         Some("garage" | "carport" | "shed" | "barn" | "roof") => Some(BuildingUse::Garage),
         Some(
             "church" | "cathedral" | "chapel" | "temple" | "mosque" | "synagogue" | "monastery"
-            | "religious" | "shrine",
-        ) => Some(BuildingUse::Church),
+            | "religious" | "shrine" | "bell_tower" | "campanile" | "minaret",
+        ) => Some(BuildingUse::Church(sacred(tags))),
         Some(
             "school" | "hospital" | "university" | "college" | "kindergarten" | "public" | "civic"
             | "government" | "train_station" | "museum" | "library" | "stadium" | "sports_hall"
@@ -111,8 +111,16 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
     if let Some(class) = by_building {
         return class;
     }
+    // колокольня в OSM — чаще `building=yes` + `man_made=tower`, и назначение у
+    // неё видно только по типу башни
+    if matches!(
+        tags.get("tower:type").map(String::as_str),
+        Some("bell_tower" | "minaret")
+    ) {
+        return BuildingUse::Church(sacred(tags));
+    }
     match tags.get("amenity").map(String::as_str) {
-        Some("place_of_worship") => BuildingUse::Church,
+        Some("place_of_worship") => BuildingUse::Church(sacred(tags)),
         Some(
             "school" | "hospital" | "clinic" | "university" | "college" | "kindergarten" | "police"
             | "fire_station" | "townhall" | "courthouse" | "library" | "theatre"
@@ -120,6 +128,99 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         ) => BuildingUse::Public,
         _ => BuildingUse::Other,
     }
+}
+
+/// Храм по тегам: вероисповедание и форма части.
+fn sacred(tags: &HashMap<String, String>) -> Sacred {
+    Sacred {
+        faith: faith(tags),
+        form: sacred_form(tags),
+        complex: 0,
+    }
+}
+
+/// Вероисповедание по `religion` и `denomination`, а где их нет — по самому
+/// `building`: мечеть и синагога называют себя тегом здания чаще, чем
+/// религией. Христианский храм без деноминации остаётся [`Faith::Unknown`] —
+/// в Туле это православный храм, в Берлине кирха, и решает за него город
+/// (`parse::resolve_faiths`), а не словарь.
+pub(super) fn faith(tags: &HashMap<String, String>) -> Faith {
+    let denomination = tags.get("denomination").map(String::as_str);
+    match tags.get("religion").map(String::as_str) {
+        Some("christian") => match denomination {
+            Some(
+                "orthodox" | "russian_orthodox" | "greek_orthodox" | "serbian_orthodox"
+                | "romanian_orthodox" | "bulgarian_orthodox" | "georgian_orthodox"
+                | "ukrainian_orthodox" | "old_believers" | "armenian_apostolic" | "coptic"
+                | "syriac_orthodox" | "ethiopian_orthodox" | "oriental_orthodox",
+            ) => Faith::Orthodox,
+            None | Some("christian" | "unknown") => Faith::Unknown,
+            // католики, протестанты всех ветвей и всё, чего нет в словаре
+            // православных: с воздуха это кирпич и шпиль
+            Some(_) => Faith::Western,
+        },
+        Some("muslim") => Faith::Muslim,
+        Some("jewish") => Faith::Jewish,
+        Some("buddhist" | "hindu" | "shinto" | "taoist" | "jain" | "sikh" | "confucian") => {
+            Faith::Eastern
+        }
+        _ => match tags.get("building").map(String::as_str) {
+            Some("mosque" | "minaret") => Faith::Muslim,
+            Some("synagogue") => Faith::Jewish,
+            Some("shrine" | "temple") => Faith::Eastern,
+            Some("campanile") => Faith::Western,
+            _ => Faith::Unknown,
+        },
+    }
+}
+
+/// Какая это часть храма: башня, барабан под главой или сам храм.
+fn sacred_form(tags: &HashMap<String, String>) -> SacredForm {
+    let tower = matches!(
+        tags.get("tower:type").map(String::as_str),
+        Some("bell_tower" | "minaret")
+    ) || matches!(
+        tags.get("building").map(String::as_str),
+        Some("bell_tower" | "campanile" | "minaret")
+    );
+    if tower {
+        return SacredForm::Tower;
+    }
+    match tags.get("roof:shape").map(String::as_str) {
+        Some("onion" | "dome") => SacredForm::Dome,
+        _ => SacredForm::Nave,
+    }
+}
+
+/// Ниже этого `building=wall` — ограда, а не крепостная стена, м.
+const FORTRESS_WALL_MIN_HEIGHT: f32 = 6.0;
+
+/// Крепостное сооружение: кремлёвская стена, её башни и ворота.
+///
+/// `historic=citywalls|castle|city_gate|fort` в OSM стоит далеко не всегда: у
+/// Тульского кремля его нет ни на одном контуре. Стена там размечена
+/// `building=wall` (12.7 м), а башни — `man_made=tower` +
+/// `tower:type=defensive`, и по одному `historic` кремль рисовался бы
+/// многоэтажками с окнами. `building=wall` пониже [`FORTRESS_WALL_MIN_HEIGHT`]
+/// — садовая ограда, кремлём она не становится.
+fn is_fortification(tags: &HashMap<String, String>) -> bool {
+    let historic = tags.get("historic").map(String::as_str);
+    if matches!(
+        historic,
+        Some("citywalls" | "castle" | "city_gate" | "fort")
+    ) {
+        return true;
+    }
+    if tags.get("barrier").map(String::as_str) == Some("city_wall") {
+        return true;
+    }
+    if tags.get("man_made").map(String::as_str) == Some("tower")
+        && tags.get("tower:type").map(String::as_str) == Some("defensive")
+    {
+        return true;
+    }
+    tags.get("building").map(String::as_str) == Some("wall")
+        && building_height(tags).is_some_and(|height| height >= FORTRESS_WALL_MIN_HEIGHT)
 }
 
 /// [`building_use`] только для зданий: у воды и парков назначения нет.
@@ -135,11 +236,9 @@ pub(super) fn area_use(kind: AreaKind, tags: &HashMap<String, String>) -> Buildi
 pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     let tags = &element.tags;
     if tags.contains_key("building") {
-        // исторические стены/башни Кремля подкрашиваются отдельно
-        let historic = tags.get("historic").map(String::as_str);
-        return Some(match historic {
-            Some("citywalls" | "castle" | "city_gate" | "fort") => AreaKind::Kremlin,
-            _ => AreaKind::Building,
+        return Some(match is_fortification(tags) {
+            true => AreaKind::Kremlin,
+            false => AreaKind::Building,
         });
     }
     let natural = tags.get("natural").map(String::as_str);

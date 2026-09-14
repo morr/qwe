@@ -11,20 +11,23 @@ use bevy::prelude::*;
 use super::arches::{
     ArchOpening, WallCells, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
 };
-use super::clutter::{flat_roof_items, push_items, ridge_chimney};
+use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
 use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs, point_to_segment};
 use super::material::{
     DOOR_CODE, RoofKind, RoofLook, WallKind, WallLook, building_seed, roof_look, run_kind,
     run_look, run_wall_look, wall_look,
 };
 use super::order::wall_order;
-use super::roofs::{HipRoof, RoofShape, Roofing, roofing, roofing_of};
+use super::roofs::{HipRoof, RoofShape, Roofing, TentRoof, roofing, roofing_of};
+use super::temples::{crowns, push_crowns, shadow_casters};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
+use crate::map::meshing::{
+    MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect, sweep_convex,
+};
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
-use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
 use crate::map::seed::seed_from_point;
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
 use crate::settings::STOREY_HEIGHT;
@@ -123,9 +126,19 @@ const PANEL_WIDTH: f32 = 3.2;
 fn cell_width(kind: WallKind) -> f32 {
     match kind {
         WallKind::GarageDoors => BAY,
+        WallKind::Sacred => SACRED_BAY,
         _ => PANEL_WIDTH,
     }
 }
+
+/// Ячейка храмовой стены, м: простенок с одним высоким окном шире жилой
+/// панели.
+const SACRED_BAY: f32 = 4.0;
+/// Ярус храмовой стены, м, — вместо жилого этажа: высокое арочное окно на
+/// трёхметровый этаж не встаёт, и храм в 18 м читался бы шестиэтажкой.
+const SACRED_TIER: f32 = 6.0;
+/// Ярус колокольни, м.
+const BELL_TOWER_TIER: f32 = 12.0;
 
 /// Сколько ячеек встанет на стену такой длины — целое число, и оно же делитель
 /// её собственной сетки: ячейка это `length / wall_columns(length, kind)`.
@@ -246,6 +259,10 @@ fn wall_frame(building: &PolyArea, look: &WallLook, span: &WallSpan) -> Option<W
         look.kind.code(),
         span.seed(),
     )?;
+    // крепость — кладка без единого проёма: ни окна, ни балкона
+    if building.kind == AreaKind::Kremlin {
+        return Some(frame.marked(WallMark::Solid));
+    }
     let balconies = balconies_fit(building, look.kind, columns, span);
     Some(match balconies {
         true => frame,
@@ -394,9 +411,17 @@ fn garage_cells(
 /// Число целое, и на нём держится вся рама ([`wall_frame`]): верхний этаж
 /// упирается ровно в карниз, а на углу дома обе стены кончаются одинаково.
 fn storeys_of(building: &PolyArea) -> f32 {
-    (height_or_default(building) / STOREY_HEIGHT)
-        .round()
-        .max(1.0)
+    let storey = match building.building_use {
+        // ярус колокольни выше храмового: семидесятиметровая колокольня в
+        // шестиметровых ярусах носила двенадцать рядов окон, как башня-жильё
+        BuildingUse::Church(Sacred {
+            form: SacredForm::Tower,
+            ..
+        }) => BELL_TOWER_TIER,
+        BuildingUse::Church(_) => SACRED_TIER,
+        _ => STOREY_HEIGHT,
+    };
+    (height_or_default(building) / storey).round().max(1.0)
 }
 
 /// Кому балконы полагаются. Это не про геометрию, а про то, что бывает на
@@ -509,6 +534,8 @@ pub(super) fn door_size(kind: WallKind) -> Vec2 {
         // доходит ([`push_doors`]), и размер тут только чтобы `match` остался
         // исчерпывающим
         WallKind::GarageDoors => Vec2::new(3.0, 2.5),
+        // храмовые двери высокие двустворчатые, под арку портала
+        WallKind::Sacred => Vec2::new(2.2, 3.4),
     }
 }
 
@@ -594,7 +621,12 @@ fn push_doors(
     // У гаражного ряда вход в каждом боксе, и рисует их сама облицовка —
     // отдельное полотно по входу из OSM встало бы поверх створки соседним
     // прямоугольником другого размера.
-    if building.entrances.is_empty() || wall.kind == WallKind::GarageDoors {
+    // У крепости проёмов нет вовсе: сгенерированный вход поставил бы подъездную
+    // дверь в прясло стены.
+    if building.entrances.is_empty()
+        || wall.kind == WallKind::GarageDoors
+        || building.kind == AreaKind::Kremlin
+    {
         return;
     }
     let length = span.length();
@@ -872,6 +904,10 @@ pub(super) fn facade_and_roof_builders(
                     ));
                 }
             }
+            Roofing::Tent(roof) => {
+                roofs.set_roof(Some(look.frame));
+                push_tent(&mut roofs, &roof);
+            }
             Roofing::Flat => {
                 push_flat_roof(
                     &mut roofs,
@@ -886,9 +922,18 @@ pub(super) fn facade_and_roof_builders(
                 }
             }
         }
+        if detail.clutter {
+            items.extend(merlons(building, Vec2::ZERO));
+        }
         // в плоском режиме у коробки нет стен — только тень и верх, как у
         // самих домов в этих режимах
         push_items(&mut roofs, &items, None, color);
+        push_crowns(
+            &mut roofs,
+            &crowns(building, facade_color, color),
+            Vec2::ZERO,
+            None,
+        );
     }
     (facades, roofs)
 }
@@ -946,6 +991,12 @@ impl ShadowSweeps {
                 let mut sweep: Vec<Vec2> = chain.clone();
                 sweep.extend(chain.iter().rev().map(|&point| point + offset));
                 push_contour(&mut contours, sweep);
+            }
+            // глава и шпиль выше карниза, и тень храма обязана дотянуться до
+            // маковки — иначе на земле он тот же коробок, что и сосед
+            for (outline, top) in shadow_casters(building) {
+                let length = (top * shadow_length_scale()).clamp(min_length, max_length);
+                push_contour(&mut contours, sweep_convex(&outline, shadow_dir() * length));
             }
             spans.push((start, contours.len()));
         }
@@ -1567,7 +1618,7 @@ fn push_house_with_arches(
             push_items(builder, &chimney, Some(lean), color);
         }
     };
-    match roofing_of(shape, building, lift, |rise| lean.ridge(rise), color, seed) {
+    let built = match roofing_of(shape, building, lift, |rise| lean.ridge(rise), color, seed) {
         Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
@@ -1603,6 +1654,11 @@ fn push_house_with_arches(
             chimney_on(builder, ridge, ridge_offset);
             RoofShape::Hip
         }
+        Roofing::Tent(roof) => {
+            builder.set_roof(Some(look.frame));
+            push_tent(builder, &roof);
+            RoofShape::Tent
+        }
         Roofing::Flat => {
             let roof_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + lift).collect();
             let roof_holes: Vec<Vec<Vec2>> = building
@@ -1617,6 +1673,25 @@ fn push_house_with_arches(
             }
             RoofShape::Flat
         }
+    };
+    // над кровлей — то, чем храм и крепость отличаются от дома: главы,
+    // колокольня и минареты, зубцы по верху стены
+    push_crowns(
+        builder,
+        &crowns(building, facade_color, color),
+        lift,
+        Some(lean),
+    );
+    if clutter {
+        push_items(builder, &merlons(building, lift), Some(lean), color);
+    }
+    built
+}
+
+/// Шатёр в меш: грани уже в порядке кладки ([`TentRoof::faces`]).
+fn push_tent(builder: &mut MeshBuilder, roof: &TentRoof) {
+    for (face, tone) in &roof.faces {
+        builder.push_triangle(*face, *tone);
     }
 }
 

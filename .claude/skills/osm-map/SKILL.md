@@ -180,7 +180,13 @@ in `CONTEXT.md` and the detail here in the same change.
   (`layer` ≥ 0, no tunnel) still draws — that is what keeps an elevated subway on the
   map. **Rails never touch the navmesh** — see the navigation-deep skill.
 - **WallLine** — `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red,
-  impassable.
+  impassable. **The ribbon is drawn only off fortress buildings** (`roads.rs::Fortresses`,
+  the axis probed every `WALL_PROBE_STEP` 2 m against `AreaKind::Kremlin` outlines): Tula
+  also maps the wall as `building=wall` (relation 13342793, 12.7 m) and each tower as a
+  building, and the ribbon laid over the lifted 2.5D wall read as a dark-orange outline and
+  as red rings over the towers — the user's report. A leftover piece under `WALL_STUB_MAX`
+  40 m is dropped too, but only on a line that was cut at all: the axis and the outlines
+  drift apart by 15–30 m pieces at Tula's corner towers. Navmesh untouched.
 - **FenceLine** — a plot boundary: `points` + `FenceKind: Fence | Wall | Hedge`, from
   `parse/tags.rs::fence_kind` (`barrier=fence` → `Fence`, `wall|retaining_wall` → `Wall`,
   `hedge` → `Hedge`). `MapData::fences`, drawn by `map/fences.rs` (**Fences** under
@@ -290,9 +296,30 @@ in `CONTEXT.md` and the detail here in the same change.
   singular, together with `carport`/`shed`/`barn`/`roof`, stays one box.
   The Kremlin (`AreaKind::Kremlin`) keeps its
   red regardless of class. `roof:shape` is **not** read (283 of 7465 in Tula carry it);
-  the roof shape is inferred instead — see **Gable roofs** under Rendering. The class is
+  the roof shape is inferred instead — see **Gable roofs** under Rendering — with one
+  exception below. The class is
   also one of the two inputs of **Inferred storeys** (the other is the footprint's shape),
   which is what fills in the height OSM does not carry.
+- **Places of worship** (`parse/tags.rs::faith`, `sacred_form`; `parse.rs::resolve_faiths`)
+  — `BuildingUse::Church(Sacred { faith, form })`. `building=bell_tower|campanile|minaret`
+  and `tower:type=bell_tower|minaret` are churches too (`form: Tower`); a part with
+  `roof:shape=onion|dome` is `form: Dome` — the only reading of `roof:shape` in the parse.
+  Faith: `religion=christian` + an Orthodox-family `denomination` → `Orthodox`, any other
+  denomination → `Western`, none → `Unknown`; `muslim|jewish|buddhist|hindu|shinto|…` by
+  religion, else by `building=mosque|synagogue|temple`. Tula v14: 27 places of worship —
+  17 `russian_orthodox`, 3 `orthodox`, 1 catholic, 1 evangelical, 1 `christian` bare, 4 with
+  no religion (the kremlin cathedral's parts: 9×9 onion 35 m, 11×11 dome, 26×25 onion 30 m,
+  the 70 m bell tower). **`resolve_faiths`** runs right after the drowned-building pass and
+  assembles churches from parts: a part's **host** is the largest larger church holding its
+  centre, else the nearest larger one within `CHURCH_PART_REACH` 30 m (a bell tower stands
+  beside, not inside). The part takes the host's first-vertex seed as `Sacred::complex` —
+  what its colours are picked by — and, when untagged, the host's faith; the rest take the
+  city majority (Orthodox vs Western, ties → Western).
+- **Fortress** (`parse/tags.rs::is_fortification`) — `AreaKind::Kremlin` from
+  `historic=citywalls|castle|city_gate|fort`, `barrier=city_wall` on an area,
+  `man_made=tower` + `tower:type=defensive`, or `building=wall` at ≥ 6 m
+  (`FORTRESS_WALL_MIN_HEIGHT`; lower is a garden wall). Tula carries **no** `historic` on
+  its kremlin — before this every tower and the wall were plain buildings with windows.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS
@@ -1868,6 +1895,43 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     remains. Verified on Tula's western private sector: red-brown two-storey houses with a
     visible ridge — the L-shaped ones were flat there, which is the observation **Hip
     roofs** was written against.
+- **Temples and the fortress** (`buildings/temples.rs`, `buildings/fortress.rs`) — the two
+  kinds of building drawn by their meaning rather than by the house rules; the author's
+  report was a kremlin wall with apartment windows under a dark-orange outline and churches
+  with dwelling windows.
+  - **The roof is assigned** (`roofs::LandmarkRoof`, `landmark_roof` before `is_pitched` in
+    `roofing`): Orthodox / Jewish / Eastern nave → hip, Western → `SteepGable` (pitch 1.3,
+    ≤ 12 m; a non-rectangle falls back to hip), mosque → flat; a tower → `Tent { rise }` in
+    plan sides (Orthodox 1.1, Western spire 2.6, others 0.9; ≤ 40 m); a drum part ≤ 14 m wide
+    → flat (the cupola hides it). Fortress: tower (`area/perimeter² ≥ 0.03`) → tent 0.9, wall
+    → flat. `landmark_rise` is the same decision in metres — what a cupola stands on.
+  - **The crown** (`Crown: Dome | Tower | Minaret`) is laid on `min_area_rect` with the long
+    axis turned east. Orthodox: a chapel (< 120 m²) one small onion; a "ship" (L ≥ 1.6 W and
+    ≥ 22 m) a tent bell tower with a cap onion at the west end and the cupolas over the
+    eastern core; five cupolas on a core ≥ 14 m by seed (6 in 10). **Colours ride the church's seed**
+    (`Sacred::complex`, `material::look_seed`): the kremlin cathedral's parts each picked
+    their own and came out pink, white and teal side by side; a size rule for gold was
+    dropped with it, since a part does not know its host's area. Western
+    ≥ 20 m: a spire tower at the west front. Mosque: hemisphere (R 0.3 of the short side) and
+    1 / 2 / 4 minarets by area (500 / 2000 m²). Synagogue ≥ 300 m²: a low dome. Eastern: roof
+    only. A crown ignores clutter gating — it is the silhouette, not equipment — and roof
+    clutter (vents, penthouses, chimneys) is **refused** on churches and fortresses.
+  - **A cupola is a stack of 16 slices**, each a `push_fan_gradient` disc lifted by the lean
+    and coloured per rim vertex by the 3D normal against the sun (`AMBIENT` 0.52 +
+    `DIFFUSE` 0.62 × Lambert, a metal highlight). Upper slices cover lower ones, leaving the
+    near crescent — what a real dome shows. The onion profile is a sine to the belly (0.32)
+    then the Hermite fall `1 − 3u² + 2u³`: concave at the tip; a `cos^1.6` fall read as an
+    egg. **Heights are stretched** (`ONION_STRETCH` 2.6, `HEMISPHERE_STRETCH` 1.4): the 2.5D
+    lift is 0.35 m per metre, and an honest onion came out a ball. Drums carry window slits;
+    bell towers a dark belfry arch. In the flat modes slices lie concentric.
+  - **Shadows** reach the crown's real top: `temples::shadow_casters` hands a convex base per
+    element and its height, swept by `sweep_convex` into `ShadowSweeps` (so roof shadows see
+    them too). Stretch is drawing only.
+  - **Merlons** (`clutter::merlons`) along every edge of a fortress wall's outer ring, pitch
+    2.6 m, 1.3 × 0.7 × 1.9 m, through `push_items` (clutter zoom bucket).
+  - **`temple_gallery`** (`examples/demos/temple_gallery`) — faith × (ship, square, chapel,
+    bell tower, drum) plus a kremlin row, built by the real `spawn_buildings`;
+    `TEMPLE_GALLERY_SHOT` and `TEMPLE_GALLERY_FOCUS=row,column,m/px` for a close-up.
 - **Inferred storeys** (`buildings/heights.rs`) — the height of the 69 % of Tula (95 % of
   Tokyo) that OSM leaves untagged. It used to be three numbers — house 6 m, garage 3 m,
   everything else 15 m — and the measurement of that is its own argument: the city's
@@ -1909,8 +1973,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     order of `MapData::buildings`) chooses a slot in a **ten-slot table per
     `BuildingUse`** — ten slots so a table reads as percentages: `House` is 5 tile / 2
     seam / 2 corrugated / 1 bitumen, `Apartments` 7 bitumen, `Industrial` 5 corrugated,
-    and so on. `Church` is always seam metal (its green is now green *metal*), the
-    Kremlin too (and keeps `KREMLIN_ROOF_COLOR`), and `Other` — half the city — splits by
+    and so on. `Church` takes its material and palette from its faith
+    (`temples::roof_kind` / `roof_palette` — Orthodox seam metal, Western and Eastern tile,
+    mosque gravel), the Kremlin from `fortress` (seam on a tower, gravel on the wall's
+    walkway), and `Other` — half the city — splits by
     footprint at the same `SMALL_FOOTPRINT_MAX` 250 m² the gable rule uses: a small box is
     a private house, a big one a block.
   - **The colour** comes from that material's own palette (3–7 plausible shades, picked
@@ -2007,8 +2073,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       block nor a curtain wall whatever OSM calls it. The seed is read from **other bytes**
       than the roof's (`>> 4`, `>> 12`, `>> 20` against the roof's raw, `>> 8`, `>> 16`):
       the two materials must be independent, or every panel block would also be under one
-      bitumen. Kremlin is brick, `Church` whitewash — the same two exceptions the roof has,
-      in the same order.
+      bitumen. Kremlin is brick (every wall `WallMark::Solid` — no window, and `push_doors`
+      skips it), `Church` is `WallKind::Sacred` coloured by faith — the same two exceptions
+      the roof has, in the same order.
     - **Wall colours are calibrated the other way from roofs**: a wall is **lighter than its
       roof**, which is what holds the 2.5D box together (dark bitumen over light panel), so
       panel and plaster live in 0.66–0.86 and only `Shopfront` is deliberately darker — and
@@ -2060,7 +2127,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       0.30 of a storey and misses 0.15 on its own, but a **balcony** starts at 0.01, and its
       slab shadow and slab edge would climb into the cornice.
     - **Knowing where the top is takes the storey count**, and that rides **in the material
-      slot** beside the code: `meshing::STOREY_STRIDE` (16) puts the code in the remainder and
+      slot** beside the code: `meshing::STOREY_STRIDE` (32 — raised from 16 when
+      `WallKind::Sacred` pushed the door to code 16) puts the code in the remainder and
       the storeys in the quotient, zero on a roof. That slot is the one field with a spare
       digit; a fifth float in the attribute would cost four bytes on every vertex of the
       building layer. `meshing::unpack_material` is the Rust mirror and exists only for the
