@@ -320,8 +320,8 @@ have to infer from the species.
 `DemonKind { Imp, Brute }` (`demon/components.rs`), the numbers in `settings.rs` as
 `DemonKindStats` (`IMP`, `BRUTE`): speed multiplier, body scale, damage, attack period.
 **Imp** is the demon described in this whole section — 2× body (`BodyScale::DEMON`),
-speed ×1, no attack. **Brute** — 3× body, ×0.6 speed, `combat::Attack { 10, 1 s }` +
-`AttackCooldown` inserted at spawn — never chases humans: `acquire_targets` and `chase`
+speed ×1, no attack. **Brute** — 3× body, ×0.6 speed, `combat::Attack { damage: 10 }` +
+`AttackCooldown::ready(1 s)` inserted at spawn — never chases humans: `acquire_targets` and `chase`
 filter `With<ImpTag>`, and its own ladder (the `city-siege` skill) drives it to the
 bastions. The marker tags (`ImpTag` / `BruteTag`) exist because a query cannot filter on
 an enum variant. Four places went from "a demon is one size and one speed" to the kind:
@@ -353,10 +353,14 @@ applied by `demon/besiege.rs::besiege` (chain slot: after `devour`, before
    `AttackTarget` and `ChaseRepath` come off, `DemonWanderTag` goes back on, the in-flight
    search is left alone (the `back_to_wander` rule). Within `ATTACK_REACH` → `Strike`:
    `Movable::to_idle` if still moving, then nothing — the blow is `combat::strike`'s.
-   Otherwise the chase's own three: `WaitForPath` (first search in flight, no path, never
-   walked), `Hold` (tact not due; the timer ticks only on `Hold`/`Repath`, as in the
-   chase), `Repath { target }` — the bastion's point through `request_wander_path`,
-   skipped when the current goal tile is already it.
+   Otherwise the chase's own three, **shared code, not a copy**: `WaitForPath` (first
+   search in flight, no path, never walked) and `Hold` (tact not due; the timer ticks only
+   on `Hold`/`Repath`, as in the chase) are `decide::path_rung` over a `PathSense` (the
+   five path fields, built by `PathSense::of` — both `ChaseSense` and `BruteSense` embed
+   it as `path`); `Repath { target }` — the bastion's point through
+   `behavior::repath_towards`, the chase's own apply tail (skipped when the current goal
+   tile is already it, else `request_wander_path`). `ChaseRepath` is the Brute's throttle
+   too, name notwithstanding.
 2. **No target**: the nearest **frontline** bastion with a free slot → `Engage` — claim
    the slot, `DemonWanderTag` off, `AttackTarget` + fresh `ChaseRepath` on, path
    requested. The front is computed once per tick in `besiege`: standing bastions whose
@@ -481,8 +485,8 @@ soul** (`human/soul.rs::release_soul`) at the victim's `SimPosition` — a golde
 (`SoulMote`) that `rise_souls` (FixedUpdate, after `SimSet::HumanBehavior`) lifts 6 m over
 1.4 s of sim time and despawns; the visible side of `Telemetry::killed`. It reads
 `Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it. The
-mote is **not** the `Souls { earned, spent }` currency of `ROADMAP.md` — that is a
-separate concept, a resource this same observer will increment next to `Telemetry::killed`;
+mote is **not** the `Souls { earned, spent }` currency of `souls.rs::Souls` — that is a
+separate concept, a resource this same observer increments next to `Telemetry::killed`;
 `SoulMote` counts nothing.
 
 **What each exit from a chase strips is one list plus one exception.** The list is

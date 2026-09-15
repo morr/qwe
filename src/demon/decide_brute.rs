@@ -12,7 +12,7 @@
 
 use bevy::prelude::*;
 
-use crate::movement::MovableState;
+use crate::demon::decide::{PathRung, PathSense, path_rung};
 use crate::settings::ATTACK_REACH;
 
 /// Лимит Громил на один бастион: расходятся по фронту, а не ломают один
@@ -28,15 +28,8 @@ pub struct BruteSense {
     /// despawn'нута) тоже `None`; что `AttackTarget` при этом ещё висит,
     /// знает применение и снимает его как [`BruteAction::Done`].
     pub target: Option<BruteTarget>,
-    pub state: MovableState,
-    /// В `Movable::path` ещё остались waypoint'ы.
-    pub has_path: bool,
-    /// Громила хоть раз шагал — есть докат.
-    pub walked: bool,
-    /// Заявка на путь подана и ответа ещё нет.
-    pub search_in_flight: bool,
-    /// Таймер перепрокладки досчитает на этом тике.
-    pub repath_due: bool,
+    /// Путь к бастиону — то же чувство, что у погони.
+    pub path: PathSense,
 }
 
 /// Что Громила знает о своей цели.
@@ -92,22 +85,13 @@ pub fn decide(sense: &BruteSense, nearest_front: impl FnOnce() -> Option<Front>)
         return BruteAction::Strike;
     }
 
-    // та же ступень, что у погони: перепрокладка уронила бы ещё не отвеченный
-    // первый поиск, и Громила стоял бы у портала, пока конвейер медленнее тика
-    if sense.search_in_flight
-        && matches!(sense.state, MovableState::Pathfinding(_))
-        && !sense.has_path
-        && !sense.walked
-    {
-        return BruteAction::WaitForPath;
-    }
-
-    let needs_first_path = matches!(
-        sense.state,
-        MovableState::Idle | MovableState::PathfindingError(_)
-    );
-    if !sense.repath_due && !needs_first_path {
-        return BruteAction::Hold;
+    // те же ступени пути, что у погони: перепрокладка уронила бы ещё не
+    // отвеченный первый поиск, и Громила стоял бы у портала, пока конвейер
+    // медленнее тика
+    match path_rung(&sense.path) {
+        Some(PathRung::WaitForPath) => return BruteAction::WaitForPath,
+        Some(PathRung::Hold) => return BruteAction::Hold,
+        None => {}
     }
     BruteAction::Repath {
         target: target.position,
@@ -117,6 +101,7 @@ pub fn decide(sense: &BruteSense, nearest_front: impl FnOnce() -> Option<Front>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::movement::MovableState;
 
     fn front() -> Front {
         Front {
@@ -134,11 +119,13 @@ mod tests {
                 position: Vec2::new(distance, 0.0),
                 ruined: false,
             }),
-            state: MovableState::Moving(IVec2::ZERO),
-            has_path: true,
-            walked: true,
-            search_in_flight: false,
-            repath_due: false,
+            path: PathSense {
+                state: MovableState::Moving(IVec2::ZERO),
+                has_path: true,
+                walked: true,
+                search_in_flight: false,
+                repath_due: false,
+            },
         }
     }
 
@@ -172,16 +159,16 @@ mod tests {
     #[test]
     fn the_first_path_is_awaited_then_held_then_repathed() {
         let mut waiting = sense(50.0);
-        waiting.state = MovableState::Pathfinding(IVec2::ZERO);
-        waiting.has_path = false;
-        waiting.walked = false;
-        waiting.search_in_flight = true;
+        waiting.path.state = MovableState::Pathfinding(IVec2::ZERO);
+        waiting.path.has_path = false;
+        waiting.path.walked = false;
+        waiting.path.search_in_flight = true;
         assert_eq!(decide(&waiting, || None), BruteAction::WaitForPath);
 
         assert_eq!(decide(&sense(50.0), || None), BruteAction::Hold);
 
         let mut due = sense(50.0);
-        due.repath_due = true;
+        due.path.repath_due = true;
         assert_eq!(
             decide(&due, || None),
             BruteAction::Repath {
@@ -189,7 +176,7 @@ mod tests {
             }
         );
         let mut idle = sense(50.0);
-        idle.state = MovableState::Idle;
+        idle.path.state = MovableState::Idle;
         assert!(matches!(decide(&idle, || None), BruteAction::Repath { .. }));
     }
 }

@@ -8,13 +8,13 @@ use crate::demon::components::{
     ChaseComponents, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
     DemonDevourTag, DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil, ImpTag,
 };
-use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
+use crate::demon::decide::{ChaseAction, ChaseSense, PathSense, Victim, decide};
 use crate::grid::world_to_tile;
 use crate::human::Human;
 use crate::movement::{
     Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition, request_wander_path,
 };
-use crate::navigation::Backend;
+use crate::navigation::{Backend, Walkable};
 use crate::settings::{
     DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEVOUR_PULSE_MAX_SCALE, DEVOUR_PULSE_PERIOD,
 };
@@ -129,14 +129,14 @@ pub fn chase(
             speed: movable.speed,
             lunge_bonus: style.lunge,
             delta_secs: time.delta_secs(),
-            state: movable.state.clone(),
-            has_path: !movable.path.is_empty(),
-            walked: movable.last_direction != Vec2::ZERO,
-            search_in_flight: has_task || has_request,
-            // спрашиваем таймер, а не крутим его: тикать он обязан только на
-            // тех ступенях, до которых лестница дошла, — бросок и ожидание
-            // первого пути его замораживают
-            repath_due: repath.0.remaining() <= time.delta(),
+            // бросок и ожидание первого пути таймер замораживают — поэтому
+            // чувство его спрашивает, а крутят ступени ниже
+            path: PathSense::of(
+                &movable,
+                has_task || has_request,
+                Some(&repath.0),
+                time.delta(),
+            ),
             shared_target: claims.is_full(chase_target.0),
         };
         let action = decide(
@@ -229,20 +229,7 @@ pub fn chase(
             }
         };
 
-        let target_tile = world_to_tile(target_pos);
-        let current_goal = match movable.state {
-            MovableState::Moving(goal) | MovableState::Pathfinding(goal) => Some(goal),
-            _ => None,
-        };
-        if current_goal == Some(target_tile) {
-            continue;
-        }
-
-        // хвост скелета прогулки: просев цели и подача заявки — один и тот же
-        // шаг независимо от того, кто выбрал цель. Возврат (фактически
-        // выбранный тайл) здесь не нужен: курса у демона нет, его ведёт цель
-        // погони, а не память о направлении.
-        request_wander_path(
+        repath_towards(
             &mut commands,
             &walkable,
             entity,
@@ -252,6 +239,31 @@ pub fn chase(
         );
     }
     crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_CHASE_MS, started);
+}
+
+/// Хвост перепрокладки погони и осады (`besiege.rs`): путь к `target` —
+/// если путь уже не ведёт в её тайл.
+///
+/// Дальше — хвост скелета прогулки: просев цели и подача заявки — один и тот
+/// же шаг независимо от того, кто выбрал цель. Возврат `request_wander_path`
+/// (фактически выбранный тайл) здесь не нужен: курса у демона нет, его ведёт
+/// цель, а не память о направлении.
+pub fn repath_towards(
+    commands: &mut Commands,
+    walkable: &Walkable,
+    entity: Entity,
+    movable: &mut Movable,
+    from: Vec2,
+    target: Vec2,
+) {
+    let current_goal = match movable.state {
+        MovableState::Moving(goal) | MovableState::Pathfinding(goal) => Some(goal),
+        _ => None,
+    };
+    if current_goal == Some(world_to_tile(target)) {
+        return;
+    }
+    request_wander_path(commands, walkable, entity, movable, from, target);
 }
 
 /// Выход из погони без убийства: снимается набор погони — и только он.
@@ -720,6 +732,44 @@ mod tests {
                 .get::<crate::movement::NeedsWanderTarget>(demon)
                 .is_some(),
             "без метки демон не поднимется в блуждание после паузы"
+        );
+    }
+
+    /// Инвариант `souls.earned == telemetry.killed`: оба счётчика растут в
+    /// одном обсервере, и повторная поимка уже убитого человека (два демона
+    /// догнали одновременно) не сдвигает ни один из них.
+    #[test]
+    fn every_kill_earns_exactly_one_soul() {
+        let app = &mut devour_app();
+        let first = app.world_mut().spawn((Human, SimPosition(Vec2::ZERO))).id();
+        let second = app
+            .world_mut()
+            .spawn((Human, SimPosition(Vec2::new(5.0, 0.0))))
+            .id();
+        let demon = app
+            .world_mut()
+            .spawn((
+                Demon,
+                ImpTag,
+                Movable::new(1.0),
+                SimPosition(Vec2::ZERO),
+                crate::rng::PawnId(0),
+                crate::rng::WanderIndex::ready(),
+            ))
+            .id();
+
+        for human in [first, first, second] {
+            app.world_mut()
+                .trigger(DemonCaughtHumanEvent { demon, human });
+            app.world_mut().flush();
+        }
+
+        let killed = app.world().resource::<Telemetry>().killed;
+        assert_eq!(killed, 2, "труп не убивают дважды");
+        assert_eq!(
+            app.world().resource::<crate::souls::Souls>().earned as usize,
+            killed,
+            "душа — ровно одна на каждое убийство"
         );
     }
 }

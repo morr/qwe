@@ -9,14 +9,13 @@ use bevy::prelude::*;
 use crate::bastion::{Bastion, RuinTag};
 use crate::combat::AttackTarget;
 use crate::corruption::Corruption;
+use crate::demon::behavior::repath_towards;
 use crate::demon::claims::BastionClaims;
 use crate::demon::components::{BruteTag, ChaseRepath, Demon, DemonWanderTag};
+use crate::demon::decide::PathSense;
 use crate::demon::decide_brute::{BruteAction, BruteSense, BruteTarget, Front, decide};
 use crate::district::Districts;
-use crate::grid::world_to_tile;
-use crate::movement::{
-    Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition, request_wander_path,
-};
+use crate::movement::{Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition};
 use crate::navigation::Backend;
 
 /// Бастион фронта: стоит, его район не осквернён, а хотя бы один сосед — да.
@@ -86,13 +85,12 @@ pub fn besiege(
         let sense = BruteSense {
             position: sim_position.0,
             target: target_sense,
-            state: movable.state.clone(),
-            has_path: !movable.path.is_empty(),
-            walked: movable.last_direction != Vec2::ZERO,
-            search_in_flight: has_task || has_request,
-            repath_due: repath
-                .as_ref()
-                .is_some_and(|repath| repath.0.remaining() <= time.delta()),
+            path: PathSense::of(
+                &movable,
+                has_task || has_request,
+                repath.as_ref().map(|repath| &repath.0),
+                time.delta(),
+            ),
         };
         // цель исчезла вовсе (сущности нет) — для лестницы «цели нет», для
         // применения — компонент, который пора снять
@@ -155,15 +153,7 @@ pub fn besiege(
             }
         };
 
-        let target_tile = world_to_tile(target_pos);
-        let current_goal = match movable.state {
-            MovableState::Moving(goal) | MovableState::Pathfinding(goal) => Some(goal),
-            _ => None,
-        };
-        if current_goal == Some(target_tile) {
-            continue;
-        }
-        request_wander_path(
+        repath_towards(
             &mut commands,
             &walkable,
             entity,
