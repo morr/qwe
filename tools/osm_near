@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""OSM features around a point of the map, in map metres, from the cached extract.
+
+    tools/osm_near 3538 1757            # everything within 30 m, nearest first
+    tools/osm_near 3538 1757 60 --key building --key highway
+    tools/osm_near 3538 1757 --verts    # + every vertex in metres
+    tools/osm_near --id 179102449       # one way / node / relation, all tags + vertices
+
+The projection is `map/osm/overpass.rs::GeoBounds::project`, with the centre and the map
+size taken from the cache file name (`<city>_<lat>_<lon>_<W>x<H>_v<N>.json`), so the
+numbers are the same metres `brp cam`, `SimPosition` and the HUD camera line use.
+Distance is 0 for a point inside a closed way, else to the nearest segment.
+"""
+
+import argparse
+import glob
+import json
+import math
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+METERS_PER_DEG_LAT = 111_320.0
+SHOWN_TAGS = 6
+
+
+def cache_file(city):
+    files = sorted(glob.glob(os.path.join(ROOT, "assets/osm", f"{city or ''}*.json")))
+    files = [f for f in files if re.search(r"_[\d.]+_[\d.]+_\d+x\d+_v\d+\.json$", f)]
+    if not files:
+        sys.exit(f"no OSM cache in assets/osm for {city or 'any city'} — run the app once")
+    cities = {os.path.basename(f).split("_")[0] for f in files}
+    if len(cities) > 1:
+        sys.exit(f"several cities cached ({', '.join(sorted(cities))}) — pass --city")
+    return max(files, key=lambda f: int(re.search(r"_v(\d+)\.json$", f)[1]))
+
+
+def projector(path):
+    lat, lon, w, h = re.search(r"_([\d.]+)_([\d.]+)_(\d+)x(\d+)_v\d+\.json$", path).groups()
+    lat, lon, w, h = float(lat), float(lon), float(w), float(h)
+    lon_scale = METERS_PER_DEG_LAT * math.cos(math.radians(lat))
+    west = lon - w / 2 / lon_scale
+    south = lat - h / 2 / METERS_PER_DEG_LAT
+    return lambda g: ((g["lon"] - west) * lon_scale, (g["lat"] - south) * METERS_PER_DEG_LAT)
+
+
+def segment_distance(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = dx * dx + dy * dy
+    t = 0 if length == 0 else max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length))
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+def inside(p, ring):
+    hit = False
+    for a, b in zip(ring, ring[1:] + ring[:1]):
+        if (a[1] > p[1]) != (b[1] > p[1]):
+            if p[0] < a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]):
+                hit = not hit
+    return hit
+
+
+def lines_of(element, project):
+    """Polylines of an element in metres: a way's geometry, a relation's members."""
+    if element["type"] == "way" and "geometry" in element:
+        return [[project(g) for g in element["geometry"]]]
+    if element["type"] == "relation":
+        return [
+            [project(g) for g in member["geometry"]]
+            for member in element.get("members", [])
+            if member.get("geometry")
+        ]
+    return []
+
+
+def distance(p, element, project):
+    if element["type"] == "node":
+        return math.dist(p, project(element))
+    best = math.inf
+    for line in lines_of(element, project):
+        if len(line) > 3 and line[0] == line[-1] and inside(p, line[:-1]):
+            return 0.0
+        for a, b in zip(line, line[1:]):
+            best = min(best, segment_distance(p, a, b))
+    return best
+
+
+def describe(element, project, dist, verts):
+    tags = element.get("tags", {})
+    shown = ", ".join(f"{k}={v}" for k, v in list(tags.items())[:SHOWN_TAGS])
+    more = f" (+{len(tags) - SHOWN_TAGS} tags)" if len(tags) > SHOWN_TAGS else ""
+    head = f"{element['type']} {element['id']}"
+    if dist is not None:
+        head += f"  d={dist:.1f} m"
+    if element["type"] == "node":
+        x, y = project(element)
+        print(f"{head}  at {x:.1f}, {y:.1f}  {shown}{more}")
+        return
+    points = [p for line in lines_of(element, project) for p in line]
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    print(
+        f"{head}  centre {sum(xs) / len(xs):.0f}, {sum(ys) / len(ys):.0f}  "
+        f"bbox {max(xs) - min(xs):.0f}×{max(ys) - min(ys):.0f} m  {shown}{more}"
+    )
+    if verts:
+        for line in lines_of(element, project):
+            print("    " + " ".join(f"({x:.1f},{y:.1f})" for x, y in line))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("x", nargs="?", type=float)
+    parser.add_argument("y", nargs="?", type=float)
+    parser.add_argument("radius", nargs="?", type=float, default=30.0)
+    parser.add_argument("--key", action="append", help="only elements with this tag key")
+    parser.add_argument("--verts", action="store_true", help="print vertices in metres")
+    parser.add_argument("--id", type=int, help="dump one element by OSM id")
+    parser.add_argument("--city", help="cache file prefix, e.g. tula")
+    parser.add_argument("--limit", type=int, default=40)
+    args = parser.parse_args()
+
+    path = cache_file(args.city)
+    project = projector(path)
+    elements = json.load(open(path))["elements"]
+
+    if args.id is not None:
+        found = [e for e in elements if e["id"] == args.id]
+        if not found:
+            sys.exit(f"no element {args.id} in {os.path.basename(path)}")
+        for element in found:
+            describe(element, project, None, verts=True)
+            print(json.dumps(element.get("tags", {}), ensure_ascii=False, indent=1))
+        return
+    if args.y is None:
+        parser.error("x y [radius], or --id")
+
+    point = (args.x, args.y)
+    hits = []
+    for element in elements:
+        tags = element.get("tags", {})
+        if not tags or (args.key and not any(k in tags for k in args.key)):
+            continue
+        if tags.get("boundary") == "administrative" and "highway" not in tags:
+            continue  # the country relation and districts contain every point
+        dist = distance(point, element, project)
+        if dist <= args.radius:
+            hits.append((dist, element))
+    hits.sort(key=lambda h: h[0])
+    print(f"{len(hits)} within {args.radius:.0f} m of {args.x:.0f}, {args.y:.0f} "
+          f"({os.path.basename(path)})")
+    for dist, element in hits[: args.limit]:
+        describe(element, project, dist, args.verts)
+    if len(hits) > args.limit:
+        print(f"… {len(hits) - args.limit} more (--limit, --key, a smaller radius)")
+
+
+if __name__ == "__main__":
+    main()

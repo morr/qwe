@@ -125,6 +125,16 @@ Two rules:
   pathfinding, task queue, egui debug UI) this project does not have. Take the idiom, not
   the whole subsystem.
 
+## A screenshot from the user — where on the map is it?
+
+The user's screenshots are screen regions from a macOS utility, not game captures. The map
+position is printed **in the picture**: the last line of the top-right telemetry panel,
+`zoom/x/y cursor_x/cursor_y`, in map metres. Read it with `tools/shot_coords <png> [px py]`
+(the png path is the `[Image: source: …]` line), then list what is there with
+`tools/osm_near x y [radius]`. **Never take the position from `brp cam`**: that is where
+the live camera is now, not where the shot was taken. Details are in
+`.claude/live-app-project.md` ("Where a screenshot was taken") and in `osm-map`.
+
 ## Build & Development Commands
 
 ```bash

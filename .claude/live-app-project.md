@@ -124,6 +124,42 @@ root, overwritten every time, plus a `screenshot.small.png` copy downscaled to 1
 window **must be visible** — `shot` raises it, but a full-screen editor over it still
 wins; a black png means exactly that, not a broken renderer.
 
+### Where a screenshot was taken — read the HUD, not the live camera
+
+The telemetry panel (top-right) ends with the **camera line** `0.11/2374/2703 2510/2880`:
+`zoom/x/y` of the camera — metres per logical pixel, then the frame centre in map metres —
+and, after a space, the map point under the cursor (`-/-` when the cursor is outside the
+window). It exists so a screenshot carries its own position (`ui/speed.rs::update_camera_text`).
+
+**For a screenshot the user pasted, this line is the answer, and `brp cam` is not.** The
+live camera is where the user is looking *now*; by the time the question is typed it has
+usually moved on — a past session searched OSM around the live camera, almost two
+kilometres from the house in the picture, and had to be told to read the HUD. So:
+
+```bash
+tools/shot_coords <png>                  # OCR the camera line → centre, cursor, what the image covers in metres
+tools/shot_coords <png> 812 430          # + an image pixel (the broken corner, the car) in metres
+tools/osm_near 2374 2703 40              # the OSM features there, nearest first (see osm-map)
+```
+
+The png path of a pasted image is in the conversation (`[Image: source: …/image-cache/…]`).
+**The user's screenshots are not taken by the game** — they are screen regions grabbed with
+a macOS utility: cropped anywhere, often without the window centre in them, saved at 1× or
+2×. `shot_coords` is built for exactly that and needs only the telemetry panel somewhere in
+the picture. The panel is the ruler: its monospace columns give image px per logical px,
+and its fixed spot at the window's top-right corner gives where the camera centre falls in
+the image (it may be outside the crop, a negative pixel — that is fine). Pixels are pixels
+of the png it was given; `brp shot` captures and their `.small.png` work the same way.
+
+What the image cannot carry is the window's logical size: the script asks a running app
+(`brp window` on 15702, then 15703) and else assumes 1920×1080 — say `--window WxH` when the
+user's window is a different size, since the centre is placed half a window from the panel.
+The cursor coordinate is exact and needs none of that; when the user pointed at the thing,
+it is the best anchor. The zoom is printed to 2 decimals, so pixel → metre carries ±5–10 %
+at close zoom: take a search radius, not a point. No panel in the picture (`no zoom/x/y word
+found`) — there is nothing to read; ask for a shot with the top-right panel in it rather
+than falling back to `brp cam`.
+
 ### The offscreen shot — when the window cannot be seen
 
 ```bash

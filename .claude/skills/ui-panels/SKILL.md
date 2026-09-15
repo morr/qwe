@@ -106,7 +106,11 @@ did not fit 1080 px and ran off the top of the screen.
   works in a monospace face, so this root brings its **own** `InheritableFont` (FiraMono).
   `apply_panel_font` therefore skips roots that already have one (`Without<InheritableFont>`);
   without that filter it overwrote FiraMono with FiraSans on the first frame and the columns
-  wobbled.
+  wobbled. Its last line, the **camera line** `zoom/x/y cx/cy` (`update_camera_text`), is
+  read back from screenshots by `tools/shot_coords`, which also uses the whole panel as a
+  ruler (its width/offset/font and the fixed columns of the pathfinding lines) — changing
+  the panel's geometry, font or any of these format strings means re-measuring the
+  constants at the top of that script in the same change.
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button.
   Left click walks the ladder up and wraps to 1x from its top step (`MAX_SIM_SPEED`), right
   click steps down; `Primary` while paused. It reads `Pointer<Click>` itself instead of

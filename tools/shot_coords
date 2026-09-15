@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""World coordinates of a qwe screenshot, read off the HUD printed in it.
+
+The telemetry panel (top-right, `ui/speed.rs::update_camera_text`) ends with a line
+`zoom/x/y cx/cy`: the camera centre in map metres, metres per logical pixel, and the
+point under the cursor (`-/-` when the cursor is outside the window). That line is the
+only record of where *that* frame was taken — `brp cam` answers where the camera is
+*now*, and the user has usually moved it since.
+
+    tools/shot_coords <png>                  # camera, cursor, the frame's extent in metres
+    tools/shot_coords <png> 812 430 [x y …]  # + those image pixels in map metres
+    tools/shot_coords <png> --window 1512x945
+
+The png may be anything that contains the panel: a `brp shot` capture, its
+`.small.png`, or — the usual case — a region the user grabbed with a macOS screenshot
+utility, cropped anywhere, at 1× or 2×, with or without the title bar. The HUD itself is
+the ruler: its monospace advance gives the image's px per logical px, and its fixed place
+at the window's top-right corner gives where the window centre (= camera centre) falls in
+the image, even when that centre is outside the crop. What the image cannot tell is the
+window's logical size; it is asked from a running app over BRP and else taken as
+1920×1080 — pass `--window` when the user's window differs.
+"""
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MAP_W, MAP_H = 5600.0, 3700.0
+
+# The panel's geometry in logical px (`ui/speed.rs`: edge offset 8, width 470, padding
+# 16/10, FiraMono at SMALL_FONT), measured on a 3840×2160 capture at scale factor 2.
+# Changing the panel means re-measuring these: `tesseract <shot> - --psm 11 tsv`.
+CHAR_ADVANCE = 7.2  # FiraMono 12 px
+TEXT_LEFT_FROM_RIGHT = 461.5  # left ink edge of every panel line → window's right edge
+CAMERA_LINE_TOP = 93.0  # top ink edge of the camera line → window's top edge
+# Monospace columns of the fixed words in the lines above, counted from the line start
+# (`update_pathfinding_text`'s format string: every number is right-padded to a fixed width,
+# so these never move). The ruler is the longest start → word distance that got read.
+COLUMNS = {
+    "pathfinding:": {"in": 18, "flight,": 21, "queued,": 35, "ms": 49, "avg": 52},
+    "answers:": {"failed": 30},
+    "entities:": {"tick": 18, "ms": 37, "wait": 40, "(pk": 45},
+}
+
+CAMERA = re.compile(r"^(\S)\.(\d+)/(\d+)/(\d+)$")
+CURSOR = re.compile(r"^(?:(\d+)/(\d+)|-/-)$")
+
+
+def words(png, upscale):
+    """Tesseract word boxes, in the png's own pixel coordinates."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prepared = os.path.join(tmp, "ocr.png")
+        cmd = ["magick", png, "-colorspace", "Gray"]
+        if upscale != 1:
+            cmd += ["-resize", f"{upscale * 100:.0f}%"]
+        subprocess.run(cmd + [prepared], check=True, capture_output=True)
+        tsv = subprocess.run(
+            ["tesseract", prepared, "-", "--psm", "11", "tsv"], capture_output=True, text=True
+        ).stdout
+    found = []
+    for row in tsv.splitlines()[1:]:
+        cols = row.split("\t")
+        if len(cols) < 12 or not cols[11].strip():
+            continue
+        # a slashed or dotted zero comes back as © / @ / O / o
+        text = re.sub(r"(?<=[\d/.])[©@Oo]|[©@Oo](?=[\d/.])", "0", cols[11].strip())
+        left, top, width, height = (int(c) / upscale for c in cols[6:10])
+        found.append({"text": text, "left": left, "top": top, "w": width, "h": height})
+    return found
+
+
+def same_line(word, anchor):
+    return abs(word["top"] - anchor["top"]) < anchor["h"] and word["left"] > anchor["left"]
+
+
+def window_size(explicit):
+    if explicit:
+        w, h = explicit.lower().split("x")
+        return float(w), float(h), "--window"
+    brp = os.path.join(ROOT, ".claude/skills/live-app/scripts/brp")
+    for port in ("15702", "15703"):
+        try:
+            out = subprocess.run(
+                [brp, "window"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env={**os.environ, "BRP_PORT": port, "BRP_TIMEOUT": "2"},
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        match = re.search(r"logical=(\d+)x(\d+)", out)
+        if match:
+            return float(match[1]), float(match[2]), f"brp window on :{port}"
+    return 1920.0, 1080.0, "default — no app answered, pass --window if it differs"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("png")
+    parser.add_argument("pixels", nargs="*", type=float, help="x y pairs, image px")
+    parser.add_argument("--window", help="window logical size WxH (`brp window`)")
+    args = parser.parse_args()
+    if len(args.pixels) % 2:
+        sys.exit("pixels come in x y pairs")
+
+    size = subprocess.run(
+        ["magick", "identify", "-format", "%w %h", args.png],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    img_w, img_h = float(size[0]), float(size[1])
+    # small text OCRs badly; a 1× capture of 12 px glyphs wants upscaling
+    boxes = words(args.png, 1 if img_w >= 2500 else 2)
+
+    camera = next((w for w in boxes if CAMERA.match(w["text"])), None)
+    if not camera:
+        sys.exit(
+            f"no `zoom/x/y` word found in {args.png} — is the telemetry panel (top-right) "
+            "in the picture? If it is, crop it (`magick <png> -crop WxH+X+Y +repage`) and Read"
+        )
+    lead, frac, cam_x, cam_y = CAMERA.match(camera["text"]).groups()
+    # the zoom's leading zero is the glyph OCR misreads most
+    zoom = float(f"{lead if lead.isdigit() else '0'}.{frac}")
+    cam_x, cam_y = float(cam_x), float(cam_y)
+    cursor = next(
+        (CURSOR.match(w["text"]) for w in boxes if same_line(w, camera) and CURSOR.match(w["text"])),
+        None,
+    )
+
+    # scale: the longest run of monospace columns between a line's first word and a
+    # fixed word of the same line, else the camera word's own ink width (±5%)
+    ruler = None
+    for start in boxes:
+        for word in boxes:
+            column = COLUMNS.get(start["text"], {}).get(word["text"])
+            if column and same_line(word, start) and (not ruler or column > ruler[0]):
+                ruler = (column, (word["left"] - start["left"]) / (column * CHAR_ADVANCE))
+                ruler_from = f"{column} columns {start['text']} → {word['text']}"
+    if ruler:
+        scale, scale_from = ruler[1], ruler_from
+    else:
+        scale = camera["w"] / ((len(camera["text"]) - 0.4) * CHAR_ADVANCE)
+        scale_from = "camera word width, ±5%"
+    win_w, win_h, win_from = window_size(args.window)
+
+    # the window's top-right corner, then its centre, in image px
+    right = camera["left"] + TEXT_LEFT_FROM_RIGHT * scale
+    top = camera["top"] - CAMERA_LINE_TOP * scale
+    centre_x, centre_y = right - win_w / 2 * scale, top + win_h / 2 * scale
+    metres_per_px = zoom / scale
+
+    def world(px, py):
+        return cam_x + (px - centre_x) * metres_per_px, cam_y - (py - centre_y) * metres_per_px
+
+    print(f"hud: {camera['text']} {cursor[0] if cursor else '(cursor word unread)'}")
+    print(
+        f"camera centre: {cam_x:.0f}, {cam_y:.0f}   zoom {zoom} m per logical px "
+        f"(2 decimals: ±{0.005 / zoom:.0%})"
+    )
+    if cursor and cursor[1]:
+        print(f"cursor: {cursor[1]}, {cursor[2]}   (where the pointer was — often at the thing)")
+    elif cursor:
+        print("cursor: outside the window")
+    if not (0 <= cam_x <= MAP_W and 0 <= cam_y <= MAP_H):
+        print(f"!! camera outside the {MAP_W:.0f}×{MAP_H:.0f} map — OCR misread?")
+    print(
+        f"image: {img_w:.0f}×{img_h:.0f} px, {scale:.3f} px per logical px ({scale_from}); "
+        f"window {win_w:.0f}×{win_h:.0f} ({win_from})"
+    )
+    print(f"camera centre is at image px {centre_x:.0f}, {centre_y:.0f}")
+    (x0, y1), (x1, y0) = world(0, 0), world(img_w, img_h)
+    print(
+        f"image covers {x1 - x0:.0f}×{y1 - y0:.0f} m: x {x0:.0f}..{x1:.0f}, y {y0:.0f}..{y1:.0f}"
+    )
+    for px, py in zip(args.pixels[::2], args.pixels[1::2]):
+        wx, wy = world(px, py)
+        print(f"pixel ({px:.0f}, {py:.0f}) → world {wx:.1f}, {wy:.1f}")
+
+    mid_x, mid_y = world(img_w / 2, img_h / 2)
+    radius = max(15, round(min(x1 - x0, y1 - y0) / 2))
+    print(f"next: tools/osm_near {mid_x:.0f} {mid_y:.0f} {radius}   # the image's middle")
+
+
+if __name__ == "__main__":
+    main()

@@ -27,6 +27,28 @@ Four deep dives live next to this file and are read on demand:
 When a change here introduces or retires a concept, update the matching summary bullet
 in `CONTEXT.md` and the detail here in the same change.
 
+## From a screenshot to the OSM feature
+
+A map bug usually arrives as a screenshot ("the house is missing a corner"). Two scripts
+turn it into OSM ids without writing a projection by hand — every past session wrote
+its own `find_building.py` with the `GeoBounds` formula copied in:
+
+```bash
+tools/shot_coords <png> [px py]        # the HUD camera line → centre / cursor / pixel in map metres
+tools/osm_near <x> <y> [radius]        # ways, relations and nodes there, nearest first, d=0 inside
+tools/osm_near <x> <y> 30 --key building --verts   # + vertices in metres, for measuring
+tools/osm_near --id 179102449          # one element: all tags, every vertex
+```
+
+**Position comes from the screenshot's HUD** (the last line of the top-right panel,
+`zoom/x/y cx/cy`), never from `brp cam` — the live camera has moved since the picture was
+taken. The user's screenshots are arbitrary screen regions from a macOS utility;
+`shot_coords` handles those (the panel is its ruler) as long as the panel is in the crop.
+Details and caveats (window size, zoom precision) — `.claude/live-app-project.md`,
+"Where a screenshot was taken". `osm_near` reads the newest `assets/osm/<city>_*.json` and
+projects with the centre and size from its name, i.e. the same metres as `SimPosition` and
+`brp cam`; to confirm the pick live, `brp cam x y` then `brp shot`.
+
 ## Download & cache
 
 - **Overpass** — the Overpass API (`overpass-api.de`), queried once with `[out:json]` +
