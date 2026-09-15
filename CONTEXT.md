@@ -637,7 +637,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   leaves no gap in the rows. **The lot's asphalt is the road's** — `PARKING_COLOR` *is*
   `roads::ROAD_COLOR`, on the same `SurfaceKind::Street` material, so a lot lying over
   its street reads as one surface; a tone of its own drew a patch at every lot. For the
-  same reason the lot has **no rim**, unlike every other area: a kerb band along its
+  same reason the lot has **no rim**, unlike the greenery, sand and pitches: a kerb band along its
   outline was a gradient across each drive running into it.
   Render-only. Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
@@ -815,7 +815,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
   more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
   but a shared node projects to the same point on every way. They feed the markings.
-  Three render-only fixes sit on the same node match (`map/roads/network.rs`,
+  Four render-only fixes sit on the same node match (`map/roads/network.rs`,
   `RoadNodes` — every node shared by two roads of any class), and none of them touches
   `RoadLine::points`, the navmesh, doors or cars:
   - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street

@@ -656,7 +656,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     shared node in place. Before, a bend of the through road at a junction was cut by a
     chord up to a road width long, and the side street's end — which sits on the OSM node
     — hung beside the drawn asphalt or stuck out past its far edge. `smooth_path` (rails,
-    tram, tree-row band, cars) pins nothing, as before. **The cars do not pin**, so near a
+    tram, tree-row band, waterways, cars) pins nothing, as before. **The cars do not pin**, so near a
     bent junction a row walks a chord the ribbon no longer draws; the junction clearance
     (`reach + 5 m`) covers most of it, and making the cars read `RoadNodes` is the way to
     close the rest.
@@ -711,7 +711,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     crack along the drive edge.
     The sidewalk band's own outer corner stays square — rounding it is a subtraction the
     additive layers cannot do. Mixed-class arms get nothing: a grey wedge over a sand
-    footway would read as asphalt spilled onto the path. Tula: 8710.
+    footway would read as asphalt spilled onto the path. Bridges and passages give no arms
+    (their paths go in as `None`), and under `RoadJoin::Square` no returns are built at
+    all — that join is kept for comparison with the old picture. Tula: 8710.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —
@@ -1020,7 +1022,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
   not on it, and a 12 cm line is the one thing on this map that must stay pure white.
   - **Road asphalt, no rim.** `PARKING_COLOR` is `roads::ROAD_COLOR` and the fill is a bare
-    `push_polygon` — the lot is the only area without a **Rim**. It had a darker one,
+    `push_polygon` — no **Rim**, unlike parks, woods, grass, sand and pitches (the landuse
+    blocks have none either, and water has its shoal instead). It had a darker one,
     then a narrow lighter one; both drew a band across every drive where it runs into the
     lot, reported from screenshots (`cam 4301 2270`): the lot lies over the roads, so its
     outline crosses the drive's asphalt, and anything laid along it is a seam.
@@ -1103,13 +1106,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   negative inside a gap. `WEAR_FADE` is 5 m, not the dashes' 1 m: over a metre the ruts
   stopped across the lane at the junction edge like a seam.
   Reported from a screenshot of a four-way crossing: the roads are independent overlapping
-  ribbons, so each was drawing its own wear across the other. The kerb dirt was the
-  louder half — a dark band along a street's edge carried straight over the crossing
-  street's asphalt, where there is no kerb — and the ruts the subtler, two lanes' polished
-  bands meeting at right angles in the middle of the junction. Neither is a thing that
-  happens: traffic fans out over a crossing and polishes nothing, and the grit collects
-  where the kerb is. The gate costs one `smoothstep` on the amplitude that scales all of
-  it, so the fade is shared. The block is
+  ribbons, so each was drawing its own wear across the other. The kerb dirt (since removed,
+  above) was then the louder half — a dark band along a street's edge carried straight
+  over the crossing street's asphalt, where there is no kerb — and the ruts the subtler,
+  two lanes' polished bands meeting at right angles in the middle of the junction. Neither
+  is a thing that happens: traffic fans out over a crossing and polishes nothing. The gate
+  costs one `smoothstep` on the wear amplitude `w`, so anything added to the block later
+  fades with the ruts. The block is
   gated on `lanes >= 2`, and `lanes` is decoded from the same `ATTRIBUTE_RIBBON.w` the
   markings ride on: `roads::road_markings` fills it only for a carriageway of two lanes or
   more, and only while `RoadStyle.markings` is on. So **wear reaches exactly the roads the
