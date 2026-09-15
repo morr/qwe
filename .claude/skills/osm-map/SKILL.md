@@ -427,17 +427,32 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
     shift, then by the deepest remaining intrusion (closest points of wall edge and axis
     link, pushed out along their difference) for up to `SIDEWALK_SHIFT_ROUNDS` 4 so a
     corner house settles against the other street too.
+  - **The cap is a cap, not a refusal**: `SIDEWALK_SHIFT_MAX` 6 m. A front needing more stays
+    **out of the row union** (a row of itself) and moves by 6 m; the correction rounds clamp the
+    total to the same 6 m, so a house that cannot fully clear the band stops part of the way.
+    It was 4 m and a refusal first, and the row rule made that loud: the row's shift is its
+    deepest member's, so one house over the limit left its whole row standing — Tula's улица
+    Громова east side (13–35) stayed on the pavement because house 17 needed 4.01 m.
+  - **Collisions** (`Obstacles`, built once per pass): other buildings (their current, possibly
+    already moved, outlines; a grid of bboxes grown by the cap) and segments of every road and
+    rail (reach = half width), wall, fence, pipe, open watercourse, water-area ring and
+    industrial cylinder (a zero-length segment of its radius), each plus `SHIFT_CLEARANCE`
+    0.5 m. The rule is **relative**: a shift is blocked only by an object the house comes
+    **closer** to and within reach of — a footway along the wall or a fence on the plot line
+    in OSM does not forbid moving away from it. A blocked shift is retried at
+    `SHIFT_FRACTIONS` ¾ / ½ / ¼; blocked at ¼ too, the house stays. Not a sweep test: a house
+    thinner than its shift could jump a line, which a ≤ 6 m move of a house does not.
   - **Left in place**: a street axis crossing the outline or ending inside it (`None` from
-    `Front::of` / `sidewalk_push` — there is no "away"), a shift over `SIDEWALK_SHIFT_MAX` 4 m or rounds
-    that do not settle (a narrow block between two streets), any **shared** vertex (the
-    `square_skewed_houses` rule, same `vertex_uses`: terraces, arches, fences on walls),
-    `AreaKind::Kremlin`, `BuildingUse::Church` (parts stand on each other).
-  - **Not checked**: the moved house against its neighbours; a row along one street moves
-    together, and a collision was not seen on Tula.
+    `Front::of` / `sidewalk_push` — there is no "away"), every fraction blocked, any **shared**
+    vertex (the `square_skewed_houses` rule, same `vertex_uses`: terraces, arches, fences on
+    walls), `AreaKind::Kremlin`, `BuildingUse::Church` (parts stand on each other).
+  - The log line reports moved (rows included), how many of the intruding ones stopped only
+    part of the way (cap or obstacle), and how many were left.
   - Order: after squaring, before door generation and tree planting — the navmesh, doors
     and trees see the moved outline. Price: the first vertex moves, so the seed, material
-    and inferred storeys roll anew. Tula: **993 moved (rows included), 160 left**, 18 ms
-    at load.
+    and inferred storeys roll anew. Tula: **1121 moved (rows included), 56 of them only part
+    of the way, 38 left**, 33 ms at load (`examples/bench/map_meshing`'s parse; it was 993
+    moved / 160 left / 18 ms at the 4 m refusal with no collision test).
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.

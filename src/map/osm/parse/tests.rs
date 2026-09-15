@@ -1906,3 +1906,77 @@ fn a_house_on_the_sidewalk_is_pulled_back_into_the_block() {
         "дом в глубине квартала сдвинут вместе с рядом"
     );
 }
+
+/// Дому, которому нужно больше предела, не отказывают: он сдвигается на
+/// предел и не держит на месте свой ряд; а сдвиг, упёршийся в забор или в
+/// соседнее здание, укорачивается, пока между ними не останется зазор.
+#[test]
+fn a_pull_is_capped_and_stops_short_of_what_stands_behind() {
+    let reach = 4.0 + sidewalk_width(8.0).unwrap() + SIDEWALK_CLEARANCE;
+    let street = vec![
+        CENTER - Vec2::new(300.0, 0.0),
+        CENTER + Vec2::new(300.0, 0.0),
+    ];
+    let house = |x: f32, gap: f32| {
+        rect(
+            CENTER + Vec2::new(x, gap),
+            CENTER + Vec2::new(x + 12.0, gap + 10.0),
+        )
+    };
+    // стена в метре от оси: нужно 6.76 м, предел 6
+    let deep = house(-200.0, 1.0);
+    // сосед по той же стороне, в 8 м от глубокого: встал бы с ним в ряд
+    let beside = house(-180.0, 4.7);
+    // забор в 2.5 м за задней стеной: полный сдвиг 3.06 м его пересёк бы
+    let fenced = house(0.0, 4.7);
+    let fence = vec![
+        CENTER + Vec2::new(-5.0, 17.2),
+        CENTER + Vec2::new(17.0, 17.2),
+    ];
+    // здание в 1.3 м за задней стеной, само улицы не касается
+    let crowded = house(150.0, 4.7);
+    let behind = rect(
+        CENTER + Vec2::new(150.0, 16.0),
+        CENTER + Vec2::new(162.0, 26.0),
+    );
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "residential")], street)
+        .area(&[("building", "yes")], deep.clone())
+        .area(&[("building", "yes")], beside.clone())
+        .area(&[("building", "yes")], fenced.clone())
+        .way(&[("barrier", "fence")], fence)
+        .area(&[("building", "yes")], crowded.clone())
+        .area(&[("building", "yes")], behind.clone())
+        .parse();
+
+    let shift = |index: usize, ring: &[Vec2]| map.buildings[index].outer[0].y - ring[0].y;
+    assert!(
+        (shift(0, &deep) - SIDEWALK_SHIFT_MAX).abs() < 0.01,
+        "глубокий дом сдвинут на {}",
+        shift(0, &deep)
+    );
+    assert!(
+        (shift(1, &beside) - (reach - 4.7)).abs() < 0.06,
+        "сосед глубокого дома сдвинут на {}",
+        shift(1, &beside)
+    );
+    let full = reach - 4.7;
+    assert!(
+        (shift(2, &fenced) - full * 0.5).abs() < 0.01,
+        "дом у забора сдвинут на {}",
+        shift(2, &fenced)
+    );
+    assert!(
+        (shift(3, &crowded) - full * 0.25).abs() < 0.01,
+        "дом перед соседом сдвинут на {}",
+        shift(3, &crowded)
+    );
+    assert!(
+        map.buildings[4]
+            .outer
+            .iter()
+            .zip(&behind)
+            .all(|(a, b)| a.distance(*b) < 0.01),
+        "здание позади тронуто"
+    );
+}

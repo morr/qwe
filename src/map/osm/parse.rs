@@ -100,9 +100,12 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         );
     }
     let started = std::time::Instant::now();
-    let (pulled, stuck) = pull_houses_off_sidewalks(&mut map);
+    let pulled = pull_houses_off_sidewalks(&mut map);
     eprintln!(
-        "osm parse: {pulled} buildings pulled off the sidewalks, {stuck} left standing on them, in {:?}",
+        "osm parse: {} buildings pulled off the sidewalks ({} of them only part of the way), {} left standing on them, in {:?}",
+        pulled.moved,
+        pulled.partly,
+        pulled.left,
         started.elapsed()
     );
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
@@ -679,8 +682,14 @@ fn vertex_uses(map: &MapData) -> HashMap<(i32, i32), u32> {
 /// дороге на полметра-метр.
 const SIDEWALK_CLEARANCE: f32 = 2.0;
 /// Дальше этого, м, дом от улицы не отодвигается: дом, которому нужно больше,
-/// стоит на улице по данным, а не у её кромки, и сдвиг унёс бы его в соседа.
-const SIDEWALK_SHIFT_MAX: f32 = 4.0;
+/// сдвигается на этот предел и остаётся краем на тротуаре. 4 м оставляли на
+/// месте целые ряды Тулы (улица Громова: дому 17 не хватило сантиметра).
+const SIDEWALK_SHIFT_MAX: f32 = 6.0;
+/// Ближе этого, м, сдвинутый дом не подходит к другому объекту — зданию,
+/// линии (от её края), водоёму, цилиндру, — если до сдвига стоял дальше.
+const SHIFT_CLEARANCE: f32 = 0.5;
+/// Доли сдвига по очереди: полный упёрся — дом сдвигается на меньший.
+const SHIFT_FRACTIONS: [f32; 4] = [1.0, 0.75, 0.5, 0.25];
 /// Разница отступов от улицы, м, при которой соседи ещё стоят «на одной линии»
 /// и сдвигаются вместе.
 const ROW_SETBACK_TOLERANCE: f32 = 2.0;
@@ -708,18 +717,21 @@ const SIDEWALK_CELL: f32 = 32.0;
 /// улицы (габариты ближе [`ROW_GAP`]), чей отступ не больше чем на
 /// [`ROW_SETBACK_TOLERANCE`] отличается от отступа самого наезжающего дома
 /// ряда, отодвигаются на тот же сдвиг — иначе линия фасадов ломается
-/// ступенькой. Потом каждый дом добирает остаток наезда от других улиц
-/// раундами до [`SIDEWALK_SHIFT_ROUNDS`]. Дом остаётся на месте,
-/// если улица проходит сквозь контур, если нужный сдвиг больше
-/// [`SIDEWALK_SHIFT_MAX`] или раунды не сошлись (узкий квартал между двумя
-/// улицами). Не трогаются, как и в [`square_skewed_houses`], дома с общей
-/// вершиной — сплошная застройка разошлась бы щелью, арка потеряла бы проход, —
-/// крепость и храмы (части храма стоят друг на друге). Сдвиг первой вершины
-/// меняет дому посев: материал и этажность выпадут заново.
+/// ступенькой. Дом, которому нужно больше [`SIDEWALK_SHIFT_MAX`], в ряд не
+/// встаёт — иначе он оставил бы на месте всех соседей — и сдвигается на
+/// предел. Потом каждый дом добирает остаток наезда от других улиц раундами до
+/// [`SIDEWALK_SHIFT_ROUNDS`], не дальше того же предела. Сдвиг, после
+/// которого дом подходит к другому объекту ближе [`SHIFT_CLEARANCE`]
+/// ([`Obstacles`]), укорачивается по [`SHIFT_FRACTIONS`]; не помогла и
+/// четверть — дом остаётся. Дом остаётся на месте и тогда, когда улица
+/// проходит сквозь контур. Не трогаются, как и в [`square_skewed_houses`],
+/// дома с общей вершиной — сплошная застройка разошлась бы щелью, арка
+/// потеряла бы проход, — крепость и храмы (части храма стоят друг на друге).
+/// Сдвиг первой вершины меняет дому посев: материал и этажность выпадут заново.
 ///
 /// Порядок в конвейере: после выпрямления косых домов, до генерации дверей и
 /// посадки деревьев — те, как и навмеш, видят уже сдвинутый контур.
-fn pull_houses_off_sidewalks(map: &mut MapData) -> (usize, usize) {
+fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
     // (начало, конец, полуширина улицы с тротуаром и зазором) и индекс улицы
     let mut segments: Vec<(Vec2, Vec2, f32)> = Vec::new();
     let mut segment_road: Vec<usize> = Vec::new();
@@ -746,6 +758,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> (usize, usize) {
     }
 
     let uses = vertex_uses(map);
+    let obstacles = Obstacles::new(map);
     let mut fronts: Vec<Front> = Vec::new();
     let mut left = 0;
     for (index, building) in map.buildings.iter().enumerate() {
@@ -794,10 +807,13 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> (usize, usize) {
     }
     let mut by_street: HashMap<(usize, bool), Vec<usize>> = HashMap::new();
     for (index, front) in fronts.iter().enumerate() {
-        by_street
-            .entry((front.road, front.left))
-            .or_default()
-            .push(index);
+        // дом, которому мало предела, — ряд из одного себя
+        if front.need <= SIDEWALK_SHIFT_MAX {
+            by_street
+                .entry((front.road, front.left))
+                .or_default()
+                .push(index);
+        }
     }
     for members in by_street.values() {
         for (position, &a) in members.iter().enumerate() {
@@ -823,35 +839,46 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> (usize, usize) {
     }
 
     let mut moved = 0;
+    let mut partly = 0;
     for (index, front) in fronts.iter().enumerate() {
         let need = row_need[&root(&mut parent, index)];
         if need <= SIDEWALK_SHIFT_TOLERANCE || front.need < need - ROW_SETBACK_TOLERANCE {
             continue;
         }
         let intruding = front.need > SIDEWALK_SHIFT_TOLERANCE;
-        if need > SIDEWALK_SHIFT_MAX {
-            left += usize::from(intruding);
-            continue;
-        }
         let building = &map.buildings[front.building];
         let nearby = local(&front.nearby, &segments);
-        // сдвиг ряда, потом остаток наезда от других улиц
-        let mut shift = front.away * need;
-        let mut push = sidewalk_push(&building.outer, shift, &nearby);
-        for _ in 0..SIDEWALK_SHIFT_ROUNDS {
-            match push {
-                Some(step) if step.length() > SIDEWALK_SHIFT_TOLERANCE => {
-                    shift += step;
-                    push = sidewalk_push(&building.outer, shift, &nearby);
-                }
-                _ => break,
-            }
-        }
-        let settled = push.is_some_and(|step| step.length() <= SIDEWALK_SHIFT_TOLERANCE);
-        if !settled || shift.length() > SIDEWALK_SHIFT_MAX {
+        // сдвиг ряда, потом остаток наезда от других улиц — всё в пределе
+        let mut shift = front.away * need.min(SIDEWALK_SHIFT_MAX);
+        let Some(mut push) = sidewalk_push(&building.outer, shift, &nearby) else {
             left += usize::from(intruding);
             continue;
+        };
+        for _ in 0..SIDEWALK_SHIFT_ROUNDS {
+            if push.length() <= SIDEWALK_SHIFT_TOLERANCE {
+                break;
+            }
+            let next = (shift + push).clamp_length_max(SIDEWALK_SHIFT_MAX);
+            // ось улицы вошла в контур или предел не пускает дальше
+            let Some(next_push) = sidewalk_push(&building.outer, next, &nearby) else {
+                break;
+            };
+            if next.distance(shift) <= SIDEWALK_SHIFT_TOLERANCE {
+                break;
+            }
+            (shift, push) = (next, next_push);
         }
+        let Some(shift) = SHIFT_FRACTIONS
+            .iter()
+            .map(|fraction| shift * fraction)
+            .find(|&shift| !obstacles.blocks(map, front.building, shift))
+        else {
+            left += usize::from(intruding);
+            continue;
+        };
+        let remains = sidewalk_push(&building.outer, shift, &nearby)
+            .is_none_or(|push| push.length() > SIDEWALK_SHIFT_TOLERANCE);
+        partly += usize::from(intruding && remains);
         let building = &mut map.buildings[front.building];
         building
             .outer
@@ -868,7 +895,178 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> (usize, usize) {
             .for_each(|entrance| *entrance += shift);
         moved += 1;
     }
-    (moved, left)
+    PulledHouses {
+        moved,
+        partly,
+        left,
+    }
+}
+
+/// Итог [`pull_houses_off_sidewalks`].
+struct PulledHouses {
+    /// Сдвинуто домов, соседи по ряду включительно.
+    moved: usize,
+    /// Из них наезжавших, что после сдвига ещё задевают тротуар: упёрлись в
+    /// предел или в соседний объект.
+    partly: usize,
+    /// Наезжающих, оставленных на месте.
+    left: usize,
+}
+
+/// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего
+/// прочего — дорог и рельсов (от края полотна), стен, заборов, труб, открытых
+/// водотоков, берегов водоёмов, цилиндров (отрезок нулевой длины радиусом).
+///
+/// Правило относительное: мешает только объект, к которому дом **подошёл**
+/// ближе [`SHIFT_CLEARANCE`], — стоявший вплотную по данным (тропа у стены,
+/// забор по участку) сдвиг от себя не запрещает.
+struct Obstacles {
+    /// Контуры зданий до сдвигов: «было» меряется по ним, «стало» — по
+    /// текущей карте, где соседи могли уже сдвинуться.
+    original: Vec<Vec<Vec2>>,
+    /// Здания по ячейкам — габарит, раздутый на [`SIDEWALK_SHIFT_MAX`], так
+    /// что сдвинутое здание не выходит из своих ячеек.
+    buildings: HashMap<(i32, i32), Vec<usize>>,
+    /// (начало, конец, радиус запрета — полуширина плюс зазор).
+    segments: Vec<(Vec2, Vec2, f32)>,
+    lines: HashMap<(i32, i32), Vec<usize>>,
+}
+
+impl Obstacles {
+    fn new(map: &MapData) -> Self {
+        let original: Vec<Vec<Vec2>> = map
+            .buildings
+            .iter()
+            .map(|building| building.outer.clone())
+            .collect();
+        let mut buildings = HashMap::new();
+        let grow = Vec2::splat(SIDEWALK_SHIFT_MAX + SHIFT_CLEARANCE);
+        for (index, ring) in original.iter().enumerate() {
+            let (min, max) = ring_bounds(ring);
+            put_in_cells(&mut buildings, min - grow, max + grow, SIDEWALK_CELL, index);
+        }
+
+        let mut segments = Vec::new();
+        let mut add = |points: &[Vec2], half_width: f32| {
+            let reach = half_width + SHIFT_CLEARANCE;
+            points
+                .windows(2)
+                .for_each(|link| segments.push((link[0], link[1], reach)));
+        };
+        map.roads
+            .iter()
+            .for_each(|line| add(&line.points, line.width / 2.0));
+        map.rails
+            .iter()
+            .for_each(|line| add(&line.points, line.width / 2.0));
+        map.walls
+            .iter()
+            .for_each(|line| add(&line.points, line.width / 2.0));
+        map.fences.iter().for_each(|line| add(&line.points, 0.0));
+        map.pipes
+            .iter()
+            .for_each(|line| add(&line.points, line.width / 2.0));
+        map.water_lines
+            .iter()
+            .filter(|line| !line.tunnel)
+            .for_each(|line| add(&line.points, line.width / 2.0));
+        for area in &map.water {
+            for ring in std::iter::once(&area.outer).chain(&area.holes) {
+                let closed: Vec<Vec2> = ring.iter().chain(ring.first()).copied().collect();
+                add(&closed, 0.0);
+            }
+        }
+        for structure in &map.structures {
+            add(&[structure.at, structure.at], structure.radius);
+        }
+        let mut lines = HashMap::new();
+        for (index, &(from, to, reach)) in segments.iter().enumerate() {
+            let grow = Vec2::splat(reach);
+            put_in_cells(
+                &mut lines,
+                from.min(to) - grow,
+                from.max(to) + grow,
+                SIDEWALK_CELL,
+                index,
+            );
+        }
+        Self {
+            original,
+            buildings,
+            segments,
+            lines,
+        }
+    }
+
+    /// Упрётся ли здание `house`, перенесённое из исходного места на `shift`.
+    fn blocks(&self, map: &MapData, house: usize, shift: Vec2) -> bool {
+        let before = &self.original[house];
+        let after: Vec<Vec2> = before.iter().map(|vertex| *vertex + shift).collect();
+        let (min, max) = ring_bounds(&after);
+        let cells = |grid: &HashMap<(i32, i32), Vec<usize>>| {
+            let mut found: Vec<usize> = Vec::new();
+            for x in grid_cell(min.x, SIDEWALK_CELL)..=grid_cell(max.x, SIDEWALK_CELL) {
+                for y in grid_cell(min.y, SIDEWALK_CELL)..=grid_cell(max.y, SIDEWALK_CELL) {
+                    found.extend(grid.get(&(x, y)).into_iter().flatten());
+                }
+            }
+            found.sort_unstable();
+            found.dedup();
+            found
+        };
+        // стало ближе запрета и ближе, чем было
+        let closer = |now: f32, reach: f32, was: f32| now < reach && now < was - 0.01;
+
+        let buildings = cells(&self.buildings);
+        let neighbours = buildings.iter().filter(|&&other| other != house);
+        for &other in neighbours {
+            let current = &map.buildings[other].outer;
+            let (other_min, other_max) = ring_bounds(current);
+            let apart = (min - other_max).max(other_min - max).max(Vec2::ZERO);
+            if apart.length() >= SHIFT_CLEARANCE {
+                continue;
+            }
+            let now = ring_distance(&after, current);
+            if closer(
+                now,
+                SHIFT_CLEARANCE,
+                ring_distance(before, &self.original[other]),
+            ) {
+                return true;
+            }
+        }
+        cells(&self.lines).into_iter().any(|index| {
+            let (from, to, reach) = self.segments[index];
+            let now = ring_segment_distance(&after, from, to);
+            now < reach && closer(now, reach, ring_segment_distance(before, from, to))
+        })
+    }
+}
+
+/// Расстояние от контура до отрезка: ноль, если отрезок пересекает контур или
+/// лежит внутри.
+fn ring_segment_distance(ring: &[Vec2], from: Vec2, to: Vec2) -> f32 {
+    if point_in_polygon(from, ring) {
+        return 0.0;
+    }
+    (0..ring.len())
+        .map(|index| {
+            let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+            closest_between_segments(a, b, from, to)
+                .map_or(0.0, |(on_ring, on_segment)| on_ring.distance(on_segment))
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Расстояние между двумя контурами: ноль, если они пересекаются или один
+/// внутри другого.
+fn ring_distance(a: &[Vec2], b: &[Vec2]) -> f32 {
+    if a.first().is_some_and(|vertex| point_in_polygon(*vertex, b)) {
+        return 0.0;
+    }
+    (0..b.len())
+        .map(|index| ring_segment_distance(a, b[index], b[(index + 1) % b.len()]))
+        .fold(f32::INFINITY, f32::min)
 }
 
 /// Отрезки улиц по индексам.
