@@ -1,13 +1,14 @@
 ---
 name: city-siege
-description: Use when working on the M1 siege layer of qwe — the districts (district.rs: components inside grid cells, the shard rule, the label raster, dist_to_heart), the district_city fixture, and, as the milestone lands, the corruption spread, the bastions and their quota, souls and the outcome. Deep detail behind CONTEXT.md's Districts entry and ROADMAP.md steps 3–10.
+description: Use when working on the M1 siege layer of qwe — the districts (district.rs: components inside grid cells, the shard rule, the label raster, dist_to_heart), the district_city fixture, the bastion sites and their quota (bastion/), the strike (combat.rs), the corruption spread and the front (corruption.rs), souls and summoning (souls.rs), the outcome (outcome.rs) and the m1_win acceptance stand. Deep detail behind CONTEXT.md's Districts, BastionSites, Bastion, Attack, Corruption, Outcome and Souls entries and city-siege references/m1-baseline.md steps 3–11.
 ---
 
 # City siege — deep detail
 
-The detail layer behind the **Districts** entry of `CONTEXT.md` and the M1 steps of
-`ROADMAP.md` («Срез и скверна»). What is here is what the code obeys; what the roadmap
-plans and the code does not yet carry is marked as such. When a mechanism here changes,
+The detail layer behind the siege entries of `CONTEXT.md` (**Districts**, **BastionSites**,
+**Bastion**, **Attack**, **Corruption**, **Outcome**, **Souls**) and the M1 steps of
+`references/m1-baseline.md` («Срез и скверна», closed — see **The M1 record** below).
+What is here is what the code obeys. When a mechanism here changes,
 this file changes in the same commit — the term itself goes to `CONTEXT.md`.
 
 ## Districts (`district.rs`)
@@ -53,8 +54,9 @@ snapped portal and heart — see the `world-lifecycle` skill for the thread):
 Cost: one pass over all tiles plus the border pass — the same order as the prune BFS;
 logged as `districts: N in …` on the load thread. Memory during the build: a `u16` per
 navtile (10 MB at 2 m, 41 MB at 1 m), freed with the thread. Tula on the slice frame,
-2 m navtile: **161 districts in 109 ms** (prune took 71 ms on the same load), the
-portal's district 9 hops from the heart's; on the overlay the Упа reads as a colour break
+2 m navtile: **198 districts in 108 ms** (prune took 67 ms on the same load; 161 in
+109 ms before the rebase on master — `references/m1-baseline.md`, step 11 baseline), the portal's
+district 9 hops from the heart's; on the overlay the Упа reads as a colour break
 everywhere but at the bridges.
 
 **What it is not.** Not run state — a restart keeps it; a city switch or a navtile
@@ -75,7 +77,8 @@ passage, is the shard.
 a north-bank district because the water band straddles a cell row border at y ≈ 822 and
 the deck itself spans both); the portal district is **7 hops** from the heart; the shard
 resolves to the first yard's district; water resolves to `None`; the two bank districts
-differ yet are neighbours (through the deck). On `tiny_city`: a cell without a bridge has
+differ yet are neighbours (through the deck), and that pair is the **only** neighbour edge
+from a district south of the water to one north of it (by centroid). On `tiny_city`: a cell without a bridge has
 its banks in two districts that are **not** neighbours; the cell with the bridge has both
 banks in one district.
 
@@ -87,9 +90,14 @@ only when `SimTick % DISTRICT_CENSUS_TICKS == 0` (64 ticks, one simulated second
 `Query<&SimPosition, With<Human>>` walk with a `district_at` lookup each — 20 000 reads
 and 20 000 raster reads per simulated second, measured as `sim/census_ms`. It keys on
 `SimTick` rather than a `Local` counter on purpose: the tick resets on `WorldStarted`, so
-a restart replays the census on the same ticks, and corruption (which will read it)
-stays inside the run fingerprint. Not run state — it recounts itself within a second of
-any restart, so it has no `WorldStarted` observer.
+a restart replays the census on the same ticks, and corruption, which reads it, stays
+inside the run fingerprint. The phase alone is not enough, and so it **is** run state:
+the first tick of a run is 1 (`advance_sim_tick` heads the chain), the first recount
+lands on tick 64, and on ticks 1..63 corruption would read the census the previous run
+left behind — after R, the humans of its last second; on a fresh app, whatever it held
+before the announcement — so the progress in the fingerprint would split a restart from a fresh run.
+`district::on_world_started` clears it; until tick 64 every run reads zero humans
+(`step` reads a short vector as zero). Pinned by `world_started_forgets_the_census`.
 
 ## What the player sees (`ui/siege.rs`)
 
@@ -128,7 +136,8 @@ passable tile; that lands on the pavement at the wall. The district is then read
 `Districts::district_near` within `BASTION_DISTRICT_REACH` (24 m) rather than
 `district_at`: the label raster is 8 m coarse and labels a cell by its *centre* tile, so a
 2 m pavement tile can sit in a cell whose centre is inside the house. A tagged bastion
-with no passable tile in reach is dropped and counted (`dropped` in the log line).
+with no passable tile or no district in reach is dropped with a `warn!` naming its kind
+and point, and counted (`dropped` in the log line).
 
 **Quota.** `closeness = 1 − dist_to_heart / max_dist` (0 for a district with no path);
 `quota(closeness)` is the first step of `BASTION_QUOTA_STEPS` whose bound is not below
@@ -149,10 +158,12 @@ building" case, quota 0, the tagged-building exclusion and scarcity.
 ## Bastion entities (`bastion/mod.rs`)
 
 `spawn_bastions` (`OnEnter(Playing)`, `WorldInitSet::Spawn`) spawns one entity per
-site: `Bastion { kind, district }`, `Health::full(bastion_hp(closeness))`, a
+site: `Bastion { kind, district, site }` (`site` — the index in `BastionSites`, the
+stable tie-break the Brute's ladder sorts on), `Health::full(bastion_hp(closeness))`, a
 `BASTION_MARKER_SIZE` (12 m) square sprite coloured by kind at `Z_BASTION` (5.4 — above
-the roofs and every debug layer, below the units), `DespawnOnExit(Playing)`. Tula: 157
-sites → 157 entities (`brp count Bastion`).
+the roofs and every debug layer, below the units), `DespawnOnExit(Playing)`. Tula: 152
+sites (44 tagged + 108 strongholds) → 152 entities (`brp count Bastion`); 157 before the
+rebase on master.
 
 **HP gradient** — `bastion_hp(closeness) = BASTION_HP × (1 + BASTION_HEART_GAIN ×
 closeness)`: 100 at the edge, 400 at the heart. Per-kind multipliers are M2.
@@ -204,13 +215,17 @@ onward from the next step) and `district_city` on an empty map: the heart falls 
 
 **Overlay.** `sync_district_overlay` mixes each district's colour toward
 `CORRUPTION_COLOR` by its progress. It runs every `Playing` frame but rebuilds the
-texture only when a district crosses one of `CORRUPTION_SHADES` (16) steps — the marker
-carries an FNV key of the quantised progress vector — or when `Districts` changes.
+texture only when a district crosses one of `PROGRESS_SHADES` (16) steps — the marker
+carries an FNV key of the quantised progress vector — or when `Districts` changes. The
+raster walk, the texture, the shade and the key are `ui/district_texture.rs`, shared with
+the siege territory layer (`ui/siege.rs`); each layer keeps only its colour rule, its key
+and its sampler.
 
 ## Strike (`combat.rs`)
 
-`Attack { damage, period }`, `AttackCooldown(Timer)` (`ready(period)` — pre-ticked, so the
-first blow lands at once), `AttackTarget(Entity)`. `strike_verdict(distance,
+`Attack { damage }`, `AttackCooldown(Timer)` (`ready(period)` — pre-ticked, so the
+first blow lands at once; the timer's duration is the one record of the period),
+`AttackTarget(Entity)`. `strike_verdict(distance,
 cooldown_ready, target_alive)` is the pure rule: `Finished` (target at zero — the ladder
 sees it next tick), `OutOfReach` (over `ATTACK_REACH`, 3 m: the bastion's point is a
 pavement tile, the attacker stands on a neighbour, and 3 m clears the 2.83 m navtile
@@ -235,7 +250,7 @@ bastions currently holding corruption back (`corruption::step` skips a district 
 rebuilds the list every tick from `Districts::neighbours`, `Corruption::is_corrupted` and
 the `Bastion` query — dozens of entries; a Brute with a target never reads it. A
 bastion behind a river is frontline by the graph even when the walk goes over a distant
-bridge; in M1 that is accepted (`ROADMAP.md`, step 8's risk).
+bridge; in M1 that is accepted (`references/m1-baseline.md`, step 8's risk).
 
 ## Souls and summoning (`souls.rs`, `demon/systems.rs::summon`)
 
@@ -286,15 +301,26 @@ zero souls available → `Lost` on the next tick.
 `replay_app_with` (the `determinism` skill): the districts and one hand-made
 `BastionSites` (a Stronghold at `city.south_bank`, the district that holds the bridge,
 HP by `closeness` like a real site) go in through the configure hook; 200 humans; at
-`SUMMON_TICK` (10) the purse gets `SOULS_GRANT` (100) and a `SummonRequested { Brute }` is
-written straight into the world (`World::write_message` — the message survives the next
+`SUMMON_TICK` (10) `replay::summon_brute` gives the purse `SOULS_GRANT` (100) and writes a
+`SummonRequested { Brute }` straight into the world (constants and helper live in
+`determinism/replay.rs`, shared with `tests/determinism.rs::run_with_summon`) (`World::write_message` — the message survives the next
 `First` swap and `summon` reads it on that update's fixed step). The run goes in
 `CHUNK_TICKS` (1 280) slices until `Outcome` leaves `Running` or `MAX_TICKS` (60 000, a
 quarter hour); a `SiegeLog` resource filled by two observers (`DistrictCorrupted`,
 `BastionDestroyed`) records the ticks. Two runs on seed 1, then three checks: `Won` before
 the cap; the same outcome (variant + tick) in both runs; every north-bank district
 (centroid past `NORTH_BANK_Y` 900) corrupted **after** the bastion's district — the bridge
-was the road. The numbers it prints are the baseline table in `ROADMAP.md`, step 11.
+was the road. The numbers it prints are the baseline table in `references/m1-baseline.md`, step 11.
 
 The stand is why `run_to_tick` now returns on a standing world: the judge's pause used to
 leave it spinning on the winning tick.
+
+## The M1 record (`references/m1-baseline.md`)
+
+M1 is closed and `ROADMAP.md` now plans M2. What outlives the M1 plan moved to
+`references/m1-baseline.md` (in Russian, as the plan was): the Tula slice spike tables,
+the numbered **decisions 1–16** the code cites as «решение N `ROADMAP.md`», a table
+mapping each M1 **step number** to where its content lives now, the accepted risks, and the
+**baseline** — the `m1_win` ticks, the six live Tula runs to the heart, the bridge table,
+the 30× performance table. Wherever this file or a code comment says «`ROADMAP.md`, step
+N» or «decision N», read it there. The full M1 plan is `git show 68e7125:ROADMAP.md`.

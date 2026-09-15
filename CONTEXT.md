@@ -68,7 +68,8 @@ in `main.rs`.
   bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
-  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
+  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → siege territory
+  (5.32) → bastions (5.4) → units → souls (18)
   → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
@@ -105,10 +106,12 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 - **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All
   run state (`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`,
-  `DemonSpawner`, `SeparationStats`) is reset by observers of it, each in its owning
-  module (`grep "On<WorldStarted>"`). **Membership is held from the outside** by
-  `a_restart_replays_the_run`, not by hand. Map-derived state (`NorthstarGrid`,
-  `PolyNavmesh`) is **not** run state — a restart keeps the map.
+  `DemonSpawner`, `SeparationStats`, and the siege layer's `BastionsStanding` + the
+  in-place bastion heal, `Corruption`, `Souls`, `Outcome`) is reset by observers of it,
+  each in its owning module (`grep "On<WorldStarted>"`). **Membership is held from the
+  outside** by `a_restart_replays_the_run`, not by hand. Map-derived state
+  (`NorthstarGrid`, `PolyNavmesh`, `Districts`, `BastionSites`) is **not** run state — a
+  restart keeps the map.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns pawns and corpses, fires
   **WorldStarted**, respawns the population; the navmesh persists. Under **Deterministic**
   this replays the previous run tick for tick.
@@ -318,7 +321,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
   it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
-  and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
+  and ignores it. Not `BastionKind` — that is a separate concept.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
   not read (`roof:shape` is rare). The private sector is **gabled**, so the **gable roof**
   (`GableRoof`, everything with a piece of wall above the eaves) comes in five
@@ -1248,7 +1251,7 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
-- **HeartPos** (resource, `portal.rs`) — the actual heart position, the invasion's goal;
+- **HeartPos** (resource, `district.rs`) — the actual heart position, the invasion's goal;
   `City::heart_hint` is the hint, snapped by the load thread **after** prune to the nearest
   passable tile (no clearance needed — nothing spawns there), so the heart is reachable
   from the portal by construction.
@@ -1273,10 +1276,12 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   **DistrictCensus** (resource) — living humans per district, recounted every
   `DISTRICT_CENSUS_TICKS` (64, one sim second) in `SimSet::SpatialRebuild` on the
   `SimTick` phase (so a replay counts on the same ticks); `sim/census_ms` measures it.
+  Run state: cleared on `WorldStarted`, so no run reads the previous run's humans before
+  its first recount on tick 64.
   The **district overlay** (`DebugDistricts`, Debug tab row `Districts`, hotkey `T`) is
   the label raster as one 8 m/texel sprite — hue by district id, the heart's district
   brighter, unreachable ones grey.
-- **BastionSites** (resource, `bastion.rs`; mechanism — **city-siege skill**) — where
+- **BastionSites** (resource, `bastion/mod.rs`, the top-up in `bastion/fill.rs`; mechanism — **city-siege skill**) — where
   the bastions stand: map-derived, planned by the load thread after the districts. A
   **BastionSite** is `{ pos, kind, district, closeness }`; `pos` is the nearest passable
   navtile to the OSM centroid (the centroid lies *inside* the building, where nothing
@@ -1288,8 +1293,9 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   (`lcg_seeded_by` on the first outline vertex, as doors and trees are), so one map
   always yields the same sites whatever the world seed. A district without such
   buildings keeps what it has.
-- **Bastion** (entity, `bastion.rs`, spawned in `WorldInitSet::Spawn` from
-  `BastionSites`) — `Bastion { kind, district }` + **Health** (`combat.rs`: `{ hp, max }`,
+- **Bastion** (entity, `bastion/mod.rs`, spawned in `WorldInitSet::Spawn` from
+  `BastionSites`) — `Bastion { kind, district, site }` (`site` — its index in
+  `BastionSites`, the stable tie-break) + **Health** (`combat.rs`: `{ hp, max }`,
   `bastion_hp(closeness) = BASTION_HP × (1 + BASTION_HEART_GAIN × closeness)`, 100 at the
   edge, ×4 at the heart) + a `BASTION_MARKER_SIZE` sprite at `Z_BASTION`, coloured by
   kind. **Destroyed** (`combat.rs` event, fired when `Health` reaches zero) turns it into
@@ -1299,8 +1305,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   per ruin, part of the run `Fingerprint`. **A restart heals in place** — the
   `WorldStarted` observer refills every `Health`, strips `RuinTag` and relights the
   sprite; bastions never pass through the restart despawn list.
-- **Attack** (`combat.rs`) — `Attack { damage, period }` + `AttackCooldown` (a timer
-  ticked by `Res<Time>` in `FixedUpdate`, ready at spawn) + `AttackTarget(Entity)` (set and
+- **Attack** (`combat.rs`) — `Attack { damage }` + `AttackCooldown` (a timer whose
+  duration is the attack period, ticked by `Res<Time>` in `FixedUpdate`, ready at spawn) + `AttackTarget(Entity)` (set and
   cleared by the attacker's ladder; present ⇔ there is a target). **strike** runs at the
   tail of the demon chain in `SimSet::DemonBehavior`: a target within `ATTACK_REACH` (3 m
   of the bastion's point) with the cooldown out takes `damage`, and the blow that reaches
@@ -1715,8 +1721,8 @@ its draw call.
   the visible side of `Telemetry::killed`. Lives at `Z_SOUL` above every unit. Stepped
   and despawned in `FixedUpdate` (`rise_souls`, after `SimSet::HumanBehavior`) — a world
   entity may not be despawned from `Update`. Not the `Souls { earned, spent }` currency of
-  `ROADMAP.md` — that is a separate concept, a resource the same kill observer will
-  increment; the mote counts nothing and is only the visible side of the kill.
+  `souls.rs::Souls` — that is a separate concept, a resource the same kill observer
+  increments; the mote counts nothing and is only the visible side of the kill.
 - **Bloom** (`post.rs`) — what makes every HDR colour above glow: the portal rim, the
   demon halos, the souls, and later spells. The setup and its threshold are under
   **Post-processing** in App lifecycle; the tuning — **ui-panels skill**.
