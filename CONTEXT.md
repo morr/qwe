@@ -891,8 +891,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadJoin::Square`.
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
-    nearest road **ahead** of it (within 60° of its heading), when that road's edge is at
-    most `STITCH_MAX_GAP` 6 m away and the segment crosses no building or water. A street
+    nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
+    the outer edge of its sidewalk, if it has one — is at most `STITCH_MAX_GAP` 6 m away and the segment crosses no building or water. A street
     is carried only by a street — a drive ending on a footway still hangs, since the sand
     ribbon lies under the asphalt; a footway is carried by anything.
   - **Driveway crossing** — a footway way under 20 m both of whose ends are **ends of

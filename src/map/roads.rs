@@ -835,7 +835,7 @@ pub fn spawn_roads(
     for (index, crossing) in &crossings {
         drawn[*index] = crossing;
     }
-    let stitches = network::stitches(&drawn, map, &nodes);
+    let stitches = network::stitches(&drawn, map, &nodes, |road| drawn_sidewalk(&style, road));
     let paths: Vec<Cow<[Vec2]>> = drawn
         .iter()
         .map(|road| centerline(road, style.smoothing, &nodes))

@@ -791,7 +791,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     road at its node that **carries** it: a street is carried only by a street, an alley by
     anything) looks ahead for the nearest centreline of a road it may join: the closest
     point on each segment within 60° of its heading, and the heading's ray hit, scored by the
-    gap to that road's **edge**, ≤ `STITCH_MAX_GAP` 6 m. If the end already lies inside a
+    gap to that road's **drawn edge**, ≤ `STITCH_MAX_GAP` 6 m. The drawn edge is the outer
+    edge of the **sidewalk** when the road carries one (`drawn_sidewalk`, so it follows
+    `RoadStyle::sidewalks`): OSM maps a drive «to the pavement footway», which sits ~9 m off
+    a 12 m street's axis, and measured to the asphalt the drive stayed 7.4 m short — it
+    butted into the sand ribbon with the street showing again beyond the sidewalk (Tula way
+    1309163271 at Первомайская, `cam 2420 1726`). If the end already lies inside a
     carrying ribbon, nothing is done. The stitched point is pulled back by
     `own half − target half` when the own ribbon is wider, so its round cap does not poke
     past the far edge; the segment is probed every metre against buildings and water (a grid

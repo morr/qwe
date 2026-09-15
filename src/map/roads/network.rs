@@ -175,17 +175,32 @@ pub fn driveway_crossings(roads: &[RoadLine], nodes: &RoadNodes) -> Vec<(usize, 
 }
 
 /// Стежки всех висячих торцов карты. `roads` — дороги **как рисуются**
-/// (переезды уже асфальтом), `map` — ради зданий и воды.
-pub fn stitches(roads: &[&RoadLine], map: &MapData, nodes: &RoadNodes) -> Stitches {
+/// (переезды уже асфальтом), `map` — ради зданий и воды, `sidewalk` — ширина
+/// тротуара, который у дороги нарисован.
+///
+/// Зазор меряется до **внешнего края тротуара**, а не асфальта: нарисованный
+/// тротуар — часть улицы, и проезд, размеченный «до тротуара-дорожки» в
+/// десятке метров от оси проспекта, иначе упирался в песочную ленту за
+/// тротуаром, а за ней снова шла улица (Тула, way 1309163271 у Первомайской).
+pub fn stitches(
+    roads: &[&RoadLine],
+    map: &MapData,
+    nodes: &RoadNodes,
+    sidewalk: impl Fn(&RoadLine) -> Option<f32>,
+) -> Stitches {
     let mut ends = vec![[None; 2]; roads.len()];
     let mut segments: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
     let mut widest = 0.0_f32;
+    let edges: Vec<f32> = roads
+        .iter()
+        .map(|road| sidewalk(road).unwrap_or(0.0))
+        .collect();
     for (index, road) in roads.iter().enumerate() {
         if !stitchable(road) {
             continue;
         }
         let half = road.width / 2.0;
-        widest = widest.max(half);
+        widest = widest.max(half + edges[index]);
         for (segment, pair) in road.points.windows(2).enumerate() {
             let (min, max) = (pair[0].min(pair[1]), pair[0].max(pair[1]));
             put_in_cells(
@@ -230,7 +245,9 @@ pub fn stitches(roads: &[&RoadLine], map: &MapData, nodes: &RoadNodes) -> Stitch
             };
             let heading = (end - *from).normalize();
             let reach = road.width / 2.0 + STITCH_MAX_GAP + widest;
-            let stitch = stitch_end(roads, index, end, heading, reach, &segments, &obstacles);
+            let stitch = stitch_end(
+                roads, &edges, index, end, heading, reach, &segments, &obstacles,
+            );
             if let Some(point) = stitch {
                 ends[index][side] = Some(point);
                 count += 1;
@@ -243,8 +260,10 @@ pub fn stitches(roads: &[&RoadLine], map: &MapData, nodes: &RoadNodes) -> Stitch
 /// Куда дотянуть торец `end` дороги `own`, смотрящий по `heading`. `None` —
 /// впереди ничего нет, торец уже лежит на чужой ленте или стежок прошёл бы
 /// сквозь дом или воду.
+#[allow(clippy::too_many_arguments)]
 fn stitch_end(
     roads: &[&RoadLine],
+    sidewalks: &[f32],
     own: usize,
     end: Vec2,
     heading: Vec2,
@@ -272,13 +291,15 @@ fn stitch_end(
                 if distance <= half {
                     return None;
                 }
+                // зазор — до внешнего края нарисованного тротуара цели
+                let edge = half + sidewalks[road];
                 let mut consider = |gap: f32, point: Vec2| {
                     if gap <= STITCH_MAX_GAP && best.is_none_or(|(known, ..)| gap < known) {
                         best = Some((gap, point, half));
                     }
                 };
                 if (nearest - end).dot(heading) >= STITCH_MIN_COS * distance {
-                    consider(distance - half, nearest);
+                    consider(distance - edge, nearest);
                 }
                 // луч вперёд из торца: прямое продолжение дороги до осевой
                 let along = b - a;
@@ -288,7 +309,7 @@ fn stitch_end(
                     let ahead = offset.perp_dot(along) / denominator;
                     let at = offset.perp_dot(heading) / denominator;
                     if ahead > 0.0 && (0.0..=1.0).contains(&at) {
-                        consider(ahead - half, end + heading * ahead);
+                        consider(ahead - edge, end + heading * ahead);
                     }
                 }
             }
@@ -349,7 +370,7 @@ mod tests {
 
     fn stitched_map(map: MapData) -> Stitches {
         let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-        stitches(&drawn, &map, &RoadNodes::new(&map.roads))
+        stitches(&drawn, &map, &RoadNodes::new(&map.roads), |_| None)
     }
 
     fn footway(points: Vec<Vec2>) -> RoadLine {
@@ -444,6 +465,26 @@ mod tests {
         let drive = street(vec![Vec2::new(0.0, 40.0), on_footway], 5.0);
         let found = stitched(vec![avenue, pavement, drive]);
         let end = found.ends[2][1].expect("drive stitched past the footway");
+        assert!(end.distance(Vec2::ZERO) < 1e-3, "{end:?}");
+    }
+
+    #[test]
+    fn a_drive_ending_past_the_sidewalk_reaches_the_street() {
+        // Первомайская у way 1309163271: улица 12 м, тротуар 2.64 м, проезд
+        // кончается в 13.4 м от оси — от асфальта 7.4 м, от тротуара 4.8 м
+        let avenue = street(vec![Vec2::new(-50.0, 0.0), Vec2::new(50.0, 0.0)], 12.0);
+        let drive = street(vec![Vec2::new(0.0, 40.0), Vec2::new(0.0, 13.4)], 5.0);
+        let map = MapData {
+            roads: vec![avenue, drive],
+            ..default()
+        };
+        let drawn: Vec<&RoadLine> = map.roads.iter().collect();
+        let nodes = RoadNodes::new(&map.roads);
+        assert_eq!(stitches(&drawn, &map, &nodes, |_| None).count, 0);
+        let found = stitches(&drawn, &map, &nodes, |road| {
+            (road.width >= 8.0).then_some(2.64)
+        });
+        let end = found.ends[1][1].expect("drive stitched across the sidewalk");
         assert!(end.distance(Vec2::ZERO) < 1e-3, "{end:?}");
     }
 
