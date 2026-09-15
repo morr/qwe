@@ -102,7 +102,7 @@ pub fn summon(
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
 /// читаются одинаково у залпа и у призыва, поэтому ездят одним значением, а
 /// не пятёркой позиционных аргументов.
-pub(super) struct DemonBirth<'a> {
+struct DemonBirth<'a> {
     world_seed: u64,
     portal_pos: Vec2,
     speed: f32,
@@ -110,7 +110,7 @@ pub(super) struct DemonBirth<'a> {
 }
 
 impl<'a> DemonBirth<'a> {
-    pub(super) fn new(
+    fn new(
         seed: &WorldSeed,
         portal_pos: &PortalPos,
         style: &DemonStyle,
@@ -140,7 +140,7 @@ impl<'a> DemonBirth<'a> {
 ///
 /// Вид (`kind`) задаёт тело, скорость и удар (`settings::IMP` / `BRUTE`);
 /// номер и поток ГПСЧ у видов общие — `Species` по-прежнему `Demon`.
-pub(super) fn spawn_demon(
+fn spawn_demon(
     commands: &mut Commands,
     spawner: &mut DemonSpawner,
     birth: &DemonBirth,
@@ -195,7 +195,6 @@ pub(super) fn spawn_demon(
                 BruteTag,
                 Attack {
                     damage: stats.damage,
-                    period: stats.attack_period,
                 },
                 AttackCooldown::ready(stats.attack_period),
             ));

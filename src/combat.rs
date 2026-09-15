@@ -50,13 +50,13 @@ pub struct Destroyed {
     pub entity: Entity,
 }
 
-/// Удар: сколько снимает и не чаще какого периода. Урон фиксированный — ГПСЧ
-/// в бою M1 нет, детерминизм не тронут.
+/// Удар: сколько снимает. Период живёт в одном месте — длительности таймера
+/// [`AttackCooldown`]. Урон фиксированный — ГПСЧ в бою M1 нет, детерминизм не
+/// тронут.
 #[derive(Component, Reflect, Debug, Clone, Copy)]
 #[reflect(Component)]
 pub struct Attack {
     pub damage: f32,
-    pub period: f32,
 }
 
 /// Перезарядка удара. Тикается `Res<Time>` внутри `FixedUpdate` — то есть
@@ -173,7 +173,7 @@ mod tests {
 
     /// Счётчик объявлений гибели — то, что видит владелец цели.
     #[derive(Resource, Default)]
-    struct Destroyed_(Vec<Entity>);
+    struct DestroyedLog(Vec<Entity>);
 
     /// Два удара по цели с запасом на два удара: первый ранит, второй добивает
     /// и объявляет гибель ровно раз, третий тик по добитой — ничего.
@@ -182,8 +182,8 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
 
         let mut world = World::new();
-        world.init_resource::<Destroyed_>();
-        world.add_observer(|event: On<Destroyed>, mut log: ResMut<Destroyed_>| {
+        world.init_resource::<DestroyedLog>();
+        world.add_observer(|event: On<Destroyed>, mut log: ResMut<DestroyedLog>| {
             log.0.push(event.entity);
         });
         // `Res<Time>` — обобщённые часы; здесь они тикают ровно на секунду за
@@ -196,10 +196,7 @@ mod tests {
             .spawn((Transform::from_xyz(10.0, 0.0, 0.0), Health::full(10.0)))
             .id();
         world.spawn((
-            Attack {
-                damage: 6.0,
-                period: 1.0,
-            },
+            Attack { damage: 6.0 },
             AttackCooldown::ready(1.0),
             AttackTarget(target),
             SimPosition(Vec2::new(10.0 + ATTACK_REACH, 0.0)),
@@ -208,15 +205,15 @@ mod tests {
         world.run_system_once(strike).unwrap();
         world.flush();
         assert_eq!(world.entity(target).get::<Health>().unwrap().hp, 4.0);
-        assert!(world.resource::<Destroyed_>().0.is_empty());
+        assert!(world.resource::<DestroyedLog>().0.is_empty());
 
         world.run_system_once(strike).unwrap();
         world.flush();
         assert_eq!(world.entity(target).get::<Health>().unwrap().hp, 0.0);
-        assert_eq!(world.resource::<Destroyed_>().0, vec![target]);
+        assert_eq!(world.resource::<DestroyedLog>().0, vec![target]);
 
         world.run_system_once(strike).unwrap();
         world.flush();
-        assert_eq!(world.resource::<Destroyed_>().0, vec![target]);
+        assert_eq!(world.resource::<DestroyedLog>().0, vec![target]);
     }
 }

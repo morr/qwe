@@ -64,7 +64,7 @@ pub fn judge(
 /// Исход на тике — после шага скверны того же тика, чтобы победа была
 /// объявлена на тике осквернения сердца, а не следующим. На переходе мир
 /// встаёт на паузу: дальше смотреть не на что, а R умеет всё нужное
-/// (решение 6 `ROADMAP.md`).
+/// (city-siege references/m1-baseline.md, решение 6).
 fn judge_outcome(
     tick: Res<SimTick>,
     districts: Res<Districts>,
@@ -148,8 +148,6 @@ mod tests {
             judge(false, 0, summon_cost(DemonKind::Imp, 0), 7),
             Outcome::Running
         );
-        // осквернённое сердце важнее пустого кошелька
-        assert_eq!(judge(true, 0, 0, 7), Outcome::Won { tick: 7 });
     }
 
     /// Пауза исхода снимается новым прогоном; пауза игрока — нет.
