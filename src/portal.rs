@@ -13,6 +13,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 
 use crate::city::City;
+use crate::district::HeartPos;
 use crate::loading::{AppState, WorldInitSet};
 use crate::settings::{HEART_MARKER_SIZE, PORTAL_DIAMETER, Z_BASTION, Z_PORTAL, Z_PORTAL_STAIN};
 use crate::silhouette::{Glyph, Silhouettes};
@@ -89,21 +90,6 @@ impl Material2d for PortalMaterial {
     }
 }
 
-/// Сердце города — цель вторжения (`VISION.md`). Стартует с хинта
-/// (`City::heart_hint`); в потоке загрузки, уже после прунинга, снапится к
-/// ближайшему проходимому тайлу: центроид кремля может лечь на стену, а
-/// районам нужен тайл, до которого можно дойти от портала. Живёт рядом с
-/// `PortalPos`, пока нет `district.rs`.
-#[derive(Resource, Reflect)]
-#[reflect(Resource)]
-pub struct HeartPos(pub Vec2);
-
-impl Default for HeartPos {
-    fn default() -> Self {
-        Self(City::default().heart_hint())
-    }
-}
-
 pub struct PortalPlugin;
 
 impl Plugin for PortalPlugin {
@@ -112,9 +98,7 @@ impl Plugin for PortalPlugin {
             .register_type::<Portal>()
             .register_type::<Heart>()
             .register_type::<PortalPos>()
-            .register_type::<HeartPos>()
             .init_resource::<PortalPos>()
-            .init_resource::<HeartPos>()
             // пятно берёт глиф ореола из атласа силуэтов; сам атлас собирает
             // `SilhouettePlugin`, здесь только гарантия, что ресурс есть
             .init_resource::<Silhouettes>()
@@ -135,7 +119,7 @@ pub struct Heart;
 fn spawn_heart_marker(mut commands: Commands, heart: Res<HeartPos>) {
     commands.spawn((
         Sprite {
-            color: HEART_COLOR,
+            color: HEART_COLOR.into(),
             custom_size: Some(Vec2::splat(HEART_MARKER_SIZE)),
             ..default()
         },
@@ -147,8 +131,9 @@ fn spawn_heart_marker(mut commands: Commands, heart: Res<HeartPos>) {
 }
 
 /// Цвет сердца — золото: единственный такой цвет на карте, читается с любого
-/// зума рядом с красным кремлём.
-const HEART_COLOR: Color = Color::srgb(1.0, 0.85, 0.2);
+/// зума рядом с красным кремлём. Тем же золотом слой территории осады
+/// (`ui/siege.rs`) красит район сердца.
+pub const HEART_COLOR: Srgba = Srgba::rgb(1.0, 0.85, 0.2);
 
 fn spawn_portal(
     mut commands: Commands,

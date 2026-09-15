@@ -16,15 +16,32 @@ use bevy::diagnostic::Diagnostics;
 use bevy::math::DVec2;
 use bevy::prelude::*;
 
+use crate::city::City;
 use crate::determinism::{SimPipeline, SimTick};
 use crate::diagnostics::{SIM_CENSUS_MS, measure_ms};
 use crate::human::Human;
+use crate::loading::WorldStarted;
 use crate::movement::SimPosition;
 use crate::navigation::Navmesh;
 use crate::settings::{
     DISTRICT_CENSUS_TICKS, DISTRICT_GRID, DISTRICT_LABEL_METERS, DISTRICT_MIN_AREA, MAP_SIZE,
 };
 use crate::spatial::SimSet;
+
+/// Сердце города — цель вторжения (`VISION.md`). Стартует с хинта
+/// (`City::heart_hint`); в потоке загрузки, уже после прунинга, снапится к
+/// ближайшему проходимому тайлу: центроид кремля может лечь на стену, а
+/// районам нужен тайл, до которого можно дойти от портала. От него районы
+/// считают `dist_to_heart`; маркер сердца на карте спавнит `portal.rs`.
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
+pub struct HeartPos(pub Vec2);
+
+impl Default for HeartPos {
+    fn default() -> Self {
+        Self(City::default().heart_hint())
+    }
+}
 
 /// Номер района — индекс в [`Districts::districts`].
 pub type DistrictId = u16;
@@ -68,7 +85,7 @@ pub struct Districts {
 }
 
 /// Компонента до дедупликации осколков.
-struct Component {
+struct Patch {
     cell: IVec2,
     tiles: u32,
     /// Сумма координат тайлов — центроид после всех слияний.
@@ -88,7 +105,7 @@ impl Districts {
 
         // 1. компоненты внутри клеток
         let mut label = vec![UNLABELED; (grid.x * grid.y) as usize];
-        let mut components: Vec<Component> = Vec::new();
+        let mut components: Vec<Patch> = Vec::new();
         let mut stack = Vec::new();
         for x in 0..grid.x {
             for y in 0..grid.y {
@@ -101,7 +118,7 @@ impl Districts {
                 );
                 let id = components.len() as u16;
                 let cell = cell_of(x, y);
-                let mut component = Component {
+                let mut component = Patch {
                     cell,
                     tiles: 0,
                     sum: DVec2::ZERO,
@@ -156,7 +173,7 @@ impl Districts {
         let min_tiles = (DISTRICT_MIN_AREA / (navmesh.tile_size * navmesh.tile_size)).ceil() as u32;
         let mut parent: Vec<u16> = (0..components.len() as u16).collect();
         let smallest_shard =
-            |parent: &[u16], components: &[Component], borders: &[HashMap<u16, u32>]| {
+            |parent: &[u16], components: &[Patch], borders: &[HashMap<u16, u32>]| {
                 (0..components.len())
                     .filter(|&i| {
                         parent[i] == i as u16
@@ -237,19 +254,9 @@ impl Districts {
         // 5. расстояние до сердца — BFS по графу соседства
         let heart_district = district_of_tile(navmesh.to_tile(heart));
         let portal_district = district_of_tile(navmesh.to_tile(portal));
-        if let Some(start) = heart_district {
-            let mut queue = VecDeque::from([start]);
-            districts[start as usize].dist_to_heart = Some(0);
-            while let Some(id) = queue.pop_front() {
-                let next = districts[id as usize].dist_to_heart.unwrap() + 1;
-                for k in 0..districts[id as usize].neighbours.len() {
-                    let neighbour = districts[id as usize].neighbours[k];
-                    if districts[neighbour as usize].dist_to_heart.is_none() {
-                        districts[neighbour as usize].dist_to_heart = Some(next);
-                        queue.push_back(neighbour);
-                    }
-                }
-            }
+        let to_heart = hops_from(&districts, heart_district);
+        for (district, hops) in districts.iter_mut().zip(to_heart) {
+            district.dist_to_heart = hops;
         }
 
         // 6. растр меток по позиции
@@ -305,10 +312,40 @@ impl Districts {
     }
 }
 
+/// Переходов по графу соседства от ближайшего из `sources` до каждого района,
+/// индекс — [`DistrictId`]; `None` — ни от одного источника не дойти. BFS от
+/// всех источников разом: расстояние до сердца строит от одного района,
+/// скверна (`corruption::hops_to_heart`) — от всего осквернённого множества.
+pub fn hops_from(
+    districts: &[District],
+    sources: impl IntoIterator<Item = DistrictId>,
+) -> Vec<Option<u16>> {
+    let mut hops: Vec<Option<u16>> = vec![None; districts.len()];
+    let mut queue = VecDeque::new();
+    for source in sources {
+        if hops[source as usize].is_none() {
+            hops[source as usize] = Some(0);
+            queue.push_back(source);
+        }
+    }
+    while let Some(id) = queue.pop_front() {
+        let next = hops[id as usize].unwrap() + 1;
+        for &neighbour in &districts[id as usize].neighbours {
+            if hops[neighbour as usize].is_none() {
+                hops[neighbour as usize] = Some(next);
+                queue.push_back(neighbour);
+            }
+        }
+    }
+    hops
+}
+
 /// Перепись: живых людей в каждом районе, индекс — [`DistrictId`]. Считается
 /// раз в [`DISTRICT_CENSUS_TICKS`] проходом по всем людям через
-/// [`Districts::district_at`]; читают её скверна и HUD. Не состояние прогона:
-/// пересчитывается сама через секунду после любого рестарта.
+/// [`Districts::district_at`]; читают её скверна и HUD. Состояние прогона:
+/// первый тик прогона — 1, первая перепись — на тике 64, и до неё скверна
+/// читала бы людей прошлого прогона, поэтому `WorldStarted` её очищает — до
+/// первой переписи любой прогон читает ноль людей.
 #[derive(Resource, Debug, Default, Reflect)]
 #[reflect(Resource)]
 pub struct DistrictCensus {
@@ -341,14 +378,22 @@ fn census_districts(
     measure_ms(&mut diagnostics, &SIM_CENSUS_MS, started);
 }
 
+/// Новый прогон: перепись прошлого забыта.
+fn on_world_started(_event: On<WorldStarted>, mut census: ResMut<DistrictCensus>) {
+    census.humans.clear();
+}
+
 pub struct DistrictPlugin;
 
 impl Plugin for DistrictPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Districts>()
+        app.register_type::<HeartPos>()
+            .register_type::<Districts>()
             .register_type::<DistrictCensus>()
+            .init_resource::<HeartPos>()
             .init_resource::<Districts>()
             .init_resource::<DistrictCensus>()
+            .add_observer(on_world_started)
             .add_systems(
                 FixedUpdate,
                 census_districts
@@ -369,6 +414,18 @@ mod tests {
         navmesh.fill_from_mapdata(map);
         navmesh.prune_unreachable(navmesh.to_tile(portal));
         Districts::build(&navmesh, portal, heart)
+    }
+
+    /// Рестарт не несёт перепись прошлого прогона в первые 63 тика нового.
+    #[test]
+    fn world_started_forgets_the_census() {
+        let mut world = World::new();
+        world.insert_resource(DistrictCensus {
+            humans: vec![120, 40],
+        });
+        world.add_observer(on_world_started);
+        world.trigger(WorldStarted);
+        assert!(world.resource::<DistrictCensus>().humans.is_empty());
     }
 
     /// Цепочка дворов от портала к сердцу через один мост: по району на
@@ -403,6 +460,19 @@ mod tests {
                 .neighbours
                 .contains(&north)
         );
+        // и это единственное ребро через воду: ни один другой район южнее
+        // неё не смежен ни с одним районом севернее
+        let south_of_water =
+            |id: DistrictId| districts.districts[id as usize].centroid.y < city.water.y;
+        let mut crossings: Vec<(DistrictId, DistrictId)> = Vec::new();
+        for id in (0..districts.len() as DistrictId).filter(|&id| south_of_water(id)) {
+            for &neighbour in &districts.districts[id as usize].neighbours {
+                if !south_of_water(neighbour) {
+                    crossings.push((id, neighbour));
+                }
+            }
+        }
+        assert_eq!(crossings, vec![(south, north)]);
         // каждый двор — свой район, все разные
         let mut ids: Vec<DistrictId> = city
             .yards

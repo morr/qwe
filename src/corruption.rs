@@ -3,13 +3,11 @@
 //! сбрасывается на `WorldStarted`, входит в отпечаток прогона. Модель и её
 //! замеры — скилл `city-siege`.
 
-use std::collections::VecDeque;
-
 use bevy::prelude::*;
 
 use crate::bastion::BastionsStanding;
 use crate::determinism::SimPipeline;
-use crate::district::{District, DistrictCensus, DistrictId, Districts};
+use crate::district::{District, DistrictCensus, DistrictId, Districts, hops_from};
 use crate::loading::{PlayPhase, WorldStarted};
 use crate::settings::{CORRUPTION_CROWD_HALF, CORRUPTION_RATE};
 use crate::spatial::SimSet;
@@ -108,24 +106,12 @@ pub fn hops_to_heart(
     heart: Option<DistrictId>,
 ) -> Option<u16> {
     let heart = heart?;
-    let mut dist: Vec<Option<u16>> = vec![None; districts.len()];
-    let mut queue = VecDeque::new();
-    for (index, &p) in progress.iter().enumerate() {
-        if p >= 1.0 {
-            dist[index] = Some(0);
-            queue.push_back(index as DistrictId);
-        }
-    }
-    while let Some(id) = queue.pop_front() {
-        let next = dist[id as usize].unwrap() + 1;
-        for &neighbour in &districts[id as usize].neighbours {
-            if dist[neighbour as usize].is_none() {
-                dist[neighbour as usize] = Some(next);
-                queue.push_back(neighbour);
-            }
-        }
-    }
-    dist[heart as usize]
+    let corrupted = progress
+        .iter()
+        .enumerate()
+        .filter(|&(_, &p)| p >= 1.0)
+        .map(|(index, _)| index as DistrictId);
+    hops_from(districts, corrupted)[heart as usize]
 }
 
 /// Новый прогон: всё в ноль, район портала осквернён с первого тика.

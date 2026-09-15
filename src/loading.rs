@@ -10,6 +10,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::city::City;
+use crate::district::HeartPos;
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
@@ -409,7 +410,7 @@ fn poll_job(
             );
             commands.insert_resource(map);
             commands.insert_resource(PortalPos(world.portal));
-            commands.insert_resource(crate::portal::HeartPos(world.heart));
+            commands.insert_resource(HeartPos(world.heart));
             commands.insert_resource(world.districts);
             commands.insert_resource(world.bastions);
             *connecting_since = None;
