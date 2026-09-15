@@ -251,7 +251,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
   not read (`roof:shape` is rare), in three kinds. A **gable** — two slopes with the ridge
   along the long axis of the minimum-area bounding rectangle — needs an outline that nearly
-  fills that rectangle. A **hip** — a slope quad per outline edge, built by pushing the
+  fills that rectangle and touches its corners (a roof corner may not hang off the walls).
+  A **hip** — a slope quad per outline edge, built by pushing the
   outline inward on miter offsets, with the leftover interior as the ridge plane — needs
   nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
   (they used to stay flat among pitched neighbours). Which of the two a house takes is its

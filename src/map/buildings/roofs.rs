@@ -11,7 +11,9 @@
 //!   описанного прямоугольника (OBB); крыша рисуется по этому прямоугольнику,
 //!   а не по контуру, — у настоящего дома скаты и так нависают над стеной.
 //!   Поэтому она ставится только на контур, заполняющий прямоугольник почти
-//!   целиком ([`RECT_FILL_MIN`]): иначе из дома торчала бы крыша буквой Г.
+//!   целиком ([`RECT_FILL_MIN`]): иначе из дома торчала бы крыша буквой Г, — и
+//!   чьи углы лежат на стенах ([`GABLE_OVERHANG_MAX`]): у косого
+//!   четырёхугольника угол крыши висит над пустотой.
 //! * **вальмовая** ([`HipRoof`]) — скаты по всему контуру и площадка конька
 //!   внутри, построенные вдвигом контура на miter-офсетах. Ей форма контура
 //!   безразлична, и именно она достаётся Г-образным домам, которые до сих пор
@@ -27,13 +29,20 @@ use bevy::prelude::*;
 
 use super::shade_by_light;
 use crate::map::meshing::{merge_close_points, min_area_rect, miter_offsets};
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{distance_to_segment, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 
 /// Какую долю своего описанного прямоугольника контур обязан заполнять,
 /// чтобы прямоугольная крыша не торчала из него. Дом с эркером или срезанным
 /// углом проходит, Г-образный (≈0.5–0.7) — нет.
 const RECT_FILL_MIN: f32 = 0.85;
+/// Насколько угол прямоугольной крыши может отстоять от контура, м. Заполнения
+/// мало: косой четырёхугольник (Тула, way 968419942, углы 79°–100°) заполняет
+/// прямоугольник на 0.91, а угол крыши висит в 2.2 м от стены — под ним нет
+/// ничего, и в 2.5D торец дома читается срезанным. Полметра с запасом — это
+/// свес карниза и неточность обводки; в Туле дальше него уходят ~550 из
+/// 4 800 кандидатов, и им достаётся вальма, которая ложится по самому контуру.
+const GABLE_OVERHANG_MAX: f32 = 0.6;
 /// Здание без назначения не крупнее этого, м², считается частным домом:
 /// в Туле `building=yes` стоит на 4004 контурах из 7465, и за окраины
 /// отвечает именно эта половина.
@@ -178,6 +187,9 @@ pub struct ShapeFacts {
     /// Доля описанного прямоугольника, занятая контуром: двускатная крыша
     /// требует не меньше [`RECT_FILL_MIN`].
     pub rect_fill: f32,
+    /// Дальше всего отстоящий от контура угол описанного прямоугольника, м:
+    /// двускатная требует не больше [`GABLE_OVERHANG_MAX`].
+    pub gable_overhang: f32,
     /// Подъём конька двускатной над карнизом, настоящих метров.
     pub gable_rise: f32,
     /// Вылет ската вальмы по плану, м; `None` — контур слишком тонкий, и
@@ -193,6 +205,7 @@ pub fn shape_facts(building: &PolyArea) -> Option<ShapeFacts> {
     let hip_inset = hip_plan(&building.outer).map(|(_, inset)| inset);
     Some(ShapeFacts {
         rect_fill,
+        gable_overhang: overhang(&building.outer, &rect),
         gable_rise: ridge_rise((rect[2] - rect[1]).length()),
         hip_inset,
         hip_rise: hip_inset.map(hip_rise),
@@ -318,11 +331,9 @@ pub(super) fn landmark_rise(building: &PolyArea) -> f32 {
     match landmark_roof(building) {
         None | Some(LandmarkRoof::Flat) => 0.0,
         Some(LandmarkRoof::Hip) => hip(),
-        Some(LandmarkRoof::SteepGable) => match bounding_rect(&building.outer) {
-            Some((rect, fill)) if fill >= RECT_FILL_MIN => {
-                pitched_rise((rect[2] - rect[1]).length(), STEEP_PITCH, STEEP_RISE_MAX)
-            }
-            _ => hip(),
+        Some(LandmarkRoof::SteepGable) => match gable_rect(&building.outer) {
+            Some(rect) => pitched_rise((rect[2] - rect[1]).length(), STEEP_PITCH, STEEP_RISE_MAX),
+            None => hip(),
         },
         Some(LandmarkRoof::Tent { rise }) => {
             let ring = merge_close_points(&building.outer, true, TENT_MERGE);
@@ -501,6 +512,28 @@ fn bounding_rect(ring: &[Vec2]) -> Option<([Vec2; 4], f32)> {
     Some((rect, signed_ring_area(ring).abs() / area))
 }
 
+/// Как далеко от контура, м, самый дальний угол прямоугольника `rect`.
+fn overhang(ring: &[Vec2], rect: &[Vec2; 4]) -> f32 {
+    rect.iter()
+        .map(|corner| {
+            (0..ring.len())
+                .map(|index| {
+                    distance_to_segment(*corner, ring[index], ring[(index + 1) % ring.len()])
+                })
+                .fold(f32::INFINITY, f32::min)
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Прямоугольник, над которым встаёт двускатная крыша; `None` — не встаёт:
+/// контур заполняет его хуже [`RECT_FILL_MIN`] или какой-то его угол висит
+/// дальше [`GABLE_OVERHANG_MAX`] от стены. Крыша рисуется по прямоугольнику,
+/// стены — по контуру, и на пустом углу из-под крыши не выходит ни одна стена.
+fn gable_rect(ring: &[Vec2]) -> Option<[Vec2; 4]> {
+    let (rect, fill) = bounding_rect(ring)?;
+    (fill >= RECT_FILL_MIN && overhang(ring, &rect) <= GABLE_OVERHANG_MAX).then_some(rect)
+}
+
 /// Двускатная крыша над контуром, поднятым на `lift`; `ridge_lift` — на
 /// сколько выше карниза нарисован конёк (в плоских режимах — ноль, и скаты
 /// отличаются только тоном). `None` — крыша остаётся плоской: дом не из
@@ -527,10 +560,7 @@ fn gable_over(
     pitch: f32,
     rise_max: f32,
 ) -> Option<GableRoof> {
-    let (rect, fill) = bounding_rect(&building.outer)?;
-    if fill < RECT_FILL_MIN {
-        return None;
-    }
+    let rect = gable_rect(&building.outer)?;
     let [c0, c1, c2, c3] = rect.map(|corner| corner + lift);
     let width = (c2 - c1).length();
     let ridge = ridge_lift(pitched_rise(width, pitch, rise_max));

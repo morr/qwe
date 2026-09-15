@@ -1109,6 +1109,58 @@ fn an_l_shaped_house_is_pitched_but_takes_no_gable() {
 }
 
 #[test]
+fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
+    let _sun = crate::map::default_sun();
+    // Тула, way 968419942: заполняет свой прямоугольник на 0.91, а угол крыши
+    // над ним висит в 2.2 м от стены — торец дома читался срезанным
+    let skewed = vec![
+        Vec2::new(412.56, 3158.32),
+        Vec2::new(426.85, 3167.85),
+        Vec2::new(420.76, 3178.18),
+        Vec2::new(407.79, 3169.97),
+    ]
+    .into_iter()
+    .map(|point| point - Vec2::new(400.0, 3150.0))
+    .collect();
+    let mut house = building(skewed, None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    let facts = shape_facts(&house).unwrap();
+    assert!(
+        facts.rect_fill > 0.85,
+        "fill alone would let it through: {}",
+        facts.rect_fill
+    );
+    assert!(facts.gable_overhang > 2.0, "{}", facts.gable_overhang);
+    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
+    // посев, по которому дому выпадает двускатная (`(seed >> 5) % 10 >= 4`)
+    let gabled_seed = 5 << 5;
+    assert!(matches!(
+        roofing(
+            &house,
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            gabled_seed
+        ),
+        Roofing::Hip(_)
+    ));
+
+    // слегка неровная обводка прямоугольника двускатную не теряет
+    let mut sloppy = building(
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(12.0, 0.2),
+            Vec2::new(12.0, 8.0),
+            Vec2::new(0.1, 8.0),
+        ],
+        None,
+        AreaKind::Building,
+    );
+    sloppy.building_use = BuildingUse::House;
+    assert!(gable_roof(&sloppy, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_some());
+}
+
+#[test]
 fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
     let _sun = crate::map::default_sun();
     let mut flats = building(oblong(8.0, 20.0), None, AreaKind::Building);

@@ -1989,7 +1989,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     rectangle, not the outline (real roofs overhang), which is why it is only applied when
     the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house would
     wear a rectangle sticking out of it, so it takes a **hip** instead (it stayed *flat*
-    until hip roofs existed). Slope tone: base roof colour mixed toward
+    until hip roofs existed). **Fill alone is not enough**, so the rectangle's corners
+    must also lie on the walls — no corner farther than `GABLE_OVERHANG_MAX` 0.6 m from
+    the outline (`gable_rect`, reported as `ShapeFacts::gable_overhang`). A skewed quad
+    fills its rectangle well and still leaves a corner of the roof over nothing: Tula way
+    968419942 (79°–100° corners) fills 0.91 with a corner 2.2 m off the wall, and in 2.5D
+    no wall came down from under that corner, so the gable end read as cut off (reported
+    from a screenshot). About 550 of Tula's ~4 800 gable candidates exceed 0.6 m and take
+    a hip, which follows the outline itself. Slope tone: base roof colour mixed toward
     white/black by the slope's plan normal against `map::sun_light()` (`SLOPE_LIT_MIX` 0.14 /
     `SLOPE_SHADED_MIX` 0.11, through the same `shade_by_light` helper as the walls, in
     sRGB), softer than walls. In 2.5D the ridge is lifted a further

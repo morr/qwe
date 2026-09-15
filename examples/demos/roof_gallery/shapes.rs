@@ -227,10 +227,11 @@ pub(crate) fn row_caption(row: usize) -> String {
     let numbers = match facts {
         Some(ShapeFacts {
             rect_fill,
+            gable_overhang,
             hip_inset,
             ..
         }) => format!(
-            "заполнение {rect_fill:.2} · вдвиг вальмы {}",
+            "заполнение {rect_fill:.2} · вылет угла {gable_overhang:.1} м · вдвиг вальмы {}",
             match hip_inset {
                 Some(inset) => format!("{inset:.2} м"),
                 None => "не встаёт".to_string(),
