@@ -113,10 +113,7 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
     }
     // колокольня в OSM — чаще `building=yes` + `man_made=tower`, и назначение у
     // неё видно только по типу башни
-    if matches!(
-        tags.get("tower:type").map(String::as_str),
-        Some("bell_tower" | "minaret")
-    ) {
+    if is_sacred_tower_type(tags) {
         return BuildingUse::Church(sacred(tags));
     }
     match tags.get("amenity").map(String::as_str) {
@@ -128,6 +125,14 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         ) => BuildingUse::Public,
         _ => BuildingUse::Other,
     }
+}
+
+/// Башня храма по `tower:type` — колокольня или минарет.
+fn is_sacred_tower_type(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("tower:type").map(String::as_str),
+        Some("bell_tower" | "minaret")
+    )
 }
 
 /// Храм по тегам: вероисповедание и форма части.
@@ -165,7 +170,7 @@ fn part_floor(tags: &HashMap<String, String>) -> f32 {
 /// религией. Христианский храм без деноминации остаётся [`Faith::Unknown`] —
 /// в Туле это православный храм, в Берлине кирха, и решает за него город
 /// (`parse::resolve_faiths`), а не словарь.
-pub(super) fn faith(tags: &HashMap<String, String>) -> Faith {
+fn faith(tags: &HashMap<String, String>) -> Faith {
     let denomination = tags.get("denomination").map(String::as_str);
     match tags.get("religion").map(String::as_str) {
         Some("christian") => match denomination {
@@ -197,13 +202,11 @@ pub(super) fn faith(tags: &HashMap<String, String>) -> Faith {
 
 /// Какая это часть храма: башня, барабан под главой или сам храм.
 fn sacred_form(tags: &HashMap<String, String>) -> SacredForm {
-    let tower = matches!(
-        tags.get("tower:type").map(String::as_str),
-        Some("bell_tower" | "minaret")
-    ) || matches!(
-        tags.get("building").map(String::as_str),
-        Some("bell_tower" | "campanile" | "minaret")
-    );
+    let tower = is_sacred_tower_type(tags)
+        || matches!(
+            tags.get("building").map(String::as_str),
+            Some("bell_tower" | "campanile" | "minaret")
+        );
     if tower {
         return SacredForm::Tower;
     }
@@ -257,9 +260,10 @@ pub(super) fn area_use(kind: AreaKind, tags: &HashMap<String, String>) -> Buildi
 pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     let tags = &element.tags;
     if tags.contains_key("building") {
-        return Some(match is_fortification(tags) {
-            true => AreaKind::Kremlin,
-            false => AreaKind::Building,
+        return Some(if is_fortification(tags) {
+            AreaKind::Kremlin
+        } else {
+            AreaKind::Building
         });
     }
     let natural = tags.get("natural").map(String::as_str);

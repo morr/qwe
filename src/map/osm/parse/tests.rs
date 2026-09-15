@@ -7,6 +7,13 @@ use crate::map::osm::model::{
     BuildingUse, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack, StructureKind,
     WaterKind, distance_to_segment,
 };
+use crate::map::osm::planting::{
+    TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
+};
+use crate::settings::MAP_SIZE;
+
+/// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
+const CITY: City = City::Tula;
 
 /// Храм, чья вера досталась ему от города без размеченных храмов.
 const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
@@ -15,13 +22,6 @@ const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
     complex: 0,
     floor_dm: 0,
 });
-use crate::map::osm::planting::{
-    TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
-};
-use crate::settings::MAP_SIZE;
-
-/// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
-const CITY: City = City::Tula;
 
 /// Центр карты: сцены собираются вокруг него, и в тех же метрах пишутся
 /// проверки — фикстуре незачем говорить в градусах.

@@ -12,7 +12,7 @@ use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
     Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, point_in_area, point_in_polygon, ring_bounds, signed_ring_area,
+    WallLine, WaterLine, point_in_area, point_in_polygon, ring_area, ring_bounds, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::seed::seed_from_point;
@@ -212,7 +212,7 @@ fn resolve_faiths(buildings: &mut [PolyArea]) -> usize {
                 Some(Church {
                     index,
                     faith: sacred.faith,
-                    area: signed_ring_area(&building.outer).abs(),
+                    area: ring_area(&building.outer),
                     center: (bounds.0 + bounds.1) * 0.5,
                     bounds,
                 })
@@ -251,25 +251,23 @@ fn resolve_faiths(buildings: &mut [PolyArea]) -> usize {
                         && point_in_polygon(part.center, &buildings[other.index].outer)
                 })
                 .max_by(|a, b| a.1.area.total_cmp(&b.1.area));
-            inside
-                .or_else(|| {
-                    larger
-                        .map(|(at, other)| {
-                            let nearest = part.center.clamp(other.bounds.0, other.bounds.1);
-                            (at, nearest.distance(part.center))
-                        })
-                        .filter(|(_, distance)| *distance <= CHURCH_PART_REACH)
-                        .min_by(|a, b| a.1.total_cmp(&b.1))
-                        .map(|(at, _)| (at, &churches[at]))
-                })
-                .map(|(at, _)| at)
+            inside.map(|(at, _)| at).or_else(|| {
+                larger
+                    .map(|(at, other)| {
+                        let nearest = part.center.clamp(other.bounds.0, other.bounds.1);
+                        (at, nearest.distance(part.center))
+                    })
+                    .filter(|(_, distance)| *distance <= CHURCH_PART_REACH)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(at, _)| at)
+            })
         })
+        .collect();
+
     // хозяин цепочкой: колокольня, ближе всего стоящая к части собора, берёт
     // посев и веру у собора, а не у части. Цепочка конечна — площадь хозяина
     // строго растёт
     let chain = |from: usize| std::iter::successors(Some(from), |&at| hosts[at]);
-        .collect();
-
     let mut guessed = 0;
     for (at, church) in churches.iter().enumerate() {
         let faith = match chain(at)
@@ -328,7 +326,7 @@ fn overlap_area(a: &[Vec2], b: &[Vec2]) -> f32 {
         .map(|(index, contour)| {
             let points: Vec<Vec2> = contour.iter().map(|p| Vec2::new(p[0], p[1])).collect();
             // первый контур фигуры — внешний, остальные — дыры
-            let area = signed_ring_area(&points).abs();
+            let area = ring_area(&points);
             if index == 0 { area } else { -area }
         })
         .sum()
@@ -342,7 +340,8 @@ fn overlap_area(a: &[Vec2], b: &[Vec2]) -> f32 {
 /// собора лежит контур «музей оружия» (`building=yes`, три этажа), а рядом —
 /// пристройка без тегов, и оба рисовались жилыми коробками с окнами, из-за
 /// которых торчали главы собора. Признак пристройки — взаимное наложение:
-/// центр контура в храме или центр храма в контуре, при площади не больше
+/// центр контура в храме, центр храма в контуре или общая с храмом доля пятна
+/// не меньше [`ANNEX_OVERLAP_SHARE`], при площади не больше
 /// [`ANNEX_AREA_RATIO`] храма. Храм, к которому она прирастает, — самый крупный
 /// из подходящих.
 fn absorb_annexes(buildings: &mut [PolyArea]) {
@@ -371,7 +370,7 @@ fn absorb_round(buildings: &mut [PolyArea]) -> usize {
             (
                 index,
                 ring_bounds(&building.outer),
-                signed_ring_area(&building.outer).abs(),
+                ring_area(&building.outer),
             )
         })
         .collect();
@@ -389,7 +388,7 @@ fn absorb_round(buildings: &mut [PolyArea]) -> usize {
         }
         let bounds = ring_bounds(&building.outer);
         let center = (bounds.0 + bounds.1) * 0.5;
-        let area = signed_ring_area(&building.outer).abs();
+        let area = ring_area(&building.outer);
         let host = candidates
             .iter()
             .filter(|(church, (lo, hi), church_area)| {
