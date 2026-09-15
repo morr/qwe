@@ -641,10 +641,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   outline was a gradient across each drive running into it.
   Render-only. Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
-  never one tone. Two things in the **ribbon frame**, so they follow the lane and not
-  the compass: **wheel ruts** (a polished band 0.85 m either side of each lane's middle —
-  the track of a car — measured with `fract` of the lane index, so every lane gets its
-  own pair) and **kerb dirt** (0.7 m of sand and grit along the edge).
+  never one tone. **Wheel ruts** in the **ribbon frame**, so they follow the lane and not
+  the compass (a polished band 0.85 m either side of each lane's middle — the track of a
+  car — measured with `fract` of the lane index, so every lane gets its own pair),
+  **zero-mean** so a marked street is on average the same tone as an unmarked drive
+  running into it. **Kerb dirt was removed**: a drive joins a street with no junction
+  gap, and the street's dark kerb band ran across every drive mouth.
   **Repair patches were tried here and removed.** A 6 m world cell whose hash cleared a
   threshold was darkened whole — which is a chequerboard aligned to the compass, not a
   patch: the edge is the cell boundary, two chosen neighbours fuse into a right-angled
@@ -653,10 +655,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   places a feature, it never *is* the feature**), and it read as badly on asphalt. Don't
   reintroduce a per-cell fill; a patch has to be a jittered shape inside its cell, in the
   lane's own frame.
-  Both **fade out in a junction gap** by the same `to_break` the lane dashes use: a
-  crossing has no kerb to collect grit along and no lane to polish a rut down, and without
-  the gate the two streets drew their ruts straight through each other and each ran its
-  kerb dirt across the other's asphalt.
+  The ruts **fade out in a junction gap** by the same `to_break` the lane dashes use,
+  over 5 m: a crossing has no lane to polish a rut down, and without the gate the two
+  streets drew their ruts straight through each other.
   Wear rides the **markings code**: the lane count comes from the very
   `ATTRIBUTE_RIBBON.w` the lane lines read, which `roads::road_markings` fills only for a
   carriageway of two lanes or more, and only while `RoadStyle.markings` is on. So wear
@@ -823,10 +824,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     neighbouring arms of a shared node of **one class** (street–street, alley–alley):
     the concave wedge between the two facing ribbon edges and an arc tangent to both,
     pushed into that class's fill layer *before* any ribbon, so every ribbon (and its
-    markings) lies over it. Radius 0.6 × the sum of half widths (1.5–9 m), capped at
+    markings) lies over it. A **minor road entering a wider one** (half widths more than
+    0.5 m apart — a drive into a street, a street into an avenue) gets only 0.4 × its own
+    half width (1 m for a 5 m drive); between equals the radius is 0.6 × the sum of half
+    widths (1.5–9 m), capped at
     3.4 sidewalk widths when both roads carry one (past that the wedge would show on the
-    lawn beyond both sidewalks), and by the straight run of each arm; arms 25°–155°
-    apart only. None under `RoadJoin::Square`.
+    lawn beyond both sidewalks), and by the straight run of each arm — which carries on
+    through vertices lying on the same line; arms 25°–155° apart only. None under
+    `RoadJoin::Square`.
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
     nearest road **ahead** of it (within 60° of its heading), when that road's edge is at
@@ -837,7 +842,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     streets**: how OSM maps a drive crossing the pavement (drive, `footway` across the
     pavement, drive again). It is drawn as asphalt at the narrower drive's width. A
     crosswalk is not one: its ends lie on pavement footways.
-  Tula: 8220 kerb returns, 39 stitches, 8 driveway crossings, in the `road meshing:` line.
+  Tula: 8710 kerb returns, 39 stitches, 8 driveway crossings, in the `road meshing:` line.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural

@@ -683,10 +683,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     past it. Tula: 39.
   - **Kerb returns** (`kerb_returns`) — the rounded corner of a junction. At every shared
     node, arms are collected from the **drawn** paths (pinned, so the node is a vertex of
-    each): a direction to the first vertex at least 0.5 m away and the straight **run** to
-    it. Arms of one class are sorted by angle, and between neighbours 25°–155° apart the
-    corner of the two facing edges is found, a circle of radius `0.6 × (half + half)`
-    clamped 1.5–9 m is fitted tangent to both, and the wedge `[corner, tangent, arc…,
+    each): a direction to the first vertex at least 0.5 m away and the straight **run** —
+    to that vertex and on through every next one within `STRAIGHT_TOLERANCE` 0.15 m of
+    the arm's line. OSM puts vertices on a straight drive wherever it likes (the node
+    where the pavement footway crosses it, 2 m off the street), and a run cut at the
+    first of them clipped the tangent to nothing: the drive met the street with square
+    corners (reported from a screenshot; 8220 → 8710 returns on Tula). Arms of one class are sorted by angle, and between neighbours 25°–155° apart the
+    corner of the two facing edges is found, a circle is fitted tangent to both — of
+    radius `0.6 × (half + half)` clamped 1.5–9 m between roads of one width, but only
+    `MINOR_RADIUS_SHARE` 0.4 × the narrower half width when the half widths differ by
+    more than `MINOR_WIDTH_STEP` 0.5 m (1 m for a 5 m drive into a street, 1.6 m for a
+    residential street into an avenue). The author's call from a screenshot: at the
+    shared-sum radius every drive entered its street as a wide funnel, which is not how
+    a minor road meets a main one — and the wedge `[corner, tangent, arc…,
     tangent]` goes into that class's fill builder **before any ribbon** — ribbons and their
     markings then lie over it, and since it is pushed with no ribbon coords it carries no
     wear or markings of its own. Two clamps: the tangent never runs past an arm's straight
@@ -697,9 +706,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     what a drive's kerb return looks like and is left alone. It is pushed as a **fan from
     the corner** (`push_convex`), which is correct although the wedge is concave: the arc
     between the tangent points is precisely the part of the circle visible from the corner.
+    Its straight sides reach `OVERLAP` 5 cm under both ribbons: a side lying exactly on a
+    ribbon edge without sharing its vertices rasterizes with dropouts, a dotted light
+    crack along the drive edge.
     The sidewalk band's own outer corner stays square — rounding it is a subtraction the
     additive layers cannot do. Mixed-class arms get nothing: a grey wedge over a sand
-    footway would read as asphalt spilled onto the path. Tula: 8220.
+    footway would read as asphalt spilled onto the path. Tula: 8710.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —
@@ -1053,14 +1065,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
-  — two effects that keep a road from being one flat tone, both in the **ribbon frame**
-  so they follow the lane rather than the compass:
-  - **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m either side of each lane's
-    middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide, +7.5 %. The lane is found
-    from `fract` of `(across + half_width) / lane_width`, so **every** lane gets its own
-    pair without knowing how many there are;
-  - **kerb dirt** — 7 % darker over the outer `EDGE_DIRT_REACH` 0.7 m, where the sand
-    and grit collect.
+  — what keeps a road from being one flat tone, in the **ribbon frame** so it follows the
+  lane rather than the compass: **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m
+  either side of each lane's middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide,
+  +7.5 %. The lane is found from `fract` of `(across + half_width) / lane_width`, so
+  **every** lane gets its own pair without knowing how many there are.
+  - **The ruts are zero-mean**: the band's share of the lane (`2·σ·√(2π) / lane width`)
+    is subtracted from it, so between the ruts the asphalt is a touch darker and the lane
+    on average is exactly `ROAD_COLOR`. Added as a plain brightening, a marked street was
+    ~3 % lighter than an unmarked drive of the same colour, and the two read as different
+    asphalt wherever one ran into the other — reported from a screenshot as a colour
+    step at the junction.
+  - **Kerb dirt was the second effect and is gone** (7 % darker over the outer 0.7 m).
+    A junction gap comes only from two *carriageways* meeting; a service drive or a
+    residential lane under 8 m joins a street with no gap, and the wider street, drawn
+    on top, laid its dark kerb band straight across every drive mouth — the same report.
+    Bringing it back needs a gap the drive can make without cutting the lane dashes.
 
   **Repair patches were the third and are gone.** A 6 m cell of the *world* grid was
   hashed and, above a threshold, darkened whole; the `smoothstep` softened the hash, not
@@ -1075,12 +1095,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   rectangle smaller than the cell with a jittered centre and size, a crisp saw-cut edge
   and a seam — not a fill of the cell.
 
-  Both remaining effects fade by `visible(...)` like the rest of the surface texture — the
-  ruts by their lane pitch, the kerb dirt by twice its reach
-  (1.4 m), so a band under half a pixel does not flicker along the road edge.
+  The ruts fade by `visible(...)` like the rest of the surface texture, by their lane
+  pitch.
 
-  **And both fade out in a junction gap**, by the very `smoothstep(0, 1, to_break)` the
-  lane dashes use — the second component of `ATTRIBUTE_RIBBON`, negative inside a gap.
+  **And they fade out in a junction gap**, by `smoothstep(0, WEAR_FADE, to_break)` over
+  the same `to_break` the lane dashes use — the second component of `ATTRIBUTE_RIBBON`,
+  negative inside a gap. `WEAR_FADE` is 5 m, not the dashes' 1 m: over a metre the ruts
+  stopped across the lane at the junction edge like a seam.
   Reported from a screenshot of a four-way crossing: the roads are independent overlapping
   ribbons, so each was drawing its own wear across the other. The kerb dirt was the
   louder half — a dark band along a street's edge carried straight over the crossing

@@ -24,11 +24,17 @@ use super::network::RoadNodes;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::{RoadClass, RoadLine};
 
-/// Радиус бордюра — доля суммы полуширин двух дорог и его пределы, м: две
-/// жилые улицы по 8 м — 4.8 м, магистраль 16 м с жилой — 7.2 м, два проезда по
-/// 5 м — 3 м, пешеходные дорожки — около двух.
+/// Радиус бордюра между дорогами одной ширины — доля суммы полуширин и его
+/// пределы, м: две жилые улицы по 8 м — 4.8 м, две магистрали — 9 м, два
+/// проезда по 5 м — 3 м, пешеходные дорожки — около двух.
 const KERB_RADIUS_SHARE: f32 = 0.6;
 const KERB_RADIUS_RANGE: std::ops::RangeInclusive<f32> = 1.5..=9.0;
+/// Дорога уже другой больше чем на столько по полуширине, м, — второстепенная,
+/// входящая в большую: проезд 5 м в улицу 8 м, жилая 8 м в магистраль 16 м.
+const MINOR_WIDTH_STEP: f32 = 0.5;
+/// Радиус въезда второстепенной дороги — доля её полуширины: у проезда 5 м
+/// это метр, у жилой улицы 8 м в магистраль — 1.6 м.
+const MINOR_RADIUS_SHARE: f32 = 0.4;
 /// Скругление меньше этого не кладётся, м: его всё равно не видно.
 const MIN_RADIUS: f32 = 0.5;
 /// Угол между лучами, в котором скругление имеет смысл. Острее — дуга
@@ -43,6 +49,11 @@ const MAX_ANGLE: f32 = 155.0 * PI / 180.0;
 const SIDEWALK_COVER: f32 = 3.4;
 /// Луч меряет направление по звену не короче этого, м.
 const MIN_ARM: f32 = 0.5;
+/// Насколько вершина может отойти вбок от прямой луча и всё ещё продолжать
+/// его прямой край, м.
+const STRAIGHT_TOLERANCE: f32 = 0.15;
+/// На сколько прямые стороны скругления заходят под ленты дорог, м.
+const OVERLAP: f32 = 0.05;
 
 /// Одна дорога, выходящая из узла.
 struct Arm {
@@ -108,21 +119,39 @@ pub fn kerb_returns(
                     if index == vertex {
                         break;
                     }
+                    at = index;
                     if path[index].distance(node) >= MIN_ARM {
                         next = Some(path[index]);
                         break;
                     }
-                    at = index;
                 }
                 let Some(next) = next else {
                     continue;
                 };
+                let direction = (next - node).normalize();
+                // край идёт прямо и через вершины, лежащие на той же прямой: OSM
+                // ставит их где угодно — узел пересечения с тротуаром в двух
+                // метрах от улицы, излом в полградуса, — и дуга, обрезанная по
+                // первой из них, не ложилась совсем
+                let mut run = next.distance(node);
+                while let Some(index) = step(at, forward) {
+                    if index == vertex {
+                        break;
+                    }
+                    let offset = path[index] - node;
+                    let along = offset.dot(direction);
+                    if along <= run || direction.perp_dot(offset).abs() > STRAIGHT_TOLERANCE {
+                        break;
+                    }
+                    run = along;
+                    at = index;
+                }
                 entry.1.push(Arm {
                     class: road.class,
                     half: road.width / 2.0,
                     sidewalk: sidewalk(road),
-                    direction: (next - node).normalize(),
-                    run: next.distance(node),
+                    direction,
+                    run,
                 });
             }
         }
@@ -175,8 +204,15 @@ fn kerb_return(node: Vec2, first: &Arm, second: &Arm) -> Option<Vec<Vec2>> {
     }
     let corner = node + side_first * first.half + along_first * t;
 
-    let mut radius = (KERB_RADIUS_SHARE * (first.half + second.half))
-        .clamp(*KERB_RADIUS_RANGE.start(), *KERB_RADIUS_RANGE.end());
+    let (narrow, wide) = (first.half.min(second.half), first.half.max(second.half));
+    let mut radius = if wide - narrow > MINOR_WIDTH_STEP {
+        // второстепенная дорога входит в большую: въезд с неё почти прямоугольный,
+        // широкая дуга делала из каждого проезда воронку
+        MINOR_RADIUS_SHARE * narrow
+    } else {
+        (KERB_RADIUS_SHARE * (first.half + second.half))
+            .clamp(*KERB_RADIUS_RANGE.start(), *KERB_RADIUS_RANGE.end())
+    };
     if let (Some(a), Some(b)) = (first.sidewalk, second.sidewalk) {
         radius = radius.min(SIDEWALK_COVER * a.min(b));
     }
@@ -201,14 +237,19 @@ fn kerb_return(node: Vec2, first: &Arm, second: &Arm) -> Option<Vec<Vec2>> {
     let from = on_first - centre;
     let turn = from.perp_dot(on_second - centre).signum();
     let steps = arc_steps(radius, sweep);
-    let mut outline = Vec::with_capacity(steps + 2);
-    outline.push(corner);
+    // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
+    // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
+    // по краю проезда шла пунктирная щель со светлым тротуаром под ней
+    let mut outline = Vec::with_capacity(steps + 4);
+    outline.push(corner - (side_first + side_second) * OVERLAP);
+    outline.push(on_first - side_first * OVERLAP);
     outline.push(on_first);
     for step in 1..steps {
         let rotation = Vec2::from_angle(turn * sweep * step as f32 / steps as f32);
         outline.push(centre + rotation.rotate(from));
     }
     outline.push(on_second);
+    outline.push(on_second - side_second * OVERLAP);
     Some(outline)
 }
 
@@ -241,20 +282,24 @@ mod tests {
         let found = returns_of(&[east_west, north_south]);
         assert_eq!(found.len(), 4);
         for (_, outline) in &found {
-            // угол — ровно на пересечении краёв
+            // угол — на пересечении краёв, чуть под лентами
             assert!(
-                (outline[0].abs() - Vec2::splat(4.0)).length() < 1e-3,
+                (outline[0].abs() - Vec2::splat(4.0 - OVERLAP)).length() < 1e-3,
                 "{:?}",
                 outline[0]
             );
+            let corner = Vec2::splat(4.0) * outline[0].signum();
             // и сама дуга за краями обеих лент
             for point in &outline[1..] {
-                assert!(point.x.abs() >= 4.0 - 1e-3 && point.y.abs() >= 4.0 - 1e-3);
+                assert!(
+                    point.x.abs() >= 4.0 - OVERLAP - 1e-3 && point.y.abs() >= 4.0 - OVERLAP - 1e-3
+                );
             }
             // радиус 4.8: ближе всего к углу середина дуги, в r·(√2 − 1) от него
             let nearest = outline[1..]
                 .iter()
-                .map(|point| point.distance(outline[0]))
+                .filter(|point| point.x.abs() >= 4.0 && point.y.abs() >= 4.0)
+                .map(|point| point.distance(corner))
                 .fold(f32::INFINITY, f32::min);
             let expected = 4.8 * (2.0_f32.sqrt() - 1.0);
             assert!((nearest - expected).abs() < 0.1, "{nearest}");
@@ -272,7 +317,7 @@ mod tests {
         assert_eq!(found.len(), 2);
         // обе дуги со стороны примыкания
         for (_, outline) in &found {
-            assert!(outline.iter().all(|point| point.y >= 4.0 - 1e-3));
+            assert!(outline.iter().all(|point| point.y >= 4.0 - OVERLAP - 1e-3));
         }
         let corner = &found[0].1;
         assert!(!point_in_polygon(Vec2::new(0.0, 10.0), corner));
@@ -289,6 +334,33 @@ mod tests {
             ..street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 3.5)
         };
         assert!(returns_of(&[through, path]).is_empty());
+    }
+
+    #[test]
+    fn a_vertex_on_a_straight_arm_does_not_cut_the_corner() {
+        // проезд пересекает тротуар в двух метрах от улицы — узел на прямой,
+        // но скругление по-прежнему ложится полным радиусом
+        let through = street(
+            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
+            8.0,
+        );
+        let drive = street(
+            vec![
+                Vec2::new(0.0, 40.0),
+                Vec2::new(0.05, 6.0),
+                Vec2::new(0.0, 2.0),
+                Vec2::ZERO,
+            ],
+            5.0,
+        );
+        let found = returns_of(&[through, drive]);
+        assert_eq!(found.len(), 2);
+        for (_, outline) in &found {
+            // проезд уже улицы — радиус 0.4 · 2.5 = 1 м: дуга уходит вдоль
+            // проезда на него от края улицы
+            let reach = outline.iter().map(|point| point.y).fold(0.0, f32::max);
+            assert!((reach - 5.0).abs() < 0.1, "{reach}");
+        }
     }
 
     #[test]
