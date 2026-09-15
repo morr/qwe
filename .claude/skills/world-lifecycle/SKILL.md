@@ -68,15 +68,17 @@ game did not, and had to announce the world start by hand to stay ahead of that 
 
 ```
 Connecting{attempt} → Downloading{bytes,total,bytes_per_sec} → Parsing
-→ BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal, heart}) | Failed(msg)
+→ BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal, heart, districts, bastions}) | Failed(msg)
 ```
 
 Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. The
 thread fills the navmesh through the `ArcNavmesh` handle and returns the snapped portal
 position and the snapped **heart** (`City::heart_hint`, snapped *after* prune to the
-nearest passable tile with plain `nearest_tile_where` — no clearance, nothing spawns there —
-so it is reachable from the portal by construction). `poll_job` inserts `MapData`,
-`PortalPos` and `HeartPos` together. Inside `BuildingNavmesh`, after the portal snap and
+nearest passable tile by `navigation::snap_heart_position` — no clearance, nothing spawns there —
+so it is reachable from the portal by construction); still inside `Pruning` it builds the
+`Districts` on the pruned navmesh and plans the `BastionSites` on them (`city-siege`
+skill). `poll_job` inserts `MapData`, `PortalPos`, `HeartPos`, `Districts` and
+`BastionSites` together. Inside `BuildingNavmesh`, after the portal snap and
 before `Pruning`, it opens the **default fence gates** (`Navmesh::open_sealed_fences`) — and
 that step **writes into the `MapData`** it hands back, so the polygonal mesh built later from
 the resource sees the same gates (navigation-deep skill).
@@ -109,8 +111,9 @@ observer only sets the speed, and a restart on R passes through no `Warmup` wher
 `resume_world` would unpause — so `outcome::on_world_started` unpauses iff the outcome it
 is resetting was not `Running`, leaving a player's Space pause alone), and the siege
 layer's `BastionsStanding` +
-the in-place bastion heal (`bastion.rs`) and `Corruption` (`corruption.rs`: zero
-everywhere, the portal's district corrupted). `grep "On<WorldStarted>"` enumerates them.
+the in-place bastion heal (`bastion/mod.rs`), `Corruption` (`corruption.rs`: zero
+everywhere, the portal's district corrupted) and `DistrictCensus` (`district.rs`: emptied,
+so ticks 1..63 before the first recount read zero humans in every run). `grep "On<WorldStarted>"` enumerates them.
 
 **Membership is not kept by hand.** It is held from the outside by
 `a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares

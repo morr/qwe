@@ -16,8 +16,7 @@ use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::parse;
-use crate::navigation::{Navmesh, nearest_tile_where, snap_portal_position};
-use crate::settings::PORTAL_SEARCH_METERS;
+use crate::navigation::{Navmesh, snap_heart_position, snap_portal_position};
 
 /// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
 /// (Нью-Йорк, Лондон) регулярно отвечает 504 «server too busy» — или, того
@@ -163,12 +162,8 @@ fn build_navmesh(
     // снапится на тайл, до которого демоны в принципе дойдут. Клиренс, в
     // отличие от портала, не нужен — здесь никто не спавнится
     let hint = city.heart_hint();
-    let search_tiles = (PORTAL_SEARCH_METERS / navmesh.tile_size) as i32;
-    let heart = match nearest_tile_where(navmesh.to_tile(hint), search_tiles, |tile| {
-        navmesh.is_passable(tile.x, tile.y)
-    }) {
-        Some(tile) => {
-            let position = navmesh.tile_center(tile);
+    let heart = match snap_heart_position(&navmesh, hint) {
+        Some(position) => {
             if position != hint {
                 info!("heart snapped {hint:?} => {position:?}");
             }

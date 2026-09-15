@@ -408,6 +408,18 @@ pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
     nearest_tile_where(start, search_tiles, is_clear).map(|tile| navmesh.tile_center(tile))
 }
 
+/// Ближайший к `position` центр проходимого тайла — снап сердца. Поток
+/// загрузки зовёт его после прунинга, так что «проходимый» там уже значит
+/// «достижимый от портала». Клиренс, в отличие от портала, не нужен: у
+/// сердца никто не спавнится. Радиус поиска — тот же
+/// [`PORTAL_SEARCH_METERS`](crate::settings::PORTAL_SEARCH_METERS): оба
+/// снапа поправляют хинт, а не ищут место по всей карте.
+pub fn snap_heart_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
+    let search_tiles = (crate::settings::PORTAL_SEARCH_METERS / navmesh.tile_size) as i32;
+    nearest_passable_tile(navmesh, navmesh.to_tile(position), search_tiles)
+        .map(|tile| navmesh.tile_center(tile))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,5 +510,19 @@ mod tests {
             snap_portal_position(&navmesh, tile_center(start)),
             Some(tile_center(start))
         );
+    }
+
+    /// Сердцу клиренс не нужен: одинокий проходимый тайл, на который портал
+    /// не встал бы, — уже ответ.
+    #[test]
+    fn the_heart_snaps_to_a_lone_passable_tile() {
+        let start = IVec2::new(500, 500);
+        let lone = start + IVec2::new(7, 0);
+        let navmesh = navmesh_with_only(&[lone]);
+        assert_eq!(
+            snap_heart_position(&navmesh, tile_center(start)),
+            Some(tile_center(lone))
+        );
+        assert_eq!(snap_portal_position(&navmesh, tile_center(start)), None);
     }
 }
