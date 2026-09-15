@@ -15,11 +15,12 @@
 //! Форма кровли назначается здесь ([`roof_form`]) и строится в `roofs.rs`;
 //! главы, башни и минареты — **венец** храма ([`Crown`]) — раскладываются по
 //! плану ([`crowns`]) и рисуются поверх кровли ([`push_crowns`]) в том же
-//! меше и том же painter's порядке, что и сам дом.
+//! меше, что и сам дом, — но после всех домов слоя.
 //!
-//! Раскладка — по **минимальному описанному прямоугольнику** плана: храм в OSM
-//! почти всегда одним контуром, частей (`building:part`) у него нет, и где
-//! алтарь, а где притвор, данные не говорят. Восток берётся за «алтарный»
+//! Раскладка — по **минимальному описанному прямоугольнику** плана: где алтарь,
+//! а где притвор, данные не говорят. Храм, собранный из частей (барабаны,
+//! колокольня, пристройки), собирается в [`Sanctuary`], а венец каждой части
+//! раскладывается по её собственному плану. Восток берётся за «алтарный»
 //! конец длинной оси, запад — за вход и колокольню: так ориентировано
 //! большинство храмов всех трёх христианских ветвей.
 //!
@@ -504,13 +505,7 @@ fn raised_drum(building: &PolyArea, floor: f32, wall: Srgba) -> Option<Crown> {
         return None;
     };
     let plan = Plan::of(building)?;
-    let domes = dome_palette(sacred.faith);
-    let color = domes[(look_seed(building) >> 18) as usize % domes.len()].to_srgba();
-    let profile = match sacred.faith {
-        Faith::Orthodox => Profile::Onion,
-        _ => Profile::Hemisphere,
-    };
-    let radius = (plan.width * 0.45).clamp(1.2, 6.0);
+    let (profile, radius) = drum_cupola(sacred.faith, &plan);
     let drum = (height_or_default(building) - floor - radius * profile.height()).max(radius * 0.6);
     Some(Crown::Dome {
         at: plan.center,
@@ -518,10 +513,27 @@ fn raised_drum(building: &PolyArea, floor: f32, wall: Srgba) -> Option<Crown> {
         base: floor,
         drum,
         profile,
-        color,
+        color: dome_color(building, sacred.faith),
         drum_color: wall,
         raised: true,
     })
+}
+
+/// Глава барабана — части, узкой настолько, что она сама и есть барабан:
+/// профиль по вере и радиус по ширине части.
+fn drum_cupola(faith: Faith, plan: &Plan) -> (Profile, f32) {
+    let profile = match faith {
+        Faith::Orthodox => Profile::Onion,
+        _ => Profile::Hemisphere,
+    };
+    (profile, (plan.width * 0.45).clamp(1.2, 6.0))
+}
+
+/// Цвет глав — по посеву **храма** ([`look_seed`]): у частей одного собора главы
+/// одного цвета.
+fn dome_color(building: &PolyArea, faith: Faith) -> Srgba {
+    let domes = dome_palette(faith);
+    domes[(look_seed(building) >> 18) as usize % domes.len()].to_srgba()
 }
 
 /// Венец храма: `wall` и `roof` — цвета, которые дому уже выбрали стена и
@@ -539,9 +551,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
         return Vec::new();
     };
     let seed = building_seed(building);
-    // цвет глав — по посеву **храма**: у частей одного собора главы одного цвета
-    let domes = dome_palette(sacred.faith);
-    let dome_color = domes[(look_seed(building) >> 18) as usize % domes.len()].to_srgba();
+    let dome_color = dome_color(building, sacred.faith);
     // подъём кровли над карнизом: глава на вальме стоит на её площадке
     let rise = landmark_rise(building);
     let mut out = Vec::new();
@@ -558,11 +568,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
     };
 
     if is_drum(sacred, building) {
-        let profile = match sacred.faith {
-            Faith::Orthodox => Profile::Onion,
-            _ => Profile::Hemisphere,
-        };
-        let radius = (plan.width * 0.45).clamp(1.2, 6.0);
+        let (profile, radius) = drum_cupola(sacred.faith, &plan);
         out.push(dome(plan.center, radius, 0.0, 0.0, profile));
         return out;
     }
@@ -741,7 +747,12 @@ fn top(crown: &Crown) -> f32 {
             cap,
             side,
             ..
-        } => base + height + spire + cap.map_or(0.0, |_| cap_radius(side) * 2.9),
+        } => {
+            let cap = cap.map_or(0.0, |_| {
+                cap_radius(side) * (CAP_DRUM + Profile::Onion.height())
+            });
+            base + height + spire + cap
+        }
         Crown::Minaret {
             radius,
             base,
@@ -869,14 +880,14 @@ pub(super) fn push_crowns(builder: &mut MeshBuilder, crowns: &[(Crown, Vec2)], l
                         builder,
                         apex,
                         radius * 0.6,
-                        radius * 0.8,
+                        radius * CAP_DRUM,
                         color,
                         lean,
                         false,
                     );
                     push_dome(
                         builder,
-                        apex + up(lean, radius * 0.8),
+                        apex + up(lean, radius * CAP_DRUM),
                         radius,
                         Profile::Onion,
                         color,
@@ -899,6 +910,9 @@ pub(super) fn push_crowns(builder: &mut MeshBuilder, crowns: &[(Crown, Vec2)], l
         }
     }
 }
+
+/// Высота барабанчика под маковкой колокольни в радиусах маковки.
+const CAP_DRUM: f32 = 0.8;
 
 /// Радиус маковки на вершине шатра колокольни.
 fn cap_radius(side: f32) -> f32 {

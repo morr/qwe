@@ -11,6 +11,8 @@ use super::*;
 use crate::map::meshing::{WallMark, min_area_rect, unpack_material};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, Faith, Sacred, SacredForm, fixture};
+use crate::map::shadow_dir;
+use crate::settings::ARCH_HEIGHT;
 
 /// Православный храм — назначение, которое тестам кровель и стен нужно чаще
 /// прочих вер.
@@ -20,8 +22,6 @@ const ORTHODOX: BuildingUse = BuildingUse::Church(Sacred {
     complex: 0,
     floor_dm: 0,
 });
-use crate::map::shadow_dir;
-use crate::settings::ARCH_HEIGHT;
 
 /// Стена ли это, если смотреть на слот материала так, как смотрит шейдер, —
 /// числом с плавающей точкой из вершинного атрибута. В слоте лежат два числа

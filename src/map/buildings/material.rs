@@ -247,7 +247,7 @@ impl WallKind {
             Self::Shopfront => &SHOPFRONT_WALL_COLORS,
             Self::Shed => &SHED_WALL_COLORS,
             Self::GarageDoors => &GARAGE_WALL_COLORS,
-            Self::Sacred => &super::temples::ORTHODOX_WALLS,
+            Self::Sacred => &temples::ORTHODOX_WALLS,
         }
     }
 }

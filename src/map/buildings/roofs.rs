@@ -320,7 +320,7 @@ pub(super) fn landmark_rise(building: &PolyArea) -> f32 {
         Some(LandmarkRoof::Hip) => hip(),
         Some(LandmarkRoof::SteepGable) => match bounding_rect(&building.outer) {
             Some((rect, fill)) if fill >= RECT_FILL_MIN => {
-                ((rect[2] - rect[1]).length() / 2.0 * STEEP_PITCH).min(STEEP_RISE_MAX)
+                pitched_rise((rect[2] - rect[1]).length(), STEEP_PITCH, STEEP_RISE_MAX)
             }
             _ => hip(),
         },
@@ -329,9 +329,15 @@ pub(super) fn landmark_rise(building: &PolyArea) -> f32 {
             if ring.len() < 3 {
                 return 0.0;
             }
-            (signed_ring_area(&ring).abs().sqrt() * rise).min(TENT_RISE_MAX)
+            tent_rise(signed_ring_area(&ring).abs().sqrt(), rise)
         }
     }
+}
+
+/// Настоящих метров от карниза до вершины шатра над планом со стороной `side`
+/// (корень из площади), поднятого на `rise` сторон.
+fn tent_rise(side: f32, rise: f32) -> f32 {
+    (side * rise).min(TENT_RISE_MAX)
 }
 
 /// Вершины контура ближе этого сливаются перед шатром, м.
@@ -357,7 +363,7 @@ fn tent_roof(
     }
     let orientation = area.signum();
     let center = ring.iter().copied().sum::<Vec2>() / ring.len() as f32;
-    let ridge_offset = ridge_lift((rise * side).min(TENT_RISE_MAX));
+    let ridge_offset = ridge_lift(tent_rise(side, rise));
     let apex = center + lift + ridge_offset;
     // отвёрнутые от камеры грани кладутся первыми: камера смотрит против
     // подъёма, и дальняя сторона шатра обязана оказаться под ближней
@@ -473,7 +479,13 @@ pub(super) fn is_pitched(building: &PolyArea) -> bool {
 
 /// Настоящих метров конька над карнизом для дома шириной `width`.
 pub(super) fn ridge_rise(width: f32) -> f32 {
-    (width / 2.0 * ROOF_PITCH).min(ROOF_RISE_MAX)
+    pitched_rise(width, ROOF_PITCH, ROOF_RISE_MAX)
+}
+
+/// Подъём конька двускатной крыши шириной `width` при крутизне `pitch` (метр
+/// подъёма на метр половины ширины), не выше `rise_max`.
+fn pitched_rise(width: f32, pitch: f32, rise_max: f32) -> f32 {
+    (width / 2.0 * pitch).min(rise_max)
 }
 
 /// Описанный прямоугольник контура и доля его площади, занятая контуром.
@@ -521,7 +533,7 @@ fn gable_over(
     }
     let [c0, c1, c2, c3] = rect.map(|corner| corner + lift);
     let width = (c2 - c1).length();
-    let ridge = ridge_lift((width / 2.0 * pitch).min(rise_max));
+    let ridge = ridge_lift(pitched_rise(width, pitch, rise_max));
     let (r0, r1) = ((c0 + c3) / 2.0 + ridge, (c1 + c2) / 2.0 + ridge);
 
     // скат c0–c1 смотрит наружу правым перпендикуляром к c0→c1 (CCW-обход),

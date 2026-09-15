@@ -21,11 +21,11 @@
 use bevy::color::Mix;
 use bevy::prelude::*;
 
+use super::Lean;
 use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
-use super::{Lean, fortress};
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::{point_in_area, signed_ring_area};
+use crate::map::osm::model::{is_fortress_tower, point_in_area, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::Lcg;
 use crate::map::{shadow_dir, shadow_length_scale};
@@ -225,10 +225,10 @@ fn is_landmark(building: &PolyArea) -> bool {
 
 /// Зубцы по верху крепостной стены — вдоль каждого ребра контура прясла, с
 /// шагом [`MERLON_PITCH`]: с воздуха стена кремля узнаётся по пунктиру зубцов
-/// и их коротким теням на боевом ходу. Башне (`fortress::is_tower`) зубцов не
+/// и их коротким теням на боевом ходу. Башне ([`is_fortress_tower`]) зубцов не
 /// положено — она под шатром.
 pub(super) fn merlons(building: &PolyArea, lift: Vec2) -> Vec<RoofItem> {
-    if building.kind != AreaKind::Kremlin || fortress::is_tower(building) {
+    if building.kind != AreaKind::Kremlin || is_fortress_tower(building) {
         return Vec::new();
     }
     let orientation = signed_ring_area(&building.outer).signum();

@@ -9,7 +9,8 @@
 //! Стену от башни отличает форма пятна, а не тег: у Тульского кремля стена —
 //! `building=wall`, башни — `building=yes` + `man_made=tower`, но в других
 //! городах бывает и `historic=citywalls` на обоих. Узкая длинная лента — стена,
-//! компактное пятно — башня ([`is_tower`]).
+//! компактное пятно — башня ([`is_fortress_tower`] — правило одно на разбор,
+//! который режет прясла по башням, и на отрисовку).
 
 use bevy::prelude::*;
 
@@ -31,15 +32,9 @@ const TOWER_ROOF_COLORS: [Color; 2] =
 /// Подъём шатра башни в сторонах плана: крепостной шатёр ниже колокольного.
 const TOWER_TENT_RISE: f32 = 0.9;
 
-/// Башня ли это, а не прясло стены ([`crate::map::osm::model::is_fortress_tower`]
-/// — правило одно на разбор, который режет прясла по башням, и на отрисовку).
-pub(super) fn is_tower(building: &PolyArea) -> bool {
-    is_fortress_tower(building)
-}
-
 /// Форма крыши: шатёр на башне, плоский ход на стене.
 pub(super) fn roof_form(building: &PolyArea) -> LandmarkRoof {
-    match is_tower(building) {
+    match is_fortress_tower(building) {
         true => LandmarkRoof::Tent {
             rise: TOWER_TENT_RISE,
         },
@@ -50,14 +45,14 @@ pub(super) fn roof_form(building: &PolyArea) -> LandmarkRoof {
 /// Чем крыто: шатёр — фальцевым железом, ход — кирпичом, который фактура
 /// гравия передаёт ровным зерном без швов.
 pub(super) fn roof_kind(building: &PolyArea) -> RoofKind {
-    match is_tower(building) {
+    match is_fortress_tower(building) {
         true => RoofKind::Seam,
         false => RoofKind::Gravel,
     }
 }
 
 pub(super) fn roof_palette(building: &PolyArea) -> &'static [Color] {
-    match is_tower(building) {
+    match is_fortress_tower(building) {
         true => &TOWER_ROOF_COLORS,
         false => &WALKWAY_COLORS,
     }

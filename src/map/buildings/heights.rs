@@ -19,10 +19,9 @@
 
 use bevy::math::Vec2;
 
-use super::fortress;
 use super::material::building_seed;
 use crate::map::meshing::min_area_rect;
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{is_fortress_tower, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, Sacred, SacredForm};
 
 /// Высота этажа, м — то же число, которым парсер переводит
@@ -98,7 +97,7 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
     // крепость меряется не назначением (у башни это `building=yes`), а тем,
     // стена это или башня
     if building.kind == AreaKind::Kremlin {
-        return match fortress::is_tower(building) {
+        return match is_fortress_tower(building) {
             true => pick(&FORTRESS_TOWER_HEIGHTS, seed),
             false => pick(&FORTRESS_WALL_HEIGHTS, seed),
         };
