@@ -366,6 +366,24 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   standing on the pond reads as a render bug. One vertex on land is enough to survive —
   piers and embankment houses stay. Counts: Tula 1, Berlin 6, NY 17, London 28, Paris 28,
   Tokyo 0; logged on stderr when non-zero.
+- **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
+  **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
+  imagery, and a rectangular house comes out a rhombus (Tula way 968419942, corners
+  79°–100°): in 2.5D its ends stand askew to its front and no gable fits it. Taken: a
+  4-vertex convex outline, `AreaKind::Building`, no holes, `House` or `Other`, at most
+  `SQUARE_AREA_MAX` 250 m² (the pitched-cohort threshold), with its worst corner
+  `SQUARE_SKEW_MIN` 2° … `SQUARE_SKEW_MAX` 20° off square — under 2° the trace is
+  already straight, over 20° it is a trapezoid by the plot. The rectangle keeps the
+  **centroid and the area**: the axis is the length-weighted mean of the edge directions
+  with the angle ×4 (so both axes vote for one), the sides the mean lengths of opposite
+  edges along it, scaled to the area; vertex `i` becomes corner `i` with the winding kept.
+  Skipped when any vertex is **shared** with another outline or line (terraced houses, a
+  fence along the wall, an arch — squared, they would open a gap) or when a vertex would
+  move over `SQUARE_SHIFT_MAX` 2.5 m. Runs after `attach_entrances` (they match by exact
+  vertex, and an attached door moves with its vertex) and before door generation and
+  tree planting. The price: the render seed is the first vertex, so a squared house rolls
+  its material and inferred storeys anew. Tula: ~200 of 4071 small quads (python estimate
+  from the cache; the exact count is the `osm parse:` line).
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.

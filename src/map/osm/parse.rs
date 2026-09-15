@@ -89,6 +89,14 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
             entrances.len()
         );
     }
+    let started = std::time::Instant::now();
+    let squared = square_skewed_houses(&mut map);
+    if squared > 0 {
+        eprintln!(
+            "osm parse: {squared} skewed small houses squared into rectangles in {:?}",
+            started.elapsed()
+        );
+    }
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
@@ -512,6 +520,170 @@ fn attach_entrances(map: &mut MapData, entrances: &[Vec2]) -> usize {
         }
     }
     orphaned
+}
+
+/// Какой площади дом, м², ещё выпрямляется в прямоугольник. Тот же порог, что
+/// у скатной когорты (`roofs::SMALL_FOOTPRINT_MAX`): частный дом.
+const SQUARE_AREA_MAX: f32 = 250.0;
+/// Перекос угла от прямого, градусы, с которого контур выпрямляется. Ниже —
+/// обводка и так ровная, а сдвиг первой вершины сменил бы дому посев
+/// (материал, этажность) ради сантиметров.
+const SQUARE_SKEW_MIN: f32 = 2.0;
+/// Перекос, выше которого четырёхугольник оставляется как есть: это уже не
+/// криво обведённый прямоугольник, а трапеция по участку.
+const SQUARE_SKEW_MAX: f32 = 20.0;
+/// Дальше этого, м, ни одна вершина не сдвигается — иначе дом наедет на
+/// соседа или на дорогу.
+const SQUARE_SHIFT_MAX: f32 = 2.5;
+
+/// Маленькие дома, обведённые в OSM **косым четырёхугольником**, выпрямляются в
+/// прямоугольник. Сдвиг первой вершины меняет дому посев, поэтому материал и
+/// этажность у выпрямленного дома выпадут заново. Возвращает, сколько домов
+/// выпрямлено.
+///
+/// Частный сектор обводят по спутнику на глаз, и прямоугольный сруб выходит
+/// ромбом с углами 79°–100° (Тула, way 968419942). В 2.5D такой дом читается
+/// кривым: торцы стоят косо к фасаду, а двускатная крыша на нём не встаёт.
+///
+/// Прямоугольник сохраняет **центроид и площадь**: ось — средняя по
+/// направлениям рёбер (угол ×4, взвешенный длиной, так что противоположные и
+/// соседние рёбра голосуют за одну ось), стороны — средние длины
+/// противоположных рёбер вдоль неё, подогнанные под площадь. Вершина `i`
+/// переходит в угол `i`, обход сохраняется — вместе с ней переезжает и
+/// размеченный на ней вход.
+///
+/// Не трогаются дома, у которых хоть одна вершина **общая** с другим контуром
+/// или линией (сплошная застройка, забор по стене, арка): выпрямленный, такой
+/// дом разошёлся бы с соседом щелью. Порядок в конвейере: после раскладки
+/// входов (они ищут дом по точной вершине) и до генерации дверей и посадки
+/// деревьев (те должны видеть уже выпрямленный контур).
+fn square_skewed_houses(map: &mut MapData) -> usize {
+    let key = |point: Vec2| {
+        (
+            (point.x * ENTRANCE_SNAP_SCALE).round() as i32,
+            (point.y * ENTRANCE_SNAP_SCALE).round() as i32,
+        )
+    };
+    let mut uses: HashMap<(i32, i32), u32> = HashMap::new();
+    let mut count = |points: &[Vec2]| {
+        let unique: HashSet<(i32, i32)> = points.iter().map(|point| key(*point)).collect();
+        for vertex in unique {
+            *uses.entry(vertex).or_default() += 1;
+        }
+    };
+    for building in &map.buildings {
+        count(&building.outer);
+        building.holes.iter().for_each(|hole| count(hole));
+    }
+    map.roads.iter().for_each(|line| count(&line.points));
+    map.rails.iter().for_each(|line| count(&line.points));
+    map.walls.iter().for_each(|line| count(&line.points));
+    map.fences.iter().for_each(|line| count(&line.points));
+    map.pipes.iter().for_each(|line| count(&line.points));
+    map.water_lines.iter().for_each(|line| count(&line.points));
+
+    let mut squared = 0;
+    for building in &mut map.buildings {
+        let small_house = building.kind == AreaKind::Building
+            && building.holes.is_empty()
+            && matches!(
+                building.building_use,
+                BuildingUse::House | BuildingUse::Other
+            )
+            && signed_ring_area(&building.outer).abs() <= SQUARE_AREA_MAX;
+        let Ok(quad) = <[Vec2; 4]>::try_from(building.outer.as_slice()) else {
+            continue;
+        };
+        if !small_house || quad.iter().any(|vertex| uses[&key(*vertex)] > 1) {
+            continue;
+        }
+        let Some(skew) = quad_skew(&quad) else {
+            continue;
+        };
+        if !(SQUARE_SKEW_MIN..=SQUARE_SKEW_MAX).contains(&skew) {
+            continue;
+        }
+        let rect = fit_rectangle(&quad);
+        if quad
+            .iter()
+            .zip(&rect)
+            .any(|(from, to)| from.distance(*to) > SQUARE_SHIFT_MAX)
+        {
+            continue;
+        }
+        for entrance in &mut building.entrances {
+            if let Some(index) = quad.iter().position(|vertex| vertex == entrance) {
+                *entrance = rect[index];
+            }
+        }
+        building.outer = rect.to_vec();
+        squared += 1;
+    }
+    squared
+}
+
+/// Наибольшее отклонение угла выпуклого четырёхугольника от прямого, градусы;
+/// `None` — четырёхугольник невыпуклый или вырожденный.
+fn quad_skew(quad: &[Vec2; 4]) -> Option<f32> {
+    let mut sign = 0.0;
+    let mut skew = 0.0_f32;
+    for index in 0..4 {
+        let (prev, at, next) = (quad[(index + 3) % 4], quad[index], quad[(index + 1) % 4]);
+        let (back, forth) = (
+            (prev - at).normalize_or_zero(),
+            (next - at).normalize_or_zero(),
+        );
+        let turn = (at - prev).perp_dot(next - at);
+        if back == Vec2::ZERO || forth == Vec2::ZERO || turn == 0.0 || turn * sign < 0.0 {
+            return None;
+        }
+        sign = turn;
+        let angle = back.dot(forth).clamp(-1.0, 1.0).acos().to_degrees();
+        skew = skew.max((angle - 90.0).abs());
+    }
+    Some(skew)
+}
+
+/// Прямоугольник с центроидом и площадью четырёхугольника `quad`; угол `i`
+/// соответствует его вершине `i`, обход тот же.
+fn fit_rectangle(quad: &[Vec2; 4]) -> [Vec2; 4] {
+    let edge = |index: usize| quad[(index + 1) % 4] - quad[index];
+    // направления с периодом 90°: угол ×4 сводит рёбра обеих осей в одно
+    let vote = (0..4).fold(Vec2::ZERO, |sum, index| {
+        let e = edge(index);
+        sum + Vec2::from_angle(e.to_angle() * 4.0) * e.length()
+    });
+    let axis = Vec2::from_angle(vote.to_angle() / 4.0);
+    // `along` — ось рёбер 0 и 2, `across` — рёбер 1 и 3
+    let (along, across) = if edge(0).dot(axis).abs() >= edge(0).dot(axis.perp()).abs() {
+        (axis, axis.perp())
+    } else {
+        (axis.perp(), axis)
+    };
+    let length = (edge(0).dot(along).abs() + edge(2).dot(along).abs()) / 2.0;
+    let width = (edge(1).dot(across).abs() + edge(3).dot(across).abs()) / 2.0;
+    // от первой вершины: в метрах карты (тысячи) произведения в f32 теряют
+    // сантиметры, а центроиду и площади нужны именно они
+    let local = quad.map(|vertex| vertex - quad[0]);
+    let area = signed_ring_area(&local).abs();
+    let scale = (area / (length * width)).sqrt();
+    let side = along * edge(0).dot(along).signum() * length * scale;
+    let up = across * edge(1).dot(across).signum() * width * scale;
+    let first = quad[0] + ring_centroid(&local) - (side + up) / 2.0;
+    [first, first + side, first + side + up, first + up]
+}
+
+/// Центроид площади простого кольца.
+fn ring_centroid(ring: &[Vec2]) -> Vec2 {
+    let mut sum = Vec2::ZERO;
+    let mut twice_area = 0.0;
+    for index in 0..ring.len() {
+        let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+        let cross = a.perp_dot(b);
+        sum += (a + b) * cross;
+        twice_area += cross;
+    }
+    sum / (3.0 * twice_area)
 }
 
 fn project_points(points: &[LatLon], bounds: &GeoBounds) -> Vec<Vec2> {

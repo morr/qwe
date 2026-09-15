@@ -203,6 +203,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
   coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
+- **Squared house** (`parse.rs::square_skewed_houses`) — a small house (≤ 250 m²) traced in
+  OSM as a skewed quad (worst corner 2°–20° off square) is replaced at parse by a rectangle
+  of the same centroid and area; not when a vertex is shared with another outline or line.
+  Everything downstream — navmesh, doors, roof, render seed — sees the rectangle.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12

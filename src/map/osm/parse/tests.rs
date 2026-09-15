@@ -1576,3 +1576,115 @@ fn a_fortress_is_told_by_its_wall_and_its_defensive_towers() {
         ]
     );
 }
+
+/// Ромб частного дома из Тулы (way 968419942, углы 79°–100°) вокруг `at`.
+fn skewed_house(at: Vec2) -> Vec<Vec2> {
+    [
+        Vec2::new(412.56, 3158.32),
+        Vec2::new(426.85, 3167.85),
+        Vec2::new(420.76, 3178.18),
+        Vec2::new(407.79, 3169.97),
+    ]
+    .map(|point| point - Vec2::new(416.99, 3168.58) + at)
+    .to_vec()
+}
+
+fn right_angles(ring: &[Vec2]) -> bool {
+    (0..ring.len()).all(|index| {
+        let (prev, at, next) = (
+            ring[(index + ring.len() - 1) % ring.len()],
+            ring[index],
+            ring[(index + 1) % ring.len()],
+        );
+        (prev - at).normalize().dot((next - at).normalize()).abs() < 0.01
+    })
+}
+
+/// Косо обведённый маленький дом выпрямляется в прямоугольник той же площади
+/// на том же месте, и вход с его вершины переезжает на угол прямоугольника.
+#[test]
+fn a_skewed_small_house_is_squared_into_a_rectangle() {
+    let ring = skewed_house(CENTER);
+    let map = Overpass::new(CITY)
+        .node(&[("entrance", "main")], ring[1])
+        .area(&[("building", "house")], ring.clone())
+        .parse();
+
+    let house = &map.buildings[0];
+    assert_eq!(house.outer.len(), 4);
+    assert!(right_angles(&house.outer), "{:?}", house.outer);
+    let area =
+        |ring: &[Vec2]| signed_ring_area(&ring.iter().map(|p| *p - CENTER).collect::<Vec<_>>());
+    assert!(
+        (area(&house.outer) - area(&ring)).abs() < 0.5,
+        "площадь и обход сохраняются"
+    );
+    let centre = |ring: &[Vec2]| ring.iter().map(|p| *p - CENTER).sum::<Vec2>() / 4.0;
+    assert!(centre(&house.outer).distance(centre(&ring)) < 0.5);
+    for (from, to) in ring.iter().zip(&house.outer) {
+        assert!(from.distance(*to) < 2.5, "вершина {from} уехала в {to}");
+    }
+    assert!(
+        house
+            .entrances
+            .iter()
+            .any(|door| door.distance(house.outer[1]) < 0.01),
+        "вход остался на старой вершине: {:?}",
+        house.entrances
+    );
+}
+
+/// Не выпрямляются: ровный дом (посев по первой вершине не должен сдвинуться),
+/// дом, делящий вершину с соседом (разошлись бы щелью), трапеция и крупное
+/// здание.
+#[test]
+fn only_a_lone_skewed_small_house_is_squared() {
+    let exact = square(CENTER, 5.0);
+    let lone = skewed_house(CENTER + Vec2::new(60.0, 0.0));
+    let terraced = skewed_house(CENTER + Vec2::new(0.0, 60.0));
+    let neighbour = vec![
+        terraced[0],
+        terraced[0] + Vec2::new(0.0, -8.0),
+        terraced[0] + Vec2::new(-8.0, -8.0),
+        terraced[0] + Vec2::new(-8.0, 0.0),
+    ];
+    let trapezoid_at = CENTER + Vec2::new(-60.0, 0.0);
+    let trapezoid = vec![
+        trapezoid_at + Vec2::new(-8.0, -5.0),
+        trapezoid_at + Vec2::new(8.0, -5.0),
+        trapezoid_at + Vec2::new(3.0, 5.0),
+        trapezoid_at + Vec2::new(-3.0, 5.0),
+    ];
+    let big = skewed_house(CENTER + Vec2::new(0.0, -60.0))
+        .iter()
+        .map(|p| (*p - (CENTER + Vec2::new(0.0, -60.0))) * 2.0 + CENTER + Vec2::new(0.0, -60.0))
+        .collect::<Vec<_>>();
+    let map = Overpass::new(CITY)
+        .area(&[("building", "house")], exact.clone())
+        .area(&[("building", "house")], lone.clone())
+        .area(&[("building", "house")], terraced.clone())
+        .area(&[("building", "house")], neighbour)
+        .area(&[("building", "house")], trapezoid.clone())
+        .area(&[("building", "house")], big.clone())
+        .parse();
+
+    let same =
+        |ring: &[Vec2], got: &[Vec2]| ring.iter().zip(got).all(|(a, b)| a.distance(*b) < 0.01);
+    assert!(same(&exact, &map.buildings[0].outer), "ровный дом тронут");
+    assert!(
+        !same(&lone, &map.buildings[1].outer),
+        "одинокий косой дом не выпрямлен"
+    );
+    assert!(
+        same(&terraced, &map.buildings[2].outer),
+        "дом с общей вершиной выпрямлен"
+    );
+    assert!(
+        same(&trapezoid, &map.buildings[4].outer),
+        "трапеция выпрямлена"
+    );
+    assert!(
+        same(&big, &map.buildings[5].outer),
+        "крупное здание выпрямлено"
+    );
+}
