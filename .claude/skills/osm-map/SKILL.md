@@ -275,7 +275,7 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   coordinates overflow f32 precision in the cross products); a `landuse=military`
   lot without `building` yields a bastion only; a multipolygon takes the centroid of
   its largest outer ring. Not drawn and not in the navmesh — the consumer is the
-  bastion spawn (`ROADMAP.md`, step 6). See **Bastion folding** below.
+  bastion spawn (city-siege `references/m1-baseline.md`, step 6). See **Bastion folding** below.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
   `Z_WATERWAY` (see **Waterways** under Rendering). Widths are drawing widths, not
