@@ -51,7 +51,7 @@ pub(crate) fn shader_constants() -> Vec<(&'static str, &'static str)> {
 
 /// Константы выбора и построения формы крыши, в порядке `roofs.rs`.
 /// Целочисленные среди них — доли форм (`HIP_SHARE_OF_100`, `DORMER_SHARE`),
-/// и без неё таблица не отвечала бы на «почему тут вальма».
+/// и без них таблица не отвечала бы на «почему тут вальма».
 pub(crate) fn shape_constants() -> Vec<(&'static str, &'static str)> {
     ROOFS_SOURCE
         .lines()

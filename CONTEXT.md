@@ -535,7 +535,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and every candidate is rejected unless all four corners fall inside the footprint —
   the placement frame is a rectangle, an L-shaped building is not. Which items a roof
   gets follows its **material**, not the building use: soft flat roofs carry the
-  penthouse and the shafts, corrugated sheds the skylights, a gable a chimney.
+  penthouse and the shafts, corrugated sheds the skylights, a gable roof with a ridge a
+  chimney (a lean-to has no ridge).
   **The clutter is the only thing zoom changes about buildings** —
   `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) rebuilds the layer without it
   once a metre stops being worth two pixels, the way rail and tram rebuild themselves.

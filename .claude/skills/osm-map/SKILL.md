@@ -2108,9 +2108,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     form read from them would travel with them): `HOUSE_FORMS` gable 8 / gambrel 1 /
     half-hip 1, `SHED_FORMS` (untagged ≤ `SHED_FOOTPRINT_MAX` 40 m²) lean-to 7 / gable 3.
     - **Half-hip** — `HALF_HIP_SPLIT` 0.55 of the gable is wall, the rest a hip triangle of
-      the side pitch; the ridge is shortened by `(1 − t) × half width` at each end.
+      the side pitch; the ridge is shortened by `(1 − t) × half width` at each end. Under
+      `HALF_HIP_MIN_WIDTH` 4.5 m wide, or too short for the two cuts, it is a plain gable.
     - **Gambrel** — knee at `GAMBREL_KNEE` 0.32 of the half width, lower pitch 2.0, upper
       0.5, rise ≤ 6 m; the gable is a pentagon, the steep slope shaded ×1.5, the upper ×0.6.
+      Under `GAMBREL_MIN_WIDTH` 5.5 m wide the seed's gambrel is a plain gable.
       Kept under 1 on the screen: a pitch whose `pitch × lean` passes 1 folds the far slope
       under the ridge.
     - **Lean-to** — rise `width × 0.3` ≤ 2 m, the high side by seed; the gables are two
@@ -2139,7 +2141,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
     its towers and gates keep the flat roof, like they keep their colour) is in the
     **pitched cohort** and gets two slopes instead of a flat roof — or another of the
-    **Gable forms** above, and a hip only where none fits. The ridge runs along the long axis of the footprint's minimum-area
+    **Gable forms** above; a hip only where none fits, or on the rare seeded large house
+    (**Hip roofs**). The ridge runs along the long axis of the footprint's minimum-area
     bounding rectangle (`min_area_rect`, edge directions of the ring tried as
     orientations — no hull needed at 4–20 vertices); the roof is drawn over that
     rectangle, not the outline (real roofs overhang), which is why it is only applied when
@@ -2151,8 +2154,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     fills its rectangle well and still leaves a corner of the roof over nothing: Tula way
     968419942 (79°–100° corners) fills 0.91 with a corner 2.2 m off the wall, and in 2.5D
     no wall came down from under that corner, so the gable end read as cut off (reported
-    from a screenshot). About 550 of Tula's ~4 800 gable candidates exceed 0.6 m and take
-    a hip, which follows the outline itself. Slope tone: base roof colour mixed toward
+    from a screenshot). About 550 of Tula's ~4 800 gable candidates exceed 0.6 m (measured
+    before the gable forms) and go past the rectangle forms: to a **cross gable** when the
+    outline cuts into rectangles, else to a hip, which follows the outline itself. Slope tone: base roof colour mixed toward
     white/black by the slope's plan normal against `map::sun_light()` (`SLOPE_LIT_MIX` 0.14 /
     `SLOPE_SHADED_MIX` 0.11, through the same `shade_by_light` helper as the walls, in
     sRGB), softer than walls. In 2.5D the ridge is lifted a further
@@ -2826,8 +2830,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       clutter — a slope would take half the covering out of view and a shaft would stand on
       the rest.
     - **Shapes, above** (`shapes.rs`) — five outlines (rectangle, near-square, L, U, and a
-      dumbbell: a big body on a thin neck) each under all three shapes **and** under the
-      game's own choice, four columns. Under every house the shape that actually reached the
+      dumbbell: a big body on a thin neck) each under every shape — flat, gable, gable with
+      a dormer, half-hip, gambrel, lean-to, cross gable, hip — **and** under the game's own
+      choice, nine columns (`shapes.rs::COLUMNS`). Under every house the shape that actually reached the
       mesh — a refused one says so instead of being quietly swapped, which is what
       `RoofShape` exists for — and the ridge rise in real metres; beside every row the two
       numbers the choice is made from, rectangle fill and hip inset, straight from
@@ -2848,8 +2853,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       prints metres per pixel and the two wavelengths `visible()` cuts at, since at city
       zoom "the texture is gone" and "the texture is off" look alike. Under the knobs the
       panel lists the **tuning constants** of both halves — texture from `roof.wgsl` and
-      shape from `roofs.rs` (fill threshold, hipped
-      share, inset and its clamp, pitch) — parsed out of those files by `constants.rs`
+      shape from `roofs.rs` (fill threshold, the hip and dormer shares, inset and its
+      clamp, pitch) — parsed out of those files by `constants.rs`
       (`include_str!`, lines of the form `const NAME: f32 = …;`) rather than mirrored as Rust
       numbers: a mirror would drift on the first edit and the gallery would then lie about
       exactly what it is opened for. They are text, not knobs: the numbers live in the code.
@@ -2905,8 +2910,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     ribbons** (2.2 m wide, 62 % of the length, along the long axis; the second only if
     the building is at least 22 m across), commercial and public buildings get
     **air-conditioning units** in addition, and a gabled roof gets a **chimney** on the
-    ridge — `ridge_of` reads the ridge back out of `GableRoof`'s first slope, since the
-    two far corners of `[eave, eave, ridge, ridge]` are exactly it.
+    ridge — `GableRoof::ridge`, an `Option` because a lean-to has no ridge and so no
+    chimney (the ridge used to be read back out of the first slope, which stopped being
+    `[eave, eave, ridge, ridge]` once half-hips and gambrels existed).
   - **Placement** is the shared Park–Miller LCG — `map/seed.rs::Lcg`, one copy for the
     whole of `map/*` (crowns, this clutter, the parked cars), the crown generator's
     original lifted out of `map/trees` — seeded from the roof material's building seed
