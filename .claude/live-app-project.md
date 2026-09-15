@@ -126,7 +126,7 @@ wins; a black png means exactly that, not a broken renderer.
 
 ### Where a screenshot was taken — read the HUD, not the live camera
 
-The telemetry panel (top-right) ends with the **camera line** `0.11/2374/2703 2510/2880`:
+The telemetry panel (top-right) ends with the **camera line** `0.110/2374/2703 2510/2880`:
 `zoom/x/y` of the camera — metres per logical pixel, then the frame centre in map metres —
 and, after a space, the map point under the cursor (`-/-` when the cursor is outside the
 window). It exists so a screenshot carries its own position (`ui/speed.rs::update_camera_text`).
@@ -155,8 +155,9 @@ What the image cannot carry is the window's logical size: the script asks a runn
 (`brp window` on 15702, then 15703) and else assumes 1920×1080 — say `--window WxH` when the
 user's window is a different size, since the centre is placed half a window from the panel.
 The cursor coordinate is exact and needs none of that; when the user pointed at the thing,
-it is the best anchor. The zoom is printed to 2 decimals, so pixel → metre carries ±5–10 %
-at close zoom: take a search radius, not a point. No panel in the picture (`no zoom/x/y word
+it is the best anchor. The zoom is printed to 3 decimals, so pixel → metre carries up to
+±1 % at the closest zoom (0.05); screenshots from before that change have 2 decimals and
+±10 % — the script reports which. No panel in the picture (`no zoom/x/y word
 found`) — there is nothing to read; ask for a shot with the top-right panel in it rather
 than falling back to `brp cam`.
 

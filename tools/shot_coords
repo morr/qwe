@@ -46,7 +46,8 @@ COLUMNS = {
     "entities:": {"tick": 18, "ms": 37, "wait": 40, "(pk": 45},
 }
 
-CAMERA = re.compile(r"^(\S)\.(\d+)/(\d+)/(\d+)$")
+# unanchored at the start: OCR sometimes glues a stray glyph in front of the zoom
+CAMERA = re.compile(r"(\S)\.(\d+)/(\d+)/(\d+)$")
 CURSOR = re.compile(r"^(?:(\d+)/(\d+)|-/-)$")
 
 
@@ -118,13 +119,13 @@ def main():
     # small text OCRs badly; a 1× capture of 12 px glyphs wants upscaling
     boxes = words(args.png, 1 if img_w >= 2500 else 2)
 
-    camera = next((w for w in boxes if CAMERA.match(w["text"])), None)
+    camera = next((w for w in boxes if CAMERA.search(w["text"])), None)
     if not camera:
         sys.exit(
             f"no `zoom/x/y` word found in {args.png} — is the telemetry panel (top-right) "
             "in the picture? If it is, crop it (`magick <png> -crop WxH+X+Y +repage`) and Read"
         )
-    lead, frac, cam_x, cam_y = CAMERA.match(camera["text"]).groups()
+    lead, frac, cam_x, cam_y = CAMERA.search(camera["text"]).groups()
     # the zoom's leading zero is the glyph OCR misreads most
     zoom = float(f"{lead if lead.isdigit() else '0'}.{frac}")
     cam_x, cam_y = float(cam_x), float(cam_y)
@@ -161,7 +162,7 @@ def main():
     print(f"hud: {camera['text']} {cursor[0] if cursor else '(cursor word unread)'}")
     print(
         f"camera centre: {cam_x:.0f}, {cam_y:.0f}   zoom {zoom} m per logical px "
-        f"(2 decimals: ±{0.005 / zoom:.0%})"
+        f"({len(frac)} decimals: ±{0.5 * 10 ** -len(frac) / zoom:.1%})"
     )
     if cursor and cursor[1]:
         print(f"cursor: {cursor[1]}, {cursor[2]}   (where the pointer was — often at the thing)")
