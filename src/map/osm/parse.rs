@@ -95,7 +95,7 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let squared = square_skewed_houses(&mut map);
     if squared > 0 {
         eprintln!(
-            "osm parse: {squared} skewed small houses squared into rectangles in {:?}",
+            "osm parse: {squared} skewed small houses squared into rectangles and L shapes in {:?}",
             started.elapsed()
         );
     }
@@ -551,22 +551,29 @@ const SQUARE_SKEW_MAX: f32 = 35.0;
 /// соседа или на дорогу. 2.5 м оставляли кривым один дом Тулы (way 968378327,
 /// перекос 27°, сдвиг 2.84 м) и больше ни одного.
 const SQUARE_SHIFT_MAX: f32 = 3.0;
+/// На какую долю площадь выпрямленной Г может разойтись с обводкой. Уровни стен
+/// площадь не держат; больше этого — стены разъехались так, что «Г» уже
+/// другой дом (вырожденная полка, вывернутый угол).
+const ELL_AREA_DRIFT: f32 = 0.15;
 
-/// Маленькие дома, обведённые в OSM **косым четырёхугольником**, выпрямляются в
-/// прямоугольник. Сдвиг первой вершины меняет дому посев, поэтому материал и
-/// этажность у выпрямленного дома выпадут заново. Возвращает, сколько домов
-/// выпрямлено.
+/// Маленькие дома, обведённые в OSM **косым четырёхугольником** или **кривой
+/// буквой Г**, выпрямляются в прямоугольник или в Г из прямых углов. Сдвиг
+/// первой вершины меняет дому посев, поэтому материал и этажность у
+/// выпрямленного дома выпадут заново. Возвращает, сколько домов выпрямлено.
 ///
 /// Частный сектор обводят по спутнику на глаз, и прямоугольный сруб выходит
 /// ромбом с углами 79°–100° (Тула, way 968419942). В 2.5D такой дом читается
 /// кривым: торцы стоят косо к фасаду, а двускатная крыша на нём не встаёт.
+/// Дом с пристройкой обводят так же — шестиугольником с одним вогнутым углом и
+/// косыми стенами (ways 968378349, 968378329).
 ///
 /// Прямоугольник сохраняет **центроид и площадь**: ось — средняя по
 /// направлениям рёбер (угол ×4, взвешенный длиной, так что противоположные и
 /// соседние рёбра голосуют за одну ось), стороны — средние длины
-/// противоположных рёбер вдоль неё, подогнанные под площадь. Вершина `i`
-/// переходит в угол `i`, обход сохраняется — вместе с ней переезжает и
-/// размеченный на ней вход.
+/// противоположных рёбер вдоль неё, подогнанные под площадь. Г строится в той же
+/// оси по уровням стен (`fit_ell`) и площадь держит лишь приблизительно
+/// (`ELL_AREA_DRIFT`). Вершина `i` переходит в угол `i`, обход сохраняется —
+/// вместе с ней переезжает и размеченный на ней вход.
 ///
 /// Не трогаются дома, у которых хоть одна вершина **общая** с другим контуром
 /// или линией (сплошная застройка, забор по стене, арка): выпрямленный, такой
@@ -587,32 +594,49 @@ fn square_skewed_houses(map: &mut MapData) -> usize {
                 _ => None,
             }
             .is_some_and(|max| signed_ring_area(&building.outer).abs() <= max);
-        let Ok(quad) = <[Vec2; 4]>::try_from(building.outer.as_slice()) else {
-            continue;
-        };
-        if !small_house || quad.iter().any(|vertex| uses[&key(*vertex)] > 1) {
-            continue;
-        }
-        let Some(skew) = quad_skew(&quad) else {
-            continue;
-        };
-        if !(SQUARE_SKEW_MIN..=SQUARE_SKEW_MAX).contains(&skew) {
+        let outline = &building.outer;
+        if !small_house
+            || !matches!(outline.len(), 4 | 6)
+            || outline.iter().any(|vertex| uses[&key(*vertex)] > 1)
+        {
             continue;
         }
-        let rect = fit_rectangle(&quad);
-        if quad
+        // прямоугольник — без вогнутых углов, Г — ровно с одним
+        let Some((skew, reflex)) = corner_skew(outline) else {
+            continue;
+        };
+        if reflex != (outline.len() - 4) / 2 || !(SQUARE_SKEW_MIN..=SQUARE_SKEW_MAX).contains(&skew)
+        {
+            continue;
+        }
+        let fitted = match <[Vec2; 4]>::try_from(outline.as_slice()) {
+            Ok(quad) => fit_rectangle(&quad).to_vec(),
+            Err(_) => {
+                let Some(ell) = fit_ell(outline).filter(|ell| {
+                    let area = |ring: &[Vec2]| {
+                        signed_ring_area(&ring.iter().map(|p| *p - ring[0]).collect::<Vec<_>>())
+                    };
+                    corner_skew(ell).is_some_and(|(_, found)| found == 1)
+                        && (area(ell) / area(outline) - 1.0).abs() <= ELL_AREA_DRIFT
+                }) else {
+                    continue;
+                };
+                ell
+            }
+        };
+        if outline
             .iter()
-            .zip(&rect)
+            .zip(&fitted)
             .any(|(from, to)| from.distance(*to) > SQUARE_SHIFT_MAX)
         {
             continue;
         }
         for entrance in &mut building.entrances {
-            if let Some(index) = quad.iter().position(|vertex| vertex == entrance) {
-                *entrance = rect[index];
+            if let Some(index) = outline.iter().position(|vertex| vertex == entrance) {
+                *entrance = fitted[index];
             }
         }
-        building.outer = rect.to_vec();
+        building.outer = fitted;
         squared += 1;
     }
     squared
@@ -959,38 +983,53 @@ fn closest_between_segments(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<(Vec2,
     })
 }
 
-/// Наибольшее отклонение угла выпуклого четырёхугольника от прямого, градусы;
-/// `None` — четырёхугольник невыпуклый или вырожденный.
-fn quad_skew(quad: &[Vec2; 4]) -> Option<f32> {
-    let mut sign = 0.0;
+/// Углы контура: наибольшее отклонение от прямого, градусы (у вогнутого угла —
+/// от 270°), и сколько углов вогнутых. `None` — у контура есть ребро нулевой
+/// длины или разворот назад.
+fn corner_skew(ring: &[Vec2]) -> Option<(f32, usize)> {
+    let count = ring.len();
+    // от первой вершины: в метрах карты (тысячи) произведения в f32 теряют сантиметры
+    let local: Vec<Vec2> = ring.iter().map(|vertex| *vertex - ring[0]).collect();
+    let winding = signed_ring_area(&local).signum();
     let mut skew = 0.0_f32;
-    for index in 0..4 {
-        let (prev, at, next) = (quad[(index + 3) % 4], quad[index], quad[(index + 1) % 4]);
-        let (back, forth) = (
-            (prev - at).normalize_or_zero(),
-            (next - at).normalize_or_zero(),
+    let mut reflex = 0;
+    for index in 0..count {
+        let (prev, at, next) = (
+            local[(index + count - 1) % count],
+            local[index],
+            local[(index + 1) % count],
         );
-        let turn = (at - prev).perp_dot(next - at);
-        if back == Vec2::ZERO || forth == Vec2::ZERO || turn == 0.0 || turn * sign < 0.0 {
+        let (back, forth) = (at - prev, next - at);
+        if back == Vec2::ZERO || forth == Vec2::ZERO {
             return None;
         }
-        sign = turn;
-        let angle = back.dot(forth).clamp(-1.0, 1.0).acos().to_degrees();
-        skew = skew.max((angle - 90.0).abs());
+        let turn = back.angle_to(forth).to_degrees() * winding;
+        if turn.abs() >= 179.0 {
+            return None;
+        }
+        if turn < 0.0 {
+            reflex += 1;
+        }
+        skew = skew.max((turn.abs() - 90.0).abs());
     }
-    Some(skew)
+    Some((skew, reflex))
+}
+
+/// Ось, вдоль которой обведён контур: направления рёбер с периодом 90° — угол
+/// ×4 сводит рёбра обеих осей в одно, — средние с весом длины.
+fn outline_axis(ring: &[Vec2]) -> Vec2 {
+    let vote = (0..ring.len()).fold(Vec2::ZERO, |sum, index| {
+        let e = ring[(index + 1) % ring.len()] - ring[index];
+        sum + Vec2::from_angle(e.to_angle() * 4.0) * e.length()
+    });
+    Vec2::from_angle(vote.to_angle() / 4.0)
 }
 
 /// Прямоугольник с центроидом и площадью четырёхугольника `quad`; угол `i`
 /// соответствует его вершине `i`, обход тот же.
 fn fit_rectangle(quad: &[Vec2; 4]) -> [Vec2; 4] {
     let edge = |index: usize| quad[(index + 1) % 4] - quad[index];
-    // направления с периодом 90°: угол ×4 сводит рёбра обеих осей в одно
-    let vote = (0..4).fold(Vec2::ZERO, |sum, index| {
-        let e = edge(index);
-        sum + Vec2::from_angle(e.to_angle() * 4.0) * e.length()
-    });
-    let axis = Vec2::from_angle(vote.to_angle() / 4.0);
+    let axis = outline_axis(quad);
     // `along` — ось рёбер 0 и 2, `across` — рёбер 1 и 3
     let (along, across) = if edge(0).dot(axis).abs() >= edge(0).dot(axis.perp()).abs() {
         (axis, axis.perp())
@@ -1008,6 +1047,49 @@ fn fit_rectangle(quad: &[Vec2; 4]) -> [Vec2; 4] {
     let up = across * edge(1).dot(across).signum() * width * scale;
     let first = quad[0] + ring_centroid(&local) - (side + up) / 2.0;
     [first, first + side, first + side + up, first + up]
+}
+
+/// Г-образный шестиугольник, прямоугольный, в осях `outline_axis` контура `ring`;
+/// угол `i` соответствует его вершине `i`, обход тот же. `None` — рёбра не
+/// чередуются по осям (это не Г).
+///
+/// Каждое ребро относится к ближней оси и получает свой **уровень** — среднее
+/// своих концов поперёк этой оси; вершина встаёт на пересечение уровней двух
+/// своих рёбер. Для прямоугольного контура это тождество, для криво обведённого —
+/// каждая стена ложится посередине между своими концами.
+fn fit_ell(ring: &[Vec2]) -> Option<Vec<Vec2>> {
+    let count = ring.len();
+    let local: Vec<Vec2> = ring.iter().map(|vertex| *vertex - ring[0]).collect();
+    let axis = outline_axis(&local);
+    let across = axis.perp();
+    let edge = |index: usize| local[(index + 1) % count] - local[index];
+    // «вдоль» — ребро ближе к `axis`, его уровень меряется поперёк
+    let along: Vec<bool> = (0..count)
+        .map(|index| edge(index).dot(axis).abs() >= edge(index).dot(across).abs())
+        .collect();
+    if (0..count).any(|index| along[index] == along[(index + 1) % count]) {
+        return None;
+    }
+    let level = |index: usize| {
+        let middle = (local[index] + local[(index + 1) % count]) / 2.0;
+        if along[index] {
+            middle.dot(across)
+        } else {
+            middle.dot(axis)
+        }
+    };
+    let fitted = (0..count)
+        .map(|index| {
+            let (before, after) = ((index + count - 1) % count, index);
+            let (lengthwise, crosswise) = if along[before] {
+                (before, after)
+            } else {
+                (after, before)
+            };
+            ring[0] + axis * level(crosswise) + across * level(lengthwise)
+        })
+        .collect();
+    Some(fitted)
 }
 
 /// Центроид площади простого кольца.

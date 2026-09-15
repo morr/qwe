@@ -1690,6 +1690,75 @@ fn only_a_lone_skewed_small_house_is_squared() {
     );
 }
 
+/// Дом с пристройкой, обведённый кривой буквой Г, выпрямляется в Г из прямых
+/// углов с тем же числом вершин и почти той же площадью, и вход с вершины
+/// переезжает на её угол. Ровная Г и выпуклый шестиугольник не трогаются.
+#[test]
+fn a_skewed_ell_house_is_squared_into_an_ell() {
+    // Тула, way 968378349: углы до 17° мимо прямого, 99 м²
+    let ell = [
+        (629.8, 3563.2),
+        (640.4, 3569.9),
+        (645.9, 3561.8),
+        (642.2, 3557.9),
+        (637.8, 3562.0),
+        (631.6, 3558.6),
+    ]
+    .map(|(x, y)| Vec2::new(x - 638.0, y - 3563.0) + CENTER)
+    .to_vec();
+    let straight_at = CENTER + Vec2::new(60.0, 0.0);
+    let straight = [
+        (0.0, 0.0),
+        (12.0, 0.0),
+        (12.0, 6.0),
+        (6.0, 6.0),
+        (6.0, 12.0),
+        (0.0, 12.0),
+    ]
+    .map(|(x, y)| straight_at + Vec2::new(x, y))
+    .to_vec();
+    let hexagon_at = CENTER + Vec2::new(-60.0, 0.0);
+    let hexagon = (0..6)
+        .map(|index| {
+            hexagon_at + Vec2::from_angle(index as f32 * std::f32::consts::TAU / 6.0) * 5.0
+        })
+        .collect::<Vec<_>>();
+    let map = Overpass::new(CITY)
+        .node(&[("entrance", "main")], ell[2])
+        .area(&[("building", "house")], ell.clone())
+        .area(&[("building", "house")], straight.clone())
+        .area(&[("building", "house")], hexagon.clone())
+        .parse();
+
+    let house = &map.buildings[0];
+    assert_eq!(house.outer.len(), 6);
+    assert!(right_angles(&house.outer), "{:?}", house.outer);
+    let area =
+        |ring: &[Vec2]| signed_ring_area(&ring.iter().map(|p| *p - CENTER).collect::<Vec<_>>());
+    assert!(
+        (area(&house.outer) / area(&ell) - 1.0).abs() < 0.05,
+        "площадь и обход сохраняются"
+    );
+    for (from, to) in ell.iter().zip(&house.outer) {
+        assert!(from.distance(*to) < 1.0, "вершина {from} уехала в {to}");
+    }
+    assert!(
+        house
+            .entrances
+            .iter()
+            .any(|door| door.distance(house.outer[2]) < 0.01),
+        "вход остался на старой вершине: {:?}",
+        house.entrances
+    );
+    let same =
+        |ring: &[Vec2], got: &[Vec2]| ring.iter().zip(got).all(|(a, b)| a.distance(*b) < 0.01);
+    assert!(same(&straight, &map.buildings[1].outer), "ровная Г тронута");
+    assert!(
+        same(&hexagon, &map.buildings[2].outer),
+        "шестиугольник выпрямлен"
+    );
+}
+
 /// Частный сектор Тулы обводят и на 20–32° мимо прямого угла, и крупный
 /// `building=house` тоже: оба выпрямляются. Здание без класса той же площади,
 /// что крупный дом, остаётся как есть — у него порог скатной когорты.

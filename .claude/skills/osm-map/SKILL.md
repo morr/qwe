@@ -383,6 +383,16 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   **centroid and the area**: the axis is the length-weighted mean of the edge directions
   with the angle ×4 (so both axes vote for one), the sides the mean lengths of opposite
   edges along it, scaled to the area; vertex `i` becomes corner `i` with the winding kept.
+  **A skewed L is straightened too** — a six-vertex outline with exactly one reflex corner
+  (a house with a wing, Tula ways 968378349 / 968378329, corners up to 17°–20° off), under
+  the same area, skew and shift gates. `fit_ell` uses the same `outline_axis`; every edge
+  goes to the nearer axis (they must alternate, or it is not an L) and gets a **level** —
+  the mean of its two ends across that axis — and vertex `i` stands where its two edges'
+  levels cross. So each wall lands halfway between its traced ends; the area is not
+  rescaled, and a fit whose area drifts over `ELL_AREA_DRIFT` 15 % or that does not come
+  out with exactly one reflex corner is left alone. `corner_skew` measures a reflex corner
+  against 270°. Tula: 27 of ~600 lone six-vertex small houses (561 are already square
+  within 2°).
   Skipped when any vertex is **shared** with another outline or line (terraced houses, a
   fence along the wall, an arch — squared, they would open a gap) or when a vertex would
   move over `SQUARE_SHIFT_MAX` 3 m (2.5 m first; on Tula that left exactly one lone

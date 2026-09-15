@@ -204,9 +204,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
   coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
 - **Squared house** (`parse.rs::square_skewed_houses`) — a small house (≤ 250 m², a
-  `building=house` ≤ 400 m²) traced in OSM as a skewed quad (worst corner 2°–35° off square) is replaced at parse by a rectangle
-  of the same centroid and area; not when a vertex is shared with another outline or line.
-  Everything downstream — navmesh, doors, roof, render seed — sees the rectangle.
+  `building=house` ≤ 400 m²) traced in OSM as a skewed quad or a skewed **L** (six vertices,
+  one reflex corner; worst corner 2°–35° off square) is replaced at parse by a rectangle of
+  the same centroid and area, or by a right-angled L; not when a vertex is shared with
+  another outline or line. Everything downstream — navmesh, doors, roof, render seed — sees
+  the straightened outline.
 - **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose outline
   reaches into a street's **drawn** sidewalk band (half the class width + `sidewalk_width` +
   2 m) is moved at parse, whole and with its doors, straight away from the street, by at
