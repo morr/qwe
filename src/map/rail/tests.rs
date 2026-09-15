@@ -284,7 +284,9 @@ fn rails_hold_the_gauge_through_a_bend() {
             incoming.angle_to(outgoing).abs()
         })
         .fold(0.0_f32, f32::max);
-    let outward = gauge / 2.0 / (sharpest / 2.0).cos() + width / 2.0;
+    // нитка тоньше допуска веера сходится на изломе общими вершинами по
+    // биссектрисе — удлинение miter у неё и у полуколеи одно
+    let outward = (gauge / 2.0 + width / 2.0) / (sharpest / 2.0).cos();
     let inward = gauge / 2.0 - width / 2.0;
 
     assert!(!steel.is_empty());

@@ -1004,20 +1004,46 @@ impl MeshBuilder {
                 }
             }
             RibbonJoin::Round => {
-                // сегменты — квады без продлений; на внутренней стороне
-                // излома они перекрываются сами, снаружи щель закрывает веер
+                // Сегменты — квады без продлений; на внутренней стороне
+                // излома они перекрываются сами, снаружи щель закрывает веер.
+                // Излом, которому веер не положен (щель мельче допуска), квады
+                // проходят **общими вершинами** по биссектрисе: торцы со своими
+                // нормалями там не совпадают ни в одной точке, кроме осевой, и
+                // растеризатор оставлял между ними волосяную щель поперёк всей
+                // ленты — светлую линию тротуара под проездом.
+                let miters = miter_offsets(&path, closed, half_width);
+                let shared: Vec<bool> = (0..count)
+                    .map(|index| {
+                        if !closed && (index == 0 || index + 1 == count) {
+                            return false;
+                        }
+                        let previous = path[(index + count - 1) % count];
+                        let next = path[(index + 1) % count];
+                        match (
+                            (path[index] - previous).try_normalize(),
+                            (next - path[index]).try_normalize(),
+                        ) {
+                            (Some(incoming), Some(outgoing)) => {
+                                half_width * incoming.angle_to(outgoing).abs() < ARC_TOLERANCE
+                            }
+                            _ => false,
+                        }
+                    })
+                    .collect();
                 for index in 0..segments {
                     let next = (index + 1) % count;
                     let Some(direction) = (path[next] - path[index]).try_normalize() else {
                         continue;
                     };
                     let normal = direction.perp() * half_width;
+                    let at_start = if shared[index] { miters[index] } else { normal };
+                    let at_end = if shared[next] { miters[next] } else { normal };
                     self.push_quad_full(
                         [
-                            path[index] + normal,
-                            path[index] - normal,
-                            path[next] - normal,
-                            path[next] + normal,
+                            path[index] + at_start,
+                            path[index] - at_start,
+                            path[next] - at_end,
+                            path[next] + at_end,
                         ],
                         [color; 4],
                         self.segment_coords(half_width, ends[index], ends[next]),

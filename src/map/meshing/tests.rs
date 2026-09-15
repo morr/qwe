@@ -293,6 +293,32 @@ fn round_ribbon_stays_within_half_width() {
 }
 
 #[test]
+fn a_nearly_straight_round_join_shares_its_vertices() {
+    // излом в 0.4° веера не получает; торцы квадов обязаны совпасть точь-в-
+    // точь, иначе между ними остаётся волосяная щель поперёк ленты (проезд
+    // у стоянки на Туле, way 2065)
+    let bend = Vec2::new(10.0, 0.0);
+    let path = [
+        Vec2::ZERO,
+        bend,
+        bend + Vec2::from_angle(0.4_f32.to_radians()) * 10.0,
+    ];
+    let mut builder = MeshBuilder::default();
+    builder.push_ribbon(
+        &path,
+        false,
+        5.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Butt,
+    );
+    assert_eq!(builder.positions.len(), 8, "no fan on a hair of a bend");
+    // первый квад кончается там, где начинается второй
+    assert_eq!(builder.positions[2], builder.positions[5]);
+    assert_eq!(builder.positions[3], builder.positions[4]);
+}
+
+#[test]
 fn round_join_fills_the_outer_gap() {
     // прямой угол влево: щель butt-квадов справа по ходу, веер обязан лечь
     // на дугу радиуса в полуширину вокруг излома
