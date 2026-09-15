@@ -219,9 +219,7 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
     assert_eq!(path.first(), Some(&bank));
     assert!(path.last().expect("непустой путь").distance(island) < 1.0);
 }
-/// Раскладка упакованного индекса полигона (`layer_of`/`polygon_of`): старшие
-/// 8 бит — слой, младшие 24 — номер полигона внутри слоя. На ней стоит потолок
-/// `MAX_CHUNKS`, и её же читают `locate`, `segment_clear` и `verify_seams`.
+
 /// Арка пробивает не только свой дом, но и то, что вплотную стоит у её устья:
 /// у ворот Тульского кремля осевая прохода кончается на контуре башни, а
 /// сразу за ним лежит лента `barrier=city_wall`. Лента меша, обрезанная по
@@ -267,6 +265,9 @@ fn an_arch_opens_a_barrier_lying_right_at_its_mouth() {
     );
 }
 
+/// Раскладка упакованного индекса полигона (`layer_of`/`polygon_of`): старшие
+/// 8 бит — слой, младшие 24 — номер полигона внутри слоя. На ней стоит потолок
+/// `MAX_CHUNKS`, и её же читают `locate`, `segment_clear` и `verify_seams`.
 #[test]
 fn a_packed_polygon_index_splits_into_layer_and_number() {
     let packed = ((MAX_CHUNKS - 1) << 24) | 0x00AB_CDEF;
