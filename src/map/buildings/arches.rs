@@ -54,7 +54,7 @@ const ARCH_WALL_REACH: f32 = 6.0;
 const ARCH_WALL_TIE: f32 = 0.5;
 /// Насколько боковая стенка проезда темнее наружной стены той же ориентации:
 /// она под перемычкой, прямого света туда нет.
-const TUNNEL_SHADE: f32 = 0.35;
+const TUNNEL_SHADE: f32 = 0.45;
 
 /// Проём, прорезанный в одной грани контура здания.
 pub(super) struct ArchOpening {

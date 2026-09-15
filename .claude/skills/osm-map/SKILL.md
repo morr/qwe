@@ -2812,7 +2812,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   from a screenshot). The wall is the passage offset by half its width, only its runs
   **inside** the outline (there the body covers it wholly, since the sill is under the
   lift, and it shows only through the hole), only the side facing `-Lean::dir()`, flat
-  `wall_colors` darkened by `TUNNEL_SHADE` 0.35, no cladding code, and pushed **before**
+  `wall_colors` darkened by `TUNNEL_SHADE` 0.45 (0.35 blended with the facade beside it, 0.55 was too dark), no cladding code, and pushed **before**
   the house's walls so the piers and lintel lie over it.
   **The wall texture does not see that cut, so the cells the opening bites into are
   handed to it whole** (`WallCells`, `WallMark::Solid` — the very patch a door lays under
