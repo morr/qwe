@@ -179,7 +179,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     and two steel rails on the gauge, thinned out by **rail zoom LOD** into a dashed
     symbol darker than its ballast on the city-wide view. Tram is `map/tram.rs`, with its
     own LOD, and is drawn only while `TramStyle::visible`.
-  - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable.
+  - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
+    no fortress building stands on it** (`roads.rs::Fortresses`): Tula maps its wall as a
+    `building=wall` and its towers as buildings too, and the ribbon over them read as a
+    dark-orange outline. The navmesh still blocks the whole line.
   - **FenceLine** — a plot boundary: `FenceKind: Fence | Wall | Hedge` from
     `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`), plus the
     **default gates** the load adds (`gates`). Drawn by `map/fences.rs`; **impassable in
@@ -218,8 +221,28 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
-  Church | Public | Other`, from `building=*` and — whenever that value is outside the
+  Church(Sacred) | Public | Other`, from `building=*` and — whenever that value is outside the
   vocabulary, `yes` above all — from `amenity=*` on the same outline.
+  **`Sacred { faith, form }`** rides inside `Church`, the `Pitch(PitchKind)` pattern:
+  **`Faith: Orthodox | Western | Muslim | Jewish | Eastern | Unknown`** from `religion` +
+  `denomination` (or the building tag — `mosque`, `synagogue`), and **`SacredForm: Nave |
+  Tower | Dome | Annex`** — a bell tower or minaret (`tower:type`), a drum under a cupola
+  (`roof:shape=onion|dome`, the one place `roof:shape` is read), and an **annex**: a
+  building without a use class (`building=yes`, `building:part`) lying **on** a church —
+  either centre inside the other, or a quarter of its footprint shared, at most 2.5× the
+  church — which takes the church's faith, walls and roof and grows no crown of its own
+  (Tula's arms museum mapped over the Epiphany cathedral). `Sacred::floor_dm` is where a part
+  **starts** (`min_height`, or `building:min_level` × 3 m): a cupola drum standing on its
+  cathedral's roof. `Unknown` does not survive
+  the parse: **`parse::resolve_faiths`** gives a part the faith of the church it belongs to
+  (the largest church holding it, or the nearest within 30 m), and anything else the city's
+  majority (ties → `Western`). The same pass fills **`Sacred::complex`** — the seed of the
+  whole church, so a cathedral and its drums and bell tower share one palette.
+  **Fortress** — `AreaKind::Kremlin` is told not only by `historic=citywalls|castle|…` but by
+  `building=wall` ≥ 6 m and `man_made=tower` + `tower:type=defensive` (Tula carries no
+  `historic` at all); a compact footprint is a **fortress tower**, a thin one a wall
+  (`model::is_fortress_tower`). Tower and wall sections are ordered by the ordinary pairwise
+  draw order, nothing forced: a section abutting a tower on the camera side lies over it.
   **`garages` (plural) is its own class**:
   OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
   it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
@@ -233,8 +256,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
   (they used to stay flat among pitched neighbours). Which of the two a house takes is its
   own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
-  and its clutter. Courtyard buildings and the Kremlin stay flat, outside use-based styling as
-  with its colour. **`RoofShape`** is the same three as an *input*: the city never asks for
+  and its clutter. Courtyard buildings stay flat. A **tent** (`TentRoof`, faces to one apex)
+  is the fourth kind and no house ever gets it: a church and a fortress are *assigned* their
+  roof (**`LandmarkRoof`** — `temples::roof_form` by faith, `fortress::roof_form`: tent on a
+  tower, flat walkway on a wall), stepping down where the outline refuses.
+  **`RoofShape`** is the same kinds as an *input*: the city never asks for
   one, `roof_gallery` does, to stand one outline under all three — and a refusal there stays
   a refusal instead of being swapped for another shape the way `roofing` swaps it.
   **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, hip inset,
@@ -257,7 +283,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   panel and storey, a garage ribbon's bay and row; see `WallFrame` below; the code is **one
   dictionary for all of them** — `0` is *no texture* and by now only roof clutter, which
   rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs,
-  `9…14` the wall claddings of `WallKind` and `15` a door leaf, a gable carrying its
+  `9…15` the wall claddings of `WallKind` and `16` a door leaf, a gable carrying its
   wall's code as the top of
   the end wall under it). **Roof age** is the
   second thing that seed carries
@@ -287,9 +313,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
   the slot by the building's seed), plus `GarageDoors`, which no table reaches: it is
   picked by the **geometry of a garage run**, like that run's roofing — see **Garage
-  rows**. Otherwise **height is consulted first**: anything under
-  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`, `Church`,
-  `Industrial` keep their own tables) drops into the low-rise table, because a low
+  rows**, and `Sacred`, which a `Church` always gets (below). Otherwise **height is
+  consulted first**: anything under
+  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`,
+  `Industrial` keep their own tables, `Church` its `Sacred`) drops into the low-rise table, because a low
   building is neither a panel block nor a curtain wall. The cladding decides three things at
   once — what lies *between* the openings (floor seams and panel joints, brick courses,
   bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
@@ -299,7 +326,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
   above it — and stands on a dark **plinth** band.
   **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `15`) — a **patch** over the cells
+  (`layers::push_doors` over `PolyArea::entrances`, code `16`) — a **patch** over the cells
   the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
   **leaf** itself on the entrance point, in a frame of its own that maps the opening to
   `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
@@ -313,8 +340,26 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   geometric: the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, and the
   invariant it protects is that **storey boundaries stay whole**, not that the wall ends on
   one. Knowing where the top *is* needs the storey count, and that rides in the **material
-  slot** next to the code (`meshing::STOREY_STRIDE` 16: code in the remainder, storeys in
+  slot** next to the code (`meshing::STOREY_STRIDE` 32: code in the remainder, storeys in
   the quotient, zero on a roof).
+  **`WallKind::Sacred`** is a church's wall: a 6 m **tier** instead of a storey, a 4 m cell,
+  and one tall **arched** window per cell — never a dwelling window. A **fortress** wall is
+  brick marked `WallMark::Solid` everywhere: no window, no door.
+- **Crown** (`map/buildings/temples.rs`) — what stands **above a church's roof**, laid out on
+  the plan's minimum-area rectangle with the long axis turned east: onion cupolas on drums
+  (one on a chapel, five on a large Orthodox church by seed) and a tent-roofed bell tower at
+  the west end of a "ship"; a spire tower at a Western church's west front; a hemisphere dome
+  and corner minarets on a mosque; a low dome on a large synagogue. A cupola is a **stack of
+  slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
+  compression, so it reads as an onion, not a ball; crowns cast ground shadow to their real
+  top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **`Sanctuary`** is the city's churches
+  assembled: a **raised part** (a `Dome` part with a floor, or a drum on another church) is
+  drawn as a drum from its floor with a cupola — **no box from the ground** — and a church
+  whose cupolas are mapped as parts grows none of its own. **Crowns are laid after every
+  building of the layer**, not per house: a church is overlapping outlines, and an annex laid
+  after its cathedral hid the cupolas' base. Roof shadows are not cast between parts of one
+  church. A fortress wall carries **merlons**
+  (`clutter::merlons`, zoom-gated like all clutter). Verified in `temple_gallery`.
   A **balcony** is a stack of bands, not a box — the slab's shadow on the wall, the bright
   slab edge, the parapet, and above it either glazing or an open recess in shade — laid out
   by the **period of a section**, not by a per-column draw: two filled **columns** out of
@@ -966,7 +1011,11 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   let `prune_unreachable` amputate half the map.
 - **Building passage** (арка) — `tunnel=building_passage` / `covered=…` sets
   `RoadLine::passage`; carved passable **last**, width capped by `PASSAGE_MAX_WIDTH`.
-  Without it, arch-only courtyards get sealed by the prune.
+  Without it, arch-only courtyards get sealed by the prune. **The carve reaches half its
+  width past both ends in both fills** — the grid's capsule by construction, the polygonal
+  mesh by extending the ribbon (`polymesh/build.rs::extended_ends`): a butt-cut ribbon left a
+  hair of `city_wall` band at the gate towers' mouths, and the whole Tula kremlin became a
+  dropped hole of the obstacle union.
 - **prune_unreachable** — BFS flood from the portal; unreachable pockets become impassable,
   because an A* to an unreachable target floods the whole region (a 12 000 request backlog
   once "froze" the crowd).

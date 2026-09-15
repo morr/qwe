@@ -219,6 +219,52 @@ fn an_island_is_walkable_once_a_bridge_reaches_it() {
     assert_eq!(path.first(), Some(&bank));
     assert!(path.last().expect("непустой путь").distance(island) < 1.0);
 }
+
+/// Арка пробивает не только свой дом, но и то, что вплотную стоит у её устья:
+/// у ворот Тульского кремля осевая прохода кончается на контуре башни, а
+/// сразу за ним лежит лента `barrier=city_wall`. Лента меша, обрезанная по
+/// концам осевой ровно, оставляла у устья перемычку — двор (весь кремль)
+/// становился дырой объединения и уходил в препятствие, хотя сетка, у которой
+/// арка — капсула, его пропускала.
+#[test]
+fn an_arch_opens_a_barrier_lying_right_at_its_mouth() {
+    let block = fixture::building(
+        vec![
+            Vec2::new(1000.0, 1000.0),
+            Vec2::new(1100.0, 1000.0),
+            Vec2::new(1100.0, 1100.0),
+            Vec2::new(1000.0, 1100.0),
+        ],
+        vec![vec![
+            Vec2::new(1010.0, 1010.0),
+            Vec2::new(1010.0, 1090.0),
+            Vec2::new(1090.0, 1090.0),
+            Vec2::new(1090.0, 1010.0),
+        ]],
+    );
+    let input = PolymeshInput {
+        buildings: vec![block],
+        water: vec![],
+        water_lines: vec![],
+        // стена вдоль внешней грани, вплотную к устью арки
+        walls: vec![fixture::wall(
+            vec![Vec2::new(990.0, 999.4), Vec2::new(1110.0, 999.4)],
+            1.0,
+        )],
+        fences: vec![],
+        roads: vec![fixture::passage(
+            vec![Vec2::new(1050.0, 1000.0), Vec2::new(1050.0, 1010.0)],
+            3.5,
+        )],
+    };
+    let mesh = build_polymesh(&input, 0.2, None, None).expect("not cancelled");
+    assert!(mesh.contains(Vec2::new(1050.0, 980.0)));
+    assert!(
+        mesh.contains(Vec2::new(1050.0, 1050.0)),
+        "the courtyard behind the arch is sealed off"
+    );
+}
+
 /// Раскладка упакованного индекса полигона (`layer_of`/`polygon_of`): старшие
 /// 8 бит — слой, младшие 24 — номер полигона внутри слоя. На ней стоит потолок
 /// `MAX_CHUNKS`, и её же читают `locate`, `segment_clear` и `verify_seams`.

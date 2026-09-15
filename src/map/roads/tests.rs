@@ -586,3 +586,41 @@ fn a_bridge_penumbra_never_lies_over_a_neighbours_core() {
     // наружные каймы пары остались: пропускается только погребённая
     assert!(faded > 0, "the pair lost its outer penumbra too");
 }
+
+fn fortress(outer: Vec<Vec2>) -> PolyArea {
+    PolyArea {
+        outer,
+        holes: Vec::new(),
+        kind: AreaKind::Kremlin,
+        building_use: crate::map::osm::BuildingUse::Other,
+        height: Some(12.0),
+        entrances: Vec::new(),
+    }
+}
+
+/// Лента кремлёвской стены не ложится поверх крепостных зданий: остаётся
+/// только кусок в стороне от них, а огрызок между двумя зданиями пропадает.
+#[test]
+fn the_city_wall_ribbon_stays_off_fortress_buildings() {
+    let wall = vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)];
+    // стена-здание на первых ста метрах, башня на 104…114 — между ними 4 м
+    let buildings = [
+        fortress(fixture::rect(Vec2::new(-1.0, -2.0), Vec2::new(100.0, 2.0))),
+        fortress(fixture::rect(Vec2::new(104.0, -5.0), Vec2::new(114.0, 5.0))),
+    ];
+    let runs = Fortresses::of(&buildings).bare_runs(&wall);
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    let run = &runs[0];
+    assert!(
+        // точка на самой кромке башни ничья — кусок начинается не раньше неё
+        run[0].x >= 114.0 && run.last().unwrap().x == 200.0,
+        "{run:?}"
+    );
+
+    // без крепостных зданий лента целиком — единственный рисунок стены
+    let alone = Fortresses::of(&[]).bare_runs(&wall);
+    assert_eq!(alone, vec![wall.clone()]);
+    // и короткая неразрезанная лента не пропадает
+    let short = vec![Vec2::new(500.0, 0.0), Vec2::new(505.0, 0.0)];
+    assert_eq!(Fortresses::of(&buildings).bare_runs(&short).len(), 1);
+}

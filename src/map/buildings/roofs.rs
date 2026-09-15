@@ -86,13 +86,53 @@ pub(super) struct HipRoof {
     pub(super) ridge_offset: Vec2,
 }
 
+/// Шатёр: грани от каждого ребра контура к одной вершине над центром. Так
+/// кроются башни — крепостная ([`super::fortress`]) и колокольня, у которой
+/// шатёр вытянут в шпиль ([`super::temples`]).
+pub(super) struct TentRoof {
+    /// Грани в порядке кладки: сперва отвёрнутые от камеры, потом обращённые
+    /// к ней, — шатёр выпуклый, и этого painter's порядка ему достаточно.
+    pub(super) faces: Vec<([Vec2; 3], LinearRgba)>,
+}
+
 /// Что за крыша у дома. Плоская — не «крыши нет», а именно плоская кровля со
 /// своим материалом, фактурой и оборудованием.
 pub(super) enum Roofing {
     Gable(GableRoof),
     Hip(HipRoof),
+    Tent(TentRoof),
     Flat,
 }
+
+/// Форма крыши, которую дому **назначает его смысл**, а не вывод по контуру и
+/// посеву: храм и крепость кроются так, как кроются храм и крепость, какого бы
+/// размера ни были. Решают [`super::temples::roof_form`] и
+/// [`super::fortress::roof_form`].
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum LandmarkRoof {
+    Flat,
+    Hip,
+    /// Крутая двускатная — костёл и кирха. Не встала (контур не прямоугольный)
+    /// — вальма.
+    SteepGable,
+    /// Шатёр высотой в `rise` сторон плана (сторона — корень из площади).
+    Tent {
+        rise: f32,
+    },
+}
+
+/// Подъём конька крутой двускатной на метр половины ширины: 1.3 ≈ 52°, готика
+/// и кирха круче жилого дома.
+const STEEP_PITCH: f32 = 1.3;
+/// Потолок подъёма крутого конька, м.
+const STEEP_RISE_MAX: f32 = 12.0;
+/// Потолок подъёма шатра, м: шпиль выше сорока метров над карнизом на карте
+/// сверху ложится поперёк квартала.
+const TENT_RISE_MAX: f32 = 40.0;
+/// Насколько светлее и темнее базового тона грань шатра по свету — круче
+/// ската, поэтому контраст сильнее, чем у двускатной.
+const TENT_LIT_MIX: f32 = 0.20;
+const TENT_SHADED_MIX: f32 = 0.22;
 
 /// Вылет ската вальмы по плану, м, и потолок этого вылета в долях толщины
 /// контура (`площадь / периметр`): у узкого дома скаты обязаны сойтись, а не
@@ -118,7 +158,13 @@ pub enum RoofShape {
     Flat,
     Gable,
     Hip,
+    /// Шатёр — башни крепости и колокольни. Выводом по посеву жилому дому не
+    /// достаётся никогда, только назначением ([`LandmarkRoof::Tent`]).
+    Tent,
 }
+
+/// Подъём шатра, заказанного витриной, в сторонах плана.
+const GALLERY_TENT_RISE: f32 = 1.0;
 
 /// Числа, по которым выбирается форма крыши, — и по которым видно, что
 /// именно получилось.
@@ -176,6 +222,8 @@ pub(super) fn roofing_of(
         RoofShape::Hip => {
             hip_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Hip)
         }
+        RoofShape::Tent => tent_roof(building, lift, &ridge_lift, base, GALLERY_TENT_RISE)
+            .map_or(Roofing::Flat, Roofing::Tent),
     }
 }
 
@@ -193,6 +241,9 @@ pub(super) fn roofing(
     base: Srgba,
     seed: u32,
 ) -> Roofing {
+    if let Some(form) = landmark_roof(building) {
+        return landmark_roofing(form, building, lift, ridge_lift, base);
+    }
     if !is_pitched(building) {
         return Roofing::Flat;
     }
@@ -211,6 +262,133 @@ pub(super) fn roofing(
 /// Сколько домов из десяти кроются вальмой, а не двускатной. В частном
 /// секторе двускатных всё же больше, но вальма — не редкость.
 const HIPPED_SHARE: u32 = 4;
+
+/// Назначенная форма крыши храма или крепости; `None` — обычный дом, форму
+/// ему выводит [`roofing`].
+pub(super) fn landmark_roof(building: &PolyArea) -> Option<LandmarkRoof> {
+    if building.kind == AreaKind::Kremlin {
+        return Some(super::fortress::roof_form(building));
+    }
+    match building.building_use {
+        BuildingUse::Church(sacred) => Some(super::temples::roof_form(sacred, building)),
+        _ => None,
+    }
+}
+
+/// Назначенная крыша, с отступлением на ступень проще там, где контур её не
+/// держит: крутая двускатная → вальма → плоская, шатёр → плоская.
+fn landmark_roofing(
+    form: LandmarkRoof,
+    building: &PolyArea,
+    lift: Vec2,
+    ridge_lift: impl Fn(f32) -> Vec2,
+    base: Srgba,
+) -> Roofing {
+    let hip = |ridge_lift: &dyn Fn(f32) -> Vec2| {
+        hip_roof(building, lift, ridge_lift, base).map_or(Roofing::Flat, Roofing::Hip)
+    };
+    match form {
+        LandmarkRoof::Flat => Roofing::Flat,
+        LandmarkRoof::Hip => hip(&ridge_lift),
+        LandmarkRoof::SteepGable => {
+            match gable_over(
+                building,
+                lift,
+                &ridge_lift,
+                base,
+                STEEP_PITCH,
+                STEEP_RISE_MAX,
+            ) {
+                Some(roof) => Roofing::Gable(roof),
+                None => hip(&ridge_lift),
+            }
+        }
+        LandmarkRoof::Tent { rise } => {
+            tent_roof(building, lift, &ridge_lift, base, rise).map_or(Roofing::Flat, Roofing::Tent)
+        }
+    }
+}
+
+/// Настоящих метров от карниза до верха назначенной крыши: на площадку
+/// вальмы и на вершину шатра встают главы храма (`temples.rs`). Считается
+/// теми же отступлениями, что и сама крыша ([`landmark_roofing`]), — иначе
+/// глава повисла бы над кровлей или утонула в ней. Обычный дом — ноль.
+pub(super) fn landmark_rise(building: &PolyArea) -> f32 {
+    let hip = || hip_plan(&building.outer).map_or(0.0, |(_, inset)| hip_rise(inset));
+    match landmark_roof(building) {
+        None | Some(LandmarkRoof::Flat) => 0.0,
+        Some(LandmarkRoof::Hip) => hip(),
+        Some(LandmarkRoof::SteepGable) => match bounding_rect(&building.outer) {
+            Some((rect, fill)) if fill >= RECT_FILL_MIN => {
+                pitched_rise((rect[2] - rect[1]).length(), STEEP_PITCH, STEEP_RISE_MAX)
+            }
+            _ => hip(),
+        },
+        Some(LandmarkRoof::Tent { rise }) => {
+            let ring = merge_close_points(&building.outer, true, TENT_MERGE);
+            if ring.len() < 3 {
+                return 0.0;
+            }
+            tent_rise(signed_ring_area(&ring).abs().sqrt(), rise)
+        }
+    }
+}
+
+/// Настоящих метров от карниза до вершины шатра над планом со стороной `side`
+/// (корень из площади), поднятого на `rise` сторон.
+fn tent_rise(side: f32, rise: f32) -> f32 {
+    (side * rise).min(TENT_RISE_MAX)
+}
+
+/// Вершины контура ближе этого сливаются перед шатром, м.
+const TENT_MERGE: f32 = 0.2;
+
+/// Шатёр над контуром: вершина над средним вершин кольца, поднятая на
+/// `rise` сторон плана. `None` — вырожденное кольцо.
+fn tent_roof(
+    building: &PolyArea,
+    lift: Vec2,
+    ridge_lift: impl Fn(f32) -> Vec2,
+    base: Srgba,
+    rise: f32,
+) -> Option<TentRoof> {
+    let ring = merge_close_points(&building.outer, true, TENT_MERGE);
+    if ring.len() < 3 {
+        return None;
+    }
+    let area = signed_ring_area(&ring);
+    let side = area.abs().sqrt();
+    if side <= 0.0 {
+        return None;
+    }
+    let orientation = area.signum();
+    let center = ring.iter().copied().sum::<Vec2>() / ring.len() as f32;
+    let ridge_offset = ridge_lift(tent_rise(side, rise));
+    let apex = center + lift + ridge_offset;
+    // отвёрнутые от камеры грани кладутся первыми: камера смотрит против
+    // подъёма, и дальняя сторона шатра обязана оказаться под ближней
+    let toward_camera = -ridge_lift(1.0).normalize_or_zero();
+    let mut faces: Vec<(f32, [Vec2; 3], LinearRgba)> = (0..ring.len())
+        .map(|index| {
+            let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+            let edge = b - a;
+            let outward = Vec2::new(edge.y, -edge.x).normalize_or_zero() * orientation;
+            let tone = shade_by_light(base, outward, TENT_LIT_MIX, TENT_SHADED_MIX);
+            (
+                outward.dot(toward_camera),
+                [a + lift, b + lift, apex],
+                tone.into(),
+            )
+        })
+        .collect();
+    faces.sort_by(|x, y| x.0.total_cmp(&y.0));
+    Some(TentRoof {
+        faces: faces
+            .into_iter()
+            .map(|(_, face, tone)| (face, tone))
+            .collect(),
+    })
+}
 
 /// Вальмовая крыша над контуром, поднятым на `lift`. `None` — контур слишком
 /// тонкий, чтобы скаты сошлись.
@@ -301,7 +479,13 @@ pub(super) fn is_pitched(building: &PolyArea) -> bool {
 
 /// Настоящих метров конька над карнизом для дома шириной `width`.
 pub(super) fn ridge_rise(width: f32) -> f32 {
-    (width / 2.0 * ROOF_PITCH).min(ROOF_RISE_MAX)
+    pitched_rise(width, ROOF_PITCH, ROOF_RISE_MAX)
+}
+
+/// Подъём конька двускатной крыши шириной `width` при крутизне `pitch` (метр
+/// подъёма на метр половины ширины), не выше `rise_max`.
+fn pitched_rise(width: f32, pitch: f32, rise_max: f32) -> f32 {
+    (width / 2.0 * pitch).min(rise_max)
 }
 
 /// Описанный прямоугольник контура и доля его площади, занятая контуром.
@@ -330,13 +514,26 @@ pub(super) fn gable_roof(
     if !is_pitched(building) {
         return None;
     }
+    gable_over(building, lift, ridge_lift, base, ROOF_PITCH, ROOF_RISE_MAX)
+}
+
+/// Двускатная крыша заданной крутизны — без вопроса, положена ли она дому:
+/// жилому дому это решает [`is_pitched`], храму — его вера.
+fn gable_over(
+    building: &PolyArea,
+    lift: Vec2,
+    ridge_lift: impl Fn(f32) -> Vec2,
+    base: Srgba,
+    pitch: f32,
+    rise_max: f32,
+) -> Option<GableRoof> {
     let (rect, fill) = bounding_rect(&building.outer)?;
     if fill < RECT_FILL_MIN {
         return None;
     }
     let [c0, c1, c2, c3] = rect.map(|corner| corner + lift);
     let width = (c2 - c1).length();
-    let ridge = ridge_lift(ridge_rise(width));
+    let ridge = ridge_lift(pitched_rise(width, pitch, rise_max));
     let (r0, r1) = ((c0 + c3) / 2.0 + ridge, (c1 + c2) / 2.0 + ridge);
 
     // скат c0–c1 смотрит наружу правым перпендикуляром к c0→c1 (CCW-обход),

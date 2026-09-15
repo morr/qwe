@@ -10,9 +10,18 @@ use super::roofs::*;
 use super::*;
 use crate::map::meshing::{WallMark, min_area_rect, unpack_material};
 use crate::map::osm::model::signed_ring_area;
-use crate::map::osm::{AreaKind, BuildingUse, fixture};
+use crate::map::osm::{AreaKind, BuildingUse, Faith, Sacred, SacredForm, fixture};
 use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
+
+/// Православный храм — назначение, которое тестам кровель и стен нужно чаще
+/// прочих вер.
+const ORTHODOX: BuildingUse = BuildingUse::Church(Sacred {
+    faith: Faith::Orthodox,
+    form: SacredForm::Nave,
+    complex: 0,
+    floor_dm: 0,
+});
 
 /// Стена ли это, если смотреть на слот материала так, как смотрит шейдер, —
 /// числом с плавающей точкой из вершинного атрибута. В слоте лежат два числа
@@ -436,11 +445,11 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
     let mut house = building(square(), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     let mut church = building(square(), None, AreaKind::Building);
-    church.building_use = BuildingUse::Church;
+    church.building_use = ORTHODOX;
     let mut industrial = building(square(), None, AreaKind::Building);
     industrial.building_use = BuildingUse::Industrial;
     let mut kremlin = building(square(), None, AreaKind::Kremlin);
-    kremlin.building_use = BuildingUse::Church;
+    kremlin.building_use = ORTHODOX;
 
     // Стена — тоже по материалу, как и крыша: у частного дома штукатурка или
     // кирпич, у склада профлист, у храма побелка, и совпасть им неоткуда.
@@ -479,7 +488,7 @@ fn the_roof_material_is_stable_and_follows_the_use() {
 
     // храм — всегда фальцевый металл, гараж — из своей таблицы
     let mut church = building(square(), None, AreaKind::Building);
-    church.building_use = BuildingUse::Church;
+    church.building_use = ORTHODOX;
     assert_eq!(roof_look(&church).kind, RoofKind::Seam);
 
     // ось фактуры — длинная сторона контура
@@ -956,9 +965,9 @@ fn the_cladding_follows_the_use_and_the_height() {
     };
     // Кремль кирпичный, храм белёный — оба мимо таблиц, как и у кровель
     let mut kremlin = building(oblong(14.0, 40.0), Some(12.0), AreaKind::Kremlin);
-    kremlin.building_use = BuildingUse::Church;
+    kremlin.building_use = ORTHODOX;
     assert_eq!(wall_of(&kremlin).kind, WallKind::Brick, "Кремль");
-    assert_eq!(of(BuildingUse::Church, 12.0), WallKind::Plaster, "храм");
+    assert_eq!(of(ORTHODOX, 12.0), WallKind::Sacred, "храм");
 
     // частный дом и гараж идут по своим таблицам мимо развилки по росту, и
     // панели среди них нет ни в одном слоте
@@ -1006,7 +1015,8 @@ fn every_cladding_reaches_the_city() {
                 BuildingUse::Industrial,
                 BuildingUse::Public,
                 BuildingUse::Other,
-            ][column % 6];
+                ORTHODOX,
+            ][column % 7];
             let kind = wall_of(&area).kind;
             if !seen.contains(&kind) {
                 seen.push(kind);
@@ -2023,4 +2033,209 @@ fn the_passage_middle_is_measured_along_its_length() {
     );
     let middle = passage_middle(&road).unwrap();
     assert!((middle.x - 50.0).abs() < 0.01, "{middle:?}");
+}
+
+fn church(outer: Vec<Vec2>, height: f32, faith: Faith, form: SacredForm) -> PolyArea {
+    let mut area = building(outer, Some(height), AreaKind::Building);
+    area.building_use = BuildingUse::Church(Sacred {
+        faith,
+        form,
+        complex: 0,
+        floor_dm: 0,
+    });
+    area
+}
+
+/// Крепость — кладка без проёмов: **каждая** вершина её стен помечена как
+/// стена без окон, и дверей на ней нет, даже когда вход у контура есть.
+#[test]
+fn a_fortress_wall_has_no_openings() {
+    let _sun = crate::map::default_sun();
+    let mut wall = building(oblong(3.0, 60.0), Some(12.7), AreaKind::Kremlin);
+    wall.entrances = vec![Vec2::new(30.0, 0.0)];
+    let mesh = extruded_mesh(std::slice::from_ref(&wall), &[], detail(false));
+    let coords = mesh.roof_coords_for_test().unwrap();
+    let walls: Vec<&[f32; 4]> = coords.iter().filter(|c| is_wall(c[2])).collect();
+    assert!(!walls.is_empty());
+    assert!(
+        walls.iter().all(|c| is_solid(c[3])),
+        "a kremlin wall got an opening"
+    );
+    assert!(
+        coords.iter().all(|c| unpack_material(c[2]).0 != DOOR_CODE),
+        "a kremlin wall got a door"
+    );
+}
+
+/// Стена крепости кроется плоским ходом с зубцами, башня — шатром.
+#[test]
+fn a_fortress_tower_is_tented_and_its_wall_crenellated() {
+    let _sun = crate::map::default_sun();
+    let wall = building(oblong(3.0, 60.0), Some(12.0), AreaKind::Kremlin);
+    let tower = building(square(), Some(30.0), AreaKind::Kremlin);
+    assert_eq!(landmark_roof(&wall), Some(LandmarkRoof::Flat));
+    assert!(matches!(
+        landmark_roof(&tower),
+        Some(LandmarkRoof::Tent { .. })
+    ));
+    let lift = extrusion_lift(&wall, BuildingHeightMode::Extrusion);
+    // по зубцу на 2.6 м с каждой длинной стороны
+    assert!(super::clutter::merlons(&wall, lift).len() >= 40);
+    assert!(super::clutter::merlons(&tower, lift).is_empty());
+}
+
+/// Над храмом стоит венец его веры: у православного главы-луковицы, у
+/// западного — башня со шпилем, у мечети — купол и минареты, а у восточного
+/// — ничего сверх вальмы.
+#[test]
+fn a_church_is_crowned_by_its_faith() {
+    use super::temples::{Crown, Profile, crowns};
+    let _sun = crate::map::default_sun();
+    let white = Srgba::WHITE;
+    let ship = || oblong(18.0, 44.0);
+    let crowns = |area: &PolyArea| crowns(area, white, white, true);
+
+    let orthodox = crowns(&church(ship(), 14.0, Faith::Orthodox, SacredForm::Nave));
+    assert!(orthodox.iter().any(|c| matches!(
+        c,
+        Crown::Dome {
+            profile: Profile::Onion,
+            ..
+        }
+    )));
+    assert!(
+        orthodox
+            .iter()
+            .any(|c| matches!(c, Crown::Tower { cap: Some(_), .. })),
+        "a ship church has a bell tower with a cupola"
+    );
+
+    let western = crowns(&church(ship(), 14.0, Faith::Western, SacredForm::Nave));
+    assert!(
+        western
+            .iter()
+            .any(|c| matches!(c, Crown::Tower { cap: None, .. }))
+    );
+    assert!(!western.iter().any(|c| matches!(c, Crown::Dome { .. })));
+
+    let mosque = crowns(&church(ship(), 14.0, Faith::Muslim, SacredForm::Nave));
+    assert!(mosque.iter().any(|c| matches!(
+        c,
+        Crown::Dome {
+            profile: Profile::Hemisphere,
+            ..
+        }
+    )));
+    assert!(mosque.iter().any(|c| matches!(c, Crown::Minaret { .. })));
+
+    let eastern = crowns(&church(ship(), 14.0, Faith::Eastern, SacredForm::Nave));
+    assert!(eastern.is_empty());
+
+    // пристройка своих глав не несёт, не храм — тем более
+    assert!(crowns(&church(ship(), 14.0, Faith::Orthodox, SacredForm::Annex)).is_empty());
+    assert!(crowns(&building(ship(), Some(14.0), AreaKind::Building)).is_empty());
+}
+
+/// Барабан, стоящий на крыше собора (`min_height`), рисуется барабаном с
+/// главой с высоты начала — без коробки от земли, — а сам собор не ставит
+/// поверх свою центральную главу.
+#[test]
+fn a_raised_drum_stands_on_its_church_instead_of_growing_from_the_ground() {
+    use super::temples::{Crown, Sanctuary};
+    let _sun = crate::map::default_sun();
+    // не от начала координат: посев точки (0, 0) — ноль, а ноль у посева храма
+    // значит «храм не собран»
+    let origin = Vec2::new(100.0, 60.0);
+    let mut cathedral = church(
+        oblong(34.0, 40.0).into_iter().map(|p| p + origin).collect(),
+        16.0,
+        Faith::Orthodox,
+        SacredForm::Nave,
+    );
+    let complex = building_seed(&cathedral);
+    assert_ne!(complex, 0);
+    let set = |area: &mut PolyArea, floor_dm: u16| {
+        if let BuildingUse::Church(sacred) = &mut area.building_use {
+            sacred.complex = complex;
+            sacred.floor_dm = floor_dm;
+        }
+    };
+    set(&mut cathedral, 0);
+    let center = Vec2::new(20.0, 17.0) + origin;
+    let mut drum = church(
+        square()
+            .iter()
+            .map(|p| *p * 0.45 + center - Vec2::splat(4.5))
+            .collect(),
+        35.0,
+        Faith::Orthodox,
+        SacredForm::Dome,
+    );
+    set(&mut drum, 200);
+    let list = [cathedral, drum];
+    let sanctuary = Sanctuary::of(&list);
+
+    assert_eq!(sanctuary.raised(0), None);
+    assert_eq!(sanctuary.raised(1), Some(20.0));
+    let white = Srgba::WHITE;
+    let on_roof = sanctuary.crowns(1, &list[1], white, white, Vec2::new(3.0, 7.0));
+    assert!(matches!(
+        on_roof.as_slice(),
+        [(Crown::Dome { base, .. }, eave)] if *base == 20.0 && *eave == Vec2::ZERO
+    ));
+
+    // у собора с главами-частями своих глав нет вовсе
+    let own = sanctuary.crowns(0, &list[0], white, white, Vec2::ZERO);
+    assert!(
+        !own.iter()
+            .any(|(crown, _)| matches!(crown, Crown::Dome { .. }))
+    );
+
+    // и коробки у барабана в меше нет: все его вершины — вершины главы, выше
+    // высоты начала
+    let mesh = extruded_mesh(&list[1..], &[], detail(false));
+    let lone = Sanctuary::of(&list[1..]);
+    assert_eq!(lone.raised(0), Some(20.0));
+    let lowest = mesh
+        .positions_for_test()
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        lowest > origin.y + 17.0 - 4.5 + 20.0 * 0.35 * 0.9,
+        "the drum reaches the ground: {lowest}"
+    );
+}
+
+/// Глава на вальме стоит на её площадке, а не висит над ней и не тонет:
+/// её основание — ровно подъём назначенной крыши.
+#[test]
+fn a_cupola_stands_on_the_ridge_it_is_given() {
+    use super::temples::{Crown, crowns};
+    let _sun = crate::map::default_sun();
+    let area = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
+    assert_eq!(landmark_roof(&area), Some(LandmarkRoof::Hip));
+    let rise = landmark_rise(&area);
+    assert!(rise > 0.0);
+    for crown in crowns(&area, Srgba::WHITE, Srgba::WHITE, true) {
+        if let Crown::Dome { base, .. } = crown {
+            assert_eq!(base, rise);
+        }
+    }
+}
+
+/// Тень храма дотягивается до маковки: пятна венца уходят в развёртки выше
+/// карниза самого храма.
+#[test]
+fn a_crown_casts_a_shadow_past_the_eaves() {
+    use super::temples::Sanctuary;
+    let _sun = crate::map::default_sun();
+    let area = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
+    let casters = Sanctuary::of(std::slice::from_ref(&area)).shadow_casters(0, &area);
+    assert!(!casters.is_empty());
+    assert!(
+        casters
+            .iter()
+            .all(|(outline, top)| outline.len() >= 3 && *top > 16.0)
+    );
 }

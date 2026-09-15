@@ -13,9 +13,10 @@
 //!
 //! Стены едут в том же меше, что и крыши (2.5D — один слой с painter's
 //! порядком), поэтому **код материала в атрибуте — один словарь на двоих**:
-//! `0` это «фактуры нет вовсе» (оборудование кровли, кайма), `1…6` — кровля
-//! ([`RoofKind`]), `7…11` — стена ([`WallKind`]), `12` — дверное полотно
-//! ([`DOOR_CODE`]). Фронтон — верх той же стены и рамку берёт её же.
+//! `0` это «фактуры нет вовсе» (оборудование кровли, кайма, главы храмов),
+//! `1…8` — кровля и гаражные ленты ([`RoofKind`]), `9…15` — стена
+//! ([`WallKind`]), `16` — дверное полотно ([`DOOR_CODE`]). Фронтон — верх той
+//! же стены и рамку берёт её же.
 //!
 //! Стена устроена по образцу кровли и выбирается тем же способом: таблица
 //! материалов по назначению дома, слот в ней по посеву от первой вершины
@@ -37,6 +38,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::garages::GarageRun;
+use super::{fortress, temples};
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
@@ -143,8 +145,8 @@ impl RoofKind {
 /// этой стене балконы.
 ///
 /// Коды продолжают кровельные — один словарь в одном числе атрибута, — а
-/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `GARAGE_DOORS =
-/// 14u`, за ними `DOOR = 15u`).
+/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `SACRED = 15u`,
+/// за ними `DOOR = 16u`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WallKind {
     /// Панель: межэтажные швы, вертикальные швы плит, окно на панель и
@@ -171,17 +173,23 @@ pub enum WallKind {
     /// ровно под шов на кровле, и ряд ворот с рядом боксов говорят одно и то
     /// же.
     GarageDoors,
+    /// Стена храма: ровная побелка или камень и **высокие арочные окна**
+    /// редким рядом — ярус храма в шесть метров, а не жилой этаж в три, и
+    /// обычное двухстворчатое окно на нём читалось бы жилым домом. Выбирается
+    /// назначением (`BuildingUse::Church`), цвет — верой ([`super::temples`]).
+    Sacred,
 }
 
 impl WallKind {
     /// Исчерпывающий список — по нему идёт витрина `wall_gallery`.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Panel,
         Self::Brick,
         Self::Plaster,
         Self::Shopfront,
         Self::Shed,
         Self::GarageDoors,
+        Self::Sacred,
     ];
 
     /// Код для [`ATTRIBUTE_ROOF`]: продолжение кровельного словаря, поэтому
@@ -195,7 +203,7 @@ impl WallKind {
     /// Сколько кодов занято облицовками — по **последнему** варианту, тем же
     /// правилом, что и [`RoofKind::CODES`]: от него отсчитывается дверь, и
     /// дописанная облицовка обязана её подвинуть, а не наехать на неё.
-    pub const CODES: u32 = Self::GarageDoors.code();
+    pub const CODES: u32 = Self::Sacred.code();
 
     /// Стена ли это. Коды приходят из вершинного атрибута числом с плавающей
     /// точкой, и разбирать их порознь в тестах и в шейдере — верный способ
@@ -225,6 +233,7 @@ impl WallKind {
             Self::Shopfront => "Витраж",
             Self::Shed => "Профлист",
             Self::GarageDoors => "Ворота",
+            Self::Sacred => "Храм",
         }
     }
 
@@ -238,6 +247,7 @@ impl WallKind {
             Self::Shopfront => &SHOPFRONT_WALL_COLORS,
             Self::Shed => &SHED_WALL_COLORS,
             Self::GarageDoors => &GARAGE_WALL_COLORS,
+            Self::Sacred => &temples::ORTHODOX_WALLS,
         }
     }
 }
@@ -371,15 +381,6 @@ const GARAGE_ROW_COLORS: [Color; 4] = [
     Color::srgb(0.40, 0.30, 0.25),
     Color::srgb(0.36, 0.39, 0.38),
 ];
-/// Храм остаётся зелёным, как его рисуют на картах, — но теперь это зелёный
-/// **металл**, с фальцем и бликом. Единственная палитра не по материалу:
-/// [`RoofKind::palette`] её не знает, её выбирает [`palette`] по назначению.
-pub const CHURCH_ROOF_COLORS: [Color; 3] = [
-    Color::srgb(0.36, 0.54, 0.46),
-    Color::srgb(0.32, 0.50, 0.52),
-    Color::srgb(0.40, 0.56, 0.40),
-];
-
 /// Доли материалов по назначению — десять слотов, то есть проценты по
 /// десяткам; дом берёт слот посевом. Не выдумка: по спутнику Тулы частный
 /// сектор — черепица и шифер с вкраплениями профлиста, панельные кварталы —
@@ -512,7 +513,7 @@ impl RoofLook {
 /// зависит ни от порядка домов в `MapData`, ни от режима отрисовки, поэтому
 /// переключение режима высот не перекрашивает город.
 pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
-    let seed = building_seed(building);
+    let seed = look_seed(building);
     let kind = kind_of(building, seed);
     let palette = palette(building, kind);
     let base = palette[(seed >> 8) as usize % palette.len()].to_srgba();
@@ -542,7 +543,7 @@ pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
 /// назначению.
 fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
     if building.kind == AreaKind::Kremlin {
-        return RoofKind::Seam;
+        return fortress::roof_kind(building);
     }
     let table = match building.building_use {
         BuildingUse::House => &HOUSE_ROOFS,
@@ -550,7 +551,7 @@ fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
         BuildingUse::Commercial => &COMMERCIAL_ROOFS,
         BuildingUse::Industrial => &INDUSTRIAL_ROOFS,
         BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_ROOFS,
-        BuildingUse::Church => return RoofKind::Seam,
+        BuildingUse::Church(sacred) => return temples::roof_kind(sacred),
         BuildingUse::Public => &PUBLIC_ROOFS,
         // `building=yes` — половина города: мелкая коробка это частный дом,
         // крупный контур — корпус, и кроют их по-разному
@@ -568,10 +569,10 @@ fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
 /// Палитра цвета кровли: Кремль и храм — своё, остальные по материалу.
 fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
     if building.kind == AreaKind::Kremlin {
-        return std::slice::from_ref(&super::KREMLIN_ROOF_COLOR);
+        return fortress::roof_palette(building);
     }
-    if building.building_use == BuildingUse::Church {
-        return &CHURCH_ROOF_COLORS;
+    if let BuildingUse::Church(sacred) = building.building_use {
+        return temples::roof_palette(sacred.faith);
     }
     kind.palette()
 }
@@ -674,7 +675,7 @@ impl WallLook {
 /// высота, поделённая на высоту этажа, и делит её `layers.rs`; дублировать то
 /// же деление значит однажды разойтись с ним.
 pub(super) fn wall_look(building: &PolyArea, storeys: f32) -> WallLook {
-    let seed = building_seed(building);
+    let seed = look_seed(building);
     let kind = wall_kind_of(building, storeys, seed >> 4);
     let palette = wall_palette(building, kind);
     let base = palette[(seed >> 12) as usize % palette.len()].to_srgba();
@@ -707,7 +708,7 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
     let table: &[WallKind] = match building.building_use {
         BuildingUse::House => &HOUSE_WALLS,
         BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_WALLS,
-        BuildingUse::Church => return WallKind::Plaster,
+        BuildingUse::Church(_) => return WallKind::Sacred,
         BuildingUse::Industrial => &INDUSTRIAL_WALLS,
         _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
         BuildingUse::Apartments => &APARTMENTS_WALLS,
@@ -817,27 +818,35 @@ const GARAGE_WALLS: [WallKind; 10] = [
 /// правило и тот же порядок, что у [`palette`] для кровли.
 fn wall_palette(building: &PolyArea, kind: WallKind) -> &'static [Color] {
     if building.kind == AreaKind::Kremlin {
-        return std::slice::from_ref(&super::KREMLIN_FACADE_COLOR);
+        return &fortress::WALL_COLORS;
     }
-    if building.building_use == BuildingUse::Church {
-        return &CHURCH_WALL_COLORS;
+    if let BuildingUse::Church(sacred) = building.building_use {
+        return temples::wall_palette(sacred.faith);
     }
     kind.palette()
 }
 
-/// Храм белёный, и это не оттенок штукатурки, а её отсутствие: побелка по
-/// кирпичу почти без тона.
-const CHURCH_WALL_COLORS: [Color; 3] = [
-    Color::srgb(0.93, 0.91, 0.86),
-    Color::srgb(0.90, 0.88, 0.85),
-    Color::srgb(0.88, 0.86, 0.78),
-];
+/// Кровля храма в витрине кровель — православная палитра: фальц по вере
+/// теперь выбирает [`temples::roof_palette`], и православная из них — та, что
+/// стояла здесь раньше, зелёный металл.
+pub const CHURCH_ROOF_COLORS: [Color; 5] = temples::ORTHODOX_ROOFS;
 
 /// Посев дома — от его первой вершины ([`seed_from_point`]): материал кровли,
 /// оборудование на ней и додуманная этажность держатся на одном числе, и оно
 /// не зависит ни от порядка домов в выгрузке, ни от пересборки слоя.
 pub(super) fn building_seed(building: &PolyArea) -> u32 {
     seed_from_point(building.outer.first().copied().unwrap_or(Vec2::ZERO))
+}
+
+/// Посев, которым дому выбираются материал и цвета. У части храма — посев
+/// **храма** ([`crate::map::osm::Sacred::complex`]): барабаны, колокольня и
+/// сам собор красятся одной палитрой, а не каждый своей. Форма, этажность и
+/// оборудование остаются на собственном посеве дома ([`building_seed`]).
+pub(super) fn look_seed(building: &PolyArea) -> u32 {
+    match building.building_use {
+        BuildingUse::Church(sacred) if sacred.complex != 0 => sacred.complex,
+        _ => building_seed(building),
+    }
 }
 
 /// Параметры фактуры кровель — юниформ шейдера. Зеркало `RoofParams` в

@@ -21,8 +21,8 @@ use bevy::math::Vec2;
 
 use super::material::building_seed;
 use crate::map::meshing::min_area_rect;
-use crate::map::osm::model::signed_ring_area;
-use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::osm::model::{is_fortress_tower, signed_ring_area};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea, Sacred, SacredForm};
 
 /// Высота этажа, м — то же число, которым парсер переводит
 /// `building:levels` в метры, и по нему же считаются серии ниже.
@@ -51,6 +51,12 @@ const MID_STOREYS: [f32; 6] = [2.0, 3.0, 3.0, 4.0, 4.0, 5.0];
 const LOW_STOREYS: [f32; 6] = [2.0, 2.0, 3.0, 3.0, 3.0, 4.0];
 /// Храм: не этажами, а сразу метрами — у него один «этаж» до карниза.
 const CHURCH_HEIGHTS: [f32; 4] = [12.0, 14.0, 18.0, 22.0];
+/// Колокольня и минарет — до карниза яруса звона; шпиль или глава над ним
+/// рисуются уже сверх этой высоты (`temples.rs`).
+const BELL_TOWER_HEIGHTS: [f32; 3] = [24.0, 30.0, 36.0];
+/// Крепостная стена и башня, м: у Тульского кремля 12.7 и 30 по тегам.
+const FORTRESS_WALL_HEIGHTS: [f32; 2] = [10.0, 12.0];
+const FORTRESS_TOWER_HEIGHTS: [f32; 2] = [20.0, 26.0];
 /// Цех и склад — тоже метрами: один пролёт, но высокий.
 const HALL_HEIGHTS: [f32; 4] = [7.0, 8.0, 10.0, 12.0];
 /// Торговый зал: один-два этажа под большой крышей.
@@ -88,10 +94,22 @@ fn pick(table: &[f32], seed: u32) -> f32 {
 fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
     let area = signed_ring_area(&building.outer).abs();
 
+    // крепость меряется не назначением (у башни это `building=yes`), а тем,
+    // стена это или башня
+    if building.kind == AreaKind::Kremlin {
+        return match is_fortress_tower(building) {
+            true => pick(&FORTRESS_TOWER_HEIGHTS, seed),
+            false => pick(&FORTRESS_WALL_HEIGHTS, seed),
+        };
+    }
     match building.building_use {
         BuildingUse::Garage | BuildingUse::GarageBlock => GARAGE_HEIGHT,
         BuildingUse::House => pick(&HOUSE_HEIGHTS, seed),
-        BuildingUse::Church => pick(&CHURCH_HEIGHTS, seed),
+        BuildingUse::Church(Sacred {
+            form: SacredForm::Tower,
+            ..
+        }) => pick(&BELL_TOWER_HEIGHTS, seed),
+        BuildingUse::Church(_) => pick(&CHURCH_HEIGHTS, seed),
         BuildingUse::Industrial => pick(&HALL_HEIGHTS, seed),
         BuildingUse::Commercial if area >= STORE_FOOTPRINT_MIN => pick(&STORE_HEIGHTS, seed),
         // казённое здание — школа, поликлиника, контора: та же таблица, что у

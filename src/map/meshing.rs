@@ -68,12 +68,12 @@ const NO_ROOF: [f32; 4] = [0.0; 4];
 /// Упаковка, а не пятое число атрибута: слот кода — единственное поле, где
 /// есть свободный разряд, а лишний `f32` стоил бы четыре байта на каждой
 /// вершине слоя зданий. Этажей у самого высокого дома OSM (600 м) двести, то
-/// есть `16 · 200 + 14`, всё ещё целое в `f32` без потерь. А вот запас по
-/// кодам почти выбран: их **четырнадцать** (шесть кровель, две гаражные
-/// ленты, пять облицовок и дверь), и пятнадцатый будет последним — на
-/// шестнадцатом код полезет в разряд этажей, и шаг придётся поднимать вместе
-/// с зеркалом в `roof.wgsl`.
-pub const STOREY_STRIDE: u32 = 16;
+/// есть `32 · 200 + 16`, всё ещё целое в `f32` без потерь. Шаг был 16 и
+/// поднят до 32 вместе с храмовой облицовкой: кодов стало **шестнадцать**
+/// (шесть кровель, две гаражные ленты, семь облицовок и дверь), и дверь легла
+/// бы ровно в разряд этажей. Следующий подъём — на тридцать втором коде,
+/// вместе с зеркалом в `roof.wgsl`.
+pub const STOREY_STRIDE: u32 = 32;
 
 /// Запас **сверх этажей**, в долях этажа: над последним этажом у дома есть
 /// перекрытие, плита кровли и парапет, и вместе это около метра.
@@ -1354,6 +1354,41 @@ impl MeshBuilder {
         for index in 1..outline.len() as u32 - 1 {
             self.indices.extend([base, base + index, base + index + 1]);
         }
+    }
+
+    /// Замкнутый веер вокруг `center` с цветом на каждую вершину обода — так
+    /// рисуется ломтик купола (`buildings::temples`): свет на нём меняется по
+    /// окружности, и плоский цвет на ломтик дал бы гранёный купол.
+    pub(crate) fn push_fan_gradient(
+        &mut self,
+        center: Vec2,
+        center_color: LinearRgba,
+        rim: &[(Vec2, LinearRgba)],
+    ) {
+        if rim.len() < 3 {
+            self.skipped_polygons += 1;
+            return;
+        }
+        let base = self.positions.len() as u32;
+        self.push_vertex(center, center_color.to_f32_array(), NO_RIBBON);
+        for (point, color) in rim {
+            self.push_vertex(*point, color.to_f32_array(), NO_RIBBON);
+        }
+        let count = rim.len() as u32;
+        for index in 0..count {
+            self.indices
+                .extend([base, base + 1 + index, base + 1 + (index + 1) % count]);
+        }
+    }
+
+    /// Треугольник одного цвета — грань шатра (`buildings::roofs::TentRoof`).
+    pub(crate) fn push_triangle(&mut self, corners: [Vec2; 3], color: LinearRgba) {
+        let base = self.positions.len() as u32;
+        let rgba = color.to_f32_array();
+        for corner in corners {
+            self.push_vertex(corner, rgba, NO_RIBBON);
+        }
+        self.indices.extend([base, base + 1, base + 2]);
     }
 
     /// Квад с цветом на каждую вершину — для вертикального градиента стен

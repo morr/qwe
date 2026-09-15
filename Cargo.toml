@@ -26,6 +26,10 @@ name = "roof_gallery"
 path = "examples/demos/roof_gallery/main.rs"
 
 [[example]]
+name = "temple_gallery"
+path = "examples/demos/temple_gallery/main.rs"
+
+[[example]]
 name = "tree_gallery"
 path = "examples/demos/tree_gallery/main.rs"
 
@@ -52,6 +56,10 @@ name = "polymesh_bench"
 path = "examples/bench/polymesh_bench.rs"
 
 # audit — офлайн-разбор геометрии меша, печатает отчёт
+[[example]]
+name = "navmesh_probe"
+path = "examples/audit/navmesh_probe.rs"
+
 [[example]]
 name = "fence_prune_audit"
 path = "examples/audit/fence_prune_audit.rs"

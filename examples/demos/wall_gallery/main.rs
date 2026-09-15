@@ -84,7 +84,7 @@ use qwe::map::buildings::material::{
 };
 use qwe::map::buildings::{BuildingHeightMode, RoofShape, extrusion_lift, push_house, wall_of};
 use qwe::map::osm::entrances::generate_entrances;
-use qwe::map::osm::{AreaKind, BuildingUse, MapData, PolyArea};
+use qwe::map::osm::{AreaKind, BuildingUse, Faith, MapData, PolyArea, Sacred, SacredForm};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::settings::STOREY_HEIGHT;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -246,6 +246,7 @@ fn note(kind: WallKind) -> &'static str {
         WallKind::Shopfront => "лента остекления, витрина на первом этаже",
         WallKind::Shed => "рёбра профлиста, окно под карнизом, ворота внизу",
         WallKind::GarageDoors => "створка в каждом боксе, окон нет вовсе",
+        WallKind::Sacred => "ярус в 6 м, высокое арочное окно, тяга по ярусу",
     }
 }
 
@@ -258,7 +259,7 @@ fn use_label(building_use: BuildingUse) -> &'static str {
         // кооператив целиком и одиночный бокс облицованы одинаково: рядами
         // боксов ГСК делает кровля, а не стена
         BuildingUse::Garage | BuildingUse::GarageBlock => "Гараж, сарай",
-        BuildingUse::Church => "Храм",
+        BuildingUse::Church(_) => "Храм",
         BuildingUse::Public => "Общественное",
         BuildingUse::Other => "building=yes",
     }
@@ -275,7 +276,12 @@ const USES: [BuildingUse; 8] = [
     BuildingUse::Public,
     BuildingUse::Industrial,
     BuildingUse::Garage,
-    BuildingUse::Church,
+    BuildingUse::Church(Sacred {
+        faith: Faith::Orthodox,
+        form: SacredForm::Nave,
+        complex: 0,
+        floor_dm: 0,
+    }),
 ];
 
 /// Дом витрины: где стоит, какой величины, сколько этажей и чем облицован.

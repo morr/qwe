@@ -269,5 +269,8 @@ fn name(shape: RoofShape) -> &'static str {
         RoofShape::Flat => "плоская",
         RoofShape::Gable => "двускатная",
         RoofShape::Hip => "вальмовая",
+        // жилому дому не достаётся: витрина его не заказывает, и выбор игры
+        // на её контурах шатром не выходит
+        RoofShape::Tent => "шатёр",
     }
 }

@@ -93,7 +93,13 @@ OSM — это весь кооператив одним контуром, в Т�
 рядами боксов с проездами, а не одним ангаром. По кешу v8 множественных 43.
 
 `roof:shape` есть у 283 (`flat` 165, `hipped` 84), `building:colour` /
-`roof:colour` у 95 — оба пока не читаются.
+`roof:colour` у 95 — цвета пока не читаются, а из `roof:shape` читаются только
+`onion|dome` у храма (`parse/tags.rs::sacred_form` → `SacredForm::Dome`, по кешу v14
+7 и 2). Храмы читают ещё `religion` / `denomination` (`tags.rs::faith`),
+`tower:type=bell_tower|minaret` и `min_height` / `building:min_level`
+(`tags.rs::part_floor`, по v14 2 и 3 контура); крепость (`tags.rs::is_fortification`,
+только на контуре с `building`) — `man_made=tower` + `tower:type=defensive` (9 в v14) и
+`building=wall` от 6 м (одна, 12.7 м); `historic` на зданиях Тулы кремлём не бывает.
 
 | | Тула | Париж | Берлин | Лондон | Токио | NY |
 |---|---|---|---|---|---|---|
