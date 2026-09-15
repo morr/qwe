@@ -17,7 +17,7 @@
 //! загрузки ассета.
 //!
 //! Разбор нарочно наивный, строка вида `const ИМЯ: f32 = ЧИСЛО;` — и она же с
-//! `u32` ради `HIPPED_SHARE`, доли вальмовых из десяти. Коды материалов
+//! `u32` ради долей форм (`HIP_SHARE_OF_100`, `DORMER_SHARE`). Коды материалов
 //! шейдера отсеиваются по типу — они `u32`, зеркало `RoofKind::code`, а не
 //! настройка; `TAU` приходится исключать по имени.
 
@@ -50,7 +50,7 @@ pub(crate) fn shader_constants() -> Vec<(&'static str, &'static str)> {
 }
 
 /// Константы выбора и построения формы крыши, в порядке `roofs.rs`.
-/// Целочисленная среди них одна — `HIPPED_SHARE`, доля вальмовых из десяти, —
+/// Целочисленные среди них — доли форм (`HIP_SHARE_OF_100`, `DORMER_SHARE`),
 /// и без неё таблица не отвечала бы на «почему тут вальма».
 pub(crate) fn shape_constants() -> Vec<(&'static str, &'static str)> {
     ROOFS_SOURCE
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn the_shape_constants_are_read_from_the_source() {
         let constants = shape_constants();
-        for expected in ["RECT_FILL_MIN", "HIP_INSET", "HIPPED_SHARE"] {
+        for expected in ["RECT_FILL_MIN", "HIP_INSET", "HIP_SHARE_OF_100"] {
             assert!(
                 constants.iter().any(|(name, _)| *name == expected),
                 "в `roofs.rs` не нашлось {expected}: {constants:?}"

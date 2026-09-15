@@ -222,7 +222,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   storeys), a compact large one (≥ 500 m², sides within 1.7) a tower (mostly 9), a small
   one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
   long thin shed stays low), and industrial / commercial / church footprints are measured
-  in **metres of span** rather than storeys.
+  in **metres of span** rather than storeys. A **private house** — `building=house`, or an
+  untagged box up to 150 m² — has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives
+  in the pitched roof), two in the rest; a yard shed (≤ 40 m²) is 2.4–3 m.
   A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
   storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large
   squarish school never comes out a tower.
@@ -262,20 +264,28 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
-  not read (`roof:shape` is rare), in three kinds. A **gable** — two slopes with the ridge
-  along the long axis of the minimum-area bounding rectangle — needs an outline that nearly
-  fills that rectangle and touches its corners (a roof corner may not hang off the walls).
-  A **hip** — a slope quad per outline edge, built by pushing the
-  outline inward on miter offsets, with the leftover interior as the ridge plane — needs
-  nothing but a footprint thicker than the inset, and so is what an **L-shaped house** gets
-  (they used to stay flat among pitched neighbours). Which of the two a house takes is its
-  own seed (4 in 10 hip). Everything else is **flat** — a real flat roof with its material
-  and its clutter. Courtyard buildings stay flat. A **tent** (`TentRoof`, faces to one apex)
-  is the fourth kind and no house ever gets it: a church and a fortress are *assigned* their
+  not read (`roof:shape` is rare). The private sector is **gabled**, so the **gable roof**
+  (`GableRoof`, everything with a piece of wall above the eaves) comes in five
+  **`GableForm`s**: a plain **gable** (two slopes, ridge along the long axis of the
+  minimum-area bounding rectangle; needs an outline that nearly fills that rectangle and
+  touches its corners), a **half-hip** (the top of each gable cut by a small slope), a
+  **gambrel** (a steep lower and a shallow upper slope — the attic storey), a **lean-to**
+  (one slope — a yard shed, `SHED_FOOTPRINT_MAX` 40 m²) and a **cross gable** over an L, T
+  or П outline (cut into rectangles; the largest is the main body, every other piece a
+  **wing** whose ridge runs into its neighbour's slope to a valley, or continues its ridge
+  from its end). A plain gable may carry one **dormer** (`DormerFace`, 2.5D only). The form
+  of a rectangular house is its seed (gable 8 / gambrel 1 / half-hip 1 in 10). A **hip** — a
+  slope quad per outline edge, built by pushing the outline inward on miter offsets, with the
+  leftover interior as the ridge plane — is now the rare case: 3 in 100 large houses
+  (≥ 120 m²) and whatever outline no gable form fits. Everything else is **flat** — a real
+  flat roof with its material and its clutter. Courtyard buildings stay flat. The mix is
+  printed in the `building meshing:` log line (`roofs:`). A **tent** (`TentRoof`, faces to one apex)
+  is one more kind and no house ever gets it: a church and a fortress are *assigned* their
   roof (**`LandmarkRoof`** — `temples::roof_form` by faith, `fortress::roof_form`: tent on a
   tower, flat walkway on a wall), stepping down where the outline refuses.
-  **`RoofShape`** is the same kinds as an *input*: the city never asks for
-  one, `roof_gallery` does, to stand one outline under all three — and a refusal there stays
+  **`RoofShape`** is the same kinds as an *input* (every `GableForm` and `Dormer` included):
+  the city never asks for one, `roof_gallery` does, to stand one outline under all of them —
+  and a refusal there stays
   a refusal instead of being swapped for another shape the way `roofing` swaps it.
   **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, hip inset,
   either ridge rise) so the gallery prints them rather than restating them.

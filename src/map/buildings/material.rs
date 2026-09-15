@@ -281,7 +281,7 @@ const BRICK_WALL_COLORS: [Color; 6] = [
     Color::srgb(0.55, 0.38, 0.32),
     Color::srgb(0.72, 0.62, 0.50),
 ];
-const PLASTER_WALL_COLORS: [Color; 7] = [
+const PLASTER_WALL_COLORS: [Color; 10] = [
     Color::srgb(0.86, 0.84, 0.78),
     Color::srgb(0.82, 0.75, 0.60),
     Color::srgb(0.78, 0.72, 0.66),
@@ -289,6 +289,10 @@ const PLASTER_WALL_COLORS: [Color; 7] = [
     Color::srgb(0.70, 0.75, 0.80),
     Color::srgb(0.84, 0.72, 0.62),
     Color::srgb(0.66, 0.64, 0.60),
+    // обшитый сайдингом дом: белый и светло-жёлтый, и потемневший брус
+    Color::srgb(0.88, 0.88, 0.86),
+    Color::srgb(0.84, 0.82, 0.64),
+    Color::srgb(0.62, 0.50, 0.38),
 ];
 const SHOPFRONT_WALL_COLORS: [Color; 4] = [
     Color::srgb(0.52, 0.56, 0.60),
@@ -354,7 +358,10 @@ const CORRUGATED_COLORS: [Color; 5] = [
     Color::srgb(0.62, 0.34, 0.28),
     Color::srgb(0.56, 0.40, 0.30),
 ];
-const TILE_COLORS: [Color; 7] = [
+/// Черепица частного сектора — металлочерепица всех цветов каталога: красная,
+/// вишнёвая, шоколадная, зелёная, синяя, бирюзовая, серебристая и почти белая
+/// оцинковка. На снимке с высоты посёлок пёстрый именно так.
+const TILE_COLORS: [Color; 11] = [
     Color::srgb(0.72, 0.22, 0.18),
     Color::srgb(0.78, 0.45, 0.30),
     Color::srgb(0.58, 0.36, 0.26),
@@ -362,6 +369,10 @@ const TILE_COLORS: [Color; 7] = [
     Color::srgb(0.30, 0.42, 0.64),
     Color::srgb(0.72, 0.71, 0.68),
     Color::srgb(0.45, 0.45, 0.44),
+    Color::srgb(0.50, 0.20, 0.22),
+    Color::srgb(0.38, 0.27, 0.21),
+    Color::srgb(0.24, 0.50, 0.48),
+    Color::srgb(0.80, 0.80, 0.78),
 ];
 const MEMBRANE_COLORS: [Color; 3] = [
     Color::srgb(0.80, 0.80, 0.78),
@@ -710,6 +721,13 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
         BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_WALLS,
         BuildingUse::Church(_) => return WallKind::Sacred,
         BuildingUse::Industrial => &INDUSTRIAL_WALLS,
+        // мелкая коробка без назначения — это частный дом (её и кроют как дом,
+        // `kind_of`), и витражу в частном секторе взяться неоткуда
+        BuildingUse::Other
+            if storeys < LOW_RISE_STOREYS && footprint_area(building) <= SMALL_FOOTPRINT_MAX =>
+        {
+            &HOUSE_WALLS
+        }
         _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
         BuildingUse::Apartments => &APARTMENTS_WALLS,
         BuildingUse::Commercial => &COMMERCIAL_WALLS,

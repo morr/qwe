@@ -19,7 +19,9 @@ use super::material::{
     run_look, run_wall_look, wall_look,
 };
 use super::order::wall_order;
-use super::roofs::{HipRoof, RoofShape, Roofing, TentRoof, roofing, roofing_of};
+use super::roofs::{
+    DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, is_pitched, roofing, roofing_of,
+};
 use super::temples::{Sanctuary, push_crowns};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
@@ -692,6 +694,42 @@ fn push_doors(
     }
 }
 
+/// Стекло слухового окна, линейный цвет: тёмная комната с отблеском неба.
+const DORMER_GLASS: LinearRgba = LinearRgba::rgb(0.05, 0.07, 0.09);
+
+/// Слуховые окна в меш: щёчки и передняя стенка в тоне фасада, стекло, крыша
+/// окна в фактуре кровли. Невидимые с камеры стенки не кладутся вовсе —
+/// painter's порядок внутри окна тогда держится сам.
+fn push_dormers(
+    builder: &mut MeshBuilder,
+    faces: &[DormerFace],
+    look: &RoofLook,
+    facade: Srgba,
+    lift_dir: Vec2,
+) {
+    let visible = |normal: Vec2| normal.dot(-lift_dir) > 0.0;
+    for face in faces {
+        match face {
+            DormerFace::Wall(points, normal) if visible(*normal) => {
+                builder.set_roof(None);
+                let tone = shade_by_light(facade, *normal, WALL_LIT_MIX, WALL_SHADED_MIX)
+                    .mix(&Srgba::WHITE, WALL_TOP_LIGHTEN);
+                builder.push_convex(points, tone.into());
+            }
+            DormerFace::Glass(points, normal) if visible(*normal) => {
+                builder.set_roof(None);
+                builder.push_convex(points, DORMER_GLASS);
+            }
+            DormerFace::Roof(points, tone) => {
+                builder.set_roof(Some(look.frame));
+                builder.push_convex(points, *tone);
+            }
+            _ => {}
+        }
+    }
+    builder.set_roof(Some(look.frame));
+}
+
 /// Вальма в меш: скаты по контуру, потом площадка конька поверх них.
 fn push_hip(builder: &mut MeshBuilder, roof: &HipRoof) {
     for (slope, tone) in &roof.slopes {
@@ -718,14 +756,6 @@ fn hip_ridge_ends(roof: &HipRoof) -> (Vec2, Vec2) {
         }
     }
     best
-}
-
-/// Конёк двускатной крыши: у ската `[карниз, карниз, конёк, конёк]` два
-/// последних угла и есть его концы. Отдельным полем `GableRoof` их не держит —
-/// они уже там, а труба на коньке единственный, кому они понадобились.
-fn ridge_of(roof: &super::roofs::GableRoof) -> (Vec2, Vec2) {
-    let [_, _, far, near] = roof.slopes[0].0;
-    (near, far)
 }
 
 /// Кровля этого дома: у бокса, вошедшего в гаражный прогон, она берётся
@@ -888,16 +918,13 @@ pub(super) fn facade_and_roof_builders(
         ) {
             Roofing::Gable(roof) => {
                 roofs.set_roof(Some(look.frame));
-                for (slope, slope_color) in roof.slopes {
-                    roofs.push_quad(slope, slope_color);
+                for (slope, slope_color) in &roof.slopes {
+                    roofs.push_convex(slope, *slope_color);
                 }
-                if detail.clutter {
-                    items.extend(ridge_chimney(
-                        building,
-                        &look,
-                        ridge_of(&roof),
-                        roof.ridge_offset,
-                    ));
+                if detail.clutter
+                    && let Some(ridge) = roof.ridge
+                {
+                    items.extend(ridge_chimney(building, &look, ridge, roof.ridge_offset));
                 }
             }
             Roofing::Hip(roof) => {
@@ -1206,6 +1233,14 @@ pub(super) fn roof_shadow_builder(
         if sanctuary.raised(target).is_some() {
             continue;
         }
+        // скатная кровля — не плоскость на высоте карниза, на которую этот слой
+        // кладёт тень: в 2.5D скаты поднимаются к коньку, и плоская заплата
+        // съезжала с них тёмным прямоугольником поперёк ската. Частный дом
+        // стал одноэтажным, двухэтажный сосед теперь выше него на те самые
+        // `SHADOW_MIN_DROP`, и заплата легла на половину частного сектора
+        if is_pitched(building) {
+            continue;
+        }
         let (min, max) = boxes[target];
         let lift = if extruded {
             extrusion_lift(building, BuildingHeightMode::Extrusion)
@@ -1501,7 +1536,8 @@ pub(super) fn extrusion_builder(
     passages: &[RoadLine],
     detail: RoofDetail,
     order: &[usize],
-) -> MeshBuilder {
+) -> (MeshBuilder, RoofMix) {
+    let mut mix = RoofMix::default();
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
     let runs = garage_runs(buildings);
@@ -1542,7 +1578,7 @@ pub(super) fn extrusion_builder(
                 (openings, tunnel)
             })
             .unwrap_or_default();
-        push_house_with_arches(
+        let drawn = push_house_with_arches(
             &mut builder,
             building,
             &look,
@@ -1553,11 +1589,12 @@ pub(super) fn extrusion_builder(
             &openings,
             &tunnel,
         );
+        mix.add(building, drawn);
     }
     // венцы — после всех домов: храм в OSM состоит из перекрывающихся контуров,
     // и пристройка, положенная после собора, закрывала низ его глав
     push_crowns(&mut builder, &placed, Some(lean));
-    builder
+    (builder, mix)
 }
 
 /// Один дом в 2.5D: видимые стены, потом крыша заказанной формы и её
@@ -1701,7 +1738,8 @@ fn push_house_with_arches(
         Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
-            for ((a, b), apex) in roof.gables {
+            for ((a, b), face) in &roof.gables {
+                let (a, b) = (*a, *b);
                 let edge = b - a;
                 if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
                     continue;
@@ -1714,14 +1752,18 @@ fn push_house_with_arches(
                 builder.set_wall(
                     wall_frame(building, wall, &span).map(|frame| frame.marked(WallMark::Solid)),
                 );
-                builder.push_polygon(&[a, b, apex], &[], top);
+                builder.push_polygon(face, &[], top);
             }
             builder.set_roof(Some(look.frame));
-            for (slope, slope_color) in roof.slopes {
-                builder.push_quad(slope, slope_color);
+            for (slope, slope_color) in &roof.slopes {
+                // скат плоский и выпуклый, и проекция выпуклость сохраняет
+                builder.push_convex(slope, *slope_color);
             }
-            chimney_on(builder, ridge_of(&roof), roof.ridge_offset);
-            RoofShape::Gable
+            push_dormers(builder, &roof.dormers, look, facade_color, lift_dir);
+            if let Some(ridge) = roof.ridge {
+                chimney_on(builder, ridge, roof.ridge_offset);
+            }
+            RoofShape::of_gable(&roof)
         }
         Roofing::Hip(roof) => {
             // у вальмы фронтонов нет — скаты сходятся со всех сторон, и

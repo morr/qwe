@@ -17,10 +17,10 @@ use qwe::settings::{
     SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN, SUN_ELEVATION_STEP,
 };
 
-/// Высота стен по умолчанию, м: середина `HOUSE_HEIGHTS` из `heights.rs` —
-/// частный дом, то есть тот единственный класс, которому игра вообще ставит
+/// Высота стен по умолчанию, м: типичная из `HOUSE_HEIGHTS` в `heights.rs` —
+/// одноэтажный частный дом, то есть тот класс, которому игра вообще ставит
 /// скатную крышу.
-const DEFAULT_HEIGHT: f32 = 7.0;
+const DEFAULT_HEIGHT: f32 = 3.2;
 
 /// Настройка витрины. `Default` — игра: сила фактуры игровая, дома стоят по
 /// сторонам света, дворов нет.

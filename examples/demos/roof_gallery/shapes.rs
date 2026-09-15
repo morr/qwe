@@ -27,10 +27,15 @@ use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
 
 /// Порядок колонок. «Как решит игра» первой: остальные три — то, из чего она
 /// выбирает.
-pub(crate) const COLUMNS: [RoofShape; 4] = [
+pub(crate) const COLUMNS: [RoofShape; 9] = [
     RoofShape::Auto,
     RoofShape::Flat,
     RoofShape::Gable,
+    RoofShape::Dormer,
+    RoofShape::HalfHip,
+    RoofShape::Gambrel,
+    RoofShape::LeanTo,
+    RoofShape::Cross,
     RoofShape::Hip,
 ];
 
@@ -60,7 +65,7 @@ const HALF_HEIGHT_MAX: f32 = 11.0;
 pub(crate) const BOTTOM_REACH: f32 = HALF_HEIGHT_MAX + CAPTION_DROP + CAPTION_HEIGHT;
 
 /// Насколько верх крыши уходит выше центра клетки, м: полувысота контура плюс
-/// подъём (`EXTRUDE_RANGE` начинается с 2.5 м).
+/// подъём (стены и конёк в 2.5D — несколько метров).
 pub(crate) const TOP_REACH: f32 = HALF_HEIGHT_MAX + 3.0;
 
 /// Дом сетки форм: контур на своём месте и заказанная ему форма.
@@ -249,7 +254,9 @@ pub(crate) fn row_caption(row: usize) -> String {
 pub(crate) fn cell_caption(cell: &ShapeCell, drawn: RoofShape) -> String {
     let facts = shape_facts(&cell.area);
     let rise = match drawn {
-        RoofShape::Gable => facts.as_ref().map(|facts| facts.gable_rise),
+        RoofShape::Gable | RoofShape::Dormer | RoofShape::HalfHip => {
+            facts.as_ref().map(|facts| facts.gable_rise)
+        }
         RoofShape::Hip => facts.as_ref().and_then(|facts| facts.hip_rise),
         _ => None,
     };
@@ -273,5 +280,10 @@ fn name(shape: RoofShape) -> &'static str {
         // жилому дому не достаётся: витрина его не заказывает, и выбор игры
         // на её контурах шатром не выходит
         RoofShape::Tent => "шатёр",
+        RoofShape::HalfHip => "полувальмовая",
+        RoofShape::Gambrel => "ломаная",
+        RoofShape::LeanTo => "односкатная",
+        RoofShape::Cross => "крестовая",
+        RoofShape::Dormer => "со слуховыми окнами",
     }
 }

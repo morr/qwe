@@ -7,7 +7,7 @@
 //!
 //! Геометрия разнесена по подмодулям: [`arches`] режет проходы
 //! `building_passage` сквозь стены, [`roofs`] ставит скатные крыши
-//! (двускатные и вальмовые) на малые дома, [`layers`] собирает сами меши
+//! (двускатные во всех видах, изредка вальмовые) на малые дома, [`layers`] собирает сами меши
 //! слоёв, [`material`] решает, чем
 //! крыша крыта, [`heights`] — сколько у него этажей, когда OSM молчит, — и
 //! фактуру кровли рисует шейдер её материала. Храмы и крепость — не дома:
@@ -74,8 +74,11 @@ const EXTRUDE_SCALE: f32 = 0.35;
 /// при этом как бы смотрит из нижнего левого угла: дальние дома те, что
 /// выше и правее.
 const EXTRUDE_SKEW: f32 = 0.4;
-/// Границы подъёма крыши, м.
-const EXTRUDE_RANGE: RangeInclusive<f32> = 2.5..=30.0;
+/// Границы подъёма крыши, м. Нижняя была 2.5 — то есть семь настоящих метров:
+/// одноэтажный дом, сарай и гараж рисовались одной высоты с двухэтажкой, и
+/// разница этажности частного сектора пропадала. Метр — это трёхметровая стена
+/// одноэтажного дома, над которой встаёт уже крыша.
+const EXTRUDE_RANGE: RangeInclusive<f32> = 1.0..=30.0;
 
 /// Режим отображения высоты зданий; переключается панелью Buildings и BRP,
 /// сохраняется в настройках между запусками.
@@ -272,7 +275,9 @@ pub fn measure_layers(
     match mode {
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
             measure("extruded", &mut || {
-                extrusion_builder(buildings, passages, detail, &order).vertex_count()
+                extrusion_builder(buildings, passages, detail, &order)
+                    .0
+                    .vertex_count()
             });
         }
         BuildingHeightMode::Facade
@@ -366,16 +371,20 @@ pub fn spawn_buildings(
     )
     .then(|| draw_order(buildings, Lean::of()));
 
+    // разброс форм крыш считает только слой экструзии — по тому, что легло в меш
+    let mut roof_mix = String::from("counted in 2.5D only");
     match &order {
         Some(order) => {
             let detail = RoofDetail {
                 tinted: mode == BuildingHeightMode::ExtrusionShadowsTint,
                 clutter: bucket.index == 0,
             };
+            let (extruded, mix) = extrusion_builder(buildings, passages, detail, order);
+            roof_mix = mix.to_string();
             spawn_layer(
                 commands,
                 meshes,
-                extrusion_builder(buildings, passages, detail, order),
+                extruded,
                 Z_BUILDING,
                 "building_extruded",
                 LayerMaterial::Roof(roof.handle()),
@@ -465,13 +474,14 @@ pub fn spawn_buildings(
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавило оборудование кровель
     info!(
-        "building meshing: {vertices} verts in {:?} (shadows {sweep_time:?} sweeps + {shadow_time:?} on ground + {roof_shadow_time:?} on roofs, {} buildings, {} in garage rows, {}, clutter {}, heights: {})",
+        "building meshing: {vertices} verts in {:?} (shadows {sweep_time:?} sweeps + {shadow_time:?} on ground + {roof_shadow_time:?} on roofs, {} buildings, {} in garage rows, {}, clutter {}, heights: {}, roofs: {})",
         started.elapsed(),
         buildings.len(),
         garage_runs(buildings).len(),
         mode.label(),
         bucket.index == 0,
         height_mix(buildings),
+        roof_mix,
     );
     if skipped > 0 {
         warn!("building meshing: {skipped} degenerate polygons skipped");

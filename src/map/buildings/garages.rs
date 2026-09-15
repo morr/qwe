@@ -467,7 +467,7 @@ fn group_reads_as_garage(points: &[Vec2], cooperative: bool) -> bool {
 /// `whole` — «резать нельзя»: у контура с дворами резать пришлось бы и дыры,
 /// а дыра, попавшая не в тот кусок, — это двор, накрытый кровлей. Гаражей с
 /// дворами в данных единицы, и они остаются одним куском, как были.
-fn split_rings(ring: &[Vec2], whole: bool) -> Vec<Vec<Vec2>> {
+pub(super) fn split_rings(ring: &[Vec2], whole: bool) -> Vec<Vec<Vec2>> {
     let mut pieces = Vec::new();
     match whole {
         true => split_into(ring.to_vec(), 0, &mut pieces),
@@ -560,7 +560,7 @@ fn best_cut(ring: &[Vec2]) -> Option<(f32, Vec<Vec2>, Vec<Vec2>)> {
 /// насквозь через остальные зубья и оставила бы кусок, слепленный из
 /// нескольких кусков перемычками нулевой ширины. Хорда же делит простое
 /// кольцо ровно на два простых кольца.
-fn cut_at(ring: &[Vec2], at: usize, direction: Vec2) -> Option<(Vec<Vec2>, Vec<Vec2>)> {
+pub(super) fn cut_at(ring: &[Vec2], at: usize, direction: Vec2) -> Option<(Vec<Vec2>, Vec<Vec2>)> {
     let count = ring.len();
     let from = ring[at];
     let mut hit: Option<(f32, usize)> = None;

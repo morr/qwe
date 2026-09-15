@@ -84,7 +84,7 @@ fn roof_shadows(list: &[PolyArea], extruded: bool) -> MeshBuilder {
 /// Меш 2.5D-экструзии — с тем же порядком отрисовки, который в игре достаётся
 /// заодно и теням на кровлях.
 fn extruded_mesh(list: &[PolyArea], passages: &[RoadLine], detail: RoofDetail) -> MeshBuilder {
-    extrusion_builder(list, passages, detail, &order::draw_order(list, Lean::of()))
+    extrusion_builder(list, passages, detail, &order::draw_order(list, Lean::of())).0
 }
 
 fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
@@ -208,11 +208,13 @@ fn casters_of_opposite_winding_merge_instead_of_cancelling() {
             AreaKind::Building,
         )
     };
-    let low = building(
+    // низкий сосед — корпус с плоской кровлей: на скатную тень не кладётся
+    let mut low = building(
         shadow_rect((-10.0, 10.0), (2.0, 12.0), true),
         Some(4.0),
         AreaKind::Building,
     );
+    low.building_use = BuildingUse::Apartments;
 
     let same = roof_shadow_area(&[near(true), far(true), low.clone()]);
     let opposite = roof_shadow_area(&[near(true), far(false), low]);
@@ -320,8 +322,8 @@ fn a_nearer_body_eats_the_shadow_it_covers() {
     let shaded = roof_shadows(&[caster, target, cover.clone()], true).build();
     let left = shadow_area(&shaded);
     assert!(
-        (left - 346.2).abs() < 1.0,
-        "тело ближнего дома обязано съесть 282 м² тени: {left} из {whole}"
+        (left - 331.3).abs() < 1.0,
+        "тело ближнего дома обязано съесть 297 м² тени: {left} из {whole}"
     );
 
     let lift = extrusion_lift(&cover, BuildingHeightMode::Extrusion);
@@ -1187,9 +1189,9 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
     assert!(ridge.distance(expected) < 1e-4, "{ridge:?} vs {expected:?}");
     assert!(expected.y > 0.0 && expected.x > 0.0);
     // конёк — вдоль длинной оси, оба фронтона стоят на торцах
-    for ((a, b), apex) in roof.gables {
+    for ((a, b), face) in roof.gables {
         assert!((b - a).length() < 8.1, "gable on the short side");
-        assert!(apex.distance((a + b) / 2.0 + expected) < 1e-4);
+        assert!(face[2].distance((a + b) / 2.0 + expected) < 1e-4);
     }
 }
 
@@ -1469,10 +1471,10 @@ fn a_hip_roof_covers_the_footprint_exactly_once() {
 }
 
 #[test]
-fn an_l_shaped_house_gets_a_hip_roof_instead_of_a_flat_one() {
+fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
     let _sun = crate::map::default_sun();
-    // Г-образный дом двускатную не принимает — прямоугольник торчал бы из
-    // него, — и до сих пор оставался плоским среди скатных соседей
+    // Г-образный дом одной двускатной не накрыть — прямоугольник торчал бы из
+    // него, — и в частном секторе он кроется двумя с ендовой, а не вальмой
     let ell = house(vec![
         Vec2::new(0.0, 0.0),
         Vec2::new(14.0, 0.0),
@@ -1481,10 +1483,16 @@ fn an_l_shaped_house_gets_a_hip_roof_instead_of_a_flat_one() {
         Vec2::new(6.0, 14.0),
         Vec2::new(0.0, 14.0),
     ]);
-    assert!(!matches!(
-        roofing(&ell, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0),
-        Roofing::Flat
-    ));
+    for seed in [0, 1 << 5, 7 << 5, 12345] {
+        let Roofing::Gable(roof) = roofing(&ell, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, seed)
+        else {
+            panic!("an L takes a cross gable");
+        };
+        assert_eq!(RoofShape::of_gable(&roof), RoofShape::Cross);
+        // корпус — два ската и два фронтона, крыло — ещё два и один торец
+        assert_eq!(roof.slopes.len(), 4);
+        assert_eq!(roof.gables.len(), 3);
+    }
     // а плоская кровля так и остаётся у того, кому она положена
     let mut block = building(oblong(30.0, 80.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
@@ -1494,9 +1502,190 @@ fn an_l_shaped_house_gets_a_hip_roof_instead_of_a_flat_one() {
     ));
 }
 
-/// Вальма с посевом, который её гарантирует.
+/// Площадь выпуклого многоугольника в плане.
+fn convex_area(points: &[Vec2]) -> f32 {
+    signed_ring_area(points).abs()
+}
+
+#[test]
+fn a_private_house_is_gabled_and_almost_never_hipped_or_flat() {
+    let _sun = crate::map::default_sun();
+    // частный дом 10 × 8: на снимке частного сектора вальмы и плоской кровли
+    // у такого почти не бывает
+    let cottage = house(oblong(8.0, 10.0));
+    let (mut gabled, mut other) = (0, 0);
+    for seed in 0..400u32 {
+        match roofing(
+            &cottage,
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            seed.wrapping_mul(2654435761),
+        ) {
+            Roofing::Gable(roof) => match roof.form {
+                GableForm::Gable => gabled += 1,
+                _ => other += 1,
+            },
+            Roofing::Hip(_) => panic!("a small house took a hip"),
+            Roofing::Flat | Roofing::Tent(_) => panic!("a house lost its pitched roof"),
+        }
+    }
+    assert!(
+        gabled * 2 > gabled + other,
+        "{gabled} gables of {}",
+        gabled + other
+    );
+    assert!(other > 0, "no half-hips or gambrels at all");
+}
+
+#[test]
+fn every_gable_form_covers_its_rectangle_exactly_once() {
+    let _sun = crate::map::default_sun();
+    // плоский режим: грани крыши лежат в плане и обязаны сложиться в
+    // прямоугольник дома — ни дыр, ни нахлёстов
+    let cottage = house(oblong(8.0, 12.0));
+    for shape in [
+        RoofShape::Gable,
+        RoofShape::HalfHip,
+        RoofShape::Gambrel,
+        RoofShape::LeanTo,
+    ] {
+        let Roofing::Gable(roof) =
+            roofing_of(shape, &cottage, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0)
+        else {
+            panic!("{shape:?} did not build");
+        };
+        assert_eq!(RoofShape::of_gable(&roof), shape);
+        let covered: f32 = roof.slopes.iter().map(|(face, _)| convex_area(face)).sum();
+        assert!((covered - 96.0).abs() < 0.1, "{shape:?} covers {covered}");
+    }
+}
+
+#[test]
+fn the_cross_gable_wing_meets_the_main_ridge_no_higher_than_it() {
+    let _sun = crate::map::default_sun();
+    let ell = house(vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(14.0, 0.0),
+        Vec2::new(14.0, 6.0),
+        Vec2::new(6.0, 6.0),
+        Vec2::new(6.0, 14.0),
+        Vec2::new(0.0, 14.0),
+    ]);
+    // подъём уводит точку на тысячу метров вверх за метр высоты: план (до
+    // 14 м) в сдвиге теряется, и высота читается прямо из `y`
+    let Roofing::Gable(roof) = roofing_of(
+        RoofShape::Cross,
+        &ell,
+        Vec2::ZERO,
+        |rise| Vec2::new(0.0, rise * 1000.0),
+        Srgba::WHITE,
+        0,
+    ) else {
+        panic!("an L takes a cross gable");
+    };
+    let top = |faces: &[(Vec<Vec2>, LinearRgba)]| {
+        faces
+            .iter()
+            .flat_map(|(face, _)| face.iter())
+            .map(|point| point.y / 1000.0)
+            .fold(f32::MIN, f32::max)
+    };
+    let (main, wing) = (top(&roof.slopes[..2]), top(&roof.slopes[2..]));
+    assert!((main - ridge_rise(6.0)).abs() < 0.02, "main ridge {main}");
+    assert!(
+        wing <= main + 0.02,
+        "wing ridge {wing} over the main {main}"
+    );
+    assert!(
+        wing > 0.5 * main,
+        "wing ridge {wing} sank into the main roof"
+    );
+}
+
+#[test]
+fn dormers_stand_on_a_lifted_roof_only() {
+    let _sun = crate::map::default_sun();
+    let cottage = house(oblong(9.0, 12.0));
+    let lean = Lean::of();
+    let Roofing::Gable(lifted) = roofing_of(
+        RoofShape::Dormer,
+        &cottage,
+        Vec2::ZERO,
+        |rise| lean.ridge(rise),
+        Srgba::WHITE,
+        0,
+    ) else {
+        panic!("a dormer roof did not build");
+    };
+    assert!(!lifted.dormers.is_empty());
+    assert_eq!(RoofShape::of_gable(&lifted), RoofShape::Dormer);
+    // в плоском режиме окно было бы заплатой на скате
+    let Roofing::Gable(flat) = roofing_of(
+        RoofShape::Dormer,
+        &cottage,
+        Vec2::ZERO,
+        |_| Vec2::ZERO,
+        Srgba::WHITE,
+        0,
+    ) else {
+        panic!("a dormer roof did not build flat");
+    };
+    assert!(flat.dormers.is_empty());
+}
+
+#[test]
+fn a_yard_shed_is_low_and_mostly_lean_to() {
+    let _sun = crate::map::default_sun();
+    let (mut lean_to, mut total) = (0, 0);
+    for index in 0..60 {
+        let at = Vec2::new(index as f32 * 23.0, index as f32 * 17.0);
+        let ring: Vec<Vec2> = oblong(4.0, 6.0).into_iter().map(|p| p + at).collect();
+        let shed = building(ring, None, AreaKind::Building);
+        assert!(height_or_default(&shed) <= 3.0, "a shed is one low box");
+        if let Roofing::Gable(roof) = roofing(
+            &shed,
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            building_seed(&shed),
+        ) {
+            total += 1;
+            lean_to += usize::from(roof.form == GableForm::LeanTo);
+        }
+    }
+    assert_eq!(total, 60);
+    assert!(lean_to * 2 > total, "{lean_to} lean-to of {total}");
+}
+
+#[test]
+fn a_private_house_is_mostly_one_storey() {
+    let _sun = crate::map::default_sun();
+    let mut one = 0;
+    for index in 0..80 {
+        let at = Vec2::new(index as f32 * 31.0, index as f32 * 19.0);
+        let ring: Vec<Vec2> = oblong(9.0, 11.0).into_iter().map(|p| p + at).collect();
+        let cottage = house(ring.clone());
+        let untagged = building(ring, None, AreaKind::Building);
+        for building in [cottage, untagged] {
+            let height = height_or_default(&building);
+            assert!(height <= 6.5, "{height} m is not a private house");
+            one += usize::from(height < 4.5);
+        }
+    }
+    assert!(one * 10 >= 160 * 6, "only {one} of 160 are one storey");
+}
+
+/// Вальма, заказанная явно: посевом она частному дому почти не выпадает.
 fn hip_only(building: &PolyArea, base: Srgba) -> Roofing {
-    roofing(building, Vec2::ZERO, |_| Vec2::ZERO, base, 1 << 5)
+    roofing_of(
+        RoofShape::Hip,
+        building,
+        Vec2::ZERO,
+        |_| Vec2::ZERO,
+        base,
+        0,
+    )
 }
 
 #[test]
@@ -1783,8 +1972,8 @@ fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
 #[test]
 fn a_clamped_wall_still_gets_a_proportional_opening() {
     let _sun = crate::map::default_sun();
-    // 4 м высоты: подъём 4 × 0.35 = 1.4 обрезается снизу до 2.5 м
-    let low = building(square(), Some(4.0), AreaKind::Building);
+    // 2 м высоты: подъём 2 × 0.35 = 0.7 обрезается снизу до 1 м
+    let low = building(square(), Some(2.0), AreaKind::Building);
     let lift = extrusion_lift(&low, BuildingHeightMode::Extrusion);
     assert_eq!(lift.y, *EXTRUDE_RANGE.start());
 
@@ -1799,7 +1988,7 @@ fn a_clamped_wall_still_gets_a_proportional_opening() {
         .collect();
     let opening = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max)
         - heights.iter().copied().fold(f32::INFINITY, f32::min);
-    // арка выше самого дома (6 > 4) — проём режется по стене целиком
+    // арка выше самого дома (6 > 2) — проём режется по стене целиком
     assert!(
         (opening - lift.y).abs() < 0.01,
         "opening {opening} m, expected the whole {} m wall",

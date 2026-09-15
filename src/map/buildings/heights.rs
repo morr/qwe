@@ -20,6 +20,7 @@
 use bevy::math::Vec2;
 
 use super::material::building_seed;
+use super::roofs::SHED_FOOTPRINT_MAX;
 use crate::map::meshing::min_area_rect;
 use crate::map::osm::model::{is_fortress_tower, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, Sacred, SacredForm};
@@ -32,9 +33,16 @@ const STOREY: f32 = 3.0;
 /// боксов на снимке все одной высоты.
 const GARAGE_HEIGHT: f32 = 3.0;
 
-/// Частный дом: один-два этажа с мансардой. Разброс небольшой, но он есть —
-/// в частном секторе соседние дома никогда не одного роста.
-const HOUSE_HEIGHTS: [f32; 4] = [5.0, 6.0, 7.0, 8.0];
+/// Частный дом, высота стен до карниза: в основном **один этаж**, и чердак
+/// над ним живёт уже в крыше (двускатной или ломаной, `roofs.rs`). Двухэтажный
+/// коттедж — один дом из пяти. Прежняя таблица (5–8 м) делила стену на два
+/// этажа окон у каждого дома, и частный сектор выходил кварталом двухэтажек.
+const HOUSE_HEIGHTS: [f32; 10] = [3.0, 3.0, 3.0, 3.0, 3.2, 3.2, 3.4, 3.4, 6.0, 6.4];
+/// Сарай, баня, летняя кухня: одна низкая коробка.
+const SHED_HEIGHTS: [f32; 4] = [2.4, 2.6, 2.8, 3.0];
+/// Дом без назначения не крупнее этого, м², — такой же частный дом, как и
+/// `building=house`: в частном секторе контуры сплошь `building=yes`.
+const COTTAGE_FOOTPRINT_MAX: f32 = 150.0;
 
 /// Панельная секция: пятиэтажка, девятиэтажка, изредка двенадцать. Доли —
 /// по тому, чего в русском городе больше.
@@ -118,6 +126,10 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
         // этажей. Общее имя, а не копия: две таблицы одного числа разошлись бы
         // на первой же правке «прочего корпуса», и молча
         BuildingUse::Public => STOREY * pick(&MID_STOREYS, seed),
+        // мелочь без назначения — постройки частного сектора: сарай во дворе
+        // и сам дом, а не старая двух-трёхэтажка
+        BuildingUse::Other if area <= SHED_FOOTPRINT_MAX => pick(&SHED_HEIGHTS, seed),
+        BuildingUse::Other if area <= COTTAGE_FOOTPRINT_MAX => pick(&HOUSE_HEIGHTS, seed),
         // жильё, контора и половина города без назначения — по форме пятна
         _ => STOREY * storeys_by_shape(&building.outer, area, seed),
     }

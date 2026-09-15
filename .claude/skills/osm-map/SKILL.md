@@ -1777,8 +1777,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   height is drawn; any change reruns `rebuild_buildings` (despawn `BuildingLayerTag`
   layers, respawn from the unchanged `MapData::buildings`). The section lives in
   `ui/buildings.rs`, in the Map tab below Trees and Tree rows, one cycling row. A building
-  with no height uses the default of its `BuildingUse` in every mode (15 m, a house 6 m,
-  a garage 3 m — see **Building use**). Modes:
+  with no height takes its **Inferred storeys** in every mode. Modes:
   - **Facade** (the historical look) — pseudo-3D: the footprint polygon shifted
     straight down in a darker color at z just below the roof (`Z_FACADE` 4.9), visible
     only along south edges. Shift = height × `FACADE_SCALE` (0.2) clamped to 1.5–12 m, so
@@ -1881,6 +1880,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       layer, so a nine-storey block did not darken the five-storey roof next to it, and in
       a dense block that is the first thing an eye checks. A second, small layer sits
       **over** the building layers and carries exactly the missing piece:
+      - **not on a pitched roof** (`is_pitched` targets are skipped). The layer lays a
+        flat patch at the eave lift, and a pitched roof rises to its ridge: the patch slid
+        off the slopes as a dark rectangle across them — reported from a screenshot as
+        soon as private houses became one storey and every two-storey neighbour was the
+        `SHADOW_MIN_DROP` taller. The price: a tall block no longer darkens the private
+        houses' roofs next to it (its ground shadow still lies under them);
       - for each building, the union of its **taller** neighbours' sweeps
         **intersected with its own footprint** — one `overlay(Intersect, NonZero)` call,
         so overlapping shadows on one roof merge instead of stacking into double darkness;
@@ -1976,7 +1981,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     max 0.3 (a 27 m block: 0.55 → 0.48); no-height buildings and the Kremlin keep their
     material colour.
   - **2.5D (Extrusion)** — watabou-style: roof lifted by `lift = height ×
-    EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 2.5–30 m.
+    EXTRUDE_SCALE (0.35) × (EXTRUDE_SKEW, 1)`, the vertical part clamped to 1–30 m. The
+    floor was 2.5 m — seven real metres — and a one-storey house, a shed and a two-storey
+    cottage were all drawn one height; at 1 m a 3 m house wall is drawn as it is.
     The lift is **oblique** (`EXTRUDE_SKEW` 0.4 — 0.4 m right per metre up): a
     strictly vertical lift showed one south wall and a block read as a roof with a dark
     band under it; the skew exposes two wall families, and with the light the shadows
@@ -2070,25 +2077,60 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     normal, so a hip roof shows four or more tones instead of one. On a convex house that
     construction *is* a hip roof; on an L-shaped one it is a hip roof with a flat top —
     which is what the photo shows anyway, and what a straight skeleton would have cost an
-    order of magnitude more to produce. `roofing` is the single door: gable when the seed
-    says so and the rectangle fits, hip otherwise, flat when the building is not in the
-    pitched cohort at all — and `HIPPED_SHARE` (4 in 10) is the split among houses that
-    could take either. **The L-shaped case is why this exists**: those houses were flat
-    among pitched neighbours, which is the one thing an aerial photo of a private sector
-    never shows.
+    order of magnitude more to produce. It was the L-shaped house's roof and 4 houses in 10
+    by seed, and a private sector of hips was the author's report against it («в частном
+    секторе домов с плоской или вальмовой крышей практически нет»): now `roofing` hands a
+    hip only to `HIP_SHARE_OF_100` (3) of the houses of at least `HIP_HOUSE_AREA_MIN`
+    120 m² and to outlines no **gable form** fits (Tula: 3 % of the pitched cohort, from
+    13 % before the cross gable learned T and П).
+  - **Gable forms** (`buildings/roofs.rs`, `GableRoof` + `GableForm`) — one structure for
+    every roof with wall above the eaves: `gables` are `((a, b), face)` — the rectangle edge
+    at the eave that picks frame and visibility, and any convex face on that wall plane —
+    `slopes` are convex polygons (pushed through `push_convex`: planar and convex, and the
+    affine lean keeps them convex), `dormers`, `ridge: Option` (the chimney's; a lean-to
+    has none). A rectangular house's form is `house_roof`, from a **mixed** seed
+    (`shape_seed` — the raw bits already pick material, colour, jitter and height, and a
+    form read from them would travel with them): `HOUSE_FORMS` gable 8 / gambrel 1 /
+    half-hip 1, `SHED_FORMS` (untagged ≤ `SHED_FOOTPRINT_MAX` 40 m²) lean-to 7 / gable 3.
+    - **Half-hip** — `HALF_HIP_SPLIT` 0.55 of the gable is wall, the rest a hip triangle of
+      the side pitch; the ridge is shortened by `(1 − t) × half width` at each end.
+    - **Gambrel** — knee at `GAMBREL_KNEE` 0.32 of the half width, lower pitch 2.0, upper
+      0.5, rise ≤ 6 m; the gable is a pentagon, the steep slope shaded ×1.5, the upper ×0.6.
+      Kept under 1 on the screen: a pitch whose `pitch × lean` passes 1 folds the far slope
+      under the ridge.
+    - **Lean-to** — rise `width × 0.3` ≤ 2 m, the high side by seed; the gables are two
+      triangles and the high long wall.
+    - **Cross gable** (`cross_gable`) — the outline is cut into rectangles by every
+      combination of chords from its reflex vertices (`rect_splits` over
+      `garages::cut_at`, ≤ 4 pieces, ≤ 24 splits), tried from the largest main body down;
+      each piece must fill its `min_area_rect` to `RECT_FILL_MIN`. The main body takes a
+      plain gable, every other piece attaches (`Wing::attach`, tolerance 0.6 m) to an
+      already covered one: at its **long side** its ridge runs across and into the
+      neighbour's slope to a valley at `rise / neighbour pitch`, at its **end** it
+      continues the ridge and drops the gable against the neighbour. A wing wider than its
+      neighbour, or overhanging it, refuses — the ridge would stand above the neighbour's.
+      Both chords of an L must be tried: the "wrong" one leaves the wing at the body's end
+      overhanging it (Tula: 409 L's fell to a hip with a single split). Wing slopes are
+      pushed after the body's: inside the valley triangle the wing is the upper surface.
+    - **Dormer** — one per house (a row of dormers is an apartment block's, the author's
+      note), on a plain gable ≥ 8 × 7 m, `DORMER_SHARE` 3 in 10, on the slope and at the
+      place (0.35–0.65 of the length) the seed picks, 2.5D only. A front wall with a glass
+      pane, two cheeks, a small gable roof into the slope; faces turned away from the
+      camera are not pushed, which is the painter's order inside it.
+    - `RoofMix` counts what the extrusion layer actually drew into the `roofs:` part of the
+      `building meshing:` line. A separate `roofing` pass was 14 ms per rebuild.
   - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
     `is_pitched` (`BuildingUse::House` of any size, or `Other` with a footprint under
     `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
     its towers and gates keep the flat roof, like they keep their colour) is in the
-    **pitched cohort** and gets two slopes instead of a flat roof — unless `roofing`
-    hands it to **Hip roofs** above, which is what happens on 4 houses in 10 by seed and
-    on every outline a gable refuses. The ridge runs along the long axis of the footprint's minimum-area
+    **pitched cohort** and gets two slopes instead of a flat roof — or another of the
+    **Gable forms** above, and a hip only where none fits. The ridge runs along the long axis of the footprint's minimum-area
     bounding rectangle (`min_area_rect`, edge directions of the ring tried as
     orientations — no hull needed at 4–20 vertices); the roof is drawn over that
     rectangle, not the outline (real roofs overhang), which is why it is only applied when
     the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house would
-    wear a rectangle sticking out of it, so it takes a **hip** instead (it stayed *flat*
-    until hip roofs existed). **Fill alone is not enough**, so the rectangle's corners
+    wear a rectangle sticking out of it, so it takes a **cross gable** instead (it stayed
+    *flat* until hip roofs existed, and a hip until the cross gable did). **Fill alone is not enough**, so the rectangle's corners
     must also lie on the walls — no corner farther than `GABLE_OVERHANG_MAX` 0.6 m from
     the outline (`gable_rect`, reported as `ShapeFacts::gable_overhang`). A skewed quad
     fills its rectangle well and still leaves a corner of the roof over nothing: Tula way
@@ -2180,6 +2222,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     thin shed stays low); everything else large is 2–5 — that last branch
     is the most populated one and being generous with it is what made the first version
     come out skyscraping (p90 27 m before the tower table was halved).
+  - **A private house is one storey with an attic in the roof**: `HOUSE_HEIGHTS` is
+    3–3.4 m in 8 slots of 10 and 6–6.4 m in 2, for `building=house` and for an untagged box
+    up to `COTTAGE_FOOTPRINT_MAX` 150 m²; an untagged box up to `SHED_FOOTPRINT_MAX` 40 m²
+    is a yard shed at 2.4–3 m. It was 5–8 m, i.e. two rows of windows on every house, and
+    an untagged 60 m² box took the 2–4-storey low table — the author's report: «большая
+    часть "двухэтажных" домов на самом деле одноэтажные, но с чердаком». Such a box also
+    takes the house wall table (`material::wall_kind_of`), not the low-rise one with its
+    shopfront.
   - **Some uses are measured in metres, not storeys**: an industrial hall or a store has
     one tall span, a church has one storey to the cornice, a garage is one box and gets no
     spread at all (a row of garage boxes on a photo is all one height).
