@@ -1011,23 +1011,28 @@ impl MeshBuilder {
                 // нормалями там не совпадают ни в одной точке, кроме осевой, и
                 // растеризатор оставлял между ними волосяную щель поперёк всей
                 // ленты — светлую линию тротуара под проездом.
-                let miters = miter_offsets(&path, closed, half_width);
-                let shared: Vec<bool> = (0..count)
+                // направления до и после каждой вершины: `None` у концов
+                // открытой ленты и у вершины с вырожденным звеном
+                let bends: Vec<Option<(Vec2, Vec2)>> = (0..count)
                     .map(|index| {
                         if !closed && (index == 0 || index + 1 == count) {
-                            return false;
+                            return None;
                         }
                         let previous = path[(index + count - 1) % count];
                         let next = path[(index + 1) % count];
-                        match (
-                            (path[index] - previous).try_normalize(),
-                            (next - path[index]).try_normalize(),
-                        ) {
-                            (Some(incoming), Some(outgoing)) => {
-                                half_width * incoming.angle_to(outgoing).abs() < ARC_TOLERANCE
-                            }
-                            _ => false,
-                        }
+                        Some((
+                            (path[index] - previous).try_normalize()?,
+                            (next - path[index]).try_normalize()?,
+                        ))
+                    })
+                    .collect();
+                let miters = miter_offsets(&path, closed, half_width);
+                let shared: Vec<bool> = bends
+                    .iter()
+                    .map(|bend| {
+                        bend.is_some_and(|(incoming, outgoing)| {
+                            join_gap_hidden(half_width, incoming.angle_to(outgoing))
+                        })
                     })
                     .collect();
                 for index in 0..segments {
@@ -1049,16 +1054,8 @@ impl MeshBuilder {
                         self.segment_coords(half_width, ends[index], ends[next]),
                     );
                 }
-                for index in 0..count {
-                    if !closed && (index == 0 || index + 1 == count) {
-                        continue;
-                    }
-                    let previous = path[(index + count - 1) % count];
-                    let next = path[(index + 1) % count];
-                    let (Some(incoming), Some(outgoing)) = (
-                        (path[index] - previous).try_normalize(),
-                        (next - path[index]).try_normalize(),
-                    ) else {
+                for (index, bend) in bends.iter().enumerate() {
+                    let Some((incoming, outgoing)) = *bend else {
                         continue;
                     };
                     self.push_join_fan(
@@ -1147,7 +1144,7 @@ impl MeshBuilder {
         to_break: f32,
     ) {
         let turn = incoming.angle_to(outgoing);
-        if radius * turn.abs() < ARC_TOLERANCE {
+        if join_gap_hidden(radius, turn) {
             return;
         }
         let side = -turn.signum();
@@ -1715,6 +1712,16 @@ pub(crate) fn arc_steps(radius: f32, sweep: f32) -> usize {
         PI
     };
     ((sweep / max_step).ceil() as usize).clamp(1, MAX_ARC_STEPS)
+}
+
+/// Не видна ли щель butt-квадов на изломе в `turn` радиан у ленты полуширины
+/// `radius`: её ширина `radius · |turn|` мельче [`ARC_TOLERANCE`]. Одно правило
+/// на обе стороны излома круглой ленты — такому веер не кладётся
+/// ([`MeshBuilder::push_join_fan`]), и такой же квады проходят общими
+/// вершинами; разойдись они, вернулась бы либо волосяная щель, либо веер поверх
+/// общих вершин.
+fn join_gap_hidden(radius: f32, turn: f32) -> bool {
+    radius * turn.abs() < ARC_TOLERANCE
 }
 
 /// Расстояние от точки до ломаной — мерка тестов на геометрию лент: ни одна
