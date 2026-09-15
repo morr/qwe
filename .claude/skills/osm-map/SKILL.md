@@ -314,7 +314,19 @@ in `CONTEXT.md` and the detail here in the same change.
   centre, else the nearest larger one within `CHURCH_PART_REACH` 30 m (a bell tower stands
   beside, not inside). The part takes the host's first-vertex seed as `Sacred::complex` —
   what its colours are picked by — and, when untagged, the host's faith; the rest take the
-  city majority (Orthodox vs Western, ties → Western).
+  city majority (Orthodox vs Western, ties → Western). `Sacred::floor_dm` is `min_height`,
+  else `building:min_level` × 3 m (`tags.rs::part_floor`).
+  **Annexes** (`parse.rs::absorb_annexes`, same pass, after hosting): a `BuildingUse::Other`
+  building of `AreaKind::Building` that lies on a church **or an annex** — its centre in the
+  host, the host's centre in it, or `ANNEX_OVERLAP_SHARE` 25 % of its own footprint
+  shared (`overlap_area`, an `i_overlay` intersect) — at most `ANNEX_AREA_RATIO` 2.5× the
+  host, becomes `SacredForm::Annex` with the largest such host's faith and complex, in up
+  to `ANNEX_ROUNDS` 3 rounds (the apse part below shares under a quarter with the
+  cathedral itself and lies on the museum instead).
+  Only `Other`: a house, a school or a shop keeps its class however it lies. Tula: the arms
+  museum mapped over the Epiphany cathedral (45×39 vs 37×35, `building=yes`) and the
+  cathedral's apse part (20×24, centre outside, half inside) were two apartment boxes with
+  windows the cathedral's cupolas stuck out from behind.
 - **Fortress** (`parse/tags.rs::is_fortification`) — `AreaKind::Kremlin` from
   `historic=citywalls|castle|city_gate|fort`, `barrier=city_wall` on an area,
   `man_made=tower` + `tower:type=defensive`, or `building=wall` at ≥ 6 m
@@ -1924,9 +1936,31 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     egg. **Heights are stretched** (`ONION_STRETCH` 2.6, `HEMISPHERE_STRETCH` 1.4): the 2.5D
     lift is 0.35 m per metre, and an honest onion came out a ball. Drums carry window slits;
     bell towers a dark belfry arch. In the flat modes slices lie concentric.
-  - **Shadows** reach the crown's real top: `temples::shadow_casters` hands a convex base per
-    element and its height, swept by `sweep_convex` into `ShadowSweeps` (so roof shadows see
-    them too). Stretch is drawing only.
+  - **Shadows** reach the crown's real top: `Sanctuary::shadow_casters` hands a convex base
+    per element and its height, swept by `sweep_convex` into `ShadowSweeps`. Stretch is
+    drawing only. **Roof shadows are not cast between parts of one church**
+    (`layers::same_church`): the roof-shadow layer lies over the building layer, and the
+    bell tower and drums of Tula's kremlin cathedral laid translucent wedges over its own
+    cupolas.
+  - **Parts of a church are assembled at draw time** (`temples::Sanctuary`, built once per
+    layer build from the whole list). A **raised part** — a `Dome` part with
+    `Sacred::floor_dm`, or a drum (≤ 14 m) on another church of its `complex` (floor = the
+    host's height) — **draws no box**: its crown is one drum from the floor (not stretched —
+    the height is real) and a cupola, seated at eave `ZERO`. Before this the kremlin
+    cathedral's drums (`min_height=20`, 30–35 m) grew from the ground as columns with
+    windows through its walls. A church whose cupolas are mapped as parts grows **none of
+    its own** (its minor cupolas used to pair up with the real ones). The raised part is
+    skipped as a roof-shadow target and casts no box sweep. **All crowns of the layer are
+    pushed after all buildings** (`push_crowns` over `(Crown, eave)` pairs): an annex laid
+    after its cathedral hid the cupolas' base — cupolas sticking out from behind walls. The
+    price: a crown can overdraw a nearer taller neighbour's wall, rare since a cupola tops
+    everything around it.
+  - **Tower against wall is the ordinary pairwise order, nothing forced.** Tula's
+    `building=wall` sections end at the tower outlines (measured: cutting them by the towers
+    removes nothing), so at a joint the section on the camera side covers the tower's foot
+    and the one behind goes under it — exactly what `order::upper` decides. Forcing «tower
+    over wall» was tried and reverted by the author's report: the tower then covered the near
+    section's end.
   - **Merlons** (`clutter::merlons`) along every edge of a fortress wall's outer ring, pitch
     2.6 m, 1.3 × 0.7 × 1.9 m, through `push_items` (clutter zoom bucket).
   - **`temple_gallery`** (`examples/demos/temple_gallery`) — faith × (ship, square, chapel,

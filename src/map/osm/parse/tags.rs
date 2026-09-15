@@ -136,6 +136,27 @@ fn sacred(tags: &HashMap<String, String>) -> Sacred {
         faith: faith(tags),
         form: sacred_form(tags),
         complex: 0,
+        floor_dm: (part_floor(tags) * 10.0).round() as u16,
+    }
+}
+
+/// С какой высоты часть здания начинается, м: `min_height`, иначе
+/// `building:min_level` × высота этажа; ноль — от земли. Зажато в пределы
+/// правдоподобной высоты здания.
+fn part_floor(tags: &HashMap<String, String>) -> f32 {
+    let floor = tags
+        .get("min_height")
+        .and_then(|value| parse_measure(value))
+        .or_else(|| {
+            tags.get("building:min_level")
+                .and_then(|value| parse_measure(value))
+                .map(|levels| levels * STOREY_HEIGHT)
+        })
+        .unwrap_or(0.0);
+    if floor.is_finite() {
+        floor.clamp(0.0, *BUILDING_HEIGHT_RANGE.end())
+    } else {
+        0.0
     }
 }
 

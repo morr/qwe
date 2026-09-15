@@ -19,7 +19,7 @@ use super::material::{
 };
 use super::order::wall_order;
 use super::roofs::{HipRoof, RoofShape, Roofing, TentRoof, roofing, roofing_of};
-use super::temples::{crowns, push_crowns, shadow_casters};
+use super::temples::{Sanctuary, push_crowns};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
@@ -843,10 +843,19 @@ pub(super) fn facade_and_roof_builders(
     let mut facades = MeshBuilder::default();
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
+    let sanctuary = Sanctuary::of(buildings);
+    let mut placed = Vec::new();
     for (index, building) in buildings.iter().enumerate() {
         // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
         // цвет у неё тот же, что был бы у настоящей стены в 2.5D
         let facade_color = wall_look(building, storeys_of(building)).base;
+        let look = look_of(building, runs.get(&index));
+        let color = roof_color(building, &look, detail.tinted);
+        placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO));
+        // часть на крыше храма — это барабан с главой, коробки у неё нет
+        if sanctuary.raised(index).is_some() {
+            continue;
+        }
 
         // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
         // только вдоль южных граней любого полигона. Сдвиг — по высоте из
@@ -868,8 +877,6 @@ pub(super) fn facade_and_roof_builders(
         }
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
-        let look = look_of(building, runs.get(&index));
-        let color = roof_color(building, &look, detail.tinted);
         let mut items = Vec::new();
         match roofing(
             building,
@@ -928,13 +935,9 @@ pub(super) fn facade_and_roof_builders(
         // в плоском режиме у коробки нет стен — только тень и верх, как у
         // самих домов в этих режимах
         push_items(&mut roofs, &items, None, color);
-        push_crowns(
-            &mut roofs,
-            &crowns(building, facade_color, color),
-            Vec2::ZERO,
-            None,
-        );
     }
+    // венцы — после всех кровель: см. `temples::push_crowns`
+    push_crowns(&mut roofs, &placed, None);
     (facades, roofs)
 }
 
@@ -982,19 +985,26 @@ impl ShadowSweeps {
         );
         let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
         let mut spans = Vec::with_capacity(buildings.len());
-        for building in buildings {
+        let sanctuary = Sanctuary::of(buildings);
+        for (index, building) in buildings.iter().enumerate() {
             let start = contours.len();
             let length =
                 (height_or_default(building) * shadow_length_scale()).clamp(min_length, max_length);
             let offset = shadow_dir() * length;
-            for chain in silhouette_chains(&building.outer, shadow_dir()) {
+            // у части на крыше храма коробки нет, и тени коробки тоже: её тень —
+            // тень барабана с главой, она ниже
+            let chains = match sanctuary.raised(index) {
+                Some(_) => Vec::new(),
+                None => silhouette_chains(&building.outer, shadow_dir()),
+            };
+            for chain in chains {
                 let mut sweep: Vec<Vec2> = chain.clone();
                 sweep.extend(chain.iter().rev().map(|&point| point + offset));
                 push_contour(&mut contours, sweep);
             }
             // глава и шпиль выше карниза, и тень храма обязана дотянуться до
             // маковки — иначе на земле он тот же коробок, что и сосед
-            for (outline, top) in shadow_casters(building) {
+            for (outline, top) in sanctuary.shadow_casters(index, building) {
                 let length = (top * shadow_length_scale()).clamp(min_length, max_length);
                 push_contour(&mut contours, sweep_convex(&outline, shadow_dir() * length));
             }
@@ -1187,8 +1197,14 @@ pub(super) fn roof_shadow_builder(
     }
     // тела соседей по той же сетке: они не отбрасывают тень, а съедают её
     let bodies = DrawnBodies::of(buildings, &boxes, order);
+    let sanctuary = Sanctuary::of(buildings);
 
     for (target, building) in buildings.iter().enumerate() {
+        // у части на крыше храма кровли нет — нарисован только барабан с главой, —
+        // и тень, посчитанная на её поднятый контур, висела над собором клином
+        if sanctuary.raised(target).is_some() {
+            continue;
+        }
         let (min, max) = boxes[target];
         let lift = if extruded {
             extrusion_lift(building, BuildingHeightMode::Extrusion)
@@ -1208,6 +1224,7 @@ pub(super) fn roof_shadow_builder(
             caster != target
                 && heights[caster] - heights[target] >= SHADOW_MIN_DROP
                 && boxes_overlap((min, max), sweep_boxes[caster])
+                && !same_church(&buildings[caster], building)
         });
         if casters.is_empty() {
             continue;
@@ -1261,6 +1278,19 @@ pub(super) fn roof_shadow_builder(
 
 /// Пересекаются ли два AABB (`ring_bounds`): касание считается пересечением —
 /// префильтр обязан ошибаться в сторону «да».
+/// Части одного храма ([`crate::map::osm::Sacred::complex`]) — одно здание.
+///
+/// Слой теней на кровлях лежит **над** слоем зданий, а собор в OSM — это
+/// перекрывающиеся контуры: колокольня, барабаны и пристройки отбрасывали тень
+/// на кровлю своего же собора, и она ложилась поверх его глав и барабанов
+/// полупрозрачными клиньями. Внутри одного храма кровельной тени нет.
+fn same_church(a: &PolyArea, b: &PolyArea) -> bool {
+    matches!(
+        (a.building_use, b.building_use),
+        (BuildingUse::Church(a), BuildingUse::Church(b)) if a.complex != 0 && a.complex == b.complex
+    )
+}
+
 fn boxes_overlap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
     a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
 }
@@ -1478,10 +1508,24 @@ pub(super) fn extrusion_builder(
     // стены и крыши едут одним мешем (painter's порядок общий), так что
     // рамку кровли несёт и он: у стен она нулевая, у крыш своя
     let mut builder = MeshBuilder::with_roof_coords();
+    let sanctuary = Sanctuary::of(buildings);
+    let mut placed = Vec::new();
     for &index in order {
         let building = &buildings[index];
         let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
+        let wall = wall_of_run(building, runs.get(&index));
+        placed.extend(sanctuary.crowns(
+            index,
+            building,
+            wall.base,
+            color,
+            extrusion_lift(building, BuildingHeightMode::Extrusion),
+        ));
+        // часть на крыше храма — барабан с главой, коробки от земли у неё нет
+        if sanctuary.raised(index).is_some() {
+            continue;
+        }
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
         let openings = arches
@@ -1495,13 +1539,16 @@ pub(super) fn extrusion_builder(
             &mut builder,
             building,
             &look,
-            &wall_of_run(building, runs.get(&index)),
+            &wall,
             color,
             RoofShape::Auto,
             detail.clutter,
             &openings,
         );
     }
+    // венцы — после всех домов: храм в OSM состоит из перекрывающихся контуров,
+    // и пристройка, положенная после собора, закрывала низ его глав
+    push_crowns(&mut builder, &placed, Some(lean));
     builder
 }
 
@@ -1529,7 +1576,17 @@ pub fn push_house(
     shape: RoofShape,
     clutter: bool,
 ) -> RoofShape {
-    push_house_with_arches(builder, building, look, wall, color, shape, clutter, &[])
+    let built = push_house_with_arches(builder, building, look, wall, color, shape, clutter, &[]);
+    // дом витрины стоит один — частей храма вокруг нет, и венец у него свой
+    let crowns = Sanctuary::of(std::slice::from_ref(building)).crowns(
+        0,
+        building,
+        wall.base,
+        color,
+        extrusion_lift(building, BuildingHeightMode::Extrusion),
+    );
+    push_crowns(builder, &crowns, Some(Lean::of()));
+    built
 }
 
 /// Облицовка, которую игра выбрала бы этому дому. Витринам — чтобы не
@@ -1674,14 +1731,8 @@ fn push_house_with_arches(
             RoofShape::Flat
         }
     };
-    // над кровлей — то, чем храм и крепость отличаются от дома: главы,
-    // колокольня и минареты, зубцы по верху стены
-    push_crowns(
-        builder,
-        &crowns(building, facade_color, color),
-        lift,
-        Some(lean),
-    );
+    // зубцы по верху крепостной стены — оборудование этого дома; главы храма
+    // кладёт вызывающий, после всех домов (`temples::push_crowns`)
     if clutter {
         push_items(builder, &merlons(building, lift), Some(lean), color);
     }

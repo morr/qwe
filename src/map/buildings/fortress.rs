@@ -16,12 +16,7 @@ use bevy::prelude::*;
 use super::material::RoofKind;
 use super::roofs::LandmarkRoof;
 use crate::map::osm::PolyArea;
-use crate::map::osm::model::signed_ring_area;
-
-/// Компактность пятна (`площадь / периметр²`), выше которой это башня, а не
-/// прясло стены. У квадрата 1/16 ≈ 0.063, у прямоугольника 5 : 1 — 0.035, у
-/// ленты стены 3 × 40 м — 0.017.
-const TOWER_COMPACTNESS_MIN: f32 = 0.03;
+use crate::map::osm::model::is_fortress_tower;
 
 /// Кирпич крепостной стены: тульский кремль красно-оранжевый, и светлее
 /// прежней тёмной константы — та на тени стены уходила почти в чёрный.
@@ -36,22 +31,10 @@ const TOWER_ROOF_COLORS: [Color; 2] =
 /// Подъём шатра башни в сторонах плана: крепостной шатёр ниже колокольного.
 const TOWER_TENT_RISE: f32 = 0.9;
 
-/// Башня ли это, а не прясло стены.
+/// Башня ли это, а не прясло стены ([`crate::map::osm::model::is_fortress_tower`]
+/// — правило одно на разбор, который режет прясла по башням, и на отрисовку).
 pub(super) fn is_tower(building: &PolyArea) -> bool {
-    let perimeter: f32 = std::iter::once(&building.outer)
-        .chain(&building.holes)
-        .map(|ring| ring_perimeter(ring))
-        .sum();
-    if perimeter <= 0.0 || !building.holes.is_empty() {
-        return false;
-    }
-    signed_ring_area(&building.outer).abs() / (perimeter * perimeter) >= TOWER_COMPACTNESS_MIN
-}
-
-fn ring_perimeter(ring: &[Vec2]) -> f32 {
-    (0..ring.len())
-        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
-        .sum()
+    is_fortress_tower(building)
 }
 
 /// Форма крыши: шатёр на башне, плоский ход на стене.

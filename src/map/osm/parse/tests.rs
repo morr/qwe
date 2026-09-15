@@ -13,6 +13,7 @@ const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
     faith: Faith::Western,
     form: SacredForm::Nave,
     complex: 0,
+    floor_dm: 0,
 });
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -1129,7 +1130,11 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
             &[("building", "church"), ("amenity", "school")],
             square(CENTER, HALF),
         )
-        .area(&[("building", "yes")], square(CENTER, HALF))
+        // в стороне: лёжа на храме, контур без назначения стал бы его пристройкой
+        .area(
+            &[("building", "yes")],
+            square(CENTER + Vec2::new(400.0, 0.0), HALF),
+        )
         .area(
             &[("natural", "water"), ("amenity", "school")],
             square(CENTER, HALF),
@@ -1396,6 +1401,85 @@ fn a_bell_tower_beside_a_church_is_painted_with_it() {
     };
     assert_eq!(tower.complex, church.complex);
     assert_eq!(tower.faith, Faith::Orthodox);
+}
+
+/// Обычный контур, лежащий на храме, — его пристройка; квартал вокруг храма
+/// во дворе ею не становится, и соседний дом тоже. Высота начала части — из
+/// `min_height`, а без него из `building:min_level`.
+#[test]
+fn a_building_lying_on_a_church_becomes_its_annex() {
+    let church_tags = [
+        ("building", "cathedral"),
+        ("religion", "christian"),
+        ("denomination", "russian_orthodox"),
+    ];
+    let map = Overpass::new(CITY)
+        .area(&church_tags, square(CENTER, 18.0))
+        // музей в здании собора: чуть больше и тот же центр
+        .area(
+            &[("building", "yes"), ("tourism", "museum")],
+            square(CENTER, 21.0),
+        )
+        // пристройка, чей центр внутри собора
+        .area(
+            &[("building", "yes")],
+            square(CENTER + Vec2::new(15.0, 0.0), 8.0),
+        )
+        // квартал с храмом во дворе — в десятки раз крупнее
+        .area(&[("building", "apartments")], square(CENTER, 120.0))
+        // соседний дом через дорогу
+        .area(
+            &[("building", "yes")],
+            square(CENTER + Vec2::new(60.0, 0.0), 10.0),
+        )
+        .area(
+            &[
+                ("building", "cathedral"),
+                ("roof:shape", "onion"),
+                ("min_height", "20"),
+            ],
+            square(CENTER, 4.0),
+        )
+        .area(
+            &[
+                ("building", "cathedral"),
+                ("roof:shape", "dome"),
+                ("building:min_level", "2"),
+            ],
+            square(CENTER + Vec2::new(8.0, 8.0), 4.0),
+        )
+        // алтарная часть: заходит в храм на 40 % своего пятна, но оба центра
+        // снаружи друг друга
+        .area(
+            &[("building", "yes")],
+            square(CENTER + Vec2::new(0.0, 20.0), 10.0),
+        )
+        .parse();
+
+    let form = |index: usize| match map.buildings[index].building_use {
+        BuildingUse::Church(sacred) => Some(sacred.form),
+        _ => None,
+    };
+    assert_eq!(form(1), Some(SacredForm::Annex));
+    assert_eq!(form(2), Some(SacredForm::Annex));
+    assert_eq!(form(7), Some(SacredForm::Annex));
+    assert_eq!(form(3), None);
+    assert_eq!(form(4), None);
+    let BuildingUse::Church(museum) = map.buildings[1].building_use else {
+        panic!("an annex");
+    };
+    let BuildingUse::Church(cathedral) = map.buildings[0].building_use else {
+        panic!("a church");
+    };
+    assert_eq!(museum.complex, cathedral.complex);
+    assert_eq!(museum.faith, Faith::Orthodox);
+
+    let floor = |index: usize| match map.buildings[index].building_use {
+        BuildingUse::Church(sacred) => sacred.floor(),
+        _ => f32::NAN,
+    };
+    assert_eq!(floor(5), 20.0);
+    assert_eq!(floor(6), 6.0);
 }
 
 /// Крепость узнаётся не только по `historic`: у Тульского кремля стена —

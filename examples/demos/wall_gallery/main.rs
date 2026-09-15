@@ -280,6 +280,7 @@ const USES: [BuildingUse; 8] = [
         faith: Faith::Orthodox,
         form: SacredForm::Nave,
         complex: 0,
+        floor_dm: 0,
     }),
 ];
 

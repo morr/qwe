@@ -100,6 +100,18 @@ pub struct Sacred {
     /// цвета стен, кровли и глав, и части одного собора не красятся вразнобой.
     /// Ноль — разбор ещё не дошёл до сборки храмов.
     pub complex: u32,
+    /// С какой высоты часть начинается, дециметры: `min_height` или
+    /// `building:min_level` × 3 м. Барабан с главой в OSM стоит на крыше
+    /// храма, и рисовать его от земли — это колонна, проросшая сквозь стену.
+    /// Целым числом, а не `f32`, — чтобы `Sacred` оставался `Eq`.
+    pub floor_dm: u16,
+}
+
+impl Sacred {
+    /// С какой высоты часть начинается, м.
+    pub fn floor(self) -> f32 {
+        f32::from(self.floor_dm) / 10.0
+    }
 }
 
 /// Вероисповедание — ровно столько классов, сколько различимо с воздуха
@@ -139,6 +151,10 @@ pub enum SacredForm {
     Tower,
     /// Барабан под главой: часть с `roof:shape=onion|dome`.
     Dome,
+    /// Пристройка: обычный контур (`building=yes`, `building:part`), лежащий
+    /// на храме, — трапезная, придел, музей в здании собора. Своих глав у неё
+    /// нет, а стены и кровля — храма (`parse::resolve_faiths`).
+    Annex,
 }
 
 /// Полигон с дырками. Кольца открытые: последняя точка не повторяет первую.
@@ -815,6 +831,27 @@ pub fn signed_ring_area(ring: &[Vec2]) -> f32 {
 /// Площадь кольца, абсолютная.
 pub fn ring_area(ring: &[Vec2]) -> f32 {
     signed_ring_area(ring).abs()
+}
+
+/// Компактность пятна (`площадь / периметр²`), с которой крепостное
+/// сооружение — башня, а не прясло стены. У квадрата 1/16 ≈ 0.063, у
+/// восьмигранника 0.075, у прямоугольника 5 : 1 — 0.035, у ленты стены
+/// 3 × 40 м — 0.017.
+const FORTRESS_TOWER_COMPACTNESS_MIN: f32 = 0.03;
+
+/// Башня ли это крепостное сооружение, а не прясло стены. Про теги не
+/// спрашивает: у Тульского кремля башня — `man_made=tower`, стена —
+/// `building=wall`, а в других городах на обоих один `historic=citywalls`, и
+/// различает их только форма.
+pub fn is_fortress_tower(area: &PolyArea) -> bool {
+    if area.kind != AreaKind::Kremlin || !area.holes.is_empty() || area.outer.len() < 3 {
+        return false;
+    }
+    let perimeter: f32 = (0..area.outer.len())
+        .map(|index| area.outer[index].distance(area.outer[(index + 1) % area.outer.len()]))
+        .sum();
+    perimeter > 0.0
+        && ring_area(&area.outer) / (perimeter * perimeter) >= FORTRESS_TOWER_COMPACTNESS_MIN
 }
 
 /// AABB кольца: (min, max).

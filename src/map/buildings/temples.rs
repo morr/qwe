@@ -30,6 +30,7 @@
 //! режимах крена нет, ломтики ложатся концентрически, и сверху глава
 //! читается кольцами света.
 
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::color::Mix;
@@ -213,6 +214,9 @@ pub(super) enum Crown {
         profile: Profile,
         color: Srgba,
         drum_color: Srgba,
+        /// Барабан приподнятой части ([`Sanctuary`]): его высота настоящая и
+        /// не вытягивается.
+        raised: bool,
     },
     /// Колокольня или западная башня: квадратный столп, шатёр или шпиль над
     /// ним, у православной — ещё и маленькая глава на вершине.
@@ -365,13 +369,172 @@ impl Plan {
     }
 }
 
+/// Храмы города в сборе: какие части стоят на крыше своего храма и у каких
+/// храмов главы размечены частями.
+///
+/// Нужно это потому, что часть храма нельзя нарисовать по одному её контуру. У
+/// Успенского собора Тульского кремля барабаны глав — отдельные контуры с
+/// `min_height=20`: они стоят на крыше собора, а коробкой от земли выходили
+/// колоннами с окнами, проросшими сквозь его стены. И сам собор, у которого
+/// главы уже есть частями, ставил поверх свои — лишний пучок глав.
+pub(super) struct Sanctuary {
+    /// Приподнятые части — индекс в списке домов и высота, с которой часть
+    /// начинается, м. Коробки у них нет: рисуются барабан и глава.
+    raised: HashMap<usize, f32>,
+    /// Храмы (по посеву [`Sacred::complex`]), главы которых размечены частями:
+    /// центральную главу такому храму от себя ставить незачем.
+    domed: HashSet<u32>,
+}
+
+impl Sanctuary {
+    pub(super) fn of(buildings: &[PolyArea]) -> Self {
+        // хозяин храма — тот, от чьей первой вершины взят посев храма
+        let hosts: HashMap<u32, usize> = buildings
+            .iter()
+            .enumerate()
+            .filter_map(|(index, building)| match building.building_use {
+                BuildingUse::Church(sacred)
+                    if sacred.complex != 0 && sacred.complex == building_seed(building) =>
+                {
+                    Some((sacred.complex, index))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut raised = HashMap::new();
+        let mut domed = HashSet::new();
+        for (index, building) in buildings.iter().enumerate() {
+            let BuildingUse::Church(sacred) = building.building_use else {
+                continue;
+            };
+            if sacred.form != SacredForm::Dome {
+                continue;
+            }
+            let host = hosts
+                .get(&sacred.complex)
+                .copied()
+                .filter(|&host| host != index);
+            let floor = match (sacred.floor(), host) {
+                (floor, _) if floor > 0.0 => floor,
+                // барабан без высоты начала, но на чужом храме — стоит на его крыше
+                (_, Some(host)) if is_drum(sacred, building) => height_or_default(&buildings[host]),
+                _ => continue,
+            };
+            // высота начала не выше самой части: иначе рисовать нечего
+            let floor = floor.min(height_or_default(building) * RAISED_FLOOR_SHARE_MAX);
+            raised.insert(index, floor);
+            if host.is_some() {
+                domed.insert(sacred.complex);
+            }
+        }
+        Self { raised, domed }
+    }
+
+    /// С какой высоты начинается приподнятая часть; `None` — дом стоит на земле
+    /// и рисуется коробкой.
+    pub(super) fn raised(&self, index: usize) -> Option<f32> {
+        self.raised.get(&index).copied()
+    }
+
+    /// Венец дома с его посадкой: `lift` — подъём карниза этого дома в текущем
+    /// режиме. У приподнятой части посадка нулевая, а высота начала уже в
+    /// самом элементе, — она меряется от земли, а не от своего карниза.
+    pub(super) fn crowns(
+        &self,
+        index: usize,
+        building: &PolyArea,
+        wall: Srgba,
+        roof: Srgba,
+        lift: Vec2,
+    ) -> Vec<(Crown, Vec2)> {
+        if let Some(floor) = self.raised(index) {
+            return raised_drum(building, floor, wall)
+                .into_iter()
+                .map(|crown| (crown, Vec2::ZERO))
+                .collect();
+        }
+        let own_domes = match building.building_use {
+            BuildingUse::Church(sacred) => !self.domed.contains(&sacred.complex),
+            _ => true,
+        };
+        crowns(building, wall, roof, own_domes)
+            .into_iter()
+            .map(|crown| (crown, lift))
+            .collect()
+    }
+
+    /// Пятна венца на земле и верх каждого над землёй, м: по ним теневой слой
+    /// дотягивает тень храма до маковки (`layers::ShadowSweeps`). Контуры
+    /// выпуклые и против часовой.
+    pub(super) fn shadow_casters(
+        &self,
+        index: usize,
+        building: &PolyArea,
+    ) -> Vec<(Vec<Vec2>, f32)> {
+        if !matches!(building.building_use, BuildingUse::Church(_)) {
+            return Vec::new();
+        }
+        let eave = match self.raised(index) {
+            Some(_) => 0.0,
+            None => height_or_default(building),
+        };
+        self.crowns(index, building, Srgba::WHITE, Srgba::WHITE, Vec2::ZERO)
+            .iter()
+            .map(|(crown, _)| {
+                let outline = match *crown {
+                    Crown::Dome { at, radius, .. } => disc(at, radius, DOME_SIDES),
+                    Crown::Tower { at, axis, side, .. } => square(at, axis, side).to_vec(),
+                    Crown::Minaret { at, radius, .. } => disc(at, radius, SHAFT_SIDES),
+                };
+                (outline, eave + top(crown))
+            })
+            .collect()
+    }
+}
+
+/// Высота начала приподнятой части не выше этой доли её собственной высоты:
+/// `min_height` выше `height` — ошибка разметки, и барабан вышел бы нулевым.
+const RAISED_FLOOR_SHARE_MAX: f32 = 0.8;
+
+/// Приподнятая часть: барабан от высоты начала до верха части и глава на нём.
+/// Верх части в OSM — это маковка (`height` вместе с `roof:height`), поэтому
+/// барабан кончается там, где начинается глава.
+fn raised_drum(building: &PolyArea, floor: f32, wall: Srgba) -> Option<Crown> {
+    let BuildingUse::Church(sacred) = building.building_use else {
+        return None;
+    };
+    let plan = Plan::of(building)?;
+    let domes = dome_palette(sacred.faith);
+    let color = domes[(look_seed(building) >> 18) as usize % domes.len()].to_srgba();
+    let profile = match sacred.faith {
+        Faith::Orthodox => Profile::Onion,
+        _ => Profile::Hemisphere,
+    };
+    let radius = (plan.width * 0.45).clamp(1.2, 6.0);
+    let drum = (height_or_default(building) - floor - radius * profile.height()).max(radius * 0.6);
+    Some(Crown::Dome {
+        at: plan.center,
+        radius,
+        base: floor,
+        drum,
+        profile,
+        color,
+        drum_color: wall,
+        raised: true,
+    })
+}
+
 /// Венец храма: `wall` и `roof` — цвета, которые дому уже выбрали стена и
-/// кровля (барабан красится стеной, шатёр колокольни — кровлей). Не храм —
-/// пусто.
-pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba) -> Vec<Crown> {
+/// кровля (барабан красится стеной, шатёр колокольни — кровлей). Не храм и
+/// пристройка — пусто. `own_domes` — ставить ли храму центральную главу от
+/// себя: `false`, когда главы у него размечены частями ([`Sanctuary`]).
+pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: bool) -> Vec<Crown> {
     let BuildingUse::Church(sacred) = building.building_use else {
         return Vec::new();
     };
+    if sacred.form == SacredForm::Annex {
+        return Vec::new();
+    }
     let Some(plan) = Plan::of(building) else {
         return Vec::new();
     };
@@ -391,6 +554,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba) -> Vec<Crown
         profile,
         color: dome_color,
         drum_color: wall,
+        raised: false,
     };
 
     if is_drum(sacred, building) {
@@ -427,7 +591,9 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba) -> Vec<Crown
             });
         }
         (_, SacredForm::Tower) => {}
-        (Faith::Orthodox, _) => orthodox_nave(&mut out, &plan, seed, rise, wall, roof, dome_color),
+        (Faith::Orthodox, _) => orthodox_nave(
+            &mut out, &plan, seed, own_domes, rise, wall, roof, dome_color,
+        ),
         (Faith::Western | Faith::Unknown, _) => {
             if plan.length >= WESTERN_TOWER_LENGTH_MIN {
                 let side = (plan.width * 0.5).clamp(4.0, 10.0);
@@ -446,13 +612,15 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba) -> Vec<Crown
         }
         (Faith::Muslim, _) => {
             let radius = (plan.width.min(plan.length) * 0.3).clamp(2.0, 14.0);
-            out.push(dome(
-                plan.center,
-                radius,
-                0.0,
-                radius * 0.25,
-                Profile::Hemisphere,
-            ));
+            if own_domes {
+                out.push(dome(
+                    plan.center,
+                    radius,
+                    0.0,
+                    radius * 0.25,
+                    Profile::Hemisphere,
+                ));
+            }
             let count = match plan.area {
                 area if area >= MINARETS_FOUR_AREA => 4,
                 area if area >= MINARETS_TWO_AREA => 2,
@@ -471,7 +639,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba) -> Vec<Crown
             }
         }
         (Faith::Jewish, _) => {
-            if plan.area >= SYNAGOGUE_DOME_AREA {
+            if own_domes && plan.area >= SYNAGOGUE_DOME_AREA {
                 let radius = (plan.width * 0.16).clamp(2.0, 5.0);
                 out.push(dome(
                     plan.center,
@@ -487,11 +655,14 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba) -> Vec<Crown
     out
 }
 
-/// Православный храм: главы и колокольня.
+/// Православный храм: главы и колокольня. Без `own_domes` — одна колокольня:
+/// главы у храма размечены частями.
+#[allow(clippy::too_many_arguments)]
 fn orthodox_nave(
     out: &mut Vec<Crown>,
     plan: &Plan,
     seed: u32,
+    own_domes: bool,
     rise: f32,
     wall: Srgba,
     roof: Srgba,
@@ -505,6 +676,7 @@ fn orthodox_nave(
         profile: Profile::Onion,
         color: dome_color,
         drum_color: wall,
+        raised: false,
     };
     if plan.area < CHAPEL_AREA_MAX {
         let radius = (plan.width.min(plan.length) * 0.3).clamp(1.0, 3.0);
@@ -537,7 +709,9 @@ fn orthodox_nave(
     };
     let side = core_length.min(plan.width);
     let radius = (side * 0.2).clamp(1.6, 6.0);
-    let five = side >= FIVE_DOMES_MIN_SIDE && (seed >> 11) % 10 < FIVE_DOMES_SHARE;
+    // главы, размеченные частями, заменяют все свои: малые главы вокруг них
+    // встали бы вперемешку с настоящими и слиплись бы с ними парами
+    let five = own_domes && side >= FIVE_DOMES_MIN_SIDE && (seed >> 11) % 10 < FIVE_DOMES_SHARE;
     if five {
         let offset = side * 0.28;
         for (u, v) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
@@ -545,7 +719,9 @@ fn orthodox_nave(
             out.push(dome(at, radius * 0.5, radius * 0.9));
         }
     }
-    out.push(dome(core, radius, radius * 1.1));
+    if own_domes {
+        out.push(dome(core, radius, radius * 1.1));
+    }
 }
 
 /// Верх элемента над карнизом, м, — докуда он отбрасывает тень.
@@ -573,27 +749,6 @@ fn top(crown: &Crown) -> f32 {
             ..
         } => base + height + radius * CONE_RISE,
     }
-}
-
-/// Пятна венца на земле и верх каждого над землёй, м: по ним теневой слой
-/// дотягивает тень храма до маковки (`layers::ShadowSweeps`). Контуры выпуклые
-/// и против часовой.
-pub(super) fn shadow_casters(building: &PolyArea) -> Vec<(Vec<Vec2>, f32)> {
-    if !matches!(building.building_use, BuildingUse::Church(_)) {
-        return Vec::new();
-    }
-    let eave = height_or_default(building);
-    crowns(building, Srgba::WHITE, Srgba::WHITE)
-        .iter()
-        .map(|crown| {
-            let outline = match *crown {
-                Crown::Dome { at, radius, .. } => disc(at, radius, DOME_SIDES),
-                Crown::Tower { at, axis, side, .. } => square(at, axis, side).to_vec(),
-                Crown::Minaret { at, radius, .. } => disc(at, radius, SHAFT_SIDES),
-            };
-            (outline, eave + top(crown))
-        })
-        .collect()
 }
 
 // ─── отрисовка ──────────────────────────────────────────────────────────────
@@ -635,24 +790,29 @@ const SHAFT_SHADED_MIX: f32 = 0.26;
 /// Тёмный проём — окно барабана и арка звона.
 const OPENING_COLOR: Color = Color::srgb(0.16, 0.15, 0.15);
 
-/// Венец поверх кровли: `eave` — подъём карниза этого дома, `lean` — крен в
-/// 2.5D (`None` в плоских режимах, где стен у венца не видно). Элементы
-/// кладутся от дальнего к ближнему, как и дома.
-pub(super) fn push_crowns(
-    builder: &mut MeshBuilder,
-    crowns: &[Crown],
-    eave: Vec2,
-    lean: Option<Lean>,
-) {
+/// Венцы поверх кровель: у каждого элемента своя посадка — подъём карниза его
+/// дома (у приподнятой части ноль), `lean` — крен в 2.5D (`None` в плоских
+/// режимах, где стен у венца не видно). Элементы кладутся от дальнего к
+/// ближнему, как и дома.
+///
+/// Вызывающий кладёт сюда венцы **всех** домов слоя разом и **после** всех
+/// домов, а не каждый дом свой: венец выше любой кровли вокруг, а храм в OSM —
+/// это несколько перекрывающихся контуров, и пристройка, положенная после
+/// собора, закрывала низ его глав — главы торчали из-за её стен.
+pub(super) fn push_crowns(builder: &mut MeshBuilder, crowns: &[(Crown, Vec2)], lean: Option<Lean>) {
     if crowns.is_empty() {
         return;
     }
     builder.set_roof(None);
     let order = Lean::of();
-    let mut sorted: Vec<&Crown> = crowns.iter().collect();
-    sorted.sort_by(|a, b| order.depth(at_of(b)).total_cmp(&order.depth(at_of(a))));
+    let mut sorted: Vec<&(Crown, Vec2)> = crowns.iter().collect();
+    sorted.sort_by(|a, b| {
+        order
+            .depth(at_of(&b.0))
+            .total_cmp(&order.depth(at_of(&a.0)))
+    });
     let light = Light::now();
-    for crown in sorted {
+    for &(ref crown, eave) in sorted {
         match *crown {
             Crown::Dome {
                 at,
@@ -662,13 +822,20 @@ pub(super) fn push_crowns(
                 profile,
                 color,
                 drum_color,
+                raised,
             } => {
                 let seat = at + eave + up(lean, base);
                 let drum_radius = match profile {
                     Profile::Onion => radius * ONION_NECK * 0.92,
                     Profile::Hemisphere => radius * 0.98,
                 };
-                let drum = drum * profile.stretch();
+                // вытягивается короткий барабан под главой; у приподнятой части
+                // барабан — настоящая высота из разметки, и вытянутый он унёс бы
+                // главу выше колокольни
+                let drum = match raised {
+                    true => drum,
+                    false => drum * profile.stretch(),
+                };
                 if drum > 0.0 {
                     push_shaft(builder, seat, drum_radius, drum, drum_color, lean, true);
                 }

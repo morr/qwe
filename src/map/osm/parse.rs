@@ -11,8 +11,8 @@ use crate::city::City;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
-    Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
-    point_in_area, point_in_polygon, ring_bounds, signed_ring_area,
+    Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
+    WallLine, WaterLine, point_in_area, point_in_polygon, ring_bounds, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::seed::seed_from_point;
@@ -282,7 +282,132 @@ fn resolve_faiths(buildings: &mut [PolyArea]) -> usize {
             sacred.complex = complex;
         }
     }
+
+    absorb_annexes(buildings);
     guessed
+}
+
+/// Во сколько раз пристройка может быть крупнее храма, на котором лежит. Музей
+/// оружия в Богоявленском соборе крупнее собора в 1.35 раза — это тот же дом,
+/// размеченный вторым контуром; квартал с домовой церковью во дворе крупнее
+/// в десятки раз, и храмом он не становится.
+const ANNEX_AREA_RATIO: f32 = 2.5;
+/// Какую долю своего пятна контур обязан делить с храмом, чтобы стать
+/// пристройкой, когда ни один из двух центров не лежит в другом. Алтарная
+/// часть Богоявленского собора (20 × 24 м) заходит в собор на половину, а её
+/// центр — за его стеной. Дом, лишь примыкающий к храму общей стеной, делит с
+/// ним ноль площади и остаётся домом.
+const ANNEX_OVERLAP_SHARE: f32 = 0.25;
+
+/// Площадь пересечения двух колец, м².
+fn overlap_area(a: &[Vec2], b: &[Vec2]) -> f32 {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+
+    let ring = |points: &[Vec2]| -> Vec<[f32; 2]> {
+        let mut ring: Vec<[f32; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
+        // i_overlay ждёт единую закрутку, OSM её не гарантирует
+        if signed_ring_area(points) < 0.0 {
+            ring.reverse();
+        }
+        ring
+    };
+    let (a, b) = (vec![ring(a)], vec![ring(b)]);
+    a.overlay(&b, OverlayRule::Intersect, FillRule::NonZero)
+        .iter()
+        .flat_map(|shape| shape.iter().enumerate())
+        .map(|(index, contour)| {
+            let points: Vec<Vec2> = contour.iter().map(|p| Vec2::new(p[0], p[1])).collect();
+            // первый контур фигуры — внешний, остальные — дыры
+            let area = signed_ring_area(&points).abs();
+            if index == 0 { area } else { -area }
+        })
+        .sum()
+}
+
+/// Контуры без назначения, лежащие **на храме**, становятся его пристройками
+/// ([`SacredForm::Annex`]): вера и посев храма, храмовые стены и кровля, своих
+/// глав нет.
+///
+/// OSM рисует храм и тем, чем он стал: в Тульском кремле поверх Богоявленского
+/// собора лежит контур «музей оружия» (`building=yes`, три этажа), а рядом —
+/// пристройка без тегов, и оба рисовались жилыми коробками с окнами, из-за
+/// которых торчали главы собора. Признак пристройки — взаимное наложение:
+/// центр контура в храме или центр храма в контуре, при площади не больше
+/// [`ANNEX_AREA_RATIO`] храма. Храм, к которому она прирастает, — самый крупный
+/// из подходящих.
+fn absorb_annexes(buildings: &mut [PolyArea]) {
+    // Раунды — потому что пристройка прирастает и к пристройке: алтарная часть
+    // Богоявленского собора лежит на контуре музея, а с самим собором делит
+    // меньше четверти своего пятна. Отдельно стоящий дом ни с чем не
+    // перекрывается, так что цепочка сквозь квартал не растёт.
+    for _ in 0..ANNEX_ROUNDS {
+        if absorb_round(buildings) == 0 {
+            break;
+        }
+    }
+}
+
+/// Сколько раундов прирастания пристроек, не больше.
+const ANNEX_ROUNDS: usize = 3;
+
+/// Один раунд [`absorb_annexes`]: хозяева — все храмы и пристройки на его
+/// начало. Возвращает, сколько контуров стало пристройками.
+fn absorb_round(buildings: &mut [PolyArea]) -> usize {
+    let candidates: Vec<(usize, (Vec2, Vec2), f32)> = buildings
+        .iter()
+        .enumerate()
+        .filter(|(_, building)| matches!(building.building_use, BuildingUse::Church(_)))
+        .map(|(index, building)| {
+            (
+                index,
+                ring_bounds(&building.outer),
+                signed_ring_area(&building.outer).abs(),
+            )
+        })
+        .collect();
+    if candidates.is_empty() {
+        return 0;
+    }
+    let mut absorbed = 0;
+    for index in 0..buildings.len() {
+        let building = &buildings[index];
+        // только контур без назначения (`building=yes`, `building:part`): дом,
+        // школа или магазин с названным классом храмом не становятся, как бы
+        // ни лежали
+        if building.kind != AreaKind::Building || building.building_use != BuildingUse::Other {
+            continue;
+        }
+        let bounds = ring_bounds(&building.outer);
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let area = signed_ring_area(&building.outer).abs();
+        let host = candidates
+            .iter()
+            .filter(|(church, (lo, hi), church_area)| {
+                let overlap = bounds.0.cmple(*hi).all() && bounds.1.cmpge(*lo).all();
+                overlap
+                    && area <= church_area * ANNEX_AREA_RATIO
+                    && (point_in_polygon(center, &buildings[*church].outer)
+                        || point_in_polygon((*lo + *hi) * 0.5, &building.outer)
+                        || overlap_area(&building.outer, &buildings[*church].outer)
+                            >= area * ANNEX_OVERLAP_SHARE)
+            })
+            .max_by(|a, b| a.2.total_cmp(&b.2));
+        let Some(&(church, ..)) = host else {
+            continue;
+        };
+        let BuildingUse::Church(sacred) = buildings[church].building_use else {
+            continue;
+        };
+        buildings[index].building_use = BuildingUse::Church(Sacred {
+            form: SacredForm::Annex,
+            floor_dm: 0,
+            ..sacred
+        });
+        absorbed += 1;
+    }
+    absorbed
 }
 
 /// Нода `entrance=*` → позиция на карте. Не вход или значение из

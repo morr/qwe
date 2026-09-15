@@ -18,6 +18,7 @@ const ORTHODOX: BuildingUse = BuildingUse::Church(Sacred {
     faith: Faith::Orthodox,
     form: SacredForm::Nave,
     complex: 0,
+    floor_dm: 0,
 });
 use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
@@ -2040,6 +2041,7 @@ fn church(outer: Vec<Vec2>, height: f32, faith: Faith, form: SacredForm) -> Poly
         faith,
         form,
         complex: 0,
+        floor_dm: 0,
     });
     area
 }
@@ -2091,12 +2093,9 @@ fn a_church_is_crowned_by_its_faith() {
     let _sun = crate::map::default_sun();
     let white = Srgba::WHITE;
     let ship = || oblong(18.0, 44.0);
+    let crowns = |area: &PolyArea| crowns(area, white, white, true);
 
-    let orthodox = crowns(
-        &church(ship(), 14.0, Faith::Orthodox, SacredForm::Nave),
-        white,
-        white,
-    );
+    let orthodox = crowns(&church(ship(), 14.0, Faith::Orthodox, SacredForm::Nave));
     assert!(orthodox.iter().any(|c| matches!(
         c,
         Crown::Dome {
@@ -2111,11 +2110,7 @@ fn a_church_is_crowned_by_its_faith() {
         "a ship church has a bell tower with a cupola"
     );
 
-    let western = crowns(
-        &church(ship(), 14.0, Faith::Western, SacredForm::Nave),
-        white,
-        white,
-    );
+    let western = crowns(&church(ship(), 14.0, Faith::Western, SacredForm::Nave));
     assert!(
         western
             .iter()
@@ -2123,11 +2118,7 @@ fn a_church_is_crowned_by_its_faith() {
     );
     assert!(!western.iter().any(|c| matches!(c, Crown::Dome { .. })));
 
-    let mosque = crowns(
-        &church(ship(), 14.0, Faith::Muslim, SacredForm::Nave),
-        white,
-        white,
-    );
+    let mosque = crowns(&church(ship(), 14.0, Faith::Muslim, SacredForm::Nave));
     assert!(mosque.iter().any(|c| matches!(
         c,
         Crown::Dome {
@@ -2137,21 +2128,82 @@ fn a_church_is_crowned_by_its_faith() {
     )));
     assert!(mosque.iter().any(|c| matches!(c, Crown::Minaret { .. })));
 
-    let eastern = crowns(
-        &church(ship(), 14.0, Faith::Eastern, SacredForm::Nave),
-        white,
-        white,
-    );
+    let eastern = crowns(&church(ship(), 14.0, Faith::Eastern, SacredForm::Nave));
     assert!(eastern.is_empty());
 
-    // не храм — никакого венца
+    // пристройка своих глав не несёт, не храм — тем более
+    assert!(crowns(&church(ship(), 14.0, Faith::Orthodox, SacredForm::Annex)).is_empty());
+    assert!(crowns(&building(ship(), Some(14.0), AreaKind::Building)).is_empty());
+}
+
+/// Барабан, стоящий на крыше собора (`min_height`), рисуется барабаном с
+/// главой с высоты начала — без коробки от земли, — а сам собор не ставит
+/// поверх свою центральную главу.
+#[test]
+fn a_raised_drum_stands_on_its_church_instead_of_growing_from_the_ground() {
+    use super::temples::{Crown, Sanctuary};
+    let _sun = crate::map::default_sun();
+    // не от начала координат: посев точки (0, 0) — ноль, а ноль у посева храма
+    // значит «храм не собран»
+    let origin = Vec2::new(100.0, 60.0);
+    let mut cathedral = church(
+        oblong(34.0, 40.0).into_iter().map(|p| p + origin).collect(),
+        16.0,
+        Faith::Orthodox,
+        SacredForm::Nave,
+    );
+    let complex = building_seed(&cathedral);
+    assert_ne!(complex, 0);
+    let set = |area: &mut PolyArea, floor_dm: u16| {
+        if let BuildingUse::Church(sacred) = &mut area.building_use {
+            sacred.complex = complex;
+            sacred.floor_dm = floor_dm;
+        }
+    };
+    set(&mut cathedral, 0);
+    let center = Vec2::new(20.0, 17.0) + origin;
+    let mut drum = church(
+        square()
+            .iter()
+            .map(|p| *p * 0.45 + center - Vec2::splat(4.5))
+            .collect(),
+        35.0,
+        Faith::Orthodox,
+        SacredForm::Dome,
+    );
+    set(&mut drum, 200);
+    let list = [cathedral, drum];
+    let sanctuary = Sanctuary::of(&list);
+
+    assert_eq!(sanctuary.raised(0), None);
+    assert_eq!(sanctuary.raised(1), Some(20.0));
+    let white = Srgba::WHITE;
+    let on_roof = sanctuary.crowns(1, &list[1], white, white, Vec2::new(3.0, 7.0));
+    assert!(matches!(
+        on_roof.as_slice(),
+        [(Crown::Dome { base, .. }, eave)] if *base == 20.0 && *eave == Vec2::ZERO
+    ));
+
+    // у собора с главами-частями своих глав нет вовсе
+    let own = sanctuary.crowns(0, &list[0], white, white, Vec2::ZERO);
     assert!(
-        crowns(
-            &building(ship(), Some(14.0), AreaKind::Building),
-            white,
-            white
-        )
-        .is_empty()
+        !own.iter()
+            .any(|(crown, _)| matches!(crown, Crown::Dome { .. }))
+    );
+
+    // и коробки у барабана в меше нет: все его вершины — вершины главы, выше
+    // высоты начала
+    let mesh = extruded_mesh(&list[1..], &[], detail(false));
+    let lone = Sanctuary::of(&list[1..]);
+    assert_eq!(lone.raised(0), Some(20.0));
+    let lowest = mesh
+        .positions_for_test()
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        lowest > origin.y + 17.0 - 4.5 + 20.0 * 0.35 * 0.9,
+        "the drum reaches the ground: {lowest}"
     );
 }
 
@@ -2165,7 +2217,7 @@ fn a_cupola_stands_on_the_ridge_it_is_given() {
     assert_eq!(landmark_roof(&area), Some(LandmarkRoof::Hip));
     let rise = landmark_rise(&area);
     assert!(rise > 0.0);
-    for crown in crowns(&area, Srgba::WHITE, Srgba::WHITE) {
+    for crown in crowns(&area, Srgba::WHITE, Srgba::WHITE, true) {
         if let Crown::Dome { base, .. } = crown {
             assert_eq!(base, rise);
         }
@@ -2176,10 +2228,10 @@ fn a_cupola_stands_on_the_ridge_it_is_given() {
 /// карниза самого храма.
 #[test]
 fn a_crown_casts_a_shadow_past_the_eaves() {
-    use super::temples::shadow_casters;
+    use super::temples::Sanctuary;
     let _sun = crate::map::default_sun();
     let area = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
-    let casters = shadow_casters(&area);
+    let casters = Sanctuary::of(std::slice::from_ref(&area)).shadow_casters(0, &area);
     assert!(!casters.is_empty());
     assert!(
         casters

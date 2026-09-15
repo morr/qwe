@@ -226,8 +226,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`Sacred { faith, form }`** rides inside `Church`, the `Pitch(PitchKind)` pattern:
   **`Faith: Orthodox | Western | Muslim | Jewish | Eastern | Unknown`** from `religion` +
   `denomination` (or the building tag — `mosque`, `synagogue`), and **`SacredForm: Nave |
-  Tower | Dome`** — a bell tower or minaret (`tower:type`), a drum under a cupola
-  (`roof:shape=onion|dome`, the one place `roof:shape` is read). `Unknown` does not survive
+  Tower | Dome | Annex`** — a bell tower or minaret (`tower:type`), a drum under a cupola
+  (`roof:shape=onion|dome`, the one place `roof:shape` is read), and an **annex**: a
+  building without a use class (`building=yes`, `building:part`) lying **on** a church —
+  either centre inside the other, or a quarter of its footprint shared, at most 2.5× the
+  church — which takes the church's faith, walls and roof and grows no crown of its own
+  (Tula's arms museum mapped over the Epiphany cathedral). `Sacred::floor_dm` is where a part
+  **starts** (`min_height`, or `building:min_level` × 3 m): a cupola drum standing on its
+  cathedral's roof. `Unknown` does not survive
   the parse: **`parse::resolve_faiths`** gives a part the faith of the church it belongs to
   (the largest church holding it, or the nearest within 30 m), and anything else the city's
   majority (ties → `Western`). The same pass fills **`Sacred::complex`** — the seed of the
@@ -235,7 +241,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **Fortress** — `AreaKind::Kremlin` is told not only by `historic=citywalls|castle|…` but by
   `building=wall` ≥ 6 m and `man_made=tower` + `tower:type=defensive` (Tula carries no
   `historic` at all); a compact footprint is a **fortress tower**, a thin one a wall
-  (`buildings/fortress.rs::is_tower`).
+  (`model::is_fortress_tower`). Tower and wall sections are ordered by the ordinary pairwise
+  draw order, nothing forced: a section abutting a tower on the camera side lies over it.
   **`garages` (plural) is its own class**:
   OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
   it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
@@ -344,7 +351,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and corner minarets on a mosque; a low dome on a large synagogue. A cupola is a **stack of
   slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
   compression, so it reads as an onion, not a ball; crowns cast ground shadow to their real
-  top (`temples::shadow_casters` → `ShadowSweeps`). A fortress wall carries **merlons**
+  top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **`Sanctuary`** is the city's churches
+  assembled: a **raised part** (a `Dome` part with a floor, or a drum on another church) is
+  drawn as a drum from its floor with a cupola — **no box from the ground** — and a church
+  whose cupolas are mapped as parts grows none of its own. **Crowns are laid after every
+  building of the layer**, not per house: a church is overlapping outlines, and an annex laid
+  after its cathedral hid the cupolas' base. Roof shadows are not cast between parts of one
+  church. A fortress wall carries **merlons**
   (`clutter::merlons`, zoom-gated like all clutter). Verified in `temple_gallery`.
   A **balcony** is a stack of bands, not a box — the slab's shadow on the wall, the bright
   slab edge, the parapet, and above it either glazing or an open recess in shade — laid out
@@ -961,7 +974,11 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   let `prune_unreachable` amputate half the map.
 - **Building passage** (арка) — `tunnel=building_passage` / `covered=…` sets
   `RoadLine::passage`; carved passable **last**, width capped by `PASSAGE_MAX_WIDTH`.
-  Without it, arch-only courtyards get sealed by the prune.
+  Without it, arch-only courtyards get sealed by the prune. **The carve reaches half its
+  width past both ends in both fills** — the grid's capsule by construction, the polygonal
+  mesh by extending the ribbon (`polymesh/build.rs::extended_ends`): a butt-cut ribbon left a
+  hair of `city_wall` band at the gate towers' mouths, and the whole Tula kremlin became a
+  dropped hole of the obstacle union.
 - **prune_unreachable** — BFS flood from the portal; unreachable pockets become impassable,
   because an A* to an unreachable target floods the whole region (a 12 000 request backlog
   once "froze" the crowd).

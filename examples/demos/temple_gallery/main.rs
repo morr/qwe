@@ -259,6 +259,7 @@ fn build(
                 faith: *faith,
                 form: column.form,
                 complex: 0,
+                floor_dm: 0,
             };
             buildings.push(area(
                 rect(center, column.half),
