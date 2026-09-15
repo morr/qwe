@@ -1650,10 +1650,11 @@ fn only_a_lone_skewed_small_house_is_squared() {
     ];
     let trapezoid_at = CENTER + Vec2::new(-60.0, 0.0);
     let trapezoid = vec![
-        trapezoid_at + Vec2::new(-8.0, -5.0),
-        trapezoid_at + Vec2::new(8.0, -5.0),
-        trapezoid_at + Vec2::new(3.0, 5.0),
-        trapezoid_at + Vec2::new(-3.0, 5.0),
+        // углы 51° и 129°: перекос 39°, за `SQUARE_SKEW_MAX`
+        trapezoid_at + Vec2::new(-10.0, -5.0),
+        trapezoid_at + Vec2::new(10.0, -5.0),
+        trapezoid_at + Vec2::new(2.0, 5.0),
+        trapezoid_at + Vec2::new(-2.0, 5.0),
     ];
     let big = skewed_house(CENTER + Vec2::new(0.0, -60.0))
         .iter()
@@ -1686,6 +1687,62 @@ fn only_a_lone_skewed_small_house_is_squared() {
     assert!(
         same(&big, &map.buildings[5].outer),
         "крупное здание выпрямлено"
+    );
+}
+
+/// Частный сектор Тулы обводят и на 20–32° мимо прямого угла, и крупный
+/// `building=house` тоже: оба выпрямляются. Здание без класса той же площади,
+/// что крупный дом, остаётся как есть — у него порог скатной когорты.
+#[test]
+fn a_steeply_skewed_house_and_a_large_house_are_squared() {
+    let around = |points: &[(f32, f32)], centre: (f32, f32), at: Vec2| {
+        points
+            .iter()
+            .map(|(x, y)| Vec2::new(x - centre.0, y - centre.1) + at)
+            .collect::<Vec<_>>()
+    };
+    // way 968378337: углы 65°–122°, 49 м²
+    let steep = around(
+        &[
+            (580.8, 3528.2),
+            (589.6, 3533.8),
+            (592.8, 3529.0),
+            (585.2, 3525.4),
+        ],
+        (586.0, 3529.0),
+        CENTER,
+    );
+    // way 968378335: перекос 21°, 348 м²
+    let large_ring = [
+        (598.0, 3505.7),
+        (626.5, 3521.8),
+        (621.3, 3532.2),
+        (596.0, 3517.0),
+    ];
+    let large = around(&large_ring, (610.0, 3519.0), CENTER + Vec2::new(80.0, 0.0));
+    let untagged = around(&large_ring, (610.0, 3519.0), CENTER + Vec2::new(-80.0, 0.0));
+    let map = Overpass::new(CITY)
+        .area(&[("building", "house")], steep.clone())
+        .area(&[("building", "house")], large.clone())
+        .area(&[("building", "yes")], untagged.clone())
+        .parse();
+
+    assert!(
+        right_angles(&map.buildings[0].outer),
+        "{:?}",
+        map.buildings[0].outer
+    );
+    assert!(
+        right_angles(&map.buildings[1].outer),
+        "{:?}",
+        map.buildings[1].outer
+    );
+    assert!(
+        untagged
+            .iter()
+            .zip(&map.buildings[2].outer)
+            .all(|(a, b)| a.distance(*b) < 0.01),
+        "здание без класса крупнее 250 м² выпрямлено"
     );
 }
 

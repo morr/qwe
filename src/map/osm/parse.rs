@@ -530,19 +530,27 @@ fn attach_entrances(map: &mut MapData, entrances: &[Vec2]) -> usize {
     orphaned
 }
 
-/// Какой площади дом, м², ещё выпрямляется в прямоугольник. Тот же порог, что
-/// у скатной когорты (`roofs::SMALL_FOOTPRINT_MAX`): частный дом.
+/// Какой площади здание без класса, м², ещё выпрямляется в прямоугольник. Тот же
+/// порог, что у скатной когорты (`roofs::SMALL_FOOTPRINT_MAX`): частный дом.
 const SQUARE_AREA_MAX: f32 = 250.0;
+/// Какой площади `building=house`, м², ещё выпрямляется. Тег уже сказал, что это
+/// частный дом, и в скатную когорту он входит любого размера; большой дом частного
+/// сектора обводят так же на глаз (Тула, way 968378335: 348 м², перекос 21°).
+const SQUARE_HOUSE_AREA_MAX: f32 = 400.0;
 /// Перекос угла от прямого, градусы, с которого контур выпрямляется. Ниже —
 /// обводка и так ровная, а сдвиг первой вершины сменил бы дому посев
 /// (материал, этажность) ради сантиметров.
 const SQUARE_SKEW_MIN: f32 = 2.0;
 /// Перекос, выше которого четырёхугольник оставляется как есть: это уже не
-/// криво обведённый прямоугольник, а трапеция по участку.
-const SQUARE_SKEW_MAX: f32 = 20.0;
+/// криво обведённый прямоугольник, а трапеция по участку. 20° не хватало: в
+/// частном секторе Тулы (ways 968378337, 968166712, 968378341) обводки уходят на
+/// 20–32°, и все одинокие маленькие дома с перекосом больше 20° — такие же
+/// кривые срубы, а не трапеции; вершины при этом сдвигаются меньше 2 м.
+const SQUARE_SKEW_MAX: f32 = 35.0;
 /// Дальше этого, м, ни одна вершина не сдвигается — иначе дом наедет на
-/// соседа или на дорогу.
-const SQUARE_SHIFT_MAX: f32 = 2.5;
+/// соседа или на дорогу. 2.5 м оставляли кривым один дом Тулы (way 968378327,
+/// перекос 27°, сдвиг 2.84 м) и больше ни одного.
+const SQUARE_SHIFT_MAX: f32 = 3.0;
 
 /// Маленькие дома, обведённые в OSM **косым четырёхугольником**, выпрямляются в
 /// прямоугольник. Сдвиг первой вершины меняет дому посев, поэтому материал и
@@ -573,11 +581,12 @@ fn square_skewed_houses(map: &mut MapData) -> usize {
     for building in &mut map.buildings {
         let small_house = building.kind == AreaKind::Building
             && building.holes.is_empty()
-            && matches!(
-                building.building_use,
-                BuildingUse::House | BuildingUse::Other
-            )
-            && signed_ring_area(&building.outer).abs() <= SQUARE_AREA_MAX;
+            && match building.building_use {
+                BuildingUse::House => Some(SQUARE_HOUSE_AREA_MAX),
+                BuildingUse::Other => Some(SQUARE_AREA_MAX),
+                _ => None,
+            }
+            .is_some_and(|max| signed_ring_area(&building.outer).abs() <= max);
         let Ok(quad) = <[Vec2; 4]>::try_from(building.outer.as_slice()) else {
             continue;
         };

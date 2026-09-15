@@ -370,20 +370,29 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
   imagery, and a rectangular house comes out a rhombus (Tula way 968419942, corners
   79°–100°): in 2.5D its ends stand askew to its front and no gable fits it. Taken: a
-  4-vertex convex outline, `AreaKind::Building`, no holes, `House` or `Other`, at most
-  `SQUARE_AREA_MAX` 250 m² (the pitched-cohort threshold), with its worst corner
-  `SQUARE_SKEW_MIN` 2° … `SQUARE_SKEW_MAX` 20° off square — under 2° the trace is
-  already straight, over 20° it is a trapezoid by the plot. The rectangle keeps the
+  4-vertex convex outline, `AreaKind::Building`, no holes, an `Other` of at most
+  `SQUARE_AREA_MAX` 250 m² (the pitched-cohort threshold) or a `House` of at most
+  `SQUARE_HOUSE_AREA_MAX` 400 m² (the tag already says private house, and a house is
+  pitched at any size — Tula way 968378335, 348 m² at 21°), with its worst corner
+  `SQUARE_SKEW_MIN` 2° … `SQUARE_SKEW_MAX` 35° off square — under 2° the trace is
+  already straight, over 35° it is a trapezoid by the plot. The ceiling was 20° first and
+  a screenshot of Tula's private sector (around `cam 641 3539`) showed seven lone houses
+  left crooked at 20.4°–32.3°; measured on the cache, **every** lone small quad above 20°
+  was such a trace (10 of them, vertex shift ≤ 1.7 m), none a real trapezoid — the
+  shift cap is what guards the rest. The rectangle keeps the
   **centroid and the area**: the axis is the length-weighted mean of the edge directions
   with the angle ×4 (so both axes vote for one), the sides the mean lengths of opposite
   edges along it, scaled to the area; vertex `i` becomes corner `i` with the winding kept.
   Skipped when any vertex is **shared** with another outline or line (terraced houses, a
   fence along the wall, an arch — squared, they would open a gap) or when a vertex would
-  move over `SQUARE_SHIFT_MAX` 2.5 m. Runs after `attach_entrances` (they match by exact
+  move over `SQUARE_SHIFT_MAX` 3 m (2.5 m first; on Tula that left exactly one lone
+  crooked house, way 968378327 at 27° and 2.84 m). A `landuse` block's outline is not
+  counted as sharing: private houses are routinely traced onto the block's boundary.
+  Runs after `attach_entrances` (they match by exact
   vertex, and an attached door moves with its vertex) and before door generation and
   tree planting. The price: the render seed is the first vertex, so a squared house rolls
-  its material and inferred storeys anew. Tula: ~200 of 4071 small quads (python estimate
-  from the cache; the exact count is the `osm parse:` line).
+  its material and inferred storeys anew. Tula: 207 (193 under the 20° / 250 m² / 2.5 m
+  thresholds; python estimate from the cache, the exact count is the `osm parse:` line).
 - **Houses pulled off the sidewalks** (`parse.rs::pull_houses_off_sidewalks`) — the street's
   width is a class constant and the sidewalk is added by the renderer
   (`roads::sidewalk_width`), so an old house standing at the kerb in OSM came out with its
