@@ -2805,6 +2805,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `push_wall_with_openings`) so the layers beneath — the road running through, the
   ground — show through the hole, and `shadow_builder` patches the opening with
   `SHADOW_COLOR` (the lintel shades it; without the patch the hole glows).
+  **The passage has a side wall** (`arches::tunnel_walls` + `push_tunnel_walls`): the
+  opening is skewed by the lean while the road goes straight in, so a sight line
+  through the top of the hole runs sideways and in a real arch hits the passage's side
+  wall — without it that wedge of the hole showed the grass beside the road (reported
+  from a screenshot). The wall is the passage offset by half its width, only its runs
+  **inside** the outline (there the body covers it wholly, since the sill is under the
+  lift, and it shows only through the hole), only the side facing `-Lean::dir()`, flat
+  `wall_colors` darkened by `TUNNEL_SHADE` 0.35, no cladding code, and pushed **before**
+  the house's walls so the piers and lintel lie over it.
   **The wall texture does not see that cut, so the cells the opening bites into are
   handed to it whole** (`WallCells`, `WallMark::Solid` — the very patch a door lays under
   its leaf; it is built by `layers::wall_cells`, so the panel and storey arithmetic stays

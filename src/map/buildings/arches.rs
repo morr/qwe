@@ -33,7 +33,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::height_or_default;
-use super::layers::{WallSpan, silhouette_edges};
+use super::layers::{WallSpan, silhouette_edges, wall_colors};
 use crate::map::SHADOW_COLOR;
 use crate::map::meshing::{MeshBuilder, WallFrame};
 use crate::map::osm::model::{
@@ -52,6 +52,9 @@ const ARCH_WALL_REACH: f32 = 6.0;
 /// Насколько дальше ближайшей грани всё ещё «та же» стена, м: у общей вершины
 /// двух граней обе на нулевом расстоянии, и проём обязан кроиться по обеим.
 const ARCH_WALL_TIE: f32 = 0.5;
+/// Насколько боковая стенка проезда темнее наружной стены той же ориентации:
+/// она под перемычкой, прямого света туда нет.
+const TUNNEL_SHADE: f32 = 0.35;
 
 /// Проём, прорезанный в одной грани контура здания.
 pub(super) struct ArchOpening {
@@ -79,9 +82,7 @@ pub(super) fn arch_openings(
     if passages.is_empty() || band == Vec2::ZERO {
         return Vec::new();
     }
-    // доля стены, которую занимает проём; у совсем низкого дома арка не
-    // может быть выше него самого
-    let sill = band * (ARCH_HEIGHT / height_or_default(building)).min(1.0);
+    let sill = arch_sill(building, band);
 
     // видимые стены — те же грани, что рисует `extrusion_builder`
     let walls: Vec<(Vec2, Vec2)> = silhouette_edges(&building.outer, facing)
@@ -147,6 +148,128 @@ pub(super) fn arch_openings(
         }
     }
     openings
+}
+
+/// Доля стены, которую занимает проём; у совсем низкого дома арка не может
+/// быть выше него самого.
+fn arch_sill(building: &PolyArea, band: Vec2) -> Vec2 {
+    band * (ARCH_HEIGHT / height_or_default(building)).min(1.0)
+}
+
+/// Боковая стенка проезда внутри дома: основание `a → b` вдоль дороги и
+/// высота проёма `sill`.
+pub(super) struct TunnelWall {
+    pub(super) a: Vec2,
+    pub(super) b: Vec2,
+    pub(super) sill: Vec2,
+}
+
+/// Видимые боковые стенки проездов — то, что видно сквозь проём сбоку.
+///
+/// Проём скошен подъёмом (`Lean`), а дорога идёт в дом прямо, и луч взгляда
+/// сквозь верх проёма уходит вбок: у настоящей арки он упирается в боковую
+/// стенку проезда. Без неё в этот клин проёма просвечивала земля рядом с
+/// дорогой — трава там, где должна быть стена.
+///
+/// Стенка — дорога, сдвинутая на половину ширины, и только те её куски, что
+/// лежат **внутри** контура: там она целиком накрыта телом дома (`sill` не
+/// выше подъёма) и видна лишь сквозь проём. Из двух сторон видна одна — та,
+/// что смотрит внутрь проезда против подъёма, по правилу стен двора.
+/// Класть их надо **до** стен дома: перемычка и простенки ложатся поверх.
+pub(super) fn tunnel_walls(
+    building: &PolyArea,
+    passages: &[&RoadLine],
+    band: Vec2,
+    facing: Vec2,
+) -> Vec<TunnelWall> {
+    if passages.is_empty() || band == Vec2::ZERO {
+        return Vec::new();
+    }
+    let sill = arch_sill(building, band);
+    let rings: Vec<&[Vec2]> = std::iter::once(building.outer.as_slice())
+        .chain(building.holes.iter().map(Vec::as_slice))
+        .collect();
+
+    let mut walls = Vec::new();
+    for passage in passages {
+        let last = passage.points.len().saturating_sub(2);
+        for (i, pair) in passage.points.windows(2).enumerate() {
+            let Some(direction) = (pair[1] - pair[0]).try_normalize() else {
+                continue;
+            };
+            // концы прохода — на контуре, а сдвинутая линия у угла дома входит
+            // в него раньше: продлеваем крайние отрезки наружу
+            let from = pair[0] - direction * if i == 0 { ARCH_WALL_REACH } else { 0.0 };
+            let to = pair[1] + direction * if i == last { ARCH_WALL_REACH } else { 0.0 };
+            for side in [-1.0, 1.0] {
+                let offset = direction.perp() * side;
+                // стенка смотрит к оси проезда
+                if (-offset).dot(facing) <= 0.0 {
+                    continue;
+                }
+                let (a, b) = (
+                    from + offset * passage.width / 2.0,
+                    to + offset * passage.width / 2.0,
+                );
+                for (low, high) in inside_runs(a, b, &rings, building) {
+                    walls.push(TunnelWall {
+                        a: a.lerp(b, low),
+                        b: a.lerp(b, high),
+                        sill,
+                    });
+                }
+            }
+        }
+    }
+    walls
+}
+
+/// Куски отрезка `a → b` внутри дома — доли его длины.
+fn inside_runs(a: Vec2, b: Vec2, rings: &[&[Vec2]], building: &PolyArea) -> Vec<(f32, f32)> {
+    let d = b - a;
+    let mut cuts = vec![0.0, 1.0];
+    for ring in rings {
+        for (i, &p) in ring.iter().enumerate() {
+            let q = ring[(i + 1) % ring.len()];
+            let e = q - p;
+            let denominator = d.perp_dot(e);
+            if denominator.abs() < 1e-6 {
+                continue;
+            }
+            let t = (p - a).perp_dot(e) / denominator;
+            let u = (p - a).perp_dot(d) / denominator;
+            if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+                cuts.push(t);
+            }
+        }
+    }
+    cuts.sort_by(f32::total_cmp);
+    cuts.windows(2)
+        .filter(|pair| (pair[1] - pair[0]) * d.length() > 0.05)
+        .filter(|pair| point_in_area(a + d * (pair[0] + pair[1]) / 2.0, building))
+        .map(|pair| (pair[0], pair[1]))
+        .collect()
+}
+
+/// Боковые стенки проездов — в тени перемычки, без рисунка облицовки.
+pub(super) fn push_tunnel_walls(
+    builder: &mut MeshBuilder,
+    walls: &[TunnelWall],
+    facade: Srgba,
+    lift_dir: Vec2,
+) {
+    builder.set_wall(None);
+    for wall in walls {
+        let (bottom, top) = wall_colors(facade, wall.a, wall.b, lift_dir);
+        let (bottom, top) = (
+            bottom.mix(&LinearRgba::BLACK, TUNNEL_SHADE),
+            top.mix(&LinearRgba::BLACK, TUNNEL_SHADE),
+        );
+        builder.push_quad_gradient(
+            [wall.a, wall.b, wall.b + wall.sill, wall.a + wall.sill],
+            [bottom, bottom, top, top],
+        );
+    }
 }
 
 /// Клетки той стены, в которой кроится проём: её рама, та же рама «без

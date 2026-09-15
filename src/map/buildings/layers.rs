@@ -9,7 +9,8 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{
-    ArchOpening, WallCells, arch_openings, arches_by_building, push_arches, push_wall_with_openings,
+    ArchOpening, TunnelWall, WallCells, arch_openings, arches_by_building, push_arches,
+    push_tunnel_walls, push_wall_with_openings, tunnel_walls,
 };
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
 use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs, point_to_segment};
@@ -1528,11 +1529,17 @@ pub(super) fn extrusion_builder(
         }
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
-        let openings = arches
+        let (openings, tunnel) = arches
             .get(&index)
             .map(|passages| {
                 let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
-                arch_openings(building, passages, lift, -lean.dir())
+                let openings = arch_openings(building, passages, lift, -lean.dir());
+                // стенки проезда видны только сквозь проём
+                let tunnel = match openings.is_empty() {
+                    true => Vec::new(),
+                    false => tunnel_walls(building, passages, lift, -lean.dir()),
+                };
+                (openings, tunnel)
             })
             .unwrap_or_default();
         push_house_with_arches(
@@ -1544,6 +1551,7 @@ pub(super) fn extrusion_builder(
             RoofShape::Auto,
             detail.clutter,
             &openings,
+            &tunnel,
         );
     }
     // венцы — после всех домов: храм в OSM состоит из перекрывающихся контуров,
@@ -1576,7 +1584,17 @@ pub fn push_house(
     shape: RoofShape,
     clutter: bool,
 ) -> RoofShape {
-    let built = push_house_with_arches(builder, building, look, wall, color, shape, clutter, &[]);
+    let built = push_house_with_arches(
+        builder,
+        building,
+        look,
+        wall,
+        color,
+        shape,
+        clutter,
+        &[],
+        &[],
+    );
     // дом витрины стоит один — частей храма вокруг нет, и венец у него свой
     let crowns = Sanctuary::of(std::slice::from_ref(building)).crowns(
         0,
@@ -1618,6 +1636,7 @@ fn push_house_with_arches(
     shape: RoofShape,
     clutter: bool,
     openings: &[ArchOpening],
+    tunnel: &[TunnelWall],
 ) -> RoofShape {
     // этажи считаются от настоящей высоты дома, а не от нарисованной: подъём
     // сжимает стену вместе с ними
@@ -1634,6 +1653,9 @@ fn push_house_with_arches(
         .then(|| plan_long_axis(&building.outer))
         .flatten();
     builder.set_roof(None);
+    // стенки проезда — позади всех стен дома: сквозь проём видна только их
+    // часть, остальное накроют простенки, перемычка и крыша
+    push_tunnel_walls(builder, tunnel, facade_color, lift_dir);
 
     // видимы стены рёбер, смотрящих против подъёма: при сдвиге
     // вверх-вправо — южные и западные; двор добавляет к ним внутреннюю стену

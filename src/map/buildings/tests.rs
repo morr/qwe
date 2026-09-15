@@ -1825,6 +1825,30 @@ fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
     );
 }
 
+/// Сквозь скошенный проём видна боковая стенка проезда — одна, та, что
+/// смотрит против подъёма, и только в пределах дома.
+#[test]
+fn an_arch_shows_the_side_wall_of_its_passage() {
+    let _sun = crate::map::default_sun();
+    let house = building(square(), Some(15.0), AreaKind::Building);
+    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+    let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
+
+    let walls = tunnel_walls(&house, &[&road], lift, -Lean::of().dir());
+
+    assert_eq!(walls.len(), 1, "exactly one side of the passage is visible");
+    let wall = &walls[0];
+    // подъём уходит вправо — видна восточная стенка, смотрящая на запад
+    let half = road.width / 2.0;
+    assert!((wall.a.x - (5.0 + half)).abs() < 1e-3 && (wall.b.x - (5.0 + half)).abs() < 1e-3);
+    let (low, high) = (wall.a.y.min(wall.b.y), wall.a.y.max(wall.b.y));
+    assert!(
+        low.abs() < 1e-3 && (high - 10.0).abs() < 1e-3,
+        "wall runs {low}..{high}"
+    );
+    assert!(wall.sill.length() > 0.0 && wall.sill.length() <= lift.length());
+}
+
 /// Арка у самого угла дома: проём подрезается по концу грани, а не
 /// повисает половиной квада в воздухе за углом.
 #[test]
