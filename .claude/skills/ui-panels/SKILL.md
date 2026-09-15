@@ -138,7 +138,8 @@ did not fit 1080 px and ran off the top of the screen.
   order: corrupted — the portal's violet at 0.42, growing — the same violet 0.08 → 0.34 by
   progress, **held** (on the front with a standing bastion, `Corruption::on_front` +
   `BastionsStanding`) — amber, the heart's district — gold, else transparent. The
-  texel → district map is built once per `Districts`, and the texture is rebuilt only when
+  texel → district map is built once per `Districts` (the raster walk, the texture and the
+  shade key are `ui/district_texture.rs`, shared with the district debug overlay), and the texture is rebuilt only when
   the FNV key (progress in 16 shades + held flag per district) changes, and not more
   often than every 0.25 s of **real** time — at 30× districts cross a shade nearly every
   frame. **Health bars** — two child sprites per bastion (`On<Add, Bastion>`: a dark back

@@ -19,15 +19,18 @@ use crate::map::ConiferField;
 use crate::map::osm::MapData;
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
 use crate::settings::{
-    DISTRICT_LABEL_METERS, MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, Z_DISTRICT_OVERLAY, grid_size,
-    navtile_size,
+    MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, Z_DISTRICT_OVERLAY, grid_size, navtile_size,
+};
+use crate::ui::district_texture::{
+    byte, district_texture, fnv_key, progress_shade, texel_districts, texture_size,
 };
 
 #[derive(Component)]
 pub(super) struct NavmeshOverlayMarker;
 
 /// Слой районов и то, под что он нарисован: ключ скверны — её прогресс по
-/// районам, квантованный в [`CORRUPTION_SHADES`] ступеней. Прогресс растёт
+/// районам, квантованный в [`PROGRESS_SHADES`](crate::ui::district_texture::PROGRESS_SHADES)
+/// ступеней. Прогресс растёт
 /// каждый тик, а текстура в 324 k текселей за тик — лишняя работа: слой
 /// пересобирается, только когда какой-то район перешёл ступень.
 #[derive(Component)]
@@ -41,8 +44,6 @@ const DISTRICT_OVERLAY_ALPHA: f32 = 0.45;
 /// Шаг оттенка между соседними по номеру районами — золотой угол: номера
 /// раздаются обходом тайлов, и соседи по карте часто соседи по номеру.
 const DISTRICT_HUE_STEP: f32 = 137.508;
-/// Ступеней прогресса скверны, различимых на слое.
-const CORRUPTION_SHADES: f32 = 16.0;
 /// Цвет осквернённого района; по дороге к нему район темнеет от своего
 /// оттенка пропорционально прогрессу.
 const CORRUPTION_COLOR: Color = Color::srgb(0.30, 0.02, 0.35);
@@ -225,7 +226,6 @@ pub(super) fn sync_conifer_noise_overlay(
             } else {
                 (Vec3::splat(value), CONIFER_NOISE_ALPHA)
             };
-            let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0) as u8;
             data.extend_from_slice(&[byte(color.x), byte(color.y), byte(color.z), byte(alpha)]);
         }
     }
@@ -276,14 +276,14 @@ fn district_color(id: DistrictId, districts: &Districts, corruption: f32) -> Col
     own.mix(&CORRUPTION_COLOR, corruption.clamp(0.0, 1.0))
 }
 
-/// Ключ слоя по скверне: прогресс каждого района в ступенях, FNV-1a.
+/// Ключ слоя по скверне: прогресс каждого района в ступенях.
 fn corruption_key(corruption: &Corruption) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for &progress in &corruption.progress {
-        hash ^= u64::from((progress.clamp(0.0, 1.0) * CORRUPTION_SHADES) as u8);
-        hash = hash.wrapping_mul(0x1000_0000_01b3);
-    }
-    hash
+    fnv_key(
+        corruption
+            .progress
+            .iter()
+            .map(|&progress| progress_shade(progress)),
+    )
 }
 
 /// Спавн/despawn слоя районов: один спрайт на всю карту с текстурой в шаг
@@ -315,48 +315,23 @@ pub(super) fn sync_district_overlay(
         return;
     }
 
-    let size = (MAP_SIZE / DISTRICT_LABEL_METERS).ceil().as_uvec2();
-    let mut data = Vec::with_capacity((size.x * size.y * 4) as usize);
-    let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0) as u8;
+    let size = texture_size();
     // цвета — раз на район, а не на тексель: смешивание в 324 k текселей
     // заметно дороже, чем в полторы сотни районов
-    let colors: Vec<Srgba> = (0..districts.len())
+    let colors: Vec<[u8; 4]> = (0..districts.len())
         .map(|id| {
             let progress = corruption.progress.get(id).copied().unwrap_or(0.0);
-            district_color(id as DistrictId, &districts, progress).to_srgba()
+            let color = district_color(id as DistrictId, &districts, progress).to_srgba();
+            [
+                byte(color.red),
+                byte(color.green),
+                byte(color.blue),
+                byte(DISTRICT_OVERLAY_ALPHA),
+            ]
         })
         .collect();
-    for row in 0..size.y {
-        for column in 0..size.x {
-            // строка 0 текстуры — верх спрайта, то есть максимальный мировой y
-            let position = Vec2::new(column as f32 + 0.5, (size.y - 1 - row) as f32 + 0.5)
-                * DISTRICT_LABEL_METERS;
-            match districts.district_at(position) {
-                Some(id) => {
-                    let color = colors[id as usize];
-                    data.extend_from_slice(&[
-                        byte(color.red),
-                        byte(color.green),
-                        byte(color.blue),
-                        byte(DISTRICT_OVERLAY_ALPHA),
-                    ]);
-                }
-                None => data.extend_from_slice(&[0, 0, 0, 0]),
-            }
-        }
-    }
-
-    let mut image = Image::new(
-        Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
+    let labels = texel_districts(&districts, size);
+    let mut image = district_texture(&labels, size, &colors, [0, 0, 0, 0]);
     image.sampler = ImageSampler::nearest();
 
     commands.spawn((

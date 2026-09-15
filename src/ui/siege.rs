@@ -12,10 +12,8 @@
 //! районов (`ui/debug/overlays.rs`, клавиша T) остаётся: он красит районы
 //! разными оттенками, чтобы видеть их границы, а этот слой — ход осады.
 
-use bevy::asset::RenderAssetUsages;
 use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::bastion::{Bastion, BastionsStanding, RuinTag};
@@ -25,8 +23,12 @@ use crate::demon::{BruteTag, Demon};
 use crate::district::{DistrictId, Districts};
 use crate::loading::AppState;
 use crate::movement::SimPosition;
+use crate::portal::HEART_COLOR;
 use crate::prefs::TrackPrefExt;
-use crate::settings::{BASTION_MARKER_SIZE, DISTRICT_LABEL_METERS, MAP_SIZE, Z_TERRITORY};
+use crate::settings::{BASTION_MARKER_SIZE, MAP_SIZE, Z_TERRITORY};
+use crate::ui::district_texture::{
+    byte, district_texture, fnv_key, progress_shade, texel_districts, texture_size,
+};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
@@ -64,12 +66,9 @@ const GROWING_ALPHA_SPAN: f32 = 0.26;
 /// Район, который держит стоящий бастион: скверна рядом, но не входит.
 const HELD: Srgba = Srgba::rgb(0.98, 0.62, 0.12);
 const HELD_ALPHA: f32 = 0.20;
-/// Район сердца, пока цел, — цвет маркера сердца (`portal.rs`).
-const HEART: Srgba = Srgba::rgb(1.0, 0.85, 0.2);
+/// Район сердца, пока цел, — цвет маркера сердца ([`HEART_COLOR`]) на этой
+/// непрозрачности.
 const HEART_ALPHA: f32 = 0.18;
-/// Ступеней прогресса, различимых на слое: текстура пересобирается, только
-/// когда какой-то район перешёл ступень.
-const TERRITORY_SHADES: f32 = 16.0;
 /// Не чаще раза в столько секунд реального времени: на 30× районы переходят
 /// ступени почти каждый кадр, а глазу хватает четырёх обновлений в секунду.
 const TERRITORY_REBUILD_SECS: f32 = 0.25;
@@ -78,13 +77,15 @@ const TERRITORY_REBUILD_SECS: f32 = 0.25;
 /// маркера. Шире маркера — чтобы край читался и у целого на треть бастиона.
 const BAR_WIDTH: f32 = BASTION_MARKER_SIZE * 1.5;
 const BAR_HEIGHT: f32 = 4.0;
+/// Заполнение тоньше подложки: тёмный кант сверху и снизу.
+const BAR_FILL_HEIGHT: f32 = BAR_HEIGHT * 0.6;
 const BAR_LIFT: f32 = BASTION_MARKER_SIZE * 0.5 + BAR_HEIGHT;
 const BAR_BACK: Color = Color::srgba(0.08, 0.06, 0.10, 0.85);
 const BAR_FULL: Srgba = Srgba::rgb(0.35, 0.85, 0.40);
 const BAR_EMPTY: Srgba = Srgba::rgb(0.90, 0.20, 0.15);
 /// Кольцо фронта вокруг маркера и его цвет — янтарь «держит», как на слое.
 const FRONT_RING_RADIUS: f32 = BASTION_MARKER_SIZE * 0.95;
-const FRONT_RING: Color = Color::srgb(0.98, 0.62, 0.12);
+const FRONT_RING: Color = Color::Srgba(HELD);
 /// Линия осады: тёмно-малиновая, как кольцо оттенков Громилы.
 const SIEGE_LINE: Color = Color::srgb(0.80, 0.18, 0.55);
 const SIEGE_ARROW_TIP: f32 = 4.0;
@@ -175,7 +176,7 @@ fn territory_color(progress: f32, held: bool, heart: bool) -> Option<Srgba> {
     } else if held {
         Some(HELD.with_alpha(HELD_ALPHA))
     } else if heart {
-        Some(HEART.with_alpha(HEART_ALPHA))
+        Some(HEART_COLOR.with_alpha(HEART_ALPHA))
     } else {
         None
     }
@@ -195,21 +196,17 @@ fn is_held(
         && corruption.on_front(districts, district)
 }
 
-/// Ключ состояния слоя, FNV-1a: ступень прогресса и «держит» по каждому району.
+/// Ключ состояния слоя: ступень прогресса и «держит» по каждому району.
 fn territory_key(
     corruption: &Corruption,
     districts: &Districts,
     standing: &BastionsStanding,
 ) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for id in 0..districts.len() {
+    fnv_key((0..districts.len()).map(|id| {
         let progress = corruption.progress.get(id).copied().unwrap_or(0.0);
-        let shade = (progress.clamp(0.0, 1.0) * TERRITORY_SHADES) as u64;
         let held = u64::from(is_held(corruption, districts, standing, id as DistrictId));
-        hash ^= shade << 1 | held;
-        hash = hash.wrapping_mul(0x1000_0000_01b3);
-    }
-    hash
+        progress_shade(progress) << 1 | held
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -224,22 +221,19 @@ fn sync_territory_layer(
     mut images: ResMut<Assets<Image>>,
     mut layers: Query<(Entity, &mut TerritoryLayer, &mut Sprite)>,
 ) {
-    if !view.territory || districts.is_empty() {
+    let hidden = !view.territory || districts.is_empty();
+    // новый мир — новые районы: старый слой и его разметка уходят целиком
+    if hidden || districts.is_changed() {
         for (entity, _, sprite) in &layers {
             images.remove(&sprite.image);
             commands.entity(entity).despawn();
         }
+    }
+    if hidden {
         return;
     }
-    let size = (MAP_SIZE / DISTRICT_LABEL_METERS).ceil().as_uvec2();
+    let size = texture_size();
 
-    // новый мир — новые районы: старый слой и его разметка уходят целиком
-    if districts.is_changed() {
-        for (entity, _, sprite) in &layers {
-            images.remove(&sprite.image);
-            commands.entity(entity).despawn();
-        }
-    }
     let key = territory_key(&corruption, &districts, &standing);
     let now = time.elapsed_secs();
 
@@ -272,19 +266,6 @@ fn sync_territory_layer(
     *last_rebuild = now;
 }
 
-/// Район под каждым текселем, строка 0 — верх спрайта (максимальный мировой y).
-fn texel_districts(districts: &Districts, size: UVec2) -> Vec<Option<DistrictId>> {
-    let mut labels = Vec::with_capacity((size.x * size.y) as usize);
-    for row in 0..size.y {
-        for column in 0..size.x {
-            let position = Vec2::new(column as f32 + 0.5, (size.y - 1 - row) as f32 + 0.5)
-                * DISTRICT_LABEL_METERS;
-            labels.push(districts.district_at(position));
-        }
-    }
-    labels
-}
-
 fn territory_image(
     labels: &[Option<DistrictId>],
     size: UVec2,
@@ -292,11 +273,13 @@ fn territory_image(
     corruption: &Corruption,
     standing: &BastionsStanding,
 ) -> Image {
-    let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0) as u8;
     let heart = districts
         .districts
         .iter()
         .position(|district| district.dist_to_heart == Some(0));
+    // прозрачный тексель несёт цвет скверны, а не чёрный: линейный сэмплер
+    // смешивает соседей, и чёрный дал бы грязную кайму
+    let empty = [byte(VILE.red), byte(VILE.green), byte(VILE.blue), 0];
     // цвет — раз на район, а не на тексель
     let colors: Vec<[u8; 4]> = (0..districts.len())
         .map(|id| {
@@ -309,29 +292,11 @@ fn territory_image(
                     byte(color.blue),
                     byte(color.alpha),
                 ],
-                // прозрачный тексель несёт цвет скверны, а не чёрный: линейный
-                // сэмплер смешивает соседей, и чёрный дал бы грязную кайму
-                None => [byte(VILE.red), byte(VILE.green), byte(VILE.blue), 0],
+                None => empty,
             }
         })
         .collect();
-    let empty = [byte(VILE.red), byte(VILE.green), byte(VILE.blue), 0];
-    let mut data = Vec::with_capacity(labels.len() * 4);
-    for label in labels {
-        let texel = label.map_or(empty, |id| colors[id as usize]);
-        data.extend_from_slice(&texel);
-    }
-    let mut image = Image::new(
-        Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
+    let mut image = district_texture(labels, size, &colors, empty);
     // линейный: край района в 8 м — не пиксель-арт, пятно должно быть мягким
     image.sampler = ImageSampler::linear();
     image
@@ -363,7 +328,7 @@ fn attach_health_bar(event: On<Add, Bastion>, mut commands: Commands) {
             HealthBarFill,
             Sprite {
                 color: BAR_FULL.into(),
-                custom_size: Some(Vec2::new(BAR_WIDTH, BAR_HEIGHT * 0.6)),
+                custom_size: Some(Vec2::new(BAR_WIDTH, BAR_FILL_HEIGHT)),
                 ..default()
             },
             Transform::from_xyz(0.0, 0.0, 0.01),
@@ -403,7 +368,7 @@ fn sync_health_bars(
             for &fill in bar_children {
                 if let Ok((mut sprite, mut transform)) = fills.get_mut(fill) {
                     let width = BAR_WIDTH * share;
-                    sprite.custom_size = Some(Vec2::new(width, BAR_HEIGHT * 0.6));
+                    sprite.custom_size = Some(Vec2::new(width, BAR_FILL_HEIGHT));
                     sprite.color = BAR_EMPTY.mix(&BAR_FULL, share).into();
                     // якорь спрайта — центр: сдвигаем, чтобы полоса убывала справа
                     transform.translation.x = (width - BAR_WIDTH) / 2.0;
@@ -465,7 +430,7 @@ mod tests {
         assert_eq!(territory_color(0.0, true, true).unwrap().red, HELD.red);
         assert_eq!(
             territory_color(0.0, false, true).unwrap().green,
-            HEART.green
+            HEART_COLOR.green
         );
         assert!(territory_color(0.0, false, false).is_none());
     }

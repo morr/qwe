@@ -20,6 +20,7 @@ mod brp;
 mod buildings;
 mod city;
 mod debug;
+mod district_texture;
 mod hotkeys;
 mod knob;
 mod navigation;
