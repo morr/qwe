@@ -14,9 +14,8 @@ use qwe::city::City;
 use qwe::grid::world_to_tile;
 use qwe::map::osm::model::point_in_area;
 use qwe::navigation::{Navmesh, build_polymesh_from_map, snap_portal_position};
+use qwe::settings::POLYMESH_AGENT_RADIUS_MIN;
 
-/// Радиус агента полигонального меша — дефолт настроек игры.
-const POLYMESH_RADIUS: f32 = 0.2;
 /// Арки не дальше этого от первой точки печатаются по центральной линии, м.
 const PASSAGE_REACH: f32 = 300.0;
 /// Насколько линия арки продолжается за её концы, м.
@@ -45,7 +44,8 @@ fn main() {
     let pruned = navmesh.prune_unreachable(world_to_tile(portal));
     println!("{}: {gates} gates, {pruned} tiles pruned", city.slug());
 
-    let mesh = build_polymesh_from_map(&map, POLYMESH_RADIUS).expect("polymesh");
+    // радиус агента — дефолт настроек игры (`PolymeshDebug::default`)
+    let mesh = build_polymesh_from_map(&map, POLYMESH_AGENT_RADIUS_MIN).expect("polymesh");
     for &point in &points {
         println!(
             "({:.0}, {:.0}): polymesh {}",
