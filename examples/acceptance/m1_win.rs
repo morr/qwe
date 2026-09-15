@@ -31,23 +31,15 @@ use bevy::prelude::*;
 
 use qwe::bastion::{BastionDestroyed, BastionSite, BastionSites, fill::closeness};
 use qwe::corruption::{Corruption, DistrictCorrupted};
-use qwe::demon::{BruteTag, Demon, DemonKind};
 use qwe::determinism::SimTick;
-use qwe::determinism::replay::{Progress, replay_app_with, run_to_tick};
+use qwe::determinism::replay::{
+    Progress, SOULS_GRANT, SUMMON_TICK, brutes_alive, replay_app_with, run_to_tick, summon_brute,
+};
 use qwe::district::{DistrictId, Districts};
 use qwe::map::osm::fixture::{DistrictCity, district_city};
 use qwe::map::osm::model::BastionKind;
 use qwe::navigation::Navmesh;
 use qwe::outcome::Outcome;
-use qwe::souls::{Souls, SummonRequested};
-
-/// Тик, на котором пишется призыв Громилы. Не нулевой: первые тики — залп Бесов
-/// и раздача `PawnId`, призыв должен встать в очередь за ними, как в игре.
-const SUMMON_TICK: u64 = 10;
-
-/// Душ, выданных перед призывом: цена Громилы (25) с запасом, чтобы стенд не
-/// зависел от того, сколько людей успели съесть Бесы у портала.
-const SOULS_GRANT: u32 = 100;
 
 /// Потолок прогона — четверть часа симуляции (64 тика в секунду). Семь
 /// переходов по 30 с плюс дорога Громилы к мосту укладываются с запасом; если
@@ -60,9 +52,6 @@ const CHUNK_TICKS: u64 = 1_280;
 /// Людей во дворах. Сотни, не тысячи: каждая заявка на путь считается плоским
 /// A* на полноразмерной сетке, и это — цена тика.
 const POPULATION: usize = 200;
-
-/// Северный берег — всё, что за водой (`district_city`: вода 800–900 м).
-const NORTH_BANK_Y: f32 = 900.0;
 
 const SEED: u64 = 1;
 
@@ -89,9 +78,9 @@ struct RunReport {
 }
 
 fn main() {
-    println!("progon 1: seed {SEED}");
+    println!("прогон 1: seed {SEED}");
     let first = run(SEED);
-    println!("\nprogon 2: тот же seed");
+    println!("\nпрогон 2: тот же seed");
     let second = run(SEED);
 
     println!("\n{:<26} {:>14} {:>14}", "", "прогон 1", "прогон 2");
@@ -168,12 +157,14 @@ fn run(seed: u64) -> RunReport {
             .dist_to_heart
             .expect("портал не связан с сердцем"),
     );
-    // центроиды нужны отчёту после прогона — ресурс уедет в приложение
+    // центроиды нужны отчёту после прогона — ресурс уедет в приложение.
+    // Северный берег — районы, чей центроид севернее воды: `city.water` лежит
+    // посреди её полосы, а вода не входит ни в один район
     let north_bank: Vec<DistrictId> = districts
         .districts
         .iter()
         .enumerate()
-        .filter(|(_, district)| district.centroid.y > NORTH_BANK_Y)
+        .filter(|(_, district)| district.centroid.y > city.water.y)
         .map(|(id, _)| id as DistrictId)
         .collect();
 
@@ -194,10 +185,7 @@ fn run(seed: u64) -> RunReport {
     });
 
     run_to_tick(&mut app, SUMMON_TICK, &[1], Progress::Silent);
-    app.world_mut().resource_mut::<Souls>().earned += SOULS_GRANT;
-    app.world_mut().write_message(SummonRequested {
-        kind: DemonKind::Brute,
-    });
+    summon_brute(&mut app);
     println!("  тик {SUMMON_TICK}: +{SOULS_GRANT} душ, призыв Громилы");
 
     let mut next_report = 0;
@@ -220,10 +208,7 @@ fn run(seed: u64) -> RunReport {
             let corruption = world.resource::<Corruption>();
             let corrupted = corruption.progress.iter().filter(|&&p| p >= 1.0).count();
             let to_heart = corruption.to_heart;
-            let brutes = world
-                .query_filtered::<(), (With<Demon>, With<BruteTag>)>()
-                .iter(world)
-                .len();
+            let brutes = brutes_alive(world);
             println!(
                 "  тик {tick:>6} ({:>4.0} с): осквернено {corrupted}, до сердца {}, Громил {brutes}, {:.0} с реального",
                 tick as f32 / 64.0,
@@ -247,10 +232,7 @@ fn run(seed: u64) -> RunReport {
         first_north: north_bank.iter().filter_map(|&id| tick_of(id)).min(),
         bastion_district_fell: tick_of(bastion_district),
         killed: world.resource::<qwe::telemetry::Telemetry>().killed,
-        brutes_alive: world
-            .query_filtered::<(), (With<Demon>, With<BruteTag>)>()
-            .iter(world)
-            .len(),
+        brutes_alive: brutes_alive(world),
         wall_secs: started.elapsed().as_secs_f32(),
     };
     println!("  {}", describe(&report.outcome));
@@ -271,9 +253,10 @@ fn bridge_bastion(
         .filter_map(|district| district.dist_to_heart)
         .max()
         .unwrap_or(0);
-    let pos = navmesh.tile_center(navmesh.to_tile(at));
+    let tile = navmesh.to_tile(at);
+    let pos = navmesh.tile_center(tile);
     assert!(
-        navmesh.is_passable(navmesh.to_tile(at).x, navmesh.to_tile(at).y),
+        navmesh.is_passable(tile.x, tile.y),
         "точка бастиона {at:?} непроходима"
     );
     BastionSites {

@@ -38,7 +38,7 @@ use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
 
 use super::{Determinism, SimTick};
-use crate::demon::Demon;
+use crate::demon::{BruteTag, Demon, DemonKind};
 use crate::human::{Human, PopulationSize};
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
@@ -46,6 +46,7 @@ use crate::movement::{MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Navmesh};
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, WorldSeed};
+use crate::souls::{Souls, SummonRequested};
 use crate::telemetry::Telemetry;
 
 /// 64 тика в секунду — шаг `Time<Fixed>` по умолчанию.
@@ -276,6 +277,34 @@ pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progre
     fingerprint(app.world_mut())
 }
 
+/// Тик, после которого повтор пишет призыв Громилы. Не нулевой: первые тики —
+/// залп Бесов и раздача `PawnId`, призыв должен встать в очередь за ними, как в
+/// игре.
+pub const SUMMON_TICK: u64 = 10;
+
+/// Душ, выданных перед призывом, — цена Громилы (25) с запасом: прогон не
+/// должен зависеть от того, сколько людей Бесы успели съесть к [`SUMMON_TICK`].
+pub const SOULS_GRANT: u32 = 100;
+
+/// Выдать [`SOULS_GRANT`] душ и записать призыв Громилы **между кадрами** —
+/// так он доходит до фиксированного шага на тике, который несёт следующий
+/// `update`, при любом числе тиков на кадр (контракт повтора: призыв — ввод
+/// симуляции). Зовётся между вызовами [`run_to_tick`].
+pub fn summon_brute(app: &mut App) {
+    app.world_mut().resource_mut::<Souls>().earned += SOULS_GRANT;
+    app.world_mut().write_message(SummonRequested {
+        kind: DemonKind::Brute,
+    });
+}
+
+/// Сколько Громил сейчас живы.
+pub fn brutes_alive(world: &mut World) -> usize {
+    world
+        .query_filtered::<(), (With<Demon>, With<BruteTag>)>()
+        .iter(world)
+        .len()
+}
+
 /// Хэш отсортированного состояния всех пешек. FNV-1a руками: заводить крейт
 /// ради одного хэша не стоит, а `DefaultHasher` не обещает стабильности даже
 /// внутри одной сборки.
@@ -313,8 +342,8 @@ pub fn fingerprint(world: &mut World) -> Fingerprint {
         }
         eat(state);
     }
-    // состояние прогона осадного слоя — тем же хэшем (решение 12
-    // `ROADMAP.md`): пропущенный сброс расходится в `a_restart_replays_the_run`
+    // состояние прогона осадного слоя — тем же хэшем (city-siege
+    // references/m1-baseline.md, решение 12): пропущенный сброс расходится в `a_restart_replays_the_run`
     // без отдельного теста. Стоящие бастионы по районам — плотный вектор, его
     // порядок и есть порядок районов
     if let Some(standing) = world.get_resource::<crate::bastion::BastionsStanding>() {

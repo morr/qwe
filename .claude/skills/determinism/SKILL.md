@@ -340,8 +340,9 @@ for minutes.
 
 Three claims: the same seed replays tick for tick, a ragged frame rate does not change the
 run, a different seed does. Two more hold the summon inside the contract
-(`run_with_summon`: souls granted and `SummonRequested { Brute }` written between frames after
-tick 10, one Brute asserted alive): **`a_summon_replays_at_any_frame_rate`** — steady and
+(`run_with_summon`: after `replay::SUMMON_TICK` (10) `replay::summon_brute` grants
+`SOULS_GRANT` souls and writes `SummonRequested { Brute }` between frames, and
+`replay::brutes_alive` asserts one Brute alive — the same three helpers the M1 stand uses): **`a_summon_replays_at_any_frame_rate`** — steady and
 ragged frames give one fingerprint — and **`a_restart_forgets_the_summon`** — a restart after
 the summon replays the run that never had one, so the Brute and `Souls` do not outlive the
 reset. The yard has no districts, so the Brute only wanders there; the siege end to end is
@@ -371,11 +372,12 @@ This test is also what holds the **WorldStarted** reset membership from the outs
 forgotten reset diverges whether or not anyone wrote it down (see the `world-lifecycle`
 skill). The siege layer's run state rides in the same hash rather than in tests of its own
 (roadmap decision 12): after the pawn rows, `fingerprint` eats `BastionsStanding` (one
-`u16` per district) and `Corruption::progress` (each `f32` in bits), both read with
-`get_resource` so a yard without those plugins still fingerprints. `replay_app` raises
-`DistrictPlugin`, `CombatPlugin`, `BastionPlugin` and `CorruptionPlugin` for exactly that
-reason — their map-derived resources stay empty on the yard, but their resets are then
-inside what the guard sees. What it cannot see is state invisible to both the simulation and the outcome
+`u16` per district), `Corruption::progress` (each `f32` in bits), `Souls { earned, spent }`
+and `Outcome` (variant + tick), all read with `get_resource` so a yard without those
+plugins still fingerprints. `replay_app` raises `DistrictPlugin`, `CombatPlugin`,
+`BastionPlugin`, `CorruptionPlugin`, `SoulsPlugin` and `OutcomePlugin` (a second tuple —
+`Plugins` takes at most 15) for exactly that reason — their map-derived resources stay
+empty on the yard, but their resets are then inside what the guard sees. What it cannot see is state invisible to both the simulation and the outcome
 counters; such a reset needs its own pin next to its observer (the regulator has one in
 `sim_time`, the frozen `Backend` one in `determinism` — the replay yard pins flat A*, so the
 seeded and the announced snapshots coincide there by construction).

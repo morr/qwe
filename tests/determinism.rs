@@ -28,13 +28,13 @@
 //! Сравнение только по `SimTick`, не по кадрам и не по настенным часам.
 
 use bevy::prelude::*;
-use qwe::demon::{BruteTag, Demon, DemonKind};
-use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
+use qwe::determinism::replay::{
+    Fingerprint, Progress, SUMMON_TICK, brutes_alive, replay_app, run_to_tick, summon_brute,
+};
 use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::fixture::{Yard, crowded_yard};
 use qwe::navigation::{Backend, Navmesh};
 use qwe::restart::RestartEvent;
-use qwe::souls::{Souls, SummonRequested};
 
 /// Полторы виртуальные секунды: демон из портала (интервал спавна — секунда)
 /// успевает появиться и погнаться, а блуждающие — выбрать цель и пойти.
@@ -48,14 +48,6 @@ const POPULATION: usize = 64;
 /// важно только их непостоянство: 1 тик — это ~64 fps, 30 — кадр почти в
 /// полсекунды.
 const RAGGED: [u32; 12] = [1, 7, 3, 12, 1, 30, 2, 5, 19, 1, 9, 4];
-
-/// Тик, после которого пишется призыв Громилы. Не нулевой, как у стенда
-/// `m1_win`: залп Бесов уже раздал свои `PawnId`, призыв встаёт за ними.
-const SUMMON_TICK: u64 = 10;
-
-/// Душ, выданных перед призывом, — цена Громилы (25) с запасом: двор не должен
-/// зависеть от того, сколько людей Бесы успели съесть к десятому тику.
-const SOULS_GRANT: u32 = 100;
 
 /// Навмеш двора — тот же рецепт, что у потока загрузки в игре: заливка по
 /// `MapData`, затем прунинг недостижимого от портала.
@@ -89,18 +81,14 @@ fn run(seed: u64, pattern: &[u32]) -> Fingerprint {
 /// отказ в призыве, а не призыв.
 fn run_with_summon(app: &mut App, pattern: &[u32]) -> Fingerprint {
     run_to_tick(app, SUMMON_TICK, pattern, Progress::Silent);
-    app.world_mut().resource_mut::<Souls>().earned += SOULS_GRANT;
-    app.world_mut().write_message(SummonRequested {
-        kind: DemonKind::Brute,
-    });
+    summon_brute(app);
     let print = run_to_tick(app, TICKS, pattern, Progress::Silent);
 
-    let world = app.world_mut();
-    let brutes = world
-        .query_filtered::<(), (With<Demon>, With<BruteTag>)>()
-        .iter(world)
-        .len();
-    assert_eq!(brutes, 1, "призыв Громилы не прошёл: {print:?}");
+    assert_eq!(
+        brutes_alive(app.world_mut()),
+        1,
+        "призыв Громилы не прошёл: {print:?}"
+    );
     assert!(
         print.moving > 0,
         "мир стоит на месте — сравнивать нечего: {print:?}"
