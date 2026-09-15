@@ -53,7 +53,7 @@ GROUPS = [
     ),
     ("REF natural=tree ноды (рисуем)", 'node["natural"="tree"]({bbox});'),
     ("REF natural=tree_row ways (рисуем)", 'way["natural"="tree_row"]({bbox});'),
-    # бастионы M1 (v8): считаются до дедупа парсера, см. `parse::fold_bastions`
+    # бастионы M1 (QUERY_VERSION 15): считаются до дедупа парсера, см. `parse::fold_bastions`
     ("REF amenity=police (бастион)", 'nwr["amenity"="police"]({bbox});'),
     ("REF amenity=fire_station (бастион)", 'nwr["amenity"="fire_station"]({bbox});'),
     ("REF amenity=place_of_worship (бастион)", 'nwr["amenity"="place_of_worship"]({bbox});'),

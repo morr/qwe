@@ -2392,7 +2392,7 @@ fn parses_bastions_and_folds_their_duplicates() {
             &[("amenity", "place_of_worship")],
             CENTER + far + Vec2::new(20.0, 0.0),
         )
-        // соседний храм в 60 м — другой
+        // соседний храм в 80 м от оставленной ноды (в 60 м от схлопнутой) — другой
         .node(
             &[("amenity", "place_of_worship")],
             CENTER + far + Vec2::new(80.0, 0.0),
@@ -2407,6 +2407,11 @@ fn parses_bastions_and_folds_their_duplicates() {
                 ("outer", vec![ne - far, nw - far, sw - far]),
             ],
         )
+        // бункер — way с `military=*` без `landuse` и без `building`: своя ветка
+        .area(
+            &[("military", "bunker")],
+            square(CENTER + Vec2::new(0.0, 300.0), HALF),
+        )
         // пожарная часть, центр которой за западным краем карты
         .node(&[("amenity", "fire_station")], Vec2::new(-10.0, CENTER.y))
         .parse();
@@ -2419,6 +2424,7 @@ fn parses_bastions_and_folds_their_duplicates() {
         vec![
             BastionKind::Police,
             BastionKind::Military,
+            BastionKind::Military,
             BastionKind::Church,
             BastionKind::Church,
         ],
@@ -2428,5 +2434,6 @@ fn parses_bastions_and_folds_their_duplicates() {
     // контурный побеждает ноду: центр — центроид здания, не нода у крыльца
     assert!((map.bastions[0].pos - CENTER).length() < 0.05);
     assert!((map.bastions[1].pos - (CENTER - far)).length() < 0.05);
-    assert!((map.bastions[2].pos - (CENTER + far)).length() < 0.05);
+    assert!((map.bastions[2].pos - (CENTER + Vec2::new(0.0, 300.0))).length() < 0.05);
+    assert!((map.bastions[3].pos - (CENTER + far)).length() < 0.05);
 }

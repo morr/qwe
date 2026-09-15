@@ -6,9 +6,8 @@ use bevy::prelude::*;
 use super::BastionSite;
 use crate::district::DistrictId;
 use crate::map::osm::model::BastionKind;
-use crate::map::osm::parse::BASTION_DEDUP_METERS;
 use crate::rng::lcg_seeded_by;
-use crate::settings::BASTION_QUOTA_STEPS;
+use crate::settings::{BASTION_DEDUP_METERS, BASTION_QUOTA_STEPS};
 
 /// Здание-кандидат в опорные пункты: уже отфильтровано по площади, точка уже
 /// снапнута на проходимый тайл у стены, район — по ней.

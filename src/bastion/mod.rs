@@ -98,7 +98,7 @@ fn spawn_bastions(mut commands: Commands, sites: Res<BastionSites>) {
 }
 
 /// Новый прогон — все бастионы целы, на месте: здоровье в максимум,
-/// `RuinTag` снят, маркер зажжён (решение 11 `ROADMAP.md`: рестарт не
+/// `RuinTag` снят, маркер зажжён (city-siege references/m1-baseline.md, решение 11: рестарт не
 /// пересоздаёт их, список despawn'а в `restart.rs` не растёт). Заодно
 /// [`BastionsStanding`] — по местам, все стоят.
 fn on_world_started(
@@ -206,6 +206,10 @@ pub fn plan_sites(map: &MapData, districts: &Districts, navmesh: &Navmesh) -> Ba
         .iter()
         .filter_map(|bastion| {
             let Some((pos, district)) = place(bastion.pos) else {
+                warn!(
+                    "bastion {:?} at {:?}: no district within reach, dropped",
+                    bastion.kind, bastion.pos
+                );
                 dropped += 1;
                 return None;
             };
@@ -262,6 +266,8 @@ impl Plugin for BastionPlugin {
 
 #[cfg(test)]
 mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
     use super::*;
 
     #[test]
@@ -316,8 +322,6 @@ mod tests {
         app
     }
 
-    use bevy::ecs::system::RunSystemOnce;
-
     /// Добитый бастион — руина на месте, район теряет стоящего; новый прогон
     /// лечит его там же, без пересоздания.
     #[test]
@@ -327,7 +331,7 @@ mod tests {
 
         let police = app
             .world_mut()
-            .query_filtered::<(Entity, &Bastion), With<Bastion>>()
+            .query::<(Entity, &Bastion)>()
             .iter(app.world())
             .find(|(_, bastion)| bastion.kind == BastionKind::Police)
             .map(|(entity, _)| entity)

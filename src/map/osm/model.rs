@@ -56,7 +56,7 @@ pub enum PitchKind {
 /// вне словаря — чаще всего просто `yes`) — класс **отрисовки**: у каждого
 /// своя пара цветов крыши и стены, чтобы частный сектор, многоэтажки,
 /// промзона и церкви читались с общего
-/// плана. Не «вид опорного пункта» из `ROADMAP.md` — тот считается от
+/// плана. Не «вид опорного пункта» из city-siege references/m1-baseline.md, шаг 6 — тот считается от
 /// `amenity` своей веткой. Полный словарь значений — `parse/tags.rs::building_use`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BuildingUse {
@@ -694,7 +694,7 @@ impl TrafficSide {
 
 /// Вид бастиона — по тегу OSM, из которого он пришёл
 /// (`parse/tags.rs::bastion_kind`). `Stronghold` из выгрузки не приходит: это
-/// добор до квоты по обычным зданиям (`ROADMAP.md`, шаг 6).
+/// добор до квоты по обычным зданиям (city-siege references/m1-baseline.md, шаг 6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
 pub enum BastionKind {
     Police,
@@ -706,7 +706,7 @@ pub enum BastionKind {
 
 /// Опорный пункт людей из OSM: полиция, пожарная часть, храм, военные.
 /// `pos` — нода как есть либо центроид контура; два объекта одного вида ближе
-/// `parse::BASTION_DEDUP_METERS` (или нода внутри контура) схлопнуты в один,
+/// `settings::BASTION_DEDUP_METERS` (или нода внутри контура) схлопнуты в один,
 /// остаётся контурный — см. `parse::fold_bastions`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bastion {

@@ -19,7 +19,7 @@ use crate::map::osm::model::{
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
 use crate::map::seed::seed_from_point;
-use crate::settings::MAP_SIZE;
+use crate::settings::{BASTION_DEDUP_METERS, MAP_SIZE};
 
 /// Ширина стены Кремля, м.
 const WALL_WIDTH: f32 = 3.0;
@@ -32,11 +32,6 @@ const RING_JOIN_EPSILON: f32 = 0.01;
 /// так что после одной и той же проекции координаты совпадают точно;
 /// сантиметровая сетка — страховка от шума f32, а не поиск ближайшего.
 const ENTRANCE_SNAP_SCALE: f32 = 100.0;
-
-/// Два бастиона одного вида ближе этого — один объект, размеченный дважды:
-/// нода у крыльца плюс контур, контур плюс relation. Тот же порог у
-/// `tools/osm_audit/slice_audit.py`, чтобы счёт аудита сходился с логом.
-pub const BASTION_DEDUP_METERS: f32 = 30.0;
 
 /// Разбор — две половины, и между ними шов.
 ///
