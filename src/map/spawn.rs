@@ -88,13 +88,6 @@ const SAND_RIM: Rim = Rim {
     width: 2.0,
     edge: Color::srgb(0.913, 0.868, 0.737),
 };
-/// Кромка стоянки — бордюр: чуть светлее её асфальта (`roads::ROAD_COLOR`) и
-/// узкая — там, где стоянка переходит в улицу, широкая светлая кайма читалась
-/// бы порогом поперёк въезда.
-const PARKING_RIM: Rim = Rim {
-    width: 0.5,
-    edge: Color::srgb(0.60, 0.60, 0.60),
-};
 /// Кромка площадки — бортик коробки или бровка поля: темнее любого покрытия,
 /// один на все виды, потому что на снимке это тень борта, а не краска.
 const PITCH_RIM: Rim = Rim {
@@ -189,7 +182,10 @@ pub fn spawn_map(
     // части, а по нему идёт разметка мест (`map::parking`)
     let mut parking = MeshBuilder::with_surface_coords();
     for area in &map.parking {
-        push_area(&mut parking, area, PARKING_COLOR, &PARKING_RIM);
+        // Без кромки: у стоянки нет края, который видно сверху, — асфальт
+        // въезда переходит в асфальт площадки, и любая кайма по контуру
+        // рисовала на въезде градиент поперёк дороги.
+        parking.push_polygon(&area.outer, &area.holes, PARKING_COLOR.to_linear());
     }
     *parking_layout = parking::ParkingLayout::new(&map.parking);
     let mut parking_lines = MeshBuilder::default();

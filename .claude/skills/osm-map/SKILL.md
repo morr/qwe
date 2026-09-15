@@ -619,7 +619,13 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   3.5 m footway; the **same tolerance decides whether a join fan is emitted at all** —
   a bend is skipped only when `half_width · turn` is under it. An angle threshold was
   tried first and was wrong: 5° on an alley still leaves a 15 cm slit, plainly visible
-  as a pale cut across the road when zoomed in.
+  as a pale cut across the road when zoomed in. **A bend that gets no fan is joined by
+  shared vertices** — both quads end on the bisector (`miter_offsets`) there. With each
+  quad on its own normal the two ends meet only on the axis, and even at 0.4° the
+  rasteriser left a hairline across the whole ribbon: a drive in Tula (way 2065, three
+  almost collinear points by a parking lot, `cam 4300 2282`) showed two pale lines of the
+  sidewalk under it, and the darker asphalt made them loud. The same holds for the
+  vertices `GapProfile::split_path` inserts, which are collinear by construction.
 - **Junctions** (`map/roads/junctions.rs`) — computed for the markings only, and from
   **shared nodes**, not segment intersections: Overpass `out geom` gives no node ids, but
   a node shared by two ways projects to the same `Vec2` on both (quantised to 5 cm to be
@@ -1001,6 +1007,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   (`Z_PARKING_LINES` 2.002). The markings go in a **flat-material** layer of their own,
   not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
   not on it, and a 12 cm line is the one thing on this map that must stay pure white.
+  - **Road asphalt, no rim.** `PARKING_COLOR` is `roads::ROAD_COLOR` and the fill is a bare
+    `push_polygon` — the lot is the only area without a **Rim**. It had a darker one,
+    then a narrow lighter one; both drew a band across every drive where it runs into the
+    lot, reported from screenshots (`cam 4301 2270`): the lot lies over the roads, so its
+    outline crosses the drive's asphalt, and anything laid along it is a seam.
   - **The layout is computed once per world load** into `ParkingLayout` (a resource,
     filled by `spawn_map` from `stalls(area)` per lot), and the paint and the cars both
     read it — two independent layouts would put a car across its own line, and recomputing

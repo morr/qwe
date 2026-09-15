@@ -636,7 +636,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   *is* the aisle. The stall layout knows nothing of roads — a road hidden under the lot
   leaves no gap in the rows. **The lot's asphalt is the road's** — `PARKING_COLOR` *is*
   `roads::ROAD_COLOR`, on the same `SurfaceKind::Street` material, so a lot lying over
-  its street reads as one surface; a tone of its own drew a patch at every lot.
+  its street reads as one surface; a tone of its own drew a patch at every lot. For the
+  same reason the lot has **no rim**, unlike every other area: a kerb band along its
+  outline was a gradient across each drive running into it.
   Render-only. Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. Two things in the **ribbon frame**, so they follow the lane and not
