@@ -299,11 +299,37 @@ fn carve_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
     }
     for road in input.roads.iter().filter(|road| road.passage) {
         let band = road.passage_band();
-        if let Some(ring) = ribbon_outline(&band.line, band.width) {
+        let line = extended_ends(&band.line, band.width / 2.0);
+        if let Some(ring) = ribbon_outline(&line, band.width) {
             push_contour(&mut carves, ring);
         }
     }
     carves
+}
+
+/// Ломаная, продолженная за оба конца на `reach` вдоль своих крайних звеньев.
+///
+/// Арка сетки — капсула (`set_polyline`: тайлы в пределах полуширины от
+/// отрезка), и за концы осевой она выходит на полуширину; лента меша
+/// обрезана по концам ровно. Разница не косметическая: осевая арки в OSM
+/// кончается на контуре здания, а у ворот Тульского кремля в том же месте
+/// проходят и лента `barrier=city_wall`, и соседнее прясло `building=wall`.
+/// Ровный срез оставлял у устья тонкую перемычку препятствия, коридор замыкался
+/// в дыру объединения — и весь кремль уходил в препятствие (`shape.first()`
+/// выбрасывает дыры), тогда как сетка его пропускала.
+fn extended_ends(line: &[Vec2], reach: f32) -> Vec<Vec2> {
+    let mut line = line.to_vec();
+    let count = line.len();
+    if count < 2 {
+        return line;
+    }
+    if let Some(lead) = (line[0] - line[1]).try_normalize() {
+        line[0] += lead * reach;
+    }
+    if let Some(tail) = (line[count - 1] - line[count - 2]).try_normalize() {
+        line[count - 1] += tail * reach;
+    }
+    line
 }
 
 /// Нарезка на слои: внешние контуры со своими bbox, глобальные точки швов, по

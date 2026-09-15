@@ -236,6 +236,15 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
   `service` (5 m) but the arch itself is narrower, and an uncapped corridor would eat a
   tile of facade on each side. Tula has ~70 of them, London ~1700; without the carve,
   courtyards reachable only through an arch get sealed off by `prune_unreachable`.
+  **The carve reaches half its width past both ends in both fills.** The grid gets it for
+  free — `set_polyline` is a capsule; the polygonal mesh extends the ribbon's end links
+  (`polymesh/build.rs::extended_ends`). It used to be butt-cut there, and at Tula's kremlin
+  gates — the passage way ends on the tower outline, the `city_wall` band runs right past
+  it — a hair of band closed every mouth: the kremlin became a hole of the obstacle union,
+  `shape.first()` dropped it, and the whole inside was an obstacle on the mesh while the grid
+  let pawns in. Pinned by `polymesh/tests.rs::an_arch_opens_a_barrier_lying_right_at_its_mouth`;
+  `cargo run --example navmesh_probe -- tula <x,y> …` prints, for points and for every
+  passage near the first one, the grid and mesh verdicts side by side.
   How the arch is drawn (the wall opening) is in the osm-map skill.
 - **Row-span rasterization** (`row_spans`): an area is filled row by row — one pass over
   the ring per tile row yields the x-crossings, and the tiles between crossing pairs are
