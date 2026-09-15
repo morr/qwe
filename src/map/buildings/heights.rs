@@ -20,7 +20,7 @@
 use bevy::math::Vec2;
 
 use super::material::building_seed;
-use super::roofs::SHED_FOOTPRINT_MAX;
+use super::roofs::{SHED_FOOTPRINT_MAX, SMALL_FOOTPRINT_MAX};
 use crate::map::meshing::min_area_rect;
 use crate::map::osm::model::{is_fortress_tower, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, Sacred, SacredForm};
@@ -40,9 +40,6 @@ const GARAGE_HEIGHT: f32 = 3.0;
 const HOUSE_HEIGHTS: [f32; 10] = [3.0, 3.0, 3.0, 3.0, 3.2, 3.2, 3.4, 3.4, 6.0, 6.4];
 /// Сарай, баня, летняя кухня: одна низкая коробка.
 const SHED_HEIGHTS: [f32; 4] = [2.4, 2.6, 2.8, 3.0];
-/// Дом без назначения не крупнее этого, м², — такой же частный дом, как и
-/// `building=house`: в частном секторе контуры сплошь `building=yes`.
-const COTTAGE_FOOTPRINT_MAX: f32 = 150.0;
 
 /// Панельная секция: пятиэтажка, девятиэтажка, изредка двенадцать. Доли —
 /// по тому, чего в русском городе больше.
@@ -127,9 +124,11 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
         // на первой же правке «прочего корпуса», и молча
         BuildingUse::Public => STOREY * pick(&MID_STOREYS, seed),
         // мелочь без назначения — постройки частного сектора: сарай во дворе
-        // и сам дом, а не старая двух-трёхэтажка
+        // и сам дом, а не старая двух-трёхэтажка. Граница дома — та же, по
+        // которой `roofs` кроет его двускатной, а `material` одевает стенами
+        // дома: одна граница, один смысл
         BuildingUse::Other if area <= SHED_FOOTPRINT_MAX => pick(&SHED_HEIGHTS, seed),
-        BuildingUse::Other if area <= COTTAGE_FOOTPRINT_MAX => pick(&HOUSE_HEIGHTS, seed),
+        BuildingUse::Other if area <= SMALL_FOOTPRINT_MAX => pick(&HOUSE_HEIGHTS, seed),
         // жильё, контора и половина города без назначения — по форме пятна
         _ => STOREY * storeys_by_shape(&building.outer, area, seed),
     }
@@ -311,5 +310,16 @@ mod tests {
         // назначению — казённое здание в 2–5 этажей
         let school = building(oblong(28.0, 32.0, Vec2::ZERO), BuildingUse::Public);
         assert!(height_or_default(&school) <= 15.0);
+    }
+
+    #[test]
+    fn an_untagged_box_under_the_pitched_cohort_border_is_a_private_house() {
+        // 12 × 20 = 240 м²: `roofs` кроет его двускатной крышей, `material` —
+        // стенами дома, значит и стены у него дома, а не 2–4 этажа
+        for offset in 0..16 {
+            let at = Vec2::new(offset as f32 * 43.0, offset as f32 * 29.0);
+            let cottage = building(oblong(12.0, 20.0, at), BuildingUse::Other);
+            assert!(HOUSE_HEIGHTS.contains(&height_or_default(&cottage)));
+        }
     }
 }

@@ -2239,12 +2239,17 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     come out skyscraping (p90 27 m before the tower table was halved).
   - **A private house is one storey with an attic in the roof**: `HOUSE_HEIGHTS` is
     3–3.4 m in 8 slots of 10 and 6–6.4 m in 2, for `building=house` and for an untagged box
-    up to `COTTAGE_FOOTPRINT_MAX` 150 m²; an untagged box up to `SHED_FOOTPRINT_MAX` 40 m²
-    is a yard shed at 2.4–3 m. It was 5–8 m, i.e. two rows of windows on every house, and
-    an untagged 60 m² box took the 2–4-storey low table — the author's report: «большая
-    часть "двухэтажных" домов на самом деле одноэтажные, но с чердаком». Such a box also
-    takes the house wall table (`material::wall_kind_of`), not the low-rise one with its
-    shopfront.
+    up to `roofs::SMALL_FOOTPRINT_MAX` 250 m²; an untagged box up to `SHED_FOOTPRINT_MAX`
+    40 m² is a yard shed at 2.4–3 m. It was 5–8 m, i.e. two rows of windows on every house,
+    and an untagged 60 m² box took the 2–4-storey low table — the author's report: «большая
+    часть "двухэтажных" домов на самом деле одноэтажные, но с чердаком». An untagged box
+    also takes the house wall table (`material::wall_kind_of`), not the low-rise one with
+    its shopfront — at the same footprint ≤ `SMALL_FOOTPRINT_MAX` and under
+    `LOW_RISE_STOREYS` (= `BALCONY_STOREYS_MIN` 4). **One constant for roof, walls and
+    height**, owned by `roofs.rs` and imported by `material.rs` and `heights.rs`: the height
+    rule had its own `COTTAGE_FOOTPRINT_MAX` 150 m² for a while, and an untagged 150–250 m²
+    box came out with a gable roof and house walls over 2–4 storeys — the two-storey-house
+    look this rule exists to remove (`an_untagged_box_under_the_pitched_cohort_border_is_a_private_house`).
   - **Some uses are measured in metres, not storeys**: an industrial hall or a store has
     one tall span, a church has one storey to the cornice, a garage is one box and gets no
     spread at all (a row of garage boxes on a photo is all one height).

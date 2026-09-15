@@ -227,7 +227,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
   long thin shed stays low), and industrial / commercial / church footprints are measured
   in **metres of span** rather than storeys. A **private house** — `building=house`, or an
-  untagged box up to 150 m² — has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives
+  untagged box up to 250 m² (the pitched-cohort border, one for roof, walls and height) — has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives
   in the pitched roof), two in the rest; a yard shed (≤ 40 m²) is 2.4–3 m.
   A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
   storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large

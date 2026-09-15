@@ -38,6 +38,10 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::garages::GarageRun;
+// Пятно, ниже которого `building=yes` считается частным домом, — та же
+// константа, по которой `roofs` ставит на него двускатную крышу: одна граница,
+// один смысл «это дом, а не корпус».
+use super::roofs::SMALL_FOOTPRINT_MAX;
 use super::{fortress, temples};
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
@@ -468,11 +472,6 @@ const PUBLIC_ROOFS: [RoofKind; 10] = [
     RoofKind::Gravel,
     RoofKind::Membrane,
 ];
-
-/// Пятно, ниже которого `building=yes` считается частным домом, — то же
-/// число, по которому [`super::roofs`] ставит на него двускатную крышу: одна
-/// граница, один смысл «это дом, а не корпус».
-const SMALL_FOOTPRINT_MAX: f32 = 250.0;
 
 /// Кровля дома глазами отрисовки: чем крыта, какого цвета и с какой рамкой
 /// для шейдера.
