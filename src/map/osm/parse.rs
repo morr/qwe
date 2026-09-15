@@ -12,9 +12,11 @@ use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
     Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, point_in_area, point_in_polygon, ring_area, ring_bounds, signed_ring_area,
+    WallLine, WaterLine, closest_on_segment, grid_cell, point_in_area, point_in_polygon,
+    put_in_cells, ring_area, ring_bounds, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
+use crate::map::roads::{is_carriageway, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
@@ -97,6 +99,12 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
             started.elapsed()
         );
     }
+    let started = std::time::Instant::now();
+    let (pulled, stuck) = pull_houses_off_sidewalks(&mut map);
+    eprintln!(
+        "osm parse: {pulled} buildings pulled off the sidewalks, {stuck} left standing on them, in {:?}",
+        started.elapsed()
+    );
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
@@ -558,29 +566,8 @@ const SQUARE_SHIFT_MAX: f32 = 2.5;
 /// входов (они ищут дом по точной вершине) и до генерации дверей и посадки
 /// деревьев (те должны видеть уже выпрямленный контур).
 fn square_skewed_houses(map: &mut MapData) -> usize {
-    let key = |point: Vec2| {
-        (
-            (point.x * ENTRANCE_SNAP_SCALE).round() as i32,
-            (point.y * ENTRANCE_SNAP_SCALE).round() as i32,
-        )
-    };
-    let mut uses: HashMap<(i32, i32), u32> = HashMap::new();
-    let mut count = |points: &[Vec2]| {
-        let unique: HashSet<(i32, i32)> = points.iter().map(|point| key(*point)).collect();
-        for vertex in unique {
-            *uses.entry(vertex).or_default() += 1;
-        }
-    };
-    for building in &map.buildings {
-        count(&building.outer);
-        building.holes.iter().for_each(|hole| count(hole));
-    }
-    map.roads.iter().for_each(|line| count(&line.points));
-    map.rails.iter().for_each(|line| count(&line.points));
-    map.walls.iter().for_each(|line| count(&line.points));
-    map.fences.iter().for_each(|line| count(&line.points));
-    map.pipes.iter().for_each(|line| count(&line.points));
-    map.water_lines.iter().for_each(|line| count(&line.points));
+    let uses = vertex_uses(map);
+    let key = vertex_key;
 
     let mut squared = 0;
     for building in &mut map.buildings {
@@ -620,6 +607,347 @@ fn square_skewed_houses(map: &mut MapData) -> usize {
         squared += 1;
     }
     squared
+}
+
+/// Ключ вершины на сантиметровой сетке: общий OSM-узел двух контуров или линий
+/// после одной проекции даёт один и тот же ключ.
+fn vertex_key(point: Vec2) -> (i32, i32) {
+    (
+        (point.x * ENTRANCE_SNAP_SCALE).round() as i32,
+        (point.y * ENTRANCE_SNAP_SCALE).round() as i32,
+    )
+}
+
+/// Сколько контуров и линий карты проходит через каждую вершину: `> 1` —
+/// вершина общая (сплошная застройка, забор по стене, арка, тропа до угла).
+fn vertex_uses(map: &MapData) -> HashMap<(i32, i32), u32> {
+    let mut uses: HashMap<(i32, i32), u32> = HashMap::new();
+    let mut count = |points: &[Vec2]| {
+        let unique: HashSet<(i32, i32)> = points.iter().map(|point| vertex_key(*point)).collect();
+        for vertex in unique {
+            *uses.entry(vertex).or_default() += 1;
+        }
+    };
+    for building in &map.buildings {
+        count(&building.outer);
+        building.holes.iter().for_each(|hole| count(hole));
+    }
+    map.roads.iter().for_each(|line| count(&line.points));
+    map.rails.iter().for_each(|line| count(&line.points));
+    map.walls.iter().for_each(|line| count(&line.points));
+    map.fences.iter().for_each(|line| count(&line.points));
+    map.pipes.iter().for_each(|line| count(&line.points));
+    map.water_lines.iter().for_each(|line| count(&line.points));
+    uses
+}
+
+/// Зазор между стеной и внешним краем нарисованного тротуара, м. Треть метра
+/// оставляла дом вплотную к тротуару, а в 2.5D крыша ещё и наклоняется к
+/// дороге на полметра-метр.
+const SIDEWALK_CLEARANCE: f32 = 2.0;
+/// Дальше этого, м, дом от улицы не отодвигается: дом, которому нужно больше,
+/// стоит на улице по данным, а не у её кромки, и сдвиг унёс бы его в соседа.
+const SIDEWALK_SHIFT_MAX: f32 = 4.0;
+/// Разница отступов от улицы, м, при которой соседи ещё стоят «на одной линии»
+/// и сдвигаются вместе.
+const ROW_SETBACK_TOLERANCE: f32 = 2.0;
+/// Промежуток между габаритами соседей по ряду, м.
+const ROW_GAP: f32 = 20.0;
+/// Раундов сдвига: угловой дом у двух улиц отталкивается от каждой по очереди.
+const SIDEWALK_SHIFT_ROUNDS: usize = 4;
+/// Остаток наезда, м, который после раундов считается нулём.
+const SIDEWALK_SHIFT_TOLERANCE: f32 = 0.05;
+/// Ячейка сетки отрезков улиц, м.
+const SIDEWALK_CELL: f32 = 32.0;
+
+/// Дома, контур которых **наезжает на нарисованный тротуар** улицы, сдвигаются
+/// от неё целиком — внутрь квартала. Возвращает, сколько домов сдвинуто и
+/// сколько наезжающих оставлено как есть.
+///
+/// Ширина улицы в модели — константа класса, а тротуар добавляет рендер
+/// (`roads::sidewalk_width`), и в старой застройке дом, стоящий в OSM у самой
+/// кромки, выходит стеной на тротуар, а в 2.5D крышей — на асфальт (Тула,
+/// way 179102449 у улицы Бундурина: стена в 4.7 м от оси при 5.76 м полосы).
+/// Точность до метра игре не нужна, а дом на тротуаре читается как баг.
+///
+/// Сдвиг — перенос всего контура вместе с входами, по кратчайшему направлению
+/// от оси улицы. **Двигается ряд, а не дом**: соседи по одной стороне одной
+/// улицы (габариты ближе [`ROW_GAP`]), чей отступ не больше чем на
+/// [`ROW_SETBACK_TOLERANCE`] отличается от отступа самого наезжающего дома
+/// ряда, отодвигаются на тот же сдвиг — иначе линия фасадов ломается
+/// ступенькой. Потом каждый дом добирает остаток наезда от других улиц
+/// раундами до [`SIDEWALK_SHIFT_ROUNDS`]. Дом остаётся на месте,
+/// если улица проходит сквозь контур, если нужный сдвиг больше
+/// [`SIDEWALK_SHIFT_MAX`] или раунды не сошлись (узкий квартал между двумя
+/// улицами). Не трогаются, как и в [`square_skewed_houses`], дома с общей
+/// вершиной — сплошная застройка разошлась бы щелью, арка потеряла бы проход, —
+/// крепость и храмы (части храма стоят друг на друге). Сдвиг первой вершины
+/// меняет дому посев: материал и этажность выпадут заново.
+///
+/// Порядок в конвейере: после выпрямления косых домов, до генерации дверей и
+/// посадки деревьев — те, как и навмеш, видят уже сдвинутый контур.
+fn pull_houses_off_sidewalks(map: &mut MapData) -> (usize, usize) {
+    // (начало, конец, полуширина улицы с тротуаром и зазором) и индекс улицы
+    let mut segments: Vec<(Vec2, Vec2, f32)> = Vec::new();
+    let mut segment_road: Vec<usize> = Vec::new();
+    for (index, road) in map.roads.iter().enumerate() {
+        if road.bridge || !is_carriageway(road) {
+            continue;
+        }
+        let Some(sidewalk) = sidewalk_width(road.width) else {
+            continue;
+        };
+        let reach = road.width / 2.0 + sidewalk + SIDEWALK_CLEARANCE;
+        for link in road.points.windows(2) {
+            segments.push((link[0], link[1], reach));
+            segment_road.push(index);
+        }
+    }
+    let widest = segments
+        .iter()
+        .map(|&(_, _, reach)| reach)
+        .fold(0.0, f32::max);
+    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, &(from, to, _)) in segments.iter().enumerate() {
+        put_in_cells(&mut cells, from.min(to), from.max(to), SIDEWALK_CELL, index);
+    }
+
+    let uses = vertex_uses(map);
+    let mut fronts: Vec<Front> = Vec::new();
+    let mut left = 0;
+    for (index, building) in map.buildings.iter().enumerate() {
+        if building.kind != AreaKind::Building
+            || matches!(building.building_use, BuildingUse::Church(_))
+            || building
+                .outer
+                .iter()
+                .any(|vertex| uses[&vertex_key(*vertex)] > 1)
+        {
+            continue;
+        }
+        let (min, max) = ring_bounds(&building.outer);
+        let margin = Vec2::splat(widest + SIDEWALK_SHIFT_MAX);
+        let mut nearby: Vec<usize> = Vec::new();
+        for x in
+            grid_cell(min.x - margin.x, SIDEWALK_CELL)..=grid_cell(max.x + margin.x, SIDEWALK_CELL)
+        {
+            for y in grid_cell(min.y - margin.y, SIDEWALK_CELL)
+                ..=grid_cell(max.y + margin.y, SIDEWALK_CELL)
+            {
+                nearby.extend(cells.get(&(x, y)).into_iter().flatten());
+            }
+        }
+        if nearby.is_empty() {
+            continue;
+        }
+        nearby.sort_unstable();
+        nearby.dedup();
+        match Front::of(index, &building.outer, &nearby, &segments, &segment_road) {
+            // улица сквозь дом: сдвигать некуда, и в ряд он не встаёт
+            None => left += 1,
+            Some(front) if front.need > -ROW_SETBACK_TOLERANCE => fronts.push(front),
+            Some(_) => {}
+        }
+    }
+
+    // ряды: соседи по одной стороне одной улицы, union-find
+    let mut parent: Vec<usize> = (0..fronts.len()).collect();
+    fn root(parent: &mut [usize], mut at: usize) -> usize {
+        while parent[at] != at {
+            parent[at] = parent[parent[at]];
+            at = parent[at];
+        }
+        at
+    }
+    let mut by_street: HashMap<(usize, bool), Vec<usize>> = HashMap::new();
+    for (index, front) in fronts.iter().enumerate() {
+        by_street
+            .entry((front.road, front.left))
+            .or_default()
+            .push(index);
+    }
+    for members in by_street.values() {
+        for (position, &a) in members.iter().enumerate() {
+            for &b in &members[position + 1..] {
+                let (first, second) = (&fronts[a], &fronts[b]);
+                let gap = (first.min - second.max)
+                    .max(second.min - first.max)
+                    .max(Vec2::ZERO)
+                    .length();
+                if gap <= ROW_GAP {
+                    let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                    parent[ra] = rb;
+                }
+            }
+        }
+    }
+    // сдвиг ряда — наезд самого глубокого дома в нём
+    let mut row_need: HashMap<usize, f32> = HashMap::new();
+    for (index, front) in fronts.iter().enumerate() {
+        let row = root(&mut parent, index);
+        let need = row_need.entry(row).or_insert(f32::NEG_INFINITY);
+        *need = need.max(front.need);
+    }
+
+    let mut moved = 0;
+    for (index, front) in fronts.iter().enumerate() {
+        let need = row_need[&root(&mut parent, index)];
+        if need <= SIDEWALK_SHIFT_TOLERANCE || front.need < need - ROW_SETBACK_TOLERANCE {
+            continue;
+        }
+        let intruding = front.need > SIDEWALK_SHIFT_TOLERANCE;
+        if need > SIDEWALK_SHIFT_MAX {
+            left += usize::from(intruding);
+            continue;
+        }
+        let building = &map.buildings[front.building];
+        let nearby = local(&front.nearby, &segments);
+        // сдвиг ряда, потом остаток наезда от других улиц
+        let mut shift = front.away * need;
+        let mut push = sidewalk_push(&building.outer, shift, &nearby);
+        for _ in 0..SIDEWALK_SHIFT_ROUNDS {
+            match push {
+                Some(step) if step.length() > SIDEWALK_SHIFT_TOLERANCE => {
+                    shift += step;
+                    push = sidewalk_push(&building.outer, shift, &nearby);
+                }
+                _ => break,
+            }
+        }
+        let settled = push.is_some_and(|step| step.length() <= SIDEWALK_SHIFT_TOLERANCE);
+        if !settled || shift.length() > SIDEWALK_SHIFT_MAX {
+            left += usize::from(intruding);
+            continue;
+        }
+        let building = &mut map.buildings[front.building];
+        building
+            .outer
+            .iter_mut()
+            .for_each(|vertex| *vertex += shift);
+        building
+            .holes
+            .iter_mut()
+            .flatten()
+            .for_each(|vertex| *vertex += shift);
+        building
+            .entrances
+            .iter_mut()
+            .for_each(|entrance| *entrance += shift);
+        moved += 1;
+    }
+    (moved, left)
+}
+
+/// Отрезки улиц по индексам.
+fn local(indices: &[usize], segments: &[(Vec2, Vec2, f32)]) -> Vec<(Vec2, Vec2, f32)> {
+    indices.iter().map(|&index| segments[index]).collect()
+}
+
+/// Дом, выходящий фасадом на улицу: ближайшая к контуру ось.
+struct Front {
+    building: usize,
+    /// Индексы отрезков улиц рядом с домом.
+    nearby: Vec<usize>,
+    road: usize,
+    /// С какой стороны оси улицы стоит дом (по порядку её точек).
+    left: bool,
+    /// Единичное направление от оси к стене.
+    away: Vec2,
+    /// Насколько стена заходит в полосу улицы, м; отрицательное — запас.
+    need: f32,
+    min: Vec2,
+    max: Vec2,
+}
+
+impl Front {
+    /// `None` — ось улицы проходит сквозь контур или кончается внутри него.
+    fn of(
+        building: usize,
+        ring: &[Vec2],
+        nearby: &[usize],
+        segments: &[(Vec2, Vec2, f32)],
+        segment_road: &[usize],
+    ) -> Option<Self> {
+        let mut best: Option<(f32, usize, Vec2, Vec2)> = None;
+        for &segment in nearby {
+            let (from, to, reach) = segments[segment];
+            if point_in_polygon(from, ring) || point_in_polygon(to, ring) {
+                return None;
+            }
+            for index in 0..ring.len() {
+                let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+                let (on_wall, on_axis) = closest_between_segments(a, b, from, to)?;
+                let need = reach - on_wall.distance(on_axis);
+                if best.is_none_or(|(deepest, ..)| need > deepest) {
+                    best = Some((need, segment, on_wall, on_axis));
+                }
+            }
+        }
+        let (need, segment, on_wall, on_axis) = best?;
+        let (from, to, _) = segments[segment];
+        let (min, max) = ring_bounds(ring);
+        Some(Self {
+            building,
+            nearby: nearby.to_vec(),
+            road: segment_road[segment],
+            left: (to - from).perp_dot(on_wall - on_axis) > 0.0,
+            away: (on_wall - on_axis).normalize_or_zero(),
+            need,
+            min,
+            max,
+        })
+    }
+}
+
+/// Сдвиг, выводящий контур `ring`, перенесённый на `shift`, из самой глубоко
+/// задетой полосы улиц `segments`: `Some(ZERO)` — не наезжает, `None` — ось
+/// улицы проходит сквозь контур или кончается внутри него, и сдвигать некуда.
+fn sidewalk_push(ring: &[Vec2], shift: Vec2, segments: &[(Vec2, Vec2, f32)]) -> Option<Vec2> {
+    let inside = |point: Vec2| point_in_polygon(point - shift, ring);
+    if segments
+        .iter()
+        .any(|&(from, to, _)| inside(from) || inside(to))
+    {
+        return None;
+    }
+    let mut push = Vec2::ZERO;
+    for index in 0..ring.len() {
+        let (a, b) = (ring[index] + shift, ring[(index + 1) % ring.len()] + shift);
+        for &(from, to, reach) in segments {
+            let (on_wall, on_axis) = closest_between_segments(a, b, from, to)?;
+            let away = on_wall - on_axis;
+            let depth = reach - away.length();
+            if depth > push.length() {
+                push = away.normalize_or_zero() * depth;
+            }
+        }
+    }
+    Some(push)
+}
+
+/// Ближайшие точки двух отрезков `(на первом, на втором)`; `None` — отрезки
+/// пересекаются.
+fn closest_between_segments(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<(Vec2, Vec2)> {
+    let (ab, cd, ac) = (b - a, d - c, c - a);
+    let denominator = ab.perp_dot(cd);
+    if denominator != 0.0 {
+        let t = ac.perp_dot(cd) / denominator;
+        let u = ac.perp_dot(ab) / denominator;
+        if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+            return None;
+        }
+    }
+    [
+        (a, closest_on_segment(a, c, d)),
+        (b, closest_on_segment(b, c, d)),
+        (closest_on_segment(c, a, b), c),
+        (closest_on_segment(d, a, b), d),
+    ]
+    .into_iter()
+    .min_by(|x, y| {
+        x.0.distance_squared(x.1)
+            .total_cmp(&y.0.distance_squared(y.1))
+    })
 }
 
 /// Наибольшее отклонение угла выпуклого четырёхугольника от прямого, градусы;

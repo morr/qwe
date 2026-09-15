@@ -384,6 +384,41 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   tree planting. The price: the render seed is the first vertex, so a squared house rolls
   its material and inferred storeys anew. Tula: ~200 of 4071 small quads (python estimate
   from the cache; the exact count is the `osm parse:` line).
+- **Houses pulled off the sidewalks** (`parse.rs::pull_houses_off_sidewalks`) — the street's
+  width is a class constant and the sidewalk is added by the renderer
+  (`roads::sidewalk_width`), so an old house standing at the kerb in OSM came out with its
+  wall on the drawn sidewalk and, in 2.5D, its roof on the asphalt (Tula way 179102449 on
+  улица Бундурина: the wall 4.7 m from the axis against a 5.76 m band). The game does not
+  need metre accuracy, and a house on the pavement reads as a bug, so the house moves.
+  - **The band** is every non-bridge `roads::is_carriageway` link at `width / 2 +
+    sidewalk_width + SIDEWALK_CLEARANCE` 2 m, in a `SIDEWALK_CELL` 32 m grid; raw OSM
+    points, not the smoothed centreline — the difference is centimetres. The clearance was
+    0.3 m first, and the author's look said the houses stood right on the pavement edge: the
+    2.5D roof leans toward the street by another half metre to a metre.
+  - **The row moves, not the house** (`Front`, union-find): each eligible building's deepest
+    band intrusion names its street way and the side of it; fronts with `need >
+    -ROW_SETBACK_TOLERANCE` 2 m on the same (way, side) whose bounding boxes are within
+    `ROW_GAP` 20 m join a row. The row's shift is its deepest `need`, and every member whose
+    own `need` is within `ROW_SETBACK_TOLERANCE` of it takes that same shift along its own
+    away-direction — a neighbour standing on the line but not quite on the band moves too,
+    one standing deeper in the block stays. The author's ask: a lone house pulled back broke
+    the facade line into a step. Rows do not cross a way split (a junction usually splits the
+    way anyway).
+  - **The shift** translates the whole outline, holes and attached entrances by the row
+    shift, then by the deepest remaining intrusion (closest points of wall edge and axis
+    link, pushed out along their difference) for up to `SIDEWALK_SHIFT_ROUNDS` 4 so a
+    corner house settles against the other street too.
+  - **Left in place**: a street axis crossing the outline or ending inside it (`None` from
+    `Front::of` / `sidewalk_push` — there is no "away"), a shift over `SIDEWALK_SHIFT_MAX` 4 m or rounds
+    that do not settle (a narrow block between two streets), any **shared** vertex (the
+    `square_skewed_houses` rule, same `vertex_uses`: terraces, arches, fences on walls),
+    `AreaKind::Kremlin`, `BuildingUse::Church` (parts stand on each other).
+  - **Not checked**: the moved house against its neighbours; a row along one street moves
+    together, and a collision was not seen on Tula.
+  - Order: after squaring, before door generation and tree planting — the navmesh, doors
+    and trees see the moved outline. Price: the first vertex moves, so the seed, material
+    and inferred storeys roll anew. Tula: **993 moved (rows included), 160 left**, 18 ms
+    at load.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.

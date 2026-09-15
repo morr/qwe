@@ -1688,3 +1688,95 @@ fn only_a_lone_skewed_small_house_is_squared() {
         "крупное здание выпрямлено"
     );
 }
+
+/// Дом, стеной заходящий на нарисованный тротуар улицы, отодвигается от неё
+/// целиком и тянет за собой соседей по ряду; дом в стороне, дом с общей
+/// вершиной и дом, сквозь который идёт улица, остаются на месте.
+#[test]
+fn a_house_on_the_sidewalk_is_pulled_back_into_the_block() {
+    // residential 8 м: полоса с тротуаром и зазором — 4 + 1.76 + 2 от оси
+    let reach = 4.0 + sidewalk_width(8.0).unwrap() + SIDEWALK_CLEARANCE;
+    let street = vec![
+        CENTER - Vec2::new(300.0, 0.0),
+        CENTER + Vec2::new(300.0, 0.0),
+    ];
+    let house = |x: f32, gap: f32| {
+        rect(
+            CENTER + Vec2::new(x, gap),
+            CENTER + Vec2::new(x + 12.0, gap + 10.0),
+        )
+    };
+    let on_sidewalk = house(-200.0, 4.7);
+    // сосед по ряду на той же линии — сдвигается на тот же сдвиг, хотя сам
+    // не наезжает; сосед глубже в квартале — нет
+    let in_row = house(-180.0, 6.5);
+    let set_back = house(-160.0, 9.5);
+    let clear = house(-120.0, 10.0);
+    let crossed = house(-100.0, -5.0);
+    let terraced = house(0.0, 4.7);
+    let neighbour = house(12.0, 4.7);
+    // уличный дом с юга: толкать надо в минус по y
+    let south = rect(
+        CENTER + Vec2::new(100.0, -14.0),
+        CENTER + Vec2::new(112.0, -5.0),
+    );
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "residential")], street)
+        .area(&[("building", "yes")], on_sidewalk.clone())
+        .area(&[("building", "yes")], clear.clone())
+        .area(&[("building", "yes")], crossed.clone())
+        .area(&[("building", "yes")], terraced.clone())
+        .area(&[("building", "yes")], neighbour)
+        .area(&[("building", "yes")], south.clone())
+        .area(&[("building", "yes")], in_row.clone())
+        .area(&[("building", "yes")], set_back.clone())
+        .parse();
+
+    let same =
+        |ring: &[Vec2], got: &[Vec2]| ring.iter().zip(got).all(|(a, b)| a.distance(*b) < 0.01);
+    let gap = |ring: &[Vec2]| {
+        ring.iter()
+            .map(|vertex| (vertex.y - CENTER.y).abs())
+            .fold(f32::INFINITY, f32::min)
+    };
+    let pulled = &map.buildings[0].outer;
+    assert!(
+        gap(pulled) >= reach - 0.06,
+        "дом остался на тротуаре: {pulled:?}"
+    );
+    assert!(gap(pulled) < reach + 0.1, "дом унесён дальше нужного");
+    assert!(
+        pulled
+            .iter()
+            .zip(&on_sidewalk)
+            .all(|(a, b)| (a.x - b.x).abs() < 0.01 && a.y > b.y),
+        "сдвиг не поперёк улицы от неё"
+    );
+    assert!(
+        same(&clear, &map.buildings[1].outer),
+        "дом в стороне тронут"
+    );
+    assert!(
+        same(&crossed, &map.buildings[2].outer),
+        "дом на оси улицы сдвинут"
+    );
+    assert!(
+        same(&terraced, &map.buildings[3].outer),
+        "дом с общей вершиной сдвинут"
+    );
+    let south_pulled = &map.buildings[5].outer;
+    assert!(gap(south_pulled) >= reach - 0.06, "{south_pulled:?}");
+    assert!(south_pulled.iter().zip(&south).all(|(a, b)| a.y < b.y));
+
+    // ряд держит линию: сосед сдвинут ровно на сдвиг наезжающего дома
+    let row_shift = pulled[0].y - on_sidewalk[0].y;
+    let neighbour_shift = map.buildings[6].outer[0].y - in_row[0].y;
+    assert!(
+        (neighbour_shift - row_shift).abs() < 0.01,
+        "сосед по ряду сдвинут на {neighbour_shift}, ряд — на {row_shift}"
+    );
+    assert!(
+        same(&set_back, &map.buildings[7].outer),
+        "дом в глубине квартала сдвинут вместе с рядом"
+    );
+}

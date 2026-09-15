@@ -207,6 +207,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   OSM as a skewed quad (worst corner 2°–20° off square) is replaced at parse by a rectangle
   of the same centroid and area; not when a vertex is shared with another outline or line.
   Everything downstream — navmesh, doors, roof, render seed — sees the rectangle.
+- **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose outline
+  reaches into a street's **drawn** sidewalk band (half the class width + `sidewalk_width` +
+  2 m) is moved at parse, whole and with its doors, straight away from the street, by at
+  most 4 m — and its **row** with it: neighbours on the same side of the same street standing
+  on the same line take the same shift, so the facade line stays straight. Not when the
+  street runs through it, a vertex is shared, or it is a church or a fortress. Like a squared
+  house, everything downstream sees the moved outline.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
