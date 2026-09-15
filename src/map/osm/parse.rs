@@ -773,21 +773,10 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
         let (min, max) = ring_bounds(&building.outer);
         let margin = Vec2::splat(widest + SIDEWALK_SHIFT_MAX);
-        let mut nearby: Vec<usize> = Vec::new();
-        for x in
-            grid_cell(min.x - margin.x, SIDEWALK_CELL)..=grid_cell(max.x + margin.x, SIDEWALK_CELL)
-        {
-            for y in grid_cell(min.y - margin.y, SIDEWALK_CELL)
-                ..=grid_cell(max.y + margin.y, SIDEWALK_CELL)
-            {
-                nearby.extend(cells.get(&(x, y)).into_iter().flatten());
-            }
-        }
+        let nearby = indices_near(&cells, min - margin, max + margin);
         if nearby.is_empty() {
             continue;
         }
-        nearby.sort_unstable();
-        nearby.dedup();
         match Front::of(index, &building.outer, &nearby, &segments, &segment_road) {
             // улица сквозь дом: сдвигать некуда, и в ряд он не встаёт
             None => left += 1,
@@ -1003,17 +992,7 @@ impl Obstacles {
         let before = &self.original[house];
         let after: Vec<Vec2> = before.iter().map(|vertex| *vertex + shift).collect();
         let (min, max) = ring_bounds(&after);
-        let cells = |grid: &HashMap<(i32, i32), Vec<usize>>| {
-            let mut found: Vec<usize> = Vec::new();
-            for x in grid_cell(min.x, SIDEWALK_CELL)..=grid_cell(max.x, SIDEWALK_CELL) {
-                for y in grid_cell(min.y, SIDEWALK_CELL)..=grid_cell(max.y, SIDEWALK_CELL) {
-                    found.extend(grid.get(&(x, y)).into_iter().flatten());
-                }
-            }
-            found.sort_unstable();
-            found.dedup();
-            found
-        };
+        let cells = |grid: &HashMap<(i32, i32), Vec<usize>>| indices_near(grid, min, max);
         // стало ближе запрета и ближе, чем было
         let closer = |now: f32, reach: f32, was: f32| now < reach && now < was - 0.01;
 
@@ -1041,6 +1020,20 @@ impl Obstacles {
             now < reach && closer(now, reach, ring_segment_distance(before, from, to))
         })
     }
+}
+
+/// Индексы из сетки [`SIDEWALK_CELL`], чьи ячейки задевает рамка `min..max`:
+/// отсортированы и без повторов.
+fn indices_near(grid: &HashMap<(i32, i32), Vec<usize>>, min: Vec2, max: Vec2) -> Vec<usize> {
+    let mut found: Vec<usize> = Vec::new();
+    for x in grid_cell(min.x, SIDEWALK_CELL)..=grid_cell(max.x, SIDEWALK_CELL) {
+        for y in grid_cell(min.y, SIDEWALK_CELL)..=grid_cell(max.y, SIDEWALK_CELL) {
+            found.extend(grid.get(&(x, y)).into_iter().flatten());
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
 }
 
 /// Расстояние от контура до отрезка: ноль, если отрезок пересекает контур или

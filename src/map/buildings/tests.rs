@@ -1502,11 +1502,6 @@ fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
     ));
 }
 
-/// Площадь выпуклого многоугольника в плане.
-fn convex_area(points: &[Vec2]) -> f32 {
-    signed_ring_area(points).abs()
-}
-
 #[test]
 fn a_private_house_is_gabled_and_almost_never_hipped_or_flat() {
     let _sun = crate::map::default_sun();
@@ -1556,7 +1551,11 @@ fn every_gable_form_covers_its_rectangle_exactly_once() {
             panic!("{shape:?} did not build");
         };
         assert_eq!(RoofShape::of_gable(&roof), shape);
-        let covered: f32 = roof.slopes.iter().map(|(face, _)| convex_area(face)).sum();
+        let covered: f32 = roof
+            .slopes
+            .iter()
+            .map(|(face, _)| signed_ring_area(face).abs())
+            .sum();
         assert!((covered - 96.0).abs() < 0.1, "{shape:?} covers {covered}");
     }
 }

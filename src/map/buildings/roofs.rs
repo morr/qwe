@@ -322,12 +322,9 @@ pub(super) fn roofing_of(
             house_gable(building, lift, &ridge_lift, base, choice)
                 .map_or(Roofing::Flat, Roofing::Gable)
         }
-        RoofShape::Cross => match is_pitched(building) {
-            true => {
-                cross_gable(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Gable)
-            }
-            false => Roofing::Flat,
-        },
+        RoofShape::Cross => {
+            cross_gable(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Gable)
+        }
     }
 }
 
@@ -656,11 +653,16 @@ fn pitched_rise(width: f32, pitch: f32, rise_max: f32) -> f32 {
 /// которому игра отказывает двускатной, а не пересчитанное своё.
 fn bounding_rect(ring: &[Vec2]) -> Option<([Vec2; 4], f32)> {
     let rect = min_area_rect(ring)?;
-    let area = (rect[1] - rect[0]).length() * (rect[2] - rect[1]).length();
+    let area = rect_area(&rect);
     if area <= 0.0 {
         return None;
     }
     Some((rect, signed_ring_area(ring).abs() / area))
+}
+
+/// Площадь прямоугольника, заданного углами по обходу.
+fn rect_area(rect: &[Vec2; 4]) -> f32 {
+    (rect[1] - rect[0]).length() * (rect[2] - rect[1]).length()
 }
 
 /// Как далеко от контура, м, самый дальний угол прямоугольника `rect`.
@@ -929,7 +931,7 @@ fn lean_to(
 
 /// Выбор крыши для прямоугольного дома скатной когорты.
 #[derive(Clone, Copy)]
-pub(super) struct HouseRoof {
+struct HouseRoof {
     form: GableForm,
     /// Редкая вальма вместо всего остального.
     hipped: bool,
@@ -986,7 +988,7 @@ fn shape_seed(seed: u32) -> u32 {
 }
 
 /// Какую крышу посев даёт прямоугольному дому.
-pub(super) fn house_roof(building: &PolyArea, rect: &[Vec2; 4], seed: u32) -> HouseRoof {
+fn house_roof(building: &PolyArea, rect: &[Vec2; 4], seed: u32) -> HouseRoof {
     let seed = shape_seed(seed);
     let area = signed_ring_area(&building.outer).abs();
     let (length, width) = ((rect[1] - rect[0]).length(), (rect[2] - rect[1]).length());
@@ -1083,21 +1085,20 @@ fn dormers(
     // окно одно: у одноэтажного дома мансарда одна, а ряд слуховых окон —
     // примета многоэтажного, по окну на подъезд. Не посередине, а где выпало
     let shift = ((seed >> 20) & 0xff) as f32 / 255.0;
-    let centres = [frame.length * (0.35 + 0.3 * shift)];
+    let centre = frame.length * (0.35 + 0.3 * shift);
     let front = -inward;
-    let mut faces = Vec::new();
-    for centre in centres {
-        let (u0, u1) = (centre - wide / 2.0, centre + wide / 2.0);
-        let (f0, f1) = (at(u0, setback, z0), at(u1, setback, z0));
-        let (t0, t1) = (at(u0, setback, z1), at(u1, setback, z1));
-        let apex = at(centre, setback, z_ridge);
-        let (e0, e1) = (at(u0, eave, z1), at(u1, eave, z1));
-        let back = at(centre, ridge, z_ridge);
-        faces.push(DormerFace::Wall(vec![f0, e0, t0], -frame.long));
-        faces.push(DormerFace::Wall(vec![f1, t1, e1], frame.long));
-        faces.push(DormerFace::Wall(vec![f0, f1, t1, apex, t0], front));
-        let pane = wide * 0.3;
-        faces.push(DormerFace::Glass(
+    let (u0, u1) = (centre - wide / 2.0, centre + wide / 2.0);
+    let (f0, f1) = (at(u0, setback, z0), at(u1, setback, z0));
+    let (t0, t1) = (at(u0, setback, z1), at(u1, setback, z1));
+    let apex = at(centre, setback, z_ridge);
+    let (e0, e1) = (at(u0, eave, z1), at(u1, eave, z1));
+    let back = at(centre, ridge, z_ridge);
+    let pane = wide * 0.3;
+    vec![
+        DormerFace::Wall(vec![f0, e0, t0], -frame.long),
+        DormerFace::Wall(vec![f1, t1, e1], frame.long),
+        DormerFace::Wall(vec![f0, f1, t1, apex, t0], front),
+        DormerFace::Glass(
             vec![
                 at(centre - pane, setback, z0 + 0.2),
                 at(centre + pane, setback, z0 + 0.2),
@@ -1105,17 +1106,10 @@ fn dormers(
                 at(centre - pane, setback, z1 - 0.15),
             ],
             front,
-        ));
-        faces.push(DormerFace::Roof(
-            vec![t0, apex, back, e0],
-            slope_tone(base, -frame.long, 1.0),
-        ));
-        faces.push(DormerFace::Roof(
-            vec![apex, t1, e1, back],
-            slope_tone(base, frame.long, 1.0),
-        ));
-    }
-    faces
+        ),
+        DormerFace::Roof(vec![t0, apex, back, e0], slope_tone(base, -frame.long, 1.0)),
+        DormerFace::Roof(vec![apex, t1, e1, back], slope_tone(base, frame.long, 1.0)),
+    ]
 }
 
 /// Крестовая двускатная над домом из нескольких прямоугольников — буквой Г,
@@ -1131,7 +1125,7 @@ fn dormers(
 ///
 /// `None` — контур на прямоугольники не режется, кусок не пристроить ни к
 /// кому или крыло шире соседа (его конёк встал бы выше соседского).
-pub(super) fn cross_gable(
+fn cross_gable(
     building: &PolyArea,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
@@ -1144,7 +1138,6 @@ pub(super) fn cross_gable(
     // разрезов у Г два, у Т и П больше, и крылья пристраиваются не при
     // всяком: у Г, разрезанной «не той» хордой, крыло встаёт к торцу корпуса и
     // свешивается с него. Перебираются все разбиения, начиная с крупного корпуса
-    let area = |rect: &[Vec2; 4]| (rect[1] - rect[0]).length() * (rect[2] - rect[1]).length();
     let mut candidates: Vec<(f32, Vec<[Vec2; 4]>)> = rect_splits(ring, CROSS_PIECES_MAX)
         .into_iter()
         .filter(|pieces| pieces.len() >= 2)
@@ -1155,11 +1148,10 @@ pub(super) fn cross_gable(
                 .collect::<Option<_>>()?;
             // кусок, недотягивающий до прямоугольника, накрылся бы крышей с
             // торчащим углом — ровно то, от чего двускатная отказывает контуру
-            let rectangular = pieces
-                .iter()
-                .zip(&rects)
-                .all(|(piece, rect)| signed_ring_area(piece).abs() >= RECT_FILL_MIN * area(rect));
-            let largest = rects.iter().map(area).fold(0.0, f32::max);
+            let rectangular = pieces.iter().zip(&rects).all(|(piece, rect)| {
+                signed_ring_area(piece).abs() >= RECT_FILL_MIN * rect_area(rect)
+            });
+            let largest = rects.iter().map(rect_area).fold(0.0, f32::max);
             rectangular.then_some((largest, rects))
         })
         .collect();
@@ -1225,8 +1217,8 @@ fn cross_over(
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
 ) -> Option<GableRoof> {
-    let area = |rect: &[Vec2; 4]| (rect[1] - rect[0]).length() * (rect[2] - rect[1]).length();
-    let largest = (0..rects.len()).max_by(|a, b| area(&rects[*a]).total_cmp(&area(&rects[*b])))?;
+    let largest =
+        (0..rects.len()).max_by(|a, b| rect_area(&rects[*a]).total_cmp(&rect_area(&rects[*b])))?;
     let main = Piece::of_rect(rects.swap_remove(largest));
     let main_rise = ridge_rise(main.width());
     let mut roof = plain_gable(&Frame::of(main.rect(), lift), &ridge_lift, base, main_rise);
