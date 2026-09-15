@@ -269,17 +269,21 @@ mod tests {
         kerb_returns(&drawn, &paths, &nodes, |_| None)
     }
 
-    #[test]
-    fn a_crossing_gets_four_rounded_corners_outside_both_ribbons() {
-        let east_west = street(
+    /// Сквозная улица 8 м по оси x через узел в начале координат.
+    fn east_west() -> RoadLine {
+        street(
             vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
             8.0,
-        );
+        )
+    }
+
+    #[test]
+    fn a_crossing_gets_four_rounded_corners_outside_both_ribbons() {
         let north_south = street(
             vec![Vec2::new(0.0, -50.0), Vec2::ZERO, Vec2::new(0.0, 50.0)],
             8.0,
         );
-        let found = returns_of(&[east_west, north_south]);
+        let found = returns_of(&[east_west(), north_south]);
         assert_eq!(found.len(), 4);
         for (_, outline) in &found {
             // угол — на пересечении краёв, чуть под лентами
@@ -308,10 +312,7 @@ mod tests {
 
     #[test]
     fn a_t_junction_rounds_only_the_two_turning_corners() {
-        let through = street(
-            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
-            8.0,
-        );
+        let through = east_west();
         let side = street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 8.0);
         let found = returns_of(&[through, side]);
         assert_eq!(found.len(), 2);
@@ -325,10 +326,7 @@ mod tests {
 
     #[test]
     fn a_street_and_a_footway_are_not_rounded_together() {
-        let through = street(
-            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
-            8.0,
-        );
+        let through = east_west();
         let path = RoadLine {
             class: RoadClass::Alley,
             ..street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 3.5)
@@ -340,10 +338,7 @@ mod tests {
     fn a_vertex_on_a_straight_arm_does_not_cut_the_corner() {
         // проезд пересекает тротуар в двух метрах от улицы — узел на прямой,
         // но скругление по-прежнему ложится полным радиусом
-        let through = street(
-            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
-            8.0,
-        );
+        let through = east_west();
         let drive = street(
             vec![
                 Vec2::new(0.0, 40.0),
@@ -367,10 +362,7 @@ mod tests {
     fn a_short_arm_limits_the_radius() {
         // вторая вершина поперечной улицы в двух метрах за краем — дуга не
         // длиннее этого
-        let through = street(
-            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
-            8.0,
-        );
+        let through = east_west();
         let side = street(
             vec![Vec2::new(30.0, 30.0), Vec2::new(0.0, 6.0), Vec2::ZERO],
             8.0,

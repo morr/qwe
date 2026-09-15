@@ -630,6 +630,14 @@ pub fn sidewalk_width(road_width: f32) -> Option<f32> {
     })
 }
 
+/// Ширина тротуара, который у дороги **рисуется** при этом стиле: один ответ
+/// и для ленты тротуара, и для зажима радиуса скругления (`roads/corners.rs`).
+fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
+    (style.sidewalks && is_carriageway(road))
+        .then(|| sidewalk_width(road.width))
+        .flatten()
+}
+
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
 /// перекрёстках: класс `Street`, не арка (`passage` идёт сквозь дом), не у́же
 /// [`STREET_MIN_WIDTH`]. Мост — тоже: улица через реку не теряет полос.
@@ -757,9 +765,7 @@ pub fn spawn_roads(
             .map(|(road, path)| (!road.bridge && !road.passage).then_some(path.as_ref()))
             .collect();
         corners::kerb_returns(&drawn, &rounded, &nodes, |road| {
-            (style.sidewalks && is_carriageway(road))
-                .then(|| sidewalk_width(road.width))
-                .flatten()
+            drawn_sidewalk(&style, road)
         })
     };
     for (class, outline) in &kerb_returns {
@@ -827,10 +833,7 @@ pub fn spawn_roads(
             RoadClass::Street => (&mut street_casings, &mut streets),
             RoadClass::Alley => (&mut alley_casings, &mut alleys),
         };
-        if style.sidewalks
-            && is_carriageway(road)
-            && let Some(sidewalk) = sidewalk_width(road.width)
-        {
+        if let Some(sidewalk) = drawn_sidewalk(&style, road) {
             push_ribbon(
                 &mut sidewalks,
                 &points,

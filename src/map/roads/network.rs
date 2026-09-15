@@ -23,7 +23,9 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use super::junctions::node_key;
-use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, put_in_cells};
+use crate::map::osm::model::{
+    closest_on_segment, grid_cell, point_in_area, polyline_length, put_in_cells, ring_bounds,
+};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine};
 
 /// Зазор между висячим торцом и **краем** дороги впереди, м, который стежок
@@ -160,9 +162,7 @@ pub fn driveway_crossings(roads: &[RoadLine], nodes: &RoadNodes) -> Vec<(usize, 
     roads
         .iter()
         .enumerate()
-        .filter(|(_, road)| {
-            road.class == RoadClass::Alley && stitchable(road) && !road.points.is_empty()
-        })
+        .filter(|(_, road)| road.class == RoadClass::Alley && stitchable(road))
         .filter_map(|(index, road)| {
             let (first, last) = (road.points[0], road.points[road.points.len() - 1]);
             if first == last || polyline_length(&road.points) > CROSSING_MAX_LENGTH {
@@ -208,13 +208,8 @@ pub fn stitches(roads: &[&RoadLine], map: &MapData, nodes: &RoadNodes) -> Stitch
         if points[0] == points[points.len() - 1] {
             continue;
         }
-        for (side, (end, tail)) in [
-            (points[0], points[1..].iter()),
-            (points[points.len() - 1], points[..points.len() - 1].iter()),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        let last = points.len() - 1;
+        for (side, end) in [points[0], points[last]].into_iter().enumerate() {
             // торец держится, если в узле есть другая дорога, годная в цель
             let held = nodes
                 .roads_at(end)
@@ -223,12 +218,14 @@ pub fn stitches(roads: &[&RoadLine], map: &MapData, nodes: &RoadNodes) -> Stitch
             if held {
                 continue;
             }
-            let tail: Vec<Vec2> = if side == 0 {
-                tail.copied().collect()
+            // ближайшая к торцу точка не ближе `MIN_TAIL`, идя вглубь дороги
+            let far_enough = |point: &&Vec2| point.distance(end) >= MIN_TAIL;
+            let from = if side == 0 {
+                points[1..].iter().find(far_enough)
             } else {
-                tail.rev().copied().collect()
+                points[..last].iter().rev().find(far_enough)
             };
-            let Some(from) = tail.iter().find(|point| point.distance(end) >= MIN_TAIL) else {
+            let Some(from) = from else {
                 continue;
             };
             let heading = (end - *from).normalize();
@@ -256,9 +253,9 @@ fn stitch_end(
     obstacles: &Obstacles,
 ) -> Option<Vec2> {
     let mut best: Option<(f32, Vec2, f32)> = None;
-    let (low, high) = ((end - reach) / CELL, (end + reach) / CELL);
-    for x in low.x.floor() as i32..=high.x.floor() as i32 {
-        for y in low.y.floor() as i32..=high.y.floor() as i32 {
+    let (low, high) = (end - reach, end + reach);
+    for x in grid_cell(low.x, CELL)..=grid_cell(high.x, CELL) {
+        for y in grid_cell(low.y, CELL)..=grid_cell(high.y, CELL) {
             let Some(found) = segments.get(&(x, y)) else {
                 continue;
             };
@@ -325,20 +322,14 @@ impl<'a> Obstacles<'a> {
         let areas: Vec<&PolyArea> = map.buildings.iter().chain(&map.water).collect();
         let mut cells = HashMap::new();
         for (index, area) in areas.iter().enumerate() {
-            let (min, max) = area.outer.iter().fold(
-                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-                |(min, max), point| (min.min(*point), max.max(*point)),
-            );
+            let (min, max) = ring_bounds(&area.outer);
             put_in_cells(&mut cells, min, max, CELL, index);
         }
         Self { areas, cells }
     }
 
     fn covers(&self, point: Vec2) -> bool {
-        let cell = (
-            (point.x / CELL).floor() as i32,
-            (point.y / CELL).floor() as i32,
-        );
+        let cell = (grid_cell(point.x, CELL), grid_cell(point.y, CELL));
         self.cells.get(&cell).is_some_and(|found| {
             found
                 .iter()
