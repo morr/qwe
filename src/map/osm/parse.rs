@@ -187,9 +187,11 @@ const CHURCH_PART_REACH: f32 = 30.0;
 /// * **Хозяин части** — самый крупный из храмов крупнее неё, в контуре
 ///   которого стоит её центр, а если такого нет — ближайший из них не дальше
 ///   [`CHURCH_PART_REACH`] (колокольня стоит рядом, а не внутри). Храм без
-///   хозяина — сам себе храм.
-/// * **Посев храма** — от первой вершины хозяина: им красятся все части.
-/// * **Вера** — своя, если размечена; иначе хозяина; иначе большинства храмов
+///   хозяина — сам себе храм. Хозяин берётся цепочкой до верха: колокольня,
+///   чей ближайший крупный сосед — часть собора, принадлежит собору.
+/// * **Посев храма** — от первой вершины верхнего хозяина: им красятся все части.
+/// * **Вера** — своя, если размечена; иначе ближайшего по цепочке хозяина с
+///   размеченной; иначе большинства храмов
 ///   города: христианский храм без деноминации в Туле православный, а в Берлине
 ///   кирха. При равенстве, и в городе без единого размеченного храма, —
 ///   [`Faith::Western`], самый распространённый в OSM вид церкви.
@@ -262,20 +264,26 @@ fn resolve_faiths(buildings: &mut [PolyArea]) -> usize {
                 })
                 .map(|(at, _)| at)
         })
+    // хозяин цепочкой: колокольня, ближе всего стоящая к части собора, берёт
+    // посев и веру у собора, а не у части. Цепочка конечна — площадь хозяина
+    // строго растёт
+    let chain = |from: usize| std::iter::successors(Some(from), |&at| hosts[at]);
         .collect();
 
     let mut guessed = 0;
-    for (church, host) in churches.iter().zip(&hosts) {
-        let host = host.map(|at| &churches[at]);
-        let faith = match (church.faith, host.map(|host| host.faith)) {
-            (Faith::Unknown, Some(faith)) if faith != Faith::Unknown => faith,
-            (Faith::Unknown, _) => {
+    for (at, church) in churches.iter().enumerate() {
+        let faith = match chain(at)
+            .map(|up| churches[up].faith)
+            .find(|faith| *faith != Faith::Unknown)
+        {
+            Some(faith) => faith,
+            None => {
                 guessed += 1;
                 majority
             }
-            (faith, _) => faith,
         };
-        let anchor = host.map_or(church.index, |host| host.index);
+        let root = chain(at).last().unwrap_or(at);
+        let anchor = churches[root].index;
         let complex = seed_from_point(buildings[anchor].outer.first().copied().unwrap_or_default());
         if let BuildingUse::Church(sacred) = &mut buildings[church.index].building_use {
             sacred.faith = faith;

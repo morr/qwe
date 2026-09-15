@@ -312,8 +312,11 @@ in `CONTEXT.md` and the detail here in the same change.
   the 70 m bell tower). **`resolve_faiths`** runs right after the drowned-building pass and
   assembles churches from parts: a part's **host** is the largest larger church holding its
   centre, else the nearest larger one within `CHURCH_PART_REACH` 30 m (a bell tower stands
-  beside, not inside). The part takes the host's first-vertex seed as `Sacred::complex` —
-  what its colours are picked by — and, when untagged, the host's faith; the rest take the
+  beside, not inside). Hosts are followed **up the chain**: a bell tower whose nearest larger
+  church is a part of a cathedral (a part sticking out past the outline, or tied with it on
+  distance) belongs to the cathedral. The part takes the top host's first-vertex seed as
+  `Sacred::complex` — what its colours are picked by — and, when untagged, the faith of the
+  nearest host up the chain that has one; the rest take the
   city majority (Orthodox vs Western, ties → Western). `Sacred::floor_dm` is `min_height`,
   else `building:min_level` × 3 m (`tags.rs::part_floor`).
   **Annexes** (`parse.rs::absorb_annexes`, same pass, after hosting): a `BuildingUse::Other`

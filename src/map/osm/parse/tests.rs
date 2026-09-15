@@ -1403,6 +1403,57 @@ fn a_bell_tower_beside_a_church_is_painted_with_it() {
     assert_eq!(tower.faith, Faith::Orthodox);
 }
 
+/// Колокольня, ближе всего стоящая к части собора, а не к нему самому, всё
+/// равно красится с собором: хозяин части — это хозяин её хозяина.
+#[test]
+fn a_bell_tower_beside_a_part_of_a_cathedral_is_painted_with_the_cathedral() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[
+                ("building", "cathedral"),
+                ("religion", "christian"),
+                ("denomination", "russian_orthodox"),
+            ],
+            square(CENTER, 20.0),
+        )
+        // часть собора: центр внутри, край выходит за его стену на 6 м
+        .area(
+            &[("building", "cathedral")],
+            square(CENTER + Vec2::new(0.0, 18.0), 8.0),
+        )
+        // колокольня: до части 14 м, до собора 20
+        .area(
+            &[("building", "yes"), ("tower:type", "bell_tower")],
+            square(CENTER + Vec2::new(0.0, 40.0), 3.0),
+        )
+        // два западных храма в городе: вера большинства — не православная
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "catholic"),
+            ],
+            square(CENTER + Vec2::new(400.0, 0.0), 20.0),
+        )
+        .area(
+            &[
+                ("building", "church"),
+                ("religion", "christian"),
+                ("denomination", "lutheran"),
+            ],
+            square(CENTER + Vec2::new(800.0, 0.0), 20.0),
+        )
+        .parse();
+    let church = |index: usize| match map.buildings[index].building_use {
+        BuildingUse::Church(sacred) => sacred,
+        _ => panic!("a church"),
+    };
+    let (cathedral, part, tower) = (church(0), church(1), church(2));
+    assert_eq!(part.complex, cathedral.complex);
+    assert_eq!(tower.complex, cathedral.complex);
+    assert_eq!(tower.faith, Faith::Orthodox);
+}
+
 /// Обычный контур, лежащий на храме, — его пристройка; квартал вокруг храма
 /// во дворе ею не становится, и соседний дом тоже. Высота начала части — из
 /// `min_height`, а без него из `building:min_level`.
