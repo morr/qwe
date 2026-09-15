@@ -283,7 +283,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   panel and storey, a garage ribbon's bay and row; see `WallFrame` below; the code is **one
   dictionary for all of them** — `0` is *no texture* and by now only roof clutter, which
   rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs,
-  `9…14` the wall claddings of `WallKind` and `15` a door leaf, a gable carrying its
+  `9…15` the wall claddings of `WallKind` and `16` a door leaf, a gable carrying its
   wall's code as the top of
   the end wall under it). **Roof age** is the
   second thing that seed carries
@@ -313,9 +313,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
   the slot by the building's seed), plus `GarageDoors`, which no table reaches: it is
   picked by the **geometry of a garage run**, like that run's roofing — see **Garage
-  rows**. Otherwise **height is consulted first**: anything under
-  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`, `Church`,
-  `Industrial` keep their own tables) drops into the low-rise table, because a low
+  rows**, and `Sacred`, which a `Church` always gets (below). Otherwise **height is
+  consulted first**: anything under
+  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`,
+  `Industrial` keep their own tables, `Church` its `Sacred`) drops into the low-rise table, because a low
   building is neither a panel block nor a curtain wall. The cladding decides three things at
   once — what lies *between* the openings (floor seams and panel joints, brick courses,
   bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
@@ -325,7 +326,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
   above it — and stands on a dark **plinth** band.
   **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `15`) — a **patch** over the cells
+  (`layers::push_doors` over `PolyArea::entrances`, code `16`) — a **patch** over the cells
   the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
   **leaf** itself on the entrance point, in a frame of its own that maps the opening to
   `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding

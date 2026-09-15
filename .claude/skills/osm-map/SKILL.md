@@ -275,7 +275,7 @@ in `CONTEXT.md` and the detail here in the same change.
   everywhere but New York, so what fills it in matters: see **Inferred storeys** under
   Rendering. Coverage is logged per city on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
-  Commercial | Industrial | Garage | GarageBlock | Church | Public | Other`, the class that
+  Commercial | Industrial | Garage | GarageBlock | Church(Sacred) | Public | Other`, the class that
   picks two material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and
   the **roofing material** (`::kind_of`); neither colour comes from the class itself, both
   come from the chosen material's own palette (**Roof material** under Rendering, bullet
@@ -331,7 +331,8 @@ in `CONTEXT.md` and the detail here in the same change.
   cathedral's apse part (20×24, centre outside, half inside) were two apartment boxes with
   windows the cathedral's cupolas stuck out from behind.
 - **Fortress** (`parse/tags.rs::is_fortification`) — `AreaKind::Kremlin` from
-  `historic=citywalls|castle|city_gate|fort`, `barrier=city_wall` on an area,
+  — on an outline carrying `building` only (`area_kind` asks nothing else) —
+  `historic=citywalls|castle|city_gate|fort`, `barrier=city_wall`,
   `man_made=tower` + `tower:type=defensive`, or `building=wall` at ≥ 6 m
   (`FORTRESS_WALL_MIN_HEIGHT`; lower is a garden wall). Tula carries **no** `historic` on
   its kremlin — before this every tower and the wall were plain buildings with windows.
@@ -1917,7 +1918,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **The roof is assigned** (`roofs::LandmarkRoof`, `landmark_roof` before `is_pitched` in
     `roofing`): Orthodox / Jewish / Eastern nave → hip, Western → `SteepGable` (pitch 1.3,
     ≤ 12 m; a non-rectangle falls back to hip), mosque → flat; a tower → `Tent { rise }` in
-    plan sides (Orthodox 1.1, Western spire 2.6, others 0.9; ≤ 40 m); a drum part ≤ 14 m wide
+    plan sides (Orthodox 1.1, Western spire 2.6, Jewish / Eastern 0.9; ≤ 40 m), except a
+    minaret → flat under its `Crown::Minaret`; a drum part ≤ 14 m wide
     → flat (the cupola hides it). Fortress: tower (`area/perimeter² ≥ 0.03`) → tent 0.9, wall
     → flat. `landmark_rise` is the same decision in metres — what a cupola stands on.
   - **The crown** (`Crown: Dome | Tower | Minaret`) is laid on `min_area_rect` with the long
@@ -2088,17 +2090,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       lean, loses its storeys earlier than a south one without a line of code about it.
     - **`WallKind` is to the wall what `RoofKind` is to the roof**, and the codes are one
       dictionary in one attribute slot: `0` no texture, `1…6` roofing, `7…8` the two garage
-      runs, `9…14` cladding, `15` the door leaf (`WallKind::code` derives itself from
+      runs, `9…15` cladding, `16` the door leaf (`WallKind::code` derives itself from
       `RoofKind::CODES`, the
       **last** roofing code rather than the length of `ALL` — the garage runs are outside
       `ALL` and would otherwise have been overwritten by the claddings — and `DOOR_CODE`
       derives from `WallKind::CODES` the same way, so a new roofing shifts the wall codes,
       a new cladding shifts the door, and the shader's mirror is edited whole).
-      Six claddings —
-      `Panel | Brick | Plaster | Shopfront | Shed | GarageDoors` — because panel seams with
+      Seven claddings —
+      `Panel | Brick | Plaster | Shopfront | Shed | GarageDoors | Sacred` — because panel seams with
       balconies are
       exactly **one** kind of building, and while the wall was one, a garage and a church
-      wore them too. Five of them are chosen by the tables below; **`GarageDoors` is chosen
+      wore them too. Five of them are chosen by the tables below; `Sacred` by the class
+      alone (every `Church`, before any table); **`GarageDoors` is chosen
       by geometry**, like the garage runs on the roof — `layers::wall_of_run` puts it on
       every box of a run and nothing else can reach it, which is why
       `every_cladding_reaches_the_city` skips it.
