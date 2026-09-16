@@ -918,7 +918,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     3.4 sidewalk widths when both roads carry one (past that the wedge would show on the
     lawn beyond both sidewalks), and by the straight run of each arm — which carries on
     through vertices lying on the same line; arms 25°–155° apart only. None under
-    `RoadJoin::Square`.
+    `RoadJoin::Square`. **The sidewalk turns with it**: the same wedge, laid in the
+    sidewalk layer between the arms that carry one, on the band edges (half width +
+    sidewalk) and on an arc of the **same centre** — the radius smaller by exactly the
+    sidewalk width, so a constant band follows the kerb round the corner. A radius under
+    the sidewalk width (a minor entry) leaves that corner square, as it is on the ground.
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
     nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
@@ -929,7 +933,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     streets**: how OSM maps a drive crossing the pavement (drive, `footway` across the
     pavement, drive again). It is drawn as asphalt at the narrower drive's width. A
     crosswalk is not one: its ends lie on pavement footways.
-  Tula: 8710 kerb returns, 39 stitches, 8 driveway crossings, in the `road meshing:` line.
+  Tula: 8710 kerb returns plus 903 on the sidewalks, 39 stitches, 8 driveway crossings, in
+  the `road meshing:` line.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
@@ -969,6 +974,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
   casing), width `sidewalk_width` (22 %, 1.2–3 m per side) — **never a bridge deck**,
   which leaves for its own layers before the band is pushed and has its curb instead.
+  At a junction the band **turns the corner on the kerb's own arc** — the sidewalk half
+  of the **kerb return** above.
   A carriageway also gets white **lane markings drawn by the surface shader** from the
   `Ribbon` coordinates (a bridge keeps those): a line on every lane boundary
   (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →

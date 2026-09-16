@@ -847,7 +847,7 @@ pub fn spawn_roads(
     // скругление, а не наоборот, и разметка остаётся целой. `Square` оставлен
     // ради сравнения с прежней картинкой — скруглений у него нет.
     let kerb_returns = if style.join == RoadJoin::Square {
-        Vec::new()
+        corners::KerbReturns::default()
     } else {
         let rounded: Vec<Option<&[Vec2]>> = drawn
             .iter()
@@ -858,7 +858,7 @@ pub fn spawn_roads(
             drawn_sidewalk(&style, road)
         })
     };
-    for (class, outline) in &kerb_returns {
+    for (class, outline) in &kerb_returns.roads {
         let (builder, color) = match class {
             RoadClass::Street => (&mut streets, ROAD_COLOR),
             RoadClass::Alley => (&mut alleys, ALLEY_COLOR),
@@ -868,6 +868,10 @@ pub fn spawn_roads(
         // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
         // больше самой укладки.
         builder.push_convex(outline, color.to_linear());
+    }
+    // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
+    for outline in &kerb_returns.sidewalks {
+        sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
     }
     let network_time = started.elapsed();
 
@@ -1028,7 +1032,7 @@ pub fn spawn_roads(
     }
 
     info!(
-        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {}, junctions {}, kerb returns {}, stitches {}, driveway crossings {}; {:?} of it before the ribbons)",
+        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {}, junctions {}, kerb returns {} + {} on sidewalks, stitches {}, driveway crossings {}; {:?} of it before the ribbons)",
         started.elapsed(),
         style.join,
         style.smoothing,
@@ -1036,7 +1040,8 @@ pub fn spawn_roads(
         style.sidewalks,
         style.markings,
         junctions.as_ref().map_or(0, |found| found.junctions),
-        kerb_returns.len(),
+        kerb_returns.roads.len(),
+        kerb_returns.sidewalks.len(),
         stitches.count,
         crossings.len(),
         network_time,

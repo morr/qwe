@@ -13,6 +13,18 @@
 //! скругления его кроет, так что разметка и чужие ленты остаются целы.
 //! Скругляются только лучи одного класса — асфальтовая дуга между улицей и
 //! пешеходной дорожкой легла бы серым поверх песочного.
+//!
+//! **Тротуар поворачивает вместе с бордюром.** Полоса тротуара шире
+//! проезжей части, и её собственный угол на перекрёстке оставался прямым:
+//! асфальт выкатывался дугой в угол, срезая тротуар до нитки, а за ним торчал
+//! прямоугольный уступ светлой полосы — на снимке это и видно. Тот же клин, но
+//! в слое тротуаров, кладётся по краям полос (полуширина плюс ширина тротуара)
+//! и дугой **того же центра**: радиус меньше ровно на ширину тротуара, и за
+//! бордюром идёт постоянная полоса шириной в тротуар — как на месте. Радиус
+//! меньше тротуара — угол и на месте прямой (въезд с малым радиусом), дуги
+//! нет. Асфальтовый клин при этом всегда лежит на тротуарном: круг тротуарной
+//! дуги вложен в круг бордюрной, пока радиус не больше [`SIDEWALK_COVER`]
+//! ширин тротуара, а он там и ограничен.
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -46,6 +58,11 @@ const MAX_ANGLE: f32 = 155.0 * PI / 180.0;
 /// на тротуарах обеих улиц: дуга радиуса `r` отходит от угла на
 /// `r·(1 − 1/√2)`, и за тротуарами обеих улиц она показалась бы при
 /// `r > s·√2/(√2 − 1) ≈ 3.41·s`. Иначе серый клин лёг бы на газон за углом.
+///
+/// На тульских улицах ограничение не срабатывает (у восьмиметровой улицы
+/// тротуар 1.76 м, потолок 5.98 м против радиуса 4.8), но именно оно держит
+/// вложенность кругов, на которой стоит тротуарное скругление, — см. доку
+/// модуля.
 const SIDEWALK_COVER: f32 = 3.4;
 /// Луч меряет направление по звену не короче этого, м.
 const MIN_ARM: f32 = 0.5;
@@ -65,7 +82,16 @@ struct Arm {
     run: f32,
 }
 
-/// Скругления всех перекрёстков: контур и класс дорог, в чей слой он ляжет.
+/// Скругления всех перекрёстков.
+#[derive(Default)]
+pub struct KerbReturns {
+    /// Контур и класс дорог, в чей слой заливки он ляжет.
+    pub roads: Vec<(RoadClass, Vec<Vec2>)>,
+    /// Контуры в слое тротуаров.
+    pub sidewalks: Vec<Vec<Vec2>>,
+}
+
+/// Скругления всех перекрёстков: дуги проезжей части и дуги тротуаров.
 ///
 /// `paths` — **нарисованные** осевые (после сглаживания, до стежков), по
 /// индексу дороги; `None` — дорога не участвует (мост, арка). `sidewalk` —
@@ -75,7 +101,7 @@ pub fn kerb_returns(
     paths: &[Option<&[Vec2]>],
     nodes: &RoadNodes,
     sidewalk: impl Fn(&RoadLine) -> Option<f32>,
-) -> Vec<(RoadClass, Vec<Vec2>)> {
+) -> KerbReturns {
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
     for (&road, path) in roads.iter().zip(paths) {
         let Some(path) = *path else {
@@ -157,7 +183,7 @@ pub fn kerb_returns(
         }
     }
 
-    let mut returns = Vec::new();
+    let mut returns = KerbReturns::default();
     for (node, mut found) in arms.into_values() {
         if found.len() < 2 {
             continue;
@@ -165,45 +191,45 @@ pub fn kerb_returns(
         found.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
         for class in [RoadClass::Street, RoadClass::Alley] {
             let group: Vec<&Arm> = found.iter().filter(|arm| arm.class == class).collect();
-            if group.len() < 2 {
-                continue;
-            }
-            for (index, first) in group.iter().enumerate() {
-                let second = group[(index + 1) % group.len()];
-                if let Some(outline) = kerb_return(node, first, second) {
-                    returns.push((class, outline));
+            for (first, second) in pairs(&group) {
+                let radius = kerb_radius(first, second);
+                let halves = (first.half, second.half);
+                if let Some(outline) = fillet(node, first, second, halves, radius) {
+                    returns.roads.push((class, outline));
                 }
+            }
+        }
+        // Тротуары — свои соседи: проезд без тротуара не рвёт полосу улицы,
+        // через которую он выходит, и угол считается между улицами по обе
+        // стороны от него.
+        let walked: Vec<&Arm> = found.iter().filter(|arm| arm.sidewalk.is_some()).collect();
+        for (first, second) in pairs(&walked) {
+            let (Some(a), Some(b)) = (first.sidewalk, second.sidewalk) else {
+                continue;
+            };
+            // тот же центр, что у бордюрной дуги: радиус меньше на тротуар,
+            // полоса шире на него же. Берётся больший из двух тротуаров — при
+            // разной их ширине одной дугой обе полосы не обойти, а меньший
+            // радиус оставляет асфальтовый клин внутри тротуарного
+            let radius = kerb_radius(first, second) - a.max(b);
+            let halves = (first.half + a, second.half + b);
+            if let Some(outline) = fillet(node, first, second, halves, radius) {
+                returns.sidewalks.push(outline);
             }
         }
     }
     returns
 }
 
-/// Скругление угла от луча `first` против часовой стрелки до луча `second`.
-fn kerb_return(node: Vec2, first: &Arm, second: &Arm) -> Option<Vec<Vec2>> {
-    let mut angle = second.direction.to_angle() - first.direction.to_angle();
-    if angle <= 0.0 {
-        angle += 2.0 * PI;
-    }
-    if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
-        return None;
-    }
-    let (along_first, along_second) = (first.direction, second.direction);
-    // края, смотрящие друг на друга: у первого слева, у второго справа
-    let (side_first, side_second) = (along_first.perp(), -along_second.perp());
-    // угол, где встречаются края: first.half·n₁ + t·u₁ = second.half·n₂ + s·u₂
-    let rhs = side_second * second.half - side_first * first.half;
-    let determinant = -along_first.perp_dot(along_second);
-    if determinant.abs() < 1e-6 {
-        return None;
-    }
-    let t = rhs.perp_dot(-along_second) / determinant;
-    let s = along_first.perp_dot(rhs) / determinant;
-    if t < 0.0 || s < 0.0 {
-        return None;
-    }
-    let corner = node + side_first * first.half + along_first * t;
+/// Соседние по углу пары лучей группы — по кругу, чтобы последний луч встретил
+/// первый. Меньше двух лучей — пар нет.
+fn pairs<'a>(group: &'a [&'a Arm]) -> impl Iterator<Item = (&'a Arm, &'a Arm)> {
+    let count = if group.len() < 2 { 0 } else { group.len() };
+    (0..count).map(move |index| (group[index], group[(index + 1) % group.len()]))
+}
 
+/// Радиус бордюра между двумя лучами узла.
+fn kerb_radius(first: &Arm, second: &Arm) -> f32 {
     let (narrow, wide) = (first.half.min(second.half), first.half.max(second.half));
     let mut radius = if wide - narrow > MINOR_WIDTH_STEP {
         // второстепенная дорога входит в большую: въезд с неё почти прямоугольный,
@@ -216,6 +242,42 @@ fn kerb_return(node: Vec2, first: &Arm, second: &Arm) -> Option<Vec<Vec2>> {
     if let (Some(a), Some(b)) = (first.sidewalk, second.sidewalk) {
         radius = radius.min(SIDEWALK_COVER * a.min(b));
     }
+    radius
+}
+
+/// Скругление угла от луча `first` против часовой стрелки до луча `second`:
+/// `halves` — полуширины полос, по краям которых сходится угол, `radius` —
+/// радиус дуги в этом углу.
+fn fillet(
+    node: Vec2,
+    first: &Arm,
+    second: &Arm,
+    halves: (f32, f32),
+    mut radius: f32,
+) -> Option<Vec<Vec2>> {
+    let mut angle = second.direction.to_angle() - first.direction.to_angle();
+    if angle <= 0.0 {
+        angle += 2.0 * PI;
+    }
+    if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
+        return None;
+    }
+    let (along_first, along_second) = (first.direction, second.direction);
+    // края, смотрящие друг на друга: у первого слева, у второго справа
+    let (side_first, side_second) = (along_first.perp(), -along_second.perp());
+    // угол, где встречаются края: halves.0·n₁ + t·u₁ = halves.1·n₂ + s·u₂
+    let rhs = side_second * halves.1 - side_first * halves.0;
+    let determinant = -along_first.perp_dot(along_second);
+    if determinant.abs() < 1e-6 {
+        return None;
+    }
+    let t = rhs.perp_dot(-along_second) / determinant;
+    let s = along_first.perp_dot(rhs) / determinant;
+    if t < 0.0 || s < 0.0 {
+        return None;
+    }
+    let corner = node + side_first * halves.0 + along_first * t;
+
     let half_angle = angle / 2.0;
     // касательная не длиннее прямого края ленты: за следующей вершиной край
     // уже повернул, и дуга легла бы мимо
@@ -260,13 +322,34 @@ mod tests {
     use crate::map::osm::model::point_in_polygon;
 
     fn returns_of(roads: &[RoadLine]) -> Vec<(RoadClass, Vec<Vec2>)> {
+        walked_returns_of(roads, |_| None).roads
+    }
+
+    fn walked_returns_of(
+        roads: &[RoadLine],
+        sidewalk: impl Fn(&RoadLine) -> Option<f32>,
+    ) -> KerbReturns {
         let nodes = RoadNodes::new(roads);
         let paths: Vec<Option<&[Vec2]>> = roads
             .iter()
             .map(|road| Some(road.points.as_slice()))
             .collect();
         let drawn: Vec<&RoadLine> = roads.iter().collect();
-        kerb_returns(&drawn, &paths, &nodes, |_| None)
+        kerb_returns(&drawn, &paths, &nodes, sidewalk)
+    }
+
+    /// Тротуар улицы 8 м — как его считает `roads::sidewalk_width`.
+    const SIDEWALK: f32 = 1.76;
+
+    /// Перекрёсток двух улиц 8 м в начале координат.
+    fn crossing() -> [RoadLine; 2] {
+        [
+            east_west(),
+            street(
+                vec![Vec2::new(0.0, -50.0), Vec2::ZERO, Vec2::new(0.0, 50.0)],
+                8.0,
+            ),
+        ]
     }
 
     /// Сквозная улица 8 м по оси x через узел в начале координат.
@@ -279,11 +362,7 @@ mod tests {
 
     #[test]
     fn a_crossing_gets_four_rounded_corners_outside_both_ribbons() {
-        let north_south = street(
-            vec![Vec2::new(0.0, -50.0), Vec2::ZERO, Vec2::new(0.0, 50.0)],
-            8.0,
-        );
-        let found = returns_of(&[east_west(), north_south]);
+        let found = returns_of(&crossing());
         assert_eq!(found.len(), 4);
         for (_, outline) in &found {
             // угол — на пересечении краёв, чуть под лентами
@@ -372,5 +451,84 @@ mod tests {
                 assert!(point.y <= 6.0 + 1e-3, "{point:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_sidewalk_turns_the_corner_on_the_kerb_arc() {
+        let found = walked_returns_of(&crossing(), |_| Some(SIDEWALK));
+        assert_eq!(found.sidewalks.len(), 4);
+        // центр бордюрной дуги в северо-восточном углу: угол краёв (4, 4) плюс
+        // биссектриса на r/sin 45°, r = 0.6 · 8 = 4.8
+        let centre = Vec2::splat(4.0 + 4.8);
+        for outline in &found.sidewalks {
+            let corner = outline[0].signum() * Vec2::splat(4.0 + SIDEWALK - OVERLAP);
+            assert!((outline[0] - corner).length() < 1e-3, "{:?}", outline[0]);
+            // дуга — того же центра, радиусом на тротуар меньше бордюрной, так
+            // что за бордюром идёт ровная полоса в ширину тротуара
+            let quadrant = outline[0].signum() * centre;
+            for point in &outline[2..outline.len() - 1] {
+                let radius = point.distance(quadrant);
+                assert!((radius - (4.8 - SIDEWALK)).abs() < 1e-2, "{radius}");
+            }
+        }
+        // и асфальтовый клин по-прежнему целиком на тротуаре: где не на полосе,
+        // там на её скруглении
+        for (_, outline) in &found.roads {
+            let quadrant = outline[0].signum() * centre;
+            for point in outline {
+                let band = 4.0 + SIDEWALK + 1e-3;
+                let on_band = point.x.abs() <= band || point.y.abs() <= band;
+                assert!(
+                    on_band || point.distance(quadrant) >= 4.8 - SIDEWALK - 1e-3,
+                    "{point:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_kerb_radius_under_the_sidewalk_width_leaves_the_corner_square() {
+        // жилая улица 8 м входит в магистраль 16 м: радиус въезда 0.4 · 4 =
+        // 1.6 м — меньше трёхметрового тротуара магистрали, и внешний угол
+        // полосы на месте такой же прямой
+        let avenue = street(
+            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
+            16.0,
+        );
+        let side = street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 8.0);
+        let found = walked_returns_of(&[avenue, side], |road| {
+            Some(if road.width > 8.0 { 3.0 } else { SIDEWALK })
+        });
+        assert_eq!(found.roads.len(), 2);
+        assert!(found.sidewalks.is_empty());
+    }
+
+    #[test]
+    fn a_drive_without_a_sidewalk_does_not_break_the_band() {
+        // проезд 5 м выходит в улицу: асфальт скругляется с обеих сторон,
+        // а полоса тротуара идёт мимо него насквозь — скруглять нечего
+        let through = east_west();
+        let drive = street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 5.0);
+        let found = walked_returns_of(&[through, drive], |road| {
+            (road.width >= 8.0).then_some(SIDEWALK)
+        });
+        assert_eq!(found.roads.len(), 2);
+        assert!(found.sidewalks.is_empty());
+    }
+
+    #[test]
+    fn a_drive_between_two_streets_leaves_their_sidewalk_corner_alone() {
+        // тот же проезд, но улицы сходятся углом: тротуарный угол считается
+        // между ними, поверх устья проезда — его асфальт ляжет сверху
+        let east = street(vec![Vec2::ZERO, Vec2::new(50.0, 0.0)], 8.0);
+        let north = street(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)], 8.0);
+        let drive = street(vec![Vec2::ZERO, Vec2::new(35.0, 35.0)], 5.0);
+        let found = walked_returns_of(&[east, north, drive], |road| {
+            (road.width >= 8.0).then_some(SIDEWALK)
+        });
+        assert_eq!(found.sidewalks.len(), 1);
+        let outline = &found.sidewalks[0];
+        let corner = Vec2::splat(4.0 + SIDEWALK - OVERLAP);
+        assert!((outline[0] - corner).length() < 1e-3, "{:?}", outline[0]);
     }
 }

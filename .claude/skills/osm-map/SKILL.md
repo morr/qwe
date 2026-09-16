@@ -731,7 +731,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   A `footway` mapped alongside draws over it as an alley — beige on grey, and
   tolerated. The road fill went from osm-carto white to asphalt grey together with the
   markings: a white line on white is invisible, and on grey the street grid also stops
-  merging with the courtyards.
+  merging with the courtyards. At a junction the band turns the corner on the kerb's own
+  arc — **The drawn network → Kerb returns → The sidewalk turns with the kerb** below.
 - **Markings** — the lane lines of a street are **not geometry**: `push_dashes` would
   alias and crawl at `Msaa::Off` (a 0.15 m line is under a pixel at the start zoom). The
   street (and bridge deck) fill is built with surface coords and
@@ -866,11 +867,43 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     Its straight sides reach `OVERLAP` 5 cm under both ribbons: a side lying exactly on a
     ribbon edge without sharing its vertices rasterizes with dropouts, a dotted light
     crack along the drive edge.
-    The sidewalk band's own outer corner stays square — rounding it is a subtraction the
-    additive layers cannot do. Mixed-class arms get nothing: a grey wedge over a sand
+    Mixed-class arms get nothing: a grey wedge over a sand
     footway would read as asphalt spilled onto the path. Bridges and passages give no arms
     (their paths go in as `None`), and under `RoadJoin::Square` no returns are built at
     all — that join is kept for comparison with the old picture. Tula: 8710.
+    - **The sidewalk turns with the kerb** (`KerbReturns::sidewalks`), and it is an
+      *addition*, not the subtraction this doc used to call impossible: the corner between
+      two sidewalk bands is a **concave** notch exactly like the asphalt one, so the same
+      `fillet` fills it — laid on the band edges (`half + sidewalk` instead of `half`) with
+      a radius smaller by the sidewalk width. That single subtraction is what makes the two
+      arcs **concentric**: a fillet's centre sits at `corner + bisector · r/sin(α/2)`, and
+      pushing the corner out by `s/sin(α/2)` while taking `s` off the radius leaves it
+      where it was. So the band keeps a constant width all the way round the corner, which
+      is what a photo shows. Reported from a screenshot of улица Кооперативная × 2-й проезд
+      Мясново (`cam 931 3189`): the asphalt rolled out into the corner on its arc, shaving
+      the light band to a sliver, and past it the band's square step stuck out onto the
+      grass.
+      - **The pairing is its own**, over the arms that carry a sidewalk rather than over
+        the class group: a drive without one must not break the band of the street it comes
+        out of (the street runs straight past it), while two streets with a drive between
+        them still get their corner — the drive's asphalt is drawn over it.
+      - **A radius under the sidewalk width leaves the corner square**, and that is the
+        geometry, not a fallback: a minor entry (a residential street into an avenue,
+        radius 1.6 m against a 3 m sidewalk) has no arc for the outer edge to follow on the
+        ground either. Same for a run too short for the tangent.
+      - **The asphalt wedge still lands on pavement.** `SIDEWALK_COVER` keeps the kerb
+        radius under 3.4 sidewalk widths, and under that bound the sidewalk fillet's disk
+        is nested in the kerb's, so the asphalt wedge lies inside the sidewalk bands and
+        their fillet whatever the angle. On Tula's streets the bound never binds (1.76 m
+        sidewalk → 5.98 m ceiling against a 4.8 m radius); it is load-bearing for the
+        nesting, not for the radius.
+      - Arms with **different** sidewalk widths cannot share one concentric arc; the
+        radius then takes the wider of the two (the conservative side — a smaller radius
+        keeps the asphalt wedge inside), and the two differ by at most ~0.2 m, since a
+        wider gap between the half widths sends the pair to the minor branch anyway.
+      - Tula: **903** of them against the asphalt's 8710 (the pairs need two sidewalks and
+        a radius over the sidewalk width), ~8 k of the road layers' 387 k vertices, in the
+        `road meshing:` line. Load-time only, like the rest of this module.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —
