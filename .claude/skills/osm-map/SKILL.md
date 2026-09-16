@@ -3011,11 +3011,28 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     place. Positions are rolled in the building's own frame (long axis × its
     perpendicular, extent projected from the outline — no second `min_area_rect`),
     inset by `EDGE_MARGIN` 1.6 m or 18 % of the short side, whichever is smaller. Every
-    candidate is accepted only if **all four corners are inside the footprint**
-    (`point_in_area`, holes included) — the frame is a rectangle and an L-shaped block
-    is not — and a miss is retried `PLACE_TRIES` (6) times before the item is dropped.
+    candidate is checked **twice**: **all four corners inside the footprint**
+    (`fit`, `point_in_area`, holes included) — the frame is a rectangle and an L-shaped
+    block is not — and **the place is free** (`clear`), i.e. no already-placed item
+    within `CLUTTER_GAP` 0.5 m. A miss is retried `PLACE_TRIES` (8) times before the
+    item is dropped.
     One try was the first version and it was wrong: a 5 × 3.5 m penthouse fits a 12 m
     slab only in a narrow band, so most blocks came out with no penthouse at all.
+    **The occupancy test came second, and without it a box sat on a box**: the places are
+    rolled independently, so on Tula's kindergarten way 234273437 (9 × 17 m, `Public`, i.e.
+    exactly one air-conditioning unit and one shaft) the unit landed on the shaft — the
+    author's report from a screenshot. It is a cheap check because **every item of a flat
+    roof is laid in one frame** (`axis`/`perp`, the skylight ribbons included), so an
+    overlap is two interval tests, not a polygon intersection; the six tries went to eight
+    with it, since the tenth shaft on a dense roof now has somewhere to miss. Pinned by
+    `equipment_never_sits_on_equipment`, and the shape of that test is the lesson: it
+    **walks the same house across the map**, because the seed is its first vertex, so one
+    position is one roll of the dice and the first version of the test — four houses at
+    the origin — passed with the check commented out. It compares by separating axis, so
+    it does not lean on the shared frame the check itself uses. The chimney and the
+    merlons are laid outside
+    `flat_roof_items`, one per ridge and one per wall edge, and have nothing to collide
+    with.
   - **Shadows are opaque.** The building layer draws without blending, so a translucent
     shadow would not mix; each item's shadow is the roof colour mixed 30 % toward black,
     swept the item's own height × `map::shadow_length_scale()` along `shadow_dir()`. The

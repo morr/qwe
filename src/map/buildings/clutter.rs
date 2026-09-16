@@ -11,8 +11,9 @@
 //! (битум, гравий, мембрана) несёт машинное помещение и вентшахты, профлист
 //! большого корпуса — ленты зенитных фонарей, скатная — трубу на коньке.
 //! Разметка идёт в раме дома (длинная ось контура), с отступом от края, и
-//! каждая коробка проверяется на попадание в контур — у Г-образного дома
-//! прямоугольник рамы торчит наружу.
+//! каждая коробка проверяется дважды: на попадание в контур — у Г-образного
+//! дома прямоугольник рамы торчит наружу — и на свободное место, потому что
+//! места берутся из ГПСЧ и две коробки иначе садятся одна на другую.
 //!
 //! Видно всё это только вблизи: [`super::BuildingZoomBucket`] снимает
 //! оборудование целиком, когда метр кровли становится мельче пары пикселей —
@@ -32,8 +33,15 @@ use crate::map::{shadow_dir, shadow_length_scale};
 
 /// Сколько мест перебрать, прежде чем отказаться от коробки. Одна попытка
 /// на узком корпусе почти всегда промахивалась: машинное помещение 5 × 3.5 м
-/// целиком укладывается в двенадцатиметровый дом лишь в узкой полосе.
-const PLACE_TRIES: usize = 6;
+/// целиком укладывается в двенадцатиметровый дом лишь в узкой полосе. Шесть
+/// хватало, пока место проверялось только на попадание в контур; с проверкой
+/// на занятость ([`clear`]) десятая вентшахта на плотной кровле отбрасывается
+/// куда чаще, и две попытки сверху возвращают её.
+const PLACE_TRIES: usize = 8;
+
+/// Зазор между соседними коробками, м. Ноль означал бы «можно вплотную», а
+/// два блока кондиционера стенка в стенку читаются как один длинный ящик.
+const CLUTTER_GAP: f32 = 0.5;
 
 /// Отступ оборудования от края кровли, м, и доля меньшей стороны дома —
 /// на узком корпусе метровый отступ съедает всю крышу.
@@ -442,8 +450,8 @@ impl Frame {
 }
 
 /// Одна попытка поставить коробку: точка в раме по ГПСЧ, проверка на попадание
-/// в контур. Промах просто теряется — дырявый ряд вентшахт на Г-образном доме
-/// выглядит естественнее, чем шахта, висящая над двором.
+/// в контур и на свободное место. Промах просто теряется — дырявый ряд вентшахт
+/// на Г-образном доме выглядит естественнее, чем шахта, висящая над двором.
 #[allow(clippy::too_many_arguments)]
 fn place(
     items: &mut Vec<RoofItem>,
@@ -460,17 +468,45 @@ fn place(
         let center = frame.origin
             + frame.axis * rng.range(0.0, frame.length)
             + frame.perp * rng.range(0.0, frame.width);
-        if let Some(base) = fit(building, center, size, frame.axis, frame.perp, lift) {
-            items.push(RoofItem {
-                base,
-                height,
-                top,
-                wall,
-                reach: shadow_reach(building, lift, &base),
-            });
-            return;
+        let Some(base) = fit(building, center, size, frame.axis, frame.perp, lift) else {
+            continue;
+        };
+        if !clear(items, &base, frame.axis, frame.perp) {
+            continue;
         }
+        items.push(RoofItem {
+            base,
+            height,
+            top,
+            wall,
+            reach: shadow_reach(building, lift, &base),
+        });
+        return;
     }
+}
+
+/// Свободно ли место под коробку. Все предметы плоской кровли разложены в
+/// одной раме (`axis`/`perp`) — и вентшахты, и блоки кондиционеров, и лента
+/// зенитного фонаря, — так что пересечение двух оснований это обычная проверка
+/// двух отрезков по каждой из двух осей, с зазором [`CLUTTER_GAP`] между ними.
+///
+/// Без неё вентшахта садилась на машинное помещение, а блок кондиционера — на
+/// вентшахту: [`fit`] спрашивает только про контур дома и ничего не знает о
+/// том, что на кровле уже стоит.
+fn clear(items: &[RoofItem], base: &[Vec2; 4], axis: Vec2, perp: Vec2) -> bool {
+    let span = |corners: &[Vec2; 4], dir: Vec2| {
+        corners
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), corner| {
+                let at = corner.dot(dir);
+                (lo.min(at), hi.max(at))
+            })
+    };
+    let apart = |a: (f32, f32), b: (f32, f32)| a.1 + CLUTTER_GAP <= b.0 || b.1 + CLUTTER_GAP <= a.0;
+    let (along, across) = (span(base, axis), span(base, perp));
+    !items
+        .iter()
+        .any(|item| !apart(along, span(&item.base, axis)) && !apart(across, span(&item.base, perp)))
 }
 
 /// Основание коробки, если все четыре угла легли внутрь контура. Проверка по
@@ -625,6 +661,76 @@ mod tests {
                 assert!(point_in_area(corner, &ell), "{corner:?} is off the roof");
             }
         }
+    }
+
+    /// Две коробки не садятся одна на другую. Места берутся из ГПСЧ, и пока
+    /// проверялось только попадание в контур, блок кондиционера вставал на
+    /// вентшахту — на детском саду 9 × 17 м (Тула, way 234273437), где кровля
+    /// несёт ровно эти две коробки и промахнуться мимо соседа почти не в чем.
+    #[test]
+    fn equipment_never_sits_on_equipment() {
+        let _sun = crate::map::default_sun();
+        // посев берётся от первой вершины контура, так что одна кровля — это
+        // одна раскладка из многих: дом переставляется по карте, и правило
+        // проверяется на сотне посевов, а не на том единственном, который
+        // случайно лёг удачно
+        for (width, length, building_use) in [
+            (9.0, 17.0, BuildingUse::Public),
+            (16.0, 60.0, BuildingUse::Apartments),
+            (40.0, 60.0, BuildingUse::Commercial),
+            (30.0, 90.0, BuildingUse::Industrial),
+        ] {
+            let mut laid = 0;
+            for step in 0..100 {
+                let at = Vec2::new(step as f32 * 13.0, step as f32 * 7.0);
+                let outer = block(width, length)
+                    .into_iter()
+                    .map(|corner| corner + at)
+                    .collect();
+                let house = building(outer, building_use);
+                let look = super::super::material::roof_look(&house);
+                let items = flat_roof_items(&house, &look, Vec2::ZERO);
+                laid += items.len();
+                for (index, item) in items.iter().enumerate() {
+                    for other in &items[index + 1..] {
+                        assert!(
+                            !boxes_overlap(&item.base, &other.base),
+                            "{width}x{length} {building_use:?} at {at:?}: \
+                             {:?} sits on {:?}",
+                            item.base,
+                            other.base
+                        );
+                    }
+                }
+            }
+            assert!(laid > 100, "{width}x{length} {building_use:?} is empty");
+        }
+    }
+
+    /// Пересекаются ли два выпуклых четырёхугольника — по разделяющей оси, на
+    /// нормалях рёбер обоих. Тест намеренно не знает про общую раму, в которой
+    /// раскладывается оборудование, и поймал бы промах и в повёрнутой паре.
+    fn boxes_overlap(a: &[Vec2; 4], b: &[Vec2; 4]) -> bool {
+        let span = |quad: &[Vec2; 4], dir: Vec2| {
+            quad.iter().fold((f32::MAX, f32::MIN), |(lo, hi), corner| {
+                let at = corner.dot(dir);
+                (lo.min(at), hi.max(at))
+            })
+        };
+        for quad in [a, b] {
+            for index in 0..quad.len() {
+                let edge = quad[(index + 1) % quad.len()] - quad[index];
+                let Some(normal) = Vec2::new(-edge.y, edge.x).try_normalize() else {
+                    continue;
+                };
+                let (a_lo, a_hi) = span(a, normal);
+                let (b_lo, b_hi) = span(b, normal);
+                if a_hi <= b_lo || b_hi <= a_lo {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     #[test]

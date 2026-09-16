@@ -533,7 +533,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **opaque** shadow (a translucent one could not blend inside the opaque building layer),
   placed by a Park–Miller LCG seeded from the same building seed the roof material uses,
   and every candidate is rejected unless all four corners fall inside the footprint —
-  the placement frame is a rectangle, an L-shaped building is not. Which items a roof
+  the placement frame is a rectangle, an L-shaped building is not — **and unless the
+  place is free**: the roll knows nothing of what already stands there, so without that
+  second test a shaft sat on a penthouse. Which items a roof
   gets follows its **material**, not the building use: soft flat roofs carry the
   penthouse and the shafts, corrugated sheds the skylights, a gable roof with a ridge a
   chimney (a lean-to has no ridge).
