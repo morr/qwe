@@ -23,6 +23,7 @@ use super::meshing::miter_offsets;
 use super::osm::model::{
     FenceLine, RoadLine, WallLine, WaterLine, closest_on_segment, distance_to_segment, ring_bounds,
 };
+use super::roads::network::{RoadNodes, STITCH_MAX_GAP, carries, stitchable};
 use crate::settings::PASSAGE_MAX_WIDTH;
 
 /// Насколько близко точка одной ломаной должна лежать к другой ломаной,
@@ -222,6 +223,13 @@ const GAP_OBLIQUITY_MAX: f32 = 2.0;
 /// скорость.
 const GAP_CELL: f32 = 32.0;
 
+/// Насколько далеко от ограды OSM бросает торец дороги, которая на месте
+/// проходит сквозь неё, м. Число то же и по той же причине, что у стежка
+/// ([`STITCH_MAX_GAP`]): столько картограф не доводит проезд до того, во что
+/// тот упирается. Одна константа, а не две одинаковых, потому что факт один —
+/// разъедься они, стежок дотянул бы асфальт сквозь несрезанный забор.
+const GAP_END_REACH: f32 = STITCH_MAX_GAP;
+
 /// Проёмы всех оград: где сквозь забор проходит дорога.
 ///
 /// **Проём даёт только пересечение осевых**, не близость лент. Дорога вдоль
@@ -237,6 +245,22 @@ const GAP_CELL: f32 = 32.0;
 /// там оборванная, осевой забор не пересекает, но упирается в него. Её конец
 /// ближе полуширины к осевой ограды — проём в ближайшей точке.
 ///
+/// И тот же торец, **не доведённый** до ограды: въезд во двор OSM размечает
+/// «до тротуара» и бросает в нескольких метрах от ворот, за которыми он на
+/// месте продолжается. Такой торец — висячий в смысле стежка
+/// (`roads::network::stitches`: в узле нет другой дороги, несущей его
+/// полотно), смотрящий вперёд на ограду — открывает проём не дальше
+/// [`GAP_END_REACH`]. Это та же небрежность разметки, которую с отрисовочной
+/// стороны закрывает стежок, и закрывать её надо здесь тоже: стежок дотягивает
+/// проезд до улицы за оградой, и нарисованный асфальт шёл сквозь несрезанный
+/// забор (Тула, way 205998518 у улицы Мосина — въезд к Свято-Никольскому).
+/// На Туле правило открывает 50 проёмов (318 → 368, `fence_prune_audit`), и
+/// **оба его условия несут вес**: по тому же кешу оно срабатывает 52 раза с
+/// ними обоими, 197 раз без проверки на висячесть (улица вдоль забора,
+/// разрезанная картографом на ways, даёт торец у ограды на каждом стыке) и 91
+/// без «вперёд» (торец в паре метров **сбоку** от ограды — это дорога вдоль
+/// неё, а не в неё).
+///
 /// **Мосты не режут**: пролёт идёт над оградой, а не сквозь неё. Совпадающие
 /// осевые (забор, нанесённый на тот же way, что и тропа) пересечением не
 /// считаются — у параллельных отрезков его нет.
@@ -247,6 +271,9 @@ const GAP_CELL: f32 = 32.0;
 ///
 /// Индекс — `[номер ограды] → проёмы`, в порядке `fences`.
 pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>> {
+    if fences.is_empty() {
+        return Vec::new();
+    }
     let cell_of = |point: Vec2| (point / GAP_CELL).floor().as_ivec2();
     // отрезки дорог по ячейкам своих коробок: дорог десятки тысяч, оград сотни,
     // и перебор пар «забор × дорога» мерил бы расстояния впустую
@@ -255,10 +282,13 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
         if road.bridge {
             continue;
         }
+        // коробка растёт на столько, на сколько отрезок вообще может открыть
+        // проём: полуширина у пересечения, [`GAP_END_REACH`] у торца
+        let grown = road.width.max(GAP_END_REACH);
         for (segment, pair) in road.points.windows(2).enumerate() {
             let (min, max) = (
-                cell_of(pair[0].min(pair[1]) - road.width),
-                cell_of(pair[0].max(pair[1]) + road.width),
+                cell_of(pair[0].min(pair[1]) - grown),
+                cell_of(pair[0].max(pair[1]) + grown),
             );
             for x in min.x..=max.x {
                 for y in min.y..=max.y {
@@ -270,6 +300,29 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
             }
         }
     }
+    // висячие торцы — тем же вопросом, что у стежка: в узле нет другой дороги,
+    // несущей это полотно. Кольцевой проезд торцов не имеет
+    let nodes = RoadNodes::new(roads);
+    let loose: Vec<[bool; 2]> = roads
+        .iter()
+        .enumerate()
+        .map(|(index, road)| {
+            if !stitchable(road) {
+                return [false; 2];
+            }
+            let last = road.points.len() - 1;
+            if road.points[0] == road.points[last] {
+                return [false; 2];
+            }
+            let free = |end: Vec2| {
+                !nodes
+                    .roads_at(end)
+                    .iter()
+                    .any(|&other| other != index && carries(road, &roads[other]))
+            };
+            [free(road.points[0]), free(road.points[last])]
+        })
+        .collect();
     fences
         .iter()
         .map(|fence| {
@@ -313,12 +366,27 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
                                 push_gap(&mut gaps, FenceGap { at, reach });
                             }
                             let last = road.points.len() - 2;
-                            for (end, is_end) in [(c, key.1 == 0), (d, key.1 as usize == last)] {
+                            for (side, (end, is_end, outward)) in [
+                                (c, key.1 == 0, -direction),
+                                (d, key.1 as usize == last, direction),
+                            ]
+                            .into_iter()
+                            .enumerate()
+                            {
                                 if !is_end {
                                     continue;
                                 }
                                 let at = closest_on_segment(end, a, b);
-                                if at.distance(end) <= road.width / 2.0 {
+                                // висячий торец, смотрящий на ограду, достаёт
+                                // до неё через зазор небрежной разметки
+                                let aimed =
+                                    loose[key.0 as usize][side] && (at - end).dot(outward) > 0.0;
+                                let limit = if aimed {
+                                    (road.width / 2.0).max(GAP_END_REACH)
+                                } else {
+                                    road.width / 2.0
+                                };
+                                if at.distance(end) <= limit {
                                     push_gap(&mut gaps, FenceGap { at, reach });
                                 }
                             }
@@ -601,6 +669,39 @@ mod tests {
         let fence = fixture::fence(vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0)]);
         let road = fixture::street(vec![Vec2::new(-10.0, 4.0), Vec2::new(50.0, 4.0)], 16.0);
         assert!(fence_gaps(std::slice::from_ref(&fence), &[road])[0].is_empty());
+    }
+
+    /// Въезд, брошенный OSM в нескольких метрах от ограды и смотрящий на неё,
+    /// открывает ворота: на месте он идёт сквозь них, и отрисовка дотягивает
+    /// его туда стежком. Дальше [`GAP_END_REACH`] — уже задуманный тупик.
+    #[test]
+    fn a_drive_dropped_short_of_the_fence_opens_a_gate() {
+        let fence = fixture::fence(vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0)]);
+        let short =
+            |gap: f32| fixture::street(vec![Vec2::new(20.0, -20.0), Vec2::new(20.0, -gap)], 5.0);
+        let gaps = &fence_gaps(std::slice::from_ref(&fence), &[short(4.0)])[0];
+        assert_eq!(gaps.len(), 1);
+        assert!(gaps[0].at.distance(Vec2::new(20.0, 0.0)) < 1e-3);
+        assert!((gaps[0].reach - 2.5).abs() < 1e-3, "{}", gaps[0].reach);
+        assert!(
+            fence_gaps(std::slice::from_ref(&fence), &[short(GAP_END_REACH + 1.0)])[0].is_empty()
+        );
+    }
+
+    /// Но только висячий торец и только смотрящий вперёд: улица, идущая вдоль
+    /// забора, и way, разрезанная картографом посреди проезда, ворот не
+    /// открывают.
+    #[test]
+    fn a_way_split_beside_the_fence_opens_nothing() {
+        let fence = fixture::fence(vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0)]);
+        // торец в четырёх метрах сбоку от ограды: дорога идёт вдоль неё
+        let along = fixture::street(vec![Vec2::new(0.0, -4.0), Vec2::new(20.0, -4.0)], 5.0);
+        assert!(fence_gaps(std::slice::from_ref(&fence), &[along])[0].is_empty());
+
+        // тот же торец, но полотно продолжает вторая way — торец не висячий
+        let first = fixture::street(vec![Vec2::new(20.0, -20.0), Vec2::new(20.0, -4.0)], 5.0);
+        let second = fixture::street(vec![Vec2::new(20.0, -4.0), Vec2::new(32.0, -8.0)], 5.0);
+        assert!(fence_gaps(std::slice::from_ref(&fence), &[first, second])[0].is_empty());
     }
 
     /// Проём на изломе режет оба звена, а кольцо ограды с калиткой остаётся

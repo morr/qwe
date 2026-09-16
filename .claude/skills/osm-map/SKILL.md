@@ -214,7 +214,10 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   `hedge` → `Hedge`). `MapData::fences`, drawn by `map/fences.rs` (**Fences** under
   Rendering). **It blocks the navmesh, with gaps**: `FenceLine::band` is the physical
   `FENCE_BAND_WIDTH` 0.3 m, and `footprint::fence_gaps` opens it where a road passes
-  through; `gates` holds the **default gates** the load thread adds — empty after parse.
+  through — including a **loose end dropped a few metres short of it and aimed at it**,
+  the very gap the drawn network closes with a stitch, so the stitched asphalt never runs
+  through an uncut fence; `gates` holds the **default gates** the load thread adds — empty
+  after parse.
   Both are the navigation-deep skill's (**Fences block, with gaps**).
 - **Structure** — an industrial cylinder: `man_made=storage_tank|silo|chimney|
   water_tower|gasometer` as centre + radius + height + kind (`StructureKind`). A
@@ -1524,8 +1527,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     polyline minus the gap discs, the very discs the polygonal mesh subtracts — and lays
     both the shadow and the ribbon from the pieces, so no fence is drawn across a path a
     pawn walks. A leftover under `MIN_FENCE_PIECE` 0.5 m at a gap edge is not drawn. The
-    gaps are recomputed on every rebuild (`fence_gaps`, 6 ms on Tula) rather than cached:
-    the layer rebuilds on a zoom crossing or a settled sun, not per frame.
+    gaps are recomputed on every rebuild (`fence_gaps`, 8.7 ms on Tula) rather than
+    cached: the layer rebuilds on a zoom crossing or a settled sun, not per frame.
   - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
     nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
     exactly the scale a fence has to be visible at; aiming for ~1.5 screen px is the

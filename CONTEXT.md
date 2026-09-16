@@ -1069,10 +1069,11 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   **building passages carve back through them**. Without bridges the Упа river bisects the
   map and no cross-river path exists.
 - **Fence gap** (`footprint::fence_gaps`) — where a fence stays open: a non-bridge road
-  whose **centerline crosses** the fence or **ends on it**, and a **default gate**. Never
-  mere band overlap — a street running along a fence covers it end to end with its nominal
-  width. A gap is cut **out of the fence mask**, never carved into the grid, so it cannot
-  open the house or water it touches.
+  whose **centerline crosses** the fence, **ends on it**, or is a **loose end dropped short
+  of it** and aimed at it (the stitch's `STITCH_MAX_GAP`, since it is the same sloppy
+  mapping), and a **default gate**. Never mere band overlap — a street running along a
+  fence covers it end to end with its nominal width. A gap is cut **out of the fence
+  mask**, never carved into the grid, so it cannot open the house or water it touches.
 - **Default gate** (`FenceLine::gates`, `Navmesh::open_sealed_fences`) — a 3.5 m gate the
   load thread opens between fill and prune where a fence cut off a pocket that holds a door
   or is at least 400 m², on the fence side **nearest a carriageway**: OSM rarely maps

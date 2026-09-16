@@ -70,12 +70,26 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
     shared OSM node;
   - **a road ending on the fence** (its end within half its width of the centerline) — a
     path drawn up to the gate and stopped there;
+  - **a road ending short of the fence but aimed at it** — reach `GAP_END_REACH`, which
+    *is* `roads::network::STITCH_MAX_GAP` (6 m), because it is the same sloppy mapping the
+    stitch answers: a drive is mapped «to the pavement» and dropped a few metres before the
+    gate it goes through on the ground. Tula: **318 → 368 gaps**, 201 → 185 fences with
+    none (`fence_prune_audit`). Two conditions carry it, and dropping either is measurably
+    worse — over the same cache the rule fires 52 times with both, 197 times without the
+    first and 91 without the second: the end must be
+    **loose in the stitch's sense** (`network::carries` — no other road at its node
+    carrying its own surface; a street split into ways beside a fence would otherwise open
+    a gate at every joint), and the fence must lie **ahead** of it (`(at − end)·heading > 0`
+    — a road running *along* a fence ends beside it, not into it). Without this the drawn
+    stitch ran the asphalt through an uncut fence (Tula way 205998518, the drive to
+    Свято-Никольский off улица Мосина — the author's report);
   - **a default gate** (below), reach `FENCE_GATE_WIDTH / 2` (a 3.5 m footway).
   **Never band overlap**: the trap of this rule is a street running alongside a fence, whose
   nominal 8–16 m ribbon covers the fence end to end — an overlap rule would have removed
   every fence along every street and kept only those deep inside the blocks
   (`a_street_along_the_fence_leaves_it_whole`). Bridges cut nothing: the span passes over.
-  Roads are found through a 32 m cell index of their segments (6 ms on Tula).
+  Roads are found through a 32 m cell index of their segments (8.7 ms on Tula, of which
+  ~1.4 is the loose-end pass and its `RoadNodes`).
   **The gap is cut out of the fence mask, never carved into the grid** — the bridge-curb
   idiom: `visit_polyline` collects the fence's tiles, the ones within `reach + tile·√2` of a
   gap are dropped, the rest are blocked. Carving the road would reopen the house or water it
@@ -123,8 +137,10 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
     pockets of a round are usually pieces of one yard cut by a door or a bend, and they
     pick neighbouring tiles — without the spacing Tula got five gates 2–3 m apart, one
     ten-metre breach. A pocket the neighbour's gate did not open is taken by the next round.
-  Tula with gates: **72 gates, prune 9 942 → 10 772 (+830), no building loses its last
-  door**; 166 door-less pockets stay cut off, 157 of them under 25 tiles. Cost: **~124 ms**
+  Tula with gates: **67 gates, prune 9 972 → 10 678 (+706), no building loses its last
+  door**; 173 door-less pockets stay cut off, 167 of them under 25 tiles. (The road gaps
+  feed this: the aimed-end rule above took the gates 70 → 67 and the prune 10 805 → 10 678
+  — a plot a road already opens needs no default gate.) Cost: **~135 ms**
   at the project's `opt-level = 1`, most of it the one full flood (a tight index-arithmetic
   `flood`; the iterator version was three times slower) — the no-fence reachability is
   grown from it through the fence tiles rather than flooded again. Offline:

@@ -1418,7 +1418,10 @@ fn chaikin(points: &[Vec2], width: f32, pinned: impl Fn(Vec2) -> bool) -> Vec<Ve
 pub(super) mod junctions;
 
 mod corners;
-mod network;
+/// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде
+/// у брошенного торца — тот же вопрос «висячий ли он», что у стежка, и второго
+/// ответа на него быть не должно.
+pub(super) mod network;
 
 #[cfg(test)]
 mod tests;

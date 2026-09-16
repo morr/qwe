@@ -115,7 +115,7 @@ impl Stitches {
 
 /// Может ли дорога участвовать в стежке — с любой стороны. Мост кончается
 /// ровным срезом бордюра, арка приколота к стенам дома: их торцы на месте.
-fn stitchable(road: &RoadLine) -> bool {
+pub(in crate::map) fn stitchable(road: &RoadLine) -> bool {
     !road.bridge && !road.passage && road.points.len() >= 2
 }
 
@@ -123,7 +123,7 @@ fn stitchable(road: &RoadLine) -> bool {
 /// проезда на пешеходной дорожке всё равно висит, песочная лента лежит под
 /// асфальтом и асфальта не несёт (так и размечают: проезд «до тротуара», общая
 /// нода с дорожкой вдоль проспекта). Дорожке годится любая дорога.
-fn carries(own: &RoadLine, target: &RoadLine) -> bool {
+pub(in crate::map) fn carries(own: &RoadLine, target: &RoadLine) -> bool {
     own.class == RoadClass::Alley || target.class == RoadClass::Street
 }
 
