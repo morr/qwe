@@ -462,13 +462,16 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   kerb, and a seam of ground beside the pavement reads as an unpainted layer.
   - **The vertex moves, not the block**, and it moves **under** the asphalt: a vertex whose
     gap to the drawn edge (half the class width plus `roads::sidewalk_width` on a
-    carriageway) is within `LANDUSE_GAP_MAX` 3 m is pulled to the road's axis until it
+    carriageway) is within `LANDUSE_GAP_MAX` 5 m is pulled to the road's axis until it
     stands `LANDUSE_OVERLAP` 0.5 m inside the band. The overlap is not decoration: the
     ribbon is drawn from the *smoothed* centreline while the gap is measured on the raw OSM
-    points, and without it a bend keeps a centimetre of seam. Beyond 3 m nothing is done —
-    that is a real gap (a front garden, a verge, a right of way), not a seam. Measured on
-    the Tula cache: of 2756 block vertices, 1135 already lie under the asphalt and 565 are
-    in the 0–3 m band (261 / 174 / 130 by the metre), with 400-odd more beyond it.
+    points, and without it a bend keeps a centimetre of seam. Beyond the limit nothing is
+    done — that is a real gap (a front garden, a verge, a right of way), not a seam.
+    Measured on the Tula cache: of 2756 block vertices, 1135 already lie under the asphalt
+    and 752 are within five metres (261 / 174 / 130 / 88 / 99 by the metre), with 200-odd
+    more beyond that. The limit was 3 m first and went up on the author's look at the
+    frame: at four and five metres the strip of ground along a street still reads as a
+    seam rather than as a verge.
   - **Green only grows**, and that single rule is what keeps the pass safe: a vertex moves
     only when the move leads **outward from the fill**, which is read **locally off the
     ring** — the ring's own signed area gives the side, so the outer contour grows away

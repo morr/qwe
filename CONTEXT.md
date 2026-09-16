@@ -223,7 +223,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Block pulled to the road** (`parse.rs::pull_landuse_to_roads`) — the other half of the
   same mismatch: a `landuse` block's edge is traced along the plot line while the road's
   width is a class constant, so between the yard and the drawn sidewalk a strip of bare
-  ground is left over (a fifth of Tula's block vertices are within 3 m of the drawn edge).
+  ground is left over (a quarter of Tula's block vertices are within 5 m of the drawn edge).
   A vertex closer than that to the road's edge is pulled **under** the asphalt (0.5 m in),
   and an edge longer than 8 m beside a road is split first so a bend cannot leave a gap
   mid-edge. The block lies below everything drawn on it, so what goes under the road is
