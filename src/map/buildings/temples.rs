@@ -402,6 +402,25 @@ const TIER_ASPECT: f32 = 1.6;
 const TIERS_MAX: u8 = 3;
 /// Во сколько раз каждый следующий ярус у́же предыдущего.
 const TIER_SHRINK: f32 = 0.8;
+/// Столп над нижним ярусом не шире этого, м: контур отдельной колокольни в
+/// OSM — это её нижний ярус вместе с папертями и боковыми палатами
+/// (кремлёвская в Туле 28 × 24 м, Всехсвятская 24 × 24), а сам столп над ним —
+/// десять-тринадцать метров. Без зажима вторым ярусом шёл тот же короб.
+const SHAFT_SIDE_MAX: f32 = 12.0;
+/// Нижний ярус шире столпа — не выше этого, м: он двухэтажный, а не куб в
+/// двадцать четыре метра, каким выходил у Всехсвятской колокольни.
+const BASE_TIER_MAX: f32 = 14.0;
+/// Проёмы столпа метрами, а не долями стены: на 12-метровой стене доля выходила
+/// чёрными воротами. Арка звона и окно глухого яруса — ширина × высота, м; и
+/// не шире этой доли своей стены, чтобы на узком столпе не слиться в один проём.
+const BELFRY_ARCH: Vec2 = Vec2::new(2.0, 5.0);
+const TIER_WINDOW: Vec2 = Vec2::new(1.1, 2.4);
+const OPENING_SHARE_MAX: f32 = 0.28;
+/// Шаг арок звона вдоль стены, м, и потолок их числа на стене.
+const BELFRY_PITCH: f32 = 4.5;
+const BELFRY_ARCHES_MAX: usize = 3;
+/// С какой длины стены на глухом ярусе два окна вместо одного, м.
+const TWO_WINDOWS_FROM: f32 = 9.0;
 /// Высоты ярусов снизу вверх, в долях друг друга: нижний самый высокий.
 const TIER_SHARES: [f32; 3] = [1.0, 0.8, 0.65];
 /// Карниз между ярусами: вылет за стену и высота, м.
@@ -707,6 +726,11 @@ pub(super) struct Sanctuary {
     /// Храмы (по посеву [`Sacred::complex`]), главы которых размечены частями:
     /// центральную главу такому храму от себя ставить незачем.
     domed: HashSet<u32>,
+    /// Храмы, у которых размечена **своя колокольня** ([`is_standalone_tower`]
+    /// того же посева): корабельную башню такому храму от себя ставить
+    /// незачем — у кремлёвского собора Тулы она вставала в десяти метрах от
+    /// настоящей, и над собором торчали два шатра.
+    towered: HashSet<u32>,
 }
 
 impl Sanctuary {
@@ -726,10 +750,14 @@ impl Sanctuary {
             .collect();
         let mut raised = HashMap::new();
         let mut domed = HashSet::new();
+        let mut towered = HashSet::new();
         for (index, building) in buildings.iter().enumerate() {
             let BuildingUse::Church(sacred) = building.building_use else {
                 continue;
             };
+            if is_standalone_tower(building) && sacred.complex != 0 {
+                towered.insert(sacred.complex);
+            }
             if sacred.form != SacredForm::Dome {
                 continue;
             }
@@ -750,7 +778,11 @@ impl Sanctuary {
                 domed.insert(sacred.complex);
             }
         }
-        Self { raised, domed }
+        Self {
+            raised,
+            domed,
+            towered,
+        }
     }
 
     /// С какой высоты начинается приподнятая часть; `None` — дом стоит на земле
@@ -786,15 +818,18 @@ impl Sanctuary {
                 .map(|crown| (crown, Vec2::ZERO))
                 .collect();
         }
-        let own_domes = match building.building_use {
-            BuildingUse::Church(sacred) => !self.domed.contains(&sacred.complex),
-            _ => true,
+        let own = match building.building_use {
+            BuildingUse::Church(sacred) => Own {
+                domes: !self.domed.contains(&sacred.complex),
+                tower: !self.towered.contains(&sacred.complex),
+            },
+            _ => Own::default(),
         };
         let eave = match is_standalone_tower(building) {
             true => Vec2::ZERO,
             false => lift,
         };
-        crowns(building, wall, roof, own_domes)
+        crowns_with(building, wall, roof, own)
             .into_iter()
             .map(|crown| (crown, eave))
             .collect()
@@ -875,11 +910,29 @@ fn dome_color(building: &PolyArea, faith: Faith) -> Srgba {
     domes[(look_seed(building) >> 18) as usize % domes.len()].to_srgba()
 }
 
+/// Что храм ставит **от себя**, а что у него уже размечено частями
+/// ([`Sanctuary`]): главы — барабанами, колокольня — своим контуром. По
+/// умолчанию — всё своё: храм, стоящий один.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Own {
+    pub(super) domes: bool,
+    pub(super) tower: bool,
+}
+
+impl Default for Own {
+    fn default() -> Self {
+        Self {
+            domes: true,
+            tower: true,
+        }
+    }
+}
+
 /// Венец храма: `wall` и `roof` — цвета, которые дому уже выбрали стена и
-/// кровля (барабан красится стеной, шатёр колокольни — кровлей). Не храм и
-/// пристройка — пусто. `own_domes` — ставить ли храму центральную главу от
-/// себя: `false`, когда главы у него размечены частями ([`Sanctuary`]).
-pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: bool) -> Vec<Crown> {
+/// кровля (барабан красится стеной, шатёр колокольни — кровлей), `own` — что
+/// храм ставит от себя ([`Sanctuary`] знает, что у него размечено частями).
+/// Не храм и пристройка — пусто.
+pub(super) fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<Crown> {
     let BuildingUse::Church(sacred) = building.building_use else {
         return Vec::new();
     };
@@ -931,11 +984,12 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
         }
         (_, SacredForm::Tower) => {}
         (Faith::Orthodox, _) => orthodox_nave(
-            &mut out, building, &plan, seed, own_domes, rise, wall, roof, dome_color,
+            &mut out, building, &plan, seed, own, rise, wall, roof, dome_color,
         ),
         (Faith::Western | Faith::Unknown, _) => {
             let wanted = (plan.width * 0.5).clamp(4.0, 10.0);
-            if plan.length >= WESTERN_TOWER_LENGTH_MIN
+            if own.tower
+                && plan.length >= WESTERN_TOWER_LENGTH_MIN
                 && let Some((at, axis, size)) = plan.tower_seat(building, wanted)
             {
                 let height = (plan.width * 0.8 + 6.0).clamp(10.0, 30.0);
@@ -956,7 +1010,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
         }
         (Faith::Muslim, _) => {
             let radius = (plan.width.min(plan.length) * 0.3).clamp(2.0, 14.0);
-            if own_domes {
+            if own.domes {
                 out.push(dome(
                     plan.center,
                     radius,
@@ -983,7 +1037,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
             }
         }
         (Faith::Jewish, _) => {
-            if own_domes && plan.area >= SYNAGOGUE_DOME_AREA {
+            if own.domes && plan.area >= SYNAGOGUE_DOME_AREA {
                 let radius = (plan.width * 0.16).clamp(2.0, 5.0);
                 out.push(dome(
                     plan.center,
@@ -999,15 +1053,16 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
     out
 }
 
-/// Православный храм: главы и колокольня. Без `own_domes` — одна колокольня:
-/// главы у храма размечены частями.
+/// Православный храм: главы и колокольня. Без `own.domes` — одна колокольня:
+/// главы у храма размечены частями; без `own.tower` — одни главы: колокольня
+/// стоит рядом своим контуром.
 #[allow(clippy::too_many_arguments)]
 fn orthodox_nave(
     out: &mut Vec<Crown>,
     building: &PolyArea,
     plan: &Plan,
     seed: u32,
-    own_domes: bool,
+    own: Own,
     rise: f32,
     wall: Srgba,
     roof: Srgba,
@@ -1030,7 +1085,7 @@ fn orthodox_nave(
     }
     // «корабль»: трапезная и колокольня по оси, главы — над восточным ядром
     let ship = plan.length >= plan.width * SHIP_RATIO_MIN && plan.length >= SHIP_LENGTH_MIN;
-    let seat = ship
+    let seat = (ship && own.tower)
         .then(|| plan.tower_seat(building, (plan.width * 0.6).clamp(4.0, 9.0)))
         .flatten();
     // восточный край столпа по оси плана: у него своя ось, так что мерить
@@ -1069,7 +1124,7 @@ fn orthodox_nave(
     };
     // главы, размеченные частями, заменяют все свои: малые главы вокруг них
     // встали бы вперемешку с настоящими и слиплись бы с ними парами
-    if !own_domes {
+    if !own.domes {
         return;
     }
     let side = core_length.min(plan.width);
@@ -1156,10 +1211,17 @@ fn standalone_tower(
 }
 
 /// Ярусов у столпа высотой `height` над нижним ярусом `size`: на каждые
-/// `TIER_ASPECT` узких сторон по ярусу, от одного до `TIERS_MAX`.
+/// `TIER_ASPECT` узких сторон **столпа** (не шире `SHAFT_SIDE_MAX`) по ярусу,
+/// от одного до `TIERS_MAX`.
 fn tier_count(height: f32, size: Vec2) -> u8 {
-    let tiers = (height / (size.min_element().max(1.0) * TIER_ASPECT)).round();
+    let shaft = size.min_element().clamp(1.0, SHAFT_SIDE_MAX);
+    let tiers = (height / (shaft * TIER_ASPECT)).round();
     (tiers as u8).clamp(1, TIERS_MAX)
+}
+
+/// Ярус над ярусом `size`: у́же в `TIER_SHRINK` и не шире столпа.
+fn next_tier(size: Vec2) -> Vec2 {
+    (size * TIER_SHRINK).min(Vec2::splat(SHAFT_SIDE_MAX))
 }
 
 /// Чем кончать столп: у православной колокольни шатёр чаще шпиля, по посеву
@@ -1171,9 +1233,9 @@ fn tower_top(faith: Faith, seed: u32) -> TowerTop {
     }
 }
 
-/// Размер верхнего яруса: нижний, сжатый `TIER_SHRINK` на каждый ярус выше.
+/// Размер верхнего яруса: нижний, сжатый [`next_tier`] на каждый ярус выше.
 fn top_tier(size: Vec2, tiers: u8) -> Vec2 {
-    size * TIER_SHRINK.powi(i32::from(tiers.clamp(1, TIERS_MAX)) - 1)
+    (1..tiers.clamp(1, TIERS_MAX)).fold(size, |size, _| next_tier(size))
 }
 
 /// Верх элемента над карнизом, м, — докуда он отбрасывает тень.
@@ -1560,14 +1622,36 @@ fn push_tower(builder: &mut MeshBuilder, seat: Vec2, pillar: &Pillar, lean: Opti
     let cornice_color = pillar.wall.mix(&Srgba::WHITE, CORNICE_LIGHTEN);
     let mut floor = seat;
     let mut size = pillar.size;
-    for (tier, share) in TIER_SHARES[..tiers].iter().enumerate() {
+    let mut heights: Vec<f32> = TIER_SHARES[..tiers]
+        .iter()
+        .map(|share| walls * share / shares)
+        .collect();
+    // широкое основание — паперти и палаты нижнего яруса — не выше
+    // `BASE_TIER_MAX`: лишнее уходит в столп над ним
+    if tiers > 1 && pillar.size.min_element() > SHAFT_SIDE_MAX && heights[0] > BASE_TIER_MAX {
+        let excess = heights[0] - BASE_TIER_MAX;
+        heights[0] = BASE_TIER_MAX;
+        let upper: f32 = heights[1..].iter().sum();
+        for height in &mut heights[1..] {
+            *height += excess * *height / upper;
+        }
+    }
+    for (tier, height) in heights.into_iter().enumerate() {
         let ring = rect(floor, pillar.axis, size);
-        let rise = up(lean, walls * share / shares);
-        push_tier_walls(builder, &ring, rise, pillar.wall, lean, tier + 1 == tiers);
+        let rise = up(lean, height);
+        push_tier_walls(
+            builder,
+            &ring,
+            rise,
+            height,
+            pillar.wall,
+            lean,
+            tier + 1 == tiers,
+        );
         floor += rise;
         if tier + 1 < tiers {
             floor = push_cornice(builder, floor, pillar.axis, size, cornice_color, lean);
-            size *= TIER_SHRINK;
+            size = next_tier(size);
         }
     }
     let ring = rect(floor, pillar.axis, size);
@@ -1608,13 +1692,15 @@ fn push_tower(builder: &mut MeshBuilder, seat: Vec2, pillar: &Pillar, lean: Opti
     }
 }
 
-/// Стены одного яруса: видимые грани с тоном по свету и проёмы — арки звона
-/// на верхнем ярусе, окно на остальных. Возвращает ничего: следующий ярус
-/// кладётся вызывающим на `ring + rise`.
+/// Стены одного яруса высотой `height` м: видимые грани с тоном по свету и
+/// проёмы — арки звона на верхнем ярусе, окно (два на длинной стене) на
+/// остальных, размером в метрах ([`BELFRY_ARCH`], [`TIER_WINDOW`]).
+#[allow(clippy::too_many_arguments)]
 fn push_tier_walls(
     builder: &mut MeshBuilder,
     ring: &[Vec2; 4],
     rise: Vec2,
+    height: f32,
     wall: Srgba,
     lean: Option<Lean>,
     belfry: bool,
@@ -1632,16 +1718,36 @@ fn push_tier_walls(
         }
         let (bottom, top) = wall_colors(wall, a, b, lean.dir());
         builder.push_quad_gradient([a, b, b + rise, a + rise], [bottom, bottom, top, top]);
-        // проёмы: у звона две высокие арки, у глухого яруса одно окно
-        let spans: &[(f32, f32, f32, f32)] = match belfry {
-            true => &[(0.18, 0.42, 0.16, 0.84), (0.58, 0.82, 0.16, 0.84)],
-            false => &[(0.4, 0.6, 0.42, 0.72)],
+        let length = edge.length();
+        if length <= 0.0 || height <= 0.0 {
+            continue;
+        }
+        let (size, count, low): (Vec2, usize, f32) = match belfry {
+            true => (
+                BELFRY_ARCH,
+                ((length / BELFRY_PITCH) as usize).clamp(1, BELFRY_ARCHES_MAX),
+                0.2,
+            ),
+            false => (
+                TIER_WINDOW,
+                1 + usize::from(length >= TWO_WINDOWS_FROM),
+                0.4,
+            ),
         };
-        for &(from, to, low, high) in spans {
-            let (left, right) = (a.lerp(b, from), a.lerp(b, to));
-            let (low, high) = (rise * low, rise * high);
+        // ширина — в долях стены, высота — в долях яруса, обе не больше того,
+        // что стена и ярус вмещают
+        let wide = (size.x / length).min(OPENING_SHARE_MAX);
+        let tall = (size.y / height).min(0.6);
+        let low = low.min(1.0 - tall - 0.08);
+        for slot in 0..count {
+            let centre = (slot as f32 + 0.5) / count as f32;
+            let (left, right) = (
+                a.lerp(b, centre - wide / 2.0),
+                a.lerp(b, centre + wide / 2.0),
+            );
+            let (bottom, top) = (rise * low, rise * (low + tall));
             builder.push_quad(
-                [left + low, right + low, right + high, left + high],
+                [left + bottom, right + bottom, right + top, left + top],
                 opening,
             );
         }

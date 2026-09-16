@@ -2354,13 +2354,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     a stack of receding storeys with a white cornice between them and open arches on the top
     one, and a plain box with a tent read as a water tower. `tier_count` gives a tier per
     `TIER_ASPECT` 1.6 narrow sides of pillar height, 1–3 (`TIERS_MAX`): the kremlin tower
-    (12 × 12 m, ~50 m of pillar) three, a ship's 6 m tower two, a chapel's turret one. Each
-    tier is `TIER_SHRINK` 0.8 of the one below and its height follows `TIER_SHARES`
-    1 / 0.8 / 0.65; between them a cornice `CORNICE_REACH` 0.35 m out and `CORNICE_HEIGHT`
+    (~50 m of pillar) three, a ship's 6 m tower two, a chapel's turret one. Each
+    tier is `TIER_SHRINK` 0.8 of the one below **and never wider than `SHAFT_SIDE_MAX`
+    12 m** (`next_tier`; `tier_count` measures by that shaft too): a standalone tower's
+    outline is its ground storey *with* the porches and side chambers — the kremlin tower
+    is a 28 × 24 m cross, All Saints' 24 × 24 — and the shaft above it is ten to thirteen
+    metres, while an unclamped second tier was the same block again. When the base is
+    wider than the shaft its tier is capped at `BASE_TIER_MAX` 14 m and the rest goes to the
+    shaft (a 24 m white cube otherwise). Heights follow `TIER_SHARES`
+    1 / 0.8 / 0.65; between tiers a cornice `CORNICE_REACH` 0.35 m out and `CORNICE_HEIGHT`
     0.5 m high, `CORNICE_LIGHTEN` 0.3 toward white (`push_cornice` — visible sides plus the
     top slab, so the next tier stands on a ledge). Walls take `wall_colors` like a house's;
-    the top tier gets two tall belfry arches per visible face, the lower tiers one window
-    (`push_tier_walls`). **`TowerTop`** ends it: `Tent` — `push_cone` from the top tier to
+    **openings are metres, not shares of the wall** (`push_tier_walls`): a belfry arch
+    `BELFRY_ARCH` 2 × 5 m, one per `BELFRY_PITCH` 4.5 m of face up to `BELFRY_ARCHES_MAX` 3,
+    a window `TIER_WINDOW` 1.1 × 2.4 m, two from `TWO_WINDOWS_FROM` 9 m of face, none
+    wider than `OPENING_SHARE_MAX` 0.28 of its wall — as shares a 12 m wall wore black
+    gates. **`TowerTop`** ends it: `Tent` — `push_cone` from the top tier to
     the apex, the cap onion on the point; `Spire` — a top cornice, a lantern (`LANTERN_RADIUS`
     0.28 / `LANTERN_HEIGHT` 0.45 of the top tier's narrow side, with slits when ≥ 1.5 m) and
     a thin cone from `SPIRE_FOOT` 0.8 of the lantern, with a ball `SPIRE_BALL` half the cap
@@ -2378,6 +2387,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     pillar takes `TOWER_PILLAR_SHARE` 0.72 of it and the spire the rest; an inferred height
     (`BELL_TOWER_HEIGHTS`, to the belfry cornice) keeps the spire on top of it. Minarets keep
     their box under `Crown::Minaret`, Jewish and Eastern towers their box under a tent.
+    **And the church it belongs to grows no ship tower of its own** (`Sanctuary::towered`,
+    `Own::tower` into `crowns_with`, `Own::default()` being a church standing alone):
+    the kremlin cathedral's plan is just long enough for a "ship", and its seeded tent
+    stood ten metres from the real bell tower — two tents over one cathedral. The cupolas
+    stay; this is the twin of `domed` / `Own::domes`.
   - **A bell tower sits on the church's own west projection first** (`Plan::west_piece`, tried
     by `Plan::tower_seat` before the search below) — the porch, the narthex, the mapped tower
     base. Then its walls **are** the church's walls carried upward and there is no junction

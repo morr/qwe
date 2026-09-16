@@ -395,8 +395,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   with a white cornice between, belfry arches on the top one, then a `TowerTop` — a tent, or a
   lantern with a thin spire (Orthodox by seed, Western always) — and the Orthodox cap onion.
   A **standalone bell tower** (`is_standalone_tower`: an Orthodox or Western `Tower` outline)
-  is **boxless** — the whole building is that crown from the ground, and its OSM height is
-  the height *with* the spire. A cupola is a **stack of
+  is **boxless** — the whole building is that crown from the ground, its OSM height is the
+  height *with* the spire, its outline is the ground storey with the porches and the shaft
+  above is clamped to `SHAFT_SIDE_MAX` — and the church it belongs to grows no ship tower of
+  its own (`Sanctuary::towered`). A cupola is a **stack of
   slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
   compression, so it reads as an onion, not a ball, on a drum with a cornice ring; crowns cast
   ground shadow to their real top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **Colours
