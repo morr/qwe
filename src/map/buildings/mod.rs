@@ -33,7 +33,8 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::garages::garage_runs;
-use self::heights::{height_mix, height_or_default};
+use self::heights::height_mix;
+pub(crate) use self::heights::height_or_default;
 pub(crate) use self::layers::SHADOW_LENGTH_RANGE;
 use self::layers::{
     ShadowSweeps, extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,

@@ -844,6 +844,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and occupies a share that **falls with the lot's size** (`lot_occupancy`: 50 % on a
   yard of ≤ 20 stalls down to 12 % from 400, by the log of the stall count) — a full mall
   lot reads as a dealership.
+  **How densely either of them parks is decided by the district** (`cars/district.rs`,
+  `Districts`): the **area-weighted mean height** of the buildings within 120 m, in storeys,
+  multiplies both shares — ×0.25 at ≤ 2 storeys (a private-house quarter parks its cars in
+  its own yards, and on the street there are singles), ×1.15 from 5 (a microdistrict has
+  nowhere else to put them), linearly between, and exactly ×1 where there is nothing to
+  read. Weighted by footprint, not counted by building: twenty garages must not outvote the
+  slab their cars belong to. The reading is refreshed every 48 m along a street, so a street
+  leaving the private sector for a microdistrict changes density where the city changes, not
+  where the OSM way ends. Without it half of Tula was parked to microdistrict norms — 98.7
+  of its 188 km of parkable street and 46 of its 159 lots are low-rise.
   **A car is not a rectangle** (`cars/body.rs`): a rounded silhouette with a dark cabin
   across it — windscreen, roof, backlight — plus mirrors, and its size and the layout of
   that cabin come from its **body type** (`CarShape`: sedan, hatchback, wagon, crossover,
@@ -861,12 +871,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   per lot, and
   a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
   layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
-  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 22 069
-  cars along the kerbs, plus 5 934 in the lots, at 1 456 k verts / 27 ms of mesh on the near
-  step against 220 k / 5 ms on the far one,
-  plus the 1 ms of junction breaks and 2 ms of parking every step pays alike
+  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 14 669
+  cars along the kerbs, plus 1 994 in the lots, at 968 k verts / 18 ms of mesh on the near
+  step against 146 k / 3 ms on the far one,
+  plus the 1 ms of junction breaks, 3 ms of the district index and 4 ms of parking every
+  step pays alike
   (`measure_cars` times them on their own rows — `examples/bench/map_meshing`; the lots are
-  not in that bench, its numbers are the kerb row alone). Every
+  not in that bench, its numbers are the kerb row alone). The district multiplier is what
+  the last of those numbers moved: on one machine 21 929 → 14 669 cars and 45.7 → 36.1 ms,
+  the index costing 3 ms against 8 ms of mesh no longer laid. Every
   street shape the row broke on, and every body type on all three detail steps, side by
   side: `cargo run --example car_gallery`.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the

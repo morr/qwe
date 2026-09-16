@@ -82,7 +82,12 @@ const TOWER_FOOTPRINT_MIN: f32 = 500.0;
 const TOWER_MAX_RATIO: f32 = 1.7;
 
 /// Высота дома для отрисовки: тег из OSM, иначе вывод по пятну и назначению.
-pub(super) fn height_or_default(building: &PolyArea) -> f32 {
+///
+/// Наружу из `buildings` её читает ещё слой машин: плотность ряда у бордюра и
+/// на стоянке зависит от этажности квартала вокруг (`cars::district`), и
+/// мерить её обязан **тот же** вывод, которым дом нарисован, — иначе
+/// нарисованная девятиэтажка стояла бы в кварталах частного сектора.
+pub(crate) fn height_or_default(building: &PolyArea) -> f32 {
     building
         .height
         .unwrap_or_else(|| inferred_height(building, building_seed(building)))

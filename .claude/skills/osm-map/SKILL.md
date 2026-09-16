@@ -1694,13 +1694,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     next to streets hundreds of metres long is otherwise invisible. The `Detail` knob drives
     the street cells, never the stand — the stand shows all three steps at once.
   - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
-    machine, so compare runs against runs): **22 069 cars along the kerbs** — the bench
-    does not fill the lots, and they add **5 934** more in the app — and per detail step
-    **1 456 k verts / 27 ms** (Full), **485 k / 11 ms** (Silhouette), **220 k / 5 ms**
+    machine, so compare runs against runs): **14 669 cars along the kerbs** — the bench
+    does not fill the lots — and per detail step
+    **968 k verts / 18 ms** (Full), **322 k / 7 ms** (Silhouette), **146 k / 3 ms**
     (Block). **Those are the mesh rows
-    alone**; the two steps in front of them do not depend on the detail and are measured
-    once each — `breaks` 1 ms (`marking_breaks`) and `parking` 2 ms (`park_cars`) — so a
-    rebuild is 30 ms at the near step and 8 ms at the far one.
+    alone**; the three steps in front of them do not depend on the detail and are measured
+    once each — `breaks` 1 ms (`marking_breaks`), `districts` 3 ms (the index) and
+    `parking` 4 ms (`park_cars`) — so a rebuild is 26 ms at the near step and 11 at the far
+    one.
+    **The district multiplier paid for itself and then some**, measured before and after on
+    one machine: 21 929 → 14 669 cars (−33 %), and the row went **45.7 → 36.1 ms** — the
+    3 ms index and the one millisecond the queries added to `parking` against 8 ms of mesh
+    that is no longer laid (Full 26 → 18, Silhouette 11 → 7, Block 5 → 3). Fewer cars is
+    not a cost here, it is the correction.
     **The swept shadow is what most of the near step's growth bought** (971 k / 15 ms
     before it, on the same machine and the same run of the buildings' 785 k / 79 ms): the
     sweep's hull is two vertices *cheaper* than the translated copy was — which is why
@@ -1719,10 +1725,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       construction, and `cars/body.rs::the_outline_is_convex` — an inline `mod tests`, there
       is no `body/tests.rs` — is what keeps it that way.
       Measured: Full 40 → 15 ms, Silhouette 35 → 9 ms, vertices unchanged.
-    - **The lots are outside every one of those numbers.** Measured on the avenues-only
-      run that predates the current kerb rule: 5665 → 11 599 cars and 45 k → 93 k verts
-      once the lots were filled, i.e. ~5 900 cars and ~48 k verts on Tula, at whatever the
-      detail step of the moment costs per car.
+    - **The lots are outside every one of those numbers**, and the way to read them off is
+      the app's own `cars:` log line minus the bench's kerb count: **1 994** on Tula
+      (16 663 in the app against 14 669 in the bench), at whatever the detail step of the
+      moment costs per car. It was ~5 900 before the district multiplier reached the lots
+      too — most of Tula's are in low- or mid-rise quarters.
   - **The lots are filled by the same pass** (`fill_lots`): every stall from
     `ParkingLayout`, a share of them taken **that falls with the lot's size**
     (`lot_occupancy`): `LOT_OCCUPANCY_SMALL` 50 % up to `LOT_SMALL_STALLS` 20 stalls,
@@ -1734,6 +1741,56 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     (`lot_seed`, its first point) exactly like a street. That curve is built from
     constants, not from `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
     lot is a different observation.
+  - **How densely a place parks at all is decided by the district** (`cars/district.rs`,
+    `Districts`), and it multiplies **both** shares — the kerb row's `CarStyle::occupancy`
+    and the lot's `lot_occupancy`. Until it existed the layer knew only the width of the
+    street and the size of the lot, and on the photo that is wrong twice over: a quarter of
+    private houses parks in its own yards and shows singles on the street, while a
+    microdistrict is solid because there is nowhere else. Tula measured off the cache:
+    **98.7 of 188 km** of parkable street and **46 of 159 lots** are low-rise, i.e. half the
+    city was parked to microdistrict norms.
+    - **The reading is the area-weighted mean height** of the buildings within `REACH`
+      120 m, in storeys, and the weighting is the load-bearing half. By count, twenty
+      garages beside a nine-storey slab outvote it, though the cars belong to the slab; by
+      area, a hundred small houses read the same as ten, which is right — a quarter does
+      not get taller for being denser. A median reads worse here than a mean: the boundary
+      between quarters has to be soft, and the weighted mean ramps — one section on the edge
+      of a private sector already lifts it a little, a row of them lifts it all the way.
+    - **The factor** is `LOW_FILL` 0.25 at `LOW_STOREYS` 2 and under, `HIGH_FILL` 1.15 from
+      `HIGH_STOREYS` 5, linear between, and exactly **1** where nothing is in reach. Low is
+      "far thinner" — a car about every fifty metres of kerb, one per two or three plots;
+      high is deliberately only +15 %, because past that the row closes into a solid band
+      and reads as the very dealership `lot_occupancy` exists to avoid.
+    - **Every contour of `MapData::buildings` counts**, churches and the kremlin included:
+      the measure is "how high is what stands here", which is what the eye reads off the
+      photo, and a kremlin tower really does make its surroundings not a private sector.
+      Each exclusion would need its own argument and is worth fractions of a metre on Tula.
+    - **The height is `buildings::height_or_default`** — the same inference the building is
+      *drawn* with (it went `pub(crate)` for this), never the raw `PolyArea::height`: 69 %
+      of Tula has no tag, and a second notion of "how tall is this" would put a drawn
+      nine-storey block in a quarter the cars treat as private sector.
+    - **The index is a grid** of building centroids, `CELL` = `REACH`, each registered in
+      every cell its radius touches, so a query reads one cell — the wagons' `Fan`
+      construction. Built **per rebuild**, not cached per world load, for the junction
+      breaks' reason: it is milliseconds on 7.6 k buildings against a layer that is
+      percentages of the building one, and `measure_cars` prints it as its own `districts`
+      row so that decision stays measured.
+    - **Along a street the reading is refreshed every `DISTRICT_STEP` 48 m**, not per place:
+      a query per each of 22 k places would cost more than the whole layer, and a quarter
+      does not change from car to car. Forty-eight metres is a couple of private plots or
+      the end of a section — the scale at which the city does change — and it is *arclength*
+      of the street, so a way running out of the private sector into a microdistrict changes
+      density where the city changes rather than where the way ends.
+    - **It is RNG-stream-neutral.** Both call sites already rolled one `next_f32` per place
+      and compared it against a share; the factor only scales the share, so the draws and
+      their order are untouched and nothing else in the layer moves. The product is clamped
+      to `[0, 1]`, so `occupancy = 1` still means "every place taken" on the slider.
+    - **An empty `Districts` is a factor of 1 everywhere**, which is not a stub but the
+      honest "no quarter to read": that is what `car_gallery` (no buildings at all) and the
+      row-layout tests in `cars/mod.rs` build with, so they check the laying-out rule
+      unmixed with the density rule. The density rule has its own tests in `district.rs`
+      plus one end-to-end in `cars/mod.rs`
+      (`the_same_street_parks_thinner_in_a_private_sector`).
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark

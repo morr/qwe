@@ -16,6 +16,12 @@
 //! «узкая улица», а как «не магистраль»; на снимке города плотнее всего
 //! запаркованы как раз жилые кварталы.
 //!
+//! **А насколько плотно — решает застройка вокруг** ([`district`]): в квартале
+//! частных домов машин вчетверо меньше обычного, в микрорайоне — на 15 %
+//! больше. Множитель один на оба источника машин, и ряд у бордюра, и
+//! размеченную стоянку: наблюдение про частный сектор — одно, а то, что во
+//! дворе он выражается стоянкой, а вдоль улицы рядом, — деталь укладки.
+//!
 //! Расстановка детерминирована (ГПСЧ Лемера, засеянный первой точкой улицы),
 //! так что от запуска к запуску ряд стоит одинаково. Виден он только вблизи:
 //! [`CarZoomBucket`] снимает слой целиком, когда машина становится мельче
@@ -41,7 +47,9 @@ use crate::settings::{
 };
 
 pub mod body;
+mod district;
 
+use self::district::Districts;
 pub use body::{Car, CarDetail, CarShape};
 
 /// Шаг парковочного места вдоль улицы, м: машина плюс просвет.
@@ -66,12 +74,24 @@ const PARK_SLOP: f32 = 0.12;
 /// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
 /// те же пять пустых метров, что и на настоящем узле.
 const JUNCTION_CLEARANCE: f32 = 5.0;
+/// Через сколько метров улицы застройка вокруг перечитывается заново, м.
+/// Квартал не меняется от места к месту, а запрос к [`Districts`] на каждое из
+/// двадцати двух тысяч мест стоил бы больше, чем весь слой; полсотни метров —
+/// это пара участков частного сектора и торец секции, то есть тот масштаб, на
+/// котором застройка и в самом деле успевает смениться. Длинная улица,
+/// выходящая из частного сектора в микрорайон, при этом меняет плотность там,
+/// где меняется город, а не там, где кончается way.
+const DISTRICT_STEP: f32 = 48.0;
 /// Какая доля мест занята на **размеченной стоянке**, от малой к большой
 /// ([`lot_occupancy`]). Двор на пару десятков мест заставлен наполовину, а
 /// стоянка торгового центра на сотни мест почти пуста: забитым её видно только
 /// в час пик, и сплошное поле машин читалось автосалоном. Свои константы, а не
 /// ползунок `CarStyle::occupancy`: тот про рваный ряд у бордюра, а полупустая
 /// стоянка — это другое наблюдение, и крутить их вместе нечем.
+///
+/// Сверх этой доли стоянка домножается на множитель квартала ([`Districts`]),
+/// как и ряд у бордюра: размер стоянки и застройка вокруг — два независимых
+/// наблюдения, поэтому они перемножаются, а не спорят за одно число.
 const LOT_OCCUPANCY_SMALL: f32 = 0.5;
 const LOT_OCCUPANCY_LARGE: f32 = 0.12;
 /// Мест на стоянке, до которых заполненность ещё [`LOT_OCCUPANCY_SMALL`], и от
@@ -90,7 +110,11 @@ const LOT_LARGE_STALLS: f32 = 400.0;
 #[settings_group(group = "cars")]
 pub struct CarStyle {
     pub visible: bool,
-    /// Доля занятых мест, 0..1 — печатается процентом.
+    /// Доля занятых мест у бордюра, 0..1 — печатается процентом. **База**, а
+    /// не итог: её домножает застройка вокруг ([`Districts`]), так что в
+    /// частном секторе ряд вчетверо реже неё, а в микрорайоне на 15 % плотнее.
+    /// Произведение прижато к единице, поэтому «100 %» на ползунке по-прежнему
+    /// значит «все места заняты».
     pub occupancy: f32,
 }
 
@@ -165,13 +189,25 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 /// её миллисекунды нельзя было бы сравнить ни с логом `rebuild_cars`, ни с
 /// прежним замером, где расстановка входила в общее время.
 ///
+/// Индекс застройки ([`Districts`]) — тоже своей строкой, и по той же причине:
+/// он строится на все семь с половиной тысяч домов и от ступени подробности не
+/// зависит, а решение не кешировать его между пересборками держится ровно на
+/// этом числе.
+///
 /// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
 /// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
 /// видна в тех же числах, что и цена зданиевых слоёв.
-pub fn measure_cars(roads: &[RoadLine], traffic: TrafficSide) -> (usize, Vec<LayerCost>) {
+pub fn measure_cars(
+    buildings: &[PolyArea],
+    roads: &[RoadLine],
+    traffic: TrafficSide,
+) -> (usize, Vec<LayerCost>) {
     let started = std::time::Instant::now();
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let breaks_took = started.elapsed();
+    let started = std::time::Instant::now();
+    let districts = Districts::new(buildings);
+    let districts_took = started.elapsed();
     let started = std::time::Instant::now();
     let cars = park_cars(
         roads,
@@ -179,6 +215,7 @@ pub fn measure_cars(roads: &[RoadLine], traffic: TrafficSide) -> (usize, Vec<Lay
         CarStyle::default(),
         RoadStyle::default().smoothing,
         traffic,
+        &districts,
     );
     let parking_took = started.elapsed();
     let mut costs = vec![
@@ -186,6 +223,11 @@ pub fn measure_cars(roads: &[RoadLine], traffic: TrafficSide) -> (usize, Vec<Lay
             name: "breaks",
             vertices: 0,
             elapsed: breaks_took,
+        },
+        LayerCost {
+            name: "districts",
+            vertices: 0,
+            elapsed: districts_took,
         },
         LayerCost {
             name: "parking",
@@ -245,14 +287,18 @@ pub fn rebuild_cars(
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
     let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
     let breaks_took = started.elapsed();
+    // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
+    // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
+    let districts = Districts::new(&map.buildings);
     let mut cars = park_cars(
         &map.roads,
         &junctions,
         *style,
         road_style.smoothing,
         map.traffic_side,
+        &districts,
     );
-    cars.extend(fill_lots(&map.parking, &layout.0));
+    cars.extend(fill_lots(&map.parking, &layout.0, &districts));
     let builder = mesh_cars(&cars, detail);
     let count = cars.len();
     let vertices = builder.vertex_count();
@@ -292,6 +338,10 @@ pub fn rebuild_cars(
 /// `smoothing` — то же, с чем витрина кладёт под ряд асфальт: осевая у ленты и
 /// у ряда обязана быть одна; `detail` — ступень подробности, которую в игре
 /// выдаёт зум, а витрина показывает все три рядом.
+///
+/// Домов у витрины нет вовсе, и пустой [`Districts`] здесь не заглушка, а
+/// честное «квартала вокруг не прочесть»: множитель тогда ровно 1, и клетки
+/// показывают правило укладки, не смешанное с правилом плотности.
 pub fn cars_mesh(
     roads: &[RoadLine],
     style: CarStyle,
@@ -300,8 +350,9 @@ pub fn cars_mesh(
     detail: CarDetail,
 ) -> MeshBuilder {
     let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let districts = Districts::new(&[]);
     mesh_cars(
-        &park_cars(roads, &junctions, style, smoothing, traffic),
+        &park_cars(roads, &junctions, style, smoothing, traffic, &districts),
         detail,
     )
 }
@@ -317,9 +368,14 @@ fn park_cars(
     style: CarStyle,
     smoothing: RoadSmoothing,
     traffic: TrafficSide,
+    districts: &Districts,
 ) -> Vec<Car> {
     let mut cars = Vec::new();
     let kerb = traffic.kerb();
+    let density = Density {
+        base: style.occupancy,
+        districts,
+    };
     let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
     let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
@@ -366,7 +422,7 @@ fn park_cars(
                     junctions: &junctions.breaks[index],
                     decks: &near,
                 },
-                style.occupancy,
+                &density,
                 &mut rng,
             );
         }
@@ -376,13 +432,18 @@ fn park_cars(
 
 /// Машины на размеченных стоянках: то же место, что и у разметки
 /// (`map::parking::ParkingLayout`), — иначе машина встала бы мимо своей полосы.
-/// Занята доля мест по размеру стоянки ([`lot_occupancy`]): полная стоянка
-/// выглядит как автосалон, а пустая — как чертёж.
-fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>]) -> Vec<Car> {
+/// Занята доля мест по размеру стоянки ([`lot_occupancy`]) и по застройке
+/// вокруг неё ([`Districts`]): полная стоянка выглядит как автосалон, пустая —
+/// как чертёж, а забитая стоянка посреди частного сектора — как чужой двор.
+fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>], districts: &Districts) -> Vec<Car> {
     let mut cars = Vec::new();
     for (lot, stalls) in lots.iter().zip(layout) {
         let mut rng = Lcg::new(lot_seed(lot));
-        let occupancy = lot_occupancy(stalls.len());
+        // квартал читается по центру пятна, а не по первой вершине контура,
+        // которой стоянка засеяна: у вытянутой вдоль квартала стоянки угол и
+        // середина стоят в разной застройке
+        let around = district::centre(&lot.outer).map_or(1.0, |at| districts.fill_at(at));
+        let occupancy = (lot_occupancy(stalls.len()) * around).clamp(0.0, 1.0);
         for stall in stalls {
             if rng.next_f32() >= occupancy {
                 continue;
@@ -476,6 +537,14 @@ impl<'a> BridgeDeck<'a> {
     }
 }
 
+/// Насколько густо занимать места вдоль улицы: базовая доля (ползунок
+/// `CarStyle::occupancy`, один на весь город) и застройка вокруг, которая её
+/// домножает. Два числа, но одно решение, поэтому и один аргумент.
+struct Density<'a> {
+    base: f32,
+    districts: &'a Districts,
+}
+
 /// Где ряду стоять нельзя: перекрёстки этой улицы и мосты рядом с ней.
 struct Clearings<'a> {
     junctions: &'a [Break],
@@ -501,13 +570,18 @@ struct Kerb {
 /// пошаговый обход `windows(2)` выбрасывал их целиком (в кеше Тулы — половину
 /// сегментов и треть длины), а на каждой вершине сбрасывал шаг, отчего ряд то
 /// рвался, то удваивался.
+///
+/// [`Density`] — базовая доля занятых мест (ползунок `CarStyle`) и застройка,
+/// которая её домножает; квартал перечитывается раз в [`DISTRICT_STEP`]
+/// метров, потому что одна улица может выйти из частного сектора в микрорайон,
+/// и плотность обязана смениться там же, где меняется город.
 fn park_along(
     cars: &mut Vec<Car>,
     points: &[Vec2],
     half_road: f32,
     kerb: Kerb,
     clearings: &Clearings,
-    occupancy: f32,
+    density: &Density,
     rng: &mut Lcg,
 ) {
     let (along, total) = arclengths(points);
@@ -523,6 +597,9 @@ fn park_along(
     // этой единственной длиной, а с пятью типами хэтчбек за фургоном проезжал
     // проверку с наложением до 0.7 м
     let mut last: Option<(Vec2, f32)> = None;
+    // застройка вокруг, перечитываемая раз в [`DISTRICT_STEP`] метров улицы, —
+    // дуговая координата прошлого чтения и его доля занятости
+    let mut around: Option<(f32, f32)> = None;
     let mut step = END_MARGIN;
     while step <= total - END_MARGIN {
         let at = step;
@@ -549,7 +626,19 @@ fn park_along(
         }) {
             continue;
         }
-        if rng.next_f32() >= occupancy {
+        // квартал читается по осевой, а не по месту у бордюра: полтора метра
+        // поперёк улицы застройку не меняют. Бросок кости от множителя не
+        // зависит и остаётся на месте — поток ГПСЧ у ряда тот же, что и был,
+        // меняется только то, какие из мест выживают
+        let fill = match around {
+            Some((read_at, fill)) if at - read_at < DISTRICT_STEP => fill,
+            _ => {
+                let fill = density.districts.fill_at(point);
+                around = Some((at, fill));
+                fill
+            }
+        };
+        if rng.next_f32() >= (density.base * fill).clamp(0.0, 1.0) {
             continue;
         }
         // запоминается место **до** поперечной небрежности ниже, и это
@@ -604,7 +693,7 @@ fn mesh_cars(cars: &[Car], detail: CarDetail) -> MeshBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::fixture::street;
+    use crate::map::osm::fixture::{self, street};
     use crate::map::roads::junctions::JUNCTION_MARGIN;
 
     /// Большая стоянка пустее малой, и доля не выходит за свои края.
@@ -628,6 +717,9 @@ mod tests {
         park_driving(roads, style, TrafficSide::Right)
     }
 
+    /// Домов в сценах этих тестов нет: пустой индекс даёт множитель 1, и они
+    /// проверяют укладку ряда, не смешанную с плотностью квартала — та
+    /// проверяется своими тестами в [`district`].
     fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
         park_cars(
             roads,
@@ -635,6 +727,7 @@ mod tests {
             style,
             RoadSmoothing::Off,
             traffic,
+            &Districts::new(&[]),
         )
     }
 
@@ -730,6 +823,57 @@ mod tests {
         // 5 м — `service`, проезд: там не паркуются
         let service = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
         assert!(park(std::slice::from_ref(&service)).is_empty());
+    }
+
+    /// Та же улица в частном секторе запаркована много реже, чем в
+    /// микрорайоне, и ползунок занятости остаётся за обоими: он задаёт базу, а
+    /// квартал — множитель к ней.
+    #[test]
+    fn the_same_street_parks_thinner_in_a_private_sector() {
+        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 8.0);
+        let roads = std::slice::from_ref(&road);
+        let breaks = junctions::marking_breaks(roads, is_carriageway);
+        let rows = |buildings: &[PolyArea]| {
+            park_cars(
+                roads,
+                &breaks,
+                CarStyle::default(),
+                RoadSmoothing::Off,
+                TrafficSide::Right,
+                &Districts::new(buildings),
+            )
+            .len()
+        };
+        // частный сектор: одноэтажные дома по обе стороны улицы
+        let houses: Vec<PolyArea> = (0..30)
+            .map(|i| PolyArea {
+                height: Some(3.2),
+                ..fixture::building(
+                    fixture::square(
+                        Vec2::new(i as f32 % 15.0 * 40.0, i as f32 % 2.0 * 60.0 - 30.0),
+                        5.0,
+                    ),
+                    Vec::new(),
+                )
+            })
+            .collect();
+        // микрорайон: те же места, но девятиэтажные секции
+        let slabs: Vec<PolyArea> = (0..8)
+            .map(|i| PolyArea {
+                height: Some(27.0),
+                ..fixture::building(
+                    fixture::square(
+                        Vec2::new(i as f32 % 4.0 * 150.0, i as f32 % 2.0 * 60.0 - 30.0),
+                        15.0,
+                    ),
+                    Vec::new(),
+                )
+            })
+            .collect();
+        let (low, high) = (rows(&houses), rows(&slabs));
+        assert!(low * 3 < high, "частный сектор {low}, микрорайон {high}");
+        // и без домов вокруг остаётся ровно прежнее правило
+        assert!(rows(&[]) > low && rows(&[]) < high);
     }
 
     #[test]
@@ -998,6 +1142,7 @@ mod tests {
             style,
             RoadSmoothing::Light,
             TrafficSide::Right,
+            &Districts::new(&[]),
         );
         assert!(!cars.is_empty());
         let drawn = smooth_path(&road.points, road.width, RoadSmoothing::Light);
