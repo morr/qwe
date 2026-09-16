@@ -453,6 +453,49 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
     and inferred storeys roll anew. Tula: **1121 moved (rows included), 56 of them only part
     of the way, 38 left**, 33 ms at load (`examples/bench/map_meshing`'s parse; it was 993
     moved / 160 left / 18 ms at the 4 m refusal with no collision test).
+- **Blocks pulled to the roads** (`parse.rs::pull_landuse_to_roads`) — the same mismatch
+  read from the other side. The road's width is a class constant and its sidewalk is the
+  renderer's, while a `landuse` block is traced along the red line or the plot fences, so
+  between the yard and the drawn sidewalk a strip of bare ground is left showing — reported
+  from a screenshot of Tula's Воздухофлотская улица (block 185117817: the edge 6.1 m from
+  the axis against a 5.76 m band, i.e. a 34 cm seam). On a photo a yard runs up to the
+  kerb, and a seam of ground beside the pavement reads as an unpainted layer.
+  - **The vertex moves, not the block**, and it moves **under** the asphalt: a vertex whose
+    gap to the drawn edge (half the class width plus `roads::sidewalk_width` on a
+    carriageway) is within `LANDUSE_GAP_MAX` 3 m is pulled to the road's axis until it
+    stands `LANDUSE_OVERLAP` 0.5 m inside the band. The overlap is not decoration: the
+    ribbon is drawn from the *smoothed* centreline while the gap is measured on the raw OSM
+    points, and without it a bend keeps a centimetre of seam. Beyond 3 m nothing is done —
+    that is a real gap (a front garden, a verge, a right of way), not a seam. Measured on
+    the Tula cache: of 2756 block vertices, 1135 already lie under the asphalt and 565 are
+    in the 0–3 m band (261 / 174 / 130 by the metre), with 400-odd more beyond it.
+  - **Green only grows**, and that single rule is what keeps the pass safe: a vertex moves
+    only when the move leads **outward from the fill**, which is read **locally off the
+    ring** — the ring's own signed area gives the side, so the outer contour grows away
+    from the block and a hole shrinks into itself (the green lies outside a hole's ring).
+    A street running inside a block would otherwise drag its boundary inward, while a
+    street through a courtyard correctly pulls the **hole's** edge to the asphalt — there is
+    no green in the hole, and it is its rim that has to reach the road.
+    Locally, rather than by asking whether the road lies outside the block: for a strip of
+    lawn between two streets the nearest street is the one **beyond the far edge**, and that
+    answer would squeeze the strip instead of stretching it. `point_in_area` also has
+    nothing to say where the projection lands exactly on the outline — which is every road
+    that ends against a block, and was two of the four corners of the courtyard test scene.
+    Everything drawn on a block lies above it (`Z_LANDUSE` 0.25 against `Z_SIDEWALK` 1.2,
+    parks and grass at 0.5–0.7), so the part that ends up under the road, under a park or
+    on a neighbouring block is never seen; only the closed seam is.
+  - **A long edge beside a road is split first** (`LANDUSE_STEP` 8 m, and only where the
+    grid has a road near the edge): between its own two vertices an edge is straight while
+    the road bends, and on the outside of a turn the seam would stay in the middle of the
+    edge, where there is nothing to move. An inserted point that found nowhere to go is
+    dropped again, so a ring does not collect vertices for nothing.
+  - Bridges and passages give no segments: a block is drawn under a bridge anyway, and an
+    arch through a house is not the edge of a yard. Everything else that is drawn does,
+    alleys included — a footpath with a seam of ground beside it reads the same way.
+  - Order: after the houses are pulled off the sidewalks, before door generation. It could
+    stand anywhere in the tail — `landuse` reaches neither the navmesh, nor the doors, nor
+    tree planting, nor the parked cars' districts — and it is the only pass here whose
+    effect is purely what is drawn.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
@@ -2279,6 +2322,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     1 / 2 / 4 minarets by area (500 / 2000 m²). Synagogue ≥ 300 m²: a low dome. Eastern: roof
     only. A crown ignores clutter gating — it is the silhouette, not equipment — and roof
     clutter (vents, penthouses, chimneys) is **refused** on churches and fortresses.
+  - **A bell tower stands on its church all four corners** (`Plan::west_tower`) — the roof
+    clutter's own rule, and it did not hold by itself: `min_area_rect` describes the porches
+    and the apse along with the church, so at an end with a porch the rectangle is longer
+    than the building, and a tower flush with its west end hung over the ground (Tula way
+    496756343, the evangelical church on улица Кабакова — 2.5 m in the air, and the same on
+    ten of the city's twenty-seven places of worship). So the square is slid east in
+    `TOWER_SEAT_STEP` 0.5 m steps and, at each step, narrowed to `TOWER_SIDE_MIN` 4 m, until
+    all four corners are on the footprint (`point_in_area`, holes included). The order of the
+    search **is** the layout rule: the tower holds the west front, so the westernmost step
+    wins and, on it, the widest tower; narrowing keeps the west face where it is, so it does
+    not help against a straight facade and does help against a narrow porch. The test square
+    is shrunk by `TOWER_SEAT_SLACK` 0.05 m — on a rectangular church the rect's corner lies
+    exactly on the wall, and without the slack every tower would slide off its own end — and
+    that slack is also the worst overhang left, under a pixel at any zoom. A seat that never
+    fits leaves the church without a tower (its Orthodox "ship" falls back to the plain nave
+    layout), which is the honest answer for a plan that has no room for one.
+  - **And so do the cupolas** (`Plan::dome_seat`) — the same rule broken by the same
+    rectangle from the other end: the Orthodox core is the *eastern* slice of
+    `min_area_rect`, and on a cross plan that slice is the apse and the air beside it, so
+    four of five cupolas grew out of the walls (Tula way 234273451, Свято-Никольский на
+    Ржавце). The cluster at full spread is moved **west from the altar** in the same 0.5 m
+    steps, no further than the bell tower's east face (`room` — past it the cluster would
+    crown the tower, not the church); failing that the spread shrinks (never under
+    `DOME_SPREAD_MIN` 1.1 central radii, where the minor cupolas merge into the main one),
+    and last of all one cupola is left. The order is the layout rule: five cupolas outrank
+    the place, the place outranks the east end. A disc is probed at `DOME_SEAT_PROBES` 8 rim
+    points, at the **belly** radius rather than the drum's, so the whole cupola stays over
+    the roof. If even one cupola never stands, it is left where the plan put it — a church
+    with no cupola at all reads worse than one over the eaves.
   - **A cupola is a stack of 16 slices**, each a `push_fan_gradient` disc lifted by the lean
     and coloured per rim vertex by the 3D normal against the sun (`AMBIENT` 0.52 +
     `DIFFUSE` 0.62 × Lambert, a metal highlight). Upper slices cover lower ones, leaving the

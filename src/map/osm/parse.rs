@@ -108,6 +108,12 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
         pulled.left,
         started.elapsed()
     );
+    let started = std::time::Instant::now();
+    let stretched = pull_landuse_to_roads(&mut map);
+    eprintln!(
+        "osm parse: {stretched} block vertices pulled to the drawn road edge in {:?}",
+        started.elapsed()
+    );
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
@@ -900,6 +906,178 @@ struct PulledHouses {
     partly: usize,
     /// Наезжающих, оставленных на месте.
     left: usize,
+}
+
+/// Зазор между краем квартала и внешним краем нарисованного полотна, м,
+/// который ещё дотягивается. Больше — это уже не щель, а настоящий промежуток
+/// (палисадник, обочина, полоса отвода), и зелень туда лезть не должна. На
+/// Туле в этот предел попадает пятая часть вершин кварталов: 0..1 м — 261,
+/// 1..2 — 174, 2..3 — 130 из 2756, а дальше 3 м их ещё 400 с лишним.
+const LANDUSE_GAP_MAX: f32 = 3.0;
+/// На сколько метров дотянутый край квартала заводится **под** полотно, м.
+/// Лента рисуется по сглаженной оси (`roads::centerline`), а зазор меряется по
+/// сырым точкам OSM — без запаса на повороте осталась бы щель в сантиметр.
+const LANDUSE_OVERLAP: f32 = 0.5;
+/// Длиннее этого, м, ребро квартала рядом с дорогой разбивается на части.
+/// Между своими вершинами ребро прямое, а дорога гнётся, и на выпуклости
+/// поворота щель осталась бы посреди ребра, где двигать нечего.
+const LANDUSE_STEP: f32 = 8.0;
+
+/// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
+/// **дотягивается под полотно**. Возвращает, сколько вершин сдвинуто.
+///
+/// Ширина улицы в модели — константа класса, тротуар добавляет рендер, а
+/// границу квартала в OSM рисуют по красным линиям или по заборам участков,
+/// и между двором и нарисованным тротуаром остаётся полоска голой земли в
+/// метр-полтора (Тула, `landuse=residential` 185117817 вдоль улицы
+/// Воздухофлотской: граница в 6.1 м от оси при 5.76 м полосы). На снимке это
+/// читается как непрокрашенный шов, а не как обочина.
+///
+/// Двигается **вершина**, а не квартал целиком: край подтягивается к оси
+/// ближайшей дороги до [`LANDUSE_OVERLAP`] внутрь её полотна. Квартал лежит
+/// ниже всего, что на нём нарисовано (`Z_LANDUSE` 0.25 против `Z_SIDEWALK`
+/// 1.2), так что заведённая под асфальт зелень не видна — видно только то,
+/// что щель закрылась.
+///
+/// **Зелень только растёт**: вершина идёт к дороге, лишь если этот сдвиг ведёт
+/// **наружу от заливки** ([`pull_ring`]). Иначе улица, проходящая внутри
+/// квартала, сжала бы его границу к себе; а улица в дырке, наоборот, дырку
+/// сжимает — зелени там нет, и подходить к полотну обязан её край.
+///
+/// Мосты и арки пропущены: под мостом квартал и так рисуется, а проезд сквозь
+/// дом — это не край двора.
+fn pull_landuse_to_roads(map: &mut MapData) -> usize {
+    // (начало, конец, внешний край нарисованного полотна от оси)
+    let mut segments: Vec<(Vec2, Vec2, f32)> = Vec::new();
+    for road in &map.roads {
+        if road.bridge || road.passage {
+            continue;
+        }
+        let sidewalk = if is_carriageway(road) {
+            sidewalk_width(road.width).unwrap_or_default()
+        } else {
+            0.0
+        };
+        let edge = road.width / 2.0 + sidewalk;
+        for link in road.points.windows(2) {
+            segments.push((link[0], link[1], edge));
+        }
+    }
+    // звено кладётся в ячейки с запасом на своё полотно и предельный зазор,
+    // так что спрашивающему хватает ячейки самой вершины
+    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, &(from, to, edge)) in segments.iter().enumerate() {
+        let grow = Vec2::splat(edge + LANDUSE_GAP_MAX);
+        put_in_cells(
+            &mut cells,
+            from.min(to) - grow,
+            from.max(to) + grow,
+            SIDEWALK_CELL,
+            index,
+        );
+    }
+
+    let mut pulled = 0;
+    for area in &mut map.landuse {
+        area.outer = pull_ring(&area.outer, false, &segments, &cells, &mut pulled);
+        area.holes = area
+            .holes
+            .iter()
+            .map(|hole| pull_ring(hole, true, &segments, &cells, &mut pulled))
+            .collect();
+    }
+    pulled
+}
+
+/// Кольцо квартала с дотянутыми к дорогам вершинами. Ребро длиннее
+/// [`LANDUSE_STEP`] рядом с дорогой разбивается, и вставленная точка остаётся
+/// в кольце, только если ей нашлось куда сдвинуться, — иначе кольцо копило бы
+/// лишние вершины на каждой перестройке геометрии.
+///
+/// «Наружу от зелени» считается **локально**, по самому кольцу: для внешнего
+/// контура это прочь из квартала, для дырки — внутрь неё (зелень лежит снаружи
+/// такого кольца). Локально, а не вопросом «лежит ли дорога вне квартала»: у
+/// полосы газона между двумя улицами ближайшая улица бывает **за
+/// противоположным** краем, и такой ответ сжал бы полосу вместо того, чтобы её
+/// растянуть.
+fn pull_ring(
+    ring: &[Vec2],
+    hole: bool,
+    segments: &[(Vec2, Vec2, f32)],
+    cells: &HashMap<(i32, i32), Vec<usize>>,
+    pulled: &mut usize,
+) -> Vec<Vec2> {
+    // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
+    let sign = if (signed_ring_area(ring) > 0.0) == hole {
+        1.0
+    } else {
+        -1.0
+    };
+    let normal = |from: Vec2, to: Vec2| ((to - from).perp() * sign).normalize_or_zero();
+    let mut out: Vec<Vec2> = Vec::with_capacity(ring.len());
+    for (index, &point) in ring.iter().enumerate() {
+        let mut push = |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(
+            point, outward, segments, cells,
+        ) {
+            Some(shifted) => {
+                out.push(shifted);
+                *pulled += 1;
+            }
+            None if inserted => {}
+            None => out.push(point),
+        };
+        let previous = ring[(index + ring.len() - 1) % ring.len()];
+        let next = ring[(index + 1) % ring.len()];
+        // у вершины — биссектриса её рёбер, у вставленной точки — нормаль
+        // самого ребра
+        let along = normal(point, next);
+        push(
+            point,
+            (normal(previous, point) + along).normalize_or_zero(),
+            false,
+        );
+        let length = point.distance(next);
+        if length <= LANDUSE_STEP
+            || indices_near(cells, point.min(next), point.max(next)).is_empty()
+        {
+            continue;
+        }
+        let steps = (length / LANDUSE_STEP).ceil() as usize;
+        for step in 1..steps {
+            push(point.lerp(next, step as f32 / steps as f32), along, true);
+        }
+    }
+    out
+}
+
+/// Куда встаёт вершина квартала, которой до полотна ближайшей дороги остался
+/// зазор не больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда.
+/// `outward` — куда от этой вершины прибывает зелень (см. [`pull_ring`]).
+fn pull_vertex(
+    point: Vec2,
+    outward: Vec2,
+    segments: &[(Vec2, Vec2, f32)],
+    cells: &HashMap<(i32, i32), Vec<usize>>,
+) -> Option<Vec2> {
+    // ближайшая по **зазору до края полотна**, а не по расстоянию до оси:
+    // узкий проезд рядом ближе широкой улицы, а щель оставляет улица
+    let mut best: Option<(f32, Vec2)> = None;
+    for index in indices_near(cells, point, point) {
+        let (from, to, edge) = segments[index];
+        let axis = closest_on_segment(point, from, to);
+        let gap = point.distance(axis) - edge;
+        if best.is_none_or(|(best_gap, _)| gap < best_gap) {
+            best = Some((gap, axis));
+        }
+    }
+    let (gap, axis) = best?;
+    if gap <= 0.0 || gap > LANDUSE_GAP_MAX {
+        return None;
+    }
+    // зелень только прибывает: сдвиг к дороге, уводящий край внутрь заливки,
+    // не делается вовсе — так улица, идущая внутри квартала, его не сжимает
+    let direction = (axis - point).try_normalize()?;
+    (direction.dot(outward) > 0.0).then(|| point + direction * (gap + LANDUSE_OVERLAP))
 }
 
 /// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего

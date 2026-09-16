@@ -1980,3 +1980,100 @@ fn a_pull_is_capped_and_stops_short_of_what_stands_behind() {
         "здание позади тронуто"
     );
 }
+
+/// Край квартала, которому до нарисованного полотна осталась пара метров,
+/// дотягивается **под** асфальт; квартал в стороне остаётся на месте, и улица
+/// внутри квартала его границу к себе не стягивает — зелень только растёт.
+#[test]
+fn a_block_edge_is_pulled_under_the_asphalt() {
+    // residential 8 м: край полотна с тротуаром — 4 + 1.76 от оси
+    let edge = 4.0 + sidewalk_width(8.0).unwrap();
+    let street = vec![
+        CENTER - Vec2::new(400.0, 0.0),
+        CENTER + Vec2::new(400.0, 0.0),
+    ];
+    let block = |x: f32, gap: f32| {
+        rect(
+            CENTER + Vec2::new(x, -40.0),
+            CENTER + Vec2::new(x + 80.0, -gap),
+        )
+    };
+    let near = block(-300.0, 6.5);
+    let far = block(-200.0, 12.0);
+    // улица идёт внутри квартала, в 7 м от его южной границы
+    let around = rect(
+        CENTER + Vec2::new(-100.0, -7.0),
+        CENTER + Vec2::new(-20.0, 60.0),
+    );
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "residential")], street)
+        .area(&[("landuse", "residential")], near)
+        .area(&[("landuse", "residential")], far.clone())
+        .area(&[("landuse", "residential")], around)
+        .parse();
+
+    let edges = |ring: &[Vec2]| {
+        ring.iter()
+            .map(|vertex| vertex.y - CENTER.y)
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), y| {
+                (low.min(y), high.max(y))
+            })
+    };
+    let (_, top) = edges(&map.landuse[0].outer);
+    assert!(
+        (top + edge - LANDUSE_OVERLAP).abs() < 0.02,
+        "край квартала не заведён под полотно: {top}"
+    );
+    assert!(
+        map.landuse[1]
+            .outer
+            .iter()
+            .zip(&far)
+            .all(|(a, b)| a.distance(*b) < 0.01),
+        "квартал в стороне от улицы тронут"
+    );
+    let (low, high) = edges(&map.landuse[2].outer);
+    assert!(
+        (low + 7.0).abs() < 0.01 && (high - 60.0).abs() < 0.01,
+        "улица внутри квартала стянула его границу к себе: {low}..{high}"
+    );
+}
+
+/// Дырка в квартале, сквозь которую идёт улица, **сжимается** к ней: зелень у
+/// дырки — тот же край двора, и подходить к полотну обязан он.
+#[test]
+fn a_street_in_a_courtyard_shrinks_the_hole_to_its_asphalt() {
+    let edge = 4.0 + sidewalk_width(8.0).unwrap();
+    let map = Overpass::new(CITY)
+        .way(
+            &[("highway", "residential")],
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+        )
+        .relation(
+            &[("landuse", "residential"), ("type", "multipolygon")],
+            &[
+                ("outer", closed(square(CENTER, 100.0))),
+                (
+                    "inner",
+                    closed(rect(
+                        CENTER + Vec2::new(-60.0, -7.0),
+                        CENTER + Vec2::new(60.0, 7.0),
+                    )),
+                ),
+            ],
+        )
+        .parse();
+
+    let hole = &map.landuse[0].holes[0];
+    let reach = hole
+        .iter()
+        .map(|vertex| (vertex.y - CENTER.y).abs())
+        .fold(0.0, f32::max);
+    assert!(
+        (reach - (edge - LANDUSE_OVERLAP)).abs() < 0.02,
+        "край дырки не подошёл к полотну: {reach}"
+    );
+}
