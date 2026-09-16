@@ -11,8 +11,8 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceKind, PitchKind, RailKind, RoadClass, Sacred, SacredForm,
-    ServiceTrack, StructureKind, WaterKind, polyline_length,
+    AreaKind, BuildingUse, Colours, Faith, FenceKind, PitchKind, RailKind, Rgb, RoadClass, Sacred,
+    SacredForm, ServiceTrack, StructureKind, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -727,3 +727,98 @@ pub(super) fn area_height(kind: AreaKind, tags: &HashMap<String, String>) -> Opt
         .then(|| building_height(tags))
         .flatten()
 }
+
+/// Цвета здания из `building:colour` и `roof:colour` — только у зданий, как и
+/// высота. Тула: 30 и 91 тега на 7.7 тысячи домов, но среди них — золото глав
+/// кремлёвского собора (`#FFD700`) и бирюза Всехсвятского (`#5D948F`), а это
+/// ровно то, чем храм узнают.
+pub(super) fn area_colours(kind: AreaKind, tags: &HashMap<String, String>) -> Colours {
+    if !matches!(kind, AreaKind::Building | AreaKind::Kremlin) {
+        return Colours::default();
+    }
+    let read = |key: &str| tags.get(key).and_then(|value| colour(value));
+    Colours {
+        wall: read("building:colour"),
+        roof: read("roof:colour"),
+    }
+}
+
+/// Цвет из значения тега: `#rgb`, `#rrggbb` или имя из CSS — те, что в OSM
+/// пишут руками. Незнакомое имя — `None`, а не серый: лучше палитра по посеву,
+/// чем угаданный цвет.
+///
+/// Hex берётся как есть — его мапер подбирал по фотографии. **Имя — краской
+/// карты**, а не значением CSS: `blue` у мапера значит «синяя кровля», и
+/// `#0000FF` на карте был бы маркером, а не краской; тона в [`CSS_COLOURS`]
+/// взяты из палитр кровель и стен (`buildings/temples.rs`, `material.rs`).
+pub(super) fn colour(value: &str) -> Option<Rgb> {
+    let value = value.trim();
+    if let Some(hex) = value.strip_prefix('#') {
+        let digit = |at: usize| {
+            hex.as_bytes()
+                .get(at)
+                .and_then(|byte| (*byte as char).to_digit(16))
+        };
+        return match hex.len() {
+            3 => Some([
+                digit(0)? as u8 * 17,
+                digit(1)? as u8 * 17,
+                digit(2)? as u8 * 17,
+            ]),
+            6 => Some([
+                (digit(0)? * 16 + digit(1)?) as u8,
+                (digit(2)? * 16 + digit(3)?) as u8,
+                (digit(4)? * 16 + digit(5)?) as u8,
+            ]),
+            _ => None,
+        };
+    }
+    let name = value.to_ascii_lowercase();
+    CSS_COLOURS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, rgb)| *rgb)
+}
+
+/// Имена цветов, встречающиеся в `building:colour` / `roof:colour`, краской
+/// карты (см. [`colour`]): `white` — побелка, а не `#FFFFFF`, `blue` — синее
+/// железо кровли, `darkgray` темнее `gray`, как его и пишут, а не светлее, как
+/// в CSS.
+const CSS_COLOURS: [(&str, Rgb); 36] = [
+    ("white", [236, 234, 229]),
+    ("black", [46, 46, 48]),
+    ("red", [168, 58, 50]),
+    ("darkred", [122, 40, 36]),
+    ("maroon", [110, 34, 38]),
+    ("green", [82, 133, 107]),
+    ("darkgreen", [56, 96, 72]),
+    ("lime", [120, 170, 80]),
+    ("olive", [128, 124, 70]),
+    ("blue", [87, 107, 138]),
+    ("darkblue", [56, 72, 118]),
+    ("navy", [50, 62, 100]),
+    ("lightblue", [150, 180, 205]),
+    ("skyblue", [130, 175, 215]),
+    ("cyan", [90, 168, 172]),
+    ("teal", [66, 132, 132]),
+    ("yellow", [222, 196, 84]),
+    ("gold", [219, 168, 61]),
+    ("orange", [214, 140, 70]),
+    ("brown", [140, 90, 62]),
+    ("saddlebrown", [120, 72, 40]),
+    ("tan", [200, 172, 132]),
+    ("beige", [226, 216, 190]),
+    ("ivory", [240, 238, 226]),
+    ("cream", [240, 235, 210]),
+    ("pink", [220, 170, 170]),
+    ("purple", [120, 80, 130]),
+    ("violet", [170, 130, 180]),
+    ("gray", [128, 128, 128]),
+    ("grey", [128, 128, 128]),
+    ("darkgray", [100, 100, 102]),
+    ("darkgrey", [100, 100, 102]),
+    ("lightgray", [190, 190, 190]),
+    ("lightgrey", [190, 190, 190]),
+    ("silver", [176, 178, 180]),
+    ("dimgray", [96, 96, 98]),
+];

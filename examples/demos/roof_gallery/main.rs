@@ -128,7 +128,7 @@ use qwe::map::buildings::material::{
     retune_roof_material,
 };
 use qwe::map::buildings::{RoofShape, push_house, wall_of};
-use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
+use qwe::map::osm::{AreaKind, BuildingUse, Colours, PolyArea};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
@@ -721,6 +721,7 @@ fn material_house(cell: &Cell, rotation: Rot2, tuning: &Tuning) -> PolyArea {
         building_use: BuildingUse::Other,
         height: Some(tuning.height),
         entrances: Vec::new(),
+        colours: Colours::default(),
     }
 }
 

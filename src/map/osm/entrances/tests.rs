@@ -15,6 +15,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>) -> PolyArea {
         building_use: BuildingUse::Other,
         height,
         entrances: Vec::new(),
+        colours: Default::default(),
     }
 }
 

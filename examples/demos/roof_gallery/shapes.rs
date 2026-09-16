@@ -24,7 +24,7 @@
 
 use bevy::prelude::*;
 use qwe::map::buildings::{RoofShape, ShapeFacts, shape_facts};
-use qwe::map::osm::{AreaKind, BuildingUse, PolyArea};
+use qwe::map::osm::{AreaKind, BuildingUse, Colours, PolyArea};
 
 /// Порядок колонок. «Как решит игра» первой: остальные — то, из чего она
 /// выбирает.
@@ -119,6 +119,7 @@ fn house(ring: Vec<Vec2>, height: f32) -> PolyArea {
         building_use: BuildingUse::House,
         height: Some(height),
         entrances: Vec::new(),
+        colours: Colours::default(),
     }
 }
 

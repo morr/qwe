@@ -528,8 +528,15 @@ pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
     let palette = palette(building, kind);
     let base = palette[(seed >> 8) as usize % palette.len()].to_srgba();
     // ±3 % яркости поверх выбранного цвета: два дома одной палитры и одного
-    // слота всё-таки не близнецы
-    let jitter = 1.0 + ((seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    // слота всё-таки не близнецы. Цвет из разметки — как есть: его подбирали
+    // по фотографии, и дрожать ему незачем
+    let (base, jitter) = match temples::tagged_roof(building) {
+        Some(tagged) => (tagged, 1.0),
+        None => (
+            base,
+            1.0 + ((seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06,
+        ),
+    };
     let axis = min_area_rect(&building.outer)
         .and_then(|rect| (rect[1] - rect[0]).try_normalize())
         .unwrap_or(Vec2::X);
@@ -690,8 +697,14 @@ pub(super) fn wall_look(building: &PolyArea, storeys: f32) -> WallLook {
     let palette = wall_palette(building, kind);
     let base = palette[(seed >> 12) as usize % palette.len()].to_srgba();
     // ±3 % яркости поверх выбранного цвета — как у кровель: два дома одной
-    // палитры и одного слота всё-таки не близнецы
-    let jitter = 1.0 + ((seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    // палитры и одного слота всё-таки не близнецы; цвет из разметки — как есть
+    let (base, jitter) = match temples::tagged_wall(building) {
+        Some(tagged) => (tagged, 1.0),
+        None => (
+            base,
+            1.0 + ((seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06,
+        ),
+    };
     WallLook::new(
         kind,
         Srgba {

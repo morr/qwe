@@ -177,6 +177,7 @@ pub fn building(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
         building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
+        colours: Default::default(),
     }
 }
 
@@ -188,6 +189,7 @@ pub fn water_area(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
         building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
+        colours: Default::default(),
     }
 }
 
@@ -199,6 +201,7 @@ pub fn wood(outer: Vec<Vec2>) -> PolyArea {
         building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
+        colours: Default::default(),
     }
 }
 

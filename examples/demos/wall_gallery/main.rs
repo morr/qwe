@@ -84,7 +84,7 @@ use qwe::map::buildings::material::{
 };
 use qwe::map::buildings::{BuildingHeightMode, RoofShape, extrusion_lift, push_house, wall_of};
 use qwe::map::osm::entrances::generate_entrances;
-use qwe::map::osm::{AreaKind, BuildingUse, Faith, MapData, PolyArea, Sacred, SacredForm};
+use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, MapData, PolyArea, Sacred, SacredForm};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::settings::STOREY_HEIGHT;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -693,6 +693,7 @@ fn house(centre: Vec2, half: Vec2, rotation: Rot2, courtyard: f32) -> PolyArea {
         building_use: BuildingUse::Other,
         height: None,
         entrances: Vec::new(),
+        colours: Colours::default(),
     }
 }
 

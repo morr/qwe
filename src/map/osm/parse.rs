@@ -1653,6 +1653,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             building_use: area_use(kind, &element.tags),
             height: area_height(kind, &element.tags),
             entrances: Vec::new(),
+            colours: area_colours(kind, &element.tags),
         },
     );
 }
@@ -1702,6 +1703,7 @@ fn parse_relation(
     let inners = assemble_rings(members, "inner", bounds, skipped_open_rings);
     let height = area_height(kind, &element.tags);
     let building_use = area_use(kind, &element.tags);
+    let colours = area_colours(kind, &element.tags);
 
     for outer in outers {
         let holes = inners
@@ -1718,6 +1720,7 @@ fn parse_relation(
                 building_use,
                 height,
                 entrances: Vec::new(),
+                colours,
             },
         );
     }
@@ -1782,9 +1785,9 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_height, area_kind, area_use, crown_radius, fence_kind,
-    is_building_passage, is_oneway, is_oneway_backward, is_road_underground, is_roundabout,
-    is_underground, pipe_width, rail_class, road_class, row_spacing, service_track,
+    NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_use, crown_radius,
+    fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_road_underground,
+    is_roundabout, is_underground, pipe_width, rail_class, road_class, row_spacing, service_track,
     structure_height, structure_kind, structure_radius, structure_size, tagged_lanes, water_class,
     water_width,
 };

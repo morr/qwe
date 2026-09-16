@@ -883,8 +883,9 @@ pub(super) fn facade_and_roof_builders(
         let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO));
-        // часть на крыше храма — это барабан с главой, коробки у неё нет
-        if sanctuary.raised(index).is_some() {
+        // часть на крыше храма — это барабан с главой, отдельная колокольня —
+        // столп ярусами: коробки у них нет
+        if sanctuary.boxless(index, building) {
             continue;
         }
 
@@ -1019,11 +1020,11 @@ impl ShadowSweeps {
             let length =
                 (height_or_default(building) * shadow_length_scale()).clamp(min_length, max_length);
             let offset = shadow_dir() * length;
-            // у части на крыше храма коробки нет, и тени коробки тоже: её тень —
-            // тень барабана с главой, она ниже
-            let chains = match sanctuary.raised(index) {
-                Some(_) => Vec::new(),
-                None => silhouette_chains(&building.outer, shadow_dir()),
+            // у части на крыше храма и у отдельной колокольни коробки нет, и
+            // тени коробки тоже: их тень — тень венца, она ниже
+            let chains = match sanctuary.boxless(index, building) {
+                true => Vec::new(),
+                false => silhouette_chains(&building.outer, shadow_dir()),
             };
             for chain in chains {
                 let mut sweep: Vec<Vec2> = chain.clone();
@@ -1228,9 +1229,10 @@ pub(super) fn roof_shadow_builder(
     let sanctuary = Sanctuary::of(buildings);
 
     for (target, building) in buildings.iter().enumerate() {
-        // у части на крыше храма кровли нет — нарисован только барабан с главой, —
-        // и тень, посчитанная на её поднятый контур, висела над собором клином
-        if sanctuary.raised(target).is_some() {
+        // у части на крыше храма и у отдельной колокольни кровли нет —
+        // нарисован только венец, — и тень, посчитанная на поднятый контур
+        // части, висела над собором клином
+        if sanctuary.boxless(target, building) {
             continue;
         }
         // скатная кровля — не плоскость на высоте карниза, на которую этот слой
@@ -1559,8 +1561,9 @@ pub(super) fn extrusion_builder(
             color,
             extrusion_lift(building, BuildingHeightMode::Extrusion),
         ));
-        // часть на крыше храма — барабан с главой, коробки от земли у неё нет
-        if sanctuary.raised(index).is_some() {
+        // часть на крыше храма — барабан с главой, отдельная колокольня — столп
+        // ярусами: коробки от земли у них нет
+        if sanctuary.boxless(index, building) {
             continue;
         }
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние

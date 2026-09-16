@@ -38,7 +38,7 @@ use qwe::map::buildings::material::{
     RoofMaterial, RoofMaterialHandle, init_roof_material, retune_roof_material,
 };
 use qwe::map::buildings::{BuildingHeightMode, BuildingPlan, BuildingZoomBucket, spawn_buildings};
-use qwe::map::osm::{AreaKind, BuildingUse, Faith, PolyArea, Sacred, SacredForm};
+use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, PolyArea, Sacred, SacredForm};
 use qwe::map::{GROUND_COLOR, RoofStyle, SunOnMap, apply_sun};
 
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -217,6 +217,7 @@ fn area(outer: Vec<Vec2>, height: f32, kind: AreaKind, building_use: BuildingUse
         building_use,
         height: Some(height),
         entrances: Vec::new(),
+        colours: Colours::default(),
     }
 }
 

@@ -702,6 +702,7 @@ mod tests {
             building_use: BuildingUse::Other,
             height: None,
             entrances: vec![],
+            colours: Default::default(),
         }
     }
 

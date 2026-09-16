@@ -1,11 +1,11 @@
 use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
-use super::tags::{building_height, parse_measure};
+use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{Overpass, closed, rect, square};
 use crate::map::osm::model::{
-    BuildingUse, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack, StructureKind,
-    WaterKind, distance_to_segment,
+    BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
+    StructureKind, WaterKind, distance_to_segment,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -2075,5 +2075,50 @@ fn a_street_in_a_courtyard_shrinks_the_hole_to_its_asphalt() {
     assert!(
         (reach - (edge - LANDUSE_OVERLAP)).abs() < 0.02,
         "край дырки не подошёл к полотну: {reach}"
+    );
+}
+
+/// Цвета из разметки доезжают до дома: hex — как есть, имя — краской карты,
+/// незнакомое имя — пусто, а у воды цветов не бывает и с тегом.
+#[test]
+fn tagged_colours_reach_the_building() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[
+                ("building", "church"),
+                ("building:colour", "#FFD700"),
+                ("roof:colour", "Blue"),
+            ],
+            square(CENTER, 10.0),
+        )
+        .area(
+            &[("building", "yes"), ("roof:colour", "#abc")],
+            square(CENTER + Vec2::new(60.0, 0.0), 10.0),
+        )
+        .area(
+            &[("building", "yes"), ("building:colour", "chartreuse-ish")],
+            square(CENTER + Vec2::new(120.0, 0.0), 10.0),
+        )
+        .area(
+            &[("natural", "water"), ("building:colour", "red")],
+            square(CENTER + Vec2::new(0.0, 120.0), 10.0),
+        )
+        .parse();
+    assert_eq!(
+        map.buildings[0].colours,
+        Colours {
+            wall: Some([255, 215, 0]),
+            roof: colour("blue"),
+        }
+    );
+    assert_eq!(map.buildings[1].colours.roof, Some([0xaa, 0xbb, 0xcc]));
+    assert_eq!(map.buildings[2].colours, Colours::default());
+    assert_eq!(map.water[0].colours, Colours::default());
+    assert_eq!(colour("#GGG"), None);
+    assert_eq!(colour("#12345"), None);
+    assert_ne!(
+        colour("blue"),
+        Some([0, 0, 255]),
+        "имя — краска карты, не CSS"
     );
 }

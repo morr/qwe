@@ -93,8 +93,11 @@ OSM — это весь кооператив одним контуром, в Т�
 рядами боксов с проездами, а не одним ангаром. По кешу v8 множественных 43.
 
 `roof:shape` есть у 283 (`flat` 165, `hipped` 84), `building:colour` /
-`roof:colour` у 95 — цвета пока не читаются, а из `roof:shape` читаются только
-`onion|dome` у храма (`parse/tags.rs::sacred_form` → `SacredForm::Dome`, по кешу v14
+`roof:colour` у 95 (v14: 30 и 91, из них 51 `blue`) — читаются в
+`PolyArea::colours` (`tags.rs::area_colours`, hex как есть, имя CSS — краской
+карты), но **красят пока только храмы** (`temples::tagged_wall` / `tagged_roof` /
+`tagged_dome`: золото кремлёвских барабанов, бирюза Всехсвятского); из
+`roof:shape` читаются только `onion|dome` у храма (`parse/tags.rs::sacred_form` → `SacredForm::Dome`, по кешу v14
 7 и 2). Храмы читают ещё `religion` / `denomination` (`tags.rs::faith`),
 `tower:type=bell_tower|minaret` и `min_height` / `building:min_level`
 (`tags.rs::part_floor`, по v14 2 и 3 контура); крепость (`tags.rs::is_fortification`,

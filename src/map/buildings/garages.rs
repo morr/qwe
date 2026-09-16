@@ -738,6 +738,7 @@ mod tests {
             building_use: use_,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         }
     }
 
@@ -802,6 +803,7 @@ mod tests {
             building_use: BuildingUse::GarageBlock,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         };
         let runs = garage_runs(&[bent]);
         let run = &runs[&0];
@@ -854,6 +856,7 @@ mod tests {
             building_use: BuildingUse::GarageBlock,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         };
         let whole = ring_area(&comb.outer);
         let runs = garage_runs(&[comb]);
@@ -891,6 +894,7 @@ mod tests {
             building_use: BuildingUse::GarageBlock,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         };
         let whole = ring_area(&comb.outer);
         let runs = garage_runs(&[comb]);
@@ -1060,6 +1064,7 @@ mod tests {
             building_use: BuildingUse::GarageBlock,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         };
         // вторая лента сдвинута поперёк на проезд и вдоль на половину длины —
         // так их осевые рамки и перекрываются

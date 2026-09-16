@@ -175,6 +175,29 @@ pub struct PolyArea {
     /// большинства домов и у всего, что не здание — потребитель обязан уметь
     /// работать без них. См. `parse::attach_entrances`.
     pub entrances: Vec<Vec2>,
+    /// Цвета из разметки — `building:colour` и `roof:colour`
+    /// (`parse/tags.rs::area_colours`). У большинства домов пусто; сейчас их
+    /// читают только храмы (`buildings/temples.rs`) — у них цвет глав и стен
+    /// решает узнаваемость, а палитра по посеву красила золотые главы
+    /// кремлёвского собора серебром.
+    pub colours: Colours,
+}
+
+/// Цвет sRGB байтами — чтобы носитель оставался `Copy + Eq`.
+pub type Rgb = [u8; 3];
+
+/// Цвета здания из его тегов; `None` — тега нет или он не разобрался.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Colours {
+    /// `building:colour`.
+    pub wall: Option<Rgb>,
+    /// `roof:colour`. У части храма с `roof:shape=onion|dome` это цвет главы.
+    pub roof: Option<Rgb>,
+}
+
+/// Цвет из разметки как `Srgba`.
+pub fn srgba_of(rgb: Rgb) -> Srgba {
+    Srgba::rgb_u8(rgb[0], rgb[1], rgb[2])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -900,6 +923,7 @@ mod tests {
             building_use: BuildingUse::Other,
             height: None,
             entrances: Vec::new(),
+            colours: Colours::default(),
         };
         assert!(point_in_area(Vec2::new(2.0, 2.0), &area));
         assert!(!point_in_area(Vec2::new(5.0, 5.0), &area));

@@ -148,7 +148,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
-    **only Wood carries trees**;
+    **only Wood carries trees**; `colours: Colours` are the **tagged colours** —
+    `building:colour` / `roof:colour` as sRGB bytes (`tags::colour`: hex as is, a CSS name
+    as the map's own paint), read so far only by churches (**Crown** below);
     Residential/Industrial are the `landuse` **blocks** — the fill under everything else,
     no effect on navigation or planting. **A residential block is drawn as a yard**: a
     muted green, its own layer with its own `SurfaceKind::Yard` texture (patchier than
@@ -386,12 +388,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   brick marked `WallMark::Solid` everywhere: no window, no door.
 - **Crown** (`map/buildings/temples.rs`) — what stands **above a church's roof**, laid out on
   the plan's minimum-area rectangle with the long axis turned east: onion cupolas on drums
-  (one on a chapel, five on a large Orthodox church by seed) and a tent-roofed bell tower at
-  the west end of a "ship"; a spire tower at a Western church's west front; a hemisphere dome
-  and corner minarets on a mosque; a low dome on a large synagogue. A cupola is a **stack of
+  (one on a chapel, five on a large Orthodox church by seed) and a bell tower at the west end
+  of a "ship"; a spire tower at a Western church's west front; a hemisphere dome and corner
+  minarets on a mosque; a low dome on a large synagogue. **A bell tower is tiers**
+  (`Crown::Tower { tiers, top }`): one to three, each narrower and lower than the one below
+  with a white cornice between, belfry arches on the top one, then a `TowerTop` — a tent, or a
+  lantern with a thin spire (Orthodox by seed, Western always) — and the Orthodox cap onion.
+  A **standalone bell tower** (`is_standalone_tower`: an Orthodox or Western `Tower` outline)
+  is **boxless** — the whole building is that crown from the ground, and its OSM height is
+  the height *with* the spire. A cupola is a **stack of
   slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
-  compression, so it reads as an onion, not a ball; crowns cast ground shadow to their real
-  top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **A crown stands on its church, whole**
+  compression, so it reads as an onion, not a ball, on a drum with a cornice ring; crowns cast
+  ground shadow to their real top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **Colours
+  come from the tags first** — `tagged_wall` / `tagged_roof` / `tagged_dome` over
+  `PolyArea::colours`, a `roof:colour` on a `Dome` part being the cupola's — and from the
+  church's seed otherwise. **A crown stands on its church, whole**
   — that rectangle describes the porches and the apse along with the church, so a tower or a
   cupola cluster laid flush with its end hung over the ground. A tower takes the church's own
   **west projection** — the porch or narthex, cut out by `Plan::west_piece` — so that its
@@ -402,7 +413,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   overhang. **`Sanctuary`** is the city's churches
   assembled: a **raised part** (a `Dome` part with a floor, or a drum on another church) is
   drawn as a drum from its floor with a cupola — **no box from the ground** — and a church
-  whose cupolas are mapped as parts grows none of its own. **Crowns are laid after every
+  whose cupolas are mapped as parts grows none of its own; `Sanctuary::boxless` is that
+  raised part or a standalone bell tower, and the layers draw neither walls, roof, box
+  shadow nor neighbours' roof shadows on it. **Crowns are laid after every
   building of the layer**, not per house: a church is overlapping outlines, and an annex laid
   after its cathedral hid the cupolas' base. Roof shadows are not cast between parts of one
   church. A fortress wall carries **merlons**

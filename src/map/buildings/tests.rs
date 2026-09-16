@@ -10,7 +10,7 @@ use super::roofs::*;
 use super::*;
 use crate::map::meshing::{WallMark, min_area_rect, unpack_material};
 use crate::map::osm::model::signed_ring_area;
-use crate::map::osm::{AreaKind, BuildingUse, Faith, Sacred, SacredForm, fixture};
+use crate::map::osm::{AreaKind, BuildingUse, Colours, Faith, Sacred, SacredForm, fixture};
 use crate::map::shadow_dir;
 use crate::settings::ARCH_HEIGHT;
 
@@ -95,6 +95,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) -> PolyArea {
         building_use: BuildingUse::Other,
         height,
         entrances: Vec::new(),
+        colours: Colours::default(),
     }
 }
 
@@ -2582,4 +2583,121 @@ fn a_crown_casts_a_shadow_past_the_eaves() {
             .iter()
             .all(|(outline, top)| outline.len() >= 3 && *top > 16.0)
     );
+}
+
+/// Отдельно стоящая колокольня — весь дом венец: коробки у неё нет, столп
+/// ярусами идёт от земли, шпиль — сверх столпа внутри высоты из OSM, и тень
+/// дотягивается до её верха.
+#[test]
+fn a_standalone_bell_tower_is_all_crown_from_the_ground() {
+    use super::temples::{Crown, Sanctuary};
+    let _sun = crate::map::default_sun();
+    let tower = church(oblong(12.0, 12.0), 70.0, Faith::Orthodox, SacredForm::Tower);
+    let sanctuary = Sanctuary::of(std::slice::from_ref(&tower));
+    assert!(sanctuary.boxless(0, &tower));
+    assert_eq!(landmark_roof(&tower), Some(LandmarkRoof::Flat));
+    let crowns = sanctuary.crowns(0, &tower, Srgba::WHITE, Srgba::WHITE, Vec2::new(3.0, 7.0));
+    let [
+        (
+            Crown::Tower {
+                base,
+                height,
+                spire,
+                tiers,
+                cap: Some(_),
+                ..
+            },
+            eave,
+        ),
+    ] = crowns[..]
+    else {
+        panic!("one bell tower crown, got {crowns:?}");
+    };
+    assert_eq!(base, 0.0);
+    assert_eq!(
+        eave,
+        Vec2::ZERO,
+        "no box, no eave: the tower stands on the ground"
+    );
+    assert!(
+        (height + spire - 70.0).abs() < 0.01,
+        "OSM height is with the spire"
+    );
+    assert_eq!(tiers, 3, "a 12 m tower with a 50 m pillar is three tiers");
+    let casters = sanctuary.shadow_casters(0, &tower);
+    assert_eq!(casters.len(), 1);
+    assert!(
+        casters[0].1 > 70.0,
+        "the shadow reaches the ball over the spire"
+    );
+
+    // минарет остаётся коробкой с венцом сверху
+    let minaret = church(oblong(6.0, 6.0), 30.0, Faith::Muslim, SacredForm::Tower);
+    assert!(!Sanctuary::of(std::slice::from_ref(&minaret)).boxless(0, &minaret));
+}
+
+/// Цвет из разметки красит храм: `building:colour` — стены, `roof:colour` —
+/// кровлю храма, но **главу** части с `roof:shape=onion` и шпиль колокольни;
+/// без тега цвет идёт по посеву.
+#[test]
+fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
+    use super::temples::{Crown, crowns};
+    let _sun = crate::map::default_sun();
+    let gold = Srgba::rgb_u8(255, 215, 0);
+    let white = Srgba::rgb_u8(236, 234, 229);
+    let painted = |mut area: PolyArea| {
+        area.colours = Colours {
+            wall: Some([236, 234, 229]),
+            roof: Some([255, 215, 0]),
+        };
+        area
+    };
+    let dome_of = |area: &PolyArea| {
+        crowns(area, Srgba::WHITE, Srgba::WHITE, true)
+            .into_iter()
+            .find_map(|crown| match crown {
+                Crown::Dome { color, .. } => Some(color),
+                _ => None,
+            })
+    };
+
+    // барабан: тег — цвет главы, кровли у него нет
+    let drum = painted(church(
+        oblong(9.0, 9.0),
+        20.0,
+        Faith::Orthodox,
+        SacredForm::Dome,
+    ));
+    assert_eq!(dome_of(&drum), Some(gold));
+    assert_eq!(wall_look(&drum, 2.0).base, white);
+    assert_eq!(roof_look(&drum).base, roof_look(&drum).base);
+
+    // храм: тег — кровля, глава остаётся по посеву
+    let nave = painted(church(
+        oblong(24.0, 26.0),
+        16.0,
+        Faith::Orthodox,
+        SacredForm::Nave,
+    ));
+    assert_eq!(roof_look(&nave).base, gold);
+    assert_eq!(wall_look(&nave, 2.0).base, white);
+    assert_ne!(dome_of(&nave), Some(gold));
+
+    // колокольня: тег — шпиль и маковка
+    let tower = painted(church(
+        oblong(12.0, 12.0),
+        70.0,
+        Faith::Orthodox,
+        SacredForm::Tower,
+    ));
+    assert!(
+        crowns(&tower, Srgba::WHITE, Srgba::WHITE, true)
+            .iter()
+            .any(|crown| matches!(crown, Crown::Tower { cap: Some(cap), .. } if *cap == gold))
+    );
+
+    // без тега — палитра по посеву, а не белый и не золото
+    let plain = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
+    assert_ne!(wall_look(&plain, 2.0).base, white);
+    assert_ne!(roof_look(&plain).base, gold);
 }

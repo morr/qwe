@@ -326,6 +326,17 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   — `BuildingUse::Church(Sacred { faith, form })`. `building=bell_tower|campanile|minaret`
   and `tower:type=bell_tower|minaret` are churches too (`form: Tower`); a part with
   `roof:shape=onion|dome` is `form: Dome` — the only reading of `roof:shape` in the parse.
+  **Tagged colours** (`tags::area_colours` → `PolyArea::colours`, every building, not only
+  churches): `building:colour` and `roof:colour` as sRGB bytes. `tags::colour` takes a hex
+  value as is — the mapper picked it off a photo — and a **CSS name as the map's own paint**
+  (`CSS_COLOURS`: `white` is whitewash, `blue` the roof palette's blue, `darkgray` darker
+  than `gray` as a mapper means it, not lighter as CSS has it), because `#0000FF` on the map
+  is a marker, not paint; an unknown name is `None`, never a guess. Tula: 30 `building:colour`
+  and 91 `roof:colour` on 7.7 k buildings, 51 of them `blue`; on the churches — `#FFD700` on
+  both kremlin-cathedral drums, `#5D948F` on the All Saints cathedral and its bell tower,
+  `blue` on Свято-Никольский, `red` / `green` on the arms museum annex. **Only the temples
+  read them so far** (`temples::tagged_wall` / `tagged_roof` / `tagged_dome`, below);
+  reading them on every house is a palette decision the private sector has not made.
   Faith: `religion=christian` + an Orthodox-family `denomination` → `Orthodox`, any other
   denomination → `Western`, none → `Unknown`; `muslim|jewish|buddhist|hindu|shinto|…` by
   religion, else by `building=mosque|synagogue|temple`. Tula v14: 27 places of worship —
@@ -2309,22 +2320,61 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   with dwelling windows.
   - **The roof is assigned** (`roofs::LandmarkRoof`, `landmark_roof` before `is_pitched` in
     `roofing`): Orthodox / Jewish / Eastern nave → hip, Western → `SteepGable` (pitch 1.3,
-    ≤ 12 m; a non-rectangle falls back to hip), mosque → flat; a tower → `Tent { rise }` in
-    plan sides (Orthodox 1.1, Western spire 2.6, Jewish / Eastern 0.9; ≤ 40 m), except a
-    minaret → flat under its `Crown::Minaret`; a drum part ≤ 14 m wide
+    ≤ 12 m; a non-rectangle falls back to hip), mosque → flat; a Jewish / Eastern tower →
+    `Tent { rise: 0.9 }` in plan sides (≤ 40 m); an Orthodox or Western tower → flat, and
+    moot — it has no box (**A standalone bell tower** below); a minaret → flat under its
+    `Crown::Minaret`; a drum part ≤ 14 m wide
     → flat (the cupola hides it). Fortress: tower (`area/perimeter² ≥ 0.03`) → tent 0.9, wall
     → flat. `landmark_rise` is the same decision in metres — what a cupola stands on.
   - **The crown** (`Crown: Dome | Tower | Minaret`) is laid on `min_area_rect` with the long
     axis turned east. Orthodox: a chapel (< 120 m²) one small onion; a "ship" (L ≥ 1.6 W and
-    ≥ 22 m) a tent bell tower with a cap onion at the west end and the cupolas over the
-    eastern core; five cupolas on a core ≥ 14 m by seed (6 in 10). **Colours ride the church's seed**
-    (`Sacred::complex`, `material::look_seed`): the kremlin cathedral's parts each picked
-    their own and came out pink, white and teal side by side; a size rule for gold was
-    dropped with it, since a part does not know its host's area. Western
+    ≥ 22 m) a bell tower with a cap onion at the west end and the cupolas over the
+    eastern core; five cupolas on a core ≥ 14 m by seed (6 in 10). **Colours come from the
+    tags first** (`tagged_wall` / `tagged_roof` / `tagged_dome` over `PolyArea::colours`,
+    consumed in `material::wall_look` / `roof_look` and `temples::dome_color`; a tagged colour
+    gets no ±3 % jitter): on a `Dome` part — a drum, or a nave whose whole `roof:shape` is an
+    onion — `roof:colour` is the **cupola's**, not the roof's, since there is no roof there to
+    paint; on a tower it is the spire's and the cap's. **Otherwise colours ride the church's
+    seed** (`Sacred::complex`, `material::look_seed`): the kremlin cathedral's parts each
+    picked their own and came out pink, white and teal side by side; a size rule for gold was
+    dropped with it, since a part does not know its host's area — and the gold the tag now
+    gives those drums is what the palette had rolled as silver. `ORTHODOX_DOMES` is half
+    gold (Tula's gold: kremlin, All Saints, Николо-Зарецкая), green, blue and the black of
+    the red-brick Успенский; silver is gone — a grey cupola read as a shed's galvanised
+    roof. Western
     ≥ 20 m: a spire tower at the west front. Mosque: hemisphere (R 0.3 of the short side) and
     1 / 2 / 4 minarets by area (500 / 2000 m²). Synagogue ≥ 300 m²: a low dome. Eastern: roof
     only. A crown ignores clutter gating — it is the silhouette, not equipment — and roof
     clutter (vents, penthouses, chimneys) is **refused** on churches and fortresses.
+  - **A bell tower is tiers** (`Crown::Tower { tiers, top }`, `push_tower`), and the photos
+    are the reason: every Tula bell tower — the kremlin's, All Saints', Флора и Лавра's — is
+    a stack of receding storeys with a white cornice between them and open arches on the top
+    one, and a plain box with a tent read as a water tower. `tier_count` gives a tier per
+    `TIER_ASPECT` 1.6 narrow sides of pillar height, 1–3 (`TIERS_MAX`): the kremlin tower
+    (12 × 12 m, ~50 m of pillar) three, a ship's 6 m tower two, a chapel's turret one. Each
+    tier is `TIER_SHRINK` 0.8 of the one below and its height follows `TIER_SHARES`
+    1 / 0.8 / 0.65; between them a cornice `CORNICE_REACH` 0.35 m out and `CORNICE_HEIGHT`
+    0.5 m high, `CORNICE_LIGHTEN` 0.3 toward white (`push_cornice` — visible sides plus the
+    top slab, so the next tier stands on a ledge). Walls take `wall_colors` like a house's;
+    the top tier gets two tall belfry arches per visible face, the lower tiers one window
+    (`push_tier_walls`). **`TowerTop`** ends it: `Tent` — `push_cone` from the top tier to
+    the apex, the cap onion on the point; `Spire` — a top cornice, a lantern (`LANTERN_RADIUS`
+    0.28 / `LANTERN_HEIGHT` 0.45 of the top tier's narrow side, with slits when ≥ 1.5 m) and
+    a thin cone from `SPIRE_FOOT` 0.8 of the lantern, with a ball `SPIRE_BALL` half the cap
+    onion. Orthodox towers are tents 6 in 10 and spires 4 (`SPIRE_SHARE_OF_10`, by the
+    church's seed); Western towers are spires always. `top_tier` and `cap_radius(size, top)`
+    size the cap off the **top** tier — on the bottom one it overhung the tent's faces.
+  - **A standalone bell tower is boxless** (`is_standalone_tower`, `Sanctuary::boxless`): an
+    Orthodox or Western `Tower` outline — `building=bell_tower`, `tower:type=bell_tower` —
+    is drawn **entirely as its crown** (`standalone_tower`) on the plan's rectangle from the
+    ground, at eave `Vec2::ZERO`, and the layers lay neither walls, roof, box shadow nor
+    neighbours' roof shadows on it (the four `boxless` sites in `layers.rs`, where `raised`
+    alone used to decide). Before this the box went up the whole height with church windows
+    over all of it and a tent on top: the All Saints bell tower (relation 7064811, 82 m) was a
+    pink nine-storey tower block. The OSM `height` is the height **with** the spire, so the
+    pillar takes `TOWER_PILLAR_SHARE` 0.72 of it and the spire the rest; an inferred height
+    (`BELL_TOWER_HEIGHTS`, to the belfry cornice) keeps the spire on top of it. Minarets keep
+    their box under `Crown::Minaret`, Jewish and Eastern towers their box under a tent.
   - **A bell tower sits on the church's own west projection first** (`Plan::west_piece`, tried
     by `Plan::tower_seat` before the search below) — the porch, the narthex, the mapped tower
     base. Then its walls **are** the church's walls carried upward and there is no junction
@@ -2384,14 +2434,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     computed from the same `hip_plan`, so neither can drift from the roof that is drawn. If
     even one cupola never stands, it is left where the plan put it — a church with no cupola
     at all reads worse than one over the eaves.
-  - **A cupola is a stack of 16 slices**, each a `push_fan_gradient` disc lifted by the lean
+  - **A cupola is a stack of 32 slices** (`DOME_SLICES`; sixteen showed as bands across a
+    6 m cupola stretched 2.6×), each a `push_fan_gradient` disc lifted by the lean
     and coloured per rim vertex by the 3D normal against the sun (`AMBIENT` 0.52 +
-    `DIFFUSE` 0.62 × Lambert, a metal highlight). Upper slices cover lower ones, leaving the
+    `DIFFUSE` 0.62 × Lambert, a metal highlight `SPECULAR` 0.55 — at 0.35 gold read as paint).
+    Upper slices cover lower ones, leaving the
     near crescent — what a real dome shows. The onion profile is a sine to the belly (0.32)
     then the Hermite fall `1 − 3u² + 2u³`: concave at the tip; a `cos^1.6` fall read as an
     egg. **Heights are stretched** (`ONION_STRETCH` 2.6, `HEMISPHERE_STRETCH` 1.4): the 2.5D
-    lift is 0.35 m per metre, and an honest onion came out a ball. Drums carry window slits;
-    bell towers a dark belfry arch. In the flat modes slices lie concentric.
+    lift is 0.35 m per metre, and an honest onion came out a ball. Drums carry window slits
+    and a **cornice ring** under the cupola (`DRUM_CORNICE_REACH` 1.12 × the drum,
+    `DRUM_CORNICE_HEIGHT` 0.35 m, whitened) — without it the onion grew out of a pipe; bell
+    towers dark belfry arches (above). In the flat modes slices lie concentric.
   - **Shadows** reach the crown's real top: `Sanctuary::shadow_casters` hands a convex base
     per element and its height, swept by `sweep_convex` into `ShadowSweeps`. Stretch is
     drawing only. **Roof shadows are not cast between parts of one church**

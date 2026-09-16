@@ -216,6 +216,7 @@ mod tests {
             building_use,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         }
     }
 

@@ -158,6 +158,7 @@ mod tests {
             building_use: BuildingUse::Other,
             height: None,
             entrances: Vec::new(),
+            colours: Default::default(),
         }
     }
 

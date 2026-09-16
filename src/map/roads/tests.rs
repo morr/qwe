@@ -595,6 +595,7 @@ fn fortress(outer: Vec<Vec2>) -> PolyArea {
         building_use: crate::map::osm::BuildingUse::Other,
         height: Some(12.0),
         entrances: Vec::new(),
+        colours: Default::default(),
     }
 }
 
