@@ -2400,6 +2400,84 @@ fn a_church_is_crowned_by_its_faith() {
     assert!(crowns(&building(ship(), Some(14.0), AreaKind::Building)).is_empty());
 }
 
+/// Колокольня стоит на храме всеми четырьмя углами. `min_area_rect` описывает
+/// вместе с храмом и крыльцо, так что у торца с притвором прямоугольник длиннее
+/// самого дома, — вровень с его концом башня повисла бы в воздухе.
+#[test]
+fn a_bell_tower_stands_on_the_church_and_not_on_its_porch() {
+    use super::temples::{Crown, crowns};
+    use crate::map::osm::model::point_in_area;
+    let _sun = crate::map::default_sun();
+    // «корабль» 18 × 44 м с крыльцом 3 × 3 м посреди западного торца
+    let porched = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(44.0, 0.0),
+        Vec2::new(44.0, 18.0),
+        Vec2::new(0.0, 18.0),
+        Vec2::new(0.0, 10.5),
+        Vec2::new(-3.0, 10.5),
+        Vec2::new(-3.0, 7.5),
+        Vec2::new(0.0, 7.5),
+    ];
+    for faith in [Faith::Orthodox, Faith::Western] {
+        let area = church(porched.clone(), 14.0, faith, SacredForm::Nave);
+        let tower = crowns(&area, Srgba::WHITE, Srgba::WHITE, true)
+            .into_iter()
+            .find_map(|crown| match crown {
+                Crown::Tower { at, axis, side, .. } => Some((at, axis, side)),
+                _ => None,
+            })
+            .expect("a ship church has a bell tower");
+        let (at, axis, side) = tower;
+        let perp = Vec2::new(-axis.y, axis.x);
+        let (u, v) = (axis * (side / 2.0), perp * (side / 2.0));
+        for corner in [at - u - v, at + u - v, at + u + v, at - u + v] {
+            assert!(
+                point_in_area(corner, &area),
+                "{faith:?}: угол башни {corner:?} висит в воздухе"
+            );
+        }
+        // и всё-таки у западного торца, а не посреди храма
+        assert!(at.x - side / 2.0 < 6.0, "{faith:?}: башня уехала на восток");
+    }
+}
+
+/// Главы тоже стоят на храме. У крестового плана восточная доля
+/// `min_area_rect` приходится на апсиду, и пятиглавие, разложенное по ней,
+/// вырастало барабанами из стен и висело над землёй за ней.
+#[test]
+fn every_cupola_stands_on_its_church_and_not_over_the_apse() {
+    use super::temples::{Crown, crowns};
+    use crate::map::osm::model::point_in_area;
+    let _sun = crate::map::default_sun();
+    // корабль 22 × 24 м с узкой апсидой 18 × 11 м на восточном конце
+    let cross = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(22.0, 0.0),
+        Vec2::new(22.0, 6.5),
+        Vec2::new(40.0, 6.5),
+        Vec2::new(40.0, 17.5),
+        Vec2::new(22.0, 17.5),
+        Vec2::new(22.0, 24.0),
+        Vec2::new(0.0, 24.0),
+    ];
+    let area = church(cross, 18.0, Faith::Orthodox, SacredForm::Nave);
+    let crowns = crowns(&area, Srgba::WHITE, Srgba::WHITE, true);
+    assert!(crowns.iter().any(|c| matches!(c, Crown::Dome { .. })));
+    for crown in &crowns {
+        let Crown::Dome { at, radius, .. } = *crown else {
+            continue;
+        };
+        for step in 0..8 {
+            let rim = at + Vec2::from_angle(step as f32 * std::f32::consts::FRAC_PI_4) * radius;
+            assert!(
+                point_in_area(rim, &area),
+                "край главы {rim:?} висит в воздухе"
+            );
+        }
+    }
+}
+
 /// Барабан, стоящий на крыше собора (`min_height`), рисуется барабаном с
 /// главой с высоты начала — без коробки от земли, — а сам собор не ставит
 /// поверх свою центральную главу.

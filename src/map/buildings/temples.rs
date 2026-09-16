@@ -43,7 +43,7 @@ use super::material::{RoofKind, building_seed, look_seed};
 use super::roofs::{LandmarkRoof, landmark_rise};
 use super::{Lean, shade_by_light};
 use crate::map::meshing::{MeshBuilder, min_area_rect};
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::{BuildingUse, Faith, PolyArea, Sacred, SacredForm};
 use crate::map::{shadow_length_scale, sun_light};
 
@@ -311,6 +311,19 @@ const SHIP_RATIO_MIN: f32 = 1.6;
 const SHIP_LENGTH_MIN: f32 = 22.0;
 /// Длина, с которой у западного храма есть башня у входа, м.
 const WESTERN_TOWER_LENGTH_MIN: f32 = 20.0;
+/// Шаг, которым башня вдвигается от западного торца внутрь дома и сужается, м.
+const TOWER_SEAT_STEP: f32 = 0.5;
+/// Уже этого башня — уже не колокольня, а тумба: такой посадки лучше не быть, м.
+const TOWER_SIDE_MIN: f32 = 4.0;
+/// Разлёт малых глав не ниже этой доли радиуса большой: ближе они с ней слипаются.
+const DOME_SPREAD_MIN: f32 = 1.1;
+/// Сколькими точками круг главы проверяется на посадку.
+const DOME_SEAT_PROBES: usize = 8;
+/// Зазор, с которым угол башни считается стоящим на доме, м: у прямоугольного
+/// храма угол `min_area_rect` лежит ровно на стене, и без зазора башня съезжала
+/// бы с торца на пустом месте. На столько же башня и свесится в худшем случае —
+/// пять сантиметров при любом зуме меньше пикселя.
+const TOWER_SEAT_SLACK: f32 = 0.05;
 /// Сколько православных храмов из десяти, кому хватает места, пятиглавы.
 const FIVE_DOMES_SHARE: u32 = 6;
 /// С какой ширины ядра храму хватает места на пять глав, м.
@@ -368,6 +381,100 @@ impl Plan {
             self.center - self.axis * half_l + self.perp * half_w,
         ]
     }
+
+    /// Посадка башни у западного торца: центр квадрата и его сторона, не шире
+    /// `side`. **Башня должна стоять на доме всеми четырьмя углами** — правило
+    /// кровельного оборудования (`clutter`), и оно не выполнялось само собой:
+    /// `min_area_rect` описывает вместе с домом и крыльцо, и апсиду, так что у
+    /// торца с притвором прямоугольник длиннее самого храма, и башня вровень с
+    /// его концом висела над землёй (Тула, way 496756343 — 2.5 м в воздухе, и
+    /// так у десяти из двадцати семи городских храмов).
+    ///
+    /// Поэтому квадрат вдвигается по оси внутрь шагами `TOWER_SEAT_STEP`, и на
+    /// каждом шаге сужается, пока не встанет. Порядок перебора — правило
+    /// раскладки: башня держится **западного торца**, так что выигрывает самый
+    /// западный шаг, а на нём — самая широкая башня; сужение оставляет западную
+    /// грань на месте, поэтому от прямой стены оно не спасает, а от узкого
+    /// притвора спасает.
+    fn west_tower(&self, building: &PolyArea, side: f32) -> Option<(Vec2, f32)> {
+        let west = self.center - self.axis * (self.length / 2.0 - side / 2.0);
+        let mut slide = 0.0;
+        while slide <= self.length / 2.0 {
+            let mut width = side;
+            while width >= TOWER_SIDE_MIN {
+                let at = west + self.axis * (slide - (side - width) / 2.0);
+                let stands = square(at, self.axis, width - 2.0 * TOWER_SEAT_SLACK)
+                    .iter()
+                    .all(|&corner| point_in_area(corner, building));
+                if stands {
+                    return Some((at, width));
+                }
+                width -= TOWER_SEAT_STEP;
+            }
+            slide += TOWER_SEAT_STEP;
+        }
+        None
+    }
+
+    /// Посадка глав: центр пучка и разлёт малых глав, ноль — одна глава. То же
+    /// правило и та же причина, что у [`Plan::west_tower`]: у крестового плана
+    /// восточная доля `min_area_rect` приходится на апсиду и на воздух за ней,
+    /// и барабаны малых глав вырастали из стен (Тула, way 234273451 — четыре
+    /// главы из пяти висели над землёй за апсидой).
+    ///
+    /// Пучок в полный разлёт отодвигается от алтаря на запад шагами
+    /// `TOWER_SEAT_STEP`, но не дальше `room` — там стоит колокольня, и венцом
+    /// он был бы ей, а не храму; не встал — разлёт сжимается и поиск идёт
+    /// заново, а в последнюю очередь остаётся одна глава. Порядок перебора и
+    /// здесь правило раскладки: пятиглавие важнее места, место важнее
+    /// восточного конца. `None` — не встала и одна глава; что с этим делать,
+    /// решает вызывающий.
+    fn dome_seat(
+        &self,
+        building: &PolyArea,
+        core: Vec2,
+        radius: f32,
+        spread: f32,
+        room: f32,
+    ) -> Option<(Vec2, f32)> {
+        let stands = |at: Vec2, radius: f32| {
+            disc(at, radius, DOME_SEAT_PROBES)
+                .into_iter()
+                .all(|point| point_in_area(point, building))
+        };
+        let mut offset = spread;
+        loop {
+            let mut slide = 0.0;
+            while slide <= room {
+                let at = core - self.axis * slide;
+                let all = stands(at, radius)
+                    && (offset == 0.0
+                        || minor_domes(self, at, offset)
+                            .into_iter()
+                            .all(|minor| stands(minor, radius * MINOR_DOME_SHARE)));
+                if all {
+                    return Some((at, offset));
+                }
+                slide += TOWER_SEAT_STEP;
+            }
+            if offset == 0.0 {
+                return None;
+            }
+            offset = match offset - TOWER_SEAT_STEP >= radius * DOME_SPREAD_MIN {
+                true => offset - TOWER_SEAT_STEP,
+                false => 0.0,
+            };
+        }
+    }
+}
+
+/// Радиус малой главы пятиглавия в радиусах большой.
+const MINOR_DOME_SHARE: f32 = 0.5;
+
+/// Четыре малые главы вокруг большой — по углам квадрата со стороной `2 · offset`.
+fn minor_domes(plan: &Plan, core: Vec2, offset: f32) -> [Vec2; 4] {
+    [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        .map(|(u, v)| core + plan.axis * (u * offset) + plan.perp * (v * offset))
 }
 
 /// Храмы города в сборе: какие части стоят на крыше своего храма и у каких
@@ -598,13 +705,15 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
         }
         (_, SacredForm::Tower) => {}
         (Faith::Orthodox, _) => orthodox_nave(
-            &mut out, &plan, seed, own_domes, rise, wall, roof, dome_color,
+            &mut out, building, &plan, seed, own_domes, rise, wall, roof, dome_color,
         ),
         (Faith::Western | Faith::Unknown, _) => {
-            if plan.length >= WESTERN_TOWER_LENGTH_MIN {
-                let side = (plan.width * 0.5).clamp(4.0, 10.0);
+            let wanted = (plan.width * 0.5).clamp(4.0, 10.0);
+            if plan.length >= WESTERN_TOWER_LENGTH_MIN
+                && let Some((at, side)) = plan.west_tower(building, wanted)
+            {
                 out.push(Crown::Tower {
-                    at: plan.center - plan.axis * (plan.length / 2.0 - side / 2.0),
+                    at,
                     axis: plan.axis,
                     side,
                     base: 0.0,
@@ -666,6 +775,7 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
 #[allow(clippy::too_many_arguments)]
 fn orthodox_nave(
     out: &mut Vec<Crown>,
+    building: &PolyArea,
     plan: &Plan,
     seed: u32,
     own_domes: bool,
@@ -691,10 +801,12 @@ fn orthodox_nave(
     }
     // «корабль»: трапезная и колокольня по оси, главы — над восточным ядром
     let ship = plan.length >= plan.width * SHIP_RATIO_MIN && plan.length >= SHIP_LENGTH_MIN;
-    let (core, core_length) = if ship {
-        let side = (plan.width * 0.6).clamp(4.0, 9.0);
+    let seat = ship
+        .then(|| plan.west_tower(building, (plan.width * 0.6).clamp(4.0, 9.0)))
+        .flatten();
+    let (core, core_length) = if let Some((at, side)) = seat {
         out.push(Crown::Tower {
-            at: plan.center - plan.axis * (plan.length / 2.0 - side / 2.0),
+            at,
             axis: plan.axis,
             side,
             base: 0.0,
@@ -704,8 +816,10 @@ fn orthodox_nave(
             roof,
             cap: Some(dome_color),
         });
-        // ядро — восточная часть за колокольней и трапезной
-        let core_length = (plan.length - side) * 0.6;
+        // ядро — восточная часть за колокольней и трапезной; колокольня могла
+        // вдвинуться от торца, и тогда она занимает больше своей стороны
+        let taken = (at - plan.center).dot(plan.axis) + side / 2.0 + plan.length / 2.0;
+        let core_length = (plan.length - taken) * 0.6;
         (
             plan.center + plan.axis * (plan.length / 2.0 - core_length / 2.0),
             core_length,
@@ -713,21 +827,34 @@ fn orthodox_nave(
     } else {
         (plan.center, plan.length)
     };
-    let side = core_length.min(plan.width);
-    let radius = (side * 0.2).clamp(1.6, 6.0);
     // главы, размеченные частями, заменяют все свои: малые главы вокруг них
     // встали бы вперемешку с настоящими и слиплись бы с ними парами
-    let five = own_domes && side >= FIVE_DOMES_MIN_SIDE && (seed >> 11) % 10 < FIVE_DOMES_SHARE;
-    if five {
-        let offset = side * 0.28;
-        for (u, v) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            let at = core + plan.axis * (u * offset) + plan.perp * (v * offset);
-            out.push(dome(at, radius * 0.5, radius * 0.9));
+    if !own_domes {
+        return;
+    }
+    let side = core_length.min(plan.width);
+    let radius = (side * 0.2).clamp(1.6, 6.0);
+    let five = side >= FIVE_DOMES_MIN_SIDE && (seed >> 11) % 10 < FIVE_DOMES_SHARE;
+    let spread = match five {
+        true => side * 0.28,
+        false => 0.0,
+    };
+    // на запад пучку — до колокольни, и ни шагом дальше
+    let room = match seat {
+        Some((at, side)) => (core - at).dot(plan.axis) - side / 2.0,
+        None => plan.length,
+    };
+    // не нашлось места и одной главе — пусть стоит где стояла: храм без главы
+    // читается хуже, чем глава над краем кровли
+    let (core, offset) = plan
+        .dome_seat(building, core, radius, spread, room)
+        .unwrap_or((core, 0.0));
+    if offset > 0.0 {
+        for at in minor_domes(plan, core, offset) {
+            out.push(dome(at, radius * MINOR_DOME_SHARE, radius * 0.9));
         }
     }
-    if own_domes {
-        out.push(dome(core, radius, radius * 1.1));
-    }
+    out.push(dome(core, radius, radius * 1.1));
 }
 
 /// Верх элемента над карнизом, м, — докуда он отбрасывает тень.

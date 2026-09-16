@@ -391,7 +391,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and corner minarets on a mosque; a low dome on a large synagogue. A cupola is a **stack of
   slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
   compression, so it reads as an onion, not a ball; crowns cast ground shadow to their real
-  top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **`Sanctuary`** is the city's churches
+  top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **A crown stands on its church, whole**
+  — that rectangle describes the porches and the apse along with the church, so a tower or a
+  cupola cluster laid flush with its end hung over the ground; both are moved inward along
+  the axis and, failing that, narrowed until every corner is on the footprint
+  (`Plan::west_tower`, `Plan::dome_seat`). **`Sanctuary`** is the city's churches
   assembled: a **raised part** (a `Dome` part with a floor, or a drum on another church) is
   drawn as a drum from its floor with a cupola — **no box from the ground** — and a church
   whose cupolas are mapped as parts grows none of its own. **Crowns are laid after every
