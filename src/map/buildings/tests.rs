@@ -2424,21 +2424,23 @@ fn a_bell_tower_stands_on_the_church_and_not_on_its_porch() {
         let tower = crowns(&area, Srgba::WHITE, Srgba::WHITE, true)
             .into_iter()
             .find_map(|crown| match crown {
-                Crown::Tower { at, axis, side, .. } => Some((at, axis, side)),
+                Crown::Tower { at, axis, size, .. } => Some((at, axis, size)),
                 _ => None,
             })
             .expect("a ship church has a bell tower");
-        let (at, axis, side) = tower;
+        let (at, axis, size) = tower;
         let perp = Vec2::new(-axis.y, axis.x);
-        let (u, v) = (axis * (side / 2.0), perp * (side / 2.0));
-        for corner in [at - u - v, at + u - v, at + u + v, at - u + v] {
+        let (u, v) = (axis * (size.x / 2.0), perp * (size.y / 2.0));
+        let corners = [at - u - v, at + u - v, at + u + v, at - u + v];
+        for corner in corners {
             assert!(
                 point_in_area(corner, &area),
                 "{faith:?}: угол башни {corner:?} висит в воздухе"
             );
         }
         // и всё-таки у западного торца, а не посреди храма
-        assert!(at.x - side / 2.0 < 6.0, "{faith:?}: башня уехала на восток");
+        let west = corners.iter().fold(f32::MAX, |west, c| west.min(c.x));
+        assert!(west < 6.0, "{faith:?}: башня уехала на восток");
     }
 }
 

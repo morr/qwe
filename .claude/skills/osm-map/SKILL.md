@@ -2325,7 +2325,23 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     1 / 2 / 4 minarets by area (500 / 2000 m²). Synagogue ≥ 300 m²: a low dome. Eastern: roof
     only. A crown ignores clutter gating — it is the silhouette, not equipment — and roof
     clutter (vents, penthouses, chimneys) is **refused** on churches and fortresses.
-  - **A bell tower stands on its church all four corners** (`Plan::west_tower`) — the roof
+  - **A bell tower sits on the church's own west projection first** (`Plan::west_piece`, tried
+    by `Plan::tower_seat` before the search below) — the porch, the narthex, the mapped tower
+    base. Then its walls **are** the church's walls carried upward and there is no junction
+    with the roof to draw at all, which is the only version of that junction that reads: a
+    tower seated anywhere else ends its wall in the middle of the roof, and a tower a few
+    tens of centimetres inside a wall leaves a sliver of roof along it — both reported off
+    Свято-Никольский (way 234273451). The outline is cut by a chord from every reflex vertex
+    along its own wall (`garages::cut_at`, the cross-gable trick), the pieces reaching the
+    plan's west end within `TOWER_PIECE_REACH` 1 m are kept, and of those the **smallest**
+    that fills its `min_area_rect` to `TOWER_PIECE_FILL` 0.9, is no thinner than
+    `TOWER_SIDE_MIN` and no wider than `TOWER_PIECE_SIDE_MAX` 16 m wins. Smallest, because at
+    Двенадцати Апостолов one chord cuts off the 7.5 × 5.4 m porch and another the porch
+    together with the neck. The rect's **own** axis is used, not the plan's: at Свято-Никольский
+    the west chapel's walls stand a couple of degrees off the plan, and a pillar on the plan's
+    axis poked out of them by centimetres — that was the sliver. Hence `Crown::Tower` carries
+    a `size: Vec2` rather than a side: a church's projection is never square.
+  - **Otherwise a tower stands on its church all four corners** (`Plan::west_tower`) — the roof
     clutter's own rule, and it did not hold by itself: `min_area_rect` describes the porches
     and the apse along with the church, so at an end with a porch the rectangle is longer
     than the building, and a tower flush with its west end hung over the ground (Tula way
@@ -2360,8 +2376,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     and last of all one cupola is left. The order is the layout rule: five cupolas outrank
     the place, the place outranks the east end. A disc is probed at `DOME_SEAT_PROBES` 8 rim
     points, at the **belly** radius rather than the drum's, so the whole cupola stays over
-    the roof. If even one cupola never stands, it is left where the plan put it — a church
-    with no cupola at all reads worse than one over the eaves.
+    the roof — **plus `roofs::landmark_inset`**, because a cupola stands on the roof's own
+    platform and not on the outline: a hip's platform is pulled in from the eaves by the
+    slope's overhang, and a drum at the outline's edge stood on the slope and hung off the
+    roof (the two east cupolas of way 234273451). `landmark_inset` is `landmark_rise`'s twin —
+    that one says at what height the cupola stands, this one how far in — and both are
+    computed from the same `hip_plan`, so neither can drift from the roof that is drawn. If
+    even one cupola never stands, it is left where the plan put it — a church with no cupola
+    at all reads worse than one over the eaves.
   - **A cupola is a stack of 16 slices**, each a `push_fan_gradient` disc lifted by the lean
     and coloured per rim vertex by the 3D normal against the sun (`AMBIENT` 0.52 +
     `DIFFUSE` 0.62 × Lambert, a metal highlight). Upper slices cover lower ones, leaving the

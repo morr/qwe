@@ -393,10 +393,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   compression, so it reads as an onion, not a ball; crowns cast ground shadow to their real
   top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **A crown stands on its church, whole**
   — that rectangle describes the porches and the apse along with the church, so a tower or a
-  cupola cluster laid flush with its end hung over the ground; both are moved inward along
-  the axis and, failing that, narrowed until every corner is on the footprint
-  (`Plan::west_tower`, `Plan::dome_seat`), and the tower also nudges **across** the axis,
-  since a mapped porch rarely stands on the plan's centreline. **`Sanctuary`** is the city's churches
+  cupola cluster laid flush with its end hung over the ground. A tower takes the church's own
+  **west projection** — the porch or narthex, cut out by `Plan::west_piece` — so that its
+  walls are the church's walls carried up and there is no junction to draw; failing that it
+  is moved inward along the axis, narrowed and nudged across it (`Plan::west_tower`). A cupola
+  is seated on the roof's **platform**, not the outline — `Plan::dome_seat` probes at
+  `roofs::landmark_inset` from the edge, since a hip's platform is pulled in by the slope's
+  overhang. **`Sanctuary`** is the city's churches
   assembled: a **raised part** (a `Dome` part with a floor, or a drum on another church) is
   drawn as a drum from its floor with a cupola — **no box from the ground** — and a church
   whose cupolas are mapped as parts grows none of its own. **Crowns are laid after every

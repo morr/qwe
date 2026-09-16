@@ -40,7 +40,7 @@ use bevy::prelude::*;
 use super::heights::height_or_default;
 use super::layers::wall_colors;
 use super::material::{RoofKind, building_seed, look_seed};
-use super::roofs::{LandmarkRoof, landmark_rise};
+use super::roofs::{LandmarkRoof, landmark_inset, landmark_rise};
 use super::{Lean, shade_by_light};
 use crate::map::meshing::{MeshBuilder, min_area_rect};
 use crate::map::osm::model::{point_in_area, signed_ring_area};
@@ -219,12 +219,15 @@ pub(super) enum Crown {
         /// не вытягивается.
         raised: bool,
     },
-    /// Колокольня или западная башня: квадратный столп, шатёр или шпиль над
-    /// ним, у православной — ещё и маленькая глава на вершине.
+    /// Колокольня или западная башня: столп, шатёр или шпиль над ним, у
+    /// православной — ещё и маленькая глава на вершине. Столп прямоугольный, а
+    /// не квадратный, потому что чаще всего он садится на собственный выступ
+    /// храма ([`Plan::west_piece`]), а тот квадратным не бывает.
     Tower {
         at: Vec2,
         axis: Vec2,
-        side: f32,
+        /// Вдоль `axis` × поперёк.
+        size: Vec2,
         base: f32,
         height: f32,
         spire: f32,
@@ -315,6 +318,12 @@ const WESTERN_TOWER_LENGTH_MIN: f32 = 20.0;
 const TOWER_SEAT_STEP: f32 = 0.5;
 /// Уже этого башня — уже не колокольня, а тумба: такой посадки лучше не быть, м.
 const TOWER_SIDE_MIN: f32 = 4.0;
+/// Насколько доля контура может не дотягивать до западного торца плана, м.
+const TOWER_PIECE_REACH: f32 = 1.0;
+/// Шире этого доля контура — уже не выступ, а сам храм, м.
+const TOWER_PIECE_SIDE_MAX: f32 = 16.0;
+/// Доля контура годится в основание, если заполняет свой прямоугольник настолько.
+const TOWER_PIECE_FILL: f32 = 0.9;
 /// Разлёт малых глав не ниже этой доли радиуса большой: ближе они с ней слипаются.
 const DOME_SPREAD_MIN: f32 = 1.1;
 /// Сколькими точками круг главы проверяется на посадку.
@@ -382,6 +391,99 @@ impl Plan {
         ]
     }
 
+    /// Посадка колокольни: центр, ось и размер её столпа.
+    ///
+    /// **Сначала — собственный западный выступ храма** ([`Plan::west_piece`]):
+    /// столп ровно по нему значит, что стены башни — это стены храма,
+    /// продолженные вверх, и стыка с кровлей не надо рисовать вовсе, его
+    /// просто нет. Выступа нет или он не годится в основание — тогда общий
+    /// поиск квадратом ([`Plan::west_tower`]), и стороной не шире `side`.
+    fn tower_seat(&self, building: &PolyArea, side: f32) -> Option<(Vec2, Vec2, Vec2)> {
+        self.west_piece(building).or_else(|| {
+            self.west_tower(building, side)
+                .map(|(at, width)| (at, self.axis, Vec2::splat(width)))
+        })
+    }
+
+    /// Западный выступ храма прямоугольником: центр, его собственная ось и
+    /// размер. Притвор, трапезная, само основание колокольни — то, чем храм
+    /// выдаётся на запад; на нём колокольня и стоит.
+    ///
+    /// Контур режется хордой от каждой вогнутой вершины вдоль её собственной
+    /// стены (`garages::cut_at` — приём крестовой кровли), берутся доли,
+    /// упирающиеся в западный торец плана, и из них — **наименьшая**, которая
+    /// заполняет свой `min_area_rect` на `TOWER_PIECE_FILL` и не мельче
+    /// `TOWER_SIDE_MIN`. Наименьшая, а не любая: у Двенадцати Апостолов (Тула,
+    /// way 42066388) одна хорда отрезает притвор 7.5 × 5.4 м, другая — притвор
+    /// вместе с шеей, и колокольня стоит на первом.
+    ///
+    /// Ось берётся у самого выступа, а не у плана: у Свято-Никольского (way
+    /// 234273451) стены западного придела повёрнуты к плану на пару градусов,
+    /// и столп по оси плана вылезал бы из них сантиметрами — тем самым
+    /// «небольшим зазором между крышей и башней».
+    fn west_piece(&self, building: &PolyArea) -> Option<(Vec2, Vec2, Vec2)> {
+        let ring = &building.outer;
+        let count = ring.len();
+        let winding = signed_ring_area(ring).signum();
+        let mut best: Option<(f32, Vec2, Vec2, Vec2)> = None;
+        for at in 0..count {
+            let (prev, here, next) = (
+                ring[(at + count - 1) % count],
+                ring[at],
+                ring[(at + 1) % count],
+            );
+            let (back, ahead) = (here - prev, next - here);
+            if back.perp_dot(ahead) * winding >= 0.0 {
+                continue;
+            }
+            for direction in [back, -ahead] {
+                let Some(direction) = direction.try_normalize() else {
+                    continue;
+                };
+                let Some((near, far)) = super::garages::cut_at(ring, at, direction) else {
+                    continue;
+                };
+                for piece in [near, far] {
+                    let Some(found) = self.piece_seat(building, &piece) else {
+                        continue;
+                    };
+                    if best.is_none_or(|(area, ..)| found.0 < area) {
+                        best = Some(found);
+                    }
+                }
+            }
+        }
+        best.map(|(_, at, axis, size)| (at, axis, size))
+    }
+
+    /// Доля контура как основание колокольни: площадь (по ней выбирают
+    /// наименьшую), центр, ось и размер. `None` — доля не у западного торца,
+    /// мелка, велика, не прямоугольна или её прямоугольник вылез из дома.
+    fn piece_seat(&self, building: &PolyArea, piece: &[Vec2]) -> Option<(f32, Vec2, Vec2, Vec2)> {
+        let west = piece
+            .iter()
+            .map(|point| (*point - self.center).dot(self.axis))
+            .fold(f32::MAX, f32::min);
+        if west > -self.length / 2.0 + TOWER_PIECE_REACH {
+            return None;
+        }
+        let rect = min_area_rect(piece)?;
+        let (long, short) = (rect[1] - rect[0], rect[2] - rect[1]);
+        let size = Vec2::new(long.length(), short.length());
+        if size.min_element() < TOWER_SIDE_MIN || size.max_element() > TOWER_PIECE_SIDE_MAX {
+            return None;
+        }
+        let area = signed_ring_area(piece).abs();
+        if area < size.x * size.y * TOWER_PIECE_FILL {
+            return None;
+        }
+        let (at, axis) = ((rect[0] + rect[2]) * 0.5, long.try_normalize()?);
+        let stands = rect
+            .iter()
+            .all(|&corner| point_in_area(corner.move_towards(at, TOWER_SEAT_SLACK), building));
+        stands.then_some((area, at, axis, size))
+    }
+
     /// Посадка башни у западного торца: центр квадрата и его сторона, не шире
     /// `side`. **Башня должна стоять на доме всеми четырьмя углами** — правило
     /// кровельного оборудования (`clutter`), и оно не выполнялось само собой:
@@ -413,7 +515,7 @@ impl Plan {
                 let seat = nudges((self.width - width) / 2.0)
                     .map(|shift| along + self.perp * shift)
                     .find(|&at| {
-                        square(at, self.axis, width - 2.0 * TOWER_SEAT_SLACK)
+                        rect(at, self.axis, Vec2::splat(width - 2.0 * TOWER_SEAT_SLACK))
                             .iter()
                             .all(|&corner| point_in_area(corner, building))
                     });
@@ -440,6 +542,12 @@ impl Plan {
     /// здесь правило раскладки: пятиглавие важнее места, место важнее
     /// восточного конца. `None` — не встала и одна глава; что с этим делать,
     /// решает вызывающий.
+    ///
+    /// Глава стоит не на контуре, а на **площадке кровли**, и проверяется
+    /// поэтому на `radius + landmark_inset` от края: площадка вальмы вдвинута
+    /// от карниза на вылет ската, и барабан у самого края стоял бы на скате и
+    /// свешивался бы с кровли — две восточные главы у way 234273451 так и
+    /// наезжали на скат.
     fn dome_seat(
         &self,
         building: &PolyArea,
@@ -448,8 +556,9 @@ impl Plan {
         spread: f32,
         room: f32,
     ) -> Option<(Vec2, f32)> {
+        let inset = landmark_inset(building);
         let stands = |at: Vec2, radius: f32| {
-            disc(at, radius, DOME_SEAT_PROBES)
+            disc(at, radius + inset, DOME_SEAT_PROBES)
                 .into_iter()
                 .all(|point| point_in_area(point, building))
         };
@@ -613,7 +722,7 @@ impl Sanctuary {
             .map(|(crown, _)| {
                 let outline = match *crown {
                     Crown::Dome { at, radius, .. } => disc(at, radius, DOME_SIDES),
-                    Crown::Tower { at, axis, side, .. } => square(at, axis, side).to_vec(),
+                    Crown::Tower { at, axis, size, .. } => rect(at, axis, size).to_vec(),
                     Crown::Minaret { at, radius, .. } => disc(at, radius, SHAFT_SIDES),
                 };
                 (outline, eave + top(crown))
@@ -732,15 +841,15 @@ pub(super) fn crowns(building: &PolyArea, wall: Srgba, roof: Srgba, own_domes: b
         (Faith::Western | Faith::Unknown, _) => {
             let wanted = (plan.width * 0.5).clamp(4.0, 10.0);
             if plan.length >= WESTERN_TOWER_LENGTH_MIN
-                && let Some((at, side)) = plan.west_tower(building, wanted)
+                && let Some((at, axis, size)) = plan.tower_seat(building, wanted)
             {
                 out.push(Crown::Tower {
                     at,
-                    axis: plan.axis,
-                    side,
+                    axis,
+                    size,
                     base: 0.0,
                     height: (plan.width * 0.8 + 6.0).clamp(10.0, 30.0),
-                    spire: (side * 2.4).clamp(8.0, 32.0),
+                    spire: (size.min_element() * 2.4).clamp(8.0, 32.0),
                     wall,
                     roof,
                     cap: None,
@@ -824,23 +933,31 @@ fn orthodox_nave(
     // «корабль»: трапезная и колокольня по оси, главы — над восточным ядром
     let ship = plan.length >= plan.width * SHIP_RATIO_MIN && plan.length >= SHIP_LENGTH_MIN;
     let seat = ship
-        .then(|| plan.west_tower(building, (plan.width * 0.6).clamp(4.0, 9.0)))
+        .then(|| plan.tower_seat(building, (plan.width * 0.6).clamp(4.0, 9.0)))
         .flatten();
-    let (core, core_length) = if let Some((at, side)) = seat {
+    // восточный край столпа по оси плана: у него своя ось, так что мерить
+    // половиной стороны нельзя — только по углам
+    let tower_east = seat.map(|(at, axis, size)| {
+        rect(at, axis, size)
+            .iter()
+            .map(|corner| (*corner - plan.center).dot(plan.axis))
+            .fold(f32::MIN, f32::max)
+    });
+    let (core, core_length) = if let Some((at, axis, size)) = seat {
         out.push(Crown::Tower {
             at,
-            axis: plan.axis,
-            side,
+            axis,
+            size,
             base: 0.0,
             height: (plan.width * 1.2).clamp(8.0, 28.0),
-            spire: side * 1.5,
+            spire: size.min_element() * 1.5,
             wall,
             roof,
             cap: Some(dome_color),
         });
         // ядро — восточная часть за колокольней и трапезной; колокольня могла
         // вдвинуться от торца, и тогда она занимает больше своей стороны
-        let taken = (at - plan.center).dot(plan.axis) + side / 2.0 + plan.length / 2.0;
+        let taken = tower_east.unwrap_or_default() + plan.length / 2.0;
         let core_length = (plan.length - taken) * 0.6;
         (
             plan.center + plan.axis * (plan.length / 2.0 - core_length / 2.0),
@@ -862,8 +979,8 @@ fn orthodox_nave(
         false => 0.0,
     };
     // на запад пучку — до колокольни, и ни шагом дальше
-    let room = match seat {
-        Some((at, side)) => (core - at).dot(plan.axis) - side / 2.0,
+    let room = match tower_east {
+        Some(east) => (core - plan.center).dot(plan.axis) - east,
         None => plan.length,
     };
     // не нашлось места и одной главе — пусть стоит где стояла: храм без главы
@@ -894,11 +1011,11 @@ fn top(crown: &Crown) -> f32 {
             height,
             spire,
             cap,
-            side,
+            size,
             ..
         } => {
             let cap = cap.map_or(0.0, |_| {
-                cap_radius(side) * (CAP_DRUM + Profile::Onion.height())
+                cap_radius(size) * (CAP_DRUM + Profile::Onion.height())
             });
             base + height + spire + cap
         }
@@ -1012,7 +1129,7 @@ pub(super) fn push_crowns(builder: &mut MeshBuilder, crowns: &[(Crown, Vec2)], l
             Crown::Tower {
                 at,
                 axis,
-                side,
+                size,
                 base,
                 height,
                 spire,
@@ -1021,9 +1138,9 @@ pub(super) fn push_crowns(builder: &mut MeshBuilder, crowns: &[(Crown, Vec2)], l
                 cap,
             } => {
                 let seat = at + eave + up(lean, base);
-                push_tower(builder, seat, axis, side, height, spire, wall, roof, lean);
+                push_tower(builder, seat, axis, size, height, spire, wall, roof, lean);
                 if let Some(color) = cap {
-                    let radius = cap_radius(side);
+                    let radius = cap_radius(size);
                     let apex = seat + up(lean, height + spire);
                     push_shaft(
                         builder,
@@ -1063,9 +1180,10 @@ pub(super) fn push_crowns(builder: &mut MeshBuilder, crowns: &[(Crown, Vec2)], l
 /// Высота барабанчика под маковкой колокольни в радиусах маковки.
 const CAP_DRUM: f32 = 0.8;
 
-/// Радиус маковки на вершине шатра колокольни.
-fn cap_radius(side: f32) -> f32 {
-    (side * 0.14).clamp(0.6, 2.0)
+/// Радиус маковки на вершине шатра колокольни — по узкой стороне столпа: шатёр
+/// сходится в точку над ней, и маковка по широкой свесилась бы с его граней.
+fn cap_radius(size: Vec2) -> f32 {
+    (size.min_element() * 0.14).clamp(0.6, 2.0)
 }
 
 fn at_of(crown: &Crown) -> Vec2 {
@@ -1205,14 +1323,14 @@ fn push_tower(
     builder: &mut MeshBuilder,
     seat: Vec2,
     axis: Vec2,
-    side: f32,
+    size: Vec2,
     height: f32,
     spire: f32,
     wall: Srgba,
     roof: Srgba,
     lean: Option<Lean>,
 ) {
-    let base = square(seat, axis, side);
+    let base = rect(seat, axis, size);
     let rise = up(lean, height);
     if let Some(lean) = lean {
         let opening: LinearRgba = OPENING_COLOR.into();
@@ -1301,9 +1419,9 @@ fn disc(at: Vec2, radius: f32, sides: usize) -> Vec<Vec2> {
         .collect()
 }
 
-/// Квадрат со стороной `side` вокруг `at`, повёрнутый по `axis`, против часовой.
-fn square(at: Vec2, axis: Vec2, side: f32) -> [Vec2; 4] {
+/// Прямоугольник `size` (вдоль `axis` × поперёк) вокруг `at`, против часовой.
+fn rect(at: Vec2, axis: Vec2, size: Vec2) -> [Vec2; 4] {
     let perp = Vec2::new(-axis.y, axis.x);
-    let (u, v) = (axis * (side / 2.0), perp * (side / 2.0));
+    let (u, v) = (axis * (size.x / 2.0), perp * (size.y / 2.0));
     [at - u - v, at + u - v, at + u + v, at - u + v]
 }
