@@ -2328,11 +2328,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     than the building, and a tower flush with its west end hung over the ground (Tula way
     496756343, the evangelical church on улица Кабакова — 2.5 m in the air, and the same on
     ten of the city's twenty-seven places of worship). So the square is slid east in
-    `TOWER_SEAT_STEP` 0.5 m steps and, at each step, narrowed to `TOWER_SIDE_MIN` 4 m, until
+    `TOWER_SEAT_STEP` 0.5 m steps, narrowed at each step to `TOWER_SIDE_MIN` 4 m, and nudged
+    **across** the axis at each width (`nudges`, from the middle of the end outward), until
     all four corners are on the footprint (`point_in_area`, holes included). The order of the
     search **is** the layout rule: the tower holds the west front, so the westernmost step
-    wins and, on it, the widest tower; narrowing keeps the west face where it is, so it does
-    not help against a straight facade and does help against a narrow porch. The test square
+    wins, on it the widest tower, and on that the smallest nudge off the middle. Each of the
+    three freedoms answers its own case: narrowing keeps the west face where it is, so it
+    does not help against a straight facade and does help against a narrow porch; the nudge
+    is there because a mapped porch is rarely on the plan's centreline — Двенадцати Апостолов
+    (way 42066388) has a real 7.5 × 5.4 m bell-tower base 0.9 m off it, and with nothing to
+    shift by, the tower slid off that base onto the church's neck and stood jammed against
+    its wall, which is where the crooked junction with the roof came from. With the nudge
+    every Tula church but three seats its tower at `slide 0`, i.e. on the west front itself.
+    The test square
     is shrunk by `TOWER_SEAT_SLACK` 0.05 m — on a rectangular church the rect's corner lies
     exactly on the wall, and without the slack every tower would slide off its own end — and
     that slack is also the worst overhang left, under a pixel at any zoom. A seat that never
