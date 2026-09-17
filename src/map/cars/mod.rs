@@ -33,7 +33,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::buildings::LayerCost;
 use crate::map::meshing::{Break, MeshBuilder};
-use crate::map::osm::model::distance_to_segment;
+use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
@@ -442,7 +442,7 @@ fn fill_lots(lots: &[PolyArea], layout: &[Vec<Stall>], districts: &Districts) ->
         // квартал читается по центру пятна, а не по первой вершине контура,
         // которой стоянка засеяна: у вытянутой вдоль квартала стоянки угол и
         // середина стоят в разной застройке
-        let around = district::centre(&lot.outer).map_or(1.0, |at| districts.fill_at(at));
+        let around = ring_vertex_mean(&lot.outer).map_or(1.0, |at| districts.fill_at(at));
         let occupancy = (lot_occupancy(stalls.len()) * around).clamp(0.0, 1.0);
         for stall in stalls {
             if rng.next_f32() >= occupancy {

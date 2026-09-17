@@ -36,7 +36,7 @@ use bevy::math::Vec2;
 
 use crate::map::buildings::height_or_default;
 use crate::map::osm::PolyArea;
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{ring_vertex_mean, signed_ring_area};
 use crate::settings::STOREY_HEIGHT;
 
 /// Радиус, в котором читается застройка, м: примерно квартал. Меньше — и ряд
@@ -88,7 +88,7 @@ impl Districts {
         let mut blocks = Vec::with_capacity(buildings.len());
         let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
         for building in buildings {
-            let Some(at) = centre(&building.outer) else {
+            let Some(at) = ring_vertex_mean(&building.outer) else {
                 continue;
             };
             let weight = signed_ring_area(&building.outer).abs();
@@ -141,13 +141,6 @@ impl Districts {
         }
         (weight > 0.0).then(|| volume / weight / STOREY_HEIGHT)
     }
-}
-
-/// Центр пятна — среднее вершин контура: контур OSM обходится по кругу, так
-/// что среднее вершин стоит там, где стоит дом. Им же читается квартал вокруг
-/// размеченной стоянки (`super::fill_lots`).
-pub(super) fn centre(ring: &[Vec2]) -> Option<Vec2> {
-    (!ring.is_empty()).then(|| ring.iter().sum::<Vec2>() / ring.len() as f32)
 }
 
 #[cfg(test)]

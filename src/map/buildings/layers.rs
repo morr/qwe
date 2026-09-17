@@ -29,7 +29,7 @@ use super::{
 use crate::map::meshing::{
     MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect, sweep_convex,
 };
-use crate::map::osm::model::{ring_bounds, signed_ring_area};
+use crate::map::osm::model::{indices_near, ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
 use crate::map::seed::seed_from_point;
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
@@ -1257,7 +1257,7 @@ pub(super) fn roof_shadow_builder(
             push_hole(&mut footprint, hole.clone());
         }
 
-        let mut casters = indices_near(&cells, (min, max));
+        let mut casters = indices_near(&cells, min, max, SHADOW_CELL);
         casters.retain(|&caster| {
             caster != target
                 && heights[caster] - heights[target] >= SHADOW_MIN_DROP
@@ -1340,20 +1340,6 @@ fn cells_of((min, max): (Vec2, Vec2)) -> impl Iterator<Item = (i32, i32)> {
     (low.x..=high.x).flat_map(move |x| (low.y..=high.y).map(move |y| (x, y)))
 }
 
-/// Индексы из сетки, чьи ячейки задевает рамка: отсортированы и без повторов,
-/// поэтому порядок обхода `HashMap` наружу не протекает и меш остаётся
-/// детерминированным.
-fn indices_near(cells: &HashMap<(i32, i32), Vec<usize>>, bounds: (Vec2, Vec2)) -> Vec<usize> {
-    let mut found: Vec<usize> = cells_of(bounds)
-        .filter_map(|cell| cells.get(&cell))
-        .flatten()
-        .copied()
-        .collect();
-    found.sort_unstable();
-    found.dedup();
-    found
-}
-
 /// Нарисованные тела домов в 2.5D — то, чем сосед закрывает чужую кровлю.
 ///
 /// Тело дома — сумма Минковского его контура с отрезком подъёма `[0, lift]`:
@@ -1433,7 +1419,7 @@ impl DrawnBodies {
     ) -> Vec<Vec<[f32; 2]>> {
         let direction = Lean::of().dir();
         let mut covers: Vec<Vec<[f32; 2]>> = Vec::new();
-        for cover in indices_near(&self.cells, bounds) {
+        for cover in indices_near(&self.cells, bounds.0, bounds.1, SHADOW_CELL) {
             // сама цель отсеивается тем же правилом: место в порядке у неё
             // одно, а строго дальше себя она не стоит
             let later = self.rank[cover] > self.rank[target];

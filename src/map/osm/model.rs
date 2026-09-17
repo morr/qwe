@@ -804,6 +804,33 @@ pub fn put_in_cells<T: Copy>(
     }
 }
 
+/// Значения из сетки шага `size`, чьи ячейки задевает рамка `min..max`:
+/// **отсортированы и без повторов**. Читающая половина [`put_in_cells`], и
+/// живёт рядом с ней по той же причине — сетку заводит не один модуль. Шаг
+/// параметром, а не константой, ровно поэтому же: иначе пара «положил /
+/// спросил» разъехалась бы размером ячейки.
+///
+/// Сортировка — не удобство вызывающего, а инвариант: значение лежит во всех
+/// ячейках, которые задевает его AABB, так что без `dedup` соседа вернуло бы
+/// несколько раз, а без сортировки наружу протёк бы порядок обхода `HashMap`
+/// — и собранный по сетке меш перестал бы быть детерминированным.
+pub fn indices_near<T: Copy + Ord>(
+    cells: &std::collections::HashMap<(i32, i32), Vec<T>>,
+    min: Vec2,
+    max: Vec2,
+    size: f32,
+) -> Vec<T> {
+    let mut found: Vec<T> = Vec::new();
+    for x in grid_cell(min.x, size)..=grid_cell(max.x, size) {
+        for y in grid_cell(min.y, size)..=grid_cell(max.y, size) {
+            found.extend(cells.get(&(x, y)).into_iter().flatten().copied());
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
 /// Длина ломаной — сумма её звеньев.
 pub fn polyline_length(points: &[Vec2]) -> f32 {
     points
@@ -834,6 +861,19 @@ pub fn point_at_arc_length(points: &[Vec2], distance: f32) -> Vec2 {
     *points
         .last()
         .expect("вызывается только для points.len() >= 2")
+}
+
+/// Среднее вершин кольца — «где стоит» объект, в отличие от центроида его
+/// площади ([`parse::ring_area_centroid`](super::parse)). Контур OSM обходится
+/// по кругу, так что среднее вершин стоит там, где стоит дом, и на вытянутом
+/// или невыпуклом контуре это **не** то же самое, что центр масс: у силосного
+/// корпуса, размеченного прямоугольником, среднее вершин ближе к тому, что
+/// глаз считает серединой, а два имени для двух разных формул нужны именно
+/// потому, что расходятся они на метры.
+///
+/// `None` — пустое кольцо.
+pub fn ring_vertex_mean(ring: &[Vec2]) -> Option<Vec2> {
+    (!ring.is_empty()).then(|| ring.iter().sum::<Vec2>() / ring.len() as f32)
 }
 
 /// Знаковая площадь кольца по формуле шнурования: положительная — обход
@@ -907,6 +947,23 @@ mod tests {
         assert!(point_in_polygon(Vec2::new(5.0, 5.0), &ring));
         assert!(!point_in_polygon(Vec2::new(15.0, 5.0), &ring));
         assert!(!point_in_polygon(Vec2::new(-1.0, 5.0), &ring));
+    }
+
+    /// Пара «положил / спросил» отдаёт соседа один раз и в одном порядке,
+    /// сколько бы ячеек он ни задевал: `dedup` и сортировка — это и есть
+    /// контракт [`indices_near`].
+    #[test]
+    fn indices_near_answers_sorted_and_once() {
+        let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> =
+            std::collections::HashMap::new();
+        // сосед 0 — на все четыре ячейки вокруг начала координат, 1 — далеко
+        put_in_cells(&mut cells, Vec2::splat(-1.0), Vec2::splat(1.0), 10.0, 0);
+        put_in_cells(&mut cells, Vec2::splat(5.0), Vec2::splat(6.0), 10.0, 1);
+        put_in_cells(&mut cells, Vec2::splat(300.0), Vec2::splat(301.0), 10.0, 2);
+
+        let found = indices_near(&cells, Vec2::splat(-2.0), Vec2::splat(7.0), 10.0);
+        assert_eq!(found, vec![0, 1], "сосед на четырёх ячейках — один раз");
+        assert!(indices_near(&cells, Vec2::splat(100.0), Vec2::splat(101.0), 10.0).is_empty());
     }
 
     #[test]

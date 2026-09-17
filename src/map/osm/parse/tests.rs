@@ -1634,6 +1634,29 @@ fn a_skewed_small_house_is_squared_into_a_rectangle() {
     );
 }
 
+/// Вход привязывается к дому по сантиметровому ключу, а не по точному
+/// совпадению координат, — и по нему же переезжает на выпрямленный контур.
+/// Нода входа в паре миллиметров от вершины (шум проекции) не должна оставлять
+/// дверь на старом месте, пока дом уезжает на свои метры.
+#[test]
+fn an_entrance_a_hair_off_its_vertex_moves_with_the_squared_house() {
+    let ring = skewed_house(CENTER);
+    let map = Overpass::new(CITY)
+        .node(&[("entrance", "main")], ring[1] + Vec2::splat(0.002))
+        .area(&[("building", "house")], ring.clone())
+        .parse();
+
+    let house = &map.buildings[0];
+    assert_eq!(house.entrances.len(), 1, "вход привязался по ключу");
+    assert!(right_angles(&house.outer), "{:?}", house.outer);
+    assert!(
+        house.entrances[0].distance(house.outer[1]) < 0.01,
+        "вход остался на старой вершине: {} против {}",
+        house.entrances[0],
+        house.outer[1]
+    );
+}
+
 /// Не выпрямляются: ровный дом (посев по первой вершине не должен сдвинуться),
 /// дом, делящий вершину с соседом (разошлись бы щелью), трапеция и крупное
 /// здание.
@@ -1687,6 +1710,44 @@ fn only_a_lone_skewed_small_house_is_squared() {
     assert!(
         same(&big, &map.buildings[5].outer),
         "крупное здание выпрямлено"
+    );
+}
+
+/// Площадные слои в общей вершине считаются **не все**: край стоянки, площадки
+/// и водоёма нарисован сам по себе, с разметкой, а на стоянке ещё и машинами,
+/// так что уехавший от него дом виден на кадре, — а квартал `landuse` лежит
+/// под всем, частные дома сплошь и рядом обведены по его границе, и щели там
+/// не видно (решение коммита 174ab8a).
+#[test]
+fn a_house_sharing_a_vertex_with_a_parking_lot_stays_put_but_one_on_a_block_is_squared() {
+    let corner = |ring: &[Vec2]| {
+        vec![
+            ring[0],
+            ring[0] + Vec2::new(0.0, -20.0),
+            ring[0] + Vec2::new(-20.0, -20.0),
+            ring[0] + Vec2::new(-20.0, 0.0),
+        ]
+    };
+    let by_lot = skewed_house(CENTER + Vec2::new(60.0, 0.0));
+    let by_block = skewed_house(CENTER + Vec2::new(-60.0, 0.0));
+    let map = Overpass::new(CITY)
+        .area(&[("building", "house")], by_lot.clone())
+        .area(&[("building", "house")], by_block.clone())
+        .area(&[("amenity", "parking")], corner(&by_lot))
+        .area(&[("landuse", "residential")], corner(&by_block))
+        .parse();
+
+    assert_eq!(map.parking.len(), 1, "стоянка разобрана");
+    assert_eq!(map.landuse.len(), 1, "квартал разобран");
+    let same =
+        |ring: &[Vec2], got: &[Vec2]| ring.iter().zip(got).all(|(a, b)| a.distance(*b) < 0.01);
+    assert!(
+        same(&by_lot, &map.buildings[0].outer),
+        "дом с общей вершиной со стоянкой выпрямлен"
+    );
+    assert!(
+        !same(&by_block, &map.buildings[1].outer),
+        "дом на границе квартала не выпрямлен"
     );
 }
 
@@ -2116,6 +2177,7 @@ fn tagged_colours_reach_the_building() {
     assert_eq!(map.water[0].colours, Colours::default());
     assert_eq!(colour("#GGG"), None);
     assert_eq!(colour("#12345"), None);
+    assert_eq!(colour("dimgrey"), colour("dimgray"));
     assert_ne!(
         colour("blue"),
         Some([0, 0, 255]),

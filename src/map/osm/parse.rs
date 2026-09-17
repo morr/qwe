@@ -12,8 +12,8 @@ use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
     Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, grid_cell, point_in_area, point_in_polygon,
-    put_in_cells, ring_area, ring_bounds, signed_ring_area,
+    WallLine, WaterLine, closest_on_segment, indices_near, point_in_area, point_in_polygon,
+    put_in_cells, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
@@ -470,14 +470,15 @@ fn parse_structure_node(element: &Element, bounds: &GeoBounds) -> Option<Structu
 /// Way `man_made=*` → тот же цилиндр, но радиус считается по контуру: он
 /// заведомо честнее тега, которого в данных обычно и нет.
 ///
-/// Центр — среднее вершин, а не центроид площади: контур цилиндра в OSM
-/// рисуют равномерным многоугольником, на нём это одно и то же, а у
-/// вытянутого контура (силосный корпус, размеченный прямоугольником) среднее
-/// вершин ближе к тому, что глаз считает серединой.
+/// Центр — [`ring_vertex_mean`], а не центроид площади
+/// ([`ring_area_centroid`]): контур цилиндра в OSM рисуют равномерным
+/// многоугольником, на нём это одно и то же, а у вытянутого контура (силосный
+/// корпус, размеченный прямоугольником) среднее вершин ближе к тому, что глаз
+/// считает серединой.
 fn parse_structure_way(element: &Element, points: &[Vec2]) -> Option<Structure> {
     let kind = structure_kind(&element.tags)?;
     let ring = as_ring(points)?;
-    let at = ring.iter().sum::<Vec2>() / ring.len() as f32;
+    let at = ring_vertex_mean(&ring)?;
     let spread = ring.iter().map(|point| at.distance(*point)).sum::<f32>() / ring.len() as f32;
     let (_, height) = structure_size(kind);
     Some(Structure {
@@ -510,29 +511,22 @@ fn parse_tree_node(element: &Element, bounds: &GeoBounds) -> Option<TreeNode> {
 /// одной точке (замер по выгрузке — минимальный зазор 0.00 м), а две двери на
 /// одном месте — это две одинаковых цели для пешек и лишний кружок в оверлее.
 fn attach_entrances(map: &mut MapData, entrances: &[Vec2]) -> usize {
-    let key = |point: Vec2| {
-        (
-            (point.x * ENTRANCE_SNAP_SCALE).round() as i32,
-            (point.y * ENTRANCE_SNAP_SCALE).round() as i32,
-        )
-    };
-
     let mut by_vertex: HashMap<(i32, i32), usize> = HashMap::new();
     for (index, building) in map.buildings.iter().enumerate() {
         for &vertex in &building.outer {
-            by_vertex.insert(key(vertex), index);
+            by_vertex.insert(vertex_key(vertex), index);
         }
     }
 
     let mut orphaned = 0;
     let mut taken: HashSet<(i32, i32)> = HashSet::new();
     for &entrance in entrances {
-        let Some(&index) = by_vertex.get(&key(entrance)) else {
+        let Some(&index) = by_vertex.get(&vertex_key(entrance)) else {
             orphaned += 1;
             continue;
         };
         // дубль считаем привязанным, а не сиротой: дом он нашёл
-        if taken.insert(key(entrance)) {
+        if taken.insert(vertex_key(entrance)) {
             map.buildings[index].entrances.push(entrance);
         }
     }
@@ -587,11 +581,11 @@ const ELL_AREA_DRIFT: f32 = 0.15;
 /// Не трогаются дома, у которых хоть одна вершина **общая** с другим контуром
 /// или линией (сплошная застройка, забор по стене, арка): выпрямленный, такой
 /// дом разошёлся бы с соседом щелью. Порядок в конвейере: после раскладки
-/// входов (они ищут дом по точной вершине) и до генерации дверей и посадки
+/// входов (они ищут дом по [`vertex_key`], и переезд двери на выпрямленный
+/// контур ищет её вершину тем же ключом) и до генерации дверей и посадки
 /// деревьев (те должны видеть уже выпрямленный контур).
 fn square_skewed_houses(map: &mut MapData) -> usize {
     let uses = vertex_uses(map);
-    let key = vertex_key;
 
     let mut squared = 0;
     for building in &mut map.buildings {
@@ -606,7 +600,7 @@ fn square_skewed_houses(map: &mut MapData) -> usize {
         let outline = &building.outer;
         if !small_house
             || !matches!(outline.len(), 4 | 6)
-            || outline.iter().any(|vertex| uses[&key(*vertex)] > 1)
+            || outline.iter().any(|vertex| uses[&vertex_key(*vertex)] > 1)
         {
             continue;
         }
@@ -640,8 +634,12 @@ fn square_skewed_houses(map: &mut MapData) -> usize {
         {
             continue;
         }
+        // тем же ключом, что и привязка: в `entrances` лежит координата ноды
+        // входа, а не вершины контура, и точное `==` теряло бы дверь ровно в
+        // том случае, ради которого сетка и заведена, — дом уезжает, дверь нет
         for entrance in &mut building.entrances {
-            if let Some(index) = outline.iter().position(|vertex| vertex == entrance) {
+            let at = vertex_key(*entrance);
+            if let Some(index) = outline.iter().position(|vertex| vertex_key(*vertex) == at) {
                 *entrance = fitted[index];
             }
         }
@@ -651,8 +649,9 @@ fn square_skewed_houses(map: &mut MapData) -> usize {
     squared
 }
 
-/// Ключ вершины на сантиметровой сетке: общий OSM-узел двух контуров или линий
-/// после одной проекции даёт один и тот же ключ.
+/// Ключ вершины на сантиметровой сетке: общий OSM-узел двух контуров, линий или
+/// входа после одной проекции даёт один и тот же ключ. Одна привязка на всех —
+/// [`attach_entrances`] ищет дом этим же ключом (см. [`ENTRANCE_SNAP_SCALE`]).
 fn vertex_key(point: Vec2) -> (i32, i32) {
     (
         (point.x * ENTRANCE_SNAP_SCALE).round() as i32,
@@ -662,6 +661,16 @@ fn vertex_key(point: Vec2) -> (i32, i32) {
 
 /// Сколько контуров и линий карты проходит через каждую вершину: `> 1` —
 /// вершина общая (сплошная застройка, забор по стене, арка, тропа до угла).
+///
+/// Считаются здания, все линейные слои и **три площадных из восьми** —
+/// [`MapData::parking`], [`MapData::pitches`], [`MapData::water`]. Перечень
+/// явный, а не «все контуры карты», потому что решает тут не модель, а кадр:
+/// край этих трёх нарисован собственной поверхностью с разметкой, а на стоянке
+/// ещё и машинами (`cars::fill_lots`), так что дом, отъехавший от него, виден.
+/// `parks`, `grass`, `woods`, `sand` не считаются — дом лежит поверх заливки,
+/// и шва под ним не видно; `landuse` не считается по решению коммита 174ab8a
+/// (частные дома сплошь и рядом обведены по границе квартала), и правило выше
+/// его расширяет, а не спорит с ним.
 fn vertex_uses(map: &MapData) -> HashMap<(i32, i32), u32> {
     let mut uses: HashMap<(i32, i32), u32> = HashMap::new();
     let mut count = |points: &[Vec2]| {
@@ -680,6 +689,12 @@ fn vertex_uses(map: &MapData) -> HashMap<(i32, i32), u32> {
     map.fences.iter().for_each(|line| count(&line.points));
     map.pipes.iter().for_each(|line| count(&line.points));
     map.water_lines.iter().for_each(|line| count(&line.points));
+    for layer in [&map.parking, &map.pitches, &map.water] {
+        for area in layer {
+            count(&area.outer);
+            area.holes.iter().for_each(|hole| count(hole));
+        }
+    }
     uses
 }
 
@@ -707,6 +722,19 @@ const SIDEWALK_SHIFT_ROUNDS: usize = 4;
 const SIDEWALK_SHIFT_TOLERANCE: f32 = 0.05;
 /// Ячейка сетки отрезков улиц, м.
 const SIDEWALK_CELL: f32 = 32.0;
+
+/// Звено линии карты и то расстояние от его оси, дальше которого оно не
+/// достаёт. Один тип на все проходы этого файла, потому что вся геометрия у
+/// них одна — «отрезок плюс радиус вокруг него», — а вот **чем** измерена
+/// `reach`, решает тот, кто звено сложил: полоса улицы с тротуаром и зазором
+/// ([`pull_houses_off_sidewalks`]), внешний край нарисованного полотна
+/// ([`pull_landuse_to_roads`]), радиус запрета ([`Obstacles`]).
+#[derive(Clone, Copy)]
+struct Link {
+    from: Vec2,
+    to: Vec2,
+    reach: f32,
+}
 
 /// Дома, контур которых **наезжает на нарисованный тротуар** улицы, сдвигаются
 /// от неё целиком — внутрь квартала. Возвращает, сколько домов сдвинуто и
@@ -738,8 +766,8 @@ const SIDEWALK_CELL: f32 = 32.0;
 /// Порядок в конвейере: после выпрямления косых домов, до генерации дверей и
 /// посадки деревьев — те, как и навмеш, видят уже сдвинутый контур.
 fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
-    // (начало, конец, полуширина улицы с тротуаром и зазором) и индекс улицы
-    let mut segments: Vec<(Vec2, Vec2, f32)> = Vec::new();
+    // `reach` — полуширина улицы с тротуаром и зазором; рядом индекс улицы
+    let mut segments: Vec<Link> = Vec::new();
     let mut segment_road: Vec<usize> = Vec::new();
     for (index, road) in map.roads.iter().enumerate() {
         if road.bridge || !is_carriageway(road) {
@@ -750,17 +778,24 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         };
         let reach = road.width / 2.0 + sidewalk + SIDEWALK_CLEARANCE;
         for link in road.points.windows(2) {
-            segments.push((link[0], link[1], reach));
+            segments.push(Link {
+                from: link[0],
+                to: link[1],
+                reach,
+            });
             segment_road.push(index);
         }
     }
-    let widest = segments
-        .iter()
-        .map(|&(_, _, reach)| reach)
-        .fold(0.0, f32::max);
+    let widest = segments.iter().map(|link| link.reach).fold(0.0, f32::max);
     let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (index, &(from, to, _)) in segments.iter().enumerate() {
-        put_in_cells(&mut cells, from.min(to), from.max(to), SIDEWALK_CELL, index);
+    for (index, link) in segments.iter().enumerate() {
+        put_in_cells(
+            &mut cells,
+            link.from.min(link.to),
+            link.from.max(link.to),
+            SIDEWALK_CELL,
+            index,
+        );
     }
 
     let uses = vertex_uses(map);
@@ -779,7 +814,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
         let (min, max) = ring_bounds(&building.outer);
         let margin = Vec2::splat(widest + SIDEWALK_SHIFT_MAX);
-        let nearby = indices_near(&cells, min - margin, max + margin);
+        let nearby = indices_near(&cells, min - margin, max + margin, SIDEWALK_CELL);
         if nearby.is_empty() {
             continue;
         }
@@ -949,8 +984,8 @@ const LANDUSE_STEP: f32 = 8.0;
 /// Мосты и арки пропущены: под мостом квартал и так рисуется, а проезд сквозь
 /// дом — это не край двора.
 fn pull_landuse_to_roads(map: &mut MapData) -> usize {
-    // (начало, конец, внешний край нарисованного полотна от оси)
-    let mut segments: Vec<(Vec2, Vec2, f32)> = Vec::new();
+    // `reach` — внешний край нарисованного полотна от оси
+    let mut segments: Vec<Link> = Vec::new();
     for road in &map.roads {
         if road.bridge || road.passage {
             continue;
@@ -962,18 +997,22 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
         };
         let edge = road.width / 2.0 + sidewalk;
         for link in road.points.windows(2) {
-            segments.push((link[0], link[1], edge));
+            segments.push(Link {
+                from: link[0],
+                to: link[1],
+                reach: edge,
+            });
         }
     }
     // звено кладётся в ячейки с запасом на своё полотно и предельный зазор,
     // так что спрашивающему хватает ячейки самой вершины
     let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (index, &(from, to, edge)) in segments.iter().enumerate() {
-        let grow = Vec2::splat(edge + LANDUSE_GAP_MAX);
+    for (index, link) in segments.iter().enumerate() {
+        let grow = Vec2::splat(link.reach + LANDUSE_GAP_MAX);
         put_in_cells(
             &mut cells,
-            from.min(to) - grow,
-            from.max(to) + grow,
+            link.from.min(link.to) - grow,
+            link.from.max(link.to) + grow,
             SIDEWALK_CELL,
             index,
         );
@@ -1005,7 +1044,7 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
 fn pull_ring(
     ring: &[Vec2],
     hole: bool,
-    segments: &[(Vec2, Vec2, f32)],
+    segments: &[Link],
     cells: &HashMap<(i32, i32), Vec<usize>>,
     pulled: &mut usize,
 ) -> Vec<Vec2> {
@@ -1040,7 +1079,7 @@ fn pull_ring(
         );
         let length = point.distance(next);
         if length <= LANDUSE_STEP
-            || indices_near(cells, point.min(next), point.max(next)).is_empty()
+            || indices_near(cells, point.min(next), point.max(next), SIDEWALK_CELL).is_empty()
         {
             continue;
         }
@@ -1058,16 +1097,16 @@ fn pull_ring(
 fn pull_vertex(
     point: Vec2,
     outward: Vec2,
-    segments: &[(Vec2, Vec2, f32)],
+    segments: &[Link],
     cells: &HashMap<(i32, i32), Vec<usize>>,
 ) -> Option<Vec2> {
     // ближайшая по **зазору до края полотна**, а не по расстоянию до оси:
     // узкий проезд рядом ближе широкой улицы, а щель оставляет улица
     let mut best: Option<(f32, Vec2)> = None;
-    for index in indices_near(cells, point, point) {
-        let (from, to, edge) = segments[index];
+    for index in indices_near(cells, point, point, SIDEWALK_CELL) {
+        let Link { from, to, reach } = segments[index];
         let axis = closest_on_segment(point, from, to);
-        let gap = point.distance(axis) - edge;
+        let gap = point.distance(axis) - reach;
         if best.is_none_or(|(best_gap, _)| gap < best_gap) {
             best = Some((gap, axis));
         }
@@ -1096,8 +1135,8 @@ struct Obstacles {
     /// Здания по ячейкам — габарит, раздутый на [`SIDEWALK_SHIFT_MAX`], так
     /// что сдвинутое здание не выходит из своих ячеек.
     buildings: HashMap<(i32, i32), Vec<usize>>,
-    /// (начало, конец, радиус запрета — полуширина плюс зазор).
-    segments: Vec<(Vec2, Vec2, f32)>,
+    /// Звенья всего прочего; `reach` — радиус запрета, полуширина плюс зазор.
+    segments: Vec<Link>,
     lines: HashMap<(i32, i32), Vec<usize>>,
 }
 
@@ -1118,9 +1157,13 @@ impl Obstacles {
         let mut segments = Vec::new();
         let mut add = |points: &[Vec2], half_width: f32| {
             let reach = half_width + SHIFT_CLEARANCE;
-            points
-                .windows(2)
-                .for_each(|link| segments.push((link[0], link[1], reach)));
+            points.windows(2).for_each(|link| {
+                segments.push(Link {
+                    from: link[0],
+                    to: link[1],
+                    reach,
+                })
+            });
         };
         map.roads
             .iter()
@@ -1149,12 +1192,12 @@ impl Obstacles {
             add(&[structure.at, structure.at], structure.radius);
         }
         let mut lines = HashMap::new();
-        for (index, &(from, to, reach)) in segments.iter().enumerate() {
-            let grow = Vec2::splat(reach);
+        for (index, link) in segments.iter().enumerate() {
+            let grow = Vec2::splat(link.reach);
             put_in_cells(
                 &mut lines,
-                from.min(to) - grow,
-                from.max(to) + grow,
+                link.from.min(link.to) - grow,
+                link.from.max(link.to) + grow,
                 SIDEWALK_CELL,
                 index,
             );
@@ -1172,7 +1215,8 @@ impl Obstacles {
         let before = &self.original[house];
         let after: Vec<Vec2> = before.iter().map(|vertex| *vertex + shift).collect();
         let (min, max) = ring_bounds(&after);
-        let cells = |grid: &HashMap<(i32, i32), Vec<usize>>| indices_near(grid, min, max);
+        let cells =
+            |grid: &HashMap<(i32, i32), Vec<usize>>| indices_near(grid, min, max, SIDEWALK_CELL);
         // стало ближе запрета и ближе, чем было
         let closer = |now: f32, reach: f32, was: f32| now < reach && now < was - 0.01;
 
@@ -1195,25 +1239,11 @@ impl Obstacles {
             }
         }
         cells(&self.lines).into_iter().any(|index| {
-            let (from, to, reach) = self.segments[index];
+            let Link { from, to, reach } = self.segments[index];
             let now = ring_segment_distance(&after, from, to);
             now < reach && closer(now, reach, ring_segment_distance(before, from, to))
         })
     }
-}
-
-/// Индексы из сетки [`SIDEWALK_CELL`], чьи ячейки задевает рамка `min..max`:
-/// отсортированы и без повторов.
-fn indices_near(grid: &HashMap<(i32, i32), Vec<usize>>, min: Vec2, max: Vec2) -> Vec<usize> {
-    let mut found: Vec<usize> = Vec::new();
-    for x in grid_cell(min.x, SIDEWALK_CELL)..=grid_cell(max.x, SIDEWALK_CELL) {
-        for y in grid_cell(min.y, SIDEWALK_CELL)..=grid_cell(max.y, SIDEWALK_CELL) {
-            found.extend(grid.get(&(x, y)).into_iter().flatten());
-        }
-    }
-    found.sort_unstable();
-    found.dedup();
-    found
 }
 
 /// Расстояние от контура до отрезка: ноль, если отрезок пересекает контур или
@@ -1243,7 +1273,7 @@ fn ring_distance(a: &[Vec2], b: &[Vec2]) -> f32 {
 }
 
 /// Отрезки улиц по индексам.
-fn local(indices: &[usize], segments: &[(Vec2, Vec2, f32)]) -> Vec<(Vec2, Vec2, f32)> {
+fn local(indices: &[usize], segments: &[Link]) -> Vec<Link> {
     indices.iter().map(|&index| segments[index]).collect()
 }
 
@@ -1269,12 +1299,12 @@ impl Front {
         building: usize,
         ring: &[Vec2],
         nearby: &[usize],
-        segments: &[(Vec2, Vec2, f32)],
+        segments: &[Link],
         segment_road: &[usize],
     ) -> Option<Self> {
         let mut best: Option<(f32, usize, Vec2, Vec2)> = None;
         for &segment in nearby {
-            let (from, to, reach) = segments[segment];
+            let Link { from, to, reach } = segments[segment];
             if point_in_polygon(from, ring) || point_in_polygon(to, ring) {
                 return None;
             }
@@ -1288,7 +1318,7 @@ impl Front {
             }
         }
         let (need, segment, on_wall, on_axis) = best?;
-        let (from, to, _) = segments[segment];
+        let Link { from, to, .. } = segments[segment];
         let (min, max) = ring_bounds(ring);
         Some(Self {
             building,
@@ -1306,18 +1336,18 @@ impl Front {
 /// Сдвиг, выводящий контур `ring`, перенесённый на `shift`, из самой глубоко
 /// задетой полосы улиц `segments`: `Some(ZERO)` — не наезжает, `None` — ось
 /// улицы проходит сквозь контур или кончается внутри него, и сдвигать некуда.
-fn sidewalk_push(ring: &[Vec2], shift: Vec2, segments: &[(Vec2, Vec2, f32)]) -> Option<Vec2> {
+fn sidewalk_push(ring: &[Vec2], shift: Vec2, segments: &[Link]) -> Option<Vec2> {
     let inside = |point: Vec2| point_in_polygon(point - shift, ring);
     if segments
         .iter()
-        .any(|&(from, to, _)| inside(from) || inside(to))
+        .any(|link| inside(link.from) || inside(link.to))
     {
         return None;
     }
     let mut push = Vec2::ZERO;
     for index in 0..ring.len() {
         let (a, b) = (ring[index] + shift, ring[(index + 1) % ring.len()] + shift);
-        for &(from, to, reach) in segments {
+        for &Link { from, to, reach } in segments {
             let (on_wall, on_axis) = closest_between_segments(a, b, from, to)?;
             let away = on_wall - on_axis;
             let depth = reach - away.length();
@@ -1416,7 +1446,7 @@ fn fit_rectangle(quad: &[Vec2; 4]) -> [Vec2; 4] {
     let scale = (area / (length * width)).sqrt();
     let side = along * edge(0).dot(along).signum() * length * scale;
     let up = across * edge(1).dot(across).signum() * width * scale;
-    let first = quad[0] + ring_centroid(&local) - (side + up) / 2.0;
+    let first = quad[0] + ring_area_centroid(&local) - (side + up) / 2.0;
     [first, first + side, first + side + up, first + up]
 }
 
@@ -1463,8 +1493,10 @@ fn fit_ell(ring: &[Vec2]) -> Option<Vec<Vec2>> {
     Some(fitted)
 }
 
-/// Центроид площади простого кольца.
-fn ring_centroid(ring: &[Vec2]) -> Vec2 {
+/// Центроид **площади** простого кольца — центр масс, в отличие от среднего
+/// вершин ([`ring_vertex_mean`]): на вытянутом или невыпуклом контуре эти две
+/// точки расходятся на метры, поэтому у них разные имена, а не одно на двоих.
+fn ring_area_centroid(ring: &[Vec2]) -> Vec2 {
     let mut sum = Vec2::ZERO;
     let mut twice_area = 0.0;
     for index in 0..ring.len() {
