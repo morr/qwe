@@ -243,7 +243,7 @@ pub fn measure_cars(
         ("cars block", CarDetail::Block),
     ] {
         let started = std::time::Instant::now();
-        let builder = mesh_cars(&cars, detail);
+        let builder = mesh_bodies(&cars, detail);
         costs.push(LayerCost {
             name,
             vertices: builder.vertex_count(),
@@ -271,11 +271,87 @@ pub fn rebuild_cars(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    // выключенный слой проходит тем же путём, что и снятый зумом: деспавн
-    // старого и никакой сборки нового — второй ветки, которая могла бы забыть
-    // деспавн, нет
+    let (layers, report) = mesh_cars(*bucket, *style, road_style.smoothing, &map, &layout);
+    spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
+    info!("{report}");
+}
+
+/// Что вышло из сборки слоя машин — значением, а не только строкой в логе.
+///
+/// `detail` — ступень подробности кузова, и `None` в ней значит «слоя нет»:
+/// зум ушёл за последнюю ступень или выключен тумблер. Остальные счётчики тогда
+/// нули, и это не заглушка: сборка в таком случае действительно не идёт.
+///
+/// `elapsed` меряется внутри сборки, потому что время тратится там; печатает его
+/// адаптер — `info!` на macOS ещё и меряет не то, потому что App Nap решает, как
+/// быстро идёт сборка. `breaks_took` — доля того же времени, ушедшая на поиск
+/// перекрёстков: разрывы считаются заново на каждую пересборку, и решение их не
+/// кешировать держится ровно на этой доле.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct CarReport {
+    /// Сколько машин расставлено — и вдоль бордюров, и на размеченных стоянках.
+    pub cars: usize,
+    /// Подробность кузова на этой ступени зума; `None` — слой не строился.
+    pub detail: Option<CarDetail>,
+    /// Сколько найдено перекрёстков, по которым рвутся ряды.
+    pub junctions: usize,
+    pub vertices: usize,
+    pub elapsed: std::time::Duration,
+    pub breaks_took: std::time::Duration,
+}
+
+impl std::fmt::Display for CarReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            cars,
+            detail,
+            junctions,
+            vertices,
+            elapsed,
+            breaks_took,
+        } = self;
+        match detail {
+            Some(detail) => write!(
+                f,
+                "cars: {cars} parked, {detail:?} ({vertices} verts) in {elapsed:?} \
+                 (junctions {junctions}, {breaks_took:?})"
+            ),
+            None => write!(f, "cars: hidden"),
+        }
+    }
+}
+
+/// Слой машин целиком: разрывы на перекрёстках, застройка вокруг, расстановка
+/// вдоль улиц, заполнение стоянок и меш кузовов с тенями.
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_cars`]), и тест. Выключенный тумблер и
+/// ушедший за последнюю ступень зум — это пустой список слоёв, а не ранний выход
+/// у вызывающего: деспавн в адаптере безусловен, и второй дороги, на которой
+/// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
+/// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
+///
+/// `smoothing` — сглаживание осевой: ряд стоит по той же ломаной, по которой
+/// `map::roads` кладёт ленту асфальта.
+pub fn mesh_cars(
+    bucket: CarZoomBucket,
+    style: CarStyle,
+    smoothing: RoadSmoothing,
+    map: &MapData,
+    layout: &ParkingLayout,
+) -> (Vec<LayerMesh>, CarReport) {
     let Some(detail) = detail_for(bucket.index).filter(|_| style.visible) else {
-        return;
+        return (
+            Vec::new(),
+            CarReport {
+                cars: 0,
+                detail: None,
+                junctions: 0,
+                vertices: 0,
+                elapsed: std::time::Duration::ZERO,
+                breaks_took: std::time::Duration::ZERO,
+            },
+        );
     };
     let started = std::time::Instant::now();
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
@@ -295,28 +371,26 @@ pub fn rebuild_cars(
     let mut cars = park_cars(
         &map.roads,
         &junctions,
-        *style,
-        road_style.smoothing,
+        style,
+        smoothing,
         map.traffic_side,
         &districts,
     );
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
-    let builder = mesh_cars(&cars, detail);
-    let count = cars.len();
-    let vertices = builder.vertex_count();
-    let elapsed = started.elapsed();
+    let builder = mesh_bodies(&cars, detail);
+    let report = CarReport {
+        cars: cars.len(),
+        detail: Some(detail),
+        junctions: junctions.junctions,
+        vertices: builder.vertex_count(),
+        elapsed: started.elapsed(),
+        breaks_took,
+    };
     // слой с блендингом: тень машины полупрозрачна, кузов — нет
-    spawn_layers(
-        &mut commands,
-        &mut meshes,
-        &materials,
-        [LayerMesh::new(builder, Z_CAR, "cars", MaterialSpec::Blend)],
-        CarLayerTag,
-    );
-    info!(
-        "cars: {count} parked, {detail:?} ({vertices} verts) in {elapsed:?} (junctions {}, {breaks_took:?})",
-        junctions.junctions,
-    );
+    (
+        vec![LayerMesh::new(builder, Z_CAR, "cars", MaterialSpec::Blend)],
+        report,
+    )
 }
 
 /// Меш припаркованных рядов по готовому срезу улиц — дверь наружу для витрины
@@ -344,7 +418,7 @@ pub fn cars_mesh(
 ) -> MeshBuilder {
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let districts = Districts::new(&[]);
-    mesh_cars(
+    mesh_bodies(
         &park_cars(roads, &junctions, style, smoothing, traffic, &districts),
         detail,
     )
@@ -671,7 +745,7 @@ fn park_along(
 /// машин стоил бы дороже всего слоя. При низком солнце тени вдоль ряда
 /// перекрываются и складываются в пятна двойной темноты — известная плата за
 /// это решение.
-fn mesh_cars(cars: &[Car], detail: CarDetail) -> MeshBuilder {
+fn mesh_bodies(cars: &[Car], detail: CarDetail) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let stretch = shadow_dir() * shadow_length_scale();
     for car in cars {
@@ -1146,5 +1220,89 @@ mod tests {
                 "кузов в {off} м от нарисованной осевой"
             );
         }
+    }
+
+    // --- слой целиком ------------------------------------------------------
+    //
+    // Тесты на `mesh_cars`. До шва слой собирался внутри системы Bevy, и ни
+    // тумблер видимости, ни порог зума проверить было нечем: оба жили за ранним
+    // возвратом в самой системе, куда тест не дотягивался.
+
+    /// Улица, вдоль которой ряд заведомо встаёт (та же, что у
+    /// `cars_line_a_street_on_both_sides`), и ничего больше: домов нет, так что
+    /// множитель квартала ровно 1, стоянок нет — только бордюрный ряд.
+    fn city() -> MapData {
+        MapData {
+            roads: vec![street(
+                vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)],
+                12.0,
+            )],
+            ..default()
+        }
+    }
+
+    /// Ближняя ступень: подробный кузов.
+    fn near_bucket() -> CarZoomBucket {
+        CarZoomBucket::for_zoom(0.0)
+    }
+
+    #[test]
+    fn a_street_builds_one_blended_layer() {
+        let (layers, report) = mesh_cars(
+            near_bucket(),
+            CarStyle::default(),
+            RoadSmoothing::Off,
+            &city(),
+            &ParkingLayout::default(),
+        );
+
+        assert_eq!(layers.len(), 1, "кузова и тени идут одним мешем");
+        assert_eq!(layers[0].name, "cars");
+        assert_eq!(layers[0].z, Z_CAR);
+        // тень машины полупрозрачна, кузов — нет
+        assert_eq!(layers[0].material, MaterialSpec::Blend);
+        assert_eq!(report.detail, Some(CarDetail::Full));
+        assert!(report.cars > 0);
+        assert!(report.vertices > 0);
+    }
+
+    #[test]
+    fn the_toggle_off_draws_nothing() {
+        let style = CarStyle {
+            visible: false,
+            ..CarStyle::default()
+        };
+        let (layers, report) = mesh_cars(
+            near_bucket(),
+            style,
+            RoadSmoothing::Off,
+            &city(),
+            &ParkingLayout::default(),
+        );
+
+        // не ранний выход у вызывающего: слой описан и пуст, а деспавн в
+        // адаптере безусловен — забыть его негде
+        assert!(layers.is_empty());
+        assert_eq!(report.detail, None);
+        assert_eq!(report.cars, 0);
+        assert_eq!(report.vertices, 0);
+    }
+
+    #[test]
+    fn the_far_bucket_draws_nothing() {
+        let far = CarZoomBucket::for_zoom(f32::INFINITY);
+        assert_eq!(far.index, CarLods::max_zooms().count() - 1);
+
+        let (layers, report) = mesh_cars(
+            far,
+            CarStyle::default(),
+            RoadSmoothing::Off,
+            &city(),
+            &ParkingLayout::default(),
+        );
+
+        assert!(layers.is_empty());
+        assert_eq!(report.detail, None);
+        assert_eq!(report.cars, 0);
     }
 }
