@@ -1,7 +1,7 @@
 //! Витрина храмов и крепости: по ряду на вероисповедание, в ряду — формы
 //! храма, какие встречаются в OSM, и последним рядом кремль.
 //!
-//! **Всё здесь строит игра.** Слои спавнит `spawn_buildings` — тот же вызов,
+//! **Всё здесь строит игра.** Слои строит `mesh_buildings` — тот же вызов,
 //! что поднимает город: стены, кровли, главы, шпили, минареты, зубцы и тени.
 //! Витрина задаёт только контуры и теги (назначение с верой, крепость), то есть
 //! ровно то, что игре приходит из OSM. Кровлю, облицовку, раскладку глав и их
@@ -34,11 +34,14 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
-use qwe::map::buildings::material::{
-    RoofMaterial, RoofMaterialHandle, init_roof_material, retune_roof_material,
+use qwe::map::buildings::material::{RoofMaterial, init_roof_material, retune_roof_material};
+use qwe::map::buildings::{
+    BuildingHeightMode, BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::buildings::{BuildingHeightMode, BuildingPlan, BuildingZoomBucket, spawn_buildings};
 use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, PolyArea, Sacred, SacredForm};
+use qwe::map::surface::{
+    LayerMaterials, SurfaceMaterial, SurfaceStyle, init_flat_materials, init_surface_materials,
+};
 use qwe::map::{GROUND_COLOR, RoofStyle, SunOnMap, apply_sun};
 
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -125,15 +128,24 @@ fn main() {
         )
         .add_plugins(PanCameraPlugin)
         .add_plugins(Material2dPlugin::<RoofMaterial>::default())
+        // фактурный материал витрине не нужен ни для чего — храмы рисуются
+        // кровельным и плоским, — но слои она кладёт игровым `spawn_layers`, а
+        // тому приходит весь `LayerMaterials` разом
+        .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .init_resource::<RoofStyle>()
+        .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()
         .insert_resource(ClearColor(GROUND_COLOR))
         .add_systems(
             Startup,
             (
                 spawn_camera,
+                // солнце — до кровельного материала: его юниформ `light`
+                // пишется один раз на всё приложение
                 (apply_sun, init_roof_material).chain(),
+                init_surface_materials,
+                init_flat_materials,
                 request_shot("TEMPLE_GALLERY_SHOT"),
             ),
         )
@@ -224,8 +236,7 @@ fn area(outer: Vec<Vec2>, height: f32, kind: AreaKind, building_use: BuildingUse
 fn build(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    roof: Res<RoofMaterialHandle>,
+    materials: LayerMaterials,
     assets: Res<AssetServer>,
 ) {
     let font: Handle<Font> = assets.load(fonts::REGULAR);
@@ -316,17 +327,15 @@ fn build(
         Anchor::CENTER,
     );
 
-    spawn_buildings(
+    let plan = BuildingPlan {
+        mode: BuildingHeightMode::ExtrusionShadowsTint,
+        bucket: BuildingZoomBucket::for_zoom(0.0),
+        shadows: true,
+    };
+    spawn_building_meshes(
         &mut commands,
         &mut meshes,
-        &mut materials,
-        &roof,
-        BuildingPlan {
-            mode: BuildingHeightMode::ExtrusionShadowsTint,
-            bucket: BuildingZoomBucket::for_zoom(0.0),
-            shadows: true,
-        },
-        &buildings,
-        &[],
+        &materials,
+        mesh_buildings(plan, &buildings, &[]),
     );
 }

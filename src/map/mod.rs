@@ -18,7 +18,9 @@ mod roads;
 mod seed;
 mod spawn;
 mod sun;
-mod surface;
+// публичен по той же причине, что `buildings` и `cars`: витрины кладут слои
+// игровым `spawn_layers`, а ему нужен `LayerMaterials` из этого модуля
+pub mod surface;
 mod tram;
 pub mod trees;
 mod wagons;

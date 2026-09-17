@@ -69,7 +69,7 @@ fn detail(tinted: bool) -> RoofDetail {
 }
 
 /// Наземные тени тестовому списку домов. Развёртки строит вызывающий: в игре
-/// это делает `spawn_buildings`, один раз на оба теневых слоя.
+/// это делает `mesh_buildings`, один раз на оба теневых слоя.
 fn ground_shadows(list: &[PolyArea], passages: &[RoadLine], extruded: bool) -> MeshBuilder {
     shadow_builder(list, passages, &ShadowSweeps::of(list), extruded)
 }

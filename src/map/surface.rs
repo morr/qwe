@@ -27,7 +27,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::loading::AppState;
-use crate::map::buildings::material::RoofMaterial;
+use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::settings::SURFACE_TEXTURE_DEFAULT;
@@ -383,6 +383,10 @@ pub enum MaterialSpec {
     /// Фактурный материал поверхности. Меш обязан быть собран через
     /// [`MeshBuilder::with_surface_coords`], иначе материал его не примет.
     Surface(SurfaceKind),
+    /// Материал кровель (`map::buildings::material`). Меш обязан быть собран
+    /// через [`MeshBuilder::with_roof_coords`]. Один на всё приложение, как и
+    /// фактурные, — вариант появился последним, вместе со зданиевыми слоями.
+    Roof,
 }
 
 /// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
@@ -476,6 +480,7 @@ pub fn spawn_layer(
 pub struct LayerMaterials<'w> {
     flats: Res<'w, FlatMaterials>,
     surfaces: Res<'w, SurfaceMaterials>,
+    roof: Res<'w, RoofMaterialHandle>,
 }
 
 impl LayerMaterials<'_> {
@@ -485,6 +490,7 @@ impl LayerMaterials<'_> {
             MaterialSpec::Flat => LayerMaterial::Flat(self.flats.opaque.clone()),
             MaterialSpec::Blend => LayerMaterial::Flat(self.flats.blend.clone()),
             MaterialSpec::Surface(kind) => LayerMaterial::Surface(self.surfaces.handle(kind)),
+            MaterialSpec::Roof => LayerMaterial::Roof(self.roof.handle()),
         }
     }
 }

@@ -8,7 +8,6 @@
 
 use bevy::prelude::*;
 
-use crate::map::buildings::material::RoofMaterialHandle;
 use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
@@ -112,16 +111,17 @@ fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim)
     }
 }
 
-// `color_materials` здесь остался ровно ради `spawn_buildings` — последнего
-// модуля, который ещё строит слои внутри себя; всё остальное идёт через
-// `materials: LayerMaterials`
+// Все слои карты идут через один `materials: LayerMaterials`: своих
+// `Assets<ColorMaterial>` и кровельного хэндла системе больше не надо — их
+// держит и разворачивает шов (`map/surface.rs`). Это сняло два параметра из
+// десяти; оставшиеся восемь — команды, меши, материалы, ступень зума кровель,
+// сама карта и три ручки стиля — все настоящие входы разового поднятия мира,
+// и сводить их в тип ради линта нечего
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut color_materials: ResMut<Assets<ColorMaterial>>,
     materials: LayerMaterials,
-    roof_material: Res<RoofMaterialHandle>,
     building_bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
@@ -276,18 +276,16 @@ pub fn spawn_map(
     );
     info!("{road_report}");
 
-    buildings::spawn_buildings(
+    let plan = buildings::BuildingPlan {
+        mode: *height_mode,
+        bucket: *building_bucket,
+        shadows: true,
+    };
+    buildings::spawn_building_meshes(
         &mut commands,
         &mut meshes,
-        &mut color_materials,
-        &roof_material,
-        buildings::BuildingPlan {
-            mode: *height_mode,
-            bucket: *building_bucket,
-            shadows: true,
-        },
-        &map.buildings,
-        &map.roads,
+        &materials,
+        buildings::mesh_buildings(plan, &map.buildings, &map.roads),
     );
 }
 
