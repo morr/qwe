@@ -29,7 +29,8 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{is_fortress_tower, point_in_area, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::Lcg;
-use crate::map::{shadow_dir, shadow_length_scale};
+use crate::map::shadow;
+use crate::map::shadow_dir;
 
 /// Сколько мест перебрать, прежде чем отказаться от коробки. Одна попытка
 /// на узком корпусе почти всегда промахивалась: машинное помещение 5 × 3.5 м
@@ -348,8 +349,7 @@ pub(super) fn push_items(
         // машинное помещение даёт одиннадцать метров и тёмная полоса уехала бы
         // с крыши на соседний дом и на землю. То есть портится это ровно на том
         // конце ползунка, ради которого высота солнца и стала ручкой
-        let length = (item.height * shadow_length_scale()).min(item.reach);
-        let offset = shadow_dir() * length;
+        let offset = shadow::offset(item.height).clamp_length_max(item.reach);
         for (a, b) in silhouette_edges(&item.base, shadow_dir()) {
             builder.push_quad([a, b, b + offset, a + offset], shadow);
         }
@@ -613,7 +613,7 @@ mod tests {
         });
         let mut clamped = 0;
         for item in &items {
-            let wanted = item.height * shadow_length_scale();
+            let wanted = shadow::length(item.height);
             // тот самый вылет, который увидит `push_items`, — из предмета, а
             // не пересчитанный тестом заново
             let reach = item.reach;
@@ -769,7 +769,7 @@ mod tests {
         // тени. С правильным ridge_offset эта область покрывается.
         let lift = Vec2::new(0.5, 0.5);
         if let Some(item) = ridge_chimney(&house, &look, ridge, lift) {
-            let offset = shadow_dir() * (item.height * shadow_length_scale()).min(item.reach);
+            let offset = shadow::offset(item.height).clamp_length_max(item.reach);
             for corner in item.base {
                 let far = corner + offset * 0.999;
                 assert!(

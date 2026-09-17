@@ -35,10 +35,9 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, PipeLine, Structure, StructureKind};
+use crate::map::shadow;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
-use crate::map::{
-    BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale, sun_stretch,
-};
+use crate::map::{BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, sun_stretch};
 use crate::prefs::retuned;
 use crate::settings::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
 
@@ -218,7 +217,7 @@ pub fn mesh_industry(
 
     let mut pipe_shadows = MeshBuilder::default();
     let mut pipes = MeshBuilder::default();
-    let offset = shadow_dir() * (PIPE_HEIGHT * shadow_length_scale());
+    let offset = shadow::offset(PIPE_HEIGHT);
     for pipe in drawn_pipes {
         let shifted: Vec<Vec2> = pipe.points.iter().map(|point| *point + offset).collect();
         push_pipe(&mut pipe_shadows, &shifted, pipe.width, SHADOW_COLOR);
@@ -296,7 +295,7 @@ fn push_pipe(builder: &mut MeshBuilder, points: &[Vec2], width: f32, color: Colo
 /// уравнял бы тень трубы с тенью пятиэтажки.
 fn push_shadow(builder: &mut MeshBuilder, structure: &Structure) {
     let stretch = sun_stretch();
-    let length = (structure.height * shadow_length_scale()).clamp(
+    let length = shadow::length(structure.height).clamp(
         *SHADOW_LENGTH_RANGE.start() * stretch,
         *SHADOW_LENGTH_RANGE.end() * stretch,
     );

@@ -24,13 +24,14 @@
 
 use bevy::prelude::*;
 
+use crate::map::SunOnMap;
 use crate::map::footprint::{fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::roads::{RoadJoin, push_ribbon};
+use crate::map::shadow;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale};
 use crate::prefs::retuned;
 use crate::settings::Z_FENCE;
 
@@ -263,10 +264,6 @@ const JOINT_SIDES: usize = 8;
 /// Кайма сужается к забору по правилу зданий и машин: доля ширины на вершине
 /// — проекция её направления на свет, у основания ноль.
 fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], width: f32) {
-    use i_overlay::core::fill_rule::FillRule;
-    use i_overlay::float::simplify::SimplifyShape;
-
-    let light = shadow_dir();
     let half = width / 2.0;
     let joint: Vec<Vec2> = (0..JOINT_SIDES)
         .map(|side| {
@@ -288,7 +285,7 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
             FenceKind::Fence | FenceKind::Wall => FENCE_HEIGHT,
             FenceKind::Hedge => HEDGE_HEIGHT,
         };
-        let offset = light * (height * shadow_length_scale());
+        let offset = shadow::offset(height);
         for pair in points.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let Some(along) = (b - a).try_normalize() else {
@@ -304,27 +301,5 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
         }
     }
 
-    let color = SHADOW_COLOR.to_linear();
-    let fade = LinearRgba {
-        alpha: 0.0,
-        ..color
-    };
-    let penumbra = |direction: Vec2| direction.dot(light).max(0.0);
-    for shape in contours.simplify_shape(FillRule::NonZero) {
-        let mut rings = shape.into_iter().map(|contour| {
-            contour
-                .into_iter()
-                .map(Vec2::from_array)
-                .collect::<Vec<Vec2>>()
-        });
-        let Some(outer) = rings.next() else {
-            continue;
-        };
-        let holes: Vec<Vec<Vec2>> = rings.collect();
-        builder.push_polygon(&outer, &holes, color);
-        builder.push_inset_band_tapered(&outer, SHADOW_BLUR, true, penumbra, color, fade);
-        for hole in &holes {
-            builder.push_inset_band_tapered(hole, SHADOW_BLUR, false, penumbra, color, fade);
-        }
-    }
+    shadow::push_union(builder, contours, SHADOW_BLUR);
 }

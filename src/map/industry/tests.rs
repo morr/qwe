@@ -66,7 +66,7 @@ fn the_shadow_clamp_rides_the_sun() {
         .iter()
         .map(|position| Vec2::new(position[0], position[1]).length())
         .fold(0.0_f32, f32::max);
-    let wanted = chimney.height * shadow_length_scale();
+    let wanted = crate::map::shadow::length(chimney.height);
     assert!(
         (reach - (wanted + chimney.radius)).abs() < 0.5,
         "the shadow reaches {reach} m, the sun asks for {wanted}"

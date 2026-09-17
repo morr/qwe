@@ -1,6 +1,7 @@
 use super::*;
 use crate::map::meshing::distance_to_path;
 use crate::map::osm::fixture;
+use crate::map::shadow_dir;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {

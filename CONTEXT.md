@@ -938,6 +938,23 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the index costing 3 ms against 8 ms of mesh no longer laid. Every
   street shape the row broke on, and every body type on all three detail steps, side by
   side: `cargo run --example car_gallery`.
+- **The shadow rules** (`map/shadow.rs`) — seven layers cast a shadow (buildings, fences,
+  cars, wagons, industry, bridges, roof clutter) and three things are common to all of
+  them, none of which used to be written in one place. **`length(height)`** is where
+  `shadow_length_scale()` lives — the expression `shadow_dir() * height *
+  shadow_length_scale()` used to appear in ten; the skill's rule *"a shadow length written
+  without `sun_stretch()` is a bug in the making"* stops being something to remember and
+  becomes a call. **`offset(height)`** is the same as a vector; the shadow **starts under
+  the object** and flows out from under it, which is the mistake cars, fences and the
+  bridge each made in turn. **`penumbra(direction)`** is the soft-edge share — zero where
+  the shadow meets what casts it, full at the far end — written three times before, once
+  named and twice as a closure. **`push_union`** is the eighteen lines that were
+  duplicated verbatim between fences and buildings: union the sweeps (`i_overlay`,
+  NonZero, so a translucent layer never doubles on itself) and lay the tapered band.
+  **The light stays a process global** (`map/sun.rs`) on purpose: making it an argument
+  would thread a parameter through every `mesh_*`, and the global is what lets one build
+  run on the load thread, in a test and in the offline bench. The price is stated — a test
+  with lit geometry takes the `default_sun()` / `sun_at()` guard and serialises on a mutex.
 - **The uniform grid** (`map/grid.rs::Grid<T>`) — the one spatial index of the map:
   doors, tree planting, the parse's sidewalk pull / landuse blocks / shift obstacles,
   water outlines, road stitches, fence gaps, street edges, standing stock, garage runs,

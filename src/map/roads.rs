@@ -57,10 +57,11 @@ use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
+use crate::map::shadow;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
-use crate::map::{SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
@@ -111,7 +112,7 @@ fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
         along.push(travelled);
     }
     let length = travelled;
-    let offset = shadow_dir() * (bridge_height(deck.span) * shadow_length_scale());
+    let offset = shadow::offset(bridge_height(deck.span));
     let ramp = (deck.span * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
     let last = dense.len() - 1;
     (0..dense.len())
@@ -1184,7 +1185,7 @@ const PENUMBRA_MAX: f32 = 1.0;
 
 /// Ширина полутени для моста с таким пролётом — см. [`PENUMBRA_SHARE`].
 fn bridge_penumbra(span: f32) -> f32 {
-    let length = bridge_height(span) * shadow_length_scale();
+    let length = shadow::length(bridge_height(span));
     (length * PENUMBRA_SHARE).clamp(PENUMBRA_MIN, PENUMBRA_MAX)
 }
 

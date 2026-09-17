@@ -30,9 +30,10 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
 use crate::map::seed::{Lcg, seed_from_point};
+use crate::map::shadow;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
 use crate::settings::{WAGON_MAX_ZOOM, Z_WAGON};
 
@@ -379,7 +380,7 @@ fn stand_along(wagons: &mut Vec<Wagon>, track: &Track, fan: &Fan, rng: &mut Lcg)
 fn mesh_bodies(wagons: &[Wagon]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let shadow = SHADOW_COLOR.to_linear();
-    let offset = shadow_dir() * (WAGON_HEIGHT * shadow_length_scale());
+    let offset = shadow::offset(WAGON_HEIGHT);
     for wagon in wagons {
         builder.push_quad(body(wagon, offset), shadow);
     }

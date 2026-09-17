@@ -30,6 +30,7 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::map::SunOnMap;
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
@@ -38,9 +39,9 @@ use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
+use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SunOnMap, shadow_dir, shadow_length_scale};
 use crate::prefs::retuned;
 use crate::settings::{
     CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR,
@@ -761,7 +762,9 @@ fn park_along(
 /// это решение.
 fn mesh_bodies(cars: &[Car], detail: CarDetail) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
-    let stretch = shadow_dir() * shadow_length_scale();
+    // сдвиг на метр высоты — общий множитель слоя, а высоту прикладывает
+    // каждая машина своей (`CarShape::height`)
+    let stretch = shadow::offset(1.0);
     for car in cars {
         body::push_shadow(&mut builder, car, stretch * car.shape.height(), detail);
     }

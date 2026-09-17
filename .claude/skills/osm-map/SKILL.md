@@ -618,6 +618,46 @@ and the choice is what is under test:
   also the only way to test the *order*: `squaring_before_attaching_loses_the_door` runs the
   same two passes both ways round.
 
+## The shadow rules — `map/shadow.rs`
+
+Seven layers cast a shadow — buildings, fences, cars, wagons, industry, bridges, roof
+clutter — and three things are the same for all of them. Each used to be written out
+wherever it was needed.
+
+- **`length(height)`** is the one place `shadow_length_scale()` is applied. The expression
+  `shadow_dir() * height * shadow_length_scale()` existed in ten places, and the rule this
+  file states — *"a shadow length written without `sun_stretch()` is a bug in the making:
+  it will look right at the default and wrong at both ends of the slider"* — is now a call
+  rather than something to remember. Clamps stay with their owner (`SHADOW_LENGTH_RANGE`
+  for buildings, the roof edge for clutter) and are applied **after** it.
+- **`offset(height)`** is that length as a vector. It is the displacement of the far end
+  of a sweep, **not** where a silhouette is moved to: the shadow starts *under* the object.
+  Cars, fences and the bridge each shipped the translated-copy version first, and at 15°
+  a 2 m fence "moved" 7.4 m and read as a second fence.
+- **`penumbra(direction)`** — the soft edge's share at a vertex: zero where the shadow
+  meets what casts it, full at the far end, growing along a lateral side. It was written
+  three times, once as a named function (buildings) and twice as a closure (fences, cars).
+- **`push_union(builder, contours, blur)`** — the eighteen lines that were duplicated
+  verbatim between `fences.rs` and `buildings/layers.rs`, differing only in the blur
+  constant: union the sweeps (`i_overlay`, NonZero — a translucent layer must never
+  double on itself) and lay the tapered band outward from the outer ring and inward from
+  each hole.
+
+**Three of the seven stay outside it, and each for a measured reason.** The cars do not
+union at all (a 6 m pitch against a metre of sweep, and `i_overlay` over 22 k cars would
+cost more than the layer); the bridge tapers by `rise` rather than by direction, because
+a deck hangs in the air and its penumbra is uniform all the way round; the roof clutter's
+shadow is **opaque**, drawn in the roof's own colour inside the merged building mesh, so
+it has no band to lay. They call `length`/`offset` like everyone else — what differs is
+the policy above them, and that is now the only thing that differs.
+
+**The light stays a process global** (`map/sun.rs`, four `AtomicU32`) and that is a
+decision, not an omission. Making it an argument would thread a parameter through every
+`mesh_*` — the very functions the layer seam made callable from the game, a test and the
+offline bench with one and the same call — and the global is what lets a build run on the
+load thread, where there is no ECS at all. The price is known and written down: a test
+with lit geometry takes the `default_sun()` / `sun_at()` guard and serialises on a mutex.
+
 ## The uniform grid — `map/grid.rs::Grid<T>`
 
 Every "what is near this point" answer on the map comes from one type. The doors, tree

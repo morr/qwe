@@ -19,6 +19,7 @@ mod pitch;
 mod rail;
 mod roads;
 mod seed;
+mod shadow;
 mod spawn;
 mod sun;
 // публичен по той же причине, что `buildings` и `cars`: витрины кладут слои
