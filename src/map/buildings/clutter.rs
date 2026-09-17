@@ -173,7 +173,14 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
         for share in lanes {
             let center = frame.center() + perp * (share * frame.width);
             let size = Vec2::new(length, SKYLIGHT_WIDTH);
-            if let Some(base) = fit(building, center, size, axis, perp, lift) {
+            // лента — такой же предмет кровли, как коробка, и место под неё
+            // проверяется тем же [`clear`]: сейчас две ленты и так расходятся
+            // (полосы в 0.44 ширины дома при ширине от `SKYLIGHT_SECOND_WIDTH`),
+            // но правило «оборудование не садится на оборудование» должно
+            // держаться постройкой, а не порядком, в котором предметы кладутся
+            if let Some(base) = fit(building, center, size, axis, perp, lift)
+                && clear(&items, &base, axis, perp)
+            {
                 items.push(RoofItem {
                     base,
                     height: SKYLIGHT_HEIGHT,
