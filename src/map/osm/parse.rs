@@ -8,12 +8,13 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
+use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
     Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, indices_near, point_in_area, point_in_polygon,
-    put_in_cells, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
+    WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon, ring_area,
+    ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
@@ -787,15 +788,9 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
     }
     let widest = segments.iter().map(|link| link.reach).fold(0.0, f32::max);
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut cells: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        put_in_cells(
-            &mut cells,
-            link.from.min(link.to),
-            link.from.max(link.to),
-            SIDEWALK_CELL,
-            index,
-        );
+        cells.insert(link.from.min(link.to), link.from.max(link.to), index);
     }
 
     let uses = vertex_uses(map);
@@ -814,7 +809,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
         let (min, max) = ring_bounds(&building.outer);
         let margin = Vec2::splat(widest + SIDEWALK_SHIFT_MAX);
-        let nearby = indices_near(&cells, min - margin, max + margin, SIDEWALK_CELL);
+        let nearby = cells.near(min - margin, max + margin);
         if nearby.is_empty() {
             continue;
         }
@@ -1006,14 +1001,12 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
     }
     // звено кладётся в ячейки с запасом на своё полотно и предельный зазор,
     // так что спрашивающему хватает ячейки самой вершины
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut cells: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
         let grow = Vec2::splat(link.reach + LANDUSE_GAP_MAX);
-        put_in_cells(
-            &mut cells,
+        cells.insert(
             link.from.min(link.to) - grow,
             link.from.max(link.to) + grow,
-            SIDEWALK_CELL,
             index,
         );
     }
@@ -1045,7 +1038,7 @@ fn pull_ring(
     ring: &[Vec2],
     hole: bool,
     segments: &[Link],
-    cells: &HashMap<(i32, i32), Vec<usize>>,
+    cells: &Grid<usize>,
     pulled: &mut usize,
 ) -> Vec<Vec2> {
     // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
@@ -1078,9 +1071,7 @@ fn pull_ring(
             false,
         );
         let length = point.distance(next);
-        if length <= LANDUSE_STEP
-            || indices_near(cells, point.min(next), point.max(next), SIDEWALK_CELL).is_empty()
-        {
+        if length <= LANDUSE_STEP || cells.near(point.min(next), point.max(next)).is_empty() {
             continue;
         }
         let steps = (length / LANDUSE_STEP).ceil() as usize;
@@ -1094,16 +1085,11 @@ fn pull_ring(
 /// Куда встаёт вершина квартала, которой до полотна ближайшей дороги остался
 /// зазор не больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда.
 /// `outward` — куда от этой вершины прибывает зелень (см. [`pull_ring`]).
-fn pull_vertex(
-    point: Vec2,
-    outward: Vec2,
-    segments: &[Link],
-    cells: &HashMap<(i32, i32), Vec<usize>>,
-) -> Option<Vec2> {
+fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], cells: &Grid<usize>) -> Option<Vec2> {
     // ближайшая по **зазору до края полотна**, а не по расстоянию до оси:
     // узкий проезд рядом ближе широкой улицы, а щель оставляет улица
     let mut best: Option<(f32, Vec2)> = None;
-    for index in indices_near(cells, point, point, SIDEWALK_CELL) {
+    for index in cells.near(point, point) {
         let Link { from, to, reach } = segments[index];
         let axis = closest_on_segment(point, from, to);
         let gap = point.distance(axis) - reach;
@@ -1134,10 +1120,10 @@ struct Obstacles {
     original: Vec<Vec<Vec2>>,
     /// Здания по ячейкам — габарит, раздутый на [`SIDEWALK_SHIFT_MAX`], так
     /// что сдвинутое здание не выходит из своих ячеек.
-    buildings: HashMap<(i32, i32), Vec<usize>>,
+    buildings: Grid<usize>,
     /// Звенья всего прочего; `reach` — радиус запрета, полуширина плюс зазор.
     segments: Vec<Link>,
-    lines: HashMap<(i32, i32), Vec<usize>>,
+    lines: Grid<usize>,
 }
 
 impl Obstacles {
@@ -1147,11 +1133,11 @@ impl Obstacles {
             .iter()
             .map(|building| building.outer.clone())
             .collect();
-        let mut buildings = HashMap::new();
+        let mut buildings = Grid::new(SIDEWALK_CELL);
         let grow = Vec2::splat(SIDEWALK_SHIFT_MAX + SHIFT_CLEARANCE);
         for (index, ring) in original.iter().enumerate() {
             let (min, max) = ring_bounds(ring);
-            put_in_cells(&mut buildings, min - grow, max + grow, SIDEWALK_CELL, index);
+            buildings.insert(min - grow, max + grow, index);
         }
 
         let mut segments = Vec::new();
@@ -1191,14 +1177,12 @@ impl Obstacles {
         for structure in &map.structures {
             add(&[structure.at, structure.at], structure.radius);
         }
-        let mut lines = HashMap::new();
+        let mut lines = Grid::new(SIDEWALK_CELL);
         for (index, link) in segments.iter().enumerate() {
             let grow = Vec2::splat(link.reach);
-            put_in_cells(
-                &mut lines,
+            lines.insert(
                 link.from.min(link.to) - grow,
                 link.from.max(link.to) + grow,
-                SIDEWALK_CELL,
                 index,
             );
         }
@@ -1215,8 +1199,7 @@ impl Obstacles {
         let before = &self.original[house];
         let after: Vec<Vec2> = before.iter().map(|vertex| *vertex + shift).collect();
         let (min, max) = ring_bounds(&after);
-        let cells =
-            |grid: &HashMap<(i32, i32), Vec<usize>>| indices_near(grid, min, max, SIDEWALK_CELL);
+        let cells = |grid: &Grid<usize>| grid.near(min, max);
         // стало ближе запрета и ближе, чем было
         let closer = |now: f32, reach: f32, was: f32| now < reach && now < was - 0.01;
 

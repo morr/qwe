@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use super::material::building_seed;
+use crate::map::grid::Grid;
 use crate::map::meshing::min_area_rect;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{BuildingUse, PolyArea};
@@ -321,29 +322,19 @@ pub(super) fn garage_runs(buildings: &[PolyArea]) -> HashMap<usize, GarageRun> {
     // ячейки, и пары ищутся внутри ячейки, а не по всему городу. Раздутый
     // на зазор контур попадает в каждую задетую ячейку, поэтому два
     // достаточно близких бокса гарантированно встретятся хотя бы в одной.
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut cells: Grid<usize> = Grid::new(CELL);
     for (slot, box_) in boxes.iter().enumerate() {
-        let low = ((box_.min - JOIN_GAP) / CELL).floor();
-        let high = ((box_.max + JOIN_GAP) / CELL).floor();
-        for x in low.x as i32..=high.x as i32 {
-            for y in low.y as i32..=high.y as i32 {
-                cells.entry((x, y)).or_default().push(slot);
-            }
-        }
+        cells.insert(box_.min - JOIN_GAP, box_.max + JOIN_GAP, slot);
     }
     let mut union = Union::new(members.len());
-    for slots in cells.values() {
-        for (at, &a) in slots.iter().enumerate() {
-            for &b in &slots[at + 1..] {
-                // рамка — только отсев: она у диагональной ленты втрое шире
-                // самой ленты, и через проезд задевает соседнюю. Решает
-                // расстояние между контурами
-                if boxes[a].near(&boxes[b])
-                    && rings_near(&buildings[members[a]].outer, &buildings[members[b]].outer)
-                {
-                    union.join(a, b);
-                }
-            }
+    for (a, b) in cells.pairs() {
+        // рамка — только отсев: она у диагональной ленты втрое шире самой
+        // ленты, и через проезд задевает соседнюю. Решает расстояние между
+        // контурами
+        if boxes[a].near(&boxes[b])
+            && rings_near(&buildings[members[a]].outer, &buildings[members[b]].outer)
+        {
+            union.join(a, b);
         }
     }
 

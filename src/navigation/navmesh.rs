@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use bevy::prelude::*;
 
 use crate::map::footprint::{FENCE_GATE_WIDTH, StreetEdges, distance_to_polyline, fence_gaps};
+use crate::map::grid::Grid;
 use crate::map::osm::model::{
     MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
 };
@@ -941,10 +942,6 @@ fn closest_point_on_polyline(point: Vec2, points: &[Vec2]) -> Vec2 {
 /// зависит по построению (см. [`BridgeBands`]).
 const BRIDGE_BAND_CELL: f32 = 32.0;
 
-fn bridge_band_cell(point: Vec2) -> IVec2 {
-    (point / BRIDGE_BAND_CELL).floor().as_ivec2()
-}
-
 /// Отрезок осевой bridge-way вместе с полушириной его ленты
 /// (`RoadLine::curb_reach`) и номером владельца в `bridge_ways`.
 #[derive(Clone, Copy)]
@@ -967,13 +964,13 @@ struct BridgeBand {
 /// собственного way, значит любая точка ближе `reach` к отрезку лежит внутри
 /// этого AABB — её ячейка одна из тех, куда отрезок положен. Ни допуска, ни
 /// обхода соседних ячеек не нужно.
-struct BridgeBands(HashMap<IVec2, Vec<BridgeBand>>);
+struct BridgeBands(Grid<BridgeBand>);
 
 impl BridgeBands {
     /// `ways` — те же пары `(осевая, curb_reach)`, что перебирал щуп; номер в
     /// срезе и есть владелец.
     fn build(ways: &[(&[Vec2], f32)]) -> Self {
-        let mut cells: HashMap<IVec2, Vec<BridgeBand>> = HashMap::new();
+        let mut cells = Grid::new(BRIDGE_BAND_CELL);
         for (owner, &(points, reach)) in ways.iter().enumerate() {
             for segment in points.windows(2) {
                 let (from, to) = (segment[0], segment[1]);
@@ -983,13 +980,7 @@ impl BridgeBands {
                     from,
                     to,
                 };
-                let lo = bridge_band_cell(from.min(to) - reach);
-                let hi = bridge_band_cell(from.max(to) + reach);
-                for x in lo.x..=hi.x {
-                    for y in lo.y..=hi.y {
-                        cells.entry(IVec2::new(x, y)).or_default().push(band);
-                    }
-                }
+                cells.insert(from.min(to) - reach, from.max(to) + reach, band);
             }
         }
         Self(cells)
@@ -999,11 +990,9 @@ impl BridgeBands {
     /// дословно тот же, что у перебора: `distance_to_polyline` — минимум по
     /// отрезкам, а «минимум ≤ порога» и есть «нашёлся отрезок ≤ порога».
     fn covered_by_other(&self, probe: Vec2, owner: usize) -> bool {
-        self.0.get(&bridge_band_cell(probe)).is_some_and(|bands| {
-            bands.iter().any(|band| {
-                band.owner as usize != owner
-                    && distance_to_segment(probe, band.from, band.to) <= band.reach
-            })
+        self.0.at(probe).iter().any(|band| {
+            band.owner as usize != owner
+                && distance_to_segment(probe, band.from, band.to) <= band.reach
         })
     }
 }

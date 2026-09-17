@@ -8,6 +8,9 @@ pub mod buildings;
 pub mod cars;
 mod fences;
 pub mod footprint;
+// публичен ради `navigation/navmesh.rs`: лента моста индексируется той же
+// сеткой, что и всё на карте
+pub mod grid;
 mod industry;
 mod meshing;
 pub mod osm;

@@ -564,6 +564,42 @@ Four things about it worth knowing before writing a case:
 A new tag reaching the map means a case here — a builder line and an assertion, not a
 new JSON literal. Coverage of tags overall is the audit in `references/osm-coverage.md`.
 
+## The uniform grid — `map/grid.rs::Grid<T>`
+
+Every "what is near this point" answer on the map comes from one type. The doors, tree
+planting, water outlines, road stitches, standing stock, garage runs, building shadows,
+the car districts and the bridge bands all index the same way, and before `Grid` existed
+each of them wrote the arithmetic again: the double loop "put it in every cell the box
+touches" existed in **seven** copies, the key was `(i32, i32)` in ten places and `IVec2`
+in five, and the cell size travelled as an argument on every call — so an insert and a
+query could disagree about it and nothing would say so.
+
+- **The step belongs to the grid** (`Grid::new(size)`), which is what makes that
+  disagreement impossible. It stays an argument rather than a module constant because the
+  number is about the domain, not about the grid: 32 m for the doors, 48 for the shadows,
+  120 for the car districts.
+- **Two primitives and three conveniences.** `cell(IVec2)` — one cell; `near_each(min,
+  max)` — everything in the touched cells **as is**, duplicates included, in a fully
+  determined order (cells ascending by x then y, insertion order inside a cell). On top of
+  them: `at(point)` (one cell by a point), `near(min, max)` (sorted and deduped, needs
+  `T: Ord`), and `pairs()` (every pair that shares a cell, sorted and deduped).
+- **`insert(min, max, value)` puts the value in every cell its box touches**, and that
+  invariant is what makes a one-cell `at` complete rather than approximate: the caller
+  inflates the box by the reach it cares about, so any point the value has business with
+  falls inside one of those cells. An error there returns a silently incomplete answer —
+  which is exactly why it lives in one place now.
+- **`near` sorts because the mesh must not move between runs**, not for the caller's
+  convenience: a value sits in several cells, so without `dedup` a neighbour comes back
+  several times, and without the sort the `HashMap` iteration order leaks into the
+  geometry. `near_each` is the escape hatch for values that are not `Ord` (`water.rs`
+  indexes `(Vec2, Vec2)` edges) and for callers that already tolerate duplicates.
+- **`cell_of` is public for one caller**, `entrances::RoadIndex`, which walks cells in
+  **rings** outward from the point and stops as soon as what it found beats anything the
+  next ring could hold. That strategy belongs to it, not to the grid.
+- **`spatial.rs` is not this grid and does not move here.** The pawn grid is a dense `Vec`
+  over the whole map with a reverse entity→cell index and a per-tick move of one entity at
+  a time; it shares nothing with a `HashMap` of boxes built once per load but the word.
+
 ## Footprint bands
 
 `map/footprint.rs` — the strips linear geometry occupies on the ground, one construction
@@ -1437,9 +1473,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     every OSM entrance to the nearest kerb of the nearest road (`map/paths.rs`,
     `Z_WORN_PATH` 0.72) — the desire lines. On the city it looked bad and was taken out
     by the author's call; the commits describing it are history, not a missing file.
-    Don't reintroduce a straight door-to-road strip. `model::put_in_cells` / `grid_cell`
-    stay — they are the door generator's own (`osm/entrances/index.rs`), extracted while
-    this layer existed and its only surviving trace.
+    Don't reintroduce a straight door-to-road strip. The uniform-grid index stays — it is
+    the door generator's own (`osm/entrances/index.rs`), extracted while this layer
+    existed and its only surviving trace; it has since become `map/grid.rs::Grid` (below).
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
   actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 2.003 and one
   markings layer at 2.006, the parking pair's shape exactly: the paint is flat

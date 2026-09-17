@@ -779,58 +779,6 @@ pub fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
     point.distance(closest_on_segment(point, from, to))
 }
 
-/// Ячейка равномерной сетки, в которую попадает координата.
-pub fn grid_cell(value: f32, size: f32) -> i32 {
-    (value / size).floor() as i32
-}
-
-/// Значение кладётся во **все** ячейки, которые пересекает его AABB — общий
-/// инвариант каждой равномерной сетки в проекте (три сетки генератора дверей,
-/// сетка дорог у троп): спрашивающему тогда хватает одной ячейки точки, и
-/// ничего на границе ячеек не теряется. Живёт здесь, а не у первого
-/// потребителя, именно поэтому — сетку заводит не один модуль, а ошибка на
-/// границе ячеек чинилась бы в каждом отдельно.
-pub fn put_in_cells<T: Copy>(
-    cells: &mut std::collections::HashMap<(i32, i32), Vec<T>>,
-    min: Vec2,
-    max: Vec2,
-    size: f32,
-    value: T,
-) {
-    for x in grid_cell(min.x, size)..=grid_cell(max.x, size) {
-        for y in grid_cell(min.y, size)..=grid_cell(max.y, size) {
-            cells.entry((x, y)).or_default().push(value);
-        }
-    }
-}
-
-/// Значения из сетки шага `size`, чьи ячейки задевает рамка `min..max`:
-/// **отсортированы и без повторов**. Читающая половина [`put_in_cells`], и
-/// живёт рядом с ней по той же причине — сетку заводит не один модуль. Шаг
-/// параметром, а не константой, ровно поэтому же: иначе пара «положил /
-/// спросил» разъехалась бы размером ячейки.
-///
-/// Сортировка — не удобство вызывающего, а инвариант: значение лежит во всех
-/// ячейках, которые задевает его AABB, так что без `dedup` соседа вернуло бы
-/// несколько раз, а без сортировки наружу протёк бы порядок обхода `HashMap`
-/// — и собранный по сетке меш перестал бы быть детерминированным.
-pub fn indices_near<T: Copy + Ord>(
-    cells: &std::collections::HashMap<(i32, i32), Vec<T>>,
-    min: Vec2,
-    max: Vec2,
-    size: f32,
-) -> Vec<T> {
-    let mut found: Vec<T> = Vec::new();
-    for x in grid_cell(min.x, size)..=grid_cell(max.x, size) {
-        for y in grid_cell(min.y, size)..=grid_cell(max.y, size) {
-            found.extend(cells.get(&(x, y)).into_iter().flatten().copied());
-        }
-    }
-    found.sort_unstable();
-    found.dedup();
-    found
-}
-
 /// Длина ломаной — сумма её звеньев.
 pub fn polyline_length(points: &[Vec2]) -> f32 {
     points
@@ -947,23 +895,6 @@ mod tests {
         assert!(point_in_polygon(Vec2::new(5.0, 5.0), &ring));
         assert!(!point_in_polygon(Vec2::new(15.0, 5.0), &ring));
         assert!(!point_in_polygon(Vec2::new(-1.0, 5.0), &ring));
-    }
-
-    /// Пара «положил / спросил» отдаёт соседа один раз и в одном порядке,
-    /// сколько бы ячеек он ни задевал: `dedup` и сортировка — это и есть
-    /// контракт [`indices_near`].
-    #[test]
-    fn indices_near_answers_sorted_and_once() {
-        let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> =
-            std::collections::HashMap::new();
-        // сосед 0 — на все четыре ячейки вокруг начала координат, 1 — далеко
-        put_in_cells(&mut cells, Vec2::splat(-1.0), Vec2::splat(1.0), 10.0, 0);
-        put_in_cells(&mut cells, Vec2::splat(5.0), Vec2::splat(6.0), 10.0, 1);
-        put_in_cells(&mut cells, Vec2::splat(300.0), Vec2::splat(301.0), 10.0, 2);
-
-        let found = indices_near(&cells, Vec2::splat(-2.0), Vec2::splat(7.0), 10.0);
-        assert_eq!(found, vec![0, 1], "сосед на четырёх ячейках — один раз");
-        assert!(indices_near(&cells, Vec2::splat(100.0), Vec2::splat(101.0), 10.0).is_empty());
     }
 
     #[test]

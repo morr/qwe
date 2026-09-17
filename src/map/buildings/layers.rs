@@ -2,7 +2,6 @@
 //! 2.5D-экструзия. Каждый билдер отдаёт готовый [`MeshBuilder`], а какие из
 //! них строить в текущем режиме — решает `mesh_buildings` в родителе.
 
-use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 use bevy::color::Mix;
@@ -26,10 +25,11 @@ use super::temples::{Sanctuary, push_crowns};
 use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
+use crate::map::grid::Grid;
 use crate::map::meshing::{
     MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect, sweep_convex,
 };
-use crate::map::osm::model::{indices_near, ring_bounds, signed_ring_area};
+use crate::map::osm::model::{ring_bounds, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
 use crate::map::seed::seed_from_point;
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
@@ -1215,14 +1215,12 @@ pub(super) fn roof_shadow_builder(
         .collect();
 
     // сетка по развёрткам: тень длиной до 45 м, домов семь с половиной тысяч,
-    // и перебор пар был бы пятьюдесятью миллионами проверок. Порядок обхода
-    // `cells` нигде не используется (только `get` по ключу, а отобранные
-    // соседи потом сортируются), поэтому `HashMap` детерминизму меша не мешает
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (index, bounds) in sweep_boxes.iter().enumerate() {
-        for cell in cells_of(*bounds) {
-            cells.entry(cell).or_default().push(index);
-        }
+    // и перебор пар был бы пятьюдесятью миллионами проверок. Детерминизму меша
+    // сетка не мешает: `Grid::near` отвечает отсортированным списком без
+    // повторов, так что обход её `HashMap` наружу не протекает
+    let mut cells: Grid<usize> = Grid::new(SHADOW_CELL);
+    for (index, &(min, max)) in sweep_boxes.iter().enumerate() {
+        cells.insert(min, max, index);
     }
     // тела соседей по той же сетке: они не отбрасывают тень, а съедают её
     let bodies = DrawnBodies::of(buildings, &boxes, order);
@@ -1257,7 +1255,7 @@ pub(super) fn roof_shadow_builder(
             push_hole(&mut footprint, hole.clone());
         }
 
-        let mut casters = indices_near(&cells, min, max, SHADOW_CELL);
+        let mut casters = cells.near(min, max);
         casters.retain(|&caster| {
             caster != target
                 && heights[caster] - heights[target] >= SHADOW_MIN_DROP
@@ -1333,13 +1331,6 @@ fn boxes_overlap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
     a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
 }
 
-/// Ячейки сетки [`SHADOW_CELL`], которые задевает рамка.
-fn cells_of((min, max): (Vec2, Vec2)) -> impl Iterator<Item = (i32, i32)> {
-    let low = (min / SHADOW_CELL).floor().as_ivec2();
-    let high = (max / SHADOW_CELL).floor().as_ivec2();
-    (low.x..=high.x).flat_map(move |x| (low.y..=high.y).map(move |y| (x, y)))
-}
-
 /// Нарисованные тела домов в 2.5D — то, чем сосед закрывает чужую кровлю.
 ///
 /// Тело дома — сумма Минковского его контура с отрезком подъёма `[0, lift]`:
@@ -1349,7 +1340,6 @@ fn cells_of((min, max): (Vec2, Vec2)) -> impl Iterator<Item = (i32, i32)> {
 ///
 /// В плоских режимах пусто: подъёма нет, дом рисуется на своём контуре, и
 /// накрыть кровлю соседа ему нечем.
-#[derive(Default)]
 struct DrawnBodies {
     lifts: Vec<Vec2>,
     /// Место дома в [`super::order::draw_order`]: больше — рисуется позже, поверх. Не
@@ -1358,15 +1348,27 @@ struct DrawnBodies {
     /// ровно оно.
     rank: Vec<usize>,
     boxes: Vec<(Vec2, Vec2)>,
-    cells: HashMap<(i32, i32), Vec<usize>>,
+    cells: Grid<usize>,
 }
 
 impl DrawnBodies {
+    /// Пусто — в плоских режимах. Не `Default`: у сетки нет осмысленного
+    /// значения по умолчанию, размер ячейки обязателен (`map/grid.rs`), и
+    /// ровно это она и стережёт.
+    fn empty() -> Self {
+        Self {
+            lifts: Vec::new(),
+            rank: Vec::new(),
+            boxes: Vec::new(),
+            cells: Grid::new(SHADOW_CELL),
+        }
+    }
+
     fn of(buildings: &[PolyArea], boxes: &[(Vec2, Vec2)], order: Option<&[usize]>) -> Self {
         // порядок есть ровно в 2.5D: в плоских режимах его никто не строит, и
         // накрывать кровлю соседа там нечем
         let Some(order) = order else {
-            return Self::default();
+            return Self::empty();
         };
         let lifts: Vec<Vec2> = buildings
             .iter()
@@ -1383,11 +1385,9 @@ impl DrawnBodies {
             .zip(&lifts)
             .map(|(&(min, max), &lift)| (min.min(min + lift), max.max(max + lift)))
             .collect();
-        let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-        for (index, bounds) in boxes.iter().enumerate() {
-            for cell in cells_of(*bounds) {
-                cells.entry(cell).or_default().push(index);
-            }
+        let mut cells: Grid<usize> = Grid::new(SHADOW_CELL);
+        for (index, &(min, max)) in boxes.iter().enumerate() {
+            cells.insert(min, max, index);
         }
         Self {
             lifts,
@@ -1419,7 +1419,7 @@ impl DrawnBodies {
     ) -> Vec<Vec<[f32; 2]>> {
         let direction = Lean::of().dir();
         let mut covers: Vec<Vec<[f32; 2]>> = Vec::new();
-        for cover in indices_near(&self.cells, bounds.0, bounds.1, SHADOW_CELL) {
+        for cover in self.cells.near(bounds.0, bounds.1) {
             // сама цель отсеивается тем же правилом: место в порядке у неё
             // одно, а строго дальше себя она не стоит
             let later = self.rank[cover] > self.rank[target];

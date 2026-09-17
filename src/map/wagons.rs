@@ -22,11 +22,10 @@
 //!
 //! Как и машины, вагоны — **декорация**: ни навмеша, ни симуляции.
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 
 use crate::map::along::{arclengths, place_on_path};
+use crate::map::grid::Grid;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
@@ -266,24 +265,22 @@ struct Track<'a> {
 /// и перебор всех отрезков на каждый сцеп был бы квадратичным по городу.
 struct Fan<'a> {
     rails: &'a [RailLine],
-    cells: HashMap<(i32, i32), Vec<(usize, usize)>>,
+    cells: Grid<(usize, usize)>,
 }
 
 impl<'a> Fan<'a> {
     fn new(rails: &'a [RailLine]) -> Self {
-        let mut cells: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
+        let mut cells = Grid::new(FAN_CELL);
         for (index, rail) in rails.iter().enumerate() {
             if !holds_stock(rail) {
                 continue;
             }
             for (segment, pair) in rail.points.windows(2).enumerate() {
-                let low = (pair[0].min(pair[1]) - FAN_REACH) / FAN_CELL;
-                let high = (pair[0].max(pair[1]) + FAN_REACH) / FAN_CELL;
-                for x in low.x.floor() as i32..=high.x.floor() as i32 {
-                    for y in low.y.floor() as i32..=high.y.floor() as i32 {
-                        cells.entry((x, y)).or_default().push((index, segment));
-                    }
-                }
+                cells.insert(
+                    pair[0].min(pair[1]) - FAN_REACH,
+                    pair[0].max(pair[1]) + FAN_REACH,
+                    (index, segment),
+                );
             }
         }
         Self { rails, cells }
@@ -291,12 +288,8 @@ impl<'a> Fan<'a> {
 
     /// Сколько путей, кроме `own`, проходит ближе [`FAN_REACH`] к `point`.
     fn width_at(&self, point: Vec2, own: usize) -> usize {
-        let cell = (point / FAN_CELL).floor();
-        let Some(entries) = self.cells.get(&(cell.x as i32, cell.y as i32)) else {
-            return 0;
-        };
         let mut near: Vec<usize> = Vec::new();
-        for &(index, segment) in entries {
+        for &(index, segment) in self.cells.at(point) {
             if index == own || near.contains(&index) {
                 continue;
             }

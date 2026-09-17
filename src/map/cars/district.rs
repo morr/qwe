@@ -30,11 +30,10 @@
 //! пустой индекс нейтрален, и витрина `examples/demos/car_gallery`, у которой
 //! домов нет вовсе, строит ряды ровно как раньше.
 
-use std::collections::HashMap;
-
 use bevy::math::Vec2;
 
 use crate::map::buildings::height_or_default;
+use crate::map::grid::Grid;
 use crate::map::osm::PolyArea;
 use crate::map::osm::model::{ring_vertex_mean, signed_ring_area};
 use crate::settings::STOREY_HEIGHT;
@@ -80,13 +79,13 @@ struct Block {
 /// весь слой машин — проценты от зданиевого.
 pub(super) struct Districts {
     blocks: Vec<Block>,
-    cells: HashMap<(i32, i32), Vec<u32>>,
+    cells: Grid<u32>,
 }
 
 impl Districts {
     pub(super) fn new(buildings: &[PolyArea]) -> Self {
         let mut blocks = Vec::with_capacity(buildings.len());
-        let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        let mut cells = Grid::new(CELL);
         for building in buildings {
             let Some(at) = ring_vertex_mean(&building.outer) else {
                 continue;
@@ -101,13 +100,7 @@ impl Districts {
                 weight,
                 height: height_or_default(building),
             });
-            let low = (at - REACH) / CELL;
-            let high = (at + REACH) / CELL;
-            for x in low.x.floor() as i32..=high.x.floor() as i32 {
-                for y in low.y.floor() as i32..=high.y.floor() as i32 {
-                    cells.entry((x, y)).or_default().push(index);
-                }
-            }
+            cells.insert(at - REACH, at + REACH, index);
         }
         Self { blocks, cells }
     }
@@ -127,11 +120,9 @@ impl Districts {
     /// домов ближе [`REACH`], делённая на высоту этажа. `None`, если рядом не
     /// стоит ничего.
     fn storeys_at(&self, point: Vec2) -> Option<f32> {
-        let cell = (point / CELL).floor();
-        let entries = self.cells.get(&(cell.x as i32, cell.y as i32))?;
         let mut weight = 0.0;
         let mut volume = 0.0;
-        for &index in entries {
+        for &index in self.cells.at(point) {
             let block = &self.blocks[index as usize];
             if block.at.distance_squared(point) > REACH * REACH {
                 continue;

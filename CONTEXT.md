@@ -927,6 +927,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the index costing 3 ms against 8 ms of mesh no longer laid. Every
   street shape the row broke on, and every body type on all three detail steps, side by
   side: `cargo run --example car_gallery`.
+- **The uniform grid** (`map/grid.rs::Grid<T>`) — the one spatial index of the map:
+  doors, tree planting, water outlines, road stitches, standing stock, garage runs,
+  building shadows, car districts, bridge bands. **The cell size belongs to the grid**
+  (`Grid::new(size)`), so an insert and a query cannot disagree about it; it stays an
+  argument because the number is about the domain, not the grid. `insert(min, max, value)`
+  puts the value in **every cell its box touches**, which is what makes a one-cell
+  `at(point)` complete rather than approximate — the caller inflates the box by the reach
+  it cares about. `near(min, max)` is **sorted and deduped**, and that is an invariant,
+  not a convenience: the `HashMap` iteration order must not reach the geometry. `near_each`
+  is the raw form for values that are not `Ord`, `pairs()` the candidate enumeration inside
+  a cell, `cell_of` the escape hatch for the one caller that walks cells in rings.
+  **`spatial.rs` is a different animal** and stays outside: a dense `Vec` over the whole
+  map with a reverse entity→cell index, moved one entity at a time each tick.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,

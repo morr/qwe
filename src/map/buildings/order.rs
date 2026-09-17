@@ -32,12 +32,12 @@
 //! меньше по площади. Настоящее лечение — `z` по высоте
 //! вершины и depth-тест; до него пары чинят типовой город.
 
-use std::collections::HashMap;
 use std::time::Instant;
 
 use bevy::prelude::*;
 
 use super::{BuildingHeightMode, Lean, building_center, extrusion_lift};
+use crate::map::grid::Grid;
 use crate::map::osm::PolyArea;
 use crate::map::osm::model::ring_bounds;
 
@@ -386,34 +386,21 @@ fn height_at(spans: &[(f32, f32)], v: f32, lift: f32) -> Option<f32> {
 }
 
 /// Пары домов, чьи нарисованные пятна могут пересечься, — по равномерной
-/// сетке. Порядок пар фиксирован сортировкой: обход `HashMap` в него попасть
-/// не должен, иначе меш поедет от запуска к запуску.
+/// сетке. Порядок пар фиксирован сортировкой внутри [`Grid::pairs`]: обход
+/// `HashMap` в него попасть не должен, иначе меш поедет от запуска к запуску.
 fn candidate_pairs(drawn: &[Drawn]) -> Vec<(usize, usize)> {
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut cells: Grid<usize> = Grid::new(CELL);
     for (index, item) in drawn.iter().enumerate() {
         // вырожденный контур (меньше трёх точек) даёт бесконечные границы —
         // такому в сетке делать нечего
         if !item.min.is_finite() || !item.max.is_finite() {
             continue;
         }
-        let from = (item.min / CELL).floor();
-        let to = (Vec2::new(item.max.x, item.max.y + item.lift) / CELL).floor();
-        for x in from.x as i32..=to.x as i32 {
-            for y in from.y as i32..=to.y as i32 {
-                cells.entry((x, y)).or_default().push(index);
-            }
-        }
+        cells.insert(
+            item.min,
+            Vec2::new(item.max.x, item.max.y + item.lift),
+            index,
+        );
     }
-
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
-    for bucket in cells.values() {
-        for (offset, &a) in bucket.iter().enumerate() {
-            for &b in &bucket[offset + 1..] {
-                pairs.push((a, b));
-            }
-        }
-    }
-    pairs.sort_unstable();
-    pairs.dedup();
-    pairs
+    cells.pairs()
 }
