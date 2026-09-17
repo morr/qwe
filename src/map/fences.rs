@@ -28,10 +28,13 @@ use crate::map::footprint::{fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::roads::{RoadJoin, push_ribbon};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::surface::{FlatMaterials, LayerMesh, MaterialSpec, SurfaceMaterials, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::Z_FENCE;
+
+#[cfg(test)]
+mod tests;
 
 /// Высота забора, м: по ней считается длина тени тем же котангенсом высоты
 /// солнца, что у домов и вагонов. Двухметровый глухой забор частного сектора.
@@ -79,7 +82,9 @@ impl ZoomLods for FenceLods {
 pub type FenceZoomBucket = ZoomBucket<FenceLods>;
 
 /// Слой заборов — своя метка: пересобирается он по ступени зума и по солнцу.
-#[derive(Component)]
+///
+/// `Copy` — потому что метку получает каждый слой модуля, а метка пуста.
+#[derive(Component, Clone, Copy)]
 pub struct FenceLayerTag;
 
 /// Цвета: доска и профнастил серо-бурые, бетонная стена светлее и холоднее,
@@ -91,7 +96,8 @@ const HEDGE_COLOR: Color = Color::srgb(0.298, 0.376, 0.243);
 pub fn rebuild_fences(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    flats: Res<FlatMaterials>,
+    surfaces: Res<SurfaceMaterials>,
     bucket: Res<FenceZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<FenceLayerTag>>,
@@ -99,33 +105,48 @@ pub fn rebuild_fences(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let width = FENCE_LODS[bucket.index].width;
-    if width <= 0.0 {
-        return;
-    }
-    let builder = mesh_fences(&map.fences, &map.roads, width);
-    let vertices = builder.vertex_count();
-    if builder.is_empty() {
-        return;
-    }
-    // тень полупрозрачна, сама линия нет — один меш с блендингом
-    let material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    surface::spawn_layer(
+    let (layers, report) = mesh_fences(&map.fences, &map.roads, FENCE_LODS[bucket.index].width);
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        builder,
-        Z_FENCE,
-        "fences",
-        LayerMaterial::Flat(material),
+        &flats,
+        &surfaces,
+        layers,
         FenceLayerTag,
     );
-    info!(
-        "fences: {} lines at {width:.2} m ({vertices} verts)",
-        map.fences.len()
-    );
+    info!("{report}");
+}
+
+/// Что вышло из сборки заборов — значением, а не только строкой в логе.
+///
+/// Числа, которыми этот слой тюнился (429 линий в Туле, ширина ступени), так
+/// становятся тем, что можно утверждать в тесте: `info!` на macOS ещё и меряет
+/// не то время, потому что App Nap решает, как быстро идёт сборка.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FenceReport {
+    /// Сколько оград пришло на вход.
+    pub lines: usize,
+    /// Сколько кусков осталось после вырезания проёмов под дороги и калитки:
+    /// больше, чем линий, — значит проёмы разрезали ограды.
+    pub pieces: usize,
+    /// Ширина линии на этой ступени, м. Ноль — дальняя ступень, не рисуется.
+    pub width: f32,
+    pub vertices: usize,
+}
+
+impl std::fmt::Display for FenceReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            lines,
+            pieces,
+            width,
+            vertices,
+        } = self;
+        write!(
+            f,
+            "fences: {lines} lines in {pieces} pieces at {width:.2} m ({vertices} verts)"
+        )
+    }
 }
 
 /// Сначала все тени, потом все линии: иначе тень одного забора легла бы на
@@ -135,7 +156,27 @@ pub fn rebuild_fences(
 /// калитка по умолчанию, нет ни линии, ни тени — это те же проёмы, через
 /// которые ходят пешки (`footprint::fence_gaps` / `fence_pieces`), и
 /// нарисованный сплошной забор поперёк тропинки врал бы о проходимости.
-fn mesh_fences(fences: &[FenceLine], roads: &[RoadLine], width: f32) -> MeshBuilder {
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_fences`]), и тест, и офлайн-бенч. Нулевая
+/// ширина — дальняя ступень зума — отдаёт пустой список слоёв, а не особый
+/// случай у вызывающего.
+pub fn mesh_fences(
+    fences: &[FenceLine],
+    roads: &[RoadLine],
+    width: f32,
+) -> (Vec<LayerMesh>, FenceReport) {
+    if width <= 0.0 {
+        return (
+            Vec::new(),
+            FenceReport {
+                lines: fences.len(),
+                pieces: 0,
+                width,
+                vertices: 0,
+            },
+        );
+    }
     let gaps = fence_gaps(fences, roads);
     let pieces: Vec<(FenceKind, Vec<Vec2>)> = fences
         .iter()
@@ -162,7 +203,15 @@ fn mesh_fences(fences: &[FenceLine], roads: &[RoadLine], width: f32) -> MeshBuil
             RoadJoin::Round,
         );
     }
-    builder
+    let report = FenceReport {
+        lines: fences.len(),
+        pieces: pieces.len(),
+        width,
+        vertices: builder.vertex_count(),
+    };
+    // тень полупрозрачна, сама линия нет — один меш с блендингом
+    let layer = LayerMesh::new(builder, Z_FENCE, "fences", MaterialSpec::Blend);
+    (vec![layer], report)
 }
 
 /// Мягкий край тени, м — машинный (`cars/body.rs::SHADOW_BLUR`): тень забора
