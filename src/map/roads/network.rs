@@ -191,16 +191,13 @@ pub fn stitches(
     let mut ends = vec![[None; 2]; roads.len()];
     let mut segments: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
     let mut widest = 0.0_f32;
-    let edges: Vec<f32> = roads
-        .iter()
-        .map(|road| sidewalk(road).unwrap_or(0.0))
-        .collect();
+    let drawn = Drawn::new(roads, sidewalk);
     for (index, road) in roads.iter().enumerate() {
         if !stitchable(road) {
             continue;
         }
         let half = road.width / 2.0;
-        widest = widest.max(half + edges[index]);
+        widest = widest.max(drawn.edges[index]);
         for (segment, pair) in road.points.windows(2).enumerate() {
             let (min, max) = (pair[0].min(pair[1]), pair[0].max(pair[1]));
             put_in_cells(
@@ -245,9 +242,7 @@ pub fn stitches(
             };
             let heading = (end - *from).normalize();
             let reach = road.width / 2.0 + STITCH_MAX_GAP + widest;
-            let stitch = stitch_end(
-                roads, &edges, index, end, heading, reach, &segments, &obstacles,
-            );
+            let stitch = stitch_end(&drawn, index, end, heading, reach, &segments, &obstacles);
             if let Some(point) = stitch {
                 ends[index][side] = Some(point);
                 count += 1;
@@ -257,13 +252,31 @@ pub fn stitches(
     Stitches { ends, count }
 }
 
+/// Дороги как они рисуются и внешний край нарисованной полосы у каждой —
+/// полуширина асфальта плюс тротуар, если он у неё нарисован. Одним типом, а не
+/// двумя срезами с общим индексом: зазор до цели меряется именно до этого края
+/// (см. [`stitches`]), и лента с её тротуаром обязаны ходить по коду парой.
+struct Drawn<'a, 'b> {
+    roads: &'a [&'b RoadLine],
+    /// По индексу дороги, м.
+    edges: Vec<f32>,
+}
+
+impl<'a, 'b> Drawn<'a, 'b> {
+    fn new(roads: &'a [&'b RoadLine], sidewalk: impl Fn(&RoadLine) -> Option<f32>) -> Self {
+        let edges = roads
+            .iter()
+            .map(|road| road.width / 2.0 + sidewalk(road).unwrap_or(0.0))
+            .collect();
+        Self { roads, edges }
+    }
+}
+
 /// Куда дотянуть торец `end` дороги `own`, смотрящий по `heading`. `None` —
 /// впереди ничего нет, торец уже лежит на чужой ленте или стежок прошёл бы
 /// сквозь дом или воду.
-#[allow(clippy::too_many_arguments)]
 fn stitch_end(
-    roads: &[&RoadLine],
-    sidewalks: &[f32],
+    drawn: &Drawn,
     own: usize,
     end: Vec2,
     heading: Vec2,
@@ -279,8 +292,8 @@ fn stitch_end(
                 continue;
             };
             for &(road, segment) in found {
-                let target = roads[road];
-                if road == own || !carries(roads[own], target) {
+                let target = drawn.roads[road];
+                if road == own || !carries(drawn.roads[own], target) {
                     continue;
                 }
                 let half = target.width / 2.0;
@@ -292,7 +305,7 @@ fn stitch_end(
                     return None;
                 }
                 // зазор — до внешнего края нарисованного тротуара цели
-                let edge = half + sidewalks[road];
+                let edge = drawn.edges[road];
                 let mut consider = |gap: f32, point: Vec2| {
                     if gap <= STITCH_MAX_GAP && best.is_none_or(|(known, ..)| gap < known) {
                         best = Some((gap, point, half));
@@ -319,7 +332,7 @@ fn stitch_end(
     let direction = (point - end).normalize_or_zero();
     // Своя лента шире цели — торец отступает, чтобы полудиск не вылез за
     // дальний край цели.
-    let pull = (roads[own].width / 2.0 - target_half).max(0.0);
+    let pull = (drawn.roads[own].width / 2.0 - target_half).max(0.0);
     let stitched = point - direction * pull;
     let length = (stitched - end).dot(direction);
     if length <= 0.1 {
