@@ -691,10 +691,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
     a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
     a number nobody reads.
-  - **Converted — all ten.** `fences`, `rail`, `tram`, `wagons`, `industry`, `cars`,
+  - **Converted — all eleven.** `fences`, `rail`, `tram`, `wagons`, `industry`, `cars`,
     `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (13 surface and paint layers plus
-    the tree-row band) and finally `buildings`. `surface::spawn_layer` (one layer, a
+    the tree-row band), `buildings` and `trees`. `surface::spawn_layer` (one layer, a
     ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
+    Count the modules, not the layers: the tree-row band lives in `spawn.rs` and is not
+    `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
+    still spawning by hand.
+  - **`trees` is a scatter, and the seam takes a different shape there.** A crown is an
+    **entity per tree** — its own tint, its own micro-step of z, its own scale — so it
+    does not fit a `LayerMesh` at all, and `mesh_trees(style, params, planted, field)`
+    returns `TreeMeshes { pools, tints, crowns, shadows }` instead:
+    - **`pools`** — the crown meshes, `TREE_VARIANTS` of them per concrete shape (`Mixed`
+      has two pools, every other shape one), as plain `Mesh` **values**. A
+      `Handle<Mesh>` would be the world, which is exactly what `MaterialSpec` keeps out
+      of a build; the adapter uploads the pool to `Assets` and nothing else changes.
+    - **`crowns`** — `CrownPlacement { at, radius, z, pool, variant, tint }`, one per
+      drawn tree. This is what the conversion actually bought: the density prefix
+      (`visible_count`), the species resolve off the conifer field, the tint slot and the
+      z micro-step were all inside a Bevy system and unreachable from a test.
+    - **`shadows`** — the one merged shadow mesh, an ordinary `LayerMesh` at
+      `Z_TREE_SHADOW`. Its colour moved **into the vertices** (`shadow_template` pushes
+      `SHADOW_COLOR`) so the layer can be a plain `MaterialSpec::Blend`, the way every
+      other shadow on the map already was; before that the layer allocated a coloured
+      `ColorMaterial` on every rebuild. `tree_gallery` lays its own grid and therefore
+      does not go through `spawn_tree_meshes`, but it had to follow the colour: its
+      shadow material is now a blended white one.
+    So `spawn_tree_meshes` is the adapter, and it is the **one** place on the map that
+    still writes `DespawnOnExit` by hand — for the crowns. Every merged layer gets it
+    from `spawn_layer`.
   - **`cars` is the one whose build is a layer rather than a mesh.** Every other
     `mesh_*` takes the data it draws; `mesh_cars(bucket, style, smoothing, map, layout)`
     takes the whole `MapData` (as `mesh_roads` does) and does the **assembly** as well —
@@ -732,7 +757,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `materials.add(...)` and its now-redundant `is_empty` guard, and write the tests the
     seam has just made possible. Do not add a `MaterialSpec` variant before a module
     needs it — the `Surface` one sat unconstructed until the tree-row band arrived, and
-    the compiler said so.
+    the compiler said so. A module whose entities are **not** one merged mesh per layer
+    (so far only `trees`) returns its own struct instead of a bare `Vec<LayerMesh>`, and
+    the rule that survives is the division, not the return type: the build says what is
+    drawn, the adapter says where it goes.
 - **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
   `Material2d` with its own vertex + fragment stage) — procedural texture without a single
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by

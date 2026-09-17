@@ -692,3 +692,123 @@ fn a_lower_sun_lengthens_the_tree_shadow() {
     // стороны, поэтому границы широкие
     assert!(low > high * 5.0 && low < high * 7.0, "{high} -> {low}");
 }
+
+// --- слой целиком ----------------------------------------------------------
+//
+// Тесты на `mesh_trees`. До шва деревья спавнились прямо в системе Bevy, и
+// правило расстановки — префикс по плотности, разрешение породы, слот оттенка,
+// микрошаг по z — было недостижимо ни для одного теста: из него нельзя было
+// достать ни одной кроны, не подняв мир.
+
+/// Десять деревьев в ряд, с порогами появления 0, 1, … 9: ползунок плотности
+/// режет такой набор ровно по своему значению.
+fn ten_trees() -> (Vec<(Vec2, f32)>, Vec<f32>) {
+    let positions = (0..10)
+        .map(|i| (Vec2::new(i as f32 * 10.0, 0.0), 1.0 + i as f32 * 0.1))
+        .collect();
+    (positions, (0..10).map(|i| i as f32).collect())
+}
+
+fn mesh_ten(shape: TreeShape, density: f32) -> (TreeMeshes, TreeReport) {
+    let (positions, appears_at) = ten_trees();
+    let style = TreeStyle {
+        shape,
+        density,
+        ..default()
+    };
+    mesh_trees(
+        &style,
+        &params(),
+        PlantedTrees {
+            positions: &positions,
+            appears_at: &appears_at,
+        },
+        &ConiferField::default(),
+    )
+}
+
+/// Ползунок плотности отдаёт **префикс** набора: стоящие деревья не переезжают,
+/// к ним только добавляются следующие. Это и есть [`visible_count`], но здесь
+/// оно проверено на том, что реально попадает в мир, — на местах крон.
+#[test]
+fn the_density_slider_only_adds_crowns() {
+    let _sun = crate::map::default_sun();
+    let (thin, thin_report) = mesh_ten(TreeShape::Cotton, 3.0);
+    let (thick, thick_report) = mesh_ten(TreeShape::Cotton, 9.0);
+
+    assert_eq!(thin_report.crowns, 4, "пороги 0..=3");
+    assert_eq!(thick_report.crowns, 10);
+    assert_eq!(thin.crowns, thick.crowns[..thin.crowns.len()]);
+    assert!(thin_report.shadow_vertices < thick_report.shadow_vertices);
+}
+
+/// У `Mixed` пула два — облачный и хвойный, — у конкретной формы один. Порода
+/// дерева берётся из поля хвои, и на пустом поле (тестовый набор его не
+/// семплировал) всякое дерево читается как лиственное, то есть встаёт в
+/// нулевой пул.
+#[test]
+fn mixed_carries_two_pools_and_a_concrete_shape_one() {
+    let _sun = crate::map::default_sun();
+    for shape in TreeShape::CONCRETE {
+        let (built, _) = mesh_ten(shape, 9.0);
+        assert_eq!(built.pools.len(), 1, "{shape:?}");
+        assert!(built.crowns.iter().all(|crown| crown.pool == 0));
+    }
+
+    let (mixed, report) = mesh_ten(TreeShape::Mixed, 9.0);
+    assert_eq!(mixed.pools.len(), 2);
+    assert_eq!(report.shape, TreeShape::Mixed);
+    assert!(mixed.crowns.iter().all(|crown| crown.pool == 0));
+    for pool in &mixed.pools {
+        assert_eq!(pool.len(), TREE_VARIANTS);
+    }
+}
+
+/// Тени — один слитый слой на весь лес, полупрозрачный: цвет лежит в вершинах,
+/// материалу остаётся блендинг. Кроны в этот слой не попадают — они сущности.
+#[test]
+fn the_shadows_are_one_blended_layer() {
+    let _sun = crate::map::default_sun();
+    let (built, report) = mesh_ten(TreeShape::Cotton, 9.0);
+
+    assert_eq!(built.shadows.len(), 1);
+    let layer = &built.shadows[0];
+    assert_eq!(layer.name, "tree_shadows");
+    assert_eq!(layer.z, Z_TREE_SHADOW);
+    assert_eq!(layer.material, MaterialSpec::Blend);
+    assert_eq!(layer.builder.vertex_count(), report.shadow_vertices);
+    assert!(report.shadow_vertices > 0);
+}
+
+/// Соседние кроны различаются и оттенком, и порядком отрисовки: пять подряд
+/// стоящих деревьев берут все пять слотов яркости, а микрошаг по z растёт, так
+/// что пересекающиеся кроны рисуются в стабильном порядке.
+#[test]
+fn neighbouring_crowns_differ_in_tint_and_in_z() {
+    let _sun = crate::map::default_sun();
+    let (built, _) = mesh_ten(TreeShape::Cotton, 9.0);
+
+    let tints: std::collections::HashSet<usize> =
+        built.crowns[..5].iter().map(|crown| crown.tint).collect();
+    assert_eq!(tints.len(), 5, "оттенки пошли полосами");
+    assert_eq!(built.tints.len(), 5);
+    assert!(
+        built.crowns.windows(2).all(|pair| pair[1].z > pair[0].z),
+        "микрошаг по z не растёт"
+    );
+    assert!(built.crowns[0].z >= Z_TREE);
+}
+
+/// Ползунок в ноль — пустой лес: ни одной кроны и ни одной тени. Слой при этом
+/// всё равно описан, и его пустоту отбрасывает уже адаптер (`spawn_layer`) —
+/// второй дороги, на которой можно забыть деспавн, нет.
+#[test]
+fn a_zero_density_plants_nothing() {
+    let _sun = crate::map::default_sun();
+    let (built, report) = mesh_ten(TreeShape::Cotton, -1.0);
+
+    assert!(built.crowns.is_empty());
+    assert_eq!(report.crowns, 0);
+    assert_eq!(built.shadows.len(), 1);
+    assert!(built.shadows[0].builder.is_empty());
+}

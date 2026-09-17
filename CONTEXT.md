@@ -951,12 +951,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the counters the `info!` line used to be made of, as a value a test can assert on. The
   system is then a thin adapter: despawn the old tag, call `mesh_*`, hand the list to
   `surface::spawn_layers`, print the report. **Every layer module is on it** — fences,
-  rail, tram, wagons, industry, cars, roads, all of `spawn.rs` and buildings.
+  rail, tram, wagons, industry, cars, roads, all of `spawn.rs`, buildings and trees.
   `MaterialSpec` has four variants, the last of them `Roof`, added with the module that
-  needed it. **`buildings` is the one module that returns two lists**
-  (`BuildingMeshes { layers, shadows }`), because its shadows carry their own tag and
-  their own rebuild schedule; a tag is what the *adapter* despawns by, so it stays
-  outside `LayerMesh`. The two
+  needed it. Two modules return more than a `Vec<LayerMesh>`, each for its own reason.
+  **`buildings` returns two lists** (`BuildingMeshes { layers, shadows }`), because its
+  shadows carry their own tag and their own rebuild schedule; a tag is what the
+  *adapter* despawns by, so it stays outside `LayerMesh`. **`trees` is a scatter, not a
+  merged mesh** — a crown is an entity per tree (own tint, own z), so `mesh_trees`
+  returns `TreeMeshes { pools, tints, crowns, shadows }`: the crown pool as plain `Mesh`
+  values (a `Handle` is the world, exactly what `MaterialSpec` keeps out of a build), the
+  placements, and only the shadows as a `LayerMesh`. Its adapter uploads the pool, spawns
+  one entity per placement and hands the shadows to `spawn_layers` — so the merged layers
+  of the map all get their `DespawnOnExit` from `spawn_layer`, and the tree crowns are
+  the one scatter that writes its own, in one place. The two
   flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`
   resource beside `SurfaceMaterials` — an unconverted module still allocates its own on
   every rebuild — and both reach an adapter as one **`LayerMaterials`** system param.

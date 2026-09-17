@@ -310,7 +310,7 @@ step when adding one):
 | tram mesh | `map/tram.rs::rebuild_tram` (same helper) |
 | fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (through `surface::spawn_layer`) |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_building_meshes` (same helper, from `rebuild_buildings` and `spawn_map`) |
-| tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
+| tree crowns + shadows | `map/trees.rs::spawn_tree_meshes` (build — `::mesh_trees`, geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | blood pool and blood spatter — two **children** of the corpse, no component of their own: despawn is recursive | `human/look.rs::blood_pool` / `::blood_spatter` |
