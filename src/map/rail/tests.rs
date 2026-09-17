@@ -1,6 +1,7 @@
 use super::*;
 use crate::camera::{MAX_ZOOM, MIN_ZOOM};
 use crate::map::meshing::distance_to_path;
+use crate::map::osm::fixture;
 
 /// Ширины балласта из OSM (`osm/parse/tags.rs`): магистральный путь,
 /// light_rail / метро, заброшенный. Экранные пороги обязаны держаться на
@@ -313,4 +314,94 @@ fn degenerate_rails_draw_nothing() {
         steel.push_rails(&points, gauge, width, LinearRgba::WHITE, RibbonJoin::Round);
         assert!(steel.is_empty());
     }
+}
+
+// --- слой целиком ------------------------------------------------------
+//
+// Ниже — тесты на `mesh_rails`, то есть на слой, собранный без мира. До шва
+// сборка жила внутри системы Bevy, и достать её из теста было нечем:
+// проверять можно было только примитивы под ней.
+
+/// Путь через полкилометра карты — чтобы на любой ступени было что рисовать.
+fn straight_track() -> Vec<Vec2> {
+    vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)]
+}
+
+/// Ближняя ступень: и шпалы, и сталь на месте.
+fn near_bucket() -> RailZoomBucket {
+    RailZoomBucket::for_zoom(MIN_ZOOM)
+}
+
+#[test]
+fn a_track_builds_three_layers_bottom_up() {
+    let rails = [fixture::rail(straight_track(), NOMINAL_BED)];
+    let (layers, report) = mesh_rails(near_bucket(), &rails);
+
+    let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
+    assert_eq!(names, ["rail_ballast", "rail_ties", "rail_steel"]);
+
+    // три меша, а не один, ровно потому же, почему их три и в мире: шпала
+    // обязана лежать выше **любого** балласта, иначе развязка расслаивается
+    for pair in layers.windows(2) {
+        assert!(
+            pair[0].z < pair[1].z,
+            "{} лежит не ниже {}",
+            pair[0].name,
+            pair[1].name
+        );
+    }
+    assert_eq!(report.tracks, 1);
+    assert!(report.vertices > 0);
+}
+
+#[test]
+fn every_rail_layer_is_flat() {
+    let rails = [fixture::rail(straight_track(), NOMINAL_BED)];
+    let (layers, _) = mesh_rails(near_bucket(), &rails);
+
+    // путь и так весь из щебня, шпал и стали — фактура поверхности ему ни к чему
+    for layer in &layers {
+        assert_eq!(layer.material, MaterialSpec::Flat, "{}", layer.name);
+    }
+}
+
+#[test]
+fn a_tram_track_is_left_to_its_own_module() {
+    let tram = RailLine {
+        kind: RailKind::Tram,
+        ..fixture::rail(straight_track(), NOMINAL_BED)
+    };
+    let (layers, report) = mesh_rails(near_bucket(), &[tram]);
+
+    assert_eq!(
+        report.tracks, 0,
+        "трамвай рисует `map/tram.rs`, а не этот слой"
+    );
+    assert_eq!(report.vertices, 0);
+    // слои описаны, но пусты: пустой меш адаптер пропустит сам
+    assert!(layers.iter().all(|layer| layer.builder.is_empty()));
+}
+
+#[test]
+fn the_far_bucket_drops_the_steel() {
+    let rails = [fixture::rail(straight_track(), NOMINAL_BED)];
+    let far = RailZoomBucket::for_zoom(MAX_ZOOM);
+    assert!(
+        RAIL_LODS[far.index].steel.is_none(),
+        "дальняя ступень обязана быть без нитей"
+    );
+
+    let (layers, _) = mesh_rails(far, &rails);
+    let steel = layers
+        .iter()
+        .find(|layer| layer.name == "rail_steel")
+        .expect("слой стали описан на любой ступени");
+
+    // ступень только снимает детали: слой остаётся в списке, но пустой
+    assert!(steel.builder.is_empty());
+    let ballast = layers
+        .iter()
+        .find(|layer| layer.name == "rail_ballast")
+        .expect("балласт рисуется на каждой ступени");
+    assert!(!ballast.builder.is_empty());
 }
