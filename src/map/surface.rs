@@ -15,6 +15,7 @@
 //! фактуры разом — ползунок [`SurfaceStyle::texture`] (панель Surfaces), ноль
 //! возвращает прежние плоские заливки.
 
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
@@ -465,6 +466,29 @@ pub fn spawn_layer(
     };
 }
 
+/// Всё, во что разворачивается [`MaterialSpec`], одним параметром системы.
+///
+/// Одним, а не двумя ресурсами по отдельности: адаптеру слоя они нужны только
+/// вместе и только чтобы отдать их в [`spawn_layers`], а подпись системы
+/// пересборки и без них длинная — у промзоны и трамвая два отдельных `Res`
+/// уводили её за предел clippy. Идиома `ui/debug/mod.rs::DebugValues`.
+#[derive(SystemParam)]
+pub struct LayerMaterials<'w> {
+    flats: Res<'w, FlatMaterials>,
+    surfaces: Res<'w, SurfaceMaterials>,
+}
+
+impl LayerMaterials<'_> {
+    /// Описание — в хэндл. Единственное место, где это происходит.
+    fn resolve(&self, spec: MaterialSpec) -> LayerMaterial {
+        match spec {
+            MaterialSpec::Flat => LayerMaterial::Flat(self.flats.opaque.clone()),
+            MaterialSpec::Blend => LayerMaterial::Flat(self.flats.blend.clone()),
+            MaterialSpec::Surface(kind) => LayerMaterial::Surface(self.surfaces.handle(kind)),
+        }
+    }
+}
+
 /// Положить в мир всё, что собрал `mesh_*` одного модуля, под одной меткой.
 ///
 /// Это вторая половина шва: сборка сказала, **что** нарисовано, адаптер знает,
@@ -474,17 +498,12 @@ pub fn spawn_layer(
 pub fn spawn_layers(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    flats: &FlatMaterials,
-    surfaces: &SurfaceMaterials,
+    materials: &LayerMaterials,
     layers: impl IntoIterator<Item = LayerMesh>,
     tag: impl Bundle + Clone,
 ) {
     for layer in layers {
-        let material = match layer.material {
-            MaterialSpec::Flat => LayerMaterial::Flat(flats.opaque.clone()),
-            MaterialSpec::Blend => LayerMaterial::Flat(flats.blend.clone()),
-            MaterialSpec::Surface(kind) => LayerMaterial::Surface(surfaces.handle(kind)),
-        };
+        let material = materials.resolve(layer.material);
         spawn_layer(
             commands,
             meshes,
