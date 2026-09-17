@@ -16,7 +16,7 @@ use crate::map::parking;
 use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
 use crate::map::surface::{
-    FlatMaterials, LayerMaterial, LayerMesh, MaterialSpec, SurfaceKind, SurfaceMaterials,
+    LayerMaterial, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, SurfaceMaterials,
     spawn_layer, spawn_layers,
 };
 use crate::map::trees::TreeRowStyle;
@@ -365,8 +365,7 @@ pub fn mesh_tree_row_band(rows: &[TreeRow], style: &TreeRowStyle) -> Vec<LayerMe
 pub fn rebuild_tree_row_band(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    flats: Res<FlatMaterials>,
-    surfaces: Res<SurfaceMaterials>,
+    materials: LayerMaterials,
     style: Res<TreeRowStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<TreeRowBandTag>>,
@@ -377,8 +376,7 @@ pub fn rebuild_tree_row_band(
     spawn_layers(
         &mut commands,
         &mut meshes,
-        &flats,
-        &surfaces,
+        &materials,
         mesh_tree_row_band(&map.tree_rows, &style),
         TreeRowBandTag,
     );

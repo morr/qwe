@@ -28,7 +28,7 @@ use crate::map::footprint::{fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::roads::{RoadJoin, push_ribbon};
-use crate::map::surface::{FlatMaterials, LayerMesh, MaterialSpec, SurfaceMaterials, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::Z_FENCE;
@@ -96,8 +96,7 @@ const HEDGE_COLOR: Color = Color::srgb(0.298, 0.376, 0.243);
 pub fn rebuild_fences(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    flats: Res<FlatMaterials>,
-    surfaces: Res<SurfaceMaterials>,
+    materials: LayerMaterials,
     bucket: Res<FenceZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<FenceLayerTag>>,
@@ -109,8 +108,7 @@ pub fn rebuild_fences(
     spawn_layers(
         &mut commands,
         &mut meshes,
-        &flats,
-        &surfaces,
+        &materials,
         layers,
         FenceLayerTag,
     );

@@ -39,7 +39,7 @@ use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{shadow_dir, shadow_length_scale};
 use crate::settings::{
@@ -128,7 +128,9 @@ impl Default for CarStyle {
 }
 
 /// Слой машин — чтобы пересборка по зуму знала, что деспавнить.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый слой модуля, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct CarLayerTag;
 
 /// Ступени зума слоя машин: не размер машины, а **подробность кузова** —
@@ -256,7 +258,7 @@ pub fn measure_cars(
 pub fn rebuild_cars(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<CarZoomBucket>,
     style: Res<CarStyle>,
     // сглаживание осевой: ряд стоит по той же ломаной, по которой `map::roads`
@@ -303,21 +305,12 @@ pub fn rebuild_cars(
     let count = cars.len();
     let vertices = builder.vertex_count();
     let elapsed = started.elapsed();
-    if builder.is_empty() {
-        return;
-    }
     // слой с блендингом: тень машины полупрозрачна, кузов — нет
-    let material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    surface::spawn_layer(
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        builder,
-        Z_CAR,
-        "cars",
-        LayerMaterial::Flat(material),
+        &materials,
+        [LayerMesh::new(builder, Z_CAR, "cars", MaterialSpec::Blend)],
         CarLayerTag,
     );
     info!(

@@ -33,7 +33,7 @@ use bevy::prelude::*;
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
-use crate::map::surface::{FlatMaterials, LayerMesh, MaterialSpec, SurfaceMaterials, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
 
@@ -390,8 +390,7 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
 pub fn rebuild_rails(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    flats: Res<FlatMaterials>,
-    surfaces: Res<SurfaceMaterials>,
+    materials: LayerMaterials,
     bucket: Res<RailZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<RailLayerTag>>,
@@ -400,14 +399,7 @@ pub fn rebuild_rails(
         commands.entity(entity).despawn();
     }
     let (layers, report) = mesh_rails(*bucket, &map.rails);
-    spawn_layers(
-        &mut commands,
-        &mut meshes,
-        &flats,
-        &surfaces,
-        layers,
-        RailLayerTag,
-    );
+    spawn_layers(&mut commands, &mut meshes, &materials, layers, RailLayerTag);
     info!("{report}");
 }
 
