@@ -15,7 +15,10 @@ use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
-use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
+use crate::map::surface::{
+    FlatMaterials, LayerMaterial, LayerMesh, MaterialSpec, SurfaceKind, SurfaceMaterials,
+    spawn_layer, spawn_layers,
+};
 use crate::map::trees::TreeRowStyle;
 use crate::map::water::{mesh_water_areas, mesh_water_lines};
 use crate::settings::{
@@ -292,7 +295,9 @@ pub fn spawn_map(
 }
 
 /// Зелёная полоса под аллеей — чтобы пересборка стиля знала, что деспавнить.
-#[derive(Component)]
+///
+/// `Copy` — метку получают оба слоя подложки, кант и заливка, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct TreeRowBandTag;
 
 /// Подложка аллей: лента лесного цвета вдоль каждого `natural=tree_row`, со
@@ -304,14 +309,11 @@ pub struct TreeRowBandTag;
 /// Отдельная сущность, а не часть слитого меша лесов, ровно потому, что эти
 /// ручки переключаются на лету, а слой лесов собирается один раз на город и
 /// пересобирать его на каждый клик незачем.
-pub fn spawn_tree_row_band(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
-    surfaces: &SurfaceMaterials,
-    rows: &[TreeRow],
-    style: &TreeRowStyle,
-) {
+/// **Чистая функция и единственная дверь в слой** — как `fences::mesh_fences` и
+/// `rail::mesh_rails`. Отчёта у неё нет, и это не пропуск: подложка ничего не
+/// печатает в лог, а сочинять отчёт ради одинаковости — значит заводить число,
+/// которое никто не читает.
+pub fn mesh_tree_row_band(rows: &[TreeRow], style: &TreeRowStyle) -> Vec<LayerMesh> {
     let mut casing = MeshBuilder::default();
     // заливка — лесная поверхность, с той же фактурой, что лес под кронами
     let mut fill = MeshBuilder::with_surface_coords();
@@ -342,30 +344,28 @@ pub fn spawn_tree_row_band(
         );
     }
 
-    let flat = materials.add(Color::WHITE);
-    for (builder, z, name, material) in [
-        (
+    // кант — плоский белый, заливка — та же лесная фактура, что под кронами
+    vec![
+        LayerMesh::new(
             casing,
             Z_TREE_ROW_BAND_CASING,
             "tree_row_band_casing",
-            LayerMaterial::Flat(flat),
+            MaterialSpec::Flat,
         ),
-        (
+        LayerMesh::new(
             fill,
             Z_TREE_ROW_BAND,
             "tree_row_band",
-            LayerMaterial::Surface(surfaces.handle(SurfaceKind::Wood)),
+            MaterialSpec::Surface(SurfaceKind::Wood),
         ),
-    ] {
-        spawn_layer(commands, meshes, builder, z, name, material, TreeRowBandTag);
-    }
+    ]
 }
 
 /// Пересборка подложки аллей после правки её настроек из UI.
 pub fn rebuild_tree_row_band(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    flats: Res<FlatMaterials>,
     surfaces: Res<SurfaceMaterials>,
     style: Res<TreeRowStyle>,
     map: Res<MapData>,
@@ -374,12 +374,12 @@ pub fn rebuild_tree_row_band(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    spawn_tree_row_band(
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        &mut materials,
+        &flats,
         &surfaces,
-        &map.tree_rows,
-        &style,
+        mesh_tree_row_band(&map.tree_rows, &style),
+        TreeRowBandTag,
     );
 }

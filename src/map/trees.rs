@@ -130,7 +130,7 @@ pub struct TreeRowStyle {
     /// игнорируются и ряд подчиняется ползунку наравне с лесом. Меняет позиции,
     /// а не вид, поэтому раскладка под неё считается на загрузке заранее.
     pub osm_spacing: bool,
-    /// Стык ленты зелёной подложки аллеи (`map::spawn::spawn_tree_row_band`).
+    /// Стык ленты зелёной подложки аллеи (`map::spawn::mesh_tree_row_band`).
     pub join: RoadJoin,
     /// Сглаживание той же подложки — Chaikin, как у дорог.
     pub smoothing: RoadSmoothing,
