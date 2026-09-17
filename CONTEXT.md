@@ -209,8 +209,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `building=house` ≤ 400 m²) traced in OSM as a skewed quad or a skewed **L** (six vertices,
   one reflex corner; worst corner 2°–35° off square) is replaced at parse by a rectangle of
   the same centroid and area, or by a right-angled L; not when a vertex is shared with
-  another outline or line. Everything downstream — navmesh, doors, roof, render seed — sees
-  the straightened outline.
+  another building, a line, or one of the three area layers whose **edge is drawn**
+  (`parking`, `pitches`, `water`) — the fills a house merely lies on top of, `landuse`
+  among them, do not count. Everything downstream — navmesh, doors, roof, render seed —
+  sees the straightened outline.
 - **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose outline
   reaches into a street's **drawn** sidewalk band (half the class width + `sidewalk_width` +
   2 m) is moved at parse, whole and with its doors, straight away from the street, by at
@@ -240,8 +242,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
   long thin shed stays low), and industrial / commercial / church footprints are measured
   in **metres of span** rather than storeys. A **private house** — `building=house`, or an
-  untagged box up to 250 m² (the pitched-cohort border, one for roof, walls and height) — has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives
-  in the pitched roof), two in the rest; a yard shed (≤ 40 m²) is 2.4–3 m.
+  untagged box up to 250 m² (the pitched-cohort border, one for roof, walls and height) —
+  has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives in the pitched roof),
+  two in the rest; a yard shed (≤ 40 m²) is 2.4–3 m.
   A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
   storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large
   squarish school never comes out a tower.
@@ -249,8 +252,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   from the building's own seed — the one that already picks its **Roof material** — so it
   is stable across rebuilds and modes. The tag always wins. Before this the whole 69 %
   took one of three numbers (3 / 6 / 15 m) and Tula's height distribution was median 15 m,
-  p90 15 m; it is now median 8 m, p90 15 m, and the mix is printed in the `building
-  meshing:` log line.
+  p90 15 m; it is now median 3 m, p90 15 m — the median is the one-storey private house,
+  which is what most of the untagged 68 % turns out to be — and the mix is printed in the
+  `building meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
   Church(Sacred) | Public | Other`, from `building=*` and — whenever that value is outside the
@@ -296,16 +300,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   leftover interior as the ridge plane — is now the rare case: 3 in 100 large houses
   (≥ 120 m²) and whatever outline no gable form fits. Everything else is **flat** — a real
   flat roof with its material and its clutter. Courtyard buildings stay flat. The mix is
-  printed in the `building meshing:` log line (`roofs:`). A **tent** (`TentRoof`, faces to one apex)
-  is one more kind and no house ever gets it: a church and a fortress are *assigned* their
-  roof (**`LandmarkRoof`** — `temples::roof_form` by faith, `fortress::roof_form`: tent on a
-  tower, flat walkway on a wall), stepping down where the outline refuses.
+  printed in the `building meshing:` log line (`roofs:`). A **tent** (`TentRoof`, faces to
+  one apex) is one more kind and no house ever gets it: a church and a fortress are
+  *assigned* their roof (**`LandmarkRoof`** — `temples::roof_form` by faith,
+  `fortress::roof_form`: tent on a tower, flat walkway on a wall), stepping down where the
+  outline refuses.
   **`RoofShape`** is the same kinds as an *input* (every `GableForm` and `Dormer` included):
   the city never asks for one, `roof_gallery` does, to stand one outline under all of them —
   and a refusal there stays
   a refusal instead of being swapped for another shape the way `roofing` swaps it.
-  **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, hip inset,
-  either ridge rise) so the gallery prints them rather than restating them.
+  **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, the
+  gable's worst corner overhang, hip inset, either ridge rise) so the gallery prints them
+  rather than restating them.
   Detail in the `osm-map` skill.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
   therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
@@ -549,7 +555,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   roof beside it. This second, small layer sits **over** them and carries exactly the
   missing piece: for each building, its **taller** neighbours' shadow sweeps clipped to
   its own footprint — merged, not stacked, so two shadows on one roof are not double
-  darkness. A neighbour casts only if it is `SHADOW_MIN_DROP` (3 m) taller; in 2.5D the
+  darkness. **A pitched roof takes none** (`is_pitched` targets are skipped): the patch is
+  flat and slid off the slopes, so a tall block no longer darkens the private houses beside
+  it — its ground shadow still lies under them.
+  A neighbour casts only if it is `SHADOW_MIN_DROP` (3 m) taller; in 2.5D the
   result is lifted by the target's own `Lean`, so it lands on the roof as drawn — and the
   **drawn bodies** of the neighbours 2.5D paints *after* the target (later in
   `order::draw_order`, not by the base key under it — the order is built **once** per
@@ -962,7 +971,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
     nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
-    the outer edge of its sidewalk, if it has one — is at most `STITCH_MAX_GAP` 6 m away and the segment crosses no building or water. A street
+    the outer edge of its sidewalk, if it has one — is at most `STITCH_MAX_GAP` 6 m away
+    and the segment crosses no building or water. A street
     is carried only by a street — a drive ending on a footway still hangs, since the sand
     ribbon lies under the asphalt; a footway is carried by anything.
   - **Driveway crossing** — a footway way under 20 m both of whose ends are **ends of

@@ -410,11 +410,25 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   Skipped when any vertex is **shared** with another outline or line (terraced houses, a
   fence along the wall, an arch — squared, they would open a gap) or when a vertex would
   move over `SQUARE_SHIFT_MAX` 3 m (2.5 m first; on Tula that left exactly one lone
-  crooked house, way 968378327 at 27° and 2.84 m). A `landuse` block's outline is not
-  counted as sharing: private houses are routinely traced onto the block's boundary.
-  Runs after `attach_entrances` (they match by exact
-  vertex, and an attached door moves with its vertex) and before door generation and
-  tree planting. The price: the render seed is the first vertex, so a squared house rolls
+  crooked house, way 968378327 at 27° and 2.84 m). **Which outlines count as sharing is
+  an explicit list, not "every outline on the map"** (`vertex_uses`): the buildings, all
+  the line layers, and **three of the eight area layers** — `parking`, `pitches`,
+  `water`. Those three are drawn as a surface of their own with markings on it, and a lot
+  carries parked cars as well, so a house that steps off that edge reads on the frame,
+  which is the whole subject of issue #27; `parks`, `grass`, `woods` and `sand` lie
+  *under* the house and show no seam, and a `landuse` block's outline is not counted
+  because private houses are routinely traced onto the block's boundary. Tula, buildings
+  with a vertex on an area layer (counted on the cache, so an upper bound — most of them
+  fail the area, skew or shift gates anyway): `landuse` 35, `parks` 29, `grass` 15,
+  `pitches` 13, `parking` 10, `woods` 5, `water`/`sand` 0. So the three counted layers put
+  at most 23 buildings of 7975 out of reach and the other 43 stay eligible.
+  `Obstacles` (the pull below) carries its own, narrower list and does not close this
+  hole — it is about what a moving house bumps into, not about a vertex two outlines share.
+  Runs after `attach_entrances` (they match by the same centimetre
+  `vertex_key`, and an attached door is carried to the straightened outline by that
+  same key — an entrance holds the *node's* coordinate, not the vertex's, so an exact
+  `==` would silently leave the door behind while the house moved) and before door
+  generation and tree planting. The price: the render seed is the first vertex, so a squared house rolls
   its material and inferred storeys anew. Tula: 207 (193 under the 20° / 250 m² / 2.5 m
   thresholds; python estimate from the cache, the exact count is the `osm parse:` line).
 - **Houses pulled off the sidewalks** (`parse.rs::pull_houses_off_sidewalks`) — the street's
@@ -2060,7 +2074,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
         feathered band there would draw a light rim around every roof;
       - a neighbour counts only if it is `SHADOW_MIN_DROP` (3 m) taller. Below that the
         shadow reaches the eaves at most, and the pair test would run for nearly every
-        pair in a city where the median height is 8 m;
+        pair in a city whose median height is one storey (Tula: 3 m);
       - casters come from a grid of sweep boxes (`SHADOW_CELL` 48 m, just over the longest
         shadow `SHADOW_LENGTH_RANGE` gives **at the default sun** — a low sun stretches
         sweeps past a cell, and that costs selectivity, not correctness: a sweep box is
@@ -2269,7 +2283,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       triangles and the high long wall.
     - **Cross gable** (`cross_gable`) — the outline is cut into rectangles by every
       combination of chords from its reflex vertices (`rect_splits` over
-      `garages::cut_at`, ≤ 4 pieces, ≤ 24 splits), tried from the largest main body down;
+      `garages::reflex_cuts`, ≤ 4 pieces, ≤ 24 splits — the cap stops the enumeration
+      itself, not just its output), tried from the largest main body down;
       each piece must fill its `min_area_rect` to `RECT_FILL_MIN`. The main body takes a
       plain gable, every other piece attaches (`Wing::attach`, tolerance 0.6 m) to an
       already covered one: at its **long side** its ridge runs across and into the
@@ -2298,7 +2313,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     rectangle, not the outline (real roofs overhang), which is why it is only applied when
     the outline fills the rectangle to `RECT_FILL_MIN` 0.85 — an L-shaped house would
     wear a rectangle sticking out of it, so it takes a **cross gable** instead (it stayed
-    *flat* until hip roofs existed, and a hip until the cross gable did). **Fill alone is not enough**, so the rectangle's corners
+    *flat* until hip roofs existed, and a hip until the cross gable did). **Fill alone is
+    not enough**, so the rectangle's corners
     must also lie on the walls — no corner farther than `GABLE_OVERHANG_MAX` 0.6 m from
     the outline (`gable_rect`, reported as `ShapeFacts::gable_overhang`). A skewed quad
     fills its rectangle well and still leaves a corner of the roof over nothing: Tula way
@@ -2306,7 +2322,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     no wall came down from under that corner, so the gable end read as cut off (reported
     from a screenshot). About 550 of Tula's ~4 800 gable candidates exceed 0.6 m (measured
     before the gable forms) and go past the rectangle forms: to a **cross gable** when the
-    outline cuts into rectangles, else to a hip, which follows the outline itself. Slope tone: base roof colour mixed toward
+    outline cuts into rectangles, else to a hip, which follows the outline itself. Slope
+    tone: base roof colour mixed toward
     white/black by the slope's plan normal against `map::sun_light()` (`SLOPE_LIT_MIX` 0.14 /
     `SLOPE_SHADED_MIX` 0.11, through the same `shade_by_light` helper as the walls, in
     sRGB), softer than walls. In 2.5D the ridge is lifted a further
@@ -2399,7 +2416,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     tower seated anywhere else ends its wall in the middle of the roof, and a tower a few
     tens of centimetres inside a wall leaves a sliver of roof along it — both reported off
     Свято-Никольский (way 234273451). The outline is cut by a chord from every reflex vertex
-    along its own wall (`garages::cut_at`, the cross-gable trick), the pieces reaching the
+    along its own wall (`garages::reflex_cuts`, the cross-gable trick), the pieces reaching the
     plan's west end within `TOWER_PIECE_REACH` 1 m are kept, and of those the **smallest**
     that fills its `min_area_rect` to `TOWER_PIECE_FILL` 0.9, is no thinner than
     `TOWER_SIDE_MIN` and no wider than `TOWER_PIECE_SIDE_MAX` 16 m wins. Smallest, because at
@@ -2533,8 +2550,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     still come out different. **A tag always wins**; the inference runs only where
     `PolyArea::height` is `None`.
   - **`height_mix`** puts the result in the `building meshing:` log line
-    (`31% tagged, median 8 m, p90 15 m, max 82 m`) — a height distribution is exactly the
-    thing a screenshot cannot show, and that line is how this was tuned.
+    (Tula: `32% tagged, median 3 m, p90 15 m, max 82 m`) — a height distribution is exactly
+    the thing a screenshot cannot show, and that line is how this was tuned. **Re-read it
+    after every change to a table here**: the median was 8 m while a private house was
+    5–8 m, and one storey plus the untagged-box border moved it to the house's own 3 m —
+    the median is now the private sector, and it is p90 that carries the blocks.
 - **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wgsl`) — what
   the roof is *covered with*. The goal is the aerial photo: from above, a roof is a
   **material** first (rolled bitumen with its seams and repair patches, gravel ballast,
@@ -3098,10 +3118,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     - **Shapes, above** (`shapes.rs`) — five outlines (rectangle, near-square, L, U, and a
       dumbbell: a big body on a thin neck) each under every shape — flat, gable, gable with
       a dormer, half-hip, gambrel, lean-to, cross gable, hip — **and** under the game's own
-      choice, nine columns (`shapes.rs::COLUMNS`). Under every house the shape that actually reached the
+      choice, nine columns (`shapes.rs::COLUMNS`). Under every house the shape that
+      actually reached the
       mesh — a refused one says so instead of being quietly swapped, which is what
-      `RoofShape` exists for — and the ridge rise in real metres; beside every row the two
-      numbers the choice is made from, rectangle fill and hip inset, straight from
+      `RoofShape` exists for — and the ridge rise in real metres; beside every row the
+      three numbers the choice is made from — rectangle fill, the gable's worst corner
+      overhang and hip inset — straight from
       `roofs::shape_facts`. That is the only way to tell a hip from a flat roof with a
       chamfer on a picture, and a gable's rise from a hip's.
     - **Every house is a house** — `push_house`, the per-building body of
@@ -3277,7 +3299,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   from a screenshot). The wall is the passage offset by half its width, only its runs
   **inside** the outline (there the body covers it wholly, since the sill is under the
   lift, and it shows only through the hole), only the side facing `-Lean::dir()`, flat
-  `wall_colors` darkened by `TUNNEL_SHADE` 0.45 (0.35 blended with the facade beside it, 0.55 was too dark), no cladding code, and pushed **before**
+  `wall_colors` darkened by `TUNNEL_SHADE` 0.45 (0.35 blended with the facade beside it,
+  0.55 was too dark), no cladding code, and pushed **before**
   the house's walls so the piers and lintel lie over it.
   **The wall texture does not see that cut, so the cells the opening bites into are
   handed to it whole** (`WallCells`, `WallMark::Solid` — the very patch a door lays under
