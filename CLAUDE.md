@@ -302,14 +302,14 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layer`) |
-| road layers (sidewalks/alleys/roads/bridge shadows/bridges/walls + casings) | `map/roads.rs::spawn_roads` (same helper) |
-| rail layers (ballast/ties/steel) | `map/rail.rs::spawn_rails` |
+| road layers (sidewalks/alleys/roads/bridge shadows/bridges/walls + casings) | `map/roads.rs::rebuild_roads` (same helper) |
+| rail layers (ballast/ties/steel) | `map/rail.rs::rebuild_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layer`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
 | industry layers (pipes + cylinder shadow/wall/top) | `map/industry.rs::rebuild_industry` (same helper) |
-| tram mesh | `map/tram.rs::spawn_tram` |
+| tram mesh | `map/tram.rs::rebuild_tram` (same helper) |
 | fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (through `surface::spawn_layer`) |
-| building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_buildings` (same helper) |
+| building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_building_meshes` (same helper, from `rebuild_buildings` and `spawn_map`) |
 | tree crowns + shadows | `map/trees.rs::spawn_trees` (geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |

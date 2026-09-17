@@ -657,7 +657,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `references/trees.md`).
 - **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world
   are two things, and this is the line between them. A **converted** module offers one
-  pure function, `mesh_<layer>(данные, стиль) -> (Vec<LayerMesh>, <Layer>Report)`, and
+  pure function, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`, and
   its system is a thin adapter: despawn by tag, call it, hand the list to
   `surface::spawn_layers`, print the report.
   - **`LayerMesh`** — `{ builder, z, name, material: MaterialSpec }`, **one type for
@@ -695,6 +695,21 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (13 surface and paint layers plus
     the tree-row band) and finally `buildings`. `surface::spawn_layer` (one layer, a
     ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
+  - **`cars` is the one whose build is a layer rather than a mesh.** Every other
+    `mesh_*` takes the data it draws; `mesh_cars(bucket, style, smoothing, map, layout)`
+    takes the whole `MapData` (as `mesh_roads` does) and does the **assembly** as well —
+    junction breaks, `Districts`, `park_cars`, `fill_lots` — because that assembly is
+    exactly what the cutoff and the toggle gate. Off, or past the last zoom step, none
+    of it runs and the list is empty, so a hidden layer still costs what the old
+    `return` inside the system cost. The private `mesh_bodies(&[Car], CarDetail)`
+    underneath is only the mesh; it carried the name `mesh_cars` until the layer
+    function took it. `CarReport::detail` is an `Option<CarDetail>`, and `None` is what
+    the `cars: hidden` log line prints — every other counter is then zero.
+    **The bench and the gallery still assemble on their own, deliberately**:
+    `measure_cars` times `breaks` / `districts` / `parking` as separate rows and meshes
+    all three detail steps, which one call cannot report — the same reason
+    `buildings::measure_layers` repeats the steps `mesh_buildings` takes; `cars_mesh` is
+    the gallery's one door and builds with neither lots nor districts on purpose.
   - **Buildings was last, and not for being big.** Two things are peculiar to it and
     worth knowing before touching it:
     - it is the only module needing **`MaterialSpec::Roof`**, and the variant was added
@@ -861,7 +876,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the width, 1.2–3 m per side). It sits under every road ribbon for the casing reason: a
   crossing street's fill covers it and the sidewalk ends at the junction the way a real
   one does. A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
-  lane markings, but the bridge branch of `spawn_roads` `continue`s into `bridge_casings`
+  lane markings, but the bridge branch of `mesh_roads` `continue`s into `bridge_casings`
   + `bridges` *before* the sidewalk block — a deck gets no band ever, at any width or
   `RoadStyle::sidewalks`. It would hang a metre or three past the deck edge over the
   water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally.
@@ -932,7 +947,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   drawn overlapping in one opaque layer, and `Round` caps are what makes a junction *look*
   joined — the caps of the ways meeting at a node overlap into a rounded blob, exactly
   how osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
-  round`). The fill order is **narrow first, wide last** (`spawn_roads` sorts by width), so
+  round`). The fill order is **narrow first, wide last** (`mesh_roads` sorts by width), so
   the main road's fill and its gapped line lie over the side street's cap. This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
@@ -957,7 +972,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     across the pavement, the drive again — the sand ribbon lay under the asphalt and cut a
     strip of ground across the entry. A crosswalk is safe from the rule by construction: its
     ends are on pavement footways and it crosses the carriageway with an interior node.
-    The substitution is `drawn: Vec<&RoadLine>` in `spawn_roads`, and everything below reads
+    The substitution is `drawn: Vec<&RoadLine>` in `mesh_roads`, and everything below reads
     `drawn`, not `map.roads`. Tula: 8.
   - **Stitches** (`stitches`) — a loose end (not closed, not a bridge or a passage, no other
     road at its node that **carries** it: a street is carried only by a street, an alley by
@@ -1822,8 +1837,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
     style.smoothing)`, never the raw OSM points), so Smoothing moves the cars with the
     asphalt. The invisible case
-    goes through the same early return as the far zoom bucket: despawn the old layer, build
-    no new one, so no second path can forget the despawn.
+    takes the same road as the far zoom bucket, and since the seam both of them live in
+    `mesh_cars` rather than in the system: the adapter despawns the old layer
+    unconditionally and is handed an empty list, so no second path can forget the
+    despawn — and it is testable, which behind a `return` it was not.
   - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`), and since the body has detail in
     it the table is no longer one threshold but four: `CAR_DETAIL_MAX_ZOOM` (0.18 m/px, a
     24-px car — glass and mirrors still read) → `CarDetail::Full`, `CAR_SILHOUETTE_MAX_ZOOM`

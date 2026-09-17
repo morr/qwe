@@ -942,7 +942,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   individual entities; tree and building **shadows** are each one merged mesh.
 - **The layer seam** — building a layer and putting it in the world are two things, and
   the line between them is `map/surface.rs`. A converted module offers **one pure
-  function**, `mesh_<layer>(данные, стиль) -> (Vec<LayerMesh>, <Layer>Report)`: no
+  function**, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`: no
   `Commands`, no `Assets`, so the game, a test and the offline bench all call it —
   the same call, not three paths. **`LayerMesh`** is one type for every layer of the map
   (builder + z rung + `Name` string + `MaterialSpec`); **`MaterialSpec`** (`Flat` /
