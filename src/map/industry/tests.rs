@@ -131,3 +131,103 @@ fn the_near_half_becomes_the_wall_and_leaves_no_bottom() {
     push_wall(&mut upright, &tank, Vec2::ZERO);
     assert!(upright.is_empty());
 }
+
+// --- слой целиком ------------------------------------------------------
+//
+// Тесты на `mesh_industry`. До шва слой собирался внутри системы Bevy, и
+// тумблер видимости — как и у трамвая — проверить было нечем: он жил за ранним
+// возвратом в самой системе.
+
+/// Пять слоёв снизу вверх, ровно в том порядке, в каком они уходят в мир.
+const LAYERS: [&str; 5] = [
+    "pipe_shadows",
+    "pipes",
+    "industry_shadows",
+    "industry_walls",
+    "industry_tops",
+];
+
+fn chimney() -> Structure {
+    structure(StructureKind::Chimney, 2.5, 60.0)
+}
+
+fn visible() -> IndustryStyle {
+    IndustryStyle { visible: true }
+}
+
+#[test]
+fn a_cylinder_builds_five_layers_bottom_up() {
+    let (layers, report) = mesh_industry(
+        &[chimney()],
+        &[],
+        BuildingHeightMode::ExtrusionShadowsTint,
+        &visible(),
+    );
+
+    let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
+    assert_eq!(names, LAYERS);
+    for pair in layers.windows(2) {
+        assert!(
+            pair[0].z < pair[1].z,
+            "{} лежит не ниже {}",
+            pair[0].name,
+            pair[1].name
+        );
+    }
+    assert_eq!(report.structures, 1);
+    assert!(report.vertices > 0);
+}
+
+#[test]
+fn only_the_shadows_are_blended() {
+    let (layers, _) = mesh_industry(
+        &[chimney()],
+        &[],
+        BuildingHeightMode::ExtrusionShadowsTint,
+        &visible(),
+    );
+
+    // блендинг нужен ровно тому, что полупрозрачно: верх и стена непрозрачны
+    for layer in &layers {
+        let expected = if layer.name.contains("shadow") {
+            MaterialSpec::Blend
+        } else {
+            MaterialSpec::Flat
+        };
+        assert_eq!(layer.material, expected, "{}", layer.name);
+    }
+}
+
+#[test]
+fn the_toggle_off_draws_nothing() {
+    let (layers, report) = mesh_industry(
+        &[chimney()],
+        &[],
+        BuildingHeightMode::ExtrusionShadowsTint,
+        &IndustryStyle { visible: false },
+    );
+
+    assert_eq!(report.structures, 0);
+    assert_eq!(report.vertices, 0);
+    // слои описаны и пусты: деспавн в адаптере безусловен, забыть его негде
+    assert_eq!(layers.len(), LAYERS.len());
+    assert!(layers.iter().all(|layer| layer.builder.is_empty()));
+}
+
+#[test]
+fn a_flat_mode_casts_no_cylinder_shadow() {
+    let shadow_of = |mode| {
+        let (layers, _) = mesh_industry(&[chimney()], &[], mode, &visible());
+        layers
+            .into_iter()
+            .find(|layer| layer.name == "industry_shadows")
+            .expect("слой тени описан в любом режиме")
+            .builder
+            .vertex_count()
+    };
+
+    // в Facade и Extrusion 2.5-метровая труба — кружок и больше ничего
+    assert_eq!(shadow_of(BuildingHeightMode::Facade), 0);
+    assert_eq!(shadow_of(BuildingHeightMode::Extrusion), 0);
+    assert!(shadow_of(BuildingHeightMode::ExtrusionShadowsTint) > 0);
+}
