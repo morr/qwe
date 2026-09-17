@@ -15,10 +15,7 @@ use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
-use crate::map::surface::{
-    LayerMaterial, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, SurfaceMaterials,
-    spawn_layer, spawn_layers,
-};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers};
 use crate::map::trees::TreeRowStyle;
 use crate::map::water::{mesh_water_areas, mesh_water_lines};
 use crate::settings::{
@@ -115,14 +112,15 @@ fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim)
     }
 }
 
-// материалов у карты теперь два комплекта (поверхности и кровли), и вместе с
-// мешами, `MapData` и двумя стилями это восьмой параметр системы
+// `color_materials` здесь остался ровно ради `spawn_buildings` — последнего
+// модуля, который ещё строит слои внутри себя; всё остальное идёт через
+// `materials: LayerMaterials`
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    surfaces: Res<SurfaceMaterials>,
+    mut color_materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     roof_material: Res<RoofMaterialHandle>,
     building_bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
@@ -229,7 +227,14 @@ pub fn spawn_map(
         warn!("map meshing: {skipped} degenerate polygons skipped");
     }
 
-    for (builder, z, name, kind) in [
+    // Покрытия и разметка одним списком. Разметка мест и полей — плоская:
+    // это белая краска, а не фактура покрытия.
+    //
+    // Тега у этих слоёв нет (`()`), и это не упущение шва, а состояние дел:
+    // их никто не запрашивает, а значит и не пересобирает — они живут ровно
+    // столько, сколько живёт город. Дать им метку имело бы смысл вместе с
+    // причиной пересобирать, а её пока нет.
+    let surfaces_and_paint: Vec<LayerMesh> = [
         (ground, Z_GROUND, "ground", SurfaceKind::Ground),
         (works, Z_LANDUSE, "landuse_works", SurfaceKind::Ground),
         (yards, Z_LANDUSE_YARD, "landuse_yards", SurfaceKind::Yard),
@@ -241,48 +246,40 @@ pub fn spawn_map(
         (parking, Z_PARKING, "parking", SurfaceKind::Street),
         (water, Z_POND, "water", SurfaceKind::Water),
         (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
-    ] {
-        spawn_layer(
-            &mut commands,
-            &mut meshes,
-            builder,
-            z,
-            name,
-            LayerMaterial::Surface(surfaces.handle(kind)),
-            (),
-        );
-    }
-
-    roads::spawn_roads(
+    ]
+    .into_iter()
+    .map(|(builder, z, name, kind)| LayerMesh::new(builder, z, name, MaterialSpec::Surface(kind)))
+    .chain(
+        [
+            (pitch_lines, Z_PITCH_LINES, "pitch_lines"),
+            (parking_lines, Z_PARKING_LINES, "parking_lines"),
+        ]
+        .into_iter()
+        .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Flat)),
+    )
+    .collect();
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        &mut materials,
-        &surfaces,
-        *road_style,
-        &map,
+        &materials,
+        surfaces_and_paint,
+        (),
     );
 
-    // разметка мест и полей — своими мешами поверх покрытия: это белая
-    // краска, а не фактура покрытия, и потому плоский материал
-    for (builder, z, name) in [
-        (pitch_lines, Z_PITCH_LINES, "pitch_lines"),
-        (parking_lines, Z_PARKING_LINES, "parking_lines"),
-    ] {
-        spawn_layer(
-            &mut commands,
-            &mut meshes,
-            builder,
-            z,
-            name,
-            LayerMaterial::Flat(materials.add(Color::WHITE)),
-            (),
-        );
-    }
+    let (road_layers, road_report) = roads::mesh_roads(&map, *road_style);
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        road_layers,
+        roads::RoadLayerTag,
+    );
+    info!("{road_report}");
 
     buildings::spawn_buildings(
         &mut commands,
         &mut meshes,
-        &mut materials,
+        &mut color_materials,
         &roof_material,
         buildings::BuildingPlan {
             mode: *height_mode,
