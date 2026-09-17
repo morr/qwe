@@ -950,11 +950,17 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   which is the only thing that would have dragged Bevy into the build. The report carries
   the counters the `info!` line used to be made of, as a value a test can assert on. The
   system is then a thin adapter: despawn the old tag, call `mesh_*`, hand the list to
-  `surface::spawn_layers`, print the report. **Converted so far: `map/fences.rs`,
-  `map/rail.rs`.** The rest still build inside their system; `surface::spawn_layer` (one
-  layer, a ready `LayerMaterial`) stays for them. The two flat `ColorMaterial`s
-  `MaterialSpec` names live in **`FlatMaterials`**, a `Startup` resource beside
-  `SurfaceMaterials` — an unconverted module still allocates its own on every rebuild.
+  `surface::spawn_layers`, print the report. **Converted: `fences`, `rail`, `tram`,
+  `wagons`, `industry`, `cars` and the tree-row band of `spawn.rs` — seven of ten.**
+  What is left is `roads` (9 layers), the 13 surface layers of `spawn_map`, and
+  `buildings`, which needs a fourth `MaterialSpec` variant for the roof material;
+  `surface::spawn_layer` (one layer, a ready `LayerMaterial`) stays for them. The two
+  flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`
+  resource beside `SurfaceMaterials` — an unconverted module still allocates its own on
+  every rebuild — and both reach an adapter as one **`LayerMaterials`** system param.
+  **A zoom cutoff and a visibility toggle belong in the build, not in the system**: an
+  invisible tram or a far-bucket fence is an empty layer list, so the despawn in the
+  adapter is unconditional and there is no second path that could skip it.
   **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are

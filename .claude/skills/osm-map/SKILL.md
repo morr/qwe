@@ -672,20 +672,38 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`FlatMaterials`** (`Startup`, beside `SurfaceMaterials`) holds the two flat
     `ColorMaterial`s the spec names. An **unconverted** module still does
     `materials.add(...)` on every rebuild — that is a per-rebuild allocation of a
-    material that never changes, and it goes away with the conversion.
+    material that never changes, and it goes away with the conversion. Both resources
+    reach an adapter as one **`LayerMaterials`** system param (`#[derive(SystemParam)]`,
+    the `ui/debug/mod.rs::DebugValues` idiom), which is also where `resolve` lives. Two
+    separate `Res` were tried first and pushed `rebuild_tram` and `rebuild_industry` to
+    eight arguments, past clippy's limit; bundling them left every adapter shorter than
+    it had been before the seam.
+  - **A zoom cutoff or a visibility toggle belongs in the build, not in the system.** A
+    far-bucket fence, an invisible tram, an invisible industry layer all return an empty
+    layer list, so the despawn in the adapter is unconditional. That is what the prose in
+    `map/mod.rs` was already worrying about from the other side — «второй дороги, на
+    которой можно забыть деспавн, нет» — and it is now a property of the shape rather
+    than a thing to remember. It also makes the toggle testable: it used to live behind
+    a `return` inside a Bevy system, where no test could reach it.
   - **The report is a value, not a log line.** `FenceReport`, `RailReport`: the counters
     `info!` used to be made of, returned so a test can assert on them. `info!` is also
     the thing App Nap mismeasures on macOS, so a returned `elapsed` is the only honest
     one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
     a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
     a number nobody reads.
-  - **Converted so far: `map/fences.rs`, `map/rail.rs`, and the tree-row band in
-    `map/spawn.rs`.** The rest still build inside their system, and
-    `surface::spawn_layer` (one layer, a ready `LayerMaterial`) stays for them — the
-    13 surface layers of `spawn_map` and the 9 of `spawn_roads` among them. Converting a
-    module means: lift the build to `mesh_*`, derive `Clone, Copy` on its `*LayerTag`
-    (`spawn_layers` hands the tag to every layer), drop its `materials.add(...)`, and
-    write the tests the seam has just made possible.
+  - **Converted — seven of ten:** `fences`, `rail`, `tram`, `wagons`, `industry`,
+    `cars`, and the tree-row band of `spawn.rs`. **Left:** `roads` (9 layers, and the
+    275-line `spawn_roads` that already ends in a table of exactly this shape), the 13
+    surface layers of `spawn_map` (they spawn with tag `()`, so they cannot be rebuilt
+    at all today), and `buildings`, which needs a **fourth `MaterialSpec` variant** for
+    the roof material. `surface::spawn_layer` stays for them.
+  - **Converting a module** means: lift the build to `mesh_*` returning
+    `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
+    tag to every layer), move any cutoff or toggle into the build, drop its
+    `materials.add(...)` and its now-redundant `is_empty` guard, and write the tests the
+    seam has just made possible. Do not add a `MaterialSpec` variant before a module
+    needs it — the `Surface` one sat unconstructed until the tree-row band arrived, and
+    the compiler said so.
 - **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
   `Material2d` with its own vertex + fragment stage) — procedural texture without a single
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
