@@ -951,10 +951,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the counters the `info!` line used to be made of, as a value a test can assert on. The
   system is then a thin adapter: despawn the old tag, call `mesh_*`, hand the list to
   `surface::spawn_layers`, print the report. **Converted: `fences`, `rail`, `tram`,
-  `wagons`, `industry`, `cars` and the tree-row band of `spawn.rs` — seven of ten.**
-  What is left is `roads` (9 layers), the 13 surface layers of `spawn_map`, and
-  `buildings`, which needs a fourth `MaterialSpec` variant for the roof material;
-  `surface::spawn_layer` (one layer, a ready `LayerMaterial`) stays for them. The two
+  `wagons`, `industry`, `cars`, `roads` (9 layers) and all of `spawn.rs` (the 13
+  surface and paint layers plus the tree-row band) — nine of ten.** What is left is
+  **`buildings`**, which needs a fourth `MaterialSpec` variant for the roof material and
+  spawns under two different tags; `surface::spawn_layer` (one layer, a ready
+  `LayerMaterial`) stays for it. The two
   flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`
   resource beside `SurfaceMaterials` — an unconverted module still allocates its own on
   every rebuild — and both reach an adapter as one **`LayerMaterials`** system param.

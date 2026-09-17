@@ -691,12 +691,19 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
     a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
     a number nobody reads.
-  - **Converted — seven of ten:** `fences`, `rail`, `tram`, `wagons`, `industry`,
-    `cars`, and the tree-row band of `spawn.rs`. **Left:** `roads` (9 layers, and the
-    275-line `spawn_roads` that already ends in a table of exactly this shape), the 13
-    surface layers of `spawn_map` (they spawn with tag `()`, so they cannot be rebuilt
-    at all today), and `buildings`, which needs a **fourth `MaterialSpec` variant** for
-    the roof material. `surface::spawn_layer` stays for them.
+  - **Converted — nine of ten:** `fences`, `rail`, `tram`, `wagons`, `industry`,
+    `cars`, `roads` (9 layers, `mesh_roads`) and all of `spawn.rs` (13 surface and paint
+    layers plus the tree-row band). **Left: `buildings`**, and it is the hard one for two
+    reasons — it wants a **fourth `MaterialSpec` variant** for `RoofMaterial`, and it
+    spawns under **two** tags (`BuildingLayerTag` and `BuildingShadowTag`, the latter on
+    its own rebuild schedule), while `spawn_layers` takes one tag per call. Two calls
+    with two lists is the honest answer; carrying the tag inside `LayerMesh` is not,
+    because a tag is what the *adapter* despawns by. `surface::spawn_layer` stays for it,
+    as does the local closure in `spawn_buildings` that shadows the same name.
+  - **The 13 surface layers still spawn with tag `()`**, and after the conversion that
+    is visible as one line in the list rather than a silent argument. They are not
+    rebuilt by anything, so they have nothing to be found by; giving them a tag is worth
+    doing together with a reason to rebuild them, not before.
   - **Converting a module** means: lift the build to `mesh_*` returning
     `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
     tag to every layer), move any cutoff or toggle into the build, drop its
