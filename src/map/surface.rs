@@ -365,6 +365,77 @@ pub enum LayerMaterial {
     Roof(Handle<RoofMaterial>),
 }
 
+/// Чем красить слой — **описанием, а не хэндлом**.
+///
+/// Хэндл берётся из `Assets`, то есть из мира, и это единственное, ради чего
+/// сборке слоя нужен был бы Bevy. Описание о мире не знает ничего, поэтому
+/// `mesh_*` остаётся чистой функцией: её зовут и игра, и тест, и офлайн-бенч
+/// (`examples/bench/map_meshing`) — одним и тем же вызовом, а не тремя разными
+/// путями. Разворачивает описание в хэндл адаптер, [`spawn_layers`].
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MaterialSpec {
+    /// Белый непрозрачный: кант, рельсы, стены — всё, чему фактура ни к чему.
+    Flat,
+    /// Белый **с блендингом**: слой, в котором есть полупрозрачное — тень
+    /// моста, тень забора. Непрозрачный материал съел бы вершинную альфу.
+    Blend,
+    /// Фактурный материал поверхности. Меш обязан быть собран через
+    /// [`MeshBuilder::with_surface_coords`], иначе материал его не примет.
+    Surface(SurfaceKind),
+}
+
+/// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
+/// мир, — рунга z, имя и вид материала.
+///
+/// **Один тип на все слои карты**, а не свой на каждый модуль: дороги отдают
+/// девять таких, промзона пять, рельсы три, забор один. Модуль, собранный как
+/// `-> Vec<LayerMesh>`, читается тем же способом, что и любой соседний, и его
+/// адаптер — один вызов [`spawn_layers`], а не переписанный цикл.
+///
+/// `name` — не выдуманный идентификатор: это ровно та строка, под которой
+/// сущность слоя видна в живом приложении (`Name`), то есть та, по которой её
+/// ищут через BRP.
+pub struct LayerMesh {
+    pub builder: MeshBuilder,
+    pub z: f32,
+    pub name: &'static str,
+    pub material: MaterialSpec,
+}
+
+impl LayerMesh {
+    pub fn new(builder: MeshBuilder, z: f32, name: &'static str, material: MaterialSpec) -> Self {
+        Self {
+            builder,
+            z,
+            name,
+            material,
+        }
+    }
+}
+
+/// Два плоских `ColorMaterial` на всё приложение — непрозрачный и с
+/// блендингом, ровно те, что называет [`MaterialSpec`].
+///
+/// Ресурс, а не `materials.add(...)` в каждой пересборке: слой пересобирается
+/// на каждую ступень зума и на каждое осевшее солнце, а материал у него всё
+/// время один и тот же. Ровесник [`SurfaceMaterials`] и живёт по тому же
+/// правилу.
+#[derive(Resource)]
+pub struct FlatMaterials {
+    opaque: Handle<ColorMaterial>,
+    blend: Handle<ColorMaterial>,
+}
+
+/// Плоские материалы — на старте приложения, рядом с фактурными.
+pub fn init_flat_materials(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
+    let opaque = materials.add(Color::WHITE);
+    let blend = materials.add(ColorMaterial {
+        alpha_mode: AlphaMode2d::Blend,
+        ..default()
+    });
+    commands.insert_resource(FlatMaterials { opaque, blend });
+}
+
 /// Слой карты из собранного меша: пустой сборщик не спавнится вовсе. Меш для
 /// [`LayerMaterial::Surface`] обязан быть собран через
 /// `MeshBuilder::with_surface_coords`, иначе материал его не примет.
@@ -392,6 +463,38 @@ pub fn spawn_layer(
         LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
     };
+}
+
+/// Положить в мир всё, что собрал `mesh_*` одного модуля, под одной меткой.
+///
+/// Это вторая половина шва: сборка сказала, **что** нарисовано, адаптер знает,
+/// **куда** это деть. Разворачивание [`MaterialSpec`] в хэндл живёт здесь и
+/// только здесь, так что описание слоя остаётся тем, что можно вернуть из
+/// чистой функции и сравнить в тесте.
+pub fn spawn_layers(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    flats: &FlatMaterials,
+    surfaces: &SurfaceMaterials,
+    layers: impl IntoIterator<Item = LayerMesh>,
+    tag: impl Bundle + Clone,
+) {
+    for layer in layers {
+        let material = match layer.material {
+            MaterialSpec::Flat => LayerMaterial::Flat(flats.opaque.clone()),
+            MaterialSpec::Blend => LayerMaterial::Flat(flats.blend.clone()),
+            MaterialSpec::Surface(kind) => LayerMaterial::Surface(surfaces.handle(kind)),
+        };
+        spawn_layer(
+            commands,
+            meshes,
+            layer.builder,
+            layer.z,
+            layer.name,
+            material,
+            tag.clone(),
+        );
+    }
 }
 
 /// Правка ползунка Texture — новые параметры в каждый материал; меши не

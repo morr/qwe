@@ -133,6 +133,7 @@ impl Plugin for MapPlugin {
                     (sun::seed_sun, sun::apply_sun).chain(),
                     (
                         surface::init_surface_materials,
+                        surface::init_flat_materials,
                         buildings::material::init_roof_material,
                     ),
                 )
