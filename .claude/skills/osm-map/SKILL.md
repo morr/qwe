@@ -655,6 +655,37 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `ColorMaterial`. ~7000
   buildings cost a handful of entities. Trees stay individual entities (see
   `references/trees.md`).
+- **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world
+  are two things, and this is the line between them. A **converted** module offers one
+  pure function, `mesh_<layer>(данные, стиль) -> (Vec<LayerMesh>, <Layer>Report)`, and
+  its system is a thin adapter: despawn by tag, call it, hand the list to
+  `surface::spawn_layers`, print the report.
+  - **`LayerMesh`** — `{ builder, z, name, material: MaterialSpec }`, **one type for
+    every layer of the map**, not a type per module. That is the point: a module read as
+    `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
+    `Name` in the live world, i.e. what a BRP query looks it up by.
+  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)`. It **names** the
+    material instead of carrying a `Handle`, and a handle is the only thing that would
+    have dragged Bevy into the build: with a spec the build needs neither `Commands` nor
+    `Assets`, so the game, a test and the offline bench call one and the same function.
+    Resolving spec → handle lives in `spawn_layers` and only there.
+  - **`FlatMaterials`** (`Startup`, beside `SurfaceMaterials`) holds the two flat
+    `ColorMaterial`s the spec names. An **unconverted** module still does
+    `materials.add(...)` on every rebuild — that is a per-rebuild allocation of a
+    material that never changes, and it goes away with the conversion.
+  - **The report is a value, not a log line.** `FenceReport`, `RailReport`: the counters
+    `info!` used to be made of, returned so a test can assert on them. `info!` is also
+    the thing App Nap mismeasures on macOS, so a returned `elapsed` is the only honest
+    one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
+    a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
+    a number nobody reads.
+  - **Converted so far: `map/fences.rs`, `map/rail.rs`, and the tree-row band in
+    `map/spawn.rs`.** The rest still build inside their system, and
+    `surface::spawn_layer` (one layer, a ready `LayerMaterial`) stays for them — the
+    13 surface layers of `spawn_map` and the 9 of `spawn_roads` among them. Converting a
+    module means: lift the build to `mesh_*`, derive `Clone, Copy` on its `*LayerTag`
+    (`spawn_layers` hands the tag to every layer), drop its `materials.add(...)`, and
+    write the tests the seam has just made possible.
 - **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
   `Material2d` with its own vertex + fragment stage) — procedural texture without a single
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by

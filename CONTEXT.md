@@ -939,7 +939,23 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `ColorMaterial` (facades, shadows, casings, rails, walls), the **surface material** below
   (everything that is ground) or the **roof material** above (every layer that carries a
   roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees stay
-  individual entities; tree and building **shadows** are each one merged mesh. **Ribbon**
+  individual entities; tree and building **shadows** are each one merged mesh.
+- **The layer seam** — building a layer and putting it in the world are two things, and
+  the line between them is `map/surface.rs`. A converted module offers **one pure
+  function**, `mesh_<layer>(данные, стиль) -> (Vec<LayerMesh>, <Layer>Report)`: no
+  `Commands`, no `Assets`, so the game, a test and the offline bench all call it —
+  the same call, not three paths. **`LayerMesh`** is one type for every layer of the map
+  (builder + z rung + `Name` string + `MaterialSpec`); **`MaterialSpec`** (`Flat` /
+  `Blend` / `Surface(SurfaceKind)`) names the material instead of carrying a `Handle`,
+  which is the only thing that would have dragged Bevy into the build. The report carries
+  the counters the `info!` line used to be made of, as a value a test can assert on. The
+  system is then a thin adapter: despawn the old tag, call `mesh_*`, hand the list to
+  `surface::spawn_layers`, print the report. **Converted so far: `map/fences.rs`,
+  `map/rail.rs`.** The rest still build inside their system; `surface::spawn_layer` (one
+  layer, a ready `LayerMaterial`) stays for them. The two flat `ColorMaterial`s
+  `MaterialSpec` names live in **`FlatMaterials`**, a `Startup` resource beside
+  `SurfaceMaterials` — an unconverted module still allocates its own on every rebuild.
+  **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are
   what makes them look joined; **keep the road layer opaque, and its colour a function of
