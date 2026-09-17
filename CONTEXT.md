@@ -950,12 +950,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   which is the only thing that would have dragged Bevy into the build. The report carries
   the counters the `info!` line used to be made of, as a value a test can assert on. The
   system is then a thin adapter: despawn the old tag, call `mesh_*`, hand the list to
-  `surface::spawn_layers`, print the report. **Converted: `fences`, `rail`, `tram`,
-  `wagons`, `industry`, `cars`, `roads` (9 layers) and all of `spawn.rs` (the 13
-  surface and paint layers plus the tree-row band) — nine of ten.** What is left is
-  **`buildings`**, which needs a fourth `MaterialSpec` variant for the roof material and
-  spawns under two different tags; `surface::spawn_layer` (one layer, a ready
-  `LayerMaterial`) stays for it. The two
+  `surface::spawn_layers`, print the report. **Every layer module is on it** — fences,
+  rail, tram, wagons, industry, cars, roads, all of `spawn.rs` and buildings.
+  `MaterialSpec` has four variants, the last of them `Roof`, added with the module that
+  needed it. **`buildings` is the one module that returns two lists**
+  (`BuildingMeshes { layers, shadows }`), because its shadows carry their own tag and
+  their own rebuild schedule; a tag is what the *adapter* despawns by, so it stays
+  outside `LayerMesh`. The two
   flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`
   resource beside `SurfaceMaterials` — an unconverted module still allocates its own on
   every rebuild — and both reach an adapter as one **`LayerMaterials`** system param.
@@ -1083,7 +1084,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `cargo run --example map_meshing -- [city slug]`: vertices and milliseconds per
   building layer for every height mode × roof-clutter bucket, plus the car layer, straight
   from the Overpass cache with **no window and no GPU**. `map::measure_layers` /
-  `map::measure_cars` are the entry points and call exactly the builders `spawn_buildings`
+  `map::measure_cars` are the entry points and call exactly the builders `mesh_buildings`
   calls. The missing window is the point: macOS App Nap slows an invisible or minimised
   one, so the `building meshing:` log line is trustworthy only while the screen is awake —
   and absolute numbers still follow the machine's power state, which is why a run is

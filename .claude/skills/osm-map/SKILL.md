@@ -623,7 +623,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   trustworthy while the screen is awake. `map::measure_layers` / `map::measure_cars` are
   the entry points; `measure_layers` takes the two decisions the measurement actually reads
   (height mode + roof clutter), not a `BuildingPlan` — its `shadows` field would have been
-  ignored — and they call exactly the builders `spawn_buildings` calls. **Absolute
+  ignored — and they call exactly the builders `mesh_buildings` calls. **Absolute
   numbers still depend on the machine's power state** (with the display asleep everything
   is 2–3× slower), so compare runs, not runs against the log.
   **Shadows are measured at the default sun.** The sweep length and direction come from the
@@ -691,15 +691,22 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
     a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
     a number nobody reads.
-  - **Converted — nine of ten:** `fences`, `rail`, `tram`, `wagons`, `industry`,
-    `cars`, `roads` (9 layers, `mesh_roads`) and all of `spawn.rs` (13 surface and paint
-    layers plus the tree-row band). **Left: `buildings`**, and it is the hard one for two
-    reasons — it wants a **fourth `MaterialSpec` variant** for `RoofMaterial`, and it
-    spawns under **two** tags (`BuildingLayerTag` and `BuildingShadowTag`, the latter on
-    its own rebuild schedule), while `spawn_layers` takes one tag per call. Two calls
-    with two lists is the honest answer; carrying the tag inside `LayerMesh` is not,
-    because a tag is what the *adapter* despawns by. `surface::spawn_layer` stays for it,
-    as does the local closure in `spawn_buildings` that shadows the same name.
+  - **Converted — all ten.** `fences`, `rail`, `tram`, `wagons`, `industry`, `cars`,
+    `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (13 surface and paint layers plus
+    the tree-row band) and finally `buildings`. `surface::spawn_layer` (one layer, a
+    ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
+  - **Buildings was last, and not for being big.** Two things are peculiar to it and
+    worth knowing before touching it:
+    - it is the only module needing **`MaterialSpec::Roof`**, and the variant was added
+      exactly when it arrived — before that nothing could construct it;
+    - it spawns under **two tags** (`BuildingLayerTag`, and `BuildingShadowTag` on its
+      own rebuild schedule — the zoom bucket does not touch the shadows), while
+      `spawn_layers` takes one tag per call. Hence `BuildingMeshes { layers, shadows }`
+      and two calls, wrapped in `spawn_building_meshes` so `rebuild_buildings` and
+      `spawn_map` share one door. Carrying the tag *inside* `LayerMesh` was rejected: a
+      tag is what the **adapter** despawns by, not a property of what was drawn.
+    The local closure in `spawn_buildings` that shadowed the name `spawn_layer` is gone
+    with the conversion; it now just pushes into a `Vec<LayerMesh>`.
   - **The 13 surface layers still spawn with tag `()`**, and after the conversion that
     is visible as one line in the list rather than a silent argument. They are not
     rebuilt by anything, so they have nothing to be found by; giving them a tag is worth
@@ -2151,7 +2158,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
           wing in front of its neighbour and the other behind it — and they are exactly
           the pairs whose drawn bodies overlap, i.e. the ones this pass is asked about.
           `roof_shadow_builder` therefore needs that very list, and is **handed** it: the
-          order is built once per layer build by the caller (`spawn_buildings`, and
+          order is built once per layer build by the caller (`mesh_buildings`, and
           `measure_layers` as its own bench row) and passed to `extrusion_builder` and to
           this layer alike — the sweeps travel the same way (`ShadowSweeps`). The
           `Option<&[usize]>` it arrives in *is* the 2.5D flag: no order, no lift, no drawn
@@ -2208,7 +2215,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       the 90 ms of 116 that used to stand here came off the `building meshing:` line in
       the app, where the power state sets the scale, so take the share, not the
       milliseconds). `BuildingPlan { mode,
-      bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
+      bucket, shadows }` is how that decision reaches `mesh_buildings` (and what keeps it
       at seven arguments).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward `ROOF_TALL_COLOR` (0.20, a near-black neutral — it must be darker in
@@ -2564,7 +2571,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Merlons** (`clutter::merlons`) along every edge of a fortress wall's outer ring, pitch
     2.6 m, 1.3 × 0.7 × 1.9 m, through `push_items` (clutter zoom bucket).
   - **`temple_gallery`** (`examples/demos/temple_gallery`) — faith × (ship, square, chapel,
-    bell tower, drum) plus a kremlin row, built by the real `spawn_buildings`;
+    bell tower, drum) plus a kremlin row, built by the real `mesh_buildings`;
     `TEMPLE_GALLERY_SHOT` and `TEMPLE_GALLERY_FOCUS=row,column,m/px` for a close-up.
 - **Inferred storeys** (`buildings/heights.rs`) — the height of the 69 % of Tula (95 % of
   Tokyo) that OSM leaves untagged. It used to be three numbers — house 6 m, garage 3 m,
