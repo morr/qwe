@@ -2736,7 +2736,8 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
     ));
     assert_eq!(dome_of(&drum), Some(gold));
     assert_eq!(wall_look(&drum, 2.0).base, white);
-    assert_eq!(roof_look(&drum).base, roof_look(&drum).base);
+    // до кровли барабана тег не доходит — её там и нет, палитра по посеву
+    assert_ne!(roof_look(&drum).base, gold);
 
     // храм: тег — кровля, глава остаётся по посеву
     let nave = painted(church(
