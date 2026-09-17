@@ -784,7 +784,7 @@ pub(super) fn colour(value: &str) -> Option<Rgb> {
 /// карты (см. [`colour`]): `white` — побелка, а не `#FFFFFF`, `blue` — синее
 /// железо кровли, `darkgray` темнее `gray`, как его и пишут, а не светлее, как
 /// в CSS.
-const CSS_COLOURS: [(&str, Rgb); 36] = [
+const CSS_COLOURS: [(&str, Rgb); 37] = [
     ("white", [236, 234, 229]),
     ("black", [46, 46, 48]),
     ("red", [168, 58, 50]),
@@ -821,4 +821,5 @@ const CSS_COLOURS: [(&str, Rgb); 36] = [
     ("lightgrey", [190, 190, 190]),
     ("silver", [176, 178, 180]),
     ("dimgray", [96, 96, 98]),
+    ("dimgrey", [96, 96, 98]),
 ];
