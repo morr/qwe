@@ -31,7 +31,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
 use crate::map::seed::{Lcg, seed_from_point};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{WAGON_MAX_ZOOM, Z_WAGON};
@@ -96,7 +96,9 @@ const WAGON_COLORS: [Color; 8] = [
 ];
 
 /// Слой вагонов — своя метка, чтобы ступень зума пересобирала только его.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый слой модуля, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct WagonLayerTag;
 
 /// Ступени зума: вагон втрое длиннее машины, поэтому его порог в 2.5 раза
@@ -122,7 +124,7 @@ struct Wagon {
 pub fn rebuild_wagons(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<WagonZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<WagonLayerTag>>,
@@ -130,33 +132,68 @@ pub fn rebuild_wagons(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    if bucket.index > 0 {
-        return;
-    }
-    let started = std::time::Instant::now();
-    let wagons = stable_wagons(&map.rails);
-    let builder = mesh_wagons(&wagons);
-    let count = wagons.len();
-    let vertices = builder.vertex_count();
-    let elapsed = started.elapsed();
-    if builder.is_empty() {
-        return;
-    }
-    // как и у машин: тень полупрозрачна, кузов нет
-    let material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    surface::spawn_layer(
+    let (layers, report) = mesh_wagon_layer(*bucket, &map.rails);
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        builder,
-        Z_WAGON,
-        "wagons",
-        LayerMaterial::Flat(material),
+        &materials,
+        layers,
         WagonLayerTag,
     );
-    info!("wagons: {count} standing ({vertices} verts) in {elapsed:?}");
+    info!("{report}");
+}
+
+/// Что вышло из расстановки вагонов — значением, а не только строкой в логе.
+///
+/// `standing` — сколько вагонов встало: число, которым этот слой тюнился
+/// (1195 на Туле, потом ×0.7 до 866), и до шва его нельзя было ни на чём
+/// закрепить, кроме глаза на лог-строке.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct WagonReport {
+    pub standing: usize,
+    pub vertices: usize,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for WagonReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            standing,
+            vertices,
+            elapsed,
+        } = self;
+        write!(
+            f,
+            "wagons: {standing} standing ({vertices} verts) in {elapsed:?}"
+        )
+    }
+}
+
+/// Слой стоящих вагонов на текущей ступени зума.
+///
+/// **Чистая функция и единственная дверь в слой.** Дальняя ступень отдаёт
+/// пустой слой, а не ранний выход у вызывающего: у вагона нет таблицы LOD, он
+/// просто пропадает — 13.9-метровый кузов на 2 м/px это те же ~7 экранных
+/// пикселей, на которых уже сняты машины.
+pub fn mesh_wagon_layer(
+    bucket: WagonZoomBucket,
+    rails: &[RailLine],
+) -> (Vec<LayerMesh>, WagonReport) {
+    let started = std::time::Instant::now();
+    let wagons = if bucket.index > 0 {
+        Vec::new()
+    } else {
+        stable_wagons(rails)
+    };
+    let builder = mesh_wagons(&wagons);
+    let report = WagonReport {
+        standing: wagons.len(),
+        vertices: builder.vertex_count(),
+        elapsed: started.elapsed(),
+    };
+    // как и у машин: тень полупрозрачна, кузов нет
+    let layer = LayerMesh::new(builder, Z_WAGON, "wagons", MaterialSpec::Blend);
+    (vec![layer], report)
 }
 
 /// Во сколько раз класс пути разрежает сцепы против станционного. Подъездной
