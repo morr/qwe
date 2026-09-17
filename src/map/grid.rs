@@ -37,6 +37,7 @@ pub struct Grid<T> {
 impl<T> Grid<T> {
     /// Пустая сетка с шагом `size`, м.
     pub fn new(size: f32) -> Self {
+        debug_assert!(size > 0.0, "шаг сетки {size} — не длина");
         Self {
             size,
             cells: HashMap::new(),
