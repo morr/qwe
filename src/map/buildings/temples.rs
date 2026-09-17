@@ -513,7 +513,7 @@ impl Plan {
     /// выдаётся на запад; на нём колокольня и стоит.
     ///
     /// Контур режется хордой от каждой вогнутой вершины вдоль её собственной
-    /// стены (`garages::cut_at` — приём крестовой кровли), берутся доли,
+    /// стены (`garages::reflex_cuts` — приём крестовой кровли), берутся доли,
     /// упирающиеся в западный торец плана, и из них — **наименьшая**, которая
     /// заполняет свой `min_area_rect` на `TOWER_PIECE_FILL` и не мельче
     /// `TOWER_SIDE_MIN`. Наименьшая, а не любая: у Двенадцати Апостолов (Тула,
@@ -525,34 +525,14 @@ impl Plan {
     /// и столп по оси плана вылезал бы из них сантиметрами — тем самым
     /// «небольшим зазором между крышей и башней».
     fn west_piece(&self, building: &PolyArea) -> Option<(Vec2, Vec2, Vec2)> {
-        let ring = &building.outer;
-        let count = ring.len();
-        let winding = signed_ring_area(ring).signum();
         let mut best: Option<(f32, Vec2, Vec2, Vec2)> = None;
-        for at in 0..count {
-            let (prev, here, next) = (
-                ring[(at + count - 1) % count],
-                ring[at],
-                ring[(at + 1) % count],
-            );
-            let (back, ahead) = (here - prev, next - here);
-            if back.perp_dot(ahead) * winding >= 0.0 {
-                continue;
-            }
-            for direction in [back, -ahead] {
-                let Some(direction) = direction.try_normalize() else {
+        for (near, far) in super::garages::reflex_cuts(&building.outer) {
+            for piece in [near, far] {
+                let Some(found) = self.piece_seat(building, &piece) else {
                     continue;
                 };
-                let Some((near, far)) = super::garages::cut_at(ring, at, direction) else {
-                    continue;
-                };
-                for piece in [near, far] {
-                    let Some(found) = self.piece_seat(building, &piece) else {
-                        continue;
-                    };
-                    if best.is_none_or(|(area, ..)| found.0 < area) {
-                        best = Some(found);
-                    }
+                if best.is_none_or(|(area, ..)| found.0 < area) {
+                    best = Some(found);
                 }
             }
         }

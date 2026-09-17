@@ -1180,39 +1180,33 @@ fn cross_gable(
 }
 
 /// Все разбиения кольца на куски не больше `budget` штук: из каждой вогнутой
-/// вершины — оба разреза по её стенам ([`super::garages::cut_at`]), и дальше
-/// рекурсивно. Почти прямоугольник не режется.
+/// вершины — оба разреза по её стенам ([`super::garages::reflex_cuts`]), и
+/// дальше рекурсивно. Почти прямоугольник не режется.
+///
+/// `SPLITS_MAX` — настоящий предохранитель, а не фильтр вывода: набрав потолок,
+/// перебор **бросается целиком** (`break 'cuts`), и оставшиеся вершины даже не
+/// режутся. Вывод от этого не меняется — всё, что шло после потолка, и так
+/// отбрасывалось.
 fn rect_splits(ring: Vec<Vec2>, budget: usize) -> Vec<Vec<Vec<Vec2>>> {
-    let area = signed_ring_area(&ring);
     let fill = bounding_rect(&ring).map_or(0.0, |(_, fill)| fill);
     if budget <= 1 || ring.len() < 5 || fill >= SPLIT_FILL_DONE {
         return vec![vec![ring]];
     }
-    let count = ring.len();
     let mut result = Vec::new();
-    for at in 0..count {
-        let (prev, here, next) = (
-            ring[(at + count - 1) % count],
-            ring[at],
-            ring[(at + 1) % count],
-        );
-        let (back, ahead) = (here - prev, next - here);
-        if back.perp_dot(ahead) * area.signum() >= 0.0 {
-            continue;
-        }
-        for direction in [back, -ahead] {
-            let Some(direction) = direction.try_normalize() else {
-                continue;
-            };
-            let Some((near, far)) = super::garages::cut_at(&ring, at, direction) else {
-                continue;
-            };
-            for left in rect_splits(near, budget - 1) {
-                for right in rect_splits(far.clone(), budget - left.len()) {
-                    if result.len() < SPLITS_MAX {
-                        result.push(left.iter().cloned().chain(right).collect());
-                    }
+    'cuts: for (near, far) in super::garages::reflex_cuts(&ring) {
+        // разбиения дальнего куска считаются один раз на каждый остаток
+        // бюджета: `budget - left.len()` пробегает не больше `budget - 1`
+        // разных значений, а на типичном контуре — одно, и без этого весь
+        // перебор дальнего куска повторялся бы на каждый `left`
+        let mut far_splits: Vec<Option<Vec<Vec<Vec<Vec2>>>>> = vec![None; budget];
+        for left in rect_splits(near, budget - 1) {
+            let rest = budget - left.len();
+            let rights = far_splits[rest].get_or_insert_with(|| rect_splits(far.clone(), rest));
+            for right in rights.iter() {
+                if result.len() >= SPLITS_MAX {
+                    break 'cuts;
                 }
+                result.push(left.iter().cloned().chain(right.iter().cloned()).collect());
             }
         }
     }

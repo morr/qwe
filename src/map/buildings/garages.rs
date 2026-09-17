@@ -498,59 +498,73 @@ fn split_into(ring: Vec<Vec2>, depth: u32, pieces: &mut Vec<Vec<Vec2>>) {
     split_into(far, depth + 1, pieces);
 }
 
-/// Лучший разрез кольца: из каждой **вогнутой** вершины продолжается внутрь
-/// каждое из двух её рёбер, и выигрывает тот разрез, после которого куски в
-/// среднем (по площади) плотнее заполняют свои прямоугольники.
+/// Лучший разрез кольца: из всех разрезов по вогнутым вершинам
+/// ([`reflex_cuts`]) выигрывает тот, после которого куски в среднем (по
+/// площади) плотнее заполняют свои прямоугольники.
+fn best_cut(ring: &[Vec2]) -> Option<(f32, Vec<Vec2>, Vec<Vec2>)> {
+    let area = ring_area(ring);
+    if area < PIECE_MIN_AREA * 2.0 {
+        return None;
+    }
+    let mut best: Option<(f32, Vec<Vec2>, Vec<Vec2>)> = None;
+    for (near, far) in reflex_cuts(ring) {
+        let (near_area, far_area) = (ring_area(&near), ring_area(&far));
+        if near_area < PIECE_MIN_AREA || far_area < PIECE_MIN_AREA {
+            continue;
+        }
+        // стружка проходит и по площади, и по заполнению, но гаражом не
+        // бывает — и получила бы свою ось, свою гребёнку и свои ворота
+        if [&near, &far]
+            .iter()
+            .any(|piece| sides_of(piece).is_none_or(|(_, width)| width < PIECE_MIN_WIDTH))
+        {
+            continue;
+        }
+        let score = (fill_of(&near) * near_area + fill_of(&far) * far_area) / area;
+        if best.as_ref().is_none_or(|(top, ..)| score > *top) {
+            best = Some((score, near, far));
+        }
+    }
+    best
+}
+
+/// Все разрезы кольца хордой из **вогнутой** вершины вдоль её собственной
+/// стены — один приём на три места: гаражный контур ([`best_cut`]), крестовая
+/// кровля (`super::roofs::rect_splits`) и западный выступ храма
+/// (`super::temples::Plan::west_piece`). Каждый элемент — пара кусков
+/// `(near, far)` от [`cut_at`].
 ///
 /// Вогнутая вершина, а не произвольная линия, — потому что резать надо ровно
 /// там, где контур перестал быть прямоугольником, и по направлению **его
 /// собственной стены**: только так ось куска окажется параллельна его стенам,
 /// ради чего всё и затевается. У буквы Г такая вершина одна, и разрез из неё
 /// делит её на два крыла.
-fn best_cut(ring: &[Vec2]) -> Option<(f32, Vec<Vec2>, Vec<Vec2>)> {
+///
+/// **Порядок перебора — часть контракта**: по вершинам кольца, внутри вершины
+/// сначала продолжение входящего ребра (`back`), затем продолжение исходящего
+/// назад (`-ahead`) — обе прямые идут внутрь контура из этой вершины. От него
+/// зависит, какой разрез выигрывает у вызывающего при равном счёте и какие
+/// разбиения попадают в потолок `roofs::SPLITS_MAX`.
+///
+/// Перебор ленивый: вызывающий, набравший своё, бросает его и не платит за
+/// оставшиеся `cut_at`.
+pub(super) fn reflex_cuts(ring: &[Vec2]) -> impl Iterator<Item = (Vec<Vec2>, Vec<Vec2>)> {
     let count = ring.len();
-    let area = ring_area(ring);
-    if area < PIECE_MIN_AREA * 2.0 {
-        return None;
-    }
-    let orientation = signed_ring_area(ring).signum();
-    let mut best: Option<(f32, Vec<Vec2>, Vec<Vec2>)> = None;
-    for at in 0..count {
-        let prev = ring[(at + count - 1) % count];
-        let here = ring[at];
-        let next = ring[(at + 1) % count];
+    let winding = signed_ring_area(ring).signum();
+    (0..count).flat_map(move |at| {
+        let (prev, here, next) = (
+            ring[(at + count - 1) % count],
+            ring[at],
+            ring[(at + 1) % count],
+        );
         let (back, ahead) = (here - prev, next - here);
-        if back.perp_dot(ahead) * orientation >= 0.0 {
-            continue;
-        }
-        // продолжение входящего ребра и продолжение исходящего назад — обе
-        // прямые идут внутрь контура из этой вершины
-        for direction in [back, -ahead] {
-            let Some(direction) = direction.try_normalize() else {
-                continue;
-            };
-            let Some((near, far)) = cut_at(ring, at, direction) else {
-                continue;
-            };
-            let (near_area, far_area) = (ring_area(&near), ring_area(&far));
-            if near_area < PIECE_MIN_AREA || far_area < PIECE_MIN_AREA {
-                continue;
-            }
-            // стружка проходит и по площади, и по заполнению, но гаражом не
-            // бывает — и получила бы свою ось, свою гребёнку и свои ворота
-            if [&near, &far]
-                .iter()
-                .any(|piece| sides_of(piece).is_none_or(|(_, width)| width < PIECE_MIN_WIDTH))
-            {
-                continue;
-            }
-            let score = (fill_of(&near) * near_area + fill_of(&far) * far_area) / area;
-            if best.as_ref().is_none_or(|(top, ..)| score > *top) {
-                best = Some((score, near, far));
-            }
-        }
-    }
-    best
+        let reflex = back.perp_dot(ahead) * winding < 0.0;
+        reflex
+            .then_some([back, -ahead])
+            .into_iter()
+            .flatten()
+            .filter_map(move |direction| cut_at(ring, at, direction.try_normalize()?))
+    })
 }
 
 /// Разрез кольца хордой: луч из вершины `at` по `direction` до **ближайшего**
