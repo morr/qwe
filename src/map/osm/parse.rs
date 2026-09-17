@@ -32,121 +32,274 @@ const RING_JOIN_EPSILON: f32 = 0.01;
 /// сантиметровая сетка — страховка от шума f32, а не поиск ближайшего.
 const ENTRANCE_SNAP_SCALE: f32 = 100.0;
 
+/// Разбор — две половины, и между ними шов.
+///
+/// Первая читает элементы Overpass в сырую [`MapData`] ([`read_elements`]),
+/// вторая гоняет по ней доводочные проходы в их единственно верном порядке
+/// ([`finish_parse`]). До шва обе лежали одним телом на сто двадцать пять
+/// строк, из которых сорок пять были телеметрией, и позвать проход в одиночку
+/// было не то чтобы нельзя — просто не за что было взяться: у стадии не было
+/// имени. Все шестьдесят тестов разбора поэтому гоняли конвейер целиком и
+/// адресовали дома по их месту в фикстуре.
 pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
     let bounds = GeoBounds::for_city(city);
 
-    let mut map = MapData::default();
-    match driving_side(&response.elements) {
-        Some(side) => map.traffic_side = side,
-        // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
-        // стороны движения всё равно рисуется
-        None => eprintln!("osm parse: no driving_side in the answer, assuming right-hand traffic"),
+    let (mut map, entrances, read) = read_elements(&response, &bounds);
+    eprint!("{read}");
+    let passes = finish_parse(&mut map, &entrances);
+    eprint!("{passes}");
+    Ok(map)
+}
+
+/// Что сказал элементный цикл — значением, а не двумя `eprintln!`.
+struct ReadReport {
+    /// `None` — зеркало не отдало `is_in`; карта рисуется правосторонней.
+    traffic_side: Option<TrafficSide>,
+    unclosed_rings: usize,
+}
+
+impl std::fmt::Display for ReadReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.traffic_side.is_none() {
+            // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
+            // стороны движения всё равно рисуется
+            writeln!(
+                f,
+                "osm parse: no driving_side in the answer, assuming right-hand traffic"
+            )?;
+        }
+        if self.unclosed_rings > 0 {
+            // не error: кольца, порванные краем bbox, ожидаемы
+            writeln!(
+                f,
+                "osm parse: {} unclosed relation rings skipped",
+                self.unclosed_rings
+            )?;
+        }
+        Ok(())
     }
-    let mut skipped_open_rings = 0usize;
-    // Overpass отдаёт ноды раньше way, так что здания на этот момент ещё не
-    // разобраны: копим входы и раскладываем по домам после цикла
+}
+
+/// Элементы Overpass — в сырую `MapData` и список входов, которые ещё некуда
+/// положить: Overpass отдаёт ноды раньше way, так что на момент разбора ноды
+/// зданий ещё нет.
+///
+/// **Ничего не доводит.** Дома ещё стоят в воде, храмы без веры, контуры
+/// косые, дверей нет, деревья не посажены — всё это [`finish_parse`].
+fn read_elements(
+    response: &OverpassResponse,
+    bounds: &GeoBounds,
+) -> (MapData, Vec<Vec2>, ReadReport) {
+    let mut map = MapData::default();
+    let traffic_side = driving_side(&response.elements);
+    if let Some(side) = traffic_side {
+        map.traffic_side = side;
+    }
+    let mut unclosed_rings = 0usize;
     let mut entrances = Vec::new();
 
     for element in &response.elements {
         match element.kind.as_str() {
             "node" => {
-                if let Some(position) = parse_entrance(element, &bounds) {
+                if let Some(position) = parse_entrance(element, bounds) {
                     entrances.push(position);
                 }
-                if let Some(node) = parse_tree_node(element, &bounds) {
+                if let Some(node) = parse_tree_node(element, bounds) {
                     map.tree_nodes.push(node);
                 }
-                if let Some(structure) = parse_structure_node(element, &bounds) {
+                if let Some(structure) = parse_structure_node(element, bounds) {
                     map.structures.push(structure);
                 }
             }
-            "way" => parse_way(element, &bounds, &mut map),
-            "relation" => parse_relation(element, &bounds, &mut map, &mut skipped_open_rings),
+            "way" => parse_way(element, bounds, &mut map),
+            "relation" => parse_relation(element, bounds, &mut map, &mut unclosed_rings),
             _ => {}
         }
     }
 
-    if skipped_open_rings > 0 {
-        // не error: кольца, порванные краем bbox, ожидаемы
-        eprintln!("osm parse: {skipped_open_rings} unclosed relation rings skipped");
-    }
+    let report = ReadReport {
+        traffic_side,
+        unclosed_rings,
+    };
+    (map, entrances, report)
+}
 
-    let drowned = drop_buildings_in_water(&mut map);
-    if drowned > 0 {
-        eprintln!("osm parse: {drowned} buildings dropped as standing entirely in water");
-    }
+/// Что дала посадка — то, чем была самая длинная строка лога.
+struct PlantedReport {
+    woods: usize,
+    standalone: usize,
+    tree_nodes: usize,
+    /// По одной на политику размещения аллей, в порядке `TreeRowLayout::ALL`.
+    rows: Vec<usize>,
+    tree_rows: usize,
+    asked: usize,
+}
 
-    let guessed = resolve_faiths(&mut map.buildings);
-    if guessed > 0 {
-        eprintln!("osm parse: {guessed} places of worship took their faith from the city");
-    }
+/// Что сделали доводочные проходы — значением, а не восемью `eprintln!`.
+///
+/// Те же счётчики, что уходили в лог, но теперь их можно сравнить в тесте: до
+/// этого единственным способом узнать, сколько домов отодвинулось от
+/// тротуаров, было прочесть строку на stderr.
+struct PassReport {
+    drowned: usize,
+    faiths_guessed: usize,
+    entrances_found: usize,
+    entrances_orphaned: usize,
+    squared: usize,
+    squaring: std::time::Duration,
+    pulled: PulledHouses,
+    pulling: std::time::Duration,
+    stretched: usize,
+    stretching: std::time::Duration,
+    generated: usize,
+    doors: std::time::Duration,
+    planted: PlantedReport,
+    planting: std::time::Duration,
+}
 
-    let orphaned = attach_entrances(&mut map, &entrances);
-    if orphaned > 0 {
-        // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом контура,
-        // либо принадлежит зданию, которое не попало в bbox
-        eprintln!(
-            "osm parse: {orphaned} of {} entrances match no building",
-            entrances.len()
-        );
+impl std::fmt::Display for PassReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.drowned > 0 {
+            writeln!(
+                f,
+                "osm parse: {} buildings dropped as standing entirely in water",
+                self.drowned
+            )?;
+        }
+        if self.faiths_guessed > 0 {
+            writeln!(
+                f,
+                "osm parse: {} places of worship took their faith from the city",
+                self.faiths_guessed
+            )?;
+        }
+        if self.entrances_orphaned > 0 {
+            // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом
+            // контура, либо принадлежит зданию, которое не попало в bbox
+            writeln!(
+                f,
+                "osm parse: {} of {} entrances match no building",
+                self.entrances_orphaned, self.entrances_found
+            )?;
+        }
+        if self.squared > 0 {
+            writeln!(
+                f,
+                "osm parse: {} skewed small houses squared into rectangles and L shapes in {:?}",
+                self.squared, self.squaring
+            )?;
+        }
+        writeln!(
+            f,
+            "osm parse: {} buildings pulled off the sidewalks ({} of them only part of the way), {} left standing on them, in {:?}",
+            self.pulled.moved, self.pulled.partly, self.pulled.left, self.pulling
+        )?;
+        writeln!(
+            f,
+            "osm parse: {} block vertices pulled to the drawn road edge in {:?}",
+            self.stretched, self.stretching
+        )?;
+        writeln!(
+            f,
+            "osm parse: {} entrances attached, {} generated in {:?}",
+            self.entrances_found - self.entrances_orphaned,
+            self.generated,
+            self.doors
+        )?;
+        // «посажено меньше, чем запрошено» — лес упёрся в насыщение, потолок
+        // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
+        // Аллеи считаются отдельно и под обе политики: `kept` = `slid`
+        // означает, что сдвигать было нечего, а `0 in K tree rows` при `K > 0`
+        // — что тег доехал, а посадка по нему не встала никуда. Одиночные ноды
+        // выбывают штатно — в лесу и у аллей дерево уже посажено процедурно
+        let planted = &self.planted;
+        let counts: Vec<String> = planted.rows.iter().map(usize::to_string).collect();
+        writeln!(
+            f,
+            "osm parse: {} trees planted of {} asked, {} standalone of {} tree nodes, \
+             {} in {} tree rows (keep/slide x osm/slider) in {:?}",
+            planted.woods,
+            planted.asked,
+            planted.standalone,
+            planted.tree_nodes,
+            counts.join("/"),
+            planted.tree_rows,
+            self.planting
+        )
     }
+}
+
+/// Доводочные проходы по сырой карте — **и этот порядок и есть их
+/// интерфейс**. До этой функции он жил заметками в трёх doc-комментариях из
+/// семи и не был записан целиком нигде.
+///
+/// Почему именно так, сверху вниз:
+///
+/// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
+///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
+///    по дому, которого не будет.
+/// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
+///    (`resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
+///    ставшая приделом, дальше читается иначе.
+/// 3. **Разметанные двери** прикладываются к контурам, пока те ещё сырые: у
+///    входа координата **ноды**, а не вершины, и ищется он по тому же
+///    сантиметровому ключу.
+/// 4. **Выпрямление косых домиков** — после разметки дверей (уже
+///    приложенную дверь перенос контура уносит с собой по тому же ключу; точное
+///    `==` молча оставило бы её на месте) и до генерации дверей и посадки
+///    деревьев (тем нужен уже выпрямленный контур).
+/// 5. **Отодвигание домов от тротуаров** — после выпрямления (косой дом
+///    сначала становится прямым, потом отъезжает) и до всего, что читает
+///    контур.
+/// 6. **Подтягивание кварталов к дорогам** — где угодно в хвосте: `landuse` не
+///    трогает ни навмеш, ни двери, ни посадку, ни машины. Стоит здесь, потому
+///    что дома к этому моменту уже на своих местах.
+/// 7. **Генерация дверей** и **посадка деревьев** — последними, по уже
+///    окончательным контурам.
+///
+/// **`vertex_uses` считается дважды, и это не расточительство.** Шаги 4 и 5
+/// оба спрашивают «эта вершина общая?», и между ними контуры **двигаются**:
+/// выпрямленный дом уносит свои вершины на новые места, и счёт, снятый до
+/// него, отвечал бы про старую карту.
+fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
+    let drowned = drop_buildings_in_water(map);
+    let faiths_guessed = resolve_faiths(&mut map.buildings);
+    let entrances_orphaned = attach_entrances(map, entrances);
+
     let started = std::time::Instant::now();
-    let squared = square_skewed_houses(&mut map);
-    if squared > 0 {
-        eprintln!(
-            "osm parse: {squared} skewed small houses squared into rectangles and L shapes in {:?}",
-            started.elapsed()
-        );
-    }
+    let squared = square_skewed_houses(map);
+    let squaring = started.elapsed();
+
     let started = std::time::Instant::now();
-    let pulled = pull_houses_off_sidewalks(&mut map);
-    eprintln!(
-        "osm parse: {} buildings pulled off the sidewalks ({} of them only part of the way), {} left standing on them, in {:?}",
-        pulled.moved,
-        pulled.partly,
-        pulled.left,
-        started.elapsed()
-    );
+    let pulled = pull_houses_off_sidewalks(map);
+    let pulling = started.elapsed();
+
     let started = std::time::Instant::now();
-    let stretched = pull_landuse_to_roads(&mut map);
-    eprintln!(
-        "osm parse: {stretched} block vertices pulled to the drawn road edge in {:?}",
-        started.elapsed()
-    );
+    let stretched = pull_landuse_to_roads(map);
+    let stretching = started.elapsed();
+
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
-    let generated = generate_entrances(&mut map);
-    eprintln!(
-        "osm parse: {} entrances attached, {generated} generated in {:?}",
-        entrances.len() - orphaned,
-        started.elapsed()
-    );
+    let generated = generate_entrances(map);
+    let doors = started.elapsed();
 
     let started = std::time::Instant::now();
-    let (standalone, woods, rows, asked) = plant_trees(&map);
-    // «посажено меньше, чем запрошено» — лес уперся в насыщение, потолок
-    // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
-    // Аллеи считаются отдельно и под обе политики: `kept` = `slid` означает,
-    // что сдвигать было нечего, а `0 in K tree rows` при `K > 0` — что тег
-    // доехал, а посадка по нему не встала никуда. Одиночные ноды выбывают
-    // штатно — в лесу и у аллей дерево уже посажено процедурно
-    let counts: Vec<String> = TreeRowLayout::ALL
-        .iter()
-        .map(|&layout| rows.get(layout).len().to_string())
-        .collect();
-    eprintln!(
-        "osm parse: {} trees planted of {asked} asked, {} standalone of {} tree nodes, \
-         {} in {} tree rows (keep/slide x osm/slider) in {:?}",
-        woods.len(),
-        standalone.len(),
-        map.tree_nodes.len(),
-        counts.join("/"),
-        map.tree_rows.len(),
-        started.elapsed()
-    );
+    let (standalone, woods, rows, asked) = plant_trees(map);
+    let planting = started.elapsed();
+    let planted = PlantedReport {
+        woods: woods.len(),
+        standalone: standalone.len(),
+        tree_nodes: map.tree_nodes.len(),
+        rows: TreeRowLayout::ALL
+            .iter()
+            .map(|&layout| rows.get(layout).len())
+            .collect(),
+        tree_rows: map.tree_rows.len(),
+        asked,
+    };
     map.standalone_trees = standalone;
     map.wood_trees = woods;
     map.row_trees = rows;
@@ -155,7 +308,23 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     // обязан помнить про отдельный шаг сборки. Выбранный игроком состав
     // доложит `map::trees::recompose_row_trees`, и только если он другой
     map.compose_trees(TreeCompose::default());
-    Ok(map)
+
+    PassReport {
+        drowned,
+        faiths_guessed,
+        entrances_found: entrances.len(),
+        entrances_orphaned,
+        squared,
+        squaring,
+        pulled,
+        pulling,
+        stretched,
+        stretching,
+        generated,
+        doors,
+        planted,
+        planting,
+    }
 }
 
 /// Дома, целиком стоящие в воде, выбрасываются. В OSM это плавучие рестораны и

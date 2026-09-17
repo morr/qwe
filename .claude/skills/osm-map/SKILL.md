@@ -290,6 +290,36 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 
 ## Parsing details
 
+### The parse seam: reading the elements, then finishing
+
+`parse()` is two halves with a line between them, and the line is what makes a single
+pass reachable:
+
+- **`read_elements(response, bounds) -> (MapData, Vec<Vec2>, ReadReport)`** — the element
+  loop and nothing else. What comes out is *raw*: houses still standing in water, churches
+  without a faith, skewed outlines, no doors, no trees. The `Vec<Vec2>` is the entrances
+  that have nowhere to go yet — Overpass hands out nodes before ways, so at that moment the
+  buildings do not exist.
+- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the seven finishing passes in
+  their one correct order, **and that order is their interface**. It used to live as notes
+  in three doc comments out of seven and was written down whole nowhere; now it is one
+  numbered list on that function, each step with its "why here".
+- **The reports are values**, not the ten `eprintln!` that used to make up forty-five of
+  `parse`'s hundred and twenty-five lines. `parse` prints them and nothing else does; a
+  test compares the counters, which before meant reading stderr.
+
+Two facts the order carries, both pinned by tests that can only exist now that a pass can
+be called alone:
+
+- **Attaching the mapped doors comes before squaring the skewed houses.** An entrance holds
+  the *node's* coordinate; while it is attached to the house the same centimetre key
+  carries it onto the straightened outline. `squaring_before_attaching_loses_the_door` runs
+  the two passes in both orders and shows the second one drops the door.
+- **`vertex_uses` is computed twice on purpose.** Squaring (step 4) and pulling houses off
+  the sidewalks (step 5) both ask "is this vertex shared?", and the outlines **move**
+  between them — a count taken before squaring answers about the old map. This was
+  reported as duplicated work; it is not.
+
 - **Building height** (`parse/tags.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
   LiDAR import) or else `building:levels` + `roof:levels` × `settings::STOREY_HEIGHT` (3 m)
