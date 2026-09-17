@@ -589,13 +589,8 @@ fn a_bridge_penumbra_never_lies_over_a_neighbours_core() {
 
 fn fortress(outer: Vec<Vec2>) -> PolyArea {
     PolyArea {
-        outer,
-        holes: Vec::new(),
-        kind: AreaKind::Kremlin,
-        building_use: crate::map::osm::BuildingUse::Other,
         height: Some(12.0),
-        entrances: Vec::new(),
-        colours: Default::default(),
+        ..fixture::area(AreaKind::Kremlin, outer)
     }
 }
 

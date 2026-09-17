@@ -207,23 +207,18 @@ fn ring(builder: &mut MeshBuilder, at: Vec2, radius: f32, width: f32, color: Lin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::BuildingUse;
+    use crate::map::osm::fixture;
 
     fn pitch(kind: PitchKind, size: Vec2) -> PolyArea {
-        PolyArea {
-            outer: vec![
+        fixture::area(
+            AreaKind::Pitch(kind),
+            vec![
                 Vec2::ZERO,
                 Vec2::new(size.x, 0.0),
                 size,
                 Vec2::new(0.0, size.y),
             ],
-            holes: Vec::new(),
-            kind: AreaKind::Pitch(kind),
-            building_use: BuildingUse::Other,
-            height: None,
-            entrances: Vec::new(),
-            colours: Default::default(),
-        }
+        )
     }
 
     fn marked(area: &PolyArea) -> usize {

@@ -489,10 +489,7 @@ pub fn pick_wander_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::{
-        AreaKind, BuildingUse,
-        fixture::{building, rect},
-    };
+    use crate::map::osm::fixture::{building, rect};
     use crate::settings::{HUMAN_BODY_RADIUS_MAX, HUMAN_SPEED_SPREAD_MAX, MAP_SIZE};
 
     /// Мир одного гуляющего: гейту хватает ресурса, системе — `Movable` и `Pace`.
@@ -695,15 +692,7 @@ mod tests {
     /// Вершина контура — детерминированно, т.к. `building_target` индексирует
     /// `outer` по случайному числу, а в тесте контур из одной вершины.
     fn building_at(corner: Vec2) -> PolyArea {
-        PolyArea {
-            outer: vec![corner],
-            holes: vec![],
-            kind: AreaKind::Building,
-            building_use: BuildingUse::Other,
-            height: None,
-            entrances: vec![],
-            colours: Default::default(),
-        }
+        building(vec![corner], vec![])
     }
 
     /// На первую цель после спавна: жребий 80/20 не разыгрывается, идёт прогулка

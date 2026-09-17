@@ -169,40 +169,38 @@ impl Overpass {
     }
 }
 
-pub fn building(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
+/// Площадь заданного вида со всеми прочими полями по умолчанию — один
+/// экземпляр записи `PolyArea` на все фикстуры. Новое поле модели правится
+/// здесь, а не в рукописном литерале каждого теста; `kind`, `height` и
+/// остальное каждый вызов уточняет struct-update'ом.
+pub fn area(kind: AreaKind, outer: Vec<Vec2>) -> PolyArea {
     PolyArea {
         outer,
-        holes,
-        kind: AreaKind::Building,
+        holes: vec![],
+        kind,
         building_use: BuildingUse::Other,
         height: None,
         entrances: vec![],
         colours: Default::default(),
+    }
+}
+
+pub fn building(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
+    PolyArea {
+        holes,
+        ..area(AreaKind::Building, outer)
     }
 }
 
 pub fn water_area(outer: Vec<Vec2>, holes: Vec<Vec<Vec2>>) -> PolyArea {
     PolyArea {
-        outer,
         holes,
-        kind: AreaKind::Water,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-        colours: Default::default(),
+        ..area(AreaKind::Water, outer)
     }
 }
 
 pub fn wood(outer: Vec<Vec2>) -> PolyArea {
-    PolyArea {
-        outer,
-        holes: vec![],
-        kind: AreaKind::Wood,
-        building_use: BuildingUse::Other,
-        height: None,
-        entrances: vec![],
-        colours: Default::default(),
-    }
+    area(AreaKind::Wood, outer)
 }
 
 pub fn rail(points: Vec<Vec2>, width: f32) -> RailLine {

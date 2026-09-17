@@ -148,18 +148,10 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::{AreaKind, BuildingUse};
+    use crate::map::osm::{AreaKind, fixture};
 
     fn lot(outer: Vec<Vec2>) -> PolyArea {
-        PolyArea {
-            outer,
-            holes: Vec::new(),
-            kind: AreaKind::Parking,
-            building_use: BuildingUse::Other,
-            height: None,
-            entrances: Vec::new(),
-            colours: Default::default(),
-        }
+        fixture::area(AreaKind::Parking, outer)
     }
 
     fn rect(width: f32, length: f32) -> Vec<Vec2> {
