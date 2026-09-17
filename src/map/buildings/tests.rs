@@ -2768,3 +2768,140 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
     assert_ne!(wall_look(&plain, 2.0).base, white);
     assert_ne!(roof_look(&plain).base, gold);
 }
+
+// --- слои целиком ------------------------------------------------------
+//
+// Тесты на `mesh_buildings`. До шва слои собирались внутри системы Bevy, и
+// достать сборку из теста было нечем: проверять можно было только билдеры под
+// ней. Здания — единственный модуль карты, отдающий **два** списка
+// (`BuildingMeshes { layers, shadows }`) под разными метками и с разным
+// расписанием пересборки, и держит это разделение только здешняя секция.
+
+/// Квадрат 10 × 10 с высотой — тот же дом, на котором стоят тесты билдеров
+/// выше.
+fn one_building() -> PolyArea {
+    building(square(), Some(9.0), AreaKind::Building)
+}
+
+/// План сборки на дальней ступени зума: оборудование на кровле выключено —
+/// эти тесты про состав слоёв, а коробки на крышах только добавили бы вершин
+/// (то же решение, что у хелпера [`detail`]).
+fn building_plan(mode: BuildingHeightMode, shadows: bool) -> BuildingPlan {
+    BuildingPlan {
+        mode,
+        bucket: BuildingZoomBucket::default(),
+        shadows,
+    }
+}
+
+fn layer_names(layers: &[LayerMesh]) -> Vec<&'static str> {
+    layers.iter().map(|layer| layer.name).collect()
+}
+
+#[test]
+fn extrusion_builds_one_layer_and_the_flat_modes_split_facade_from_roof() {
+    let _sun = crate::map::default_sun();
+    let buildings = [one_building()];
+
+    // 2.5D: стены и кровля в одном меше, и весь он идёт кровельным материалом
+    let (extruded, _) = mesh_buildings(
+        building_plan(BuildingHeightMode::ExtrusionShadowsTint, false),
+        &buildings,
+        &[],
+    );
+    assert_eq!(layer_names(&extruded.layers), ["building_extruded"]);
+    assert_eq!(extruded.layers[0].material, MaterialSpec::Roof);
+
+    // плоские режимы: полоса фасада отдельным слоем и **ниже** кровли — крыша
+    // соседа сверху прикрывает полосу
+    let (flat, _) = mesh_buildings(
+        building_plan(BuildingHeightMode::Facade, false),
+        &buildings,
+        &[],
+    );
+    assert_eq!(
+        layer_names(&flat.layers),
+        ["building_facades", "building_roofs"]
+    );
+    assert_eq!(flat.layers[0].material, MaterialSpec::Flat);
+    assert_eq!(flat.layers[1].material, MaterialSpec::Roof);
+    assert!(
+        flat.layers[0].z < flat.layers[1].z,
+        "фасад лежит ниже крыши"
+    );
+    assert!(flat.layers.iter().all(|layer| !layer.builder.is_empty()));
+}
+
+#[test]
+fn both_shadow_layers_ride_their_own_list_around_the_building_ones() {
+    let _sun = crate::map::default_sun();
+    let (built, report) = mesh_buildings(
+        building_plan(BuildingHeightMode::ExtrusionShadowsTint, true),
+        &[one_building()],
+        &[],
+    );
+
+    assert_eq!(
+        layer_names(&built.shadows),
+        ["building_shadows", "roof_shadows"]
+    );
+    // обе тени полупрозрачны, отсюда `Blend`
+    assert!(
+        built
+            .shadows
+            .iter()
+            .all(|layer| layer.material == MaterialSpec::Blend)
+    );
+    // наземная тень — под всеми зданиевыми слоями (её маскирует стена соседа),
+    // тень на кровле — над ними: это единственная часть тени, которая обязана
+    // лежать поверх крыши
+    let ground = built.shadows[0].z;
+    let on_roofs = built.shadows[1].z;
+    assert!(
+        built
+            .layers
+            .iter()
+            .all(|layer| ground < layer.z && layer.z < on_roofs),
+        "теневые рунги обязаны обнимать зданиевые"
+    );
+    assert!(report.vertices > 0);
+}
+
+#[test]
+fn the_shadow_flag_leaves_the_list_empty_without_touching_the_building_layers() {
+    let _sun = crate::map::default_sun();
+    let buildings = [one_building()];
+    let (kept, quiet) = mesh_buildings(
+        building_plan(BuildingHeightMode::ExtrusionShadowsTint, false),
+        &buildings,
+        &[],
+    );
+    let (whole, full) = mesh_buildings(
+        building_plan(BuildingHeightMode::ExtrusionShadowsTint, true),
+        &buildings,
+        &[],
+    );
+
+    // `shadows: false` — «теневой слой оставить как есть»: список пуст, а не с
+    // пустыми мешами, потому что адаптер в этом случае старые теневые сущности
+    // не деспавнит, и класть поверх них нечего
+    assert!(kept.shadows.is_empty());
+    // а сами зданиевые слои от тумблера не зависят
+    assert_eq!(layer_names(&kept.layers), layer_names(&whole.layers));
+    // и вершины теней считаются в общий отчёт, а не мимо него
+    assert!(full.vertices > quiet.vertices);
+}
+
+#[test]
+fn a_mode_without_long_shadows_builds_none_however_the_plan_asks() {
+    let _sun = crate::map::default_sun();
+    let (built, _) = mesh_buildings(
+        building_plan(BuildingHeightMode::Facade, true),
+        &[one_building()],
+        &[],
+    );
+
+    // длинные тени рисуют не все режимы (`casts_shadows`), и план их не
+    // переспорит
+    assert!(built.shadows.is_empty());
+}
