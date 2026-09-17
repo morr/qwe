@@ -690,7 +690,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the thing App Nap mismeasures on macOS, so a returned `elapsed` is the only honest
     one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
     a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
-    a number nobody reads.
+    a number nobody reads. **The reports are not symmetrical with each other, and are
+    not meant to be.** `FenceReport` is `Clone, Copy, PartialEq, Debug` — every field of
+    it is a number, so the derives cost nothing; `BuildingReport` derives nothing, and
+    cannot: `Copy` is out (two `String` fields) and no test compares it. Add a derive
+    when something uses it, not for the symmetry; a failure message wants `Display`
+    anyway, which every report has and which prints the log line itself.
   - **Converted — all eleven.** `fences`, `rail`, `tram`, `wagons`, `industry`, `cars`,
     `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (13 surface and paint layers plus
     the tree-row band), `buildings` and `trees`. `surface::spawn_layer` (one layer, a
