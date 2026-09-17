@@ -702,29 +702,23 @@ fn a_lower_sun_lengthens_the_tree_shadow() {
 
 /// Десять деревьев в ряд, с порогами появления 0, 1, … 9: ползунок плотности
 /// режет такой набор ровно по своему значению.
-fn ten_trees() -> (Vec<(Vec2, f32)>, Vec<f32>) {
-    let positions = (0..10)
-        .map(|i| (Vec2::new(i as f32 * 10.0, 0.0), 1.0 + i as f32 * 0.1))
-        .collect();
-    (positions, (0..10).map(|i| i as f32).collect())
+fn ten_trees() -> TreeSet {
+    TreeSet::of((0..10).map(|i| {
+        (
+            Vec2::new(i as f32 * 10.0, 0.0),
+            1.0 + i as f32 * 0.1,
+            i as f32,
+        )
+    }))
 }
 
 fn mesh_ten(shape: TreeShape, density: f32) -> (TreeMeshes, TreeReport) {
-    let (positions, appears_at) = ten_trees();
     let style = TreeStyle {
         shape,
         density,
         ..default()
     };
-    mesh_trees(
-        &style,
-        &params(),
-        PlantedTrees {
-            positions: &positions,
-            appears_at: &appears_at,
-        },
-        &ConiferField::default(),
-    )
+    mesh_trees(&style, &params(), &ten_trees(), &ConiferField::default())
 }
 
 /// Ползунок плотности отдаёт **префикс** набора: стоящие деревья не переезжают,

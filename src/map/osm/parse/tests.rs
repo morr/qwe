@@ -278,12 +278,12 @@ fn trees_are_deterministic_and_inside_the_wood() {
 
     assert!(!first.trees.is_empty());
     assert_eq!(first.trees, second.trees);
-    for &(pos, radius) in &first.trees {
+    for &(pos, radius) in first.trees.positions() {
         assert!(point_in_area(pos, &first.woods[0]), "{pos:?}");
         assert!((2.5..=4.0).contains(&radius));
     }
-    for (index, &(pos, _)) in first.trees.iter().enumerate() {
-        for &(other, _) in &first.trees[index + 1..] {
+    for (index, &(pos, _)) in first.trees.positions().iter().enumerate() {
+        for &(other, _) in &first.trees.positions()[index + 1..] {
             assert!(
                 pos.distance(other) >= TREE_MIN_SPACING,
                 "trees too close: {pos:?} vs {other:?}"
@@ -303,7 +303,7 @@ fn trees_avoid_a_pond_inside_the_wood() {
     assert_eq!(map.water.len(), 1);
     assert!(!map.trees.is_empty());
     let pond = &map.water[0];
-    for &(pos, _) in &map.trees {
+    for &(pos, _) in map.trees.positions() {
         assert!(!point_in_area(pos, pond), "tree in the pond at {pos:?}");
         assert!(
             !near_area_edge(pos, pond, TREE_SHORE_CLEARANCE),
@@ -588,7 +588,7 @@ fn trees_avoid_grass_and_sand_inside_the_wood() {
     assert_eq!(map.grass.len(), 1);
     assert_eq!(map.sand.len(), 1);
     assert!(!map.trees.is_empty());
-    for &(pos, _) in &map.trees {
+    for &(pos, _) in map.trees.positions() {
         assert!(
             !point_in_area(pos, &map.grass[0]),
             "tree on grass at {pos:?}"
@@ -614,7 +614,7 @@ fn trees_keep_the_crown_off_walls_and_kerbs() {
     assert!(!map.trees.is_empty());
     let house = &map.buildings[0];
     let path = &map.roads[0];
-    for &(pos, radius) in &map.trees {
+    for &(pos, radius) in map.trees.positions() {
         assert!(
             !point_in_area(pos, house),
             "tree inside the house at {pos:?}"
@@ -1243,8 +1243,8 @@ fn parses_standalone_tree_nodes() {
     assert_eq!(map.tree_nodes.len(), 1);
     assert_eq!(map.tree_nodes[0].radius, Some(5.0));
     assert_eq!(map.trees.len(), 1);
-    assert_eq!(map.trees[0].1, 5.0);
-    assert_eq!(map.tree_appears_at[0], 0.0);
+    assert_eq!(map.trees.positions()[0].1, 5.0);
+    assert_eq!(map.trees.appears_at(0), 0.0);
 }
 
 /// Вера храма: по `religion` с `denomination`, а без них — по тегу здания.
@@ -2364,10 +2364,9 @@ fn finishing_the_parse_reports_what_each_pass_did() {
     assert_eq!(report.planted.tree_nodes, 1);
     assert_eq!(report.planted.standalone, 1);
     assert_eq!(map.buildings.len(), 1, "остался только косой домик");
-    // и деревья собраны по составу по умолчанию, а не оставлены пустыми:
-    // посаженная одиночка доехала до набора, который читает рендер. Пустые
-    // `trees` сравнялись бы с пустыми `tree_appears_at` и без сборки вовсе
+    // и деревья собраны по составу по умолчанию, а не оставлены несобранными:
+    // посаженная одиночка доехала до набора, который читает рендер
     assert_eq!(map.standalone_trees.len(), 1, "дерево посажено");
     assert_eq!(map.trees.len(), 1, "и собрано в набор рендера");
-    assert_eq!(map.tree_appears_at.len(), map.trees.len());
+    assert_eq!(map.composed_for, Some(TreeCompose::default()));
 }

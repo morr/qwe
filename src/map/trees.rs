@@ -23,6 +23,7 @@ use self::crown::{
 use crate::loading::AppState;
 use crate::map::SunOnMap;
 use crate::map::meshing::MeshBuilder;
+use crate::map::osm::model::TreeSet;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -181,28 +182,6 @@ impl TreeStyle {
     }
 }
 
-/// Сколько деревьев показать при такой плотности: `MapData::trees`
-/// отсортированы по плотности появления, так что нужен префикс, а не фильтр.
-/// Доля каждого леса при этом точна — порог посчитан от его площади, — и
-/// прореживание монотонно: шаг ползунка вверх только добавляет деревья, уже
-/// стоящие не переезжают.
-///
-/// Породе прореживание ортогонально: её решает поле хвои по координатам, так
-/// что доля хвои в прореженном наборе та же, а дерево при движении ползунка
-/// плотности породу не меняет.
-pub fn visible_count(appears_at: &[f32], density: f32) -> usize {
-    appears_at.partition_point(|&at| at <= density)
-}
-
-/// Что сажать: где стоят деревья (позиция и радиус кроны) и при какой
-/// плотности каждое появляется. Два поля `MapData`, которые всегда ходят
-/// парой — и порядок в них общий, так что разъехаться им нельзя.
-#[derive(Clone, Copy)]
-pub struct PlantedTrees<'a> {
-    pub positions: &'a [(Vec2, f32)],
-    pub appears_at: &'a [f32],
-}
-
 /// Крона или её тень — чтобы пересборка стиля знала, что деспавнить.
 #[derive(Component, Clone, Copy)]
 pub struct TreeTag;
@@ -325,13 +304,9 @@ impl std::fmt::Display for TreeReport {
 pub fn mesh_trees(
     style: &TreeStyle,
     params: &CrownParams,
-    planted: PlantedTrees,
+    planted: &TreeSet,
     field: &ConiferField,
 ) -> (TreeMeshes, TreeReport) {
-    let PlantedTrees {
-        positions,
-        appears_at,
-    } = planted;
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
     let shapes = style.shape.crown_shapes();
     let pools: Vec<Vec<CrownVariant>> = shapes
@@ -344,9 +319,9 @@ pub fn mesh_trees(
         .collect();
 
     let mut shadows = MeshBuilder::default();
-    let visible = visible_count(appears_at, style.density);
-    let mut crowns = Vec::with_capacity(visible);
-    for (index, &(at, radius)) in positions.iter().take(visible).enumerate() {
+    let visible = planted.visible(style.density);
+    let mut crowns = Vec::with_capacity(visible.len());
+    for (index, &(at, radius)) in visible.iter().enumerate() {
         let shape = style.shape.resolve(field.is_conifer(index));
         let pool = shapes
             .iter()
@@ -460,7 +435,7 @@ pub fn recompose_row_trees(
         return;
     }
     map.compose_trees(compose);
-    field.resample(&map.trees, &noise, style.noise_mix);
+    field.resample(map.trees.positions(), &noise, style.noise_mix);
     field.set_share(style.conifer_share);
 }
 
@@ -474,7 +449,7 @@ pub fn build_conifer_field(
     noise: Res<ConiferNoiseStyle>,
 ) {
     let started = std::time::Instant::now();
-    field.resample(&map.trees, &noise, style.noise_mix);
+    field.resample(map.trees.positions(), &noise, style.noise_mix);
     field.set_share(style.conifer_share);
     debug!(
         "conifer field: {} trees sampled in {:.1?}",
@@ -498,7 +473,7 @@ pub fn retune_conifer_field(
         return;
     }
     let started = std::time::Instant::now();
-    field.resample(&map.trees, &noise, style.noise_mix);
+    field.resample(map.trees.positions(), &noise, style.noise_mix);
     field.set_share(style.conifer_share);
     debug!(
         "conifer field retuned: {} trees resampled in {:.1?}",
@@ -549,10 +524,7 @@ pub fn rebuild_trees(
         // ручки геометрии кроны в игре не выведены никуда: город рисуется
         // дефолтом, а крутит их витрина `tree_gallery`
         &CrownParams::default(),
-        PlantedTrees {
-            positions: &map.trees,
-            appears_at: &map.tree_appears_at,
-        },
+        &map.trees,
         &field,
     );
     spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, built);

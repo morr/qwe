@@ -417,10 +417,11 @@ fn standalone_trees_lead_the_planted_array() {
     map.row_trees = rows;
 
     map.compose_trees(TreeCompose::default());
-    assert_eq!(map.trees[0].0, Vec2::new(2000.0, 2000.0));
-    assert_eq!(map.tree_appears_at[0], 0.0);
+    assert_eq!(map.trees.positions()[0].0, Vec2::new(2000.0, 2000.0));
+    assert_eq!(map.trees.appears_at(0), 0.0);
     assert!(
-        map.tree_appears_at
+        map.trees
+            .thresholds()
             .windows(2)
             .all(|pair| pair[0] <= pair[1])
     );

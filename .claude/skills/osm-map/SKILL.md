@@ -104,6 +104,23 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 
 `map/osm/model.rs`; the resource stays resident after spawn.
 
+- **The nine `Vec<PolyArea>` are not `AreaKind` written twice**, and this has been
+  reviewed and closed once — do not re-open it as "the same fact encoded twice". The
+  vector says which **layer** an area is drawn in; the kind says which **member of that
+  layer** it is, and three of the nine hold more than one member:
+  - `buildings` holds `Building` **and** `Kremlin`, and the difference is read in nine
+    production places — the wall ribbon (`roads::Fortresses`), the fortress roofs and
+    merlons, the brick cladding, the tint ramp;
+  - `landuse` holds `Residential` **and** `Industrial`, which are two surface textures
+    (yard grass against trodden works ground);
+  - `Pitch(PitchKind)` carries a **payload** — the sport — that a vector cannot hold at
+    all.
+
+  Collapsing them into one filtered vector would therefore lose nothing of the kind (it
+  would all still be needed) and would add a pass over tens of thousands of areas per
+  layer. The ten-branch `match` in `parse::push_area` is a dispatch that exists **once**;
+  it is not repeated on the read side — what `spawn::mesh_surfaces` matches is the
+  *sub-class within* a vector, which is exactly what the vector cannot say.
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
   Industrial | Parking`. **Park** is the
