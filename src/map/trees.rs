@@ -21,10 +21,12 @@ use self::crown::{
     CROWN_COLOR, INK_COLOR, crown_geometry, crown_mesh, shadow_template, variant_rng,
 };
 use crate::loading::AppState;
+use crate::map::SunOnMap;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::prefs::retuned;
 use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
@@ -503,6 +505,23 @@ pub fn retune_conifer_field(
         map.trees.len(),
         started.elapsed()
     );
+}
+
+/// Когда пересобирать деревья — **и всю их связку целиком**: состав набора
+/// (`recompose_row_trees`), поле хвои (`retune_conifer_field`), подложку аллей
+/// и сами кроны.
+///
+/// Тумблеры состава и политика аллей меняют сам набор деревьев, а не только их
+/// вид, поэтому пересборка идёт после сборки набора; солнце здесь потому, что
+/// тень дерева строится по нему же, только запечена в шаблон варианта.
+///
+/// `retuned`, а не `resource_changed`: в кадре, где настройки легли на ресурс,
+/// кроны ещё не спавнены и пересобирать нечего.
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<TreeStyle>
+        .or_else(retuned::<TreeRowStyle>)
+        .or_else(retuned::<ConiferNoiseStyle>)
+        .or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка крон после правки стиля из UI: деспавн старых сущностей и

@@ -1004,6 +1004,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   is then a state of the report, never a zero in a counter** — `hidden` (or
   `CarReport::detail = None`, `FenceReport::width = 0`) prints `<layer>: hidden`, and the
   counters keep saying what came in, so a hidden layer never reads as an empty city.
+  **And when a layer rebuilds is the layer's own business** — `rebuilds_on()`, a run
+  condition beside its `rebuild_*`; `map/mod.rs` only wires it. The reason a gate lists
+  what it lists is a fact about the layer (`roads` carries `SunOnMap` because the bridge
+  shadow is baked into its mesh), and it now sits where that layer is edited. **One
+  condition, one registration**: two copies of a system in one schedule can both fire in
+  a frame and spawn the layer twice, so conditions are summed with `or_else`, never split
+  across registrations.
   **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are

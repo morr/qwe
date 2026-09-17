@@ -36,7 +36,10 @@ use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, PipeLine, Structure, StructureKind};
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
-use crate::map::{BuildingHeightMode, SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
+use crate::map::{
+    BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale, sun_stretch,
+};
+use crate::prefs::retuned;
 use crate::settings::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
 
 /// Сторон в круге. Двадцать четыре: у резервуара в двадцать метров это грань
@@ -110,6 +113,23 @@ fn look_of(kind: StructureKind) -> StructureLook {
         top: Color::srgb(top.0, top.1, top.2),
         wall: Color::srgb(wall.0, wall.1, wall.2),
     }
+}
+
+/// Когда пересобирать слои промзоны: осевшее солнце, режим высот и тумблер
+/// видимости.
+///
+/// Ступени зума у цилиндра нет — его видно ровно настолько, насколько видна
+/// его тень, — зато кренится он вместе с домами, отсюда `BuildingHeightMode`.
+/// Солнце берётся осевшее (`SunOnMap`), а не ползунок: пересборка читает
+/// глобали, которые пишет `apply_sun` уже по нему.
+///
+/// **Условие одно, регистрация одна** — и здесь это не теория: слой приехал с
+/// `rebuild_industry`, записанной в `Update` дважды, и спавнился по два раза
+/// (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<SunOnMap>
+        .or_else(retuned::<BuildingHeightMode>)
+        .or_else(retuned::<IndustryStyle>)
 }
 
 pub fn rebuild_industry(

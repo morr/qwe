@@ -60,7 +60,8 @@ use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale};
+use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
     Z_ROAD_CASING, Z_SIDEWALK,
@@ -1083,6 +1084,26 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
 pub fn measure_roads(map: &MapData) -> Vec<LayerCost> {
     let (layers, report) = mesh_roads(map, RoadStyle::default());
     surface::layer_costs(&layers, report.elapsed)
+}
+
+/// Когда пересобирать дорожные слои — **условие живёт рядом со слоем**, а не у
+/// того, кто ставит систему в расписание: причина тут дорожная, и узнать её
+/// надо, правя `roads.rs`, а не `map/mod.rs`.
+///
+/// `SunOnMap` в списке потому, что **в дорожный меш запечена тень моста**:
+/// настил, сдвинутый по `shadow_dir()` на высоту пролёта через
+/// `shadow_length_scale()`. Без этого условия она осталась бы от солнца, с
+/// которым грузился город, пока все остальные тени карты едут за осевшим.
+/// Осевшим (`SunOnMap`), а не ползунком (`SunStyle`): на шкале семьдесят
+/// делений, и каждое стоило бы полной пересборки девяти слоёв.
+///
+/// **Условие одно, регистрация одна.** Две копии одной системы в одном
+/// расписании могут сработать в одном кадре обе, и слой заспавнится дважды:
+/// деспавн второй копии идёт по данным, снятым до применения команд первой.
+/// Поэтому условия складываются через `or_else`, а не разносятся по
+/// регистрациям.
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка дорожных слоёв после переключения стиля из UI или BRP: деспавн

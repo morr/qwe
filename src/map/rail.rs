@@ -35,6 +35,7 @@ use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::prefs::retuned;
 use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
 
 /// Цвета одного вида пути. Действующий путь — щебень, креозотная шпала и
@@ -398,6 +399,19 @@ pub fn measure_rails(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
             (index, surface::layer_costs(&layers, report.elapsed))
         })
         .collect()
+}
+
+/// Когда пересобирать путевые слои. Только ступень зума: у пути нет ни ручек
+/// стиля (`RoadStyle` его не касается), ни теней, так что солнце ему
+/// безразлично — единственное, что меняет рисунок, это порог зума.
+///
+/// **Условие одно, регистрация одна** — общее правило пересборок слоя: две
+/// копии одной системы в одном расписании могут сработать в одном кадре обе, и
+/// деспавн второй пойдёт по данным, снятым до применения команд первой.
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    // через `into_system`, потому что у голой функции-условия свой маркер
+    // типа; у остальных слоёв его стирает `or_else`, а здесь складывать нечего
+    IntoSystem::into_system(retuned::<RailZoomBucket>)
 }
 
 /// Пересборка рельсовых слоёв при смене ступени зума — дорожные и трамвайный

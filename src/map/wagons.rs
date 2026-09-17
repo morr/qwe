@@ -32,7 +32,8 @@ use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale};
+use crate::prefs::retuned;
 use crate::settings::{WAGON_MAX_ZOOM, Z_WAGON};
 
 /// Габарит четырёхосного вагона, м: полувагон 13.9 × 3.1, высота по борту
@@ -117,6 +118,15 @@ struct Wagon {
     at: Vec2,
     along: Vec2,
     color: Color,
+}
+
+/// Когда пересобирать слой стоящих вагонов: своя ступень зума и осевшее
+/// солнце. Ручек стиля у вагонов нет вовсе, а осевая пути не сглаживается —
+/// отсюда условие короче машинного.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<WagonZoomBucket>.or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка слоя: по ступени зума и по смене солнца (у вагона своя тень).

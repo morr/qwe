@@ -944,6 +944,32 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     is visible as one line in the list rather than a silent argument. They are not
     rebuilt by anything, so they have nothing to be found by; giving them a tag is worth
     doing together with a reason to rebuild them, not before.
+  - **When a layer rebuilds is the layer's own business** — `rebuilds_on()`, a run
+    condition next to its `rebuild_*`, and `map/mod.rs` only wires it
+    (`roads::rebuild_roads.run_if(roads::rebuilds_on())`). The reason a gate lists what it
+    lists is a fact about the layer: `roads` carries `SunOnMap` **because the bridge
+    shadow is baked into its mesh**, and that is something you need to know while editing
+    `roads.rs`, not while reading the plugin. Before this it was a ten-line comment in
+    `map/mod.rs`, a file the layer's author has no reason to open.
+    - **One condition, one registration**, and it is written on every one of them. Two
+      copies of one system in one schedule can both fire in a frame: the second one's
+      despawn runs against data taken before the first one's commands were applied, and
+      the layer spawns twice. That is not theory — the industry layer arrived with
+      `rebuild_industry` listed twice. So conditions are summed with `or_else` rather
+      than split across registrations, and the rule now has a single place to live
+      instead of the three comments that used to repeat it.
+    - `rail::rebuilds_on` goes through `IntoSystem::into_system` because a bare
+      function-condition carries its own type marker; the other layers' `or_else` erases
+      it. That is the only oddity in the shape.
+    - **A full layer registry was considered and rejected.** Declaring a layer as data —
+      tag, triggers, build, z, material — and letting one generic system register it
+      would close the double-spawn trap by construction, and the trap is real. It would
+      also cost an associated-type-per-layer trait and one indirection between "what is
+      drawn" and "when", to replace eleven adapters of about ten lines each. Most of what
+      that card was written against is already gone: the per-rebuild material
+      allocations, the redundant `is_empty` guards and the two modules writing
+      `DespawnOnExit` by hand all went with the seam itself. What was left was the gates'
+      prose living away from its layer, and that is what `rebuilds_on` fixes.
   - **Converting a module** means: lift the build to `mesh_*` returning
     `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
     tag to every layer), move any cutoff or toggle into the build, drop its

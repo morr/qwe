@@ -47,6 +47,7 @@ use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SunOnMap, sun_light};
+use crate::prefs::retuned;
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
@@ -518,6 +519,19 @@ pub fn mesh_buildings(
         shadows: shadow_layers,
     };
     (meshes, report)
+}
+
+/// Когда пересобирать зданиевые слои: режим высот, осевшее солнце и ступень
+/// зума кровельного оборудования.
+///
+/// Ступень зума здесь потому, что оборудование на кровле живёт в том же
+/// слитом меше, что и дома, и снять его иначе, чем пересборкой, нельзя.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<BuildingHeightMode>
+        .or_else(retuned::<SunOnMap>)
+        .or_else(retuned::<BuildingZoomBucket>)
 }
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:

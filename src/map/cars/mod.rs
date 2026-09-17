@@ -40,7 +40,8 @@ use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{shadow_dir, shadow_length_scale};
+use crate::map::{SunOnMap, shadow_dir, shadow_length_scale};
+use crate::prefs::retuned;
 use crate::settings::{
     CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR,
 };
@@ -250,6 +251,20 @@ pub fn measure_cars(
         });
     }
     (cars.len(), costs)
+}
+
+/// Когда пересобирать слой припаркованных машин: своя ступень зума, тумблер и
+/// ручка занятости, стиль дорог и осевое солнце.
+///
+/// `RoadStyle` здесь потому, что ряд стоит по **сглаженной** осевой, той же,
+/// по которой рисуется асфальт: смена Smoothing двигает машины вместе с ним.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<CarZoomBucket>
+        .or_else(retuned::<CarStyle>)
+        .or_else(retuned::<RoadStyle>)
+        .or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.

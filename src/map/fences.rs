@@ -30,7 +30,8 @@ use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::roads::{RoadJoin, push_ribbon};
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, SunOnMap, shadow_dir, shadow_length_scale};
+use crate::prefs::retuned;
 use crate::settings::Z_FENCE;
 
 #[cfg(test)]
@@ -92,6 +93,18 @@ pub struct FenceLayerTag;
 const FENCE_COLOR: Color = Color::srgb(0.435, 0.404, 0.353);
 const WALL_COLOR: Color = Color::srgb(0.549, 0.541, 0.522);
 const HEDGE_COLOR: Color = Color::srgb(0.298, 0.376, 0.243);
+
+/// Когда пересобирать слой оград: своя ступень зума и осевшее солнце.
+///
+/// Солнце — потому что видно у ограды в первую очередь **тень**: сверху сам
+/// забор это волос в четверть метра. Осевшее (`SunOnMap`), а не ползунок
+/// (`SunStyle`): иначе слой пересобирался бы на каждом делении шкалы и с ещё
+/// не доехавшим солнцем.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)
+}
 
 pub fn rebuild_fences(
     mut commands: Commands,

@@ -16,6 +16,7 @@ use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::prefs::retuned;
 use crate::settings::Z_TRAM;
 
 /// Трамвай — не лента, а линия с поперечной насечкой, как в Яндекс.Картах и
@@ -251,6 +252,16 @@ pub fn measure_tram(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
             (index, surface::layer_costs(&layers, report.elapsed))
         })
         .collect()
+}
+
+/// Когда пересобирать трамвайный слой: ступень зума и тумблер видимости.
+/// Выключенный трамвай идёт через ту же пересборку — она и деспавнит слой, и
+/// строит его заново пустым, — поэтому тумблер стоит здесь, а не ранним
+/// выходом в системе.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<TramZoomBucket>.or_else(retuned::<TramStyle>)
 }
 
 /// Пересборка трамвайного меша при смене ступени зума или переключении
