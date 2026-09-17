@@ -46,6 +46,19 @@ impl<T: ZoomLods> ZoomBucket<T> {
             _table: PhantomData,
         }
     }
+
+    /// Ступень по её номеру. Нужна одному — офлайн-замеру
+    /// (`examples/bench/map_meshing.rs`), который проходит таблицу целиком:
+    /// у слоя рельсов дальняя ступень стоит 45 к вершин, а ближняя 673 к, и
+    /// счёт «по зуму где-то внутри ступени» врал бы уже в выборе ступени.
+    pub fn at(index: usize) -> Self {
+        let steps = T::max_zooms().count();
+        assert!(index < steps, "ступени {index} нет в таблице из {steps}");
+        Self {
+            index,
+            _table: PhantomData,
+        }
+    }
 }
 
 /// Значение до первого входа в мир не наблюдается — [`seed_zoom_bucket`] идёт

@@ -27,6 +27,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::loading::AppState;
+use crate::map::buildings::LayerCost;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
@@ -520,6 +521,34 @@ pub fn spawn_layers(
             tag.clone(),
         );
     }
+}
+
+/// Слои, собранные `mesh_*`, — строками офлайн-замера
+/// (`examples/bench/map_meshing.rs`).
+///
+/// Время одно на всю сборку и стоит первой строкой (`build`), с нулём вершин:
+/// `mesh_*` строит все свои слои одним проходом, и делить миллисекунды между
+/// ними нечем — та же форма, что у шагов `breaks`/`districts` в
+/// `measure_cars`. Дальше идут слои: имя — то самое, под которым слой виден в
+/// живом мире, — и вершины.
+///
+/// Существует ради того, чтобы `measure_*` каждого модуля был одной строкой:
+/// **своей сборки у замера нет**, он зовёт игровой `mesh_*`. Это и есть то,
+/// ради чего делался шов, и это отличает их от `buildings::measure_layers` и
+/// `cars::measure_cars`, которые повторяют шаги сборки нарочно — им надо
+/// развести их по строкам.
+pub fn layer_costs(layers: &[LayerMesh], elapsed: std::time::Duration) -> Vec<LayerCost> {
+    std::iter::once(LayerCost {
+        name: "build",
+        vertices: 0,
+        elapsed,
+    })
+    .chain(layers.iter().map(|layer| LayerCost {
+        name: layer.name,
+        vertices: layer.builder.vertex_count(),
+        elapsed: std::time::Duration::ZERO,
+    }))
+    .collect()
 }
 
 /// Правка ползунка Texture — новые параметры в каждый материал; меши не

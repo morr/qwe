@@ -633,12 +633,25 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   sweep length and the union's area, so a run that did not state its sun would not be
   comparable with the next one; the live app builds with the sun from `settings.toml`, which
   is a second reason a log line and a run are not comparable.
-  **What it covers is the building layers and the cars, and nothing else yet.** The road,
-  rail, tram and surface/tree layers are still measurable only from the app log
-  (`road meshing:`, `rail meshing:`, `tram meshing:`) — the same log line App Nap lies
-  about; there is no `measure_roads` / `measure_rails` / `measure_tram` / `measure_surface`,
-  and adding one is the way to extend the bench when a road-style or surface comparison
-  needs the same treatment.
+  **What it covers besides the buildings and the cars**: `measure_surfaces`,
+  `measure_roads`, `measure_rails` and `measure_tram`, i.e. everything a `mesh_*` builds
+  except the trees. Those four are of a different kind from the two above, and the
+  difference is the whole payoff of the seam: they have **no build of their own**. Each
+  calls the game's `mesh_*` once and lays its layers out through
+  `surface::layer_costs(name, &layers, report.elapsed)` — one row carrying the module's
+  milliseconds (the build is one pass; there is nothing to split them between) and then a
+  row of vertices per layer, under the same `name` the layer wears in the live world.
+  `measure_layers` and `measure_cars` repeat their build's steps deliberately, because a
+  bench row per step is exactly what they exist for.
+  - **Rails and tram get a row per zoom bucket** (`ZoomBucket::at(index)`, which exists
+    for this). Their buckets differ in *what is drawn*, not in size — rails run 45 k
+    vertices on the far step against 673 k on the near one — so a single number would be
+    a number about nothing.
+  - **The tram is measured switched on**, though it ships off: the bench is about what
+    the layer costs, not about whether it is shown.
+  - Trees are the gap left: their build is a crown pool plus a scatter, and the
+    `LayerCost` row (a name and a vertex count per layer) has nothing to say about
+    15 k entities. Measuring them wants its own shape, not a sixth `measure_*`.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, water and waterways in
   `map/water.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in

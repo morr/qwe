@@ -30,10 +30,11 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
+use crate::map::buildings::LayerCost;
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{self, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
 
@@ -383,6 +384,21 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
     .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Flat))
     .collect();
     (layers, report)
+}
+
+/// Офлайн-замер путевых слоёв — **по строке на ступень зума**, а не одной
+/// строкой: у рельсов ступени отличаются не размером, а тем, что нарисовано,
+/// и дальняя стоит 45 к вершин против 673 к у ближней. Одно число здесь было
+/// бы числом ни о чём.
+///
+/// Своей сборки у замера нет: он зовёт тот же [`mesh_rails`], что и игра.
+pub fn measure_rails(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
+    (0..RAIL_LODS.len())
+        .map(|index| {
+            let (layers, report) = mesh_rails(RailZoomBucket::at(index), rails);
+            (index, surface::layer_costs(&layers, report.elapsed))
+        })
+        .collect()
 }
 
 /// Пересборка рельсовых слоёв при смене ступени зума — дорожные и трамвайный

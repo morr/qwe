@@ -11,10 +11,11 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::map::buildings::LayerCost;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{self, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::Z_TRAM;
 
@@ -218,6 +219,23 @@ pub(crate) fn push_tram(builder: &mut MeshBuilder, points: &[Vec2], lod: &TramLo
     if let Some(tie) = &lod.tie {
         builder.push_ticks(points, tie.length, tie.thickness, tie.spacing, color);
     }
+}
+
+/// Офлайн-замер трамвайного слоя — по строке на ступень зума, как у рельсов:
+/// ступени здесь тоже отличаются тем, что нарисовано (на дальней ступени шпал
+/// нет вовсе).
+///
+/// Меряется **включённый** трамвай, хотя по умолчанию он выключен: замер о
+/// цене слоя, а не о том, показан ли он в игре. Своей сборки у него нет — тот
+/// же [`mesh_tram`], что и у игры.
+pub fn measure_tram(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
+    let style = TramStyle { visible: true };
+    (0..TRAM_LODS.len())
+        .map(|index| {
+            let (layers, report) = mesh_tram(TramZoomBucket::at(index), &style, rails);
+            (index, surface::layer_costs(&layers, report.elapsed))
+        })
+        .collect()
 }
 
 /// Пересборка трамвайного меша при смене ступени зума или переключении

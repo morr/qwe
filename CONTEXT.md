@@ -1089,10 +1089,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   alone.
 - **map_meshing** (`examples/bench/map_meshing.rs`) — offline measurement of the layer build,
   `cargo run --example map_meshing -- [city slug]`: vertices and milliseconds per
-  building layer for every height mode × roof-clutter bucket, plus the car layer, straight
-  from the Overpass cache with **no window and no GPU**. `map::measure_layers` /
-  `map::measure_cars` are the entry points and call exactly the builders `mesh_buildings`
-  calls. The missing window is the point: macOS App Nap slows an invisible or minimised
+  building layer for every height mode × roof-clutter bucket, plus the car layer, the
+  surfaces, the roads and the rail and tram layers at every zoom bucket — straight
+  from the Overpass cache with **no window and no GPU**. `measure_layers` and
+  `measure_cars` repeat the steps of their build on purpose, to give each a row of its
+  own; the other four (`measure_surfaces`, `measure_roads`, `measure_rails`,
+  `measure_tram`) have no build of their own at all — each calls the game's `mesh_*` and
+  lays its layers out through `surface::layer_costs`, which is what the seam bought.
+  The missing window is the point: macOS App Nap slows an invisible or minimised
   one, so the `building meshing:` log line is trustworthy only while the screen is awake —
   and absolute numbers still follow the machine's power state, which is why a run is
   compared with a run, never with the log. Run it after touching a building or car layer

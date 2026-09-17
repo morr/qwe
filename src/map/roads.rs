@@ -48,6 +48,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::network::RoadNodes;
+use crate::map::buildings::LayerCost;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
@@ -57,7 +58,9 @@ use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers};
+use crate::map::surface::{
+    self, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
+};
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
@@ -1071,6 +1074,16 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         elapsed: started.elapsed(),
     };
     (layers, report)
+}
+
+/// Офлайн-замер дорожных слоёв — строками `LayerCost`, как у зданий и машин.
+///
+/// Своей сборки у него нет: он зовёт тот же [`mesh_roads`], что и игра. До шва
+/// дорожные слои мерились только строкой `road meshing:` из живого приложения,
+/// то есть ровно тем способом, который на macOS врёт (App Nap).
+pub fn measure_roads(map: &MapData) -> Vec<LayerCost> {
+    let (layers, report) = mesh_roads(map, RoadStyle::default());
+    surface::layer_costs(&layers, report.elapsed)
 }
 
 /// Пересборка дорожных слоёв после переключения стиля из UI или BRP: деспавн

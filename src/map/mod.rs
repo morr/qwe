@@ -34,6 +34,15 @@ pub use self::buildings::material::RoofStyle;
 pub use self::buildings::{BuildingHeightMode, LayerCost, extrusion_lift, measure_layers};
 pub use self::cars::{CarStyle, measure_cars};
 pub use self::industry::IndustryStyle;
+// Остальные замеры бенча. В отличие от двух выше они **не повторяют** сборку:
+// каждый зовёт игровой `mesh_*` и раскладывает его слои в строки
+// (`surface::layer_costs`). Ради этого шов и делался — до него эти слои
+// мерились только строкой из лога живого приложения, которую на macOS решает
+// App Nap.
+pub use self::rail::measure_rails;
+pub use self::roads::measure_roads;
+pub use self::spawn::measure_surfaces;
+pub use self::tram::measure_tram;
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
 pub use self::meshing::{

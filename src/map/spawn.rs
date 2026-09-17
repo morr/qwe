@@ -8,13 +8,15 @@
 
 use bevy::prelude::*;
 
-use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
+use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket, LayerCost};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers};
+use crate::map::surface::{
+    self, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
+};
 use crate::map::trees::TreeRowStyle;
 use crate::map::water::{mesh_water_areas, mesh_water_lines};
 use crate::settings::{
@@ -128,6 +130,100 @@ pub fn spawn_map(
     road_style: Res<RoadStyle>,
     mut parking_layout: ResMut<parking::ParkingLayout>,
 ) {
+    // Раскладка стоянок — вход сборки, а не её выход: по ней рисуется и
+    // разметка мест, и ряды машин (`map/cars`), так что живёт она ресурсом и
+    // считается один раз на загрузку мира.
+    *parking_layout = parking::ParkingLayout::new(&map.parking);
+    let (surfaces, surface_report) = mesh_surfaces(&map, &parking_layout);
+    info!("{surface_report}");
+    if surface_report.skipped > 0 {
+        warn!(
+            "map meshing: {} degenerate polygons skipped",
+            surface_report.skipped
+        );
+    }
+    // Тега у этих слоёв нет (`()`), и это не упущение шва, а состояние дел:
+    // их никто не запрашивает, а значит и не пересобирает — они живут ровно
+    // столько, сколько живёт город. Дать им метку имело бы смысл вместе с
+    // причиной пересобирать, а её пока нет.
+    spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
+
+    let (road_layers, road_report) = roads::mesh_roads(&map, *road_style);
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        road_layers,
+        roads::RoadLayerTag,
+    );
+    info!("{road_report}");
+
+    let plan = buildings::BuildingPlan {
+        mode: *height_mode,
+        bucket: *building_bucket,
+        shadows: true,
+    };
+    buildings::spawn_building_meshes(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        buildings::mesh_buildings(plan, &map.buildings, &map.roads),
+    );
+}
+
+/// Что вышло из сборки поверхностей — значением, а не тремя строками в логе.
+///
+/// Вода и водотоки печатались двумя своими `info!` изнутри сборки; здесь они
+/// два поля, потому что оба шага — самые дорогие в слое, а `info!` на macOS
+/// меряет то, что решит App Nap.
+pub struct SurfaceReport {
+    pub water_areas: usize,
+    pub water_lines: usize,
+    pub vertices: usize,
+    /// Вырожденные контуры, которые билдеры пропустили: ненулевое значение —
+    /// повод посмотреть в парс, а не в сборку.
+    pub skipped: usize,
+    /// Отмель площадной воды — вложенные офсеты по всем полигонам сразу.
+    pub water: std::time::Duration,
+    /// Русла: резка по берегам площадной воды.
+    pub waterways: std::time::Duration,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for SurfaceReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            water_areas,
+            water_lines,
+            vertices,
+            water,
+            waterways,
+            elapsed,
+            ..
+        } = self;
+        write!(
+            f,
+            "surface meshing: {vertices} verts in {elapsed:.1?} \
+             (water {water_areas} areas in {water:.1?}, \
+             waterways {water_lines} ways in {waterways:.1?})"
+        )
+    }
+}
+
+/// Покрытия и разметка — тринадцать слоёв города, собранные **без мира**.
+///
+/// Это те самые слои, что живут ровно столько, сколько живёт город: земля,
+/// кварталы, зелень, песок, площадки, стоянки, вода и разметка по ним. До шва
+/// они собирались прямо в теле [`spawn_map`], и достать их из теста или из
+/// офлайн-замера было нечем — единственной дверью в них была система Bevy.
+///
+/// Раскладка стоянок приходит **готовой**: по ней рисуется не только разметка
+/// мест, но и ряды машин, поэтому она ресурс мира, а не выход этой сборки.
+pub fn mesh_surfaces(
+    map: &MapData,
+    parking_layout: &parking::ParkingLayout,
+) -> (Vec<LayerMesh>, SurfaceReport) {
+    let started = std::time::Instant::now();
     // земля — квад на всю карту тем же фактурным материалом, что и прочие
     // поверхности: спрайту с плоским цветом фактуру не положить
     let mut ground = MeshBuilder::with_surface_coords();
@@ -172,12 +268,7 @@ pub fn spawn_map(
     // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
     let water_started = std::time::Instant::now();
     let water = mesh_water_areas(&map.water);
-    info!(
-        "water meshing: {} areas, {} verts in {:.1?}",
-        map.water.len(),
-        water.vertex_count(),
-        water_started.elapsed()
-    );
+    let water_took = water_started.elapsed();
 
     // стоянка — асфальт своим слоем, того же тона, что проезжая часть; по
     // нему идёт разметка мест (`map::parking`)
@@ -188,7 +279,6 @@ pub fn spawn_map(
         // рисовала на въезде градиент поперёк дороги.
         parking.push_polygon(&area.outer, &area.holes, PARKING_COLOR.to_linear());
     }
-    *parking_layout = parking::ParkingLayout::new(&map.parking);
     let mut parking_lines = MeshBuilder::default();
     for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
         parking::push_markings(&mut parking_lines, area, stalls);
@@ -210,12 +300,7 @@ pub fn spawn_map(
 
     let waterways_started = std::time::Instant::now();
     let waterways = mesh_water_lines(&map.water_lines, &map.water);
-    info!(
-        "waterways meshing: {} ways against {} water areas in {:.1?}",
-        map.water_lines.len(),
-        map.water.len(),
-        waterways_started.elapsed()
-    );
+    let waterways_took = waterways_started.elapsed();
 
     let skipped: usize = [
         &yards, &works, &parks, &woods, &grass, &sand, &pitches, &parking, &water,
@@ -223,18 +308,10 @@ pub fn spawn_map(
     .iter()
     .map(|builder| builder.skipped_polygons())
     .sum();
-    if skipped > 0 {
-        warn!("map meshing: {skipped} degenerate polygons skipped");
-    }
 
     // Покрытия и разметка одним списком. Разметка мест и полей — плоская:
     // это белая краска, а не фактура покрытия.
-    //
-    // Тега у этих слоёв нет (`()`), и это не упущение шва, а состояние дел:
-    // их никто не запрашивает, а значит и не пересобирает — они живут ровно
-    // столько, сколько живёт город. Дать им метку имело бы смысл вместе с
-    // причиной пересобирать, а её пока нет.
-    let surfaces_and_paint: Vec<LayerMesh> = [
+    let layers: Vec<LayerMesh> = [
         (ground, Z_GROUND, "ground", SurfaceKind::Ground),
         (works, Z_LANDUSE, "landuse_works", SurfaceKind::Ground),
         (yards, Z_LANDUSE_YARD, "landuse_yards", SurfaceKind::Yard),
@@ -258,35 +335,29 @@ pub fn spawn_map(
         .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Flat)),
     )
     .collect();
-    spawn_layers(
-        &mut commands,
-        &mut meshes,
-        &materials,
-        surfaces_and_paint,
-        (),
-    );
 
-    let (road_layers, road_report) = roads::mesh_roads(&map, *road_style);
-    spawn_layers(
-        &mut commands,
-        &mut meshes,
-        &materials,
-        road_layers,
-        roads::RoadLayerTag,
-    );
-    info!("{road_report}");
-
-    let plan = buildings::BuildingPlan {
-        mode: *height_mode,
-        bucket: *building_bucket,
-        shadows: true,
+    let report = SurfaceReport {
+        water_areas: map.water.len(),
+        water_lines: map.water_lines.len(),
+        vertices: layers
+            .iter()
+            .map(|layer| layer.builder.vertex_count())
+            .sum(),
+        skipped,
+        water: water_took,
+        waterways: waterways_took,
+        elapsed: started.elapsed(),
     };
-    buildings::spawn_building_meshes(
-        &mut commands,
-        &mut meshes,
-        &materials,
-        buildings::mesh_buildings(plan, &map.buildings, &map.roads),
-    );
+    (layers, report)
+}
+
+/// Офлайн-замер слоёв поверхностей — строками `LayerCost`, как у зданий и
+/// машин. Своей сборки у него нет: он зовёт тот же [`mesh_surfaces`], что и
+/// игра, — ради этого шов и делался.
+pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
+    let layout = parking::ParkingLayout::new(&map.parking);
+    let (layers, report) = mesh_surfaces(map, &layout);
+    surface::layer_costs(&layers, report.elapsed)
 }
 
 /// Зелёная полоса под аллеей — чтобы пересборка стиля знала, что деспавнить.
@@ -376,3 +447,6 @@ pub fn rebuild_tree_row_band(
         TreeRowBandTag,
     );
 }
+
+#[cfg(test)]
+mod tests;
