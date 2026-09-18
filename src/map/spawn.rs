@@ -14,6 +14,7 @@ use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
+use crate::map::smooth::smooth_path;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
@@ -366,7 +367,7 @@ pub struct TreeRowBandTag;
 
 /// Подложка аллей: лента лесного цвета вдоль каждого `natural=tree_row`, со
 /// своими **тремя** ручками — стык, сглаживание и кант, — теми же самыми, что у
-/// дорожных лент (`RoadJoin` / `RoadSmoothing` / `casing`), но своими: ломаная
+/// дорожных лент (`RoadJoin` / `Smoothing` / `casing`), но своими: ломаная
 /// аллеи и ломаная улицы приходят из разных данных, и подложка обязана выглядеть
 /// лесом даже там, где дороги оставлены нетронутыми.
 ///
@@ -387,7 +388,7 @@ pub fn mesh_tree_row_band(rows: &[TreeRow], style: &TreeRowStyle) -> Vec<LayerMe
     for row in rows {
         // Chaikin тот же, что у дорог: ломаная из OSM на повороте даёт полосе
         // заметный угол, которого у лесного контура не бывает
-        let path = roads::smooth_path(&row.points, TREE_ROW_BAND_WIDTH, style.smoothing);
+        let path = smooth_path(&row.points, TREE_ROW_BAND_WIDTH, style.smoothing);
         if style.casing {
             let width = TREE_ROW_BAND_WIDTH
                 + 2.0 * crate::map::footprint::casing_width(TREE_ROW_BAND_WIDTH);

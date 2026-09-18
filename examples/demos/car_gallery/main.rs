@@ -63,8 +63,7 @@ use qwe::camera::{hovering_ui, zoom_to_cursor};
 use qwe::map::cars::cars_mesh;
 use qwe::map::osm::{RoadLine, TrafficSide};
 use qwe::map::{
-    CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, RoadSmoothing,
-    smooth_path,
+    CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, Smoothing, smooth_path,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -418,7 +417,7 @@ fn rebuild_gallery(
     let road_color = ROAD_COLOR.to_linear();
     // город кладёт ленту по сглаженной осевой; витрина обязана класть её так
     // же, иначе показывает не игровую геометрию, а свою
-    let smoothing = RoadSmoothing::default();
+    let smoothing = Smoothing::default();
     for road in &roads {
         asphalt.push_ribbon(
             &smooth_path(&road.points, road.width, smoothing),

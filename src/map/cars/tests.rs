@@ -40,7 +40,7 @@ fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Ve
         roads,
         &junctions::marking_breaks(roads, is_carriageway),
         style,
-        RoadSmoothing::Off,
+        Smoothing::Off,
         traffic,
         &Districts::new(&[]),
     )
@@ -153,7 +153,7 @@ fn the_same_street_parks_thinner_in_a_private_sector() {
             roads,
             &breaks,
             CarStyle::default(),
-            RoadSmoothing::Off,
+            Smoothing::Off,
             TrafficSide::Right,
             &Districts::new(buildings),
         )
@@ -455,12 +455,12 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
         std::slice::from_ref(&road),
         &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
         style,
-        RoadSmoothing::Light,
+        Smoothing::Light,
         TrafficSide::Right,
         &Districts::new(&[]),
     );
     assert!(!cars.is_empty());
-    let drawn = smooth_path(&road.points, road.width, RoadSmoothing::Light);
+    let drawn = smooth_path(&road.points, road.width, Smoothing::Light);
     for car in &cars {
         let off = distance_to_path(&drawn, car.at);
         assert!(
@@ -499,7 +499,7 @@ fn a_street_builds_one_blended_layer() {
     let (layers, report) = mesh_cars(
         near_bucket(),
         CarStyle::default(),
-        RoadSmoothing::Off,
+        Smoothing::Off,
         &city(),
         &ParkingLayout::default(),
     );
@@ -523,7 +523,7 @@ fn the_toggle_off_draws_nothing() {
     let (layers, report) = mesh_cars(
         near_bucket(),
         style,
-        RoadSmoothing::Off,
+        Smoothing::Off,
         &city(),
         &ParkingLayout::default(),
     );
@@ -544,7 +544,7 @@ fn the_far_bucket_draws_nothing() {
     let (layers, report) = mesh_cars(
         far,
         CarStyle::default(),
-        RoadSmoothing::Off,
+        Smoothing::Off,
         &city(),
         &ParkingLayout::default(),
     );

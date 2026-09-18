@@ -11,9 +11,9 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
-use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
+use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
@@ -38,8 +38,9 @@ const TRAM_SMOOTH_WIDTH: f32 = 1.2;
 /// линии в полтора-два экранных пикселя стык излома не читается вовсе, а
 /// Strong-сглаживание неотличимо от Light. Осевая всегда слегка сглажена —
 /// ломаная OSM на повороте даёт тонкой линии заметный угол.
-const TRAM_JOIN: RoadJoin = RoadJoin::Round;
-const TRAM_SMOOTHING: RoadSmoothing = RoadSmoothing::Light;
+const TRAM_JOIN: RibbonJoin = RibbonJoin::Round;
+const TRAM_CAP: RibbonCap = RibbonCap::Round;
+const TRAM_SMOOTHING: Smoothing = Smoothing::Light;
 
 /// Единственная ручка трамвая — рисовать его или нет; строка `Tram` в секции
 /// Roads (`ui/roads.rs`), пишется и по BRP, сохраняется между запусками.
@@ -231,7 +232,7 @@ pub fn mesh_tram(
 /// тестов на геометрию.
 pub(crate) fn push_tram(builder: &mut MeshBuilder, points: &[Vec2], lod: &TramLod) {
     let color = TRAM_COLOR.to_linear();
-    push_ribbon(builder, points, lod.line_width, color, TRAM_JOIN);
+    builder.push_ribbon(points, false, lod.line_width, color, TRAM_JOIN, TRAM_CAP);
     if let Some(tie) = &lod.tie {
         builder.push_ticks(points, tie.length, tie.thickness, tie.spacing, color);
     }

@@ -25,7 +25,8 @@ use crate::map::SunOnMap;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::TreeSet;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
-use crate::map::roads::{RoadJoin, RoadSmoothing};
+use crate::map::roads::RoadJoin;
+use crate::map::smooth::Smoothing;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::prefs::retuned;
 use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
@@ -136,7 +137,7 @@ pub struct TreeRowStyle {
     /// Стык ленты зелёной подложки аллеи (`map::spawn::mesh_tree_row_band`).
     pub join: RoadJoin,
     /// Сглаживание той же подложки — Chaikin, как у дорог.
-    pub smoothing: RoadSmoothing,
+    pub smoothing: Smoothing,
     /// Тёмный кант по краю подложки, отдельным слоем под заливкой.
     pub casing: bool,
 }
@@ -151,7 +152,7 @@ impl Default for TreeRowStyle {
             // задано явно, а не через `default()`: у дорог сглаживание — вкус, а
             // здесь требование. Полоса без него читается как нарисованная линия,
             // а не как заросшая обочина, и `Off` в этом поле — всегда ошибка
-            smoothing: RoadSmoothing::Light,
+            smoothing: Smoothing::Light,
             // у дороги кант отделяет полотно от фона, у зарослей отделять нечего:
             // подложка и так темнее газона, а второй зелёный контур читается как
             // ещё одна дорожка вдоль аллеи

@@ -28,7 +28,7 @@ use crate::map::grid::Grid;
 use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin};
 use crate::map::osm::model::{point_in_area, point_in_polygon, ring_bounds, signed_ring_area};
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
-use crate::map::roads::{self, RoadSmoothing};
+use crate::map::smooth::{Smoothing, smooth_path};
 
 /// Цвет глубокой воды — площадной и ленты русла.
 pub const WATER_COLOR: Color = Color::srgb(0.655, 0.804, 0.910);
@@ -232,7 +232,7 @@ pub fn mesh_water_lines(lines: &[WaterLine], water: &[PolyArea]) -> MeshBuilder 
         // сглаживание как у дорог: русло в OSM — ломаная по точкам съёмки, и на
         // её изломах лента без сглаживания заметно гранёная. Режется уже
         // сглаженная ось — та, по которой лента и ляжет
-        let path = roads::smooth_path(&line.points, line.width, RoadSmoothing::Light);
+        let path = smooth_path(&line.points, line.width, Smoothing::Light);
         // круглые торцы там, где вода продолжается: два way одного русла
         // встречаются в общем узле, и полудиски сливаются в непрерывную реку.
         // Портал культверта — исключение: за ним воды нет, и полудиск торчал бы

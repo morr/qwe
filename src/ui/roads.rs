@@ -16,7 +16,7 @@
 
 use bevy::prelude::*;
 
-use crate::map::{CarStyle, RoadJoin, RoadSmoothing, RoadStyle, TramStyle};
+use crate::map::{CarStyle, RoadJoin, RoadStyle, Smoothing, TramStyle};
 use crate::settings::{CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
@@ -78,7 +78,7 @@ fn build_roads_section(
         ROW_LEFT_PX,
         &*style,
         CycleBinding {
-            cycle: |style| style.smoothing = next_in(&RoadSmoothing::ALL, style.smoothing),
+            cycle: |style| style.smoothing = next_in(&Smoothing::ALL, style.smoothing),
             text: |style| style.smoothing.label().to_string(),
         },
     );
