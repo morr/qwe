@@ -101,13 +101,16 @@ stand, how density works, and which resources restyle them.
   `TREE_DENSITY_MAX` is it rounded up to a slider step — **6.5×** today. It is computed so
   that editing the spacing can't silently strand the top of the slider. Raising the ceiling
   beyond this does nothing; the lever for a denser forest is `TREE_MIN_SPACING`.
-- **`MapData::tree_appears_at`** — the density at which each tree appears, same length and
-  order as `MapData::trees` (sorted ascending). Threshold is
+- **The appearance threshold** — the density at which each tree appears. It is not a field
+  of its own: `MapData::trees` is a **`TreeSet`**, and position and threshold enter it
+  together through the single `TreeSet::push`, both arrays private and sorted ascending by
+  threshold, so "same length, same order" cannot be broken from outside. Threshold is
   `(rank within its wood + 1) · TREE_AREA_PER_TREE / wood area`, so every wood contributes
   exactly its own share at any density, *including* woods that hit saturation and never
   filled their ask. Row trees carry their own threshold (see **Tree rows**), and a row
   whose spacing came from OSM carries `0` — it stands whole at every step of the slider.
-  `map::trees::visible_count` is then a `partition_point` — thinning is
+  `TreeSet::visible_count` is then a `partition_point` (and `visible(density)` hands back
+  that prefix) — thinning is
   monotone (a step up only adds trees) and exact, where the earlier hash-share thinning
   drifted ~20% sparse at 1× because it divided by the nominal ceiling the map never reached.
 - **Asked vs planted** — the log line
@@ -242,7 +245,7 @@ stand, how density works, and which resources restyle them.
     the field is already sampled for the current params — `ConiferField` remembers what
     it was sampled with, plus a `generation` counter the overlay uses as cache key).
   - Species is **orthogonal to density thinning**: the quantile runs over all planted
-    trees while the density slider spawns a prefix of them (`visible_count`), and that
+    trees while the density slider spawns a prefix of them (`TreeSet::visible_count`), and that
     prefix is a spatially uniform subsample, so the share among spawned trees holds and a
     tree does not change species as the slider is dragged.
   - The **noise** debug toggle (`ui/debug/overlays.rs::sync_conifer_noise_overlay`) shows the

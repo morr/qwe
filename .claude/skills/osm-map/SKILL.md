@@ -118,12 +118,12 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 
   Collapsing them into one filtered vector would therefore lose nothing of the kind (it
   would all still be needed) and would add a pass over tens of thousands of areas per
-  layer. The ten-branch `match` in `parse::push_area` is a dispatch that exists **once**;
-  it is not repeated on the read side — what `spawn::mesh_surfaces` matches is the
-  *sub-class within* a vector, which is exactly what the vector cannot say.
+  layer. The `match` in `parse::push_area` (one arm per vector) is a dispatch that
+  exists **once**; it is not repeated on the read side — what `spawn::mesh_surfaces`
+  matches is the *sub-class within* a vector, which is exactly what the vector cannot say.
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
-  Industrial | Parking`. **Park** is the
+  Industrial | Parking | Pitch(PitchKind)`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
@@ -299,11 +299,17 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   each sorted by threshold: the forest (with standalone surveyed trees at threshold 0
   in front), and the avenues under each placement policy.
   Raw material, not what the renderer reads.
-- **trees** / **tree_appears_at** — what the renderer reads: `MapData::compose_trees`
+- **trees** (**`TreeSet`**) — what the renderer reads: `MapData::compose_trees`
   merges the forest with the avenues of the selected policy (a merge, not a sort — both
   inputs are already ordered). `composed_for` records which policy it was built for;
   it lives on `MapData` rather than in a system `Local` precisely because a city switch
   replaces the whole resource, and a `Local` would survive it and skip the rebuild.
+  The set is **one value**, not the two `pub` arrays it used to be: positions and
+  thresholds are private, the only door in is `TreeSet::push`, which takes a position and
+  its threshold together, so "same length, same order" can no longer be broken from
+  outside. The **prefix rule** lives on it too — `visible(density)` /
+  `visible_count(density)` return the beginning of the set, never a filter, so a step up
+  the density slider only adds trees and never moves the standing ones.
 
 ## Parsing details
 
@@ -961,7 +967,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       of a build; the adapter uploads the pool to `Assets` and nothing else changes.
     - **`crowns`** — `CrownPlacement { at, radius, z, pool, variant, tint }`, one per
       drawn tree. This is what the conversion actually bought: the density prefix
-      (`visible_count`), the species resolve off the conifer field, the tint slot and the
+      (`TreeSet::visible_count`), the species resolve off the conifer field, the tint slot and the
       z micro-step were all inside a Bevy system and unreachable from a test.
     - **`shadows`** — the one merged shadow mesh, an ordinary `LayerMesh` at
       `Z_TREE_SHADOW`. Its colour moved **into the vertices** (`shadow_template` pushes

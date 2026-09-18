@@ -42,7 +42,7 @@ fn plant_as(map: &MapData, layout: TreeRowLayout) -> Vec<PlantedTree> {
 }
 
 /// Сколько деревьев видно на такой плотности — то же, что делает
-/// `map::trees::visible_count`, но без ползунка.
+/// `TreeSet::visible_count`, но без ползунка.
 fn visible(planted: &[PlantedTree], density: f32) -> Vec<Vec2> {
     planted
         .iter()

@@ -146,16 +146,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   scene in the same numbers it later asserts on. **Add a tag case here, not another
   literal.**
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
-  - **The nine `Vec<PolyArea>` and `AreaKind` are not the same fact twice.** The vector
-    says which *layer* an area is drawn in; the kind says which *member of that layer* it
-    is, and three vectors hold more than one: `buildings` holds `Building` **and**
-    `Kremlin` (read in nine production places — the wall ribbon, the fortress roofs, the
-    merlons, the brick, the tint), `landuse` holds `Residential` **and** `Industrial` (two
-    surface textures), and `Pitch(PitchKind)` carries a payload the vector cannot hold at
-    all. Collapsing the nine into one filtered vector would lose none of the kind and add
-    a pass over tens of thousands of areas per layer; the ten-branch `match` in
-    `parse::push_area` is a dispatch that exists **once** and is not repeated on the read
-    side. This was reviewed as an architecture candidate and closed as a non-finding.
+  - **The nine `Vec<PolyArea>` and `AreaKind` are not the same fact twice** — the vector
+    says which *layer* an area is drawn in, the kind says which *member of that layer* it
+    is, and three vectors hold more than one member. Reviewed as an architecture candidate
+    and closed as a non-finding; the argument and its numbers are in the **osm-map skill**.
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
     **only Wood carries trees**; `colours: Colours` are the **tagged colours** —
@@ -211,12 +205,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **TreeRow** / **TreeNode** — `natural=tree_row` avenues and single surveyed
     `natural=tree` trees, with optional `spacing`/`radius` from tags.
   - **trees** (`TreeSet`) — what the renderer reads; `compose_trees` merges forest +
-    avenues of the selected layout, `composed_for` caches which. It was two `pub` fields —
-    positions and thresholds — that had to stay "the same length and the same order", an
-    invariant held by prose in a type named in three dozen files. Now the type holds it:
-    the two arrays are private, the only way in is one `push` that takes both, and the
-    **prefix rule** lives there too — the density slider shows the beginning of the set,
-    not a filter, so a step up only ever adds trees and never moves the standing ones
+    avenues of the selected layout, `composed_for` caches which. A position and its
+    appearance threshold are **one value**: both arrays are private and enter through one
+    `push` that takes them together, so they cannot drift apart in length or order. The
+    **prefix rule** lives on the type too — the density slider shows the beginning of the
+    set, not a filter, so a step up only ever adds trees and never moves the standing ones
     (`visible(density)`, `visible_count(density)`).
 - **The parse seam** (`map/osm/parse.rs`) — reading the elements and finishing the map are
   two things, and either half is callable alone. **`read_elements`** runs the Overpass
@@ -736,7 +729,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons** plus standalone
   surveyed trees and `tree_row` avenues; deterministic LCGs seeded by geometry. **Planting
   runs once at the density ceiling**; the density slider shows a monotone *prefix*
-  (`tree_appears_at`), never a replant. The ceiling (`TREE_DENSITY_MAX` 6.5×) is derived
+  (`TreeSet::visible`), never a replant. The ceiling (`TREE_DENSITY_MAX` 6.5×) is derived
   from `TREE_MIN_SPACING` (6 m) saturation, not chosen. Health check — the `osm parse: N
   trees planted of M asked …` log line. **Crown geometry** is all in `CrownParams`
   (`map/trees/crown.rs`), built by `crown_variant`; **the city is drawn with
