@@ -7,8 +7,8 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use qwe::grid::{navtile_size, tile_center, world_to_tile};
 use qwe::human::{
-    HUMAN_SPEED_SPREAD, Human, HumanFirstWanderTag, HumanStyle, HumanWanderTag, Pace, WanderHeading,
-    WanderPause,
+    HUMAN_SPEED_SPREAD, Human, HumanFirstWanderTag, HumanStyle, HumanWanderTag, Pace,
+    WanderHeading, WanderPause,
 };
 use qwe::map::osm::{MapData, WallLine};
 use qwe::movement::{

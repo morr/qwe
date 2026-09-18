@@ -50,7 +50,9 @@ const _: () = {
         HUMAN_SPEED_SPREAD >= HUMAN_SPEED_SPREAD_MIN
             && HUMAN_SPEED_SPREAD <= HUMAN_SPEED_SPREAD_MAX
     );
-    assert!(HUMAN_BODY_RADIUS >= HUMAN_BODY_RADIUS_MIN && HUMAN_BODY_RADIUS <= HUMAN_BODY_RADIUS_MAX);
+    assert!(
+        HUMAN_BODY_RADIUS >= HUMAN_BODY_RADIUS_MIN && HUMAN_BODY_RADIUS <= HUMAN_BODY_RADIUS_MAX
+    );
 };
 
 #[derive(Component, Reflect, Default)]
