@@ -794,7 +794,7 @@ pub(super) fn shadow_template(
 /// Фигуры объединяются булевым union: слой теней полупрозрачный, и наложение
 /// копий внутри одного дерева читалось бы пятнами двойной темноты — та же
 /// причина, по которой union стоит у теней зданий
-/// (`buildings::layers::shadow_builder`). Считается один раз на вариант.
+/// (`buildings::shadows::shadow_builder`). Считается один раз на вариант.
 pub(super) fn conifer_shadow(outer: &[Vec2], height: f32) -> Vec<(Vec<Vec2>, Vec<Vec<Vec2>>)> {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;

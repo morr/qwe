@@ -476,7 +476,7 @@ pub(super) fn inflate_ring(ring: &[Vec2], distance: f32) -> Vec<Vec2> {
 
 /// Кольцо → контур i_overlay, нормализованный CCW: NonZero гасит контуры
 /// противоположного обхода, а обход source-колец OSM произволен (тот же
-/// приём, что у `buildings::layers::shadow_builder`).
+/// приём, что у `buildings::shadows::shadow_builder`).
 fn oriented(mut ring: Vec<Vec2>) -> Vec<[f32; 2]> {
     if signed_ring_area(&ring) < 0.0 {
         ring.reverse();
