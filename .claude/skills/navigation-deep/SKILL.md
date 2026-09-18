@@ -61,6 +61,19 @@ world's knobs but the scale everything navigational is built in, and it has one 
 - **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
   `x * grid_size.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
+- **Where each rule lives.** `navmesh.rs` keeps only the type: the `Vec<bool>`, the
+  grid-size/tile-size snapshot, `is_passable`/`set_passable` and the `to_tile`/`tile_center`
+  conversions, plus `ArcNavmesh`. Everything done *to* the grid is a submodule of
+  `navigation/navmesh/`, one per role, each with its own `tests.rs` beside it:
+  **`raster.rs`** — rasterisation (`set_area` and the row spans, `set_polyline*`,
+  `visit_polyline*`, `visit_segment_tiles`); **`fill.rs`** — the fill from `MapData`
+  (`fill_from_mapdata`, `fill_base`, `fill_fences`, `carve_passages`, `BridgeBands`);
+  **`gates.rs`** — the default gates (`open_sealed_fences`, the door groups and the
+  `SEALED_POCKET_MIN_AREA` / `GATE_ROUNDS` / `GATE_SPACING` knobs); **`reach.rs`** —
+  reachability (`flood`, `neighbours`, `component`, `successors` with its step costs,
+  `passable_from`, `prune_unreachable`, `open_gates_and_prune` + `GatesAndPrune`). They are
+  all `impl Navmesh` blocks, so every method keeps its name and its visibility — what the
+  split changes is the file you open, never the call.
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
   block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
   strips back** (`bridge=yes` roads) → buildings block → walls block → **fences block,
@@ -164,7 +177,7 @@ world's knobs but the scale everything navigational is built in, and it has one 
   carves — the render layering (curbs under fills) repeated in the grid, so at a
   junction of two bridge ways one way's deck re-carves the other's curb and the bridge
   is never walled across by its own curb. The deck carve is `width + curb − tile·√2`
-  (`navmesh.rs::fill_from_mapdata`) — it stops **half a tile diagonal short of the curb
+  (`navmesh/fill.rs::fill_base`) — it stops **half a tile diagonal short of the curb
   centerline**, which at the default 2 m navtile leaves it narrower than the deck itself
   by `tile·√2 − curb`: a curb-chain tile's center wanders up to half a diagonal (√2 m)
   off the curb centerline — i.e. *into* the deck on a slanted bridge — and carving out
