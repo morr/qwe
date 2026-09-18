@@ -339,7 +339,10 @@ fn stand_along(wagons: &mut Vec<Wagon>, track: &Track, fan: &Fan, rng: &mut Lcg)
     // расстоянию, а не по дуговой координате, — она ловит любую кривизну
     let mut last: Option<Vec2> = None;
     while at + WAGON_LENGTH <= total - END_MARGIN {
-        let rake = rng.range(RAKE_MIN as f32, RAKE_MAX as f32 + 1.0) as u32;
+        // кламп сверх того, что делает сам `next_f32`: на длинном диапазоне
+        // сумма `from + t·(to − from)` округляется до самого `to` ещё на 127
+        // состояниях, и усечение давало сцеп из `RAKE_MAX + 1` вагонов
+        let rake = (rng.range(RAKE_MIN as f32, RAKE_MAX as f32 + 1.0) as u32).min(RAKE_MAX);
         let span = rake as f32 * pitch;
         let middle = (at + span / 2.0).min(total - END_MARGIN);
         let width = place_on_path(&rail.points, &along, middle)
