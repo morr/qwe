@@ -21,13 +21,16 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
-mod knob;
+// `pub` ради витрин (`examples/demos/*_gallery/`): их ручки привязаны к полю
+// ресурса ровно так же, как ручки панелей игры, и повторять у себя протяжку,
+// синхронизацию и подпись им незачем
+pub mod knob;
 mod navigation;
 mod noise;
 mod roads;
 mod rows;
 mod shell;
-// `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
+// `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo/`): ей
 // нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
 // поднять не может — он тянет панели, карту и настройки
 pub mod slider;

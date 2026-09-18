@@ -340,9 +340,9 @@ did not fit 1080 px and ran off the top of the screen.
   panel must register what it uses rather than assume its neighbour did, which is the
   mirror-of-a-list habit this whole change removes. Without the memo the second call
   would simply add a second copy of both systems.
-- **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one the examples
-  (`crowd_demo`, `tree_gallery`) call directly, since their sliders drive
-  demo-local state rather than a resource: `spawn_slider_row` (label + value text +
+- **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one `crowd_demo`
+  calls directly, since its fifteen knobs interleave three resources in one `const` slice
+  that also feeds the presets: `spawn_slider_row` (label + value text +
   discrete `bevy_ui_widgets::Slider`), `quantize`, `apply_step` (quantize + put the thumb
   back on the stepped value), `retarget` (move the thumb when the value arrived past it —
   over BRP, from saved settings, from a lab preset). Free functions only: the file holds no
