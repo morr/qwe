@@ -19,6 +19,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
+pub use self::reach::GatesAndPrune;
 use crate::grid::{grid_size, navtile_size};
 
 /// Множитель эвристики — та же шкала, что и стоимость шага

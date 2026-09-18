@@ -12,7 +12,7 @@ use bevy::prelude::*;
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::backend::{Backend, Walkable};
 pub use self::mode::{GridMode, MeshMode, NavMode};
-pub use self::navmesh::{ArcNavmesh, COST_MULTIPLIER, Navmesh};
+pub use self::navmesh::{ArcNavmesh, COST_MULTIPLIER, GatesAndPrune, Navmesh};
 pub use self::northstar::{
     NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
     start_northstar_build,
@@ -384,7 +384,8 @@ fn clear_map_backends(mut northstar: ResMut<NorthstarGrid>, mut polymesh: ResMut
 }
 
 /// Ближайший к `position` центр тайла, вокруг которого хватает свободного
-/// места для портала. Хинт `PORTAL_POS` мог попасть в здание OSM-карты;
+/// места для портала. Хинт города (`City::portal_hint`, константы `*_PORTAL_POS`
+/// в `city.rs`) мог попасть в здание OSM-карты;
 /// снап делает поток загрузки (`map/osm/download.rs`) сразу после заливки
 /// navmesh, той же функцией пользуется офлайн-бенч
 /// (`examples/bench/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
