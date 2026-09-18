@@ -2,7 +2,7 @@ use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, colour, parse_measure};
-use crate::map::osm::fixture::{Overpass, building, closed, rect, square, water_area};
+use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
     StructureKind, WaterKind, distance_to_segment,
@@ -2369,4 +2369,286 @@ fn finishing_the_parse_reports_what_each_pass_did() {
     assert_eq!(map.standalone_trees.len(), 1, "дерево посажено");
     assert_eq!(map.trees.len(), 1, "и собрано в набор рендера");
     assert_eq!(map.composed_for, Some(TreeCompose::default()));
+}
+
+/// Отодвигание домов от тротуаров — в одиночку, на карте, собранной руками:
+/// улица и два дома, а не сцена Overpass. Что именно проход сохраняет и кого
+/// оставляет на месте, проверяет `a_house_on_the_sidewalk_is_pulled_back_into_the_block`
+/// через весь конвейер; здесь важно, что проход зовётся по имени и что
+/// счётчики у него не нулевые.
+#[test]
+fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
+    // residential 8 м: полоса с тротуаром и зазором — 4 + 1.76 + 2 от оси
+    let reach = 4.0 + sidewalk_width(8.0).unwrap() + SIDEWALK_CLEARANCE;
+    let on_sidewalk = rect(
+        CENTER + Vec2::new(-20.0, 4.7),
+        CENTER + Vec2::new(-8.0, 14.7),
+    );
+    let clear = rect(
+        CENTER + Vec2::new(20.0, 20.0),
+        CENTER + Vec2::new(32.0, 30.0),
+    );
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(300.0, 0.0),
+                CENTER + Vec2::new(300.0, 0.0),
+            ],
+            8.0,
+        )],
+        buildings: vec![
+            building(on_sidewalk.clone(), Vec::new()),
+            building(clear.clone(), Vec::new()),
+        ],
+        ..MapData::default()
+    };
+
+    let pulled = pull_houses_off_sidewalks(&mut map);
+    assert_eq!(pulled.moved, 1, "наезжающий дом не сдвинут");
+    assert_eq!(pulled.partly, 0, "сдвигу ничто не мешало");
+    assert_eq!(pulled.left, 0);
+
+    let gap = map.buildings[0]
+        .outer
+        .iter()
+        .map(|vertex| vertex.y - CENTER.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        gap >= reach - 0.06,
+        "дом остался на тротуаре: {gap} м от оси"
+    );
+    assert!(gap < reach + 0.1, "дом унесён дальше нужного: {gap}");
+    assert!(
+        map.buildings[1]
+            .outer
+            .iter()
+            .zip(&clear)
+            .all(|(a, b)| a.distance(*b) < 0.01),
+        "дом в стороне от улицы тронут"
+    );
+}
+
+/// Дотягивание кварталов до дорог — тоже само по себе и тоже с ненулевым
+/// счётчиком: у ближнего квартала под асфальт уходит весь его верхний край,
+/// дальний не трогают.
+#[test]
+fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
+    // residential 8 м: край полотна с тротуаром — 4 + 1.76 от оси
+    let edge = 4.0 + sidewalk_width(8.0).unwrap();
+    let block = |ring: Vec<Vec2>| PolyArea {
+        kind: AreaKind::Residential,
+        ..building(ring, Vec::new())
+    };
+    let near = rect(
+        CENTER + Vec2::new(-40.0, -40.0),
+        CENTER + Vec2::new(40.0, -6.5),
+    );
+    let far = rect(
+        CENTER + Vec2::new(60.0, -40.0),
+        CENTER + Vec2::new(140.0, -14.0),
+    );
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            8.0,
+        )],
+        landuse: vec![block(near), block(far.clone())],
+        ..MapData::default()
+    };
+
+    let stretched = pull_landuse_to_roads(&mut map);
+    assert!(stretched >= 2, "дотянуто вершин: {stretched}");
+    let top = map.landuse[0]
+        .outer
+        .iter()
+        .map(|vertex| vertex.y - CENTER.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (top + edge - LANDUSE_OVERLAP).abs() < 0.02,
+        "край квартала не заведён под полотно: {top}"
+    );
+    assert!(
+        map.landuse[1]
+            .outer
+            .iter()
+            .zip(&far)
+            .all(|(a, b)| a.distance(*b) < 0.01),
+        "квартал в стороне от улицы тронут"
+    );
+}
+
+/// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт
+/// его веру и его посев, а одинокая церковь без разметки — веру большинства
+/// города, и она же одна и попадает в счётчик угаданных.
+#[test]
+fn resolving_the_faiths_runs_on_its_own() {
+    let church = |ring: Vec<Vec2>, faith: Faith, form: SacredForm| PolyArea {
+        building_use: BuildingUse::Church(Sacred {
+            faith,
+            form,
+            complex: 0,
+            floor_dm: 0,
+        }),
+        ..building(ring, Vec::new())
+    };
+    let mut buildings = vec![
+        church(square(CENTER, 20.0), Faith::Orthodox, SacredForm::Nave),
+        // барабан стоит в контуре собора и своей веры не имеет
+        church(square(CENTER, 5.0), Faith::Unknown, SacredForm::Dome),
+        // а эта церковь стоит сама по себе, и веры у неё тоже нет
+        church(
+            square(CENTER + Vec2::new(500.0, 0.0), 15.0),
+            Faith::Unknown,
+            SacredForm::Nave,
+        ),
+    ];
+
+    assert_eq!(
+        resolve_faiths(&mut buildings),
+        1,
+        "по большинству города угадан ровно один храм"
+    );
+
+    let sacred = |building: &PolyArea| match building.building_use {
+        BuildingUse::Church(sacred) => sacred,
+        other => panic!("не храм: {other:?}"),
+    };
+    let (cathedral, drum, lone) = (
+        sacred(&buildings[0]),
+        sacred(&buildings[1]),
+        sacred(&buildings[2]),
+    );
+    assert_ne!(cathedral.complex, 0, "посев храма не проставлен");
+    assert_eq!(drum.faith, Faith::Orthodox, "барабан не взял веру собора");
+    assert_eq!(drum.complex, cathedral.complex, "и красится сам по себе");
+    assert_eq!(
+        lone.faith,
+        Faith::Orthodox,
+        "одинокая церковь не взяла веру большинства"
+    );
+    assert_ne!(
+        lone.complex, cathedral.complex,
+        "чужой храм красится посевом собора"
+    );
+}
+
+/// Прямоугольник по косому четырёхугольнику: углы прямые, площадь, центроид
+/// и обход — те же, и вершина `i` встаёт рядом со своей.
+#[test]
+fn a_fitted_rectangle_keeps_the_area_the_centroid_and_the_winding() {
+    let ring = skewed_house(CENTER);
+    let quad = [ring[0], ring[1], ring[2], ring[3]];
+    let fitted = fit_rectangle(&quad);
+
+    assert!(right_angles(&fitted), "углы не прямые: {fitted:?}");
+    let local = |ring: &[Vec2]| ring.iter().map(|point| *point - CENTER).collect::<Vec<_>>();
+    let (before, after) = (
+        signed_ring_area(&local(&quad)),
+        signed_ring_area(&local(&fitted)),
+    );
+    assert!(
+        (after / before - 1.0).abs() < 1e-3,
+        "площадь {before} → {after}"
+    );
+    assert!(
+        ring_area_centroid(&local(&quad)).distance(ring_area_centroid(&local(&fitted))) < 0.01,
+        "центроид уехал"
+    );
+    for (from, to) in quad.iter().zip(&fitted) {
+        assert!(from.distance(*to) < 2.5, "вершина {from} уехала в {to}");
+    }
+}
+
+/// Г по косо обведённой Г: шесть прямых углов на своих местах. Контур, у
+/// которого два соседних ребра лежат по одной оси, — не Г, и ответа нет.
+#[test]
+fn a_fitted_ell_squares_its_corners_and_refuses_what_is_not_an_ell() {
+    // Тула, way 968378349: углы до 17° мимо прямого, 99 м²
+    let ell = [
+        (629.8, 3563.2),
+        (640.4, 3569.9),
+        (645.9, 3561.8),
+        (642.2, 3557.9),
+        (637.8, 3562.0),
+        (631.6, 3558.6),
+    ]
+    .map(|(x, y)| Vec2::new(x - 638.0, y - 3563.0) + CENTER)
+    .to_vec();
+
+    let fitted = fit_ell(&ell).expect("Г не выпрямилась");
+    assert_eq!(fitted.len(), ell.len());
+    assert!(right_angles(&fitted), "углы не прямые: {fitted:?}");
+    let area = |ring: &[Vec2]| {
+        signed_ring_area(&ring.iter().map(|point| *point - CENTER).collect::<Vec<_>>())
+    };
+    assert!(
+        (area(&fitted) / area(&ell) - 1.0).abs() < ELL_AREA_DRIFT,
+        "площадь ушла: {} → {}",
+        area(&ell),
+        area(&fitted)
+    );
+    for (from, to) in ell.iter().zip(&fitted) {
+        assert!(from.distance(*to) < 1.0, "вершина {from} уехала в {to}");
+    }
+
+    // прямоугольник с лишней вершиной посередине длинной стороны: рёбра по
+    // осям не чередуются
+    let not_an_ell = [
+        (0.0, 0.0),
+        (6.0, 0.0),
+        (12.0, 0.0),
+        (12.0, 8.0),
+        (6.0, 8.0),
+        (0.0, 8.0),
+    ]
+    .map(|(x, y)| CENTER + Vec2::new(x, y))
+    .to_vec();
+    assert!(fit_ell(&not_an_ell).is_none());
+}
+
+/// Ближайшая пара точек двух отрезков: у пересекающихся её нет, у
+/// параллельных она поперёк, у разминувшихся торцами — концы.
+#[test]
+fn the_closest_pair_of_two_segments_is_none_only_when_they_cross() {
+    let (a, b) = (CENTER, CENTER + Vec2::new(10.0, 0.0));
+    assert!(
+        closest_between_segments(
+            a,
+            b,
+            CENTER + Vec2::new(5.0, -5.0),
+            CENTER + Vec2::new(5.0, 5.0)
+        )
+        .is_none(),
+        "у пересекающихся отрезков ближайшей пары не бывает"
+    );
+
+    let (near_a, near_c) = closest_between_segments(
+        a,
+        b,
+        CENTER + Vec2::new(2.0, 3.0),
+        CENTER + Vec2::new(8.0, 3.0),
+    )
+    .expect("параллельные отрезки не пересекаются");
+    assert!(
+        (near_a.distance(near_c) - 3.0).abs() < 1e-3,
+        "зазор {} вместо 3",
+        near_a.distance(near_c)
+    );
+    assert!(
+        (near_a.y - CENTER.y).abs() < 1e-3 && (near_c.y - CENTER.y - 3.0).abs() < 1e-3,
+        "пара взята не поперёк: {near_a} и {near_c}"
+    );
+
+    let (near_a, near_c) = closest_between_segments(
+        a,
+        b,
+        CENTER + Vec2::new(14.0, 0.0),
+        CENTER + Vec2::new(20.0, 0.0),
+    )
+    .expect("отрезки на одной прямой не пересекаются");
+    assert!(near_a.distance(b) < 1e-3, "{near_a} вместо конца отрезка");
+    assert!(near_c.distance(CENTER + Vec2::new(14.0, 0.0)) < 1e-3);
 }

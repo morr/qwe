@@ -637,9 +637,19 @@ and the choice is what is under test:
   (`reading_the_elements_leaves_the_passes_undone`), or `finish_parse` called on it as one
   value-returning step (`finishing_the_parse_reports_what_each_pass_did`).
 - **A pass called by name on a `MapData` built by hand** — no JSON, no `GeoBounds`, none of
-  the other passes (`a_pass_runs_on_a_hand_built_map`, `squaring_runs_on_its_own`). This is
+  the other passes (`a_pass_runs_on_a_hand_built_map`, `squaring_runs_on_its_own`,
+  `pulling_houses_off_the_sidewalks_runs_on_its_own`,
+  `pulling_the_blocks_to_the_roads_runs_on_its_own`, `resolving_the_faiths_runs_on_its_own` —
+  every one of them on a scene that makes the pass's counter **non-zero**, since a pass
+  that did nothing proves nothing about being called). This is
   also the only way to test the *order*: `squaring_before_attaching_loses_the_door` runs the
   same two passes both ways round.
+  **The geometry under the passes has its own unit tests**, one step below the pass —
+  `fit_rectangle`, `fit_ell` and `closest_between_segments` take rings and segments, not a
+  `MapData`, so they are asserted on directly
+  (`a_fitted_rectangle_keeps_the_area_the_centroid_and_the_winding`,
+  `a_fitted_ell_squares_its_corners_and_refuses_what_is_not_an_ell`,
+  `the_closest_pair_of_two_segments_is_none_only_when_they_cross`).
 
 ## The shadow rules — `map/shadow.rs`
 
