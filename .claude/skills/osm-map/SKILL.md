@@ -643,13 +643,17 @@ wherever it was needed.
   double on itself) and lay the tapered band outward from the outer ring and inward from
   each hole.
 
-**Three of the seven stay outside it, and each for a measured reason.** The cars do not
-union at all (a 6 m pitch against a metre of sweep, and `i_overlay` over 22 k cars would
-cost more than the layer); the bridge tapers by `rise` rather than by direction, because
-a deck hangs in the air and its penumbra is uniform all the way round; the roof clutter's
-shadow is **opaque**, drawn in the roof's own colour inside the merged building mesh, so
-it has no band to lay. They call `length`/`offset` like everyone else — what differs is
-the policy above them, and that is now the only thing that differs.
+**Only buildings and fences go through `push_union`; the other five stay outside it, and
+each for a measured reason.** The cars do not union at all (a 6 m pitch against a metre
+of sweep, and `i_overlay` over 22 k cars would cost more than the layer); the bridge
+tapers by `rise` rather than by direction, because a deck hangs in the air and its
+penumbra is uniform all the way round; the roof clutter's shadow is **opaque**, drawn in
+the roof's own colour inside the merged building mesh, so it has no band to lay; the
+wagons get a translated quad, the cheap version the card asked for (a 13.9 m body at a
+6 m pitch, and at 15° the copy does detach — the stated price); the industry writes its
+circle sweep out by hand and lays it as a plain polygon, since a disc has no contour to
+hand `i_overlay`. They call `length`/`offset` like everyone else — what differs is the
+policy above them.
 
 **The light stays a process global** (`map/sun.rs`, four `AtomicU32`) and that is a
 decision, not an omission. Making it an argument would thread a parameter through every
@@ -2078,7 +2082,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     whole azimuth × elevation grid, `the_shadow_stays_under_the_car` pins the attachment.
   - **The edge is soft, by the buildings' own taper** — a `SHADOW_BLUR` (0.35 m) band
     fading to zero alpha, its width at each vertex `direction · shadow_dir()` clamped at
-    zero, exactly `buildings::layers::penumbra`: hard where the shadow meets the car,
+    zero, exactly `map/shadow.rs::penumbra`: hard where the shadow meets the car,
     full width at the far end, growing along the flanks. A metre there against a third of
     one here, because a building's shadow is three to ten times longer. Two consequences
     of that taper are load-bearing: the near edges collapse and **are not emitted at all**,
@@ -2421,7 +2425,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       and blurs as it runs away from it. In the union that difference is readable locally,
       because the body always lies on the `map::shadow_dir()` side of a contact edge: the
       band's own direction points *against* the light there, *along* it on the far edge, and
-      across it on a lateral one. Hence `layers.rs::penumbra(direction) =
+      across it on a lateral one. Hence `shadow.rs::penumbra(direction) =
       direction·shadow_dir()` (clamped at zero) as the per-vertex share of the width, fed to
       `MeshBuilder::push_inset_band_tapered` — zero at the contact, the full metre at the
       far edge, and along a lateral side a growth from nothing at the building's corner to

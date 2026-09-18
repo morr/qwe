@@ -918,7 +918,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   outline and the outline moved by `shadow_length_scale()` × the type's own height — so it
   lies under the car and runs out from beneath it instead of standing apart from it, with a
   `SHADOW_BLUR` (0.35 m) soft edge tapered by `direction · shadow_dir()` exactly as
-  `buildings::layers::penumbra` tapers: hard where it meets the car, full width at the far
+  `shadow::penumbra` tapers: hard where it meets the car, full width at the far
   end, and no soft ring around the car (that ring is the retired contact skirt). Shadows of
   neighbouring cars are **not** unioned — at the default sun the sweep is a metre against
   the six of `CAR_PITCH`. **Decoration only** — cars are in no navmesh and no simulation, and pawns
@@ -946,7 +946,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   without `sun_stretch()` is a bug in the making"* stops being something to remember and
   becomes a call. **`offset(height)`** is the same as a vector; the shadow **starts under
   the object** and flows out from under it, which is the mistake cars, fences and the
-  bridge each made in turn. **`penumbra(direction)`** is the soft-edge share — zero where
+  bridge each made in turn — the wagons keep the translated quad deliberately, as the
+  cheap case. **`penumbra(direction)`** is the soft-edge share — zero where
   the shadow meets what casts it, full at the far end — written three times before, once
   named and twice as a closure. **`push_union`** is the eighteen lines that were
   duplicated verbatim between fences and buildings: union the sweeps (`i_overlay`,
