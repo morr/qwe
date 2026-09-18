@@ -41,6 +41,20 @@ pub struct Navmesh {
     pub tile_size: f32,
 }
 
+/// Итог [`Navmesh::open_gates_and_prune`]. Замер прунинга — поле, а не дело
+/// вызывающего: загрузчик пишет по строке на шаг, и обе строки — ready-маркеры
+/// `live-app` (`navmesh: opened N fence gates`,
+/// `navmesh: pruned N unreachable tiles`), формат которых менять нельзя.
+/// Замер калиток отдаётся раньше, колбэком стадии, чтобы строка о них не ждала
+/// конца прунинга.
+pub struct GatesAndPrune {
+    /// Открытых калиток по умолчанию.
+    pub gates: usize,
+    /// Срезанных недостижимых тайлов.
+    pub pruned: usize,
+    pub prune_time: std::time::Duration,
+}
+
 impl Default for Navmesh {
     fn default() -> Self {
         let grid_size = crate::settings::grid_size();
@@ -669,6 +683,47 @@ impl Navmesh {
                     self.set_passable(x, y, value);
                 }
             }
+        }
+    }
+
+    /// Калитки по умолчанию, затем прунинг — двумя шагами, но одним вызовом.
+    ///
+    /// Порядок здесь — правило, а не последовательность двух независимых
+    /// операций: ограда, отрезавшая участок с дверями, обязана открыться
+    /// РАНЬШЕ, чем этот участок выбросят как недостижимый. Пять мест сборки
+    /// навмеша писали эту пару руками, и порядок в каждом держался на
+    /// внимательности.
+    ///
+    /// Заливка и снап портала остаются у вызывающего: заливка бывает разной
+    /// (`fill_from_mapdata` против собранной руками сетки теста), а снап
+    /// умеет не найти места и вернуть сырую подсказку — оба решения
+    /// принадлежат сборке, а не навмешу.
+    ///
+    /// `stage` зовётся МЕЖДУ шагами и получает итог калиток: загрузчику нужно
+    /// на этом месте переключить `JobState::Pruning` и написать свою строку,
+    /// не дожидаясь конца прунинга. Кому стадия не нужна — передаёт
+    /// `|_, _| {}`.
+    ///
+    /// Кому этот метод не подходит: аудиты (`fence_prune_audit`,
+    /// `navmesh_probe`) снимают `clone()` между шагами, поэтому зовут
+    /// [`Self::open_sealed_fences`] и [`Self::prune_unreachable`] по
+    /// отдельности — обе остаются `pub` ровно для этого.
+    pub fn open_gates_and_prune(
+        &mut self,
+        map: &mut MapData,
+        portal: Vec2,
+        stage: impl FnOnce(usize, std::time::Duration),
+    ) -> GatesAndPrune {
+        let started = std::time::Instant::now();
+        let gates = self.open_sealed_fences(map, portal);
+        stage(gates, started.elapsed());
+
+        let started = std::time::Instant::now();
+        let pruned = self.prune_unreachable(portal);
+        GatesAndPrune {
+            gates,
+            pruned,
+            prune_time: started.elapsed(),
         }
     }
 

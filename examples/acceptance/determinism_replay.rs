@@ -151,8 +151,10 @@ fn build_navmesh(mut map: MapData) -> Navmesh {
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&map);
     let portal = snap_portal_position(&navmesh, CITY.portal_hint()).expect("no spot for portal");
-    navmesh.open_sealed_fences(&mut map, portal);
-    let pruned = navmesh.prune_unreachable(portal);
-    println!("navmesh: pruned {pruned} unreachable tiles, portal at {portal:?}");
+    let done = navmesh.open_gates_and_prune(&mut map, portal, |_, _| {});
+    println!(
+        "navmesh: pruned {} unreachable tiles, portal at {portal:?}",
+        done.pruned
+    );
     navmesh
 }
