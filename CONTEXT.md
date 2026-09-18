@@ -1144,7 +1144,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
   sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are
-  load-bearing for navmesh, arches, planting and entrances), **BuildingHeightMode**,
+  load-bearing for navmesh, arches, planting and entrances; the rule itself is
+  **`Smoothing`** in `map/smooth.rs`, shared by six layers, not a road's own),
+  **BuildingHeightMode**,
   **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** and
   **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
   no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have

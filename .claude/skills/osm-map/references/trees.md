@@ -47,7 +47,7 @@ stand, how density works, and which resources restyle them.
     and roads, exactly as the wood fill does inside a park.
     It is its **own entity**, not part of the merged `woods` mesh, because it carries the
     same three knobs the road ribbons do — **join, smoothing (Chaikin), casing** — reusing
-    `roads::push_ribbon` / `smooth_path` / `casing_width` verbatim. The knobs are separate
+    `roads::push_ribbon` / `smooth::smooth_path` / `footprint::casing_width` verbatim. The knobs are separate
     from the Roads section's on purpose: an avenue's polyline and a street's come from
     different data, and the band must read as *wood* even where the roads are left raw.
     Defaults differ from roads accordingly — smoothing `Light` (a street may turn a
