@@ -816,7 +816,7 @@ impl Sanctuary {
     }
 
     /// Пятна венца на земле и верх каждого над землёй, м: по ним теневой слой
-    /// дотягивает тень храма до маковки (`layers::ShadowSweeps`). Контуры
+    /// дотягивает тень храма до маковки (`shadows::ShadowSweeps`). Контуры
     /// выпуклые и против часовой.
     pub(super) fn shadow_casters(
         &self,
@@ -1835,3 +1835,6 @@ fn rect(at: Vec2, axis: Vec2, size: Vec2) -> [Vec2; 4] {
     let (u, v) = (axis * (size.x / 2.0), perp * (size.y / 2.0));
     [at - u - v, at + u - v, at + u + v, at - u + v]
 }
+
+#[cfg(test)]
+mod tests;

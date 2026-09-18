@@ -677,7 +677,7 @@ would say something different about them, so they call the sun directly.
   meets what casts it, full at the far end, growing along a lateral side. It was written
   three times, once as a named function (buildings) and twice as a closure (fences, cars).
 - **`push_union(builder, contours, blur)`** — the eighteen lines that were duplicated
-  verbatim between `fences.rs` and `buildings/layers.rs`, differing only in the blur
+  verbatim between `fences.rs` and `buildings/shadows.rs`, differing only in the blur
   constant: union the sweeps (`i_overlay`, NonZero — a translucent layer must never
   double on itself) and lay the tapered band outward from the outer ring and inward from
   each hole.
@@ -2403,8 +2403,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     only along south edges. Shift = height × `FACADE_SCALE` (0.2) clamped to 1.5–12 m, so
     a five-storey block keeps the historical 3 m band. Facades sit *under* every roof on
     purpose — that is what stops a tower's wide band from painting over its low neighbour.
-  - **Shadows** — facade band plus a long shadow: one translucent merged mesh at
-    `Z_BUILDING_SHADOW` (4.5 — *below* every building layer, so a neighbour's roof or
+  - **Shadows** — facade band plus a long shadow. **Both shadow layers live in
+    `map/buildings/shadows.rs`**, not in `layers.rs`: `ShadowSweeps`, `shadow_builder`,
+    `roof_shadow_builder`, `DrawnBodies` and the silhouette **chains** they are swept
+    from, plus `SHADOW_LENGTH_RANGE`, `PENUMBRA_WIDTH`, `SHADOW_MIN_DROP` and
+    `SHADOW_CELL`. `layers.rs` keeps the facades, the roofs and the extrusion — and with
+    them `silhouette_edges`, the per-edge silhouette, which is a wall question and not a
+    shadow one (`clutter` and `arches` call it). The layer itself is one translucent
+    merged mesh at `Z_BUILDING_SHADOW` (4.5 — *below* every building layer, so a neighbour's roof or
     wall masks the shadow; what a **taller** neighbour owes a lower roof is no longer
     dropped along with it — that piece is the separate `Z_ROOF_SHADOW` layer, see
     **Shadows on lower roofs** below. Still above the portal and corpses, which
@@ -2838,8 +2844,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     Orthodox or Western `Tower` outline — `building=bell_tower`, `tower:type=bell_tower` —
     is drawn **entirely as its crown** (`standalone_tower`) on the plan's rectangle from the
     ground, at eave `Vec2::ZERO`, and the layers lay neither walls, roof, box shadow nor
-    neighbours' roof shadows on it (the four `boxless` sites in `layers.rs`, where `raised`
-    alone used to decide). Before this the box went up the whole height with church windows
+    neighbours' roof shadows on it (the four `boxless` sites — two in `layers.rs`, two in
+    `shadows.rs` — where `raised` alone used to decide). Before this the box went up the whole height with church windows
     over all of it and a tent on top: the All Saints bell tower (relation 7064811, 82 m) was a
     pink nine-storey tower block. The OSM `height` is the height **with** the spire, so the
     pillar takes `TOWER_PILLAR_SHARE` 0.72 of it and the spire the rest; an inferred height
@@ -2924,7 +2930,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Shadows** reach the crown's real top: `Sanctuary::shadow_casters` hands a convex base
     per element and its height, swept by `sweep_convex` into `ShadowSweeps`. Stretch is
     drawing only. **Roof shadows are not cast between parts of one church**
-    (`layers::same_church`): the roof-shadow layer lies over the building layer, and the
+    (`shadows::same_church`): the roof-shadow layer lies over the building layer, and the
     bell tower and drums of Tula's kremlin cathedral laid translucent wedges over its own
     cupolas.
   - **Parts of a church are assembled at draw time** (`temples::Sanctuary`, built once per
