@@ -19,7 +19,10 @@ mod pitch;
 mod rail;
 mod roads;
 mod seed;
-mod shadow;
+// публичен ради стенда кузовов витрины `car_gallery`: он рисует тень машины
+// тем же правилом длины, каким её рисует слой города (`shadow::offset`), а не
+// своей копией выражения
+pub mod shadow;
 mod spawn;
 mod sun;
 // публичен по той же причине, что `buildings` и `cars`: витрины кладут слои
