@@ -70,8 +70,7 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use crate::grid::navtile_size;
-use crate::grid::tile_center;
+use crate::grid::{navtile_size, tile_center};
 use crate::human::HumanStyle;
 use crate::movement::components::{Movable, MovableState, PathfindingRequest};
 use crate::navigation::ArcNavmesh;

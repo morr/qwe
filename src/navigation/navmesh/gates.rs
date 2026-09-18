@@ -7,7 +7,7 @@ use std::f32::consts::SQRT_2;
 use bevy::prelude::*;
 
 use super::Navmesh;
-use super::fill::nearest_fence_point;
+use super::fill::closest_point_on_polyline;
 use crate::map::footprint::{FENCE_GATE_WIDTH, StreetEdges};
 use crate::map::osm::model::MapData;
 
@@ -180,6 +180,19 @@ impl Navmesh {
             })
             .collect()
     }
+}
+
+/// Ближайшая к `point` точка ограды и номер ограды — не дальше диагонали
+/// навтайла (`limit`): тайл, для которого ищется калитка, лежит на заборе по
+/// построению.
+fn nearest_fence_point(map: &MapData, point: Vec2, limit: f32) -> Option<(usize, Vec2)> {
+    map.fences
+        .iter()
+        .enumerate()
+        .filter(|(_, fence)| fence.points.len() >= 2)
+        .map(|(index, fence)| (index, closest_point_on_polyline(point, &fence.points)))
+        .filter(|(_, at)| at.distance(point) <= limit)
+        .min_by(|a, b| a.1.distance(point).total_cmp(&b.1.distance(point)))
 }
 
 #[cfg(test)]

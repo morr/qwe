@@ -15,11 +15,10 @@ const COST_DIAGONAL: i32 = 141;
 /// вызывающего: загрузчик пишет по строке на шаг, и обе строки — ready-маркеры
 /// `live-app` (`navmesh: opened N fence gates`,
 /// `navmesh: pruned N unreachable tiles`), формат которых менять нельзя.
-/// Замер калиток отдаётся раньше, колбэком стадии, чтобы строка о них не ждала
-/// конца прунинга.
+/// Итог калиток — число и замер — отдаётся раньше и только колбэком стадии,
+/// чтобы строка о них не ждала конца прунинга; в итоге его нет, чтобы одна
+/// величина не приезжала к вызывающему двумя путями.
 pub struct GatesAndPrune {
-    /// Открытых калиток по умолчанию.
-    pub gates: usize,
     /// Срезанных недостижимых тайлов.
     pub pruned: usize,
     pub prune_time: std::time::Duration,
@@ -208,7 +207,6 @@ impl Navmesh {
         let started = std::time::Instant::now();
         let pruned = self.prune_unreachable(portal);
         GatesAndPrune {
-            gates,
             pruned,
             prune_time: started.elapsed(),
         }

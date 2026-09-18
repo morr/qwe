@@ -97,7 +97,7 @@ impl Backend {
         start_tile: IVec2,
         end_tile: IVec2,
     ) -> PathfindingResult {
-        let (path, started_at) = match &self.mesh {
+        let (path, duration) = match &self.mesh {
             Some(mesh) => {
                 // цель осталась тайловой (её выбрало поведение по
                 // проходимости сетки) — на меше это её центр. Перевод берётся
@@ -107,10 +107,15 @@ impl Backend {
                 let end_world = self.navmesh.read().unwrap().tile_center(end_tile);
                 let started_at = std::time::Instant::now();
                 let path = find_path_polymesh(mesh, start_world, end_world);
-                (path, started_at)
+                (path, started_at.elapsed())
             }
             None => {
                 let (tiles, started_at) = self.grid_path(start_tile, end_tile);
+                // метрика снимается сразу после поиска: перевод тайлов в мир
+                // берёт лок сетки второй раз, и ожидание писателя (заливка
+                // нового города) не должно попасть в замер — тот же уговор,
+                // что у [`Self::grid_path`]
+                let duration = started_at.elapsed();
                 let path = tiles.map(|tiles| {
                     let navmesh = self.navmesh.read().unwrap();
                     tiles
@@ -118,13 +123,13 @@ impl Backend {
                         .map(|tile| navmesh.tile_center(tile))
                         .collect::<Vec<Vec2>>()
                 });
-                (path, started_at)
+                (path, duration)
             }
         };
         PathfindingResult {
             end_tile,
             path,
-            duration: started_at.elapsed(),
+            duration,
         }
     }
 

@@ -120,13 +120,6 @@ impl Navmesh {
                 }
             });
         }
-        let (grid_height, tile_size) = (self.grid_size.y, self.tile_size);
-        // центр тайла по плоскому индексу и в масштабе снапшота (`self.tile_size`) —
-        // не `crate::grid::tile_center`, читающий процессный атомик
-        let snapshot_tile_center = move |index: usize| -> Vec2 {
-            let (x, y) = (index as i32 / grid_height, index as i32 % grid_height);
-            (Vec2::new(x as f32, y as f32) + 0.5) * tile_size
-        };
         // блокировка — щупом «что снаружи»: тайл держит бордюр, если на шаг
         // наружу от осевой владельца НЕ лежит лента другого bridge-way. Так
         // пара «мост + тротуар» запирается по внешнему краю ленты, которая
@@ -143,7 +136,10 @@ impl Navmesh {
             if tile.road {
                 continue;
             }
-            let center = snapshot_tile_center(index);
+            // центр тайла по плоскому индексу и в масштабе снапшота
+            // (`Navmesh::index_center`) — не `crate::grid::tile_center`,
+            // читающий процессный атомик
+            let center = self.index_center(index);
             let holds = tile.owners.iter().any(|&id| {
                 let owner = id as usize - 1;
                 let closest = closest_point_on_polyline(center, bridge_ways[owner].0);
@@ -203,8 +199,8 @@ impl Navmesh {
                         continue;
                     }
                     let way = bridge_ways[tile.owners[0] as usize - 1].0;
-                    let outer = if distance_to_polyline(snapshot_tile_center(side), way)
-                        >= distance_to_polyline(snapshot_tile_center(vertical), way)
+                    let outer = if distance_to_polyline(self.index_center(side), way)
+                        >= distance_to_polyline(self.index_center(vertical), way)
                     {
                         side
                     } else {
@@ -293,21 +289,9 @@ struct CurbTile {
     road: bool,
 }
 
-/// Ближайшая к `point` точка ограды и номер ограды — не дальше диагонали
-/// навтайла (`limit`): тайл, для которого ищется калитка, лежит на заборе по
-/// построению.
-pub(super) fn nearest_fence_point(map: &MapData, point: Vec2, limit: f32) -> Option<(usize, Vec2)> {
-    map.fences
-        .iter()
-        .enumerate()
-        .filter(|(_, fence)| fence.points.len() >= 2)
-        .map(|(index, fence)| (index, closest_point_on_polyline(point, &fence.points)))
-        .filter(|(_, at)| at.distance(point) <= limit)
-        .min_by(|a, b| a.1.distance(point).total_cmp(&b.1.distance(point)))
-}
-
-/// Ближайшая к `point` точка ломаной.
-fn closest_point_on_polyline(point: Vec2, points: &[Vec2]) -> Vec2 {
+/// Ближайшая к `point` точка ломаной. `pub(super)` — ту же ломаную щупают
+/// калитки ([`super::gates`]).
+pub(super) fn closest_point_on_polyline(point: Vec2, points: &[Vec2]) -> Vec2 {
     let mut best = points[0];
     let mut best_distance = f32::INFINITY;
     for segment in points.windows(2) {
