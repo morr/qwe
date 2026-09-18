@@ -1192,7 +1192,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 Summary; the mechanism and the measurements — **navigation-deep skill** (polymesh in
 `references/polymesh.md`, separation & slots in `references/crowd.md`).
 
-- **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
+- **Navmesh** (`navigation/navmesh.rs` — the type, its storage and the world↔tile
+  conversions; the work on it is split by role into `navmesh/{raster,fill,gates,reach}.rs`)
+  — `Vec<bool>` passability grid, index
   `x * grid_size.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
