@@ -964,16 +964,6 @@ pub const TREE_OUTLINE_STROKE: f32 = 0.12;
 /// Толщина внутренних пунктирных дуг, доля радиуса — вдвое тоньше контура.
 pub const TREE_DETAIL_STROKE: f32 = 0.06;
 
-// --- Фактура поверхностей (`map::surface`) ---
-/// Дефолт и границы ползунка Texture (`SurfaceStyle::texture`) — общий
-/// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
-/// до фактуры; 1 — фактура как задумана; полтора — заметно грубее, дальше шум
-/// перекрикивает цвет слоя.
-pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
-pub const SURFACE_TEXTURE_MIN: f32 = 0.0;
-pub const SURFACE_TEXTURE_MAX: f32 = 1.5;
-pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
-
 // --- Фактура кровель (`map::buildings::material`) ---
 /// Зум (метров на пиксель), выше которого оборудование на кровле не
 /// рисуется: вентшахта в метр становится там тоньше двух пикселей и мерцает
@@ -1162,10 +1152,6 @@ const _: () = {
     assert!(
         SEPARATION_LEFT_SHARE >= SEPARATION_LEFT_SHARE_MIN
             && SEPARATION_LEFT_SHARE <= SEPARATION_LEFT_SHARE_MAX
-    );
-    assert!(
-        SURFACE_TEXTURE_DEFAULT >= SURFACE_TEXTURE_MIN
-            && SURFACE_TEXTURE_DEFAULT <= SURFACE_TEXTURE_MAX
     );
     assert!(ROOF_TEXTURE_DEFAULT >= ROOF_TEXTURE_MIN && ROOF_TEXTURE_DEFAULT <= ROOF_TEXTURE_MAX);
     assert!(

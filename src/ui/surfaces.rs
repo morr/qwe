@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use crate::map::SurfaceStyle;
-use crate::settings::{SURFACE_TEXTURE_MAX, SURFACE_TEXTURE_MIN, SURFACE_TEXTURE_STEP};
+use crate::map::surface::{SURFACE_TEXTURE_MAX, SURFACE_TEXTURE_MIN, SURFACE_TEXTURE_STEP};
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use crate::ui::{UiBuildSet, panel_title};
