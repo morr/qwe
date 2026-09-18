@@ -36,15 +36,18 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | any git operation — staging, committing, branching, rebasing, history | `git` |
 | running the app, BRP, screenshots, the trace log | `live-app` |
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
-| `map/*` — the OSM pipeline (`map/osm/*`), the map's light (`sun`) and every layer (`meshing`, `spawn`, `surface`, `roads`, `rail`, `tram`, `cars`, `industry`, `fences`, `trees`, `buildings`, `footprint`, `seed`) | `osm-map` |
-| `navigation/*`, `movement/*` (incl. separation, slots, the navtile size), `tests/{navigation,movement}.rs` | `navigation-deep` |
-| `rng.rs`, `determinism/*`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
-| `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `tests/spatial.rs` | `species-behavior` |
+| `map/*` — the whole OSM pipeline and every layer it renders, whatever the module is called | `osm-map` |
+| `navigation/*`, `movement/*` (incl. separation, slots), `grid.rs` (the navtile), `tests/{navigation,movement}.rs` | `navigation-deep` |
+| `rng.rs`, `determinism/*`, `sim_yard.rs`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
+| `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `telemetry.rs`, `tests/spatial.rs` | `species-behavior` |
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
-| `sim_time.rs` | `sim-speed` |
-| `ui/*`, `camera.rs`, `post.rs`, `prefs.rs` | `ui-panels` |
+| `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
+| `ui/*`, `camera.rs`, `post.rs`, `prefs.rs`, `dev.rs` | `ui-panels` |
+| `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
+| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench` → `navigation-deep`; `map_meshing` → `osm-map` | — |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
+- **`src/settings.rs` has no domain skill on purpose, and that is a decision, not a gap.** What is left in it is by definition what more than one owner reads — the shared z-stack, the projection scale, the numbers two modules both need — so no single domain owns the file; a constant that *does* have one owner belongs beside that owner and is gated by that owner's row (see "Code Conventions"). Editing it needs `bevy` and the skill of whatever module the change is really about.
 - **Re-check the table when the work spreads to an area you didn't expect at the start** — the misses are never in the module the session is about, always in the one it drifts into (a UI change that ends up moving a threshold, a navigation fix that touches the replay contract).
 - **Two `PreToolUse` hooks enforce the table** (`.claude/hooks/`, wired in `.claude/settings.json`): `require-skill.sh` denies an `Edit`/`Write` of a gated path — every `.rs` under `src/`, `tests/`, `examples/` needs `bevy`, plus the domain skill of its row; `guard-bash.sh` denies a mutating git command without `git`, `cargo run` of the app or a `brp` call without `live-app`, a foreground heavy cargo command (`build`/`run`/`test`/`clippy`/`check`/`bench`/`doc`/`nextest`, and `tools/check.sh`), one of those piped through `tail`/`head`/`grep`/`rg`/`less`/`more`, `--features bevy/dynamic_linking`, and a command that **writes** a source file (`.rs`, `.wgsl`, any `.md`, `Cargo.toml`) instead of Edit/Write — a `python3 - <<PY … write_text()`, a `sed -i`, a `cat > file`. That last one is what closes the hole under the other hook: `require-skill.sh` only ever sees `Edit`/`Write`, so a file rewritten from Bash skipped the skill gate entirely. Its one exemption is the mechanical sweep CLAUDE.md already allows, and it is spelled rather than guessed — put the literal `# mechanical-sweep` in the command. `record-skill.sh` (PostToolUse/Skill) is what tells them which skills the session has loaded; `worktree-drift.sh` reports, on `EnterWorktree` and on each `Skill` load, what the worktree's branch changed under `.claude/` — because skills, hooks and settings always load from the main checkout. They are the net, not the trigger — a deny costs the whole rejected call, so load ahead of the action.
 - **After a compaction, load the gated skills again before the first gated action** — the first edit, the first git command, the first `brp` call. A continued session gets a new session id, so the record starts empty however many skills the previous context had loaded; and that same compaction truncated the skills' text away, so the call is due on its own merits. Doing it up front is free — `Skill` answers with a one-line note when the text did survive — while waiting for the hook to say it costs a rejected call each, and the rejected call is the *edit*, not the load.
@@ -61,7 +64,7 @@ The links are absolute on purpose. A relative `../../../zxc` resolves only from 
 
 **Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
-- **`osm-map` — before changing the OSM pipeline or map rendering** (all of `map/*`: `map/osm/*`, `map/{meshing,spawn,surface,roads,rail,tram,trees,buildings,footprint}`): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up.
+- **`osm-map` — before changing the OSM pipeline or map rendering** (all of `map/*`, whatever the module is called): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up, and `references/buildings.md` carries the buildings layer — height modes, temples and the fortress, inferred storeys, roof material and clutter, arches — which `SKILL.md` only summarises.
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
 - **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
 - **`species-behavior` — before changing pawn behaviour or how a pawn is drawn** (`human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids, plus the look layer — the silhouette atlas and its mips, the screen-size floor and the two LOD systems, the portal vortex and its stain.
@@ -262,10 +265,11 @@ those additions.
   city.
 - Tuning constants (sizes, speeds, radii, z-layers) are never inline in a system. Where
   they live is decided by **who reads them**: `src/settings.rs` holds what belongs to the
-  world as a whole — a number two modules both read, a rung of the shared z-stack, the geo
-  anchor, a spawn rate. A number with exactly one owner belongs **beside that owner**: a
-  slider's `_MIN`/`_MAX`/`_STEP` range beside the resource whose field it clamps (the range
-  is part of the model — it clamps on read, and a panel is only one of its readers), a rule
+  world as a whole — a number two modules both read, a rung of the shared z-stack, the map
+  size, a spawn rate. A number with exactly one owner belongs **beside that owner**: a
+  slider's `_MIN`/`_MAX`/`_STEP` range beside the resource whose field it bounds (the range
+  is part of the model — it says which values that field may take, and a panel only renders
+  it; a resource that clamps on read, like `PolymeshDebug` or `SunStyle`, does so there), a rule
   of a decision ladder beside its `decide.rs`. "It is a constant" is not itself a reason to
   put it in `settings.rs`
 - Clippy `type_complexity` is allowed globally; `wildcard_imports` warns
