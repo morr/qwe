@@ -8,9 +8,12 @@ pub mod buildings;
 pub mod cars;
 mod fences;
 pub mod footprint;
-// публичен ради `navigation/navmesh.rs`: лента моста индексируется той же
-// сеткой, что и всё на карте
-pub mod grid;
+// виден всему крейту ради `navigation/navmesh.rs`: лента моста индексируется
+// той же сеткой, что и всё на карте. Не `pub`, в отличие от соседей выше и
+// ниже: у тех потребитель снаружи крейта (витрины, офлайн-аудит), а у сетки
+// все вызывающие внутри — то же сужение, каким шов вернул `spawn_layer` и
+// `LayerMaterial` в приватные
+pub(crate) mod grid;
 mod industry;
 mod meshing;
 pub mod osm;
