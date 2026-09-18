@@ -186,6 +186,10 @@ fn an_empty_grid_answers_nothing() {
     let grid = Grid::<usize>::new(10.0);
     assert!(grid.at(Vec2::ZERO).is_empty());
     assert!(grid.near(Vec2::ZERO, Vec2::splat(100.0)).is_empty());
-    assert!(grid.near_each(Vec2::ZERO, Vec2::splat(100.0)).next().is_none());
+    assert!(
+        grid.near_each(Vec2::ZERO, Vec2::splat(100.0))
+            .next()
+            .is_none()
+    );
     assert!(grid.pairs().is_empty());
 }

@@ -436,9 +436,15 @@ impl<'a> StreetEdges<'a> {
     /// `STREET_REACH`. Кромка, а не осевая: широкая улица притягивает сильнее.
     pub fn distance(&self, point: Vec2) -> f32 {
         let mut best = STREET_REACH;
-        for &(road, segment) in self.segments.near_each(point - STREET_REACH, point + STREET_REACH) {
+        for &(road, segment) in self
+            .segments
+            .near_each(point - STREET_REACH, point + STREET_REACH)
+        {
             let road = &self.roads[road as usize];
-            let (a, b) = (road.points[segment as usize], road.points[segment as usize + 1]);
+            let (a, b) = (
+                road.points[segment as usize],
+                road.points[segment as usize + 1],
+            );
             let edge = (distance_to_segment(point, a, b) - road.width / 2.0).max(0.0);
             best = best.min(edge);
         }
