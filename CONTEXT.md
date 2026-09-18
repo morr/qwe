@@ -928,18 +928,24 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   street shape the row broke on, and every body type on all three detail steps, side by
   side: `cargo run --example car_gallery`.
 - **The uniform grid** (`map/grid.rs::Grid<T>`) — the one spatial index of the map:
-  doors, tree planting, water outlines, road stitches, standing stock, garage runs,
-  building shadows, car districts, bridge bands. **The cell size belongs to the grid**
+  doors, tree planting, the parse's sidewalk pull / landuse blocks / shift obstacles,
+  water outlines, road stitches, fence gaps, street edges, standing stock, garage runs,
+  house draw order, building shadows, car districts, bridge bands.
+  **The cell size belongs to the grid**
   (`Grid::new(size)`), so an insert and a query cannot disagree about it; it stays an
   argument because the number is about the domain, not the grid. `insert(min, max, value)`
   puts the value in **every cell its box touches**, which is what makes a one-cell
   `at(point)` complete rather than approximate — the caller inflates the box by the reach
   it cares about. `near(min, max)` is **sorted and deduped**, and that is an invariant,
   not a convenience: the `HashMap` iteration order must not reach the geometry. `near_each`
-  is the raw form for values that are not `Ord`, `pairs()` the candidate enumeration inside
-  a cell, `cell_of` the escape hatch for the one caller that walks cells in rings.
+  is the raw form — for values that are not `Ord`, and for a caller that needs the traversal
+  order and the duplicates exactly as the hand-rolled loop gave them; `pairs()` the candidate
+  enumeration inside a cell, `cell_of` the escape hatch for the one caller that walks cells
+  in rings.
   **`spatial.rs` is a different animal** and stays outside: a dense `Vec` over the whole
   map with a reverse entity→cell index, moved one entity at a time each tick.
+  **`planting::Occupied` stays outside too**, on the opposite convention: a bare point goes
+  in, the asker carries the radius, and a query walks the 3×3 neighbourhood.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
   ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
   `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,

@@ -567,17 +567,20 @@ new JSON literal. Coverage of tags overall is the audit in `references/osm-cover
 ## The uniform grid — `map/grid.rs::Grid<T>`
 
 Every "what is near this point" answer on the map comes from one type. The doors, tree
-planting, water outlines, road stitches, standing stock, garage runs, building shadows,
-the car districts and the bridge bands all index the same way, and before `Grid` existed
-each of them wrote the arithmetic again: the double loop "put it in every cell the box
-touches" existed in **seven** copies, the key was `(i32, i32)` in ten places and `IVec2`
-in five, and the cell size travelled as an argument on every call — so an insert and a
-query could disagree about it and nothing would say so.
+planting, the parse's sidewalk pull, landuse blocks and shift obstacles, water outlines,
+road stitches, the fence gaps and street edges of `footprint.rs`, standing stock, garage
+runs, house draw order, building shadows, the car districts and the bridge bands all
+index the same way, and before `Grid` existed each of them wrote the arithmetic again:
+the double loop "put it in every cell the box touches" existed in **nine** copies, the
+key was `(i32, i32)` in ten places and `IVec2` in seven, and the cell size travelled as
+an argument on every call — so an insert and a query could disagree about it and nothing
+would say so.
 
 - **The step belongs to the grid** (`Grid::new(size)`), which is what makes that
   disagreement impossible. It stays an argument rather than a module constant because the
-  number is about the domain, not about the grid: 32 m for the doors, 48 for the shadows,
-  120 for the car districts.
+  number is about the domain, not about the grid: 60 m for the doors' road index and 30 for
+  their footprints (`ROAD_CELL` / `FOOTPRINT_CELL` in `osm/entrances/index.rs`), 48 for the
+  shadows, 120 for the car districts.
 - **Two primitives and three conveniences.** `cell(IVec2)` — one cell; `near_each(min,
   max)` — everything in the touched cells **as is**, duplicates included, in a fully
   determined order (cells ascending by x then y, insertion order inside a cell). On top of
@@ -588,6 +591,16 @@ query could disagree about it and nothing would say so.
   inflates the box by the reach it cares about, so any point the value has business with
   falls inside one of those cells. An error there returns a silently incomplete answer —
   which is exactly why it lives in one place now.
+- **`insert_segment(from, to, pad, value)` is that insert for a link of a polyline**, and
+  the box is the grid's arithmetic too: `from.min(to) - pad, from.max(to) + pad`. Twelve
+  of the map's indexes wrote that line by hand — the doors (two of them), tree planting,
+  water outlines, road stitches, the wagon fan, three of the parse's grids, the bridge
+  bands and `footprint.rs`'s fence gaps and street edges — and a `pad` that drifts from
+  the reach the query cares about is the same silent incompleteness as a disagreeing cell
+  size. `pad` is `0.0` where the reach belongs to the query rather than to the value
+  (`water.rs`, `entrances::RoadIndex`, the parse's sidewalk grid,
+  `footprint::StreetEdges`), and it is a **scalar**: `Vec2 - f32` is glam's own, so no
+  caller writes `Vec2::splat(reach)` any more.
 - **`near` sorts because the mesh must not move between runs**, not for the caller's
   convenience: a value sits in several cells, so without `dedup` a neighbour comes back
   several times, and without the sort the `HashMap` iteration order leaks into the
@@ -596,6 +609,10 @@ query could disagree about it and nothing would say so.
 - **`cell_of` is public for one caller**, `entrances::RoadIndex`, which walks cells in
   **rings** outward from the point and stops as soon as what it found beats anything the
   next ring could hold. That strategy belongs to it, not to the grid.
+- **`planting::Occupied` keeps a grid of its own**, on the opposite convention: it takes a
+  bare point and the asker carries the radius, so a query walks the 3×3 neighbourhood
+  (`osm/planting/index.rs`). A "neighbourhood" method for its one caller would be a
+  hypothetical seam, not a seam.
 - **`spatial.rs` is not this grid and does not move here.** The pawn grid is a dense `Vec`
   over the whole map with a reverse entity→cell index and a per-tick move of one entity at
   a time; it shares nothing with a `HashMap` of boxes built once per load but the word.
@@ -1475,7 +1492,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     by the author's call; the commits describing it are history, not a missing file.
     Don't reintroduce a straight door-to-road strip. The uniform-grid index stays — it is
     the door generator's own (`osm/entrances/index.rs`), extracted while this layer
-    existed and its only surviving trace; it has since become `map/grid.rs::Grid` (below).
+    existed and its only surviving trace; it has since become `map/grid.rs::Grid` (above).
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
   actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 2.003 and one
   markings layer at 2.006, the parking pair's shape exactly: the paint is flat
@@ -2346,7 +2363,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
           over-subtracting the sliver of shadow that would show through the gap is
           cheaper than leaving a stain on a drawn wall.
         - **covers are prefiltered by the same `SHADOW_CELL` grid** as the casters, over
-          body boxes instead of sweep boxes (`indices_near`); the pass runs only for a
+          body boxes instead of sweep boxes (`Grid::near`); the pass runs only for a
           target that has both a shadow and a cover.
         In the flat modes there is nothing to subtract — a building is drawn on its own
         contour, and `DrawnBodies` is empty there.
