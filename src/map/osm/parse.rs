@@ -62,7 +62,13 @@ struct ReadReport {
 
 impl std::fmt::Display for ReadReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.traffic_side.is_none() {
+        // разбор по полям, а не `self.…`: подстановка тогда читается по имени,
+        // а не счётом позиций — как у всех прочих отчётов `map/*`
+        let Self {
+            traffic_side,
+            unclosed_rings,
+        } = self;
+        if traffic_side.is_none() {
             // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
             // стороны движения всё равно рисуется
             writeln!(
@@ -70,12 +76,11 @@ impl std::fmt::Display for ReadReport {
                 "osm parse: no driving_side in the answer, assuming right-hand traffic"
             )?;
         }
-        if self.unclosed_rings > 0 {
+        if *unclosed_rings > 0 {
             // не error: кольца, порванные краем bbox, ожидаемы
             writeln!(
                 f,
-                "osm parse: {} unclosed relation rings skipped",
-                self.unclosed_rings
+                "osm parse: {unclosed_rings} unclosed relation rings skipped"
             )?;
         }
         Ok(())
@@ -154,59 +159,74 @@ struct PassReport {
     stretched: usize,
     stretching: std::time::Duration,
     generated: usize,
-    doors: std::time::Duration,
+    generating: std::time::Duration,
     planted: PlantedReport,
     planting: std::time::Duration,
 }
 
 impl std::fmt::Display for PassReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.drowned > 0 {
+        // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
+        // по именам они читаются, а по позициям — только счётом
+        let Self {
+            drowned,
+            faiths_guessed,
+            entrances_found,
+            entrances_orphaned,
+            squared,
+            squaring,
+            pulled,
+            pulling,
+            stretched,
+            stretching,
+            generated,
+            generating,
+            planted,
+            planting,
+        } = self;
+        if *drowned > 0 {
             writeln!(
                 f,
-                "osm parse: {} buildings dropped as standing entirely in water",
-                self.drowned
+                "osm parse: {drowned} buildings dropped as standing entirely in water"
             )?;
         }
-        if self.faiths_guessed > 0 {
+        if *faiths_guessed > 0 {
             writeln!(
                 f,
-                "osm parse: {} places of worship took their faith from the city",
-                self.faiths_guessed
+                "osm parse: {faiths_guessed} places of worship took their faith from the city"
             )?;
         }
-        if self.entrances_orphaned > 0 {
+        if *entrances_orphaned > 0 {
             // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом
             // контура, либо принадлежит зданию, которое не попало в bbox
             writeln!(
                 f,
-                "osm parse: {} of {} entrances match no building",
-                self.entrances_orphaned, self.entrances_found
+                "osm parse: {entrances_orphaned} of {entrances_found} entrances match no building"
             )?;
         }
-        if self.squared > 0 {
+        if *squared > 0 {
             writeln!(
                 f,
-                "osm parse: {} skewed small houses squared into rectangles and L shapes in {:?}",
-                self.squared, self.squaring
+                "osm parse: {squared} skewed small houses squared into rectangles and L shapes in {squaring:?}"
             )?;
         }
+        let PulledHouses {
+            moved,
+            partly,
+            left,
+        } = pulled;
         writeln!(
             f,
-            "osm parse: {} buildings pulled off the sidewalks ({} of them only part of the way), {} left standing on them, in {:?}",
-            self.pulled.moved, self.pulled.partly, self.pulled.left, self.pulling
+            "osm parse: {moved} buildings pulled off the sidewalks ({partly} of them only part of the way), {left} left standing on them, in {pulling:?}"
         )?;
         writeln!(
             f,
-            "osm parse: {} block vertices pulled to the drawn road edge in {:?}",
-            self.stretched, self.stretching
+            "osm parse: {stretched} block vertices pulled to the drawn road edge in {stretching:?}"
         )?;
+        let attached = entrances_found - entrances_orphaned;
         writeln!(
             f,
-            "osm parse: {} entrances attached, {} generated in {:?}",
-            self.entrances_found - self.entrances_orphaned,
-            self.generated,
-            self.doors
+            "osm parse: {attached} entrances attached, {generated} generated in {generating:?}"
         )?;
         // «посажено меньше, чем запрошено» — лес упёрся в насыщение, потолок
         // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
@@ -214,19 +234,24 @@ impl std::fmt::Display for PassReport {
         // означает, что сдвигать было нечего, а `0 in K tree rows` при `K > 0`
         // — что тег доехал, а посадка по нему не встала никуда. Одиночные ноды
         // выбывают штатно — в лесу и у аллей дерево уже посажено процедурно
-        let planted = &self.planted;
-        let counts: Vec<String> = planted.rows.iter().map(usize::to_string).collect();
+        let PlantedReport {
+            woods,
+            standalone,
+            tree_nodes,
+            rows,
+            tree_rows,
+            asked,
+        } = planted;
+        let counts = rows
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<String>>()
+            .join("/");
         writeln!(
             f,
-            "osm parse: {} trees planted of {} asked, {} standalone of {} tree nodes, \
-             {} in {} tree rows (keep/slide x osm/slider) in {:?}",
-            planted.woods,
-            planted.asked,
-            planted.standalone,
-            planted.tree_nodes,
-            counts.join("/"),
-            planted.tree_rows,
-            self.planting
+            "osm parse: {woods} trees planted of {asked} asked, {standalone} standalone of \
+             {tree_nodes} tree nodes, {counts} in {tree_rows} tree rows \
+             (keep/slide x osm/slider) in {planting:?}"
         )
     }
 }
@@ -284,7 +309,7 @@ fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
     let generated = generate_entrances(map);
-    let doors = started.elapsed();
+    let generating = started.elapsed();
 
     let started = std::time::Instant::now();
     let (standalone, woods, rows, asked) = plant_trees(map);
@@ -321,7 +346,7 @@ fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
         stretched,
         stretching,
         generated,
-        doors,
+        generating,
         planted,
         planting,
     }
