@@ -205,7 +205,7 @@ pub struct PlantedTrees<'a> {
 #[derive(Component, Clone, Copy)]
 pub struct TreeTag;
 
-/// Геометрия одного варианта кроны: то, что [`spawn_trees`] кладёт в свой пул
+/// Геометрия одного варианта кроны: то, что [`mesh_trees`] кладёт в свой пул
 /// и потом повторяет под каждым деревом этого варианта.
 ///
 /// Публичной эта сборка сделана ради витрины `tree_gallery`: демо обязано
@@ -300,6 +300,20 @@ pub struct TreeReport {
     pub crowns: usize,
     pub shadow_vertices: usize,
     pub shape: TreeShape,
+}
+
+impl std::fmt::Display for TreeReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            crowns,
+            shadow_vertices,
+            shape,
+        } = self;
+        write!(
+            f,
+            "tree shadows: {shadow_vertices} vertices for {crowns} trees ({shape:?})"
+        )
+    }
 }
 
 /// Сборка деревьев без мира: `TREE_VARIANTS` крон единичного радиуса на каждую
@@ -410,10 +424,7 @@ pub fn spawn_tree_meshes(
 
     // веер хвои весит вчетверо против одиночного силуэта: при разборе просадок
     // смотреть в первую очередь сюда
-    debug!(
-        "tree shadows: {} vertices for {} trees ({:?})",
-        report.shadow_vertices, report.crowns, report.shape
-    );
+    debug!("{report}");
     spawn_layers(commands, meshes, &materials.layers, shadows, TreeTag);
 }
 
