@@ -13,6 +13,17 @@ top speed.
 **Changing that mechanism is changing this file, in the same change** — a new regulator
 input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
 
+**Every number named below lives in `sim_time.rs` itself**, at the top of the file, not
+in `settings.rs`: the regulator is their only reader, and a number with exactly one
+owner lives beside that owner (`CLAUDE.md`, "Code Conventions"). They are declared as
+one block in a fixed order, because `SIM_FRAME_SHARE`, `SIM_FRAME_BUDGET_MS` and
+`SIM_TICK_DEBT_CAP` are computed from each other and from `MAX_SIM_SPEED` — reassembled
+in another order the block still compiles and silently yields a different frame budget,
+which only an fps measurement would show. Two `const _: () = assert!` ride with it.
+`settings.rs` keeps only what the regulator shares with someone else — the pathfinding
+pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`,
+`MAX_PATHFINDING_IN_FLIGHT`, …), which `movement/` reads.
+
 - **Speed ladder** — Space pauses, `=`/`-` walk `SPEED_LADDER`
   (1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
@@ -46,7 +57,7 @@ input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
   the main thread standing in `block_on` waiting for the pathfinding pool
   (`apply_pathfinding_results`, `movement/pathfinding.rs:411`, reports it through
   `SimLoad::add_frame_cost`; the port's **second caller** is the once-a-frame
-  `separation`, `movement/separation/mod.rs:377`) — and that
+  `separation`, `movement/separation/mod.rs:374`) — and that
   one depends on the speed directly: the answer's deadline is measured in **ticks**
   (`PATHFINDING_RETIRE_TICKS`), so faster ticks give the pool less real time for the
   same work. Blending the two into one number closes the regulator on a quantity it

@@ -371,7 +371,7 @@ fn format_speed_label(time: &Time<Virtual>, speed: &SimSpeed) -> String {
 }
 
 /// Часы симуляции как `T+8130` — секунды и всё: разбивка на часы и сутки пока
-/// не нужна, а секунды напрямую сопоставимы с периодами в `settings.rs`.
+/// не нужна, а секунды напрямую сопоставимы с периодами в `sim_time.rs`.
 fn format_sim_clock(elapsed: f64) -> String {
     format!("T+{}", elapsed.max(0.0) as u64)
 }

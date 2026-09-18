@@ -16,8 +16,7 @@
 //!   режиме «медленно разглядываю толпу» гейт ничего не отнимает;
 //! - **мягкое и одинаковое на всех скоростях** — перекрытие затухает как
 //!   `exp(-SEPARATION_RATE · t)` виртуального времени под потолком скорости
-//!   [`SEPARATION_MAX_SPEED`](crate::settings::SEPARATION_MAX_SPEED);
-//!   [`SEPARATION_MAX_STEP`](crate::settings::SEPARATION_MAX_STEP) — страховка от
+//!   [`SEPARATION_MAX_SPEED`]; [`SEPARATION_MAX_STEP`] — страховка от
 //!   телепорта, не потолок. Прогон инвариантен к нарезке dt: один кадр на
 //!   30× и тридцать кадров на 1× дают одну траекторию
 //!   ([`relaxation_fraction`], [`clamped_step`]). В давке мгновенное
@@ -56,15 +55,12 @@ use crate::spatial::SpatialGrid;
 
 // Дефолты ручек уехали в `tuning`, и константы под ними этот файл больше не
 // читает — а `tests.rs` их через `use super::*` читает по-прежнему (пин
-// «дефолт равен константе»). Импорт под `cfg(test)`, чтобы в обычной сборке он
-// не висел неиспользованным. Протискивания и доли левшей здесь нет: их дефолты
-// переехали к `SeparationLab`, и в `super::*` они приходят из `pub use
-// self::tuning::*` ниже.
+// «дефолт равен константе»). В `super::*` они приходят из `pub use
+// self::tuning::*` ниже. Из `settings.rs` остаётся одна: у `SEPARATION_RATE`
+// читатель не один (`movement/destination.rs`), поэтому она не переехала.
+// Импорт под `cfg(test)`, чтобы в обычной сборке он не висел неиспользованным.
 #[cfg(test)]
-use crate::settings::{
-    SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_RATE, SEPARATION_SIDESTEP,
-    SEPARATION_STEER,
-};
+use crate::settings::SEPARATION_RATE;
 
 mod pairs;
 mod ports;

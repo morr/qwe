@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::settings::{MIN_SIM_FPS, SIM_RENDER_BUDGET};
-
 /// Шаг фиксированного расписания, как его держит `Time<Fixed>`.
 const HZ: f32 = 64.0;
 
