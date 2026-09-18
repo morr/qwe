@@ -21,8 +21,9 @@ pub use self::components::{
     RetireAt, SimPosition, UrgentPath, strip_movement,
 };
 pub use self::destination::{
-    DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
-    assign_destination_slots, claim_batch, slot_side, slot_side_with_slack, slot_target,
+    CLAIM_SEARCH_MAX, CLAIM_SEARCH_METERS, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, DestinationClaim,
+    DestinationClaims, SlotLab, SlotMatching, SlotSearch, assign_destination_slots, claim_batch,
+    slot_side, slot_side_with_slack, slot_target,
 };
 pub use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
