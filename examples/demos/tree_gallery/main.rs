@@ -87,9 +87,10 @@ use qwe::map::{
 };
 use qwe::settings::TREE_VARIANTS;
 
+use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
-use crate::panel::{spawn_panel, sync_param_rows, sync_reset_button};
+use crate::panel::{spawn_panel, sync_reset_button};
 use crate::params::Tuning;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
 
@@ -207,6 +208,8 @@ fn main() {
         .init_resource::<Ground>()
         .init_resource::<Show>()
         .init_resource::<Tuning>()
+        // подписи и бегунки ручек ведёт кит — по разу на ресурс, как в игре
+        .add_knobs::<Tuning>()
         .init_resource::<SunOnMap>()
         .insert_resource(ClearColor(Ground::default().color()))
         // солнце — в глобаль до первой сборки крон: `CrownMaterial::of` читает
@@ -235,7 +238,7 @@ fn main() {
                 // ресурс считается только что добавленным, и условие пускает
                 // ту же сборку, что потом идёт на каждую правку ручки
                 rebuild_crowns.run_if(resource_changed::<Tuning>),
-                (sync_param_rows, sync_reset_button).run_if(resource_changed::<Tuning>),
+                sync_reset_button.run_if(resource_changed::<Tuning>),
                 apply_show.run_if(resource_changed::<Show>),
                 auto_shot.run_if(resource_exists::<ShotRequest>),
             ),
