@@ -136,8 +136,10 @@ struct PlantedReport {
     woods: usize,
     standalone: usize,
     tree_nodes: usize,
-    /// По одной на политику размещения аллей, в порядке `TreeRowLayout::ALL`.
-    rows: Vec<usize>,
+    /// По одной на политику размещения аллей, в порядке [`TreeRowLayout::ALL`]
+    /// — массивом той же длины, а не `Vec`: «столько же и в том же порядке»
+    /// держит тип, а не эта строчка.
+    rows: [usize; TreeRowLayout::ALL.len()],
     tree_rows: usize,
     asked: usize,
 }
@@ -326,10 +328,7 @@ fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
         woods: woods.len(),
         standalone: standalone.len(),
         tree_nodes: map.tree_nodes.len(),
-        rows: TreeRowLayout::ALL
-            .iter()
-            .map(|&layout| rows.get(layout).len())
-            .collect(),
+        rows: TreeRowLayout::ALL.map(|layout| rows.get(layout).len()),
         tree_rows: map.tree_rows.len(),
         asked,
     };
@@ -987,10 +986,10 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
     }
     let widest = segments.iter().map(|link| link.reach).fold(0.0, f32::max);
-    let mut cells: Grid<usize> = Grid::new(SIDEWALK_CELL);
+    let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
         // радиус здесь знает запрос (`widest` ниже), а не звено
-        cells.insert_segment(link.from, link.to, 0.0, index);
+        lines.insert_segment(link.from, link.to, 0.0, index);
     }
 
     let uses = vertex_uses(map);
@@ -1009,7 +1008,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
         let (min, max) = ring_bounds(&building.outer);
         let margin = Vec2::splat(widest + SIDEWALK_SHIFT_MAX);
-        let nearby = cells.near(min - margin, max + margin);
+        let nearby = lines.near(min - margin, max + margin);
         if nearby.is_empty() {
             continue;
         }
@@ -1201,18 +1200,18 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
     }
     // звено кладётся в ячейки с запасом на своё полотно и предельный зазор,
     // так что спрашивающему хватает ячейки самой вершины
-    let mut cells: Grid<usize> = Grid::new(SIDEWALK_CELL);
+    let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        cells.insert_segment(link.from, link.to, link.reach + LANDUSE_GAP_MAX, index);
+        lines.insert_segment(link.from, link.to, link.reach + LANDUSE_GAP_MAX, index);
     }
 
     let mut pulled = 0;
     for area in &mut map.landuse {
-        area.outer = pull_ring(&area.outer, false, &segments, &cells, &mut pulled);
+        area.outer = pull_ring(&area.outer, false, &segments, &lines, &mut pulled);
         area.holes = area
             .holes
             .iter()
-            .map(|hole| pull_ring(hole, true, &segments, &cells, &mut pulled))
+            .map(|hole| pull_ring(hole, true, &segments, &lines, &mut pulled))
             .collect();
     }
     pulled
@@ -1233,7 +1232,7 @@ fn pull_ring(
     ring: &[Vec2],
     hole: bool,
     segments: &[Link],
-    cells: &Grid<usize>,
+    lines: &Grid<usize>,
     pulled: &mut usize,
 ) -> Vec<Vec2> {
     // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
@@ -1246,7 +1245,7 @@ fn pull_ring(
     let mut out: Vec<Vec2> = Vec::with_capacity(ring.len());
     for (index, &point) in ring.iter().enumerate() {
         let mut push = |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(
-            point, outward, segments, cells,
+            point, outward, segments, lines,
         ) {
             Some(shifted) => {
                 out.push(shifted);
@@ -1266,7 +1265,7 @@ fn pull_ring(
             false,
         );
         let length = point.distance(next);
-        if length <= LANDUSE_STEP || cells.near(point.min(next), point.max(next)).is_empty() {
+        if length <= LANDUSE_STEP || lines.near(point.min(next), point.max(next)).is_empty() {
             continue;
         }
         let steps = (length / LANDUSE_STEP).ceil() as usize;
@@ -1280,11 +1279,11 @@ fn pull_ring(
 /// Куда встаёт вершина квартала, которой до полотна ближайшей дороги остался
 /// зазор не больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда.
 /// `outward` — куда от этой вершины прибывает зелень (см. [`pull_ring`]).
-fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], cells: &Grid<usize>) -> Option<Vec2> {
+fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], lines: &Grid<usize>) -> Option<Vec2> {
     // ближайшая по **зазору до края полотна**, а не по расстоянию до оси:
     // узкий проезд рядом ближе широкой улицы, а щель оставляет улица
     let mut best: Option<(f32, Vec2)> = None;
-    for index in cells.near(point, point) {
+    for index in lines.near(point, point) {
         let Link { from, to, reach } = segments[index];
         let axis = closest_on_segment(point, from, to);
         let gap = point.distance(axis) - reach;
