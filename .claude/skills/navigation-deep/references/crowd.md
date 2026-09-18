@@ -179,7 +179,9 @@ separation off).
 split in two by type. `SeparationLab`'s own seven fields **are live in the game**:
 `rate`, `max_step`, `max_speed`, `steer`, `steer_release` come from `settings.rs`
 constants, and `pass_squeeze` / `left_share` are on top of that the Nav tab's two
-sliders. Everything the game does *not* run sits in `SeparationLab::experiments`
+sliders — so those two are the ones whose defaults *and* `_MIN`/`_MAX`/`_STEP` live in
+`separation/tuning.rs` beside `SeparationLab`, by the rule that a range belongs to the
+resource it clamps. Everything the game does *not* run sits in `SeparationLab::experiments`
 (`SeparationExperiments`) — `horizon`, `anticipation`, `anticipate_margin`, `lane_bias`,
 `compress`, `compress_at`, `crowd_sidestep`, `idle_mobility`, `arrive_slack`, `slide`,
 `stuck_compress`, `stuck_after`, `stuck_ramp`, `hard_core`, `slide_release` — every one

@@ -89,7 +89,8 @@ stand, how density works, and which resources restyle them.
     over a few hundred rows are not. The load log prints all four counts.
 - **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m² of wood outline) at
   `TreeStyle::density == 1`; the slider multiplies it, `TREE_DENSITY_MIN` (0.25, in
-  `settings.rs`) … `TREE_DENSITY_MAX`, step 0.25. Planting runs once at the ceiling, so
+  `map/trees.rs` beside `TreeStyle` — a range belongs to the resource it clamps) …
+  `TREE_DENSITY_MAX` (in `map/osm/planting.rs`, where it is computed), step 0.25. Planting runs once at the ceiling, so
   `MapData::trees` holds the densest forest and the slider only **shows a prefix** of it —
   never a replant, which would reshuffle every position and make the whole forest jump on
   each step.
