@@ -34,11 +34,10 @@ use crate::demon::{
     DEMON_SPEED_FACTOR_STEP, Demon, DemonStyle,
 };
 use crate::determinism::Determinism;
-use crate::human::{Human, HumanStyle};
-use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
-use crate::settings::{
-    HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN, HUMAN_SPEED_SPREAD_STEP,
+use crate::human::{
+    HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN, HUMAN_SPEED_SPREAD_STEP, Human, HumanStyle,
 };
+use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::telemetry::Telemetry;
 
 /// Какой счётчик показывает строка; компонент висит на тексте значения.

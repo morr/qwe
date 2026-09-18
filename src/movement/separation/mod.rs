@@ -47,13 +47,11 @@ use super::VIEW_MARGIN;
 use crate::camera::Viewport;
 use crate::demon::{Demon, DemonDevourTag, DemonLungeTag};
 use crate::grid::world_to_tile;
-use crate::human::Human;
+use crate::human::{HUMAN_BODY_RADIUS, Human};
 use crate::loading::WorldStarted;
 use crate::movement::components::SimPosition;
 use crate::navigation::ContinuousSpace;
-use crate::settings::{
-    DEMON_BODY_RADIUS, DEMON_MOBILITY, HUMAN_BODY_RADIUS, SEPARATION_CELL, SEPARATION_MAX_ZOOM,
-};
+use crate::settings::{DEMON_BODY_RADIUS, DEMON_MOBILITY, SEPARATION_CELL, SEPARATION_MAX_ZOOM};
 use crate::spatial::SpatialGrid;
 
 // Дефолты ручек уехали в `tuning`, и константы под ними этот файл больше не

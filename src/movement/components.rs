@@ -398,7 +398,7 @@ pub fn strip_movement(commands: &mut Commands, entity: Entity) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX};
+    use crate::human::{HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX};
 
     /// Та самая побочка находки: пешка без вида (отладочный ходок) — это тело
     /// обычного размера, а не демон.
