@@ -64,48 +64,48 @@ fn main() {
         // зум по обе стороны порога
         for clutter in [true, false] {
             let costs = measure_layers(&map.buildings, &map.roads, mode, clutter);
-            let (vertices, elapsed, breakdown) = totals(&costs);
-            println!(
-                "{:>18} clutter {:<5} {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]",
-                mode.label(),
-                clutter,
-            );
+            row(mode.label(), &format!("clutter {clutter:<5}"), &costs);
         }
     }
 
     // машины — тем же форматом и с теми же миллисекундами: слой сравнивается
     // со зданиевыми (он на порядок дешевле, и это надо видеть, а не помнить)
     let (cars, costs) = measure_cars(&map.buildings, &map.roads, map.traffic_side);
-    let (vertices, elapsed, breakdown) = totals(&costs);
-    println!(
-        "{:>18} {cars:>8} cars {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]",
-        "parked cars",
-    );
+    row("parked cars", &format!("{cars:>8} cars"), &costs);
 
     // Остальные слои карты. Своей сборки у этих замеров нет — каждый зовёт тот
     // же `mesh_*`, что и игра; до шва они мерились только строками
     // `road meshing:` / `rail meshing:` / `tram meshing:` из живого приложения,
     // то есть ровно тем способом, который на macOS решает App Nap.
-    row("surfaces", &measure_surfaces(&map));
-    row("roads", &measure_roads(&map));
+    row("surfaces", "", &measure_surfaces(&map));
+    row("roads", "", &measure_roads(&map));
     // у рельсов и трамвая ступени зума отличаются не размером, а тем, что
     // нарисовано, поэтому строка на ступень
     for (bucket, costs) in measure_rails(&map.rails) {
-        row(&format!("rails b{bucket}"), &costs);
+        row(&format!("rails b{bucket}"), "", &costs);
     }
     for (bucket, costs) in measure_tram(&map.rails) {
-        row(&format!("tram b{bucket}"), &costs);
+        row(&format!("tram b{bucket}"), "", &costs);
     }
 }
 
-/// Строка замера: имя, вершины, миллисекунды и разбивка по слоям.
-fn row(label: &str, costs: &[LayerCost]) {
+/// Строка замера: имя, своя колонка замера, вершины, миллисекунды и разбивка
+/// по слоям.
+///
+/// Средняя колонка — то, что есть не у всех: ступень оборудования у зданий,
+/// число машин у машин, пусто у остальных. Ширина её постоянна (13 знаков — по
+/// самой длинной, `clutter false` и `   14669 cars`), и печатают через эту одну
+/// функцию **все** замеры: иначе колонка вершин у строк одного вывода не
+/// сходится столбиком, а сравнивать столбиком и есть то, ради чего бенч
+/// существует.
+fn row(label: &str, mid: &str, costs: &[LayerCost]) {
     let (vertices, elapsed, breakdown) = totals(costs);
-    println!("{label:>18} {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]");
+    println!("{label:>18} {mid:<13} {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]");
 }
 
-/// Вершины, миллисекунды и разбивка по слоям одного замера — общие для обоих
-/// замеров, чтобы слой машин печатался тем же форматом, что зданиевые.
+/// Вершины, миллисекунды и разбивка по слоям одного замера — общие для всех
+/// замеров, чтобы машины и слои, поднятые на шов, печатались тем же форматом,
+/// что зданиевые.
 fn totals(costs: &[LayerCost]) -> (usize, f64, String) {
     let vertices: usize = costs.iter().map(|cost| cost.vertices).sum();
     let elapsed: f64 = costs
