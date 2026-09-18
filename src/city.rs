@@ -11,11 +11,12 @@ use bevy::math::DVec2;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::grid::NavtileBase;
 use crate::loading::AppState;
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::settings::{
     BERLIN_GEO_CENTER, DEVILS_LAKE_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS,
-    NY_GEO_CENTER, NY_PORTAL_POS, NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER,
+    NY_GEO_CENTER, NY_PORTAL_POS, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER,
     TULA_PORTAL_POS,
 };
 

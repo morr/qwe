@@ -4,12 +4,12 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 
+use crate::grid::{grid_size, navtile_size};
 use crate::map::footprint::{FENCE_GATE_WIDTH, StreetEdges, distance_to_polyline, fence_gaps};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
     MapData, PolyArea, closest_on_segment, distance_to_segment, ring_bounds, water_line_caps,
 };
-use crate::settings::navtile_size;
 
 /// Стоимость шага между тайлами (для A*): прямой и диагональный.
 const COST_STRAIGHT: i32 = 100;
@@ -57,7 +57,7 @@ pub struct GatesAndPrune {
 
 impl Default for Navmesh {
     fn default() -> Self {
-        let grid_size = crate::settings::grid_size();
+        let grid_size = grid_size();
         Self {
             passable: vec![true; (grid_size.x * grid_size.y) as usize],
             grid_size,
@@ -192,7 +192,7 @@ impl Navmesh {
         // навтайла — дефолтная аллокация при `init_resource` сделана до
         // восстановления настроек и права быть не обязана
         self.tile_size = navtile_size();
-        self.grid_size = crate::settings::grid_size();
+        self.grid_size = grid_size();
         let len = (self.grid_size.x * self.grid_size.y) as usize;
         if self.passable.len() != len {
             self.passable = vec![true; len];

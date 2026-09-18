@@ -33,7 +33,7 @@ in `main.rs`.
 - **Navtile** — navigation grid cell, **2 m by default, runtime-switchable to 1 m** via the
   `navtile:` cycler in the Debug tab. Grid size is derived as `MAP_SIZE / navtile_size()`
   (2800 × 1850 tiles at 2 m); the live value is a process-global atomic
-  (`settings::navtile_size()`), written only in `OnEnter(Loading)`, and **a filled `Navmesh`
+  (`grid::navtile_size()`), written only in `OnEnter(Loading)`, and **a filled `Navmesh`
   carries its own `grid_size`/`tile_size` snapshot** so stale snapshots never index against
   the switched atomic — the fill and the navmesh-side queries convert through
   `Navmesh::to_tile` / `Navmesh::tile_center`, never the global pair. Switching reloads the
@@ -635,7 +635,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   length calibrated at 59° is multiplied by (the buildings' `SHADOW_LENGTH_RANGE`, the
   crowns' shadow heights). Section *Sun*, persisted, and the same two knobs stand in
   `roof_gallery`. **It is read through a process global**, not a `Res`, for the
-  same reason the navtile size is (`settings::navtile_size`): `shade_by_light`, the shadow
+  same reason the navtile size is (`grid::navtile_size`): `shade_by_light`, the shadow
   sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
   the global holds is the ready shadow vector and cotangent, not the two angles: it is read
   hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are

@@ -17,7 +17,7 @@
 //!
 //! - `Camera start` — откуда стартует камера (`save` ⇄ `reset`,
 //!   `camera::CameraPositionMode`);
-//! - `Navtile` — сторона ячейки навигации (`settings::NavtileBase`, смена
+//! - `Navtile` — сторона ячейки навигации (`grid::NavtileBase`, смена
 //!   перезагружает мир).
 //!
 //! Замыкает вкладку `reset` — кнопка-действие, возвращающая ВСЕ настройки к
@@ -42,12 +42,12 @@ use bevy::ui_widgets::Activate;
 use bevy::prelude::*;
 
 use crate::camera::CameraPositionMode;
+use crate::grid::NavtileBase;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
 use crate::prefs::{ResetSettings, TrackPrefExt};
-use crate::settings::NavtileBase;
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_block, spawn_section};

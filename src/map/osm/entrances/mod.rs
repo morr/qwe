@@ -40,9 +40,9 @@ use bevy::math::Vec2;
 
 use self::cohorts::{cohort_of, entrance_count, equivalent_length, plan_sections};
 use self::index::{FootprintIndex, PassageIndex, RoadIndex, ring_is_ccw};
+use crate::grid::navtile_size;
 use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea};
 use crate::rng::lcg_seeded_by;
-use crate::settings::navtile_size;
 
 /// Шаг расстановки входов вдоль одной грани, м — медиана зазора между
 /// соседними входами в OSM (26.7 м по пяти городам; 22.6 в Туле, где

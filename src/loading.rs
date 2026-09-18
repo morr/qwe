@@ -208,8 +208,8 @@ fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>, city: Res<City>) 
 /// загрузки, когда ни заливка, ни генерация входов ещё не живы. Покрывает и
 /// первый запуск (настройки восстановлены при сборке `App`, до расписаний),
 /// и каждую перезагрузку мира.
-fn sync_navtile_size(base: Res<crate::settings::NavtileBase>) {
-    crate::settings::set_navtile_size(base.size());
+fn sync_navtile_size(base: Res<crate::grid::NavtileBase>) {
+    crate::grid::set_navtile_size(base.size());
 }
 
 fn spawn_loader_ui(mut commands: Commands) {

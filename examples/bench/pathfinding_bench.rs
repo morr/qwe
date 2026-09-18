@@ -275,7 +275,7 @@ fn path_length(path: &[IVec2]) -> f32 {
     path.windows(2)
         .map(|pair| {
             let delta = (pair[1] - pair[0]).as_vec2();
-            delta.length() * qwe::settings::navtile_size()
+            delta.length() * qwe::grid::navtile_size()
         })
         .sum()
 }

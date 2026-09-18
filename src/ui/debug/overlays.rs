@@ -11,11 +11,12 @@ use bevy::window::PrimaryWindow;
 
 use super::{DebugConiferNoise, DebugNavmesh};
 use crate::camera::Viewport;
+use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::ConiferField;
 use crate::map::osm::MapData;
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
-use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
+use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY};
 
 #[derive(Component)]
 pub(super) struct NavmeshOverlayMarker;

@@ -23,11 +23,11 @@ in `CONTEXT.md` and the detail here in the same change.
 ## Navtile size
 
 The navtile is **2 m by default and runtime-switchable to 1 m** via the `navtile:` cycler in
-the Debug tab (`NavtileBase` in `settings.rs`, persisted in prefs). Switching it reloads the
+the Debug tab (`NavtileBase` in `src/grid.rs`, persisted in prefs). Switching it reloads the
 world like a city switch, except the camera stays where it was — same city, same spot under
 inspection.
 
-**The live value is a process-global atomic**, read by `settings::navtile_size()`: background
+**The live value is a process-global atomic**, read by `grid::navtile_size()`: background
 threads (navmesh fill, entrance generation) have no ECS access. It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
@@ -48,8 +48,13 @@ for exactly this reason), everything `Walkable` asks (`allows`, `coast_allows`,
 Cost of 1 m, measured: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU, +1.6 GB RSS. A change
 to the navtile size is simulation input — it breaks a replay in flight (`determinism`).
 
-`grid.rs` holds the global conversions — `world_to_tile` / `tile_center` — for callers with
-no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the atomic.
+**`src/grid.rs` owns the navtile**, and that is its whole reason for existing as a module of
+its own: `DEFAULT_NAVTILE_SIZE`, the atomic and its `navtile_size()` / `set_navtile_size()`
+(the setter is `pub(crate)` — the one safe writer is `loading::sync_navtile_size`),
+`grid_size()`, the `NavtileBase` cycler, and the global conversions `world_to_tile` /
+`tile_center` for callers with no `Navmesh` in hand (movement, wander, the door overlay);
+those read the atomic. None of it is in `settings.rs`: the navtile is not a knob among the
+world's knobs but the scale everything navigational is built in, and it has one owner.
 
 ## The grid navmesh
 
@@ -352,7 +357,7 @@ reason it already spawns a `PrimaryWindow`.
   (`grid_point` → `OrdinalGrid::in_bounds`) before `pathfind`, and out of bounds is a
   silent `None` — same verdict the grid gives ("out-of-bounds reads impassable"). Without
   it the crate logs a `log::error!` per call, at dispatcher rate, for a pawn past the map
-  edge. The size is asked of the grid, not of `settings::grid_size()`: the grid is built
+  edge. The size is asked of the grid, not of `grid::grid_size()`: the grid is built
   from a navmesh snapshot and outlives a navtile-size change.
 - **Where the build starts is a mode branch — three registrations of
   `start_northstar_build`** (`navigation/mod.rs::NavigationPlugin`, all

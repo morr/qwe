@@ -12,14 +12,13 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
-use qwe::grid::{tile_center, world_to_tile};
+use qwe::grid::{DEFAULT_NAVTILE_SIZE, tile_center, world_to_tile};
 use qwe::loading::{AppState, WorldStarted};
 use qwe::movement::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, MovementPlugin,
     PreviousSimPosition, SeparationStats, SimPosition,
 };
 use qwe::navigation::{ArcNavmesh, Backend, PolymeshDebug};
-use qwe::settings::DEFAULT_NAVTILE_SIZE;
 use qwe::spatial::SpatialPlugin;
 
 /// Шаг симуляции в тестах; при навтайле 2 м (дефолт) скорость 20 м/с даёт

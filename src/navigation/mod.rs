@@ -21,10 +21,10 @@ pub use self::polymesh::{
     PolyNavmesh, PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
     find_path_polymesh, poll_polymesh_build, sync_polymesh_build,
 };
+use crate::grid::NavtileBase;
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
 use crate::map::osm::model::MapData;
 use crate::prefs::TrackPrefExt;
-use crate::settings::NavtileBase;
 
 /// Ответ асинхронного поиска пути (снимается в
 /// `movement::listen_for_pathfinding_tasks`).
@@ -433,7 +433,7 @@ mod tests {
     /// поляны разнесены так, что их объединение не даёт лишнего центра.
     fn navmesh_with_portal_spots(centers: &[IVec2]) -> Navmesh {
         let clearance =
-            (crate::settings::PORTAL_DIAMETER / 2.0 / crate::settings::navtile_size()) as i32 + 1;
+            (crate::settings::PORTAL_DIAMETER / 2.0 / crate::grid::navtile_size()) as i32 + 1;
         let free: Vec<IVec2> = centers
             .iter()
             .flat_map(|centre| {

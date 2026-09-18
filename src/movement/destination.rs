@@ -70,11 +70,12 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use crate::grid::navtile_size;
 use crate::grid::tile_center;
 use crate::human::HumanStyle;
 use crate::movement::components::{Movable, MovableState, PathfindingRequest};
 use crate::navigation::ArcNavmesh;
-use crate::settings::{CLAIM_SEARCH_METERS, navtile_size};
+use crate::settings::CLAIM_SEARCH_METERS;
 
 /// Слот, зарезервированный этой пешкой под конечную точку (координаты решётки
 /// слотов, не тайлов). Источник истины; [`DestinationClaims`] — обратный индекс.

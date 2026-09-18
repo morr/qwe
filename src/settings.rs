@@ -1,11 +1,8 @@
 //! Все размеры и скорости — метры и м/с. Пиксели существуют только в
 //! настройках зума камеры.
 
-use std::sync::atomic::{AtomicU32, Ordering};
-
 use bevy::math::DVec2;
 use bevy::prelude::*;
-use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 /// Высота этажа, м — единица, общая всему дому, а не настройка одного модуля,
 /// и потому одна на всех: парсер переводит по ней `building:levels` в метры
@@ -18,7 +15,8 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 pub const STOREY_HEIGHT: f32 = 3.0;
 
 /// Карта: реальные данные OpenStreetMap вокруг гео-центра выбранного города
-/// (`City`). Размер общий для всех городов — от него считается [`grid_size`].
+/// (`City`). Размер общий для всех городов — от него считается
+/// [`grid_size`](crate::grid::grid_size).
 /// Начало координат — юго-западный угол bbox.
 pub const MAP_SIZE: Vec2 = Vec2::new(5600.0, 3700.0);
 
@@ -43,69 +41,6 @@ pub const TOKYO_GEO_CENTER: DVec2 = DVec2::new(35.68950, 139.72900);
 pub const DEVILS_LAKE_GEO_CENTER: DVec2 = DVec2::new(48.11379, -98.85592);
 /// Метров в градусе широты (и долготы на экваторе).
 pub const METERS_PER_DEG_LAT: f64 = 111_320.0;
-
-/// Ячейка навигации по умолчанию, м. Живое значение переключается кнопкой
-/// `navtile:` ([`NavtileBase`]) и читается через [`navtile_size`].
-pub const DEFAULT_NAVTILE_SIZE: f32 = 2.0;
-
-/// Текущий размер навтайла — process-global атомик, а не ресурс: его читают
-/// потоки без доступа к ECS (заливка navmesh в потоке загрузки, генерация
-/// входов там же). Пишется он только на главном потоке и только когда ни один
-/// из этих потоков не жив (`loading::sync_navtile_size` в начале `Loading`).
-static NAVTILE_SIZE_BITS: AtomicU32 = AtomicU32::new(DEFAULT_NAVTILE_SIZE.to_bits());
-
-/// Текущий размер ячейки навигации, м.
-pub fn navtile_size() -> f32 {
-    f32::from_bits(NAVTILE_SIZE_BITS.load(Ordering::Relaxed))
-}
-
-pub fn set_navtile_size(size: f32) {
-    NAVTILE_SIZE_BITS.store(size.to_bits(), Ordering::Relaxed);
-}
-
-/// Размер навигационной сетки в тайлах: `MAP_SIZE / navtile_size()`.
-pub fn grid_size() -> IVec2 {
-    (MAP_SIZE / navtile_size()).as_ivec2()
-}
-
-/// Базовый размер навтайла — кнопка `navtile:` в debug-панели. Смена значения
-/// перезагружает мир (`city::reload_world`): проходимость и иерархия northstar
-/// существуют только в тайлах текущего размера.
-///
-/// Цена 1 м против 2 м (Тула, замер `pathfinding_bench`): постройка northstar
-/// 14.4 с против 11 с, HPA* ×1.7 по CPU, +1.6 ГБ RSS — зато косые ленты
-/// держатся от 1.41 м вместо 2.83 м, бордюры и арки заметно точнее.
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
-#[reflect(Resource, SettingsGroup, Default)]
-#[settings_group(group = "navigation", key = "navtile")]
-pub enum NavtileBase {
-    #[default]
-    M2,
-    M1,
-}
-
-impl NavtileBase {
-    pub fn size(self) -> f32 {
-        match self {
-            Self::M2 => 2.0,
-            Self::M1 => 1.0,
-        }
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            Self::M2 => Self::M1,
-            Self::M1 => Self::M2,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::M2 => "2m",
-            Self::M1 => "1m",
-        }
-    }
-}
 
 /// Потолок ширины прорезаемой арки, м. Проезд сквозь дом размечен обычной
 /// дорогой (чаще `service`, 5 м), но сама арка уже проезжей части — без
@@ -1189,7 +1124,8 @@ pub const POLYMESH_AGENT_RADIUS_STEP: f32 = 0.1;
 /// `10 · step` точек. Кольца идут `for step in 0..steps`, то есть последнее
 /// имеет радиус `delta · (steps − 1)`: итоговый допуск —
 /// `POLYMESH_SEARCH_DELTA · (POLYMESH_SEARCH_STEPS − 1)`, 0.75 м, чуть меньше половины навтайла
-/// ([`DEFAULT_NAVTILE_SIZE`]) — той неопределённости, с которой цель приходит из
+/// ([`DEFAULT_NAVTILE_SIZE`](crate::grid::DEFAULT_NAVTILE_SIZE)) — той
+/// неопределённости, с которой цель приходит из
 /// сетки. Цена платится только за конец, оказавшийся вне меша, и только
 /// точечными запросами к BVH. Та же арифметика задаёт потолок
 /// [`POLYMESH_AGENT_RADIUS_MAX`]: допуск вытягивает цель, ушедшую внутрь
