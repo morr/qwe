@@ -12,7 +12,7 @@ use super::arches::{
     push_tunnel_walls, push_wall_with_openings, tunnel_walls,
 };
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
-use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs, point_to_segment};
+use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs};
 use super::material::{
     DOOR_CODE, RoofKind, RoofLook, WallKind, WallLook, building_seed, roof_look, run_kind,
     run_look, run_wall_look, wall_look,
@@ -26,7 +26,7 @@ use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{distance_to_segment, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
 use crate::map::seed::seed_from_point;
 use crate::settings::STOREY_HEIGHT;
@@ -286,7 +286,7 @@ fn garage_walls(run: &GarageRun, outer: &[Vec2], facing: Vec2) -> Vec<(Vec2, Vec
 /// разреза.
 fn on_ring(ring: &[Vec2], point: Vec2) -> bool {
     let count = ring.len();
-    (0..count).any(|at| point_to_segment(point, ring[at], ring[(at + 1) % count]) < 1e-3)
+    (0..count).any(|at| distance_to_segment(point, ring[at], ring[(at + 1) % count]) < 1e-3)
 }
 
 /// Клетки гаражной стены — **шагом своего куска**, а не общей меркой [`BAY`].
