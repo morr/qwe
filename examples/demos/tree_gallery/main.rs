@@ -63,9 +63,15 @@
 //! | `H` | тени вкл/выкл |
 //! | `G` | подложка: лес → парк → мостовая |
 //! | `L` | подписи вкл/выкл |
+//!
+//! `TREE_GALLERY_SHOT=путь.png` — поднять окно, снять витрину и выйти. Нужно
+//! затем, что у примера нет BRP: без этого проверить внешний вид из сессии
+//! нечем. Окно поднимается само — перекрытое чужим окном macOS снимает чёрным.
 
 mod panel;
 mod params;
+#[path = "../gallery_shot.rs"]
+mod shot;
 
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
@@ -85,6 +91,7 @@ use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
 use crate::panel::{spawn_panel, sync_param_rows, sync_reset_button};
 use crate::params::Tuning;
+use crate::shot::{ShotRequest, auto_shot, request_shot};
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 860.0;
@@ -206,7 +213,13 @@ fn main() {
         // его один раз, в момент создания материала, а не каждый кадр
         .add_systems(
             Startup,
-            (spawn_camera, spawn_labels, spawn_panel, apply_sun),
+            (
+                spawn_camera,
+                spawn_labels,
+                spawn_panel,
+                apply_sun,
+                request_shot("TREE_GALLERY_SHOT"),
+            ),
         )
         .add_systems(
             Update,
@@ -224,6 +237,7 @@ fn main() {
                 rebuild_crowns.run_if(resource_changed::<Tuning>),
                 (sync_param_rows, sync_reset_button).run_if(resource_changed::<Tuning>),
                 apply_show.run_if(resource_changed::<Show>),
+                auto_shot.run_if(resource_exists::<ShotRequest>),
             ),
         )
         .run();
