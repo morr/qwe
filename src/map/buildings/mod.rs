@@ -8,7 +8,8 @@
 //! Геометрия разнесена по подмодулям: [`arches`] режет проходы
 //! `building_passage` сквозь стены, [`roofs`] ставит скатные крыши
 //! (двускатные во всех видах, изредка вальмовые) на малые дома, [`layers`]
-//! собирает сами меши слоёв, [`material`] решает, чем крыша крыта,
+//! собирает меши фасадов, кровель и экструзии, [`shadows`] — оба теневых
+//! слоя (на земле и на кровлях соседей), [`material`] решает, чем крыша крыта,
 //! [`heights`] — сколько у него этажей, когда OSM молчит, — и
 //! фактуру кровли рисует шейдер её материала. Храмы и крепость — не дома:
 //! [`temples`] ставит над храмом главы, шпили и минареты по его вере,
@@ -16,6 +17,8 @@
 
 mod arches;
 mod clutter;
+#[cfg(test)]
+mod fixtures;
 mod fortress;
 mod garages;
 mod heights;
@@ -23,6 +26,7 @@ mod layers;
 pub mod material;
 mod order;
 mod roofs;
+mod shadows;
 mod temples;
 
 use std::ops::RangeInclusive;
@@ -35,13 +39,12 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use self::garages::garage_runs;
 use self::heights::height_mix;
 pub(crate) use self::heights::height_or_default;
-pub(crate) use self::layers::SHADOW_LENGTH_RANGE;
-use self::layers::{
-    ShadowSweeps, extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
-};
+use self::layers::{extrusion_builder, facade_and_roof_builders};
 pub use self::layers::{push_house, wall_of};
 use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
+pub(crate) use self::shadows::SHADOW_LENGTH_RANGE;
+use self::shadows::{ShadowSweeps, roof_shadow_builder, shadow_builder};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec};
@@ -58,7 +61,7 @@ const Z_FACADE: f32 = Z_BUILDING - 0.1;
 /// экструзия 5.0): крыша или стена соседа сама маскирует тень. Выше портала
 /// (4) и трупов (3): они на улице и в тени по смыслу.
 const Z_BUILDING_SHADOW: f32 = Z_BUILDING - 0.5;
-/// Тени, падающие **на кровли** ([`layers::roof_shadow_builder`]), — наоборот,
+/// Тени, падающие **на кровли** ([`shadows::roof_shadow_builder`]), — наоборот,
 /// над всеми зданиевыми слоями: это единственная часть тени, которая обязана
 /// лежать поверх крыши, стен и оборудования на ней. Волосок над кровлей и всё
 /// ещё ниже юнитов (10).

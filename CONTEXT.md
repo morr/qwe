@@ -569,7 +569,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   pitch at all. No new
   geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
   refused on both (no penthouse, no vent, no chimney).
-- **Roof shadows** (`map/buildings/layers.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
+- **Roof shadows** (`map/buildings/shadows.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
   — the one place the shadow model used to lie outright. The ground shadow layer sits
   **under** every building layer, so a nine-storey block did not darken the five-storey
   roof beside it. This second, small layer sits **over** them and carries exactly the
@@ -657,7 +657,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   uniform) and that the settings file is written from. One division of the slider costs a
   full building rebuild with its shadow union, so a drag across the scale would otherwise
   be seventy of them.
-- **Soft shadow** (`map/buildings/layers.rs::shadow_builder`) — a building's shadow is no
+- **Soft shadow** (`map/buildings/shadows.rs::shadow_builder`) — a building's shadow is no
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
   resolution and the sky's fill light, not from the sun's angular size, and is therefore
@@ -669,8 +669,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sunlit side of every convex corner — the building came out ringed exactly like the
   **contact skirt** that was taken back out of the union. What goes into
   the union is still the silhouette sweeps and nothing else — and those sweeps are
-  **built once per layer build** (`layers.rs::ShadowSweeps`) and handed to both shadow
-  layers: the ground one reads them flat, the roof one grouped by building. Both shadow layers —
+  **built once per layer build** (`shadows.rs::ShadowSweeps`) and handed to both shadow
+  layers: the ground one reads them flat, the roof one grouped by building. Both layers, the
+  sweeps and the silhouette **chains** they are swept from live in
+  `map/buildings/shadows.rs`; `layers.rs` keeps the facades, the roofs and the extrusion,
+  and with them `silhouette_edges` — the per-edge silhouette, which is about walls, not
+  shadow. Both shadow layers —
   ground and roof — carry **`BuildingShadowTag`** rather than `BuildingLayerTag` and are
   rebuilt only when the height mode or the sun changes: together they are the most
   expensive thing the building layers build, and they do not depend on the roof-clutter
