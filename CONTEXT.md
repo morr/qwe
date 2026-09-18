@@ -1707,8 +1707,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `human/decide.rs`. A constant both species declare moves to `settings.rs`
   (`WANDER_MAP_MARGIN`). A slider's `_MIN`/`_MAX`/`_STEP` range belongs to the resource
   whose field it clamps: the range is part of the model, applied on read, and the panel is
-  only one of its readers. Same split in the polymesh: the world-scale metres are in
-  `settings.rs` under the `POLYMESH_` prefix (agent radius, endpoint tolerance, map-edge
+  only one of its readers — the agent-radius range is exactly that and lives in
+  `navigation/polymesh/`. Same split in the polymesh for the rest: the world-scale metres
+  are in `settings.rs` under the `POLYMESH_` prefix (endpoint tolerance, map-edge
   margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
   `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,
   `SEAM_QUANTUM`, `SIMPLIFY_EPSILON`, `WALK_*`), the search budget and `COST_SCALE`.
