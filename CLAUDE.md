@@ -260,8 +260,14 @@ those additions.
 - **Every entity of the game world carries `DespawnOnExit(AppState::Playing)`** — see
   "World entities" below. Adding a spawn site without it leaks the entity into the next
   city.
-- Tuning constants (sizes, speeds, radii, z-layers) live in `src/settings.rs`, not
-  inline in systems
+- Tuning constants (sizes, speeds, radii, z-layers) are never inline in a system. Where
+  they live is decided by **who reads them**: `src/settings.rs` holds what belongs to the
+  world as a whole — a number two modules both read, a rung of the shared z-stack, the geo
+  anchor, a spawn rate. A number with exactly one owner belongs **beside that owner**: a
+  slider's `_MIN`/`_MAX`/`_STEP` range beside the resource whose field it clamps (the range
+  is part of the model — it clamps on read, and a panel is only one of its readers), a rule
+  of a decision ladder beside its `decide.rs`. "It is a constant" is not itself a reason to
+  put it in `settings.rs`
 - Clippy `type_complexity` is allowed globally; `wildcard_imports` warns
 - Formatting: block indent style, reorder imports (`.rustfmt.toml`); fmt needs the
   nightly rustfmt (see Verification)

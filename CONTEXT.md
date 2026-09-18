@@ -1687,12 +1687,17 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 
 ## Cross-references
 
-- All tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates, z-layers,
-  geo anchor). Not there: a number that *is* a rule of a decision ladder rather than a knob
+- World-wide tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates,
+  z-layers, geo anchor) — what belongs to the world as a whole, i.e. what more than one
+  owner reads. **A number with exactly one owner lives beside that owner**, and "it is a
+  constant" is not a reason to move it here. Not there: a number that *is* a rule of a
+  decision ladder rather than a knob
   over it stays beside its `decide.rs` — `MAX_CHASERS_PER_TARGET` and the ×1.5/×0.7 switch
   factors in `demon/decide.rs`, `FLEE_STEP`/`FLEE_SPREAD`/`ESCAPE_MARGIN` in
   `human/decide.rs`. A constant both species declare moves to `settings.rs`
-  (`WANDER_MAP_MARGIN`). Same split in the polymesh: the world-scale metres are in
+  (`WANDER_MAP_MARGIN`). A slider's `_MIN`/`_MAX`/`_STEP` range belongs to the resource
+  whose field it clamps: the range is part of the model, applied on read, and the panel is
+  only one of its readers. Same split in the polymesh: the world-scale metres are in
   `settings.rs` under the `POLYMESH_` prefix (agent radius, endpoint tolerance, map-edge
   margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
   `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,

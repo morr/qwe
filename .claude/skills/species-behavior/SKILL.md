@@ -392,9 +392,11 @@ asks only on the repath rung, and the answer is `ChaseAction::Switch { to: Victi
 `MAX_CHASERS_PER_TARGET`, `SWITCH_DISTANCE_FACTOR`, `CLOSER_SWITCH_FACTOR` are rules of the
 ladder — same placement as `FLEE_STEP`/`FLEE_SPREAD` in `human/decide.rs`, while the metres the
 ladder consumes (`DEMON_AGGRO_RADIUS`, `DEMON_LUNGE_RANGE`, `KILL_DISTANCE`,
-`RADIUS_HYSTERESIS`) do come from `settings.rs`. What moves to `settings.rs` is a knob or a
-constant both species declare (`WANDER_MAP_MARGIN`, commit `432eabf`). Don't relocate them to
-"comply" with the tuning-constants rule.
+`RADIUS_HYSTERESIS`) do come from `settings.rs`. What moves to `settings.rs` is a constant
+more than one owner reads — both species declaring it (`WANDER_MAP_MARGIN`, commit
+`432eabf`), or a knob the panel and the model share. A knob's own `_MIN`/`_MAX`/`_STEP`
+range is *not* such a constant: it clamps its resource on read, so it belongs beside that
+resource. Don't relocate anything here to "comply" with the tuning-constants rule.
 
 **A chaser with no first path yet skips the repath tick and waits.** Repathing cancels the
 in-flight search, and whenever the pipeline answers slower than the victim changes tiles the
