@@ -464,7 +464,7 @@ pub type PlantedTree = (Vec2, f32, f32);
 /// массива (`(номер + 1) · TREE_AREA_PER_TREE / площадь`), поэтому каждый лес
 /// отдаёт ровно свою долю, даже если засаживался до упора и не добрал
 /// запрошенного (см. `planting.rs`).
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq)]
 pub struct TreeSet {
     /// Центр и радиус кроны.
     positions: Vec<(Vec2, f32)>,
