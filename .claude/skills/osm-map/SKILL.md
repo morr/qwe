@@ -300,13 +300,21 @@ pass reachable:
   without a faith, skewed outlines, no doors, no trees. The `Vec<Vec2>` is the entrances
   that have nowhere to go yet — Overpass hands out nodes before ways, so at that moment the
   buildings do not exist.
-- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the seven finishing passes in
-  their one correct order, **and that order is their interface**. It used to live as notes
-  in three doc comments out of seven and was written down whole nowhere; now it is one
-  numbered list on that function, each step with its "why here".
+- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the **eight** finishing passes
+  in their one correct order, closed by a ninth step, `compose_trees` for the default
+  layout (the parser knows nothing about the panels, but it must not hand out a `MapData`
+  whose `trees` is empty, or every reader has to remember a separate compose step; the
+  player's own layout is reported by `map::trees::recompose_row_trees`, and only when it
+  differs). **That order is their interface**. It used to live as notes in three doc
+  comments out of eight and was written down whole nowhere; now it is one numbered list of
+  nine steps on that function, each step with its "why here", and a pass's own doc comment
+  only points at its step number.
 - **The reports are values**, not the ten `eprintln!` that used to make up forty-five of
-  `parse`'s hundred and twenty-five lines. `parse` prints them and nothing else does; a
-  test compares the counters, which before meant reading stderr.
+  `parse`'s hundred and twenty-five lines. `parse` prints both of them at the end of the
+  load, as one contiguous block; a test compares the counters, which before meant reading
+  stderr. A pass that still prints on its own prints *before* that block — the door
+  generator's two warnings (`entrances/mod.rs`) used to interleave with the summary and
+  now precede it; moving them into a report is work inside `entrances/`.
 
 Two facts the order carries, both pinned by tests that can only exist now that a pass can
 be called alone:
@@ -319,6 +327,8 @@ be called alone:
   the sidewalks (step 5) both ask "is this vertex shared?", and the outlines **move**
   between them — a count taken before squaring answers about the old map. This was
   reported as duplicated work; it is not.
+
+### Readings and passes, one by one
 
 - **Building height** (`parse/tags.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
@@ -593,6 +603,20 @@ Four things about it worth knowing before writing a case:
 
 A new tag reaching the map means a case here — a builder line and an assertion, not a
 new JSON literal. Coverage of tags overall is the audit in `references/osm-coverage.md`.
+
+**Since the parse seam, a case need not go through the whole pipeline.** Three routes,
+and the choice is what is under test:
+
+- **The fixture through the real `parse`** — a tag rule, which is most cases. The route
+  above.
+- **`read(scene)`** (the helper in `tests.rs`) — the fixture's JSON through `read_elements`
+  alone, so the *raw* map can be asserted on before any pass touches it
+  (`reading_the_elements_leaves_the_passes_undone`), or `finish_parse` called on it as one
+  value-returning step (`finishing_the_parse_reports_what_each_pass_did`).
+- **A pass called by name on a `MapData` built by hand** — no JSON, no `GeoBounds`, none of
+  the other passes (`a_pass_runs_on_a_hand_built_map`, `squaring_runs_on_its_own`). This is
+  also the only way to test the *order*: `squaring_before_attaching_loses_the_door` runs the
+  same two passes both ways round.
 
 ## The uniform grid — `map/grid.rs::Grid<T>`
 

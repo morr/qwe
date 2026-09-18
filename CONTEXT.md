@@ -203,17 +203,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **trees / tree_appears_at** — what the renderer reads; `compose_trees` merges forest +
     avenues of the selected layout, `composed_for` caches which.
 - **The parse seam** (`map/osm/parse.rs`) — reading the elements and finishing the map are
-  two things. **`read_elements`** runs the Overpass element loop and stops: what comes out
-  is raw, with houses still in the water, churches without a faith, skewed outlines, no
-  doors and no trees. **`finish_parse`** runs the seven finishing passes, **and their order
-  is their interface** — it is written down whole on that function, each step with its
-  reason, where it used to live as notes in three doc comments out of seven. Both halves
-  report as values (`ReadReport` / `PassReport`) instead of the ten `eprintln!` that were
-  forty-five of the old function's hundred and twenty-five lines; `parse` prints them.
-  Two order facts ride on it: the mapped doors are attached **before** the skewed houses
-  are squared (the door is carried onto the new outline by the same centimetre key), and
-  `vertex_uses` is deliberately computed **twice**, because the outlines move between its
-  two readers.
+  two things, and either half is callable alone. **`read_elements`** runs the Overpass
+  element loop and stops: what comes out is raw, with houses still in the water, churches
+  without a faith, skewed outlines, no doors and no trees. **`finish_parse`** runs the
+  eight finishing passes and closes by composing the trees for the default layout, **and
+  that order is their interface** — all nine steps written down whole, with each step's
+  reason, on that function. Both halves report as values (`ReadReport` /
+  `PassReport`); `parse` prints them. Two order invariants: the mapped doors are attached
+  **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
+  **twice**, because the outlines move between its two readers. Detail in the `osm-map`
+  skill.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
   coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
