@@ -44,7 +44,7 @@ use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, PolyArea, RoadLine};
-use crate::map::surface::{self, LayerMaterials, LayerMesh, MaterialSpec};
+use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SunOnMap, sun_light};
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
@@ -174,8 +174,8 @@ impl ZoomLods for BuildingLods {
 pub type BuildingZoomBucket = ZoomBucket<BuildingLods>;
 
 /// Что строить: режим высот, ступень зума и надо ли трогать теневой слой.
-/// Одним значением, а не тремя параметрами, — так `mesh_buildings`
-/// укладывается в семь аргументов, а вызывающий видит все три решения рядом.
+/// Одним значением, а не тремя параметрами, — так вызывающий видит все три
+/// решения рядом, а `mesh_buildings` читается как «собрать по этому плану».
 #[derive(Clone, Copy)]
 pub struct BuildingPlan {
     pub mode: BuildingHeightMode,
@@ -193,13 +193,6 @@ pub(super) struct RoofDetail {
     pub(super) tinted: bool,
     /// Оборудование на кровле — по ступени зума.
     pub(super) clutter: bool,
-}
-
-/// Во что обошёлся один слой: имя, вершины, время сборки.
-pub struct LayerCost {
-    pub name: &'static str,
-    pub vertices: usize,
-    pub elapsed: Duration,
 }
 
 /// Сборка зданиевых слоёв **без мира и без ассетов** — для офлайн-замера
@@ -386,7 +379,10 @@ impl std::fmt::Display for BuildingReport {
 
 /// Зданиевые слои в выбранном режиме.
 ///
-/// **Чистая функция и единственная дверь в слой** — последняя из десяти.
+/// **Чистая функция и единственная дверь в слой** — последняя из слитых
+/// слоёв: `trees` и поверхности `spawn.rs` переехали на шов позже и приняли
+/// другую форму. Счёт дверей живёт в скилле `osm-map` и в `CONTEXT.md`, здесь
+/// его нет — он устаревал бы на каждом новом модуле.
 /// Кровельный материал ездит через шов как [`MaterialSpec::Roof`]: вариант
 /// появился ровно здесь и ровно потому, что до зданий его некому было
 /// конструировать.

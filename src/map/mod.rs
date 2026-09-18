@@ -28,10 +28,11 @@ mod water;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-// `LayerCost`/`measure_layers` (и `measure_cars` ниже) наружу — офлайн-бенчу
+// `measure_layers` (и `measure_cars` ниже) наружу — офлайн-бенчу
 // `examples/bench/map_meshing`: замер сборки слоёв без мира и без GPU. Форма
-// входа у него своя, не `BuildingPlan`, — см. док `measure_layers`
-pub use self::buildings::{BuildingHeightMode, LayerCost, extrusion_lift, measure_layers};
+// входа у него своя, не `BuildingPlan`, — см. док `measure_layers`. Строку
+// замера, `LayerCost`, бенч берёт из `surface` — она общая для всех слоёв
+pub use self::buildings::{BuildingHeightMode, extrusion_lift, measure_layers};
 pub use self::cars::{CarStyle, measure_cars};
 pub use self::industry::IndustryStyle;
 // Остальные замеры бенча. В отличие от двух выше они **не повторяют** сборку:
@@ -62,7 +63,7 @@ pub use self::sun::{
 };
 #[cfg(test)]
 pub(crate) use self::sun::{default_sun, sun_at};
-pub use self::surface::SurfaceStyle;
+pub use self::surface::{LayerCost, SurfaceStyle};
 pub use self::tram::TramStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 

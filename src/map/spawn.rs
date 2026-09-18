@@ -8,14 +8,14 @@
 
 use bevy::prelude::*;
 
-use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket, LayerCost};
+use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::roads::{self, RoadStyle};
 use crate::map::surface::{
-    self, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
+    self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
 use crate::map::trees::TreeRowStyle;
 use crate::map::water::{mesh_water_areas, mesh_water_lines};
@@ -117,7 +117,8 @@ fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim)
 // `Assets<ColorMaterial>` и кровельного хэндла системе больше не надо — их
 // держит и разворачивает шов (`map/surface.rs`). Это сняло два параметра из
 // десяти; оставшиеся восемь — команды, меши, материалы, ступень зума кровель,
-// сама карта и три ручки стиля — все настоящие входы разового поднятия мира,
+// сама карта, две ручки стиля и раскладка стоянок, которую система считает и
+// кладёт ресурсом, — всё это настоящие входы и выходы разового поднятия мира,
 // и сводить их в тип ради линта нечего
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_map(
@@ -148,15 +149,12 @@ pub fn spawn_map(
     // причиной пересобирать, а её пока нет.
     spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
 
-    let (road_layers, road_report) = roads::mesh_roads(&map, *road_style);
-    spawn_layers(
+    roads::spawn_road_meshes(
         &mut commands,
         &mut meshes,
         &materials,
-        road_layers,
-        roads::RoadLayerTag,
+        roads::mesh_roads(&map, *road_style),
     );
-    info!("{road_report}");
 
     let plan = buildings::BuildingPlan {
         mode: *height_mode,

@@ -15,6 +15,8 @@
 //! фактуры разом — ползунок [`SurfaceStyle::texture`] (панель Surfaces), ноль
 //! возвращает прежние плоские заливки.
 
+use std::time::Duration;
+
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
@@ -27,7 +29,6 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::loading::AppState;
-use crate::map::buildings::LayerCost;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
@@ -361,7 +362,10 @@ pub fn init_surface_materials(
 /// Чем красить слой карты: плоским `ColorMaterial` (кант, рельсы, стены —
 /// всё, чему фактура ни к чему), фактурным материалом поверхности или
 /// материалом кровель (`map::buildings::material`).
-pub enum LayerMaterial {
+///
+/// Приватен вместе со [`spawn_layer`]: наружу модуль отдаёт [`MaterialSpec`],
+/// а готовый хэндл существует только между `resolve` и спавном.
+enum LayerMaterial {
     Flat(Handle<ColorMaterial>),
     Surface(Handle<SurfaceMaterial>),
     Roof(Handle<RoofMaterial>),
@@ -445,7 +449,10 @@ pub fn init_flat_materials(mut commands: Commands, mut materials: ResMut<Assets<
 /// Слой карты из собранного меша: пустой сборщик не спавнится вовсе. Меш для
 /// [`LayerMaterial::Surface`] обязан быть собран через
 /// `MeshBuilder::with_surface_coords`, иначе материал его не примет.
-pub fn spawn_layer(
+///
+/// Приватен: после шва это примитив, на котором стоит [`spawn_layers`], и
+/// звать его снаружи модуля незачем — адаптеры слоёв ходят через шов.
+fn spawn_layer(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     builder: MeshBuilder,
@@ -523,6 +530,17 @@ pub fn spawn_layers(
     }
 }
 
+/// Во что обошёлся один слой: имя, вершины, время сборки.
+///
+/// Живёт рядом с [`layer_costs`], который его и собирает: строка замера — это
+/// слой, посчитанный на шве, а не деталь зданий, где её впервые понадобилось
+/// печатать. Зданиям и машинам она нужна тем же типом, они берут её отсюда.
+pub struct LayerCost {
+    pub name: &'static str,
+    pub vertices: usize,
+    pub elapsed: Duration,
+}
+
 /// Слои, собранные `mesh_*`, — строками офлайн-замера
 /// (`examples/bench/map_meshing.rs`).
 ///
@@ -537,7 +555,7 @@ pub fn spawn_layers(
 /// ради чего делался шов, и это отличает их от `buildings::measure_layers` и
 /// `cars::measure_cars`, которые повторяют шаги сборки нарочно — им надо
 /// развести их по строкам.
-pub fn layer_costs(layers: &[LayerMesh], elapsed: std::time::Duration) -> Vec<LayerCost> {
+pub fn layer_costs(layers: &[LayerMesh], elapsed: Duration) -> Vec<LayerCost> {
     std::iter::once(LayerCost {
         name: "build",
         vertices: 0,
@@ -546,7 +564,7 @@ pub fn layer_costs(layers: &[LayerMesh], elapsed: std::time::Duration) -> Vec<La
     .chain(layers.iter().map(|layer| LayerCost {
         name: layer.name,
         vertices: layer.builder.vertex_count(),
-        elapsed: std::time::Duration::ZERO,
+        elapsed: Duration::ZERO,
     }))
     .collect()
 }

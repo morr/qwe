@@ -48,7 +48,6 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::network::RoadNodes;
-use crate::map::buildings::LayerCost;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
@@ -59,7 +58,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::surface::{
-    self, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
+    self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
 use crate::settings::{
@@ -1099,8 +1098,25 @@ pub fn rebuild_roads(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_roads(&map, *style);
-    spawn_layers(&mut commands, &mut meshes, &materials, layers, RoadLayerTag);
+    spawn_road_meshes(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        mesh_roads(&map, *style),
+    );
+}
+
+/// Положить в мир то, что собрал [`mesh_roads`]: слои под `RoadLayerTag`, плюс
+/// отчёт в лог. Одна дверь для `rebuild_roads` и `spawn_map` — форма
+/// `buildings::spawn_building_meshes`: дверь нужна не по числу меток, а по
+/// числу вызывающих.
+pub fn spawn_road_meshes(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    (layers, report): (Vec<LayerMesh>, RoadReport),
+) {
+    spawn_layers(commands, meshes, materials, layers, RoadLayerTag);
     info!("{report}");
 }
 
