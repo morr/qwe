@@ -1010,7 +1010,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shadow is baked into its mesh), and it now sits where that layer is edited. **One
   condition, one registration**: two copies of a system in one schedule can both fire in
   a frame and spawn the layer twice, so conditions are summed with `or_else`, never split
-  across registrations.
+  across registrations. **What a condition gates is a rebuild, and a rebuild may be a
+  chain**: `trees::rebuilds_on()` gates all four of `recompose_row_trees`,
+  `retune_conifer_field`, `spawn::rebuild_tree_row_band` and `rebuild_trees`, so the
+  tree-row band — which lives in `spawn.rs` and is not `trees` — is the one `rebuild_*`
+  with no `rebuilds_on()` of its own, and its doc comment says where the condition is.
   **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are

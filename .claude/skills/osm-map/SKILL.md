@@ -829,12 +829,14 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       (`tram/tests.rs` and `industry/tests.rs::the_toggle_off_draws_nothing`).
 
     Either is safe, because `surface::spawn_layer` skips an empty builder anyway. That is
-    the very thing the converted modules now say in their own doc comments —
-    «второй дороги, на которой можно забыть деспавн, нет» (`cars/mod.rs`, `industry.rs`)
-    — a property of the shape rather than a thing to remember. Do not confuse it with the
-    three comments in `map/mod.rs`: those are about **double registration spawning a layer
-    twice**, which the seam neither removes nor touches. It also makes the toggle testable:
-    it used to live behind a `return` inside a Bevy system, where no test could reach it.
+    the very thing the builds' own doc comments now say from the other side —
+    «второй дороги, на которой можно забыть деспавн, нет» (`cars::mesh_cars`,
+    `industry::mesh_industry`) — a property of the shape rather than a thing to remember.
+    Do not confuse it with **«одно условие — одна регистрация»**, which each layer's
+    `rebuilds_on` states and `map/mod.rs` refers to: that one is about **double
+    registration spawning a layer twice**, which the seam neither removes nor touches. It
+    also makes the toggle testable: it used to live behind a `return` inside a Bevy
+    system, where no test could reach it.
     Whichever shape a module takes, it says so in its **report** — see **"The layer is not
     drawn" is a state of the report** below; the shape decides what is in the list, the
     report decides what the log line says.
@@ -951,6 +953,11 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     shadow is baked into its mesh**, and that is something you need to know while editing
     `roads.rs`, not while reading the plugin. Before this it was a ten-line comment in
     `map/mod.rs`, a file the layer's author has no reason to open.
+    **One layer takes its condition from another module**: `trees::rebuilds_on()` gates
+    the whole four-system chain — `recompose_row_trees`, `retune_conifer_field`,
+    `spawn::rebuild_tree_row_band` and `rebuild_trees` — so the tree-row band, which
+    lives in `spawn.rs` and is not `trees` (see **Converted** above), is gated from
+    `trees.rs`. What rebuilds is the chain, so the chain is what the condition belongs to.
     - **One condition, one registration**, and it is written on every one of them. Two
       copies of one system in one schedule can both fire in a frame: the second one's
       despawn runs against data taken before the first one's commands were applied, and
@@ -973,8 +980,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Converting a module** means: lift the build to `mesh_*` returning
     `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
     tag to every layer), move any cutoff or toggle into the build, drop its
-    `materials.add(...)` and its now-redundant `is_empty` guard, and write the tests the
-    seam has just made possible. Do not add a `MaterialSpec` variant before a module
+    `materials.add(...)` and its now-redundant `is_empty` guard, write its `rebuilds_on()`
+    beside the `rebuild_*` (**When a layer rebuilds** above), and write the tests the seam
+    has just made possible. Do not add a `MaterialSpec` variant before a module
     needs it — the `Surface` one sat unconstructed until the tree-row band arrived, and
     the compiler said so. A module whose entities are **not** one merged mesh per layer
     (so far only `trees`) returns its own struct instead of a bare `Vec<LayerMesh>`, and
@@ -1717,15 +1725,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   code could ever deliver.
 - **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **11**.
   Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
-  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>).or_else(retuned::<IndustryStyle>)`
+  `industry::rebuilds_on()` — `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)
+  .or_else(retuned::<IndustryStyle>)`
   and on nothing else — the settled sun, never `SunStyle`, like every other rebuild — and
   the system stands on its own rather than in the zoom-bucket chain, because there is no
   zoom bucket here: a cylinder is visible exactly as far as its shadow is.
-  **One registration carrying all three conditions, never three registrations**: the layer
-  arrived with its `rebuild_industry` listed twice in `Update`, and two copies of one
-  system in one schedule can both fire in a frame — the second despawns by a query taken
-  before the first one's commands were applied, so the layer is spawned twice. That is the
-  same trap the buildings' `or_else` chain is written against.
+  **One registration carrying all three conditions, never three registrations** — this is
+  the layer the rule is written from (it arrived with its `rebuild_industry` listed twice
+  in `Update`); the rule itself lives once, on `roads::rebuilds_on` and under **When a
+  layer rebuilds** above.
   - **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
     the `Industry` row of the **Buildings** section (`ui/buildings.rs`), the tram's
     arrangement exactly, and for the tram's reason: its own resource rather than a
@@ -2080,12 +2088,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`CarStyle`** (resource, BRP-writable, persisted, settings group `cars`) is the whole
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
-    effect is one merged mesh — and `rebuild_cars` is gated on
+    effect is one merged mesh — and `rebuild_cars` is gated on `cars::rebuilds_on()`,
     `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)
     .or_else(retuned::<SunOnMap>)`,
-    one registration, since two in one schedule could both fire in a frame and spawn the
-    layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
-    centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
+    one registration by the rule under **When a layer rebuilds** above; `RoadStyle` is in
+    there because the row is walked along the **smoothed** centreline the ribbon is drawn
+    from (`smooth_path(road.points, road.width,
     style.smoothing)`, never the raw OSM points), so Smoothing moves the cars with the
     asphalt. The invisible case
     takes the same road as the far zoom bucket, and since the seam both of them live in
@@ -3587,9 +3595,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
     `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
     world entry before `spawn_map` and rebuilt on a threshold crossing through the same
-    `retuned` gate the height mode uses (one registration with `or_else`, deliberately:
-    two registrations of `rebuild_buildings` in one schedule could both fire in one
-    frame and spawn the layer twice).
+    `buildings::rebuilds_on()` the height mode uses — one registration with `or_else`, by
+    the rule under **When a layer rebuilds** above.
   - **What it costs** (Tula, 7723 buildings, 2.5D+shadows+tint, from
     `examples/bench/map_meshing` on the `dev` profile): 792 147 verts / 101 ms with clutter
     against 468 867 / 89 ms without — one hitch on the threshold crossing, in the same
