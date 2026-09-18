@@ -426,6 +426,15 @@ pub fn mesh_tree_row_band(rows: &[TreeRow], style: &TreeRowStyle) -> Vec<LayerMe
 }
 
 /// Пересборка подложки аллей после правки её настроек из UI.
+///
+/// **Своего `rebuilds_on()` у полосы нет — и это единственный такой слой на
+/// карте.** Она живёт здесь, в `spawn.rs`, но пересобирается не сама по себе: её
+/// пересобирает связка деревьев целиком — `trees::recompose_row_trees`,
+/// `trees::retune_conifer_field`, эта система и `trees::rebuild_trees`, — одной
+/// цепочкой под одним условием `crate::map::trees::rebuilds_on()`. Условие живёт
+/// там потому, что пересобирается именно цепочка: `TreeRowStyle` меняет и состав
+/// набора деревьев, и подложку под ними, так что разделить их нечем. Правишь
+/// условие пересборки полосы — правишь `trees::rebuilds_on`, не это место.
 pub fn rebuild_tree_row_band(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,

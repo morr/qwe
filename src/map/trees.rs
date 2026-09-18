@@ -517,6 +517,9 @@ pub fn retune_conifer_field(
 ///
 /// `retuned`, а не `resource_changed`: в кадре, где настройки легли на ресурс,
 /// кроны ещё не спавнены и пересобирать нечего.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`) —
+/// здесь тем более: одно условие держит всю связку из четырёх систем.
 pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<TreeStyle>
         .or_else(retuned::<TreeRowStyle>)
