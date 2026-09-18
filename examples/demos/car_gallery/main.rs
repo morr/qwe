@@ -66,11 +66,10 @@ use qwe::map::{
     CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, RoadSmoothing,
     smooth_path,
 };
+use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
-use crate::panel::{
-    spawn_panel, spawn_readout, sync_param_rows, sync_reset_button, update_readout,
-};
+use crate::panel::{spawn_panel, spawn_readout, sync_reset_button, update_readout};
 use crate::params::Tuning;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
 
@@ -186,6 +185,8 @@ fn main() {
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .init_resource::<View>()
         .init_resource::<Tuning>()
+        // подписи и бегунки ручек ведёт кит — по разу на ресурс, как в игре
+        .add_knobs::<Tuning>()
         .insert_resource(ClearColor(Ground::default().color()))
         .add_systems(
             Startup,
@@ -209,8 +210,7 @@ fn main() {
                 // сетка строится здесь же, а не в `Startup`: на первом кадре
                 // ресурс считается только что добавленным, и условие пускает
                 // ту же сборку, что потом идёт на каждую правку ручки
-                (rebuild_gallery, sync_param_rows, sync_reset_button)
-                    .run_if(resource_changed::<Tuning>),
+                (rebuild_gallery, sync_reset_button).run_if(resource_changed::<Tuning>),
                 apply_ground.run_if(resource_changed::<View>),
                 auto_shot.run_if(resource_exists::<ShotRequest>),
             )

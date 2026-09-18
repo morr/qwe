@@ -10,6 +10,7 @@ use qwe::map::cars::{self, CarDetail};
 use qwe::settings::{
     CAR_OCCUPANCY_DEFAULT, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP,
 };
+use qwe::ui::knob::SliderBinding;
 
 /// Настройка витрины. `Default` — игра: занятость игровая, сцена не повёрнута.
 #[derive(bevy::prelude::Resource, Clone, Copy, Debug, PartialEq)]
@@ -57,16 +58,18 @@ fn detail_at(value: f32) -> CarDetail {
     cars::detail_for(value as usize).unwrap_or(CarDetail::Block)
 }
 
-/// Одна ручка панели: как её звать, в каких пределах крутить и куда писать.
+/// Одна ручка панели: как её звать, под каким заголовком она стоит и к какому
+/// полю привязана.
+///
+/// Привязка — китовая ([`SliderBinding`]), ровно та же, что у ручек панелей
+/// игры: диапазон, чтение, запись и подпись. За протяжкой и синхронизацией
+/// тогда стоит наблюдатель кита, заведённый по разу на ресурс, а не свой на
+/// витрину.
 pub(crate) struct ParamSpec {
     pub(crate) label: &'static str,
-    /// `(min, max, step)` — как у строк-ползунков в панелях игры.
-    pub(crate) range: (f32, f32, f32),
-    pub(crate) get: fn(&Tuning) -> f32,
-    pub(crate) set: fn(&mut Tuning, f32),
-    pub(crate) format: fn(f32) -> String,
     /// Заголовок группы, если эта ручка её открывает.
     pub(crate) group: Option<&'static str>,
+    pub(crate) binding: SliderBinding<Tuning>,
 }
 
 fn percent(value: f32) -> String {
@@ -86,27 +89,33 @@ pub(crate) fn specs() -> Vec<ParamSpec> {
     vec![
         ParamSpec {
             label: "Occupancy",
-            range: (CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_STEP),
-            get: |t| t.occupancy,
-            set: |t, v| t.occupancy = v,
-            format: percent,
             group: Some("Ряд"),
+            binding: SliderBinding {
+                get: |t| t.occupancy,
+                set: |t, v| t.occupancy = v,
+                range: (CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_STEP),
+                text: percent,
+            },
         },
         ParamSpec {
             label: "Detail",
-            range: (0.0, 2.0, 1.0),
-            get: |t| t.detail,
-            set: |t, v| t.detail = v,
-            format: detail_name,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.detail,
+                set: |t, v| t.detail = v,
+                range: (0.0, 2.0, 1.0),
+                text: detail_name,
+            },
         },
         ParamSpec {
             label: "Rotation",
-            range: (0.0, 90.0, 5.0),
-            get: |t| t.rotation_deg,
-            set: |t, v| t.rotation_deg = v,
-            format: degrees,
             group: Some("Сцена"),
+            binding: SliderBinding {
+                get: |t| t.rotation_deg,
+                set: |t, v| t.rotation_deg = v,
+                range: (0.0, 90.0, 5.0),
+                text: degrees,
+            },
         },
     ]
 }

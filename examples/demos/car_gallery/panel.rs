@@ -1,10 +1,11 @@
 //! Панель витрины: строки-ползунки на ручки и плашка с масштабом внизу
 //! справа.
 //!
-//! Виджеты — те же, что в панелях игры (`qwe::ui::slider`), а не свои: витрина
+//! Виджеты — те же, что в панелях игры (`qwe::ui::knob`), а не свои: витрина
 //! обязана выглядеть и вести себя как настоящая панель, иначе непонятно, чему
-//! в ней верить. Устройство целиком повторяет `roof_gallery/panel.rs` — один
-//! наблюдатель протяжки на все ручки, номер ручки на самом ползунке.
+//! в ней верить. Строка тут и строка панели игры — один и тот же вызов
+//! `spawn_knob`, а за протяжкой, округлением до шага и подписью стоит
+//! наблюдатель кита, заведённый `add_knobs::<Tuning>()` по разу на ресурс.
 //!
 //! **Шрифт панель ставит себе сама.** В игре его вешает `apply_panel_font` по
 //! `Added<GameUiRoot>`, но эта система живёт в `UiPlugin`, которого здесь нет —
@@ -16,27 +17,20 @@ use bevy::feathers::controls::ButtonVariant;
 use bevy::feathers::font_styles::InheritableFont;
 use bevy::prelude::*;
 use bevy::text::FontWeight;
-use bevy::ui_widgets::{Activate, ValueChange};
+use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 use qwe::settings::CAR_MAX_ZOOM;
-use qwe::ui::slider::{SliderRow, apply_step, retarget, spawn_slider_row};
+use qwe::ui::knob::spawn_knob;
 use qwe::ui::{
     PANEL_FONT, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background,
     panel_title, row_value, spawn_panel_button, ui_node,
 };
 
-use crate::params::{ParamSpec, Tuning, specs};
+use crate::params::{Tuning, specs};
 
 /// Отступ заголовка группы от края плашки — как у заголовка секции в панели
 /// настроек игры.
 const GROUP_HEADER_PAD_PX: f32 = 6.0;
-
-/// Номер ручки в [`specs`] — на ползунке и на его числе.
-#[derive(Component, Clone, Copy)]
-pub(crate) struct ParamSlider(usize);
-
-#[derive(Component, Clone, Copy)]
-pub(crate) struct ParamValue(usize);
 
 /// Строка с масштабом: сколько метров в пикселе и жив ли на нём слой машин.
 #[derive(Component)]
@@ -72,24 +66,11 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         ))
         .id();
 
-    for (index, spec) in specs().into_iter().enumerate() {
+    for spec in specs() {
         if let Some(group) = spec.group {
             spawn_group_header(&mut commands, panel, group);
         }
-        let value = (spec.get)(&tuning);
-        spawn_slider_row(
-            &mut commands,
-            panel,
-            SliderRow {
-                label: spec.label,
-                value,
-                value_text: (spec.format)(value),
-                range: spec.range,
-            },
-            ParamValue(index),
-            ParamSlider(index),
-            on_param_change,
-        );
+        spawn_knob(&mut commands, panel, spec.label, &*tuning, spec.binding);
     }
 
     spawn_panel_button(
@@ -148,61 +129,6 @@ pub(crate) fn update_readout(
         "в игре на таком зуме слоя машин уже нет"
     };
     readout.0 = format!("{metres_per_pixel:.3} м/пиксель  ·  {in_game} (порог {CAR_MAX_ZOOM})");
-}
-
-/// Протяжка любой ручки. Округляет до шага, возвращает бегунок на округлённое
-/// место и пишет поле — какое именно, знает [`ParamSpec::set`] под номером,
-/// который носит сам ползунок.
-fn on_param_change(
-    change: On<ValueChange<f32>>,
-    mut commands: Commands,
-    sliders: Query<&ParamSlider>,
-    mut tuning: ResMut<Tuning>,
-    mut values: Query<(&ParamValue, &mut Text)>,
-) {
-    let Ok(&ParamSlider(index)) = sliders.get(change.source) else {
-        return;
-    };
-    let specs = specs();
-    let spec = &specs[index];
-    let stepped = apply_step(&change, &mut commands, spec.range);
-    if (spec.get)(&tuning) == stepped {
-        // ресурс правится только на смене шага: пересборка витрины стоит всех
-        // клеток разом, и платить ею за каждый пиксель протяжки нельзя
-        return;
-    }
-    (spec.set)(&mut tuning, stepped);
-    write_value(&mut values, index, spec, stepped);
-}
-
-/// Вернуть бегунки и числа под значение, пришедшее мимо них, — сейчас это
-/// кнопка сброса.
-pub(crate) fn sync_param_rows(
-    mut commands: Commands,
-    tuning: Res<Tuning>,
-    sliders: Query<(Entity, &ParamSlider, &bevy::ui_widgets::SliderValue)>,
-    mut values: Query<(&ParamValue, &mut Text)>,
-) {
-    let specs = specs();
-    for (entity, &ParamSlider(index), current) in &sliders {
-        let spec = &specs[index];
-        let target = (spec.get)(&tuning);
-        retarget(&mut commands, entity, current.0, target);
-        write_value(&mut values, index, spec, target);
-    }
-}
-
-fn write_value(
-    values: &mut Query<(&ParamValue, &mut Text)>,
-    index: usize,
-    spec: &ParamSpec,
-    value: f32,
-) {
-    for (&ParamValue(owner), mut text) in values.iter_mut() {
-        if owner == index {
-            text.0 = (spec.format)(value);
-        }
-    }
 }
 
 /// Кнопка сброса подсвечивается, пока настройка отличается от игровой.
