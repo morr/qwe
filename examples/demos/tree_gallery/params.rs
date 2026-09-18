@@ -6,7 +6,7 @@
 //! (`qwe::ui::knob`), заведённый по разу на ресурс.
 
 use qwe::map::trees::CrownParams;
-use qwe::ui::knob::SliderBinding;
+use qwe::ui::knob::{KnobSpec, SliderBinding};
 
 /// Настройка витрины: ручки геометрии кроны плюс те немногие ручки вида,
 /// которые живут не в них. `Default` — игра по геометрии, с единственным
@@ -41,12 +41,10 @@ impl Default for Tuning {
 /// игры: диапазон, чтение, запись и подпись. За протяжкой и синхронизацией
 /// тогда стоит наблюдатель кита, заведённый по разу на ресурс, а не свой на
 /// витрину.
-pub(crate) struct ParamSpec {
-    pub(crate) label: &'static str,
-    /// Заголовок группы, если эта ручка её открывает.
-    pub(crate) group: Option<&'static str>,
-    pub(crate) binding: SliderBinding<Tuning>,
-}
+///
+/// Китовым стал и сам тип: [`KnobSpec`] держит ту же тройку полей, а имя здесь
+/// локальное, чтобы таблица `specs()` ниже читалась как раньше.
+pub(crate) type ParamSpec = KnobSpec<Tuning>;
 
 /// Множитель к величине, своей у каждой формы: 1.00 — как в игре.
 fn multiplier(value: f32) -> String {

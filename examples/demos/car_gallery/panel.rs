@@ -12,25 +12,18 @@
 //! а без `InheritableFont` подписи достаются дефолтному шрифту bevy, где нет
 //! кириллицы.
 
-use bevy::feathers::constants::fonts;
 use bevy::feathers::controls::ButtonVariant;
-use bevy::feathers::font_styles::InheritableFont;
 use bevy::prelude::*;
-use bevy::text::FontWeight;
 use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 use qwe::settings::CAR_MAX_ZOOM;
-use qwe::ui::knob::spawn_knob;
+use qwe::ui::knob::spawn_knob_specs;
 use qwe::ui::{
-    PANEL_FONT, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background,
-    panel_title, row_value, spawn_panel_button, ui_node,
+    GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_font,
+    row_value, spawn_panel_button, ui_node,
 };
 
 use crate::params::{Tuning, specs};
-
-/// Отступ заголовка группы от края плашки — как у заголовка секции в панели
-/// настроек игры.
-const GROUP_HEADER_PAD_PX: f32 = 6.0;
 
 /// Строка с масштабом: сколько метров в пикселе и жив ли на нём слой машин.
 #[derive(Component)]
@@ -38,14 +31,6 @@ pub(crate) struct ScaleReadout;
 
 #[derive(Component)]
 pub(crate) struct ResetButton;
-
-fn panel_font(assets: &AssetServer) -> InheritableFont {
-    InheritableFont {
-        font: assets.load(fonts::REGULAR),
-        font_size: PANEL_FONT,
-        weight: FontWeight::NORMAL,
-    }
-}
 
 pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuning: Res<Tuning>) {
     let panel = commands
@@ -66,12 +51,7 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         ))
         .id();
 
-    for spec in specs() {
-        if let Some(group) = spec.group {
-            spawn_group_header(&mut commands, panel, group);
-        }
-        spawn_knob(&mut commands, panel, spec.label, &*tuning, spec.binding);
-    }
+    spawn_knob_specs(&mut commands, panel, &*tuning, &specs());
 
     spawn_panel_button(
         &mut commands,
@@ -81,19 +61,6 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         false,
         |_: On<Activate>, mut tuning: ResMut<Tuning>| *tuning = Tuning::default(),
     );
-}
-
-/// Заголовок группы строк — плашка с названием, как секция в панели игры.
-fn spawn_group_header(commands: &mut Commands, panel: Entity, title: &str) {
-    commands.spawn((
-        ui_node(Node {
-            padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2)),
-            ..default()
-        }),
-        panel_block_background(),
-        children![panel_title(title)],
-        ChildOf(panel),
-    ));
 }
 
 /// Плашка с масштабом — внизу справа. Не подсказка, а измерение: в игре слой

@@ -13,23 +13,16 @@
 //! а без `InheritableFont` подписи достаются дефолтному шрифту bevy, где нет
 //! кириллицы, и вся панель выходит квадратиками не того кегля.
 
-use bevy::feathers::constants::fonts;
 use bevy::feathers::controls::ButtonVariant;
-use bevy::feathers::font_styles::InheritableFont;
 use bevy::prelude::*;
-use bevy::text::FontWeight;
 use bevy::ui_widgets::Activate;
-use qwe::ui::knob::spawn_knob;
+use qwe::ui::knob::spawn_knob_specs;
 use qwe::ui::{
-    PANEL_FONT, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_block_background,
-    panel_title, spawn_panel_button, ui_node,
+    GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, panel_background, panel_font,
+    spawn_panel_button, ui_node,
 };
 
 use crate::params::{Tuning, specs};
-
-/// Отступ заголовка группы от края плашки — как у заголовка секции в панели
-/// настроек игры.
-const GROUP_HEADER_PAD_PX: f32 = 6.0;
 
 pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuning: Res<Tuning>) {
     let panel = commands
@@ -53,29 +46,12 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
             panel_background(),
             // тот же шрифт, которым игра пишет свои панели: своей
             // `apply_panel_font` тут нет, см. шапку модуля
-            InheritableFont {
-                font: assets.load(fonts::REGULAR),
-                font_size: PANEL_FONT,
-                weight: FontWeight::NORMAL,
-            },
+            panel_font(&assets),
             Name::new("gallery_panel"),
         ))
         .id();
 
-    for spec in specs() {
-        if let Some(group) = spec.group {
-            commands.spawn((
-                ui_node(Node {
-                    padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2)),
-                    ..default()
-                }),
-                panel_block_background(),
-                children![panel_title(group)],
-                ChildOf(panel),
-            ));
-        }
-        spawn_knob(&mut commands, panel, spec.label, &*tuning, spec.binding);
-    }
+    spawn_knob_specs(&mut commands, panel, &*tuning, &specs());
 
     spawn_panel_button(
         &mut commands,

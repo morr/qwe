@@ -10,7 +10,7 @@ use qwe::map::cars::{
     self, CAR_OCCUPANCY_DEFAULT, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP,
     CarDetail,
 };
-use qwe::ui::knob::SliderBinding;
+use qwe::ui::knob::{KnobSpec, SliderBinding};
 
 /// Настройка витрины. `Default` — игра: занятость игровая, сцена не повёрнута.
 #[derive(bevy::prelude::Resource, Clone, Copy, Debug, PartialEq)]
@@ -65,12 +65,10 @@ fn detail_at(value: f32) -> CarDetail {
 /// игры: диапазон, чтение, запись и подпись. За протяжкой и синхронизацией
 /// тогда стоит наблюдатель кита, заведённый по разу на ресурс, а не свой на
 /// витрину.
-pub(crate) struct ParamSpec {
-    pub(crate) label: &'static str,
-    /// Заголовок группы, если эта ручка её открывает.
-    pub(crate) group: Option<&'static str>,
-    pub(crate) binding: SliderBinding<Tuning>,
-}
+///
+/// Китовым стал и сам тип: [`KnobSpec`] держит ту же тройку полей, а имя здесь
+/// локальное, чтобы таблица `specs()` ниже читалась как раньше.
+pub(crate) type ParamSpec = KnobSpec<Tuning>;
 
 fn percent(value: f32) -> String {
     format!("{:.0}%", value * 100.0)

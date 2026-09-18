@@ -126,6 +126,34 @@ pub fn panel_title(title: &str) -> impl Bundle {
     (Text::new(title), ThemeTextColor(tokens::PANE_HEADER_TEXT))
 }
 
+/// Отступ заголовка группы от края плашки.
+pub const GROUP_HEADER_PAD_PX: f32 = 6.0;
+
+/// Заголовок группы строк — плашка с названием, как секция панели настроек.
+pub fn spawn_group_header(commands: &mut Commands, panel: Entity, title: &str) {
+    commands.spawn((
+        ui_node(Node {
+            padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2)),
+            ..default()
+        }),
+        panel_block_background(),
+        children![panel_title(title)],
+        ChildOf(panel),
+    ));
+}
+
+/// Шрифт панели для стенда: в игре его вешает `apply_panel_font` по
+/// `Added<GameUiRoot>`, но `UiPlugin` витрина не поднимает, а без
+/// `InheritableFont` подписи достаются дефолтному шрифту bevy, где нет
+/// кириллицы.
+pub fn panel_font(assets: &AssetServer) -> InheritableFont {
+    InheritableFont {
+        font: assets.load(fonts::REGULAR),
+        font_size: PANEL_FONT,
+        weight: FontWeight::NORMAL,
+    }
+}
+
 /// Счётчики в заголовках панелей: сколько объектов этого типа сейчас в мире.
 /// Деревья считаются по собранному набору с учётом ползунка плотности и
 /// тумблеров источников — то есть ровно столько крон и стоит на карте.

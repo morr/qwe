@@ -17,7 +17,7 @@ use qwe::map::sun::{
     SUN_AZIMUTH_DEFAULT, SUN_AZIMUTH_MAX, SUN_AZIMUTH_MIN, SUN_AZIMUTH_STEP, SUN_ELEVATION_DEFAULT,
     SUN_ELEVATION_MAX, SUN_ELEVATION_MIN, SUN_ELEVATION_STEP,
 };
-use qwe::ui::knob::SliderBinding;
+use qwe::ui::knob::{KnobSpec, SliderBinding};
 
 /// Высота стен по умолчанию, м: типичная из `HOUSE_HEIGHTS` в `heights.rs` —
 /// одноэтажный частный дом, то есть тот класс, которому игра вообще ставит
@@ -86,12 +86,10 @@ impl Default for Tuning {
 /// игры: диапазон, чтение, запись и подпись. За протяжкой и синхронизацией
 /// тогда стоит наблюдатель кита, заведённый по разу на ресурс, а не свой на
 /// витрину.
-pub(crate) struct ParamSpec {
-    pub(crate) label: &'static str,
-    /// Заголовок группы, если эта ручка её открывает.
-    pub(crate) group: Option<&'static str>,
-    pub(crate) binding: SliderBinding<Tuning>,
-}
+///
+/// Китовым стал и сам тип: [`KnobSpec`] держит ту же тройку полей, а имя здесь
+/// локальное, чтобы таблица `specs()` ниже читалась как раньше.
+pub(crate) type ParamSpec = KnobSpec<Tuning>;
 
 fn percent(value: f32) -> String {
     format!("{:.0}%", value * 100.0)
