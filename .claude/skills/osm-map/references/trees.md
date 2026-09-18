@@ -309,9 +309,15 @@ three shapes and keeps their proportions, where an absolute would erase the diff
 and need three sliders per quantity. Absolute are only the quantities with no per-shape
 value — stroke widths and the shadow geometry.
 
+`TREE_GALLERY_SHOT=path.png` takes one frame and exits, the shared `gallery_shot.rs` the
+roof, wall and car galleries use. The example has no remote endpoint, so that is the only
+way a session can look at its own work on the crowns.
+
 Two things the panel had to borrow from the game rather than invent, and both are the
-kind of thing that silently looks wrong: the widget kit (`qwe::ui::slider`,
-`spawn_panel_button`, `panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
+kind of thing that silently looks wrong: the widget kit (`qwe::ui::knob` over
+`qwe::ui::slider` — the rows are `spawn_knob` with a `SliderBinding<Tuning>` per knob, so
+the drag observer and the slider sync are the game's; plus `spawn_panel_button`,
+`panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
 the **font** — `apply_panel_font` lives in `UiPlugin`, which an example does not load, so
 the panel inserts `InheritableFont` (feathers' Fira Sans + `PANEL_FONT`) on its own root.
 Without it every label falls back to bevy's built-in font, which carries no Cyrillic and

@@ -340,6 +340,16 @@ did not fit 1080 px and ran off the top of the screen.
   panel must register what it uses rather than assume its neighbour did, which is the
   mirror-of-a-list habit this whole change removes. Without the memo the second call
   would simply add a second copy of both systems.
+  **The module is `pub`, and the four galleries call it** (`examples/demos/*_gallery/`).
+  Each keeps a `ParamSpec { label, group, binding }` table of its own — the label and the
+  group header are the gallery's, the binding is the kit's — and its `main.rs` registers
+  `add_knobs::<Tuning>()` beside `init_resource::<Tuning>()`. That is what retired four
+  word-for-word copies of a `ParamSlider(usize)` / `ParamValue(usize)` pair, an
+  `on_param_change`, a `sync_param_rows` and a `write_value`: the number on the slider
+  was an index into the gallery's own `specs()`, i.e. the kit's binding written out by
+  hand. A gallery still owns its **reset** button, which the kit has no notion of, and
+  `tree_gallery` compares it knob by knob through `binding.get` rather than by `!=` on
+  the whole `Tuning` — `CrownParams` is not `PartialEq`.
 - **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one `crowd_demo`
   calls directly, since its fifteen knobs interleave three resources in one `const` slice
   that also feeds the presets: `spawn_slider_row` (label + value text +
@@ -357,7 +367,9 @@ did not fit 1080 px and ran off the top of the screen.
   `apply_panel_font` lives in `UiPlugin`, which no example can raise. Without an
   `InheritableFont` on the scene's own plaque every label falls back to bevy's default
   20 px face, the slider rows grow out of the panel and the value text wraps — which is
-  exactly what `crowd_demo` looked like after the feathers port. So a demo plaque is
+  exactly what `crowd_demo` looked like after the feathers port. This holds whichever kit
+  the scene calls — a gallery on the knob kit needs the plaque and the font just as much.
+  So a demo plaque is
   `ui_node(…)` + `panel_background()` + its own `InheritableFont { fonts::REGULAR,
   PANEL_FONT }` (`crowd_demo/panel.rs::panel_font`, `tree_gallery/panel.rs::spawn_panel`),
   its group headers `panel_block_background()` + `panel_title`, its labels `row_label` /
