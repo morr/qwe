@@ -35,9 +35,6 @@ use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::Z_FENCE;
 
-#[cfg(test)]
-mod tests;
-
 /// Высота забора, м: по ней считается длина тени тем же котангенсом высоты
 /// солнца, что у домов и вагонов. Двухметровый глухой забор частного сектора.
 const FENCE_HEIGHT: f32 = 2.0;
@@ -118,7 +115,7 @@ pub fn rebuild_fences(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_fences(&map.fences, &map.roads, FENCE_LODS[bucket.index].width);
+    let (layers, report) = mesh_fences(*bucket, &map.fences, &map.roads);
     spawn_layers(
         &mut commands,
         &mut meshes,
@@ -180,14 +177,16 @@ impl std::fmt::Display for FenceReport {
 /// нарисованный сплошной забор поперёк тропинки врал бы о проходимости.
 ///
 /// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
-/// её зовёт и игра (через [`rebuild_fences`]), и тест. Нулевая
-/// ширина — дальняя ступень зума — отдаёт пустой список слоёв, а не особый
-/// случай у вызывающего.
+/// её зовёт и игра (через [`rebuild_fences`]), и тест. Ступень зума
+/// разворачивается в ширину здесь, а не у вызывающего — как у путей, трамвая,
+/// вагонов и машин; дальняя ступень (нулевая ширина) отдаёт пустой список
+/// слоёв, а не особый случай у вызывающего.
 pub fn mesh_fences(
+    bucket: FenceZoomBucket,
     fences: &[FenceLine],
     roads: &[RoadLine],
-    width: f32,
 ) -> (Vec<LayerMesh>, FenceReport) {
+    let width = FENCE_LODS[bucket.index].width;
     if width <= 0.0 {
         return (
             Vec::new(),
@@ -303,3 +302,6 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
 
     shadow::push_union(builder, &contours, SHADOW_BLUR);
 }
+
+#[cfg(test)]
+mod tests;

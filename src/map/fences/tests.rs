@@ -6,13 +6,16 @@
 //! и копия правила полутени.
 
 use super::*;
+use crate::camera::{MAX_ZOOM, MIN_ZOOM};
 use crate::map::osm::fixture;
-
-/// Ширина линии ближней ступени, м — чтобы тест не зависел от таблицы LOD.
-const NEAR_WIDTH: f32 = FENCE_LODS[0].width;
 
 fn fence_across(from: Vec2, to: Vec2) -> FenceLine {
     fixture::fence(vec![from, to])
+}
+
+/// Ближняя ступень — та, где ограда рисуется настоящей доской.
+fn near_bucket() -> FenceZoomBucket {
+    FenceZoomBucket::for_zoom(MIN_ZOOM)
 }
 
 #[test]
@@ -21,7 +24,7 @@ fn a_fence_builds_one_blended_layer() {
         Vec2::new(100.0, 100.0),
         Vec2::new(200.0, 100.0),
     )];
-    let (layers, report) = mesh_fences(&fences, &[], NEAR_WIDTH);
+    let (layers, report) = mesh_fences(near_bucket(), &fences, &[]);
 
     assert_eq!(layers.len(), 1, "ограда — один слитый меш");
     let layer = &layers[0];
@@ -39,11 +42,12 @@ fn the_far_bucket_draws_nothing() {
         Vec2::new(100.0, 100.0),
         Vec2::new(200.0, 100.0),
     )];
-    let width = FENCE_LODS[FENCE_LODS.len() - 1].width;
-    assert_eq!(width, 0.0, "дальняя ступень обязана быть нулевой ширины");
+    let (layers, report) = mesh_fences(FenceZoomBucket::for_zoom(MAX_ZOOM), &fences, &[]);
 
-    let (layers, report) = mesh_fences(&fences, &[], width);
-
+    assert_eq!(
+        report.width, 0.0,
+        "дальняя ступень обязана быть нулевой ширины"
+    );
     // не особый случай у вызывающего, а пустой список слоёв
     assert!(layers.is_empty(), "на общем плане ограда не рисуется");
     assert_eq!(report.vertices, 0);
@@ -59,8 +63,8 @@ fn a_road_through_a_fence_breaks_it_into_pieces() {
     let fence = fence_across(Vec2::new(100.0, 100.0), Vec2::new(200.0, 100.0));
     let across = fixture::street(vec![Vec2::new(150.0, 40.0), Vec2::new(150.0, 160.0)], 8.0);
 
-    let (_, whole) = mesh_fences(std::slice::from_ref(&fence), &[], NEAR_WIDTH);
-    let (_, cut) = mesh_fences(std::slice::from_ref(&fence), &[across], NEAR_WIDTH);
+    let (_, whole) = mesh_fences(near_bucket(), std::slice::from_ref(&fence), &[]);
+    let (_, cut) = mesh_fences(near_bucket(), std::slice::from_ref(&fence), &[across]);
 
     assert_eq!(whole.pieces, 1, "ограду без дорог резать нечем");
     assert!(
@@ -77,7 +81,7 @@ fn a_road_along_a_fence_leaves_it_whole() {
     // улица параллельно ограде и в стороне от неё: сквозь ограду не идёт
     let along = fixture::street(vec![Vec2::new(100.0, 140.0), Vec2::new(200.0, 140.0)], 8.0);
 
-    let (_, report) = mesh_fences(std::slice::from_ref(&fence), &[along], NEAR_WIDTH);
+    let (_, report) = mesh_fences(near_bucket(), std::slice::from_ref(&fence), &[along]);
 
     assert_eq!(
         report.pieces, 1,
@@ -87,7 +91,7 @@ fn a_road_along_a_fence_leaves_it_whole() {
 
 #[test]
 fn an_empty_map_builds_no_geometry() {
-    let (layers, report) = mesh_fences(&[], &[], NEAR_WIDTH);
+    let (layers, report) = mesh_fences(near_bucket(), &[], &[]);
 
     assert_eq!(report.lines, 0);
     assert_eq!(report.vertices, 0);
