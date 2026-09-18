@@ -32,9 +32,25 @@ use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
-use crate::settings::SURFACE_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/surface.wgsl";
+
+/// Дефолт и границы ползунка Texture ([`SurfaceStyle::texture`]) — общий
+/// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
+/// до фактуры; 1 — фактура как задумана; полтора — заметно грубее, дальше шум
+/// перекрикивает цвет слоя.
+pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
+pub const SURFACE_TEXTURE_MIN: f32 = 0.0;
+pub const SURFACE_TEXTURE_MAX: f32 = 1.5;
+pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
+
+// Умолчание ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(
+        SURFACE_TEXTURE_DEFAULT >= SURFACE_TEXTURE_MIN
+            && SURFACE_TEXTURE_DEFAULT <= SURFACE_TEXTURE_MAX
+    );
+};
 
 /// Ширина линии разметки, м — как у настоящей (10–15 см). На экране линия
 /// всё равно не тоньше ~1.3 px (шейдер расширяет её), так что число задаёт

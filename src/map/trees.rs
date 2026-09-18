@@ -138,7 +138,8 @@ pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
 const TREE_VARIANCE_DEFAULT: f32 = 0.35;
 
 // Умолчание каждого ползунка — внутри его же диапазона; правило и его цена
-// записаны в `settings.rs` над общим блоком ассертов.
+// записаны в `settings.rs`, в хвосте файла, там, где раньше стоял общий блок
+// ассертов.
 const _: () = {
     assert!(TREE_DENSITY_DEFAULT >= TREE_DENSITY_MIN && TREE_DENSITY_DEFAULT <= TREE_DENSITY_MAX);
     assert!(

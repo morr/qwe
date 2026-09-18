@@ -297,7 +297,8 @@ world's knobs but the scale everything navigational is built in, and it has one 
 - **ArcNavmesh** — `Arc<RwLock<Navmesh>>` resource; async A* tasks read it off-thread.
   Starts empty (all passable), filled and pruned by the map-load thread while the loader
   screen is still up (`JobState::BuildingNavmesh` / `Pruning`).
-- **PortalPos** (resource) — actual portal position. `PORTAL_POS` in settings is only a
+- **PortalPos** (resource) — actual portal position. The city's own `*_PORTAL_POS`
+  (`city.rs`, beside `City::portal_hint`) is only a
   **hint**; `snap_portal_position` spirals out to the nearest tile with clearance derived
   from `PORTAL_DIAMETER`, through the shared `nearest_tile_where` ring search — nearest is
   Euclidean, so the first ring with a hit is not the answer (a corner at `r·√2` loses to a

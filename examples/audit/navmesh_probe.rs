@@ -13,8 +13,9 @@ use bevy::math::Vec2;
 use qwe::city::City;
 use qwe::grid::world_to_tile;
 use qwe::map::osm::model::point_in_area;
-use qwe::navigation::{Navmesh, build_polymesh_from_map, snap_portal_position};
-use qwe::settings::POLYMESH_AGENT_RADIUS_MIN;
+use qwe::navigation::{
+    Navmesh, POLYMESH_AGENT_RADIUS_MIN, build_polymesh_from_map, snap_portal_position,
+};
 
 /// Арки не дальше этого от первой точки печатаются по центральной линии, м.
 const PASSAGE_REACH: f32 = 300.0;

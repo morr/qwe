@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 
 use crate::map::SunStyle;
-use crate::settings::{
+use crate::map::sun::{
     SUN_AZIMUTH_MAX, SUN_AZIMUTH_MIN, SUN_AZIMUTH_STEP, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN,
     SUN_ELEVATION_STEP,
 };

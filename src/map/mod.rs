@@ -28,7 +28,9 @@ mod seed;
 pub mod shadow;
 mod smooth;
 mod spawn;
-mod sun;
+// `pub`: дефолты и границы ползунков азимута и высоты живут рядом со своим
+// ресурсом, и за ними сюда ходят панель Sun и витрины кровель и стены
+pub mod sun;
 // публичен по той же причине, что `buildings` и `cars`: витрины кладут слои
 // игровым `spawn_layers`, а ему нужен `LayerMaterials` из этого модуля
 pub mod surface;

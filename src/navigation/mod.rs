@@ -18,7 +18,8 @@ pub use self::northstar::{
     start_northstar_build,
 };
 pub use self::polymesh::{
-    PolyNavmesh, PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
+    POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP, PolyNavmesh,
+    PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
     find_path_polymesh, poll_polymesh_build, sync_polymesh_build,
 };
 use crate::grid::NavtileBase;

@@ -53,9 +53,13 @@ in `main.rs`.
   `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door gizmos 1.5), because each asks a different
   question — the table is in the **navigation-deep skill**. No `Default`, like `Backend`:
   a stand inserts it. Not Bevy's `Camera::viewport`, which is in pixels.
-- **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
-  local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
-  f64 math, `MAP_SIZE`-sized bbox derived from the center.
+- **Geo anchor** — a `*_GEO_CENTER` per city (Tula's puts the kremlin near frame center),
+  beside `City` in `city.rs`, which is the only reader; the portal hints
+  (`TULA_PORTAL_POS`, `NY_PORTAL_POS`, `MAP_CENTER_PORTAL_POS`) live there with them.
+  Projection is local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW
+  corner → (0,0), f64 math, `MAP_SIZE`-sized bbox derived from the center, with
+  `METERS_PER_DEG_LAT` in `settings.rs` — that one belongs to the projection, not to a
+  city.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → parking
@@ -1239,7 +1243,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   once "froze" the crowd).
 - **ArcNavmesh** — `Arc<RwLock<Navmesh>>`; async tasks read it off-thread. Filled and pruned
   by the map-load thread while the loader is up.
-- **PortalPos** (resource) — the actual portal position; `PORTAL_POS` is only a hint,
+- **PortalPos** (resource) — the actual portal position; the city's `*_PORTAL_POS`
+  (`city.rs`) is only a hint,
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
@@ -1707,8 +1712,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `human/decide.rs`. A constant both species declare moves to `settings.rs`
   (`WANDER_MAP_MARGIN`). A slider's `_MIN`/`_MAX`/`_STEP` range belongs to the resource
   whose field it clamps: the range is part of the model, applied on read, and the panel is
-  only one of its readers. Same split in the polymesh: the world-scale metres are in
-  `settings.rs` under the `POLYMESH_` prefix (agent radius, endpoint tolerance, map-edge
+  only one of its readers — the agent-radius range is exactly that and lives in
+  `navigation/polymesh/`. Same split in the polymesh for the rest: the world-scale metres
+  are in `settings.rs` under the `POLYMESH_` prefix (endpoint tolerance, map-edge
   margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
   `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,
   `SEAM_QUANTUM`, `SIMPLIFY_EPSILON`, `WALK_*`), the search budget and `COST_SCALE`.

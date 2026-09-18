@@ -87,6 +87,7 @@ use bevy::input::common_conditions::input_just_pressed;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use qwe::camera::hovering_ui;
+use qwe::city::MAP_CENTER_PORTAL_POS;
 use qwe::diagnostics::SIM_SEPARATION_MS;
 use qwe::human::{HumanStyle, pick_wander_targets};
 use qwe::loading::{AppState, PlayPhase};
@@ -96,7 +97,6 @@ use qwe::movement::{
 };
 use qwe::navigation::PathfindingAlgorithm;
 use qwe::rng::WorldSeed;
-use qwe::settings::MAP_CENTER_PORTAL_POS;
 
 use crate::args::{Args, apply_lab, parse_args};
 use crate::metrics::{

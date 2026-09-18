@@ -9,7 +9,11 @@ use bevy::prelude::*;
 
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
 pub use self::components::{
-    ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
+    ChaseRepath, ChaseTarget, DEMON_CAP, DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP,
+    DEMON_LUNGE_BOOST, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN, DEMON_LUNGE_BOOST_STEP,
+    DEMON_SPAWN_INTERVAL, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
+    DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
+    DEMON_SPEED_FACTOR_STEP, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
     DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
 };
 pub use self::look::DemonHalo;

@@ -6,9 +6,9 @@
 //! за улицу, а не за оси мира, — на повёрнутой клетке видно и смещение от
 //! кромки, и направление кузовов.
 
-use qwe::map::cars::{self, CarDetail};
-use qwe::settings::{
-    CAR_OCCUPANCY_DEFAULT, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP,
+use qwe::map::cars::{
+    self, CAR_OCCUPANCY_DEFAULT, CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP,
+    CarDetail,
 };
 use qwe::ui::knob::SliderBinding;
 

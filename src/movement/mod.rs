@@ -21,13 +21,17 @@ pub use self::components::{
     RetireAt, SimPosition, UrgentPath, strip_movement,
 };
 pub use self::destination::{
-    DestinationClaim, DestinationClaims, SlotLab, SlotMatching, SlotSearch,
-    assign_destination_slots, claim_batch, slot_side, slot_side_with_slack, slot_target,
+    CLAIM_SEARCH_MAX, CLAIM_SEARCH_METERS, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, DestinationClaim,
+    DestinationClaims, SlotLab, SlotMatching, SlotSearch, assign_destination_slots, claim_batch,
+    slot_side, slot_side_with_slack, slot_target,
 };
 pub use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
-    SeparationExperiments, SeparationHolds, SeparationLab, SeparationStats, SeparationSteer,
-    SeparationStyle, demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
+    SEPARATION_LEFT_SHARE, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
+    SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE, SEPARATION_PASS_SQUEEZE_MAX,
+    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SeparationExperiments,
+    SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
+    demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 pub use self::wander::{
