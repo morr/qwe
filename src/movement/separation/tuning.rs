@@ -8,9 +8,56 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::settings::{
-    SEPARATION_BACKSTEP, SEPARATION_HOLD, SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED,
-    SEPARATION_MAX_STEP, SEPARATION_PASS_SQUEEZE, SEPARATION_RATE, SEPARATION_SIDESTEP,
-    SEPARATION_STEER,
+    SEPARATION_BACKSTEP, SEPARATION_HOLD, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP,
+    SEPARATION_RATE, SEPARATION_SIDESTEP, SEPARATION_STEER,
+};
+
+/// Во сколько раз ужимается дистанция покоя в паре «ИДУЩАЯ + СТОЯЩАЯ» — дефолт
+/// [`SeparationLab::pass_squeeze`]. Пара «оба стоят» и пара «оба идут» держат
+/// полную — сжимается ПРОХОД сквозь толпу, а не сама толпа.
+///
+/// Ради чего. Шаг решётки слотов — 2.0 м, а идущей пешке между двумя осевшими
+/// нужен просвет `2 ×` дистанции покоя = 3.6 м: внутренние слоты недостижимы в
+/// принципе. При 0.6 просвет становится 2.16 м, то есть решётка проходима, а
+/// осевшая толпа и встречный поток по-прежнему держат полные 1.8 м.
+pub const SEPARATION_PASS_SQUEEZE: f32 = 0.6;
+/// Доля пешек, обходящих препятствие ВЛЕВО — дефолт
+/// [`SeparationLab::left_share`]. Сторона личная и постоянная — хэш `PawnId`.
+///
+/// Одинаковая сторона у всех — источник двух картинок, которых в жизни не
+/// бывает: попутный поток складывается в сплошную колонну, а недошедшие вокруг
+/// плотной толпы едут одной каруселью. На стенде пятая часть левшей — лучший
+/// результат по времени в расталкивании (0.61 против 0.75) и единственное, что
+/// реально разбивает колонну (разброс 2.94 против 2.55).
+pub const SEPARATION_LEFT_SHARE: f32 = 0.2;
+
+/// Границы ползунков группы `Separation` панели Navigation для механизмов,
+/// которые замер вывел в дефолты (`tools/crowd_tuning_lab/REPORT.md`).
+/// Ползунки, а не константы, по той же причине, что у радиуса тела:
+/// правильное значение у каждого — это компромисс, и проверяется он глазом на
+/// живой толпе.
+///
+/// У протискивания снизу не ноль: при нём идущая проходит сквозь стоящую
+/// насквозь. 1.0 — «не ужимается вовсе», то есть поведение до этого замера.
+pub const SEPARATION_PASS_SQUEEZE_MIN: f32 = 0.3;
+pub const SEPARATION_PASS_SQUEEZE_MAX: f32 = 1.0;
+pub const SEPARATION_PASS_SQUEEZE_STEP: f32 = 0.05;
+/// Половина — это уже не «немного левшей», а вторая такая же толпа навстречу
+/// первой; выше ставить незачем, ниже нуля не бывает.
+pub const SEPARATION_LEFT_SHARE_MIN: f32 = 0.0;
+pub const SEPARATION_LEFT_SHARE_MAX: f32 = 0.5;
+pub const SEPARATION_LEFT_SHARE_STEP: f32 = 0.05;
+
+// Умолчание каждого ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(
+        SEPARATION_PASS_SQUEEZE >= SEPARATION_PASS_SQUEEZE_MIN
+            && SEPARATION_PASS_SQUEEZE <= SEPARATION_PASS_SQUEEZE_MAX
+    );
+    assert!(
+        SEPARATION_LEFT_SHARE >= SEPARATION_LEFT_SHARE_MIN
+            && SEPARATION_LEFT_SHARE <= SEPARATION_LEFT_SHARE_MAX
+    );
 };
 
 /// Тумблер расталкивания — заголовок группы `Separation` во вкладке Nav.

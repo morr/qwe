@@ -12,13 +12,13 @@ use crate::determinism::Determinism;
 use crate::human::{
     HUMAN_BODY_RADIUS_MAX, HUMAN_BODY_RADIUS_MIN, HUMAN_BODY_RADIUS_STEP, HumanStyle,
 };
-use crate::movement::{SeparationLab, SlotSearch, separation_allowed_by_mode};
-use crate::navigation::PolymeshDebug;
-use crate::settings::{
-    CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP, SEPARATION_LEFT_SHARE_MAX,
-    SEPARATION_LEFT_SHARE_MIN, SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE_MAX,
-    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP,
+use crate::movement::{
+    SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN, SEPARATION_LEFT_SHARE_STEP,
+    SEPARATION_PASS_SQUEEZE_MAX, SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP,
+    SeparationLab, SlotSearch, separation_allowed_by_mode,
 };
+use crate::navigation::PolymeshDebug;
+use crate::settings::{CLAIM_SEARCH_MAX, CLAIM_SEARCH_MIN, CLAIM_SEARCH_STEP};
 use crate::ui::knob::{SliderBinding, spawn_knob};
 
 /// Группа ручек толпы — только для того, чтобы разложить их по заголовкам.

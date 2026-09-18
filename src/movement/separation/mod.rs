@@ -57,11 +57,13 @@ use crate::spatial::SpatialGrid;
 // Дефолты ручек уехали в `tuning`, и константы под ними этот файл больше не
 // читает — а `tests.rs` их через `use super::*` читает по-прежнему (пин
 // «дефолт равен константе»). Импорт под `cfg(test)`, чтобы в обычной сборке он
-// не висел неиспользованным.
+// не висел неиспользованным. Протискивания и доли левшей здесь нет: их дефолты
+// переехали к `SeparationLab`, и в `super::*` они приходят из `pub use
+// self::tuning::*` ниже.
 #[cfg(test)]
 use crate::settings::{
-    SEPARATION_LEFT_SHARE, SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_PASS_SQUEEZE,
-    SEPARATION_RATE, SEPARATION_SIDESTEP, SEPARATION_STEER,
+    SEPARATION_MAX_SPEED, SEPARATION_MAX_STEP, SEPARATION_RATE, SEPARATION_SIDESTEP,
+    SEPARATION_STEER,
 };
 
 mod pairs;
