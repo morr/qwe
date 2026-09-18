@@ -17,7 +17,7 @@
 //! проверить никак.
 
 use qwe::map::buildings::material::ROOF_TEXTURE_DEFAULT;
-use qwe::settings::{
+use qwe::map::sun::{
     SUN_AZIMUTH_DEFAULT, SUN_AZIMUTH_MAX, SUN_AZIMUTH_MIN, SUN_AZIMUTH_STEP, SUN_ELEVATION_DEFAULT,
     SUN_ELEVATION_MAX, SUN_ELEVATION_MIN, SUN_ELEVATION_STEP,
 };

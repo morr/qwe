@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::{SUN_AZIMUTH_DEFAULT, SUN_ELEVATION_MIN};
+use crate::map::sun::{SUN_AZIMUTH_DEFAULT, SUN_ELEVATION_MIN};
 
 fn structure(kind: StructureKind, radius: f32, height: f32) -> Structure {
     Structure {

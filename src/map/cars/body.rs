@@ -441,7 +441,7 @@ fn lighten(color: Color, amount: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN};
+    use crate::map::sun::{SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN};
 
     /// Кузов вписан в свой габарит, а зеркала — единственное, что из него
     /// торчит: слой ставит машины по габариту, и вылезший борт заехал бы на
