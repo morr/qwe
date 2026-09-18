@@ -2215,6 +2215,38 @@ fn reading_the_elements_leaves_the_passes_undone() {
     assert!(map.buildings.is_empty());
 }
 
+/// Вторая половина шва тоже отчитывается **значением**: что элементный цикл
+/// узнал про сторону движения и сколько колец бросил, раньше можно было
+/// прочесть только на stderr.
+#[test]
+fn reading_the_elements_reports_what_it_skipped() {
+    let (sw, se, ..) = corners(HALF);
+    let torn = Overpass::new(CITY)
+        .relation(
+            &[
+                ("boundary", "administrative"),
+                ("admin_level", "2"),
+                ("driving_side", "left"),
+            ],
+            &[],
+        )
+        // кольцо из одного куска в две точки: соединять не с чем, замкнуть
+        // нечем — такое бросается и считается
+        .relation(&[("natural", "water")], &[("outer", vec![sw, se])]);
+
+    let (map, _, report) = read(&torn);
+    assert_eq!(report.unclosed_rings, 1);
+    assert!(map.water.is_empty(), "порванное кольцо не стало водой");
+    assert_eq!(report.traffic_side, Some(TrafficSide::Left));
+
+    // без границы в ответе сторона движения неизвестна, и карта рисуется
+    // правосторонней — отчёт говорит именно «неизвестна», а не «правая»
+    let (map, _, report) = read(&Overpass::new(CITY));
+    assert_eq!(report.unclosed_rings, 0);
+    assert!(report.traffic_side.is_none());
+    assert_eq!(map.traffic_side, TrafficSide::Right);
+}
+
 /// Проход зовётся сам по себе, на карте, собранной руками, — без JSON, без
 /// `GeoBounds` и без остальных шести проходов.
 #[test]
@@ -2308,6 +2340,11 @@ fn finishing_the_parse_reports_what_each_pass_did() {
         .area(
             &[("building", "house")],
             skewed_house(CENTER + Vec2::new(800.0, 0.0)),
+        )
+        // сажается и собирается: одиночное дерево вдали от всего остального
+        .node(
+            &[("natural", "tree"), ("diameter_crown", "10")],
+            CENTER + Vec2::new(-800.0, 0.0),
         );
 
     let (mut map, entrances, _) = read(&scene);
@@ -2317,7 +2354,20 @@ fn finishing_the_parse_reports_what_each_pass_did() {
     assert_eq!(report.squared, 1);
     assert_eq!(report.entrances_found, 0);
     assert_eq!(report.entrances_orphaned, 0);
+    // и счётчики остальных проходов — тоже значением, а не строкой на stderr
+    assert_eq!(
+        report.pulled.moved, 0,
+        "дорог в сцене нет, отодвигать не от чего"
+    );
+    assert_eq!(report.pulled.left, 0);
+    assert_eq!(report.stretched, 0, "кварталов в сцене нет");
+    assert_eq!(report.planted.tree_nodes, 1);
+    assert_eq!(report.planted.standalone, 1);
     assert_eq!(map.buildings.len(), 1, "остался только косой домик");
-    // и деревья собраны по составу по умолчанию, а не оставлены пустыми
-    assert_eq!(map.trees.len(), map.tree_appears_at.len());
+    // и деревья собраны по составу по умолчанию, а не оставлены пустыми:
+    // посаженная одиночка доехала до набора, который читает рендер. Пустые
+    // `trees` сравнялись бы с пустыми `tree_appears_at` и без сборки вовсе
+    assert_eq!(map.standalone_trees.len(), 1, "дерево посажено");
+    assert_eq!(map.trees.len(), 1, "и собрано в набор рендера");
+    assert_eq!(map.tree_appears_at.len(), map.trees.len());
 }
