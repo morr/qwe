@@ -1076,7 +1076,7 @@ pub(super) fn shadow_builder(
 ) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
-    shadow::push_union(&mut builder, sweeps.all().to_vec(), PENUMBRA_WIDTH);
+    shadow::push_union(&mut builder, sweeps.all(), PENUMBRA_WIDTH);
 
     if extruded {
         // по возрастанию номера дома, а не в порядке обхода `HashMap`: тот у
@@ -1107,9 +1107,6 @@ pub(super) fn shadow_builder(
     builder
 }
 
-/// Доля [`PENUMBRA_WIDTH`], которую кайма получает на вершине, идущей в
-/// сторону `direction`: проекция этого направления на [`shadow_dir`].
-///
 /// Тени, падающие **на кровли**: единственное место, где прежняя модель теней
 /// прямо врала. Теневой слой лежит под всеми зданиевыми, поэтому
 /// девятиэтажка не темнила крышу пятиэтажки под собой, и в плотном квартале

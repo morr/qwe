@@ -87,7 +87,7 @@ pub fn penumbra(direction: Vec2) -> f32 {
 /// разрешением кадра и светом неба, — поэтому число выбирается видом. У дома
 /// метр, у забора и машины треть, **потому что и тень там втрое-вдесятеро
 /// короче**.
-pub fn push_union(builder: &mut MeshBuilder, contours: Vec<Vec<[f32; 2]>>, blur: f32) {
+pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f32) {
     let color = SHADOW_COLOR.to_linear();
     let fade = LinearRgba {
         alpha: 0.0,

@@ -301,5 +301,5 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
         }
     }
 
-    shadow::push_union(builder, contours, SHADOW_BLUR);
+    shadow::push_union(builder, &contours, SHADOW_BLUR);
 }

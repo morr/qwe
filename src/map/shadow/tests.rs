@@ -39,7 +39,8 @@ fn a_lower_sun_lengthens_every_shadow() {
     assert!(low > high * 6.0 && low < high * 6.5, "{high} -> {low}");
 }
 
-/// Сдвиг — та же длина, но в сторону солнца, и модуль азимута он держит.
+/// Сдвиг — та же длина, но вектором по свету, то есть **от** солнца, и модуль
+/// азимута он держит.
 #[test]
 fn the_offset_points_away_from_the_sun() {
     for azimuth in [0.0, 90.0, 300.0] {
@@ -65,7 +66,8 @@ fn the_penumbra_is_zero_at_the_contact_and_full_at_the_far_edge() {
         "дальний край не полный"
     );
     assert_eq!(penumbra(-light), 0.0, "у контакта кайма не нулевая");
-    // боковая сторона — ровно посередине между ними
+    // поперёк света кайма уже нулевая: доля — проекция на свет, а не доля угла,
+    // и рост от нуля к единице идёт по той половине круга, что смотрит по свету
     let across = light.perp();
     assert!(penumbra(across).abs() < 1e-3);
     // и ничего отрицательного: ширина каймы — доля, а не знак
@@ -92,13 +94,13 @@ fn overlapping_sweeps_are_unioned_into_one_body() {
     let mut apart = MeshBuilder::default();
     push_union(
         &mut apart,
-        vec![square(Vec2::ZERO, 5.0), square(Vec2::new(100.0, 0.0), 5.0)],
+        &[square(Vec2::ZERO, 5.0), square(Vec2::new(100.0, 0.0), 5.0)],
         1.0,
     );
     let mut overlapping = MeshBuilder::default();
     push_union(
         &mut overlapping,
-        vec![square(Vec2::ZERO, 5.0), square(Vec2::new(5.0, 0.0), 5.0)],
+        &[square(Vec2::ZERO, 5.0), square(Vec2::new(5.0, 0.0), 5.0)],
         1.0,
     );
 
@@ -117,6 +119,6 @@ fn overlapping_sweeps_are_unioned_into_one_body() {
 fn nothing_to_cast_draws_nothing() {
     let _sun = default_sun();
     let mut builder = MeshBuilder::default();
-    push_union(&mut builder, Vec::new(), 1.0);
+    push_union(&mut builder, &[], 1.0);
     assert!(builder.is_empty());
 }
