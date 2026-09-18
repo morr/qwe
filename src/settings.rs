@@ -964,21 +964,7 @@ pub const TREE_OUTLINE_STROKE: f32 = 0.12;
 /// Толщина внутренних пунктирных дуг, доля радиуса — вдвое тоньше контура.
 pub const TREE_DETAIL_STROKE: f32 = 0.06;
 
-/// Низ и шаг ползунка плотности (`TreeStyle::density`) — множитель к базовой
-/// плотности посадки. Потолок здесь не лежит: он **считается** от минимального
-/// зазора между деревьями — `map::TREE_DENSITY_MAX` в `map/osm/planting.rs`,
-/// рядом с `TREE_MIN_SPACING`, от которого зависит.
-pub const TREE_DENSITY_MIN: f32 = 0.25;
-pub const TREE_DENSITY_STEP: f32 = 0.25;
-
 // --- Поле хвои (`map::trees::conifer`) ---
-/// Границы и шаг ползунка доли хвои (`TreeStyle::conifer_share`) при форме
-/// `Mixed`. Доля точная: порог поля берётся квантилем, а не фиксированным
-/// уровнем шума, — 0 даёт лес без хвои, 1 — только хвою.
-pub const TREE_CONIFER_SHARE_MIN: f32 = 0.0;
-pub const TREE_CONIFER_SHARE_MAX: f32 = 1.0;
-pub const TREE_CONIFER_SHARE_STEP: f32 = 0.05;
-
 /// Длина волны поля, м: единица шума на столько метров. Массив — это не волна
 /// шума, а её **вершина**: отсекая верхние 10 %, получаешь острова втрое-вчетверо
 /// мельче волны, — поэтому 400 м на входе дают массивы поперёк 100–200 м. С
@@ -1012,17 +998,6 @@ pub const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
 pub const CONIFER_NOISE_PERSISTENCE_MIN: f32 = 0.0;
 pub const CONIFER_NOISE_PERSISTENCE_MAX: f32 = 1.0;
 pub const CONIFER_NOISE_PERSISTENCE_STEP: f32 = 0.05;
-/// Сила примеси (`TreeStyle::noise_mix`): к значению поля в дереве
-/// добавляется `mix · jitter`, jitter ∈ ±0.5 детерминированно по позиции
-/// ствола. Ноль — сплошные массивы; 0.1 рвёт их кромки; около 0.2 одиночные
-/// ели добираются до сердцевины лиственных массивов (и наоборот), а массивы
-/// ещё читаются; от ~0.35 кластеризация падает вдвое и лес уходит в
-/// соль-перец — само поле в пределах массива гуляет лишь на 0.1–0.3, и
-/// разброс примеси быстро его перекрикивает.
-pub const TREE_NOISE_MIX_DEFAULT: f32 = 0.1;
-pub const TREE_NOISE_MIX_MIN: f32 = 0.0;
-pub const TREE_NOISE_MIX_MAX: f32 = 1.0;
-pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
 /// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
 /// к запуску, как и посадка деревьев.
 pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
@@ -1193,14 +1168,11 @@ const _: () = {
 // бегунок при первом же касании прыгает к границе, меняя настройку, которую
 // никто не трогал.
 //
-// Проверяются те девятнадцать, у которых умолчание названо здесь же; у
-// остальных трёх (`TREE_DENSITY`, `TREE_CONIFER_SHARE`,
-// `POLYMESH_AGENT_RADIUS`) оно записано литералом в `impl Default` своего
-// ресурса, и константы умолчания в этом файле нет — назвать литерал
-// константой предстоит вместе с переносом диапазонов к их владельцам. Имена
-// этих ресурсов здесь не пишутся намеренно: часть из них принадлежит
-// `navigation/`, и инвариант их упоминания снаружи проверяется grep'ом
-// (см. `CONTEXT.md`).
+// Здесь проверяются только те ручки, чей диапазон ещё живёт в этом файле.
+// Диапазон, уехавший к своему владельцу, уносит ассерт с собой: у деревьев он
+// стоит в `map/trees.rs`, у поля хвои — рядом с `ConiferNoiseStyle`, и так
+// далее. Правило, по которому диапазон принадлежит ресурсу, а не этому файлу,
+// записано в `CLAUDE.md` и в `CONTEXT.md`.
 const _: () = {
     assert!(DEMON_CAP as f32 >= DEMON_CAP_MIN && DEMON_CAP as f32 <= DEMON_CAP_MAX);
     assert!(
@@ -1256,10 +1228,6 @@ const _: () = {
     assert!(SUN_AZIMUTH_DEFAULT >= SUN_AZIMUTH_MIN && SUN_AZIMUTH_DEFAULT <= SUN_AZIMUTH_MAX);
     assert!(
         SUN_ELEVATION_DEFAULT >= SUN_ELEVATION_MIN && SUN_ELEVATION_DEFAULT <= SUN_ELEVATION_MAX
-    );
-    assert!(
-        TREE_NOISE_MIX_DEFAULT >= TREE_NOISE_MIX_MIN
-            && TREE_NOISE_MIX_DEFAULT <= TREE_NOISE_MIX_MAX
     );
     assert!(CLAIM_SEARCH_METERS >= CLAIM_SEARCH_MIN && CLAIM_SEARCH_METERS <= CLAIM_SEARCH_MAX);
 };

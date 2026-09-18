@@ -27,9 +27,10 @@ use bevy::prelude::{Reflect, ReflectDefault, ReflectResource, Resource};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use noise::{NoiseFn, Simplex};
 
+use super::TREE_NOISE_MIX_DEFAULT;
 use crate::settings::{
     CONIFER_NOISE_LACUNARITY, CONIFER_NOISE_OCTAVES, CONIFER_NOISE_PERSISTENCE, CONIFER_NOISE_SEED,
-    CONIFER_NOISE_WAVELENGTH, TREE_NOISE_MIX_DEFAULT,
+    CONIFER_NOISE_WAVELENGTH,
 };
 
 /// Параметры fbm поля хвои — панель Noise (видна при включённом дебаг-слое

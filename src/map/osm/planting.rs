@@ -19,7 +19,8 @@ mod index;
 #[cfg(test)]
 pub(super) use self::index::near_area_edge;
 use self::index::{Obstacles, Occupied, in_bbox};
-use crate::settings::{MAP_SIZE, TREE_DENSITY_STEP};
+use crate::map::trees::TREE_DENSITY_STEP;
+use crate::settings::MAP_SIZE;
 
 /// Плотность деревьев при `TreeStyle::density == 1`: одно дерево на столько м²
 /// леса (1600 / 1.3 / 1.5 / 2 — плотность поднималась на 30%, затем ещё на 50%,
