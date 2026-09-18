@@ -30,12 +30,36 @@ pub(super) fn arclengths(points: &[Vec2]) -> (Vec<f32>, f32) {
 /// Точка ломаной на дуговой координате `at` и направление звена, на которое
 /// она попала: звено ищется бинарным поиском по `along`, позиция внутри него —
 /// интерполяцией.
+///
+/// Края отрезка `[0, total]` — **внутри**, а не снаружи: `at = 0` даёт первую
+/// точку ломаной, `at = total` — последнюю, каждую с направлением своего
+/// крайнего звена. Полуоткрытость тут была бы вредна — шаг вдоль пути
+/// упирается в конец ровно, и отказ на границе выбрасывал бы последний
+/// объект ряда.
+///
+/// **Дублирующаяся вершина не съедает место.** Нулевое звено не имеет
+/// направления, а `binary_search` при равных ключах вправе вернуть любой из
+/// них — то есть ответ зависел бы от неоговорённой детали `std`. Позиция от
+/// выбора не зависит (совпавшие вершины — одна и та же точка), а направление
+/// берётся у ближайшего звена, у которого длина есть: сперва вперёд, потом
+/// назад. `None` остаётся только там, где направления нет вовсе — у ломаной
+/// короче двух точек или нулевой длины целиком.
 pub(super) fn place_on_path(points: &[Vec2], along: &[f32], at: f32) -> Option<(Vec2, Vec2)> {
     let last = points.len().checked_sub(2)?;
     let index = match along.binary_search_by(|value| value.total_cmp(&at)) {
         Ok(index) => index.min(last),
         Err(index) => index.saturating_sub(1).min(last),
     };
-    let direction = (points[index + 1] - points[index]).try_normalize()?;
+    let direction = direction_at(points, index)?;
     Some((points[index] + direction * (at - along[index]), direction))
 }
+
+/// Направление ближайшего к `index` звена, у которого есть длина.
+fn direction_at(points: &[Vec2], index: usize) -> Option<Vec2> {
+    (index..points.len() - 1)
+        .chain((0..index).rev())
+        .find_map(|link| (points[link + 1] - points[link]).try_normalize())
+}
+
+#[cfg(test)]
+mod tests;
