@@ -972,16 +972,6 @@ pub const TREE_DETAIL_STROKE: f32 = 0.06;
 /// зданий — как у пути и трамвая.
 pub const ROOF_CLUTTER_MAX_ZOOM: f32 = 0.5;
 
-/// Дефолт и границы ползунка Texture секции Buildings
-/// (`RoofStyle::texture`) — множитель амплитуд фактуры крыш: 0 — плоская
-/// заливка материала без швов и зерна, 1 — как задумано, полтора — фактура
-/// начинает спорить с цветом. Отдельно от поверхностей: кровля смотрит прямо
-/// в камеру и её фактура заметнее земли, так что и крутить их порознь.
-pub const ROOF_TEXTURE_DEFAULT: f32 = 1.0;
-pub const ROOF_TEXTURE_MIN: f32 = 0.0;
-pub const ROOF_TEXTURE_MAX: f32 = 1.5;
-pub const ROOF_TEXTURE_STEP: f32 = 0.1;
-
 // --- Припаркованные машины (`map::cars`) ---
 /// Зум (метров на пиксель), выше которого слоя машин нет: машина в 4.4 м
 /// становится там мельче шести пикселей, а ряд вдоль улицы — мерцающим
@@ -1153,7 +1143,6 @@ const _: () = {
         SEPARATION_LEFT_SHARE >= SEPARATION_LEFT_SHARE_MIN
             && SEPARATION_LEFT_SHARE <= SEPARATION_LEFT_SHARE_MAX
     );
-    assert!(ROOF_TEXTURE_DEFAULT >= ROOF_TEXTURE_MIN && ROOF_TEXTURE_DEFAULT <= ROOF_TEXTURE_MAX);
     assert!(
         CAR_OCCUPANCY_DEFAULT >= CAR_OCCUPANCY_MIN && CAR_OCCUPANCY_DEFAULT <= CAR_OCCUPANCY_MAX
     );

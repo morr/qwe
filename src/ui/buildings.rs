@@ -10,8 +10,8 @@
 
 use bevy::prelude::*;
 
+use crate::map::buildings::material::{ROOF_TEXTURE_MAX, ROOF_TEXTURE_MIN, ROOF_TEXTURE_STEP};
 use crate::map::{BuildingHeightMode, IndustryStyle, RoofStyle};
-use crate::settings::{ROOF_TEXTURE_MAX, ROOF_TEXTURE_MIN, ROOF_TEXTURE_STEP};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
