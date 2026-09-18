@@ -5,7 +5,9 @@
 //! облачный контур; внутренние кольца-штрихи; тень — растянутый силуэт.
 
 mod canopy;
-mod conifer;
+// `pub`: диапазоны ползунков панели Noise живут рядом со своим ресурсом, и
+// панель ходит за ними сюда
+pub mod conifer;
 mod crown;
 
 pub use self::canopy::CrownMaterial;

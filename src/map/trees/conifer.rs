@@ -28,14 +28,64 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use noise::{NoiseFn, Simplex};
 
 use super::TREE_NOISE_MIX_DEFAULT;
-use crate::settings::{
-    CONIFER_NOISE_LACUNARITY, CONIFER_NOISE_OCTAVES, CONIFER_NOISE_PERSISTENCE, CONIFER_NOISE_SEED,
-    CONIFER_NOISE_WAVELENGTH,
+
+/// Длина волны поля, м: единица шума на столько метров. Массив — это не волна
+/// шума, а её **вершина**: отсекая верхние 10 %, получаешь острова втрое-вчетверо
+/// мельче волны, — поэтому 400 м на входе дают массивы поперёк 100–200 м. С
+/// длиной 120 м (первый заход) массивы выходили по 50 м, то есть вкраплениями в
+/// десяток крон, а не участками леса.
+pub const CONIFER_NOISE_WAVELENGTH: f32 = 400.0;
+/// Границы длины волны: 50 м — уже рябь в несколько крон, 1600 м — четверть
+/// карты одной волной.
+pub const CONIFER_NOISE_WAVELENGTH_MIN: f32 = 50.0;
+pub const CONIFER_NOISE_WAVELENGTH_MAX: f32 = 1600.0;
+pub const CONIFER_NOISE_WAVELENGTH_STEP: f32 = 50.0;
+/// Октавы fbm: контур массива нужен рваный, а не гладкий овал. Дефолт — три:
+/// при [`CONIFER_NOISE_LACUNARITY`] = 2 четвёртая октава — это волна в 50 м, то
+/// есть рябь мельче самого массива, и породу у его кромки она разыгрывает по
+/// монетке. Три октавы — 400/200/100 м; больше — осознанная рваность из панели
+/// Noise, а не дефолт.
+pub const CONIFER_NOISE_OCTAVES: u32 = 3;
+/// Диапазоны октав, lacunarity и persistence — как у слайдеров zxc
+/// (`zxc/src/map/generator/perlin_noise.rs`).
+pub const CONIFER_NOISE_OCTAVES_MIN: f32 = 1.0;
+pub const CONIFER_NOISE_OCTAVES_MAX: f32 = 8.0;
+pub const CONIFER_NOISE_LACUNARITY: f32 = 2.0;
+pub const CONIFER_NOISE_LACUNARITY_MIN: f32 = 1.0;
+pub const CONIFER_NOISE_LACUNARITY_MAX: f32 = 4.0;
+pub const CONIFER_NOISE_LACUNARITY_STEP: f32 = 0.1;
+pub const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
+pub const CONIFER_NOISE_PERSISTENCE_MIN: f32 = 0.0;
+pub const CONIFER_NOISE_PERSISTENCE_MAX: f32 = 1.0;
+pub const CONIFER_NOISE_PERSISTENCE_STEP: f32 = 0.05;
+/// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
+/// к запуску, как и посадка деревьев.
+pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
+
+// Умолчание каждого ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(
+        CONIFER_NOISE_WAVELENGTH >= CONIFER_NOISE_WAVELENGTH_MIN
+            && CONIFER_NOISE_WAVELENGTH <= CONIFER_NOISE_WAVELENGTH_MAX
+    );
+    assert!(
+        CONIFER_NOISE_OCTAVES as f32 >= CONIFER_NOISE_OCTAVES_MIN
+            && CONIFER_NOISE_OCTAVES as f32 <= CONIFER_NOISE_OCTAVES_MAX
+    );
+    assert!(
+        CONIFER_NOISE_LACUNARITY >= CONIFER_NOISE_LACUNARITY_MIN
+            && CONIFER_NOISE_LACUNARITY <= CONIFER_NOISE_LACUNARITY_MAX
+    );
+    assert!(
+        CONIFER_NOISE_PERSISTENCE >= CONIFER_NOISE_PERSISTENCE_MIN
+            && CONIFER_NOISE_PERSISTENCE <= CONIFER_NOISE_PERSISTENCE_MAX
+    );
 };
 
 /// Параметры fbm поля хвои — панель Noise (видна при включённом дебаг-слое
-/// `noise`). Дефолты и границы ползунков — в `settings.rs`; правка любого поля
-/// пересемплирует поле и пересобирает кроны (`retune_conifer_field`).
+/// `noise`). Дефолты и границы ползунков лежат выше, рядом с ресурсом; правка
+/// любого поля пересемплирует поле и пересобирает кроны
+/// (`retune_conifer_field`).
 #[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "conifer_noise")]

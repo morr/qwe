@@ -964,44 +964,6 @@ pub const TREE_OUTLINE_STROKE: f32 = 0.12;
 /// Толщина внутренних пунктирных дуг, доля радиуса — вдвое тоньше контура.
 pub const TREE_DETAIL_STROKE: f32 = 0.06;
 
-// --- Поле хвои (`map::trees::conifer`) ---
-/// Длина волны поля, м: единица шума на столько метров. Массив — это не волна
-/// шума, а её **вершина**: отсекая верхние 10 %, получаешь острова втрое-вчетверо
-/// мельче волны, — поэтому 400 м на входе дают массивы поперёк 100–200 м. С
-/// длиной 120 м (первый заход) массивы выходили по 50 м, то есть вкраплениями в
-/// десяток крон, а не участками леса.
-///
-/// Отсюда и до `TREE_NOISE_MIX_STEP` — дефолты и границы ползунков панелей Noise
-/// и Trees: параметры поля живут в ресурсе `map::trees::ConiferNoiseStyle` (и
-/// `TreeStyle::noise_mix`) и правятся на лету.
-pub const CONIFER_NOISE_WAVELENGTH: f32 = 400.0;
-/// Границы длины волны: 50 м — уже рябь в несколько крон, 1600 м — четверть
-/// карты одной волной.
-pub const CONIFER_NOISE_WAVELENGTH_MIN: f32 = 50.0;
-pub const CONIFER_NOISE_WAVELENGTH_MAX: f32 = 1600.0;
-pub const CONIFER_NOISE_WAVELENGTH_STEP: f32 = 50.0;
-/// Октавы fbm: контур массива нужен рваный, а не гладкий овал. Дефолт — три:
-/// при `CONIFER_NOISE_LACUNARITY` = 2 четвёртая октава — это волна в 50 м, то
-/// есть рябь мельче самого массива, и породу у его кромки она разыгрывает по
-/// монетке. Три октавы — 400/200/100 м; больше — осознанная рваность из панели
-/// Noise, а не дефолт.
-pub const CONIFER_NOISE_OCTAVES: u32 = 3;
-/// Диапазоны октав, lacunarity и persistence — как у слайдеров zxc
-/// (`zxc/src/map/generator/perlin_noise.rs`).
-pub const CONIFER_NOISE_OCTAVES_MIN: f32 = 1.0;
-pub const CONIFER_NOISE_OCTAVES_MAX: f32 = 8.0;
-pub const CONIFER_NOISE_LACUNARITY: f32 = 2.0;
-pub const CONIFER_NOISE_LACUNARITY_MIN: f32 = 1.0;
-pub const CONIFER_NOISE_LACUNARITY_MAX: f32 = 4.0;
-pub const CONIFER_NOISE_LACUNARITY_STEP: f32 = 0.1;
-pub const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
-pub const CONIFER_NOISE_PERSISTENCE_MIN: f32 = 0.0;
-pub const CONIFER_NOISE_PERSISTENCE_MAX: f32 = 1.0;
-pub const CONIFER_NOISE_PERSISTENCE_STEP: f32 = 0.05;
-/// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
-/// к запуску, как и посадка деревьев.
-pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
-
 // --- Фактура поверхностей (`map::surface`) ---
 /// Дефолт и границы ползунка Texture (`SurfaceStyle::texture`) — общий
 /// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
@@ -1200,22 +1162,6 @@ const _: () = {
     assert!(
         SEPARATION_LEFT_SHARE >= SEPARATION_LEFT_SHARE_MIN
             && SEPARATION_LEFT_SHARE <= SEPARATION_LEFT_SHARE_MAX
-    );
-    assert!(
-        CONIFER_NOISE_WAVELENGTH >= CONIFER_NOISE_WAVELENGTH_MIN
-            && CONIFER_NOISE_WAVELENGTH <= CONIFER_NOISE_WAVELENGTH_MAX
-    );
-    assert!(
-        CONIFER_NOISE_OCTAVES as f32 >= CONIFER_NOISE_OCTAVES_MIN
-            && CONIFER_NOISE_OCTAVES as f32 <= CONIFER_NOISE_OCTAVES_MAX
-    );
-    assert!(
-        CONIFER_NOISE_LACUNARITY >= CONIFER_NOISE_LACUNARITY_MIN
-            && CONIFER_NOISE_LACUNARITY <= CONIFER_NOISE_LACUNARITY_MAX
-    );
-    assert!(
-        CONIFER_NOISE_PERSISTENCE >= CONIFER_NOISE_PERSISTENCE_MIN
-            && CONIFER_NOISE_PERSISTENCE <= CONIFER_NOISE_PERSISTENCE_MAX
     );
     assert!(
         SURFACE_TEXTURE_DEFAULT >= SURFACE_TEXTURE_MIN

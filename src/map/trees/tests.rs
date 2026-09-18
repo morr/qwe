@@ -10,7 +10,7 @@ use super::crown::{
 use super::*;
 use crate::map::seed::Lcg;
 use crate::map::shadow_dir;
-use crate::settings::CONIFER_NOISE_WAVELENGTH;
+use crate::map::trees::conifer::CONIFER_NOISE_WAVELENGTH;
 
 /// Параметры кроны, на которых нарисован город: тесты пиннят игру, а не
 /// произвольную настройку витрины.
