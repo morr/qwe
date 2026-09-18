@@ -10,7 +10,8 @@ use super::*;
 /// Сетка с шагом 10 м и значением, занимающим ровно одну ячейку.
 fn one_cell() -> Grid<usize> {
     let mut grid = Grid::new(10.0);
-    grid.insert_at(Vec2::new(5.0, 5.0), 7);
+    let at = Vec2::new(5.0, 5.0);
+    grid.insert(at, at, 7);
     grid
 }
 
@@ -58,6 +59,43 @@ fn a_value_lands_in_every_cell_its_box_touches() {
     assert!(grid.at(Vec2::new(1.0, 21.0)).is_empty());
 }
 
+/// Рамка звена ломаной — то же правило вставки, только рамку считает сетка:
+/// направление звена на неё не влияет, и `pad` раздувает её на радиус, в
+/// котором значению есть дело до точки.
+#[test]
+fn a_segment_lands_in_every_cell_its_padded_box_touches() {
+    let mut grid = Grid::new(10.0);
+    // звено идёт справа налево — рамка обязана выйти той же
+    grid.insert_segment(Vec2::new(25.0, 5.0), Vec2::new(5.0, 5.0), 4.0, 1);
+
+    // рамка (1, 1)–(29, 9) задевает три ячейки по x и одну по y
+    for x in 0..3 {
+        let point = Vec2::new(x as f32 * 10.0 + 5.0, 5.0);
+        assert_eq!(grid.at(point), [1], "{point}");
+    }
+    assert!(grid.at(Vec2::new(35.0, 5.0)).is_empty());
+    assert!(grid.at(Vec2::new(5.0, 15.0)).is_empty());
+}
+
+/// Нулевой `pad` — не особый случай: рамка тогда ровно та же, что у `insert`
+/// по концам звена. Так вставляют те, у кого радиус знает запрос, а не
+/// значение (`water.rs`, `RoadIndex`, тротуарная сетка парса).
+#[test]
+fn a_segment_with_no_pad_is_the_bare_box_of_its_ends() {
+    let (from, to) = (Vec2::new(25.0, 15.0), Vec2::new(5.0, 5.0));
+    let mut padded = Grid::new(10.0);
+    padded.insert_segment(from, to, 0.0, 1);
+    let mut bare = Grid::new(10.0);
+    bare.insert(from.min(to), from.max(to), 1);
+
+    for x in 0..4 {
+        for y in 0..3 {
+            let point = Vec2::new(x as f32 * 10.0 + 5.0, y as f32 * 10.0 + 5.0);
+            assert_eq!(padded.at(point), bare.at(point), "{point}");
+        }
+    }
+}
+
 /// Ответ по рамке — отсортирован и без повторов: значение лежит в нескольких
 /// ячейках сразу, а порядок обхода `HashMap` наружу протечь не должен.
 #[test]
@@ -88,6 +126,31 @@ fn the_raw_query_repeats_a_value_once_per_cell() {
     assert_eq!(grid.near(Vec2::ZERO, Vec2::new(30.0, 5.0)), [1]);
 }
 
+/// И порядок этого сырого ответа — часть договора, а не то, что получилось:
+/// ячейки обходятся по возрастанию x, затем y. Значения кладутся в обратном
+/// порядке, каждое в свою ячейку, так что ответ мог бы прийти любым — и если
+/// бы он зависел от обхода `HashMap`, меш по нему собирался бы каждый запуск
+/// по-своему.
+#[test]
+fn the_raw_query_walks_cells_in_order() {
+    let mut grid = Grid::new(10.0);
+    // (1, 1) → 4, (1, 0) → 3, (0, 1) → 2, (0, 0) → 1
+    for (value, at) in [
+        (4, Vec2::new(15.0, 15.0)),
+        (3, Vec2::new(15.0, 5.0)),
+        (2, Vec2::new(5.0, 15.0)),
+        (1, Vec2::new(5.0, 5.0)),
+    ] {
+        grid.insert(at, at, value);
+    }
+
+    let raw: Vec<usize> = grid
+        .near_each(Vec2::ZERO, Vec2::splat(19.0))
+        .copied()
+        .collect();
+    assert_eq!(raw, [1, 2, 3, 4]);
+}
+
 /// Пары — перебор кандидатов внутри ячейки, и он тоже отсортирован: по ним
 /// сшиваются ленты гаражей и сравниваются дома, и порядок решать не должен.
 ///
@@ -97,11 +160,13 @@ fn the_raw_query_repeats_a_value_once_per_cell() {
 #[test]
 fn pairs_are_taken_inside_a_cell_sorted_and_once() {
     let mut grid = Grid::new(10.0);
+    let at = Vec2::new(5.0, 5.0);
     for value in [2, 1, 3] {
-        grid.insert_at(Vec2::new(5.0, 5.0), value);
+        grid.insert(at, at, value);
     }
     // сосед в другой ячейке в пары не попадает
-    grid.insert_at(Vec2::new(15.0, 5.0), 9);
+    let apart = Vec2::new(15.0, 5.0);
+    grid.insert(apart, apart, 9);
 
     assert_eq!(grid.pairs(), [(1, 2), (1, 3), (2, 3)]);
 }
@@ -119,9 +184,8 @@ fn a_pair_sharing_two_cells_is_reported_once() {
 #[test]
 fn an_empty_grid_answers_nothing() {
     let grid = Grid::<usize>::new(10.0);
-    assert!(grid.is_empty());
     assert!(grid.at(Vec2::ZERO).is_empty());
     assert!(grid.near(Vec2::ZERO, Vec2::splat(100.0)).is_empty());
+    assert!(grid.near_each(Vec2::ZERO, Vec2::splat(100.0)).next().is_none());
     assert!(grid.pairs().is_empty());
-    assert!(!one_cell().is_empty());
 }
