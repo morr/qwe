@@ -901,6 +901,16 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       the layer order is worth seeing in the test — the tram, the industry layer
       (`tram/tests.rs` and `industry/tests.rs::the_toggle_off_draws_nothing`).
 
+    **A stepped layer takes the `ZoomBucket` itself, never a value already unrolled from
+    the LOD table.** `mesh_rails`, `mesh_tram`, `mesh_wagons`, `mesh_cars` and — last to
+    follow — `mesh_fences` all take the bucket and read their own table inside the door.
+    Handing the build a bare width instead (`FENCE_LODS[bucket.index].width`, as
+    `rebuild_fences` did) leaves half the cutoff in the system: the test then has to index
+    the table by hand to say which step it means, and the door can be called with a width
+    no step of the ladder ever produces. With the bucket a test says `for_zoom(MAX_ZOOM)`
+    and asserts on the report (`FenceReport::width == 0.0`), which is where the layer
+    carries `hidden`.
+
     Either is safe, because `surface::spawn_layer` skips an empty builder anyway. That is
     the very thing the builds' own doc comments now say from the other side —
     «второй дороги, на которой можно забыть деспавн, нет» (`cars::mesh_cars`,
@@ -1052,7 +1062,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       prose living away from its layer, and that is what `rebuilds_on` fixes.
   - **Converting a module** means: lift the build to `mesh_*` returning
     `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
-    tag to every layer), move any cutoff or toggle into the build, drop its
+    tag to every layer), move any cutoff or toggle into the build — a zoom ladder as the
+    `ZoomBucket` itself, not as a width read out of the table by the adapter — drop its
     `materials.add(...)` and its now-redundant `is_empty` guard, write its `rebuilds_on()`
     beside the `rebuild_*` (**When a layer rebuilds** above), and write the tests the seam
     has just made possible. Do not add a `MaterialSpec` variant before a module
