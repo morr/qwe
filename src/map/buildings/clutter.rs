@@ -333,7 +333,7 @@ pub(super) fn push_items(
     if items.is_empty() {
         return;
     }
-    let shadow: LinearRgba = roof.mix(&Srgba::BLACK, CLUTTER_SHADOW_MIX).into();
+    let shadow_color: LinearRgba = roof.mix(&Srgba::BLACK, CLUTTER_SHADOW_MIX).into();
     builder.set_roof(None);
     for item in items {
         // тень — свип основания по свету: два ребра силуэта плюс сдвинутое
@@ -351,9 +351,9 @@ pub(super) fn push_items(
         // конце ползунка, ради которого высота солнца и стала ручкой
         let offset = shadow::offset(item.height).clamp_length_max(item.reach);
         for (a, b) in silhouette_edges(&item.base, shadow_dir()) {
-            builder.push_quad([a, b, b + offset, a + offset], shadow);
+            builder.push_quad([a, b, b + offset, a + offset], shadow_color);
         }
-        builder.push_quad(item.base.map(|point| point + offset), shadow);
+        builder.push_quad(item.base.map(|point| point + offset), shadow_color);
 
         let lift = lean.map_or(Vec2::ZERO, |lean| lean.ridge(item.height));
         if let Some(lean) = lean {

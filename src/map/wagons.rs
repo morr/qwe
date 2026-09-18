@@ -379,10 +379,10 @@ fn stand_along(wagons: &mut Vec<Wagon>, track: &Track, fan: &Fan, rng: &mut Lcg)
 /// (`cars::mesh_bodies` под `cars::mesh_cars`).
 fn mesh_bodies(wagons: &[Wagon]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
-    let shadow = SHADOW_COLOR.to_linear();
+    let color = SHADOW_COLOR.to_linear();
     let offset = shadow::offset(WAGON_HEIGHT);
     for wagon in wagons {
-        builder.push_quad(body(wagon, offset), shadow);
+        builder.push_quad(body(wagon, offset), color);
     }
     for wagon in wagons {
         builder.push_quad(body(wagon, Vec2::ZERO), wagon.color.to_linear());
