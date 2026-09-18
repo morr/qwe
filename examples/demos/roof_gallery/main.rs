@@ -131,11 +131,10 @@ use qwe::map::buildings::material::{
 use qwe::map::buildings::{RoofShape, push_house, wall_of};
 use qwe::map::osm::{AreaKind, BuildingUse, Colours, PolyArea};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
+use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
-use crate::panel::{
-    spawn_panel, spawn_readout, sync_param_rows, sync_reset_button, update_readout,
-};
+use crate::panel::{spawn_panel, spawn_readout, sync_reset_button, update_readout};
 use crate::params::Tuning;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
 
@@ -401,6 +400,8 @@ fn main() {
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .init_resource::<View>()
         .init_resource::<Tuning>()
+        // подписи и бегунки ручек ведёт кит — по разу на ресурс, как в игре
+        .add_knobs::<Tuning>()
         .init_resource::<RoofStyle>()
         .init_resource::<SunOnMap>()
         .insert_resource(ClearColor(Ground::default().color()))
@@ -438,8 +439,7 @@ fn main() {
                 // ресурс считается только что добавленным, и условие пускает
                 // ту же сборку, что потом идёт на каждую правку ручки
                 rebuild_roofs.run_if(resource_changed::<Tuning>),
-                (apply_texture, sync_param_rows, sync_reset_button)
-                    .run_if(resource_changed::<Tuning>),
+                (apply_texture, sync_reset_button).run_if(resource_changed::<Tuning>),
                 // юниформ материала, а не пересборка мешей — как в игре. Солнце
                 // сюда тоже приходит: `light` в `RoofParams` это азимут
                 retune_roof_material
