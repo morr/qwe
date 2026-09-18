@@ -11,7 +11,6 @@ use bevy::window::PrimaryWindow;
 
 use super::{DebugConiferNoise, DebugNavmesh};
 use crate::camera::Viewport;
-use crate::grid::tile_center;
 use crate::loading::AppState;
 use crate::map::ConiferField;
 use crate::map::osm::MapData;
@@ -124,7 +123,9 @@ pub(super) fn sync_navmesh_overlay(
             if navmesh.is_passable(x, y) {
                 continue;
             }
-            let center = tile_center(IVec2::new(x, y));
+            // перевод по снимку самой сетки, а не по глобальному атомику:
+            // слой рисует ту сетку, которую держит, в её собственном масштабе
+            let center = navmesh.tile_center(IVec2::new(x, y));
             builder.push_rect(
                 center - navmesh.tile_size / 2.0,
                 center + navmesh.tile_size / 2.0,

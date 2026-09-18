@@ -35,9 +35,12 @@ Grid size is derived as `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m).
 `Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
 cancelled northstar build) never indexes against the switched atomic. The snapshot owns the
 conversions too: rasterisation (`set_area`/`row_spans`, `visit_polyline*`,
-`visit_segment_tiles`) and the navmesh-side queries (`line_of_sight`,
-`snap_portal_position`) go through `Navmesh::to_tile` / `Navmesh::tile_center`, never
-through `grid::world_to_tile`, which reads the atomic.
+`visit_segment_tiles`), the navmesh-side queries (`line_of_sight`,
+`snap_portal_position`), `prune_unreachable` (which takes a **world point**, not a tile,
+for exactly this reason), everything `Walkable` asks (`allows`, `coast_allows`,
+`nearest_free_point`), the tile→world step of `Backend::search`, and the grid overlay
+(`ui/debug/overlays.rs::sync_navmesh_overlay`) all go through `Navmesh::to_tile` /
+`Navmesh::tile_center`, never through `grid::world_to_tile`, which reads the atomic.
 
 **The northstar chunk scales with the tile** to stay 50 world metres — 25 tiles at 2 m, 50 at
 1 m. With the chunk pinned at 25 tiles a 1 m build explodes from ~14 s to ~140 s.
