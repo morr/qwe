@@ -961,6 +961,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   named and twice as a closure. **`push_union`** is the eighteen lines that were
   duplicated verbatim between fences and buildings: union the sweeps (`i_overlay`,
   NonZero, so a translucent layer never doubles on itself) and lay the tapered band.
+  **The crowns are the eighth caster and stay outside it** (`trees/crown.rs`): a crown's
+  shadow length is a drawn length of its own, not an object height through
+  `shadow_length_scale()`, and it rides `sun_stretch()` where it is written.
   **The light stays a process global** (`map/sun.rs`) on purpose: making it an argument
   would thread a parameter through every `mesh_*`, and the global is what lets one build
   run on the load thread, in a test and in the offline bench. The price is stated — a test

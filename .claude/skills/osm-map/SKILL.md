@@ -647,6 +647,12 @@ Seven layers cast a shadow — buildings, fences, cars, wagons, industry, bridge
 clutter — and three things are the same for all of them. Each used to be written out
 wherever it was needed.
 
+**The crowns are the eighth caster and stay outside on purpose** (`trees/crown.rs`):
+their length is not an object's height run through `shadow_length_scale()` but a drawn
+length of its own (`CrownParams::shadow_height_base`, the conifer cone's `3h`), and every
+one of those is multiplied by `sun_stretch()` right where it is written. `shadow::length`
+would say something different about them, so they call the sun directly.
+
 - **`length(height)`** is the one place `shadow_length_scale()` is applied. The expression
   `shadow_dir() * height * shadow_length_scale()` existed in ten places, and the rule this
   file states — *"a shadow length written without `sun_stretch()` is a bug in the making:
