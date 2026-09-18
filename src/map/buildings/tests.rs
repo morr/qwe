@@ -4,8 +4,8 @@
 //! к нему соседа (`map/sun.rs`).
 
 use super::fixtures::{
-    building, detail, extruded_mesh, ground_shadows, house, is_solid, is_wall, mesh_points, oblong,
-    rect, square, whole_cells,
+    building, detail, extruded_mesh, ground_shadows, is_solid, is_wall, mesh_points, oblong, rect,
+    square, whole_cells,
 };
 use super::layers::*;
 use super::material::*;
@@ -28,6 +28,13 @@ const ORTHODOX: BuildingUse = BuildingUse::Church(Sacred {
 /// Сколько этажей записано в слоте.
 fn slot_storeys(slot: f32) -> f32 {
     unpack_material(slot).1
+}
+
+/// Частный дом — пятно без высоты, высота выводится по форме и посеву.
+fn house(outer: Vec<Vec2>) -> PolyArea {
+    let mut house = building(outer, None, AreaKind::Building);
+    house.building_use = BuildingUse::House;
+    house
 }
 
 #[test]

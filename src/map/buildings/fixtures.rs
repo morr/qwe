@@ -1,4 +1,4 @@
-//! Общие фикстуры тестов зданий: дом, его пятно и оба теневых слоя.
+//! Общие фикстуры тестов зданий: пятна домов, их меши и наземные тени.
 //!
 //! Здесь лежит ровно то, что понадобилось **больше чем одному** набору
 //! тестов, — после того как теневые, храмовые и арочные тесты разъехались по
@@ -15,9 +15,7 @@ use super::material::WallKind;
 use super::order;
 use super::{Lean, RoofDetail};
 use crate::map::meshing::{MeshBuilder, WallMark, unpack_material};
-use crate::map::osm::{
-    AreaKind, BuildingUse, Colours, Faith, PolyArea, RoadLine, Sacred, SacredForm,
-};
+use crate::map::osm::{AreaKind, BuildingUse, Colours, PolyArea, RoadLine};
 
 /// Квадрат 10 × 10 в начале координат — дом, у которого важно, что он есть.
 pub(super) fn square() -> Vec<Vec2> {
@@ -79,24 +77,6 @@ pub(super) fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) ->
     }
 }
 
-/// Частный дом — пятно без высоты, высота выводится по форме и посеву.
-pub(super) fn house(outer: Vec<Vec2>) -> PolyArea {
-    let mut house = building(outer, None, AreaKind::Building);
-    house.building_use = BuildingUse::House;
-    house
-}
-
-pub(super) fn church(outer: Vec<Vec2>, height: f32, faith: Faith, form: SacredForm) -> PolyArea {
-    let mut area = building(outer, Some(height), AreaKind::Building);
-    area.building_use = BuildingUse::Church(Sacred {
-        faith,
-        form,
-        complex: 0,
-        floor_dm: 0,
-    });
-    area
-}
-
 /// Подробность слоя для теста: рампа тона по вкусу, оборудование на кровле
 /// выключено — эти тесты про геометрию домов, а коробки на крышах только
 /// добавили бы им вершин.
@@ -117,15 +97,6 @@ pub(super) fn ground_shadows(
     use super::shadows::{ShadowSweeps, shadow_builder};
 
     shadow_builder(list, passages, &ShadowSweeps::of(list), extruded)
-}
-
-/// Тени на кровлях. `extruded` — 2.5D, и порядок отрисовки строится здесь
-/// ровно потому, что в игре его делят меш экструзии и этот слой.
-pub(super) fn roof_shadows(list: &[PolyArea], extruded: bool) -> MeshBuilder {
-    use super::shadows::{ShadowSweeps, roof_shadow_builder};
-
-    let order = extruded.then(|| order::draw_order(list, Lean::of()));
-    roof_shadow_builder(list, &ShadowSweeps::of(list), order.as_deref())
 }
 
 /// Меш 2.5D-экструзии — с тем же порядком отрисовки, который в игре достаётся

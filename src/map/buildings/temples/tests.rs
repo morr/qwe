@@ -9,13 +9,25 @@
 use super::*;
 use crate::map::buildings::clutter::merlons;
 use crate::map::buildings::fixtures::{
-    building, church, detail, extruded_mesh, is_solid, is_wall, oblong, square,
+    building, detail, extruded_mesh, is_solid, is_wall, oblong, square,
 };
 use crate::map::buildings::material::{DOOR_CODE, roof_look, wall_look};
 use crate::map::buildings::roofs::landmark_roof;
 use crate::map::buildings::{BuildingHeightMode, extrusion_lift};
 use crate::map::meshing::unpack_material;
 use crate::map::osm::{AreaKind, Colours};
+
+/// Храм — пятно с высотой, вера и форма задаются тестом.
+fn church(outer: Vec<Vec2>, height: f32, faith: Faith, form: SacredForm) -> PolyArea {
+    let mut area = building(outer, Some(height), AreaKind::Building);
+    area.building_use = BuildingUse::Church(Sacred {
+        faith,
+        form,
+        complex: 0,
+        floor_dm: 0,
+    });
+    area
+}
 
 /// Крепость — кладка без проёмов: **каждая** вершина её стен помечена как
 /// стена без окон, и дверей на ней нет, даже когда вход у контура есть.

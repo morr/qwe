@@ -475,7 +475,7 @@ pub(super) fn arches_by_building<'a>(
 
 /// Середина ломаной по длине — устойчивее к неравномерным сегментам, чем
 /// средняя точка списка.
-pub(super) fn passage_middle(passage: &RoadLine) -> Option<Vec2> {
+fn passage_middle(passage: &RoadLine) -> Option<Vec2> {
     let total = polyline_length(&passage.points);
     if total <= 0.0 {
         return passage.points.first().copied();
