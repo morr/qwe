@@ -491,3 +491,6 @@ fn push_swept_quad(builder: &mut MeshBuilder, edge: [Vec2; 2], sweep: Vec2, colo
         color,
     );
 }
+
+#[cfg(test)]
+mod tests;

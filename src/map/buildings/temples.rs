@@ -1835,3 +1835,6 @@ fn rect(at: Vec2, axis: Vec2, size: Vec2) -> [Vec2; 4] {
     let (u, v) = (axis * (size.x / 2.0), perp * (size.y / 2.0));
     [at - u - v, at + u - v, at + u + v, at - u + v]
 }
+
+#[cfg(test)]
+mod tests;
