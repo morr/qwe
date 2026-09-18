@@ -195,6 +195,10 @@ impl Plugin for MapPlugin {
                     .in_set(WorldInitSet::Spawn)
                     .after(crate::camera::place_camera_on_world_ready),
             )
+            // когда пересобирать слой — дело слоя (`rebuilds_on()` рядом с его
+            // `rebuild_*`), здесь только проводка. Что ни одна `rebuild_*` не
+            // попала сюда дважды — правило «одно условие — одна регистрация»,
+            // см. `roads::rebuilds_on` — стережёт `tests/map.rs`
             .add_systems(
                 Update,
                 (
@@ -241,7 +245,7 @@ impl Plugin for MapPlugin {
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
                     buildings::material::retune_roof_material
-                        .run_if(retuned::<RoofStyle>.or_else(retuned::<SunOnMap>)),
+                        .run_if(buildings::material::retunes_on()),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку запускает только её фактическая
                     // смена. Таблицы у путей и трамвая свои, и пороги в них не
