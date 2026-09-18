@@ -204,7 +204,11 @@ impl Plugin for MovementPlugin {
                     toggle_draw_move_paths
                         .run_if(input_just_pressed(KeyCode::KeyM))
                         .run_if(not(crate::ui::typing_in_text_input)),
-                    draw_move_paths,
+                    // тумблер — условием запуска, а не ранним выходом из тела:
+                    // система просит камеру и окно, и на стендах без них
+                    // выключенная косметика всё равно не проходила бы
+                    // валидацию параметров каждый кадр
+                    draw_move_paths.run_if(|draw: Res<DrawMovePaths>| draw.0),
                 ),
             )
             // Симуляция движения — фиксированным шагом, визуальный `Transform` —
