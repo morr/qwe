@@ -298,7 +298,8 @@ impl<'a> WaterIndex<'a> {
             for ring in std::iter::once(&area.outer).chain(&area.holes) {
                 for (index, &from) in ring.iter().enumerate() {
                     let to = ring[(index + 1) % ring.len()];
-                    edges.insert(from.min(to), from.max(to), (from, to));
+                    // радиус здесь знает запрос, а не ребро — рамка не раздувается
+                    edges.insert_segment(from, to, 0.0, (from, to));
                 }
             }
         }

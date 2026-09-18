@@ -1348,7 +1348,9 @@ struct DrawnBodies {
     /// ровно оно.
     rank: Vec<usize>,
     boxes: Vec<(Vec2, Vec2)>,
-    cells: Grid<usize>,
+    /// Номера тел по ячейкам их рамок — те же номера, которыми индексируются
+    /// [`Self::lifts`], [`Self::rank`] и [`Self::boxes`].
+    bodies_by_cell: Grid<usize>,
 }
 
 impl DrawnBodies {
@@ -1360,7 +1362,7 @@ impl DrawnBodies {
             lifts: Vec::new(),
             rank: Vec::new(),
             boxes: Vec::new(),
-            cells: Grid::new(SHADOW_CELL),
+            bodies_by_cell: Grid::new(SHADOW_CELL),
         }
     }
 
@@ -1385,15 +1387,15 @@ impl DrawnBodies {
             .zip(&lifts)
             .map(|(&(min, max), &lift)| (min.min(min + lift), max.max(max + lift)))
             .collect();
-        let mut cells: Grid<usize> = Grid::new(SHADOW_CELL);
+        let mut bodies_by_cell: Grid<usize> = Grid::new(SHADOW_CELL);
         for (index, &(min, max)) in boxes.iter().enumerate() {
-            cells.insert(min, max, index);
+            bodies_by_cell.insert(min, max, index);
         }
         Self {
             lifts,
             rank,
             boxes,
-            cells,
+            bodies_by_cell,
         }
     }
 
@@ -1419,7 +1421,7 @@ impl DrawnBodies {
     ) -> Vec<Vec<[f32; 2]>> {
         let direction = Lean::of().dir();
         let mut covers: Vec<Vec<[f32; 2]>> = Vec::new();
-        for cover in self.cells.near(bounds.0, bounds.1) {
+        for cover in self.bodies_by_cell.near(bounds.0, bounds.1) {
             // сама цель отсеивается тем же правилом: место в порядке у неё
             // одно, а строго дальше себя она не стоит
             let later = self.rank[cover] > self.rank[target];

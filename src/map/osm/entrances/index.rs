@@ -25,19 +25,21 @@ const ROAD_SEARCH_RINGS: i32 = 4;
 /// для каждой грани каждого контура — в Париже это 27 000 зданий против
 /// 20 000 дорог, и линейный проход тут не проходит по времени.
 pub(super) struct RoadIndex {
-    cells: Grid<(Vec2, Vec2)>,
+    segments: Grid<(Vec2, Vec2)>,
 }
 
 impl RoadIndex {
     pub(super) fn build(roads: &[RoadLine]) -> Self {
-        let mut cells = Grid::new(ROAD_CELL);
+        let mut segments = Grid::new(ROAD_CELL);
         for road in roads {
             for segment in road.points.windows(2) {
                 let (from, to) = (segment[0], segment[1]);
-                cells.insert(from.min(to), from.max(to), (from, to));
+                // радиус здесь знает запрос (`nearest` обходит кольцами), а не
+                // сам отрезок — рамка не раздувается
+                segments.insert_segment(from, to, 0.0, (from, to));
             }
         }
-        Self { cells }
+        Self { segments }
     }
 
     /// Ближайшая точка дорожной сети и расстояние до неё. Кольца
@@ -47,7 +49,7 @@ impl RoadIndex {
     pub(super) fn nearest(&self, point: Vec2) -> Option<(Vec2, f32)> {
         // единственное место на карте, которое обходит ячейки **кольцами**, —
         // поэтому оно и спрашивает у сетки координату ячейки, а не «что рядом»
-        let centre = self.cells.cell_of(point);
+        let centre = self.segments.cell_of(point);
         let mut best: Option<(Vec2, f32)> = None;
 
         for ring in 0..=ROAD_SEARCH_RINGS {
@@ -57,7 +59,7 @@ impl RoadIndex {
                     if (x - centre.x).abs() != ring && (y - centre.y).abs() != ring {
                         continue;
                     }
-                    for &(from, to) in self.cells.cell(IVec2::new(x, y)) {
+                    for &(from, to) in self.segments.cell(IVec2::new(x, y)) {
                         let distance = distance_to_segment(point, from, to);
                         if best.is_none_or(|(_, best_distance)| distance < best_distance) {
                             best = Some((closest_on_segment(point, from, to), distance));
@@ -83,27 +85,25 @@ impl RoadIndex {
 /// ([`super::ENTRANCE_ARCH_CLEARANCE`] плюс полуширина дороги), поэтому
 /// спрашивать хватает одну ячейку точки.
 pub(super) struct PassageIndex {
-    cells: Grid<(Vec2, Vec2, f32)>,
+    passages: Grid<(Vec2, Vec2, f32)>,
 }
 
 impl PassageIndex {
     pub(super) fn build(roads: &[RoadLine]) -> Self {
-        let mut cells = Grid::new(ROAD_CELL);
+        let mut passages = Grid::new(ROAD_CELL);
         for road in roads.iter().filter(|road| road.passage) {
             let reach = road.width / 2.0 + super::ENTRANCE_ARCH_CLEARANCE;
             for segment in road.points.windows(2) {
                 let (from, to) = (segment[0], segment[1]);
-                let min = from.min(to) - Vec2::splat(reach);
-                let max = from.max(to) + Vec2::splat(reach);
-                cells.insert(min, max, (from, to, reach));
+                passages.insert_segment(from, to, reach, (from, to, reach));
             }
         }
-        Self { cells }
+        Self { passages }
     }
 
     /// Стоит ли эта точка в арке или вплотную к ней.
     pub(super) fn blocks(&self, point: Vec2) -> bool {
-        self.cells
+        self.passages
             .at(point)
             .iter()
             .any(|&(from, to, reach)| distance_to_segment(point, from, to) < reach)
@@ -115,28 +115,33 @@ impl PassageIndex {
 /// вплотную и даже перекрываются, и дверь, поставленная на общую стену,
 /// оказывается внутри соседа — снаружи её не видно, а изнутри к ней не пройти.
 pub(super) struct FootprintIndex<'a> {
-    cells: Grid<usize>,
+    /// Номера домов из [`Self::buildings`] по ячейкам их пятен — имя `buildings`
+    /// занято самим срезом, в который эти номера индексируют.
+    buildings_by_cell: Grid<usize>,
     buildings: &'a [PolyArea],
 }
 
 impl<'a> FootprintIndex<'a> {
     pub(super) fn build(buildings: &'a [PolyArea]) -> Self {
-        let mut cells = Grid::new(FOOTPRINT_CELL);
+        let mut buildings_by_cell = Grid::new(FOOTPRINT_CELL);
         for (index, building) in buildings.iter().enumerate() {
             // загораживает дверь только дом; вода и парк — не преграда
             if building.kind != AreaKind::Building || building.outer.len() < 3 {
                 continue;
             }
             let (min, max) = ring_bounds(&building.outer);
-            cells.insert(min, max, index);
+            buildings_by_cell.insert(min, max, index);
         }
-        Self { cells, buildings }
+        Self {
+            buildings_by_cell,
+            buildings,
+        }
     }
 
     /// Точка занята чужим домом? Свой дом (`owner`) не в счёт — дверь стоит на
     /// его собственной стене.
     pub(super) fn is_covered(&self, point: Vec2, owner: usize) -> bool {
-        self.cells
+        self.buildings_by_cell
             .at(point)
             .iter()
             .any(|&index| index != owner && point_in_area(point, &self.buildings[index]))

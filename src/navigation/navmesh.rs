@@ -984,7 +984,7 @@ impl BridgeBands {
                     from,
                     to,
                 };
-                cells.insert(from.min(to) - reach, from.max(to) + reach, band);
+                cells.insert_segment(from, to, reach, band);
             }
         }
         Self(cells)

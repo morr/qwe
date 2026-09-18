@@ -790,7 +790,8 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
     let widest = segments.iter().map(|link| link.reach).fold(0.0, f32::max);
     let mut cells: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        cells.insert(link.from.min(link.to), link.from.max(link.to), index);
+        // радиус здесь знает запрос (`widest` ниже), а не звено
+        cells.insert_segment(link.from, link.to, 0.0, index);
     }
 
     let uses = vertex_uses(map);
@@ -1003,12 +1004,7 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
     // так что спрашивающему хватает ячейки самой вершины
     let mut cells: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        let grow = Vec2::splat(link.reach + LANDUSE_GAP_MAX);
-        cells.insert(
-            link.from.min(link.to) - grow,
-            link.from.max(link.to) + grow,
-            index,
-        );
+        cells.insert_segment(link.from, link.to, link.reach + LANDUSE_GAP_MAX, index);
     }
 
     let mut pulled = 0;
@@ -1179,12 +1175,7 @@ impl Obstacles {
         }
         let mut lines = Grid::new(SIDEWALK_CELL);
         for (index, link) in segments.iter().enumerate() {
-            let grow = Vec2::splat(link.reach);
-            lines.insert(
-                link.from.min(link.to) - grow,
-                link.from.max(link.to) + grow,
-                index,
-            );
+            lines.insert_segment(link.from, link.to, link.reach, index);
         }
         Self {
             original,
@@ -1199,11 +1190,10 @@ impl Obstacles {
         let before = &self.original[house];
         let after: Vec<Vec2> = before.iter().map(|vertex| *vertex + shift).collect();
         let (min, max) = ring_bounds(&after);
-        let cells = |grid: &Grid<usize>| grid.near(min, max);
         // стало ближе запрета и ближе, чем было
         let closer = |now: f32, reach: f32, was: f32| now < reach && now < was - 0.01;
 
-        let buildings = cells(&self.buildings);
+        let buildings = self.buildings.near(min, max);
         let neighbours = buildings.iter().filter(|&&other| other != house);
         for &other in neighbours {
             let current = &map.buildings[other].outer;
@@ -1221,7 +1211,7 @@ impl Obstacles {
                 return true;
             }
         }
-        cells(&self.lines).into_iter().any(|index| {
+        self.lines.near(min, max).into_iter().any(|index| {
             let Link { from, to, reach } = self.segments[index];
             let now = ring_segment_distance(&after, from, to);
             now < reach && closer(now, reach, ring_segment_distance(before, from, to))

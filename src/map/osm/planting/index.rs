@@ -63,7 +63,7 @@ impl NearbySegments {
             let pad = width / 2.0 + TREE_MAX_RADIUS + clearance;
             for segment in points.windows(2) {
                 let (from, to) = (segment[0], segment[1]);
-                cells.insert(from.min(to) - pad, from.max(to) + pad, (width, from, to));
+                cells.insert_segment(from, to, pad, (width, from, to));
             }
         }
         Self(cells)

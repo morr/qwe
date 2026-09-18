@@ -79,13 +79,15 @@ struct Block {
 /// весь слой машин — проценты от зданиевого.
 pub(super) struct Districts {
     blocks: Vec<Block>,
-    cells: Grid<u32>,
+    /// Номера домов из [`Self::blocks`] по ячейкам, до которых достаёт их
+    /// радиус — имя `blocks` занято самим вектором, в который они индексируют.
+    blocks_by_cell: Grid<u32>,
 }
 
 impl Districts {
     pub(super) fn new(buildings: &[PolyArea]) -> Self {
         let mut blocks = Vec::with_capacity(buildings.len());
-        let mut cells = Grid::new(CELL);
+        let mut blocks_by_cell = Grid::new(CELL);
         for building in buildings {
             let Some(at) = ring_vertex_mean(&building.outer) else {
                 continue;
@@ -100,9 +102,12 @@ impl Districts {
                 weight,
                 height: height_or_default(building),
             });
-            cells.insert(at - REACH, at + REACH, index);
+            blocks_by_cell.insert(at - REACH, at + REACH, index);
         }
-        Self { blocks, cells }
+        Self {
+            blocks,
+            blocks_by_cell,
+        }
     }
 
     /// Множитель занятости мест у `point`: [`LOW_FILL`] в частном секторе,
@@ -122,7 +127,7 @@ impl Districts {
     fn storeys_at(&self, point: Vec2) -> Option<f32> {
         let mut weight = 0.0;
         let mut volume = 0.0;
-        for &index in self.cells.at(point) {
+        for &index in self.blocks_by_cell.at(point) {
             let block = &self.blocks[index as usize];
             if block.at.distance_squared(point) > REACH * REACH {
                 continue;

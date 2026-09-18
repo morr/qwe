@@ -265,31 +265,27 @@ struct Track<'a> {
 /// и перебор всех отрезков на каждый сцеп был бы квадратичным по городу.
 struct Fan<'a> {
     rails: &'a [RailLine],
-    cells: Grid<(usize, usize)>,
+    segments: Grid<(usize, usize)>,
 }
 
 impl<'a> Fan<'a> {
     fn new(rails: &'a [RailLine]) -> Self {
-        let mut cells = Grid::new(FAN_CELL);
+        let mut segments = Grid::new(FAN_CELL);
         for (index, rail) in rails.iter().enumerate() {
             if !holds_stock(rail) {
                 continue;
             }
             for (segment, pair) in rail.points.windows(2).enumerate() {
-                cells.insert(
-                    pair[0].min(pair[1]) - FAN_REACH,
-                    pair[0].max(pair[1]) + FAN_REACH,
-                    (index, segment),
-                );
+                segments.insert_segment(pair[0], pair[1], FAN_REACH, (index, segment));
             }
         }
-        Self { rails, cells }
+        Self { rails, segments }
     }
 
     /// Сколько путей, кроме `own`, проходит ближе [`FAN_REACH`] к `point`.
     fn width_at(&self, point: Vec2, own: usize) -> usize {
         let mut near: Vec<usize> = Vec::new();
-        for &(index, segment) in self.cells.at(point) {
+        for &(index, segment) in self.segments.at(point) {
             if index == own || near.contains(&index) {
                 continue;
             }

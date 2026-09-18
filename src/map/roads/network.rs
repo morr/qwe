@@ -198,8 +198,7 @@ pub fn stitches(
         let half = road.width / 2.0;
         widest = widest.max(drawn.edges[index]);
         for (segment, pair) in road.points.windows(2).enumerate() {
-            let (min, max) = (pair[0].min(pair[1]), pair[0].max(pair[1]));
-            segments.insert(min - half, max + half, (index, segment));
+            segments.insert_segment(pair[0], pair[1], half, (index, segment));
         }
     }
     let obstacles = Obstacles::new(map);
@@ -337,22 +336,27 @@ fn stitch_end(
 /// кончается там по-настоящему.
 struct Obstacles<'a> {
     areas: Vec<&'a PolyArea>,
-    cells: Grid<usize>,
+    /// Номера из [`Self::areas`] по ячейкам их рамок — имя `areas` занято самим
+    /// вектором, в который они индексируют.
+    areas_by_cell: Grid<usize>,
 }
 
 impl<'a> Obstacles<'a> {
     fn new(map: &'a MapData) -> Self {
         let areas: Vec<&PolyArea> = map.buildings.iter().chain(&map.water).collect();
-        let mut cells = Grid::new(CELL);
+        let mut areas_by_cell = Grid::new(CELL);
         for (index, area) in areas.iter().enumerate() {
             let (min, max) = ring_bounds(&area.outer);
-            cells.insert(min, max, index);
+            areas_by_cell.insert(min, max, index);
         }
-        Self { areas, cells }
+        Self {
+            areas,
+            areas_by_cell,
+        }
     }
 
     fn covers(&self, point: Vec2) -> bool {
-        self.cells
+        self.areas_by_cell
             .at(point)
             .iter()
             .any(|&index| point_in_area(point, self.areas[index]))
