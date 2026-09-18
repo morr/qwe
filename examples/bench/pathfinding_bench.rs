@@ -160,7 +160,7 @@ fn build_navmesh(map: &mut MapData) -> Navmesh {
         snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
     navmesh.open_sealed_fences(map, portal);
     let started = Instant::now();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let pruned = navmesh.prune_unreachable(portal);
     println!(
         "navmesh: pruned {pruned} unreachable tiles in {:?}",
         started.elapsed()

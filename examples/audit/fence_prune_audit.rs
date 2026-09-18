@@ -48,7 +48,7 @@ fn measure(map: &mut MapData, city: City) -> Report {
     let gates = navmesh.open_sealed_fences(map, portal);
     let gate_time = started.elapsed();
     let filled = navmesh.clone();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let pruned = navmesh.prune_unreachable(portal);
     let doorless = map
         .buildings
         .iter()

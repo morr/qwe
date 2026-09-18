@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use crate::city::City;
-use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::parse;
@@ -144,7 +143,7 @@ fn build_navmesh(
 
     job.set(JobState::Pruning);
     let started = std::time::Instant::now();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let pruned = navmesh.prune_unreachable(portal);
     info!(
         "navmesh: pruned {pruned} unreachable tiles in {:?}",
         started.elapsed()

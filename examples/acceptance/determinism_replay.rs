@@ -33,7 +33,6 @@ use bevy::prelude::*;
 
 use qwe::city::City;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
-use qwe::grid::world_to_tile;
 use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::{Navmesh, snap_portal_position};
 use qwe::restart::RestartEvent;
@@ -153,7 +152,7 @@ fn build_navmesh(mut map: MapData) -> Navmesh {
     navmesh.fill_from_mapdata(&map);
     let portal = snap_portal_position(&navmesh, CITY.portal_hint()).expect("no spot for portal");
     navmesh.open_sealed_fences(&mut map, portal);
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let pruned = navmesh.prune_unreachable(portal);
     println!("navmesh: pruned {pruned} unreachable tiles, portal at {portal:?}");
     navmesh
 }

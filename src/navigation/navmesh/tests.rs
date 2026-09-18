@@ -656,8 +656,7 @@ fn plot_fence(degrees: f32) -> FenceLine {
 fn plot_reachable(map: &MapData, degrees: f32) -> bool {
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(map);
-    let outside = world_to_tile(plot_point(Vec2::new(-60.0, 0.0), degrees));
-    navmesh.prune_unreachable(outside);
+    navmesh.prune_unreachable(plot_point(Vec2::new(-60.0, 0.0), degrees));
     let inside = world_to_tile(PLOT);
     navmesh.is_passable(inside.x, inside.y)
 }
@@ -769,7 +768,7 @@ fn a_sealed_plot_gets_its_gate_on_the_street_side() {
             .all(|gate| (gate.y - (PLOT.y + 20.0)).abs() < 1.0),
         "калитки {gates:?} не на северной стороне"
     );
-    navmesh.prune_unreachable(world_to_tile(portal));
+    navmesh.prune_unreachable(portal);
     let inside = world_to_tile(Vec2::new(PLOT.x, PLOT.y - 12.0));
     assert!(navmesh.is_passable(inside.x, inside.y), "двор открыт");
 }
@@ -795,4 +794,65 @@ fn a_gate_does_not_open_the_house_behind_it() {
     navmesh.fill_from_mapdata(&map);
     let tile = world_to_tile(Vec2::new(PLOT.x - 17.0, PLOT.y));
     assert!(!navmesh.is_passable(tile.x, tile.y), "дом за калиткой");
+}
+
+/// Дом-кольцо: двор внутри проходим по заливке, но снаружи в него не войти.
+fn courtyard_map() -> MapData {
+    let mut map = MapData::default();
+    map.buildings.push(building(
+        rect(Vec2::new(180.0, 180.0), Vec2::new(220.0, 220.0)),
+        vec![rect(Vec2::new(195.0, 195.0), Vec2::new(205.0, 205.0))],
+    ));
+    map
+}
+
+/// Замкнутый двор недостижим, и прунинг его закрывает — ради этого он и есть:
+/// A* к недостижимой цели обходит всю связную область.
+#[test]
+fn pruning_closes_a_courtyard_no_one_can_walk_into() {
+    let map = courtyard_map();
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let yard = world_to_tile(Vec2::new(200.0, 200.0));
+    let street = world_to_tile(Vec2::new(100.0, 100.0));
+    assert!(navmesh.is_passable(yard.x, yard.y), "двор залит проходимым");
+
+    let pruned = navmesh.prune_unreachable(Vec2::new(100.0, 100.0));
+
+    assert!(pruned > 0, "двор должен быть срезан");
+    assert!(!navmesh.is_passable(yard.x, yard.y), "двор закрыт");
+    assert!(navmesh.is_passable(street.x, street.y), "улица цела");
+}
+
+/// Старт на непроходимом тайле не режет ничего. Это случай
+/// `no clear spot for portal`: обход от такого старта не достигает ни одного
+/// тайла, и «залить и вырезать недостигнутое» вырезало бы всю карту.
+#[test]
+fn pruning_from_a_blocked_start_cuts_nothing() {
+    let map = courtyard_map();
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let street = world_to_tile(Vec2::new(100.0, 100.0));
+    let yard = world_to_tile(Vec2::new(200.0, 200.0));
+
+    // точка в стене кольца
+    let pruned = navmesh.prune_unreachable(Vec2::new(185.0, 200.0));
+
+    assert_eq!(pruned, 0, "срезать нечего");
+    assert!(navmesh.is_passable(street.x, street.y), "улица цела");
+    assert!(navmesh.is_passable(yard.x, yard.y), "двор цел");
+}
+
+/// Старт за краем сетки — тот же ранний выход.
+#[test]
+fn pruning_from_outside_the_grid_cuts_nothing() {
+    let map = courtyard_map();
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let street = world_to_tile(Vec2::new(100.0, 100.0));
+
+    let pruned = navmesh.prune_unreachable(Vec2::new(-50.0, -50.0));
+
+    assert_eq!(pruned, 0, "срезать нечего");
+    assert!(navmesh.is_passable(street.x, street.y), "улица цела");
 }

@@ -41,7 +41,7 @@ fn main() {
     let portal = snap_portal_position(&navmesh, city.portal_hint()).expect("portal");
     let gates = navmesh.open_sealed_fences(&mut map, portal);
     let filled = navmesh.clone();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let pruned = navmesh.prune_unreachable(portal);
     println!("{}: {gates} gates, {pruned} tiles pruned", city.slug());
 
     // радиус агента — дефолт настроек игры (`PolymeshDebug::default`)

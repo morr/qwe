@@ -676,8 +676,18 @@ impl Navmesh {
     /// дворы и острова иначе порождают заведомо безуспешные A*-поиски,
     /// обходящие всю карту (десятки мс каждый). 4-связность совпадает с
     /// достижимостью A*: диагональ требует обоих смежных прямых тайлов.
-    pub fn prune_unreachable(&mut self, start: IVec2) -> usize {
-        let Some(start_index) = self.index(start.x, start.y) else {
+    ///
+    /// Точка мировая, а не тайл: перевод берётся из снимка сетки самого
+    /// навмеша ([`Self::to_tile`]), а не из глобального атомика размера
+    /// навтайла, который к моменту прунинга мог уже смениться.
+    ///
+    /// **Ранний выход обязателен.** Старт вне сетки или на непроходимом тайле
+    /// — это случай `no clear spot for portal`: обход от такого старта не
+    /// достигает ничего, и «залить и вырезать недостигнутое» вырезало бы всю
+    /// карту. Здесь прунинг не режет ничего.
+    pub fn prune_unreachable(&mut self, start: Vec2) -> usize {
+        let start_tile = self.to_tile(start);
+        let Some(start_index) = self.index(start_tile.x, start_tile.y) else {
             return 0;
         };
         if !self.passable[start_index] {
@@ -685,21 +695,7 @@ impl Navmesh {
         }
 
         let mut reachable = vec![false; self.passable.len()];
-        let mut queue = std::collections::VecDeque::new();
-        reachable[start_index] = true;
-        queue.push_back(start);
-        while let Some(tile) = queue.pop_front() {
-            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                let (nx, ny) = (tile.x + dx, tile.y + dy);
-                if let Some(index) = self.index(nx, ny)
-                    && self.passable[index]
-                    && !reachable[index]
-                {
-                    reachable[index] = true;
-                    queue.push_back(IVec2::new(nx, ny));
-                }
-            }
-        }
+        self.flood(&self.passable, &mut reachable, vec![start_index]);
 
         let mut pruned = 0;
         for (index, is_reachable) in reachable.iter().enumerate() {
