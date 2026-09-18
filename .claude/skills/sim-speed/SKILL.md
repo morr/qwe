@@ -44,9 +44,9 @@ input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
   the speed, since speed changes how many steps a frame runs and not what a step costs.
   `wait_ms` is per-frame time inside the fixed loop that is not per-tick work — chiefly
   the main thread standing in `block_on` waiting for the pathfinding pool
-  (`apply_pathfinding_results`, `movement/pathfinding.rs:414`, reports it through
+  (`apply_pathfinding_results`, `movement/pathfinding.rs:411`, reports it through
   `SimLoad::add_frame_cost`; the port's **second caller** is the once-a-frame
-  `separation`, `movement/separation/mod.rs:832`) — and that
+  `separation`, `movement/separation/mod.rs:377`) — and that
   one depends on the speed directly: the answer's deadline is measured in **ticks**
   (`PATHFINDING_RETIRE_TICKS`), so faster ticks give the pool less real time for the
   same work. Blending the two into one number closes the regulator on a quantity it

@@ -3,11 +3,9 @@
 //! хвои отдельными мешами.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::window::PrimaryWindow;
 
 use super::{DebugConiferNoise, DebugNavmesh};
 use crate::camera::Viewport;
@@ -79,13 +77,8 @@ pub(super) fn render_grid(mut gizmos: Gizmos) {
 /// Входы в здания — кружок на каждую дверь. Как и у movepath, рисуется
 /// гизмо каждый кадр и отсекается по вьюпорту: дверей на карте под десять
 /// тысяч, и гизмо на всю карту разом кладёт кадр.
-pub(super) fn render_doors(
-    map: Res<MapData>,
-    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut gizmos: Gizmos,
-) {
-    let view = Viewport::of(&window, &camera, DOORS_VIEW_SCREENS);
+pub(super) fn render_doors(map: Res<MapData>, frame: Res<Viewport>, mut gizmos: Gizmos) {
+    let view = frame.with_margin(DOORS_VIEW_SCREENS);
 
     for building in &map.buildings {
         for &door in &building.entrances {

@@ -228,6 +228,9 @@ fn main() {
         qwe::navigation::NavigationPlugin,
         qwe::spatial::SpatialPlugin,
         qwe::movement::MovementPlugin,
+        // кадр как значение: `Res<Viewport>` берут диспетчер и расталкивание,
+        // и `Default` у него намеренно нет — плагин обязателен
+        qwe::camera::ViewportPlugin,
         // киты панелей игры (кнопки, ползунки) — первопартийные виджеты
         // feathers: без их плагина и темы кнопки демо остались бы без фона
         qwe::ui::PanelWidgetsPlugin,

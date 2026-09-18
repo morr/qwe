@@ -40,10 +40,8 @@
 //! трупом неподвижно (mobility 0), но толпу от себя отталкивает. Трупы вне
 //! механизма по построению — у них нет `SimPosition`.
 
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 use super::VIEW_MARGIN;
 use crate::camera::Viewport;
@@ -194,8 +192,7 @@ pub fn separate_pawns(
     navmesh: Res<crate::navigation::ArcNavmesh>,
     mut humans: ResMut<SpatialGrid<Human>>,
     demons: Res<SpatialGrid<Demon>>,
-    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    frame: Res<Viewport>,
     mut out: SeparationOutput,
     mut pawns: Query<
         (
@@ -230,13 +227,13 @@ pub fn separate_pawns(
     // на таком отдалении пешка — 1–2 пикселя, перекрытие не читается; вместе
     // с расталкиванием выключается и придержка — иначе пешки, придержанные
     // последним прогоном перед отзумом, остались бы придержанными навсегда
-    if camera.scale.x >= SEPARATION_MAX_ZOOM {
+    if frame.zoom >= SEPARATION_MAX_ZOOM {
         out.clear();
         return;
     }
 
     let started = std::time::Instant::now();
-    let view = Viewport::of(&window, &camera, VIEW_MARGIN);
+    let view = frame.with_margin(VIEW_MARGIN);
 
     let human_radius = human_style.body_radius;
     let demon_radius = demon_radius(human_radius);

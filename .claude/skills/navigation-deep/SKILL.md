@@ -299,11 +299,26 @@ world's knobs but the scale everything navigational is built in, and it has one 
 ## Viewport — the value the gates ask
 
 **`Viewport`** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
-`half_extent` (margin already applied) and `zoom` (world metres per logical pixel).
+`half_extent` and `zoom` (world metres per logical pixel).
 `Viewport::of(window, camera_transform, screens)` is the single place that computes
 `window/2 · zoom · screens`. What a gate asks it: `contains` (**the edge counts as inside**),
 `min` / `max`, `distance_from_centre_squared`. Not Bevy's `Camera::viewport` — that one is in
 pixels.
+
+**And a resource.** `ViewportPlugin` runs `sync_viewport` once per frame in
+`RunFixedMainLoopSystems::BeforeFixedMainLoop`, `.before(sim_time::begin_sim_load)` — so the
+frame is computed before the sim-load bracket opens, and it is in place before both
+`FixedUpdate` and `Update` run. The resource holds **exactly the frame** (`screens = 1.0`),
+with nobody's margin in it; a gate adds its own with `Viewport::with_margin(screens)`.
+
+- **It has no `Default`, on purpose** — the `Backend` precedent: a placeholder frame would
+  quietly claim half the map is on screen and every gate would pass. A stand that raises
+  these systems inserts the resource itself (`crowd_demo` adds `ViewportPlugin`,
+  `tests/movement.rs::test_app` inserts a `viewport_at(..)` constant), and `sync_viewport`
+  inserts it on the first frame in the game.
+- **Known cost**: when the camera is gone (leaving the world despawns it) `sync_viewport` is
+  skipped and the readers get **last frame's** frame with no signal. Before this each of them
+  was skipped silently on its own for the same reason, which was not better.
 
 **Five gates use it and each keeps its own margin on purpose**, because each asks a different
 question:
@@ -319,13 +334,16 @@ question:
 **Do not unify them.** The warmup margin in particular is deliberately the strictest: it
 counts what the player can actually see, not what the dispatcher is willing to serve early.
 
-**Every one of them asks for the camera as `Single<&Transform, (With<Camera2d>,
-With<PanCamera>)>`**, and the `PanCamera` half is load-bearing: a `dev::OffscreenShotEvent`
-raises a second `Camera2d` for three frames, and a `Single` matching two entities makes the
-executor skip the system **silently** — three frames with no dispatch and, at 30×, dozens of
-ticks with no separation, every time a screenshot is taken. A headless world that runs these
-systems (`tests/movement.rs`, `crowd_demo`) must put `PanCamera` on its camera for the same
-reason it already spawns a `PrimaryWindow`.
+**None of them asks for the camera any more** — they take `Res<Viewport>`. The one place
+that still does is `sync_viewport`, and there the `PanCamera` half of `Single<&Transform,
+(With<Camera2d>, With<PanCamera>)>` is load-bearing: a `dev::OffscreenShotEvent` raises a
+second `Camera2d` for three frames, and a `Single` matching two entities makes the executor
+skip the system **silently** — which used to mean three frames with no dispatch and, at 30×,
+dozens of ticks with no separation, every time a screenshot was taken. Now it means three
+frames on a slightly stale frame, which nothing can see. The filter is still what keeps the
+offscreen camera out; a headless world that raises `ViewportPlugin` must put `PanCamera` on
+its camera for the same reason it spawns a `PrimaryWindow`. A stand with no camera at all
+inserts the resource instead.
 
 ## Backends & the pipeline
 

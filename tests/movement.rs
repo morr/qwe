@@ -7,11 +7,11 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
+use qwe::camera::Viewport;
 use qwe::grid::{DEFAULT_NAVTILE_SIZE, tile_center, world_to_tile};
 use qwe::loading::{AppState, WorldStarted};
 use qwe::movement::{
@@ -25,6 +25,19 @@ use qwe::spatial::SpatialPlugin;
 /// ровно один тайл за шаг — удобно считать пересечения.
 const FIXED_STEP: f32 = 0.1;
 const ONE_TILE_PER_STEP: f32 = DEFAULT_NAVTILE_SIZE / FIXED_STEP;
+
+/// Кадр стенда вокруг `centre`: окна и камеры здесь нет, а `Viewport` — ресурс
+/// без `Default`, так что стенд обязан вставить его сам, иначе диспетчер и
+/// расталкивание молча не проходят валидацию параметров и тест проходит
+/// впустую. Зум мельче `SEPARATION_MAX_ZOOM` (0.75), иначе расталкивание
+/// выключается само; полукадр — окно 1280 × 720 на этом зуме.
+fn viewport_at(centre: Vec2) -> Viewport {
+    Viewport {
+        centre,
+        half_extent: Vec2::new(64.0, 36.0),
+        zoom: 0.1,
+    }
+}
 
 /// Приложение с реальным `MovementPlugin`: тесты проверяют в том числе
 /// расстановку систем по расписаниям (шаг — в `FixedUpdate`, интерполяция —
@@ -61,6 +74,9 @@ fn test_app(frame_delta: f32, time_scale: f32) -> App {
     // тумблер полимеша: им гейтится расталкивание
     // (`movement::separation_runs`)
     .init_resource::<PolymeshDebug>()
+    // кадр — всегда, а не только в тестах про толпу: его берут и диспетчер
+    // заявок, и расталкивание, и без ресурса они не проходят валидацию
+    .insert_resource(viewport_at(Vec2::ZERO))
     .insert_resource(Time::<Fixed>::from_seconds(FIXED_STEP as f64))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         frame_delta,
@@ -400,22 +416,12 @@ fn coasting_stops_at_an_impassable_tile() {
     );
 }
 
-/// Пара перекрывшихся людей в кадре: и камера, и окно, и зум — всё, что
-/// расталкивание требует, иначе оно молча не проходит валидацию параметров и
-/// тест прошёл бы впустую.
+/// Пара перекрывшихся людей в кадре: кадр ставится ресурсом на их середину —
+/// расталкивание гейтится вьюпортом, и за его пределами пара просто не
+/// разойдётся, а тест прошёл бы впустую.
 fn spawn_overlapping_pair(app: &mut App) -> (Entity, Entity) {
     let centre = tile_center(IVec2::new(20, 20));
-    app.world_mut()
-        .spawn((bevy::window::Window::default(), bevy::window::PrimaryWindow));
-    app.world_mut().spawn((
-        Camera2d,
-        // `PanCamera` — маркер «камера пользователя»: расталкивание фильтрует
-        // по нему, чтобы не поймать закадровую камеру снимка (`dev.rs`)
-        PanCamera::default(),
-        // зум обязан быть мельче `SEPARATION_MAX_ZOOM` = 0.75, иначе
-        // расталкивание выключается само
-        Transform::from_translation(centre.extend(0.0)).with_scale(Vec3::splat(0.1)),
-    ));
+    app.insert_resource(viewport_at(centre));
 
     let pawn = |app: &mut App, id: u32, offset: Vec2| {
         app.world_mut()
@@ -513,13 +519,7 @@ fn a_held_pawn_within_rest_distance_arrives() {
     let mut app = test_app(FIXED_STEP, 1.0);
     let target_tile = IVec2::new(20, 20);
     let target = tile_center(target_tile);
-    app.world_mut()
-        .spawn((bevy::window::Window::default(), bevy::window::PrimaryWindow));
-    app.world_mut().spawn((
-        Camera2d,
-        PanCamera::default(),
-        Transform::from_translation(target.extend(0.0)).with_scale(Vec3::splat(0.1)),
-    ));
+    app.insert_resource(viewport_at(target));
 
     // стоящий — ровно на цели: идущему остаётся упор, а не обход
     app.world_mut().spawn((

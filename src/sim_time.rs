@@ -303,7 +303,7 @@ fn modify_time(
 /// возвращается долг предохранителя — до того, как `run_fixed_main_schedule`
 /// накопит дельту этого кадра, чтобы перенесённые тики встали в общий
 /// накопитель и прошли обычным порядком.
-fn begin_sim_load(
+pub(crate) fn begin_sim_load(
     mut load: ResMut<SimLoad>,
     tick: Res<SimTick>,
     mut fixed: ResMut<Time<Fixed>>,

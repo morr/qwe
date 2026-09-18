@@ -45,12 +45,14 @@ in `main.rs`.
   halos, soul sparks — and the map's white markings and light roofs do not; tonemapping is
   off so the map palette is untouched, and `Msaa` stays off. A full-screen **vignette** is
   a UI node under the panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
-- **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
-  `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
-  — **the edge counts as inside**. Five visibility gates use it and **each keeps its own
-  margin** (warmup 1.0, dispatcher/separation `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door
-  gizmos 1.5), because each asks a different question — the table is in the
-  **navigation-deep skill**. Not Bevy's `Camera::viewport`, which is in pixels.
+- **Viewport** (`camera.rs`) — the piece of the world in frame, as a value **and a
+  resource**: `centre`, `half_extent`, `zoom` (world m per logical pixel). `contains`
+  — **the edge counts as inside**. `ViewportPlugin` recomputes it once per frame before the
+  fixed loop; the resource holds exactly the frame, and each of the five visibility gates
+  adds **its own margin** with `with_margin` (warmup 1.0, dispatcher/separation
+  `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door gizmos 1.5), because each asks a different
+  question — the table is in the **navigation-deep skill**. No `Default`, like `Backend`:
+  a stand inserts it. Not Bevy's `Camera::viewport`, which is in pixels.
 - **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
   local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
   f64 math, `MAP_SIZE`-sized bbox derived from the center.
@@ -1709,7 +1711,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   Also not there: what a gizmo *looks like* and each visibility gate's own view margin —
   `MOVEPATH_COLOR`/`MOVEPATH_ARROW_TIP`/`MOVEPATH_VIEW_SCREENS` (`movement/systems.rs`),
   `DOOR_*` (`ui/debug/overlays.rs`), `VIEW_MARGIN` (`movement/mod.rs`) — they live beside
-  the draw call or the gate, see `camera::Viewport::of`.
+  the draw call or the gate, see `camera::Viewport::with_margin`.
   Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
   `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry

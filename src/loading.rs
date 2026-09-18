@@ -2,11 +2,9 @@
 //! → `Playing`. Мир (карта, навигация, население) строится в
 //! `OnEnter(Playing)`, когда `MapData` уже вставлена.
 
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
-use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::city::City;
@@ -456,8 +454,7 @@ fn poll_job(
 fn poll_warmup(
     time: Res<Time<Real>>,
     mut progress: ResMut<WarmupProgress>,
-    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    view: Res<Viewport>,
     pending: Query<
         (&SimPosition, Has<UrgentPath>),
         Or<(With<PathfindingRequest>, With<PathfindingTask>)>,
@@ -510,8 +507,8 @@ fn poll_warmup(
 
     // ровно один экран, без запаса диспетчера: вопрос прогрева — «видит ли
     // игрок стоящую пешку», а не «возьмёт ли её диспетчер»; заявки в полосе
-    // запаса он выдаст сам, пока игрок смотрит на середину кадра
-    let view = Viewport::of(&window, &camera, 1.0);
+    // запаса он выдаст сам, пока игрок смотрит на середину кадра. Ресурс
+    // хранит ровно кадр, так что запас здесь и не добавляется
     let wanderers_dispatched = wanderers_dispatched_at_zoom(view.zoom);
     let waiting = pending
         .iter()

@@ -111,6 +111,50 @@ struct ViewSaveDebounce {
     moved_at: f32,
 }
 
+/// Один счёт кадра на кадр — и ресурс [`Viewport`], который его несёт.
+///
+/// Отдельный плагин, а не две строки в [`CameraPlugin`]: ресурс нужен стендам,
+/// которые поднимают движение без камерной обвязки игры (`crowd_demo`), и там
+/// `CameraPlugin` не поднять.
+pub struct ViewportPlugin;
+
+impl Plugin for ViewportPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            RunFixedMainLoop,
+            // до `begin_sim_load`: скобка замера симуляции не должна включать
+            // в себя счёт кадра. `BeforeFixedMainLoop` идёт раньше `Update`, а
+            // камера и окно существуют с `Startup`, так что первый же кадр
+            // видит ресурс на месте — и в `FixedUpdate`, и в `Update`.
+            sync_viewport
+                .in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop)
+                .before(crate::sim_time::begin_sim_load),
+        );
+    }
+}
+
+/// Пересчитать кадр. Ресурса может ещё не быть — на первом кадре его вставляет
+/// эта же система, `Default` у [`Viewport`] нет намеренно.
+///
+/// Камеры может не быть (её сносит выход из мира): тогда система пропускается,
+/// и читатели получают **прошлокадровый** кадр без единого сигнала. Известная
+/// цена: раньше каждый из них так же молча снимался сам.
+fn sync_viewport(
+    mut commands: Commands,
+    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    current: Option<ResMut<Viewport>>,
+) {
+    let view = Viewport::of(&window, &camera, 1.0);
+    match current {
+        // `set_if_neq`: стоящая камера не должна метить ресурс изменённым
+        Some(mut resource) => {
+            resource.set_if_neq(view);
+        }
+        None => commands.insert_resource(view),
+    }
+}
+
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
@@ -417,7 +461,18 @@ pub fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
 /// что для проверки требовалась живая камера с окном.
 ///
 /// Не `Camera::viewport` из bevy — тот в пикселях.
-#[derive(Clone, Copy, PartialEq, Debug)]
+///
+/// **И ресурс.** Правило «окно пополам, умножить на зум» считалось пятью
+/// системами заново, каждая своей парой `Single<&Transform>` +
+/// `Single<&Window>`; теперь его считает один [`sync_viewport`], а гейт берёт
+/// `Res<Viewport>` и добавляет **свой** запас через [`Self::with_margin`].
+/// В ресурсе лежит ровно кадр (`screens = 1.0`), без чьего-либо запаса.
+///
+/// **`Default` намеренно нет** — прецедент `Backend`
+/// ([`crate::navigation::Backend`]): заглушка молчаливо соврала бы о том, что
+/// в кадре, и гейты пропустили бы полкарты. Стенд, который поднимает системы с
+/// этим ресурсом, обязан вставить его сам.
+#[derive(Clone, Copy, PartialEq, Debug, Resource)]
 pub struct Viewport {
     /// Центр кадра, мировые метры.
     pub centre: Vec2,
@@ -439,6 +494,20 @@ impl Viewport {
             centre: camera.translation.truncate(),
             half_extent: window.size() / 2.0 * zoom * screens,
             zoom,
+        }
+    }
+
+    /// Тот же кадр с запасом в `screens` экранов в стороны.
+    ///
+    /// Запас у каждого гейта **свой и остаётся своим**: у прогрева его нет
+    /// вовсе (`1.0` — «видит ли пешку игрок»), у диспетчера и расталкивания
+    /// [`VIEW_MARGIN`](crate::movement::VIEW_MARGIN), у гизмо путей 3.0, у
+    /// гизмо дверей 1.5. Сводить их в одно число нельзя: вопрос у каждого
+    /// свой.
+    pub fn with_margin(&self, screens: f32) -> Self {
+        Self {
+            half_extent: self.half_extent * screens,
+            ..*self
         }
     }
 
