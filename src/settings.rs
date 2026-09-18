@@ -188,30 +188,11 @@ pub const DEVOUR_PULSE_PERIOD: f32 = 0.5;
 pub const DEVOUR_PULSE_MAX_SCALE: f32 = 1.5;
 /// Дистанция убийства.
 pub const KILL_DISTANCE: f32 = 1.0;
-/// Спавн: стартовый залп, затем интервал, кап. Интервал и кап — только дефолты
-/// ресурса `DemonStyle`, системы читают его, а не эти константы.
+/// Стартовый залп демонов при входе в мир. Ручкой не стал: кап и интервал
+/// крутятся панелью Demon и живут дефолтами `DemonStyle`
+/// (`demon::DEMON_CAP` / `demon::DEMON_SPAWN_INTERVAL`), а залп — свойство
+/// самого появления портала.
 pub const DEMON_INITIAL_BURST: usize = 8;
-pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
-pub const DEMON_CAP: usize = 350;
-/// Множитель к `DEMON_SPEED` и надбавка к ней на время броска — тоже дефолты
-/// `DemonStyle`. Оба ползунка стоят на 30% своего хода: скорость 130% от базы,
-/// бросок +30% к получившейся скорости.
-pub const DEMON_SPEED_FACTOR: f32 = 1.3;
-pub const DEMON_LUNGE_BOOST: f32 = 0.3;
-
-/// Границы ползунков панели Demon.
-pub const DEMON_CAP_MIN: f32 = 0.0;
-pub const DEMON_CAP_MAX: f32 = 500.0;
-pub const DEMON_CAP_STEP: f32 = 5.0;
-pub const DEMON_SPAWN_INTERVAL_MIN: f32 = 0.1;
-pub const DEMON_SPAWN_INTERVAL_MAX: f32 = 10.0;
-pub const DEMON_SPAWN_INTERVAL_STEP: f32 = 0.1;
-pub const DEMON_SPEED_FACTOR_MIN: f32 = 1.0;
-pub const DEMON_SPEED_FACTOR_MAX: f32 = 2.0;
-pub const DEMON_SPEED_FACTOR_STEP: f32 = 0.05;
-pub const DEMON_LUNGE_BOOST_MIN: f32 = 0.0;
-pub const DEMON_LUNGE_BOOST_MAX: f32 = 1.0;
-pub const DEMON_LUNGE_BOOST_STEP: f32 = 0.05;
 
 /// Границы ползунка панели Human. Потолок не круглый, а выведенный: демон
 /// быстрее бегущего человека ровно на 35% (`DEMON_SPEED`), и на своём
@@ -1090,18 +1071,6 @@ const _: () = {
 // далее. Правило, по которому диапазон принадлежит ресурсу, а не этому файлу,
 // записано в `CLAUDE.md` и в `CONTEXT.md`.
 const _: () = {
-    assert!(DEMON_CAP as f32 >= DEMON_CAP_MIN && DEMON_CAP as f32 <= DEMON_CAP_MAX);
-    assert!(
-        DEMON_SPAWN_INTERVAL >= DEMON_SPAWN_INTERVAL_MIN
-            && DEMON_SPAWN_INTERVAL <= DEMON_SPAWN_INTERVAL_MAX
-    );
-    assert!(
-        DEMON_SPEED_FACTOR >= DEMON_SPEED_FACTOR_MIN
-            && DEMON_SPEED_FACTOR <= DEMON_SPEED_FACTOR_MAX
-    );
-    assert!(
-        DEMON_LUNGE_BOOST >= DEMON_LUNGE_BOOST_MIN && DEMON_LUNGE_BOOST <= DEMON_LUNGE_BOOST_MAX
-    );
     assert!(
         HUMAN_SPEED_SPREAD >= HUMAN_SPEED_SPREAD_MIN
             && HUMAN_SPEED_SPREAD <= HUMAN_SPEED_SPREAD_MAX
