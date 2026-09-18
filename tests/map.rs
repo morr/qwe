@@ -75,7 +75,7 @@ fn no_layer_rebuild_is_registered_twice_in_update() {
         counts.keys().collect::<Vec<_>>(),
     );
 
-    let twice: Vec<_> = counts.iter().filter(|(_, &n)| n > 1).collect();
+    let twice: Vec<_> = counts.iter().filter(|&(_, &n)| n > 1).collect();
     assert!(
         twice.is_empty(),
         "в `Update` по две регистрации одной системы: {twice:?}. \
