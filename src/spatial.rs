@@ -39,14 +39,17 @@ fn cell_of(pos: Vec2) -> IVec2 {
     )
 }
 
-/// Порядок симуляции в `FixedUpdate`: сетки → демоны → люди. Демоны раньше
-/// людей, чтобы убийства применились до `escape` и человек не был засчитан
-/// и убитым, и спасшимся в один тик.
+/// Порядок симуляции в `FixedUpdate`: сетки → демоны → люди → территория.
+/// Демоны раньше людей, чтобы убийства применились до `escape` и человек не
+/// был засчитан и убитым, и спасшимся в один тик. Территория (скверна,
+/// `corruption.rs`) — после обоих: она читает перепись и стоящие бастионы
+/// этого тика и ничего из пешек не трогает.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimSet {
     SpatialRebuild,
     DemonBehavior,
     HumanBehavior,
+    Territory,
 }
 
 /// Равномерная Vec-сетка сущностей типа-маркера `T`; ячейка — по позиции,
@@ -294,6 +297,7 @@ impl Plugin for SpatialPlugin {
                     SimSet::SpatialRebuild,
                     SimSet::DemonBehavior,
                     SimSet::HumanBehavior,
+                    SimSet::Territory,
                 )
                     .chain()
                     .run_if(in_state(crate::loading::AppState::Playing)),

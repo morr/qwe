@@ -42,6 +42,10 @@ path = "examples/demos/wall_gallery/main.rs"
 name = "determinism_replay"
 path = "examples/acceptance/determinism_replay.rs"
 
+[[example]]
+name = "m1_win"
+path = "examples/acceptance/m1_win.rs"
+
 # bench — офлайн-замеры скорости
 [[example]]
 name = "map_meshing"

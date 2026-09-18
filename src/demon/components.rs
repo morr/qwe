@@ -2,13 +2,73 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::settings::{
-    DEMON_CAP, DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL,
-    DEMON_SPEED_FACTOR,
+    BRUTE, DEMON_CAP, DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_BOOST,
+    DEMON_SPEED_FACTOR, DemonKindStats, IMP,
 };
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct Demon;
+
+/// Вид демона. Бес — охотник за людьми, Громила — ломает бастионы и людей не
+/// ест; разделение труда — то, ради чего игрок призывает обоих. Числа вида —
+/// `settings::IMP` / `settings::BRUTE`. Рядом с перечислением едет маркер
+/// вида ([`ImpTag`] / [`BruteTag`]): лестницы фильтруют выборки по нему, а по
+/// варианту перечисления запрос не отфильтровать.
+#[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[reflect(Component)]
+pub enum DemonKind {
+    #[default]
+    Imp,
+    Brute,
+}
+
+impl DemonKind {
+    pub fn stats(self) -> &'static DemonKindStats {
+        match self {
+            Self::Imp => &IMP,
+            Self::Brute => &BRUTE,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Imp => "imp",
+            Self::Brute => "brute",
+        }
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+    use crate::settings::MAX_BODY_SCALE;
+
+    /// Бес — прежний демон: его тело и есть `BodyScale::DEMON`. Громила
+    /// крупнее и медленнее, и именно он задаёт ячейку расталкивания.
+    #[test]
+    fn the_imp_is_the_old_demon_and_the_brute_is_the_largest_body() {
+        let imp = DemonKind::Imp.stats();
+        let brute = DemonKind::Brute.stats();
+        assert_eq!(imp.body_scale, crate::movement::BodyScale::DEMON.0);
+        assert_eq!(imp.speed_mul, 1.0);
+        assert_eq!(imp.damage, 0.0);
+        assert!(brute.body_scale > imp.body_scale);
+        assert!(brute.speed_mul < imp.speed_mul);
+        assert!(brute.damage > 0.0);
+        assert_eq!(MAX_BODY_SCALE, brute.body_scale.max(imp.body_scale));
+    }
+}
+
+/// Маркер Беса — ставится при спавне вместе с [`DemonKind::Imp`].
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct ImpTag;
+
+/// Маркер Громилы — ставится при спавне вместе с [`DemonKind::Brute`].
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct BruteTag;
 
 /// Стейт-машина демона: Wander / Chase / Devour — эксклюзивные теги.
 #[derive(Component, Reflect, Default)]
@@ -88,16 +148,15 @@ pub struct DemonCaughtHumanEvent {
 /// Настройки демонов, крутятся ползунками панели Demon и сохраняются между
 /// запусками. Отдельно от `DemonSpawner`: тот — состояние мира и сбрасывается
 /// на рестарте и смене города, а это — выбор пользователя, который рестарт
-/// переживает.
+/// переживает. Старый `settings.toml` с ключом `interval` (интервальный
+/// спавнер снят) читается как прежде — лишний ключ `bevy_settings` пропускает.
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "demon")]
 pub struct DemonStyle {
-    /// Потолок числа демонов; дойдя до него, спавнер молчит. Понижение уже
-    /// вышедших демонов не убирает — оно видно только после рестарта.
+    /// Потолок числа демонов; дойдя до него, залп и призыв молчат. Понижение
+    /// уже вышедших демонов не убирает — оно видно только после рестарта.
     pub cap: usize,
-    /// Секунды между демонами после стартового залпа.
-    pub interval: f32,
     /// Множитель к `DEMON_SPEED`, 1.0…2.0. Пишется в `Movable::speed` при
     /// спавне, а уже вышедшим демонам его раздаёт `sync_demon_speed`.
     pub speed: f32,
@@ -111,14 +170,15 @@ impl Default for DemonStyle {
     fn default() -> Self {
         Self {
             cap: DEMON_CAP,
-            interval: DEMON_SPAWN_INTERVAL,
             speed: DEMON_SPEED_FACTOR,
             lunge: DEMON_LUNGE_BOOST,
         }
     }
 }
 
-/// Спавнер демонов: стартовый залп, затем по таймеру до капа.
+/// Спавнер демонов: стартовый залп, дальше — только призыв за души.
+/// Интервального спавна нет (city-siege references/m1-baseline.md, решение 5): он противоречил бы
+/// «души покупают демонов».
 ///
 /// Состояние мира, а не настройка: `WorldStarted` пересобирает его целиком
 /// (`demon::on_world_started`). В реестре типов — ради живого осмотра по BRP,
@@ -126,20 +186,9 @@ impl Default for DemonStyle {
 /// Регистрация даёт и запись: правка `spawned` руками по BRP раздаст уже
 /// выданные `PawnId` второй раз, а на их уникальности стоят и поток ГПСЧ
 /// пешки, и ключ очереди диспетчера.
-#[derive(Resource, Reflect)]
+#[derive(Resource, Reflect, Default)]
 #[reflect(Resource)]
 pub struct DemonSpawner {
-    pub timer: Timer,
     pub spawned: usize,
     pub initial_burst_done: bool,
-}
-
-impl Default for DemonSpawner {
-    fn default() -> Self {
-        Self {
-            timer: Timer::from_seconds(DEMON_SPAWN_INTERVAL, TimerMode::Repeating),
-            spawned: 0,
-            initial_burst_done: false,
-        }
-    }
 }

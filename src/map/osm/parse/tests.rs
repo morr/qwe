@@ -4,8 +4,8 @@ use super::*;
 use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{Overpass, building, closed, rect, square, water_area};
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
-    StructureKind, WaterKind, distance_to_segment,
+    BastionKind, BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm,
+    ServiceTrack, StructureKind, WaterKind, distance_to_segment,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -2369,4 +2369,71 @@ fn finishing_the_parse_reports_what_each_pass_did() {
     assert_eq!(map.standalone_trees.len(), 1, "дерево посажено");
     assert_eq!(map.trees.len(), 1, "и собрано в набор рендера");
     assert_eq!(map.composed_for, Some(TreeCompose::default()));
+}
+
+/// Бастионы: нода, здание с тегом (остаётся зданием **и** даёт бастион в
+/// центроиде), участок без `building`, мультиполигон. Дубли схлопываются — нода
+/// внутри контура того же вида, две ноды ближе `BASTION_DEDUP_METERS`, — и
+/// остаётся контурный; центр за картой выбрасывается.
+#[test]
+fn parses_bastions_and_folds_their_duplicates() {
+    let (sw, se, ne, nw) = corners(HALF);
+    let far = Vec2::new(300.0, 0.0);
+    let map = Overpass::new(CITY)
+        // нода у крыльца полиции — раньше контура, как в настоящей выгрузке
+        .node(&[("amenity", "police")], CENTER + Vec2::new(10.0, 10.0))
+        .area(
+            &[("building", "yes"), ("amenity", "police")],
+            square(CENTER, HALF),
+        )
+        // две ноды одного храма в 20 м — один бастион
+        .node(&[("amenity", "place_of_worship")], CENTER + far)
+        .node(
+            &[("amenity", "place_of_worship")],
+            CENTER + far + Vec2::new(20.0, 0.0),
+        )
+        // соседний храм в 80 м от оставленной ноды (в 60 м от схлопнутой) — другой
+        .node(
+            &[("amenity", "place_of_worship")],
+            CENTER + far + Vec2::new(80.0, 0.0),
+        )
+        // участок военных без здания — бастион, но не здание
+        .area(&[("landuse", "military")], square(CENTER - far, HALF))
+        // тот же участок ещё и relation с `military` — центроид тот же, дубль
+        .relation(
+            &[("military", "barracks")],
+            &[
+                ("outer", vec![sw - far, se - far, ne - far]),
+                ("outer", vec![ne - far, nw - far, sw - far]),
+            ],
+        )
+        // бункер — way с `military=*` без `landuse` и без `building`: своя ветка
+        .area(
+            &[("military", "bunker")],
+            square(CENTER + Vec2::new(0.0, 300.0), HALF),
+        )
+        // пожарная часть, центр которой за западным краем карты
+        .node(&[("amenity", "fire_station")], Vec2::new(-10.0, CENTER.y))
+        .parse();
+
+    assert_eq!(map.buildings.len(), 1, "a police building stays a building");
+
+    let kinds: Vec<BastionKind> = map.bastions.iter().map(|bastion| bastion.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            BastionKind::Police,
+            BastionKind::Military,
+            BastionKind::Military,
+            BastionKind::Church,
+            BastionKind::Church,
+        ],
+        "{:?}",
+        map.bastions
+    );
+    // контурный побеждает ноду: центр — центроид здания, не нода у крыльца
+    assert!((map.bastions[0].pos - CENTER).length() < 0.05);
+    assert!((map.bastions[1].pos - (CENTER - far)).length() < 0.05);
+    assert!((map.bastions[2].pos - (CENTER + Vec2::new(0.0, 300.0))).length() < 0.05);
+    assert!((map.bastions[3].pos - (CENTER + far)).length() < 0.05);
 }

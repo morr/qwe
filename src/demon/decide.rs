@@ -18,9 +18,11 @@
 //! стоит дорого, и лестница обязана задать его ровно на той ступени, где он
 //! нужен. На всех остальных он не считается вовсе.
 
+use std::time::Duration;
+
 use bevy::prelude::*;
 
-use crate::movement::MovableState;
+use crate::movement::{Movable, MovableState};
 use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_LUNGE_RANGE, KILL_DISTANCE, RADIUS_HYSTERESIS};
 
 // Три числа ниже — правила лестницы, а не тюнинг, и потому живут здесь, а не в
@@ -56,6 +58,18 @@ pub struct ChaseSense {
     pub lunge_bonus: f32,
     /// Длительность тика, сек.
     pub delta_secs: f32,
+    /// Путь к цели: ждём ли первого ответа и настал ли такт перепрокладки.
+    pub path: PathSense,
+    /// Цель делим с другим демоном — преследователей у неё уже
+    /// [`MAX_CHASERS_PER_TARGET`].
+    pub shared_target: bool,
+}
+
+/// Что демон знает о своём пути к цели на этом тике — общее чувство двух
+/// лестниц, которые ведут демона к точке по перепрокладке: погони и осады
+/// (`decide_brute.rs`). Ступени над ним — [`path_rung`].
+#[derive(Clone, Debug)]
+pub struct PathSense {
     /// Состояние движения: есть ли цель у пути и ждём ли ответа поиска.
     pub state: MovableState,
     /// В `Movable::path` ещё остались waypoint'ы.
@@ -66,9 +80,67 @@ pub struct ChaseSense {
     pub search_in_flight: bool,
     /// Таймер перепрокладки досчитает на этом тике.
     pub repath_due: bool,
-    /// Цель делим с другим демоном — преследователей у неё уже
-    /// [`MAX_CHASERS_PER_TARGET`].
-    pub shared_target: bool,
+}
+
+impl PathSense {
+    /// Чувство пути из `Movable` и таймера перепрокладки. Таймер
+    /// спрашивается, а не крутится: тикать он обязан только на тех ступенях,
+    /// до которых лестница дошла. Нет таймера — такт не настал.
+    pub fn of(
+        movable: &Movable,
+        search_in_flight: bool,
+        repath: Option<&Timer>,
+        delta: Duration,
+    ) -> Self {
+        Self {
+            state: movable.state.clone(),
+            has_path: !movable.path.is_empty(),
+            walked: movable.last_direction != Vec2::ZERO,
+            search_in_flight,
+            repath_due: repath.is_some_and(|timer| timer.remaining() <= delta),
+        }
+    }
+}
+
+/// Ступень пути, на которой лестница останавливается, не перепрокладывая.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PathRung {
+    /// Первого пути ещё нет, поиск в полёте: ждём ответа, не трогая ни
+    /// заявку, ни таймер перепрокладки.
+    WaitForPath,
+    /// Идём по тому, что есть: такт перепрокладки не настал.
+    Hold,
+}
+
+/// Общие ступени пути погони и осады: ждать первого ответа, держать путь —
+/// или `None`, и тогда лестнице пора перепрокладывать.
+///
+/// Первого пути ещё нет: путь пуст, доката нет (демон ни разу не шагал), а
+/// поиск уже в полёте. Перепрокладка отменила бы его — `to_pathfinding`
+/// роняет таск, — и пока конвейер отвечает медленнее, чем цель меняет тайл
+/// (постройка northstar на старте, высокая скорость), демон обрывал бы
+/// каждый ответ до прихода и стоял у портала вечно, отвисая только на
+/// паузе. Ждём ответ: он даст путь и `last_direction`, дальше промежутки
+/// перепрокладки прикрывает докат.
+pub fn path_rung(path: &PathSense) -> Option<PathRung> {
+    if path.search_in_flight
+        && matches!(path.state, MovableState::Pathfinding(_))
+        && !path.has_path
+        && !path.walked
+    {
+        return Some(PathRung::WaitForPath);
+    }
+
+    // перепрокладка пути к цели — по таймеру, не каждый тик; потерянный путь
+    // ждать такта не обязан
+    let needs_first_path = matches!(
+        path.state,
+        MovableState::Idle | MovableState::PathfindingError(_)
+    );
+    if !path.repath_due && !needs_first_path {
+        return Some(PathRung::Hold);
+    }
+    None
 }
 
 /// Условия поиска замены цели: кандидат годится, если он не дальше `radius`
@@ -195,29 +267,11 @@ pub fn decide(
         };
     }
 
-    // Первого пути ещё нет: путь пуст, доката нет (демон ни разу не шагал), а
-    // поиск уже в полёте. Перепрокладка отменила бы его — `to_pathfinding`
-    // роняет таск, — и пока конвейер отвечает медленнее, чем цель меняет тайл
-    // (постройка northstar на старте, высокая скорость), демон обрывал бы
-    // каждый ответ до прихода и стоял у портала вечно, отвисая только на
-    // паузе. Ждём ответ: он даст путь и `last_direction`, дальше промежутки
-    // перепрокладки прикрывает докат.
-    if sense.search_in_flight
-        && matches!(sense.state, MovableState::Pathfinding(_))
-        && !sense.has_path
-        && !sense.walked
-    {
-        return ChaseAction::WaitForPath;
-    }
-
-    // перепрокладка пути к цели — по таймеру, не каждый тик; потерянный путь
-    // ждать такта не обязан
-    let needs_first_path = matches!(
-        sense.state,
-        MovableState::Idle | MovableState::PathfindingError(_)
-    );
-    if !sense.repath_due && !needs_first_path {
-        return ChaseAction::Hold;
+    // ждать первого ответа или держать путь до такта — общие ступени пути
+    match path_rung(&sense.path) {
+        Some(PathRung::WaitForPath) => return ChaseAction::WaitForPath,
+        Some(PathRung::Hold) => return ChaseAction::Hold,
+        None => {}
     }
 
     // Смена цели, два случая. Цель делим с другим демоном — берём любого
@@ -260,11 +314,13 @@ mod tests {
             speed: 10.0,
             lunge_bonus: 0.5,
             delta_secs: 1.0 / 64.0,
-            state: MovableState::Moving(IVec2::ZERO),
-            has_path: true,
-            walked: true,
-            search_in_flight: false,
-            repath_due: false,
+            path: PathSense {
+                state: MovableState::Moving(IVec2::ZERO),
+                has_path: true,
+                walked: true,
+                search_in_flight: false,
+                repath_due: false,
+            },
             shared_target: false,
         }
     }
@@ -360,20 +416,20 @@ mod tests {
     #[test]
     fn a_demon_without_a_first_path_waits_for_its_search() {
         let mut sense = sense(20.0);
-        sense.state = MovableState::Pathfinding(IVec2::ZERO);
-        sense.search_in_flight = true;
-        sense.has_path = false;
-        sense.walked = false;
+        sense.path.state = MovableState::Pathfinding(IVec2::ZERO);
+        sense.path.search_in_flight = true;
+        sense.path.has_path = false;
+        sense.path.walked = false;
         assert_eq!(decide(&sense, || false, |_| None), ChaseAction::WaitForPath);
     }
 
     #[test]
     fn a_demon_that_has_walked_does_not_wait() {
         let mut sense = sense(20.0);
-        sense.state = MovableState::Pathfinding(IVec2::ZERO);
-        sense.search_in_flight = true;
-        sense.has_path = false;
-        sense.walked = true;
+        sense.path.state = MovableState::Pathfinding(IVec2::ZERO);
+        sense.path.search_in_flight = true;
+        sense.path.has_path = false;
+        sense.path.walked = true;
         // докат несёт его дальше, ответа ждать незачем
         assert_eq!(decide(&sense, || false, |_| None), ChaseAction::Hold);
     }
@@ -382,7 +438,7 @@ mod tests {
     fn the_repath_timer_gates_the_chase() {
         assert_eq!(decide(&sense(20.0), || false, |_| None), ChaseAction::Hold);
         let mut due = sense(20.0);
-        due.repath_due = true;
+        due.path.repath_due = true;
         assert!(matches!(
             decide(&due, || false, |_| None),
             ChaseAction::Repath { .. }
@@ -396,8 +452,8 @@ mod tests {
             MovableState::PathfindingError(IVec2::ZERO),
         ] {
             let mut sense = sense(20.0);
-            sense.state = state.clone();
-            sense.has_path = false;
+            sense.path.state = state.clone();
+            sense.path.has_path = false;
             assert!(
                 matches!(
                     decide(&sense, || false, |_| None),
@@ -426,7 +482,7 @@ mod tests {
     #[test]
     fn a_shared_target_is_swapped_for_any_free_victim_nearby() {
         let mut sense = sense(20.0);
-        sense.repath_due = true;
+        sense.path.repath_due = true;
         sense.shared_target = true;
         // ищем шире текущей дистанции, но только никем не занятых
         assert_eq!(
@@ -441,7 +497,7 @@ mod tests {
     #[test]
     fn an_own_target_is_swapped_only_for_a_much_closer_one() {
         let mut sense = sense(20.0);
-        sense.repath_due = true;
+        sense.path.repath_due = true;
         // ближе текущей цели на 30 % (14 м из 20), зато делить кандидата
         // с соседом можно
         assert_eq!(
@@ -458,7 +514,7 @@ mod tests {
     #[test]
     fn a_found_candidate_becomes_the_new_target() {
         let mut sense = sense(20.0);
-        sense.repath_due = true;
+        sense.path.repath_due = true;
         let victim = Victim {
             entity: Entity::from_raw_u32(7).expect("entity"),
             position: Vec2::new(5.0, 0.0),
@@ -493,7 +549,7 @@ mod tests {
         assert!(!ask(&sense(20.0)), "такт не настал");
 
         let mut due = sense(20.0);
-        due.repath_due = true;
+        due.path.repath_due = true;
         assert!(ask(&due), "такт перепрокладки — здесь поиск обязан быть");
     }
 

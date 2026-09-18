@@ -74,6 +74,9 @@ esac
 case "$rel" in
   src/ui/*|src/camera.rs|src/post.rs|src/prefs.rs) add ui-panels ;;
 esac
+case "$rel" in
+  src/district.rs|src/bastion/*|src/combat.rs|src/corruption.rs|src/souls.rs|src/outcome.rs) add city-siege ;;
+esac
 
 [ -z "$required" ] && exit 0
 

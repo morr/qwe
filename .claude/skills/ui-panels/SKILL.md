@@ -93,9 +93,16 @@ did not fit 1080 px and ran off the top of the screen.
 ## Panels
 
 - **HUD counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
-  stripped on death), Demons, Souls reaped (`Telemetry::killed`), first in the left column,
-  **outside** the tabs: they are watched continuously, and putting them behind a tab choice
-  would mean watching the simulation through a keyhole. The counters use `iter().len()`,
+  stripped on death), Demons by kind (`8 imp, 1 brute`), **Souls** as `available / earned`
+  (`souls::Souls`), **To heart** (`Corruption::to_heart` in hops, `-` when unreachable),
+  first in the left column, **outside** the tabs: they are watched continuously, and putting them
+  behind a tab choice would mean watching the simulation through a keyhole. Under them a
+  row of two **summon buttons** (`spawn_panel_button_with` with a `SummonButton(kind)`
+  marker on the button and `SummonCaption(kind)` on the caption): the caption reads
+  `imp 3` / `brute 25` with the live `summon_cost`, the click observer writes
+  `SummonRequested`, and `sync_summon_buttons` puts `InteractionDisabled` on a button the
+  souls cannot pay for — the inert-row idiom of `ui/rows.rs`, so a click that would be
+  refused is not offered. The counters use `iter().len()`,
   not `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so
   the length is a sum over archetypes rather than a walk over 20 000 entities every frame.
   In agent runs the red **BRP badge** owns that corner, and `offset_below_brp_badge`
@@ -111,16 +118,40 @@ did not fit 1080 px and ran off the top of the screen.
   ruler (its width/offset/font and the fixed columns of the pathfinding lines) — changing
   the panel's geometry, font or any of these format strings means re-measuring the
   constants at the top of that script in the same change.
+- **Outcome plaque** (`ui/outcome.rs`) — a 320 px panel centred at 40 % of the screen
+  height, spawned hidden in `Startup` and toggled by `resource_changed::<Outcome>` alone:
+  it is not a `GameUiRoot` (that group means "the world is running", this one "the world
+  has ended"). Title `VICTORY` / `DEFEAT`, then the reason, `T+<sim seconds>`, `souls
+  available / earned` and `R - restart`; the text is written on the transition, not per
+  frame — the world is paused, nothing moves. ASCII only, like every panel.
 - **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button.
   Left click walks the ladder up and wraps to 1x from its top step (`MAX_SIM_SPEED`), right
   click steps down; `Primary` while paused. It reads `Pointer<Click>` itself instead of
   `Activate`, which fires for *any* mouse button and would make one right click move both
   ways.
-- **Sim tab** (`ui/stats.rs`) — three sections. **World**: `Deterministic` and the `Seed`
-  field + `new`. **Demon**: the four `DemonStyle` knobs — **Max demons** (0…500, step 5),
-  **Spawn every** (0.1…10 s, step 0.1), **Speed** (100…200%, step 5) and **Lunge boost**
-  (+0…+100%, step 5); both percent rows print as percent, a bare `1.3` on the panel says
-  nothing. **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a
+- **Sim tab** (`ui/stats.rs`, `ui/siege.rs`) — four sections. **World**: `Deterministic` and the `Seed`
+  field + `new`. **Siege** (`ui/siege.rs`): four `On`/`Off` cycle rows on `SiegeView`
+  (persisted, group `siege`, all on by default) — what of the M1 siege is drawn on the map.
+  **Territory** — one sprite over `MAP_SIZE` at `Z_TERRITORY` (5.32, between the polymesh
+  overlay and the district debug overlay), a texel per label-raster cell (8 m), sampled
+  **linear** so a district reads as a stain, not as pixels; colour by `territory_color`, in
+  order: corrupted — the portal's violet at 0.42, growing — the same violet 0.08 → 0.34 by
+  progress, **held** (on the front with a standing bastion, `Corruption::on_front` +
+  `BastionsStanding`) — amber, the heart's district — gold, else transparent. The
+  texel → district map is built once per `Districts` (the raster walk, the texture and the
+  shade key are `ui/district_texture.rs`, shared with the district debug overlay), and the texture is rebuilt only when
+  the FNV key (progress in 16 shades + held flag per district) changes, and not more
+  often than every 0.25 s of **real** time — at 30× districts cross a shade nearly every
+  frame. **Health bars** — two child sprites per bastion (`On<Add, Bastion>`: a dark back
+  and a fill, 18 × 4 m over the marker), shown only while wounded and not a ruin; resized
+  on `Changed<Health>`. **Front** — a gizmo ring around each standing bastion on the front,
+  the very set `demon::besiege` targets. **Siege lines** — a gizmo arrow from each Brute to
+  its `AttackTarget`. All four are `Update` cosmetics under `in_state(Playing)`; the
+  simulation never reads them. The HUD counters gained two rows next to `To heart`:
+  **Corrupted** (`N / districts`) and **Bastions** (`standing / total`). **Demon**: the three `DemonStyle` knobs — **Max demons** (0…500, step 5),
+  **Speed** (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both percent rows
+  print as percent, a bare `1.3` on the panel says nothing. **Spawn every** stood here
+  until the interval spawner went (M1: demons are bought with souls, not dripped). **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a
   half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the ASCII
   `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved

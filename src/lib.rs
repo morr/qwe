@@ -1,15 +1,20 @@
+pub mod bastion;
 pub mod camera;
 pub mod city;
+pub mod combat;
+pub mod corruption;
 pub mod demon;
 pub mod determinism;
 pub mod dev;
 pub mod diagnostics;
+pub mod district;
 pub mod grid;
 pub mod human;
 pub mod loading;
 pub mod map;
 pub mod movement;
 pub mod navigation;
+pub mod outcome;
 pub mod portal;
 pub mod post;
 pub mod prefs;
@@ -23,6 +28,7 @@ pub mod sim_time;
 // интеграционные тесты двор не собирается
 #[cfg(test)]
 pub mod sim_yard;
+pub mod souls;
 pub mod spatial;
 pub mod telemetry;
 pub mod ui;

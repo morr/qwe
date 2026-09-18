@@ -29,9 +29,10 @@ import urllib.request
 MAP_SIZE = (5600.0, 3700.0)
 METERS_PER_DEG_LAT = 111_320.0
 
-# city.rs::geo_center
+# city.rs::geo_center. Тула — срез: центр вычислен от сердца (`Slice::geo_center`,
+# сердце 54.19506/37.62039, портал на севере, глубина 0.7 — `slice_audit.py`)
 CITIES = {
-    "tula": (54.18969, 37.59148),
+    "tula": (54.20171, 37.62039),
     "paris": (48.85565, 2.34612),
     "berlin": (52.519, 13.40133),
     "london": (51.5119, -0.1224),
@@ -52,6 +53,11 @@ GROUPS = [
     ),
     ("REF natural=tree ноды (рисуем)", 'node["natural"="tree"]({bbox});'),
     ("REF natural=tree_row ways (рисуем)", 'way["natural"="tree_row"]({bbox});'),
+    # бастионы M1 (QUERY_VERSION 15): считаются до дедупа парсера, см. `parse::fold_bastions`
+    ("REF amenity=police (бастион)", 'nwr["amenity"="police"]({bbox});'),
+    ("REF amenity=fire_station (бастион)", 'nwr["amenity"="fire_station"]({bbox});'),
+    ("REF amenity=place_of_worship (бастион)", 'nwr["amenity"="place_of_worship"]({bbox});'),
+    ("REF military / landuse=military (бастион)", 'nwr["military"]({bbox});way["landuse"="military"]({bbox});'),
     ("natural=hedge (ways)", 'way["natural"="hedge"]({bbox});'),
     ("barrier=hedge (ways)", 'way["barrier"="hedge"]({bbox});'),
     ("barrier кроме hedge и city_wall", 'way["barrier"]["barrier"!="city_wall"]["barrier"!="hedge"]({bbox});'),

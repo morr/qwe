@@ -5,12 +5,14 @@
 //! - doors — входы в здания, свои и досочинённые (`map/osm/entrances/`);
 //! - movepath — существующий `DrawMovePaths` (он же на клавише M);
 //! - noise — поле хвои (`map/trees/conifer.rs`) текстурой на всю карту:
-//!   серым — значение поля, зелёным — будущие хвойные массивы.
+//!   серым — значение поля, зелёным — будущие хвойные массивы;
+//! - districts — районы (`district.rs`) текстурой на всю карту: тексель —
+//!   цвет района, соседние районы разными оттенками, район сердца светлее.
 //!
 //! Хоткеи: N — слой навигации (`toggle_navmesh`: показ той подсистемы, по
 //! которой сейчас ходят), M — movepath (в `movement`), G — «гизмо» одной
-//! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
-//! редко и только вблизи, кнопки в панели достаточно.
+//! клавишей, то есть doors и movepath вместе, T — районы. У grid хоткея нет:
+//! сетка нужна редко и только вблизи, кнопки в панели достаточно.
 //!
 //! Кроме тумблеров вкладка держит листалки — строки, где клик перебирает
 //! значения, а текущее значение написано словом справа:
@@ -78,9 +80,20 @@ pub struct DebugDoors(pub bool);
 #[settings_group(group = "debug", key = "conifer_noise")]
 pub struct DebugConiferNoise(pub bool);
 
+/// Показывать ли районы (`district.rs`) — строка `Districts` и клавиша T:
+/// текстура в шаг растра меток, тексель — цвет района, соседние районы
+/// разными оттенками, район сердца светлее.
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "districts")]
+pub struct DebugDistricts(pub bool);
+
 mod overlays;
 
-use self::overlays::{render_doors, render_grid, sync_conifer_noise_overlay, sync_navmesh_overlay};
+use self::overlays::{
+    render_doors, render_grid, sync_conifer_noise_overlay, sync_district_overlay,
+    sync_navmesh_overlay,
+};
 
 pub struct UiDebugTogglesPlugin;
 
@@ -90,20 +103,24 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_knobs::<DebugDoors>()
             .add_knobs::<DrawMovePaths>()
             .add_knobs::<DebugConiferNoise>()
+            .add_knobs::<DebugDistricts>()
             .add_knobs::<CameraPositionMode>()
             .add_knobs::<NavtileBase>()
             .init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
             .init_resource::<DebugDoors>()
             .init_resource::<DebugConiferNoise>()
+            .init_resource::<DebugDistricts>()
             .register_type::<DebugGrid>()
             .register_type::<DebugNavmesh>()
             .register_type::<DebugDoors>()
             .register_type::<DebugConiferNoise>()
+            .register_type::<DebugDistricts>()
             .track_pref::<DebugGrid>()
             .track_pref::<DebugNavmesh>()
             .track_pref::<DebugDoors>()
             .track_pref::<DebugConiferNoise>()
+            .track_pref::<DebugDistricts>()
             .add_systems(Startup, build_debug_tab.in_set(UiBuildSet::Sections))
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
@@ -146,6 +163,15 @@ impl Plugin for UiDebugTogglesPlugin {
                                 .or_else(resource_changed::<ConiferNoiseStyle>),
                         )
                         .after(crate::map::trees::rebuild_trees),
+                    // районы приезжают ресурсом вместе с миром (`poll_job`), и
+                    // первый кадр под `Playing` видит их изменёнными — отдельной
+                    // регистрации на `OnEnter` слою не нужно. Каждый кадр, а не
+                    // по `resource_changed`: скверна меняется на каждом тике, и
+                    // «пересобирать ли» слой решает сам, по ступени прогресса
+                    sync_district_overlay.run_if(in_state(AppState::Playing)),
+                    toggle_districts
+                        .run_if(input_just_pressed(KeyCode::KeyT))
+                        .run_if(not(super::typing_in_text_input)),
                     toggle_navmesh
                         .run_if(input_just_pressed(KeyCode::KeyN))
                         .run_if(not(super::typing_in_text_input)),
@@ -168,6 +194,7 @@ struct DebugValues<'w> {
     doors: Res<'w, DebugDoors>,
     movepaths: Res<'w, DrawMovePaths>,
     conifer_noise: Res<'w, DebugConiferNoise>,
+    districts: Res<'w, DebugDistricts>,
 }
 
 fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: DebugValues) {
@@ -222,6 +249,17 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         CycleBinding {
             cycle: |noise: &mut DebugConiferNoise| noise.0 = !noise.0,
             text: |noise| on_off(noise.0).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        overlays,
+        "Districts",
+        ROW_LEFT_PX,
+        &*values.districts,
+        CycleBinding {
+            cycle: |districts: &mut DebugDistricts| districts.0 = !districts.0,
+            text: |districts| on_off(districts.0).to_string(),
         },
     );
 
@@ -283,6 +321,11 @@ fn toggle_navmesh(mut navmesh: ResMut<DebugNavmesh>, mut polymesh: ResMut<Polyme
     } else {
         navmesh.0 = !navmesh.0;
     }
+}
+
+/// T — слой районов.
+fn toggle_districts(mut districts: ResMut<DebugDistricts>) {
+    districts.0 = !districts.0;
 }
 
 /// G — общий тумблер «гизмо»: doors и movepath разом. Гасит всё, если горит

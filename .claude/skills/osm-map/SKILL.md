@@ -64,11 +64,15 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   `barrier=city_wall`, `barrier=fence|wall|retaining_wall|hedge` (way — the plot
   **fences**),
   `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
-  `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **14** (v3 added `entrance` nodes, v4 `railway`,
+  `man_made=pipeline` (way only), and the **bastion** tags as `nwr` (node, way or
+  relation — all under the same `out geom`, no `out center`):
+  `amenity=police|fire_station|place_of_worship`, `military=*`, `landuse=military` (way).
+  The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **15** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
   blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
-  industrial `man_made` cylinders and pipelines, v13 `driving_side`, v14 the fences;
+  industrial `man_made` cylinders and pipelines, v13 `driving_side`, v14 the fences,
+  v15 the bastions;
   **v12 is skipped** — the fence branch held that number while it waited its turn and
   `driving_side` reached master first, and the number may only ever **grow**: a v13
   cache is already on disk without `barrier`, and reusing the gap would have served the
@@ -260,6 +264,18 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   bigger lie than losing a trestle whose tag somebody forgot. The branch **falls
   through** like the rail and tree-row ones: a pipeline crossing a street on a trestle is one way
   carrying both tags. Tula: 22 of 24 ways kept, 1.2 km.
+- **Bastion** — `{ pos, kind }`, `BastionKind: Police | FireStation | Church | Military
+  | Stronghold`; `Stronghold` never comes from the extract (it is the quota top-up of
+  M1 step 6). `parse/tags.rs::bastion_kind` is the classifier the coverage audit
+  works in: `amenity=police|fire_station|place_of_worship`, any `military=*`
+  (`office` is a военкомат, `bunker`, `barracks`), `landuse=military`. It is a flag
+  **on top of** `area_kind`, not a branch of it — a building tagged `amenity=police`
+  stays in `buildings` *and* yields a bastion at its outline's centroid
+  (`model::ring_centroid`, computed relative to the first vertex because absolute map
+  coordinates overflow f32 precision in the cross products); a `landuse=military`
+  lot without `building` yields a bastion only; a multipolygon takes the centroid of
+  its largest outer ring. Not drawn and not in the navmesh — the consumer is the
+  bastion spawn (city-siege `references/m1-baseline.md`, step 6). See **Bastion folding** below.
 - **WaterLine** — a *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`)
   6/4 m → `stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
   `Z_WATERWAY` (see **Waterways** under Rendering). Widths are drawing widths, not
@@ -435,6 +451,18 @@ be called alone:
   `man_made=tower` + `tower:type=defensive`, or `building=wall` at ≥ 6 m
   (`FORTRESS_WALL_MIN_HEIGHT`; lower is a garden wall). Tula carries **no** `historic` on
   its kremlin — before this every tower and the wall were plain buildings with windows.
+- **Bastion folding** (`parse.rs::fold_bastions`) — candidates are collected during the
+  element loop (nodes come before ways in an Overpass answer, so a node cannot be
+  matched to its outline on the spot) and folded after it, outlines first: a candidate
+  of the same kind within `BASTION_DEDUP_METERS` (30 m) of one already kept, or a node
+  inside a kept outline, is a duplicate — OSM routinely maps a fire station as a lot
+  polygon *and* a node at the gate 80 m from the centroid. Outlines win over nodes so
+  the surviving position is the centroid of the lot. A centroid outside `MAP_SIZE` is
+  dropped: the bbox catches a way by any vertex, and a `landuse=military` polygon half
+  the size of the city (Tula's Мясново) has its centre off the map. Walkability is
+  **not** checked here — that is the spawn's job. The same 30 m threshold lives in
+  `tools/osm_audit/slice_audit.py`, so the audit's count matches the `osm map:` log
+  line. Quadratic in the number of bastions, which are dozens.
 - **Drowned buildings** (`parse.rs::drop_buildings_in_water`) — a building whose outline
   lies **entirely** inside a water polygon is dropped right after the element loop, before
   doors and trees. OSM tags floating restaurants and moored ships as buildings (`HMS

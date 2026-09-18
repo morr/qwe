@@ -314,6 +314,17 @@ find the few thousand standing ones.
 - **`sim_yard::behavior_yard`** (test-only) — the four resources a species' behaviour stand
   needs (backend, grid, diagnostics store, clock). Answers "did this rung fire".
 - **`replay_app`** — the run yard. Answers "does the whole run replay".
+  **`replay_app_with`** is the same yard with a `configure(&mut App)` hook that runs
+  **before** the `Playing` entry — the only moment to insert what the game's load thread
+  brings next to the map (`Districts`, `BastionSites`) and to hang observers: `spawn_bastions`
+  runs in `OnEnter(Playing)` and takes whatever sites the resource holds by then. The M1 stand
+  (`examples/acceptance/m1_win.rs`, the `city-siege` skill) is its one caller.
+
+**`run_to_tick` stops on a standing world.** A frame that was handed ticks and moved
+`SimTick` by nothing means `Time<Virtual>` is paused — that is how `outcome::judge_outcome`
+ends a run on the win. Such a world never reaches the target, so the loop breaks and the
+fingerprint is taken where it stands; the caller reads the stopping tick from `SimTick` or
+`Outcome`. Before this the M1 stand spun forever on the tick the heart fell.
 
 **The list of plugins `replay_app` deliberately leaves out lives next to the list it
 includes**, with a reason per line: that boundary is exactly what `a_restart_replays_the_run`
@@ -328,7 +339,14 @@ dozens of pawns, 96 ticks, ~1 s in `cargo test`); the example runs Tula with 20 
 for minutes.
 
 Three claims: the same seed replays tick for tick, a ragged frame rate does not change the
-run, a different seed does.
+run, a different seed does. Two more hold the summon inside the contract
+(`run_with_summon`: after `replay::SUMMON_TICK` (10) `replay::summon_brute` grants
+`SOULS_GRANT` souls and writes `SummonRequested { Brute }` between frames, and
+`replay::brutes_alive` asserts one Brute alive — the same three helpers the M1 stand uses): **`a_summon_replays_at_any_frame_rate`** — steady and
+ragged frames give one fingerprint — and **`a_restart_forgets_the_summon`** — a restart after
+the summon replays the run that never had one, so the Brute and `Souls` do not outlive the
+reset. The yard has no districts, so the Brute only wanders there; the siege end to end is
+the M1 stand (`m1_win`), which is minutes, not a test.
 
 Two things make it bite, both learned the hard way:
 
@@ -352,7 +370,14 @@ and cannot.
 
 This test is also what holds the **WorldStarted** reset membership from the outside — a
 forgotten reset diverges whether or not anyone wrote it down (see the `world-lifecycle`
-skill). What it cannot see is state invisible to both the simulation and the outcome
+skill). The siege layer's run state rides in the same hash rather than in tests of its own
+(roadmap decision 12): after the pawn rows, `fingerprint` eats `BastionsStanding` (one
+`u16` per district), `Corruption::progress` (each `f32` in bits), `Souls { earned, spent }`
+and `Outcome` (variant + tick), all read with `get_resource` so a yard without those
+plugins still fingerprints. `replay_app` raises `DistrictPlugin`, `CombatPlugin`,
+`BastionPlugin`, `CorruptionPlugin`, `SoulsPlugin` and `OutcomePlugin` (a second tuple —
+`Plugins` takes at most 15) for exactly that reason — their map-derived resources stay
+empty on the yard, but their resets are then inside what the guard sees. What it cannot see is state invisible to both the simulation and the outcome
 counters; such a reset needs its own pin next to its observer (the regulator has one in
 `sim_time`, the frozen `Backend` one in `determinism` — the replay yard pins flat A*, so the
 seeded and the announced snapshots coincide there by construction).
@@ -373,7 +398,13 @@ and **pin the algorithm** to one that needs no build.
 
 **1:1 replay holds only while `DemonStyle` / `HumanStyle` / `SeparationStyle` / the
 algorithm / the navtile size are left alone mid-run.** Sliders are simulation input. Not
-enforced by code.
+enforced by code. **A summon is simulation input the same way**: `SummonRequested` (a
+`Message`, written by the HUD, the `1`/`2` hotkeys or `brp msg`) is consumed by
+`demon::summon` on the tick it reaches the fixed step, and a replay must feed it on the
+same tick — a yard that wants a summoned Brute writes the message before the `update`
+that carries that tick (`MessageWriter` from a system, or `world.write_message` between
+`run_to_tick` calls). `Souls { earned, spent }` is in the fingerprint; `earned` moves with
+`Telemetry::killed` from the same observer.
 
 **Frame rate does not matter.** `Time<Fixed>`'s step is constant regardless of fps and of
 `SimSpeed`; the answer to a path query waits for its tick; everything left in `Update` only

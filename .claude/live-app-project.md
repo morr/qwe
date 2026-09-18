@@ -224,8 +224,11 @@ $b cam                                          # read the resulting zoom back
 
   Negative `y` zooms out. Range is clamped to `0.05 … 4.5`.
 
-- Portal hint for Tula is `2284, 1969`; other cities put it at the map centre
-  (`2800, 1850`) unless `city.rs` says otherwise.
+- Tula is a *slice* (`city.rs::Slice`): the portal hint is `1400, 3450` — 250 m inside
+  the north edge, in Заречье — and the heart (the kremlin, `HeartPos`) is at `2800, 1110`;
+  `brp res get PortalPos` / `HeartPos` give the snapped values. Other cities put the
+  portal at the map centre (`2800, 1850`) unless `city.rs` says otherwise, and their
+  heart is the map centre.
 
 ## Registered types
 
@@ -237,9 +240,12 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `DemonDevourTag`, `DemonHalo` (one per demon, a child entity), `BloodPool` (one per
 corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
-`RequestedAt`, `RetireAt`.
+`RequestedAt`, `RetireAt`, `Bastion`, `RuinTag`, `Health`, `Attack`, `AttackCooldown`,
+`AttackTarget`, `DemonKind`, `ImpTag`, `BruteTag`, `Heart`.
 
-Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
+Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `HeartPos`, `Districts`,
+`DistrictCensus`, `BastionSites`, `BastionsStanding`, `Corruption`, `Souls`, `Outcome`,
+`PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
@@ -255,6 +261,11 @@ Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same pa
 the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
 Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
+
+Messages — `SummonRequested`: `$b msg SummonRequested '{"kind":"Brute"}'` (or `"Imp"`)
+asks for a demon at the portal for souls; `$b res get Souls` shows `earned` / `spent`,
+and a refused request only logs `summon … refused` at debug level. Hotkeys `1` / `2` do
+the same from the keyboard.
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.
@@ -286,6 +297,10 @@ requests plus the average search time, already computed by the app.
 $b res set DebugDoors .0 true         # tuple structs: field .0
 $b res set DebugGrid .0 true
 $b res set DebugNavmesh .0 true       # grid overlay: the `Show` row under Algo: Navmesh
+$b res set DebugDistricts .0 true     # district overlay (hotkey T); `res get Districts` for the model
+$b res set SiegeView .territory false # siege layer (Sim tab, Siege): territory / health_bars / front / siege_lines
+# to see a health bar without waiting for a Brute: wound a bastion by hand (full type path)
+$b insert <bastion> '{"qwe::combat::Health":{"hp":110.0,"max":261.5}}'
 $b res set PolymeshDebug .enabled true            # Algo: Navmesh (false) ⇄ Polymesh (true)
 $b res set PolymeshDebug .show false              # polymesh overlay off, routing untouched
 $b res set DrawMovePaths .0 true
@@ -303,7 +318,7 @@ $b res set IndustryStyle .visible true            # промзона: цилин
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
-Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the
+Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `T` districts, `1`/`2` summon an imp / a brute, `N` the
 navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
 `=`/`-` speed. The bottom-left button row has the layer toggles, the **Navigation**
 panel above it picks the pathfinding backend (`Algo`) and shows only that backend's

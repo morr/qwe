@@ -1,20 +1,24 @@
 mod behavior;
+mod besiege;
 mod claims;
 mod components;
 mod decide;
+mod decide_brute;
 mod look;
 mod systems;
 
 use bevy::prelude::*;
 
 use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
+use self::besiege::besiege;
 pub use self::components::{
-    ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
+    BruteTag, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
+    DemonDevourTag, DemonKind, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
+    DevourUntil, ImpTag,
 };
 pub use self::look::DemonHalo;
 use self::systems::{
-    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
+    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, summon, sync_demon_speed,
 };
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{PlayPhase, WorldStarted};
@@ -34,6 +38,9 @@ impl Plugin for DemonPlugin {
         }
 
         app.register_type::<Demon>()
+            .register_type::<DemonKind>()
+            .register_type::<ImpTag>()
+            .register_type::<BruteTag>()
             .register_type::<DemonWanderTag>()
             .register_type::<DemonChaseTag>()
             .register_type::<DemonDevourTag>()
@@ -63,7 +70,9 @@ impl Plugin for DemonPlugin {
             // все 11–14 с постройки навигации.
             .add_systems(
                 FixedUpdate,
-                (spawn_initial_burst, tick_spawner)
+                // залп, за ним призыв за души (`souls.rs` пишет просьбу, здесь
+                // она исполняется) — один слот, одни правила
+                (spawn_initial_burst, summon)
                     .chain()
                     // рождение — голова тика: ребро к `SpatialRebuild` ставит
                     // точку синхронизации, команды спавна применяются на ней, и
@@ -96,7 +105,17 @@ impl Plugin for DemonPlugin {
                     // порядок (демоны раньше людей) и настраивается чужим
                     // плагином — на него этот гейт не переложишь: без
                     // `SpatialPlugin` множество не гейтит ничего
-                    (pick_wander_targets, acquire_targets, chase, devour)
+                    // осада (Громилы) — после погони (Бесы), удар
+                    // (`combat::strike`) — хвост цепочки: лестница Громилы
+                    // выставила цель на этом же тике, и бьёт он на нём же
+                    (
+                        pick_wander_targets,
+                        acquire_targets,
+                        chase,
+                        devour,
+                        besiege,
+                        crate::combat::strike,
+                    )
                         .chain()
                         .in_set(SimPipeline::BothModes),
                 )

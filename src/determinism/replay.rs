@@ -38,7 +38,7 @@ use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
 
 use super::{Determinism, SimTick};
-use crate::demon::Demon;
+use crate::demon::{BruteTag, Demon, DemonKind};
 use crate::human::{Human, PopulationSize};
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
@@ -46,6 +46,7 @@ use crate::movement::{MovableState, SimPosition};
 use crate::navigation::{ArcNavmesh, Navmesh};
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, WorldSeed};
+use crate::souls::{Souls, SummonRequested};
 use crate::telemetry::Telemetry;
 
 /// 64 тика в секунду — шаг `Time<Fixed>` по умолчанию.
@@ -90,6 +91,22 @@ pub fn replay_app(
     seed: u64,
     population: usize,
 ) -> App {
+    replay_app_with(map, navmesh, portal, seed, population, |_| {})
+}
+
+/// То же приложение, но с рукой на мире **до** входа в `Playing`: `configure`
+/// вставляет ресурсы, которые в игре приносит поток загрузки рядом с картой
+/// (`Districts`, `BastionSites`), и вешает наблюдателей. Позже — нельзя:
+/// `spawn_bastions` идёт в `OnEnter(Playing)` и ставит ровно те места, что
+/// лежат в ресурсе к этому моменту.
+pub fn replay_app_with(
+    map: MapData,
+    navmesh: Navmesh,
+    portal: Vec2,
+    seed: u64,
+    population: usize,
+    configure: impl FnOnce(&mut App),
+) -> App {
     let mut app = App::new();
     // Косметические системы (`draw_lunge_paths`, `draw_move_paths`) просят
     // `Gizmos`, а он живёт в рендере, которого здесь нет. По умолчанию Bevy
@@ -116,6 +133,23 @@ pub fn replay_app(
             crate::demon::DemonPlugin,
             crate::human::HumanPlugin,
             crate::restart::RestartPlugin,
+        ))
+        // осадный слой M1 — отдельным кортежем: `Plugins` принимает не больше
+        // 15 элементов. Районы (перепись по тику), здоровье, бастионы
+        // (`BastionsStanding` — состояние прогона, в отпечатке). Ресурсы
+        // карты у них здесь пустые — двор без районов и без мест, — но
+        // сбросы `WorldStarted` страж видит только у перечисленных
+        .add_plugins((
+            crate::district::DistrictPlugin,
+            crate::combat::CombatPlugin,
+            crate::bastion::BastionPlugin,
+            crate::corruption::CorruptionPlugin,
+            // души — состояние прогона; хоткеи призыва внутри плагина висят
+            // на `ButtonInput<KeyCode>`, который двор заводит ниже
+            crate::souls::SoulsPlugin,
+            // исход — тоже состояние прогона; его судья ставит паузу
+            // `Time<Virtual>`, которую тот же `WorldStarted` и снимает
+            crate::outcome::OutcomePlugin,
         ))
         // Что сюда НЕ входит и почему — половина смысла этого списка.
         // `a_restart_replays_the_run` держит членство сбросов `WorldStarted`
@@ -168,6 +202,8 @@ pub fn replay_app(
         .resource_mut::<Time<Virtual>>()
         .set_max_delta(Duration::from_secs(10));
 
+    configure(&mut app);
+
     // Дальше — те же две фазы, что проходит игра. Мир объявляет свой старт
     // сам, на входе в `Live` (`SimBootPlugin`): этим событием прогон забирает
     // себе бэкенд, обнуляет тики, телеметрию, часы и спавнер демонов.
@@ -192,6 +228,12 @@ pub fn replay_app(
 /// подавая за кадр столько тиков, сколько говорит очередной элемент `pattern`
 /// (циклически). Разный `pattern` при одном отпечатке — и есть проверка «fps
 /// ни при чём».
+///
+/// **Стоящий мир — выход, а не вечный цикл.** Кадр, которому подали тики, а
+/// `SimTick` не сдвинулся, значит `Time<Virtual>` на паузе — так судья исхода
+/// останавливает прогон на победе (`outcome::judge_outcome`). До цели такому
+/// миру не дойти никогда; отпечаток снимается там, где он встал, а тик
+/// остановки читается из `SimTick` (или из `Outcome`) вызывающим.
 pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progress) -> Fingerprint {
     let started = std::time::Instant::now();
     let mut frame = 0usize;
@@ -201,11 +243,18 @@ pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progre
         // перескакивает цель, и отпечатки снимались бы на РАЗНЫХ тиках — а
         // тогда «рваный кадр» проваливался бы всегда, и не потому, что
         // симуляция зависит от fps
-        let remaining = (target - app.world().resource::<SimTick>().0) as u32;
+        let before = app.world().resource::<SimTick>().0;
+        let remaining = (target - before) as u32;
         let ticks_this_frame = pattern[frame % pattern.len()].min(remaining);
         app.insert_resource(TimeUpdateStrategy::ManualDuration(TICK * ticks_this_frame));
         app.update();
         frame += 1;
+        if app.world().resource::<SimTick>().0 == before {
+            if progress == Progress::Print {
+                println!("  мир стоит на тике {before} — прокрутка остановлена");
+            }
+            break;
+        }
 
         if progress == Progress::Print {
             let tick = app.world().resource::<SimTick>().0;
@@ -226,6 +275,34 @@ pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progre
         );
     }
     fingerprint(app.world_mut())
+}
+
+/// Тик, после которого повтор пишет призыв Громилы. Не нулевой: первые тики —
+/// залп Бесов и раздача `PawnId`, призыв должен встать в очередь за ними, как в
+/// игре.
+pub const SUMMON_TICK: u64 = 10;
+
+/// Душ, выданных перед призывом, — цена Громилы (25) с запасом: прогон не
+/// должен зависеть от того, сколько людей Бесы успели съесть к [`SUMMON_TICK`].
+pub const SOULS_GRANT: u32 = 100;
+
+/// Выдать [`SOULS_GRANT`] душ и записать призыв Громилы **между кадрами** —
+/// так он доходит до фиксированного шага на тике, который несёт следующий
+/// `update`, при любом числе тиков на кадр (контракт повтора: призыв — ввод
+/// симуляции). Зовётся между вызовами [`run_to_tick`].
+pub fn summon_brute(app: &mut App) {
+    app.world_mut().resource_mut::<Souls>().earned += SOULS_GRANT;
+    app.world_mut().write_message(SummonRequested {
+        kind: DemonKind::Brute,
+    });
+}
+
+/// Сколько Громил сейчас живы.
+pub fn brutes_alive(world: &mut World) -> usize {
+    world
+        .query_filtered::<(), (With<Demon>, With<BruteTag>)>()
+        .iter(world)
+        .len()
 }
 
 /// Хэш отсортированного состояния всех пешек. FNV-1a руками: заводить крейт
@@ -264,6 +341,46 @@ pub fn fingerprint(world: &mut World) -> Fingerprint {
             eat(byte);
         }
         eat(state);
+    }
+    // состояние прогона осадного слоя — тем же хэшем (city-siege
+    // references/m1-baseline.md, решение 12): пропущенный сброс расходится в `a_restart_replays_the_run`
+    // без отдельного теста. Стоящие бастионы по районам — плотный вектор, его
+    // порядок и есть порядок районов
+    if let Some(standing) = world.get_resource::<crate::bastion::BastionsStanding>() {
+        for count in &standing.0 {
+            for byte in count.to_le_bytes() {
+                eat(byte);
+            }
+        }
+    }
+    // скверна — в битах, как позиции: нужна побайтовая одинаковость
+    if let Some(corruption) = world.get_resource::<crate::corruption::Corruption>() {
+        for progress in &corruption.progress {
+            for byte in progress.to_bits().to_le_bytes() {
+                eat(byte);
+            }
+        }
+    }
+    if let Some(souls) = world.get_resource::<crate::souls::Souls>() {
+        for byte in souls
+            .earned
+            .to_le_bytes()
+            .into_iter()
+            .chain(souls.spent.to_le_bytes())
+        {
+            eat(byte);
+        }
+    }
+    if let Some(outcome) = world.get_resource::<crate::outcome::Outcome>() {
+        let (variant, tick) = match *outcome {
+            crate::outcome::Outcome::Running => (0u8, 0u64),
+            crate::outcome::Outcome::Won { tick } => (1, tick),
+            crate::outcome::Outcome::Lost { tick, .. } => (2, tick),
+        };
+        eat(variant);
+        for byte in tick.to_le_bytes() {
+            eat(byte);
+        }
     }
 
     let telemetry = world.resource::<Telemetry>();

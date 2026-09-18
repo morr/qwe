@@ -51,9 +51,16 @@ in `main.rs`.
   margin** (warmup 1.0, dispatcher/separation `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door
   gizmos 1.5), because each asks a different question — the table is in the
   **navigation-deep skill**. Not Bevy's `Camera::viewport`, which is in pixels.
-- **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
-  local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
-  f64 math, `MAP_SIZE`-sized bbox derived from the center.
+- **Geo anchor** — each `City` has a geo center; the map bbox is `MAP_SIZE` around it.
+  Projection is local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW
+  corner → (0,0), f64 math. A city with a **Slice** (`city.rs`; Tula only) is anchored
+  from its **heart** instead: `Slice { heart, portal_edge: Edge, portal_across }`, the
+  geo center *computed* as the heart shifted toward the portal edge by
+  `(HEART_DEPTH − 0.5) × map extent` (0.7 — the heart sits at 0.7 depth from the portal
+  edge, the portal `PORTAL_EDGE_MARGIN` inside that edge at `portal_across` along it).
+  Tula: heart = kremlin wall centroid (`TULA_HEART_GEO`), portal on the north edge in
+  Заречье, the Упа across the way. `City::heart_hint()` exists for every city (map
+  centre without a slice).
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → parking
@@ -61,7 +68,8 @@ in `main.rs`.
   bridge casings → bridges → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
-  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
+  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → siege territory
+  (5.32) → bastions (5.4) → units → souls (18)
   → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
   (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
@@ -98,10 +106,12 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 - **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All
   run state (`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`,
-  `DemonSpawner`, `SeparationStats`) is reset by observers of it, each in its owning
-  module (`grep "On<WorldStarted>"`). **Membership is held from the outside** by
-  `a_restart_replays_the_run`, not by hand. Map-derived state (`NorthstarGrid`,
-  `PolyNavmesh`) is **not** run state — a restart keeps the map.
+  `DemonSpawner`, `SeparationStats`, and the siege layer's `BastionsStanding` + the
+  in-place bastion heal, `Corruption`, `Souls`, `Outcome`) is reset by observers of it,
+  each in its owning module (`grep "On<WorldStarted>"`). **Membership is held from the
+  outside** by `a_restart_replays_the_run`, not by hand. Map-derived state
+  (`NorthstarGrid`, `PolyNavmesh`, `Districts`, `BastionSites`) is **not** run state — a
+  restart keeps the map.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns pawns and corpses, fires
   **WorldStarted**, respawns the population; the navmesh persists. Under **Deterministic**
   this replays the previous run tick for tick.
@@ -110,7 +120,8 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   Consumed in `PreUpdate` after `InputSystems` — the same slot R uses, because a mass
   despawn may not happen in `Update` (CLAUDE.md). Always `to_portal: true`.
 - **City** (`city.rs`, resource, persisted) — `Tula | NewYork | Paris | Berlin | London |
-  Tokyo | DevilsLake`, each with its geo center, portal hint and cache slug. `MAP_SIZE` and
+  Tokyo | DevilsLake`, each with its geo center, portal hint, heart hint and cache slug
+  (Tula derives the first two from its *Slice* — see **Geo anchor**). `MAP_SIZE` and
   therefore the derived `grid_size()` are shared, so switching city never resizes the
   navmesh. UI — a select at
   bottom centre (`ui/city.rs`).
@@ -132,7 +143,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
   bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS` are tried in
   order. **Bump `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**
-  (currently 13), or existing caches keep serving extracts that lack them.
+  (currently 15), or existing caches keep serving extracts that lack them.
 - **Driving side** (`TrafficSide: Right | Left`, `MapData::traffic_side`) — the
   `driving_side` tag of the country boundary the map's centre lies in, asked by `is_in` as a
   second `out tags` output (the tag is not on roads). No answer means `Right`. Read only by
@@ -195,6 +206,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the navmesh with gaps** (`FENCE_BAND_WIDTH` 0.3 m — the physical thickness, not the
     zoom-grown drawn width; see **Fence gap** under Navigation). The branch falls through,
     so a way that is both a fence and something else becomes both.
+  - **Bastion** — `{ pos, kind }` from `amenity=police|fire_station|place_of_worship`,
+    `military=*`, `landuse=military` (`BastionKind: Police | FireStation | Church |
+    Military | Stronghold`; `Stronghold` is the M1 quota top-up, never from OSM). A flag
+    **on top of** `area_kind`: a tagged building stays a building *and* yields a bastion at
+    its centroid. Folded after the element loop (same kind within 30 m, or a node inside a
+    kept outline — the outline survives) and dropped when the centroid is off the map.
+    Not drawn, not in the navmesh; consumed by the bastion spawn.
   - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
     `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
     watercourse kind that does **not** block the navmesh. Drawn (`map/water.rs`) only
@@ -303,7 +321,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
   it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
-  and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
+  and ignores it. Not `BastionKind` — that is a separate concept.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
   not read (`roof:shape` is rare). The private sector is **gabled**, so the **gable roof**
   (`GableRoof`, everything with a piece of wall above the eaves) comes in five
@@ -1233,6 +1251,67 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
+- **HeartPos** (resource, `district.rs`) — the actual heart position, the invasion's goal;
+  `City::heart_hint` is the hint, snapped by the load thread **after** prune to the nearest
+  passable tile (no clearance needed — nothing spawns there), so the heart is reachable
+  from the portal by construction.
+- **Districts** (resource, `district.rs`; the mechanism — **city-siege skill**) — the
+  coarse partition of walkable ground that corruption, the census and the distance to the
+  heart are counted on. Map-derived, not run state: built by the load thread right after
+  prune from the pruned navmesh and the snapped portal and heart, inserted by `poll_job`,
+  untouched by a restart. A **District** is a **connected component of passable navtiles
+  inside one cell** of `DISTRICT_GRID` (14 × 9, ~400 × 411 m) under 4-adjacency — *not*
+  the cell: a cell cut by the river yields one district per bank, a cell with a bridge
+  yields one, because the deck is passable and joins the banks. So "corruption crosses
+  the Упа only over a bridge" follows from the same navmesh the pawns walk, not from a
+  rule of its own. **Neighbours** are districts with at least one pair of adjacent tiles
+  across a cell border. A **shard** — a component under `DISTRICT_MIN_AREA` (1600 m²,
+  stated in metres so the navtile size does not move it) — is absorbed by the neighbour
+  with the longest shared border, smallest first, to a fixed point. Water, walls and
+  pruned pockets are in no district (`None`). Each district carries `cell`, `tiles`,
+  `centroid`, `neighbours` and **`dist_to_heart`** (BFS hops over the neighbour graph
+  from the heart's district; `None` = unreachable). **`district_at(pos)`** answers from
+  the **label raster** — one label per `DISTRICT_LABEL_METERS` (8 m) cell, the district
+  of the navtile at the cell's centre — O(1), no per-navtile storage.
+  **DistrictCensus** (resource) — living humans per district, recounted every
+  `DISTRICT_CENSUS_TICKS` (64, one sim second) in `SimSet::SpatialRebuild` on the
+  `SimTick` phase (so a replay counts on the same ticks); `sim/census_ms` measures it.
+  Run state: cleared on `WorldStarted`, so no run reads the previous run's humans before
+  its first recount on tick 64.
+  The **district overlay** (`DebugDistricts`, Debug tab row `Districts`, hotkey `T`) is
+  the label raster as one 8 m/texel sprite — hue by district id, the heart's district
+  brighter, unreachable ones grey.
+- **BastionSites** (resource, `bastion/mod.rs`, the top-up in `bastion/fill.rs`; mechanism — **city-siege skill**) — where
+  the bastions stand: map-derived, planned by the load thread after the districts. A
+  **BastionSite** is `{ pos, kind, district, closeness }`; `pos` is the nearest passable
+  navtile to the OSM centroid (the centroid lies *inside* the building, where nothing
+  walks), `district` the district of that tile, **closeness** `1 − dist_to_heart /
+  max_dist` (1 at the heart). Tagged bastions (`MapData.bastions`) come first; then each
+  district is topped up to its **bastion quota** — `BASTION_QUOTA_STEPS` by closeness (0
+  up to 0.3, 1 up to 0.7, 2 up to 0.9, 3 at the heart) — with **Stronghold**s: buildings
+  of at least `STRONGHOLD_MIN_AREA` (300 m²) in the district, chosen by the geometry lot
+  (`lcg_seeded_by` on the first outline vertex, as doors and trees are), so one map
+  always yields the same sites whatever the world seed. A district without such
+  buildings keeps what it has.
+- **Bastion** (entity, `bastion/mod.rs`, spawned in `WorldInitSet::Spawn` from
+  `BastionSites`) — `Bastion { kind, district, site }` (`site` — its index in
+  `BastionSites`, the stable tie-break) + **Health** (`combat.rs`: `{ hp, max }`,
+  `bastion_hp(closeness) = BASTION_HP × (1 + BASTION_HEART_GAIN × closeness)`, 100 at the
+  edge, ×4 at the heart) + a `BASTION_MARKER_SIZE` sprite at `Z_BASTION`, coloured by
+  kind. **Destroyed** (`combat.rs` event, fired when `Health` reaches zero) turns it into
+  a **Ruin** — the same entity retagged with `RuinTag`, sprite dimmed, `Bastion` kept —
+  and fires **BastionDestroyed { entity, district }**. **BastionsStanding** (resource,
+  `Vec<u16>` per district) is run state: filled on `WorldStarted` from the sites, decremented
+  per ruin, part of the run `Fingerprint`. **A restart heals in place** — the
+  `WorldStarted` observer refills every `Health`, strips `RuinTag` and relights the
+  sprite; bastions never pass through the restart despawn list.
+- **Attack** (`combat.rs`) — `Attack { damage }` + `AttackCooldown` (a timer whose
+  duration is the attack period, ticked by `Res<Time>` in `FixedUpdate`, ready at spawn) + `AttackTarget(Entity)` (set and
+  cleared by the attacker's ladder; present ⇔ there is a target). **strike** runs at the
+  tail of the demon chain in `SimSet::DemonBehavior`: a target within `ATTACK_REACH` (3 m
+  of the bastion's point) with the cooldown out takes `damage`, and the blow that reaches
+  zero fires `Destroyed` exactly once; a target already at zero is left alone. Fixed
+  damage, no RNG.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
@@ -1264,10 +1343,12 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 - **BodyScale** (`movement/components.rs`) — how many times this pawn's body is bigger than
   a human's (`HUMAN` 1.0, `DEMON` the `DEMON_RADIUS_RATIO` 2×), a **ratio** because the
   radius itself is a live slider (`HumanStyle::body_radius`). Required by `Movable`, so
-  every movable pawn has one; the demon writes `BodyScale::DEMON` at spawn, everyone else
-  takes the human default. `move_moving_entities` reads the rest distance off it
-  (`BodyScale::rest`) instead of asking `Has<Human>` — separation still derives its own
-  radius from `Has<Demon>`, both from the same ratio.
+  every movable pawn has one; a demon writes its kind's body at spawn
+  (`DemonKindStats::body_scale`: Imp = `BodyScale::DEMON`, Brute 3×), everyone else takes
+  the human default. `move_moving_entities` reads the rest distance off it
+  (`BodyScale::rest`) and **separation reads its radius off it too** — with two demon
+  bodies "a demon is twice a human" is no longer a rule; the separation cell is sized
+  from `MAX_BODY_SCALE`, the largest body.
 - **Repath on the move** — `to_pathfinding` keeps the current path; a pawn walks the old one
   while the new is computed. `MovableStateMovingTag` means "has a path **or is coasting**".
   **Coasting** — a pawn whose path ran out mid-repath keeps walking `last_direction` over
@@ -1391,8 +1472,31 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
 **navigation-deep skill**, `references/crowd.md`.
 
 - **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-  DemonBehavior → HumanBehavior`. **Demons act before humans so a kill lands before
-  `escape`** — a human is never counted both killed and escaped in one tick.
+  DemonBehavior → HumanBehavior → Territory`. **Demons act before humans so a kill lands
+  before `escape`** — a human is never counted both killed and escaped in one tick.
+  **Territory** is the corruption step: it reads the census and the standing bastions
+  of this tick and touches no pawn, so it needs no edge to `move_moving_entities`.
+- **Outcome** (resource, `outcome.rs`; mechanism — **city-siege skill**) — `Running |
+  Won { tick } | Lost { tick, reason: Stalemate }`, judged each tick at the tail of
+  `SimSet::Territory` after the corruption step: the **Heart**'s district corrupted →
+  `Won`; no living demon and fewer souls than an Imp costs → `Lost(Stalemate)`. The tick
+  is `SimTick`. On the transition the world is **paused** (`Time<Virtual>`) and the
+  outcome plaque (`ui/outcome.rs`) shows the verdict, the sim clock, the souls and
+  `R - restart`; the `WorldStarted` observer of `outcome.rs` lifts that pause only when the
+  outcome was not `Running` — a player's own pause survives a restart. Run state, reset on
+  `WorldStarted`, in the fingerprint (variant + tick). The heart itself is the gold
+  **Heart** marker sprite at `HeartPos` (`portal.rs`, `HEART_MARKER_SIZE`).
+- **Corruption** (resource, `corruption.rs`; mechanism — **city-siege skill**) — the
+  siege field: `progress: Vec<f32>` per district, a district is **corrupted** at `≥ 1`;
+  `to_heart` — hops from the corrupted set to the heart's district over the neighbour
+  graph (bastions count as passable — they can be broken). Run state: reset on
+  `WorldStarted` to zero with the portal's district corrupted, hashed into the run
+  `Fingerprint`. Each tick (`SimSet::Territory`, `PlayPhase::Live`) every uncorrupted
+  district with a corrupted neighbour **and no standing bastion** gains
+  `dt × CORRUPTION_RATE / (1 + humans / CORRUPTION_CROWD_HALF)` (1/30 per second and 50
+  humans: an empty district falls in 30 s, 50 humans stretch it to a minute). Corruption
+  never recedes (holy ground is M7). **DistrictCorrupted { district }** fires on the tick a
+  district crosses 1. The district overlay darkens a district toward purple by progress.
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop`. Systems mutate `SimPosition`, **never
   `Transform.translation.xy`**. `snapshot_previous_sim_positions` runs **before**
@@ -1485,12 +1589,33 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `DemonCaughtHumanEvent`. **Devour** — pause 1.5–2 s with a sine pulse ×1 → ×1.5; the pause
   is rolled in the kill observer from the demon's **decision stream**, so a kill advances its
   `WanderIndex`.
+- **DemonKind** (`demon/components.rs`, component next to `Demon`; numbers in
+  `settings::IMP` / `settings::BRUTE`, `DemonKindStats { speed_mul, body_scale, damage,
+  attack_period }`) — **Imp**, the hunter as before (2× body, eats humans, no attack), and
+  **Brute** (3× body, ×0.6 speed, `Attack` 10 per second, never chases humans). The kind
+  rides with a marker (`ImpTag` / `BruteTag`) because a query cannot filter on a variant:
+  `acquire_targets` and `chase` are `With<ImpTag>`. `Species` stays `Demon` and the
+  `PawnId` counter is shared, so the replay contract is untouched. The burst spawns Imps;
+  Brutes come only by summoning. Sprite size and tint follow the kind (Brutes a darker
+  ring toward purple).
+- **Brute ladder** (`demon/decide_brute.rs`, applied by `demon/besiege.rs::besiege`, in
+  the demon chain between `devour` and `strike`) — the same pure `decide` shape as the
+  chase: a target that is a ruin or gone → `Done` (drop `AttackTarget`, back to
+  `DemonWanderTag`); within `ATTACK_REACH` → `Strike` (stand, `strike` hits); else wait
+  for the first path / hold / `Repath` on the `ChaseRepath` tact. With no target: the
+  nearest **frontline bastion** with a free slot → `Engage`, or `Wander`. A bastion is
+  **frontline** when it stands in an uncorrupted district that has a corrupted
+  neighbour — the list is built once per tick from `Districts`, `Corruption` and the
+  bastions. **BastionClaims** (`demon/claims.rs`) counts Brutes per bastion from their
+  `AttackTarget`s each tick; `MAX_BRUTES_PER_BASTION` = 3 spreads them along the front.
+  Distance ties break on the bastion's `site` number, never on `Entity`.
 - **DEMON_SPEED** — one base for every state, `HUMAN_FLEE_SPEED × 1.35`. **Do not
   reintroduce per-state demon speeds**: the only multipliers are the two user ones,
   `DemonStyle::speed` and `DemonStyle::lunge`.
-- **DemonSpawner** — initial burst at the portal rim, then one demon per interval up to the
-  cap; cap and interval live in **`DemonStyle`**, `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are
-  only its `Default`. Lowering the cap never despawns demons already out. **The spawner runs
+- **DemonSpawner** — the initial burst of Imps at the portal rim; after it demons come only
+  by summoning for souls (no interval spawner — roadmap decision 5). The cap lives in
+  **`DemonStyle { cap, speed, lunge }`**, `DEMON_CAP` is only its `Default`, and it caps
+  summoning too. Lowering the cap never despawns demons already out. **The spawner runs
   only in `PlayPhase::Live`, and that is an invariant**: it hands out `PawnId`s from a
   counter `WorldStarted` resets, so a burst fired before the announcement deals the same
   numbers twice. Matching precondition: **no demon may be alive when a run starts**. It runs
@@ -1516,9 +1641,20 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   released on next target selection, despawn, or corpse strip — **not on arrival** (a
   standing pawn *is* the occupancy). **Chase and flee are excluded** by design. Runs in
   **both** modes — it is simulation, not cosmetics.
-- **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the **Souls reaped** HUD
-  counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
-  holds the seed and the determinism row. Invariant (check paused):
+- **Souls** (resource, `souls.rs`; mechanism — **city-siege skill**) — `{ earned, spent }`,
+  run state in the fingerprint; `earned` is incremented in the same kill observer as
+  `Telemetry::killed`, so `earned == killed` always. **Summon** — `SummonRequested { kind }`
+  is a `Message` written from `Update` (hotkeys `1` / `2`, gated on `typing_in_text_input`;
+  the HUD; `brp msg`) and consumed on the fixed step by `demon::summon` in the spawner
+  slot (`Live` only): under `DemonStyle::cap` and with `available()` ≥ `summon_cost(kind,
+  alive of that kind)` — `SUMMON_COST_IMP` 3 / `SUMMON_COST_BRUTE` 25 × (1 +
+  `SUMMON_COST_GROWTH` 5 % per living demon of the kind) — it charges `spent` and spawns
+  the demon at the portal rim; otherwise the request is refused and dropped. A summon is
+  simulation input like a slider (**determinism skill**, "The contract").
+- **Telemetry** — `{killed, escaped}`, BRP-readable; the HUD's **Souls** row shows
+  `Souls::available / earned` (`ui/stats.rs`, with the two summon buttons under it), *not*
+  a row of the Sim tab's **World** section — that section holds the seed and the
+  determinism row. Invariant (check paused):
   `killed + escaped + alive == PopulationSize` — the number the spawn actually read, not
   the constant: in the game that is the default `HUMAN_COUNT`, in a replay run whatever
   `replay_app` was given. At high sim speed BRP reads are skewed — pause before asserting.
@@ -1585,8 +1721,8 @@ its draw call.
   the visible side of `Telemetry::killed`. Lives at `Z_SOUL` above every unit. Stepped
   and despawned in `FixedUpdate` (`rise_souls`, after `SimSet::HumanBehavior`) — a world
   entity may not be despawned from `Update`. Not the `Souls { earned, spent }` currency of
-  `ROADMAP.md` — that is a separate concept, a resource the same kill observer will
-  increment; the mote counts nothing and is only the visible side of the kill.
+  `souls.rs::Souls` — that is a separate concept, a resource the same kill observer
+  increments; the mote counts nothing and is only the visible side of the kill.
 - **Bloom** (`post.rs`) — what makes every HDR colour above glow: the portal rim, the
   demon halos, the souls, and later spells. The setup and its threshold are under
   **Post-processing** in App lifecycle; the tuning — **ui-panels skill**.
@@ -1608,6 +1744,13 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
   spawned by one system per section plugin.
+- **Siege view** (`SiegeView`, `ui/siege.rs`, Sim tab → Siege) — the M1 siege drawn for the
+  player, all four parts toggleable: **territory** (corrupted districts violet, growing ones
+  paler, a district **held** by a standing bastion on the front amber, the heart gold),
+  **health bars** over wounded bastions, a ring around **front** bastions
+  (`Corruption::on_front` — the same predicate the Brute's ladder uses) and **siege lines**
+  from each Brute to its target. Cosmetic only; the district debug overlay (T) stays for
+  district borders.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

@@ -24,7 +24,11 @@ pub struct GeoBounds {
 
 impl GeoBounds {
     pub fn for_city(city: City) -> Self {
-        let center = city.geo_center();
+        Self::around(city.geo_center())
+    }
+
+    /// Рамка `MAP_SIZE` вокруг гео-центра `(широта, долгота)`.
+    pub fn around(center: DVec2) -> Self {
         let lon_scale = METERS_PER_DEG_LAT * center.x.to_radians().cos();
         let half = DVec2::new(
             MAP_SIZE.x as f64 / 2.0 / lon_scale,
@@ -68,12 +72,13 @@ impl GeoBounds {
 /// `man_made=storage_tank|silo|chimney|water_tower|gasometer` и надземные
 /// трубопроводы `man_made=pipeline`. v13 — `driving_side` границы страны.
 /// v14 — ограды участков `barrier=fence|wall|retaining_wall|hedge`.
+/// v15 — бастионы (полиция, пожарные, храмы, военные).
 ///
 /// v12 не использована: номер был занят этой же веткой оград, пока она ждала
 /// очереди, а в master первым уехал `driving_side`. Номер обязан **расти**, а
 /// не занимать оставленную дыру: выгрузка v13 уже лежит на дисках без
 /// `barrier`, и ограды на ней молча вышли бы пустыми.
-const QUERY_VERSION: u32 = 14;
+const QUERY_VERSION: u32 = 15;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
@@ -81,8 +86,9 @@ const QUERY_VERSION: u32 = 14;
 /// промышленные цилиндры и надземные трубопроводы
 /// (`man_made=storage_tank|silo|chimney|water_tower|gasometer|pipeline`),
 /// ограды участков (`barrier=*`), аллеи, одиночные деревья, стены Кремля,
-/// входы в здания — и отдельным `out tags` границы с `driving_side`, внутри
-/// которых лежит центр карты.
+/// входы в здания, бастионы (`nwr` — нода, way или relation; геометрия у всех
+/// под тем же `out geom`, отдельный `out center` не нужен) — и отдельным
+/// `out tags` границы с `driving_side`, внутри которых лежит центр карты.
 ///
 /// Границы идут вторым выводом, а не в общий `out geom`: геометрия границы
 /// страны весит мегабайты, а нужен от неё один тег. `is_in` работает по
@@ -133,6 +139,9 @@ pub fn overpass_query(city: City) -> String {
   way["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer|pipeline)$"]({bbox});
   node["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer)$"]({bbox});
   node["entrance"]({bbox});
+  nwr["amenity"~"^(police|fire_station|place_of_worship)$"]({bbox});
+  nwr["military"]({bbox});
+  way["landuse"="military"]({bbox});
 );
 out geom;
 is_in({lat},{lon})->.here;

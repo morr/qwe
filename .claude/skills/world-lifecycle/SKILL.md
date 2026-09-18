@@ -68,15 +68,20 @@ game did not, and had to announce the world start by hand to stay ahead of that 
 
 ```
 Connecting{attempt} → Downloading{bytes,total,bytes_per_sec} → Parsing
-→ BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal}) | Failed(msg)
+→ BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal, heart, districts, bastions}) | Failed(msg)
 ```
 
 Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. The
 thread fills the navmesh through the `ArcNavmesh` handle and returns the snapped portal
-position. Inside `BuildingNavmesh`, after the portal snap and before `Pruning`, it opens the
-**default fence gates** (`Navmesh::open_sealed_fences`) — and that step **writes into the
-`MapData`** it hands back, so the polygonal mesh built later from the resource sees the same
-gates (navigation-deep skill).
+position and the snapped **heart** (`City::heart_hint`, snapped *after* prune to the
+nearest passable tile by `navigation::snap_heart_position` — no clearance, nothing spawns there —
+so it is reachable from the portal by construction); still inside `Pruning` it builds the
+`Districts` on the pruned navmesh and plans the `BastionSites` on them (`city-siege`
+skill). `poll_job` inserts `MapData`, `PortalPos`, `HeartPos`, `Districts` and
+`BastionSites` together. Inside `BuildingNavmesh`, after the portal snap and
+before `Pruning`, it opens the **default fence gates** (`Navmesh::open_sealed_fences`) — and
+that step **writes into the `MapData`** it hands back, so the polygonal mesh built later from
+the resource sees the same gates (navigation-deep skill).
 
 - `total` is `None` in practice (chunked answers, gzip strips `content-length`), so the
   screen shows MB + rate.
@@ -100,7 +105,15 @@ share. Fired from exactly **two** places:
 
 **All run state is reset by observers of this event, each living in its owning module** —
 `SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner`,
-`SeparationStats` (the crowd-demo counters). `grep "On<WorldStarted>"` enumerates them.
+`SeparationStats` (the crowd-demo counters), `Souls`, `Outcome` (whose observer also
+**lifts the outcome's pause**: the win/loss judge pauses `Time<Virtual>`, `sim_time`'s
+observer only sets the speed, and a restart on R passes through no `Warmup` where
+`resume_world` would unpause — so `outcome::on_world_started` unpauses iff the outcome it
+is resetting was not `Running`, leaving a player's Space pause alone), and the siege
+layer's `BastionsStanding` +
+the in-place bastion heal (`bastion/mod.rs`), `Corruption` (`corruption.rs`: zero
+everywhere, the portal's district corrupted) and `DistrictCensus` (`district.rs`: emptied,
+so ticks 1..63 before the first recount read zero humans in every run). `grep "On<WorldStarted>"` enumerates them.
 
 **Membership is not kept by hand.** It is held from the outside by
 `a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares
@@ -150,9 +163,22 @@ portal at `START_ZOOM` regardless of `CameraPositionMode` — the camera side is
 
 **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built from:
 `Tula | NewYork | Paris | Berlin | London | Tokyo | DevilsLake`. Each carries its **geo
-center** (bbox center of the Overpass extract), its **portal hint** and its **cache slug**.
-`MAP_SIZE` and therefore the derived `grid_size()` are shared, so switching city never
-resizes the navmesh.
+center** (bbox center of the Overpass extract), its **portal hint**, its **heart hint** and
+its **cache slug**. `MAP_SIZE` and therefore the derived `grid_size()` are shared, so
+switching city never resizes the navmesh.
+
+**Slice** (`city.rs`, Tula only — `City::slice()` is `None` elsewhere) — the city is
+anchored from its heart, not from a constant center: `Slice { heart, portal_edge,
+portal_across }`. `Slice::geo_center()` shifts the heart toward the portal edge by
+`(HEART_DEPTH − 0.5) × extent` (3700 m for N/S, 5600 for E/W; metres → degrees through
+`METERS_PER_DEG_LAT` and the longitude scale at the heart's latitude — the same frame
+`tools/osm_audit/slice_audit.py` measured with); `Slice::portal_hint()` puts the portal
+`PORTAL_EDGE_MARGIN` (250 m) inside that edge at `portal_across` along it. The cache name
+carries lat/lon, so moving the heart re-downloads by itself and `prune_stale_caches` drops
+the old file. A pocket at the edge (rail yard, fenced industry) is fixed by sliding
+`portal_across`, not by code — that is why it is a slice parameter. `city.rs` tests pin
+the shift formula for all four edges and Tula's spike numbers (heart (2800, 1110), portal
+hint (1400, 3450)).
 
 **A city switch is a full world reload.** Writing `City` (the select or BRP) sends the app
 back to `AppState::Loading`:

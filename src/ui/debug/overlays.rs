@@ -9,17 +9,44 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PrimaryWindow;
 
-use super::{DebugConiferNoise, DebugNavmesh};
+use super::{DebugConiferNoise, DebugDistricts, DebugNavmesh};
 use crate::camera::Viewport;
+use crate::corruption::Corruption;
+use crate::district::{DistrictId, Districts};
 use crate::grid::tile_center;
 use crate::loading::AppState;
 use crate::map::ConiferField;
 use crate::map::osm::MapData;
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
-use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, grid_size, navtile_size};
+use crate::settings::{
+    MAP_SIZE, Z_CONIFER_NOISE_OVERLAY, Z_DISTRICT_OVERLAY, grid_size, navtile_size,
+};
+use crate::ui::district_texture::{
+    byte, district_texture, fnv_key, progress_shade, texel_districts, texture_size,
+};
 
 #[derive(Component)]
 pub(super) struct NavmeshOverlayMarker;
+
+/// Слой районов и то, под что он нарисован: ключ скверны — её прогресс по
+/// районам, квантованный в [`PROGRESS_SHADES`](crate::ui::district_texture::PROGRESS_SHADES)
+/// ступеней. Прогресс растёт
+/// каждый тик, а текстура в 324 k текселей за тик — лишняя работа: слой
+/// пересобирается, только когда какой-то район перешёл ступень.
+#[derive(Component)]
+pub(super) struct DistrictOverlayMarker {
+    corruption_key: u64,
+}
+
+/// Прозрачность слоя районов: границы должны читаться, а дома под ними —
+/// оставаться различимыми.
+const DISTRICT_OVERLAY_ALPHA: f32 = 0.45;
+/// Шаг оттенка между соседними по номеру районами — золотой угол: номера
+/// раздаются обходом тайлов, и соседи по карте часто соседи по номеру.
+const DISTRICT_HUE_STEP: f32 = 137.508;
+/// Цвет осквернённого района; по дороге к нему район темнеет от своего
+/// оттенка пропорционально прогрессу.
+const CORRUPTION_COLOR: Color = Color::srgb(0.30, 0.02, 0.35);
 
 /// Слой поля хвои и то, под что он нарисован: порог и поколение поля.
 /// Пересобирать текстуру, пока оба те же, незачем — правка любого другого поля
@@ -199,7 +226,6 @@ pub(super) fn sync_conifer_noise_overlay(
             } else {
                 (Vec3::splat(value), CONIFER_NOISE_ALPHA)
             };
-            let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0) as u8;
             data.extend_from_slice(&[byte(color.x), byte(color.y), byte(color.z), byte(alpha)]);
         }
     }
@@ -233,5 +259,92 @@ pub(super) fn sync_conifer_noise_overlay(
         Transform::from_translation((MAP_SIZE / 2.0).extend(Z_CONIFER_NOISE_OVERLAY)),
         DespawnOnExit(AppState::Playing),
         Name::new("conifer_noise_overlay"),
+    ));
+}
+
+/// Цвет района: оттенок по номеру, район сердца — светлее и насыщеннее,
+/// район без пути к сердцу — серый; по прогрессу скверны — к
+/// [`CORRUPTION_COLOR`].
+fn district_color(id: DistrictId, districts: &Districts, corruption: f32) -> Color {
+    let hue = (id as f32 * DISTRICT_HUE_STEP) % 360.0;
+    let district = &districts.districts[id as usize];
+    let own = match district.dist_to_heart {
+        Some(0) => Color::hsl(hue, 1.0, 0.75),
+        Some(_) => Color::hsl(hue, 0.65, 0.5),
+        None => Color::hsl(hue, 0.0, 0.4),
+    };
+    own.mix(&CORRUPTION_COLOR, corruption.clamp(0.0, 1.0))
+}
+
+/// Ключ слоя по скверне: прогресс каждого района в ступенях.
+fn corruption_key(corruption: &Corruption) -> u64 {
+    fnv_key(
+        corruption
+            .progress
+            .iter()
+            .map(|&progress| progress_shade(progress)),
+    )
+}
+
+/// Спавн/despawn слоя районов: один спрайт на всю карту с текстурой в шаг
+/// растра меток (`DISTRICT_LABEL_METERS`, 700 × 463), тексель — цвет района,
+/// вне района — прозрачно; границы читаются сами. Ближайший сосед, а не
+/// линейный сэмплер: край района — граница тайлов, размывать его незачем.
+/// Гизмо здесь не годятся: полторы сотни районов с произвольными границами
+/// по тайлам — это сотни тысяч отрезков за кадр, а текстура пересобирается
+/// за миллисекунды и только на смене ступени скверны.
+pub(super) fn sync_district_overlay(
+    mut commands: Commands,
+    enabled: Res<DebugDistricts>,
+    districts: Res<Districts>,
+    corruption: Res<Corruption>,
+    mut images: ResMut<Assets<Image>>,
+    overlay: Query<(Entity, &DistrictOverlayMarker)>,
+) {
+    let key = corruption_key(&corruption);
+    if enabled.0
+        && !districts.is_changed()
+        && overlay.iter().any(|(_, drawn)| drawn.corruption_key == key)
+    {
+        return;
+    }
+    for (entity, _) in &overlay {
+        commands.entity(entity).despawn();
+    }
+    if !enabled.0 || districts.is_empty() {
+        return;
+    }
+
+    let size = texture_size();
+    // цвета — раз на район, а не на тексель: смешивание в 324 k текселей
+    // заметно дороже, чем в полторы сотни районов
+    let colors: Vec<[u8; 4]> = (0..districts.len())
+        .map(|id| {
+            let progress = corruption.progress.get(id).copied().unwrap_or(0.0);
+            let color = district_color(id as DistrictId, &districts, progress).to_srgba();
+            [
+                byte(color.red),
+                byte(color.green),
+                byte(color.blue),
+                byte(DISTRICT_OVERLAY_ALPHA),
+            ]
+        })
+        .collect();
+    let labels = texel_districts(&districts, size);
+    let mut image = district_texture(&labels, size, &colors, [0, 0, 0, 0]);
+    image.sampler = ImageSampler::nearest();
+
+    commands.spawn((
+        DistrictOverlayMarker {
+            corruption_key: key,
+        },
+        Sprite {
+            image: images.add(image),
+            custom_size: Some(MAP_SIZE),
+            ..default()
+        },
+        Transform::from_translation((MAP_SIZE / 2.0).extend(Z_DISTRICT_OVERLAY)),
+        DespawnOnExit(AppState::Playing),
+        Name::new("district_overlay"),
     ));
 }

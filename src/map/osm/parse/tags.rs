@@ -11,8 +11,8 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Colours, Faith, FenceKind, PitchKind, RailKind, Rgb, RoadClass, Sacred,
-    SacredForm, ServiceTrack, StructureKind, WaterKind, polyline_length,
+    AreaKind, BastionKind, BuildingUse, Colours, Faith, FenceKind, PitchKind, RailKind, Rgb,
+    RoadClass, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -254,6 +254,24 @@ pub(super) fn area_use(kind: AreaKind, tags: &HashMap<String, String>) -> Buildi
     } else {
         BuildingUse::Other
     }
+}
+
+/// Бастион по тегам: полиция, пожарные, храм, военные. Военных ловим по ключу
+/// `military=*` целиком (`office` — военкомат, `bunker`, `barracks`) и по
+/// `landuse=military`. Это признак **поверх** площадной классификации, а не
+/// её ветка: здание с `amenity=police` остаётся зданием и даёт бастион.
+pub(super) fn bastion_kind(tags: &HashMap<String, String>) -> Option<BastionKind> {
+    match tags.get("amenity").map(String::as_str) {
+        Some("police") => return Some(BastionKind::Police),
+        Some("fire_station") => return Some(BastionKind::FireStation),
+        Some("place_of_worship") => return Some(BastionKind::Church),
+        _ => {}
+    }
+    if tags.contains_key("military") || tags.get("landuse").map(String::as_str) == Some("military")
+    {
+        return Some(BastionKind::Military);
+    }
+    None
 }
 
 /// Классификация элемента по тегам → вид площадного объекта.

@@ -10,6 +10,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::city::City;
+use crate::district::HeartPos;
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
@@ -390,7 +391,7 @@ fn poll_job(
                 "osm map: {} buildings ({with_height} with height, {entrances} entrances), \
                  {} water, {} waterways ({culverts} culverts), {} parks, {} woods, {} grass, \
                  {} sand, {} landuse, {} parking, {} pitches, {} roads, {} rails, {} walls, \
-                 {} trees",
+                 {} trees, {} bastions",
                 map.buildings.len(),
                 map.water.len(),
                 map.water_lines.len(),
@@ -405,9 +406,13 @@ fn poll_job(
                 map.rails.len(),
                 map.walls.len(),
                 map.trees.len(),
+                map.bastions.len(),
             );
             commands.insert_resource(map);
             commands.insert_resource(PortalPos(world.portal));
+            commands.insert_resource(HeartPos(world.heart));
+            commands.insert_resource(world.districts);
+            commands.insert_resource(world.bastions);
             *connecting_since = None;
             next.set(AppState::Playing);
             return;

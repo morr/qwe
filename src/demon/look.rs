@@ -8,7 +8,8 @@
 
 use bevy::prelude::*;
 
-use crate::settings::{DEMON_MIN_PX, DEMON_SIZE};
+use crate::demon::components::DemonKind;
+use crate::settings::{DEMON_MIN_PX, DEMON_SIZE, IMP};
 use crate::silhouette::{Glyph, Silhouette, Silhouettes};
 
 /// Сколько оттенков в кольце: демон номер `index` берёт `index % DEMON_TINT_SHADES`-й.
@@ -17,6 +18,11 @@ const DEMON_TINT_SHADES: usize = 5;
 const DEMON_TINT_BASE: Vec3 = Vec3::new(0.78, 0.08, 0.10);
 /// Шаг кольца: с каждым оттенком краснота уходит в оранжевое.
 const DEMON_TINT_STEP: Vec3 = Vec3::new(0.05, 0.07, -0.01);
+/// Самый тёмный оттенок Громилы: тёмная малина с синим сверху — к
+/// фиолетовому, чтобы Громила читался в толпе Бесов не только размером.
+const BRUTE_TINT_BASE: Vec3 = Vec3::new(0.46, 0.05, 0.36);
+/// Шаг кольца Громилы: краснота растёт, синий держится.
+const BRUTE_TINT_STEP: Vec3 = Vec3::new(0.05, 0.02, 0.0);
 /// Диаметр ореола в телах демона.
 const HALO_RATIO: f32 = 3.0;
 /// Цвет ореола: тёплый, полупрозрачный и ярче белого — HDR под bloom камеры
@@ -36,17 +42,42 @@ pub(super) fn demon_tint(index: usize) -> Color {
     Color::srgb(tint.x, tint.y, tint.z)
 }
 
-/// Спрайт и силуэт демона номер `index`.
-pub(super) fn demon_body(silhouettes: &Silhouettes, index: usize) -> (Sprite, Silhouette) {
+/// Оттенок Громилы номер `index` — своё кольцо, темнее и фиолетовее бесовского.
+pub(super) fn brute_tint(index: usize) -> Color {
+    let tint = BRUTE_TINT_BASE + BRUTE_TINT_STEP * (index % DEMON_TINT_SHADES) as f32;
+    Color::srgb(tint.x, tint.y, tint.z)
+}
+
+/// Оттенок по виду.
+fn kind_tint(kind: DemonKind, index: usize) -> Color {
+    match kind {
+        DemonKind::Imp => demon_tint(index),
+        DemonKind::Brute => brute_tint(index),
+    }
+}
+
+/// Размер тела вида: Бес — [`DEMON_SIZE`], остальные — пропорционально своему
+/// `body_scale` (Громила в полтора раза шире).
+fn body_size(kind: DemonKind) -> f32 {
+    DEMON_SIZE * kind.stats().body_scale / IMP.body_scale
+}
+
+/// Спрайт и силуэт демона вида `kind` номер `index`.
+pub(super) fn demon_body(
+    silhouettes: &Silhouettes,
+    kind: DemonKind,
+    index: usize,
+) -> (Sprite, Silhouette) {
+    let size = Vec2::splat(body_size(kind));
     (
-        silhouettes.sprite(Glyph::Ember, demon_tint(index), Vec2::splat(DEMON_SIZE)),
-        Silhouette::new(Vec2::splat(DEMON_SIZE), DEMON_MIN_PX),
+        silhouettes.sprite(Glyph::Ember, kind_tint(kind, index), size),
+        Silhouette::new(size, DEMON_MIN_PX),
     )
 }
 
-/// Ореол — под телом (z чуть ниже) и в [`HALO_RATIO`] раз шире.
-pub(super) fn halo(silhouettes: &Silhouettes) -> impl Bundle {
-    let size = Vec2::splat(DEMON_SIZE * HALO_RATIO);
+/// Ореол — под телом (z чуть ниже) и в [`HALO_RATIO`] раз шире тела своего вида.
+pub(super) fn halo(silhouettes: &Silhouettes, kind: DemonKind) -> impl Bundle {
+    let size = Vec2::splat(body_size(kind) * HALO_RATIO);
     (
         DemonHalo,
         silhouettes.sprite(Glyph::Halo, HALO_COLOR, size),
@@ -91,6 +122,18 @@ mod tests {
                 red > 0.7 && red > green * 2.0 && red > blue * 2.0,
                 "shade {index} is not red-orange"
             );
+        }
+    }
+
+    /// Громила отличим от Беса цветом при любых номерах: у него синий канал
+    /// выше, чем у любого оттенка бесовского кольца.
+    #[test]
+    fn brute_shades_are_bluer_than_every_imp_shade() {
+        let imp_blue = (0..DEMON_TINT_SHADES)
+            .map(|index| demon_tint(index).to_srgba().blue)
+            .fold(0.0, f32::max);
+        for index in 0..DEMON_TINT_SHADES {
+            assert!(brute_tint(index).to_srgba().blue > imp_blue * 2.0);
         }
     }
 }

@@ -29,6 +29,9 @@ const HOTKEYS: &[(&str, &str)] = &[
     ("G", "gizmos"),
     ("N", "navmesh"),
     ("M", "movepath"),
+    ("T", "districts"),
+    ("1", "summon imp"),
+    ("2", "summon brute"),
     ("Tab", "settings panel"),
 ];
 

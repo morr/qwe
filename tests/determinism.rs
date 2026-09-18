@@ -28,7 +28,9 @@
 //! Сравнение только по `SimTick`, не по кадрам и не по настенным часам.
 
 use bevy::prelude::*;
-use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
+use qwe::determinism::replay::{
+    Fingerprint, Progress, SUMMON_TICK, brutes_alive, replay_app, run_to_tick, summon_brute,
+};
 use qwe::grid::{tile_center, world_to_tile};
 use qwe::map::osm::fixture::{Yard, crowded_yard};
 use qwe::navigation::{Backend, Navmesh};
@@ -65,6 +67,28 @@ fn app(seed: u64) -> App {
 fn run(seed: u64, pattern: &[u32]) -> Fingerprint {
     let mut app = app(seed);
     let print = run_to_tick(&mut app, TICKS, pattern, Progress::Silent);
+    assert!(
+        print.moving > 0,
+        "мир стоит на месте — сравнивать нечего: {print:?}"
+    );
+    print
+}
+
+/// Прогон с призывом: до [`SUMMON_TICK`], души и `SummonRequested` между
+/// кадрами — так призыв доходит до фиксированного шага на одном и том же тике
+/// при любом числе тиков на кадр (контракт повтора, скилл `determinism`), —
+/// затем до [`TICKS`]. Громила обязан быть жив: иначе прогон сравнивал бы
+/// отказ в призыве, а не призыв.
+fn run_with_summon(app: &mut App, pattern: &[u32]) -> Fingerprint {
+    run_to_tick(app, SUMMON_TICK, pattern, Progress::Silent);
+    summon_brute(app);
+    let print = run_to_tick(app, TICKS, pattern, Progress::Silent);
+
+    assert_eq!(
+        brutes_alive(app.world_mut()),
+        1,
+        "призыв Громилы не прошёл: {print:?}"
+    );
     assert!(
         print.moving > 0,
         "мир стоит на месте — сравнивать нечего: {print:?}"
@@ -138,4 +162,31 @@ fn a_restart_replays_the_run() {
     let second = run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
 
     assert_eq!(first, second);
+}
+
+/// Призыв — ввод симуляции, как ползунок: поданный между кадрами после
+/// [`SUMMON_TICK`], он приходится на один тик и при ровных кадрах, и при
+/// рваных. Ловит призыв, съеденный в `Update`, и Громилу, чей номер или цена
+/// зависят от того, сколько тиков уместилось в кадр.
+#[test]
+fn a_summon_replays_at_any_frame_rate() {
+    let steady = run_with_summon(&mut app(1), &[1]);
+    let ragged = run_with_summon(&mut app(1), &RAGGED);
+    assert_eq!(steady, ragged);
+}
+
+/// Рестарт после призыва возвращает прогон без призыва: Громила уходит вместе с
+/// демонами, `Souls` обнуляются на `WorldStarted`. Сравнение со свежим `App` —
+/// то, что даёт этому тесту [`a_restart_replays_the_run`]: состояние призыва,
+/// пережившее сброс, разошлось бы здесь.
+#[test]
+fn a_restart_forgets_the_summon() {
+    let mut app = app(1);
+    run_with_summon(&mut app, &[1]);
+
+    app.world_mut().trigger(RestartEvent::default());
+    app.update();
+    let after_restart = run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
+
+    assert_eq!(after_restart, run(1, &[1]));
 }

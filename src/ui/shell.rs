@@ -170,6 +170,7 @@ pub(super) enum SectionSlot {
     Navigation,
     // Sim
     World,
+    Siege,
     Demon,
     Human,
     // Debug

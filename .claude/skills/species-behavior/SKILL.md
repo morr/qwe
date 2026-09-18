@@ -21,8 +21,11 @@ Neighbouring skills: pathfinding, separation and destination slots are `navigati
 ## The fixed step
 
 **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-DemonBehavior → HumanBehavior`. **Demons act before humans so a kill lands before `escape`**
-— a human is never counted both killed and escaped in one tick.
+DemonBehavior → HumanBehavior → Territory`. **Demons act before humans so a kill lands
+before `escape`** — a human is never counted both killed and escaped in one tick.
+`Territory` is the siege layer's slot (corruption, `corruption.rs` — the `city-siege`
+skill): it reads what this tick's behaviour left (the census, the standing bastions) and
+writes only `Corruption`, so it has no ordering edge to `move_moving_entities`.
 
 **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
 interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems mutate
@@ -31,7 +34,7 @@ interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems 
 Fixed-step order is explicit and load-bearing:
 
 - `snapshot_previous_sim_positions` **before** `SimSet::SpatialRebuild`;
-- the demon spawner (`spawn_initial_burst`, `tick_spawner`) **before**
+- the demon spawner (`spawn_initial_burst`) **before**
   `SimSet::SpatialRebuild` — the edge is what puts a sync point between the spawn commands
   and the grid rebuild, so a demon is in the grid on the tick it is born. With no edge the
   flush landed on either side of the rebuild depending on the executor;
@@ -309,16 +312,68 @@ and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
 
 States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target biased away
 from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always,
-and `movement::BodyScale::DEMON` — its body is the one thing movement would otherwise have
-to infer from the species.
+and its kind's `movement::BodyScale` — its body is the one thing movement would otherwise
+have to infer from the species.
+
+### Kinds
+
+`DemonKind { Imp, Brute }` (`demon/components.rs`), the numbers in `settings.rs` as
+`DemonKindStats` (`IMP`, `BRUTE`): speed multiplier, body scale, damage, attack period.
+**Imp** is the demon described in this whole section — 2× body (`BodyScale::DEMON`),
+speed ×1, no attack. **Brute** — 3× body, ×0.6 speed, `combat::Attack { damage: 10 }` +
+`AttackCooldown::ready(1 s)` inserted at spawn — never chases humans: `acquire_targets` and `chase`
+filter `With<ImpTag>`, and its own ladder (the `city-siege` skill) drives it to the
+bastions. The marker tags (`ImpTag` / `BruteTag`) exist because a query cannot filter on
+an enum variant. Four places went from "a demon is one size and one speed" to the kind:
+`spawn_demon` (body, `Movable::new(base × speed_mul)`), `sync_demon_speed`
+(× `speed_mul`), separation (radius off `BodyScale`, the cell off `MAX_BODY_SCALE` —
+`navigation-deep`, `references/crowd.md`) and the look (`demon/look.rs`: `demon_body` and
+`halo` take the kind — sprite and halo sized `DEMON_SIZE × body_scale / IMP.body_scale`,
+`kind_tint` picks the Imp's hot ring or the Brute's darker ring toward purple,
+`brute_tint`). The burst spawns Imps only; Brutes come by summoning.
+`Species::Demon` and the shared `PawnId` counter are unchanged — the replay contract
+does not see kinds.
 
 **Look** (`demon/look.rs`) — the `Ember` glyph of the silhouette atlas (seven spikes, a
 bright core), tinted by `demon_tint`: a five-shade ring from crimson to orange so demons
-born in a row stay apart. Under the body a **halo** — a child entity (`DemonHalo`, the
+born in a row stay apart (a Brute takes `brute_tint`, its darker ring toward purple, and a
+body sized by its kind). Under the body a **halo** — a child entity (`DemonHalo`, the
 `Halo` glyph, `HALO_RATIO` 3 bodies wide, local z −0.01): it inherits the devour pulse
 through the parent's scale, is despawned with the parent (despawn is recursive, so it
 carries no `DespawnOnExit` of its own), and y-sorting draws a neighbouring human *over*
 it. `spawn_demon` gets the atlas through `DemonBirth`.
+
+### The Brute's ladder
+
+`demon/decide_brute.rs` — `BruteSense → decide → BruteAction`, the chase ladder's shape,
+applied by `demon/besiege.rs::besiege` (chain slot: after `devour`, before
+`combat::strike`, so a target set this tick is hit this tick). Rungs, in order:
+
+1. **A target** (`AttackTarget`): a ruin, or an entity that no longer exists → `Done` —
+   `AttackTarget` and `ChaseRepath` come off, `DemonWanderTag` goes back on, the in-flight
+   search is left alone (the `back_to_wander` rule). Within `ATTACK_REACH` → `Strike`:
+   `Movable::to_idle` if still moving, then nothing — the blow is `combat::strike`'s.
+   Otherwise the chase's own three, **shared code, not a copy**: `WaitForPath` (first
+   search in flight, no path, never walked) and `Hold` (tact not due; the timer ticks only
+   on `Hold`/`Repath`, as in the chase) are `decide::path_rung` over a `PathSense` (the
+   five path fields, built by `PathSense::of` — both `ChaseSense` and `BruteSense` embed
+   it as `path`); `Repath { target }` — the bastion's point through
+   `behavior::repath_towards`, the chase's own apply tail (skipped when the current goal
+   tile is already it, else `request_wander_path`). `ChaseRepath` is the Brute's throttle
+   too, name notwithstanding.
+2. **No target**: the nearest **frontline** bastion with a free slot → `Engage` — claim
+   the slot, `DemonWanderTag` off, `AttackTarget` + fresh `ChaseRepath` on, path
+   requested. The front is computed once per tick in `besiege`: standing bastions whose
+   district is uncorrupted and has a corrupted neighbour (`Corruption::is_corrupted` over
+   `District::neighbours`). Nearest is by distance squared with ties on `Bastion::site`
+   — the site index, never `Entity`.
+3. **No front** → `Wander`: the Brute keeps `DemonWanderTag` and the shared
+   `pick_wander_targets` walks it away from the portal like any demon.
+
+`BastionClaims` (`claims.rs`) is `ChaseClaims`' twin for bastions — built each tick from
+the Brutes' `AttackTarget`s, `MAX_BRUTES_PER_BASTION = 3` (a rule of the ladder, declared
+in `decide_brute.rs`). No lunge, no kill, no RNG anywhere in this ladder. Tests:
+`decide_brute::tests` (the table) and `claims::tests::three_brutes_fill_a_bastion`.
 
 ### Wander
 
@@ -430,8 +485,8 @@ soul** (`human/soul.rs::release_soul`) at the victim's `SimPosition` — a golde
 (`SoulMote`) that `rise_souls` (FixedUpdate, after `SimSet::HumanBehavior`) lifts 6 m over
 1.4 s of sim time and despawns; the visible side of `Telemetry::killed`. It reads
 `Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it. The
-mote is **not** the `Souls { earned, spent }` currency of `ROADMAP.md` — that is a
-separate concept, a resource this same observer will increment next to `Telemetry::killed`;
+mote is **not** the `Souls { earned, spent }` currency of `souls.rs::Souls` — that is a
+separate concept, a resource this same observer increments next to `Telemetry::killed`;
 `SoulMote` counts nothing.
 
 **What each exit from a chase strips is one list plus one exception.** The list is
@@ -465,15 +520,18 @@ one line in `chase` that steps `SimPosition`, never written into `Movable::speed
 
 ### The spawner
 
-**`DemonSpawner`** — initial burst at the portal rim, then one demon per interval up to the
-cap. Runs in `FixedUpdate` so a restart re-fires the burst for free. Cap and interval live in
-**`DemonStyle { cap, interval, speed, lunge }`** (sliders of the Sim tab's Demon section,
-persisted); `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are only its `Default`.
+**`DemonSpawner`** — the initial burst of Imps at the portal rim, and nothing after it:
+further demons come only by **summoning** for souls (roadmap decision 5 — an interval
+spawner contradicts "souls buy demons"; `tick_spawner`, `DemonStyle::interval`, the
+**Spawn every** slider and the `DEMON_SPAWN_INTERVAL*` constants were removed with it).
+Runs in `FixedUpdate` so a restart re-fires the burst for free. The cap lives in
+**`DemonStyle { cap, speed, lunge }`** (sliders of the Sim tab's Demon section, persisted);
+`DEMON_CAP` is only its `Default`, and it caps summoning too. A `settings.toml` written
+before the change still carries `interval` — `bevy_settings` applies TOML by field and
+skips the unknown key.
 
 - The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the reduced count).
 - Lowering the cap never despawns demons already out.
-- The timer's period is re-synced inside `tick_spawner`, because restart and city switch
-  rebuild `DemonSpawner` whole.
 
 **A demon acts from the first tick it exists**, the initial burst included — held by the
 schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in
@@ -488,7 +546,10 @@ time. Two demons then share a `PawnId`, which breaks both the pawn's RNG stream 
 deterministic dispatcher's queue key (it died on a duplicate key ~30 ticks in). Relying on
 "warmup keeps the world paused" was not enough — that pause belongs to `sim_time` and space
 unpauses it. Matching precondition on the reset: **no demon may be alive when a run starts**
-(`demon::on_world_started` says so).
+(`demon::on_world_started` says so). **Summoning shares the slot**: `demon::systems::summon`
+is chained right after `spawn_initial_burst` under the same gates, reads
+`SummonRequested` messages and calls the same `spawn_demon` — the price, the cap check and
+the souls are the `city-siege` skill's.
 
 ## Look: the silhouette atlas and the portal
 
@@ -667,10 +728,10 @@ junction under the portal is charred), below corpses (bodies stay visible on it)
 
 ## Telemetry
 
-`{killed, escaped}`, BRP-readable; `killed` is what the **Souls reaped** HUD counter shows
-(`ui/stats.rs`, first in the left column, outside the settings tabs — panel internals live
-in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
-determinism row, no telemetry.
+`{killed, escaped}`, BRP-readable; `killed` equals `Souls::earned`, and the HUD's **Souls**
+row shows `available / earned` (`ui/stats.rs`, first in the left column, outside the
+settings tabs — panel internals live in the **ui-panels skill**). The Sim tab's **World**
+section is a different thing: seed and determinism row, no telemetry.
 
 **Invariant (check paused): `killed + escaped + alive == PopulationSize`** — the number the
 spawn read, not the constant. In the game it is the default `HUMAN_COUNT`; in a replay run

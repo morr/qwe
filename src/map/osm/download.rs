@@ -9,12 +9,14 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
+use crate::bastion::{BastionSites, plan_sites};
 use crate::city::City;
+use crate::district::Districts;
 use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::parse;
-use crate::navigation::{Navmesh, snap_portal_position};
+use crate::navigation::{Navmesh, snap_heart_position, snap_portal_position};
 
 /// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
 /// (Нью-Йорк, Лондон) регулярно отвечает 504 «server too busy» — или, того
@@ -36,11 +38,17 @@ const CHUNK_SIZE: usize = 64 * 1024;
 /// экране загрузки. По чанку в 64 КБ мерить бессмысленно — цифра прыгает.
 const SPEED_WINDOW: Duration = Duration::from_millis(250);
 
-/// Готовый к спавну мир: разобранная карта и позиция портала (снап нужен
-/// уже заполненному navmesh, а прунинг — уже снапнутому порталу).
+/// Готовый к спавну мир: разобранная карта, позиция портала (снап нужен
+/// уже заполненному navmesh, а прунинг — уже снапнутому порталу) и сердце
+/// (снап — уже после прунинга, чтобы тайл сердца был достижим от портала).
 pub struct LoadedWorld {
     pub map: MapData,
     pub portal: Vec2,
+    pub heart: Vec2,
+    /// Районы по пропрунённому navmesh — производная от карты, как и он.
+    pub districts: Districts,
+    /// Места бастионов: теги плюс добор до квоты района.
+    pub bastions: BastionSites,
 }
 
 pub enum JobState {
@@ -150,7 +158,57 @@ fn build_navmesh(
         started.elapsed()
     );
 
-    LoadedWorld { map, portal }
+    // после прунинга «проходимый» значит «достижимый от портала»: сердце
+    // снапится на тайл, до которого демоны в принципе дойдут. Клиренс, в
+    // отличие от портала, не нужен — здесь никто не спавнится
+    let hint = city.heart_hint();
+    let heart = match snap_heart_position(&navmesh, hint) {
+        Some(position) => {
+            if position != hint {
+                info!("heart snapped {hint:?} => {position:?}");
+            }
+            position
+        }
+        None => {
+            warn!("no passable tile for the heart near {hint:?}");
+            hint
+        }
+    };
+
+    // районы — по пропрунённому navmesh и снапнутым порталу и сердцу;
+    // миллисекунды, своего состояния экрана загрузки не заслуживают
+    let started = std::time::Instant::now();
+    let districts = Districts::build(&navmesh, portal, heart);
+    info!(
+        "districts: {} in {:?} (heart {:?}, portal {:?} at {:?} steps)",
+        districts.len(),
+        started.elapsed(),
+        districts.heart,
+        districts.portal,
+        districts
+            .portal
+            .and_then(|id| districts.districts[id as usize].dist_to_heart)
+    );
+
+    // бастионы — по районам: теги плюс добор до квоты, точки на проходимых
+    // тайлах у стен
+    let started = std::time::Instant::now();
+    let bastions = plan_sites(&map, &districts, &navmesh);
+    info!(
+        "bastions: {} tagged, {} strongholds, {} dropped in {:?}",
+        bastions.tagged,
+        bastions.strongholds(),
+        bastions.dropped,
+        started.elapsed()
+    );
+
+    LoadedWorld {
+        map,
+        portal,
+        heart,
+        districts,
+        bastions,
+    }
 }
 
 fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
