@@ -395,8 +395,9 @@ ladder consumes (`DEMON_AGGRO_RADIUS`, `DEMON_LUNGE_RANGE`, `KILL_DISTANCE`,
 `RADIUS_HYSTERESIS`) do come from `settings.rs`. What moves to `settings.rs` is a constant
 more than one owner reads — both species declaring it (`WANDER_MAP_MARGIN`, commit
 `432eabf`), or a knob the panel and the model share. A knob's own `_MIN`/`_MAX`/`_STEP`
-range is *not* such a constant: it clamps its resource on read, so it belongs beside that
-resource. Don't relocate anything here to "comply" with the tuning-constants rule.
+range is *not* such a constant: it bounds its resource's field — the panel only renders it —
+so it belongs beside that resource. `HumanStyle` and `DemonStyle` do not clamp on read; their
+ranges are the declaration of what the field may hold, not a guard on it. Don't relocate anything here to "comply" with the tuning-constants rule.
 
 **A chaser with no first path yet skips the repath tick and waits.** Repathing cancels the
 in-flight search, and whenever the pipeline answers slower than the victim changes tiles the
@@ -599,7 +600,8 @@ Two traps, both paid for once:
 - **`shade` is read as sRGB** (the atlas is `Rgba8UnormSrgb`), so 0.55 is ≈0.26 of the
   light — a value picked as a linear fraction comes out near black.
 - **transparency belongs to the glyph, not to the sprite colour.** `BLOOD_ALPHA` is 1.0
-  and `BLOOD_COLOR`'s job is only to say *what colour thin blood is*. A translucent colour
+  and the `BLOOD_HUE` / `BLOOD_SATURATION` / `BLOOD_LIGHTNESS` triple's job is only to say
+  *what colour thin blood is*. A translucent colour
   was tried first: on the pavement (linear 0.74 against blood's 0.3) even an eighth of the
   ground bleaching through turned the pool brown.
 

@@ -687,11 +687,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   zoom bucket.
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
   (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
-  the roof material, parked cars, standing wagons. **The seed is the object's own reference
-  point** — the
-  first vertex of a footprint, the first point of a street — never its index in the extract,
-  so a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage
-  (doors, tree planting) keeps its own point-seeded `rng::lcg_seeded_by`.
+  the roof material, parked cars, standing wagons. `Lcg::next_f32` is `[0, 1)` by a clamp,
+  not by arithmetic — the `u32 / 2³¹−1` division rounds up to exactly `1.0` on 63 of the
+  generator's states — and **`Lcg::range` is half-open only almost**: `from + t·(to − from)`
+  still rounds to `to` itself on a long range, so a caller that needs strict half-openness
+  clamps at the call site, the way the wagon rake does. **The seed is the object's own
+  reference point** — the first vertex of a footprint, the first point of a street — never
+  its index in the extract, so a zoom rebuild, a height-mode switch and a restart move
+  nothing. The parse stage (doors, tree planting) keeps its own point-seeded
+  `rng::lcg_seeded_by`.
 - **Arclength walk** (`map/along.rs`) — `arclengths` + `place_on_path`, the one walk along a
   polyline's **whole** length, shared by every layer that places objects along linear
   geometry (parked cars, standing wagons) the way `map/seed.rs` shares the RNG. The defect
@@ -699,7 +703,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   routinely shorter than two end margins, so such a walk drops the link whole, resets the
   step at every vertex and keeps a margin clear of every interior bend. Curvature stays the
   caller's problem — checked by **world** distance to the last object placed, never by the
-  arc coordinate.
+  arc coordinate. Both edges of `[0, total]` are **inside**: the walk hits the end exactly,
+  and a refusal there would drop the last object of a row. A repeated vertex does not eat a
+  place either — coinciding vertices are one point, and the direction comes from the nearest
+  link that has length; `None` is left only for a polyline with no length at all.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -1356,7 +1363,7 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `FixedUpdate` chain. **The unit of replay**: world state is a function of `(seed,
   settings, SimTick)`. Not `SimClock`, which counts virtual seconds and loses whatever
   `max_delta` discarded. **Compare states by tick, never by wall clock.**
-- **Deterministic** (`determinism.rs::Determinism`, panel toggle) — gates *scheduling*, not
+- **Deterministic** (`determinism/mod.rs::Determinism`, panel toggle) — gates *scheduling*, not
   the dice. On: *human* target picking moves to `FixedUpdate` (the demons' already runs there
   in both modes), answers land on a fixed tick, the dispatcher stops looking at the camera,
   the backend is frozen, separation is off. A run is
@@ -1703,7 +1710,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 ## Cross-references
 
 - World-wide tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates,
-  z-layers, geo anchor) — what belongs to the world as a whole, i.e. what more than one
+  z-layers, the projection scale `METERS_PER_DEG_LAT`) — what belongs to the world as a
+  whole, i.e. what more than one
   owner reads. **A number with exactly one owner lives beside that owner**, and "it is a
   constant" is not a reason to move it here. Not there: a number that *is* a rule of a
   decision ladder rather than a knob
@@ -1711,9 +1719,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   factors in `demon/decide.rs`, `FLEE_STEP`/`FLEE_SPREAD`/`ESCAPE_MARGIN` in
   `human/decide.rs`. A constant both species declare moves to `settings.rs`
   (`WANDER_MAP_MARGIN`). A slider's `_MIN`/`_MAX`/`_STEP` range belongs to the resource
-  whose field it clamps: the range is part of the model, applied on read, and the panel is
-  only one of its readers — the agent-radius range is exactly that and lives in
-  `navigation/polymesh/`. Same split in the polymesh for the rest: the world-scale metres
+  whose field it bounds: the range is part of the model — it says which values that field
+  may take, and the panel only renders it — the agent-radius range is exactly that and lives
+  in `navigation/polymesh/`, where `PolymeshDebug::radius()` also clamps on read. Same split in the polymesh for the rest: the world-scale metres
   are in `settings.rs` under the `POLYMESH_` prefix (endpoint tolerance, map-edge
   margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
   `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,
@@ -1721,7 +1729,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   Also not there: what a gizmo *looks like* and each visibility gate's own view margin —
   `MOVEPATH_COLOR`/`MOVEPATH_ARROW_TIP`/`MOVEPATH_VIEW_SCREENS` (`movement/systems.rs`),
   `DOOR_*` (`ui/debug/overlays.rs`), `VIEW_MARGIN` (`movement/mod.rs`) — they live beside
-  the draw call or the gate, see `camera::Viewport::with_margin`.
+  the draw call or the gate, see `camera::Viewport::with_margin`. And not there either: the
+  **geo anchor** — the `*_GEO_CENTER` per city and the `*_PORTAL_POS` hints live beside
+  `City` in `city.rs`, its only reader; only `METERS_PER_DEG_LAT` stays, because it belongs
+  to the projection rather than to a city.
   Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
   `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry
@@ -1736,6 +1747,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   Detail — **species-behavior skill**.
 - Speed & regulator: `src/sim_time.rs`. Detail — **sim-speed skill**.
 - UI: `src/ui/`, camera: `src/camera.rs`. Detail — **ui-panels skill**.
-- Tests: `tests/navigation.rs` (synthetic navmesh + hand-built `MapData`),
-  `tests/spatial.rs`, `tests/movement.rs`, `tests/determinism.rs`, unit tests inside
-  `map/osm/*` and `map/meshing.rs`.
+- Tests: the integration suites `tests/navigation.rs` (synthetic navmesh + hand-built
+  `MapData`), `tests/spatial.rs`, `tests/movement.rs`, `tests/determinism.rs`,
+  `tests/map.rs`; everything else is a **unit-test module beside the module it tests** —
+  a `tests.rs` in the module's own directory —
+  `navigation/navmesh/{raster,fill,gates,reach}/tests.rs`, `map/seed/tests.rs`,
+  `map/smooth/tests.rs`, `sim_time/tests.rs`, … — three dozen of them today.

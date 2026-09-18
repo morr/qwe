@@ -38,7 +38,8 @@ stand, how density works, and which resources restyle them.
   untouched: row trees land in the same `MapData::trees`, so crowns, the merged shadow
   layer, the conifer field and the density prefix apply to them without a line of new
   rendering code.
-  - **A row carries a green band under it** (`spawn.rs::spawn_tree_row_band`) — a ribbon
+  - **A row carries a green band under it** (`spawn.rs::mesh_tree_row_band`, spawned by
+    `spawn.rs::rebuild_tree_row_band`) — a ribbon
     of `TREE_ROW_BAND_WIDTH` (10 m) in `WOOD_COLOR` at `Z_TREE_ROW_BAND`. On the map an
     avenue is a wood one crown wide, and without the band its crowns hang over bare
     asphalt while every park tree stands on green. The band is deliberately narrower than
@@ -89,7 +90,8 @@ stand, how density works, and which resources restyle them.
     over a few hundred rows are not. The load log prints all four counts.
 - **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m² of wood outline) at
   `TreeStyle::density == 1`; the slider multiplies it, `TREE_DENSITY_MIN` (0.25, in
-  `map/trees.rs` beside `TreeStyle` — a range belongs to the resource it clamps) …
+  `map/trees.rs` beside `TreeStyle`, per `CLAUDE.md`'s tuning-constants rule — `TreeStyle`
+  does not clamp on read) …
   `TREE_DENSITY_MAX` (in `map/osm/planting.rs`, where it is computed), step 0.25. Planting runs once at the ceiling, so
   `MapData::trees` holds the densest forest and the slider only **shows a prefix** of it —
   never a replant, which would reshuffle every position and make the whole forest jump on

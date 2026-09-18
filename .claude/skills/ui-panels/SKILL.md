@@ -395,8 +395,9 @@ did not fit 1080 px and ran off the top of the screen.
   feathers paints hover and press itself. A row whose click currently does nothing gets
   first-party **`bevy::ui::InteractionDisabled`** from its panel, which both stops the
   highlight and swallows `Activate` — promising a reaction the click will not deliver is
-  worse than not highlighting. `BUTTON_BG_DISABLED` is deliberately the *resting* colour,
-  not a dimmed one: an inert row should look ordinary and merely not react. The only carrier
+  worse than not highlighting. There is no dimmed-disabled colour of our own: feathers simply
+  stops repainting the row, so it keeps its *resting* colour — an inert row should look
+  ordinary and merely not react. The only carrier
   today is the Separation toggle under **Deterministic** or grid navigation.
 - **The bottom columns are gone.** `stack_bottom_columns`, `column_bottom`, `Stacked`,
   `UiRightColumn` / `UiLeftColumn` / `UiPanelGapBelow`, `panel_node`, `right_panel` /

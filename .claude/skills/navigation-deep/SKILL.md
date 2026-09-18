@@ -289,7 +289,8 @@ world's knobs but the scale everything navigational is built in, and it has one 
   poking outside its outer ring still subtracts instead of filling. Replaced a
   point-in-polygon test per tile of the AABB, which on London's Thames (huge bbox × long
   ring) cost 6.3 s of a 6.5 s fill; now 30 ms.
-- **prune_unreachable** — BFS flood from the portal tile; passable-but-unreachable
+- **prune_unreachable** — the shared `reach::flood` from the portal, taken as a **world
+  point** and converted through the navmesh's own snapshot; passable-but-unreachable
   pockets (enclosed courtyards, islands) become impassable. Reason: an A* request to an
   unreachable target floods the whole reachable region (tens of ms each); before pruning
   this once piled up a 12 000-request backlog and humans "froze". 4-connectivity matches
