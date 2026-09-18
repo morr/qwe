@@ -26,9 +26,8 @@ use bevy::prelude::*;
 
 use crate::map::SunOnMap;
 use crate::map::footprint::{fence_gaps, fence_pieces};
-use crate::map::meshing::{MeshBuilder, sweep_convex};
+use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
-use crate::map::roads::{RoadJoin, push_ribbon};
 use crate::map::shadow;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -216,12 +215,13 @@ pub fn mesh_fences(
             FenceKind::Wall => WALL_COLOR,
             FenceKind::Hedge => HEDGE_COLOR,
         };
-        push_ribbon(
-            &mut builder,
+        builder.push_ribbon(
             points,
+            false,
             width,
             color.to_linear(),
-            RoadJoin::Round,
+            RibbonJoin::Round,
+            RibbonCap::Round,
         );
     }
     let report = FenceReport {
@@ -251,7 +251,7 @@ const JOINT_SIDES: usize = 8;
 /// — при ширине ленты в четверть метра это вторая ограда рядом, а не тень.
 /// Лента не выпукла, поэтому свип собирается по кускам, каждый из которых
 /// выпуклый: прямоугольник каждого звена и многоугольник каждого узла (круглые
-/// стыки и торцы ленты, `RoadJoin::Round`), и каждый заметается
+/// стыки и торцы ленты, `RibbonJoin::Round` / `RibbonCap::Round`), и каждый заметается
 /// [`sweep_convex`] — тем же обходом, что у машин.
 ///
 /// **Куски объединяются**, в отличие от машин: полупрозрачный слой, в котором

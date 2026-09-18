@@ -24,7 +24,9 @@
 //!
 //! Осевая (`RoadLine::points`) при этом **не трогается**: на ней стоят навмеш
 //! (`bridge`/`passage`-прорезы), арки, посадка деревьев и генератор дверей.
-//! Chaikin-сглаживание работает на копии и только ради картинки.
+//! Chaikin-сглаживание работает на копии и только ради картинки; само правило
+//! живёт в `map/smooth.rs` — его читают ещё пять слоёв, — а здесь остаётся
+//! [`centerline`], дорожная обёртка над ним с её двумя закреплениями.
 //!
 //! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, светлая
 //! полоса шире проезжей части на [`sidewalk_width`] с каждой стороны), кант и
@@ -44,7 +46,6 @@
 //! магистрали с разрывом под въезд, а не обрубок линии въезда поверх неё.
 
 use std::borrow::Cow;
-use std::f32::consts::PI;
 
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
@@ -60,6 +61,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::shadow;
+use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
@@ -522,12 +524,6 @@ const Z_WALL: f32 = Z_BUILDING + 0.1;
 /// пересекаются) — в `map::footprint`.
 const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
 
-/// Изломы мельче Chaikin не срезает: прямые участки обязаны остаться точками
-/// OSM, иначе сглаживание съедает и без того редкую геометрию длинных улиц.
-const MIN_SMOOTH_ANGLE: f32 = 10.0 * PI / 180.0;
-/// Доля сегмента, отрезаемая с каждой стороны излома (классический Chaikin).
-const CHAIKIN_CUT: f32 = 0.25;
-
 /// Чем закрыт излом ленты дороги.
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RoadJoin {
@@ -565,38 +561,6 @@ impl RoadJoin {
     }
 }
 
-/// Сколько раз осевая прогоняется через Chaikin перед построением ленты.
-#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum RoadSmoothing {
-    /// Осевая ровно по данным OSM — как в самом OSM, где углы остаются острыми.
-    Off,
-    /// Один проход: улица на повороте перестаёт ломаться под углом, а рисунок
-    /// сети ещё держится там, где OSM ставил узлы.
-    #[default]
-    Light,
-    Strong,
-}
-
-impl RoadSmoothing {
-    pub const ALL: [Self; 3] = [Self::Off, Self::Light, Self::Strong];
-
-    fn iterations(self) -> usize {
-        match self {
-            Self::Off => 0,
-            Self::Light => 1,
-            Self::Strong => 2,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Light => "Light",
-            Self::Strong => "Strong",
-        }
-    }
-}
-
 /// Стиль дорожных лент; переключается панелью Roads и BRP, сохраняется в
 /// настройках между запусками. Правка пересобирает дорожные слои
 /// ([`rebuild_roads`]).
@@ -605,7 +569,7 @@ impl RoadSmoothing {
 #[settings_group(group = "roads")]
 pub struct RoadStyle {
     pub join: RoadJoin,
-    pub smoothing: RoadSmoothing,
+    pub smoothing: Smoothing,
     /// Тёмный кант по краю дороги отдельным слоем под заливкой.
     pub casing: bool,
     /// Серая полоса тротуара вдоль улиц (не проездов) отдельным слоем под
@@ -620,7 +584,7 @@ impl Default for RoadStyle {
     fn default() -> Self {
         Self {
             join: RoadJoin::default(),
-            smoothing: RoadSmoothing::default(),
+            smoothing: Smoothing::default(),
             casing: false,
             sidewalks: true,
             markings: true,
@@ -1365,8 +1329,14 @@ fn push_bridge_curb(builder: &mut MeshBuilder, points: &[Vec2], width: f32, join
     );
 }
 
-/// Лента выбранного стиля. Общая с подложкой аллей (`map::spawn`): у неё те же
-/// три настройки, что у дорог, и мапиться на `MeshBuilder` они обязаны одинаково.
+/// Лента выбранного стиля — `RoadJoin` через [`RoadJoin::ribbon_shape`]. Общая
+/// с подложкой аллей (`map::spawn`): у неё те же три настройки, что у дорог, и
+/// мапиться на `MeshBuilder` они обязаны одинаково.
+///
+/// Слои с **жёстко заданным** стыком (ограда, рельсы, трамвай) зовут
+/// `MeshBuilder::push_ribbon` напрямую: обёртка им говорила бы только «переведи
+/// `RoadJoin::Round` в `RibbonJoin::Round`», то есть выдавала бы стиль дорог за
+/// их собственный.
 pub fn push_ribbon(
     builder: &mut MeshBuilder,
     points: &[Vec2],
@@ -1412,76 +1382,13 @@ fn push_street_fill(
 /// узле кончается поперечная улица и сходятся лучи скругления бордюра
 /// (`roads/corners.rs`). Сдвинь хорда сквозную дорогу с узла — торец
 /// поперечной повис бы в метре от её асфальта или вылез за дальний край.
-fn centerline<'a>(
-    road: &'a RoadLine,
-    smoothing: RoadSmoothing,
-    nodes: &RoadNodes,
-) -> Cow<'a, [Vec2]> {
+fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -> Cow<'a, [Vec2]> {
     if road.passage {
         return Cow::Borrowed(&road.points);
     }
     smooth_pinned(&road.points, road.width, smoothing, |point| {
         nodes.is_shared(point)
     })
-}
-
-/// Сглаживание осевой на копии — общее для дорог, рельсов и зелёной полосы под
-/// аллеей (`map::spawn`). Длина среза зажата шириной ленты, поэтому ширина
-/// здесь параметр, а не константа.
-pub fn smooth_path(points: &[Vec2], width: f32, smoothing: RoadSmoothing) -> Cow<'_, [Vec2]> {
-    smooth_pinned(points, width, smoothing, |_| false)
-}
-
-/// [`smooth_path`], не трогающее вершины, для которых `pinned` — да.
-fn smooth_pinned(
-    points: &[Vec2],
-    width: f32,
-    smoothing: RoadSmoothing,
-    pinned: impl Fn(Vec2) -> bool + Copy,
-) -> Cow<'_, [Vec2]> {
-    let iterations = smoothing.iterations();
-    if iterations == 0 || points.len() < 3 {
-        return Cow::Borrowed(points);
-    }
-    let mut path = points.to_vec();
-    for _ in 0..iterations {
-        path = chaikin(&path, width, pinned);
-    }
-    Cow::Owned(path)
-}
-
-/// Срезание углов по Chaikin: излом заменяется парой точек на прилежащих
-/// сегментах. Срезаются только изломы круче [`MIN_SMOOTH_ANGLE`], а длина
-/// среза зажата шириной дороги — иначе на длинных сегментах осевая уезжает от
-/// данных OSM на десятки метров и дорога перестаёт совпадать с домами.
-/// Концы пути и вершины, для которых `pinned` — да, закреплены.
-fn chaikin(points: &[Vec2], width: f32, pinned: impl Fn(Vec2) -> bool) -> Vec<Vec2> {
-    let mut path = Vec::with_capacity(points.len() * 2);
-    path.push(points[0]);
-    for index in 1..points.len() - 1 {
-        let (previous, corner, next) = (points[index - 1], points[index], points[index + 1]);
-        if pinned(corner) {
-            path.push(corner);
-            continue;
-        }
-        let (Some(incoming), Some(outgoing)) = (
-            (corner - previous).try_normalize(),
-            (next - corner).try_normalize(),
-        ) else {
-            path.push(corner);
-            continue;
-        };
-        if incoming.angle_to(outgoing).abs() < MIN_SMOOTH_ANGLE {
-            path.push(corner);
-            continue;
-        }
-        let back = (corner.distance(previous) * CHAIKIN_CUT).min(width);
-        let forward = (next.distance(corner) * CHAIKIN_CUT).min(width);
-        path.push(corner - incoming * back);
-        path.push(corner + outgoing * forward);
-    }
-    path.push(points[points.len() - 1]);
-    path
 }
 
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин обязан

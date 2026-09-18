@@ -47,7 +47,7 @@ stand, how density works, and which resources restyle them.
     and roads, exactly as the wood fill does inside a park.
     It is its **own entity**, not part of the merged `woods` mesh, because it carries the
     same three knobs the road ribbons do — **join, smoothing (Chaikin), casing** — reusing
-    `roads::push_ribbon` / `smooth_path` / `casing_width` verbatim. The knobs are separate
+    `roads::push_ribbon` / `smooth::smooth_path` / `footprint::casing_width` verbatim. The knobs are separate
     from the Roads section's on purpose: an avenue's polyline and a street's come from
     different data, and the band must read as *wood* even where the roads are left raw.
     Defaults differ from roads accordingly — smoothing `Light` (a street may turn a
@@ -309,9 +309,15 @@ three shapes and keeps their proportions, where an absolute would erase the diff
 and need three sliders per quantity. Absolute are only the quantities with no per-shape
 value — stroke widths and the shadow geometry.
 
+`TREE_GALLERY_SHOT=path.png` takes one frame and exits, the shared `gallery_shot.rs` the
+roof, wall and car galleries use. The example has no remote endpoint, so that is the only
+way a session can look at its own work on the crowns.
+
 Two things the panel had to borrow from the game rather than invent, and both are the
-kind of thing that silently looks wrong: the widget kit (`qwe::ui::slider`,
-`spawn_panel_button`, `panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
+kind of thing that silently looks wrong: the widget kit (`qwe::ui::knob` over
+`qwe::ui::slider` — the rows are `spawn_knob` with a `SliderBinding<Tuning>` per knob, so
+the drag observer and the slider sync are the game's; plus `spawn_panel_button`,
+`panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
 the **font** — `apply_panel_font` lives in `UiPlugin`, which an example does not load, so
 the panel inserts `InheritableFont` (feathers' Fira Sans + `PANEL_FONT`) on its own root.
 Without it every label falls back to bevy's built-in font, which carries no Cyrillic and

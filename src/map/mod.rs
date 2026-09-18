@@ -26,6 +26,7 @@ mod seed;
 // тем же правилом длины, каким её рисует слой города (`shadow::offset`), а не
 // своей копией выражения
 pub mod shadow;
+mod smooth;
 mod spawn;
 mod sun;
 // публичен по той же причине, что `buildings` и `cars`: витрины кладут слои
@@ -60,10 +61,12 @@ pub use self::meshing::{
     MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, min_area_rect, miter_offsets,
 };
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
-// `ROAD_COLOR` и `smooth_path` наружу по той же причине: ряд машин витрины
-// обязан стоять на том же асфальте, что в городе, а асфальт — на той же
+// `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
+// том же асфальте, что в городе
+pub use self::roads::{ROAD_COLOR, RoadJoin, RoadStyle};
+// а `smooth_path` со `Smoothing` — потому, что асфальт под ним лежит на той же
 // сглаженной осевой
-pub use self::roads::{ROAD_COLOR, RoadJoin, RoadSmoothing, RoadStyle, smooth_path};
+pub use self::smooth::{Smoothing, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 // `apply_sun_style` наружу — тому же офлайн-бенчу: тени он собирает игровым
 // билдером, а солнце тому билдеру приходит процессной глобалью

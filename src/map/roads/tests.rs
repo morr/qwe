@@ -46,56 +46,17 @@ fn bridge_map(decks: Vec<RoadLine>) -> MapData {
 }
 
 #[test]
-fn chaikin_keeps_endpoints() {
-    let original = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
-    let smoothed = chaikin(&original, 3.5, |_| false);
-    assert_eq!(smoothed[0], original[0]);
-    assert_eq!(smoothed[smoothed.len() - 1], original[original.len() - 1]);
-}
-
-#[test]
-fn chaikin_deviation_is_bounded_by_width() {
-    // длинные сегменты: без ограничения шириной срез ушёл бы на 5 м от угла
-    let width = 3.5;
-    let original = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
-    let smoothed = chaikin(&original, width, |_| false);
-    // сами точки среза лежат на исходных сегментах
-    for point in &smoothed {
-        assert!(distance_to_path(*point, &original) < 1e-4);
-    }
-    // а хорда, заменившая угол, отходит от него не дальше ширины дороги
-    let deviation = smoothed
-        .windows(2)
-        .map(|segment| distance_to_path(segment[0].midpoint(segment[1]), &original))
-        .fold(0.0_f32, f32::max);
-    assert!(deviation <= width, "chaikin drifted {deviation} m");
-}
-
-#[test]
-fn chaikin_leaves_straight_runs_alone() {
-    // изломы по 2° мельче MIN_SMOOTH_ANGLE — ломаная возвращается как есть
-    let step = 10.0 * 2.0_f32.to_radians().tan();
-    let original = vec![
-        Vec2::ZERO,
-        Vec2::new(10.0, 0.0),
-        Vec2::new(20.0, step),
-        Vec2::new(30.0, step * 2.0),
-    ];
-    assert_eq!(chaikin(&original, 3.5, |_| false), original);
-}
-
-#[test]
 fn passage_roads_are_not_smoothed() {
     // концы арки приколоты к вершинам контура здания — сглаживать её нельзя
     let points = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
     let nodes = RoadNodes::new(&[]);
     let arch = road(points.clone(), 5.0, true);
     assert_eq!(
-        centerline(&arch, RoadSmoothing::Strong, &nodes).as_ref(),
+        centerline(&arch, Smoothing::Strong, &nodes).as_ref(),
         points.as_slice()
     );
     let ordinary = road(points, 5.0, false);
-    assert!(centerline(&ordinary, RoadSmoothing::Strong, &nodes).len() > 3);
+    assert!(centerline(&ordinary, Smoothing::Strong, &nodes).len() > 3);
 }
 
 #[test]
@@ -107,7 +68,7 @@ fn a_shared_node_survives_smoothing() {
     let side = road(vec![Vec2::new(20.0, -30.0), corner], 8.0, false);
     let roads = [through, side];
     let nodes = RoadNodes::new(&roads);
-    let drawn = centerline(&roads[0], RoadSmoothing::Strong, &nodes);
+    let drawn = centerline(&roads[0], Smoothing::Strong, &nodes);
     assert!(drawn.contains(&corner), "{drawn:?}");
 }
 
@@ -115,20 +76,7 @@ fn a_shared_node_survives_smoothing() {
 fn smoothing_off_borrows_the_osm_centerline() {
     let ordinary = road(vec![Vec2::ZERO, Vec2::new(20.0, 0.0)], 5.0, false);
     assert!(matches!(
-        centerline(&ordinary, RoadSmoothing::Off, &RoadNodes::new(&[])),
-        Cow::Borrowed(_)
-    ));
-}
-
-#[test]
-fn smooth_path_applies_where_nothing_is_pinned() {
-    // `smooth_path` — общий вход для рельсов, трамвая и зелёной полосы: в
-    // отличие от `centerline` ему нечего закреплять, и сглаживание он
-    // применяет всегда
-    let points = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
-    assert!(smooth_path(&points, 5.0, RoadSmoothing::Strong).len() > 3);
-    assert!(matches!(
-        smooth_path(&points, 5.0, RoadSmoothing::Off),
+        centerline(&ordinary, Smoothing::Off, &RoadNodes::new(&[])),
         Cow::Borrowed(_)
     ));
 }

@@ -1276,7 +1276,12 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   breaks at all gets `along + FAR_FROM_BREAKS` (dashes need a growing coordinate). The
   `Square` join falls back to `push_polyline`, which knows only the ends.
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
-  every road, alley and kremlin wall is drawn. Two knobs, both named after their SVG /
+  every road, alley and kremlin wall is drawn. The `roads::push_ribbon` **wrapper** over
+  it exists only to map a `RoadJoin` (the user's knob) onto the pair below, so the layers
+  whose join is a constant — fences, rails, the tram — call `MeshBuilder::push_ribbon`
+  themselves with `RibbonJoin::Round` / `RibbonCap::Round` and `closed: false`; going
+  through the wrapper made the road's style read as theirs.
+  Two knobs, both named after their SVG /
   Mapnik counterparts: **join** (`Miter` — bisector offsets capped by `MITER_LIMIT`;
   `Round` — an arc of radius half-width on the **outer** side of the bend, the side where
   butt-ended segment quads leave a gap) and **cap** (`Butt` — cut at the last point;
@@ -1425,7 +1430,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
     with *both ends* extended by half a width; no joins at all, which is what produced
     the notches on bends and the wedges at junctions), `Miter`, `Round` (default).
-  - **smoothing** — Chaikin corner-cutting on the centerline, `Off` / `Light` (default,
+  - **smoothing** — Chaikin corner-cutting on the centerline (`map/smooth.rs::Smoothing`),
+    `Off` / `Light` (default,
     1 iteration) / `Strong` (2). Only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the
     cut length is clamped to the road width, so the drawn line never leaves the OSM data by
     more than a road width. `passage` roads are never smoothed — their endpoints are pinned
@@ -1438,8 +1444,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
 
   Smoothing works on a **copy** — `RoadLine::points` and `width` are load-bearing for the
   navmesh (`bridge`/`passage` carves), arches, tree planting and the entrance generator,
-  and none of them may shift because the drawing changed. `smooth_path` is shared with
-  the rail layers; `centerline` is the road wrapper that adds the `passage` pin.
+  and none of them may shift because the drawing changed. **The rule itself lives in
+  `map/smooth.rs`**, not in `roads.rs`: `Smoothing`, `smooth_path`, the `pinned` variant
+  `smooth_pinned` and the private `chaikin` with its two constants. Six modules read it —
+  roads, rails, the tram, the waterways, the parked cars and the tree-row band — and it
+  used to sit in the middle of `roads.rs`, between the road palette and the bridge
+  shadows, which is why the enum was called `RoadSmoothing`. The **variant names**
+  `Off`/`Light`/`Strong` and the field name `smoothing` are values in `settings.toml` and
+  may not be renamed; the type and the module may. `centerline` stays in `roads.rs` — it
+  is the road wrapper that adds the arch and shared-node pins.
 - **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
   its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
   `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`

@@ -1,11 +1,12 @@
 //! Что вообще решает, как выглядит крона, — одной таблицей.
 //!
 //! Каждая строка панели описана здесь как [`ParamSpec`]: подпись, диапазон,
-//! чтение и запись поля. Таблица, а не по функции на ручку, потому что
-//! обработчик протяжки у всех один и тот же — «округли до шага, положи в поле,
-//! перепиши число» — и шестнадцать его копий отличались бы только именем поля.
+//! чтение и запись поля. Таблица, а не по функции на ручку, потому что за
+//! протяжкой всех шестнадцати стоит один и тот же наблюдатель кита
+//! (`qwe::ui::knob`), заведённый по разу на ресурс.
 
 use qwe::map::trees::CrownParams;
+use qwe::ui::knob::SliderBinding;
 
 /// Настройка витрины: ручки геометрии кроны плюс те немногие ручки вида,
 /// которые живут не в них. `Default` — игра по геометрии, с единственным
@@ -33,16 +34,18 @@ impl Default for Tuning {
     }
 }
 
-/// Одна ручка панели: как её звать, в каких пределах крутить и куда писать.
+/// Одна ручка панели: как её звать, под каким заголовком она стоит и к какому
+/// полю привязана.
+///
+/// Привязка — китовая ([`SliderBinding`]), ровно та же, что у ручек панелей
+/// игры: диапазон, чтение, запись и подпись. За протяжкой и синхронизацией
+/// тогда стоит наблюдатель кита, заведённый по разу на ресурс, а не свой на
+/// витрину.
 pub(crate) struct ParamSpec {
     pub(crate) label: &'static str,
-    /// `(min, max, step)` — как у строк-ползунков в панелях игры.
-    pub(crate) range: (f32, f32, f32),
-    pub(crate) get: fn(&Tuning) -> f32,
-    pub(crate) set: fn(&mut Tuning, f32),
-    pub(crate) format: fn(f32) -> String,
     /// Заголовок группы, если эта ручка её открывает.
     pub(crate) group: Option<&'static str>,
+    pub(crate) binding: SliderBinding<Tuning>,
 }
 
 /// Множитель к величине, своей у каждой формы: 1.00 — как в игре.
@@ -71,131 +74,163 @@ pub(crate) fn specs() -> Vec<ParamSpec> {
     vec![
         ParamSpec {
             label: "Points",
-            range: (0.25, 2.0, 0.25),
-            get: |t| t.crown.points,
-            set: |t, v| t.crown.points = v,
-            format: multiplier,
             group: Some("Форма"),
+            binding: SliderBinding {
+                get: |t| t.crown.points,
+                set: |t, v| t.crown.points = v,
+                range: (0.25, 2.0, 0.25),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Radius jitter",
-            range: (0.0, 2.0, 0.1),
-            get: |t| t.crown.radius_jitter,
-            set: |t, v| t.crown.radius_jitter = v,
-            format: multiplier,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.radius_jitter,
+                set: |t, v| t.crown.radius_jitter = v,
+                range: (0.0, 2.0, 0.1),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Lobe",
-            range: (0.3, 2.5, 0.1),
-            get: |t| t.crown.lobe,
-            set: |t, v| t.crown.lobe = v,
-            format: multiplier,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.lobe,
+                set: |t, v| t.crown.lobe = v,
+                range: (0.3, 2.5, 0.1),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Seed",
-            range: (0.0, 15.0, 1.0),
-            get: |t| t.crown.seed as f32,
-            set: |t, v| t.crown.seed = v as u32,
-            format: whole,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.seed as f32,
+                set: |t, v| t.crown.seed = v as u32,
+                range: (0.0, 15.0, 1.0),
+                text: whole,
+            },
         },
         ParamSpec {
             label: "Band lift",
-            range: (0.0, 3.0, 0.1),
-            get: |t| t.crown.band_lift,
-            set: |t, v| t.crown.band_lift = v,
-            format: multiplier,
             group: Some("Кольца и штрихи"),
+            binding: SliderBinding {
+                get: |t| t.crown.band_lift,
+                set: |t, v| t.crown.band_lift = v,
+                range: (0.0, 3.0, 0.1),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Band scale",
-            range: (0.4, 1.6, 0.05),
-            get: |t| t.crown.band_scale,
-            set: |t, v| t.crown.band_scale = v,
-            format: multiplier,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.band_scale,
+                set: |t, v| t.crown.band_scale = v,
+                range: (0.4, 1.6, 0.05),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Shade weight",
-            range: (0.0, 2.0, 0.1),
-            get: |t| t.crown.shade_weight,
-            set: |t, v| t.crown.shade_weight = v,
-            format: multiplier,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.shade_weight,
+                set: |t, v| t.crown.shade_weight = v,
+                range: (0.0, 2.0, 0.1),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Outline",
-            range: (0.02, 0.30, 0.01),
-            get: |t| t.crown.outline_stroke,
-            set: |t, v| t.crown.outline_stroke = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.outline_stroke,
+                set: |t, v| t.crown.outline_stroke = v,
+                range: (0.02, 0.30, 0.01),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Detail",
-            range: (0.01, 0.20, 0.01),
-            get: |t| t.crown.detail_stroke,
-            set: |t, v| t.crown.detail_stroke = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.detail_stroke,
+                set: |t, v| t.crown.detail_stroke = v,
+                range: (0.01, 0.20, 0.01),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Spike floor",
-            range: (0.0, 3.0, 0.1),
-            get: |t| t.crown.spike_floor,
-            set: |t, v| t.crown.spike_floor = v,
-            format: multiplier,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.spike_floor,
+                set: |t, v| t.crown.spike_floor = v,
+                range: (0.0, 3.0, 0.1),
+                text: multiplier,
+            },
         },
         ParamSpec {
             label: "Stretch",
-            range: (1.0, 3.0, 0.05),
-            get: |t| t.crown.shadow_stretch,
-            set: |t, v| t.crown.shadow_stretch = v,
-            format: fraction,
             group: Some("Тень"),
+            binding: SliderBinding {
+                get: |t| t.crown.shadow_stretch,
+                set: |t, v| t.crown.shadow_stretch = v,
+                range: (1.0, 3.0, 0.05),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Backshift",
-            range: (-1.5, 0.5, 0.05),
-            get: |t| t.crown.shadow_backshift,
-            set: |t, v| t.crown.shadow_backshift = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.shadow_backshift,
+                set: |t, v| t.crown.shadow_backshift = v,
+                range: (-1.5, 0.5, 0.05),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Height base",
-            range: (0.0, 1.5, 0.05),
-            get: |t| t.crown.shadow_height_base,
-            set: |t, v| t.crown.shadow_height_base = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.shadow_height_base,
+                set: |t, v| t.crown.shadow_height_base = v,
+                range: (0.0, 1.5, 0.05),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Height spread",
-            range: (0.0, 2.0, 0.05),
-            get: |t| t.crown.shadow_height_spread,
-            set: |t, v| t.crown.shadow_height_spread = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.shadow_height_spread,
+                set: |t, v| t.crown.shadow_height_spread = v,
+                range: (0.0, 2.0, 0.05),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Long at",
-            range: (0.0, 1.5, 0.05),
-            get: |t| t.crown.long_shadow_height,
-            set: |t, v| t.crown.long_shadow_height = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.crown.long_shadow_height,
+                set: |t, v| t.crown.long_shadow_height = v,
+                range: (0.0, 1.5, 0.05),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Variance",
-            range: (0.0, 1.0, 0.05),
-            get: |t| t.variance,
-            set: |t, v| t.variance = v,
-            format: fraction,
             group: Some("Цвет"),
+            binding: SliderBinding {
+                get: |t| t.variance,
+                set: |t, v| t.variance = v,
+                range: (0.0, 1.0, 0.05),
+                text: fraction,
+            },
         },
     ]
 }
