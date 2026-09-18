@@ -132,7 +132,7 @@ pub fn rebuild_wagons(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_wagon_layer(*bucket, &map.rails);
+    let (layers, report) = mesh_wagons(*bucket, &map.rails);
     spawn_layers(
         &mut commands,
         &mut meshes,
@@ -148,9 +148,18 @@ pub fn rebuild_wagons(
 /// `standing` — сколько вагонов встало: число, которым этот слой тюнился
 /// (1195 на Туле, потом ×0.7 до 866), и до шва его нельзя было ни на чём
 /// закрепить, кроме глаза на лог-строке.
+///
+/// `hidden` — дальняя ступень зума: слой снят, и это состояние отчёта, а не
+/// ноль в `standing`. Счётчики тогда нули, и это не заглушка — расстановка в
+/// таком случае действительно не идёт, ровно как у машин
+/// (`CarReport::detail = None`): снятый слой не должен стоить дороже, чем
+/// стоил ранний возврат. Считать вход было бы можно только расставив вагоны,
+/// то есть заплатив за то, чего никто не увидит.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct WagonReport {
     pub standing: usize,
+    /// Дальняя ступень зума: слой описан и пуст, расстановка не шла.
+    pub hidden: bool,
     pub vertices: usize,
     pub elapsed: std::time::Duration,
 }
@@ -159,9 +168,13 @@ impl std::fmt::Display for WagonReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             standing,
+            hidden,
             vertices,
             elapsed,
         } = self;
+        if *hidden {
+            return write!(f, "wagons: hidden");
+        }
         write!(
             f,
             "wagons: {standing} standing ({vertices} verts) in {elapsed:?}"
@@ -174,20 +187,20 @@ impl std::fmt::Display for WagonReport {
 /// **Чистая функция и единственная дверь в слой.** Дальняя ступень отдаёт
 /// пустой слой, а не ранний выход у вызывающего: у вагона нет таблицы LOD, он
 /// просто пропадает — 13.9-метровый кузов на 2 м/px это те же ~7 экранных
-/// пикселей, на которых уже сняты машины.
-pub fn mesh_wagon_layer(
-    bucket: WagonZoomBucket,
-    rails: &[RailLine],
-) -> (Vec<LayerMesh>, WagonReport) {
+/// пикселей, на которых уже сняты машины. Говорит она об этом
+/// [`WagonReport::hidden`], а не нулём в `standing`.
+pub fn mesh_wagons(bucket: WagonZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>, WagonReport) {
     let started = std::time::Instant::now();
-    let wagons = if bucket.index > 0 {
+    let hidden = bucket.index > 0;
+    let wagons = if hidden {
         Vec::new()
     } else {
         stable_wagons(rails)
     };
-    let builder = mesh_wagons(&wagons);
+    let builder = mesh_bodies(&wagons);
     let report = WagonReport {
         standing: wagons.len(),
+        hidden,
         vertices: builder.vertex_count(),
         elapsed: started.elapsed(),
     };
@@ -359,7 +372,10 @@ fn stand_along(wagons: &mut Vec<Wagon>, track: &Track, fan: &Fan, rng: &mut Lcg)
 }
 
 /// Все тени, потом все кузова: иначе тень вагона легла бы на соседний.
-fn mesh_wagons(wagons: &[Wagon]) -> MeshBuilder {
+///
+/// Только меш, без слоя — имя `mesh_wagons` ушло функции слоя, как у машин
+/// (`cars::mesh_bodies` под `cars::mesh_cars`).
+fn mesh_bodies(wagons: &[Wagon]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let shadow = SHADOW_COLOR.to_linear();
     let offset = shadow_dir() * (WAGON_HEIGHT * shadow_length_scale());
@@ -387,6 +403,8 @@ fn body(wagon: &Wagon, offset: Vec2) -> [Vec2; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::camera::{MAX_ZOOM, MIN_ZOOM};
 
     /// Междупутье парка, м.
     const SPACING: f32 = 5.3;
@@ -550,5 +568,59 @@ mod tests {
             "{coupled} сцепленных из {}",
             wagons.len()
         );
+    }
+
+    // --- слой целиком ------------------------------------------------------
+    //
+    // Тесты на `mesh_wagons`. До шва слой собирался внутри системы Bevy: число
+    // вставших вагонов жило только в лог-строке, а порог зума — ранним
+    // возвратом у вызывающего, и ни до того, ни до другого тест не доставал.
+
+    /// Порог зума переехал в сборку: ближняя ступень рисует вагоны, дальняя
+    /// начинается ровно с [`WAGON_MAX_ZOOM`], и верхний край зума камеры уже за
+    /// ней — иначе тест на пустой слой ниже проверял бы не ту ступень.
+    #[test]
+    fn the_wagon_bucket_ends_at_its_cutoff() {
+        assert_eq!(WagonZoomBucket::for_zoom(MIN_ZOOM).index, 0);
+        assert_eq!(WagonZoomBucket::for_zoom(WAGON_MAX_ZOOM).index, 1);
+        assert_eq!(WagonZoomBucket::for_zoom(MAX_ZOOM).index, 1);
+    }
+
+    /// Парк на ближней ступени даёт один слой, и он блендится: тень вагона
+    /// полупрозрачна, а плоский материал съел бы вершинную альфу.
+    #[test]
+    fn a_yard_builds_one_blended_layer() {
+        let rails = yards(Some(ServiceTrack::Siding), 600.0);
+        let (layers, report) = mesh_wagons(WagonZoomBucket::for_zoom(MIN_ZOOM), &rails);
+
+        assert_eq!(layers.len(), 1, "тени и кузова идут одним мешем");
+        assert_eq!(layers[0].name, "wagons");
+        assert_eq!(layers[0].z, Z_WAGON);
+        assert_eq!(layers[0].material, MaterialSpec::Blend);
+        assert!(report.standing > 0);
+        assert!(report.vertices > 0);
+    }
+
+    /// Отчёт не расходится с расстановкой: `standing` — ровно те вагоны, что
+    /// поставил [`stable_wagons`] на той же сцене. Это и есть число, которым
+    /// слой тюнился, значением вместо строки в логе.
+    #[test]
+    fn the_report_counts_the_wagons_that_stood() {
+        let rails = yards(Some(ServiceTrack::Siding), 600.0);
+        let (_, report) = mesh_wagons(WagonZoomBucket::for_zoom(MIN_ZOOM), &rails);
+
+        assert_eq!(report.standing, stable_wagons(&rails).len());
+    }
+
+    /// Дальняя ступень: слой описан и пуст — не ранний выход у вызывающего, так
+    /// что деспавн в адаптере безусловен и забыть его негде.
+    #[test]
+    fn the_far_bucket_builds_an_empty_layer() {
+        let rails = yards(Some(ServiceTrack::Siding), 600.0);
+        let (layers, _) = mesh_wagons(WagonZoomBucket::for_zoom(MAX_ZOOM), &rails);
+
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].name, "wagons");
+        assert!(layers[0].builder.is_empty());
     }
 }

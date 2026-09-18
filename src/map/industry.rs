@@ -136,10 +136,19 @@ pub fn rebuild_industry(
 }
 
 /// Что вышло из сборки промзоны — значением, а не только строкой в логе.
+///
+/// Снятый слой — это состояние отчёта (`hidden`), а не ноль в счётчике:
+/// счётчики остаются про то, что было **на входе**, иначе выключенный тумблер
+/// печатал бы то же самое, что пустая карта. Правило машин (`CarReport::detail`),
+/// одно на все пять слоёв.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct IndustryReport {
+    /// Сколько цилиндров пришло на вход — не сколько нарисовано.
     pub structures: usize,
+    /// Сколько трубопроводов пришло на вход — не сколько нарисовано.
     pub pipes: usize,
+    /// Тумблер выключен: слои описаны и пусты, вершин ноль.
+    pub hidden: bool,
     pub vertices: usize,
 }
 
@@ -148,8 +157,15 @@ impl std::fmt::Display for IndustryReport {
         let Self {
             structures,
             pipes,
+            hidden,
             vertices,
         } = self;
+        if *hidden {
+            return write!(
+                f,
+                "industry: hidden ({structures} structures, {pipes} pipes)"
+            );
+        }
         write!(
             f,
             "industry: {structures} structures, {pipes} pipes ({vertices} verts)"
@@ -164,14 +180,18 @@ impl std::fmt::Display for IndustryReport {
 /// пустые слои, а не ранний выход у вызывающего: деспавн в адаптере безусловен,
 /// и второй дороги, на которой можно его забыть, просто нет. Пустой вход
 /// проверять тоже незачем — пустой сборщик адаптер не спавнит.
+///
+/// Рисуется при этом `drawn_*`, а считается вход: «слой снят» говорит
+/// [`IndustryReport::hidden`], и ноль в счётчике остаётся означать «на карте
+/// этого нет».
 pub fn mesh_industry(
     structures: &[Structure],
-    pipes_in: &[PipeLine],
+    pipe_lines: &[PipeLine],
     mode: BuildingHeightMode,
     style: &IndustryStyle,
 ) -> (Vec<LayerMesh>, IndustryReport) {
-    let (structures, pipes_in): (&[Structure], &[PipeLine]) = if style.visible {
-        (structures, pipes_in)
+    let (drawn_structures, drawn_pipes): (&[Structure], &[PipeLine]) = if style.visible {
+        (structures, pipe_lines)
     } else {
         (&[], &[])
     };
@@ -179,20 +199,20 @@ pub fn mesh_industry(
     let mut pipe_shadows = MeshBuilder::default();
     let mut pipes = MeshBuilder::default();
     let offset = shadow_dir() * (PIPE_HEIGHT * shadow_length_scale());
-    for pipe in pipes_in {
+    for pipe in drawn_pipes {
         let shifted: Vec<Vec2> = pipe.points.iter().map(|point| *point + offset).collect();
         push_pipe(&mut pipe_shadows, &shifted, pipe.width, SHADOW_COLOR);
     }
     // все тени, потом все линии: иначе тень одной магистрали легла бы на
     // нарисованную до неё
-    for pipe in pipes_in {
+    for pipe in drawn_pipes {
         push_pipe(&mut pipes, &pipe.points, pipe.width, PIPE_COLOR);
     }
 
     let mut shadows = MeshBuilder::default();
     let mut walls = MeshBuilder::default();
     let mut tops = MeshBuilder::default();
-    for structure in structures {
+    for structure in drawn_structures {
         if mode.casts_shadows() {
             push_shadow(&mut shadows, structure);
         }
@@ -203,7 +223,8 @@ pub fn mesh_industry(
 
     let report = IndustryReport {
         structures: structures.len(),
-        pipes: pipes_in.len(),
+        pipes: pipe_lines.len(),
+        hidden: !style.visible,
         vertices: pipe_shadows.vertex_count()
             + pipes.vertex_count()
             + shadows.vertex_count()

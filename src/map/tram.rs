@@ -11,11 +11,10 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::map::buildings::LayerCost;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
-use crate::map::surface::{self, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::Z_TRAM;
 
@@ -145,11 +144,16 @@ pub struct TramLayerTag;
 
 /// Что вышло из сборки трамвая — значением, а не только строкой в логе.
 ///
-/// `tracks` — сколько трамвайных путей нарисовано: обычный рельсовый путь сюда
-/// не попадает, у него свой модуль.
+/// `tracks` — сколько трамвайных путей пришло **на вход**: обычный рельсовый
+/// путь сюда не попадает, у него свой модуль. Не «сколько нарисовано»:
+/// выключенный тумблер — это состояние отчёта (`hidden`), а не ноль в счётчике,
+/// иначе лог-строка снятого слоя неотличима от города без трамвая. Правило
+/// машин (`CarReport::detail`), одно на все пять слоёв.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct TramReport {
     pub tracks: usize,
+    /// Тумблер выключен: слой описан и пуст, вершин ноль.
+    pub hidden: bool,
     pub bucket: usize,
     pub vertices: usize,
     pub elapsed: std::time::Duration,
@@ -159,10 +163,14 @@ impl std::fmt::Display for TramReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             tracks,
+            hidden,
             bucket,
             vertices,
             elapsed,
         } = self;
+        if *hidden {
+            return write!(f, "tram meshing: hidden ({tracks} tracks)");
+        }
         write!(
             f,
             "tram meshing: {tracks} tracks, {vertices} verts in {elapsed:?} (bucket {bucket})"
@@ -179,6 +187,8 @@ impl std::fmt::Display for TramReport {
 /// **Выключенный трамвай — это пустой список слоёв, а не ранний выход у
 /// вызывающего.** Ровно тот же приём, что нулевая ширина у заборов: деспавн в
 /// адаптере безусловен, и второго пути, который мог бы его забыть, нет вовсе.
+/// Пути при этом считаются всё равно — снятый слой говорит о себе
+/// [`TramReport::hidden`], а не нулём в счётчике.
 pub fn mesh_tram(
     bucket: TramZoomBucket,
     style: &TramStyle,
@@ -189,19 +199,24 @@ pub fn mesh_tram(
 
     let mut builder = MeshBuilder::default();
     let mut tracks = 0;
-    if style.visible {
-        for rail in rails {
-            if rail.kind != RailKind::Tram {
-                continue;
-            }
-            let points = smooth_path(&rail.points, TRAM_SMOOTH_WIDTH, TRAM_SMOOTHING);
-            push_tram(&mut builder, &points, lod);
-            tracks += 1;
+    for rail in rails {
+        if rail.kind != RailKind::Tram {
+            continue;
         }
+        // счёт идёт по входу, рисование — по тумблеру: «слой снят» говорит
+        // `TramReport::hidden`, а ноль в счётчике остаётся означать «трамвая на
+        // карте нет»
+        tracks += 1;
+        if !style.visible {
+            continue;
+        }
+        let points = smooth_path(&rail.points, TRAM_SMOOTH_WIDTH, TRAM_SMOOTHING);
+        push_tram(&mut builder, &points, lod);
     }
 
     let report = TramReport {
         tracks,
+        hidden: !style.visible,
         bucket: bucket.index,
         vertices: builder.vertex_count(),
         elapsed: started.elapsed(),

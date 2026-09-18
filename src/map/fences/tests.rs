@@ -49,8 +49,9 @@ fn the_far_bucket_draws_nothing() {
     assert_eq!(report.vertices, 0);
     assert_eq!(report.pieces, 0);
     // ограда на входе всё равно посчитана: ноль кусков — это решение ступени,
-    // а не пустая карта
+    // а не пустая карта, и лог-строка говорит ровно это
     assert_eq!(report.lines, 1);
+    assert_eq!(report.to_string(), "fences: hidden (1 lines)");
 }
 
 #[test]

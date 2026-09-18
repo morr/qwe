@@ -138,6 +138,7 @@ fn a_tram_line_builds_one_flat_layer() {
     assert_eq!(layers[0].z, Z_TRAM);
     assert_eq!(layers[0].material, MaterialSpec::Flat);
     assert_eq!(report.tracks, 1);
+    assert!(!report.hidden);
     assert!(report.vertices > 0);
 }
 
@@ -147,9 +148,13 @@ fn the_toggle_off_draws_nothing() {
 
     // не ранний выход у вызывающего: слой описан и пуст, а деспавн в адаптере
     // безусловен — забыть его негде
-    assert_eq!(report.tracks, 0);
-    assert_eq!(report.vertices, 0);
     assert!(layers.iter().all(|layer| layer.builder.is_empty()));
+    assert_eq!(report.vertices, 0);
+    // «слой снят» — это состояние отчёта, а не ноль в счётчике: путь на карте
+    // есть, его просто не нарисовали
+    assert!(report.hidden);
+    assert_eq!(report.tracks, 1);
+    assert_eq!(report.to_string(), "tram meshing: hidden (1 tracks)");
 }
 
 #[test]

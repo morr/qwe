@@ -175,6 +175,7 @@ fn a_cylinder_builds_five_layers_bottom_up() {
         );
     }
     assert_eq!(report.structures, 1);
+    assert!(!report.hidden);
     assert!(report.vertices > 0);
 }
 
@@ -207,8 +208,15 @@ fn the_toggle_off_draws_nothing() {
         &IndustryStyle { visible: false },
     );
 
-    assert_eq!(report.structures, 0);
+    // «слой снят» — это состояние отчёта, а не ноль в счётчике: труба на карте
+    // есть, её просто не нарисовали
+    assert!(report.hidden);
+    assert_eq!(report.structures, 1);
     assert_eq!(report.vertices, 0);
+    assert_eq!(
+        report.to_string(),
+        "industry: hidden (1 structures, 0 pipes)"
+    );
     // слои описаны и пусты: деспавн в адаптере безусловен, забыть его негде
     assert_eq!(layers.len(), LAYERS.len());
     assert!(layers.iter().all(|layer| layer.builder.is_empty()));
