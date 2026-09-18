@@ -1123,8 +1123,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   passage; bridges included) is asphalt grey (`ROAD_COLOR`, a neutral mid grey — the
   weathered asphalt of an aerial photo, not the pale blue-grey of a 2GIS map) and gets a
   light **sidewalk band** at
-  `Z_SIDEWALK` under every road ribbon (a crossing street's fill covers it, like a
-  casing), width `sidewalk_width` (22 %, 1.2–3 m per side) — **never a bridge deck**,
+  `Z_SIDEWALK` 1.6 — under the street ribbons (a crossing street's fill covers it, like a
+  casing) and **over the alley one**, so a footway running into the street stops at the
+  band instead of drawing a sand ribbon across it — width `sidewalk_width` (22 %,
+  1.2–3 m per side) — **never a bridge deck**,
   which leaves for its own layers before the band is pushed and has its curb instead.
   At a junction the band **turns the corner on the kerb's own arc** — the sidewalk half
   of the **kerb return** above.

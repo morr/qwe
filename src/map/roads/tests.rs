@@ -631,9 +631,9 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 /// Девять дорожных слоёв снизу вверх, ровно в том порядке, в каком они уходят
 /// в мир.
 const LAYERS: [&str; 9] = [
-    "sidewalks",
     "alley_casings",
     "alleys",
+    "sidewalks",
     "road_casings",
     "roads",
     "bridge_shadows",

@@ -575,7 +575,7 @@ be called alone:
     answer would squeeze the strip instead of stretching it. `point_in_area` also has
     nothing to say where the projection lands exactly on the outline — which is every road
     that ends against a block, and was two of the four corners of the courtyard test scene.
-    Everything drawn on a block lies above it (`Z_LANDUSE` 0.25 against `Z_SIDEWALK` 1.2,
+    Everything drawn on a block lies above it (`Z_LANDUSE` 0.25 against `Z_SIDEWALK` 1.6,
     parks and grass at 0.5–0.7), so the part that ends up under the road, under a park or
     on a neighbouring block is never seen; only the closed seam is.
   - **A long edge beside a road is split first** (`LANDUSE_STEP` 8 m, and only where the
@@ -1211,20 +1211,28 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - Cost: one pass per open channel at load — the `waterways` field of `SurfaceReport`,
     printed inside the one `surface meshing:` line (it had its own `waterways meshing:`
     line until the surface layers went on the seam).
-- **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
+- **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.6, `SurfaceKind::
   Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
   brightness step between them is what reads as the kerb) — a **carriageway**
   (`is_carriageway`: `RoadClass::Street`, width ≥ `STREET_MIN_WIDTH` 8 m, so `service`
   drives get none, and never a `passage`) gets a band `width + 2 · sidewalk_width` (22 % of
-  the width, 1.2–3 m per side). It sits under every road ribbon for the casing reason: a
-  crossing street's fill covers it and the sidewalk ends at the junction the way a real
-  one does. A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
+  the width, 1.2–3 m per side). It sits under the **street** ribbons (1.9 / 2.0) for the
+  casing reason: a crossing street's fill covers it and the sidewalk ends at the junction
+  the way a real one does. It sits **over the alley** ones (1.4 / 1.5), and that is the
+  author's call from a screenshot of a yard footway running out onto улица: the path used
+  to draw a sand ribbon straight across the light band and on to the kerb, while on a
+  photo it stops at the pavement. The price is the other reading of the same rule — a
+  `footway` mapped *alongside* a street (OSM's own way of mapping a pavement) now sinks
+  into the band instead of lying on it, which is what the band already draws anyway; and a
+  path crossing a street still reaches the asphalt, because a **driveway crossing**
+  (`network::driveway_crossings`) is redrawn as a `Street` and a footway that is not one
+  is simply covered by the carriageway at 2.0 as before.
+  A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
   lane markings, but the bridge branch of `mesh_roads` `continue`s into `bridge_casings`
   + `bridges` *before* the sidewalk block — a deck gets no band ever, at any width or
   `RoadStyle::sidewalks`. It would hang a metre or three past the deck edge over the
   water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally.
-  A `footway` mapped alongside draws over it as an alley — beige on grey, and
-  tolerated. The road fill went from osm-carto white to asphalt grey together with the
+  The road fill went from osm-carto white to asphalt grey together with the
   markings: a white line on white is invisible, and on grey the street grid also stops
   merging with the courtyards. At a junction the band turns the corner on the kerb's own
   arc — **The drawn network → Kerb returns → The sidewalk turns with the kerb** below.
