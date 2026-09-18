@@ -1,14 +1,11 @@
 //! Все размеры и скорости — метры и м/с. Пиксели существуют только в
-//! константах рендера (`PIXELS_PER_METER`) и настройках зума камеры.
+//! настройках зума камеры.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevy::math::DVec2;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
-
-/// Пиксельная плотность ассетов: 16 px = 1 м.
-pub const PIXELS_PER_METER: f32 = 16.0;
 
 /// Высота этажа, м — единица, общая всему дому, а не настройка одного модуля,
 /// и потому одна на всех: парсер переводит по ней `building:levels` в метры
@@ -1260,12 +1257,14 @@ const _: () = {
 // бегунок при первом же касании прыгает к границе, меняя настройку, которую
 // никто не трогал.
 //
-// Проверяются те двенадцать, у которых умолчание названо здесь же; у остальных
-// шести оно живёт в `impl Default` своего ресурса (слоты, стенды, стиль
-// деревьев, настройки полигонального меша), и константы умолчания в этом файле
-// нет. Имена этих ресурсов здесь не пишутся намеренно: часть из них
-// принадлежит `navigation/`, и инвариант их упоминания снаружи проверяется
-// grep'ом (см. `CONTEXT.md`).
+// Проверяются те девятнадцать, у которых умолчание названо здесь же; у
+// остальных трёх (`TREE_DENSITY`, `TREE_CONIFER_SHARE`,
+// `POLYMESH_AGENT_RADIUS`) оно записано литералом в `impl Default` своего
+// ресурса, и константы умолчания в этом файле нет — назвать литерал
+// константой предстоит вместе с переносом диапазонов к их владельцам. Имена
+// этих ресурсов здесь не пишутся намеренно: часть из них принадлежит
+// `navigation/`, и инвариант их упоминания снаружи проверяется grep'ом
+// (см. `CONTEXT.md`).
 const _: () = {
     assert!(DEMON_CAP as f32 >= DEMON_CAP_MIN && DEMON_CAP as f32 <= DEMON_CAP_MAX);
     assert!(
@@ -1314,6 +1313,19 @@ const _: () = {
         SURFACE_TEXTURE_DEFAULT >= SURFACE_TEXTURE_MIN
             && SURFACE_TEXTURE_DEFAULT <= SURFACE_TEXTURE_MAX
     );
+    assert!(ROOF_TEXTURE_DEFAULT >= ROOF_TEXTURE_MIN && ROOF_TEXTURE_DEFAULT <= ROOF_TEXTURE_MAX);
+    assert!(
+        CAR_OCCUPANCY_DEFAULT >= CAR_OCCUPANCY_MIN && CAR_OCCUPANCY_DEFAULT <= CAR_OCCUPANCY_MAX
+    );
+    assert!(SUN_AZIMUTH_DEFAULT >= SUN_AZIMUTH_MIN && SUN_AZIMUTH_DEFAULT <= SUN_AZIMUTH_MAX);
+    assert!(
+        SUN_ELEVATION_DEFAULT >= SUN_ELEVATION_MIN && SUN_ELEVATION_DEFAULT <= SUN_ELEVATION_MAX
+    );
+    assert!(
+        TREE_NOISE_MIX_DEFAULT >= TREE_NOISE_MIX_MIN
+            && TREE_NOISE_MIX_DEFAULT <= TREE_NOISE_MIX_MAX
+    );
+    assert!(CLAIM_SEARCH_METERS >= CLAIM_SEARCH_MIN && CLAIM_SEARCH_METERS <= CLAIM_SEARCH_MAX);
 };
 
 /// Z юнита по его мировой y-координате.
