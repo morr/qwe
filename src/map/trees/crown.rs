@@ -12,7 +12,7 @@ use super::{TreeShape, TreeStyle};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::seed::Lcg;
-use crate::map::{shadow_dir, sun_stretch};
+use crate::map::{SHADOW_COLOR, shadow_dir, sun_stretch};
 use crate::settings::{TREE_DETAIL_STROKE, TREE_OUTLINE_STROKE};
 
 /// Насколько контур и штрихи уведены к цвету листвы. Ноль — прежние чернила
@@ -741,17 +741,24 @@ pub(super) fn leaf_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Ve
     chain_arcs(ring, 4, &drawn)
 }
 
-/// Силуэт тени единичного радиуса — шаблон, который `spawn_trees` кладёт в
-/// общий меш теней под каждое дерево этого варианта. Тип тени выбирает
+/// Силуэт тени единичного радиуса — шаблон, который [`super::mesh_trees`]
+/// кладёт в общий меш теней под каждое дерево этого варианта. Тип тени выбирает
 /// «высота» `h` (`drawTree`): у облака и пальмы высокая крона даёт длинную
 /// тень, низкая — простой сдвинутый силуэт; ель вместо этого отбрасывает
 /// веер-конус. `h` разыгрывается на вариант, так что соседние деревья стоят с
 /// тенями разной длины.
+///
+/// Цвет тени — **вершинный**, [`SHADOW_COLOR`], как у всякой другой тени на
+/// карте (мосты, заборы, машины, вагоны, дома). Раньше шаблон был белым, а
+/// цвет лежал в отдельном `ColorMaterial`, который слой заводил себе на
+/// каждую пересборку; со швом слой красится общим `MaterialSpec::Blend`, и
+/// цвету больше негде быть.
 pub(super) fn shadow_template(
     geometry: &CrownGeometry,
     rng: &mut Lcg,
     params: &CrownParams,
 ) -> MeshBuilder {
+    let color = SHADOW_COLOR.to_linear();
     // высоту разыгрывает вариант, а во сколько раз тень от неё длиннее —
     // солнце ([`sun_stretch`], у домов оно же растягивает зажим длины). Тип
     // тени при этом выбирает сама разыгранная высота, до растяжения: иначе на
@@ -762,21 +769,17 @@ pub(super) fn shadow_template(
     match geometry.shape {
         TreeShape::Conifer => {
             for (outer, holes) in conifer_shadow(&geometry.outer, height) {
-                builder.push_polygon(&outer, &holes, LinearRgba::WHITE);
+                builder.push_polygon(&outer, &holes, color);
             }
         }
         _ if height > params.long_shadow_height => {
-            builder.push_polygon(
-                &shadow_ring(&geometry.outer, params),
-                &[],
-                LinearRgba::WHITE,
-            );
+            builder.push_polygon(&shadow_ring(&geometry.outer, params), &[], color);
         }
         // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
         _ => {
             let offset = shadow_dir() * height * sun_stretch();
             let ring: Vec<Vec2> = geometry.outer.iter().map(|&p| p + offset).collect();
-            builder.push_polygon(&ring, &[], LinearRgba::WHITE);
+            builder.push_polygon(&ring, &[], color);
         }
     }
     builder

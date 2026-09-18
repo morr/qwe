@@ -20,7 +20,7 @@
 
 use bevy::prelude::*;
 use qwe::map::cars::{Car, CarDetail, CarShape, body};
-use qwe::map::{MeshBuilder, shadow_dir, shadow_length_scale};
+use qwe::map::{MeshBuilder, shadow};
 
 /// Во сколько раз стенд увеличен трансформом — лупа над игровой геометрией.
 /// Больше не выйдет: стенд обязан остаться внутри своей ячейки сетки
@@ -90,7 +90,9 @@ pub(crate) fn half_size() -> Vec2 {
 /// кладёт слой города, иначе тень соседа легла бы на кузов.
 pub(crate) fn mesh() -> MeshBuilder {
     let mut builder = MeshBuilder::default();
-    let stretch = shadow_dir() * shadow_length_scale();
+    // тот же сдвиг на метр высоты, что кладёт слой города (`cars::mesh_bodies`):
+    // общий множитель стенда, а высоту прикладывает каждая машина своей
+    let stretch = shadow::offset(1.0);
     let cars: Vec<(Car, CarDetail)> = SHAPES
         .iter()
         .enumerate()

@@ -1,12 +1,13 @@
 //! Офлайн-замер сборки слоёв карты: сколько вершин и сколько миллисекунд
-//! стоит каждый режим отрисовки зданий и слой машин.
+//! стоит каждый режим отрисовки зданий, слой машин, поверхности, дороги,
+//! рельсы и трамвай — то есть всё, что собирают `mesh_*` модулей карты.
 //!
 //! Bevy-приложение не поднимается, окна нет — и в этом весь смысл. Мерить
 //! сборку в живом приложении на macOS **нельзя**: невидимому или свёрнутому
 //! окну система урезает приоритет потоков (App Nap), и одна и та же сборка,
 //! показывающая 116 мс на активном экране, показывает пять секунд на
 //! заблокированном. Здесь нет ни окна, ни GPU — только те же билдеры, что
-//! зовёт `spawn_buildings`, на той же карте из кеша Overpass.
+//! зовёт `mesh_buildings`, на той же карте из кеша Overpass.
 //!
 //! **Абсолютные числа зависят от энергетического состояния машины** (со спящим
 //! экраном всё в 2–3 раза медленнее), поэтому сравнивать надо прогон с
@@ -27,7 +28,10 @@
 mod common;
 
 use qwe::city::City;
-use qwe::map::{BuildingHeightMode, LayerCost, SunStyle, measure_cars, measure_layers};
+use qwe::map::{
+    BuildingHeightMode, LayerCost, SunStyle, measure_cars, measure_layers, measure_rails,
+    measure_roads, measure_surfaces, measure_tram,
+};
 
 fn main() {
     // по slug, как в остальных офлайн-инструментах (`polymesh_start_area`):
@@ -60,42 +64,69 @@ fn main() {
         // зум по обе стороны порога
         for clutter in [true, false] {
             let costs = measure_layers(&map.buildings, &map.roads, mode, clutter);
-            let (vertices, elapsed, breakdown) = totals(&costs);
-            println!(
-                "{:>18} clutter {:<5} {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]",
-                mode.label(),
-                clutter,
-            );
+            row(mode.label(), &format!("clutter {clutter:<5}"), &costs);
         }
     }
 
     // машины — тем же форматом и с теми же миллисекундами: слой сравнивается
     // со зданиевыми (он на порядок дешевле, и это надо видеть, а не помнить)
     let (cars, costs) = measure_cars(&map.buildings, &map.roads, map.traffic_side);
-    let (vertices, elapsed, breakdown) = totals(&costs);
-    println!(
-        "{:>18} {cars:>8} cars {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]",
-        "parked cars",
-    );
+    row("parked cars", &format!("{cars:>8} cars"), &costs);
+
+    // Остальные слои карты. Своей сборки у этих замеров нет — каждый зовёт тот
+    // же `mesh_*`, что и игра; до шва они мерились только строками
+    // `road meshing:` / `rail meshing:` / `tram meshing:` из живого приложения,
+    // то есть ровно тем способом, который на macOS решает App Nap.
+    row("surfaces", "", &measure_surfaces(&map));
+    row("roads", "", &measure_roads(&map));
+    // у рельсов и трамвая ступени зума отличаются не размером, а тем, что
+    // нарисовано, поэтому строка на ступень
+    for (bucket, costs) in measure_rails(&map.rails) {
+        row(&format!("rails b{bucket}"), "", &costs);
+    }
+    for (bucket, costs) in measure_tram(&map.rails) {
+        row(&format!("tram b{bucket}"), "", &costs);
+    }
 }
 
-/// Вершины, миллисекунды и разбивка по слоям одного замера — общие для обоих
-/// замеров, чтобы слой машин печатался тем же форматом, что зданиевые.
+/// Строка замера: имя, своя колонка замера, вершины, миллисекунды и разбивка
+/// по слоям.
+///
+/// Средняя колонка — то, что есть не у всех: ступень оборудования у зданий,
+/// число машин у машин, пусто у остальных. Ширина её постоянна (13 знаков — по
+/// самой длинной, `clutter false` и `   14669 cars`), и печатают через эту одну
+/// функцию **все** замеры: иначе колонка вершин у строк одного вывода не
+/// сходится столбиком, а сравнивать столбиком и есть то, ради чего бенч
+/// существует.
+fn row(label: &str, mid: &str, costs: &[LayerCost]) {
+    let (vertices, elapsed, breakdown) = totals(costs);
+    println!("{label:>18} {mid:<13} {vertices:>7} verts {elapsed:>7.1} ms   [{breakdown}]");
+}
+
+/// Вершины, миллисекунды и разбивка по слоям одного замера — общие для всех
+/// замеров, чтобы машины и слои, поднятые на шов, печатались тем же форматом,
+/// что зданиевые.
 fn totals(costs: &[LayerCost]) -> (usize, f64, String) {
     let vertices: usize = costs.iter().map(|cost| cost.vertices).sum();
     let elapsed: f64 = costs
         .iter()
         .map(|cost| cost.elapsed.as_secs_f64() * 1000.0)
         .sum();
+    // Шаг без вершин печатается миллисекундами, слой без своего времени —
+    // вершинами: у сборки, поднятой на шов, время одно на все её слои и стоит
+    // строкой `build`, а «0ms» на каждом слое было бы шумом. Пустой слой —
+    // такой же слой (`rail_steel` на дальней ступени), и печатается вершинами.
     let breakdown: Vec<String> = costs
         .iter()
         .map(|cost| {
-            format!(
-                "{} {:.0}ms/{}k",
-                cost.name,
-                cost.elapsed.as_secs_f64() * 1000.0,
-                cost.vertices / 1000
-            )
+            let ms = cost.elapsed.as_secs_f64() * 1000.0;
+            let name = cost.name;
+            let thousands = cost.vertices / 1000;
+            match (cost.vertices, cost.elapsed.is_zero()) {
+                (_, true) => format!("{name} {thousands}k"),
+                (0, false) => format!("{name} {ms:.0}ms"),
+                (_, false) => format!("{name} {ms:.0}ms/{thousands}k"),
+            }
         })
         .collect();
     (vertices, elapsed, breakdown.join(", "))

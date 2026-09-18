@@ -57,8 +57,12 @@ use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use crate::map::surface::{LayerMaterial, SurfaceKind, SurfaceMaterials, spawn_layer};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::shadow;
+use crate::map::surface::{
+    self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
+};
+use crate::map::{SHADOW_COLOR, SunOnMap};
+use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
     Z_ROAD_CASING, Z_SIDEWALK,
@@ -108,7 +112,7 @@ fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
         along.push(travelled);
     }
     let length = travelled;
-    let offset = shadow_dir() * (bridge_height(deck.span) * shadow_length_scale());
+    let offset = shadow::offset(bridge_height(deck.span));
     let ramp = (deck.span * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
     let last = dense.len() - 1;
     (0..dense.len())
@@ -770,30 +774,65 @@ impl<'a> Fortresses<'a> {
 const WALL_STUB_MAX: f32 = 40.0;
 
 /// Дорожный слой карты — чтобы пересборка стиля знала, что деспавнить.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый из девяти слоёв, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct RoadLayerTag;
 
-/// Спавн дорожных слоёв в выбранном стиле. Вызывается из `spawn_map` при входе
-/// в мир и из [`rebuild_roads`] при переключении стиля.
-pub fn spawn_roads(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
-    surfaces: &SurfaceMaterials,
-    style: RoadStyle,
-    map: &MapData,
-) {
+/// Что вышло из сборки дорожных слоёв — значением, а не только строкой в логе.
+///
+/// Здесь живут числа, которыми тюнилась вся эта область и которые до шва
+/// нельзя было ни на чём закрепить: 8710 закруглений кербов на Туле, 903 из
+/// них в полосе тротуара, 39 стежков, 8 переездов. `network` — сколько из
+/// общего времени ушло **до первой ленты**, то есть на сеть, стежки и углы.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct RoadReport {
+    /// Стиль, которым всё это нарисовано: пять ручек из лог-строки — это он.
+    pub style: RoadStyle,
+    pub junctions: usize,
+    pub kerb_returns: usize,
+    pub sidewalk_returns: usize,
+    pub stitches: usize,
+    pub crossings: usize,
+    pub vertices: usize,
+    pub network: std::time::Duration,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for RoadReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            style,
+            junctions,
+            kerb_returns,
+            sidewalk_returns,
+            stitches,
+            crossings,
+            vertices,
+            network,
+            elapsed,
+        } = self;
+        write!(
+            f,
+            "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
+             sidewalks {}, markings {}, junctions {junctions}, kerb returns {kerb_returns} + \
+             {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
+             {crossings}; {network:?} of it before the ribbons)",
+            style.join, style.smoothing, style.casing, style.sidewalks, style.markings,
+        )
+    }
+}
+
+/// Девять дорожных слоёв в выбранном стиле: тротуары, канты и заливки аллей и
+/// улиц, три мостовых слоя и лента крепостной стены.
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_roads`] и `spawn_map`), и тест. Это самый
+/// крупный модуль шва, и он же самый показательный: девять слоёв, три вида
+/// материала и вся телеметрия области — всё уезжает через один возврат.
+pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadReport) {
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
-    // вершинные цвета — плоский материал один, белый; фактурные — по виду
-    // поверхности, из `SurfaceMaterials`
-    let flat = materials.add(Color::WHITE);
-    // тень моста полупрозрачна, поэтому у неё свой материал с блендингом:
-    // белый непрозрачный съел бы альфу вершинного цвета
-    let shadow = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
     // перекрёстки нужны только разметке: без неё и рвать нечего
     let junctions = style
         .markings
@@ -966,86 +1005,106 @@ pub fn spawn_roads(
         }
     }
 
-    let vertices = [
-        &sidewalks,
-        &alley_casings,
-        &alleys,
-        &street_casings,
-        &streets,
-        &bridge_shadows,
-        &bridge_casings,
-        &bridge_fills,
-        &wall_ribbons,
-    ]
-    .iter()
-    .map(|builder| builder.vertex_count())
-    .sum::<usize>();
-
-    let surface = |kind| LayerMaterial::Surface(surfaces.handle(kind));
-    for (builder, z, name, material) in [
+    // тень моста полупрозрачна, поэтому у неё `Blend`: непрозрачный материал
+    // съел бы альфу вершинного цвета. Асфальт, тротуар и дорожка — фактурные,
+    // канты и лента стены — плоские
+    let layers: Vec<LayerMesh> = [
         (
             sidewalks,
             Z_SIDEWALK,
             "sidewalks",
-            surface(SurfaceKind::Sidewalk),
+            MaterialSpec::Surface(SurfaceKind::Sidewalk),
         ),
         (
             alley_casings,
             Z_ALLEY_CASING,
             "alley_casings",
-            LayerMaterial::Flat(flat.clone()),
+            MaterialSpec::Flat,
         ),
-        (alleys, Z_ALLEY, "alleys", surface(SurfaceKind::Alley)),
+        (
+            alleys,
+            Z_ALLEY,
+            "alleys",
+            MaterialSpec::Surface(SurfaceKind::Alley),
+        ),
         (
             street_casings,
             Z_ROAD_CASING,
             "road_casings",
-            LayerMaterial::Flat(flat.clone()),
+            MaterialSpec::Flat,
         ),
-        (streets, Z_ROAD, "roads", surface(SurfaceKind::Street)),
+        (
+            streets,
+            Z_ROAD,
+            "roads",
+            MaterialSpec::Surface(SurfaceKind::Street),
+        ),
         (
             bridge_shadows,
             Z_BRIDGE_SHADOW,
             "bridge_shadows",
-            LayerMaterial::Flat(shadow.clone()),
+            MaterialSpec::Blend,
         ),
         (
             bridge_casings,
             Z_BRIDGE_CASING,
             "bridge_casings",
-            LayerMaterial::Flat(flat.clone()),
+            MaterialSpec::Flat,
         ),
         (
             bridge_fills,
             Z_BRIDGE,
             "bridges",
-            surface(SurfaceKind::Street),
+            MaterialSpec::Surface(SurfaceKind::Street),
         ),
-        (
-            wall_ribbons,
-            Z_WALL,
-            "walls",
-            LayerMaterial::Flat(flat.clone()),
-        ),
-    ] {
-        spawn_layer(commands, meshes, builder, z, name, material, RoadLayerTag);
-    }
+        (wall_ribbons, Z_WALL, "walls", MaterialSpec::Flat),
+    ]
+    .into_iter()
+    .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
+    .collect();
 
-    info!(
-        "road meshing: {vertices} verts in {:?} ({:?}, smoothing {:?}, casing {}, sidewalks {}, markings {}, junctions {}, kerb returns {} + {} on sidewalks, stitches {}, driveway crossings {}; {:?} of it before the ribbons)",
-        started.elapsed(),
-        style.join,
-        style.smoothing,
-        style.casing,
-        style.sidewalks,
-        style.markings,
-        junctions.as_ref().map_or(0, |found| found.junctions),
-        kerb_returns.roads.len(),
-        kerb_returns.sidewalks.len(),
-        stitches.count,
-        crossings.len(),
-        network_time,
-    );
+    let report = RoadReport {
+        style,
+        junctions: junctions.as_ref().map_or(0, |found| found.junctions),
+        kerb_returns: kerb_returns.roads.len(),
+        sidewalk_returns: kerb_returns.sidewalks.len(),
+        stitches: stitches.count,
+        crossings: crossings.len(),
+        vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
+        network: network_time,
+        elapsed: started.elapsed(),
+    };
+    (layers, report)
+}
+
+/// Офлайн-замер дорожных слоёв — строками `LayerCost`, как у зданий и машин.
+///
+/// Своей сборки у него нет: он зовёт тот же [`mesh_roads`], что и игра. До шва
+/// дорожные слои мерились только строкой `road meshing:` из живого приложения,
+/// то есть ровно тем способом, который на macOS врёт (App Nap).
+pub fn measure_roads(map: &MapData) -> Vec<LayerCost> {
+    let (layers, report) = mesh_roads(map, RoadStyle::default());
+    surface::layer_costs(&layers, report.elapsed)
+}
+
+/// Когда пересобирать дорожные слои — **условие живёт рядом со слоем**, а не у
+/// того, кто ставит систему в расписание: причина тут дорожная, и узнать её
+/// надо, правя `roads.rs`, а не `map/mod.rs`.
+///
+/// `SunOnMap` в списке потому, что **в дорожный меш запечена тень моста**:
+/// настил, сдвинутый по `shadow_dir()` на высоту пролёта через
+/// `shadow_length_scale()`. Без этого условия она осталась бы от солнца, с
+/// которым грузился город, пока все остальные тени карты едут за осевшим.
+/// Осевшим (`SunOnMap`), а не ползунком (`SunStyle`): на шкале семьдесят
+/// делений, и каждое стоило бы полной пересборки девяти слоёв.
+///
+/// **Условие одно, регистрация одна.** Две копии одной системы в одном
+/// расписании могут сработать в одном кадре обе, и слой заспавнится дважды:
+/// деспавн второй копии идёт по данным, снятым до применения команд первой.
+/// Поэтому условия складываются через `or_else`, а не разносятся по
+/// регистрациям.
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка дорожных слоёв после переключения стиля из UI или BRP: деспавн
@@ -1053,8 +1112,7 @@ pub fn spawn_roads(
 pub fn rebuild_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    surfaces: Res<SurfaceMaterials>,
+    materials: LayerMaterials,
     style: Res<RoadStyle>,
     map: Res<MapData>,
     existing: Query<Entity, With<RoadLayerTag>>,
@@ -1062,14 +1120,26 @@ pub fn rebuild_roads(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    spawn_roads(
+    spawn_road_meshes(
         &mut commands,
         &mut meshes,
-        &mut materials,
-        &surfaces,
-        *style,
-        &map,
+        &materials,
+        mesh_roads(&map, *style),
     );
+}
+
+/// Положить в мир то, что собрал [`mesh_roads`]: слои под `RoadLayerTag`, плюс
+/// отчёт в лог. Одна дверь для `rebuild_roads` и `spawn_map` — форма
+/// `buildings::spawn_building_meshes`: дверь нужна не по числу меток, а по
+/// числу вызывающих.
+pub fn spawn_road_meshes(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    (layers, report): (Vec<LayerMesh>, RoadReport),
+) {
+    spawn_layers(commands, meshes, materials, layers, RoadLayerTag);
+    info!("{report}");
 }
 
 /// Теневая лента одного моста, готовая к укладке: путь, полуширина настила и
@@ -1115,7 +1185,7 @@ const PENUMBRA_MAX: f32 = 1.0;
 
 /// Ширина полутени для моста с таким пролётом — см. [`PENUMBRA_SHARE`].
 fn bridge_penumbra(span: f32) -> f32 {
-    let length = bridge_height(span) * shadow_length_scale();
+    let length = shadow::length(bridge_height(span));
     (length * PENUMBRA_SHARE).clamp(PENUMBRA_MIN, PENUMBRA_MAX)
 }
 

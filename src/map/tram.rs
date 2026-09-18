@@ -11,11 +11,12 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::loading::AppState;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
+use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::prefs::retuned;
 use crate::settings::Z_TRAM;
 
 /// Трамвай — не лента, а линия с поперечной насечкой, как в Яндекс.Картах и
@@ -137,52 +138,93 @@ impl ZoomLods for TramLods {
 pub type TramZoomBucket = ZoomBucket<TramLods>;
 
 /// Трамвайный меш — чтобы пересборка знала, что деспавнить.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый слой модуля, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct TramLayerTag;
 
-/// Трамвайный меш текущей ступени зума. Единственный вызов — из
-/// [`rebuild_tram`]: и вход в мир, и смена ступени зума идут через пересборку
-/// (в свежем мире деспавнить ей нечего). Линия и шпалы — один цвет, поэтому
-/// лежат в одном меше: накладываться сами на себя они могут без всякого
+/// Что вышло из сборки трамвая — значением, а не только строкой в логе.
+///
+/// `tracks` — сколько трамвайных путей пришло **на вход**: обычный рельсовый
+/// путь сюда не попадает, у него свой модуль. Не «сколько нарисовано»:
+/// выключенный тумблер — это состояние отчёта (`hidden`), а не ноль в счётчике,
+/// иначе лог-строка снятого слоя неотличима от города без трамвая. Правило
+/// машин (`CarReport::detail`), одно на все пять слоёв.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TramReport {
+    pub tracks: usize,
+    /// Тумблер выключен: слой описан и пуст, вершин ноль.
+    pub hidden: bool,
+    pub bucket: usize,
+    pub vertices: usize,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for TramReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            tracks,
+            hidden,
+            bucket,
+            vertices,
+            elapsed,
+        } = self;
+        if *hidden {
+            return write!(f, "tram meshing: hidden ({tracks} tracks)");
+        }
+        write!(
+            f,
+            "tram meshing: {tracks} tracks, {vertices} verts in {elapsed:?} (bucket {bucket})"
+        )
+    }
+}
+
+/// Трамвайный слой текущей ступени зума.
+///
+/// **Чистая функция и единственная дверь в слой.** Линия и шпалы — один цвет,
+/// поэтому лежат в одном меше: накладываться сами на себя они могут без всякого
 /// z-файтинга.
-fn spawn_tram(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
+///
+/// **Выключенный трамвай — это пустой список слоёв, а не ранний выход у
+/// вызывающего.** Ровно тот же приём, что нулевая ширина у заборов: деспавн в
+/// адаптере безусловен, и второго пути, который мог бы его забыть, нет вовсе.
+/// Пути при этом считаются всё равно — снятый слой говорит о себе
+/// [`TramReport::hidden`], а не нулём в счётчике.
+pub fn mesh_tram(
     bucket: TramZoomBucket,
+    style: &TramStyle,
     rails: &[RailLine],
-) {
+) -> (Vec<LayerMesh>, TramReport) {
     let started = std::time::Instant::now();
     let lod = &TRAM_LODS[bucket.index];
 
     let mut builder = MeshBuilder::default();
+    let mut tracks = 0;
     for rail in rails {
         if rail.kind != RailKind::Tram {
+            continue;
+        }
+        // счёт идёт по входу, рисование — по тумблеру: «слой снят» говорит
+        // `TramReport::hidden`, а ноль в счётчике остаётся означать «трамвая на
+        // карте нет»
+        tracks += 1;
+        if !style.visible {
             continue;
         }
         let points = smooth_path(&rail.points, TRAM_SMOOTH_WIDTH, TRAM_SMOOTHING);
         push_tram(&mut builder, &points, lod);
     }
-    if builder.is_empty() {
-        return;
-    }
 
-    let vertices = builder.vertex_count();
-    commands.spawn((
-        TramLayerTag,
-        Mesh2d(meshes.add(builder.build())),
-        // вершинные цвета — материал белый, как у остальных слоёв карты
-        MeshMaterial2d(materials.add(Color::WHITE)),
-        Transform::from_xyz(0.0, 0.0, Z_TRAM),
-        DespawnOnExit(AppState::Playing),
-        Name::new("tram"),
-    ));
-
-    info!(
-        "tram meshing: {vertices} verts in {:?} (bucket {})",
-        started.elapsed(),
-        bucket.index,
-    );
+    let report = TramReport {
+        tracks,
+        hidden: !style.visible,
+        bucket: bucket.index,
+        vertices: builder.vertex_count(),
+        elapsed: started.elapsed(),
+    };
+    // вершинные цвета — материал белый, как у остальных слоёв карты
+    let layer = LayerMesh::new(builder, Z_TRAM, "tram", MaterialSpec::Flat);
+    (vec![layer], report)
 }
 
 /// Линия и шпалы одного пути на одной ступени LOD — отдельно от спавна ради
@@ -195,13 +237,40 @@ pub(crate) fn push_tram(builder: &mut MeshBuilder, points: &[Vec2], lod: &TramLo
     }
 }
 
+/// Офлайн-замер трамвайного слоя — по строке на ступень зума, как у рельсов:
+/// ступени здесь тоже отличаются тем, что нарисовано (на дальней ступени шпал
+/// нет вовсе).
+///
+/// Меряется **включённый** трамвай, хотя по умолчанию он выключен: замер о
+/// цене слоя, а не о том, показан ли он в игре. Своей сборки у него нет — тот
+/// же [`mesh_tram`], что и у игры.
+pub fn measure_tram(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
+    let style = TramStyle { visible: true };
+    (0..TRAM_LODS.len())
+        .map(|index| {
+            let (layers, report) = mesh_tram(TramZoomBucket::at(index), &style, rails);
+            (index, surface::layer_costs(&layers, report.elapsed))
+        })
+        .collect()
+}
+
+/// Когда пересобирать трамвайный слой: ступень зума и тумблер видимости.
+/// Выключенный трамвай идёт через ту же пересборку — она и деспавнит слой, и
+/// строит его заново пустым, — поэтому тумблер стоит здесь, а не ранним
+/// выходом в системе.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<TramZoomBucket>.or_else(retuned::<TramStyle>)
+}
+
 /// Пересборка трамвайного меша при смене ступени зума или переключении
 /// [`TramStyle`] — дорожные и рельсовые слои не трогаются. Выключенный трамвай
 /// проходит через ту же пересборку: деспавн старого слоя и никакого нового.
 pub fn rebuild_tram(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<TramZoomBucket>,
     style: Res<TramStyle>,
     map: Res<MapData>,
@@ -210,16 +279,9 @@ pub fn rebuild_tram(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    if !style.visible {
-        return;
-    }
-    spawn_tram(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        *bucket,
-        &map.rails,
-    );
+    let (layers, report) = mesh_tram(*bucket, &style, &map.rails);
+    spawn_layers(&mut commands, &mut meshes, &materials, layers, TramLayerTag);
+    info!("{report}");
 }
 
 #[cfg(test)]

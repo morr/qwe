@@ -445,8 +445,104 @@ pub struct TreeNode {
 }
 
 /// Посаженное дерево: центр, радиус кроны и плотность, на которой оно
-/// появляется (см. [`MapData::tree_appears_at`]).
+/// появляется (см. [`TreeSet`]).
 pub type PlantedTree = (Vec2, f32, f32);
+
+/// Деревья карты — позиции и пороги появления **одним значением**.
+///
+/// Раньше это были два поля `MapData`: `trees: Vec<(Vec2, f32)>` и
+/// `tree_appears_at: Vec<f32>`, обязанные быть «той же длины и того же
+/// порядка». Инвариант держала проза, а оба поля были `pub` в типе, который
+/// упомянут в трёх десятках файлов, — то есть жить ему было негде. Здесь его
+/// держит тип: поля приватны, пополняется набор одним приватным `push`, и
+/// разъехаться им нечем.
+///
+/// Здесь же и **правило префикса**: ползунок плотности показывает не фильтр, а
+/// начало набора. Лес засаживается по потолку плотности, деревья отсортированы
+/// по порогу появления, и шаг ползунка вверх обязан только добавлять деревья, а
+/// не переставлять уже стоящие. Порог считается по номеру дерева внутри своего
+/// массива (`(номер + 1) · TREE_AREA_PER_TREE / площадь`), поэтому каждый лес
+/// отдаёт ровно свою долю, даже если засаживался до упора и не добрал
+/// запрошенного (см. `planting.rs`).
+#[derive(Default, Debug, PartialEq)]
+pub struct TreeSet {
+    /// Центр и радиус кроны.
+    positions: Vec<(Vec2, f32)>,
+    /// На какой плотности (`TreeStyle::density`) появляется каждое, по
+    /// возрастанию.
+    appears_at: Vec<f32>,
+}
+
+impl TreeSet {
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    /// Весь набор: центр и радиус каждого дерева, по возрастанию порога.
+    pub fn positions(&self) -> &[(Vec2, f32)] {
+        &self.positions
+    }
+
+    /// Сколько деревьев видно при этой плотности — **префикс, а не фильтр**
+    /// (см. док типа). Прореживание от этого монотонно: шаг ползунка вверх
+    /// только добавляет деревья, уже стоящие не переезжают.
+    ///
+    /// Породе прореживание ортогонально: её решает поле хвои по координатам
+    /// ствола, так что доля хвои в прореженном наборе та же, а дерево при
+    /// движении ползунка породу не меняет.
+    pub fn visible_count(&self, density: f32) -> usize {
+        self.appears_at.partition_point(|&at| at <= density)
+    }
+
+    /// Видимый при этой плотности префикс набора.
+    pub fn visible(&self, density: f32) -> &[(Vec2, f32)] {
+        &self.positions[..self.visible_count(density)]
+    }
+
+    /// Порог появления дерева `index` — тестам.
+    #[cfg(test)]
+    pub fn appears_at(&self, index: usize) -> f32 {
+        self.appears_at[index]
+    }
+
+    /// Все пороги подряд — тестам, которые проверяют их возрастание.
+    #[cfg(test)]
+    pub fn thresholds(&self) -> &[f32] {
+        &self.appears_at
+    }
+
+    /// Набор из готовых посадок — **тестам**. В игре его собирает только
+    /// [`MapData::compose_trees`], и это ровно то, ради чего поля приватны:
+    /// сложить два массива разной длины больше негде.
+    #[cfg(test)]
+    pub fn of(trees: impl IntoIterator<Item = PlantedTree>) -> Self {
+        let mut set = Self::default();
+        for tree in trees {
+            set.push(tree);
+        }
+        set
+    }
+
+    fn clear(&mut self) {
+        self.positions.clear();
+        self.appears_at.clear();
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.positions.reserve(additional);
+        self.appears_at.reserve(additional);
+    }
+
+    /// Единственная дверь внутрь: позиция и порог кладутся вместе.
+    fn push(&mut self, (position, radius, at): PlantedTree) {
+        self.positions.push((position, radius));
+        self.appears_at.push(at);
+    }
+}
 
 /// Что делать с деревом аллеи, попавшим на занятое место.
 ///
@@ -656,22 +752,11 @@ pub struct MapData {
     /// смене города ресурс заменяется целиком: `Local` пережил бы замену и
     /// решил, что для нового города всё уже собрано.
     pub composed_for: Option<TreeCompose>,
-    /// Деревья карты: (центр, радиус). Детерминированы данными карты.
-    /// Отсортированы по [`MapData::tree_appears_at`] — по возрастанию плотности,
-    /// на которой дерево появляется. Собираются
+    /// Деревья карты. Детерминированы данными карты, собираются
     /// [`MapData::compose_trees`] из леса и аллей выбранной политики; всё
-    /// остальное (рендер, тени, поле хвои, ползунок плотности) видит только этот
-    /// массив и про аллеи не знает.
-    pub trees: Vec<(Vec2, f32)>,
-    /// На какой плотности (`TreeStyle::density`) появляется каждое дерево —
-    /// массив **той же длины и того же порядка**, что [`MapData::trees`].
-    ///
-    /// Лес засаживается по потолку плотности, а ползунок показывает префикс:
-    /// `trees[..partition_point(|d| d <= density)]`. Порог считается по номеру
-    /// дерева внутри своего массива (`(номер + 1) · TREE_AREA_PER_TREE / площадь`),
-    /// поэтому каждый лес отдаёт ровно свою долю, даже если он засаживался до
-    /// упора и не добрал запрошенного (см. `planting.rs`).
-    pub tree_appears_at: Vec<f32>,
+    /// остальное (рендер, тени, поле хвои, ползунок плотности) видит только
+    /// этот набор и про аллеи не знает.
+    pub trees: TreeSet,
 }
 
 impl MapData {
@@ -679,7 +764,7 @@ impl MapData {
     /// лес и аллеи выбранной раскладки.
     ///
     /// Все слагаемые уже отсортированы по порогу появления, так что это слияние,
-    /// а не сортировка: префикс по плотности (`trees::visible_count`) обязан
+    /// а не сортировка: префикс по плотности ([`TreeSet::visible_count`]) обязан
     /// оставаться монотонным, иначе шаг ползунка вверх убирал бы деревья.
     pub fn compose_trees(&mut self, compose: TreeCompose) {
         // разбор по полям, а не `self.…`: аллеи читаются, пока выход пишется
@@ -688,7 +773,6 @@ impl MapData {
             wood_trees,
             standalone_trees,
             trees,
-            tree_appears_at,
             ..
         } = self;
         let empty: &[PlantedTree] = &[];
@@ -705,15 +789,12 @@ impl MapData {
         };
 
         trees.clear();
-        tree_appears_at.clear();
         trees.reserve(standalone.len() + wood_trees.len() + rows.len());
-        tree_appears_at.reserve(standalone.len() + wood_trees.len() + rows.len());
 
         // одиночные первыми: у всех порог 0, ниже любого лесного, и на равных
         // порогах с OSM-аллеями они и раньше стояли впереди
-        for &(position, radius, at) in standalone {
-            trees.push((position, radius));
-            tree_appears_at.push(at);
+        for &tree in standalone {
+            trees.push(tree);
         }
 
         let (mut wood, mut row) = (0, 0);
@@ -725,15 +806,14 @@ impl MapData {
                 (Some(_), None) => true,
                 _ => false,
             };
-            let &(position, radius, at) = if take_wood {
+            let &tree = if take_wood {
                 wood += 1;
                 &wood_trees[wood - 1]
             } else {
                 row += 1;
                 &rows[row - 1]
             };
-            trees.push((position, radius));
-            tree_appears_at.push(at);
+            trees.push(tree);
         }
 
         self.composed_for = Some(compose);
@@ -777,58 +857,6 @@ pub fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
 /// Расстояние от точки до отрезка.
 pub fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
     point.distance(closest_on_segment(point, from, to))
-}
-
-/// Ячейка равномерной сетки, в которую попадает координата.
-pub fn grid_cell(value: f32, size: f32) -> i32 {
-    (value / size).floor() as i32
-}
-
-/// Значение кладётся во **все** ячейки, которые пересекает его AABB — общий
-/// инвариант каждой равномерной сетки в проекте (три сетки генератора дверей,
-/// сетка дорог у троп): спрашивающему тогда хватает одной ячейки точки, и
-/// ничего на границе ячеек не теряется. Живёт здесь, а не у первого
-/// потребителя, именно поэтому — сетку заводит не один модуль, а ошибка на
-/// границе ячеек чинилась бы в каждом отдельно.
-pub fn put_in_cells<T: Copy>(
-    cells: &mut std::collections::HashMap<(i32, i32), Vec<T>>,
-    min: Vec2,
-    max: Vec2,
-    size: f32,
-    value: T,
-) {
-    for x in grid_cell(min.x, size)..=grid_cell(max.x, size) {
-        for y in grid_cell(min.y, size)..=grid_cell(max.y, size) {
-            cells.entry((x, y)).or_default().push(value);
-        }
-    }
-}
-
-/// Значения из сетки шага `size`, чьи ячейки задевает рамка `min..max`:
-/// **отсортированы и без повторов**. Читающая половина [`put_in_cells`], и
-/// живёт рядом с ней по той же причине — сетку заводит не один модуль. Шаг
-/// параметром, а не константой, ровно поэтому же: иначе пара «положил /
-/// спросил» разъехалась бы размером ячейки.
-///
-/// Сортировка — не удобство вызывающего, а инвариант: значение лежит во всех
-/// ячейках, которые задевает его AABB, так что без `dedup` соседа вернуло бы
-/// несколько раз, а без сортировки наружу протёк бы порядок обхода `HashMap`
-/// — и собранный по сетке меш перестал бы быть детерминированным.
-pub fn indices_near<T: Copy + Ord>(
-    cells: &std::collections::HashMap<(i32, i32), Vec<T>>,
-    min: Vec2,
-    max: Vec2,
-    size: f32,
-) -> Vec<T> {
-    let mut found: Vec<T> = Vec::new();
-    for x in grid_cell(min.x, size)..=grid_cell(max.x, size) {
-        for y in grid_cell(min.y, size)..=grid_cell(max.y, size) {
-            found.extend(cells.get(&(x, y)).into_iter().flatten().copied());
-        }
-    }
-    found.sort_unstable();
-    found.dedup();
-    found
 }
 
 /// Длина ломаной — сумма её звеньев.
@@ -947,23 +975,6 @@ mod tests {
         assert!(point_in_polygon(Vec2::new(5.0, 5.0), &ring));
         assert!(!point_in_polygon(Vec2::new(15.0, 5.0), &ring));
         assert!(!point_in_polygon(Vec2::new(-1.0, 5.0), &ring));
-    }
-
-    /// Пара «положил / спросил» отдаёт соседа один раз и в одном порядке,
-    /// сколько бы ячеек он ни задевал: `dedup` и сортировка — это и есть
-    /// контракт [`indices_near`].
-    #[test]
-    fn indices_near_answers_sorted_and_once() {
-        let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> =
-            std::collections::HashMap::new();
-        // сосед 0 — на все четыре ячейки вокруг начала координат, 1 — далеко
-        put_in_cells(&mut cells, Vec2::splat(-1.0), Vec2::splat(1.0), 10.0, 0);
-        put_in_cells(&mut cells, Vec2::splat(5.0), Vec2::splat(6.0), 10.0, 1);
-        put_in_cells(&mut cells, Vec2::splat(300.0), Vec2::splat(301.0), 10.0, 2);
-
-        let found = indices_near(&cells, Vec2::splat(-2.0), Vec2::splat(7.0), 10.0);
-        assert_eq!(found, vec![0, 1], "сосед на четырёх ячейках — один раз");
-        assert!(indices_near(&cells, Vec2::splat(100.0), Vec2::splat(101.0), 10.0).is_empty());
     }
 
     #[test]

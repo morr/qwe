@@ -24,13 +24,15 @@
 
 use bevy::prelude::*;
 
+use crate::map::SunOnMap;
 use crate::map::footprint::{fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::roads::{RoadJoin, push_ribbon};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::shadow;
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::prefs::retuned;
 use crate::settings::Z_FENCE;
 
 /// Высота забора, м: по ней считается длина тени тем же котангенсом высоты
@@ -79,7 +81,9 @@ impl ZoomLods for FenceLods {
 pub type FenceZoomBucket = ZoomBucket<FenceLods>;
 
 /// Слой заборов — своя метка: пересобирается он по ступени зума и по солнцу.
-#[derive(Component)]
+///
+/// `Copy` — потому что метку получает каждый слой модуля, а метка пуста.
+#[derive(Component, Clone, Copy)]
 pub struct FenceLayerTag;
 
 /// Цвета: доска и профнастил серо-бурые, бетонная стена светлее и холоднее,
@@ -88,10 +92,22 @@ const FENCE_COLOR: Color = Color::srgb(0.435, 0.404, 0.353);
 const WALL_COLOR: Color = Color::srgb(0.549, 0.541, 0.522);
 const HEDGE_COLOR: Color = Color::srgb(0.298, 0.376, 0.243);
 
+/// Когда пересобирать слой оград: своя ступень зума и осевшее солнце.
+///
+/// Солнце — потому что видно у ограды в первую очередь **тень**: сверху сам
+/// забор это волос в четверть метра. Осевшее (`SunOnMap`), а не ползунок
+/// (`SunStyle`): иначе слой пересобирался бы на каждом делении шкалы и с ещё
+/// не доехавшим солнцем.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)
+}
+
 pub fn rebuild_fences(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<FenceZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<FenceLayerTag>>,
@@ -99,33 +115,57 @@ pub fn rebuild_fences(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let width = FENCE_LODS[bucket.index].width;
-    if width <= 0.0 {
-        return;
-    }
-    let builder = mesh_fences(&map.fences, &map.roads, width);
-    let vertices = builder.vertex_count();
-    if builder.is_empty() {
-        return;
-    }
-    // тень полупрозрачна, сама линия нет — один меш с блендингом
-    let material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    surface::spawn_layer(
+    let (layers, report) = mesh_fences(*bucket, &map.fences, &map.roads);
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        builder,
-        Z_FENCE,
-        "fences",
-        LayerMaterial::Flat(material),
+        &materials,
+        layers,
         FenceLayerTag,
     );
-    info!(
-        "fences: {} lines at {width:.2} m ({vertices} verts)",
-        map.fences.len()
-    );
+    info!("{report}");
+}
+
+/// Что вышло из сборки заборов — значением, а не только строкой в логе.
+///
+/// Числа, которыми этот слой тюнился (429 линий в Туле, ширина ступени), так
+/// становятся тем, что можно утверждать в тесте: `info!` на macOS ещё и меряет
+/// не то время, потому что App Nap решает, как быстро идёт сборка.
+///
+/// Снятый слой — это состояние отчёта, а не ноль в счётчике, и состояние это
+/// несёт сама `width`: нулевая ширина и значит «на этой ступени не рисуется»,
+/// ровно как `None` в `CarReport::detail`. Заводить рядом с ней `hidden: bool`
+/// значило бы держать два источника одного факта.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FenceReport {
+    /// Сколько оград пришло на вход — считается и на снятой ступени.
+    pub lines: usize,
+    /// Сколько кусков осталось после вырезания проёмов под дороги и калитки:
+    /// больше, чем линий, — значит проёмы разрезали ограды. На снятой ступени
+    /// ноль: проёмы там не режутся вовсе (`fence_gaps` — 8.7 мс на Туле).
+    pub pieces: usize,
+    /// Ширина линии на этой ступени, м. Ноль — дальняя ступень, слой снят, и
+    /// `Display` печатает `fences: hidden`.
+    pub width: f32,
+    pub vertices: usize,
+}
+
+impl std::fmt::Display for FenceReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            lines,
+            pieces,
+            width,
+            vertices,
+        } = self;
+        if *width <= 0.0 {
+            return write!(f, "fences: hidden ({lines} lines)");
+        }
+        write!(
+            f,
+            "fences: {lines} lines in {pieces} pieces at {width:.2} m ({vertices} verts)"
+        )
+    }
 }
 
 /// Сначала все тени, потом все линии: иначе тень одного забора легла бы на
@@ -135,7 +175,29 @@ pub fn rebuild_fences(
 /// калитка по умолчанию, нет ни линии, ни тени — это те же проёмы, через
 /// которые ходят пешки (`footprint::fence_gaps` / `fence_pieces`), и
 /// нарисованный сплошной забор поперёк тропинки врал бы о проходимости.
-fn mesh_fences(fences: &[FenceLine], roads: &[RoadLine], width: f32) -> MeshBuilder {
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_fences`]), и тест. Ступень зума
+/// разворачивается в ширину здесь, а не у вызывающего — как у путей, трамвая,
+/// вагонов и машин; дальняя ступень (нулевая ширина) отдаёт пустой список
+/// слоёв, а не особый случай у вызывающего.
+pub fn mesh_fences(
+    bucket: FenceZoomBucket,
+    fences: &[FenceLine],
+    roads: &[RoadLine],
+) -> (Vec<LayerMesh>, FenceReport) {
+    let width = FENCE_LODS[bucket.index].width;
+    if width <= 0.0 {
+        return (
+            Vec::new(),
+            FenceReport {
+                lines: fences.len(),
+                pieces: 0,
+                width,
+                vertices: 0,
+            },
+        );
+    }
     let gaps = fence_gaps(fences, roads);
     let pieces: Vec<(FenceKind, Vec<Vec2>)> = fences
         .iter()
@@ -162,7 +224,15 @@ fn mesh_fences(fences: &[FenceLine], roads: &[RoadLine], width: f32) -> MeshBuil
             RoadJoin::Round,
         );
     }
-    builder
+    let report = FenceReport {
+        lines: fences.len(),
+        pieces: pieces.len(),
+        width,
+        vertices: builder.vertex_count(),
+    };
+    // тень полупрозрачна, сама линия нет — один меш с блендингом
+    let layer = LayerMesh::new(builder, Z_FENCE, "fences", MaterialSpec::Blend);
+    (vec![layer], report)
 }
 
 /// Мягкий край тени, м — машинный (`cars/body.rs::SHADOW_BLUR`): тень забора
@@ -193,10 +263,6 @@ const JOINT_SIDES: usize = 8;
 /// Кайма сужается к забору по правилу зданий и машин: доля ширины на вершине
 /// — проекция её направления на свет, у основания ноль.
 fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], width: f32) {
-    use i_overlay::core::fill_rule::FillRule;
-    use i_overlay::float::simplify::SimplifyShape;
-
-    let light = shadow_dir();
     let half = width / 2.0;
     let joint: Vec<Vec2> = (0..JOINT_SIDES)
         .map(|side| {
@@ -218,7 +284,7 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
             FenceKind::Fence | FenceKind::Wall => FENCE_HEIGHT,
             FenceKind::Hedge => HEDGE_HEIGHT,
         };
-        let offset = light * (height * shadow_length_scale());
+        let offset = shadow::offset(height);
         for pair in points.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let Some(along) = (b - a).try_normalize() else {
@@ -234,27 +300,8 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
         }
     }
 
-    let color = SHADOW_COLOR.to_linear();
-    let fade = LinearRgba {
-        alpha: 0.0,
-        ..color
-    };
-    let penumbra = |direction: Vec2| direction.dot(light).max(0.0);
-    for shape in contours.simplify_shape(FillRule::NonZero) {
-        let mut rings = shape.into_iter().map(|contour| {
-            contour
-                .into_iter()
-                .map(Vec2::from_array)
-                .collect::<Vec<Vec2>>()
-        });
-        let Some(outer) = rings.next() else {
-            continue;
-        };
-        let holes: Vec<Vec<Vec2>> = rings.collect();
-        builder.push_polygon(&outer, &holes, color);
-        builder.push_inset_band_tapered(&outer, SHADOW_BLUR, true, penumbra, color, fade);
-        for hole in &holes {
-            builder.push_inset_band_tapered(hole, SHADOW_BLUR, false, penumbra, color, fade);
-        }
-    }
+    shadow::push_union(builder, &contours, SHADOW_BLUR);
 }
+
+#[cfg(test)]
+mod tests;

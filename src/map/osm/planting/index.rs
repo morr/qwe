@@ -15,15 +15,13 @@ use super::{
     TREE_WALL_CLEARANCE,
 };
 use crate::map::footprint::casing_width;
+use crate::map::grid::Grid;
 use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, point_in_area, ring_bounds};
 
 /// Сторона ячейки индексов близости, м. Того же порядка, что `FOOTPRINT_CELL`
 /// (30) у генератора входов: в ячейке должно лежать несколько кандидатов, а не
 /// полквартала и не одна стена.
 const NEARBY_CELL: f32 = 32.0;
-fn nearby_cell(pos: Vec2) -> IVec2 {
-    (pos / NEARBY_CELL).floor().as_ivec2()
-}
 
 /// Равномерная сетка «что может накрывать точку»: номера элементов, чей
 /// **расширенный** AABB пересекает ячейку. Посадка перебирает десятки тысяч
@@ -31,24 +29,19 @@ fn nearby_cell(pos: Vec2) -> IVec2 {
 /// попытку — почти всё время посадки. Идиома та же, что в
 /// `entrances/index.rs`; сам AABB после выборки всё равно проверяется —
 /// ячейка крупнее его.
-pub(super) struct NearbyAreas(HashMap<IVec2, Vec<usize>>);
+pub(super) struct NearbyAreas(Grid<usize>);
 
 impl NearbyAreas {
     pub(super) fn build(bounds: &[(Vec2, Vec2)]) -> Self {
-        let mut cells: HashMap<IVec2, Vec<usize>> = HashMap::new();
+        let mut cells = Grid::new(NEARBY_CELL);
         for (index, &(min, max)) in bounds.iter().enumerate() {
-            let (lo, hi) = (nearby_cell(min), nearby_cell(max));
-            for x in lo.x..=hi.x {
-                for y in lo.y..=hi.y {
-                    cells.entry(IVec2::new(x, y)).or_default().push(index);
-                }
-            }
+            cells.insert(min, max, index);
         }
         Self(cells)
     }
 
     fn near(&self, pos: Vec2) -> &[usize] {
-        self.0.get(&nearby_cell(pos)).map_or(&[], Vec::as_slice)
+        self.0.at(pos)
     }
 }
 
@@ -58,35 +51,26 @@ impl NearbyAreas {
 /// `(ширина ленты, начало, конец)` — ширина рядом с отрезком, а не номером в
 /// исходном векторе, потому что индексов теперь два (дороги и русла) и
 /// разыменовывать они бы стали разные вектора.
-pub(super) struct NearbySegments(HashMap<IVec2, Vec<(f32, Vec2, Vec2)>>);
+pub(super) struct NearbySegments(Grid<(f32, Vec2, Vec2)>);
 
 impl NearbySegments {
     /// `clearance` — наибольший зазор, который потребитель прибавит к
     /// полуширине; паддинг ячейки обязан его накрывать, иначе отрезок, до
     /// которого дереву не хватило зазора, не попадёт в кандидаты.
     fn build<'a>(lines: impl Iterator<Item = (&'a [Vec2], f32)>, clearance: f32) -> Self {
-        let mut cells: HashMap<IVec2, Vec<(f32, Vec2, Vec2)>> = HashMap::new();
+        let mut cells = Grid::new(NEARBY_CELL);
         for (points, width) in lines {
             let pad = width / 2.0 + TREE_MAX_RADIUS + clearance;
             for segment in points.windows(2) {
                 let (from, to) = (segment[0], segment[1]);
-                let lo = nearby_cell(from.min(to) - pad);
-                let hi = nearby_cell(from.max(to) + pad);
-                for x in lo.x..=hi.x {
-                    for y in lo.y..=hi.y {
-                        cells
-                            .entry(IVec2::new(x, y))
-                            .or_default()
-                            .push((width, from, to));
-                    }
-                }
+                cells.insert_segment(from, to, pad, (width, from, to));
             }
         }
         Self(cells)
     }
 
     fn near(&self, pos: Vec2) -> &[(f32, Vec2, Vec2)] {
-        self.0.get(&nearby_cell(pos)).map_or(&[], Vec::as_slice)
+        self.0.at(pos)
     }
 }
 
@@ -219,7 +203,14 @@ impl<'a> Obstacles<'a> {
     }
 }
 
-/// Сетка занятых мест со стороной ячейки [`TREE_MIN_SPACING`]: единственная
+/// Сетка занятых мест со стороной ячейки [`TREE_MIN_SPACING`] — **не**
+/// [`Grid`](crate::map::grid::Grid), и это осознанно: у неё обратное
+/// соглашение. Всё на карте кладётся рамкой, раздутой на собственный радиус, и
+/// спрашивается одной ячейкой; здесь кладётся голая точка, а радиус знает
+/// спрашивающий, поэтому обходятся девять соседних ячеек. Заводить ради
+/// одного потребителя метод «окрестность» — это гипотетический шов, а не шов.
+///
+/// Сама сетка: единственная
 /// проверка, растущая с числом посаженных деревьев, и линейным перебором она
 /// делала посадку квадратичной (при потолке плотности деревьев уже десятки
 /// тысяч). Результат не приблизительный: при такой стороне любое дерево ближе

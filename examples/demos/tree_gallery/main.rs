@@ -12,11 +12,11 @@
 //! игре не бывает кроны, которой здесь нет.
 //!
 //! **Геометрия здесь та же, что в игре, а не её копия.** Клетку собирает
-//! [`crown_variant`] — ровно тот вызов, которым `spawn_trees` набивает свой пул
+//! [`crown_variant`] — ровно тот вызов, которым `mesh_trees` набивает свой пул
 //! вариантов. Тени тоже кладутся как в игре: один слитый меш на всю витрину
 //! через `MeshBuilder::push_template`, а не сущность на дерево. И материал тот
 //! же: крону красит игровой [`CrownMaterial`] — тем же вызовом
-//! `CrownMaterial::of(factor)`, что и `spawn_trees`, — так что
+//! `CrownMaterial::of(factor)`, что и `mesh_trees`, — так что
 //! освещение полога и рябь листвы здесь ровно те, что на карте.
 //!
 //! **Панель слева — ручки самой генерации** (`CrownParams`, разбор — в
@@ -75,10 +75,9 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
-use qwe::map::trees::{CrownMaterial, TreeMaterials, crown_variant};
+use qwe::map::trees::{CrownMaterial, crown_variant};
 use qwe::map::{
-    GROUND_COLOR, MeshBuilder, PARK_COLOR, SHADOW_COLOR, SunOnMap, TreeShape, TreeStyle,
-    WOOD_COLOR, apply_sun,
+    GROUND_COLOR, MeshBuilder, PARK_COLOR, SunOnMap, TreeShape, TreeStyle, WOOD_COLOR, apply_sun,
 };
 use qwe::settings::TREE_VARIANTS;
 
@@ -342,7 +341,8 @@ fn spawn_labels(mut commands: Commands, assets: Res<AssetServer>) {
 fn rebuild_crowns(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: TreeMaterials,
+    mut crown_materials: ResMut<Assets<CrownMaterial>>,
+    mut flat: ResMut<Assets<ColorMaterial>>,
     tuning: Res<Tuning>,
     show: Res<Show>,
     existing: Query<Entity, With<CrownTag>>,
@@ -362,7 +362,7 @@ fn rebuild_crowns(
     let tints: Vec<Handle<CrownMaterial>> = style
         .tint_factors()
         .iter()
-        .map(|&factor| materials.crowns.add(CrownMaterial::of(factor)))
+        .map(|&factor| crown_materials.add(CrownMaterial::of(factor)))
         .collect();
     let mut shadows = MeshBuilder::default();
 
@@ -388,7 +388,12 @@ fn rebuild_crowns(
         CrownTag,
         ShadowLayer,
         Mesh2d(meshes.add(shadows.build())),
-        MeshMaterial2d(materials.flat.add(SHADOW_COLOR)),
+        // цвет тени лежит в вершинах шаблона, как у всякой тени на карте, —
+        // материалу остаётся только блендинг (игровой `MaterialSpec::Blend`)
+        MeshMaterial2d(flat.add(ColorMaterial {
+            alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
+            ..default()
+        })),
         Transform::from_xyz(0.0, 0.0, 0.5),
         visibility(show.shadows),
         Name::new("tree_shadows"),

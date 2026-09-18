@@ -21,10 +21,13 @@ use self::crown::{
     CROWN_COLOR, INK_COLOR, crown_geometry, crown_mesh, shadow_template, variant_rng,
 };
 use crate::loading::AppState;
-use crate::map::SHADOW_COLOR;
+use crate::map::SunOnMap;
 use crate::map::meshing::MeshBuilder;
+use crate::map::osm::model::TreeSet;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::{RoadJoin, RoadSmoothing};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::prefs::retuned;
 use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
@@ -86,7 +89,7 @@ pub struct TreeStyle {
     /// Плотность посадки, множитель к базовой (`TREE_DENSITY_MIN..MAX`):
     /// `1` — одно дерево на `TREE_AREA_PER_TREE` (410 м²) леса.
     /// `map::osm::planting` засаживает лес сразу по `TREE_DENSITY_MAX`, а спавн
-    /// показывает префикс набора (см. [`visible_count`]) — деревья при движении
+    /// показывает префикс набора (см. [`TreeSet::visible_count`]) — деревья при движении
     /// ползунка не пересаживаются, а появляются и исчезают.
     pub density: f32,
     /// Лесные массивы включены. Выключение убирает из мира лес целиком, аллеи и
@@ -130,7 +133,7 @@ pub struct TreeRowStyle {
     /// игнорируются и ряд подчиняется ползунку наравне с лесом. Меняет позиции,
     /// а не вид, поэтому раскладка под неё считается на загрузке заранее.
     pub osm_spacing: bool,
-    /// Стык ленты зелёной подложки аллеи (`map::spawn::spawn_tree_row_band`).
+    /// Стык ленты зелёной подложки аллеи (`map::spawn::mesh_tree_row_band`).
     pub join: RoadJoin,
     /// Сглаживание той же подложки — Chaikin, как у дорог.
     pub smoothing: RoadSmoothing,
@@ -179,33 +182,11 @@ impl TreeStyle {
     }
 }
 
-/// Сколько деревьев показать при такой плотности: `MapData::trees`
-/// отсортированы по плотности появления, так что нужен префикс, а не фильтр.
-/// Доля каждого леса при этом точна — порог посчитан от его площади, — и
-/// прореживание монотонно: шаг ползунка вверх только добавляет деревья, уже
-/// стоящие не переезжают.
-///
-/// Породе прореживание ортогонально: её решает поле хвои по координатам, так
-/// что доля хвои в прореженном наборе та же, а дерево при движении ползунка
-/// плотности породу не меняет.
-pub fn visible_count(appears_at: &[f32], density: f32) -> usize {
-    appears_at.partition_point(|&at| at <= density)
-}
-
-/// Что сажать: где стоят деревья (позиция и радиус кроны) и при какой
-/// плотности каждое появляется. Два поля `MapData`, которые всегда ходят
-/// парой — и порядок в них общий, так что разъехаться им нельзя.
-#[derive(Clone, Copy)]
-pub struct PlantedTrees<'a> {
-    pub positions: &'a [(Vec2, f32)],
-    pub appears_at: &'a [f32],
-}
-
 /// Крона или её тень — чтобы пересборка стиля знала, что деспавнить.
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub struct TreeTag;
 
-/// Геометрия одного варианта кроны: то, что [`spawn_trees`] кладёт в свой пул
+/// Геометрия одного варианта кроны: то, что [`mesh_trees`] кладёт в свой пул
 /// и потом повторяет под каждым деревом этого варианта.
 ///
 /// Публичной эта сборка сделана ради витрины `tree_gallery`: демо обязано
@@ -240,99 +221,188 @@ pub fn crown_variant(
     CrownVariant { crown, shadow }
 }
 
-/// Хранилища материалов, которые нужны дереву: тень рисуется плоским
-/// `ColorMaterial`, крона — своим [`CrownMaterial`]. Одним параметром, а не
-/// двумя, чтобы спавн и пересборка укладывались в семь аргументов.
+/// Хранилища материалов, которые нужны дереву: крона красится своим
+/// [`CrownMaterial`], слой теней — общими материалами слоёв ([`LayerMaterials`],
+/// он же разворачивает `MaterialSpec::Blend` в хэндл).
+///
+/// Одним параметром, а не двумя: пересборке они нужны только вместе, а её
+/// подпись и без того на пределе clippy — та же причина, по которой
+/// [`LayerMaterials`] сам собран из трёх ресурсов.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct TreeMaterials<'w> {
-    pub flat: ResMut<'w, Assets<ColorMaterial>>,
     pub crowns: ResMut<'w, Assets<CrownMaterial>>,
+    pub layers: LayerMaterials<'w>,
 }
 
-/// Спавн деревьев: `TREE_VARIANTS` крон единичного радиуса, каждому дереву —
-/// вариант, оттенок и масштаб детерминированно по индексу; ползунок плотности
-/// отдаёт префикс набора (см. [`visible_count`]). Кроны — сущность на
-/// дерево (свой оттенок и свой z), тени — **один слитый меш на все деревья**:
-/// полупрозрачная сущность попадает в сортируемую фазу `Transparent2d`, а
-/// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов пешеходов
-/// теряется по одной-две на кадр (тень мигает). Слой из одного меша — как
-/// `building_shadows` — этой фазе не по зубам и рисуется одним вызовом.
-pub fn spawn_trees(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut TreeMaterials,
+/// Одна крона в мире: какой меш из пула поставить, где, какого радиуса и каким
+/// оттенком.
+///
+/// Крона — **сущность на дерево** (свой оттенок и свой z), а не часть слитого
+/// меша, поэтому дерево не укладывается в [`LayerMesh`], и шов здесь принимает
+/// другую форму: сборка отдаёт пул крон и список мест, а адаптер заливает пул
+/// в `Assets` и спавнит по сущности на место. Деление то же самое — сборка
+/// говорит, **что** нарисовано, адаптер знает, **куда** это деть.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct CrownPlacement {
+    pub at: Vec2,
+    pub radius: f32,
+    pub z: f32,
+    /// Номер пула — по конкретной форме кроны, в порядке
+    /// `TreeShape::crown_shapes`: у `Mixed` пулов два, у прочих форм один.
+    pub pool: usize,
+    /// Номер варианта внутри пула.
+    pub variant: usize,
+    /// Слот оттенка в [`TreeStyle::tint_factors`].
+    pub tint: usize,
+}
+
+/// Собранные деревья: пул крон, места и слой теней.
+///
+/// Пул — готовые `Mesh`, а не `Handle<Mesh>`: хэндл берётся из мира, и это
+/// единственное, ради чего сборке понадобился бы Bevy. Ровно то же соображение
+/// стоит за `MaterialSpec` в [`LayerMesh`].
+pub struct TreeMeshes {
+    /// По пулу на каждую конкретную форму, `TREE_VARIANTS` крон в каждом.
+    pub pools: Vec<Vec<Mesh>>,
+    /// Множители яркости листвы — по слоту на оттенок.
+    pub tints: Vec<f32>,
+    pub crowns: Vec<CrownPlacement>,
+    /// Слитый меш теней, одним слоем. Один, а не сущность на тень:
+    /// полупрозрачная сущность попадает в сортируемую фазу `Transparent2d`, а
+    /// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов
+    /// пешеходов теряется по одной-две на кадр (тень мигает). Слой из одного
+    /// меша — как `building_shadows` — этой фазе не по зубам.
+    pub shadows: Vec<LayerMesh>,
+}
+
+/// Счётчики, которыми была лог-строка слоя.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TreeReport {
+    pub crowns: usize,
+    pub shadow_vertices: usize,
+    pub shape: TreeShape,
+}
+
+impl std::fmt::Display for TreeReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            crowns,
+            shadow_vertices,
+            shape,
+        } = self;
+        write!(
+            f,
+            "tree shadows: {shadow_vertices} vertices for {crowns} trees ({shape:?})"
+        )
+    }
+}
+
+/// Сборка деревьев без мира: `TREE_VARIANTS` крон единичного радиуса на каждую
+/// конкретную форму, каждому дереву — вариант, оттенок и масштаб
+/// детерминированно по индексу; ползунок плотности отдаёт префикс набора (см.
+/// [`TreeSet::visible_count`]).
+pub fn mesh_trees(
     style: &TreeStyle,
     params: &CrownParams,
-    planted: PlantedTrees,
+    planted: &TreeSet,
     field: &ConiferField,
-) {
-    let PlantedTrees {
-        positions,
-        appears_at,
-    } = planted;
+) -> (TreeMeshes, TreeReport) {
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
-    let pools: Vec<(TreeShape, Vec<(Handle<Mesh>, MeshBuilder)>)> = style
-        .shape
-        .crown_shapes()
+    let shapes = style.shape.crown_shapes();
+    let pools: Vec<Vec<CrownVariant>> = shapes
         .iter()
         .map(|&shape| {
-            let variants = (0..TREE_VARIANTS)
-                .map(|variant| {
-                    let built = crown_variant(shape, variant, style, params);
-                    (meshes.add(built.crown), built.shadow)
-                })
-                .collect();
-            (shape, variants)
+            (0..TREE_VARIANTS)
+                .map(|variant| crown_variant(shape, variant, style, params))
+                .collect()
         })
-        .collect();
-    // множитель яркости уехал из цвета материала в юниформ: цвет кроне
-    // теперь считает шейдер (`canopy`), и слотов ровно столько же
-    let tints: Vec<Handle<CrownMaterial>> = style
-        .tint_factors()
-        .iter()
-        .map(|&factor| materials.crowns.add(CrownMaterial::of(factor)))
         .collect();
 
     let mut shadows = MeshBuilder::default();
-    let visible = visible_count(appears_at, style.density);
-    for (index, &(position, radius)) in positions.iter().take(visible).enumerate() {
+    let visible = planted.visible(style.density);
+    let mut crowns = Vec::with_capacity(visible.len());
+    for (index, &(at, radius)) in visible.iter().enumerate() {
         let shape = style.shape.resolve(field.is_conifer(index));
-        let variants = &pools
+        let pool = shapes
             .iter()
-            .find(|(pooled, _)| *pooled == shape)
-            .expect("crown_shapes covers every shape resolve can return")
-            .1;
-        let (crown, shadow) = &variants[index % variants.len()];
-        // микрошаг по z: пересекающиеся кроны рисуются в стабильном порядке
-        let z = Z_TREE + (index % 512) as f32 * 1e-3;
+            .position(|&pooled| pooled == shape)
+            .expect("crown_shapes covers every shape resolve can return");
+        let variant = index % pools[pool].len();
+        crowns.push(CrownPlacement {
+            at,
+            radius,
+            // микрошаг по z: пересекающиеся кроны рисуются в стабильном порядке
+            z: Z_TREE + (index % 512) as f32 * 1e-3,
+            pool,
+            variant,
+            tint: TreeStyle::tint_slot(index),
+        });
+        shadows.push_template(&pools[pool][variant].shadow, at, radius);
+    }
+
+    let report = TreeReport {
+        crowns: crowns.len(),
+        shadow_vertices: shadows.vertex_count(),
+        shape: style.shape,
+    };
+    let built = TreeMeshes {
+        pools: pools
+            .into_iter()
+            .map(|pool| pool.into_iter().map(|built| built.crown).collect())
+            .collect(),
+        // множитель яркости уехал из цвета материала в юниформ: цвет кроне
+        // теперь считает шейдер (`canopy`), и слотов ровно столько же
+        tints: style.tint_factors().to_vec(),
+        crowns,
+        shadows: vec![LayerMesh::new(
+            shadows,
+            Z_TREE_SHADOW,
+            "tree_shadows",
+            MaterialSpec::Blend,
+        )],
+    };
+    (built, report)
+}
+
+/// Собранные деревья — в мир: пул крон в `Assets`, по сущности на место, слой
+/// теней через общий [`spawn_layers`].
+pub fn spawn_tree_meshes(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut TreeMaterials,
+    (built, report): (TreeMeshes, TreeReport),
+) {
+    let TreeMeshes {
+        pools,
+        tints,
+        crowns,
+        shadows,
+    } = built;
+    let pools: Vec<Vec<Handle<Mesh>>> = pools
+        .into_iter()
+        .map(|pool| pool.into_iter().map(|crown| meshes.add(crown)).collect())
+        .collect();
+    let tints: Vec<Handle<CrownMaterial>> = tints
+        .into_iter()
+        .map(|factor| materials.crowns.add(CrownMaterial::of(factor)))
+        .collect();
+
+    for crown in &crowns {
         commands.spawn((
             TreeTag,
-            Mesh2d(crown.clone()),
-            MeshMaterial2d(tints[TreeStyle::tint_slot(index)].clone()),
-            Transform::from_translation(position.extend(z)).with_scale(Vec3::splat(radius)),
+            Mesh2d(pools[crown.pool][crown.variant].clone()),
+            MeshMaterial2d(tints[crown.tint].clone()),
+            Transform::from_translation(crown.at.extend(crown.z))
+                .with_scale(Vec3::splat(crown.radius)),
             DespawnOnExit(AppState::Playing),
             Name::new("tree"),
         ));
-        shadows.push_template(shadow, position, radius);
     }
 
-    if !shadows.is_empty() {
-        // слой теней — один меш на весь лес, и веер хвои весит вчетверо против
-        // одиночного силуэта: при разборе просадок смотреть в первую очередь сюда
-        debug!(
-            "tree shadows: {} vertices for {visible} trees ({:?})",
-            shadows.vertex_count(),
-            style.shape
-        );
-        commands.spawn((
-            TreeTag,
-            Mesh2d(meshes.add(shadows.build())),
-            MeshMaterial2d(materials.flat.add(SHADOW_COLOR)),
-            Transform::from_xyz(0.0, 0.0, Z_TREE_SHADOW),
-            DespawnOnExit(AppState::Playing),
-            Name::new("tree_shadows"),
-        ));
-    }
+    // веер хвои весит вчетверо против одиночного силуэта: при разборе просадок
+    // смотреть в первую очередь сюда
+    debug!("{report}");
+    spawn_layers(commands, meshes, &materials.layers, shadows, TreeTag);
 }
 
 /// Сборка `MapData::trees` из включённых источников: одиночные деревья, лес и
@@ -365,7 +435,7 @@ pub fn recompose_row_trees(
         return;
     }
     map.compose_trees(compose);
-    field.resample(&map.trees, &noise, style.noise_mix);
+    field.resample(map.trees.positions(), &noise, style.noise_mix);
     field.set_share(style.conifer_share);
 }
 
@@ -379,7 +449,7 @@ pub fn build_conifer_field(
     noise: Res<ConiferNoiseStyle>,
 ) {
     let started = std::time::Instant::now();
-    field.resample(&map.trees, &noise, style.noise_mix);
+    field.resample(map.trees.positions(), &noise, style.noise_mix);
     field.set_share(style.conifer_share);
     debug!(
         "conifer field: {} trees sampled in {:.1?}",
@@ -403,13 +473,33 @@ pub fn retune_conifer_field(
         return;
     }
     let started = std::time::Instant::now();
-    field.resample(&map.trees, &noise, style.noise_mix);
+    field.resample(map.trees.positions(), &noise, style.noise_mix);
     field.set_share(style.conifer_share);
     debug!(
         "conifer field retuned: {} trees resampled in {:.1?}",
         map.trees.len(),
         started.elapsed()
     );
+}
+
+/// Когда пересобирать деревья — **и всю их связку целиком**: состав набора
+/// (`recompose_row_trees`), поле хвои (`retune_conifer_field`), подложку аллей
+/// и сами кроны.
+///
+/// Тумблеры состава и политика аллей меняют сам набор деревьев, а не только их
+/// вид, поэтому пересборка идёт после сборки набора; солнце здесь потому, что
+/// тень дерева строится по нему же, только запечена в шаблон варианта.
+///
+/// `retuned`, а не `resource_changed`: в кадре, где настройки легли на ресурс,
+/// кроны ещё не спавнены и пересобирать нечего.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`) —
+/// здесь тем более: одно условие держит всю связку из четырёх систем.
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<TreeStyle>
+        .or_else(retuned::<TreeRowStyle>)
+        .or_else(retuned::<ConiferNoiseStyle>)
+        .or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка крон после правки стиля из UI: деспавн старых сущностей и
@@ -429,20 +519,15 @@ pub fn rebuild_trees(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    spawn_trees(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
+    let built = mesh_trees(
         &style,
         // ручки геометрии кроны в игре не выведены никуда: город рисуется
         // дефолтом, а крутит их витрина `tree_gallery`
         &CrownParams::default(),
-        PlantedTrees {
-            positions: &map.trees,
-            appears_at: &map.tree_appears_at,
-        },
+        &map.trees,
         &field,
     );
+    spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, built);
 }
 
 #[cfg(test)]

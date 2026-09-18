@@ -8,6 +8,12 @@ pub mod buildings;
 pub mod cars;
 mod fences;
 pub mod footprint;
+// виден всему крейту ради `navigation/navmesh.rs`: лента моста индексируется
+// той же сеткой, что и всё на карте. Не `pub`, в отличие от соседей выше и
+// ниже: у тех потребитель снаружи крейта (витрины, офлайн-аудит), а у сетки
+// все вызывающие внутри — то же сужение, каким шов вернул `spawn_layer` и
+// `LayerMaterial` в приватные
+pub(crate) mod grid;
 mod industry;
 mod meshing;
 pub mod osm;
@@ -16,9 +22,15 @@ mod pitch;
 mod rail;
 mod roads;
 mod seed;
+// публичен ради стенда кузовов витрины `car_gallery`: он рисует тень машины
+// тем же правилом длины, каким её рисует слой города (`shadow::offset`), а не
+// своей копией выражения
+pub mod shadow;
 mod spawn;
 mod sun;
-mod surface;
+// публичен по той же причине, что `buildings` и `cars`: витрины кладут слои
+// игровым `spawn_layers`, а ему нужен `LayerMaterials` из этого модуля
+pub mod surface;
 mod tram;
 pub mod trees;
 mod wagons;
@@ -26,12 +38,22 @@ mod water;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;
-// `LayerCost`/`measure_layers` (и `measure_cars` ниже) наружу — офлайн-бенчу
+// `measure_layers` (и `measure_cars` ниже) наружу — офлайн-бенчу
 // `examples/bench/map_meshing`: замер сборки слоёв без мира и без GPU. Форма
-// входа у него своя, не `BuildingPlan`, — см. док `measure_layers`
-pub use self::buildings::{BuildingHeightMode, LayerCost, extrusion_lift, measure_layers};
+// входа у него своя, не `BuildingPlan`, — см. док `measure_layers`. Строку
+// замера, `LayerCost`, бенч берёт из `surface` — она общая для всех слоёв
+pub use self::buildings::{BuildingHeightMode, extrusion_lift, measure_layers};
 pub use self::cars::{CarStyle, measure_cars};
 pub use self::industry::IndustryStyle;
+// Остальные замеры бенча. В отличие от двух выше они **не повторяют** сборку:
+// каждый зовёт игровой `mesh_*` и раскладывает его слои в строки
+// (`surface::layer_costs`). Ради этого шов и делался — до него эти слои
+// мерились только строкой из лога живого приложения, которую на macOS решает
+// App Nap.
+pub use self::rail::measure_rails;
+pub use self::roads::measure_roads;
+pub use self::spawn::measure_surfaces;
+pub use self::tram::measure_tram;
 // `RibbonCap`/`RibbonJoin` наружу — витринам, которые кладут ленту сами
 // (`car_gallery` рисует под рядами саму проезжую часть)
 pub use self::meshing::{
@@ -51,7 +73,7 @@ pub use self::sun::{
 };
 #[cfg(test)]
 pub(crate) use self::sun::{default_sun, sun_at};
-pub use self::surface::SurfaceStyle;
+pub use self::surface::{LayerCost, SurfaceStyle};
 pub use self::tram::TramStyle;
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
@@ -133,6 +155,7 @@ impl Plugin for MapPlugin {
                     (sun::seed_sun, sun::apply_sun).chain(),
                     (
                         surface::init_surface_materials,
+                        surface::init_flat_materials,
                         buildings::material::init_roof_material,
                     ),
                 )
@@ -179,14 +202,15 @@ impl Plugin for MapPlugin {
                     .in_set(WorldInitSet::Spawn)
                     .after(crate::camera::place_camera_on_world_ready),
             )
+            // когда пересобирать слой — дело слоя (`rebuilds_on()` рядом с его
+            // `rebuild_*`), здесь только проводка. Что ни одна `rebuild_*` не
+            // попала сюда дважды — правило «одно условие — одна регистрация»,
+            // см. `roads::rebuilds_on` — стережёт `tests/map.rs`
             .add_systems(
                 Update,
                 (
-                    // тумблеры состава (лес/аллеи/одиночные) и политика аллей
-                    // меняют сам набор деревьев, так что пересборка идёт до
-                    // крон; параметры шума и примесь пересемплируют поле хвои
-                    // (`retune_conifer_field`) — тоже до крон. Обе системы
-                    // выходят сразу, если их вход не поехал, — отдельных
+                    // состав набора и поле хвои — до крон: обе системы
+                    // выходят сразу, если их вход не поехал, так что отдельных
                     // условий на них не надо
                     (
                         trees::recompose_row_trees,
@@ -196,117 +220,52 @@ impl Plugin for MapPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing))
-                        // `retuned`, а не `resource_changed`: в кадре, где
-                        // настройки легли на ресурс, кроны ещё не спавнены и
-                        // пересобирать нечего
-                        // солнце меняет и кроны: тень дерева строится по нему
-                        // же, только запечена в шаблон варианта
-                        .run_if(
-                            retuned::<TreeStyle>
-                                .or_else(retuned::<TreeRowStyle>)
-                                .or_else(retuned::<ConiferNoiseStyle>)
-                                .or_else(retuned::<SunOnMap>),
-                        ),
-                    // ступень зума решает, стоит ли на крышах оборудование;
-                    // порог редкий, а пересборка слоя — единственный способ его
-                    // снять, как у пути и трамвая
+                        .run_if(trees::rebuilds_on()),
                     (
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
-                        buildings::rebuild_buildings.run_if(
-                            retuned::<BuildingHeightMode>
-                                .or_else(retuned::<SunOnMap>)
-                                .or_else(retuned::<buildings::BuildingZoomBucket>),
-                        ),
+                        buildings::rebuild_buildings.run_if(buildings::rebuilds_on()),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
-                    // солнце — потому что в дорожный меш запечена тень моста
-                    // (настил, сдвинутый по `shadow_dir()` на высоту пролёта
-                    // через `shadow_length_scale()`), и без этого условия она
-                    // осталась бы от солнца, с которым грузился город, пока все
-                    // остальные тени карты едут за осевшим солнцем (`SunOnMap`).
-                    // Одной регистрацией через `or_else`: две в одном
-                    // расписании могли бы сработать в одном кадре и заспавнить
-                    // слой дважды
                     roads::rebuild_roads
                         .run_if(in_state(AppState::Playing))
-                        .run_if(retuned::<RoadStyle>.or_else(retuned::<SunOnMap>)),
-                    // машины — целый слой, который на общем плане не нужен
-                    // вовсе; порог у него свой, ближе зданиевого. Тумблер и
-                    // ручка занятости идут одной регистрацией через `or_else`:
-                    // две в одном расписании могли бы сработать в одном кадре
-                    // и заспавнить слой дважды. `RoadStyle` здесь же: ряд стоит
-                    // по сглаженной осевой, и смена Smoothing двигает его
-                    // вместе с асфальтом.
-                    //
-                    // Вагоны (`map::wagons`) — тот же приём и потому та же
-                    // группа, но порог у них свой (вагон втрое длиннее машины
-                    // и виден дальше), ручек стиля нет вовсе, а осевая
-                    // пути не сглаживается — отсюда и короткое условие
+                        .run_if(roads::rebuilds_on()),
+                    // три слоя со своими таблицами зума, одной группой: у
+                    // каждого ступень считается своим `update_zoom_bucket`, и
+                    // пересборка идёт следом
                     (
                         zoom::update_zoom_bucket::<cars::CarLods>,
-                        cars::rebuild_cars.run_if(
-                            retuned::<cars::CarZoomBucket>
-                                .or_else(retuned::<CarStyle>)
-                                .or_else(retuned::<RoadStyle>)
-                                .or_else(retuned::<SunOnMap>),
-                        ),
+                        cars::rebuild_cars.run_if(cars::rebuilds_on()),
                         zoom::update_zoom_bucket::<wagons::WagonLods>,
-                        wagons::rebuild_wagons.run_if(
-                            retuned::<wagons::WagonZoomBucket>.or_else(retuned::<SunOnMap>),
-                        ),
+                        wagons::rebuild_wagons.run_if(wagons::rebuilds_on()),
                         zoom::update_zoom_bucket::<fences::FenceLods>,
-                        // забор снимается зумом по своей таблице, а его тень
-                        // живёт по солнцу карты: `SunOnMap`, как у машин и
-                        // зданий, а не ползунок `SunStyle` — иначе слой
-                        // пересобирался бы на каждом делении шкалы и с ещё не
-                        // доехавшим солнцем
-                        fences::rebuild_fences.run_if(
-                            retuned::<fences::FenceZoomBucket>.or_else(retuned::<SunOnMap>),
-                        ),
+                        fences::rebuild_fences.run_if(fences::rebuilds_on()),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
-                    // цилиндр промзоны ступени зума не имеет — его видно
-                    // ровно настолько, насколько видна тень, — зато кренится
-                    // он вместе с домами. Ступени нет, значит и в связку с
-                    // машинами его класть не за что: слой стоит сам по себе,
-                    // как дороги. Солнце здесь — `SunOnMap`, осевшее, а не
-                    // ползунок: пересборка читает глобали, которые пишет
-                    // `apply_sun` уже по нему, плюс тумблер видимости.
-                    //
-                    // Одна регистрация на три условия, а не три регистрации:
-                    // две копии одной системы в одном расписании могут сработать
-                    // в одном кадре обе, и слой отспавнится дважды — деспавн
-                    // второй копии идёт по данным до применения команд первой
+                    // ступени зума у промзоны нет, так что в группу выше её
+                    // класть не за что: слой стоит сам по себе, как дороги
                     industry::rebuild_industry
                         .run_if(in_state(AppState::Playing))
-                        .run_if(
-                            retuned::<SunOnMap>
-                                .or_else(retuned::<BuildingHeightMode>)
-                                .or_else(retuned::<IndustryStyle>),
-                        ),
+                        .run_if(industry::rebuilds_on()),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
                     surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
                     buildings::material::retune_roof_material
-                        .run_if(retuned::<RoofStyle>.or_else(retuned::<SunOnMap>)),
+                        .run_if(buildings::material::retunes_on()),
                     // ступень зума считается каждый кадр (одно чтение камеры и
                     // сравнение), но пересборку запускает только её фактическая
                     // смена. Таблицы у путей и трамвая свои, и пороги в них не
                     // совпадают, поэтому и ступени считаются порознь
                     (
                         zoom::update_zoom_bucket::<rail::RailLods>,
-                        rail::rebuild_rails.run_if(retuned::<rail::RailZoomBucket>),
+                        rail::rebuild_rails.run_if(rail::rebuilds_on()),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
                     (
                         zoom::update_zoom_bucket::<tram::TramLods>,
-                        // тумблер видимости идёт через ту же пересборку: она и
-                        // деспавнит слой, и строит его заново
-                        tram::rebuild_tram
-                            .run_if(retuned::<tram::TramZoomBucket>.or_else(retuned::<TramStyle>)),
+                        tram::rebuild_tram.run_if(tram::rebuilds_on()),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

@@ -22,18 +22,19 @@
 //!
 //! Как и машины, вагоны — **декорация**: ни навмеша, ни симуляции.
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 
 use crate::map::along::{arclengths, place_on_path};
+use crate::map::grid::Grid;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::distance_to_segment;
 use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
 use crate::map::seed::{Lcg, seed_from_point};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::shadow;
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
+use crate::map::{SHADOW_COLOR, SunOnMap};
+use crate::prefs::retuned;
 use crate::settings::{WAGON_MAX_ZOOM, Z_WAGON};
 
 /// Габарит четырёхосного вагона, м: полувагон 13.9 × 3.1, высота по борту
@@ -96,7 +97,9 @@ const WAGON_COLORS: [Color; 8] = [
 ];
 
 /// Слой вагонов — своя метка, чтобы ступень зума пересобирала только его.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый слой модуля, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct WagonLayerTag;
 
 /// Ступени зума: вагон втрое длиннее машины, поэтому его порог в 2.5 раза
@@ -118,11 +121,22 @@ struct Wagon {
     color: Color,
 }
 
-/// Пересборка слоя: по ступени зума и по смене солнца (у вагона своя тень).
+/// Когда пересобирать слой стоящих вагонов: своя ступень зума и осевшее
+/// солнце — у вагона своя тень. Ручек стиля у вагонов нет вовсе, а путь
+/// сглаживается своей константой (`rail.rs::RAIL_SMOOTHING`), а не ручкой
+/// `RoadStyle`, — отсюда условие короче машинного.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<WagonZoomBucket>.or_else(retuned::<SunOnMap>)
+}
+
+/// Пересборка слоя: деспавн старого слоя и повторный спавн из той же
+/// `MapData` (когда — [`rebuilds_on`]).
 pub fn rebuild_wagons(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<WagonZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<WagonLayerTag>>,
@@ -130,33 +144,81 @@ pub fn rebuild_wagons(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    if bucket.index > 0 {
-        return;
-    }
-    let started = std::time::Instant::now();
-    let wagons = stable_wagons(&map.rails);
-    let builder = mesh_wagons(&wagons);
-    let count = wagons.len();
-    let vertices = builder.vertex_count();
-    let elapsed = started.elapsed();
-    if builder.is_empty() {
-        return;
-    }
-    // как и у машин: тень полупрозрачна, кузов нет
-    let material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    surface::spawn_layer(
+    let (layers, report) = mesh_wagons(*bucket, &map.rails);
+    spawn_layers(
         &mut commands,
         &mut meshes,
-        builder,
-        Z_WAGON,
-        "wagons",
-        LayerMaterial::Flat(material),
+        &materials,
+        layers,
         WagonLayerTag,
     );
-    info!("wagons: {count} standing ({vertices} verts) in {elapsed:?}");
+    info!("{report}");
+}
+
+/// Что вышло из расстановки вагонов — значением, а не только строкой в логе.
+///
+/// `standing` — сколько вагонов встало: число, которым этот слой тюнился
+/// (1195 на Туле, потом ×0.7 до 866), и до шва его нельзя было ни на чём
+/// закрепить, кроме глаза на лог-строке.
+///
+/// `hidden` — дальняя ступень зума: слой снят, и это состояние отчёта, а не
+/// ноль в `standing`. Счётчики тогда нули, и это не заглушка — расстановка в
+/// таком случае действительно не идёт, ровно как у машин
+/// (`CarReport::detail = None`): снятый слой не должен стоить дороже, чем
+/// стоил ранний возврат. Считать вход было бы можно только расставив вагоны,
+/// то есть заплатив за то, чего никто не увидит.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct WagonReport {
+    pub standing: usize,
+    /// Дальняя ступень зума: слой описан и пуст, расстановка не шла.
+    pub hidden: bool,
+    pub vertices: usize,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for WagonReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            standing,
+            hidden,
+            vertices,
+            elapsed,
+        } = self;
+        if *hidden {
+            return write!(f, "wagons: hidden");
+        }
+        write!(
+            f,
+            "wagons: {standing} standing ({vertices} verts) in {elapsed:?}"
+        )
+    }
+}
+
+/// Слой стоящих вагонов на текущей ступени зума.
+///
+/// **Чистая функция и единственная дверь в слой.** Дальняя ступень отдаёт
+/// пустой слой, а не ранний выход у вызывающего: у вагона нет таблицы LOD, он
+/// просто пропадает — 13.9-метровый кузов на 2 м/px это те же ~7 экранных
+/// пикселей, на которых уже сняты машины. Говорит она об этом
+/// [`WagonReport::hidden`], а не нулём в `standing`.
+pub fn mesh_wagons(bucket: WagonZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>, WagonReport) {
+    let started = std::time::Instant::now();
+    let hidden = bucket.index > 0;
+    let wagons = if hidden {
+        Vec::new()
+    } else {
+        stable_wagons(rails)
+    };
+    let builder = mesh_bodies(&wagons);
+    let report = WagonReport {
+        standing: wagons.len(),
+        hidden,
+        vertices: builder.vertex_count(),
+        elapsed: started.elapsed(),
+    };
+    // как и у машин: тень полупрозрачна, кузов нет
+    let layer = LayerMesh::new(builder, Z_WAGON, "wagons", MaterialSpec::Blend);
+    (vec![layer], report)
 }
 
 /// Во сколько раз класс пути разрежает сцепы против станционного. Подъездной
@@ -216,37 +278,27 @@ struct Track<'a> {
 /// и перебор всех отрезков на каждый сцеп был бы квадратичным по городу.
 struct Fan<'a> {
     rails: &'a [RailLine],
-    cells: HashMap<(i32, i32), Vec<(usize, usize)>>,
+    segments: Grid<(usize, usize)>,
 }
 
 impl<'a> Fan<'a> {
     fn new(rails: &'a [RailLine]) -> Self {
-        let mut cells: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
+        let mut segments = Grid::new(FAN_CELL);
         for (index, rail) in rails.iter().enumerate() {
             if !holds_stock(rail) {
                 continue;
             }
             for (segment, pair) in rail.points.windows(2).enumerate() {
-                let low = (pair[0].min(pair[1]) - FAN_REACH) / FAN_CELL;
-                let high = (pair[0].max(pair[1]) + FAN_REACH) / FAN_CELL;
-                for x in low.x.floor() as i32..=high.x.floor() as i32 {
-                    for y in low.y.floor() as i32..=high.y.floor() as i32 {
-                        cells.entry((x, y)).or_default().push((index, segment));
-                    }
-                }
+                segments.insert_segment(pair[0], pair[1], FAN_REACH, (index, segment));
             }
         }
-        Self { rails, cells }
+        Self { rails, segments }
     }
 
     /// Сколько путей, кроме `own`, проходит ближе [`FAN_REACH`] к `point`.
     fn width_at(&self, point: Vec2, own: usize) -> usize {
-        let cell = (point / FAN_CELL).floor();
-        let Some(entries) = self.cells.get(&(cell.x as i32, cell.y as i32)) else {
-            return 0;
-        };
         let mut near: Vec<usize> = Vec::new();
-        for &(index, segment) in entries {
+        for &(index, segment) in self.segments.at(point) {
             if index == own || near.contains(&index) {
                 continue;
             }
@@ -322,12 +374,15 @@ fn stand_along(wagons: &mut Vec<Wagon>, track: &Track, fan: &Fan, rng: &mut Lcg)
 }
 
 /// Все тени, потом все кузова: иначе тень вагона легла бы на соседний.
-fn mesh_wagons(wagons: &[Wagon]) -> MeshBuilder {
+///
+/// Только меш, без слоя — имя `mesh_wagons` ушло функции слоя, как у машин
+/// (`cars::mesh_bodies` под `cars::mesh_cars`).
+fn mesh_bodies(wagons: &[Wagon]) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
-    let shadow = SHADOW_COLOR.to_linear();
-    let offset = shadow_dir() * (WAGON_HEIGHT * shadow_length_scale());
+    let color = SHADOW_COLOR.to_linear();
+    let offset = shadow::offset(WAGON_HEIGHT);
     for wagon in wagons {
-        builder.push_quad(body(wagon, offset), shadow);
+        builder.push_quad(body(wagon, offset), color);
     }
     for wagon in wagons {
         builder.push_quad(body(wagon, Vec2::ZERO), wagon.color.to_linear());
@@ -348,170 +403,4 @@ fn body(wagon: &Wagon, offset: Vec2) -> [Vec2; 4] {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Междупутье парка, м.
-    const SPACING: f32 = 5.3;
-
-    fn track(service: Option<ServiceTrack>, origin: Vec2, length: f32) -> RailLine {
-        RailLine {
-            points: vec![origin, origin + Vec2::new(length, 0.0)],
-            width: 5.0,
-            kind: RailKind::Active,
-            service,
-        }
-    }
-
-    /// Парк: `count` параллельных путей через междупутье, начиная с `origin`.
-    fn yard(
-        service: Option<ServiceTrack>,
-        origin: Vec2,
-        length: f32,
-        count: usize,
-    ) -> Vec<RailLine> {
-        (0..count)
-            .map(|index| {
-                track(
-                    service,
-                    origin + Vec2::new(0.0, SPACING * index as f32),
-                    length,
-                )
-            })
-            .collect()
-    }
-
-    /// Восемь парков по пять путей, в километре друг от друга.
-    fn yards(service: Option<ServiceTrack>, length: f32) -> Vec<RailLine> {
-        (0..8)
-            .flat_map(|index| {
-                yard(
-                    service,
-                    Vec2::new(100.0, 100.0 + 1000.0 * index as f32),
-                    length,
-                    5,
-                )
-            })
-            .collect()
-    }
-
-    /// Сорок одиночных путей той же длины, в километре друг от друга.
-    fn lone(service: Option<ServiceTrack>, length: f32) -> Vec<RailLine> {
-        (0..40)
-            .map(|index| {
-                track(
-                    service,
-                    Vec2::new(100.0, 100.0 + 1000.0 * index as f32),
-                    length,
-                )
-            })
-            .collect()
-    }
-
-    /// В парке из служебных путей стоят составы, в пучке главных ходов — нет.
-    #[test]
-    fn wagons_stand_on_service_track_only() {
-        assert!(!stable_wagons(&yards(Some(ServiceTrack::Siding), 600.0)).is_empty());
-        assert!(stable_wagons(&yards(None, 600.0)).is_empty());
-    }
-
-    /// Станцию выдаёт веер: одиночный путь той же длины и того же класса
-    /// держит в разы меньше вагонов, чем путь в парке.
-    #[test]
-    fn a_lone_track_stands_almost_empty() {
-        let fanned = stable_wagons(&yards(Some(ServiceTrack::Siding), 600.0)).len();
-        let single = stable_wagons(&lone(Some(ServiceTrack::Siding), 600.0)).len();
-        assert!(
-            single * 5 < fanned,
-            "{single} на одиночных против {fanned} в парках"
-        );
-    }
-
-    /// Подъездной путь в том же парке держит меньше, чем станционный.
-    #[test]
-    fn a_spur_stands_thinner_than_a_siding() {
-        let siding = stable_wagons(&yards(Some(ServiceTrack::Siding), 600.0)).len();
-        let spur = stable_wagons(&yards(Some(ServiceTrack::Spur), 600.0)).len();
-        assert!(
-            spur < siding,
-            "{spur} на подъездных против {siding} на станционных"
-        );
-    }
-
-    /// Ширина веера — это другие пути в пределах досягаемости: свой путь не в
-    /// счёт, дальний сосед тоже, заброшенный путь станции не образует.
-    #[test]
-    fn the_fan_counts_other_stock_tracks_within_reach() {
-        let mut rails = yard(None, Vec2::ZERO, 200.0, 3);
-        rails.push(track(None, Vec2::new(0.0, 40.0), 200.0));
-        let mut disused = track(None, Vec2::new(0.0, -SPACING), 200.0);
-        disused.kind = RailKind::Disused;
-        rails.push(disused);
-        let fan = Fan::new(&rails);
-        let middle = Vec2::new(100.0, SPACING);
-        assert_eq!(fan.width_at(middle, 1), 2);
-        assert_eq!(fan.width_at(Vec2::new(100.0, 0.0), 0), 2);
-        assert_eq!(fan.width_at(Vec2::new(100.0, 40.0), 3), 0);
-    }
-
-    /// Заброшенный путь состава не держит.
-    #[test]
-    fn a_disused_track_stands_empty() {
-        let mut rails = yards(Some(ServiceTrack::Siding), 600.0);
-        for rail in &mut rails {
-            rail.kind = RailKind::Disused;
-        }
-        assert!(stable_wagons(&rails).is_empty());
-    }
-
-    /// Короткий тупик — тоже: там негде.
-    #[test]
-    fn a_short_stub_stands_empty() {
-        assert!(stable_wagons(&yards(Some(ServiceTrack::Siding), 30.0)).is_empty());
-    }
-
-    /// Тот же путь, разбитый на короткие звенья: геометрия та же, вершин больше.
-    fn chopped(mut rail: RailLine, links: usize) -> RailLine {
-        let (start, end) = (rail.points[0], rail.points[1]);
-        rail.points = (0..=links)
-            .map(|index| start.lerp(end, index as f32 / links as f32))
-            .collect();
-        rail
-    }
-
-    /// Короткие звенья ломаной ничего не отнимают: сцепы идут по дуговой
-    /// координате **всего** пути, а не по каждому звену порознь. Посегментный
-    /// обход оставлял такой путь пустым целиком — каждое звено короче
-    /// `TRACK_MIN`.
-    #[test]
-    fn short_links_carry_the_same_rakes() {
-        let straight = yards(Some(ServiceTrack::Siding), 400.0);
-        let broken: Vec<RailLine> = straight
-            .iter()
-            .cloned()
-            .map(|rail| chopped(rail, 20))
-            .collect();
-        let straight = stable_wagons(&straight);
-        assert!(!straight.is_empty());
-        assert_eq!(straight.len(), stable_wagons(&broken).len());
-    }
-
-    /// Вагоны идут сцепами: между соседними в сцепе — автосцепка, а не
-    /// произвольный зазор.
-    #[test]
-    fn wagons_come_in_rakes() {
-        let wagons = stable_wagons(&yards(Some(ServiceTrack::Siding), 600.0));
-        let mut coupled = 0;
-        for pair in wagons.windows(2) {
-            let gap = pair[1].at.distance(pair[0].at);
-            if (gap - (WAGON_LENGTH + COUPLED_GAP)).abs() < 1e-3 {
-                coupled += 1;
-            }
-        }
-        assert!(
-            coupled > wagons.len() / 2,
-            "{coupled} сцепленных из {}",
-            wagons.len()
-        );
-    }
-}
+mod tests;

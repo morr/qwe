@@ -46,7 +46,8 @@ use super::{fortress, temples};
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
-use crate::map::sun_light;
+use crate::map::{SunOnMap, sun_light};
+use crate::prefs::retuned;
 use crate::settings::ROOF_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/roof.wgsl";
@@ -983,7 +984,25 @@ pub fn init_roof_material(
     commands.insert_resource(RoofMaterialHandle(handle));
 }
 
-/// Правка ползунка Texture — новые параметры в материал; меши не трогаются.
+/// Когда перетюнивать кровельный материал — **условие живёт рядом с системой**,
+/// а не у того, кто ставит её в расписание: причина тут кровельная, и узнать её
+/// надо, правя `material.rs`, а не `map/mod.rs`. Не `rebuilds_on`, как у слоёв:
+/// пересобирать нечего, переписывается юниформ уже созданного материала.
+///
+/// `RoofStyle` — это ползунок Texture. `SunOnMap` в списке потому, что
+/// [`RoofStyle::params`] кладёт в юниформ [`sun_light`] — глобаль осевшего
+/// солнца, — и без этого условия блики фальца остались бы освещёнными с угла, с
+/// которым грузился город, пока все остальные тени карты едут за осевшим
+/// солнцем. Осевшим (`SunOnMap`), а не ползунком (`SunStyle`), — как везде на
+/// карте: на шкале семьдесят делений.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
+pub fn retunes_on() -> impl SystemCondition<()> {
+    retuned::<RoofStyle>.or_else(retuned::<SunOnMap>)
+}
+
+/// Правка ползунка Texture или осевшего солнца — новые параметры в материал;
+/// меши не трогаются.
 pub fn retune_roof_material(
     style: Res<RoofStyle>,
     handle: Res<RoofMaterialHandle>,

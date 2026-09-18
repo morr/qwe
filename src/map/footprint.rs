@@ -14,11 +14,11 @@
 //! блокирует проходимость, и нарисованная полоса обязана совпадать с
 //! заблокированной по построению.
 
-use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 use bevy::prelude::*;
 
+use super::grid::Grid;
 use super::meshing::miter_offsets;
 use super::osm::model::{
     FenceLine, RoadLine, WallLine, WaterLine, closest_on_segment, distance_to_segment, ring_bounds,
@@ -274,10 +274,9 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
     if fences.is_empty() {
         return Vec::new();
     }
-    let cell_of = |point: Vec2| (point / GAP_CELL).floor().as_ivec2();
     // отрезки дорог по ячейкам своих коробок: дорог десятки тысяч, оград сотни,
     // и перебор пар «забор × дорога» мерил бы расстояния впустую
-    let mut cells: HashMap<IVec2, Vec<(u32, u32)>> = HashMap::new();
+    let mut cells: Grid<(u32, u32)> = Grid::new(GAP_CELL);
     for (road_index, road) in roads.iter().enumerate() {
         if road.bridge {
             continue;
@@ -286,18 +285,7 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
         // проём: полуширина у пересечения, [`GAP_END_REACH`] у торца
         let grown = road.width.max(GAP_END_REACH);
         for (segment, pair) in road.points.windows(2).enumerate() {
-            let (min, max) = (
-                cell_of(pair[0].min(pair[1]) - grown),
-                cell_of(pair[0].max(pair[1]) + grown),
-            );
-            for x in min.x..=max.x {
-                for y in min.y..=max.y {
-                    cells
-                        .entry(IVec2::new(x, y))
-                        .or_default()
-                        .push((road_index as u32, segment as u32));
-                }
-            }
+            cells.insert_segment(pair[0], pair[1], grown, (road_index as u32, segment as u32));
         }
     }
     // висячие торцы — тем же вопросом, что у стежка: в узле нет другой дороги,
@@ -342,54 +330,44 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
                 let Some(along) = (b - a).try_normalize() else {
                     continue;
                 };
-                let (min, max) = (cell_of(a.min(b)), cell_of(a.max(b)));
                 seen.clear();
-                for x in min.x..=max.x {
-                    for y in min.y..=max.y {
-                        let Some(candidates) = cells.get(&IVec2::new(x, y)) else {
+                for &key in cells.near_each(a.min(b), a.max(b)) {
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.push(key);
+                    let road = &roads[key.0 as usize];
+                    let (c, d) = (road.points[key.1 as usize], road.points[key.1 as usize + 1]);
+                    let Some(direction) = (d - c).try_normalize() else {
+                        continue;
+                    };
+                    let sin = along.perp_dot(direction).abs();
+                    let reach = road.width / 2.0 / sin.max(1.0 / GAP_OBLIQUITY_MAX);
+                    if let Some(at) = segment_crossing(a, b, c, d) {
+                        push_gap(&mut gaps, FenceGap { at, reach });
+                    }
+                    let last = road.points.len() - 2;
+                    for (side, (end, is_end, outward)) in [
+                        (c, key.1 == 0, -direction),
+                        (d, key.1 as usize == last, direction),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        if !is_end {
                             continue;
+                        }
+                        let at = closest_on_segment(end, a, b);
+                        // висячий торец, смотрящий на ограду, достаёт
+                        // до неё через зазор небрежной разметки
+                        let aimed = loose[key.0 as usize][side] && (at - end).dot(outward) > 0.0;
+                        let limit = if aimed {
+                            (road.width / 2.0).max(GAP_END_REACH)
+                        } else {
+                            road.width / 2.0
                         };
-                        for &key in candidates {
-                            if seen.contains(&key) {
-                                continue;
-                            }
-                            seen.push(key);
-                            let road = &roads[key.0 as usize];
-                            let (c, d) =
-                                (road.points[key.1 as usize], road.points[key.1 as usize + 1]);
-                            let Some(direction) = (d - c).try_normalize() else {
-                                continue;
-                            };
-                            let sin = along.perp_dot(direction).abs();
-                            let reach = road.width / 2.0 / sin.max(1.0 / GAP_OBLIQUITY_MAX);
-                            if let Some(at) = segment_crossing(a, b, c, d) {
-                                push_gap(&mut gaps, FenceGap { at, reach });
-                            }
-                            let last = road.points.len() - 2;
-                            for (side, (end, is_end, outward)) in [
-                                (c, key.1 == 0, -direction),
-                                (d, key.1 as usize == last, direction),
-                            ]
-                            .into_iter()
-                            .enumerate()
-                            {
-                                if !is_end {
-                                    continue;
-                                }
-                                let at = closest_on_segment(end, a, b);
-                                // висячий торец, смотрящий на ограду, достаёт
-                                // до неё через зазор небрежной разметки
-                                let aimed =
-                                    loose[key.0 as usize][side] && (at - end).dot(outward) > 0.0;
-                                let limit = if aimed {
-                                    (road.width / 2.0).max(GAP_END_REACH)
-                                } else {
-                                    road.width / 2.0
-                                };
-                                if at.distance(end) <= limit {
-                                    push_gap(&mut gaps, FenceGap { at, reach });
-                                }
-                            }
+                        if at.distance(end) <= limit {
+                            push_gap(&mut gaps, FenceGap { at, reach });
                         }
                     }
                 }
@@ -436,63 +414,42 @@ const STREET_REACH: f32 = 96.0;
 /// задах, даже если тропинка ближе к достижимому.
 pub struct StreetEdges<'a> {
     roads: &'a [RoadLine],
-    cells: HashMap<IVec2, Vec<(u32, u32)>>,
+    segments: Grid<(u32, u32)>,
 }
 
 impl<'a> StreetEdges<'a> {
     pub fn build(roads: &'a [RoadLine]) -> Self {
-        let mut cells: HashMap<IVec2, Vec<(u32, u32)>> = HashMap::new();
+        let mut segments: Grid<(u32, u32)> = Grid::new(GAP_CELL);
         for (index, road) in roads.iter().enumerate() {
             if !super::roads::is_carriageway(road) {
                 continue;
             }
             for (segment, pair) in road.points.windows(2).enumerate() {
-                let min = street_cell(pair[0].min(pair[1]));
-                let max = street_cell(pair[0].max(pair[1]));
-                for x in min.x..=max.x {
-                    for y in min.y..=max.y {
-                        cells
-                            .entry(IVec2::new(x, y))
-                            .or_default()
-                            .push((index as u32, segment as u32));
-                    }
-                }
+                segments.insert_segment(pair[0], pair[1], 0.0, (index as u32, segment as u32));
             }
         }
-        Self { roads, cells }
+        Self { roads, segments }
     }
 
     /// Расстояние от точки до кромки ближайшей проезжей части (осевая минус
     /// полширины, не меньше нуля), не дальше [`STREET_REACH`] — иначе
     /// `STREET_REACH`. Кромка, а не осевая: широкая улица притягивает сильнее.
     pub fn distance(&self, point: Vec2) -> f32 {
-        let (min, max) = (
-            street_cell(point - STREET_REACH),
-            street_cell(point + STREET_REACH),
-        );
         let mut best = STREET_REACH;
-        for x in min.x..=max.x {
-            for y in min.y..=max.y {
-                let Some(segments) = self.cells.get(&IVec2::new(x, y)) else {
-                    continue;
-                };
-                for &(road, segment) in segments {
-                    let road = &self.roads[road as usize];
-                    let (a, b) = (
-                        road.points[segment as usize],
-                        road.points[segment as usize + 1],
-                    );
-                    let edge = (distance_to_segment(point, a, b) - road.width / 2.0).max(0.0);
-                    best = best.min(edge);
-                }
-            }
+        for &(road, segment) in self
+            .segments
+            .near_each(point - STREET_REACH, point + STREET_REACH)
+        {
+            let road = &self.roads[road as usize];
+            let (a, b) = (
+                road.points[segment as usize],
+                road.points[segment as usize + 1],
+            );
+            let edge = (distance_to_segment(point, a, b) - road.width / 2.0).max(0.0);
+            best = best.min(edge);
         }
         best
     }
-}
-
-fn street_cell(point: Vec2) -> IVec2 {
-    (point / GAP_CELL).floor().as_ivec2()
 }
 
 /// Ограда, как она стоит: осевая, из которой вынуто всё, что лежит внутри

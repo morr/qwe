@@ -22,14 +22,11 @@
 //! (`Navmesh::fill_from_mapdata`), и то, что лента внутри полигона больше не
 //! рисуется, проходимости не меняет.
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 
+use crate::map::grid::Grid;
 use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin};
-use crate::map::osm::model::{
-    grid_cell, point_in_area, point_in_polygon, put_in_cells, ring_bounds, signed_ring_area,
-};
+use crate::map::osm::model::{point_in_area, point_in_polygon, ring_bounds, signed_ring_area};
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
 use crate::map::roads::{self, RoadSmoothing};
 
@@ -291,17 +288,18 @@ struct OpenRun {
 struct WaterIndex<'a> {
     areas: &'a [PolyArea],
     bounds: Vec<(Vec2, Vec2)>,
-    edges: HashMap<(i32, i32), Vec<(Vec2, Vec2)>>,
+    edges: Grid<(Vec2, Vec2)>,
 }
 
 impl<'a> WaterIndex<'a> {
     fn new(areas: &'a [PolyArea]) -> Self {
-        let mut edges = HashMap::new();
+        let mut edges = Grid::new(CELL);
         for area in areas {
             for ring in std::iter::once(&area.outer).chain(&area.holes) {
                 for (index, &from) in ring.iter().enumerate() {
                     let to = ring[(index + 1) % ring.len()];
-                    put_in_cells(&mut edges, from.min(to), from.max(to), CELL, (from, to));
+                    // радиус здесь знает запрос, а не ребро — рамка не раздувается
+                    edges.insert_segment(from, to, 0.0, (from, to));
                 }
             }
         }
@@ -327,26 +325,22 @@ impl<'a> WaterIndex<'a> {
         let (min, max) = (from.min(to), from.max(to));
         let span = to - from;
         let mut hits = Vec::new();
-        for x in grid_cell(min.x, CELL)..=grid_cell(max.x, CELL) {
-            for y in grid_cell(min.y, CELL)..=grid_cell(max.y, CELL) {
-                let Some(cell) = self.edges.get(&(x, y)) else {
-                    continue;
-                };
-                for &(a, b) in cell {
-                    let edge = b - a;
-                    let denominator = span.perp_dot(edge);
-                    if denominator == 0.0 {
-                        continue;
-                    }
-                    let t = (a - from).perp_dot(edge) / denominator;
-                    let u = (a - from).perp_dot(span) / denominator;
-                    // начало звена считается, конец — нет: берег, пришедший ровно в
-                    // вершину оси, обязан сбросить «внутри/снаружи» один раз, а не
-                    // ноль (он же конец предыдущего звена)
-                    if (0.0..1.0).contains(&t) && (0.0..=1.0).contains(&u) {
-                        hits.push(t);
-                    }
-                }
+        // `near_each`, а не `near`: ребро — пара `Vec2`, сравнивать их нечем,
+        // да и повторы здесь безразличны — доли всё равно сортируются и
+        // склеиваются ниже
+        for &(a, b) in self.edges.near_each(min, max) {
+            let edge = b - a;
+            let denominator = span.perp_dot(edge);
+            if denominator == 0.0 {
+                continue;
+            }
+            let t = (a - from).perp_dot(edge) / denominator;
+            let u = (a - from).perp_dot(span) / denominator;
+            // начало звена считается, конец — нет: берег, пришедший ровно в
+            // вершину оси, обязан сбросить «внутри/снаружи» один раз, а не
+            // ноль (он же конец предыдущего звена)
+            if (0.0..1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+                hits.push(t);
             }
         }
         hits.sort_by(f32::total_cmp);

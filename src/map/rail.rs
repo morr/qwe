@@ -33,8 +33,9 @@ use bevy::prelude::*;
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
 use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
-use crate::map::surface::{LayerMaterial, spawn_layer};
+use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::prefs::retuned;
 use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
 
 /// Цвета одного вида пути. Действующий путь — щебень, креозотная шпала и
@@ -237,7 +238,9 @@ impl ZoomLods for RailLods {
 pub type RailZoomBucket = ZoomBucket<RailLods>;
 
 /// Рельсовый слой карты — чтобы пересборка знала, что деспавнить.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый из трёх слоёв, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct RailLayerTag;
 
 /// Один путь, приведённый к тому, что нужно рисованию: сглаженная осевая,
@@ -250,16 +253,42 @@ struct Track<'a> {
     palette: &'static RailPalette,
 }
 
-/// Рельсовые слои текущей ступени зума. Единственный вызов — из
-/// [`rebuild_rails`]: и вход в мир, и смена ступени идут через пересборку (в
-/// свежем мире деспавнить ей нечего).
-fn spawn_rails(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
-    bucket: RailZoomBucket,
-    rails: &[RailLine],
-) {
+/// Что вышло из сборки путей — значением, а не только строкой в логе.
+///
+/// `tracks` — сколько путей действительно нарисовано: трамвайные сюда не
+/// попадают, у них свой модуль. `elapsed` меряется внутри сборки, потому что
+/// время тратится там; печатает его адаптер.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct RailReport {
+    pub tracks: usize,
+    pub bucket: usize,
+    pub vertices: usize,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for RailReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            tracks,
+            bucket,
+            vertices,
+            elapsed,
+        } = self;
+        write!(
+            f,
+            "rail meshing: {tracks} tracks, {vertices} verts in {elapsed:?} (bucket {bucket})"
+        )
+    }
+}
+
+/// Рельсовые слои текущей ступени зума: балласт, шпалы, сталь — снизу вверх.
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_rails`]), и тест. Три меша, а не один, по
+/// той же причине, по которой они три и в мире: копланарная геометрия
+/// z-файтит, и шпала обязана лежать выше **любого** балласта, иначе развязка
+/// нескольких путей расслаивается.
+pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>, RailReport) {
     let started = std::time::Instant::now();
     let lod = &RAIL_LODS[bucket.index];
 
@@ -338,31 +367,49 @@ fn spawn_rails(
         }
     }
 
-    let vertices = ballast.vertex_count() + ties.vertex_count() + steel.vertex_count();
+    let report = RailReport {
+        tracks: tracks.len(),
+        bucket: bucket.index,
+        vertices: ballast.vertex_count() + ties.vertex_count() + steel.vertex_count(),
+        elapsed: started.elapsed(),
+    };
     // вершинные цвета — материал белый и плоский: фактура поверхностей пути ни
     // к чему, он и так весь из щебня, шпал и стали
-    let flat = materials.add(Color::WHITE);
-    for (builder, z, name) in [
+    let layers = [
         (ballast, Z_RAIL, "rail_ballast"),
         (ties, Z_RAIL_TIE, "rail_ties"),
         (steel, Z_RAIL_STEEL, "rail_steel"),
-    ] {
-        spawn_layer(
-            commands,
-            meshes,
-            builder,
-            z,
-            name,
-            LayerMaterial::Flat(flat.clone()),
-            RailLayerTag,
-        );
-    }
+    ]
+    .into_iter()
+    .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Flat))
+    .collect();
+    (layers, report)
+}
 
-    info!(
-        "rail meshing: {vertices} verts in {:?} (bucket {})",
-        started.elapsed(),
-        bucket.index,
-    );
+/// Офлайн-замер путевых слоёв — **по строке на ступень зума**, а не одной
+/// строкой: у рельсов ступени отличаются не размером, а тем, что нарисовано,
+/// и дальняя стоит 45 к вершин против 673 к у ближней. Одно число здесь было
+/// бы числом ни о чём.
+///
+/// Своей сборки у замера нет: он зовёт тот же [`mesh_rails`], что и игра.
+pub fn measure_rails(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
+    (0..RAIL_LODS.len())
+        .map(|index| {
+            let (layers, report) = mesh_rails(RailZoomBucket::at(index), rails);
+            (index, surface::layer_costs(&layers, report.elapsed))
+        })
+        .collect()
+}
+
+/// Когда пересобирать путевые слои. Только ступень зума: у пути нет ни ручек
+/// стиля (`RoadStyle` его не касается), ни теней, так что солнце ему
+/// безразлично — единственное, что меняет рисунок, это порог зума.
+///
+/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    // через `into_system`, потому что у голой функции-условия свой маркер
+    // типа; у остальных слоёв его стирает `or_else`, а здесь складывать нечего
+    IntoSystem::into_system(retuned::<RailZoomBucket>)
 }
 
 /// Пересборка рельсовых слоёв при смене ступени зума — дорожные и трамвайный
@@ -370,7 +417,7 @@ fn spawn_rails(
 pub fn rebuild_rails(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<RailZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<RailLayerTag>>,
@@ -378,13 +425,9 @@ pub fn rebuild_rails(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    spawn_rails(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        *bucket,
-        &map.rails,
-    );
+    let (layers, report) = mesh_rails(*bucket, &map.rails);
+    spawn_layers(&mut commands, &mut meshes, &materials, layers, RailLayerTag);
+    info!("{report}");
 }
 
 #[cfg(test)]

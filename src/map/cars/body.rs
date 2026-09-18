@@ -35,6 +35,7 @@ use bevy::prelude::*;
 
 use crate::map::SHADOW_COLOR;
 use crate::map::meshing::{MeshBuilder, sweep_convex};
+use crate::map::shadow;
 
 /// Тип кузова. Доли в списке — то, как часто он встречается во дворе
 /// русского города: половина — седаны и хэтчбеки, кроссоверов заметно
@@ -333,7 +334,7 @@ impl Car {
 /// кузов, и разница со свипом там только в двух вырезах по бокам.
 ///
 /// Кайма (`SHADOW_BLUR`) сужается к машине по тому же правилу, что у зданий
-/// ([`crate::map::buildings::layers`]`::penumbra`): у самого кузова тень
+/// ([`crate::map::shadow`]`::penumbra`): у самого кузова тень
 /// примыкает жёстко, размывается она с удалением от того, кто её отбрасывает.
 /// Обвести машину мягкой каймой по всему кругу — то самое «контактное
 /// затенение», которое из теней зданий убрали: город вышел обведён грязной
@@ -355,15 +356,7 @@ pub fn push_shadow(builder: &mut MeshBuilder, car: &Car, offset: Vec2, detail: C
         alpha: 0.0,
         ..color
     };
-    let light = offset.normalize_or_zero();
-    builder.push_inset_band_tapered(
-        &cast,
-        SHADOW_BLUR,
-        true,
-        |direction| direction.dot(light).max(0.0),
-        color,
-        fade,
-    );
+    builder.push_inset_band_tapered(&cast, SHADOW_BLUR, true, shadow::penumbra, color, fade);
 }
 
 /// Кузов со всем, что на нём видно на этой ступени подробности.

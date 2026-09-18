@@ -15,6 +15,9 @@
 //! фактуры разом — ползунок [`SurfaceStyle::texture`] (панель Surfaces), ноль
 //! возвращает прежние плоские заливки.
 
+use std::time::Duration;
+
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
@@ -26,7 +29,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use crate::loading::AppState;
-use crate::map::buildings::material::RoofMaterial;
+use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::settings::SURFACE_TEXTURE_DEFAULT;
@@ -359,16 +362,97 @@ pub fn init_surface_materials(
 /// Чем красить слой карты: плоским `ColorMaterial` (кант, рельсы, стены —
 /// всё, чему фактура ни к чему), фактурным материалом поверхности или
 /// материалом кровель (`map::buildings::material`).
-pub enum LayerMaterial {
+///
+/// Приватен вместе со [`spawn_layer`]: наружу модуль отдаёт [`MaterialSpec`],
+/// а готовый хэндл существует только между `resolve` и спавном.
+enum LayerMaterial {
     Flat(Handle<ColorMaterial>),
     Surface(Handle<SurfaceMaterial>),
     Roof(Handle<RoofMaterial>),
 }
 
+/// Чем красить слой — **описанием, а не хэндлом**.
+///
+/// Хэндл берётся из `Assets`, то есть из мира, и это единственное, ради чего
+/// сборке слоя нужен был бы Bevy. Описание о мире не знает ничего, поэтому
+/// `mesh_*` остаётся чистой функцией: её зовут и игра, и тест, и офлайн-бенч
+/// (`examples/bench/map_meshing`) — одним и тем же вызовом, а не тремя разными
+/// путями. Разворачивает описание в хэндл адаптер, [`spawn_layers`].
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MaterialSpec {
+    /// Белый непрозрачный: кант, рельсы, стены — всё, чему фактура ни к чему.
+    Flat,
+    /// Белый **с блендингом**: слой, в котором есть полупрозрачное — тень
+    /// моста, тень забора. Непрозрачный материал съел бы вершинную альфу.
+    Blend,
+    /// Фактурный материал поверхности. Меш обязан быть собран через
+    /// [`MeshBuilder::with_surface_coords`], иначе материал его не примет.
+    Surface(SurfaceKind),
+    /// Материал кровель (`map::buildings::material`). Меш обязан быть собран
+    /// через [`MeshBuilder::with_roof_coords`]. Один на всё приложение, как и
+    /// фактурные, — вариант появился последним, вместе со зданиевыми слоями.
+    Roof,
+}
+
+/// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
+/// мир, — рунга z, имя и вид материала.
+///
+/// **Один тип на все слои карты**, а не свой на каждый модуль: дороги отдают
+/// девять таких, промзона пять, рельсы три, забор один. Модуль, собранный как
+/// `-> Vec<LayerMesh>`, читается тем же способом, что и любой соседний, и его
+/// адаптер — один вызов [`spawn_layers`], а не переписанный цикл.
+///
+/// `name` — не выдуманный идентификатор: это ровно та строка, под которой
+/// сущность слоя видна в живом приложении (`Name`), то есть та, по которой её
+/// ищут через BRP.
+pub struct LayerMesh {
+    pub builder: MeshBuilder,
+    pub z: f32,
+    pub name: &'static str,
+    pub material: MaterialSpec,
+}
+
+impl LayerMesh {
+    pub fn new(builder: MeshBuilder, z: f32, name: &'static str, material: MaterialSpec) -> Self {
+        Self {
+            builder,
+            z,
+            name,
+            material,
+        }
+    }
+}
+
+/// Два плоских `ColorMaterial` на всё приложение — непрозрачный и с
+/// блендингом, ровно те, что называет [`MaterialSpec`].
+///
+/// Ресурс, а не `materials.add(...)` в каждой пересборке: слой пересобирается
+/// на каждую ступень зума и на каждое осевшее солнце, а материал у него всё
+/// время один и тот же. Ровесник [`SurfaceMaterials`] и живёт по тому же
+/// правилу.
+#[derive(Resource)]
+pub struct FlatMaterials {
+    opaque: Handle<ColorMaterial>,
+    blend: Handle<ColorMaterial>,
+}
+
+/// Плоские материалы — на старте приложения, рядом с фактурными.
+pub fn init_flat_materials(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
+    let opaque = materials.add(Color::WHITE);
+    let blend = materials.add(ColorMaterial {
+        alpha_mode: AlphaMode2d::Blend,
+        ..default()
+    });
+    commands.insert_resource(FlatMaterials { opaque, blend });
+}
+
 /// Слой карты из собранного меша: пустой сборщик не спавнится вовсе. Меш для
 /// [`LayerMaterial::Surface`] обязан быть собран через
 /// `MeshBuilder::with_surface_coords`, иначе материал его не примет.
-pub fn spawn_layer(
+///
+/// Приватен: после шва это примитив, на котором стоит [`spawn_layers`], и
+/// звать его снаружи модуля незачем — адаптеры слоёв ходят через шов.
+fn spawn_layer(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     builder: MeshBuilder,
@@ -392,6 +476,97 @@ pub fn spawn_layer(
         LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
     };
+}
+
+/// Всё, во что разворачивается [`MaterialSpec`], одним параметром системы.
+///
+/// Одним, а не двумя ресурсами по отдельности: адаптеру слоя они нужны только
+/// вместе и только чтобы отдать их в [`spawn_layers`], а подпись системы
+/// пересборки и без них длинная — у промзоны и трамвая два отдельных `Res`
+/// уводили её за предел clippy. Идиома `ui/debug/mod.rs::DebugValues`.
+#[derive(SystemParam)]
+pub struct LayerMaterials<'w> {
+    flats: Res<'w, FlatMaterials>,
+    surfaces: Res<'w, SurfaceMaterials>,
+    roof: Res<'w, RoofMaterialHandle>,
+}
+
+impl LayerMaterials<'_> {
+    /// Описание — в хэндл. Единственное место, где это происходит.
+    fn resolve(&self, spec: MaterialSpec) -> LayerMaterial {
+        match spec {
+            MaterialSpec::Flat => LayerMaterial::Flat(self.flats.opaque.clone()),
+            MaterialSpec::Blend => LayerMaterial::Flat(self.flats.blend.clone()),
+            MaterialSpec::Surface(kind) => LayerMaterial::Surface(self.surfaces.handle(kind)),
+            MaterialSpec::Roof => LayerMaterial::Roof(self.roof.handle()),
+        }
+    }
+}
+
+/// Положить в мир всё, что собрал `mesh_*` одного модуля, под одной меткой.
+///
+/// Это вторая половина шва: сборка сказала, **что** нарисовано, адаптер знает,
+/// **куда** это деть. Разворачивание [`MaterialSpec`] в хэндл живёт здесь и
+/// только здесь, так что описание слоя остаётся тем, что можно вернуть из
+/// чистой функции и сравнить в тесте.
+pub fn spawn_layers(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    layers: impl IntoIterator<Item = LayerMesh>,
+    tag: impl Bundle + Clone,
+) {
+    for layer in layers {
+        let material = materials.resolve(layer.material);
+        spawn_layer(
+            commands,
+            meshes,
+            layer.builder,
+            layer.z,
+            layer.name,
+            material,
+            tag.clone(),
+        );
+    }
+}
+
+/// Во что обошёлся один слой: имя, вершины, время сборки.
+///
+/// Живёт рядом с [`layer_costs`], который его и собирает: строка замера — это
+/// слой, посчитанный на шве, а не деталь зданий, где её впервые понадобилось
+/// печатать. Зданиям и машинам она нужна тем же типом, они берут её отсюда.
+pub struct LayerCost {
+    pub name: &'static str,
+    pub vertices: usize,
+    pub elapsed: Duration,
+}
+
+/// Слои, собранные `mesh_*`, — строками офлайн-замера
+/// (`examples/bench/map_meshing.rs`).
+///
+/// Время одно на всю сборку и стоит первой строкой (`build`), с нулём вершин:
+/// `mesh_*` строит все свои слои одним проходом, и делить миллисекунды между
+/// ними нечем — та же форма, что у шагов `breaks`/`districts` в
+/// `measure_cars`. Дальше идут слои: имя — то самое, под которым слой виден в
+/// живом мире, — и вершины.
+///
+/// Существует ради того, чтобы `measure_*` каждого модуля был одной строкой:
+/// **своей сборки у замера нет**, он зовёт игровой `mesh_*`. Это и есть то,
+/// ради чего делался шов, и это отличает их от `buildings::measure_layers` и
+/// `cars::measure_cars`, которые повторяют шаги сборки нарочно — им надо
+/// развести их по строкам.
+pub fn layer_costs(layers: &[LayerMesh], elapsed: Duration) -> Vec<LayerCost> {
+    std::iter::once(LayerCost {
+        name: "build",
+        vertices: 0,
+        elapsed,
+    })
+    .chain(layers.iter().map(|layer| LayerCost {
+        name: layer.name,
+        vertices: layer.builder.vertex_count(),
+        elapsed: Duration::ZERO,
+    }))
+    .collect()
 }
 
 /// Правка ползунка Texture — новые параметры в каждый материал; меши не

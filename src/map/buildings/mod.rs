@@ -40,14 +40,14 @@ use self::layers::{
     ShadowSweeps, extrusion_builder, facade_and_roof_builders, roof_shadow_builder, shadow_builder,
 };
 pub use self::layers::{push_house, wall_of};
-use self::material::RoofMaterialHandle;
 use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{MapData, PolyArea, RoadLine};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SunOnMap, sun_light};
+use crate::prefs::retuned;
 use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
 
 /// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
@@ -143,7 +143,7 @@ impl BuildingHeightMode {
 }
 
 /// Зданиевый слой карты — чтобы пересборка режима знала, что деспавнить.
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub struct BuildingLayerTag;
 
 /// Теневой слой — своя метка, потому что пересобирается он реже прочих: тени
@@ -155,7 +155,7 @@ pub struct BuildingLayerTag;
 /// Доля, а не миллисекунды: абсолютное время зависит от энергетического
 /// состояния машины (App Nap), поэтому перемерять его надо бенчем —
 /// `examples/bench/map_meshing`, — а не строкой `building meshing:` в логе.
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub struct BuildingShadowTag;
 
 /// Ступени детализации кровли — единственное, чем зум правит слой зданий:
@@ -175,8 +175,8 @@ impl ZoomLods for BuildingLods {
 pub type BuildingZoomBucket = ZoomBucket<BuildingLods>;
 
 /// Что строить: режим высот, ступень зума и надо ли трогать теневой слой.
-/// Одним значением, а не тремя параметрами, — так `spawn_buildings`
-/// укладывается в семь аргументов, а вызывающий видит все три решения рядом.
+/// Одним значением, а не тремя параметрами, — так вызывающий видит все три
+/// решения рядом, а `mesh_buildings` читается как «собрать по этому плану».
 #[derive(Clone, Copy)]
 pub struct BuildingPlan {
     pub mode: BuildingHeightMode,
@@ -196,20 +196,13 @@ pub(super) struct RoofDetail {
     pub(super) clutter: bool,
 }
 
-/// Во что обошёлся один слой: имя, вершины, время сборки.
-pub struct LayerCost {
-    pub name: &'static str,
-    pub vertices: usize,
-    pub elapsed: Duration,
-}
-
 /// Сборка зданиевых слоёв **без мира и без ассетов** — для офлайн-замера
 /// (`examples/bench/map_meshing.rs`).
 ///
 /// Существует потому, что мерить сборку в живом приложении на macOS нельзя:
 /// невидимому окну система урезает приоритет (App Nap), и те же 116 мс
 /// показывают себя пятью секундами. Здесь нет ни окна, ни GPU — только те же
-/// билдеры, что зовёт `spawn_buildings`.
+/// билдеры, что зовёт `mesh_buildings`.
 ///
 /// Аргументы — ровно те два решения, которые замер читает: режим высот и
 /// оборудование на кровле. [`BuildingPlan`] здесь не берётся: его третье поле,
@@ -304,7 +297,7 @@ pub fn measure_layers(
         });
         // тени на кровлях — свой ряд, а не слагаемое в чужом: слой лежит над
         // зданиевыми, строится другим сборщиком и стоит своих миллисекунд,
-        // причём `spawn_buildings` печатает их отдельно тем же образом
+        // причём `mesh_buildings` отдаёт их отдельно тем же образом
         measure("roof shadows", &mut || {
             roof_shadow_builder(
                 buildings,
@@ -317,46 +310,102 @@ pub fn measure_layers(
     costs
 }
 
-/// Спавн зданиевых слоёв в выбранном режиме. Вызывается из `spawn_map` при
-/// входе в мир и из `rebuild_buildings` при переключении режима.
-pub fn spawn_buildings(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<ColorMaterial>,
-    roof: &RoofMaterialHandle,
+/// Зданиевые слои, разложенные по меткам, под которыми они уходят в мир.
+///
+/// **Два списка, а не один**, и это единственный модуль карты, которому нужно
+/// именно так: у теней своё расписание пересборки (`BuildingShadowTag` —
+/// ступень зума их не трогает, а стоят они дороже всего остального), поэтому
+/// деспавнить их надо порознь. Класть метку внутрь `LayerMesh` было бы
+/// неверно: метка — это то, по чему деспавнит **адаптер**, а не свойство
+/// нарисованного.
+pub struct BuildingMeshes {
+    /// Под `BuildingLayerTag`: фасады и кровли или экструзия.
+    pub layers: Vec<LayerMesh>,
+    /// Под `BuildingShadowTag`: наземные тени и тени на кровлях.
+    pub shadows: Vec<LayerMesh>,
+}
+
+/// Что вышло из сборки зданиевых слоёв — значением, а не только строкой в логе.
+///
+/// Дериватов у него нет, в отличие от `FenceReport` (`Clone, Copy, PartialEq,
+/// Debug`), и симметрии тут не будет. У ограды отчёт из одних чисел, и деривы
+/// ей ничего не стоят; здесь `Copy` невозможен — два поля `String`, — а
+/// `Clone`/`PartialEq` никому не нужны: тесты слоя читают отдельные счётчики, а
+/// для сообщения об ошибке есть [`Display`](std::fmt::Display) ниже, который
+/// печатает ту же строку, что уходит в лог, и читается лучше любого `Debug`.
+/// Правило шва: дерив добавляют, когда им кто-то пользуется, а не ради
+/// симметрии отчётов между собой.
+pub struct BuildingReport {
+    pub buildings: usize,
+    pub garage_runs: usize,
+    pub mode: BuildingHeightMode,
+    pub clutter: bool,
+    pub vertices: usize,
+    pub skipped: usize,
+    pub heights: String,
+    pub roofs: String,
+    /// Развёртки силуэтов — общий шаг обоих теневых слоёв.
+    pub sweeps: Duration,
+    pub ground_shadows: Duration,
+    pub roof_shadows: Duration,
+    pub elapsed: Duration,
+}
+
+impl std::fmt::Display for BuildingReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            buildings,
+            garage_runs,
+            mode,
+            clutter,
+            vertices,
+            heights,
+            roofs,
+            sweeps,
+            ground_shadows,
+            roof_shadows,
+            elapsed,
+            ..
+        } = self;
+        write!(
+            f,
+            "building meshing: {vertices} verts in {elapsed:?} (shadows {sweeps:?} sweeps + \
+             {ground_shadows:?} on ground + {roof_shadows:?} on roofs, {buildings} buildings, \
+             {garage_runs} in garage rows, {}, clutter {clutter}, heights: {heights}, \
+             roofs: {roofs})",
+            mode.label(),
+        )
+    }
+}
+
+/// Зданиевые слои в выбранном режиме.
+///
+/// **Чистая функция и единственная дверь в слой** — последняя из слитых
+/// слоёв: `trees` и поверхности `spawn.rs` переехали на шов позже и приняли
+/// другую форму. Счёт дверей живёт в скилле `osm-map` и в `CONTEXT.md`, здесь
+/// его нет — он устаревал бы на каждом новом модуле.
+/// Кровельный материал ездит через шов как [`MaterialSpec::Roof`]: вариант
+/// появился ровно здесь и ровно потому, что до зданий его некому было
+/// конструировать.
+pub fn mesh_buildings(
     plan: BuildingPlan,
     buildings: &[PolyArea],
     passages: &[RoadLine],
-) {
+) -> (BuildingMeshes, BuildingReport) {
     let BuildingPlan {
         mode,
         bucket,
         shadows: with_shadows,
     } = plan;
-    // фасады и тени — плоский белый `ColorMaterial` под вершинные цвета;
-    // всё, где есть крыша, идёт через `RoofMaterial` (у стен в том же меше
-    // код материала нулевой, и фактуры они не получают)
+    // фасады и тени — плоский белый материал под вершинные цвета; всё, где
+    // есть крыша, идёт через `MaterialSpec::Roof` (у стен в том же меше код
+    // материала нулевой, и фактуры они не получают)
     let started = Instant::now();
-    let opaque = materials.add(Color::WHITE);
     let mut skipped = 0;
-    let mut vertices = 0;
-    let mut spawn_layer = |commands: &mut Commands,
-                           meshes: &mut Assets<Mesh>,
-                           builder: MeshBuilder,
-                           z,
-                           name,
-                           material| {
+    let mut layers: Vec<LayerMesh> = Vec::new();
+    let mut push = |builder: MeshBuilder, z, name, material| {
         skipped += builder.skipped_polygons();
-        vertices += builder.vertex_count();
-        surface::spawn_layer(
-            commands,
-            meshes,
-            builder,
-            z,
-            name,
-            material,
-            BuildingLayerTag,
-        );
+        layers.push(LayerMesh::new(builder, z, name, material));
     };
 
     // порядок отрисовки строится один раз на сборку слоя и достаётся обоим,
@@ -382,13 +431,11 @@ pub fn spawn_buildings(
             };
             let (extruded, mix) = extrusion_builder(buildings, passages, detail, order);
             roof_mix = mix.to_string();
-            spawn_layer(
-                commands,
-                meshes,
+            push(
                 extruded,
                 Z_BUILDING,
                 "building_extruded",
-                LayerMaterial::Roof(roof.handle()),
+                MaterialSpec::Roof,
             );
         }
         None => {
@@ -397,37 +444,20 @@ pub fn spawn_buildings(
                 clutter: bucket.index == 0,
             };
             let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
-            spawn_layer(
-                commands,
-                meshes,
-                facades,
-                Z_FACADE,
-                "building_facades",
-                LayerMaterial::Flat(opaque.clone()),
-            );
-            spawn_layer(
-                commands,
-                meshes,
-                roofs,
-                Z_BUILDING,
-                "building_roofs",
-                LayerMaterial::Roof(roof.handle()),
-            );
+            push(facades, Z_FACADE, "building_facades", MaterialSpec::Flat);
+            push(roofs, Z_BUILDING, "building_roofs", MaterialSpec::Roof);
         }
     }
 
+    let mut shadow_layers: Vec<LayerMesh> = Vec::new();
     let mut sweep_time = Duration::ZERO;
     let mut shadow_time = Duration::ZERO;
     let mut roof_shadow_time = Duration::ZERO;
     if with_shadows && mode.casts_shadows() {
-        // оба теневых слоя красит один полупрозрачный материал, и спавнит их
-        // общий `surface::spawn_layer`: он сам отсеивает пустой сборщик,
-        // вешает `DespawnOnExit` и `Name`. Не локальное замыкание
-        // `spawn_layer` — у теней своя метка `BuildingShadowTag`
-        let translucent = materials.add(ColorMaterial {
-            alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-            ..default()
-        });
+        // оба теневых слоя полупрозрачны, отсюда `Blend`. Отдельным списком, а
+        // не в общем: у теней своя метка `BuildingShadowTag` и своё расписание
+        // пересборки — ступень зума их не трогает
+        //
         // развёртки — общие для обоих теневых слоёв: свип на цепочку силуэта
         // каждого дома, и раньше их строил каждый сборщик у себя. На кровлях
         // это была большая часть цены слоя
@@ -443,16 +473,12 @@ pub fn spawn_buildings(
             mode == BuildingHeightMode::ExtrusionShadowsTint,
         );
         shadow_time = shadow_started.elapsed();
-        vertices += shadows.vertex_count();
-        surface::spawn_layer(
-            commands,
-            meshes,
+        shadow_layers.push(LayerMesh::new(
             shadows,
             Z_BUILDING_SHADOW,
             "building_shadows",
-            LayerMaterial::Flat(translucent.clone()),
-            BuildingShadowTag,
-        );
+            MaterialSpec::Blend,
+        ));
 
         // Тени на кровлях — **над** зданиевыми слоями, а не под ними: это
         // единственный кусок тени, который обязан лежать поверх крыши.
@@ -460,33 +486,52 @@ pub fn spawn_buildings(
         let roof_started = Instant::now();
         let on_roofs = roof_shadow_builder(buildings, &sweeps, order.as_deref());
         roof_shadow_time = roof_started.elapsed();
-        vertices += on_roofs.vertex_count();
-        surface::spawn_layer(
-            commands,
-            meshes,
+        shadow_layers.push(LayerMesh::new(
             on_roofs,
             Z_ROOF_SHADOW,
             "roof_shadows",
-            LayerMaterial::Flat(translucent),
-            BuildingShadowTag,
-        );
+            MaterialSpec::Blend,
+        ));
     }
 
     // тот же отчёт, что у дорог и путей: по нему видно, во что обошёлся
     // режим и сколько геометрии добавило оборудование кровель
-    info!(
-        "building meshing: {vertices} verts in {:?} (shadows {sweep_time:?} sweeps + {shadow_time:?} on ground + {roof_shadow_time:?} on roofs, {} buildings, {} in garage rows, {}, clutter {}, heights: {}, roofs: {})",
-        started.elapsed(),
-        buildings.len(),
-        garage_runs(buildings).len(),
-        mode.label(),
-        bucket.index == 0,
-        height_mix(buildings),
-        roof_mix,
-    );
-    if skipped > 0 {
-        warn!("building meshing: {skipped} degenerate polygons skipped");
-    }
+    let report = BuildingReport {
+        buildings: buildings.len(),
+        garage_runs: garage_runs(buildings).len(),
+        mode,
+        clutter: bucket.index == 0,
+        vertices: layers
+            .iter()
+            .chain(&shadow_layers)
+            .map(|layer| layer.builder.vertex_count())
+            .sum(),
+        skipped,
+        heights: height_mix(buildings),
+        roofs: roof_mix,
+        sweeps: sweep_time,
+        ground_shadows: shadow_time,
+        roof_shadows: roof_shadow_time,
+        elapsed: started.elapsed(),
+    };
+    let meshes = BuildingMeshes {
+        layers,
+        shadows: shadow_layers,
+    };
+    (meshes, report)
+}
+
+/// Когда пересобирать зданиевые слои: режим высот, осевшее солнце и ступень
+/// зума кровельного оборудования.
+///
+/// Ступень зума здесь потому, что оборудование на кровле живёт в том же
+/// слитом меше, что и дома, и снять его иначе, чем пересборкой, нельзя.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<BuildingHeightMode>
+        .or_else(retuned::<SunOnMap>)
+        .or_else(retuned::<BuildingZoomBucket>)
 }
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:
@@ -495,8 +540,7 @@ pub fn spawn_buildings(
 pub fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    roof: Res<RoofMaterialHandle>,
+    materials: LayerMaterials,
     mode: Res<BuildingHeightMode>,
     sun: Res<SunOnMap>,
     bucket: Res<BuildingZoomBucket>,
@@ -515,19 +559,42 @@ pub fn rebuild_buildings(
             commands.entity(entity).despawn();
         }
     }
-    spawn_buildings(
+    let plan = BuildingPlan {
+        mode: *mode,
+        bucket: *bucket,
+        shadows: with_shadows,
+    };
+    spawn_building_meshes(
         &mut commands,
         &mut meshes,
-        &mut materials,
-        &roof,
-        BuildingPlan {
-            mode: *mode,
-            bucket: *bucket,
-            shadows: with_shadows,
-        },
-        &map.buildings,
-        &map.roads,
+        &materials,
+        mesh_buildings(plan, &map.buildings, &map.roads),
     );
+}
+
+/// Положить в мир то, что собрал [`mesh_buildings`]: два списка под своими
+/// метками, плюс отчёт в лог. Дверь наружу — ею же пользуется `spawn_map`.
+pub fn spawn_building_meshes(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    (built, report): (BuildingMeshes, BuildingReport),
+) {
+    surface::spawn_layers(commands, meshes, materials, built.layers, BuildingLayerTag);
+    surface::spawn_layers(
+        commands,
+        meshes,
+        materials,
+        built.shadows,
+        BuildingShadowTag,
+    );
+    if report.skipped > 0 {
+        warn!(
+            "building meshing: {} degenerate polygons skipped",
+            report.skipped
+        );
+    }
+    info!("{report}");
 }
 
 /// Отклонение верха **этого** дома от отвеса: единичное направление и метров

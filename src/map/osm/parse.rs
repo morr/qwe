@@ -8,12 +8,13 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
+use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
     Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, indices_near, point_in_area, point_in_polygon,
-    put_in_cells, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
+    WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon, ring_area,
+    ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
@@ -31,130 +32,328 @@ const RING_JOIN_EPSILON: f32 = 0.01;
 /// сантиметровая сетка — страховка от шума f32, а не поиск ближайшего.
 const ENTRANCE_SNAP_SCALE: f32 = 100.0;
 
+/// Разбор — две половины, и между ними шов.
+///
+/// Первая читает элементы Overpass в сырую [`MapData`] ([`read_elements`]),
+/// вторая гоняет по ней доводочные проходы в их единственно верном порядке
+/// ([`finish_parse`]). До шва обе лежали одним телом на сто двадцать пять
+/// строк, из которых сорок пять были телеметрией, и позвать проход в одиночку
+/// было не то чтобы нельзя — просто не за что было взяться: у стадии не было
+/// имени. Все шестьдесят тестов разбора поэтому гоняли конвейер целиком и
+/// адресовали дома по их месту в фикстуре.
 pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
     let bounds = GeoBounds::for_city(city);
 
-    let mut map = MapData::default();
-    match driving_side(&response.elements) {
-        Some(side) => map.traffic_side = side,
-        // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
-        // стороны движения всё равно рисуется
-        None => eprintln!("osm parse: no driving_side in the answer, assuming right-hand traffic"),
+    let (mut map, entrances, read) = read_elements(&response, &bounds);
+    eprint!("{read}");
+    let passes = finish_parse(&mut map, &entrances);
+    eprint!("{passes}");
+    Ok(map)
+}
+
+/// Что сказал элементный цикл — значением, а не двумя `eprintln!`.
+struct ReadReport {
+    /// `None` — зеркало не отдало `is_in`; карта рисуется правосторонней.
+    traffic_side: Option<TrafficSide>,
+    unclosed_rings: usize,
+}
+
+impl std::fmt::Display for ReadReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // разбор по полям, а не `self.…`: подстановка тогда читается по имени,
+        // а не счётом позиций — как у всех прочих отчётов `map/*`
+        let Self {
+            traffic_side,
+            unclosed_rings,
+        } = self;
+        if traffic_side.is_none() {
+            // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
+            // стороны движения всё равно рисуется
+            writeln!(
+                f,
+                "osm parse: no driving_side in the answer, assuming right-hand traffic"
+            )?;
+        }
+        if *unclosed_rings > 0 {
+            // не error: кольца, порванные краем bbox, ожидаемы
+            writeln!(
+                f,
+                "osm parse: {unclosed_rings} unclosed relation rings skipped"
+            )?;
+        }
+        Ok(())
     }
-    let mut skipped_open_rings = 0usize;
-    // Overpass отдаёт ноды раньше way, так что здания на этот момент ещё не
-    // разобраны: копим входы и раскладываем по домам после цикла
+}
+
+/// Элементы Overpass — в сырую `MapData` и список входов, которые ещё некуда
+/// положить: Overpass отдаёт ноды раньше way, так что на момент разбора ноды
+/// зданий ещё нет.
+///
+/// **Ничего не доводит.** Дома ещё стоят в воде, храмы без веры, контуры
+/// косые, дверей нет, деревья не посажены — всё это [`finish_parse`].
+fn read_elements(
+    response: &OverpassResponse,
+    bounds: &GeoBounds,
+) -> (MapData, Vec<Vec2>, ReadReport) {
+    let mut map = MapData::default();
+    let traffic_side = driving_side(&response.elements);
+    if let Some(side) = traffic_side {
+        map.traffic_side = side;
+    }
+    let mut unclosed_rings = 0usize;
     let mut entrances = Vec::new();
 
     for element in &response.elements {
         match element.kind.as_str() {
             "node" => {
-                if let Some(position) = parse_entrance(element, &bounds) {
+                if let Some(position) = parse_entrance(element, bounds) {
                     entrances.push(position);
                 }
-                if let Some(node) = parse_tree_node(element, &bounds) {
+                if let Some(node) = parse_tree_node(element, bounds) {
                     map.tree_nodes.push(node);
                 }
-                if let Some(structure) = parse_structure_node(element, &bounds) {
+                if let Some(structure) = parse_structure_node(element, bounds) {
                     map.structures.push(structure);
                 }
             }
-            "way" => parse_way(element, &bounds, &mut map),
-            "relation" => parse_relation(element, &bounds, &mut map, &mut skipped_open_rings),
+            "way" => parse_way(element, bounds, &mut map),
+            "relation" => parse_relation(element, bounds, &mut map, &mut unclosed_rings),
             _ => {}
         }
     }
 
-    if skipped_open_rings > 0 {
-        // не error: кольца, порванные краем bbox, ожидаемы
-        eprintln!("osm parse: {skipped_open_rings} unclosed relation rings skipped");
-    }
+    let report = ReadReport {
+        traffic_side,
+        unclosed_rings,
+    };
+    (map, entrances, report)
+}
 
-    let drowned = drop_buildings_in_water(&mut map);
-    if drowned > 0 {
-        eprintln!("osm parse: {drowned} buildings dropped as standing entirely in water");
-    }
+/// Что дала посадка — то, чем была самая длинная строка лога.
+struct PlantedReport {
+    woods: usize,
+    standalone: usize,
+    tree_nodes: usize,
+    /// По одной на политику размещения аллей, в порядке [`TreeRowLayout::ALL`]
+    /// — массивом той же длины, а не `Vec`: «столько же и в том же порядке»
+    /// держит тип, а не эта строчка.
+    rows: [usize; TreeRowLayout::ALL.len()],
+    tree_rows: usize,
+    asked: usize,
+}
 
-    let guessed = resolve_faiths(&mut map.buildings);
-    if guessed > 0 {
-        eprintln!("osm parse: {guessed} places of worship took their faith from the city");
-    }
+/// Что сделали доводочные проходы — значением, а не восемью `eprintln!`.
+///
+/// Те же счётчики, что уходили в лог, но теперь их можно сравнить в тесте: до
+/// этого единственным способом узнать, сколько домов отодвинулось от
+/// тротуаров, было прочесть строку на stderr.
+struct PassReport {
+    drowned: usize,
+    faiths_guessed: usize,
+    entrances_found: usize,
+    entrances_orphaned: usize,
+    squared: usize,
+    squaring: std::time::Duration,
+    pulled: PulledHouses,
+    pulling: std::time::Duration,
+    stretched: usize,
+    stretching: std::time::Duration,
+    generated: usize,
+    generating: std::time::Duration,
+    planted: PlantedReport,
+    planting: std::time::Duration,
+}
 
-    let orphaned = attach_entrances(&mut map, &entrances);
-    if orphaned > 0 {
-        // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом контура,
-        // либо принадлежит зданию, которое не попало в bbox
-        eprintln!(
-            "osm parse: {orphaned} of {} entrances match no building",
-            entrances.len()
-        );
+impl std::fmt::Display for PassReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
+        // по именам они читаются, а по позициям — только счётом
+        let Self {
+            drowned,
+            faiths_guessed,
+            entrances_found,
+            entrances_orphaned,
+            squared,
+            squaring,
+            pulled,
+            pulling,
+            stretched,
+            stretching,
+            generated,
+            generating,
+            planted,
+            planting,
+        } = self;
+        if *drowned > 0 {
+            writeln!(
+                f,
+                "osm parse: {drowned} buildings dropped as standing entirely in water"
+            )?;
+        }
+        if *faiths_guessed > 0 {
+            writeln!(
+                f,
+                "osm parse: {faiths_guessed} places of worship took their faith from the city"
+            )?;
+        }
+        if *entrances_orphaned > 0 {
+            // ожидаемо: вход бывает отдельной нодой у крыльца, а не узлом
+            // контура, либо принадлежит зданию, которое не попало в bbox
+            writeln!(
+                f,
+                "osm parse: {entrances_orphaned} of {entrances_found} entrances match no building"
+            )?;
+        }
+        if *squared > 0 {
+            writeln!(
+                f,
+                "osm parse: {squared} skewed small houses squared into rectangles and L shapes in {squaring:?}"
+            )?;
+        }
+        let PulledHouses {
+            moved,
+            partly,
+            left,
+        } = pulled;
+        writeln!(
+            f,
+            "osm parse: {moved} buildings pulled off the sidewalks ({partly} of them only part of the way), {left} left standing on them, in {pulling:?}"
+        )?;
+        writeln!(
+            f,
+            "osm parse: {stretched} block vertices pulled to the drawn road edge in {stretching:?}"
+        )?;
+        let attached = entrances_found - entrances_orphaned;
+        writeln!(
+            f,
+            "osm parse: {attached} entrances attached, {generated} generated in {generating:?}"
+        )?;
+        // «посажено меньше, чем запрошено» — лес упёрся в насыщение, потолок
+        // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
+        // Аллеи считаются отдельно и под обе политики: `kept` = `slid`
+        // означает, что сдвигать было нечего, а `0 in K tree rows` при `K > 0`
+        // — что тег доехал, а посадка по нему не встала никуда. Одиночные ноды
+        // выбывают штатно — в лесу и у аллей дерево уже посажено процедурно
+        let PlantedReport {
+            woods,
+            standalone,
+            tree_nodes,
+            rows,
+            tree_rows,
+            asked,
+        } = planted;
+        let counts = rows
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<String>>()
+            .join("/");
+        writeln!(
+            f,
+            "osm parse: {woods} trees planted of {asked} asked, {standalone} standalone of \
+             {tree_nodes} tree nodes, {counts} in {tree_rows} tree rows \
+             (keep/slide x osm/slider) in {planting:?}"
+        )
     }
+}
+
+/// Доводочные проходы по сырой карте — восемь, плюс сборка деревьев в конце, —
+/// **и этот порядок и есть их интерфейс**. До этой функции он жил заметками в
+/// трёх doc-комментариях из восьми и не был записан целиком нигде.
+///
+/// Почему именно так, сверху вниз:
+///
+/// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
+///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
+///    по дому, которого не будет.
+/// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
+///    (`resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
+///    ставшая приделом, дальше читается иначе.
+/// 3. **Разметанные двери** прикладываются к контурам, пока те ещё сырые: у
+///    входа координата **ноды**, а не вершины, и ищется он по тому же
+///    сантиметровому ключу.
+/// 4. **Выпрямление косых домиков** — после разметки дверей (уже
+///    приложенную дверь перенос контура уносит с собой по тому же ключу; точное
+///    `==` молча оставило бы её на месте) и до генерации дверей и посадки
+///    деревьев (тем нужен уже выпрямленный контур).
+/// 5. **Отодвигание домов от тротуаров** — после выпрямления (косой дом
+///    сначала становится прямым, потом отъезжает) и до всего, что читает
+///    контур.
+/// 6. **Подтягивание кварталов к дорогам** — где угодно в хвосте: `landuse` не
+///    трогает ни навмеш, ни двери, ни посадку, ни машины. Стоит здесь, потому
+///    что дома к этому моменту уже на своих местах.
+/// 7. **Генерация дверей** — по уже окончательным контурам: дверь ставится по
+///    стене того дома, который останется на карте.
+/// 8. **Посадка деревьев** — тоже по окончательным контурам: дерево обходит
+///    дом там, где дом стоит после выпрямления и сдвига.
+/// 9. **Сборка деревьев по составу по умолчанию** (`compose_trees`) — только
+///    после посадки и после того, как её три набора легли в `map`: парсер о
+///    панелях ничего не знает, но и отдавать `MapData` с пустым `trees` не
+///    должен — иначе каждый читатель обязан помнить про отдельный шаг сборки.
+///    Выбранный игроком состав доложит `map::trees::recompose_row_trees`, и
+///    только если он другой.
+///
+/// **`vertex_uses` считается дважды, и это не расточительство.** Шаги 4 и 5
+/// оба спрашивают «эта вершина общая?», и между ними контуры **двигаются**:
+/// выпрямленный дом уносит свои вершины на новые места, и счёт, снятый до
+/// него, отвечал бы про старую карту.
+fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
+    let drowned = drop_buildings_in_water(map);
+    let faiths_guessed = resolve_faiths(&mut map.buildings);
+    let entrances_orphaned = attach_entrances(map, entrances);
+
     let started = std::time::Instant::now();
-    let squared = square_skewed_houses(&mut map);
-    if squared > 0 {
-        eprintln!(
-            "osm parse: {squared} skewed small houses squared into rectangles and L shapes in {:?}",
-            started.elapsed()
-        );
-    }
+    let squared = square_skewed_houses(map);
+    let squaring = started.elapsed();
+
     let started = std::time::Instant::now();
-    let pulled = pull_houses_off_sidewalks(&mut map);
-    eprintln!(
-        "osm parse: {} buildings pulled off the sidewalks ({} of them only part of the way), {} left standing on them, in {:?}",
-        pulled.moved,
-        pulled.partly,
-        pulled.left,
-        started.elapsed()
-    );
+    let pulled = pull_houses_off_sidewalks(map);
+    let pulling = started.elapsed();
+
     let started = std::time::Instant::now();
-    let stretched = pull_landuse_to_roads(&mut map);
-    eprintln!(
-        "osm parse: {stretched} block vertices pulled to the drawn road edge in {:?}",
-        started.elapsed()
-    );
+    let stretched = pull_landuse_to_roads(map);
+    let stretching = started.elapsed();
+
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
-    let generated = generate_entrances(&mut map);
-    eprintln!(
-        "osm parse: {} entrances attached, {generated} generated in {:?}",
-        entrances.len() - orphaned,
-        started.elapsed()
-    );
+    let generated = generate_entrances(map);
+    let generating = started.elapsed();
 
     let started = std::time::Instant::now();
-    let (standalone, woods, rows, asked) = plant_trees(&map);
-    // «посажено меньше, чем запрошено» — лес уперся в насыщение, потолок
-    // плотности стоит выше достижимого (см. `planting::TREE_MIN_SPACING`).
-    // Аллеи считаются отдельно и под обе политики: `kept` = `slid` означает,
-    // что сдвигать было нечего, а `0 in K tree rows` при `K > 0` — что тег
-    // доехал, а посадка по нему не встала никуда. Одиночные ноды выбывают
-    // штатно — в лесу и у аллей дерево уже посажено процедурно
-    let counts: Vec<String> = TreeRowLayout::ALL
-        .iter()
-        .map(|&layout| rows.get(layout).len().to_string())
-        .collect();
-    eprintln!(
-        "osm parse: {} trees planted of {asked} asked, {} standalone of {} tree nodes, \
-         {} in {} tree rows (keep/slide x osm/slider) in {:?}",
-        woods.len(),
-        standalone.len(),
-        map.tree_nodes.len(),
-        counts.join("/"),
-        map.tree_rows.len(),
-        started.elapsed()
-    );
+    let (standalone, woods, rows, asked) = plant_trees(map);
+    let planting = started.elapsed();
+    let planted = PlantedReport {
+        woods: woods.len(),
+        standalone: standalone.len(),
+        tree_nodes: map.tree_nodes.len(),
+        rows: TreeRowLayout::ALL.map(|layout| rows.get(layout).len()),
+        tree_rows: map.tree_rows.len(),
+        asked,
+    };
     map.standalone_trees = standalone;
     map.wood_trees = woods;
     map.row_trees = rows;
-    // сборка по составу **по умолчанию**: парсер о панелях ничего не знает,
-    // но и отдавать `MapData` с пустым `trees` не должен — иначе каждый читатель
-    // обязан помнить про отдельный шаг сборки. Выбранный игроком состав
-    // доложит `map::trees::recompose_row_trees`, и только если он другой
+    // шаг 9, довод — в списке над функцией
     map.compose_trees(TreeCompose::default());
-    Ok(map)
+
+    PassReport {
+        drowned,
+        faiths_guessed,
+        entrances_found: entrances.len(),
+        entrances_orphaned,
+        squared,
+        squaring,
+        pulled,
+        pulling,
+        stretched,
+        stretching,
+        generated,
+        generating,
+        planted,
+        planting,
+    }
 }
 
 /// Дома, целиком стоящие в воде, выбрасываются. В OSM это плавучие рестораны и
@@ -167,8 +366,8 @@ pub fn parse(json: &str, city: City) -> Result<MapData, String> {
 /// (пирс, набережная, дом на сваях у кромки), остаётся. Выброшенных единицы:
 /// Тула 1, Берлин 6, Нью-Йорк 17, Лондон и Париж по 28, Токио 0.
 ///
-/// Порядок важен: до раскладки входов и посадки деревьев — иначе дом получит
-/// двери, а деревья обойдут стороной пустое место.
+/// Место в конвейере — **шаг 1** [`finish_parse`]: порядок проходов записан
+/// там целиком и с доводом у каждого шага, и записан ровно в одном месте.
 fn drop_buildings_in_water(map: &mut MapData) -> usize {
     // AABB-прекомпьют: воды десятки полигонов, зданий десятки тысяч, и почти
     // каждое отсеивается на первой же вершине, не доходя до point-in-polygon
@@ -580,10 +779,10 @@ const ELL_AREA_DRIFT: f32 = 0.15;
 ///
 /// Не трогаются дома, у которых хоть одна вершина **общая** с другим контуром
 /// или линией (сплошная застройка, забор по стене, арка): выпрямленный, такой
-/// дом разошёлся бы с соседом щелью. Порядок в конвейере: после раскладки
-/// входов (они ищут дом по [`vertex_key`], и переезд двери на выпрямленный
-/// контур ищет её вершину тем же ключом) и до генерации дверей и посадки
-/// деревьев (те должны видеть уже выпрямленный контур).
+/// дом разошёлся бы с соседом щелью.
+///
+/// Место в конвейере — **шаг 4** [`finish_parse`]: порядок проходов записан
+/// там целиком и с доводом у каждого шага, и записан ровно в одном месте.
 fn square_skewed_houses(map: &mut MapData) -> usize {
     let uses = vertex_uses(map);
 
@@ -763,8 +962,8 @@ struct Link {
 /// потеряла бы проход, — крепость и храмы (части храма стоят друг на друге).
 /// Сдвиг первой вершины меняет дому посев: материал и этажность выпадут заново.
 ///
-/// Порядок в конвейере: после выпрямления косых домов, до генерации дверей и
-/// посадки деревьев — те, как и навмеш, видят уже сдвинутый контур.
+/// Место в конвейере — **шаг 5** [`finish_parse`]: порядок проходов записан
+/// там целиком и с доводом у каждого шага, и записан ровно в одном месте.
 fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
     // `reach` — полуширина улицы с тротуаром и зазором; рядом индекс улицы
     let mut segments: Vec<Link> = Vec::new();
@@ -787,15 +986,10 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
     }
     let widest = segments.iter().map(|link| link.reach).fold(0.0, f32::max);
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        put_in_cells(
-            &mut cells,
-            link.from.min(link.to),
-            link.from.max(link.to),
-            SIDEWALK_CELL,
-            index,
-        );
+        // радиус здесь знает запрос (`widest` ниже), а не звено
+        lines.insert_segment(link.from, link.to, 0.0, index);
     }
 
     let uses = vertex_uses(map);
@@ -814,7 +1008,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         }
         let (min, max) = ring_bounds(&building.outer);
         let margin = Vec2::splat(widest + SIDEWALK_SHIFT_MAX);
-        let nearby = indices_near(&cells, min - margin, max + margin, SIDEWALK_CELL);
+        let nearby = lines.near(min - margin, max + margin);
         if nearby.is_empty() {
             continue;
         }
@@ -1006,25 +1200,18 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
     }
     // звено кладётся в ячейки с запасом на своё полотно и предельный зазор,
     // так что спрашивающему хватает ячейки самой вершины
-    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        let grow = Vec2::splat(link.reach + LANDUSE_GAP_MAX);
-        put_in_cells(
-            &mut cells,
-            link.from.min(link.to) - grow,
-            link.from.max(link.to) + grow,
-            SIDEWALK_CELL,
-            index,
-        );
+        lines.insert_segment(link.from, link.to, link.reach + LANDUSE_GAP_MAX, index);
     }
 
     let mut pulled = 0;
     for area in &mut map.landuse {
-        area.outer = pull_ring(&area.outer, false, &segments, &cells, &mut pulled);
+        area.outer = pull_ring(&area.outer, false, &segments, &lines, &mut pulled);
         area.holes = area
             .holes
             .iter()
-            .map(|hole| pull_ring(hole, true, &segments, &cells, &mut pulled))
+            .map(|hole| pull_ring(hole, true, &segments, &lines, &mut pulled))
             .collect();
     }
     pulled
@@ -1045,7 +1232,7 @@ fn pull_ring(
     ring: &[Vec2],
     hole: bool,
     segments: &[Link],
-    cells: &HashMap<(i32, i32), Vec<usize>>,
+    lines: &Grid<usize>,
     pulled: &mut usize,
 ) -> Vec<Vec2> {
     // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
@@ -1058,7 +1245,7 @@ fn pull_ring(
     let mut out: Vec<Vec2> = Vec::with_capacity(ring.len());
     for (index, &point) in ring.iter().enumerate() {
         let mut push = |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(
-            point, outward, segments, cells,
+            point, outward, segments, lines,
         ) {
             Some(shifted) => {
                 out.push(shifted);
@@ -1078,9 +1265,7 @@ fn pull_ring(
             false,
         );
         let length = point.distance(next);
-        if length <= LANDUSE_STEP
-            || indices_near(cells, point.min(next), point.max(next), SIDEWALK_CELL).is_empty()
-        {
+        if length <= LANDUSE_STEP || lines.near(point.min(next), point.max(next)).is_empty() {
             continue;
         }
         let steps = (length / LANDUSE_STEP).ceil() as usize;
@@ -1094,16 +1279,11 @@ fn pull_ring(
 /// Куда встаёт вершина квартала, которой до полотна ближайшей дороги остался
 /// зазор не больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда.
 /// `outward` — куда от этой вершины прибывает зелень (см. [`pull_ring`]).
-fn pull_vertex(
-    point: Vec2,
-    outward: Vec2,
-    segments: &[Link],
-    cells: &HashMap<(i32, i32), Vec<usize>>,
-) -> Option<Vec2> {
+fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], lines: &Grid<usize>) -> Option<Vec2> {
     // ближайшая по **зазору до края полотна**, а не по расстоянию до оси:
     // узкий проезд рядом ближе широкой улицы, а щель оставляет улица
     let mut best: Option<(f32, Vec2)> = None;
-    for index in indices_near(cells, point, point, SIDEWALK_CELL) {
+    for index in lines.near(point, point) {
         let Link { from, to, reach } = segments[index];
         let axis = closest_on_segment(point, from, to);
         let gap = point.distance(axis) - reach;
@@ -1134,10 +1314,10 @@ struct Obstacles {
     original: Vec<Vec<Vec2>>,
     /// Здания по ячейкам — габарит, раздутый на [`SIDEWALK_SHIFT_MAX`], так
     /// что сдвинутое здание не выходит из своих ячеек.
-    buildings: HashMap<(i32, i32), Vec<usize>>,
+    buildings: Grid<usize>,
     /// Звенья всего прочего; `reach` — радиус запрета, полуширина плюс зазор.
     segments: Vec<Link>,
-    lines: HashMap<(i32, i32), Vec<usize>>,
+    lines: Grid<usize>,
 }
 
 impl Obstacles {
@@ -1147,11 +1327,11 @@ impl Obstacles {
             .iter()
             .map(|building| building.outer.clone())
             .collect();
-        let mut buildings = HashMap::new();
+        let mut buildings = Grid::new(SIDEWALK_CELL);
         let grow = Vec2::splat(SIDEWALK_SHIFT_MAX + SHIFT_CLEARANCE);
         for (index, ring) in original.iter().enumerate() {
             let (min, max) = ring_bounds(ring);
-            put_in_cells(&mut buildings, min - grow, max + grow, SIDEWALK_CELL, index);
+            buildings.insert(min - grow, max + grow, index);
         }
 
         let mut segments = Vec::new();
@@ -1191,16 +1371,9 @@ impl Obstacles {
         for structure in &map.structures {
             add(&[structure.at, structure.at], structure.radius);
         }
-        let mut lines = HashMap::new();
+        let mut lines = Grid::new(SIDEWALK_CELL);
         for (index, link) in segments.iter().enumerate() {
-            let grow = Vec2::splat(link.reach);
-            put_in_cells(
-                &mut lines,
-                link.from.min(link.to) - grow,
-                link.from.max(link.to) + grow,
-                SIDEWALK_CELL,
-                index,
-            );
+            lines.insert_segment(link.from, link.to, link.reach, index);
         }
         Self {
             original,
@@ -1215,12 +1388,10 @@ impl Obstacles {
         let before = &self.original[house];
         let after: Vec<Vec2> = before.iter().map(|vertex| *vertex + shift).collect();
         let (min, max) = ring_bounds(&after);
-        let cells =
-            |grid: &HashMap<(i32, i32), Vec<usize>>| indices_near(grid, min, max, SIDEWALK_CELL);
         // стало ближе запрета и ближе, чем было
         let closer = |now: f32, reach: f32, was: f32| now < reach && now < was - 0.01;
 
-        let buildings = cells(&self.buildings);
+        let buildings = self.buildings.near(min, max);
         let neighbours = buildings.iter().filter(|&&other| other != house);
         for &other in neighbours {
             let current = &map.buildings[other].outer;
@@ -1238,7 +1409,7 @@ impl Obstacles {
                 return true;
             }
         }
-        cells(&self.lines).into_iter().any(|index| {
+        self.lines.near(min, max).into_iter().any(|index| {
             let Link { from, to, reach } = self.segments[index];
             let now = ring_segment_distance(&after, from, to);
             now < reach && closer(now, reach, ring_segment_distance(before, from, to))

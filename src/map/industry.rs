@@ -34,9 +34,11 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, Structure, StructureKind};
-use crate::map::surface::{self, LayerMaterial};
-use crate::map::{BuildingHeightMode, SHADOW_COLOR, shadow_dir, shadow_length_scale, sun_stretch};
+use crate::map::osm::{MapData, PipeLine, Structure, StructureKind};
+use crate::map::shadow;
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::{BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, sun_stretch};
+use crate::prefs::retuned;
 use crate::settings::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
 
 /// Сторон в круге. Двадцать четыре: у резервуара в двадцать метров это грань
@@ -67,7 +69,9 @@ const PIPE_HEIGHT: f32 = 3.0;
 const PIPE_COLOR: Color = Color::srgb(0.678, 0.671, 0.643);
 
 /// Слой промзоны — своя метка: пересобирается он по солнцу и по наклону.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый из пяти слоёв, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct IndustryLayerTag;
 
 /// Единственная ручка промзоны — рисовать её или нет; строка `Industry` в
@@ -110,10 +114,27 @@ fn look_of(kind: StructureKind) -> StructureLook {
     }
 }
 
+/// Когда пересобирать слои промзоны: осевшее солнце, режим высот и тумблер
+/// видимости.
+///
+/// Ступени зума у цилиндра нет — его видно ровно настолько, насколько видна
+/// его тень, — зато кренится он вместе с домами, отсюда `BuildingHeightMode`.
+/// Солнце берётся осевшее (`SunOnMap`), а не ползунок: пересборка читает
+/// глобали, которые пишет `apply_sun` уже по нему.
+///
+/// **Условие одно, регистрация одна** — и здесь это не теория: слой приехал с
+/// `rebuild_industry`, записанной в `Update` дважды, и спавнился по два раза
+/// (см. `roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<SunOnMap>
+        .or_else(retuned::<BuildingHeightMode>)
+        .or_else(retuned::<IndustryStyle>)
+}
+
 pub fn rebuild_industry(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     map: Res<MapData>,
     mode: Res<BuildingHeightMode>,
     style: Res<IndustryStyle>,
@@ -122,82 +143,132 @@ pub fn rebuild_industry(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    // выключенный слой идёт через ту же пересборку, что и трамвай: деспавн
-    // старого и никакого нового — второй дороги, на которой можно забыть
-    // деспавн, тогда просто нет
-    if !style.visible {
-        return;
+    let (layers, report) = mesh_industry(&map.structures, &map.pipes, *mode, &style);
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        layers,
+        IndustryLayerTag,
+    );
+    info!("{report}");
+}
+
+/// Что вышло из сборки промзоны — значением, а не только строкой в логе.
+///
+/// Снятый слой — это состояние отчёта (`hidden`), а не ноль в счётчике:
+/// счётчики остаются про то, что было **на входе**, иначе выключенный тумблер
+/// печатал бы то же самое, что пустая карта. Правило машин (`CarReport::detail`),
+/// одно на все пять слоёв.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct IndustryReport {
+    /// Сколько цилиндров пришло на вход — не сколько нарисовано.
+    pub structures: usize,
+    /// Сколько трубопроводов пришло на вход — не сколько нарисовано.
+    pub pipes: usize,
+    /// Тумблер выключен: слои описаны и пусты, вершин ноль.
+    pub hidden: bool,
+    pub vertices: usize,
+}
+
+impl std::fmt::Display for IndustryReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            structures,
+            pipes,
+            hidden,
+            vertices,
+        } = self;
+        if *hidden {
+            return write!(
+                f,
+                "industry: hidden ({structures} structures, {pipes} pipes)"
+            );
+        }
+        write!(
+            f,
+            "industry: {structures} structures, {pipes} pipes ({vertices} verts)"
+        )
     }
-    if map.structures.is_empty() && map.pipes.is_empty() {
-        return;
-    }
+}
+
+/// Пять слоёв промзоны снизу вверх: тень трубы, труба, тень цилиндра, его
+/// стена и верх.
+///
+/// **Чистая функция и единственная дверь в слой.** Выключенный тумблер — это
+/// пустые слои, а не ранний выход у вызывающего: деспавн в адаптере безусловен,
+/// и второй дороги, на которой можно его забыть, просто нет. Пустой вход
+/// проверять тоже незачем — пустой сборщик адаптер не спавнит.
+///
+/// Рисуется при этом `drawn_*`, а считается вход: «слой снят» говорит
+/// [`IndustryReport::hidden`], и ноль в счётчике остаётся означать «на карте
+/// этого нет».
+pub fn mesh_industry(
+    structures: &[Structure],
+    pipe_lines: &[PipeLine],
+    mode: BuildingHeightMode,
+    style: &IndustryStyle,
+) -> (Vec<LayerMesh>, IndustryReport) {
+    let (drawn_structures, drawn_pipes): (&[Structure], &[PipeLine]) = if style.visible {
+        (structures, pipe_lines)
+    } else {
+        (&[], &[])
+    };
 
     let mut pipe_shadows = MeshBuilder::default();
     let mut pipes = MeshBuilder::default();
-    let offset = shadow_dir() * (PIPE_HEIGHT * shadow_length_scale());
-    for pipe in &map.pipes {
+    let offset = shadow::offset(PIPE_HEIGHT);
+    for pipe in drawn_pipes {
         let shifted: Vec<Vec2> = pipe.points.iter().map(|point| *point + offset).collect();
         push_pipe(&mut pipe_shadows, &shifted, pipe.width, SHADOW_COLOR);
     }
-    for pipe in &map.pipes {
+    // все тени, потом все линии: иначе тень одной магистрали легла бы на
+    // нарисованную до неё
+    for pipe in drawn_pipes {
         push_pipe(&mut pipes, &pipe.points, pipe.width, PIPE_COLOR);
     }
 
     let mut shadows = MeshBuilder::default();
     let mut walls = MeshBuilder::default();
     let mut tops = MeshBuilder::default();
-    for structure in &map.structures {
+    for structure in drawn_structures {
         if mode.casts_shadows() {
             push_shadow(&mut shadows, structure);
         }
-        let lift = drawn_lift(structure.height, *mode);
+        let lift = drawn_lift(structure.height, mode);
         push_wall(&mut walls, structure, lift);
         push_top(&mut tops, structure, lift);
     }
-    let vertices = pipe_shadows.vertex_count()
-        + pipes.vertex_count()
-        + shadows.vertex_count()
-        + walls.vertex_count()
-        + tops.vertex_count();
 
-    // тень полупрозрачна, верх и стена нет — блендинг нужен только первому
-    let shadow_material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    let flat = materials.add(Color::WHITE);
-    for (builder, z, name, material) in [
-        (
+    let report = IndustryReport {
+        structures: structures.len(),
+        pipes: pipe_lines.len(),
+        hidden: !style.visible,
+        vertices: pipe_shadows.vertex_count()
+            + pipes.vertex_count()
+            + shadows.vertex_count()
+            + walls.vertex_count()
+            + tops.vertex_count(),
+    };
+    // тень полупрозрачна, верх и стена нет — блендинг нужен только первым
+    let layers = vec![
+        LayerMesh::new(
             pipe_shadows,
             Z_PIPE_SHADOW,
             "pipe_shadows",
-            shadow_material.clone(),
+            MaterialSpec::Blend,
         ),
-        (pipes, Z_PIPE, "pipes", flat.clone()),
-        (
+        LayerMesh::new(pipes, Z_PIPE, "pipes", MaterialSpec::Flat),
+        LayerMesh::new(
             shadows,
             Z_INDUSTRY_SHADOW,
             "industry_shadows",
-            shadow_material,
+            MaterialSpec::Blend,
         ),
-        (walls, Z_INDUSTRY_WALL, "industry_walls", flat.clone()),
-        (tops, Z_INDUSTRY, "industry_tops", flat),
-    ] {
-        surface::spawn_layer(
-            &mut commands,
-            &mut meshes,
-            builder,
-            z,
-            name,
-            LayerMaterial::Flat(material),
-            IndustryLayerTag,
-        );
-    }
-    info!(
-        "industry: {} structures, {} pipes ({vertices} verts)",
-        map.structures.len(),
-        map.pipes.len()
-    );
+        LayerMesh::new(walls, Z_INDUSTRY_WALL, "industry_walls", MaterialSpec::Flat),
+        LayerMesh::new(tops, Z_INDUSTRY, "industry_tops", MaterialSpec::Flat),
+    ];
+    (layers, report)
 }
 
 /// Труба лентой: та же лента, что у дорог и путей, только со скруглённым
@@ -224,7 +295,7 @@ fn push_pipe(builder: &mut MeshBuilder, points: &[Vec2], width: f32, color: Colo
 /// уравнял бы тень трубы с тенью пятиэтажки.
 fn push_shadow(builder: &mut MeshBuilder, structure: &Structure) {
     let stretch = sun_stretch();
-    let length = (structure.height * shadow_length_scale()).clamp(
+    let length = shadow::length(structure.height).clamp(
         *SHADOW_LENGTH_RANGE.start() * stretch,
         *SHADOW_LENGTH_RANGE.end() * stretch,
     );

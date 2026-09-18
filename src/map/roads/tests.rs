@@ -1,6 +1,7 @@
 use super::*;
 use crate::map::meshing::distance_to_path;
 use crate::map::osm::fixture;
+use crate::map::shadow_dir;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {
@@ -619,4 +620,187 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
     // и короткая неразрезанная лента не пропадает
     let short = vec![Vec2::new(500.0, 0.0), Vec2::new(505.0, 0.0)];
     assert_eq!(Fortresses::of(&buildings).bare_runs(&short).len(), 1);
+}
+
+// --- слои целиком ------------------------------------------------------
+//
+// Тесты на `mesh_roads`. До шва девять слоёв, три вида материала и вся
+// телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
+// теста было нечем: проверять можно было только хелперы под ними.
+
+/// Девять дорожных слоёв снизу вверх, ровно в том порядке, в каком они уходят
+/// в мир.
+const LAYERS: [&str; 9] = [
+    "sidewalks",
+    "alley_casings",
+    "alleys",
+    "road_casings",
+    "roads",
+    "bridge_shadows",
+    "bridge_casings",
+    "bridges",
+    "walls",
+];
+
+fn one_street() -> MapData {
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(
+        vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)],
+        12.0,
+    ));
+    map
+}
+
+fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
+    layers
+        .iter()
+        .find(|layer| layer.name == name)
+        .unwrap_or_else(|| panic!("слой {name} описан на любом стиле"))
+}
+
+#[test]
+fn a_street_builds_nine_layers_bottom_up() {
+    let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
+
+    let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
+    assert_eq!(names, LAYERS);
+    for pair in layers.windows(2) {
+        assert!(
+            pair[0].z < pair[1].z,
+            "{} лежит не ниже {}",
+            pair[0].name,
+            pair[1].name
+        );
+    }
+    assert!(report.vertices > 0);
+}
+
+#[test]
+fn only_the_bridge_shadow_is_blended() {
+    let (layers, _) = mesh_roads(&one_street(), RoadStyle::default());
+
+    // фактурный материал — у всего, что асфальт, тротуар или дорожка;
+    // блендинг — ровно у полупрозрачной тени настила
+    for layer in &layers {
+        let expected = match layer.name {
+            "bridge_shadows" => MaterialSpec::Blend,
+            "sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
+            "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
+            "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
+            _ => MaterialSpec::Flat,
+        };
+        assert_eq!(layer.material, expected, "{}", layer.name);
+    }
+}
+
+#[test]
+fn the_casing_knob_fills_the_casing_layers() {
+    let map = one_street();
+    let casing_verts = |casing| {
+        let style = RoadStyle {
+            casing,
+            ..RoadStyle::default()
+        };
+        let (layers, _) = mesh_roads(&map, style);
+        layer(&layers, "road_casings").builder.vertex_count()
+    };
+
+    // кант — отдельный слой, и выключенный он пуст, а не отсутствует
+    assert_eq!(casing_verts(false), 0);
+    assert!(casing_verts(true) > 0);
+}
+
+#[test]
+fn the_sidewalk_knob_fills_the_sidewalk_layer() {
+    let map = one_street();
+    let sidewalk_verts = |sidewalks| {
+        let style = RoadStyle {
+            sidewalks,
+            ..RoadStyle::default()
+        };
+        let (layers, _) = mesh_roads(&map, style);
+        layer(&layers, "sidewalks").builder.vertex_count()
+    };
+
+    assert_eq!(sidewalk_verts(false), 0);
+    assert!(sidewalk_verts(true) > 0);
+}
+
+/// Улица с вершиной посередине и вторая, выходящая из неё **этой же** точкой:
+/// у Overpass нет id нод, и перекрёсток восстанавливается по совпадению
+/// координат, так что общая вершина обязана быть у обеих.
+fn a_tee() -> MapData {
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(350.0, 100.0),
+            Vec2::new(600.0, 100.0),
+        ],
+        12.0,
+    ));
+    map.roads.push(fixture::street(
+        vec![Vec2::new(350.0, 100.0), Vec2::new(350.0, 400.0)],
+        10.0,
+    ));
+    map
+}
+
+fn junctions_with(map: &MapData, markings: bool) -> usize {
+    let style = RoadStyle {
+        markings,
+        ..RoadStyle::default()
+    };
+    mesh_roads(map, style).1.junctions
+}
+
+#[test]
+fn markings_off_means_no_junctions_counted() {
+    // перекрёстки считаются только ради разметки: без неё и рвать нечего
+    assert_eq!(junctions_with(&a_tee(), false), 0);
+    assert_eq!(junctions_with(&a_tee(), true), 1);
+}
+
+#[test]
+fn a_crossing_without_a_shared_node_is_not_a_junction() {
+    let mut map = one_street();
+    // улица пересекает первую геометрически, но общей вершины у них нет —
+    // так в OSM выглядит мост над улицей, и рвать линии он не должен
+    map.roads.push(fixture::street(
+        vec![Vec2::new(350.0, -100.0), Vec2::new(350.0, 400.0)],
+        10.0,
+    ));
+
+    assert_eq!(
+        junctions_with(&map, true),
+        0,
+        "перекрёсток восстанавливается по общей ноде, а не по пересечению"
+    );
+}
+
+#[test]
+fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
+    let mut map = MapData::default();
+    map.roads.push(fixture::bridge(
+        vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)],
+        12.0,
+    ));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+
+    // настил уходит из уличных слоёв в мостовые целиком, и тротуара у него нет
+    // никогда: полоса свисала бы с настила над водой
+    assert!(layer(&layers, "roads").builder.is_empty());
+    assert!(layer(&layers, "sidewalks").builder.is_empty());
+    assert!(!layer(&layers, "bridges").builder.is_empty());
+    // бордюр настила рисуется всегда, независимо от ручки канта
+    assert!(!layer(&layers, "bridge_casings").builder.is_empty());
+}
+
+#[test]
+fn an_empty_map_still_describes_every_layer() {
+    let (layers, report) = mesh_roads(&MapData::default(), RoadStyle::default());
+
+    assert_eq!(layers.len(), LAYERS.len());
+    assert!(layers.iter().all(|layer| layer.builder.is_empty()));
+    assert_eq!(report.vertices, 0);
 }

@@ -2,7 +2,7 @@ use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, colour, parse_measure};
-use crate::map::osm::fixture::{Overpass, closed, rect, square};
+use crate::map::osm::fixture::{Overpass, building, closed, rect, square, water_area};
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
     StructureKind, WaterKind, distance_to_segment,
@@ -278,12 +278,12 @@ fn trees_are_deterministic_and_inside_the_wood() {
 
     assert!(!first.trees.is_empty());
     assert_eq!(first.trees, second.trees);
-    for &(pos, radius) in &first.trees {
+    for &(pos, radius) in first.trees.positions() {
         assert!(point_in_area(pos, &first.woods[0]), "{pos:?}");
         assert!((2.5..=4.0).contains(&radius));
     }
-    for (index, &(pos, _)) in first.trees.iter().enumerate() {
-        for &(other, _) in &first.trees[index + 1..] {
+    for (index, &(pos, _)) in first.trees.positions().iter().enumerate() {
+        for &(other, _) in &first.trees.positions()[index + 1..] {
             assert!(
                 pos.distance(other) >= TREE_MIN_SPACING,
                 "trees too close: {pos:?} vs {other:?}"
@@ -303,7 +303,7 @@ fn trees_avoid_a_pond_inside_the_wood() {
     assert_eq!(map.water.len(), 1);
     assert!(!map.trees.is_empty());
     let pond = &map.water[0];
-    for &(pos, _) in &map.trees {
+    for &(pos, _) in map.trees.positions() {
         assert!(!point_in_area(pos, pond), "tree in the pond at {pos:?}");
         assert!(
             !near_area_edge(pos, pond, TREE_SHORE_CLEARANCE),
@@ -588,7 +588,7 @@ fn trees_avoid_grass_and_sand_inside_the_wood() {
     assert_eq!(map.grass.len(), 1);
     assert_eq!(map.sand.len(), 1);
     assert!(!map.trees.is_empty());
-    for &(pos, _) in &map.trees {
+    for &(pos, _) in map.trees.positions() {
         assert!(
             !point_in_area(pos, &map.grass[0]),
             "tree on grass at {pos:?}"
@@ -614,7 +614,7 @@ fn trees_keep_the_crown_off_walls_and_kerbs() {
     assert!(!map.trees.is_empty());
     let house = &map.buildings[0];
     let path = &map.roads[0];
-    for &(pos, radius) in &map.trees {
+    for &(pos, radius) in map.trees.positions() {
         assert!(
             !point_in_area(pos, house),
             "tree inside the house at {pos:?}"
@@ -1243,8 +1243,8 @@ fn parses_standalone_tree_nodes() {
     assert_eq!(map.tree_nodes.len(), 1);
     assert_eq!(map.tree_nodes[0].radius, Some(5.0));
     assert_eq!(map.trees.len(), 1);
-    assert_eq!(map.trees[0].1, 5.0);
-    assert_eq!(map.tree_appears_at[0], 0.0);
+    assert_eq!(map.trees.positions()[0].1, 5.0);
+    assert_eq!(map.trees.appears_at(0), 0.0);
 }
 
 /// Вера храма: по `religion` с `denomination`, а без них — по тегу здания.
@@ -2183,4 +2183,190 @@ fn tagged_colours_reach_the_building() {
         Some([0, 0, 255]),
         "имя — краска карты, не CSS"
     );
+}
+
+// --- шов между чтением элементов и доводкой ---------------------------------
+//
+// Тесты, которые зовут **один проход**, а не конвейер целиком. До шва так никто
+// не делал: `parse` была одним телом на сто двадцать пять строк, у стадии не
+// было имени, и каждый тест шёл через `Overpass::…parse()`, адресуя дома по их
+// месту в фикстуре.
+
+/// Сырая карта из сцены — ровно то, что отдаёт элементный цикл, без доводки.
+fn read(scene: &Overpass) -> (MapData, Vec<Vec2>, ReadReport) {
+    let response: OverpassResponse =
+        serde_json::from_str(&scene.json()).expect("фикстура строит валидный JSON");
+    read_elements(&response, &GeoBounds::for_city(CITY))
+}
+
+/// Чтение элементов ничего не доводит: дом посреди пруда из него выходит
+/// живым, и топит его отдельный проход.
+#[test]
+fn reading_the_elements_leaves_the_passes_undone() {
+    let scene = Overpass::new(CITY)
+        .area(&[("natural", "water")], square(CENTER, 100.0))
+        .area(&[("building", "yes")], square(CENTER, 10.0));
+
+    let (mut map, _, _) = read(&scene);
+    assert_eq!(map.buildings.len(), 1, "сарай посреди пруда ещё стоит");
+
+    let drowned = drop_buildings_in_water(&mut map);
+    assert_eq!(drowned, 1);
+    assert!(map.buildings.is_empty());
+}
+
+/// Вторая половина шва тоже отчитывается **значением**: что элементный цикл
+/// узнал про сторону движения и сколько колец бросил, раньше можно было
+/// прочесть только на stderr.
+#[test]
+fn reading_the_elements_reports_what_it_skipped() {
+    let (sw, se, ..) = corners(HALF);
+    let torn = Overpass::new(CITY)
+        .relation(
+            &[
+                ("boundary", "administrative"),
+                ("admin_level", "2"),
+                ("driving_side", "left"),
+            ],
+            &[],
+        )
+        // кольцо из одного куска в две точки: соединять не с чем, замкнуть
+        // нечем — такое бросается и считается
+        .relation(&[("natural", "water")], &[("outer", vec![sw, se])]);
+
+    let (map, _, report) = read(&torn);
+    assert_eq!(report.unclosed_rings, 1);
+    assert!(map.water.is_empty(), "порванное кольцо не стало водой");
+    assert_eq!(report.traffic_side, Some(TrafficSide::Left));
+
+    // без границы в ответе сторона движения неизвестна, и карта рисуется
+    // правосторонней — отчёт говорит именно «неизвестна», а не «правая»
+    let (map, _, report) = read(&Overpass::new(CITY));
+    assert_eq!(report.unclosed_rings, 0);
+    assert!(report.traffic_side.is_none());
+    assert_eq!(map.traffic_side, TrafficSide::Right);
+}
+
+/// Проход зовётся сам по себе, на карте, собранной руками, — без JSON, без
+/// `GeoBounds` и без остальных шести проходов.
+#[test]
+fn a_pass_runs_on_a_hand_built_map() {
+    let mut map = MapData {
+        buildings: vec![
+            building(square(CENTER, 10.0), Vec::new()),
+            building(square(CENTER + Vec2::new(500.0, 0.0), 10.0), Vec::new()),
+        ],
+        water: vec![water_area(square(CENTER, 100.0), Vec::new())],
+        ..MapData::default()
+    };
+
+    assert_eq!(drop_buildings_in_water(&mut map), 1);
+    assert_eq!(map.buildings.len(), 1, "дом вдали от воды остался");
+}
+
+/// Выпрямление косых домиков — тоже само по себе, и видно, что оно сделало.
+/// Что именно оно сохраняет (площадь, центр, вход на вершине), проверяет
+/// `a_skewed_small_house_is_squared_into_a_rectangle` через весь конвейер;
+/// здесь важно только то, что проход зовётся в одиночку.
+#[test]
+fn squaring_runs_on_its_own() {
+    let before = skewed_house(CENTER);
+    let mut map = MapData {
+        buildings: vec![building(before.clone(), Vec::new())],
+        ..MapData::default()
+    };
+
+    assert_eq!(square_skewed_houses(&mut map), 1);
+    let after = &map.buildings[0].outer;
+    assert_eq!(after.len(), 4);
+    assert_ne!(*after, before, "контур не тронут");
+
+    assert!(right_angles(after), "углы не стали прямыми");
+    for (from, to) in before.iter().zip(after) {
+        assert!(from.distance(*to) < 2.5, "вершина {from} уехала в {to}");
+    }
+}
+
+/// Порядок проходов — это их интерфейс, и вот доказательство, что он
+/// load-bearing: те же два прохода в обратном порядке теряют дверь.
+///
+/// Разметанный вход держит координату **ноды**, а выпрямление уносит вершину
+/// контура. Пока дверь приложена к дому, её уносит тот же сантиметровый ключ;
+/// если же выпрямить сначала, ключ вершины уже другой, и приложить дверь
+/// становится не к чему. Написать такой тест до шва было нечем: оба прохода
+/// жили внутри одного тела `parse`, и переставить их местами было негде.
+#[test]
+fn squaring_before_attaching_loses_the_door() {
+    let ring = skewed_house(CENTER);
+    let door = ring[1];
+    let house = || MapData {
+        buildings: vec![building(ring.clone(), Vec::new())],
+        ..MapData::default()
+    };
+
+    // как в `finish_parse`: сначала дверь, потом выпрямление
+    let mut in_order = house();
+    assert_eq!(attach_entrances(&mut in_order, &[door]), 0);
+    assert_eq!(square_skewed_houses(&mut in_order), 1);
+    let carried = in_order.buildings[0].entrances[0];
+    assert!(
+        in_order.buildings[0]
+            .outer
+            .iter()
+            .any(|&vertex| vertex.distance(carried) < 0.01),
+        "дверь съехала с выпрямленного контура: {carried}"
+    );
+
+    // наоборот: дом выпрямлен, ноду двери прикладывать уже не к чему
+    let mut reversed = house();
+    assert_eq!(square_skewed_houses(&mut reversed), 1);
+    assert_eq!(
+        attach_entrances(&mut reversed, &[door]),
+        1,
+        "дверь нашла дом на старой вершине"
+    );
+    assert!(reversed.buildings[0].entrances.is_empty());
+}
+
+/// Доводка целиком — одним вызовом, и она отчитывается значением: те же
+/// счётчики, что уходили в лог восемью `eprintln!`, теперь можно сравнить.
+#[test]
+fn finishing_the_parse_reports_what_each_pass_did() {
+    let scene = Overpass::new(CITY)
+        .area(&[("natural", "water")], square(CENTER, 100.0))
+        // тонет
+        .area(&[("building", "yes")], square(CENTER, 10.0))
+        // выпрямляется: косой домик вдали от воды и дорог
+        .area(
+            &[("building", "house")],
+            skewed_house(CENTER + Vec2::new(800.0, 0.0)),
+        )
+        // сажается и собирается: одиночное дерево вдали от всего остального
+        .node(
+            &[("natural", "tree"), ("diameter_crown", "10")],
+            CENTER + Vec2::new(-800.0, 0.0),
+        );
+
+    let (mut map, entrances, _) = read(&scene);
+    let report = finish_parse(&mut map, &entrances);
+
+    assert_eq!(report.drowned, 1);
+    assert_eq!(report.squared, 1);
+    assert_eq!(report.entrances_found, 0);
+    assert_eq!(report.entrances_orphaned, 0);
+    // и счётчики остальных проходов — тоже значением, а не строкой на stderr
+    assert_eq!(
+        report.pulled.moved, 0,
+        "дорог в сцене нет, отодвигать не от чего"
+    );
+    assert_eq!(report.pulled.left, 0);
+    assert_eq!(report.stretched, 0, "кварталов в сцене нет");
+    assert_eq!(report.planted.tree_nodes, 1);
+    assert_eq!(report.planted.standalone, 1);
+    assert_eq!(map.buildings.len(), 1, "остался только косой домик");
+    // и деревья собраны по составу по умолчанию, а не оставлены несобранными:
+    // посаженная одиночка доехала до набора, который читает рендер
+    assert_eq!(map.standalone_trees.len(), 1, "дерево посажено");
+    assert_eq!(map.trees.len(), 1, "и собрано в набор рендера");
+    assert_eq!(map.composed_for, Some(TreeCompose::default()));
 }

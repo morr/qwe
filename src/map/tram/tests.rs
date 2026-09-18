@@ -1,5 +1,6 @@
 use super::*;
 use crate::camera::{MAX_ZOOM, MIN_ZOOM};
+use crate::map::osm::fixture;
 
 /// Обе границы диапазона зума камеры покрыты ступенями, ступень не убывает с
 /// ростом зума, а зум ровно на границе попадает в верхнюю ступень.
@@ -109,4 +110,58 @@ fn tram_mesh_narrows_and_sheds_ties_per_bucket() {
         TRAM_JOIN,
     );
     assert!(near.vertex_count() > bare_near.vertex_count());
+}
+
+// --- слой целиком ------------------------------------------------------
+//
+// Тесты на `mesh_tram`. До шва слой собирался внутри системы Bevy, и тумблер
+// видимости проверить было нечем вовсе: он жил в самой системе, за ранним
+// возвратом.
+
+fn tram_line() -> RailLine {
+    RailLine {
+        kind: RailKind::Tram,
+        ..fixture::rail(vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)], 1.2)
+    }
+}
+
+fn near_bucket() -> TramZoomBucket {
+    TramZoomBucket::for_zoom(MIN_ZOOM)
+}
+
+#[test]
+fn a_tram_line_builds_one_flat_layer() {
+    let (layers, report) = mesh_tram(near_bucket(), &TramStyle { visible: true }, &[tram_line()]);
+
+    assert_eq!(layers.len(), 1, "линия и шпалы одного цвета — один меш");
+    assert_eq!(layers[0].name, "tram");
+    assert_eq!(layers[0].z, Z_TRAM);
+    assert_eq!(layers[0].material, MaterialSpec::Flat);
+    assert_eq!(report.tracks, 1);
+    assert!(!report.hidden);
+    assert!(report.vertices > 0);
+}
+
+#[test]
+fn the_toggle_off_draws_nothing() {
+    let (layers, report) = mesh_tram(near_bucket(), &TramStyle { visible: false }, &[tram_line()]);
+
+    // не ранний выход у вызывающего: слой описан и пуст, а деспавн в адаптере
+    // безусловен — забыть его негде
+    assert!(layers.iter().all(|layer| layer.builder.is_empty()));
+    assert_eq!(report.vertices, 0);
+    // «слой снят» — это состояние отчёта, а не ноль в счётчике: путь на карте
+    // есть, его просто не нарисовали
+    assert!(report.hidden);
+    assert_eq!(report.tracks, 1);
+    assert_eq!(report.to_string(), "tram meshing: hidden (1 tracks)");
+}
+
+#[test]
+fn an_ordinary_track_is_left_to_the_rail_module() {
+    let heavy = fixture::rail(vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)], 5.0);
+    let (_, report) = mesh_tram(near_bucket(), &TramStyle { visible: true }, &[heavy]);
+
+    assert_eq!(report.tracks, 0, "обычный путь рисует `map/rail.rs`");
+    assert_eq!(report.vertices, 0);
 }

@@ -104,9 +104,26 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 
 `map/osm/model.rs`; the resource stays resident after spawn.
 
+- **The nine `Vec<PolyArea>` are not `AreaKind` written twice**, and this has been
+  reviewed and closed once — do not re-open it as "the same fact encoded twice". The
+  vector says which **layer** an area is drawn in; the kind says which **member of that
+  layer** it is, and three of the nine hold more than one member:
+  - `buildings` holds `Building` **and** `Kremlin`, and the difference is read in nine
+    production places — the wall ribbon (`roads::Fortresses`), the fortress roofs and
+    merlons, the brick cladding, the tint ramp;
+  - `landuse` holds `Residential` **and** `Industrial`, which are two surface textures
+    (yard grass against trodden works ground);
+  - `Pitch(PitchKind)` carries a **payload** — the sport — that a vector cannot hold at
+    all.
+
+  Collapsing them into one filtered vector would therefore lose nothing of the kind (it
+  would all still be needed) and would add a pass over tens of thousands of areas per
+  layer. The `match` in `parse::push_area` (one arm per vector) is a dispatch that
+  exists **once**; it is not repeated on the read side — what `spawn::mesh_surfaces`
+  matches is the *sub-class within* a vector, which is exactly what the vector cannot say.
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
-  Industrial | Parking`. **Park** is the
+  Industrial | Parking | Pitch(PitchKind)`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
@@ -282,13 +299,59 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   each sorted by threshold: the forest (with standalone surveyed trees at threshold 0
   in front), and the avenues under each placement policy.
   Raw material, not what the renderer reads.
-- **trees** / **tree_appears_at** — what the renderer reads: `MapData::compose_trees`
+- **trees** (**`TreeSet`**) — what the renderer reads: `MapData::compose_trees`
   merges the forest with the avenues of the selected policy (a merge, not a sort — both
   inputs are already ordered). `composed_for` records which policy it was built for;
   it lives on `MapData` rather than in a system `Local` precisely because a city switch
   replaces the whole resource, and a `Local` would survive it and skip the rebuild.
+  The set is **one value**, not the two `pub` arrays it used to be: positions and
+  thresholds are private, the only door in is `TreeSet::push`, which takes a position and
+  its threshold together, so "same length, same order" can no longer be broken from
+  outside. The **prefix rule** lives on it too — `visible(density)` /
+  `visible_count(density)` return the beginning of the set, never a filter, so a step up
+  the density slider only adds trees and never moves the standing ones.
 
 ## Parsing details
+
+### The parse seam: reading the elements, then finishing
+
+`parse()` is two halves with a line between them, and the line is what makes a single
+pass reachable:
+
+- **`read_elements(response, bounds) -> (MapData, Vec<Vec2>, ReadReport)`** — the element
+  loop and nothing else. What comes out is *raw*: houses still standing in water, churches
+  without a faith, skewed outlines, no doors, no trees. The `Vec<Vec2>` is the entrances
+  that have nowhere to go yet — Overpass hands out nodes before ways, so at that moment the
+  buildings do not exist.
+- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the **eight** finishing passes
+  in their one correct order, closed by a ninth step, `compose_trees` for the default
+  layout (the parser knows nothing about the panels, but it must not hand out a `MapData`
+  whose `trees` is empty, or every reader has to remember a separate compose step; the
+  player's own layout is reported by `map::trees::recompose_row_trees`, and only when it
+  differs). **That order is their interface**. It used to live as notes in three doc
+  comments out of eight and was written down whole nowhere; now it is one numbered list of
+  nine steps on that function, each step with its "why here", and a pass's own doc comment
+  only points at its step number.
+- **The reports are values**, not the ten `eprintln!` that used to make up forty-five of
+  `parse`'s hundred and twenty-five lines. `parse` prints both of them at the end of the
+  load, as one contiguous block; a test compares the counters, which before meant reading
+  stderr. A pass that still prints on its own prints *before* that block — the door
+  generator's two warnings (`entrances/mod.rs`) used to interleave with the summary and
+  now precede it; moving them into a report is work inside `entrances/`.
+
+Two facts the order carries, both pinned by tests that can only exist now that a pass can
+be called alone:
+
+- **Attaching the mapped doors comes before squaring the skewed houses.** An entrance holds
+  the *node's* coordinate; while it is attached to the house the same centimetre key
+  carries it onto the straightened outline. `squaring_before_attaching_loses_the_door` runs
+  the two passes in both orders and shows the second one drops the door.
+- **`vertex_uses` is computed twice on purpose.** Squaring (step 4) and pulling houses off
+  the sidewalks (step 5) both ask "is this vertex shared?", and the outlines **move**
+  between them — a count taken before squaring answers about the old map. This was
+  reported as duplicated work; it is not.
+
+### Readings and passes, one by one
 
 - **Building height** (`parse/tags.rs::building_height`) — metres, from two *independent*
   branches of OSM data that almost never co-occur: `height` verbatim (New York — 97%, a
@@ -564,6 +627,123 @@ Four things about it worth knowing before writing a case:
 A new tag reaching the map means a case here — a builder line and an assertion, not a
 new JSON literal. Coverage of tags overall is the audit in `references/osm-coverage.md`.
 
+**Since the parse seam, a case need not go through the whole pipeline.** Three routes,
+and the choice is what is under test:
+
+- **The fixture through the real `parse`** — a tag rule, which is most cases. The route
+  above.
+- **`read(scene)`** (the helper in `tests.rs`) — the fixture's JSON through `read_elements`
+  alone, so the *raw* map can be asserted on before any pass touches it
+  (`reading_the_elements_leaves_the_passes_undone`), or `finish_parse` called on it as one
+  value-returning step (`finishing_the_parse_reports_what_each_pass_did`).
+- **A pass called by name on a `MapData` built by hand** — no JSON, no `GeoBounds`, none of
+  the other passes (`a_pass_runs_on_a_hand_built_map`, `squaring_runs_on_its_own`). This is
+  also the only way to test the *order*: `squaring_before_attaching_loses_the_door` runs the
+  same two passes both ways round.
+
+## The shadow rules — `map/shadow.rs`
+
+Seven layers cast a shadow — buildings, fences, cars, wagons, industry, bridges, roof
+clutter — and three things are the same for all of them. Each used to be written out
+wherever it was needed.
+
+**The crowns are the eighth caster and stay outside on purpose** (`trees/crown.rs`):
+their length is not an object's height run through `shadow_length_scale()` but a drawn
+length of its own (`CrownParams::shadow_height_base`, the conifer cone's `3h`), and every
+one of those is multiplied by `sun_stretch()` right where it is written. `shadow::length`
+would say something different about them, so they call the sun directly.
+
+- **`length(height)`** is the one place `shadow_length_scale()` is applied. The expression
+  `shadow_dir() * height * shadow_length_scale()` existed in ten places, and the rule this
+  file states — *"a shadow length written without `sun_stretch()` is a bug in the making:
+  it will look right at the default and wrong at both ends of the slider"* — is now a call
+  rather than something to remember. Clamps stay with their owner (`SHADOW_LENGTH_RANGE`
+  for buildings, the roof edge for clutter) and are applied **after** it.
+- **`offset(height)`** is that length as a vector. It is the displacement of the far end
+  of a sweep, **not** where a silhouette is moved to: the shadow starts *under* the object.
+  Cars, fences and the bridge each shipped the translated-copy version first, and at 15°
+  a 2 m fence "moved" 7.4 m and read as a second fence.
+- **`penumbra(direction)`** — the soft edge's share at a vertex: zero where the shadow
+  meets what casts it, full at the far end, growing along a lateral side. It was written
+  three times, once as a named function (buildings) and twice as a closure (fences, cars).
+- **`push_union(builder, contours, blur)`** — the eighteen lines that were duplicated
+  verbatim between `fences.rs` and `buildings/layers.rs`, differing only in the blur
+  constant: union the sweeps (`i_overlay`, NonZero — a translucent layer must never
+  double on itself) and lay the tapered band outward from the outer ring and inward from
+  each hole.
+
+**Only buildings and fences go through `push_union`; the other five stay outside it, and
+each for a measured reason.** The cars do not union at all (a 6 m pitch against a metre
+of sweep, and `i_overlay` over 22 k cars would cost more than the layer); the bridge
+tapers by `rise` rather than by direction, because a deck hangs in the air and its
+penumbra is uniform all the way round; the roof clutter's shadow is **opaque**, drawn in
+the roof's own colour inside the merged building mesh, so it has no band to lay; the
+wagons get a translated quad, the cheap version the card asked for (a 13.9 m body at a
+6 m pitch, and at 15° the copy does detach — the stated price); the industry writes its
+circle sweep out by hand and lays it as a plain polygon, since a disc has no contour to
+hand `i_overlay`. They call `length`/`offset` like everyone else — what differs is the
+policy above them.
+
+**The light stays a process global** (`map/sun.rs`, four `AtomicU32`) and that is a
+decision, not an omission. Making it an argument would thread a parameter through every
+`mesh_*` — the very functions the layer seam made callable from the game, a test and the
+offline bench with one and the same call — and the global is what lets a build run on the
+load thread, where there is no ECS at all. The price is known and written down: a test
+with lit geometry takes the `default_sun()` / `sun_at()` guard and serialises on a mutex.
+
+## The uniform grid — `map/grid.rs::Grid<T>`
+
+Every "what is near this point" answer on the map comes from one type. The doors, tree
+planting, the parse's sidewalk pull, landuse blocks and shift obstacles, water outlines,
+road stitches, the fence gaps and street edges of `footprint.rs`, standing stock, garage
+runs, house draw order, building shadows, the car districts and the bridge bands all
+index the same way, and before `Grid` existed each of them wrote the arithmetic again:
+the double loop "put it in every cell the box touches" existed in **nine** copies, the
+key was `(i32, i32)` in ten places and `IVec2` in seven, and the cell size travelled as
+an argument on every call — so an insert and a query could disagree about it and nothing
+would say so.
+
+- **The step belongs to the grid** (`Grid::new(size)`), which is what makes that
+  disagreement impossible. It stays an argument rather than a module constant because the
+  number is about the domain, not about the grid: 60 m for the doors' road index and 30 for
+  their footprints (`ROAD_CELL` / `FOOTPRINT_CELL` in `osm/entrances/index.rs`), 48 for the
+  shadows, 120 for the car districts.
+- **Two primitives and three conveniences.** `cell(IVec2)` — one cell; `near_each(min,
+  max)` — everything in the touched cells **as is**, duplicates included, in a fully
+  determined order (cells ascending by x then y, insertion order inside a cell). On top of
+  them: `at(point)` (one cell by a point), `near(min, max)` (sorted and deduped, needs
+  `T: Ord`), and `pairs()` (every pair that shares a cell, sorted and deduped).
+- **`insert(min, max, value)` puts the value in every cell its box touches**, and that
+  invariant is what makes a one-cell `at` complete rather than approximate: the caller
+  inflates the box by the reach it cares about, so any point the value has business with
+  falls inside one of those cells. An error there returns a silently incomplete answer —
+  which is exactly why it lives in one place now.
+- **`insert_segment(from, to, pad, value)` is that insert for a link of a polyline**, and
+  the box is the grid's arithmetic too: `from.min(to) - pad, from.max(to) + pad`. Twelve
+  of the map's indexes wrote that line by hand — the doors (two of them), tree planting,
+  water outlines, road stitches, the wagon fan, three of the parse's grids, the bridge
+  bands and `footprint.rs`'s fence gaps and street edges — and a `pad` that drifts from
+  the reach the query cares about is the same silent incompleteness as a disagreeing cell
+  size. `pad` is `0.0` where the reach belongs to the query rather than to the value
+  (`water.rs`, `entrances::RoadIndex`, the parse's sidewalk grid,
+  `footprint::StreetEdges`), and it is a **scalar**: `Vec2 - f32` is glam's own, so no
+  caller writes `Vec2::splat(reach)` any more.
+- **`near` sorts because the mesh must not move between runs**, not for the caller's
+  convenience: a value sits in several cells, so without `dedup` a neighbour comes back
+  several times, and without the sort the `HashMap` iteration order leaks into the
+  geometry. `near_each` is the escape hatch for values that are not `Ord` (`water.rs`
+  indexes `(Vec2, Vec2)` edges) and for callers that already tolerate duplicates.
+- **`cell_of` is public for one caller**, `entrances::RoadIndex`, which walks cells in
+  **rings** outward from the point and stops as soon as what it found beats anything the
+  next ring could hold. That strategy belongs to it, not to the grid.
+- **`planting::Occupied` keeps a grid of its own**, on the opposite convention: it takes a
+  bare point and the asker carries the radius, so a query walks the 3×3 neighbourhood
+  (`osm/planting/index.rs`). A "neighbourhood" method for its one caller would be a
+  hypothetical seam, not a seam.
+- **`spatial.rs` is not this grid and does not move here.** The pawn grid is a dense `Vec`
+  over the whole map with a reverse entity→cell index and a per-tick move of one entity at
+  a time; it shares nothing with a `HashMap` of boxes built once per load but the word.
+
 ## Footprint bands
 
 `map/footprint.rs` — the strips linear geometry occupies on the ground, one construction
@@ -623,7 +803,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   trustworthy while the screen is awake. `map::measure_layers` / `map::measure_cars` are
   the entry points; `measure_layers` takes the two decisions the measurement actually reads
   (height mode + roof clutter), not a `BuildingPlan` — its `shadows` field would have been
-  ignored — and they call exactly the builders `spawn_buildings` calls. **Absolute
+  ignored — and they call exactly the builders `mesh_buildings` calls. **Absolute
   numbers still depend on the machine's power state** (with the display asleep everything
   is 2–3× slower), so compare runs, not runs against the log.
   **Shadows are measured at the default sun.** The sweep length and direction come from the
@@ -633,12 +813,35 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   sweep length and the union's area, so a run that did not state its sun would not be
   comparable with the next one; the live app builds with the sun from `settings.toml`, which
   is a second reason a log line and a run are not comparable.
-  **What it covers is the building layers and the cars, and nothing else yet.** The road,
-  rail, tram and surface/tree layers are still measurable only from the app log
-  (`road meshing:`, `rail meshing:`, `tram meshing:`) — the same log line App Nap lies
-  about; there is no `measure_roads` / `measure_rails` / `measure_tram` / `measure_surface`,
-  and adding one is the way to extend the bench when a road-style or surface comparison
-  needs the same treatment.
+  **What it covers besides the buildings and the cars**: `measure_surfaces`,
+  `measure_roads`, `measure_rails` and `measure_tram` — six measurements against eleven
+  `mesh_*` doors. **Unmeasured: `fences`, `wagons`, `industry` and the trees** (both
+  `mesh_trees` and `spawn::mesh_tree_row_band`). The first three are cheap single-pass
+  layers with no zoom ladder worth a row per step, and the trees want a different row
+  shape altogether (its own sub-bullet below); none of the four is a decision recorded as
+  final — a row for any of them is a `measure_*` plus a `row(...)` line in the bench.
+  Those four that exist are of a different kind from the two above, and the
+  difference is the whole payoff of the seam: they have **no build of their own**. Each
+  calls the game's `mesh_*` once and lays its layers out through
+  `surface::layer_costs(&layers, report.elapsed)` — the helper *and* its `LayerCost` row
+  both live in `map/surface.rs`, i.e. on the seam rather than in `buildings`, where the
+  row was first needed — a first row named `build`, carrying the module's
+  milliseconds (the build is one pass; there is nothing to split them between) and then a
+  row of vertices per layer, under the same `name` the layer wears in the live world.
+  `measure_layers` and `measure_cars` repeat their build's steps deliberately, because a
+  bench row per step is exactly what they exist for.
+  - **Rails and tram get a row per zoom bucket** (`ZoomBucket::at(index)`, which exists
+    for this). Their buckets differ in *what is drawn*, not in size — rails run 45 k
+    vertices on the far step against 663 k on the near one (44 563 and 662 939, Tula,
+    `dev`) — so a single number would be a number about nothing. Those are the **bench's**
+    numbers; the 673 k / 23 ms that appears elsewhere in this skill under **What a bucket
+    costs** and beside it comes off the app's `rail meshing:` line, which App Nap decides,
+    and the two are not comparable — that is the whole reason the bench exists.
+  - **The tram is measured switched on**, though it ships off: the bench is about what
+    the layer costs, not about whether it is shown.
+  - Trees are the gap left: their build is a crown pool plus a scatter, and the
+    `LayerCost` row (a name and a vertex count per layer) has nothing to say about
+    15 k entities. Measuring them wants its own shape, not a sixth `measure_*`.
 - **Merged meshes** (`map/meshing.rs` + `map/spawn.rs`, water and waterways in
   `map/water.rs`, road layers in `map/roads.rs`,
   rail layers in `map/rail.rs`, the tram layer in `map/tram.rs`, building layers in
@@ -655,6 +858,220 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   `ColorMaterial`. ~7000
   buildings cost a handful of entities. Trees stay individual entities (see
   `references/trees.md`).
+- **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world
+  are two things, and this is the line between them. A **converted** module offers one
+  pure function, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`, and
+  its system is a thin adapter: despawn by tag, call it, hand the list to
+  `surface::spawn_layers`, print the report.
+  **A layer with a second caller gets one door for both** — `spawn_<layer>_meshes(commands,
+  meshes, materials, mesh_<layer>(...))`, taking what is already built so the build stays
+  outside the world. `buildings` and `roads` have one each (`spawn_building_meshes`,
+  `spawn_road_meshes`), because `spawn_map` spawns their layers at world entry and a
+  `rebuild_*` respawns them on a style or bucket change. The trigger is the **number of
+  callers, not the number of tags**: without the door `spawn.rs` would have to know the
+  layer's tag and the "spawn, then `info!`" order. A module with one caller (the surfaces)
+  needs none.
+  - **`LayerMesh`** — `{ builder, z, name, material: MaterialSpec }`, **one type for
+    every layer of the map**, not a type per module. That is the point: a module read as
+    `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
+    `Name` in the live world, i.e. what a BRP query looks it up by.
+  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof`. It **names** the
+    material instead of carrying a `Handle`, and a handle is the only thing that would
+    have dragged Bevy into the build: with a spec the build needs neither `Commands` nor
+    `Assets`, so the game, a test and the offline bench call one and the same function.
+    Resolving spec → handle lives in `spawn_layers` and only there.
+  - **`FlatMaterials`** (`Startup`, beside `SurfaceMaterials`) holds the two flat
+    `ColorMaterial`s the spec names. An **unconverted** module did
+    `materials.add(...)` on every rebuild — a per-rebuild allocation of a material that
+    never changes — and the conversion is what retired the last of them. Both resources
+    reach an adapter as one **`LayerMaterials`** system param (`#[derive(SystemParam)]`,
+    the `ui/debug/mod.rs::DebugValues` idiom), which is also where `resolve` lives. Two
+    separate `Res` were tried first and pushed `rebuild_tram` and `rebuild_industry` to
+    eight arguments, past clippy's limit; bundling them left every adapter shorter than
+    it had been before the seam.
+  - **A zoom cutoff or a visibility toggle belongs in the build, not in the system.** A
+    far-bucket fence, an invisible tram, an invisible industry layer all return **nothing
+    to draw**, so the despawn in the adapter is unconditional — and that comes in two
+    shapes, both pinned by tests:
+    - an **empty list**, when the cutoff also saves work before the build — the fence's
+      far bucket returns `Vec::new()` and never calls `fence_gaps` (8.7 ms on Tula), and
+      `mesh_cars` off or past the last step does neither breaks nor districts
+      (`fences/tests.rs::the_far_bucket_draws_nothing`);
+    - the module's **usual layers with empty builders**, when there is nothing to save and
+      the layer order is worth seeing in the test — the tram, the industry layer
+      (`tram/tests.rs` and `industry/tests.rs::the_toggle_off_draws_nothing`).
+
+    **A stepped layer takes the `ZoomBucket` itself, never a value already unrolled from
+    the LOD table.** `mesh_rails`, `mesh_tram`, `mesh_wagons`, `mesh_cars` and — last to
+    follow — `mesh_fences` all take the bucket and read their own table inside the door.
+    Handing the build a bare width instead (`FENCE_LODS[bucket.index].width`, as
+    `rebuild_fences` did) leaves half the cutoff in the system: the test then has to index
+    the table by hand to say which step it means, and the door can be called with a width
+    no step of the ladder ever produces. With the bucket a test says `for_zoom(MAX_ZOOM)`
+    and asserts on the report (`FenceReport::width == 0.0`), which is where the layer
+    carries `hidden`.
+
+    Either is safe, because `surface::spawn_layer` skips an empty builder anyway. That is
+    the very thing the builds' own doc comments now say from the other side —
+    «второй дороги, на которой можно забыть деспавн, нет» (`cars::mesh_cars`,
+    `industry::mesh_industry`) — a property of the shape rather than a thing to remember.
+    Do not confuse it with **«одно условие — одна регистрация»**, which each layer's
+    `rebuilds_on` states and `map/mod.rs` refers to: that one is about **double
+    registration spawning a layer twice**, which the seam neither removes nor touches. It
+    also makes the toggle testable: it used to live behind a `return` inside a Bevy
+    system, where no test could reach it.
+    Whichever shape a module takes, it says so in its **report** — see **"The layer is not
+    drawn" is a state of the report** below; the shape decides what is in the list, the
+    report decides what the log line says.
+  - **The report is a value, not a log line.** `FenceReport`, `RailReport`: the counters
+    `info!` used to be made of, returned so a test can assert on them. `info!` is also
+    the thing App Nap mismeasures on macOS, so a returned `elapsed` is the only honest
+    one. A module that logs nothing gets no report — `spawn::mesh_tree_row_band` returns
+    a bare `Vec<LayerMesh>`, deliberately; inventing a report for symmetry would invent
+    a number nobody reads. **The reports are not symmetrical with each other, and are
+    not meant to be.** `FenceReport` is `Clone, Copy, PartialEq, Debug` — every field of
+    it is a number, so the derives cost nothing; `BuildingReport` derives nothing, and
+    cannot: `Copy` is out (two `String` fields) and no test compares it. Add a derive
+    when something uses it, not for the symmetry; a failure message wants `Display`
+    anyway, which every report has and which prints the log line itself.
+  - **"The layer is not drawn" is a state of the report, never a zero in a counter.** A
+    build that the toggle or the zoom step took away must not print what an empty city
+    prints: `industry: 0 structures, 0 pipes` was the line a map with a chimney on it
+    logged, and nothing in it said which of the two had happened. So the state is a
+    **field**, and the counters keep saying what came in:
+    - the field is `hidden: bool` (`IndustryReport`, `TramReport`, `WagonReport`) or an
+      existing one that already carries the fact — `CarReport::detail: Option<CarDetail>`,
+      `FenceReport::width` (zero *is* "not drawn at this step"). A second `hidden` beside
+      `width` would be two sources of one fact;
+    - `Display` then prints `<layer>: hidden`, with the free input counters after it
+      (`industry: hidden (1 structures, 0 pipes)`, `tram meshing: hidden (1 tracks)`,
+      `fences: hidden (429 lines)`) — that parenthesis is what tells the hidden layer
+      from the empty city at a glance;
+    - **free** means the count is a slice length or a filter over the input
+      (`mesh_tram` walks `rails` and counts `RailKind::Tram` whatever the toggle says;
+      `mesh_industry` counts its own `structures`/`pipe_lines`, and only the loops move
+      to the substituted `drawn_*` slices). A counter that would need the build to run
+      stays zero, and that is honest rather than a stub — `WagonReport::standing` and
+      `CarReport::cars` are zero because the placement genuinely does not run, which is
+      the whole point of taking the cutoff before the build (`fences::pieces` likewise:
+      `fence_gaps` is 8.7 ms).
+
+    Pinned by `industry/tests.rs` and `tram/tests.rs::the_toggle_off_draws_nothing` (the
+    input counter stays 1 and `hidden` is true) and by
+    `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
+  - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
+    `industry`, `cars`,
+    `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (the 13 surface and paint layers
+    as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
+    parking layout arrives ready, because the car rows are drawn off the same one — plus
+    the tree-row band, its **second** door), `buildings` and `trees`.
+    `surface::spawn_layer` (one layer, a
+    ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
+    The two counts are different numbers and both are worth having: `grep 'pub fn mesh_'
+    src/map/` gives eleven doors, the module list gives ten — `spawn.rs` carries two
+    (`mesh_surfaces`, `mesh_tree_row_band`). **Count the modules when asking "is anything
+    left".** The tree-row band lives in `spawn.rs` and is not
+    `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
+    still spawning by hand.
+  - **`trees` is a scatter, and the seam takes a different shape there.** A crown is an
+    **entity per tree** — its own tint, its own micro-step of z, its own scale — so it
+    does not fit a `LayerMesh` at all, and `mesh_trees(style, params, planted, field)`
+    returns `TreeMeshes { pools, tints, crowns, shadows }` instead:
+    - **`pools`** — the crown meshes, `TREE_VARIANTS` of them per concrete shape (`Mixed`
+      has two pools, every other shape one), as plain `Mesh` **values**. A
+      `Handle<Mesh>` would be the world, which is exactly what `MaterialSpec` keeps out
+      of a build; the adapter uploads the pool to `Assets` and nothing else changes.
+    - **`crowns`** — `CrownPlacement { at, radius, z, pool, variant, tint }`, one per
+      drawn tree. This is what the conversion actually bought: the density prefix
+      (`TreeSet::visible_count`), the species resolve off the conifer field, the tint slot and the
+      z micro-step were all inside a Bevy system and unreachable from a test.
+    - **`shadows`** — the one merged shadow mesh, an ordinary `LayerMesh` at
+      `Z_TREE_SHADOW`. Its colour moved **into the vertices** (`shadow_template` pushes
+      `SHADOW_COLOR`) so the layer can be a plain `MaterialSpec::Blend`, the way every
+      other shadow on the map already was; before that the layer allocated a coloured
+      `ColorMaterial` on every rebuild. `tree_gallery` lays its own grid and therefore
+      does not go through `spawn_tree_meshes`, but it had to follow the colour: its
+      shadow material is now a blended white one.
+    So `spawn_tree_meshes` is the adapter, and it is the **one** place on the map that
+    still writes `DespawnOnExit` by hand — for the crowns. Every merged layer gets it
+    from `spawn_layer`.
+  - **`cars` is the one whose build is a layer rather than a mesh.** Every other
+    `mesh_*` takes the data it draws; `mesh_cars(bucket, style, smoothing, map, layout)`
+    takes the whole `MapData` (as `mesh_roads` does) and does the **assembly** as well —
+    junction breaks, `Districts`, `park_cars`, `fill_lots` — because that assembly is
+    exactly what the cutoff and the toggle gate. Off, or past the last zoom step, none
+    of it runs and the list is empty, so a hidden layer still costs what the old
+    `return` inside the system cost. The private `mesh_bodies(&[Car], CarDetail)`
+    underneath is only the mesh; it carried the name `mesh_cars` until the layer
+    function took it. `CarReport::detail` is an `Option<CarDetail>`, and `None` is what
+    the `cars: hidden` log line prints — every other counter is then zero, because the
+    assembly those counters would count is exactly what did not run. That is the one
+    shape of the rule above (**"The layer is not drawn" is a state of the report**); the
+    four modules whose input counters are free print theirs beside the word.
+    **The bench and the gallery still assemble on their own, deliberately**:
+    `measure_cars` times `breaks` / `districts` / `parking` as separate rows and meshes
+    all three detail steps, which one call cannot report — the same reason
+    `buildings::measure_layers` repeats the steps `mesh_buildings` takes; `cars_mesh` is
+    the gallery's one door and builds with neither lots nor districts on purpose.
+  - **Buildings was last, and not for being big.** Two things are peculiar to it and
+    worth knowing before touching it:
+    - it is the only module needing **`MaterialSpec::Roof`**, and the variant was added
+      exactly when it arrived — before that nothing could construct it;
+    - it spawns under **two tags** (`BuildingLayerTag`, and `BuildingShadowTag` on its
+      own rebuild schedule — the zoom bucket does not touch the shadows), while
+      `spawn_layers` takes one tag per call. Hence `BuildingMeshes { layers, shadows }`
+      and two calls, wrapped in `spawn_building_meshes` so `rebuild_buildings` and
+      `spawn_map` share one door. Carrying the tag *inside* `LayerMesh` was rejected: a
+      tag is what the **adapter** despawns by, not a property of what was drawn.
+    The local closure in `spawn_buildings` that shadowed the name `spawn_layer` is gone
+    with the conversion; it now just pushes into a `Vec<LayerMesh>`.
+  - **The 13 surface layers still spawn with tag `()`**, and after the conversion that
+    is visible as one line in the list rather than a silent argument. They are not
+    rebuilt by anything, so they have nothing to be found by; giving them a tag is worth
+    doing together with a reason to rebuild them, not before.
+  - **When a layer rebuilds is the layer's own business** — `rebuilds_on()`, a run
+    condition next to its `rebuild_*`, and `map/mod.rs` only wires it
+    (`roads::rebuild_roads.run_if(roads::rebuilds_on())`). The reason a gate lists what it
+    lists is a fact about the layer: `roads` carries `SunOnMap` **because the bridge
+    shadow is baked into its mesh**, and that is something you need to know while editing
+    `roads.rs`, not while reading the plugin. Before this it was a ten-line comment in
+    `map/mod.rs`, a file the layer's author has no reason to open.
+    **One layer takes its condition from another module**: `trees::rebuilds_on()` gates
+    the whole four-system chain — `recompose_row_trees`, `retune_conifer_field`,
+    `spawn::rebuild_tree_row_band` and `rebuild_trees` — so the tree-row band, which
+    lives in `spawn.rs` and is not `trees` (see **Converted** above), is gated from
+    `trees.rs`. What rebuilds is the chain, so the chain is what the condition belongs to.
+    - **One condition, one registration**, and it is written on every one of them. Two
+      copies of one system in one schedule can both fire in a frame: the second one's
+      despawn runs against data taken before the first one's commands were applied, and
+      the layer spawns twice. That is not theory — the industry layer arrived with
+      `rebuild_industry` listed twice. So conditions are summed with `or_else` rather
+      than split across registrations, and the rule now has a single place to live
+      instead of the three comments that used to repeat it.
+    - `rail::rebuilds_on` goes through `IntoSystem::into_system` because a bare
+      function-condition carries its own type marker; the other layers' `or_else` erases
+      it. That is the only oddity in the shape.
+    - **A full layer registry was considered and rejected.** Declaring a layer as data —
+      tag, triggers, build, z, material — and letting one generic system register it
+      would close the double-spawn trap by construction, and the trap is real. It would
+      also cost an associated-type-per-layer trait and one indirection between "what is
+      drawn" and "when", to replace eleven adapters of about ten lines each. Most of what
+      that card was written against is already gone: the per-rebuild material
+      allocations, the redundant `is_empty` guards and the two modules writing
+      `DespawnOnExit` by hand all went with the seam itself. What was left was the gates'
+      prose living away from its layer, and that is what `rebuilds_on` fixes.
+  - **Converting a module** means: lift the build to `mesh_*` returning
+    `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
+    tag to every layer), move any cutoff or toggle into the build — a zoom ladder as the
+    `ZoomBucket` itself, not as a width read out of the table by the adapter — drop its
+    `materials.add(...)` and its now-redundant `is_empty` guard, write its `rebuilds_on()`
+    beside the `rebuild_*` (**When a layer rebuilds** above), and write the tests the seam
+    has just made possible. Do not add a `MaterialSpec` variant before a module
+    needs it — the `Surface` one sat unconstructed until the tree-row band arrived, and
+    the compiler said so. A module whose entities are **not** one merged mesh per layer
+    (so far only `trees`) returns its own struct instead of a bare `Vec<LayerMesh>`, and
+    the rule that survives is the division, not the return type: the build says what is
+    drawn, the adapter says where it goes.
 - **Surface material** (`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a
   `Material2d` with its own vertex + fragment stage) — procedural texture without a single
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
@@ -744,7 +1161,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     island, making a separate band piece with that island as its hole.
   - A triangle whose three vertices sit on one ring is flat-coloured; on a 0.5 m band that
     error is under one step.
-  - Cost: logged as `water meshing:`.
+  - Cost: the `water` field of `SurfaceReport`, printed inside the one
+    `surface meshing:` line (it had its own `water meshing:` line until the surface
+    layers went on the seam).
 - **Waterways** (`map/water.rs::mesh_water_lines`, the `waterways` layer at `Z_WATERWAY` 2.02,
   `SurfaceKind::Water`) — the open channels, and two decisions, both from screenshots
   of the Упа's southern arm (`waterway=river` 221646296 at `cam 4366 3254`):
@@ -789,7 +1208,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     ends and would fade the shore at every channel end on dry land too.
   - **Render-only.** The navmesh blocks the polygon and the whole channel band as before;
     the caps rule it shares with the drawing (`water_line_caps`) is untouched.
-  - Cost: one pass per open channel at load, logged as `waterways meshing:`.
+  - Cost: one pass per open channel at load — the `waterways` field of `SurfaceReport`,
+    printed inside the one `surface meshing:` line (it had its own `waterways meshing:`
+    line until the surface layers went on the seam).
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
   Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
   brightness step between them is what reads as the kerb) — a **carriageway**
@@ -798,7 +1219,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   the width, 1.2–3 m per side). It sits under every road ribbon for the casing reason: a
   crossing street's fill covers it and the sidewalk ends at the junction the way a real
   one does. A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
-  lane markings, but the bridge branch of `spawn_roads` `continue`s into `bridge_casings`
+  lane markings, but the bridge branch of `mesh_roads` `continue`s into `bridge_casings`
   + `bridges` *before* the sidewalk block — a deck gets no band ever, at any width or
   `RoadStyle::sidewalks`. It would hang a metre or three past the deck edge over the
   water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally.
@@ -869,7 +1290,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   drawn overlapping in one opaque layer, and `Round` caps are what makes a junction *look*
   joined — the caps of the ways meeting at a node overlap into a rounded blob, exactly
   how osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
-  round`). The fill order is **narrow first, wide last** (`spawn_roads` sorts by width), so
+  round`). The fill order is **narrow first, wide last** (`mesh_roads` sorts by width), so
   the main road's fill and its gapped line lie over the side street's cap. This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
@@ -894,7 +1315,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     across the pavement, the drive again — the sand ribbon lay under the asphalt and cut a
     strip of ground across the entry. A crosswalk is safe from the rule by construction: its
     ends are on pavement footways and it crosses the carriageway with an interior node.
-    The substitution is `drawn: Vec<&RoadLine>` in `spawn_roads`, and everything below reads
+    The substitution is `drawn: Vec<&RoadLine>` in `mesh_roads`, and everything below reads
     `drawn`, not `map.roads`. Tula: 8.
   - **Stitches** (`stitches`) — a loose end (not closed, not a bridge or a passage, no other
     road at its node that **carries** it: a street is carried only by a street, an alley by
@@ -1241,9 +1662,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     every OSM entrance to the nearest kerb of the nearest road (`map/paths.rs`,
     `Z_WORN_PATH` 0.72) — the desire lines. On the city it looked bad and was taken out
     by the author's call; the commits describing it are history, not a missing file.
-    Don't reintroduce a straight door-to-road strip. `model::put_in_cells` / `grid_cell`
-    stay — they are the door generator's own (`osm/entrances/index.rs`), extracted while
-    this layer existed and its only surviving trace.
+    Don't reintroduce a straight door-to-road strip. The uniform-grid index stays — it is
+    the door generator's own (`osm/entrances/index.rs`), extracted while this layer
+    existed and its only surviving trace; it has since become `map/grid.rs::Grid` (above).
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
   actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 2.003 and one
   markings layer at 2.006, the parking pair's shape exactly: the paint is flat
@@ -1388,15 +1809,15 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   code could ever deliver.
 - **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **11**.
   Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
-  `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>).or_else(retuned::<IndustryStyle>)`
+  `industry::rebuilds_on()` — `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)
+  .or_else(retuned::<IndustryStyle>)`
   and on nothing else — the settled sun, never `SunStyle`, like every other rebuild — and
   the system stands on its own rather than in the zoom-bucket chain, because there is no
   zoom bucket here: a cylinder is visible exactly as far as its shadow is.
-  **One registration carrying all three conditions, never three registrations**: the layer
-  arrived with its `rebuild_industry` listed twice in `Update`, and two copies of one
-  system in one schedule can both fire in a frame — the second despawns by a query taken
-  before the first one's commands were applied, so the layer is spawned twice. That is the
-  same trap the buildings' `or_else` chain is written against.
+  **One registration carrying all three conditions, never three registrations** — this is
+  the layer the rule is written from (it arrived with its `rebuild_industry` listed twice
+  in `Update`); the rule itself lives once, on `roads::rebuilds_on` and under **When a
+  layer rebuilds** above.
   - **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
     the `Industry` row of the **Buildings** section (`ui/buildings.rs`), the tram's
     arrangement exactly, and for the tram's reason: its own resource rather than a
@@ -1701,7 +2122,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     whole azimuth × elevation grid, `the_shadow_stays_under_the_car` pins the attachment.
   - **The edge is soft, by the buildings' own taper** — a `SHADOW_BLUR` (0.35 m) band
     fading to zero alpha, its width at each vertex `direction · shadow_dir()` clamped at
-    zero, exactly `buildings::layers::penumbra`: hard where the shadow meets the car,
+    zero, exactly `map/shadow.rs::penumbra`: hard where the shadow meets the car,
     full width at the far end, growing along the flanks. A metre there against a third of
     one here, because a building's shadow is three to ten times longer. Two consequences
     of that taper are load-bearing: the near edges collapse and **are not emitted at all**,
@@ -1751,16 +2172,18 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **`CarStyle`** (resource, BRP-writable, persisted, settings group `cars`) is the whole
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
-    effect is one merged mesh — and `rebuild_cars` is gated on
+    effect is one merged mesh — and `rebuild_cars` is gated on `cars::rebuilds_on()`,
     `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)
     .or_else(retuned::<SunOnMap>)`,
-    one registration, since two in one schedule could both fire in a frame and spawn the
-    layer twice; `RoadStyle` is in there because the row is walked along the **smoothed**
-    centreline the ribbon is drawn from (`smooth_path(road.points, road.width,
+    one registration by the rule under **When a layer rebuilds** above; `RoadStyle` is in
+    there because the row is walked along the **smoothed** centreline the ribbon is drawn
+    from (`smooth_path(road.points, road.width,
     style.smoothing)`, never the raw OSM points), so Smoothing moves the cars with the
     asphalt. The invisible case
-    goes through the same early return as the far zoom bucket: despawn the old layer, build
-    no new one, so no second path can forget the despawn.
+    takes the same road as the far zoom bucket, and since the seam both of them live in
+    `mesh_cars` rather than in the system: the adapter despawns the old layer
+    unconditionally and is handed an empty list, so no second path can forget the
+    despawn — and it is testable, which behind a `return` it was not.
   - **Its own zoom bucket** (`CarLods` / `CarZoomBucket`), and since the body has detail in
     it the table is no longer one threshold but four: `CAR_DETAIL_MAX_ZOOM` (0.18 m/px, a
     24-px car — glass and mirrors still read) → `CarDetail::Full`, `CAR_SILHOUETTE_MAX_ZOOM`
@@ -2042,7 +2465,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       and blurs as it runs away from it. In the union that difference is readable locally,
       because the body always lies on the `map::shadow_dir()` side of a contact edge: the
       band's own direction points *against* the light there, *along* it on the far edge, and
-      across it on a lateral one. Hence `layers.rs::penumbra(direction) =
+      across it on a lateral one. Hence `shadow.rs::penumbra(direction) =
       direction·shadow_dir()` (clamped at zero) as the per-vertex share of the width, fed to
       `MeshBuilder::push_inset_band_tapered` — zero at the contact, the full metre at the
       far edge, and along a lateral side a growth from nothing at the building's corner to
@@ -2095,7 +2518,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
           wing in front of its neighbour and the other behind it — and they are exactly
           the pairs whose drawn bodies overlap, i.e. the ones this pass is asked about.
           `roof_shadow_builder` therefore needs that very list, and is **handed** it: the
-          order is built once per layer build by the caller (`spawn_buildings`, and
+          order is built once per layer build by the caller (`mesh_buildings`, and
           `measure_layers` as its own bench row) and passed to `extrusion_builder` and to
           this layer alike — the sweeps travel the same way (`ShadowSweeps`). The
           `Option<&[usize]>` it arrives in *is* the 2.5D flag: no order, no lift, no drawn
@@ -2112,7 +2535,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
           over-subtracting the sliver of shadow that would show through the gap is
           cheaper than leaving a stain on a drawn wall.
         - **covers are prefiltered by the same `SHADOW_CELL` grid** as the casters, over
-          body boxes instead of sweep boxes (`indices_near`); the pass runs only for a
+          body boxes instead of sweep boxes (`Grid::near`); the pass runs only for a
           target that has both a shadow and a cover.
         In the flat modes there is nothing to subtract — a building is drawn on its own
         contour, and `DrawnBodies` is empty there.
@@ -2152,7 +2575,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
       the 90 ms of 116 that used to stand here came off the `building meshing:` line in
       the app, where the power state sets the scale, so take the share, not the
       milliseconds). `BuildingPlan { mode,
-      bucket, shadows }` is how that decision reaches `spawn_buildings` (and what keeps it
+      bucket, shadows }` is how that decision reaches `mesh_buildings` (and what keeps it
       at seven arguments).
   - **Shadows+tint** — shadows plus a roof color ramp: `t = sqrt(height / 60 m)` mixes
     the roof toward `ROOF_TALL_COLOR` (0.20, a near-black neutral — it must be darker in
@@ -2508,7 +2931,7 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   - **Merlons** (`clutter::merlons`) along every edge of a fortress wall's outer ring, pitch
     2.6 m, 1.3 × 0.7 × 1.9 m, through `push_items` (clutter zoom bucket).
   - **`temple_gallery`** (`examples/demos/temple_gallery`) — faith × (ship, square, chapel,
-    bell tower, drum) plus a kremlin row, built by the real `spawn_buildings`;
+    bell tower, drum) plus a kremlin row, built by the real `mesh_buildings`;
     `TEMPLE_GALLERY_SHOT` and `TEMPLE_GALLERY_FOCUS=row,column,m/px` for a close-up.
 - **Inferred storeys** (`buildings/heights.rs`) — the height of the 69 % of Tula (95 % of
   Tokyo) that OSM leaves untagged. It used to be three numbers — house 6 m, garage 3 m,
@@ -3256,9 +3679,8 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
     `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
     world entry before `spawn_map` and rebuilt on a threshold crossing through the same
-    `retuned` gate the height mode uses (one registration with `or_else`, deliberately:
-    two registrations of `rebuild_buildings` in one schedule could both fire in one
-    frame and spawn the layer twice).
+    `buildings::rebuilds_on()` the height mode uses — one registration with `or_else`, by
+    the rule under **When a layer rebuilds** above.
   - **What it costs** (Tula, 7723 buildings, 2.5D+shadows+tint, from
     `examples/bench/map_meshing` on the `dev` profile): 792 147 verts / 101 ms with clutter
     against 468 867 / 89 ms without — one hitch on the threshold crossing, in the same

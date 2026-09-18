@@ -56,7 +56,6 @@ pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 pub use self::theme::PanelWidgetsPlugin;
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
-use crate::map::trees::visible_count;
 use crate::map::{TreeRowStyle, TreeStyle};
 
 pub const UI_SCREEN_EDGE_PX_OFFSET: f32 = 8.0;
@@ -134,7 +133,7 @@ fn sync_panel_counts(
 ) {
     for (count, mut text) in &mut labels {
         let total = match count {
-            PanelCount::Trees => visible_count(&map.tree_appears_at, style.density),
+            PanelCount::Trees => map.trees.visible_count(style.density),
             PanelCount::TreeRows => map.tree_rows.len(),
             PanelCount::Buildings => map.buildings.len(),
             PanelCount::Roads => map.roads.len(),

@@ -23,9 +23,8 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use super::junctions::node_key;
-use crate::map::osm::model::{
-    closest_on_segment, grid_cell, point_in_area, polyline_length, put_in_cells, ring_bounds,
-};
+use crate::map::grid::Grid;
+use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine};
 
 /// Зазор между висячим торцом и **краем** дороги впереди, м, который стежок
@@ -189,7 +188,7 @@ pub fn stitches(
     sidewalk: impl Fn(&RoadLine) -> Option<f32>,
 ) -> Stitches {
     let mut ends = vec![[None; 2]; roads.len()];
-    let mut segments: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
+    let mut segments: Grid<(usize, usize)> = Grid::new(CELL);
     let mut widest = 0.0_f32;
     let drawn = Drawn::new(roads, sidewalk);
     for (index, road) in roads.iter().enumerate() {
@@ -199,14 +198,7 @@ pub fn stitches(
         let half = road.width / 2.0;
         widest = widest.max(drawn.edges[index]);
         for (segment, pair) in road.points.windows(2).enumerate() {
-            let (min, max) = (pair[0].min(pair[1]), pair[0].max(pair[1]));
-            put_in_cells(
-                &mut segments,
-                min - half,
-                max + half,
-                CELL,
-                (index, segment),
-            );
+            segments.insert_segment(pair[0], pair[1], half, (index, segment));
         }
     }
     let obstacles = Obstacles::new(map);
@@ -281,50 +273,46 @@ fn stitch_end(
     end: Vec2,
     heading: Vec2,
     reach: f32,
-    segments: &HashMap<(i32, i32), Vec<(usize, usize)>>,
+    segments: &Grid<(usize, usize)>,
     obstacles: &Obstacles,
 ) -> Option<Vec2> {
     let mut best: Option<(f32, Vec2, f32)> = None;
-    let (low, high) = (end - reach, end + reach);
-    for x in grid_cell(low.x, CELL)..=grid_cell(high.x, CELL) {
-        for y in grid_cell(low.y, CELL)..=grid_cell(high.y, CELL) {
-            let Some(found) = segments.get(&(x, y)) else {
-                continue;
-            };
-            for &(road, segment) in found {
-                let target = drawn.roads[road];
-                if road == own || !carries(drawn.roads[own], target) {
-                    continue;
-                }
-                let half = target.width / 2.0;
-                let (a, b) = (target.points[segment], target.points[segment + 1]);
-                let nearest = closest_on_segment(end, a, b);
-                let distance = nearest.distance(end);
-                // торец уже на чужой ленте — зазора нет
-                if distance <= half {
-                    return None;
-                }
-                // зазор — до внешнего края нарисованного тротуара цели
-                let edge = drawn.edges[road];
-                let mut consider = |gap: f32, point: Vec2| {
-                    if gap <= STITCH_MAX_GAP && best.is_none_or(|(known, ..)| gap < known) {
-                        best = Some((gap, point, half));
-                    }
-                };
-                if (nearest - end).dot(heading) >= STITCH_MIN_COS * distance {
-                    consider(distance - edge, nearest);
-                }
-                // луч вперёд из торца: прямое продолжение дороги до осевой
-                let along = b - a;
-                let denominator = heading.perp_dot(along);
-                if denominator.abs() > 1e-6 {
-                    let offset = a - end;
-                    let ahead = offset.perp_dot(along) / denominator;
-                    let at = offset.perp_dot(heading) / denominator;
-                    if ahead > 0.0 && (0.0..=1.0).contains(&at) {
-                        consider(ahead - edge, end + heading * ahead);
-                    }
-                }
+    // `near_each`, а не `near`: отрезок, попавший в две ячейки, и раньше
+    // проверялся дважды, а победителя выбирает строгое сравнение — порядок
+    // обхода тот же самый (ячейки по возрастанию, внутри ячейки — порядок
+    // вставки), так что выбор стыка не сдвинулся ни на один метр
+    for &(road, segment) in segments.near_each(end - reach, end + reach) {
+        let target = drawn.roads[road];
+        if road == own || !carries(drawn.roads[own], target) {
+            continue;
+        }
+        let half = target.width / 2.0;
+        let (a, b) = (target.points[segment], target.points[segment + 1]);
+        let nearest = closest_on_segment(end, a, b);
+        let distance = nearest.distance(end);
+        // торец уже на чужой ленте — зазора нет
+        if distance <= half {
+            return None;
+        }
+        // зазор — до внешнего края нарисованного тротуара цели
+        let edge = drawn.edges[road];
+        let mut consider = |gap: f32, point: Vec2| {
+            if gap <= STITCH_MAX_GAP && best.is_none_or(|(known, ..)| gap < known) {
+                best = Some((gap, point, half));
+            }
+        };
+        if (nearest - end).dot(heading) >= STITCH_MIN_COS * distance {
+            consider(distance - edge, nearest);
+        }
+        // луч вперёд из торца: прямое продолжение дороги до осевой
+        let along = b - a;
+        let denominator = heading.perp_dot(along);
+        if denominator.abs() > 1e-6 {
+            let offset = a - end;
+            let ahead = offset.perp_dot(along) / denominator;
+            let at = offset.perp_dot(heading) / denominator;
+            if ahead > 0.0 && (0.0..=1.0).contains(&at) {
+                consider(ahead - edge, end + heading * ahead);
             }
         }
     }
@@ -348,27 +336,30 @@ fn stitch_end(
 /// кончается там по-настоящему.
 struct Obstacles<'a> {
     areas: Vec<&'a PolyArea>,
-    cells: HashMap<(i32, i32), Vec<usize>>,
+    /// Номера из [`Self::areas`] по ячейкам их рамок — имя `areas` занято самим
+    /// вектором, в который они индексируют.
+    areas_by_cell: Grid<usize>,
 }
 
 impl<'a> Obstacles<'a> {
     fn new(map: &'a MapData) -> Self {
         let areas: Vec<&PolyArea> = map.buildings.iter().chain(&map.water).collect();
-        let mut cells = HashMap::new();
+        let mut areas_by_cell = Grid::new(CELL);
         for (index, area) in areas.iter().enumerate() {
             let (min, max) = ring_bounds(&area.outer);
-            put_in_cells(&mut cells, min, max, CELL, index);
+            areas_by_cell.insert(min, max, index);
         }
-        Self { areas, cells }
+        Self {
+            areas,
+            areas_by_cell,
+        }
     }
 
     fn covers(&self, point: Vec2) -> bool {
-        let cell = (grid_cell(point.x, CELL), grid_cell(point.y, CELL));
-        self.cells.get(&cell).is_some_and(|found| {
-            found
-                .iter()
-                .any(|&index| point_in_area(point, self.areas[index]))
-        })
+        self.areas_by_cell
+            .at(point)
+            .iter()
+            .any(|&index| point_in_area(point, self.areas[index]))
     }
 }
 

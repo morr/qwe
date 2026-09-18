@@ -30,8 +30,8 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::map::SunOnMap;
 use crate::map::along::{arclengths, place_on_path};
-use crate::map::buildings::LayerCost;
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
@@ -39,9 +39,10 @@ use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
 use crate::map::seed::{Lcg, seed_from_point};
-use crate::map::surface::{self, LayerMaterial};
+use crate::map::shadow;
+use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::map::{shadow_dir, shadow_length_scale};
+use crate::prefs::retuned;
 use crate::settings::{
     CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR,
 };
@@ -128,7 +129,9 @@ impl Default for CarStyle {
 }
 
 /// Слой машин — чтобы пересборка по зуму знала, что деспавнить.
-#[derive(Component)]
+///
+/// `Copy` — метку получает каждый слой модуля, а сама она пуста.
+#[derive(Component, Clone, Copy)]
 pub struct CarLayerTag;
 
 /// Ступени зума слоя машин: не размер машины, а **подробность кузова** —
@@ -241,7 +244,7 @@ pub fn measure_cars(
         ("cars block", CarDetail::Block),
     ] {
         let started = std::time::Instant::now();
-        let builder = mesh_cars(&cars, detail);
+        let builder = mesh_bodies(&cars, detail);
         costs.push(LayerCost {
             name,
             vertices: builder.vertex_count(),
@@ -251,12 +254,26 @@ pub fn measure_cars(
     (cars.len(), costs)
 }
 
+/// Когда пересобирать слой припаркованных машин: своя ступень зума, тумблер и
+/// ручка занятости, стиль дорог и осевшее солнце.
+///
+/// `RoadStyle` здесь потому, что ряд стоит по **сглаженной** осевой, той же,
+/// по которой рисуется асфальт: смена Smoothing двигает машины вместе с ним.
+///
+/// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
+pub fn rebuilds_on() -> impl SystemCondition<()> {
+    retuned::<CarZoomBucket>
+        .or_else(retuned::<CarStyle>)
+        .or_else(retuned::<RoadStyle>)
+        .or_else(retuned::<SunOnMap>)
+}
+
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
 #[allow(clippy::too_many_arguments)]
 pub fn rebuild_cars(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    materials: LayerMaterials,
     bucket: Res<CarZoomBucket>,
     style: Res<CarStyle>,
     // сглаживание осевой: ряд стоит по той же ломаной, по которой `map::roads`
@@ -269,11 +286,87 @@ pub fn rebuild_cars(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    // выключенный слой проходит тем же путём, что и снятый зумом: деспавн
-    // старого и никакой сборки нового — второй ветки, которая могла бы забыть
-    // деспавн, нет
+    let (layers, report) = mesh_cars(*bucket, *style, road_style.smoothing, &map, &layout);
+    spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
+    info!("{report}");
+}
+
+/// Что вышло из сборки слоя машин — значением, а не только строкой в логе.
+///
+/// `detail` — ступень подробности кузова, и `None` в ней значит «слоя нет»:
+/// зум ушёл за последнюю ступень или выключен тумблер. Остальные счётчики тогда
+/// нули, и это не заглушка: сборка в таком случае действительно не идёт.
+///
+/// `elapsed` меряется внутри сборки, потому что время тратится там; печатает его
+/// адаптер — `info!` на macOS ещё и меряет не то, потому что App Nap решает, как
+/// быстро идёт сборка. `breaks_took` — доля того же времени, ушедшая на поиск
+/// перекрёстков: разрывы считаются заново на каждую пересборку, и решение их не
+/// кешировать держится ровно на этой доле.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct CarReport {
+    /// Сколько машин расставлено — и вдоль бордюров, и на размеченных стоянках.
+    pub cars: usize,
+    /// Подробность кузова на этой ступени зума; `None` — слой не строился.
+    pub detail: Option<CarDetail>,
+    /// Сколько найдено перекрёстков, по которым рвутся ряды.
+    pub junctions: usize,
+    pub vertices: usize,
+    pub elapsed: std::time::Duration,
+    pub breaks_took: std::time::Duration,
+}
+
+impl std::fmt::Display for CarReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            cars,
+            detail,
+            junctions,
+            vertices,
+            elapsed,
+            breaks_took,
+        } = self;
+        match detail {
+            Some(detail) => write!(
+                f,
+                "cars: {cars} parked, {detail:?} ({vertices} verts) in {elapsed:?} \
+                 (junctions {junctions}, {breaks_took:?})"
+            ),
+            None => write!(f, "cars: hidden"),
+        }
+    }
+}
+
+/// Слой машин целиком: разрывы на перекрёстках, застройка вокруг, расстановка
+/// вдоль улиц, заполнение стоянок и меш кузовов с тенями.
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_cars`]), и тест. Выключенный тумблер и
+/// ушедший за последнюю ступень зум — это пустой список слоёв, а не ранний выход
+/// у вызывающего: деспавн в адаптере безусловен, и второй дороги, на которой
+/// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
+/// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
+///
+/// `smoothing` — сглаживание осевой: ряд стоит по той же ломаной, по которой
+/// `map::roads` кладёт ленту асфальта.
+pub fn mesh_cars(
+    bucket: CarZoomBucket,
+    style: CarStyle,
+    smoothing: RoadSmoothing,
+    map: &MapData,
+    layout: &ParkingLayout,
+) -> (Vec<LayerMesh>, CarReport) {
     let Some(detail) = detail_for(bucket.index).filter(|_| style.visible) else {
-        return;
+        return (
+            Vec::new(),
+            CarReport {
+                cars: 0,
+                detail: None,
+                junctions: 0,
+                vertices: 0,
+                elapsed: std::time::Duration::ZERO,
+                breaks_took: std::time::Duration::ZERO,
+            },
+        );
     };
     let started = std::time::Instant::now();
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
@@ -293,37 +386,26 @@ pub fn rebuild_cars(
     let mut cars = park_cars(
         &map.roads,
         &junctions,
-        *style,
-        road_style.smoothing,
+        style,
+        smoothing,
         map.traffic_side,
         &districts,
     );
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
-    let builder = mesh_cars(&cars, detail);
-    let count = cars.len();
-    let vertices = builder.vertex_count();
-    let elapsed = started.elapsed();
-    if builder.is_empty() {
-        return;
-    }
+    let builder = mesh_bodies(&cars, detail);
+    let report = CarReport {
+        cars: cars.len(),
+        detail: Some(detail),
+        junctions: junctions.junctions,
+        vertices: builder.vertex_count(),
+        elapsed: started.elapsed(),
+        breaks_took,
+    };
     // слой с блендингом: тень машины полупрозрачна, кузов — нет
-    let material = materials.add(ColorMaterial {
-        alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
-        ..default()
-    });
-    surface::spawn_layer(
-        &mut commands,
-        &mut meshes,
-        builder,
-        Z_CAR,
-        "cars",
-        LayerMaterial::Flat(material),
-        CarLayerTag,
-    );
-    info!(
-        "cars: {count} parked, {detail:?} ({vertices} verts) in {elapsed:?} (junctions {}, {breaks_took:?})",
-        junctions.junctions,
-    );
+    (
+        vec![LayerMesh::new(builder, Z_CAR, "cars", MaterialSpec::Blend)],
+        report,
+    )
 }
 
 /// Меш припаркованных рядов по готовому срезу улиц — дверь наружу для витрины
@@ -351,7 +433,7 @@ pub fn cars_mesh(
 ) -> MeshBuilder {
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let districts = Districts::new(&[]);
-    mesh_cars(
+    mesh_bodies(
         &park_cars(roads, &junctions, style, smoothing, traffic, &districts),
         detail,
     )
@@ -678,9 +760,11 @@ fn park_along(
 /// машин стоил бы дороже всего слоя. При низком солнце тени вдоль ряда
 /// перекрываются и складываются в пятна двойной темноты — известная плата за
 /// это решение.
-fn mesh_cars(cars: &[Car], detail: CarDetail) -> MeshBuilder {
+fn mesh_bodies(cars: &[Car], detail: CarDetail) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
-    let stretch = shadow_dir() * shadow_length_scale();
+    // сдвиг на метр высоты — общий множитель слоя, а высоту прикладывает
+    // каждая машина своей (`CarShape::height`)
+    let stretch = shadow::offset(1.0);
     for car in cars {
         body::push_shadow(&mut builder, car, stretch * car.shape.height(), detail);
     }
@@ -691,467 +775,4 @@ fn mesh_cars(cars: &[Car], detail: CarDetail) -> MeshBuilder {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::map::osm::fixture::{self, street};
-    use crate::map::roads::junctions::JUNCTION_MARGIN;
-
-    /// Большая стоянка пустее малой, и доля не выходит за свои края.
-    #[test]
-    fn a_bigger_lot_is_emptier() {
-        assert_eq!(lot_occupancy(5), LOT_OCCUPANCY_SMALL);
-        assert!((lot_occupancy(5000) - LOT_OCCUPANCY_LARGE).abs() < 1e-6);
-        let shares: Vec<f32> = [20, 50, 100, 200, 400].map(lot_occupancy).to_vec();
-        assert!(
-            shares.windows(2).all(|pair| pair[1] < pair[0]),
-            "{shares:?}"
-        );
-    }
-
-    /// Расстановка по срезу целиком — так же, как её зовёт пересборка слоя.
-    fn park(roads: &[RoadLine]) -> Vec<Car> {
-        park_with(roads, CarStyle::default())
-    }
-
-    fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
-        park_driving(roads, style, TrafficSide::Right)
-    }
-
-    /// Домов в сценах этих тестов нет: пустой индекс даёт множитель 1, и они
-    /// проверяют укладку ряда, не смешанную с плотностью квартала — та
-    /// проверяется своими тестами в [`district`].
-    fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
-        park_cars(
-            roads,
-            &junctions::marking_breaks(roads, is_carriageway),
-            style,
-            RoadSmoothing::Off,
-            traffic,
-            &Districts::new(&[]),
-        )
-    }
-
-    #[test]
-    fn cars_line_a_street_on_both_sides() {
-        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        let cars = park(std::slice::from_ref(&road));
-        assert!(!cars.is_empty());
-        // ряды по обе стороны осевой, внутри проезжей части: отступ считается
-        // по габариту этой машины, плюс небрежность парковки
-        assert!(cars.iter().any(|car| car.at.y > 0.0));
-        assert!(cars.iter().any(|car| car.at.y < 0.0));
-        for car in &cars {
-            let offset = road.width / 2.0 - CURB_GAP - car.shape.width() / 2.0;
-            assert!(
-                (car.at.y.abs() - offset).abs() <= PARK_SLOP + 0.01,
-                "{}",
-                car.at.y
-            );
-            assert!(car.at.x >= END_MARGIN - 0.01 && car.at.x <= 200.0 - END_MARGIN + 0.01);
-        }
-    }
-
-    /// Таблица зума и лестница подробности — об одном и том же: у каждой
-    /// ступени `CarLods` своя подробность, и только у последней её нет
-    /// (слоя там не строят вовсе).
-    #[test]
-    fn the_zoom_table_and_the_detail_ladder_agree() {
-        let steps = CarLods::max_zooms().count();
-        for bucket in 0..steps - 1 {
-            assert!(
-                detail_for(bucket).is_some(),
-                "ступень {bucket} без подробности"
-            );
-        }
-        assert!(detail_for(steps - 1).is_none(), "последняя ступень рисует");
-    }
-
-    #[test]
-    fn a_narrow_lane_and_a_bridge_stay_empty() {
-        let narrow = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
-        assert!(park(std::slice::from_ref(&narrow)).is_empty());
-
-        let mut bridge = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 14.0);
-        bridge.bridge = true;
-        assert!(park(std::slice::from_ref(&bridge)).is_empty());
-    }
-
-    #[test]
-    fn a_street_crossing_a_bridge_clears_the_row_under_the_deck() {
-        // улица проходит под мостом: общей ноды нет, перекрёстка тоже
-        let through = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        let mut bridge = street(vec![Vec2::new(100.0, -80.0), Vec2::new(100.0, 80.0)], 16.0);
-        bridge.bridge = true;
-        let cars = park(&[through.clone(), bridge.clone()]);
-
-        let cleared = bridge.curb_reach() + JUNCTION_CLEARANCE;
-        for car in &cars {
-            assert!(
-                (car.at.x - 100.0).abs() >= cleared - 0.01,
-                "машина на мосту: {}",
-                car.at
-            );
-        }
-        assert!(cars.iter().any(|car| car.at.x > 130.0));
-        assert!(cars.iter().any(|car| car.at.x < 70.0));
-
-        // первый ряд до моста стоит ровно как без него (после пропуска поток
-        // ГПСЧ уже другой — так же, как за перекрёстком, и второй ряд идёт
-        // по тому же потоку следом)
-        let alone = park(std::slice::from_ref(&through));
-        let far = |car: &&Car| car.at.x <= 100.0 - cleared - 10.0 && car.at.y < 0.0;
-        let with: Vec<_> = cars.iter().filter(far).map(|car| car.at).collect();
-        let without: Vec<_> = alone.iter().filter(far).map(|car| car.at).collect();
-        assert_eq!(with, without);
-    }
-
-    #[test]
-    fn a_residential_street_gets_a_row() {
-        // 8 м — `residential`/`unclassified`: основная масса улиц города
-        let residential = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 8.0);
-        let cars = park(std::slice::from_ref(&residential));
-        assert!(!cars.is_empty());
-        // и ряды на ней не наезжают на осевую: между ними остаётся проезд
-        for car in &cars {
-            assert!(
-                car.at.y.abs() - car.shape.width() / 2.0 > 0.5,
-                "ряд на осевой: {}",
-                car.at.y
-            );
-        }
-
-        // 5 м — `service`, проезд: там не паркуются
-        let service = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
-        assert!(park(std::slice::from_ref(&service)).is_empty());
-    }
-
-    /// Та же улица в частном секторе запаркована много реже, чем в
-    /// микрорайоне, и ползунок занятости остаётся за обоими: он задаёт базу, а
-    /// квартал — множитель к ней.
-    #[test]
-    fn the_same_street_parks_thinner_in_a_private_sector() {
-        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 8.0);
-        let roads = std::slice::from_ref(&road);
-        let breaks = junctions::marking_breaks(roads, is_carriageway);
-        let rows = |buildings: &[PolyArea]| {
-            park_cars(
-                roads,
-                &breaks,
-                CarStyle::default(),
-                RoadSmoothing::Off,
-                TrafficSide::Right,
-                &Districts::new(buildings),
-            )
-            .len()
-        };
-        // частный сектор: одноэтажные дома по обе стороны улицы
-        let houses: Vec<PolyArea> = (0..30)
-            .map(|i| PolyArea {
-                height: Some(3.2),
-                ..fixture::building(
-                    fixture::square(
-                        Vec2::new(i as f32 % 15.0 * 40.0, i as f32 % 2.0 * 60.0 - 30.0),
-                        5.0,
-                    ),
-                    Vec::new(),
-                )
-            })
-            .collect();
-        // микрорайон: те же места, но девятиэтажные секции
-        let slabs: Vec<PolyArea> = (0..8)
-            .map(|i| PolyArea {
-                height: Some(27.0),
-                ..fixture::building(
-                    fixture::square(
-                        Vec2::new(i as f32 % 4.0 * 150.0, i as f32 % 2.0 * 60.0 - 30.0),
-                        15.0,
-                    ),
-                    Vec::new(),
-                )
-            })
-            .collect();
-        let (low, high) = (rows(&houses), rows(&slabs));
-        assert!(low * 3 < high, "частный сектор {low}, микрорайон {high}");
-        // и без домов вокруг остаётся ровно прежнее правило
-        assert!(rows(&[]) > low && rows(&[]) < high);
-    }
-
-    #[test]
-    fn the_row_crosses_the_bends_of_a_polyline() {
-        // десять звеньев по 10 м: каждое короче прежних двух отступов, и
-        // посегментный обход не ставил на них ни одной машины
-        let points = (0..=10).map(|i| Vec2::new(i as f32 * 10.0, 0.0)).collect();
-        let with_vertices = park(std::slice::from_ref(&street(points, 12.0)));
-        let straight = street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 12.0);
-        let one_span = park(std::slice::from_ref(&straight));
-
-        // вершины на прямой не меняют ничего: шаг идёт по длине улицы
-        assert!(!with_vertices.is_empty());
-        assert_eq!(with_vertices.len(), one_span.len());
-        for (car, twin) in with_vertices.iter().zip(&one_span) {
-            assert!(car.at.distance(twin.at) < 0.01, "{} / {}", car.at, twin.at);
-        }
-    }
-
-    #[test]
-    fn cars_never_overlap_on_a_sharp_bend() {
-        // излом в 90°: с внутренней стороны ряд сжимается, и место, наехавшее
-        // на соседа, обязано быть пропущено
-        let road = street(
-            vec![
-                Vec2::new(0.0, 100.0),
-                Vec2::new(0.0, 0.0),
-                Vec2::new(100.0, 0.0),
-            ],
-            12.0,
-        );
-        let cars = park(std::slice::from_ref(&road));
-        assert!(cars.len() > 10, "{}", cars.len());
-        // просвет — по **полусумме** длин пары: именно на ней два кузова,
-        // стоящие носом к корме, и перестают перекрываться. Небрежность
-        // парковки (`PARK_SLOP`, поперёк ряда) разыгрывается после проверки и
-        // может сдвинуть навстречу обе машины, отсюда допуск в два слопа
-        for (index, car) in cars.iter().enumerate() {
-            for other in &cars[index + 1..] {
-                let gap = car.at.distance(other.at);
-                let apart = (car.shape.length() + other.shape.length()) / 2.0 - 2.0 * PARK_SLOP;
-                assert!(
-                    gap >= apart - 0.01,
-                    "{gap} м между {} ({:?}) и {} ({:?})",
-                    car.at,
-                    car.shape,
-                    other.at,
-                    other.shape
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_junction_clears_the_row_and_the_row_resumes() {
-        // Т-образный: сквозная улица с нодой в узле (перекрёсток и держится
-        // на общей ноде) и примыкающая к ней в середине
-        let through = street(
-            vec![
-                Vec2::new(0.0, 0.0),
-                Vec2::new(100.0, 0.0),
-                Vec2::new(200.0, 0.0),
-            ],
-            12.0,
-        );
-        let joining = street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 10.0);
-        let cars = park(&[through, joining]);
-
-        // полуширина самой широкой из сошедшихся плюс запас разметки и клиренс
-        let node = Vec2::new(100.0, 0.0);
-        let cleared = 10.0 / 2.0 + JUNCTION_MARGIN + JUNCTION_CLEARANCE;
-        for car in &cars {
-            assert!(
-                car.at.distance(node) >= cleared - 0.01,
-                "машина на перекрёстке: {}",
-                car.at
-            );
-        }
-        // и ряд идёт дальше по обе стороны от узла
-        assert!(
-            cars.iter()
-                .any(|car| car.at.x > 130.0 && car.at.y.abs() < 6.0)
-        );
-        assert!(
-            cars.iter()
-                .any(|car| car.at.x < 70.0 && car.at.y.abs() < 6.0)
-        );
-    }
-
-    #[test]
-    fn a_way_split_in_the_middle_keeps_the_row() {
-        // одна прямая улица, разрезанная на два way в общей ноде: стык двух
-        // торцов — не перекрёсток, и ряд идёт сквозь него
-        let first = street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 12.0);
-        let second = street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        let cars = park(&[first, second]);
-        assert!(
-            cars.iter().any(|car| (92.0..=108.0).contains(&car.at.x)),
-            "ряд разорван на стыке двух way одной улицы"
-        );
-    }
-
-    #[test]
-    fn a_street_shorter_than_its_end_margins_stays_empty() {
-        let stub = street(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)], 12.0);
-        assert!(park(std::slice::from_ref(&stub)).is_empty());
-    }
-
-    #[test]
-    fn a_one_way_carriageway_parks_on_its_right() {
-        // улица на восток: справа по ходу — юг
-        let points = vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)];
-        let mut oneway = street(points.clone(), 12.0);
-        oneway.oneway = true;
-        let cars = park(std::slice::from_ref(&oneway));
-        assert!(!cars.is_empty());
-        for car in &cars {
-            assert!(car.at.y < 0.0, "ряд не с той стороны: {}", car.at);
-        }
-
-        // та же улица без `oneway` — с обеих сторон
-        let both = park(std::slice::from_ref(&street(points, 12.0)));
-        assert!(both.iter().any(|car| car.at.y > 0.0));
-        assert!(both.iter().any(|car| car.at.y < 0.0));
-    }
-
-    /// Нос машины — по потоку её полосы: при правостороннем движении южный
-    /// ряд улицы на восток смотрит на восток, северный — на запад, при
-    /// левостороннем наоборот. Перекос парковки — градусы, так что знак
-    /// проекции на ось улицы он не меняет.
-    #[test]
-    fn cars_face_the_traffic_of_their_own_kerb() {
-        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        for (traffic, south_heading) in [(TrafficSide::Right, 1.0), (TrafficSide::Left, -1.0)] {
-            let cars = park_driving(std::slice::from_ref(&road), CarStyle::default(), traffic);
-            assert!(cars.iter().any(|car| car.at.y > 0.0));
-            assert!(cars.iter().any(|car| car.at.y < 0.0));
-            for car in &cars {
-                let expected = if car.at.y < 0.0 {
-                    south_heading
-                } else {
-                    -south_heading
-                };
-                assert!(
-                    car.along.x * expected > 0.9,
-                    "{traffic:?}: машина в {} смотрит {}",
-                    car.at,
-                    car.along
-                );
-            }
-        }
-    }
-
-    /// Сторона движения переворачивает машины, но не переставляет их: поток
-    /// ГПСЧ от неё не зависит, и двусторонняя улица Лондона стоит теми же
-    /// местами, что и такая же в Туле.
-    #[test]
-    fn the_traffic_side_turns_the_row_without_moving_it() {
-        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        let right = park_driving(
-            std::slice::from_ref(&road),
-            CarStyle::default(),
-            TrafficSide::Right,
-        );
-        let left = park_driving(
-            std::slice::from_ref(&road),
-            CarStyle::default(),
-            TrafficSide::Left,
-        );
-        assert_eq!(right.len(), left.len());
-        for (a, b) in right.iter().zip(&left) {
-            assert_eq!(a.at, b.at);
-            assert!(
-                (a.along + b.along).length() < 1e-5,
-                "{} {}",
-                a.along,
-                b.along
-            );
-        }
-    }
-
-    #[test]
-    fn a_left_hand_one_way_carriageway_parks_on_its_left() {
-        // улица на восток: слева по ходу — север, и носы по ходу
-        let mut oneway = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        oneway.oneway = true;
-        let cars = park_driving(
-            std::slice::from_ref(&oneway),
-            CarStyle::default(),
-            TrafficSide::Left,
-        );
-        assert!(!cars.is_empty());
-        for car in &cars {
-            assert!(car.at.y > 0.0, "ряд не с той стороны: {}", car.at);
-            assert!(
-                car.along.x > 0.9,
-                "машина смотрит против потока: {}",
-                car.along
-            );
-        }
-    }
-
-    #[test]
-    fn occupancy_zero_parks_nothing() {
-        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        let empty = CarStyle {
-            occupancy: 0.0,
-            ..default()
-        };
-        assert!(park_with(std::slice::from_ref(&road), empty).is_empty());
-    }
-
-    #[test]
-    fn a_roundabout_stays_empty() {
-        let mut ring = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 12.0);
-        ring.roundabout = true;
-        assert!(park(std::slice::from_ref(&ring)).is_empty());
-    }
-
-    #[test]
-    fn the_row_is_ragged_and_stable() {
-        let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(400.0, 0.0)], 12.0);
-        let cars = park(std::slice::from_ref(&road));
-        // мест на 400 м вдвое больше, чем машин: ряд рваный, а не сплошной
-        let places = ((400.0 - 2.0 * END_MARGIN) / CAR_PITCH) as usize * 2;
-        assert!(cars.len() < places, "{} of {places}", cars.len());
-        assert!(cars.len() > places / 5, "{} of {places}", cars.len());
-        // и он тот же самый при повторной сборке
-        let again = park(std::slice::from_ref(&road));
-        assert_eq!(cars.len(), again.len());
-        for (car, twin) in cars.iter().zip(&again) {
-            assert_eq!(car.at, twin.at);
-        }
-    }
-
-    /// Наименьшее расстояние от точки до ломаной — тем же способом, каким
-    /// глаз проверяет, лежит ли машина на асфальте.
-    fn distance_to_path(points: &[Vec2], at: Vec2) -> f32 {
-        points
-            .windows(2)
-            .map(|link| {
-                let span = link[1] - link[0];
-                let t = (at - link[0]).dot(span) / span.length_squared().max(f32::EPSILON);
-                at.distance(link[0] + span * t.clamp(0.0, 1.0))
-            })
-            .fold(f32::INFINITY, f32::min)
-    }
-
-    #[test]
-    fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
-        // излом 30° на звеньях по 40 м: Chaikin срезает вершину на два метра,
-        // и ряд по сырым точкам вставал бы за кромкой
-        let points = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(40.0, 0.0),
-            Vec2::new(40.0 + 40.0 * 0.866, 20.0),
-        ];
-        let road = street(points, 8.0);
-        let style = CarStyle {
-            visible: true,
-            occupancy: 1.0,
-        };
-        let cars = park_cars(
-            std::slice::from_ref(&road),
-            &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
-            style,
-            RoadSmoothing::Light,
-            TrafficSide::Right,
-            &Districts::new(&[]),
-        );
-        assert!(!cars.is_empty());
-        let drawn = smooth_path(&road.points, road.width, RoadSmoothing::Light);
-        for car in &cars {
-            let off = distance_to_path(&drawn, car.at);
-            assert!(
-                off <= road.width / 2.0 - car.shape.width() / 2.0 + 0.01,
-                "кузов в {off} м от нарисованной осевой"
-            );
-        }
-    }
-}
+mod tests;
