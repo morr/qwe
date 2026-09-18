@@ -268,7 +268,8 @@ variant, style, params)`**, the same call `mesh_trees` fills its variant pool wi
 the shadows go into one merged mesh through `push_template` exactly as the game's
 `tree_shadows` layer does. The shadow template carries `SHADOW_COLOR` in its **vertices**
 (as every other shadow of the map does), so the gallery's shadow material is a plain
-blended `ColorMaterial` — the game's `MaterialSpec::Blend` — and not a coloured one. `crown_variant` exists for this — when the crown pipeline
+blended `ColorMaterial` — the game's `MaterialSpec::Blend` — and not a coloured one.
+`crown_variant` exists for this — when the crown pipeline
 grows an axis (a new shape, a new shadow kind), the gallery shows it without a line of
 its own, so the axis must be added there rather than in the example.
 

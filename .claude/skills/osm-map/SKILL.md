@@ -634,19 +634,29 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   comparable with the next one; the live app builds with the sun from `settings.toml`, which
   is a second reason a log line and a run are not comparable.
   **What it covers besides the buildings and the cars**: `measure_surfaces`,
-  `measure_roads`, `measure_rails` and `measure_tram`, i.e. everything a `mesh_*` builds
-  except the trees. Those four are of a different kind from the two above, and the
+  `measure_roads`, `measure_rails` and `measure_tram` — six measurements against eleven
+  `mesh_*` doors. **Unmeasured: `fences`, `wagons`, `industry` and the trees** (both
+  `mesh_trees` and `spawn::mesh_tree_row_band`). The first three are cheap single-pass
+  layers with no zoom ladder worth a row per step, and the trees want a different row
+  shape altogether (its own sub-bullet below); none of the four is a decision recorded as
+  final — a row for any of them is a `measure_*` plus a `row(...)` line in the bench.
+  Those four that exist are of a different kind from the two above, and the
   difference is the whole payoff of the seam: they have **no build of their own**. Each
   calls the game's `mesh_*` once and lays its layers out through
-  `surface::layer_costs(name, &layers, report.elapsed)` — one row carrying the module's
+  `surface::layer_costs(&layers, report.elapsed)` — the helper *and* its `LayerCost` row
+  both live in `map/surface.rs`, i.e. on the seam rather than in `buildings`, where the
+  row was first needed — a first row named `build`, carrying the module's
   milliseconds (the build is one pass; there is nothing to split them between) and then a
   row of vertices per layer, under the same `name` the layer wears in the live world.
   `measure_layers` and `measure_cars` repeat their build's steps deliberately, because a
   bench row per step is exactly what they exist for.
   - **Rails and tram get a row per zoom bucket** (`ZoomBucket::at(index)`, which exists
     for this). Their buckets differ in *what is drawn*, not in size — rails run 45 k
-    vertices on the far step against 673 k on the near one — so a single number would be
-    a number about nothing.
+    vertices on the far step against 663 k on the near one (44 563 and 662 939, Tula,
+    `dev`) — so a single number would be a number about nothing. Those are the **bench's**
+    numbers; the 673 k / 23 ms that appears elsewhere in this skill under **What a bucket
+    costs** and beside it comes off the app's `rail meshing:` line, which App Nap decides,
+    and the two are not comparable — that is the whole reason the bench exists.
   - **The tram is measured switched on**, though it ships off: the bench is about what
     the layer costs, not about whether it is shown.
   - Trees are the gap left: their build is a crown pool plus a scatter, and the
@@ -673,31 +683,54 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
   pure function, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`, and
   its system is a thin adapter: despawn by tag, call it, hand the list to
   `surface::spawn_layers`, print the report.
+  **A layer with a second caller gets one door for both** — `spawn_<layer>_meshes(commands,
+  meshes, materials, mesh_<layer>(...))`, taking what is already built so the build stays
+  outside the world. `buildings` and `roads` have one each (`spawn_building_meshes`,
+  `spawn_road_meshes`), because `spawn_map` spawns their layers at world entry and a
+  `rebuild_*` respawns them on a style or bucket change. The trigger is the **number of
+  callers, not the number of tags**: without the door `spawn.rs` would have to know the
+  layer's tag and the "spawn, then `info!`" order. A module with one caller (the surfaces)
+  needs none.
   - **`LayerMesh`** — `{ builder, z, name, material: MaterialSpec }`, **one type for
     every layer of the map**, not a type per module. That is the point: a module read as
     `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
     `Name` in the live world, i.e. what a BRP query looks it up by.
-  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)`. It **names** the
+  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof`. It **names** the
     material instead of carrying a `Handle`, and a handle is the only thing that would
     have dragged Bevy into the build: with a spec the build needs neither `Commands` nor
     `Assets`, so the game, a test and the offline bench call one and the same function.
     Resolving spec → handle lives in `spawn_layers` and only there.
   - **`FlatMaterials`** (`Startup`, beside `SurfaceMaterials`) holds the two flat
-    `ColorMaterial`s the spec names. An **unconverted** module still does
-    `materials.add(...)` on every rebuild — that is a per-rebuild allocation of a
-    material that never changes, and it goes away with the conversion. Both resources
+    `ColorMaterial`s the spec names. An **unconverted** module did
+    `materials.add(...)` on every rebuild — a per-rebuild allocation of a material that
+    never changes — and the conversion is what retired the last of them. Both resources
     reach an adapter as one **`LayerMaterials`** system param (`#[derive(SystemParam)]`,
     the `ui/debug/mod.rs::DebugValues` idiom), which is also where `resolve` lives. Two
     separate `Res` were tried first and pushed `rebuild_tram` and `rebuild_industry` to
     eight arguments, past clippy's limit; bundling them left every adapter shorter than
     it had been before the seam.
   - **A zoom cutoff or a visibility toggle belongs in the build, not in the system.** A
-    far-bucket fence, an invisible tram, an invisible industry layer all return an empty
-    layer list, so the despawn in the adapter is unconditional. That is what the prose in
-    `map/mod.rs` was already worrying about from the other side — «второй дороги, на
-    которой можно забыть деспавн, нет» — and it is now a property of the shape rather
-    than a thing to remember. It also makes the toggle testable: it used to live behind
-    a `return` inside a Bevy system, where no test could reach it.
+    far-bucket fence, an invisible tram, an invisible industry layer all return **nothing
+    to draw**, so the despawn in the adapter is unconditional — and that comes in two
+    shapes, both pinned by tests:
+    - an **empty list**, when the cutoff also saves work before the build — the fence's
+      far bucket returns `Vec::new()` and never calls `fence_gaps` (8.7 ms on Tula), and
+      `mesh_cars` off or past the last step does neither breaks nor districts
+      (`fences/tests.rs::the_far_bucket_draws_nothing`);
+    - the module's **usual layers with empty builders**, when there is nothing to save and
+      the layer order is worth seeing in the test — the tram, the industry layer
+      (`tram/tests.rs` and `industry/tests.rs::the_toggle_off_draws_nothing`).
+
+    Either is safe, because `surface::spawn_layer` skips an empty builder anyway. That is
+    the very thing the converted modules now say in their own doc comments —
+    «второй дороги, на которой можно забыть деспавн, нет» (`cars/mod.rs`, `industry.rs`)
+    — a property of the shape rather than a thing to remember. Do not confuse it with the
+    three comments in `map/mod.rs`: those are about **double registration spawning a layer
+    twice**, which the seam neither removes nor touches. It also makes the toggle testable:
+    it used to live behind a `return` inside a Bevy system, where no test could reach it.
+    Whichever shape a module takes, it says so in its **report** — see **"The layer is not
+    drawn" is a state of the report** below; the shape decides what is in the list, the
+    report decides what the log line says.
   - **The report is a value, not a log line.** `FenceReport`, `RailReport`: the counters
     `info!` used to be made of, returned so a test can assert on them. `info!` is also
     the thing App Nap mismeasures on macOS, so a returned `elapsed` is the only honest
@@ -709,11 +742,43 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     cannot: `Copy` is out (two `String` fields) and no test compares it. Add a derive
     when something uses it, not for the symmetry; a failure message wants `Display`
     anyway, which every report has and which prints the log line itself.
-  - **Converted — all eleven.** `fences`, `rail`, `tram`, `wagons`, `industry`, `cars`,
-    `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (13 surface and paint layers plus
-    the tree-row band), `buildings` and `trees`. `surface::spawn_layer` (one layer, a
+  - **"The layer is not drawn" is a state of the report, never a zero in a counter.** A
+    build that the toggle or the zoom step took away must not print what an empty city
+    prints: `industry: 0 structures, 0 pipes` was the line a map with a chimney on it
+    logged, and nothing in it said which of the two had happened. So the state is a
+    **field**, and the counters keep saying what came in:
+    - the field is `hidden: bool` (`IndustryReport`, `TramReport`, `WagonReport`) or an
+      existing one that already carries the fact — `CarReport::detail: Option<CarDetail>`,
+      `FenceReport::width` (zero *is* "not drawn at this step"). A second `hidden` beside
+      `width` would be two sources of one fact;
+    - `Display` then prints `<layer>: hidden`, with the free input counters after it
+      (`industry: hidden (1 structures, 0 pipes)`, `tram meshing: hidden (1 tracks)`,
+      `fences: hidden (429 lines)`) — that parenthesis is what tells the hidden layer
+      from the empty city at a glance;
+    - **free** means the count is a slice length or a filter over the input
+      (`mesh_tram` walks `rails` and counts `RailKind::Tram` whatever the toggle says;
+      `mesh_industry` counts its own `structures`/`pipe_lines`, and only the loops move
+      to the substituted `drawn_*` slices). A counter that would need the build to run
+      stays zero, and that is honest rather than a stub — `WagonReport::standing` and
+      `CarReport::cars` are zero because the placement genuinely does not run, which is
+      the whole point of taking the cutoff before the build (`fences::pieces` likewise:
+      `fence_gaps` is 8.7 ms).
+
+    Pinned by `industry/tests.rs` and `tram/tests.rs::the_toggle_off_draws_nothing` (the
+    input counter stays 1 and `hidden` is true) and by
+    `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
+  - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
+    `industry`, `cars`,
+    `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (the 13 surface and paint layers
+    as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
+    parking layout arrives ready, because the car rows are drawn off the same one — plus
+    the tree-row band, its **second** door), `buildings` and `trees`.
+    `surface::spawn_layer` (one layer, a
     ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
-    Count the modules, not the layers: the tree-row band lives in `spawn.rs` and is not
+    The two counts are different numbers and both are worth having: `grep 'pub fn mesh_'
+    src/map/` gives eleven doors, the module list gives ten — `spawn.rs` carries two
+    (`mesh_surfaces`, `mesh_tree_row_band`). **Count the modules when asking "is anything
+    left".** The tree-row band lives in `spawn.rs` and is not
     `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
     still spawning by hand.
   - **`trees` is a scatter, and the seam takes a different shape there.** A crown is an
@@ -747,7 +812,10 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     `return` inside the system cost. The private `mesh_bodies(&[Car], CarDetail)`
     underneath is only the mesh; it carried the name `mesh_cars` until the layer
     function took it. `CarReport::detail` is an `Option<CarDetail>`, and `None` is what
-    the `cars: hidden` log line prints — every other counter is then zero.
+    the `cars: hidden` log line prints — every other counter is then zero, because the
+    assembly those counters would count is exactly what did not run. That is the one
+    shape of the rule above (**"The layer is not drawn" is a state of the report**); the
+    four modules whose input counters are free print theirs beside the word.
     **The bench and the gallery still assemble on their own, deliberately**:
     `measure_cars` times `breaks` / `districts` / `parking` as separate rows and meshes
     all three detail steps, which one call cannot report — the same reason
@@ -868,7 +936,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     island, making a separate band piece with that island as its hole.
   - A triangle whose three vertices sit on one ring is flat-coloured; on a 0.5 m band that
     error is under one step.
-  - Cost: logged as `water meshing:`.
+  - Cost: the `water` field of `SurfaceReport`, printed inside the one
+    `surface meshing:` line (it had its own `water meshing:` line until the surface
+    layers went on the seam).
 - **Waterways** (`map/water.rs::mesh_water_lines`, the `waterways` layer at `Z_WATERWAY` 2.02,
   `SurfaceKind::Water`) — the open channels, and two decisions, both from screenshots
   of the Упа's southern arm (`waterway=river` 221646296 at `cam 4366 3254`):
@@ -913,7 +983,9 @@ through the curb pin tests (`navmesh/tests.rs`) and the parity tests.
     ends and would fade the shore at every channel end on dry land too.
   - **Render-only.** The navmesh blocks the polygon and the whole channel band as before;
     the caps rule it shares with the drawing (`water_line_caps`) is untouched.
-  - Cost: one pass per open channel at load, logged as `waterways meshing:`.
+  - Cost: one pass per open channel at load — the `waterways` field of `SurfaceReport`,
+    printed inside the one `surface meshing:` line (it had its own `waterways meshing:`
+    line until the surface layers went on the seam).
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.2, `SurfaceKind::
   Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
   brightness step between them is what reads as the kerb) — a **carriageway**

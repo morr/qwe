@@ -965,11 +965,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   of the map all get their `DespawnOnExit` from `spawn_layer`, and the tree crowns are
   the one scatter that writes its own, in one place. The two
   flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`
-  resource beside `SurfaceMaterials` — an unconverted module still allocates its own on
-  every rebuild — and both reach an adapter as one **`LayerMaterials`** system param.
+  resource beside `SurfaceMaterials` — an unconverted module allocated its own on
+  every rebuild, and the last of those went with the conversion — and both reach an
+  adapter as one **`LayerMaterials`** system param.
   **A zoom cutoff and a visibility toggle belong in the build, not in the system**: an
   invisible tram or a far-bucket fence is an empty layer list, so the despawn in the
-  adapter is unconditional and there is no second path that could skip it.
+  adapter is unconditional and there is no second path that could skip it. **"Not drawn"
+  is then a state of the report, never a zero in a counter** — `hidden` (or
+  `CarReport::detail = None`, `FenceReport::width = 0`) prints `<layer>: hidden`, and the
+  counters keep saying what came in, so a hidden layer never reads as an empty city.
   **Ribbon**
   (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
   geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are
