@@ -38,7 +38,8 @@ stand, how density works, and which resources restyle them.
   untouched: row trees land in the same `MapData::trees`, so crowns, the merged shadow
   layer, the conifer field and the density prefix apply to them without a line of new
   rendering code.
-  - **A row carries a green band under it** (`spawn.rs::spawn_tree_row_band`) — a ribbon
+  - **A row carries a green band under it** (`spawn.rs::mesh_tree_row_band`, spawned by
+    `spawn.rs::rebuild_tree_row_band`) — a ribbon
     of `TREE_ROW_BAND_WIDTH` (10 m) in `WOOD_COLOR` at `Z_TREE_ROW_BAND`. On the map an
     avenue is a wood one crown wide, and without the band its crowns hang over bare
     asphalt while every park tree stands on green. The band is deliberately narrower than
@@ -47,7 +48,7 @@ stand, how density works, and which resources restyle them.
     and roads, exactly as the wood fill does inside a park.
     It is its **own entity**, not part of the merged `woods` mesh, because it carries the
     same three knobs the road ribbons do — **join, smoothing (Chaikin), casing** — reusing
-    `roads::push_ribbon` / `smooth_path` / `casing_width` verbatim. The knobs are separate
+    `roads::push_ribbon` / `smooth::smooth_path` / `footprint::casing_width` verbatim. The knobs are separate
     from the Roads section's on purpose: an avenue's polyline and a street's come from
     different data, and the band must read as *wood* even where the roads are left raw.
     Defaults differ from roads accordingly — smoothing `Light` (a street may turn a
@@ -89,7 +90,9 @@ stand, how density works, and which resources restyle them.
     over a few hundred rows are not. The load log prints all four counts.
 - **Tree density** — base density is 1 / `TREE_AREA_PER_TREE` (410 m² of wood outline) at
   `TreeStyle::density == 1`; the slider multiplies it, `TREE_DENSITY_MIN` (0.25, in
-  `settings.rs`) … `TREE_DENSITY_MAX`, step 0.25. Planting runs once at the ceiling, so
+  `map/trees.rs` beside `TreeStyle`, per `CLAUDE.md`'s tuning-constants rule — `TreeStyle`
+  does not clamp on read) …
+  `TREE_DENSITY_MAX` (in `map/osm/planting.rs`, where it is computed), step 0.25. Planting runs once at the ceiling, so
   `MapData::trees` holds the densest forest and the slider only **shows a prefix** of it —
   never a replant, which would reshuffle every position and make the whole forest jump on
   each step.
@@ -309,9 +312,15 @@ three shapes and keeps their proportions, where an absolute would erase the diff
 and need three sliders per quantity. Absolute are only the quantities with no per-shape
 value — stroke widths and the shadow geometry.
 
+`TREE_GALLERY_SHOT=path.png` takes one frame and exits, the shared `gallery_shot.rs` the
+roof, wall and car galleries use. The example has no remote endpoint, so that is the only
+way a session can look at its own work on the crowns.
+
 Two things the panel had to borrow from the game rather than invent, and both are the
-kind of thing that silently looks wrong: the widget kit (`qwe::ui::slider`,
-`spawn_panel_button`, `panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
+kind of thing that silently looks wrong: the widget kit (`qwe::ui::knob` over
+`qwe::ui::slider` — the rows are `spawn_knob` with a `SliderBinding<Tuning>` per knob, so
+the drag observer and the slider sync are the game's; plus `spawn_panel_button`,
+`panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
 the **font** — `apply_panel_font` lives in `UiPlugin`, which an example does not load, so
 the panel inserts `InheritableFont` (feathers' Fira Sans + `PANEL_FONT`) on its own root.
 Without it every label falls back to bevy's built-in font, which carries no Cyrillic and

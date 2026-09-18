@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 
-use crate::map::{RoadJoin, RoadSmoothing, TreeRowPlacement, TreeRowStyle};
+use crate::map::{RoadJoin, Smoothing, TreeRowPlacement, TreeRowStyle};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
@@ -94,7 +94,7 @@ fn build_tree_rows_section(
         ROW_LEFT_PX,
         &*style,
         CycleBinding {
-            cycle: |style| style.smoothing = next_in(&RoadSmoothing::ALL, style.smoothing),
+            cycle: |style| style.smoothing = next_in(&Smoothing::ALL, style.smoothing),
             text: |style| style.smoothing.label().to_string(),
         },
     );

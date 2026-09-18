@@ -2,7 +2,7 @@ use super::*;
 use crate::map::osm::fixture::{building, rect, street, wood};
 use crate::map::osm::model::PolyArea;
 use crate::map::osm::model::{RoadLine, TreeCompose, TreeNode, TreeRow};
-use crate::settings::TREE_DENSITY_MIN;
+use crate::map::trees::TREE_DENSITY_MIN;
 
 /// Прямой ряд длиной `length` вдоль оси X, на высоте 1000 — подальше от
 /// края карты и от чего бы то ни было ещё.

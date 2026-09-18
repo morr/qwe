@@ -225,15 +225,23 @@ const MIN_DASH_CONTRAST: f32 = 1.75;
 fn ballast_shoulder_sticks_out_from_under_the_bed() {
     let points = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
     let mut shoulder = MeshBuilder::default();
-    push_ribbon(
-        &mut shoulder,
+    shoulder.push_ribbon(
         &points,
+        false,
         NOMINAL_BED * SHOULDER_SCALE,
         LinearRgba::WHITE,
         RAIL_JOIN,
+        RAIL_CAP,
     );
     let mut bed = MeshBuilder::default();
-    push_ribbon(&mut bed, &points, NOMINAL_BED, LinearRgba::WHITE, RAIL_JOIN);
+    bed.push_ribbon(
+        &points,
+        false,
+        NOMINAL_BED,
+        LinearRgba::WHITE,
+        RAIL_JOIN,
+        RAIL_CAP,
+    );
 
     assert!(half_extent(&shoulder) > half_extent(&bed));
     // но не превращается в самостоятельную полосу: откос уже половины пути

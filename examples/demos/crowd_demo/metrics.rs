@@ -6,7 +6,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use qwe::diagnostics::SIM_SEPARATION_MS;
-use qwe::grid::tile_center;
+use qwe::grid::{navtile_size, tile_center};
 use qwe::human::HumanStyle;
 use qwe::movement::{
     DestinationClaim, Movable, MovableStateMovingTag, SeparationHolds, SeparationStats,
@@ -14,7 +14,7 @@ use qwe::movement::{
     slot_side_with_slack, slot_target,
 };
 use qwe::navigation::PolyNavmesh;
-use qwe::settings::{HUMAN_SIZE, navtile_size};
+use qwe::settings::HUMAN_SIZE;
 
 use crate::scenario::{DemoPawn, Route, Scenario};
 use crate::{DemoConfig, DemoSpeed};

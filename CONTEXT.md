@@ -33,7 +33,7 @@ in `main.rs`.
 - **Navtile** — navigation grid cell, **2 m by default, runtime-switchable to 1 m** via the
   `navtile:` cycler in the Debug tab. Grid size is derived as `MAP_SIZE / navtile_size()`
   (2800 × 1850 tiles at 2 m); the live value is a process-global atomic
-  (`settings::navtile_size()`), written only in `OnEnter(Loading)`, and **a filled `Navmesh`
+  (`grid::navtile_size()`), written only in `OnEnter(Loading)`, and **a filled `Navmesh`
   carries its own `grid_size`/`tile_size` snapshot** so stale snapshots never index against
   the switched atomic — the fill and the navmesh-side queries convert through
   `Navmesh::to_tile` / `Navmesh::tile_center`, never the global pair. Switching reloads the
@@ -45,15 +45,21 @@ in `main.rs`.
   halos, soul sparks — and the map's white markings and light roofs do not; tonemapping is
   off so the map palette is untouched, and `Msaa` stays off. A full-screen **vignette** is
   a UI node under the panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
-- **Viewport** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
-  `half_extent` (margin already applied), `zoom` (world m per logical pixel). `contains`
-  — **the edge counts as inside**. Five visibility gates use it and **each keeps its own
-  margin** (warmup 1.0, dispatcher/separation `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door
-  gizmos 1.5), because each asks a different question — the table is in the
-  **navigation-deep skill**. Not Bevy's `Camera::viewport`, which is in pixels.
-- **Geo anchor** — `GEO_CENTER_LAT/LON` (Tula, kremlin near frame center). Projection is
-  local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW corner → (0,0),
-  f64 math, `MAP_SIZE`-sized bbox derived from the center.
+- **Viewport** (`camera.rs`) — the piece of the world in frame, as a value **and a
+  resource**: `centre`, `half_extent`, `zoom` (world m per logical pixel). `contains`
+  — **the edge counts as inside**. `ViewportPlugin` recomputes it once per frame before the
+  fixed loop; the resource holds exactly the frame, and each of the five visibility gates
+  adds **its own margin** with `with_margin` (warmup 1.0, dispatcher/separation
+  `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door gizmos 1.5), because each asks a different
+  question — the table is in the **navigation-deep skill**. No `Default`, like `Backend`:
+  a stand inserts it. Not Bevy's `Camera::viewport`, which is in pixels.
+- **Geo anchor** — a `*_GEO_CENTER` per city (Tula's puts the kremlin near frame center),
+  beside `City` in `city.rs`, which is the only reader; the portal hints
+  (`TULA_PORTAL_POS`, `NY_PORTAL_POS`, `MAP_CENTER_PORTAL_POS`) live there with them.
+  Projection is local equirectangular (`GeoBounds` in `map/osm/overpass.rs`): bbox SW
+  corner → (0,0), f64 math, `MAP_SIZE`-sized bbox derived from the center, with
+  `METERS_PER_DEG_LAT` in `settings.rs` — that one belongs to the projection, not to a
+  city.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
   sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → parking
@@ -569,7 +575,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   pitch at all. No new
   geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
   refused on both (no penthouse, no vent, no chimney).
-- **Roof shadows** (`map/buildings/layers.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
+- **Roof shadows** (`map/buildings/shadows.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
   — the one place the shadow model used to lie outright. The ground shadow layer sits
   **under** every building layer, so a nine-storey block did not darken the five-storey
   roof beside it. This second, small layer sits **over** them and carries exactly the
@@ -635,7 +641,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   length calibrated at 59° is multiplied by (the buildings' `SHADOW_LENGTH_RANGE`, the
   crowns' shadow heights). Section *Sun*, persisted, and the same two knobs stand in
   `roof_gallery`. **It is read through a process global**, not a `Res`, for the
-  same reason the navtile size is (`settings::navtile_size`): `shade_by_light`, the shadow
+  same reason the navtile size is (`grid::navtile_size`): `shade_by_light`, the shadow
   sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
   the global holds is the ready shadow vector and cotangent, not the two angles: it is read
   hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are
@@ -657,7 +663,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   uniform) and that the settings file is written from. One division of the slider costs a
   full building rebuild with its shadow union, so a drag across the scale would otherwise
   be seventy of them.
-- **Soft shadow** (`map/buildings/layers.rs::shadow_builder`) — a building's shadow is no
+- **Soft shadow** (`map/buildings/shadows.rs::shadow_builder`) — a building's shadow is no
   longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
   alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
   resolution and the sky's fill light, not from the sun's angular size, and is therefore
@@ -669,19 +675,27 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sunlit side of every convex corner — the building came out ringed exactly like the
   **contact skirt** that was taken back out of the union. What goes into
   the union is still the silhouette sweeps and nothing else — and those sweeps are
-  **built once per layer build** (`layers.rs::ShadowSweeps`) and handed to both shadow
-  layers: the ground one reads them flat, the roof one grouped by building. Both shadow layers —
+  **built once per layer build** (`shadows.rs::ShadowSweeps`) and handed to both shadow
+  layers: the ground one reads them flat, the roof one grouped by building. Both layers, the
+  sweeps and the silhouette **chains** they are swept from live in
+  `map/buildings/shadows.rs`; `layers.rs` keeps the facades, the roofs and the extrusion,
+  and with them `silhouette_edges` — the per-edge silhouette, which is about walls, not
+  shadow. Both shadow layers —
   ground and roof — carry **`BuildingShadowTag`** rather than `BuildingLayerTag` and are
   rebuilt only when the height mode or the sun changes: together they are the most
   expensive thing the building layers build, and they do not depend on the roof-clutter
   zoom bucket.
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
   (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
-  the roof material, parked cars, standing wagons. **The seed is the object's own reference
-  point** — the
-  first vertex of a footprint, the first point of a street — never its index in the extract,
-  so a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage
-  (doors, tree planting) keeps its own point-seeded `rng::lcg_seeded_by`.
+  the roof material, parked cars, standing wagons. `Lcg::next_f32` is `[0, 1)` by a clamp,
+  not by arithmetic — the `u32 / 2³¹−1` division rounds up to exactly `1.0` on 63 of the
+  generator's states — and **`Lcg::range` is half-open only almost**: `from + t·(to − from)`
+  still rounds to `to` itself on a long range, so a caller that needs strict half-openness
+  clamps at the call site, the way the wagon rake does. **The seed is the object's own
+  reference point** — the first vertex of a footprint, the first point of a street — never
+  its index in the extract, so a zoom rebuild, a height-mode switch and a restart move
+  nothing. The parse stage (doors, tree planting) keeps its own point-seeded
+  `rng::lcg_seeded_by`.
 - **Arclength walk** (`map/along.rs`) — `arclengths` + `place_on_path`, the one walk along a
   polyline's **whole** length, shared by every layer that places objects along linear
   geometry (parked cars, standing wagons) the way `map/seed.rs` shares the RNG. The defect
@@ -689,7 +703,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   routinely shorter than two end margins, so such a walk drops the link whole, resets the
   step at every vertex and keeps a margin clear of every interior bend. Curvature stays the
   caller's problem — checked by **world** distance to the last object placed, never by the
-  arc coordinate.
+  arc coordinate. Both edges of `[0, total]` are **inside**: the walk hits the end exactly,
+  and a refusal there would drop the last object of a row. A repeated vertex does not eat a
+  place either — coinciding vertices are one point, and the direction comes from the nearest
+  link that has length; `None` is left only for a polyline with no length at all.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, the count follows building
@@ -1144,7 +1161,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
   layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
   sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are
-  load-bearing for navmesh, arches, planting and entrances), **BuildingHeightMode**,
+  load-bearing for navmesh, arches, planting and entrances; the rule itself is
+  **`Smoothing`** in `map/smooth.rs`, shared by six layers, not a road's own),
+  **BuildingHeightMode**,
   **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** and
   **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
   no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
@@ -1184,7 +1203,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 Summary; the mechanism and the measurements — **navigation-deep skill** (polymesh in
 `references/polymesh.md`, separation & slots in `references/crowd.md`).
 
-- **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
+- **Navmesh** (`navigation/navmesh.rs` — the type, its storage and the world↔tile
+  conversions; the work on it is split by role into `navmesh/{raster,fill,gates,reach}.rs`)
+  — `Vec<bool>` passability grid, index
   `x * grid_size.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
@@ -1229,7 +1250,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   once "froze" the crowd).
 - **ArcNavmesh** — `Arc<RwLock<Navmesh>>`; async tasks read it off-thread. Filled and pruned
   by the map-load thread while the loader is up.
-- **PortalPos** (resource) — the actual portal position; `PORTAL_POS` is only a hint,
+- **PortalPos** (resource) — the actual portal position; the city's `*_PORTAL_POS`
+  (`city.rs`) is only a hint,
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
@@ -1341,7 +1363,7 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `FixedUpdate` chain. **The unit of replay**: world state is a function of `(seed,
   settings, SimTick)`. Not `SimClock`, which counts virtual seconds and loses whatever
   `max_delta` discarded. **Compare states by tick, never by wall clock.**
-- **Deterministic** (`determinism.rs::Determinism`, panel toggle) — gates *scheduling*, not
+- **Deterministic** (`determinism/mod.rs::Determinism`, panel toggle) — gates *scheduling*, not
   the dice. On: *human* target picking moves to `FixedUpdate` (the demons' already runs there
   in both modes), answers land on a fixed tick, the dispatcher stops looking at the camera,
   the backend is frozen, separation is off. A run is
@@ -1687,20 +1709,30 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 
 ## Cross-references
 
-- All tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates, z-layers,
-  geo anchor). Not there: a number that *is* a rule of a decision ladder rather than a knob
+- World-wide tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates,
+  z-layers, the projection scale `METERS_PER_DEG_LAT`) — what belongs to the world as a
+  whole, i.e. what more than one
+  owner reads. **A number with exactly one owner lives beside that owner**, and "it is a
+  constant" is not a reason to move it here. Not there: a number that *is* a rule of a
+  decision ladder rather than a knob
   over it stays beside its `decide.rs` — `MAX_CHASERS_PER_TARGET` and the ×1.5/×0.7 switch
   factors in `demon/decide.rs`, `FLEE_STEP`/`FLEE_SPREAD`/`ESCAPE_MARGIN` in
   `human/decide.rs`. A constant both species declare moves to `settings.rs`
-  (`WANDER_MAP_MARGIN`). Same split in the polymesh: the world-scale metres are in
-  `settings.rs` under the `POLYMESH_` prefix (agent radius, endpoint tolerance, map-edge
+  (`WANDER_MAP_MARGIN`). A slider's `_MIN`/`_MAX`/`_STEP` range belongs to the resource
+  whose field it bounds: the range is part of the model — it says which values that field
+  may take, and the panel only renders it — the agent-radius range is exactly that and lives
+  in `navigation/polymesh/`, where `PolymeshDebug::radius()` also clamps on read. Same split in the polymesh for the rest: the world-scale metres
+  are in `settings.rs` under the `POLYMESH_` prefix (endpoint tolerance, map-edge
   margin, chunk sides), while the rules of the algorithm stay in `navigation/polymesh/` —
   `MAX_CHUNKS` (polyanya's layer-index width), the f32 tolerances (`SEAM_EPSILON`,
   `SEAM_QUANTUM`, `SIMPLIFY_EPSILON`, `WALK_*`), the search budget and `COST_SCALE`.
   Also not there: what a gizmo *looks like* and each visibility gate's own view margin —
   `MOVEPATH_COLOR`/`MOVEPATH_ARROW_TIP`/`MOVEPATH_VIEW_SCREENS` (`movement/systems.rs`),
   `DOOR_*` (`ui/debug/overlays.rs`), `VIEW_MARGIN` (`movement/mod.rs`) — they live beside
-  the draw call or the gate, see `camera::Viewport::of`.
+  the draw call or the gate, see `camera::Viewport::with_margin`. And not there either: the
+  **geo anchor** — the `*_GEO_CENTER` per city and the `*_PORTAL_POS` hints live beside
+  `City` in `city.rs`, its only reader; only `METERS_PER_DEG_LAT` stays, because it belongs
+  to the projection rather than to a city.
   Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
   `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry
@@ -1715,6 +1747,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   Detail — **species-behavior skill**.
 - Speed & regulator: `src/sim_time.rs`. Detail — **sim-speed skill**.
 - UI: `src/ui/`, camera: `src/camera.rs`. Detail — **ui-panels skill**.
-- Tests: `tests/navigation.rs` (synthetic navmesh + hand-built `MapData`),
-  `tests/spatial.rs`, `tests/movement.rs`, `tests/determinism.rs`, unit tests inside
-  `map/osm/*` and `map/meshing.rs`.
+- Tests: the integration suites `tests/navigation.rs` (synthetic navmesh + hand-built
+  `MapData`), `tests/spatial.rs`, `tests/movement.rs`, `tests/determinism.rs`,
+  `tests/map.rs`; everything else is a **unit-test module beside the module it tests** —
+  a `tests.rs` in the module's own directory —
+  `navigation/navmesh/{raster,fill,gates,reach}/tests.rs`, `map/seed/tests.rs`,
+  `map/smooth/tests.rs`, `sim_time/tests.rs`, … — three dozen of them today.

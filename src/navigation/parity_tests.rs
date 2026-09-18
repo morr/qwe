@@ -35,8 +35,7 @@ fn built_city() -> BuiltCity {
     navmesh.fill_from_mapdata(&city.map);
     // калитки по умолчанию ложатся в карту до постройки меша — как в игре,
     // где меш строится из `MapData`, уже прошедшей поток загрузки
-    navmesh.open_sealed_fences(&mut city.map, city.portal);
-    navmesh.prune_unreachable(world_to_tile(city.portal));
+    navmesh.open_gates_and_prune(&mut city.map, city.portal, |_, _| {});
     let mesh = build_polymesh_from_map(&city.map, AGENT_RADIUS).expect("постройка не отменялась");
     BuiltCity {
         city,

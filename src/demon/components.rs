@@ -1,9 +1,49 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::{
-    DEMON_CAP, DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE, DEMON_LUNGE_BOOST, DEMON_SPAWN_INTERVAL,
-    DEMON_SPEED_FACTOR,
+use crate::settings::{DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE};
+
+/// Кап и интервал спавна — дефолты [`DemonStyle`], системы читают ресурс, а не
+/// эти константы. Стартовый залп ручкой не стал и остался в `settings.rs`
+/// рядом с прочим тюнингом демона ([`DEMON_INITIAL_BURST`]).
+///
+/// [`DEMON_INITIAL_BURST`]: crate::settings::DEMON_INITIAL_BURST
+pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
+pub const DEMON_CAP: usize = 350;
+/// Множитель к `DEMON_SPEED` и надбавка к ней на время броска — тоже дефолты
+/// [`DemonStyle`]. Оба ползунка стоят на 30% своего хода: скорость 130% от
+/// базы, бросок +30% к получившейся скорости.
+pub const DEMON_SPEED_FACTOR: f32 = 1.3;
+pub const DEMON_LUNGE_BOOST: f32 = 0.3;
+
+/// Границы ползунков панели Demon.
+pub const DEMON_CAP_MIN: f32 = 0.0;
+pub const DEMON_CAP_MAX: f32 = 500.0;
+pub const DEMON_CAP_STEP: f32 = 5.0;
+pub const DEMON_SPAWN_INTERVAL_MIN: f32 = 0.1;
+pub const DEMON_SPAWN_INTERVAL_MAX: f32 = 10.0;
+pub const DEMON_SPAWN_INTERVAL_STEP: f32 = 0.1;
+pub const DEMON_SPEED_FACTOR_MIN: f32 = 1.0;
+pub const DEMON_SPEED_FACTOR_MAX: f32 = 2.0;
+pub const DEMON_SPEED_FACTOR_STEP: f32 = 0.05;
+pub const DEMON_LUNGE_BOOST_MIN: f32 = 0.0;
+pub const DEMON_LUNGE_BOOST_MAX: f32 = 1.0;
+pub const DEMON_LUNGE_BOOST_STEP: f32 = 0.05;
+
+// Умолчание каждого ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(DEMON_CAP as f32 >= DEMON_CAP_MIN && DEMON_CAP as f32 <= DEMON_CAP_MAX);
+    assert!(
+        DEMON_SPAWN_INTERVAL >= DEMON_SPAWN_INTERVAL_MIN
+            && DEMON_SPAWN_INTERVAL <= DEMON_SPAWN_INTERVAL_MAX
+    );
+    assert!(
+        DEMON_SPEED_FACTOR >= DEMON_SPEED_FACTOR_MIN
+            && DEMON_SPEED_FACTOR <= DEMON_SPEED_FACTOR_MAX
+    );
+    assert!(
+        DEMON_LUNGE_BOOST >= DEMON_LUNGE_BOOST_MIN && DEMON_LUNGE_BOOST <= DEMON_LUNGE_BOOST_MAX
+    );
 };
 
 #[derive(Component, Reflect, Default)]

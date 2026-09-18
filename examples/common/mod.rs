@@ -14,7 +14,6 @@
 #![allow(dead_code)]
 
 use qwe::city::City;
-use qwe::grid::world_to_tile;
 use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::{Navmesh, snap_portal_position};
 
@@ -39,7 +38,6 @@ pub fn build_navmesh(map: &mut MapData, city: City) -> Navmesh {
     let portal =
         snap_portal_position(&navmesh, city.portal_hint()).expect("no clear spot for portal");
     // калитки оград пишутся в карту — меш, построенный из неё после, их увидит
-    navmesh.open_sealed_fences(map, portal);
-    navmesh.prune_unreachable(world_to_tile(portal));
+    navmesh.open_gates_and_prune(map, portal, |_, _| {});
     navmesh
 }

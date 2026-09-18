@@ -74,9 +74,9 @@ use crate::determinism::Determinism;
 use crate::human::HumanStyle;
 use crate::loading::{AppState, WorldInitSet};
 use crate::movement::{SeparationLab, SeparationStyle, SlotSearch, separation_allowed_by_mode};
-use crate::navigation::{PathfindingAlgorithm, PolyNavmesh, PolymeshDebug};
-use crate::settings::{
+use crate::navigation::{
     POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP,
+    PathfindingAlgorithm, PolyNavmesh, PolymeshDebug,
 };
 use crate::ui::knob::{AddKnobsExt, SliderBinding, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, on_off, spawn_value_row};

@@ -767,7 +767,7 @@ impl Sanctuary {
 
     /// С какой высоты начинается приподнятая часть; `None` — дом стоит на земле
     /// и рисуется коробкой.
-    pub(super) fn raised(&self, index: usize) -> Option<f32> {
+    fn raised(&self, index: usize) -> Option<f32> {
         self.raised.get(&index).copied()
     }
 
@@ -816,7 +816,7 @@ impl Sanctuary {
     }
 
     /// Пятна венца на земле и верх каждого над землёй, м: по ним теневой слой
-    /// дотягивает тень храма до маковки (`layers::ShadowSweeps`). Контуры
+    /// дотягивает тень храма до маковки (`shadows::ShadowSweeps`). Контуры
     /// выпуклые и против часовой.
     pub(super) fn shadow_casters(
         &self,
@@ -894,7 +894,7 @@ fn dome_color(building: &PolyArea, faith: Faith) -> Srgba {
 /// ([`Sanctuary`]): главы — барабанами, колокольня — своим контуром. По
 /// умолчанию — всё своё: храм, стоящий один.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Own {
+struct Own {
     pub(super) domes: bool,
     pub(super) tower: bool,
 }
@@ -912,7 +912,7 @@ impl Default for Own {
 /// кровля (барабан красится стеной, шатёр колокольни — кровлей), `own` — что
 /// храм ставит от себя ([`Sanctuary`] знает, что у него размечено частями).
 /// Не храм и пристройка — пусто.
-pub(super) fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<Crown> {
+fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<Crown> {
     let BuildingUse::Church(sacred) = building.building_use else {
         return Vec::new();
     };
@@ -1835,3 +1835,6 @@ fn rect(at: Vec2, axis: Vec2, size: Vec2) -> [Vec2; 4] {
     let (u, v) = (axis * (size.x / 2.0), perp * (size.y / 2.0));
     [at - u - v, at + u - v, at + u + v, at - u + v]
 }
+
+#[cfg(test)]
+mod tests;

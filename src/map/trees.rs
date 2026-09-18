@@ -5,7 +5,9 @@
 //! облачный контур; внутренние кольца-штрихи; тень — растянутый силуэт.
 
 mod canopy;
-mod conifer;
+// `pub`: диапазоны ползунков панели Noise живут рядом со своим ресурсом, и
+// панель ходит за ними сюда
+pub mod conifer;
 mod crown;
 
 pub use self::canopy::CrownMaterial;
@@ -22,13 +24,15 @@ use self::crown::{
 };
 use crate::loading::AppState;
 use crate::map::SunOnMap;
+use crate::map::TREE_DENSITY_MAX;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::TreeSet;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
-use crate::map::roads::{RoadJoin, RoadSmoothing};
+use crate::map::roads::RoadJoin;
+use crate::map::smooth::Smoothing;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::prefs::retuned;
-use crate::settings::{TREE_NOISE_MIX_DEFAULT, TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
+use crate::settings::{TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -99,16 +103,65 @@ pub struct TreeStyle {
     pub standalone: bool,
 }
 
+/// Низ и шаг ползунка плотности (`TreeStyle::density`) — множитель к базовой
+/// плотности посадки. Потолок здесь не лежит: он **считается** от минимального
+/// зазора между деревьями — [`TREE_DENSITY_MAX`](crate::map::TREE_DENSITY_MAX)
+/// в `map/osm/planting.rs`, рядом с `TREE_MIN_SPACING`, от которого зависит.
+pub const TREE_DENSITY_MIN: f32 = 0.25;
+pub const TREE_DENSITY_STEP: f32 = 0.25;
+/// Умолчание плотности — названо константой, чтобы диапазон и оно лежали
+/// рядом и проверялись ассертом ниже.
+pub const TREE_DENSITY_DEFAULT: f32 = 4.0;
+
+/// Границы и шаг ползунка доли хвои (`TreeStyle::conifer_share`) при форме
+/// `Mixed`. Доля точная: порог поля берётся квантилем, а не фиксированным
+/// уровнем шума, — 0 даёт лес без хвои, 1 — только хвою.
+pub const TREE_CONIFER_SHARE_MIN: f32 = 0.0;
+pub const TREE_CONIFER_SHARE_MAX: f32 = 1.0;
+pub const TREE_CONIFER_SHARE_STEP: f32 = 0.05;
+pub const TREE_CONIFER_SHARE_DEFAULT: f32 = 0.1;
+
+/// Сила примеси (`TreeStyle::noise_mix`): к значению поля в дереве
+/// добавляется `mix · jitter`, jitter ∈ ±0.5 детерминированно по позиции
+/// ствола. Ноль — сплошные массивы; 0.1 рвёт их кромки; около 0.2 одиночные
+/// ели добираются до сердцевины лиственных массивов (и наоборот), а массивы
+/// ещё читаются; от ~0.35 кластеризация падает вдвое и лес уходит в
+/// соль-перец — само поле в пределах массива гуляет лишь на 0.1–0.3, и
+/// разброс примеси быстро его перекрикивает.
+pub const TREE_NOISE_MIX_DEFAULT: f32 = 0.1;
+pub const TREE_NOISE_MIX_MIN: f32 = 0.0;
+pub const TREE_NOISE_MIX_MAX: f32 = 1.0;
+pub const TREE_NOISE_MIX_STEP: f32 = 0.05;
+
+/// Разброс яркости листвы (`TreeStyle::variance`). Диапазона у него нет —
+/// ползунок панели не показывает его, строка Trees цикличная.
+const TREE_VARIANCE_DEFAULT: f32 = 0.35;
+
+// Умолчание каждого ползунка — внутри его же диапазона; правило и его цена
+// записаны в `settings.rs`, в хвосте файла, там, где раньше стоял общий блок
+// ассертов.
+const _: () = {
+    assert!(TREE_DENSITY_DEFAULT >= TREE_DENSITY_MIN && TREE_DENSITY_DEFAULT <= TREE_DENSITY_MAX);
+    assert!(
+        TREE_CONIFER_SHARE_DEFAULT >= TREE_CONIFER_SHARE_MIN
+            && TREE_CONIFER_SHARE_DEFAULT <= TREE_CONIFER_SHARE_MAX
+    );
+    assert!(
+        TREE_NOISE_MIX_DEFAULT >= TREE_NOISE_MIX_MIN
+            && TREE_NOISE_MIX_DEFAULT <= TREE_NOISE_MIX_MAX
+    );
+};
+
 impl Default for TreeStyle {
     fn default() -> Self {
         Self {
             foliage: CROWN_COLOR,
             details: INK_COLOR,
-            variance: 0.35,
+            variance: TREE_VARIANCE_DEFAULT,
             shape: TreeShape::default(),
-            conifer_share: 0.1,
+            conifer_share: TREE_CONIFER_SHARE_DEFAULT,
             noise_mix: TREE_NOISE_MIX_DEFAULT,
-            density: 4.0,
+            density: TREE_DENSITY_DEFAULT,
             woods: true,
             standalone: true,
         }
@@ -136,7 +189,7 @@ pub struct TreeRowStyle {
     /// Стык ленты зелёной подложки аллеи (`map::spawn::mesh_tree_row_band`).
     pub join: RoadJoin,
     /// Сглаживание той же подложки — Chaikin, как у дорог.
-    pub smoothing: RoadSmoothing,
+    pub smoothing: Smoothing,
     /// Тёмный кант по краю подложки, отдельным слоем под заливкой.
     pub casing: bool,
 }
@@ -151,7 +204,7 @@ impl Default for TreeRowStyle {
             // задано явно, а не через `default()`: у дорог сглаживание — вкус, а
             // здесь требование. Полоса без него читается как нарисованная линия,
             // а не как заросшая обочина, и `Off` в этом поле — всегда ошибка
-            smoothing: RoadSmoothing::Light,
+            smoothing: Smoothing::Light,
             // у дороги кант отделяет полотно от фона, у зарослей отделять нечего:
             // подложка и так темнее газона, а второй зелёный контур читается как
             // ещё одна дорожка вдоль аллеи

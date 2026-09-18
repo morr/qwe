@@ -489,8 +489,9 @@ pub fn pick_wander_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::human::{HUMAN_BODY_RADIUS_MAX, HUMAN_SPEED_SPREAD_MAX};
     use crate::map::osm::fixture::{building, rect};
-    use crate::settings::{HUMAN_BODY_RADIUS_MAX, HUMAN_SPEED_SPREAD_MAX, MAP_SIZE};
+    use crate::settings::MAP_SIZE;
 
     /// Мир одного гуляющего: гейту хватает ресурса, системе — `Movable` и `Pace`.
     fn pace_app() -> (App, Entity) {
@@ -660,7 +661,7 @@ mod tests {
         let mut world = World::new();
         let hole_center = crate::settings::MAP_SIZE * 0.25;
         let hole_tile = crate::grid::world_to_tile(hole_center);
-        let hole_tile_size = crate::settings::navtile_size();
+        let hole_tile_size = crate::grid::navtile_size();
         let hole_rect = rect(hole_center, hole_center + hole_tile_size);
         let navmesh = navmesh_blocked_except(vec![hole_rect]);
         spawn_population(

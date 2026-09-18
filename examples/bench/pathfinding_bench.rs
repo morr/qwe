@@ -158,12 +158,10 @@ fn build_navmesh(map: &mut MapData) -> Navmesh {
 
     let portal =
         snap_portal_position(&navmesh, CITY.portal_hint()).expect("no clear spot for portal");
-    navmesh.open_sealed_fences(map, portal);
-    let started = Instant::now();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let done = navmesh.open_gates_and_prune(map, portal, |_, _| {});
     println!(
-        "navmesh: pruned {pruned} unreachable tiles in {:?}",
-        started.elapsed()
+        "navmesh: pruned {} unreachable tiles in {:?}",
+        done.pruned, done.prune_time
     );
 
     let passable = (0..navmesh.grid_size.x)
@@ -277,7 +275,7 @@ fn path_length(path: &[IVec2]) -> f32 {
     path.windows(2)
         .map(|pair| {
             let delta = (pair[1] - pair[0]).as_vec2();
-            delta.length() * qwe::settings::navtile_size()
+            delta.length() * qwe::grid::navtile_size()
         })
         .sum()
 }

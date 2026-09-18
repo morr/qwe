@@ -73,10 +73,13 @@ Connecting{attempt} → Downloading{bytes,total,bytes_per_sec} → Parsing
 
 Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. The
 thread fills the navmesh through the `ArcNavmesh` handle and returns the snapped portal
-position. Inside `BuildingNavmesh`, after the portal snap and before `Pruning`, it opens the
-**default fence gates** (`Navmesh::open_sealed_fences`) — and that step **writes into the
-`MapData`** it hands back, so the polygonal mesh built later from the resource sees the same
-gates (navigation-deep skill).
+position. After the portal snap it makes **one** call — `Navmesh::open_gates_and_prune(map,
+portal, stage)` — which opens the **default fence gates** and only then prunes, because the
+order is a rule: a fence that sealed a plot with doors has to open before that plot is thrown
+away as unreachable. `Pruning` is not set by the thread directly: the `stage` callback the
+call makes between the two steps is what logs the gate line and flips `JobState::Pruning`.
+The gate step **writes into the `MapData`** the thread hands back, so the polygonal mesh
+built later from the resource sees the same gates (navigation-deep skill).
 
 - `total` is `None` in practice (chunked answers, gzip strips `content-length`), so the
   screen shows MB + rate.

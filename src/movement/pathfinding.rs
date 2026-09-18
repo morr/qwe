@@ -2,10 +2,8 @@
 //! → асинхронный таск → снятый ответ, подрезанный под уже пройденное.
 //! Ходьбу по готовому пути ведёт [`super::systems`].
 
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
-use bevy::window::PrimaryWindow;
 
 use super::VIEW_MARGIN;
 use super::systems::rescue_from_impassable;
@@ -65,8 +63,7 @@ fn queue_key(view: &Viewport, position: Vec2, urgent: bool) -> Option<(u8, f32)>
 pub fn dispatch_pathfinding_requests(
     mut commands: Commands,
     backend: Res<Backend>,
-    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    frame: Res<Viewport>,
     requests: Query<(
         Entity,
         &SimPosition,
@@ -80,7 +77,7 @@ pub fn dispatch_pathfinding_requests(
         return;
     }
 
-    let view = Viewport::of(&window, &camera, VIEW_MARGIN);
+    let view = frame.with_margin(VIEW_MARGIN);
 
     let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = requests
         .iter()

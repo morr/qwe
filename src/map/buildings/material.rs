@@ -48,9 +48,23 @@ use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
 use crate::map::{SunOnMap, sun_light};
 use crate::prefs::retuned;
-use crate::settings::ROOF_TEXTURE_DEFAULT;
 
 const SHADER_PATH: &str = "shaders/roof.wgsl";
+
+/// Дефолт и границы ползунка Texture секции Buildings
+/// ([`RoofStyle::texture`]) — множитель амплитуд фактуры крыш: 0 — плоская
+/// заливка материала без швов и зерна, 1 — как задумано, полтора — фактура
+/// начинает спорить с цветом. Отдельно от поверхностей: кровля смотрит прямо
+/// в камеру и её фактура заметнее земли, так что и крутить их порознь.
+pub const ROOF_TEXTURE_DEFAULT: f32 = 1.0;
+pub const ROOF_TEXTURE_MIN: f32 = 0.0;
+pub const ROOF_TEXTURE_MAX: f32 = 1.5;
+pub const ROOF_TEXTURE_STEP: f32 = 0.1;
+
+// Умолчание ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(ROOF_TEXTURE_DEFAULT >= ROOF_TEXTURE_MIN && ROOF_TEXTURE_DEFAULT <= ROOF_TEXTURE_MAX);
+};
 
 /// Чем крыша покрыта. Код материала (`code`) едет в вершинный атрибут и
 /// разбирается шейдером; ноль занят «без фактуры» (оборудование кровли,

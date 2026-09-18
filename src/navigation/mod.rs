@@ -12,19 +12,20 @@ use bevy::prelude::*;
 pub use self::astar::{PathfindingAlgorithm, find_path};
 pub use self::backend::{Backend, Walkable};
 pub use self::mode::{GridMode, MeshMode, NavMode};
-pub use self::navmesh::{ArcNavmesh, COST_MULTIPLIER, Navmesh};
+pub use self::navmesh::{ArcNavmesh, COST_MULTIPLIER, GatesAndPrune, Navmesh};
 pub use self::northstar::{
     NorthstarGrid, build_from_navmesh, find_path_northstar, poll_northstar_build,
     start_northstar_build,
 };
 pub use self::polymesh::{
-    PolyNavmesh, PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
+    POLYMESH_AGENT_RADIUS_MAX, POLYMESH_AGENT_RADIUS_MIN, POLYMESH_AGENT_RADIUS_STEP, PolyNavmesh,
+    PolymeshBuild, PolymeshDebug, SEAM_EPSILON, SEAM_QUANTUM, build_polymesh_from_map,
     find_path_polymesh, poll_polymesh_build, sync_polymesh_build,
 };
+use crate::grid::NavtileBase;
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
 use crate::map::osm::model::MapData;
 use crate::prefs::TrackPrefExt;
-use crate::settings::NavtileBase;
 
 /// Ответ асинхронного поиска пути (снимается в
 /// `movement::listen_for_pathfinding_tasks`).
@@ -383,7 +384,8 @@ fn clear_map_backends(mut northstar: ResMut<NorthstarGrid>, mut polymesh: ResMut
 }
 
 /// Ближайший к `position` центр тайла, вокруг которого хватает свободного
-/// места для портала. Хинт `PORTAL_POS` мог попасть в здание OSM-карты;
+/// места для портала. Хинт города (`City::portal_hint`, константы `*_PORTAL_POS`
+/// в `city.rs`) мог попасть в здание OSM-карты;
 /// снап делает поток загрузки (`map/osm/download.rs`) сразу после заливки
 /// navmesh, той же функцией пользуется офлайн-бенч
 /// (`examples/bench/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
@@ -433,7 +435,7 @@ mod tests {
     /// поляны разнесены так, что их объединение не даёт лишнего центра.
     fn navmesh_with_portal_spots(centers: &[IVec2]) -> Navmesh {
         let clearance =
-            (crate::settings::PORTAL_DIAMETER / 2.0 / crate::settings::navtile_size()) as i32 + 1;
+            (crate::settings::PORTAL_DIAMETER / 2.0 / crate::grid::navtile_size()) as i32 + 1;
         let free: Vec<IVec2> = centers
             .iter()
             .flat_map(|centre| {

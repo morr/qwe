@@ -20,7 +20,7 @@ to `CONTEXT.md`.
 **World seed** (`rng.rs::WorldSeed`, remembered by `prefs.rs`, panel row *Seed* in the Sim
 tab) is the one number every simulation draw descends from. It governs the **simulation**,
 not the map: OSM is parsed from a cache file, and trees and entrances are seeded by their
-own coordinates (`map/trees/crown.rs::Lcg`, `entrances::lcg_seeded_by`), so those are
+own coordinates (`map/seed.rs::Lcg`, `entrances::lcg_seeded_by`), so those are
 already reproducible without it.
 
 Capped at `i64::MAX` (`MAX_SEED`) — `toml` cannot store more, and the seed has to survive a
@@ -138,7 +138,7 @@ tie is broken by `PawnId` rather than by traversal order — lives in `movement/
 
 ## SimTick
 
-`determinism.rs` — the step counter, incremented at the head of the `FixedUpdate` chain.
+`determinism/mod.rs` — the step counter, incremented at the head of the `FixedUpdate` chain.
 **The unit of replay**: world state is a function of `(seed, settings, SimTick)`.
 
 Not the same as `SimClock`, which counts virtual seconds and loses whatever `max_delta`
@@ -146,7 +146,7 @@ discarded on a long frame. **Compare states by tick, never by wall clock.**
 
 ## The toggle
 
-**`Determinism`** (`determinism.rs`, panel toggle) gates *scheduling*, not the dice — the
+**`Determinism`** (`determinism/mod.rs`, panel toggle) gates *scheduling*, not the dice — the
 RNG work above is unconditional.
 
 | | off (default) | on |

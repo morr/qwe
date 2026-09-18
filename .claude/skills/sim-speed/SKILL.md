@@ -13,6 +13,17 @@ top speed.
 **Changing that mechanism is changing this file, in the same change** — a new regulator
 input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
 
+**Every number named below lives in `sim_time.rs` itself**, at the top of the file, not
+in `settings.rs`: the regulator is their only reader, and a number with exactly one
+owner lives beside that owner (`CLAUDE.md`, "Code Conventions"). They are declared as
+one block in a fixed order, because `SIM_FRAME_SHARE`, `SIM_FRAME_BUDGET_MS` and
+`SIM_TICK_DEBT_CAP` are computed from each other and from `MAX_SIM_SPEED` — reassembled
+in another order the block still compiles and silently yields a different frame budget,
+which only an fps measurement would show. Two `const _: () = assert!` ride with it.
+`settings.rs` keeps only what the regulator shares with someone else — the pathfinding
+pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`,
+`MAX_PATHFINDING_IN_FLIGHT`, …), which `movement/` reads.
+
 - **Speed ladder** — Space pauses, `=`/`-` walk `SPEED_LADDER`
   (1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
   step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
@@ -44,7 +55,9 @@ input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
   the speed, since speed changes how many steps a frame runs and not what a step costs.
   `wait_ms` is per-frame time inside the fixed loop that is not per-tick work — chiefly
   the main thread standing in `block_on` waiting for the pathfinding pool
-  (`apply_pathfinding_results` reports it through `SimLoad::add_frame_cost`) — and that
+  (`apply_pathfinding_results`, `movement/pathfinding.rs:411`, reports it through
+  `SimLoad::add_frame_cost`; the port's **second caller** is the once-a-frame
+  `separation`, `movement/separation/mod.rs:374`) — and that
   one depends on the speed directly: the answer's deadline is measured in **ticks**
   (`PATHFINDING_RETIRE_TICKS`), so faster ticks give the pool less real time for the
   same work. Blending the two into one number closes the regulator on a quantity it
@@ -55,6 +68,17 @@ input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
   dilutes them before the pipeline ceiling can answer. Published as `sim/tick_ms`,
   `sim/wait_ms` and `sim/wait_peak_ms`, all on the panel's third line
   (`tick 1.20 + 3.50 ms wait (pk 8.10)`).
+  **Outside the bracket the cost is dropped, and dropped silently.**
+  `add_frame_cost` returns at once when `started` is `None` — no warning: without
+  `SimTimePlugin` there is nobody to close the bracket, and both callers run there
+  perfectly normally (the deterministic `apply_pathfinding_results` in `replay_app`, and
+  `crowd_demo`), so a `warn_once` would fire in every determinism test. Keeping the cost
+  instead is worse than dropping it: `observe` takes `frame_extra_ms` whole, so a
+  stand's accumulated milliseconds would be charged to the first frame the regulator
+  really measured — and with no `observe` at all they simply grew without bound.
+  Pinned by `a_cost_outside_the_bracket_never_reaches_the_next_observe`. Splitting the
+  port in two — one door per caller — was considered and is **not** to be done without a
+  symptom.
 - **The regulator solves where it can, integrates where it cannot.** Two independent
   bounds, the smaller wins.
   *By CPU it solves*: a frame of length `d` carries `d × S × 64` ticks, so allowing the

@@ -17,7 +17,7 @@
 //!
 //! - `Camera start` — откуда стартует камера (`save` ⇄ `reset`,
 //!   `camera::CameraPositionMode`);
-//! - `Navtile` — сторона ячейки навигации (`settings::NavtileBase`, смена
+//! - `Navtile` — сторона ячейки навигации (`grid::NavtileBase`, смена
 //!   перезагружает мир).
 //!
 //! Замыкает вкладку `reset` — кнопка-действие, возвращающая ВСЕ настройки к
@@ -42,12 +42,12 @@ use bevy::ui_widgets::Activate;
 use bevy::prelude::*;
 
 use crate::camera::CameraPositionMode;
+use crate::grid::NavtileBase;
 use crate::loading::{AppState, WorldInitSet};
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
 use crate::prefs::{ResetSettings, TrackPrefExt};
-use crate::settings::NavtileBase;
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_block, spawn_section};
@@ -127,10 +127,18 @@ impl Plugin for UiDebugTogglesPlugin {
                         .run_if(in_state(AppState::Playing)),
                     // слой сетки гаснет и при выборе полигонального бэкенда:
                     // рисовать его поверх меша, по которому ходят, — значит
-                    // показывать не ту проходимость
-                    sync_navmesh_overlay.run_if(
-                        resource_changed::<DebugNavmesh>.or_else(resource_changed::<PolymeshDebug>),
-                    ),
+                    // показывать не ту проходимость.
+                    //
+                    // Гейт на `Playing` обязателен: смена города проходит через
+                    // `Loading`, где навмеш уже перезалит под новый город, а
+                    // сущность слоя ещё жива — без гейта слой строился бы по
+                    // неверному масштабу и рядом со старым остался бы второй.
+                    sync_navmesh_overlay
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(
+                            resource_changed::<DebugNavmesh>
+                                .or_else(resource_changed::<PolymeshDebug>),
+                        ),
                     // подсвеченная область следует за ползунком доли хвои; смена
                     // состава деревьев (тумблеры Trees / Tree rows) меняет сам
                     // набор, по которому посчитано поле, панель Noise — его

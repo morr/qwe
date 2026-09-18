@@ -1,7 +1,59 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::{HUMAN_BODY_RADIUS, HUMAN_SPEED_SPREAD};
+/// Полуширина разброса личной скорости — дефолт [`HumanStyle::spread`], системы
+/// читают ресурс, а не эту константу. ±15%: толпа перестаёт двигаться
+/// монолитом, но обгон остаётся медленным и строй распадается не мгновенно.
+pub const HUMAN_SPEED_SPREAD: f32 = 0.15;
+/// Границы ползунка панели Human. Потолок не круглый, а выведенный: демон
+/// быстрее бегущего человека ровно на 35% ([`DEMON_SPEED`]), и на своём
+/// минимальном множителе ([`DEMON_SPEED_FACTOR_MIN`]) он идёт как раз
+/// `HUMAN_FLEE_SPEED × 1.35`. Разброс выше 0.35 сделал бы самых быстрых людей
+/// недогоняемыми — паника перестала бы кончаться смертью в принципе.
+///
+/// [`DEMON_SPEED`]: crate::settings::DEMON_SPEED
+/// [`DEMON_SPEED_FACTOR_MIN`]: crate::demon::DEMON_SPEED_FACTOR_MIN
+pub const HUMAN_SPEED_SPREAD_MIN: f32 = 0.0;
+pub const HUMAN_SPEED_SPREAD_MAX: f32 = 0.35;
+pub const HUMAN_SPEED_SPREAD_STEP: f32 = 0.05;
+
+/// Радиус «тела» человека, м — дефолт [`HumanStyle::body_radius`]. Вдвое больше
+/// прежних 0.45, то есть ЗАМЕТНО больше половины спрайта
+/// ([`HUMAN_SIZE`](crate::settings::HUMAN_SIZE)). Так и задумано: на прежнем
+/// радиусе дистанция покоя пары (0.9 м) была меньше самого спрайта (1.0 м), и
+/// правильно разведённая толпа всё равно рисовалась сплошной мозаикой из
+/// наезжающих друг на друга квадратов — «расталкивание не работает» на глаз.
+/// Теперь между спрайтами в покое почти корпус зазора (1.8 м против 1.0 м).
+///
+/// Значение подобрано ползунком `Body radius` на живой толпе — это вопрос вида,
+/// а не расчёта, и ручка есть и в панели Navigation, и в демо-сцене
+/// (`examples/demos/crowd_demo.rs`); константа ей лишь дефолт. Радиус демона не
+/// отдельная ручка: он всегда вдвое больше
+/// ([`DEMON_BODY_RADIUS`](crate::settings::DEMON_BODY_RADIUS)).
+///
+/// Сумма радиусов демон+человек (2.7 м) больше
+/// [`KILL_DISTANCE`](crate::settings::KILL_DISTANCE) — это не мешает убийству,
+/// потому что смыкается демон в фазе броска, а бросок из расталкивания исключён
+/// целиком.
+pub const HUMAN_BODY_RADIUS: f32 = 0.9;
+/// Границы ползунка радиуса тела. Снизу — меньше половины спрайта, то есть
+/// разведённая пара перекрывается спрайтами (так и было, пока радиус не стал
+/// ручкой); сверху — заведомо избыточное личное пространство, на котором видно,
+/// как решётка слотов назначения переходит на блок в два тайла.
+pub const HUMAN_BODY_RADIUS_MIN: f32 = 0.3;
+pub const HUMAN_BODY_RADIUS_MAX: f32 = 1.2;
+pub const HUMAN_BODY_RADIUS_STEP: f32 = 0.01;
+
+// Умолчание каждого ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(
+        HUMAN_SPEED_SPREAD >= HUMAN_SPEED_SPREAD_MIN
+            && HUMAN_SPEED_SPREAD <= HUMAN_SPEED_SPREAD_MAX
+    );
+    assert!(
+        HUMAN_BODY_RADIUS >= HUMAN_BODY_RADIUS_MIN && HUMAN_BODY_RADIUS <= HUMAN_BODY_RADIUS_MAX
+    );
+};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]

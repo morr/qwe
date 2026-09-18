@@ -23,11 +23,11 @@ in `CONTEXT.md` and the detail here in the same change.
 ## Navtile size
 
 The navtile is **2 m by default and runtime-switchable to 1 m** via the `navtile:` cycler in
-the Debug tab (`NavtileBase` in `settings.rs`, persisted in prefs). Switching it reloads the
+the Debug tab (`NavtileBase` in `src/grid.rs`, persisted in prefs). Switching it reloads the
 world like a city switch, except the camera stays where it was — same city, same spot under
 inspection.
 
-**The live value is a process-global atomic**, read by `settings::navtile_size()`: background
+**The live value is a process-global atomic**, read by `grid::navtile_size()`: background
 threads (navmesh fill, entrance generation) have no ECS access. It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
@@ -35,9 +35,12 @@ Grid size is derived as `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m).
 `Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
 cancelled northstar build) never indexes against the switched atomic. The snapshot owns the
 conversions too: rasterisation (`set_area`/`row_spans`, `visit_polyline*`,
-`visit_segment_tiles`) and the navmesh-side queries (`line_of_sight`,
-`snap_portal_position`) go through `Navmesh::to_tile` / `Navmesh::tile_center`, never
-through `grid::world_to_tile`, which reads the atomic.
+`visit_segment_tiles`), the navmesh-side queries (`line_of_sight`,
+`snap_portal_position`), `prune_unreachable` (which takes a **world point**, not a tile,
+for exactly this reason), everything `Walkable` asks (`allows`, `coast_allows`,
+`nearest_free_point`), the tile→world step of `Backend::search`, and the grid overlay
+(`ui/debug/overlays.rs::sync_navmesh_overlay`) all go through `Navmesh::to_tile` /
+`Navmesh::tile_center`, never through `grid::world_to_tile`, which reads the atomic.
 
 **The northstar chunk scales with the tile** to stay 50 world metres — 25 tiles at 2 m, 50 at
 1 m. With the chunk pinned at 25 tiles a 1 m build explodes from ~14 s to ~140 s.
@@ -45,14 +48,32 @@ through `grid::world_to_tile`, which reads the atomic.
 Cost of 1 m, measured: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU, +1.6 GB RSS. A change
 to the navtile size is simulation input — it breaks a replay in flight (`determinism`).
 
-`grid.rs` holds the global conversions — `world_to_tile` / `tile_center` — for callers with
-no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the atomic.
+**`src/grid.rs` owns the navtile**, and that is its whole reason for existing as a module of
+its own: `DEFAULT_NAVTILE_SIZE`, the atomic and its `navtile_size()` / `set_navtile_size()`
+(the setter is `pub(crate)` — the one safe writer is `loading::sync_navtile_size`),
+`grid_size()`, the `NavtileBase` cycler, and the global conversions `world_to_tile` /
+`tile_center` for callers with no `Navmesh` in hand (movement, wander, the door overlay);
+those read the atomic. None of it is in `settings.rs`: the navtile is not a knob among the
+world's knobs but the scale everything navigational is built in, and it has one owner.
 
 ## The grid navmesh
 
 - **Navmesh** (`navigation/navmesh.rs`) — `Vec<bool>` passability grid, index
   `x * grid_size.y + y`, out-of-bounds reads impassable. `successors` — 8-way, diagonals
   only when both adjacent orthogonal tiles are passable (**no corner cutting**).
+- **Where each rule lives.** `navmesh.rs` keeps only the type: the `Vec<bool>`, the
+  grid-size/tile-size snapshot, `is_passable`/`set_passable` and the `to_tile`/`tile_center`
+  conversions, plus `ArcNavmesh`. Everything done *to* the grid is a submodule of
+  `navigation/navmesh/`, one per role, each with its own `tests.rs` beside it:
+  **`raster.rs`** — rasterisation (`set_area` and the row spans, `set_polyline*`,
+  `visit_polyline*`, `visit_segment_tiles`); **`fill.rs`** — the fill from `MapData`
+  (`fill_from_mapdata`, `fill_base`, `fill_fences`, `carve_passages`, `BridgeBands`);
+  **`gates.rs`** — the default gates (`open_sealed_fences`, the door groups and the
+  `SEALED_POCKET_MIN_AREA` / `GATE_ROUNDS` / `GATE_SPACING` knobs); **`reach.rs`** —
+  reachability (`flood`, `neighbours`, `component`, `successors` with its step costs,
+  `passable_from`, `prune_unreachable`, `open_gates_and_prune` + `GatesAndPrune`). They are
+  all `impl Navmesh` blocks, so every method keeps its name and its visibility — what the
+  split changes is the file you open, never the call.
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
   block** (all but culverts) → **bridge curbs block** → **bridge decks carve passable
   strips back** (`bridge=yes` roads) → buildings block → walls block → **fences block,
@@ -156,7 +177,7 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
   carves — the render layering (curbs under fills) repeated in the grid, so at a
   junction of two bridge ways one way's deck re-carves the other's curb and the bridge
   is never walled across by its own curb. The deck carve is `width + curb − tile·√2`
-  (`navmesh.rs::fill_from_mapdata`) — it stops **half a tile diagonal short of the curb
+  (`navmesh/fill.rs::fill_base`) — it stops **half a tile diagonal short of the curb
   centerline**, which at the default 2 m navtile leaves it narrower than the deck itself
   by `tile·√2 − curb`: a curb-chain tile's center wanders up to half a diagonal (√2 m)
   off the curb centerline — i.e. *into* the deck on a slanted bridge — and carving out
@@ -268,7 +289,8 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
   poking outside its outer ring still subtracts instead of filling. Replaced a
   point-in-polygon test per tile of the AABB, which on London's Thames (huge bbox × long
   ring) cost 6.3 s of a 6.5 s fill; now 30 ms.
-- **prune_unreachable** — BFS flood from the portal tile; passable-but-unreachable
+- **prune_unreachable** — the shared `reach::flood` from the portal, taken as a **world
+  point** and converted through the navmesh's own snapshot; passable-but-unreachable
   pockets (enclosed courtyards, islands) become impassable. Reason: an A* request to an
   unreachable target floods the whole reachable region (tens of ms each); before pruning
   this once piled up a 12 000-request backlog and humans "froze". 4-connectivity matches
@@ -276,7 +298,8 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
 - **ArcNavmesh** — `Arc<RwLock<Navmesh>>` resource; async A* tasks read it off-thread.
   Starts empty (all passable), filled and pruned by the map-load thread while the loader
   screen is still up (`JobState::BuildingNavmesh` / `Pruning`).
-- **PortalPos** (resource) — actual portal position. `PORTAL_POS` in settings is only a
+- **PortalPos** (resource) — actual portal position. The city's own `*_PORTAL_POS`
+  (`city.rs`, beside `City::portal_hint`) is only a
   **hint**; `snap_portal_position` spirals out to the nearest tile with clearance derived
   from `PORTAL_DIAMETER`, through the shared `nearest_tile_where` ring search — nearest is
   Euclidean, so the first ring with a hit is not the answer (a corner at `r·√2` loses to a
@@ -291,11 +314,26 @@ no `Navmesh` in hand (`Walkable`, movement, wander, the overlays); they read the
 ## Viewport — the value the gates ask
 
 **`Viewport`** (`camera.rs`) — the piece of the world in frame, as a value: `centre`,
-`half_extent` (margin already applied) and `zoom` (world metres per logical pixel).
+`half_extent` and `zoom` (world metres per logical pixel).
 `Viewport::of(window, camera_transform, screens)` is the single place that computes
 `window/2 · zoom · screens`. What a gate asks it: `contains` (**the edge counts as inside**),
 `min` / `max`, `distance_from_centre_squared`. Not Bevy's `Camera::viewport` — that one is in
 pixels.
+
+**And a resource.** `ViewportPlugin` runs `sync_viewport` once per frame in
+`RunFixedMainLoopSystems::BeforeFixedMainLoop`, `.before(sim_time::begin_sim_load)` — so the
+frame is computed before the sim-load bracket opens, and it is in place before both
+`FixedUpdate` and `Update` run. The resource holds **exactly the frame** (`screens = 1.0`),
+with nobody's margin in it; a gate adds its own with `Viewport::with_margin(screens)`.
+
+- **It has no `Default`, on purpose** — the `Backend` precedent: a placeholder frame would
+  quietly claim half the map is on screen and every gate would pass. A stand that raises
+  these systems inserts the resource itself (`crowd_demo` adds `ViewportPlugin`,
+  `tests/movement.rs::test_app` inserts a `viewport_at(..)` constant), and `sync_viewport`
+  inserts it on the first frame in the game.
+- **Known cost**: when the camera is gone (leaving the world despawns it) `sync_viewport` is
+  skipped and the readers get **last frame's** frame with no signal. Before this each of them
+  was skipped silently on its own for the same reason, which was not better.
 
 **Five gates use it and each keeps its own margin on purpose**, because each asks a different
 question:
@@ -311,13 +349,16 @@ question:
 **Do not unify them.** The warmup margin in particular is deliberately the strictest: it
 counts what the player can actually see, not what the dispatcher is willing to serve early.
 
-**Every one of them asks for the camera as `Single<&Transform, (With<Camera2d>,
-With<PanCamera>)>`**, and the `PanCamera` half is load-bearing: a `dev::OffscreenShotEvent`
-raises a second `Camera2d` for three frames, and a `Single` matching two entities makes the
-executor skip the system **silently** — three frames with no dispatch and, at 30×, dozens of
-ticks with no separation, every time a screenshot is taken. A headless world that runs these
-systems (`tests/movement.rs`, `crowd_demo`) must put `PanCamera` on its camera for the same
-reason it already spawns a `PrimaryWindow`.
+**None of them asks for the camera any more** — they take `Res<Viewport>`. The one place
+that still does is `sync_viewport`, and there the `PanCamera` half of `Single<&Transform,
+(With<Camera2d>, With<PanCamera>)>` is load-bearing: a `dev::OffscreenShotEvent` raises a
+second `Camera2d` for three frames, and a `Single` matching two entities makes the executor
+skip the system **silently** — which used to mean three frames with no dispatch and, at 30×,
+dozens of ticks with no separation, every time a screenshot was taken. Now it means three
+frames on a slightly stale frame, which nothing can see. The filter is still what keeps the
+offscreen camera out; a headless world that raises `ViewportPlugin` must put `PanCamera` on
+its camera for the same reason it spawns a `PrimaryWindow`. A stand with no camera at all
+inserts the resource instead.
 
 ## Backends & the pipeline
 
@@ -349,7 +390,7 @@ reason it already spawns a `PrimaryWindow`.
   (`grid_point` → `OrdinalGrid::in_bounds`) before `pathfind`, and out of bounds is a
   silent `None` — same verdict the grid gives ("out-of-bounds reads impassable"). Without
   it the crate logs a `log::error!` per call, at dispatcher rate, for a pawn past the map
-  edge. The size is asked of the grid, not of `settings::grid_size()`: the grid is built
+  edge. The size is asked of the grid, not of `grid::grid_size()`: the grid is built
   from a navmesh snapshot and outlives a navtile-size change.
 - **Where the build starts is a mode branch — three registrations of
   `start_northstar_build`** (`navigation/mod.rs::NavigationPlugin`, all

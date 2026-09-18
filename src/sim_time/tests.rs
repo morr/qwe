@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::settings::{MIN_SIM_FPS, SIM_RENDER_BUDGET};
-
 /// Шаг фиксированного расписания, как его держит `Time<Fixed>`.
 const HZ: f32 = 64.0;
 
@@ -154,6 +152,38 @@ fn a_wait_burst_raises_the_peak_at_once_and_lets_go_slowly() {
         "пик не вернулся к среднему: {} против {}",
         load.wait_peak_ms,
         load.wait_ms
+    );
+}
+
+/// Стоимость, поданная вне скобки прогона, пропадает, а не оседает до
+/// следующего замера. Без `SimTimePlugin` — на стендах, в `replay_app`, в
+/// примерах — скобку открывать некому, а порт всё равно зовут штатно, так что
+/// накопленное там приписалось бы первому кадру, который регулятор
+/// действительно померил; в приложении без замеров оно росло бы вовсе
+/// неограниченно.
+#[test]
+fn a_cost_outside_the_bracket_never_reaches_the_next_observe() {
+    let mut load = SimLoad::default();
+    // скобка не открыта: стенд без плагина
+    load.add_frame_cost(std::time::Duration::from_millis(50));
+    assert_eq!(load.frame_extra_ms, 0.0, "стоимость осела вне скобки");
+
+    // внутри скобки тот же порт считает как считал
+    load.started = Some(std::time::Instant::now());
+    load.add_frame_cost(std::time::Duration::from_millis(4));
+    assert!((load.frame_extra_ms - 4.0).abs() < 1e-3);
+
+    // первый замер кладётся целиком: 4 мс ожидания на 2 шага, остальное — ЦП
+    load.observe(6.0, 2, 1.0 / 60.0);
+    assert!(
+        (load.wait_ms - 2.0).abs() < 1e-3,
+        "ожидание {} мс на шаг вместо 2",
+        load.wait_ms
+    );
+    assert!(
+        (load.tick_ms - 1.0).abs() < 1e-3,
+        "цена шага {} мс вместо 1",
+        load.tick_ms
     );
 }
 

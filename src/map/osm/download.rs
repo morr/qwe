@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use crate::city::City;
-use crate::grid::world_to_tile;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::parse;
@@ -135,19 +134,13 @@ fn build_navmesh(
     // калитки — до прунинга и со снапнутым порталом: ограда, отрезавшая
     // участок с дверями, открывается раньше, чем его выбросят. Пишутся в
     // `map`, чтобы полигональный меш позже прочитал те же калитки
-    let started = std::time::Instant::now();
-    let gates = navmesh.open_sealed_fences(&mut map, portal);
+    let done = navmesh.open_gates_and_prune(&mut map, portal, |gates, took| {
+        info!("navmesh: opened {gates} fence gates in {took:?}");
+        job.set(JobState::Pruning);
+    });
     info!(
-        "navmesh: opened {gates} fence gates in {:?}",
-        started.elapsed()
-    );
-
-    job.set(JobState::Pruning);
-    let started = std::time::Instant::now();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
-    info!(
-        "navmesh: pruned {pruned} unreachable tiles in {:?}",
-        started.elapsed()
+        "navmesh: pruned {} unreachable tiles in {:?}",
+        done.pruned, done.prune_time
     );
 
     LoadedWorld { map, portal }

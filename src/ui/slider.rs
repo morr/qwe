@@ -26,7 +26,8 @@ pub struct SliderRow<'a> {
     pub label: &'a str,
     pub value: f32,
     pub value_text: String,
-    /// `(min, max, step)` — как у констант `settings.rs`.
+    /// `(min, max, step)` — константы рядом с ресурсом, чьи значения диапазон
+    /// объявляет, а не в `settings.rs`.
     pub range: (f32, f32, f32),
 }
 

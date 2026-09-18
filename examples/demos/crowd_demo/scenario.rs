@@ -5,9 +5,10 @@ use std::collections::VecDeque;
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use qwe::grid::{tile_center, world_to_tile};
+use qwe::grid::{navtile_size, tile_center, world_to_tile};
 use qwe::human::{
-    Human, HumanFirstWanderTag, HumanStyle, HumanWanderTag, Pace, WanderHeading, WanderPause,
+    HUMAN_SPEED_SPREAD, Human, HumanFirstWanderTag, HumanStyle, HumanWanderTag, Pace,
+    WanderHeading, WanderPause,
 };
 use qwe::map::osm::{MapData, WallLine};
 use qwe::movement::{
@@ -16,7 +17,7 @@ use qwe::movement::{
 };
 use qwe::navigation::{ArcNavmesh, Pathfinder, PolyNavmesh, PolymeshDebug, find_path_polymesh};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, decision_stream, stream};
-use qwe::settings::{HUMAN_SIZE, HUMAN_SPEED_SPREAD, HUMAN_WALK_SPEED, navtile_size, unit_z};
+use qwe::settings::{HUMAN_SIZE, HUMAN_WALK_SPEED, unit_z};
 use rand::Rng;
 
 use crate::DemoConfig;

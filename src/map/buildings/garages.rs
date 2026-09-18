@@ -38,7 +38,7 @@ use bevy::prelude::*;
 use super::material::building_seed;
 use crate::map::grid::Grid;
 use crate::map::meshing::min_area_rect;
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{distance_to_segment, ring_area, ring_bounds, signed_ring_area};
 use crate::map::osm::{BuildingUse, PolyArea};
 
 /// Зазор, ближе которого два гаража считаются одним прогоном, м. Боксы обычно
@@ -249,7 +249,7 @@ impl GarageRect {
     fn distance(&self, point: Vec2) -> f32 {
         let count = self.ring.len();
         (0..count)
-            .map(|at| point_to_segment(point, self.ring[at], self.ring[(at + 1) % count]))
+            .map(|at| distance_to_segment(point, self.ring[at], self.ring[(at + 1) % count]))
             .fold(f32::MAX, f32::min)
     }
 
@@ -313,9 +313,9 @@ pub(super) fn garage_runs(buildings: &[PolyArea]) -> HashMap<usize, GarageRun> {
     if members.is_empty() {
         return runs;
     }
-    let boxes: Vec<Aabb> = members
+    let boxes: Vec<(Vec2, Vec2)> = members
         .iter()
-        .map(|&at| aabb(&buildings[at].outer))
+        .map(|&at| ring_bounds(&buildings[at].outer))
         .collect();
 
     // Пространственный хеш: гараж мал, поэтому раскладывается в одну-две
@@ -323,15 +323,15 @@ pub(super) fn garage_runs(buildings: &[PolyArea]) -> HashMap<usize, GarageRun> {
     // на зазор контур попадает в каждую задетую ячейку, поэтому два
     // достаточно близких бокса гарантированно встретятся хотя бы в одной.
     let mut cells: Grid<usize> = Grid::new(CELL);
-    for (slot, box_) in boxes.iter().enumerate() {
-        cells.insert(box_.min - JOIN_GAP, box_.max + JOIN_GAP, slot);
+    for (slot, &(min, max)) in boxes.iter().enumerate() {
+        cells.insert(min - JOIN_GAP, max + JOIN_GAP, slot);
     }
     let mut union = Union::new(members.len());
     for (a, b) in cells.pairs() {
         // рамка — только отсев: она у диагональной ленты втрое шире самой
         // ленты, и через проезд задевает соседнюю. Решает расстояние между
         // контурами
-        if boxes[a].near(&boxes[b])
+        if boxes_near(boxes[a], boxes[b])
             && rings_near(&buildings[members[a]].outer, &buildings[members[b]].outer)
         {
             union.join(a, b);
@@ -635,10 +635,6 @@ fn fill_of(ring: &[Vec2]) -> f32 {
     }
 }
 
-fn ring_area(ring: &[Vec2]) -> f32 {
-    signed_ring_area(ring).abs()
-}
-
 /// Расстояние между двумя кольцами не больше [`JOIN_GAP`]: пары рёбер, без
 /// проверки на вложенность — гаражи друг в друга не вкладываются.
 fn rings_near(a: &[Vec2], b: &[Vec2]) -> bool {
@@ -654,46 +650,26 @@ fn rings_near(a: &[Vec2], b: &[Vec2]) -> bool {
 /// Расстояние между отрезками. Пересечение считать не нужно: контуры соседних
 /// гаражей не пересекаются, а касание даёт ноль и так — через концы.
 fn segments_distance(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> f32 {
-    point_to_segment(a0, b0, b1)
-        .min(point_to_segment(a1, b0, b1))
-        .min(point_to_segment(b0, a0, a1))
-        .min(point_to_segment(b1, a0, a1))
+    distance_to_segment(a0, b0, b1)
+        .min(distance_to_segment(a1, b0, b1))
+        .min(distance_to_segment(b0, a0, a1))
+        .min(distance_to_segment(b1, a0, a1))
 }
 
-pub(super) fn point_to_segment(point: Vec2, a: Vec2, b: Vec2) -> f32 {
-    let edge = b - a;
-    let length2 = edge.length_squared();
-    if length2 < 1e-12 {
-        return point.distance(a);
-    }
-    let at = ((point - a).dot(edge) / length2).clamp(0.0, 1.0);
-    point.distance(a + edge * at)
-}
-
-#[derive(Clone, Copy)]
-struct Aabb {
-    min: Vec2,
-    max: Vec2,
-}
-
-impl Aabb {
-    /// Зазор между коробками не больше [`JOIN_GAP`] по обеим осям.
-    fn near(&self, other: &Aabb) -> bool {
-        self.min.x - JOIN_GAP <= other.max.x
-            && other.min.x - JOIN_GAP <= self.max.x
-            && self.min.y - JOIN_GAP <= other.max.y
-            && other.min.y - JOIN_GAP <= self.max.y
-    }
-}
-
-fn aabb(ring: &[Vec2]) -> Aabb {
-    let mut min = Vec2::splat(f32::MAX);
-    let mut max = Vec2::splat(f32::MIN);
-    for point in ring {
-        min = min.min(*point);
-        max = max.max(*point);
-    }
-    Aabb { min, max }
+/// Зазор между двумя рамками ([`ring_bounds`]) не больше [`JOIN_GAP`] по обеим
+/// осям.
+///
+/// Свободная функция, а не метод своего типа рамки: рамка гаража — та же пара
+/// `(min, max)`, какой её меряет вся остальная карта, и держать ради этой
+/// проверки собственный AABB со своим конструктором значило завести второе
+/// понятие рамки. Своего здесь ровно одно — зазор, которым сшивается прогон,
+/// и он-то и есть причина, по которой проверку нельзя просто выбросить в
+/// пользу общей `boxes_overlap`.
+fn boxes_near(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> bool {
+    a.0.x - JOIN_GAP <= b.1.x
+        && b.0.x - JOIN_GAP <= a.1.x
+        && a.0.y - JOIN_GAP <= b.1.y
+        && b.0.y - JOIN_GAP <= a.1.y
 }
 
 /// Система непересекающихся множеств со сжатием путей — боксы сшиваются

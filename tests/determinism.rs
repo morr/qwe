@@ -29,7 +29,7 @@
 
 use bevy::prelude::*;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
-use qwe::grid::{tile_center, world_to_tile};
+use qwe::grid::tile_center;
 use qwe::map::osm::fixture::{Yard, crowded_yard};
 use qwe::navigation::{Backend, Navmesh};
 use qwe::restart::RestartEvent;
@@ -52,7 +52,7 @@ const RAGGED: [u32; 12] = [1, 7, 3, 12, 1, 30, 2, 5, 19, 1, 9, 4];
 fn yard_navmesh(yard: &Yard) -> Navmesh {
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&yard.map);
-    navmesh.prune_unreachable(world_to_tile(yard.portal));
+    navmesh.prune_unreachable(yard.portal);
     navmesh
 }
 

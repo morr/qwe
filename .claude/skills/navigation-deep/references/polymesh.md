@@ -117,8 +117,11 @@ a `u32::MAX × u32::MAX` grid (a multiply-overflow panic inside the async task i
 
 **Where the numbers live.** The world-scale ones are in `settings.rs` with the
 `POLYMESH_` prefix — `POLYMESH_SEARCH_DELTA`/`_STEPS`, `POLYMESH_MAP_EDGE_MARGIN`,
-`POLYMESH_CHUNK_TARGET_METERS`, `POLYMESH_FLAT_CHUNK_METERS`, next to
-`POLYMESH_AGENT_RADIUS_*` whose ceiling the tolerance sets. What stays beside its own
+`POLYMESH_CHUNK_TARGET_METERS`, `POLYMESH_FLAT_CHUNK_METERS`. **`POLYMESH_AGENT_RADIUS_*`
+is not among them**: it is a slider range, it clamps `PolymeshDebug::agent_radius` on the
+read (`PolymeshDebug::radius`), so it lives in `polymesh/mod.rs` beside that resource —
+the tolerance above still sets its ceiling, and that doc comment names it across the
+module boundary. What stays beside its own
 code is what is a rule of the algorithm rather than a knob over the world: `MAX_CHUNKS`
 (polyanya's 8-bit layer index), the f32 tolerances (`SIMPLIFY_EPSILON`, `SEAM_QUANTUM`,
 `SEAM_EPSILON`, `WALK_EPSILON`, `WALK_PROBE`), `SEAM_STEP_METERS`, the search budget

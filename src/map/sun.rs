@@ -8,7 +8,7 @@
 //! секции Sun.
 //!
 //! **Читается глобалью, а не ресурсом**, как размер навтайла
-//! (`settings::navtile_size`): направление света нужно `shade_by_light`,
+//! (`grid::navtile_size`): направление света нужно `shade_by_light`,
 //! свипу теней, коробкам на кровле, машинам — всё это чистые функции глубоко
 //! внутри сборки мешей, и протаскивать `Res<SunStyle>` через каждую значило бы
 //! переписать полдюжины сигнатур ради двух чисел.
@@ -59,8 +59,29 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::settings::{
-    SUN_AZIMUTH_DEFAULT, SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN,
+/// Азимут по умолчанию, градусы по часовой стрелке от севера: 300° дают тень
+/// вправо-вниз под 30° — прежнюю константу `SHADOW_DIR`.
+pub const SUN_AZIMUTH_DEFAULT: f32 = 300.0;
+pub const SUN_AZIMUTH_MIN: f32 = 0.0;
+/// Верх шкалы — не 360: это то же солнце, что и на нуле, а ползунок с
+/// одинаковыми концами даёт 73 положения на 72 направления и залипание вместо
+/// оборота через ноль.
+pub const SUN_AZIMUTH_MAX: f32 = 355.0;
+pub const SUN_AZIMUTH_STEP: f32 = 5.0;
+/// Высота по умолчанию, градусы: полдень середины лета на широте Тулы.
+/// Минимум не нулевой: на пяти градусах котангенс уходит за десяток, и тень
+/// всякого дома накрывает полквартала.
+pub const SUN_ELEVATION_DEFAULT: f32 = 59.0;
+pub const SUN_ELEVATION_MIN: f32 = 15.0;
+pub const SUN_ELEVATION_MAX: f32 = 80.0;
+pub const SUN_ELEVATION_STEP: f32 = 1.0;
+
+// Умолчание каждого ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(SUN_AZIMUTH_DEFAULT >= SUN_AZIMUTH_MIN && SUN_AZIMUTH_DEFAULT <= SUN_AZIMUTH_MAX);
+    assert!(
+        SUN_ELEVATION_DEFAULT >= SUN_ELEVATION_MIN && SUN_ELEVATION_DEFAULT <= SUN_ELEVATION_MAX
+    );
 };
 
 /// Сколько покоя нужно ползунку, чтобы солнце доехало до карты, с реального

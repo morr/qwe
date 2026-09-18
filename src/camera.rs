@@ -111,6 +111,50 @@ struct ViewSaveDebounce {
     moved_at: f32,
 }
 
+/// Один счёт кадра на кадр — и ресурс [`Viewport`], который его несёт.
+///
+/// Отдельный плагин, а не две строки в [`CameraPlugin`]: ресурс нужен стендам,
+/// которые поднимают движение без камерной обвязки игры (`crowd_demo`), и там
+/// `CameraPlugin` не поднять.
+pub struct ViewportPlugin;
+
+impl Plugin for ViewportPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            RunFixedMainLoop,
+            // до `begin_sim_load`: скобка замера симуляции не должна включать
+            // в себя счёт кадра. `BeforeFixedMainLoop` идёт раньше `Update`, а
+            // камера и окно существуют с `Startup`, так что первый же кадр
+            // видит ресурс на месте — и в `FixedUpdate`, и в `Update`.
+            sync_viewport
+                .in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop)
+                .before(crate::sim_time::begin_sim_load),
+        );
+    }
+}
+
+/// Пересчитать кадр. Ресурса может ещё не быть — на первом кадре его вставляет
+/// эта же система, `Default` у [`Viewport`] нет намеренно.
+///
+/// Камеры может не быть (её сносит выход из мира): тогда система пропускается,
+/// и читатели получают **прошлокадровый** кадр без единого сигнала. Известная
+/// цена: раньше каждый из них так же молча снимался сам.
+fn sync_viewport(
+    mut commands: Commands,
+    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    current: Option<ResMut<Viewport>>,
+) {
+    let view = Viewport::of(&window, &camera, 1.0);
+    match current {
+        // `set_if_neq`: стоящая камера не должна метить ресурс изменённым
+        Some(mut resource) => {
+            resource.set_if_neq(view);
+        }
+        None => commands.insert_resource(view),
+    }
+}
+
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
@@ -412,12 +456,22 @@ pub fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
 /// Кусок мира в кадре — то, чем всякий гейт видимости отвечает на «стоит ли
 /// этим заниматься»: диспетчер заявок, расталкивание, прогрев и обе отсечки
 /// гизмо. Значение, а не пара `Single<&Transform, With<Camera2d>>` +
-/// `Single<&Window>`: правило «окно пополам, умножить на зум» писалось на
-/// каждом из этих мест заново, и ни одно из них не проверялось тестом, потому
-/// что для проверки требовалась живая камера с окном.
+/// `Single<&Window>` на каждом из этих мест: кадр как тип наконец проверяется
+/// тестом — прежней арифметике на месте гейта требовалась живая камера с окном.
 ///
 /// Не `Camera::viewport` из bevy — тот в пикселях.
-#[derive(Clone, Copy, PartialEq, Debug)]
+///
+/// **И ресурс.** Правило «окно пополам, умножить на зум» считалось пятью
+/// системами заново, каждая своей парой `Single<&Transform>` +
+/// `Single<&Window>`; теперь его считает один [`sync_viewport`], а гейт берёт
+/// `Res<Viewport>` и добавляет **свой** запас через [`Self::with_margin`].
+/// В ресурсе лежит ровно кадр (`screens = 1.0`), без чьего-либо запаса.
+///
+/// **`Default` намеренно нет** — прецедент `Backend`
+/// ([`crate::navigation::Backend`]): заглушка молчаливо соврала бы о том, что
+/// в кадре, и гейты пропустили бы полкарты. Стенд, который поднимает системы с
+/// этим ресурсом, обязан вставить его сам.
+#[derive(Clone, Copy, PartialEq, Debug, Resource)]
 pub struct Viewport {
     /// Центр кадра, мировые метры.
     pub centre: Vec2,
@@ -439,6 +493,20 @@ impl Viewport {
             centre: camera.translation.truncate(),
             half_extent: window.size() / 2.0 * zoom * screens,
             zoom,
+        }
+    }
+
+    /// Тот же кадр с запасом в `screens` экранов в стороны — тот же `screens`,
+    /// что у [`Self::of`], только поверх кадра, посчитанного один раз за кадр.
+    ///
+    /// Запас у каждого гейта **свой и остаётся своим**, и живёт рядом с ним
+    /// своей константой: [`VIEW_MARGIN`](crate::movement::VIEW_MARGIN) у
+    /// диспетчера и расталкивания, `MOVEPATH_VIEW_SCREENS` у гизмо путей,
+    /// `DOORS_VIEW_SCREENS` у гизмо дверей, ничего у прогрева.
+    pub fn with_margin(&self, screens: f32) -> Self {
+        Self {
+            half_extent: self.half_extent * screens,
+            ..*self
         }
     }
 

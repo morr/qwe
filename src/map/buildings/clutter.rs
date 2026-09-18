@@ -550,7 +550,7 @@ fn rect(center: Vec2, size: Vec2, axis: Vec2, perp: Vec2) -> [Vec2; 4] {
 mod tests {
     use super::*;
     use crate::map::osm::AreaKind;
-    use crate::settings::SUN_ELEVATION_MIN;
+    use crate::map::sun::SUN_ELEVATION_MIN;
 
     fn building(outer: Vec<Vec2>, building_use: BuildingUse) -> PolyArea {
         PolyArea {

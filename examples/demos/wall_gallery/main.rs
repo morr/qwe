@@ -87,11 +87,10 @@ use qwe::map::osm::entrances::generate_entrances;
 use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, MapData, PolyArea, Sacred, SacredForm};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
 use qwe::settings::STOREY_HEIGHT;
+use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
-use crate::panel::{
-    spawn_panel, spawn_readout, sync_param_rows, sync_reset_button, update_readout,
-};
+use crate::panel::{spawn_panel, spawn_readout, sync_reset_button, update_readout};
 use crate::params::Tuning;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
 
@@ -382,6 +381,8 @@ fn main() {
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .init_resource::<View>()
         .init_resource::<Tuning>()
+        // подписи и бегунки ручек ведёт кит — по разу на ресурс, как в игре
+        .add_knobs::<Tuning>()
         .init_resource::<RoofStyle>()
         .init_resource::<SunOnMap>()
         .insert_resource(ClearColor(Ground::default().color()))
@@ -412,8 +413,7 @@ fn main() {
                 // ресурс считается только что добавленным, и условие пускает ту
                 // же сборку, что потом идёт на каждую правку ручки
                 rebuild_walls.run_if(resource_changed::<Tuning>.or_else(resource_changed::<View>)),
-                (apply_texture, sync_param_rows, sync_reset_button)
-                    .run_if(resource_changed::<Tuning>),
+                (apply_texture, sync_reset_button).run_if(resource_changed::<Tuning>),
                 retune_roof_material
                     .run_if(resource_changed::<RoofStyle>.or_else(resource_changed::<SunOnMap>)),
                 apply_ground.run_if(resource_changed::<View>),

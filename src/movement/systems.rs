@@ -1,7 +1,5 @@
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
-use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 use crate::movement::components::{
@@ -274,18 +272,16 @@ pub fn toggle_draw_move_paths(mut draw: ResMut<DrawMovePaths>) {
     info!("draw move paths: {}", draw.0);
 }
 
+/// Тумблер [`DrawMovePaths`] висит условием запуска на регистрации
+/// (`movement/mod.rs`), а не проверяется здесь: система просит камеру и окно,
+/// и вне игры выключенная косметика иначе не проходила бы валидацию
+/// параметров каждый кадр.
 pub fn draw_move_paths(
-    draw: Res<DrawMovePaths>,
-    camera: Single<&Transform, (With<Camera2d>, With<PanCamera>)>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    frame: Res<Viewport>,
     mut gizmos: Gizmos,
     query: Query<(&SimPosition, &Movable), With<MovableStateMovingTag>>,
 ) {
-    if !draw.0 {
-        return;
-    }
-
-    let view = Viewport::of(&window, &camera, MOVEPATH_VIEW_SCREENS);
+    let view = frame.with_margin(MOVEPATH_VIEW_SCREENS);
 
     for (sim_position, movable) in &query {
         // на всю карту это десятки тысяч линий за кадр; за соседним экраном

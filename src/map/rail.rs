@@ -30,9 +30,9 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
-use crate::map::meshing::{MeshBuilder, RibbonJoin};
+use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine};
-use crate::map::roads::{RoadJoin, RoadSmoothing, push_ribbon, smooth_path};
+use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
@@ -99,8 +99,9 @@ const RAIL_SMOOTH_WIDTH: f32 = 5.0;
 /// Стиль зафиксирован, без ручек панели (см. модульную прозу): осевая слегка
 /// сглажена, стыки круглые — ломаная OSM на повороте даёт балласту заметный
 /// угол, а шпалы на нём разъезжаются веером.
-const RAIL_JOIN: RoadJoin = RoadJoin::Round;
-const RAIL_SMOOTHING: RoadSmoothing = RoadSmoothing::Light;
+const RAIL_JOIN: RibbonJoin = RibbonJoin::Round;
+const RAIL_CAP: RibbonCap = RibbonCap::Round;
+const RAIL_SMOOTHING: Smoothing = Smoothing::Light;
 
 /// Шпалы одной ступени: длина поперёк пути как доля ширины балласта (у
 /// узкоколейки балласт уже, и шпала обязана быть короче), толщина и шаг, м.
@@ -311,23 +312,25 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
 
     let mut ballast = MeshBuilder::default();
     for track in &tracks {
-        push_ribbon(
-            &mut ballast,
+        ballast.push_ribbon(
             &track.points,
+            false,
             track.bed * SHOULDER_SCALE,
             track.palette.shoulder.to_linear(),
             RAIL_JOIN,
+            RAIL_CAP,
         );
     }
     // верх призмы — вторым проходом: плечо соседнего пути не должно ложиться
     // на балласт этого, иначе развязка расчерчивается тёмными полосами
     for track in &tracks {
-        push_ribbon(
-            &mut ballast,
+        ballast.push_ribbon(
             &track.points,
+            false,
             track.bed,
             track.palette.ballast.to_linear(),
             RAIL_JOIN,
+            RAIL_CAP,
         );
     }
 

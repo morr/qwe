@@ -9,7 +9,6 @@ use super::{
     Navmesh, PathfindingAlgorithm, PathfindingResult, PolymeshBuild, find_passable_tile_near,
     find_path, find_path_northstar, find_path_polymesh, line_of_sight, nearest_tile_where,
 };
-use crate::grid::{tile_center, world_to_tile};
 use crate::settings::RESCUE_SEARCH_TILES;
 
 /// Снимок активного бэкенда навигации: сеточный navmesh с выбранным
@@ -98,25 +97,39 @@ impl Backend {
         start_tile: IVec2,
         end_tile: IVec2,
     ) -> PathfindingResult {
-        let (path, started_at) = match &self.mesh {
+        let (path, duration) = match &self.mesh {
             Some(mesh) => {
-                let started_at = std::time::Instant::now();
                 // цель осталась тайловой (её выбрало поведение по
-                // проходимости сетки) — на меше это её центр
-                let path = find_path_polymesh(mesh, start_world, tile_center(end_tile));
-                (path, started_at)
+                // проходимости сетки) — на меше это её центр. Перевод берётся
+                // у самой сетки, а не у глобального атомика размера навтайла:
+                // задача унесла снимок и переживает смену размера. Лок держится
+                // ровно на перевод и снимается до замера.
+                let end_world = self.navmesh.read().unwrap().tile_center(end_tile);
+                let started_at = std::time::Instant::now();
+                let path = find_path_polymesh(mesh, start_world, end_world);
+                (path, started_at.elapsed())
             }
             None => {
                 let (tiles, started_at) = self.grid_path(start_tile, end_tile);
-                let path =
-                    tiles.map(|tiles| tiles.into_iter().map(tile_center).collect::<Vec<Vec2>>());
-                (path, started_at)
+                // метрика снимается сразу после поиска: перевод тайлов в мир
+                // берёт лок сетки второй раз, и ожидание писателя (заливка
+                // нового города) не должно попасть в замер — тот же уговор,
+                // что у [`Self::grid_path`]
+                let duration = started_at.elapsed();
+                let path = tiles.map(|tiles| {
+                    let navmesh = self.navmesh.read().unwrap();
+                    tiles
+                        .into_iter()
+                        .map(|tile| navmesh.tile_center(tile))
+                        .collect::<Vec<Vec2>>()
+                });
+                (path, duration)
             }
         };
         PathfindingResult {
             end_tile,
             path,
-            duration: started_at.elapsed(),
+            duration,
         }
     }
 
@@ -167,7 +180,7 @@ pub struct Walkable<'a> {
 
 impl Walkable<'_> {
     pub fn allows(&self, point: Vec2) -> bool {
-        let tile = world_to_tile(point);
+        let tile = self.navmesh.to_tile(point);
         // сетка первой: индекс в `Vec` против запроса в BVH
         self.navmesh.is_passable(tile.x, tile.y)
             && self.mesh.is_none_or(|mesh| mesh.contains(point))
@@ -205,7 +218,7 @@ impl Walkable<'_> {
     /// пространство — штатный вход спасения (`rescue_from_impassable`), как и
     /// прочие прямые сдвиги `SimPosition`.
     pub fn coast_allows(&self, point: Vec2) -> bool {
-        let tile = world_to_tile(point);
+        let tile = self.navmesh.to_tile(point);
         self.navmesh.is_passable(tile.x, tile.y)
     }
 
@@ -219,10 +232,12 @@ impl Walkable<'_> {
             .and_then(|mesh| mesh.nearest_free_point(point))
             .filter(|&snapped| self.allows(snapped))
             .or_else(|| {
-                nearest_tile_where(world_to_tile(point), RESCUE_SEARCH_TILES, |candidate| {
-                    self.allows(tile_center(candidate))
-                })
-                .map(tile_center)
+                nearest_tile_where(
+                    self.navmesh.to_tile(point),
+                    RESCUE_SEARCH_TILES,
+                    |candidate| self.allows(self.navmesh.tile_center(candidate)),
+                )
+                .map(|tile| self.navmesh.tile_center(tile))
             })
     }
 }
@@ -230,6 +245,9 @@ impl Walkable<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // сетка по умолчанию — навтайл по умолчанию, так что глобальный перевод
+    // здесь совпадает со снимочным и читается короче
+    use crate::grid::tile_center;
 
     /// Сеточный снимок с перечисленными заблокированными тайлами — интерфейс
     /// тестируется тем же путём, каким его берут потребители: значение, а не

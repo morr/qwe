@@ -21,13 +21,16 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
-mod knob;
+// `pub` ради витрин (`examples/demos/*_gallery/`): их ручки привязаны к полю
+// ресурса ровно так же, как ручки панелей игры, и повторять у себя протяжку,
+// синхронизацию и подпись им незачем
+pub mod knob;
 mod navigation;
 mod noise;
 mod roads;
 mod rows;
 mod shell;
-// `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo.rs`): ей
+// `pub` ради демо-сцены расталкивания (`examples/demos/crowd_demo/`): ей
 // нужна та же строка-ползунок, что и панелям игры, а весь `UiPlugin` она
 // поднять не может — он тянет панели, карту и настройки
 pub mod slider;
@@ -121,6 +124,34 @@ pub fn panel_header(title: &str, count: PanelCount) -> impl Bundle {
 /// Human, слои отладки).
 pub fn panel_title(title: &str) -> impl Bundle {
     (Text::new(title), ThemeTextColor(tokens::PANE_HEADER_TEXT))
+}
+
+/// Отступ заголовка группы от края плашки.
+pub const GROUP_HEADER_PAD_PX: f32 = 6.0;
+
+/// Заголовок группы строк — плашка с названием, как секция панели настроек.
+pub fn spawn_group_header(commands: &mut Commands, panel: Entity, title: &str) {
+    commands.spawn((
+        ui_node(Node {
+            padding: UiRect::axes(px(GROUP_HEADER_PAD_PX), px(2)),
+            ..default()
+        }),
+        panel_block_background(),
+        children![panel_title(title)],
+        ChildOf(panel),
+    ));
+}
+
+/// Шрифт панели для стенда: в игре его вешает `apply_panel_font` по
+/// `Added<GameUiRoot>`, но `UiPlugin` витрина не поднимает, а без
+/// `InheritableFont` подписи достаются дефолтному шрифту bevy, где нет
+/// кириллицы.
+pub fn panel_font(assets: &AssetServer) -> InheritableFont {
+    InheritableFont {
+        font: assets.load(fonts::REGULAR),
+        font_size: PANEL_FONT,
+        weight: FontWeight::NORMAL,
+    }
 }
 
 /// Счётчики в заголовках панелей: сколько объектов этого типа сейчас в мире.

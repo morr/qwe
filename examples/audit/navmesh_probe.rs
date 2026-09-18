@@ -13,8 +13,9 @@ use bevy::math::Vec2;
 use qwe::city::City;
 use qwe::grid::world_to_tile;
 use qwe::map::osm::model::point_in_area;
-use qwe::navigation::{Navmesh, build_polymesh_from_map, snap_portal_position};
-use qwe::settings::POLYMESH_AGENT_RADIUS_MIN;
+use qwe::navigation::{
+    Navmesh, POLYMESH_AGENT_RADIUS_MIN, build_polymesh_from_map, snap_portal_position,
+};
 
 /// Арки не дальше этого от первой точки печатаются по центральной линии, м.
 const PASSAGE_REACH: f32 = 300.0;
@@ -41,7 +42,7 @@ fn main() {
     let portal = snap_portal_position(&navmesh, city.portal_hint()).expect("portal");
     let gates = navmesh.open_sealed_fences(&mut map, portal);
     let filled = navmesh.clone();
-    let pruned = navmesh.prune_unreachable(world_to_tile(portal));
+    let pruned = navmesh.prune_unreachable(portal);
     println!("{}: {gates} gates, {pruned} tiles pruned", city.slug());
 
     // радиус агента — дефолт настроек игры (`PolymeshDebug::default`)

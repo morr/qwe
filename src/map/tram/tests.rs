@@ -92,22 +92,24 @@ fn tram_mesh_narrows_and_sheds_ties_per_bucket() {
     assert!(extent(&near) < extent(&far));
 
     let mut bare_far = MeshBuilder::default();
-    push_ribbon(
-        &mut bare_far,
+    bare_far.push_ribbon(
         &points,
+        false,
         TRAM_LODS[TRAM_LODS.len() - 1].line_width,
         TRAM_COLOR.to_linear(),
         TRAM_JOIN,
+        TRAM_CAP,
     );
     assert_eq!(far.vertex_count(), bare_far.vertex_count());
 
     let mut bare_near = MeshBuilder::default();
-    push_ribbon(
-        &mut bare_near,
+    bare_near.push_ribbon(
         &points,
+        false,
         TRAM_LODS[0].line_width,
         TRAM_COLOR.to_linear(),
         TRAM_JOIN,
+        TRAM_CAP,
     );
     assert!(near.vertex_count() > bare_near.vertex_count());
 }

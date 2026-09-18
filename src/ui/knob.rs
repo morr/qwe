@@ -40,7 +40,9 @@ impl<R: Resource<Mutability = Mutable>> Knobbed for R {}
 pub struct SliderBinding<R: Knobbed> {
     pub get: fn(&R) -> f32,
     pub set: fn(&mut R, f32),
-    /// `(min, max, шаг)` — из `settings.rs`, как у всех ползунков.
+    /// `(min, max, шаг)` — константы рядом с самим ресурсом `R`, а не в
+    /// `settings.rs`: диапазон объявляет, какие значения поле может принимать,
+    /// а панель его лишь показывает.
     pub range: (f32, f32, f32),
     /// Как значение показывается в подписи: единицы, знаки, проценты.
     pub text: fn(f32) -> String,
@@ -90,6 +92,33 @@ pub fn spawn_knob<R: Knobbed>(
         binding,
         on_knob_dragged::<R>,
     )
+}
+
+/// Строка панели, описанная данными: подпись, заголовок группы (если строка её
+/// открывает) и привязка к полю ресурса.
+///
+/// Панелей, у которых состав строк — таблица, а не последовательность вызовов,
+/// четыре, и все четыре — витрины (`examples/demos/*_gallery`). Тип общий,
+/// потому что копия у каждой расходится с остальными на первой же правке кита.
+pub struct KnobSpec<R: Knobbed> {
+    pub label: &'static str,
+    pub group: Option<&'static str>,
+    pub binding: SliderBinding<R>,
+}
+
+/// Разложить таблицу строк по панели, открывая группы заголовками.
+pub fn spawn_knob_specs<R: Knobbed>(
+    commands: &mut Commands,
+    panel: Entity,
+    resource: &R,
+    specs: &[KnobSpec<R>],
+) {
+    for spec in specs {
+        if let Some(group) = spec.group {
+            crate::ui::spawn_group_header(commands, panel, group);
+        }
+        spawn_knob(commands, panel, spec.label, resource, spec.binding);
+    }
 }
 
 /// Протяжка ползунка: округлить до шага и записать поле — но только на

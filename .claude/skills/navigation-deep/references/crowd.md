@@ -177,9 +177,15 @@ separation off).
 **The separation lab** (`SeparationLab`, `SeparationStats`, `SeparationSteer`;
 `tools/separation_lab/`, findings in its `REPORT.md`) — the numeric knobs of separation,
 split in two by type. `SeparationLab`'s own seven fields **are live in the game**:
-`rate`, `max_step`, `max_speed`, `steer`, `steer_release` come from `settings.rs`
-constants, and `pass_squeeze` / `left_share` are on top of that the Nav tab's two
-sliders. Everything the game does *not* run sits in `SeparationLab::experiments`
+`max_step`, `max_speed` and `steer` default from constants in `separation/tuning.rs`
+itself, `rate` from `settings.rs` (the only one of them with a second reader —
+`movement/destination.rs` explains the walk-vs-separation equilibrium by it), and
+`steer_release` has no constant of its own — 2 m, written out in the `Default`.
+`pass_squeeze` / `left_share` are on top of that the Nav tab's two
+sliders — so those two are the ones whose defaults *and* `_MIN`/`_MAX`/`_STEP` live in
+`separation/tuning.rs` beside `SeparationLab`, per `CLAUDE.md`'s tuning-constants rule
+(`SeparationLab` does not clamp on read — the range is the declaration of what the field
+may hold). Everything the game does *not* run sits in `SeparationLab::experiments`
 (`SeparationExperiments`) — `horizon`, `anticipation`, `anticipate_margin`, `lane_bias`,
 `compress`, `compress_at`, `crowd_sidestep`, `idle_mobility`, `arrive_slack`, `slide`,
 `stuck_compress`, `stuck_after`, `stuck_ramp`, `hard_core`, `slide_release` — every one

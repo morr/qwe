@@ -3,27 +3,20 @@
 //! берёт `default_sun()` — гард, который держит солнце на дефолте и не пускает
 //! к нему соседа (`map/sun.rs`).
 
+use super::conifer::CONIFER_NOISE_WAVELENGTH;
 use super::crown::{
     CONE_BANDS, PALM_BANDS, bloat, chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs,
     shade_dir, shaded_arcs, shadow_ring,
 };
 use super::*;
+use crate::map::osm::model::signed_ring_area;
 use crate::map::seed::Lcg;
 use crate::map::shadow_dir;
-use crate::settings::CONIFER_NOISE_WAVELENGTH;
 
 /// Параметры кроны, на которых нарисован город: тесты пиннят игру, а не
 /// произвольную настройку витрины.
 fn params() -> CrownParams {
     CrownParams::default()
-}
-
-fn ring_area(ring: &[Vec2]) -> f32 {
-    ring.windows(2)
-        .map(|pair| pair[0].perp_dot(pair[1]))
-        .sum::<f32>()
-        / 2.0
-        + ring[ring.len() - 1].perp_dot(ring[0]) / 2.0
 }
 
 #[test]
@@ -300,7 +293,7 @@ fn cloud_crown_stays_near_unit_radius() {
         );
     }
     // CCW-обход: bloat наружу требует положительной площади
-    assert!(ring_area(&crown.outer) > 0.0);
+    assert!(signed_ring_area(&crown.outer) > 0.0);
 }
 
 #[test]
@@ -321,7 +314,10 @@ fn every_shape_has_its_own_outline_and_bands() {
             .map(|point| point.length())
             .fold(0.0_f32, f32::max);
         assert!(reach > 1.1, "{shape:?} spikes barely reach {reach}");
-        assert!(ring_area(&crown.outer) > 0.0, "{shape:?} winding flipped");
+        assert!(
+            signed_ring_area(&crown.outer) > 0.0,
+            "{shape:?} winding flipped"
+        );
     }
 }
 
@@ -375,7 +371,7 @@ fn opening_notches_keeps_every_spike() {
             &params(),
         );
         assert_eq!(crown.outer.len(), 32, "variant {variant}");
-        assert!(ring_area(&crown.outer) > 0.0, "variant {variant}");
+        assert!(signed_ring_area(&crown.outer) > 0.0, "variant {variant}");
         let reach = crown
             .outer
             .iter()

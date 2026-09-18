@@ -11,13 +11,43 @@ use bevy::math::DVec2;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use crate::grid::NavtileBase;
 use crate::loading::AppState;
 use crate::prefs::{TrackPrefExt, retuned};
-use crate::settings::{
-    BERLIN_GEO_CENTER, DEVILS_LAKE_GEO_CENTER, LONDON_GEO_CENTER, MAP_CENTER_PORTAL_POS,
-    NY_GEO_CENTER, NY_PORTAL_POS, NavtileBase, PARIS_GEO_CENTER, TOKYO_GEO_CENTER, TULA_GEO_CENTER,
-    TULA_PORTAL_POS,
-};
+use crate::settings::MAP_SIZE;
+
+/// Гео-центр Тулы (от Мясново на западе до Пролетарского моста на востоке,
+/// Кремль — в правой части кадра). Проекция — локальная равнопромежуточная:
+/// метры от юго-западного угла bbox. `(широта, долгота)`.
+const TULA_GEO_CENTER: DVec2 = DVec2::new(54.18969, 37.59148);
+/// Гео-центр Нью-Йорка: Ист-Ривер у Бруклинского моста, в кадре — Даунтаун
+/// Манхэттена и северо-западный Бруклин.
+const NY_GEO_CENTER: DVec2 = DVec2::new(40.70979, -73.97284);
+/// Париж: Иль-де-ла-Сите, Сена делит кадр надвое.
+const PARIS_GEO_CENTER: DVec2 = DVec2::new(48.85565, 2.34612);
+/// Берлин: Митте, Музейный остров.
+const BERLIN_GEO_CENTER: DVec2 = DVec2::new(52.51900, 13.40133);
+/// Лондон: Ковент-Гарден, Темза в южной части кадра.
+const LONDON_GEO_CENTER: DVec2 = DVec2::new(51.51190, -0.12240);
+/// Токио: Ёцуя между Синдзюку и Императорским дворцом — сплошная застройка,
+/// Токийский залив за восточным краем bbox.
+const TOKYO_GEO_CENTER: DVec2 = DVec2::new(35.68950, 139.72900);
+/// Devils Lake, Северная Дакота: американский городок на 7 тысяч жителей —
+/// сетка улиц в середине кадра, вокруг поля и озёра.
+const DEVILS_LAKE_GEO_CENTER: DVec2 = DVec2::new(48.11379, -98.85592);
+
+/// Центр портала — хинт; при загрузке снапится к ближайшему проходимому
+/// тайлу. Тула: гео-точка (54.1908, 37.5836) — перекрёсток к северу от
+/// Центрального парка.
+const TULA_PORTAL_POS: Vec2 = Vec2::new(2284.0, 1969.0);
+/// Нью-Йорк: Чайнатаун / Ист-Сайд. В самом центре bbox — Ист-Ривер, поэтому
+/// хинт сдвинут на сушу, а не взят серединой карты.
+const NY_PORTAL_POS: Vec2 = Vec2::new(1352.0, 2263.0);
+/// Остальные города центрированы по суше — хинту хватает середины карты.
+///
+/// `pub` в отличие от соседей: середину карты как хинт портала берёт ещё и
+/// демо-сцена толпы (`examples/demos/crowd_demo`), у которой города нет вовсе.
+pub const MAP_CENTER_PORTAL_POS: Vec2 = Vec2::new(MAP_SIZE.x / 2.0, MAP_SIZE.y / 2.0);
 
 /// Город, по которому строится карта.
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]

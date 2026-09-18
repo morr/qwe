@@ -37,18 +37,32 @@ use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
-use crate::map::roads::{RoadSmoothing, RoadStyle, is_carriageway, smooth_path};
+use crate::map::roads::{RoadStyle, is_carriageway};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
+use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
-use crate::settings::{
-    CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_OCCUPANCY_DEFAULT, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR,
-};
+use crate::settings::{CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR};
 
 pub mod body;
 mod district;
+
+/// Дефолт, границы и шаг ползунка занятости мест ([`CarStyle::occupancy`]) —
+/// какая доля парковочных мест улицы занята. Сплошной ряд от перекрёстка до
+/// перекрёстка выглядит как автосалон; у настоящей улицы ряд рваный.
+pub const CAR_OCCUPANCY_DEFAULT: f32 = 0.45;
+pub const CAR_OCCUPANCY_MIN: f32 = 0.0;
+pub const CAR_OCCUPANCY_MAX: f32 = 1.0;
+pub const CAR_OCCUPANCY_STEP: f32 = 0.05;
+
+// Умолчание ползунка — внутри его же диапазона.
+const _: () = {
+    assert!(
+        CAR_OCCUPANCY_DEFAULT >= CAR_OCCUPANCY_MIN && CAR_OCCUPANCY_DEFAULT <= CAR_OCCUPANCY_MAX
+    );
+};
 
 use self::district::Districts;
 pub use body::{Car, CarDetail, CarShape};
@@ -351,7 +365,7 @@ impl std::fmt::Display for CarReport {
 pub fn mesh_cars(
     bucket: CarZoomBucket,
     style: CarStyle,
-    smoothing: RoadSmoothing,
+    smoothing: Smoothing,
     map: &MapData,
     layout: &ParkingLayout,
 ) -> (Vec<LayerMesh>, CarReport) {
@@ -427,7 +441,7 @@ pub fn mesh_cars(
 pub fn cars_mesh(
     roads: &[RoadLine],
     style: CarStyle,
-    smoothing: RoadSmoothing,
+    smoothing: Smoothing,
     traffic: TrafficSide,
     detail: CarDetail,
 ) -> MeshBuilder {
@@ -448,7 +462,7 @@ fn park_cars(
     roads: &[RoadLine],
     junctions: &MarkingBreaks,
     style: CarStyle,
-    smoothing: RoadSmoothing,
+    smoothing: Smoothing,
     traffic: TrafficSide,
     districts: &Districts,
 ) -> Vec<Car> {

@@ -166,11 +166,9 @@ fn a_pawn_deeper_than_the_search_radius_is_left_alone() {
 
 // --- спасение впереди диспетчера ---
 
-use bevy::camera_controller::pan_camera::PanCamera;
-use bevy::window::PrimaryWindow;
-
 use super::components::UrgentPath;
 use super::pathfinding::dispatch_pathfinding_requests;
+use crate::camera::Viewport;
 
 /// Ребро `rescue → dispatch` (`movement/mod.rs`) целиком: заявка застрявшей
 /// пешки снимается переездом ДО того, как диспетчер успеет оплатить по ней
@@ -184,11 +182,14 @@ use super::pathfinding::dispatch_pathfinding_requests;
 fn the_rescue_beats_the_dispatcher_to_a_trapped_pawns_request() {
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
     let app = &mut app_with_block();
-    app.world_mut().spawn((Window::default(), PrimaryWindow));
-    // `PanCamera` — маркер «камера пользователя»: диспетчер фильтрует по нему,
-    // чтобы не поймать закадровую камеру снимка (`dev.rs`). Без маркера
-    // `Single` не находит камеру вовсе, и срабатывает контроль ниже
-    app.world_mut().spawn((Camera2d, PanCamera::default()));
+    // кадр ресурсом: камеры и окна здесь нет, а `Viewport` без `Default` —
+    // без него диспетчер молча не проходит валидацию параметров и контроль
+    // ниже срабатывает. Окно 1280 × 720 на зуме 1.0, центр в начале координат
+    app.insert_resource(Viewport {
+        centre: Vec2::ZERO,
+        half_extent: Vec2::new(640.0, 360.0),
+        zoom: 1.0,
+    });
     // тот же порядок, что и в `MovementPlugin`
     app.add_systems(
         Update,

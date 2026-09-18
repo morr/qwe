@@ -6,11 +6,11 @@
 
 use bevy::prelude::*;
 
-use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
-use crate::settings::{
+use crate::map::trees::{
     TREE_CONIFER_SHARE_MAX, TREE_CONIFER_SHARE_MIN, TREE_CONIFER_SHARE_STEP, TREE_DENSITY_MIN,
     TREE_DENSITY_STEP, TREE_NOISE_MIX_MAX, TREE_NOISE_MIX_MIN, TREE_NOISE_MIX_STEP,
 };
+use crate::map::{TREE_DENSITY_MAX, TreeShape, TreeStyle};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};

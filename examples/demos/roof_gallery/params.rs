@@ -12,10 +12,12 @@
 //! фактуры кровель (`RoofStyle::texture`) и час съёмки (`SunStyle`), общий для
 //! всей карты.
 
-use qwe::settings::{
-    ROOF_TEXTURE_DEFAULT, SUN_AZIMUTH_DEFAULT, SUN_AZIMUTH_MAX, SUN_AZIMUTH_MIN, SUN_AZIMUTH_STEP,
-    SUN_ELEVATION_DEFAULT, SUN_ELEVATION_MAX, SUN_ELEVATION_MIN, SUN_ELEVATION_STEP,
+use qwe::map::buildings::material::ROOF_TEXTURE_DEFAULT;
+use qwe::map::sun::{
+    SUN_AZIMUTH_DEFAULT, SUN_AZIMUTH_MAX, SUN_AZIMUTH_MIN, SUN_AZIMUTH_STEP, SUN_ELEVATION_DEFAULT,
+    SUN_ELEVATION_MAX, SUN_ELEVATION_MIN, SUN_ELEVATION_STEP,
 };
+use qwe::ui::knob::{KnobSpec, SliderBinding};
 
 /// Высота стен по умолчанию, м: типичная из `HOUSE_HEIGHTS` в `heights.rs` —
 /// одноэтажный частный дом, то есть тот класс, которому игра вообще ставит
@@ -77,17 +79,17 @@ impl Default for Tuning {
     }
 }
 
-/// Одна ручка панели: как её звать, в каких пределах крутить и куда писать.
-pub(crate) struct ParamSpec {
-    pub(crate) label: &'static str,
-    /// `(min, max, step)` — как у строк-ползунков в панелях игры.
-    pub(crate) range: (f32, f32, f32),
-    pub(crate) get: fn(&Tuning) -> f32,
-    pub(crate) set: fn(&mut Tuning, f32),
-    pub(crate) format: fn(f32) -> String,
-    /// Заголовок группы, если эта ручка её открывает.
-    pub(crate) group: Option<&'static str>,
-}
+/// Одна ручка панели: как её звать, под каким заголовком она стоит и к какому
+/// полю привязана.
+///
+/// Привязка — китовая ([`SliderBinding`]), ровно та же, что у ручек панелей
+/// игры: диапазон, чтение, запись и подпись. За протяжкой и синхронизацией
+/// тогда стоит наблюдатель кита, заведённый по разу на ресурс, а не свой на
+/// витрину.
+///
+/// Китовым стал и сам тип: [`KnobSpec`] держит ту же тройку полей, а имя здесь
+/// локальное, чтобы таблица `specs()` ниже читалась как раньше.
+pub(crate) type ParamSpec = KnobSpec<Tuning>;
 
 fn percent(value: f32) -> String {
     format!("{:.0}%", value * 100.0)
@@ -119,59 +121,73 @@ pub(crate) fn specs() -> Vec<ParamSpec> {
     vec![
         ParamSpec {
             label: "Texture",
-            range: (0.0, 1.5, 0.05),
-            get: |t| t.texture,
-            set: |t, v| t.texture = v,
-            format: percent,
             group: Some("Фактура"),
+            binding: SliderBinding {
+                get: |t| t.texture,
+                set: |t, v| t.texture = v,
+                range: (0.0, 1.5, 0.05),
+                text: percent,
+            },
         },
         ParamSpec {
             label: "Height",
-            range: (3.0, 24.0, 1.0),
-            get: |t| t.height,
-            set: |t, v| t.height = v,
-            format: metres,
             group: Some("Дом"),
+            binding: SliderBinding {
+                get: |t| t.height,
+                set: |t, v| t.height = v,
+                range: (3.0, 24.0, 1.0),
+                text: metres,
+            },
         },
         ParamSpec {
             label: "Axis",
-            range: (0.0, 90.0, 5.0),
-            get: |t| t.axis_deg,
-            set: |t, v| t.axis_deg = v,
-            format: degrees,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.axis_deg,
+                set: |t, v| t.axis_deg = v,
+                range: (0.0, 90.0, 5.0),
+                text: degrees,
+            },
         },
         ParamSpec {
             label: "Seed",
-            range: (0.0, 1.0, 0.05),
-            get: |t| t.seed,
-            set: |t, v| t.seed = v,
-            format: fraction,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.seed,
+                set: |t, v| t.seed = v,
+                range: (0.0, 1.0, 0.05),
+                text: fraction,
+            },
         },
         ParamSpec {
             label: "Courtyard",
-            range: (0.0, 0.5, 0.05),
-            get: |t| t.courtyard,
-            set: |t, v| t.courtyard = v,
-            format: courtyard,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.courtyard,
+                set: |t, v| t.courtyard = v,
+                range: (0.0, 0.5, 0.05),
+                text: courtyard,
+            },
         },
         ParamSpec {
             label: "Azimuth",
-            range: (SUN_AZIMUTH_MIN, SUN_AZIMUTH_MAX, SUN_AZIMUTH_STEP),
-            get: |t| t.sun_azimuth,
-            set: |t, v| t.sun_azimuth = v,
-            format: degrees,
             group: Some("Солнце"),
+            binding: SliderBinding {
+                get: |t| t.sun_azimuth,
+                set: |t, v| t.sun_azimuth = v,
+                range: (SUN_AZIMUTH_MIN, SUN_AZIMUTH_MAX, SUN_AZIMUTH_STEP),
+                text: degrees,
+            },
         },
         ParamSpec {
             label: "Elevation",
-            range: (SUN_ELEVATION_MIN, SUN_ELEVATION_MAX, SUN_ELEVATION_STEP),
-            get: |t| t.sun_elevation,
-            set: |t, v| t.sun_elevation = v,
-            format: degrees,
             group: None,
+            binding: SliderBinding {
+                get: |t| t.sun_elevation,
+                set: |t, v| t.sun_elevation = v,
+                range: (SUN_ELEVATION_MIN, SUN_ELEVATION_MAX, SUN_ELEVATION_STEP),
+                text: degrees,
+            },
         },
     ]
 }

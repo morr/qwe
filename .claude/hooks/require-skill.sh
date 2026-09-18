@@ -54,16 +54,19 @@ esac
 # Domain skills, one per row of the CLAUDE.md table. A path may sit in two
 # rows (movement/wander.rs, map/osm/download.rs) — both skills are required.
 case "$rel" in
-  src/map/*) add osm-map ;;
+  src/map/*|examples/demos/*_gallery/*|examples/bench/map_meshing.rs) add osm-map ;;
 esac
 case "$rel" in
-  src/navigation/*|src/movement/*|tests/navigation.rs|tests/movement.rs) add navigation-deep ;;
+  src/navigation/*|src/movement/*|src/grid.rs|tests/navigation.rs|tests/movement.rs) add navigation-deep ;;
+  examples/demos/crowd_demo/*|examples/audit/polymesh_*|examples/audit/navmesh_probe.rs) add navigation-deep ;;
+  examples/bench/pathfinding_bench.rs|examples/bench/polymesh_bench.rs) add navigation-deep ;;
 esac
 case "$rel" in
-  src/rng.rs|src/rng/*|src/determinism/*|tests/determinism.rs|examples/acceptance/*) add determinism ;;
+  src/rng.rs|src/rng/*|src/determinism/*|src/sim_yard.rs|tests/determinism.rs|examples/acceptance/*) add determinism ;;
 esac
 case "$rel" in
-  src/human/*|src/demon/*|src/silhouette/*|src/portal.rs|src/movement/wander.rs|src/spatial.rs|tests/spatial.rs) add species-behavior ;;
+  src/human/*|src/demon/*|src/silhouette/*|src/portal.rs|src/movement/wander.rs|src/spatial.rs|src/telemetry.rs|tests/spatial.rs) add species-behavior ;;
+  examples/demos/blood_gallery/*) add species-behavior ;;
 esac
 case "$rel" in
   src/loading.rs|src/restart.rs|src/city.rs|src/map/osm/download.rs) add world-lifecycle ;;
@@ -72,7 +75,7 @@ case "$rel" in
   src/sim_time.rs|src/sim_time/*) add sim-speed ;;
 esac
 case "$rel" in
-  src/ui/*|src/camera.rs|src/post.rs|src/prefs.rs) add ui-panels ;;
+  src/ui/*|src/camera.rs|src/post.rs|src/prefs.rs|src/dev.rs|examples/demos/*) add ui-panels ;;
 esac
 
 [ -z "$required" ] && exit 0
