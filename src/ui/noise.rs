@@ -20,9 +20,9 @@ use bevy::prelude::*;
 use crate::map::ConiferNoiseStyle;
 use crate::map::trees::conifer::{
     CONIFER_NOISE_LACUNARITY_MAX, CONIFER_NOISE_LACUNARITY_MIN, CONIFER_NOISE_LACUNARITY_STEP,
-    CONIFER_NOISE_OCTAVES_MAX, CONIFER_NOISE_OCTAVES_MIN, CONIFER_NOISE_PERSISTENCE_MAX,
-    CONIFER_NOISE_PERSISTENCE_MIN, CONIFER_NOISE_PERSISTENCE_STEP, CONIFER_NOISE_WAVELENGTH_MAX,
-    CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_STEP,
+    CONIFER_NOISE_OCTAVES_MAX, CONIFER_NOISE_OCTAVES_MIN, CONIFER_NOISE_OCTAVES_STEP,
+    CONIFER_NOISE_PERSISTENCE_MAX, CONIFER_NOISE_PERSISTENCE_MIN, CONIFER_NOISE_PERSISTENCE_STEP,
+    CONIFER_NOISE_WAVELENGTH_MAX, CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_STEP,
 };
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
@@ -102,7 +102,11 @@ fn build_noise_section(
         SliderBinding {
             get: |noise| noise.octaves as f32,
             set: |noise, value| noise.octaves = value as u32,
-            range: (CONIFER_NOISE_OCTAVES_MIN, CONIFER_NOISE_OCTAVES_MAX, 1.0),
+            range: (
+                CONIFER_NOISE_OCTAVES_MIN,
+                CONIFER_NOISE_OCTAVES_MAX,
+                CONIFER_NOISE_OCTAVES_STEP,
+            ),
             text: |value| format!("{value:.0}"),
         },
     );

@@ -50,6 +50,8 @@ pub const CONIFER_NOISE_OCTAVES: u32 = 3;
 /// (`zxc/src/map/generator/perlin_noise.rs`).
 pub const CONIFER_NOISE_OCTAVES_MIN: f32 = 1.0;
 pub const CONIFER_NOISE_OCTAVES_MAX: f32 = 8.0;
+/// Шаг целочисленный: октава либо есть целиком, либо её нет.
+pub const CONIFER_NOISE_OCTAVES_STEP: f32 = 1.0;
 pub const CONIFER_NOISE_LACUNARITY: f32 = 2.0;
 pub const CONIFER_NOISE_LACUNARITY_MIN: f32 = 1.0;
 pub const CONIFER_NOISE_LACUNARITY_MAX: f32 = 4.0;
