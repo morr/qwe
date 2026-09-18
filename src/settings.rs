@@ -987,14 +987,6 @@ pub const CAR_MAX_ZOOM: f32 = 0.8;
 pub const CAR_DETAIL_MAX_ZOOM: f32 = 0.18;
 pub const CAR_SILHOUETTE_MAX_ZOOM: f32 = 0.4;
 
-/// Дефолт, границы и шаг ползунка занятости мест (`CarStyle::occupancy`) —
-/// какая доля парковочных мест улицы занята. Сплошной ряд от перекрёстка до
-/// перекрёстка выглядит как автосалон; у настоящей улицы ряд рваный.
-pub const CAR_OCCUPANCY_DEFAULT: f32 = 0.45;
-pub const CAR_OCCUPANCY_MIN: f32 = 0.0;
-pub const CAR_OCCUPANCY_MAX: f32 = 1.0;
-pub const CAR_OCCUPANCY_STEP: f32 = 0.05;
-
 /// Вагон втрое длиннее машины (13.9 м против 4.4), и на 2.0 м/px кузов — это
 /// те же ~7 экранных пикселей, на которых машину уже снимают: порог свой, а не
 /// общий с машинами (`map::wagons`), и в 2.5 раза дальше их 0.8.
@@ -1142,9 +1134,6 @@ const _: () = {
     assert!(
         SEPARATION_LEFT_SHARE >= SEPARATION_LEFT_SHARE_MIN
             && SEPARATION_LEFT_SHARE <= SEPARATION_LEFT_SHARE_MAX
-    );
-    assert!(
-        CAR_OCCUPANCY_DEFAULT >= CAR_OCCUPANCY_MIN && CAR_OCCUPANCY_DEFAULT <= CAR_OCCUPANCY_MAX
     );
     assert!(SUN_AZIMUTH_DEFAULT >= SUN_AZIMUTH_MIN && SUN_AZIMUTH_DEFAULT <= SUN_AZIMUTH_MAX);
     assert!(
