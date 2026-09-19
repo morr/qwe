@@ -162,7 +162,13 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   playgrounds, 48 pitches, 13 tracks, 7 sports centres, 1 stadium — of which 118 reach
   `MapData::pitches`; the other 10 carry `building=*` too and stay buildings.
   `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the
-  tag is there). See **Building height** below. `building_use: BuildingUse` — the
+  tag is there). See **Building height** below.
+  `storeys: Option<f32>` — `building:levels` as the tag says (`area_storeys`), buildings
+  only, **without** `roof:levels`, which by S3DB describes the roof and not the floors;
+  the height alone cannot be asked how many floors a building has — a four-storey mall
+  and a two-level retail box are both about twelve metres — and `is_big_box` is what
+  reads it. Not to be confused with the *inferred* storeys of `buildings/heights.rs`,
+  which invent a height where OSM is silent. `building_use: BuildingUse` — the
   drawing class (`Other` on everything that is not a building), see **Building use**
   below. `entrances: Vec<Vec2>` — the OSM
   doors on this building's outline, empty for most buildings; see
@@ -372,10 +378,12 @@ be called alone:
   the **roofing material** (`::kind_of`); neither colour comes from the class itself, both
   come from the chosen material's own palette (**Roof material** in
   `references/buildings.md`, bullet
-  **The pick**). Three sources in order: `building=*` when the value says something
-  (`house`, `apartments`, `garages`, `church`,
+  **The pick**). Three sources in order: `building=*` when the value names a *particular*
+  building (`house`, `apartments`, `garages`, `church`,
   `school`, …), else a big-format **`shop=*`** (`is_big_format_shop`, **Retail box**
-  below), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
+  below) — which also overrides the one generic value that does map to a class,
+  `building=commercial`, so «Магнит» is a box and not an office — else `amenity=*` on the
+  same outline (`school`, `hospital`, `police`,
   `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
   + `amenity=…`. Anything outside the vocabulary is `Other`, and `Other` is read by shape
   rather than left flat: the wall takes the apartment-block table (height having spoken
@@ -401,22 +409,63 @@ be called alone:
   the kiosk and the pavilion) because an office block and a hypermarket share nothing from
   the air: the office has dwelling-height storeys and rows of windows, the box one tall
   trading hall, a blind facade under a brand band and a roof of skylights and plant.
-  - **The tag.** `building=retail|supermarket|mall|department_store`, and — under
+  - **The tag.** `building=retail|supermarket|mall|department_store|shop`, and — under
     `building=yes`, which is where half of it lives — a **whitelist** of `shop=*`:
     `mall`, `supermarket`, `department_store`, `wholesale`, `doityourself`, `hardware`,
     `trade`, `garden_centre`, `furniture`, `car`. A whitelist for the reason every other
     one here is: `shop` has a hundred values and nearly all of them are a **point inside
     somebody else's house** — a bakery, a florist, «продукты» on the ground floor of a
-    nine-storey block. Tula v14: 68 buildings carry `shop=*`, 34 pass the list (17 `mall`,
-    7 `supermarket`, 3 `department_store`, 3 `doityourself`, 2 `furniture`, `hardware`,
-    `car`). **No `QUERY_VERSION` bump** — `out geom` returns every tag of the element, so
-    `shop` has been in every cache since v1.
-  - **The size** (`is_big_box`: `Retail` with a footprint ≥ `BIG_BOX_AREA_MIN` 1200 m²).
+    nine-storey block. Tula v14: 69 building outlines carry `shop=*` (67 ways and 2
+    relations), 35 pass the list (17 `mall`, 7 `supermarket`, 4 `doityourself`,
+    3 `department_store`, 2 `furniture`, `hardware`, `car`). **No `QUERY_VERSION` bump** —
+    `out geom` returns every tag of the element, so `shop` has been in every cache since v1.
+    **`building=shop` sits in the `Retail` arm, not the `Commercial` one**, because in OSM
+    it is a plain synonym of `building=retail` — the building that is a shop — and the
+    whitelist a line below already calls `shop=mall` and `shop=department_store` retail. The
+    value is a *particular* one, so a small `shop=*` on the same outline no longer overrides
+    it. Latent on Tula, which carries **no** `building=shop` at all; it shows on another
+    city, where such an outline gets the cassette, the brand band and the box roof instead
+    of an office's shopfront.
+  - **The size, the storeys and the height** (`is_big_box`: `Retail` with a footprint ≥
+    `BIG_BOX_AREA_MIN` 1200 m², **and** `PolyArea::storeys` at or under
+    `BIG_BOX_MAX_LEVELS` 3, **and** a height at or under `BIG_BOX_MAX_HEIGHT` 17 m — each
+    of the three can refuse on its own).
     OSM never marks crowd-format, so it is read off the pattern, exactly as
-    `is_fortress_tower` reads a tower off its compactness. The threshold is measured, not
-    picked: Tula's 68 shop buildings fall into 18 big (1363 m² «ДА!» … 52 321 m² ТРЦ
-    «Макси») and 50 small (largest 339 m²), and the gap between the two groups is four
-    times the threshold's own width.
+    `is_fortress_tower` reads a tower off its compactness. **The threshold is a chosen
+    line, not a gap the data hands you**, and that is worth knowing before moving it: on
+    the Tula v14 cache the class has 90 outlines — one per outer ring, the way
+    `parse_relation` assembles them, not one per way-member of a relation — of which 63 are
+    `building=retail` and 47 of those carry no `shop=*` at all; 24 are at or above 1200 m²
+    and 66 below, and the distribution around the line is continuous —
+    1265 m² («Торговые ряды») above it, 1198 m² of an unnamed `building=retail` below, and
+    ТЦ «Триумф», a `shop=mall`, at 1187. What 1200 m² says is that big format starts at a
+    hypermarket of 1300–1400 m² («ДА!» 1363, «Верный» 1628), while a mall block of a
+    thousand-odd still reads as an infill from the air; the price is that two buildings of
+    nearly the same footprint are drawn differently, which is the cost of any single
+    number here.
+    **The storey count is what actually separates a mall from a box, and that is why
+    `PolyArea` carries it** (`storeys`, `building:levels` as the tag says — see **MapData**
+    above). The threshold used to live in the parse's height alone, and everything else on
+    this list hung on the footprint by itself: «Пятёрочка», a `shop=supermarket` on the
+    ground floor of a nine-storey panel block mapped onto the whole block, got honest 27 m
+    *and* a blind cassette, a 5.5 m tier, a skylight grid and entrance groups every 55 m.
+    Moving a **height** ceiling into the predicate was the first attempt and it could not
+    do the job: a four- or five-storey mall is measured in dwelling storeys and lands at
+    12–15 m while a real two-level box stands at 12.5 m, so the ceiling separated two of
+    the nine tall malls and left seven — no number in metres runs between «Империя» (4
+    storeys, 12 m) and ТРЦ «Макси» (2 trading levels, 12.5 m). `BIG_BOX_MAX_LEVELS` 3 does,
+    and the same constant is what `building_height` measures the shell by, so «measured as
+    a box» and «drawn as a box» stay one statement rather than two that can part.
+    Of the 24 outlines above the area line **15 are big boxes**. The nine that go are
+    exactly the `building:levels ≥ 4` ones: ТРЦ «Гостиный двор» (6), «Парадиз» (5),
+    «Троицкий» (5), «Заречье» (5), «УтюгЪ» (4), «Империя» (4), «Талисман» (4), an unnamed
+    `building=retail` of 1408 m² (4) and «Пятёрочка» (9).
+    **The height ceiling stays, as the answer for an unmapped storey count**
+    (`BIG_BOX_MAX_HEIGHT` 17 m — the same three trading levels of `BIG_BOX_LEVEL_HEIGHT`
+    4.5 m plus `BIG_BOX_SHELL_EXTRA` 3.5 m of shell, written in metres): a building with a
+    verbatim `height` and no `building:levels` has nothing else to be judged by, and on
+    Tula the two questions never disagree — no `Retail` outline there carries a `height`
+    tag at all.
   - **What it decides.** Four things, each with its own bullet elsewhere: the **height**
     (below), the **roof material** (`BIG_BOX_ROOFS` — light membrane / bitumen / gravel —
     against `SHOP_ROOFS`), the **roof clutter** (the skylight grid and the roof plant, in
@@ -430,11 +479,23 @@ be called alone:
     (`building=commercial` + `shop=supermarket`, `levels=1`) was drawn three metres tall
     and read as a giant one-storey house. Tula: «Магнит» 8 m, ТРЦ «Макси» (`levels=2`)
     12.5, ТЦ «Сарафан» (3) 17.
-    **Only while levels ≤ `BIG_BOX_LEVELS_MAX` 3**, and that guard is load-bearing:
-    «Пятёрочка» is `building=retail` + `levels=9` mapped onto the whole panel block it
-    occupies the ground floor of, and a trading level there would have made a 45 m tower
-    of it. Above the cap the ordinary dwelling storey applies, which also happens to be
-    right for the multi-floor malls (Гостиный двор 6 → 18 m, Парадиз 5 → 15).
+    **Only up to `BIG_BOX_MAX_LEVELS` 3 trading levels** (and only while the shell they
+    produce fits under `BIG_BOX_MAX_HEIGHT` — the same statement in metres, which here
+    catches a `roof:levels` the storey threshold does not count) **and only from
+    `BIG_BOX_MIN_LEVELS` 1 up**. Both ends are
+    load-bearing. Above: «Пятёрочка» is `building=retail` + `levels=9` mapped onto the
+    whole panel block it occupies the ground floor of, and a trading level there would
+    have made a 45 m tower of it — so the ordinary dwelling storey applies, which also
+    happens to be right for the multi-floor malls (Гостиный двор 6 → 18 m, Парадиз 5 → 15).
+    Below: `building:levels=0` is abandoned tagging rather than a building, and without
+    the lower bound `BIG_BOX_SHELL_EXTRA` would lift that zero to a plausible 3.5 m — a
+    hypermarket drawn as a slab one storey tall, which is the very defect this bullet is
+    about. Out of the range at either end the tag is read as the ordinary storey count, and
+    a zero there stays implausible and falls through to the inferred height.
+    **Both thresholds are the constants the predicate reads**, and that is the point: a
+    house measured in dwelling storeys because it has a fourth one is, by the same number,
+    not a box downstream either (`a_shop_on_a_tall_block_is_not_a_big_box_either`,
+    `four_storeys_of_mall_are_not_a_two_level_box`).
   - **The untagged half is inferred to the same numbers** (`heights.rs`: `BIG_BOX_HEIGHTS`
     8–11 m, `SHOP_HEIGHTS` 4.5–6.5), deliberately — «Верный» and ТЦ «Перспектива» carry no
     `building:levels` at all, and a box standing next to an identical box must not come out

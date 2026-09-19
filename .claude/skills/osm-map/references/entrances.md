@@ -105,20 +105,25 @@ whole algorithm:
   (`model::is_big_box` — see **Retail box** in `SKILL.md`) has no подъезды at all, it
   has **entrance groups**, and between the lobbies of a «Магнит» or a «Лента» there are
   fifty-odd metres. So a big box carries `BIG_BOX_ENTRANCE_SPACING` 55 m and
-  `BIG_BOX_MIN_SPACING` 45 m, its own cohort (`mean` 2, `max` 12 — a mall has an
-  entrance group per anchor tenant, and the dwelling ceiling of 8 is half of what a
-  half-kilometre perimeter needs), and its count is taken off the **perimeter** instead
+  `BIG_BOX_MIN_SPACING` 45 m, its own cohort (`mean` 2, `max` 25 — a backstop the pitch
+  law must never hit, set to what the law asks of the largest box in the cache: 25 groups
+  on «Макси»'s 1390 m; the dwelling ceiling of 8 is under a third of that), and its count
+  is taken off the **perimeter** instead
   of the equivalent length.
   Three separate defects, all reported from one frame of ТРЦ «Макси» (`building=yes` +
-  `shop=mall`, 52 321 m²), and each needed its own half of the fix:
-  - **too few**: the ceiling of 8 is one door per 125 m of wall;
-  - **too few again**: `equivalent_length` is 300 m on a 1000 m perimeter, because it
+  `shop=mall`, **64 257 m², a 1390 m outer ring** — that is the ring `assemble_rings`
+  builds out of the relation's two outer way-members; measuring the longer member alone
+  gives 52 321 m² and 1126 m, and those figures stood here wrongly for a while), and each
+  needed its own half of the fix:
+  - **too few**: the ceiling of 8 is one door per 174 m of wall;
+  - **too few again**: `equivalent_length` is 585 m on that 1390 m perimeter, because it
     answers "how elongated", which is the right question for a slab whose ends are blind
     and the wrong one for a box with entrances on every side. Hence the perimeter;
   - **all in one place**: facades are walked by *proximity to a road*, and on a
-    half-kilometre outline the edges near the road are neighbours of each other, so every
-    door landed in the one corner closest to the street. The five-fold minimum gap is what
-    pushes the next door on round the building. Pinned by
+    kilometre-long outline the edges near the road are neighbours of each other, so every
+    door landed in the one corner closest to the street. The minimum gap, nearly four
+    times the dwelling one (45 m against 12), is what pushes the next door on round the
+    building. Pinned by
     `a_shopping_centre_spreads_its_entrances_around_the_perimeter`.
 - **A step in the outline is not a facade** (`ENTRANCE_MIN_FACADE` 6 m). OSM traces a
   block with two- to four-metre steps — a stair projection, a bay, the joint between two

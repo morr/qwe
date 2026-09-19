@@ -175,7 +175,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     **Pitch** (`leisure=*`, `MapData::pitches`) is a sports or children's ground — see
     **Pitches** below; the `PitchKind` rides inside the `AreaKind` value, since nothing
     but a pitch has one. Buildings carry
-    `height: Option<f32>`, `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
+    `height: Option<f32>`, `storeys: Option<f32>` (`building:levels` as the tag says —
+    what tells a four-storey mall from a two-level retail box of the same height),
+    `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
     `oneway`, `roundabout` (`junction=roundabout|circular`, implies one-way) and
@@ -286,8 +288,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
   `BuildingUse: House | Apartments | Commercial | Retail | Industrial | Garage | GarageBlock |
   Church(Sacred) | Public | Other`, from `building=*` and — whenever that value is outside the
-  vocabulary, `yes` above all — from `shop=*` (see **Retail box** below) and then from
-  `amenity=*` on the same outline.
+  vocabulary (`yes` above all) **or is the generic `commercial`** — from `shop=*` (see
+  **Retail box** below), and then, when neither has spoken, from `amenity=*` on the same
+  outline.
   **`Sacred { faith, form }`** rides inside `Church`, the `Pitch(PitchKind)` pattern:
   **`Faith: Orthodox | Western | Muslim | Jewish | Eastern | Unknown`** from `religion` +
   `denomination` (or the building tag — `mosque`, `synagogue`), and **`SacredForm: Nave |
@@ -316,20 +319,37 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Retail box** (`BuildingUse::Retail`, `model::is_big_box`) — a building that **is** a
   shop, split from `Commercial` (which keeps offices, kiosks and pavilions) because an
   office and a hypermarket share nothing from the air. Read from
-  `building=retail|supermarket|mall|department_store` and, under `building=yes`, from a
+  `building=retail|supermarket|mall|department_store|shop` (`shop` is OSM's plain synonym
+  of `retail`) and, under `building=yes`, from a
   **big-format `shop=*`** whitelist (`mall`, `supermarket`, `department_store`,
   `wholesale`, `doityourself`, `hardware`, `trade`, `garden_centre`, `furniture`, `car`;
   a bakery or a convenience store stands in somebody else's house and is not one). Half of
   Tula's malls carry the class only there — ТРЦ «Макси» is `building=yes` + `shop=mall`,
-  52 321 m².
-  **Size decides as much as the class**, and `is_big_box` (footprint ≥
-  `BIG_BOX_AREA_MIN` 1200 m²) is the one predicate that says it — a giant box and a corner
-  shop look nothing alike, and OSM never marks the difference. Tula's 68 shop buildings
-  split 18 / 50 across that threshold with a fourfold gap around it. What the predicate
+  64 257 m².
+  **Size, storeys and height decide as much as the class**, and `is_big_box` (footprint ≥
+  `BIG_BOX_AREA_MIN` 1200 m², `PolyArea::storeys` ≤ `BIG_BOX_MAX_LEVELS` 3 and height ≤
+  `BIG_BOX_MAX_HEIGHT` 17 m — any of the three refuses) is the one predicate
+  that says it — a giant box and a corner
+  shop look nothing alike, and OSM never marks the difference. The area threshold is a chosen
+  line through a continuous distribution rather than a gap in it (Tula: 24 of 90 `Retail`
+  outlines are at or above it, and its nearest neighbours are 1198 and 1265 m²). **The
+  storey count is what tells a mall from a box**, and it is why `PolyArea` carries
+  `building:levels` at all: a four- or five-storey mall is measured in dwelling storeys and
+  lands at 12–15 m, a real two-level box stands at 12.5 m, and no ceiling in metres runs
+  between them. The height ceiling — three trading levels plus the shell, the same threshold
+  written in metres — answers for the building whose storeys nobody mapped, where `height` is
+  the only thing said at all. Of Tula's 24, **15 are big boxes**: the nine with
+  `building:levels ≥ 4` are not, from ТРЦ «Гостиный двор» (6) down to a `shop=supermarket`
+  on a nine-storey block («Пятёрочка»), and they get a shopfront and the ordinary door pitch
+  instead of the cassette, the tier and the entrance groups. The
+  measurement is in `references/osm-coverage.md`. What the predicate
   decides: the **height** (a trading level is `BIG_BOX_LEVEL_HEIGHT` 4.5 m rather than a
   3 m dwelling storey, plus `BIG_BOX_SHELL_EXTRA` 3.5 m of technical floor and parapet, and
-  only while `building:levels` ≤ 3 — `shop=*` on a nine-storey block is a shop on its
-  ground floor); the **roof** (light membrane / bitumen / gravel, plus the **skylight
+  only while the storeys stay within `BIG_BOX_MIN_LEVELS` 1 … `BIG_BOX_MAX_LEVELS` 3 and
+  that shell under the same `BIG_BOX_MAX_HEIGHT` — above the threshold `shop=*` on a
+  nine-storey block is a shop on its ground floor, below the floor a `levels=0` is abandoned
+  tagging and the height is inferred rather than read as the shell's own 3.5 m); the
+  **roof** (light membrane / bitumen / gravel, plus the **skylight
   grid** and the **roof plant** below); and the **wall** — `WallKind::BigBox`, a blind
   composite-cassette facade on a 7 m bay and a 5.5 m tier, with a **brand band**
   (`layers::push_brand_band`) along the top of every drawn wall in the building's
@@ -337,7 +357,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and an ordinary flat roof.
 - **Skylight grid** and **roof plant** (`map/buildings/clutter.rs`) — what a big box's roof
   carries and nothing else does: a **regular lattice** of 2.8 m skylights at a 13 m pitch
-  (capped at 90) plus a **row** of 2–5 air-handling units, and the vent cap raised from 10
+  (a target, stretched on a giant roof so the whole of it keeps a grid, capped at 300 nodes)
+  plus a **row** of 2–5 air-handling units, and the vent cap raised from 10
   to 26. This is the deliberate exception to "a cell grid places a feature, it never *is*
   the feature" — real skylights stand on the frame's columns, by the ruler, exactly as a
   garage run's bay seams do.
@@ -744,9 +765,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   link that has length; `None` is left only for a polyline with no length at all.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
-  ~98 % of buildings without one. Doors face the street, the count follows building
-  *length* at a measured pitch (`ENTRANCE_SPACING` 25 m, floor `ENTRANCE_MIN_SPACING` 12 m),
-  walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
+  ~98 % of buildings without one. Doors face the street, and **how a building is doored is
+  a property of the building, not of the module** (`DoorPitch`): a dwelling is counted in
+  *подъезды* by its **length** at a measured pitch (`ENTRANCE_SPACING` 25 m, floor
+  `ENTRANCE_MIN_SPACING` 12 m), a **retail box** (`is_big_box`) has no подъезды at all but
+  **entrance groups**, counted by its **perimeter** at `BIG_BOX_ENTRANCE_SPACING` 55 m with
+  a floor of `BIG_BOX_MIN_SPACING` 45 m — the box has doors on every side, so its
+  equivalent length would count one facade of four, and the wide floor is what spreads the
+  groups round the outline instead of heaping them in the corner nearest the street.
+  Walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
   a step in the outline rather than a facade and gets none either, **a door never stands in
   an arch** (`PassageIndex`: a `passage` road eats the wall whole, so the opening plus
   `ENTRANCE_ARCH_CLEARANCE` (3 m) is out for the street door, for its courtyard twin and for

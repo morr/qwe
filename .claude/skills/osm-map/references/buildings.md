@@ -742,9 +742,11 @@ arches.
     - **The pick** (`material::wall_look`) is `roof_look`'s twin — a ten-slot table per
       `BuildingUse`, the slot from the building's seed, the colour from the material's own
       palette plus ±3 % — with one difference: **height is consulted before the tag.**
-      Anything under `LOW_RISE_STOREYS` (4) that is not already `House`, `Garage`, `Church`
-      or `Industrial` drops into `LOW_RISE_WALLS`, because a low building is neither a panel
-      block nor a curtain wall whatever OSM calls it. The seed is read from **other bytes**
+      Anything under `LOW_RISE_STOREYS` (4) that is not already `House`, `Garage`, `Church`,
+      `Industrial` or `Retail` (which is settled by its size) drops into `LOW_RISE_WALLS`,
+      because a low building is neither a panel block nor a curtain wall whatever OSM calls
+      it — and the retail exception is only about the curtain wall: neither trade table
+      carries a panel. The seed is read from **other bytes**
       than the roof's (`>> 4`, `>> 12`, `>> 20` against the roof's raw, `>> 8`, `>> 16`):
       the two materials must be independent, or every panel block would also be under one
       bitumen. Kremlin is brick (every wall `WallMark::Solid` — no window, and `push_doors`
@@ -950,8 +952,9 @@ arches.
       said by the band above it and the glazing below it.
     - The opening is a **ribbon of curtain glazing high under the parapet**
       (`BIG_BOX_WINDOW_LOW` 0.52 … `HIGH` 0.70, five panes), on
-      `BIG_BOX_WINDOW_SHARE` **34 %** of the bays by the column roll — the share the
-      shed's ribbon already uses, and low on purpose: a ribbon on every bay is a
+      `BIG_BOX_WINDOW_SHARE` **34 %** of the bays by the same column roll the shed's ribbon
+      uses (its own share is higher, `SHED_WINDOW_SHARE` 0.55), and low on purpose: a
+      ribbon on every bay is a
       `Shopfront`, i.e. a downtown mall, not a box by the highway. There is no dwelling
       window on this cladding at all.
     - The **plinth is taller** (`BIG_BOX_PLINTH` 0.22 of a tier against `PLINTH_HIGH`
@@ -959,7 +962,8 @@ arches.
     - The **door is the widest opening on the map** (`door_size` 4.2 × 3.4 m): a group of
       glass leaves with a lobby, and you walk in with a trolley.
   - **The brand band is geometry, not shader** (`layers::push_brand_band`,
-    `BRAND_BAND_SHARE` 0.26 of the drawn wall, top at `BRAND_BAND_TOP` 0.96) — one quad
+    `BRAND_BAND_SHARE` 0.30 of a **tier**, its top `BRAND_BAND_GAP` 0.05 of a tier below
+    the wall's own top) — one quad
     across every drawn wall of a `BigBox`, with `set_roof(None)` so no texture touches it,
     shaded by the wall's own outward normal through `shade_by_light` so the corner of the
     box does not vanish. **It is what the eye reads a hypermarket by** on every one of the
@@ -970,14 +974,25 @@ arches.
     the **door** arrives, and for the same reason — a feature whose place or paint the data
     knows cannot be rolled in the shader. The colour is `building:colour` when the mapper
     set one (ТРЦ «Макси» is tagged `orange`, which is its real colour) and otherwise a
-    five-slot chain palette by the building's seed — red, yellow, green, blue, orange, i.e.
-    Магнит / Лента / Леруа / Метро / ОБИ; a sixth, magenta, was dropped on the first look
-    at the frame, since no chain here is that colour. **This is the first place
-    outside the temples that reads `building:colour`**; the note under **Tagged colours**
-    in `SKILL.md` that only temples read them is now half true, and the private sector
-    still does not.
+    five-slot chain palette by the building's seed (`BRAND_COLORS`) — red, yellow, green,
+    blue, orange, i.e. Магнит / Лента / Леруа / Глобус / Макси; a sixth, magenta, was
+    dropped on the first look at the frame, since no chain here is that colour. **This is
+    the first place outside the temples that reads `building:colour`**, which is why the
+    note under **Tagged colours** in `SKILL.md` now names two readers and not one; the
+    private sector still does not read them.
     Pushed **after** its own wall and **before** the door, so the frieze lies on the facade
     and the entrance lies on the frieze.
+    **Two things about it are measured in somebody else's system, and both were got wrong
+    once**, so they are stated here. Its **height is a tier, not a share of the wall**
+    (`WallCells::storey`): the glass ribbon it must sit above lives inside a *cell* of the
+    shader's grid (`roof.wgsl::BIG_BOX_WINDOW_HIGH` 0.70 of a tier), and a share of the
+    whole wall equals a share of a tier only on a one-tier box — on a two-tier one (half of
+    `BIG_BOX_HEIGHTS` and both of Tula's tagged big-format cases) such a band lay over the
+    top tier's ribbon completely. And its **normal is the wall's own**
+    (`layers::wall_normal`, the helper `wall_colors` takes too): OSM does not normalise a
+    ring's winding, so the raw right-hand perpendicular points into the building on half of
+    them — written out a second time inside the band, it painted the lit face dark and the
+    shaded one light.
     Its wall palette is deliberately quiet (`BIG_BOX_WALL_COLORS`: three near-whites, a
     cool grey and one anthracite) — the band is the colour of the building, and a bright
     cassette under it would fight it.
@@ -1328,16 +1343,23 @@ arches.
     ridge — `GableRoof::ridge`, an `Option` because a lean-to has no ridge and so no
     chimney (the ridge used to be read back out of the first slope, which stopped being
     `[eave, eave, ridge, ridge]` once half-hips and gambrels existed).
-  - **A big box's roof is a different roof** (`model::is_big_box`, the size half of
-    **Retail box** in `SKILL.md`), and this is the one place the size distinction is worth
+  - **A big box's roof is a different roof** (`model::is_big_box` — the footprint, the
+    storey count **and** the height ceiling, **Retail box** in `SKILL.md`), and this is the one place the size distinction is worth
     the most: from directly above, the roof *is* the hypermarket. Three additions, none of
     which a corner shop gets:
     - **The skylight grid** (`push_skylight_grid`) — `GRID_SKYLIGHT_SIDE` 2.8 m squares on
       a `GRID_SKYLIGHT_PITCH` 13 m lattice laid from the middle of the frame outward (so
       both edges of the roof keep an equal margin rather than one full step and one
-      offcut), each tested by the usual `fit`, capped at `GRID_SKYLIGHT_MAX` 90. A nine
+      offcut), each tested by the usual `fit`, capped at `GRID_SKYLIGHT_MAX` 300. A nine
       thousand square metre trading hall is lit from above, and on every reference photo
       that regular field of pale squares is what the roof is made of.
+      The **pitch is a target, not a constant** (`grid_pitch`, the same way `PANEL_WIDTH`
+      is a target for a wall): a roof on which the 13 m lattice would not fit under the cap
+      gets the pitch stretched instead — by the square root of the excess, at most
+      `GRID_PITCH_TRIES` 6 times — so ТРЦ «Макси» (493 × 298 m, ~800 nodes at 13 m) comes
+      out with a thinner grid over the whole roof rather than a full grid over its first
+      rows and a bare half beyond them. `a_giant_roof_thins_the_grid_instead_of_cutting_it_off`
+      pins that.
       **This is the deliberate exception to "a cell grid places a feature, it never *is*
       the feature"** (the rule under `repair_patch` above). Real skylights sit on the
       frame's columns, by the ruler; jitter here would be an error, not life — the same
@@ -1352,7 +1374,7 @@ arches.
       and on «Магнит» it put ten specks on a hectare of roof.
     **What the three cost**, measured before and after on one machine, `dev` profile,
     `examples/bench/map_meshing`, 2.5D+shadows+tint: **865 732 verts / 114.6 ms →
-    883 917 / 115.2**, i.e. **+18 k vertices (+2.1 %) and +0.6 ms** for all eighteen of
+    883 917 / 115.2**, i.e. **+18 k vertices (+2.1 %) and +0.6 ms** for all twenty-two of
     Tula's big boxes together. Load-time only, like the rest of the layer. The
     clutter-off row moved by **185 vertices** in the same runs — that is the brand band,
     a quad per drawn wall of a big box, and nothing else about the walls grew.
