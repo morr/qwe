@@ -135,7 +135,18 @@ pub fn spawn_map(
     // Раскладка стоянок — вход сборки, а не её выход: по ней рисуется и
     // разметка мест, и ряды машин (`map/cars`), так что живёт она ресурсом и
     // считается один раз на загрузку мира.
+    // Считается она до сборки, то есть **вне** таймера `SurfaceReport`, —
+    // поэтому у неё свой: иначе работа по местам не попадает ни в
+    // `surface meshing:`, ни в офлайн-замер, и «сколько стоит раскладка»
+    // нечем ответить.
+    let layout_started = std::time::Instant::now();
     *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    info!(
+        "parking layout: {} lots, {} stalls in {:.1?}",
+        map.parking.len(),
+        parking_layout.0.iter().map(Vec::len).sum::<usize>(),
+        layout_started.elapsed()
+    );
     let (surfaces, surface_report) = mesh_surfaces(&map, &parking_layout);
     info!("{surface_report}");
     if surface_report.skipped > 0 {
@@ -354,9 +365,21 @@ pub fn mesh_surfaces(
 /// машин. Своей сборки у него нет: он зовёт тот же [`mesh_surfaces`], что и
 /// игра, — ради этого шов и делался.
 pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
+    // Раскладка — вход сборки и считается до неё, так что таймер
+    // `mesh_surfaces` её не видит: без своей строки работа по местам не
+    // попадает в замер вовсе. Вершин у неё нет (она не меш), поэтому строка
+    // печатается миллисекундами — ровно как `build`.
+    let started = std::time::Instant::now();
     let layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    let layout_cost = LayerCost {
+        name: "parking layout",
+        vertices: 0,
+        elapsed: started.elapsed(),
+    };
     let (layers, report) = mesh_surfaces(map, &layout);
-    surface::layer_costs(&layers, report.elapsed)
+    let mut costs = surface::layer_costs(&layers, report.elapsed);
+    costs.insert(1, layout_cost);
+    costs
 }
 
 /// Зелёная полоса под аллеей — чтобы пересборка стиля знала, что деспавнить.
