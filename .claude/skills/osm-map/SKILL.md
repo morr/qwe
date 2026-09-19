@@ -702,74 +702,74 @@ be called alone:
   - Bridges and passages give no segments: a block is drawn under a bridge anyway, and an
     arch through a house is not the edge of a yard. Everything else that is drawn does,
     alleys included — a footpath with a seam of ground beside it reads the same way.
-  - **The parking lots go through the same pass**, on the same road index (its only
-    expensive part) but under their own rule, `Stretch::Lot`:
-    - **`PARKING_GAP_MAX` is 12 m**, not the block's five, and the number is read off the
-      layout rather than off taste: a strip wider than a stall row with its aisle
-      (`STALL_DEPTH` 5.2 + `AISLE` 6) is a plot of its own, anything narrower is the
-      pustyr between the lot and the drive it is entered from — asphalt on a photo, and
-      wide enough at the top of the range for the layout to stripe a row on it.
-      Measured on the Tula cache v14, that is on the 7600 × 5700 bbox: 349 lots,
-      54.4 km of outline, 13.1 km of it already under asphalt, 35.1 km of the rest
-      within the limit (24.9 km within five metres). Of that 35.1 km the strip is over
-      greenery for 773 m and over a building for 144 m — 2.6 % of it together, which is
-      why the pass asks nothing about what is in the strip. The same pass on the old
-      5600 × 3700 bbox read 181 lots, 30 km, 7 km, 19.4 km, 13.9 km, 492 m and 51 m:
-      every figure grew by the ~1.8× the outline grew by, and the share the limit is
-      read off did not move. **Recounted offline over the cache**, not in the app —
-      lot rings by `area_kind`/`assemble_rings`, the gap to the nearest drawn road edge
-      by `road_class` + `sidewalk_width`, the greenery and building probes by
-      `Untouched`; see `references/osm-coverage.md`.
-    - **`Stretch::Lot` — the answer is looked for outside the edge only**, and a
-      road the vertex already stands on is skipped instead of ending the search. That is
-      the whole pass on a big lot: its own aisles (`service=parking_aisle`) cross the
-      outline every dozen metres — Tula's ТРЦ «Макси» lot, way 397005593, has one every
-      17 m — so the *nearest* road to a vertex is routinely the aisle under it. Under the
-      block's rule ("under a ribbon means nowhere to go") those vertices stay while the
-      stretches between them move, and the lot ends up with a sawtooth edge — a tooth of
-      unpaved ground beside every aisle, which is worse than the strip it replaced.
-    - **`Untouched` — what the asphalt does not crawl over**: a building of at least
-      `KEEP_BUILDING_AREA` 100 m² and any greenery or water, probed every `KEEP_PROBE`
-      1 m along the shift. Under the building itself nothing is visible anyway
-      (`Z_BUILDING` 5 against `Z_PARKING` 2.001) — what the guard is about is the **yard
-      behind it**: Tula's hardware shop (way 764017758, 36 × 51 m) is one, and the lot
-      stepped over it in the first build (the author's "parking runs onto the building").
-      The 100 m² floor is the other half of the same report: a ticket booth standing *in*
-      the lot (way 1435094568, 6 × 7 m) has no yard behind it, and going round it leaves a
-      patch of bare ground with the booth in the middle.
-    - **A fence is in the same guard, but asked a different question.** It is a line, not
-      a ring, so there is no "behind" it — and a fenced lot's outline lies *along* the
-      `barrier`, sharing its nodes, so the shift starts **on** the fence and formally
-      never crosses it. The rule is therefore *a vertex standing on a fence
-      (`KEEP_ON_FENCE` 0.5 m) does not step off it*. Without it the hospital lot (way
-      344589378, fences 344589394 / 344589354 on its own vertices) spilled into the
-      Больничный сквер next door — the author's third report. The price is measured: in
-      Tula, cache v14: 144 lot vertices of 2200 (6.5 %) sit on a fence, on 27 lots, and
-      those are
-      exactly the lots that honestly end at a fence.
-      **That rule alone was a hole**, and the author found it on the same lot: a vertex
-      two metres *beside* the fence is not standing on it, so nothing stopped it reaching
-      for a road ten metres off and crossing the railing on the way. Every other vertex
-      is therefore tested against the fence links with a plain segment intersection
-      (`segments_cross`; parallel counts as no crossing, so a shift along a fence is
-      free). Fence links also go into the index padded by `PARKING_GAP_MAX`, not by
-      `KEEP_ON_FENCE` — the query is by the cell of the shift's *start*, and at half a
-      metre of padding a link further away was never even a candidate.
-    - **`PARKING_STEP` 3 m** (the block's is 8): between two pulled points the edge runs
-      as a chord while the road bends, so at a corner the chord leaves a wedge of ground —
-      metres of it at 8 m spacing on the embankment bend, centimetres at 3.
-    - **`untangled` — NonZero over the pulled ring** (`i_overlay`, the shoal's and the
-      shadows' tool). Points are pulled independently, so where the nearest road changes
-      the ring can cross itself; earcut turns such a needle into an unfilled wedge — a
-      white slash across the asphalt. The blocks need none of it: their limit is smaller
-      than the step they split an edge by.
-    - What it fixes is the report this came from: light pockets between the aisle stubs
-      along the lot's edge (the same lot, `cam 6560 3115`), which read as holes in the
-      asphalt rather than as ground. **What it does not reach**: a pocket deeper than the
-      limit — at the lot's north-west edge the perimeter drive stands 15–20 m off, and
-      those pockets stay ground. Filling them wants a different construction (a
-      morphological closing of the lot with its aisles), not a bigger limit: the limit is
-      what keeps the lot from swallowing the embankment footway on the other side.
+  - **The parking lots reach their roads in the same step, by a different construction**
+    — `parse/lots.rs::pave_lots`, a **polygon closing**, called at the end of
+    `pull_areas_to_roads`.
+    - **The vertex pull was here first and was removed** (`Stretch::Lot`, `Untouched`,
+      `untangled`, `PARKING_GAP_MAX` 12 m, `PARKING_STEP` 3 m). Each point of the outline
+      looked for its own road — the farthest one outside within the limit — and
+      neighbours moved by different amounts. On Tula's ТРЦ «Макси» lot (way 397005593,
+      an aisle across the outline every 17 m, a perimeter drive 10–20 m off) that left,
+      all on one screenshot from the author: a **tooth of ground beside every aisle stub**
+      where the drive was past the limit, **needles of asphalt** toward a far road,
+      unfilled wedges where the ring crossed itself (`untangled` kept only the largest
+      contour), and holes in the blob two thin lots and their drive merged into. None of
+      it is a threshold to tune: a ring whose vertices move independently has no way to
+      stay smooth. Do not bring the pull back for lots.
+    - **The construction.** `base` = the lot ∪ the bands of the streets beside it
+      (`road_pieces`: a road is cut every `ROAD_PIECE` 3 m and a piece is taken while its
+      band is within two closing radii of the lot, so a long street does not drag asphalt
+      along its whole way; pieces of one road are glued across links into one stroke;
+      `RoadClass::Street` only — a footpath is not what a lot is entered from; the band
+      of a carriageway includes its sidewalks). `closed` = `base` offset **out by the
+      radius and back in** (`i_overlay` `outline`, round joins, `ARC` 0.3). `closed − base`
+      is what the closing added, and a piece of it is kept only if it lies **between the
+      lot and a road** (`between`: a vertex within `TOUCH` 0.25 m of the lot's rings — or
+      of a **drive**, a street with no sidewalk, whose asphalt is the lot's own — and a
+      vertex on some road band). A notch in the outline (the lawn in the corner of an
+      L-shaped lot) touches no road; a wedge between two streets touches no lot. Kept
+      pieces grow by `LANDUSE_OVERLAP` 0.5 m (bevel join) so the edge goes under the
+      ribbon drawn from the smoothed centreline, and the largest shape of lot ∪ pieces is
+      the new outline, **holes included** — the island of a roundabout at the lot's edge
+      stays ground.
+    - **`CLOSING_RADIUS` 7 m** — a gap under 14 m closes: a stall row with its aisle
+      (`STALL_DEPTH` 5.2 + `AISLE` 6) and a little, the same reading the 12 m limit had;
+      the pockets between the mall's aisle stubs are 12 m between bands.
+      **`GROUND_CLOSING_RADIUS` 12 m** on a big lot (`parking::is_ground`): its perimeter
+      drive stands 15–20 m off, and all of that strip is the lot's asphalt on a photo —
+      exactly the pockets the vertex pull was written down as not reaching.
+    - **What the asphalt does not crawl over** is subtracted from the kept pieces, and
+      `between` is asked again: a building of `KEEP_BUILDING_AREA` 100 m² or more (the
+      hardware shop, way 764017758, has a yard behind it; the ticket booth *in* the lot,
+      way 1435094568, does not), greenery, water — and **fences**, as a band of
+      `FENCE_HALF` 0.75 m either side of the line. A fenced lot's outline lies along its
+      `barrier`, so the band separates the added piece from the lot, the piece no longer
+      touches it and is dropped; a fence standing a few metres off cuts the piece in two
+      and each half fails one side of `between`. Both cases of the hospital lot (way
+      344589378) are pinned: `a_fenced_lot_stays_behind_its_fence`,
+      `a_lot_does_not_step_over_a_fence_it_was_not_standing_on`.
+    - **The road band itself is not part of the lot** — a lot is entered *from* that
+      road, and the layout stripes whatever the outline holds. **Except a drive with the
+      lot's asphalt on both sides of it** (`sandwiched`, probed every 3 m at `BESIDE`
+      0.4 m past either edge of the band, butt ends): without that a lot falls apart into
+      strips along its own drives and no row fits any of them. A second, small closing
+      (3 m) did the same job and cost four more `i_overlay` calls per lot.
+    - **What it changed besides the edge, and it is a correction**: the vertex pull went
+      to the *farthest* road, so a pocket or a strip lying against a street was stretched
+      **over the street** and striped there — 96 stalls on the carriageway beside way
+      702257069 alone. Lots shrank to their honest area (that one 5661 → 2036 m²); what
+      puts stalls back on such a strip is the layout's pocket rule (**Parking** below).
+      City total 20 245 → 19 440 stalls.
+    - **Cost, and why it is threaded.** A lot costs half a dozen `i_overlay` calls, and
+      the price of a call is the call, not the geometry — ≈ 0.3 ms even on a four-vertex
+      lot — so 349 lots were 0.5–1 s single-threaded against 74 ms for the whole old step.
+      Lots are independent, so `pave_lots` splits them across `available_parallelism`
+      threads (`std::thread::scope`, results applied in order — the output does not
+      depend on the split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
+      profile), +38 ms per world load. Two things that were measured on the way: subtract
+      obstacles from the *kept* pieces, not from everything added, and filter them by the
+      pieces' bounds (the river's outline otherwise goes into a boolean for every lot on
+      the embankment); glue road pieces into one stroke per road, not per link.
   - Order: after the houses are pulled off the sidewalks, before door generation. It could
     stand anywhere in the tail — neither `landuse` nor `parking` reaches the navmesh, the
     doors, tree planting or the parked cars' districts — and it is the only pass here whose
@@ -1165,7 +1165,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (9 layers, `mesh_roads`), all of `spawn.rs` (the 13 surface and paint layers
+    `roads` (11 layers, `mesh_roads` — nine of its own plus the two over a big lot,
+    `roads/lots.rs`), all of `spawn.rs` (the 13 surface and paint layers
     as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
     parking layout arrives ready, because the car rows are drawn off the same one — plus
     the tree-row band, its **second** door), `buildings` and `trees`.
@@ -1911,8 +1912,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     the door generator's own (`osm/entrances/index.rs`), extracted while this layer
     existed and its only surviving trace; it has since become `map/grid.rs::Grid` (above).
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds, the thing a courtyard is
-  actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 2.003 and one
-  markings layer at 2.006, the parking pair's shape exactly: the paint is flat
+  actually *made of* on an aerial photo. One surface layer at `Z_PITCH` 2.005 (2.003 until the two
+  big-lot road layers took 2.002–2.004 — a step under 0.001 is not worth trusting to the
+  depth buffer) and one markings layer at 2.006, the parking pair's shape exactly: the paint is flat
   `ColorMaterial`, the surface carries `SurfaceKind::Ground` (a neutral mottle — a
   football field must not get the street's asphalt grain).
   - **Over every road ribbon, under water.** It sat at 0.75, under the sidewalks and
@@ -1948,7 +1950,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `MeshBuilder` and this is the only caller that wants one.
 - **Parking** (`map/parking.rs`) — an `amenity=parking` area is drawn as asphalt
   (`Z_PARKING` 2.001, the `parking` surface layer) with the **stalls painted on it**
-  (`Z_PARKING_LINES` 2.002). The markings go in a **flat-material** layer of their own,
+  (`Z_PARKING_LINES` 2.004 — above the two big-lot road layers, see **A big lot shows
+  the road through it** below). The markings go in a **flat-material** layer of their own,
   not through `SurfaceMaterial`: the procedural asphalt grain belongs under the paint,
   not on it, and a 12 cm line is the one thing on this map that must stay pure white.
   - **Road asphalt, no rim.** `PARKING_COLOR` is `roads::ROAD_COLOR` and the fill is a bare
@@ -2148,18 +2151,97 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     price of the lot on top is stated: an outline mapped over a real carriageway hides
     that stretch of asphalt, markings and sidewalk — the kerb cars lie above (`Z_CAR`)
     and stay. Render-only: the navmesh, doors and tree planting still see every road.
-  - **The stall layout knows nothing of roads**, and must not. While the road ribbons
-    were still drawn over the lot, stalls under a crossing road were dropped (Tula's big
-    lot by the eastern roundabout has a one-way `highway=service`, way 498649803, mapped
-    through it); with the lot on top that road is hidden, and the dropped stalls read as
-    an unexplained empty band across the rows — the author's call from a screenshot, and
-    the rule came out together with the `RoadLine::parking_aisle` flag it needed. The
+  - **On a small lot the stall layout leaves no gap for a road, and must not.** While the
+    road ribbons were still drawn over every lot, stalls under a crossing road were
+    dropped; with the lot on top that road is hidden, and the dropped stalls read as an
+    unexplained empty band across the rows — the author's call from a screenshot. The
     layout's own `AISLE` gaps — and, since the cross aisles, its own drives across the
-    field — stand in for the OSM aisles.
-  - **But the outline itself is moved to the road**, in the parse (**Blocks pulled to the
-    roads** above, `Stretch::Lot`). That is not the layout reading roads: the lot grows to
+    field — stand in for the OSM aisles. **The rule that a gap and a visible road go
+    together is the same one the next bullet obeys from the other side.**
+  - **A big lot shows the road through it** — the author's later call, on ТРЦ «Макси»:
+    hiding the roads is right for a yard and wrong for eight hectares, which came out as
+    a field of hatching with no landmark in it, while 2GIS and Yandex draw the boulevard.
+    - **Big** is `parking::is_ground`, the outline at `GROUND_MIN_AREA` 8000 m² or more
+      (six lots in Tula). **Through** is `parking::is_through`: a `Street` that is not a
+      `parking_aisle`, a bridge or a passage, and is **one-way, a roundabout or a
+      carriageway**. That is the one thing tags say about it: the mall's boulevard is
+      `highway=service` + `oneway=yes` with three mini-roundabouts, while the plain
+      `service` ways inside the other five big lots are their aisles, merely untagged —
+      not one of them one-way (measured on the cache: 838 m of one-way road inside lots,
+      all of it at the mall). Showing every `service` way would have cut those lots' rows
+      along every aisle.
+    - **Drawn by `roads/lots.rs`, inside `mesh_roads`** (so it follows `RoadStyle` and
+      the very centreline the ribbon underneath is drawn from): `Grounds::runs` clips a
+      street's drawn path to the big lots (probes every `PROBE_STEP` 2 m, the crossing
+      found by bisection) and the stretch inside goes a second time into **`lot_roads`**
+      (`Z_LOT_ROAD` 2.003, `SurfaceKind::Street`); a through road also into
+      **`lot_sidewalks`** (`Z_LOT_SIDEWALK` 2.002) at `width + 2 · parking::kerb_width`
+      (its sidewalk, or `LOT_KERB` 1.2 m on a drive), **butt-cut at the lot's outline** —
+      a round cap there is a light bracket around the road leaving the lot.
+      `RoadStyle::sidewalks` off takes the kerb off here too.
+    - **The aisles ride in `lot_roads` for their mouths, not for themselves**: their
+      asphalt is the lot's own tone and invisible on it, but lying over the kerb layer an
+      aisle cuts its entry in the kerb, so along the boulevard the kerb comes out as the
+      islands at the row ends. That is also why `Z_PARKING_LINES` went **above** both
+      layers — an aisle ribbon over the paint would have erased the stall lines it runs
+      across.
+    - **No stall under a through road or its kerb** (`Surroundings::cover`, the band
+      `width / 2 + kerb + THROUGH_CLEARANCE` 0.5 m, four corners and the centre; a cheap
+      centre-distance reject first). 250 stalls on the mall lot.
+    - **The perimeter drive gets no kerb**, by construction rather than by a rule: a road
+      band is not part of the paved outline (see **Blocks pulled to the roads**), so its
+      axis is outside the lot and nothing of it is clipped in. The lot's asphalt simply
+      runs into the drive's.
+    - A carriageway crossing a big lot loses its lane markings on it (the stretch is
+      pushed with no markings) — the stated price of one layer for everything; Tula has
+      no such road.
+  - **But the outline itself reaches the road**, in the parse (**Blocks pulled to the
+    roads** above, `pave_lots`). That is not the layout reading roads: the lot grows to
     the drive it is entered from, and everything below — the stalls, the paint, the cars —
     reads the grown outline knowing nothing of why it grew.
+  - **What the layout does read of the roads around a lot** (`Surroundings`, built per lot
+    in `ParkingLayout::new` from the streets whose bounds come within `AISLE` of it):
+    the through roads above, and the **drives** — every street band beside the lot is
+    asphalt a stall can be entered from (`reachable` asks the lot **or**
+    `Surroundings::paved`). Without it a strip along a drive lost every stall: its nose
+    is in the drive, and the drive is not in the outline. On a big lot a through road is
+    left out of the drives — there is a kerb in the way.
+  - **Aisle fields** (`fields_of`). A big lot is not always one grid: the mall's 44
+    aisles run at 102–105° and the six of its east wing at 59–61°, along their own edge.
+    One direction per lot striped that wing with rows of the main field, across the
+    wing's own aisles. Fields are peeled off in turn by the same `main_of` over the links
+    not yet taken; a second field needs `FIELD_MIN_LANES` 3 distinct lanes, which is what
+    keeps the hospital lot's chain of spurs (one line, one lane) from becoming one. The
+    lane grid of each field still runs out to the outline, so **whose ground it is** is
+    decided per stall: the nearest aisle run must be of the stall's own field
+    (`Frame::territory`). A lot with one field is never asked.
+  - **Pockets** (`pocket_depth`, `pocket_rows`) — a one-row strip along a street (way
+    702257069, 354 × 5.7 m). With `EDGE_MARGIN` either side no stall fits it, and it was
+    a dark band by the pavement; before the polygon paving it was striped only because
+    the outline had been stretched over the street. Recognised by thickness,
+    `2 · area / perimeter`, from `STALL_DEPTH_MIN` up to a stall with both margins; the
+    stall takes the strip's own depth with `STRIP_MARGIN` 0.2 m (clearance for the
+    corner test, not a design gap). The row is laid **along the sides of the outline**,
+    longest first, not on the bounding-box grid — a strip a third of a kilometre long
+    bends with its street, and one degree of bend walks a straight grid out of it;
+    the row along the opposite side lands on the first and is dropped by `Placed`. One
+    nose per side, toward the street if `paved` finds it in front. The bar test follows
+    (`push_markings`): it asks for `EDGE_MARGIN` beyond the bar **along the row** and for
+    as much margin in depth as the stall itself has, or a pocket would get no paint.
+  - **Overlapping lots do not share stalls.** Two lots paved to one drive both hold the
+    gap between them, and both layouts striped it — cars of two lots parked across each
+    other (the mall's north-west lot and the two pockets along its drive). Lots are laid
+    out from the largest down against one shared `Placed`, and a stall landing on one
+    already standing is dropped; results are stored in map order, so
+    `ParkingLayout.0[i]` is still `MapData::parking[i]`.
+  - **`Outline`** — every point test of the layout and the markings goes through an index
+    of the ring's edges by horizontal bands of `OUTLINE_BAND` 4 m (same even-odd answer
+    as `point_in_area`, pinned by `the_outline_index_agrees_with_the_full_ring`). A paved
+    outline carries its fillets: the mall lot is 1220 vertices, and walking the ring for
+    each of tens of thousands of probes cost **87 ms on that lot alone**. With the index
+    the whole city's layout is **38 ms** in the app's `parking layout:` line (21 ms
+    before this work, 2 ms before the pocket rule) — two fields, the through-road test
+    and the shared `Placed` are the rest.
   - Tula, cache v14: **349 lots** (355 in the bbox, less the five that carry `building`
     and the one `parking=multi-storey`). Parking touches neither the navmesh nor tree
     planting, like the landuse blocks.
