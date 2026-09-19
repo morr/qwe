@@ -2763,16 +2763,107 @@ fn a_lot_reaches_the_road_across_its_own_aisle() {
         ..MapData::default()
     };
 
-    let stretched = pull_areas_to_roads(&mut map).lots;
-    assert!(stretched >= 2, "дотянуто вершин: {stretched}");
-    // весь верхний край — под полотном улицы, без зубцов у проезда
-    for vertex in &map.parking[0].outer {
+    assert_eq!(pull_areas_to_roads(&mut map).lots, 1);
+    let lot = &map.parking[0];
+    // вся полоса между стоянкой и улицей — асфальт, без зубцов у проезда (под
+    // самим проездом асфальт его собственный: полотно в контур не входит)…
+    for x in (-35..=35).step_by(5).filter(|x| *x != 0) {
+        let at = CENTER + Vec2::new(x as f32, -edge - 0.5);
+        assert!(point_in_area(at, lot), "полоса у улицы не залита: x = {x}");
+    }
+    // …и край заведён под тротуар ровно на запас, не дальше
+    for vertex in &lot.outer {
         let y = vertex.y - CENTER.y;
         assert!(
-            y < -30.0 || (y + edge - LANDUSE_OVERLAP).abs() < 0.02,
-            "вершина верхнего края не дотянута: {y}"
+            y <= -edge + LANDUSE_OVERLAP + 0.05,
+            "край стоянки вылез на тротуар: {y}"
         );
     }
+}
+
+/// Карман между торцами двух проездов, не доходящих до объездной, — асфальт:
+/// замыкание затягивает его целиком, а не тянет к дороге каждую вершину
+/// порознь, из-за чего край и выходил зубцами.
+#[test]
+fn the_pocket_between_two_aisle_stubs_is_paved() {
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -60.0),
+                CENTER + Vec2::new(40.0, -20.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let aisle = |x: f32| {
+        street(
+            vec![CENTER + Vec2::new(x, -50.0), CENTER + Vec2::new(x, 0.0)],
+            5.0,
+        )
+    };
+    let mut map = MapData {
+        roads: vec![
+            // объездная в двадцати метрах от кромки: повершинно не дотянуться
+            street(
+                vec![
+                    CENTER - Vec2::new(400.0, 0.0),
+                    CENTER + Vec2::new(400.0, 0.0),
+                ],
+                5.0,
+            ),
+            aisle(-8.5),
+            aisle(8.5),
+        ],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+
+    assert_eq!(pull_areas_to_roads(&mut map).lots, 1);
+    for y in [-18.0, -12.0, -6.0] {
+        let at = CENTER + Vec2::new(0.0, y);
+        assert!(
+            point_in_area(at, &map.parking[0]),
+            "карман не залит: y = {y}"
+        );
+    }
+}
+
+/// Выемка в самом контуре дороги не касается и асфальтом не становится: так
+/// Г-образная стоянка не закрашивает газон в своём углу.
+#[test]
+fn a_notch_in_the_lot_is_not_paved() {
+    let base = CENTER + Vec2::new(0.0, -60.0);
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            vec![
+                base + Vec2::new(-40.0, 0.0),
+                base + Vec2::new(40.0, 0.0),
+                base + Vec2::new(40.0, 40.0),
+                base + Vec2::new(5.0, 40.0),
+                base + Vec2::new(5.0, 20.0),
+                base + Vec2::new(-5.0, 20.0),
+                base + Vec2::new(-5.0, 40.0),
+                base + Vec2::new(-40.0, 40.0),
+            ],
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                base + Vec2::new(-400.0, -10.0),
+                base + Vec2::new(400.0, -10.0),
+            ],
+            5.0,
+        )],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+
+    pull_areas_to_roads(&mut map);
+    assert!(!point_in_area(base + Vec2::new(0.0, 30.0), &map.parking[0]));
 }
 
 /// Обнесённая забором стоянка за него не выходит: в OSM её контур лежит **по**

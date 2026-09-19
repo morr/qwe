@@ -53,7 +53,10 @@ use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::PolyArea;
-use crate::map::osm::model::{RoadLine, point_in_area, ring_bounds, signed_ring_area};
+use crate::map::osm::model::{
+    RoadClass, RoadLine, distance_to_segment, point_in_area, ring_bounds, signed_ring_area,
+};
+use crate::map::roads::{is_carriageway, sidewalk_width};
 
 /// Место, м: легковая машина плюс просвет по обе стороны.
 const STALL_WIDTH: f32 = 2.6;
@@ -113,6 +116,10 @@ const OVERLAP_CELL: f32 = STALL_WIDTH + STALL_DEPTH;
 const OVERLAP_SLACK: f32 = 0.05;
 /// Отступ разметки от края площадки, м.
 const EDGE_MARGIN: f32 = 1.2;
+/// Зазор между местом и краем **парковочного кармана** — полосы в один ряд,
+/// в которую место с [`EDGE_MARGIN`] не встаёт, м. Только на счёт: угол места
+/// ровно на контуре проверку попадания проходит через раз.
+const STRIP_MARGIN: f32 = 0.2;
 /// Ширина полосы разметки, м, и её цвет — та же белая краска, что на улице.
 const LINE_WIDTH: f32 = 0.12;
 /// Насколько полоса не доходит до спины места, м. Ряды пары стоят спинами
@@ -124,6 +131,35 @@ const LINE_COLOR: Color = Color::srgb(0.82, 0.82, 0.80);
 /// никто не расчерчивает. Места на ней остаются — машины на них стоят
 /// (`map::cars::fill_lots`), просто по неразмеченному асфальту.
 const MIN_AREA: f32 = 120.0;
+/// С какой площади стоянка — **большая**, м². Маленькая кроет все ленты, что
+/// на неё заходят, и это верно: во дворе асфальт стоянки и есть проезд. У
+/// большой сквозь площадку идёт настоящая дорога — с односторонним движением,
+/// с кольцами на развязках, — и спрятанная под асфальтом, она оставляет поле
+/// штриховки без единого ориентира. В Туле таких площадок шесть, и дорога
+/// ([`is_through`]) идёт сквозь одну — стоянку ТРЦ «Макси», 8.3 га.
+const GROUND_MIN_AREA: f32 = 8000.0;
+
+/// Большая ли это стоянка — см. [`GROUND_MIN_AREA`].
+pub fn is_ground(area: &PolyArea) -> bool {
+    signed_ring_area(&area.outer).abs() >= GROUND_MIN_AREA
+}
+
+/// Дорога **сквозь** большую стоянку — та, что рисуется поверх её асфальта, с
+/// бордюром, и под которой мест нет.
+///
+/// По тегам её от проезда между рядами отличает одно: движение по ней
+/// организовано. У «Макси» бульвар посреди площадки — `highway=service` с
+/// `oneway=yes` и тремя кольцами, а у остальных больших площадок города
+/// `service` внутри контура — это те же проезды рядов, только без
+/// `service=parking_aisle`, и ни один не односторонний. Улица классом выше
+/// проезда (`width` ≥ `STREET_MIN_WIDTH`) — дорога при любых тегах.
+pub fn is_through(road: &RoadLine) -> bool {
+    road.class == RoadClass::Street
+        && !road.parking_aisle
+        && !road.bridge
+        && !road.passage
+        && (road.oneway || road.roundabout || is_carriageway(road))
+}
 
 /// Одно место: центр, направление, в котором машина стоит, и его глубина.
 ///
@@ -132,7 +168,7 @@ const MIN_AREA: f32 = 120.0;
 /// тесном кармане приходится ужаться до [`STALL_DEPTH_MIN`]. Длиннее всех в
 /// слое машин «Газель» (5.3 м) — она торчит из ужатого места, легковые (3.9 —
 /// 4.6 м) помещаются.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Stall {
     pub at: Vec2,
     pub along: Vec2,
@@ -156,9 +192,59 @@ impl ParkingLayout {
     /// раскладке по-прежнему безразлична, и это не упущение — стоянка лежит
     /// поверх дорог (`Z_PARKING`) и кроет любую ленту, что заходит на неё или
     /// идёт сквозь неё: асфальт стоянки и есть проезд.
+    ///
+    /// Второе, что читается, — **дороги сквозь большую стоянку**
+    /// ([`is_through`] на [`is_ground`]): они рисуются поверх её асфальта
+    /// (`roads::mesh_roads`), и мест под ними нет.
+    ///
+    /// Третье — **асфальт улиц у кромки**: место, перед носом которого лежит
+    /// полотно дороги, доступно с неё ([`reachable`]).
     pub fn new(lots: &[PolyArea], roads: &[RoadLine]) -> Self {
         let aisles: Vec<&RoadLine> = roads.iter().filter(|road| road.parking_aisle).collect();
-        Self(lots.iter().map(|lot| stalls(lot, &aisles)).collect())
+        let through: Vec<&RoadLine> = roads.iter().filter(|road| is_through(road)).collect();
+        // улицы с габаритами: на площадку идут только те, что рядом с ней
+        let streets: Vec<(&RoadLine, Vec2, Vec2)> = roads
+            .iter()
+            .filter(|road| road.class == RoadClass::Street && !road.bridge && !road.passage)
+            .map(|road| {
+                let (low, high) = ring_bounds(&road.points);
+                (road, low, high)
+            })
+            .collect();
+        // Соседние площадки дотянуты до одних и тех же дорог и в зазоре между
+        // собой **перекрываются** — оба контура честно считают его своим. Места
+        // же на нём ставит одна: площадки раскладываются от большой к малой, и
+        // место, наехавшее на уже стоящее чужое, снимается. Иначе машины двух
+        // раскладок стоят друг на друге под разными углами (у ТРЦ «Макси» —
+        // северо-западная стоянка и два кармана вдоль её проезда).
+        let mut order: Vec<usize> = (0..lots.len()).collect();
+        order.sort_by(|a, b| {
+            let area = |index: &usize| signed_ring_area(&lots[*index].outer).abs();
+            area(b).total_cmp(&area(a))
+        });
+        let mut taken = Placed::default();
+        let mut layout: Vec<Vec<Stall>> = lots.iter().map(|_| Vec::new()).collect();
+        for index in order {
+            let lot = &lots[index];
+            let (lot_low, lot_high) = ring_bounds(&lot.outer);
+            let reach = Vec2::splat(AISLE);
+            let ground = is_ground(lot);
+            // с дороги за бордюром на место не заехать
+            let drives: Vec<&RoadLine> = streets
+                .iter()
+                .filter(|(road, low, high)| {
+                    low.cmple(lot_high + reach).all()
+                        && high.cmpge(lot_low - reach).all()
+                        && !(ground && is_through(road))
+                })
+                .map(|(road, _, _)| *road)
+                .collect();
+            let through: &[&RoadLine] = if ground { &through } else { &[] };
+            let mut found = stalls_beside(lot, &aisles, through, &drives);
+            found.retain(|stall| taken.push(*stall));
+            layout[index] = found;
+        }
+        Self(layout)
     }
 }
 
@@ -169,12 +255,169 @@ impl ParkingLayout {
 /// Раскладка выдумывается не только там, где проездов нет вовсе: пустой ответ
 /// [`aisle_rows`] — это и «полос меньше двух», и «ни одно место не прошло
 /// проверок», — и тогда ряды идут по стороне контура, а не по проездам.
+#[cfg(test)]
 pub fn stalls(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
-    let rows = aisle_rows(area, aisles);
+    stalls_beside(area, aisles, &[], &[])
+}
+
+/// То же, но с дорогами вокруг. Места, на которые легла бы дорога из `through`
+/// вместе со своим бордюром, не ставятся: дорога сквозь стоянку режет её ряды.
+/// А полотно улицы из `drives` — асфальт, с которого на место заезжают, наравне
+/// с асфальтом самой площадки.
+pub fn stalls_beside(
+    area: &PolyArea,
+    aisles: &[&RoadLine],
+    through: &[&RoadLine],
+    drives: &[&RoadLine],
+) -> Vec<Stall> {
+    let roads = Surroundings::near(area, through, drives);
+    let outline = Outline::of(area);
+    let rows = aisle_rows(&outline, aisles, &roads);
     if rows.is_empty() {
-        generated_rows(area)
+        generated_rows(&outline, &roads)
     } else {
         rows
+    }
+}
+
+/// Высота полосы индекса рёбер, м, — порядка места: проба смотрит рёбра одной
+/// полосы, и у площадки в тысячу вершин их там единицы.
+const OUTLINE_BAND: f32 = 4.0;
+
+/// Контур площадки с рёбрами, разложенными по горизонтальным полосам, — чтобы
+/// вопрос «внутри ли точка» не обходил всё кольцо.
+///
+/// Раскладка задаёт его десятки тысяч раз на площадку (четыре угла и две пробы
+/// перед носом на каждое место-кандидат), а контур стоянки, дотянутой до дорог,
+/// — сотни вершин на скруглениях: у ТРЦ «Макси» 1220, и обход всего кольца на
+/// каждую пробу стоил 87 мс на одну эту площадку. Ответ тот же, что у
+/// `point_in_area`: чётность пересечений луча по всем кольцам разом (дырка
+/// лежит внутри внешнего кольца, и её пересечения чётность гасят).
+struct Outline<'a> {
+    area: &'a PolyArea,
+    low: f32,
+    bands: Vec<Vec<(Vec2, Vec2)>>,
+}
+
+impl<'a> Outline<'a> {
+    fn of(area: &'a PolyArea) -> Self {
+        let (low, high) = ring_bounds(&area.outer);
+        let count = ((high.y - low.y) / OUTLINE_BAND).floor().max(0.0) as usize + 1;
+        let mut bands: Vec<Vec<(Vec2, Vec2)>> = vec![Vec::new(); count];
+        for ring in std::iter::once(&area.outer).chain(&area.holes) {
+            for index in 0..ring.len() {
+                let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+                let band = |y: f32| {
+                    (((y - low.y) / OUTLINE_BAND).floor().max(0.0) as usize).min(count - 1)
+                };
+                for slot in &mut bands[band(a.y.min(b.y))..=band(a.y.max(b.y))] {
+                    slot.push((a, b));
+                }
+            }
+        }
+        Self {
+            area,
+            low: low.y,
+            bands,
+        }
+    }
+
+    fn contains(&self, point: Vec2) -> bool {
+        let band = (point.y - self.low) / OUTLINE_BAND;
+        if band < 0.0 {
+            return false;
+        }
+        let Some(edges) = self.bands.get(band as usize) else {
+            return false;
+        };
+        let mut inside = false;
+        for (a, b) in edges {
+            if (a.y > point.y) != (b.y > point.y)
+                && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
+            {
+                inside = !inside;
+            }
+        }
+        inside
+    }
+}
+
+/// Бордюр дороги, идущей сквозь стоянку, с одной стороны, м, — когда у неё нет
+/// своего тротуара (проезд у́же `STREET_MIN_WIDTH`).
+const LOT_KERB: f32 = 1.2;
+/// Сколько асфальта остаётся между бордюром сквозной дороги и местом, м.
+const THROUGH_CLEARANCE: f32 = 0.5;
+
+/// Ширина бордюра, которым дорога сквозь стоянку отделена от её асфальта:
+/// тротуар улицы, а у проезда — [`LOT_KERB`].
+pub fn kerb_width(road: &RoadLine) -> f32 {
+    sidewalk_width(road.width).unwrap_or(LOT_KERB)
+}
+
+/// Дороги вокруг площадки — звеньями `(от, до, расстояние от оси)`.
+#[derive(Default)]
+struct Surroundings {
+    /// Дороги сквозь площадку: ближе этого расстояния к оси место не встаёт.
+    through: Vec<(Vec2, Vec2, f32)>,
+    /// Полотна улиц у площадки: в пределах этого расстояния от оси — асфальт.
+    drives: Vec<(Vec2, Vec2, f32)>,
+}
+
+impl Surroundings {
+    fn near(area: &PolyArea, through: &[&RoadLine], drives: &[&RoadLine]) -> Self {
+        let (low, high) = ring_bounds(&area.outer);
+        let links = |roads: &[&RoadLine], reach: fn(&RoadLine) -> f32| {
+            let mut links = Vec::new();
+            for road in roads {
+                let reach = reach(road);
+                for pair in road.points.windows(2) {
+                    let (from, to) = (pair[0], pair[1]);
+                    let outside = from.max(to).cmplt(low - reach - AISLE).any()
+                        || from.min(to).cmpgt(high + reach + AISLE).any();
+                    if !outside {
+                        links.push((from, to, reach));
+                    }
+                }
+            }
+            links
+        };
+        Self {
+            through: links(through, |road| {
+                road.width / 2.0 + kerb_width(road) + THROUGH_CLEARANCE
+            }),
+            drives: links(drives, |road| road.width / 2.0),
+        }
+    }
+
+    /// Лежит ли точка на полотне улицы.
+    fn paved(&self, point: Vec2) -> bool {
+        self.drives
+            .iter()
+            .any(|(from, to, reach)| distance_to_segment(point, *from, *to) <= *reach)
+    }
+
+    /// Задевает ли место полотно или бордюр. Углов и центра хватает: полоса
+    /// запрета (от 3.7 м в сторону от оси) шире полудиагонали места (2.9 м),
+    /// так что ось, прошедшая сквозь место, ловится его центром.
+    fn cover(&self, at: Vec2, along: Vec2, depth: f32) -> bool {
+        if self.through.is_empty() {
+            return false;
+        }
+        let across = Vec2::new(-along.y, along.x);
+        let half_depth = along * (depth / 2.0);
+        let half_width = across * (STALL_WIDTH / 2.0);
+        let probes = [
+            at,
+            at - half_width - half_depth,
+            at + half_width - half_depth,
+            at + half_width + half_depth,
+            at - half_width + half_depth,
+        ];
+        self.through.iter().any(|(from, to, reach)| {
+            probes
+                .iter()
+                .any(|probe| distance_to_segment(*probe, *from, *to) < *reach)
+        })
     }
 }
 
@@ -191,7 +434,8 @@ pub fn stalls(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
 /// проезд. Так не паркуют: один ряд бывает только с краю. Карман же делится по
 /// факту — два ряда спинами по его середине, остаток обеим сторонам под
 /// проезд, — и 14.8 м читаются как ряд, ряд и 4.4 м проезда между ними.
-fn aisle_rows(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
+fn aisle_rows(outline: &Outline, aisles: &[&RoadLine], through: &Surroundings) -> Vec<Stall> {
+    let area = outline.area;
     let (lot_low, lot_high) = ring_bounds(&area.outer);
     let mut segments: Vec<(Vec2, Vec2)> = Vec::new();
     for aisle in aisles {
@@ -214,47 +458,97 @@ fn aisle_rows(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
             }
         }
     }
-    let Some(main) = main_of(&segments) else {
-        return Vec::new();
-    };
-    let across = Vec2::new(-main.y, main.x);
-    let (low, high) = axis_bounds(&area.outer, main, across);
-    let rows = rows_of(&segments, main);
-    let lanes = lanes_of(&rows, across, (low.y, high.y));
-    if lanes.len() < 2 {
-        return Vec::new();
-    }
-    let drives = cross_drives_of(&rows, main, across);
-
-    // продольная сетка одна на всю площадку: тогда места соседних рядов стоят
-    // в одну линию, как на снимке, а не вразнобой на полместа. Считается она
-    // **от контура, а не от проездов**: проезд в OSM обрывается, не доходя до
-    // края площадки, и ряд, обрезанный по нему, оставлял бы вдоль одной
-    // стороны полосу голого асфальта, а вдоль другой ничего
-    let frame = Frame {
-        area,
-        main,
-        across,
-        span: (low.x, high.x),
-        drives,
-    };
+    let fields = fields_of(segments);
+    let runs: Vec<(Vec2, Vec2, usize)> = fields
+        .iter()
+        .enumerate()
+        .flat_map(|(index, field)| field.rows.iter().map(move |(from, to)| (*from, *to, index)))
+        .collect();
 
     let mut placed = Placed::default();
-    for pair in lanes.windows(2) {
-        let gap = pair[1] - pair[0];
-        let centre = pair[0].midpoint(pair[1]);
-        // глубину места задаёт карман: сперва проезд, остальное ряду
-        let depth = ((gap - AISLE) / 2.0).clamp(STALL_DEPTH_MIN, STALL_DEPTH);
-        if gap >= 2.0 * depth + PAIR_AISLE {
-            frame.push_row(&mut placed, centre - depth / 2.0, -1.0, depth);
-            frame.push_row(&mut placed, centre + depth / 2.0, 1.0, depth);
-        } else if gap >= STALL_DEPTH + MIN_AISLE {
-            // на пару не хватило — ряд по середине кармана, проезд по обе
-            // стороны от него
-            frame.push_row(&mut placed, centre, -1.0, STALL_DEPTH);
+    for (index, field) in fields.iter().enumerate() {
+        let (main, rows) = (field.main, &field.rows);
+        let across = Vec2::new(-main.y, main.x);
+        let (low, high) = axis_bounds(&area.outer, main, across);
+        let lanes = lanes_of(rows, across, (low.y, high.y));
+        if lanes.len() < 2 {
+            continue;
+        }
+        // продольная сетка одна на всё поле: тогда места соседних рядов стоят
+        // в одну линию, как на снимке, а не вразнобой на полместа. Считается
+        // она **от контура, а не от проездов**: проезд в OSM обрывается, не
+        // доходя до края площадки, и ряд, обрезанный по нему, оставлял бы вдоль
+        // одной стороны полосу голого асфальта, а вдоль другой ничего
+        let frame = Frame {
+            area: outline,
+            main,
+            across,
+            span: (low.x, high.x),
+            drives: cross_drives_of(rows, main, across),
+            through,
+            // у единственного поля спрашивать не у кого: вся площадка его
+            territory: (fields.len() > 1).then_some((runs.as_slice(), index)),
+        };
+        for pair in lanes.windows(2) {
+            let gap = pair[1] - pair[0];
+            let centre = pair[0].midpoint(pair[1]);
+            // глубину места задаёт карман: сперва проезд, остальное ряду
+            let depth = ((gap - AISLE) / 2.0).clamp(STALL_DEPTH_MIN, STALL_DEPTH);
+            if gap >= 2.0 * depth + PAIR_AISLE {
+                frame.push_row(&mut placed, centre - depth / 2.0, -1.0, depth);
+                frame.push_row(&mut placed, centre + depth / 2.0, 1.0, depth);
+            } else if gap >= STALL_DEPTH + MIN_AISLE {
+                // на пару не хватило — ряд по середине кармана, проезд по обе
+                // стороны от него
+                frame.push_row(&mut placed, centre, -1.0, STALL_DEPTH);
+            }
         }
     }
     placed.stalls
+}
+
+/// Сколько разных полос обязано быть у **второго** поля проездов, чтобы оно
+/// считалось полем. Отвороты к соседнему проезду у больничной стоянки лежат
+/// цепочкой на одной линии — это одна «полоса», и рядов по ней быть не должно;
+/// у ТРЦ «Макси» восточное поле — шесть параллельных проездов под 40° к
+/// главным.
+const FIELD_MIN_LANES: usize = 3;
+
+/// Поле проездов: общее направление и ходы, что его держатся.
+struct Field {
+    main: Vec2,
+    rows: Vec<(Vec2, Vec2)>,
+}
+
+/// Поля проездов площадки — по убыванию длины: главное и те, чьи проезды идут
+/// под своим углом.
+///
+/// Большая стоянка бывает размечена не одной сеткой: у ТРЦ «Макси» сорок
+/// четыре проезда идут под 102–105°, а шесть в восточном крыле — под 59–61°,
+/// вдоль своей кромки. Одно направление на всю площадку расчерчивало это крыло
+/// рядами главного поля — поперёк собственных проездов крыла, и на снимке там
+/// штриховка под углом к тому, как стоят машины. Поле отбирается тем же
+/// правилом, что и главное направление ([`main_of`] по ещё не разобранным
+/// звеньям), а **чья земля** — решает ближайший ход ([`Frame::territory`]).
+fn fields_of(mut segments: Vec<(Vec2, Vec2)>) -> Vec<Field> {
+    let spread = AISLE_SPREAD.to_radians().cos();
+    let mut fields: Vec<Field> = Vec::new();
+    while let Some(main) = main_of(&segments) {
+        let rows = rows_of(&segments, main);
+        if rows.is_empty() {
+            break;
+        }
+        let across = Vec2::new(-main.y, main.x);
+        if fields.is_empty() || distinct_lanes(&rows, across).len() >= FIELD_MIN_LANES {
+            fields.push(Field { main, rows });
+        }
+        segments.retain(|(from, to)| {
+            (*to - *from)
+                .try_normalize()
+                .is_some_and(|step| step.dot(main).abs() < spread)
+        });
+    }
+    fields
 }
 
 /// Проезды как смещения поперёк площадки, по порядку и **продолженные до её
@@ -273,19 +567,7 @@ fn aisle_rows(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
 /// голого асфальта, а вдоль двух других мест не было вовсе — поля выходили
 /// разными, чего у настоящей стоянки не бывает.
 fn lanes_of(rows: &[(Vec2, Vec2)], across: Vec2, bounds: (f32, f32)) -> Vec<f32> {
-    let mut lanes: Vec<f32> = rows
-        .iter()
-        .map(|(from, to)| across.dot(*from).midpoint(across.dot(*to)))
-        .collect();
-    lanes.sort_by(f32::total_cmp);
-
-    let mut merged: Vec<f32> = Vec::new();
-    for lane in lanes {
-        match merged.last() {
-            Some(last) if lane - last < LANE_MERGE => {}
-            _ => merged.push(lane),
-        }
-    }
+    let mut merged = distinct_lanes(rows, across);
     let (Some(first), Some(last)) = (merged.first().copied(), merged.last().copied()) else {
         return merged;
     };
@@ -309,10 +591,29 @@ fn lanes_of(rows: &[(Vec2, Vec2)], across: Vec2, bounds: (f32, f32)) -> Vec<f32>
     merged
 }
 
+/// Полосы самих проездов, по порядку поперёк площадки: ближе [`LANE_MERGE`]
+/// друг к другу — одна полоса.
+fn distinct_lanes(rows: &[(Vec2, Vec2)], across: Vec2) -> Vec<f32> {
+    let mut lanes: Vec<f32> = rows
+        .iter()
+        .map(|(from, to)| across.dot(*from).midpoint(across.dot(*to)))
+        .collect();
+    lanes.sort_by(f32::total_cmp);
+
+    let mut merged: Vec<f32> = Vec::new();
+    for lane in lanes {
+        match merged.last() {
+            Some(last) if lane - last < LANE_MERGE => {}
+            _ => merged.push(lane),
+        }
+    }
+    merged
+}
+
 /// Оси площадки и общая продольная сетка — всё, что нужно, чтобы поставить ряд
 /// на заданной глубине.
 struct Frame<'a> {
-    area: &'a PolyArea,
+    area: &'a Outline<'a>,
     main: Vec2,
     across: Vec2,
     /// Отрезок вдоль площадки, на котором стоят ряды: от него же отсчитывается
@@ -321,9 +622,27 @@ struct Frame<'a> {
     /// Поперечные проезды, прочитанные из OSM ([`cross_drives_of`]): под
     /// каждым ряд рвётся, оставляя полосу [`AISLE`].
     drives: Vec<f32>,
+    /// Дороги сквозь площадку: под ними и их бордюром мест нет.
+    through: &'a Surroundings,
+    /// Ходы проездов **всех** полей площадки с номером поля и номер своего:
+    /// место встаёт, только если ближайший к нему ход — своего поля. Сетка
+    /// полос продолжается до краёв контура, то есть и на землю соседнего поля,
+    /// и без этого два поля расчерчивали бы друг друга.
+    territory: Option<(&'a [(Vec2, Vec2, usize)], usize)>,
 }
 
 impl Frame<'_> {
+    /// Своя ли это земля — см. [`Frame::territory`].
+    fn owns(&self, at: Vec2) -> bool {
+        let Some((runs, own)) = self.territory else {
+            return true;
+        };
+        runs.iter()
+            .map(|(from, to, field)| (distance_to_segment(at, *from, *to), *field))
+            .min_by(|left, right| left.0.total_cmp(&right.0))
+            .is_none_or(|(_, field)| field == own)
+    }
+
     /// Ряд, середина которого стоит на `band` поперёк площадки, носом в `nose`
     /// (±1 вдоль `across`), местами глубиной `depth`, во всю длину площадки
     /// ([`Frame::span`]).
@@ -349,8 +668,10 @@ impl Frame<'_> {
                 .iter()
                 .any(|drive| (place - drive).abs() < (AISLE + STALL_WIDTH) / 2.0);
             if clear
+                && self.owns(at)
+                && !self.through.cover(at, along, depth)
                 && fits_with(self.area, at, self.main, self.across, depth, EDGE_MARGIN)
-                && reachable(self.area, at, along, depth)
+                && reachable(self.area, self.through, at, along, depth)
             {
                 run.push(Stall { at, along, depth });
             } else {
@@ -544,10 +865,14 @@ fn main_direction(segments: &[(Vec2, Vec2)]) -> Option<Vec2> {
 }
 
 /// Выдуманная раскладка: ряды вдоль самой длинной стороны контура.
-fn generated_rows(area: &PolyArea) -> Vec<Stall> {
+fn generated_rows(outline: &Outline, through: &Surroundings) -> Vec<Stall> {
+    let area = outline.area;
     let Some(along) = longest_side(&area.outer) else {
         return Vec::new();
     };
+    if let Some(depth) = pocket_depth(area) {
+        return pocket_rows(outline, through, depth);
+    }
     let across = Vec2::new(-along.y, along.x);
     let (low, high) = axis_bounds(&area.outer, along, across);
     let length = (high.x - low.x) - 2.0 * EDGE_MARGIN;
@@ -555,6 +880,7 @@ fn generated_rows(area: &PolyArea) -> Vec<Stall> {
     if length < STALL_WIDTH || width < STALL_DEPTH {
         return Vec::new();
     }
+    let depth = STALL_DEPTH;
     let origin = along * (low.x + EDGE_MARGIN) + across * (low.y + EDGE_MARGIN);
 
     let mut stalls = Vec::new();
@@ -564,9 +890,21 @@ fn generated_rows(area: &PolyArea) -> Vec<Stall> {
     // а улицы контур площадки не видит — то же исключение, что у
     // `every_row_has_an_aisle_to_drive_in_from`
     let single_row = bands.len() == 1;
-    let noses = row_noses(&bands, width);
+    let mut noses = row_noses(&bands, width);
+    if single_row {
+        // единственный ряд смотрит на улицу, с которой в него заезжают, — если
+        // она нашлась рядом с серединой площадки
+        let centre = origin + along * (length / 2.0) + across * (depth / 2.0);
+        let reach = depth / 2.0 + PAIR_AISLE / 2.0;
+        if let Some(sign) = [1.0f32, -1.0]
+            .into_iter()
+            .find(|sign| through.paved(centre + across * (sign * reach)))
+        {
+            noses = vec![sign];
+        }
+    }
     for (band, sign) in bands.iter().zip(&noses) {
-        let middle = band + STALL_DEPTH / 2.0;
+        let middle = band + depth / 2.0;
         // машина стоит поперёк ряда, носом в свой проезд
         let nose = across * *sign;
         let mut row: Vec<Stall> = Vec::new();
@@ -576,13 +914,14 @@ fn generated_rows(area: &PolyArea) -> Vec<Stall> {
         let mut run: Vec<Stall> = Vec::new();
         for place in &places {
             let at = origin + along * *place + across * middle;
-            if fits(area, at, along, across, STALL_DEPTH)
-                && (single_row || reachable(area, at, nose, STALL_DEPTH))
+            if !through.cover(at, nose, depth)
+                && fits(outline, at, along, across, depth)
+                && (single_row || reachable(outline, through, at, nose, depth))
             {
                 run.push(Stall {
                     at,
                     along: nose,
-                    depth: STALL_DEPTH,
+                    depth,
                 });
             } else {
                 if run.len() >= MIN_ROW_RUN {
@@ -603,6 +942,100 @@ fn generated_rows(area: &PolyArea) -> Vec<Stall> {
         stalls.append(&mut row);
     }
     stalls
+}
+
+/// Глубина места в **парковочном кармане** — полосе в один ряд вдоль улицы
+/// (Тула, way 702257069, 354 × 5.7 м); `None` — площадка не карман.
+///
+/// Карман узнаётся по толщине, `2 · площадь / периметр` (у длинной полосы это
+/// её ширина): места с [`EDGE_MARGIN`] по обе стороны в такую полосу не
+/// встаёт, а без мест это просто тёмная лента у тротуара. Карман размечают от
+/// бордюра до проезжей части, так что отступ тут — только зазор на счёт
+/// ([`STRIP_MARGIN`]), а место берёт глубину самой полосы.
+fn pocket_depth(area: &PolyArea) -> Option<f32> {
+    let ring = &area.outer;
+    let perimeter: f32 = (0..ring.len())
+        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
+        .sum();
+    let thickness = 2.0 * signed_ring_area(ring).abs() / perimeter;
+    let depth = thickness - 2.0 * STRIP_MARGIN;
+    (STALL_DEPTH_MIN..STALL_DEPTH + 2.0 * (EDGE_MARGIN - STRIP_MARGIN))
+        .contains(&depth)
+        .then_some(depth.min(STALL_DEPTH))
+}
+
+/// Ряд парковочного кармана — **вдоль сторон контура**, а не по сетке
+/// описанного прямоугольника: полоса в треть километра гнётся вместе с улицей,
+/// и на изломе в один градус прямая сетка уходит из неё на метры.
+///
+/// Стороны берутся от длинной к короткой; ряд вдоль противоположной стороны
+/// ложится поверх уже стоящего и снимается ([`Placed`]). Носом место стоит к
+/// улице, если она нашлась перед ним ([`Surroundings::paved`]), иначе — от
+/// своей стороны внутрь: с другой стороны кармана и подъезжают.
+fn pocket_rows(outline: &Outline, roads: &Surroundings, depth: f32) -> Vec<Stall> {
+    let ring = &outline.area.outer;
+    // наружу от заливки — по знаку площади кольца
+    let outward = if signed_ring_area(ring) > 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    let mut sides: Vec<(Vec2, Vec2)> = (0..ring.len())
+        .map(|index| (ring[index], ring[(index + 1) % ring.len()]))
+        .filter(|(from, to)| from.distance(*to) >= MIN_ROW_RUN as f32 * STALL_WIDTH)
+        .collect();
+    sides.sort_by(|a, b| b.0.distance(b.1).total_cmp(&a.0.distance(a.1)));
+
+    let mut placed = Placed::default();
+    for (from, to) in sides {
+        let Some(along) = (to - from).try_normalize() else {
+            continue;
+        };
+        let inward = along.perp() * -outward;
+        let count = (from.distance(to) / STALL_WIDTH).floor() as usize;
+        let start = (from.distance(to) - count as f32 * STALL_WIDTH) / 2.0;
+        // нос один на ряд: по середине стороны, а не по каждому месту, иначе у
+        // перекрёстка ряд встал бы вразнобой
+        let middle = from.midpoint(to) + inward * (STRIP_MARGIN + depth / 2.0);
+        let ahead = depth / 2.0 + PAIR_AISLE / 2.0;
+        let nose = if roads.paved(middle - inward * ahead) {
+            -inward
+        } else {
+            inward
+        };
+        let mut run: Vec<Stall> = Vec::new();
+        let mut row: Vec<Stall> = Vec::new();
+        for index in 0..count {
+            let place = start + (index as f32 + 0.5) * STALL_WIDTH;
+            let at = from + along * place + inward * (STRIP_MARGIN + depth / 2.0);
+            if !roads.cover(at, nose, depth) && fits(outline, at, along, inward, depth) {
+                run.push(Stall {
+                    at,
+                    along: nose,
+                    depth,
+                });
+            } else {
+                if run.len() >= MIN_ROW_RUN {
+                    row.append(&mut run);
+                }
+                run.clear();
+            }
+        }
+        if run.len() >= MIN_ROW_RUN {
+            row.append(&mut run);
+        }
+        // порядок — тот, которого ждёт разметка: вдоль `-perp(Stall::along)`
+        if row
+            .first()
+            .is_some_and(|stall| (-stall.along.perp()).dot(along) < 0.0)
+        {
+            row.reverse();
+        }
+        for stall in row {
+            placed.push(stall);
+        }
+    }
+    placed.stalls
 }
 
 /// Направление самой длинной стороны контура. Именно стороны, а не оси
@@ -642,7 +1075,8 @@ struct Placed {
 }
 
 impl Placed {
-    fn push(&mut self, stall: Stall) {
+    /// Поставить место, если оно не наезжает на уже стоящее; встало ли.
+    fn push(&mut self, stall: Stall) -> bool {
         let cell = Self::cell(stall.at);
         for dx in -1..=1 {
             for dy in -1..=1 {
@@ -653,12 +1087,13 @@ impl Placed {
                     .iter()
                     .any(|index| overlaps(&self.stalls[*index], &stall))
                 {
-                    return;
+                    return false;
                 }
             }
         }
         self.grid.entry(cell).or_default().push(self.stalls.len());
         self.stalls.push(stall);
+        true
     }
 
     fn cell(at: Vec2) -> (i32, i32) {
@@ -784,16 +1219,21 @@ fn row_places(length: f32) -> Vec<f32> {
 /// на снимке это одинокие полосы вдоль кромки, отчёт автора. Проба идёт по
 /// обеим передним кромкам, а не по одной осевой: у скошенного угла площадки
 /// середина ещё на асфальте, когда половина выезда уже за ним.
-fn reachable(area: &PolyArea, at: Vec2, along: Vec2, depth: f32) -> bool {
+///
+/// **Асфальт — это и полотно улицы у кромки** ([`Surroundings::paved`]), не
+/// только сама площадка: полоса мест вдоль проезда (Тула, way 619292977,
+/// 62 × 6 м) вся стоит носом в него, а в контур площадки проезд не входит.
+fn reachable(area: &Outline, roads: &Surroundings, at: Vec2, along: Vec2, depth: f32) -> bool {
     let across = Vec2::new(-along.y, along.x);
     let ahead = at + along * (depth / 2.0 + PAIR_AISLE / 2.0);
-    [-1.0f32, 1.0]
-        .iter()
-        .all(|side| point_in_area(ahead + across * (side * STALL_WIDTH / 2.0), area))
+    [-1.0f32, 1.0].iter().all(|side| {
+        let probe = ahead + across * (side * STALL_WIDTH / 2.0);
+        area.contains(probe) || roads.paved(probe)
+    })
 }
 
 /// Место целиком внутри контура — по четырём углам, как и коробки на кровле.
-fn fits(area: &PolyArea, at: Vec2, along: Vec2, across: Vec2, depth: f32) -> bool {
+fn fits(area: &Outline, at: Vec2, along: Vec2, across: Vec2, depth: f32) -> bool {
     fits_with(area, at, along, across, depth, 0.0)
 }
 
@@ -804,16 +1244,21 @@ fn fits(area: &PolyArea, at: Vec2, along: Vec2, across: Vec2, depth: f32) -> boo
 /// на картинке читается половинкой: машины на нём не видно, а полосы по его
 /// краям торчат из ряда в никуда — отчёт автора. Запас в [`EDGE_MARGIN`]
 /// убирает ровно такой торец, оставляя ряд на метр короче.
-fn fits_with(
-    area: &PolyArea,
+fn fits_with(area: &Outline, at: Vec2, along: Vec2, across: Vec2, depth: f32, margin: f32) -> bool {
+    fits_within(area, at, along, across, depth, (margin, margin))
+}
+
+/// То же, с запасом порознь: `margins.0` вдоль ряда, `margins.1` — по глубине.
+fn fits_within(
+    area: &Outline,
     at: Vec2,
     along: Vec2,
     across: Vec2,
     depth: f32,
-    margin: f32,
+    margins: (f32, f32),
 ) -> bool {
-    let half_width = along * (STALL_WIDTH / 2.0 + margin);
-    let half_depth = across * (depth / 2.0 + margin);
+    let half_width = along * (STALL_WIDTH / 2.0 + margins.0);
+    let half_depth = across * (depth / 2.0 + margins.1);
     [
         at - half_width - half_depth,
         at + half_width - half_depth,
@@ -821,7 +1266,7 @@ fn fits_with(
         at - half_width + half_depth,
     ]
     .iter()
-    .all(|corner| point_in_area(*corner, area))
+    .all(|corner| area.contains(*corner))
 }
 
 /// Разметка мест в меш: по полоске между соседними местами. Полоса, а не
@@ -841,6 +1286,7 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall
         return;
     }
     let color = LINE_COLOR.to_linear();
+    let area = &Outline::of(area);
     // места одного ряда идут по порядку, так что сосед справа — предыдущее
     // место списка; у первого места куска его там нет
     let mut previous: Option<Vec2> = None;
@@ -860,9 +1306,31 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall
         // есть. Мерить наличием асфальта в полуместе от грани было мало:
         // место и так стоит с запасом [`EDGE_MARGIN`], и проба попадала на
         // него же
+        // запас по глубине — тот, с каким стоит само место: в парковочном
+        // кармане ([`STRIP_MARGIN`]) его нет и у места, и требовать его от
+        // соседа значило бы оставить карман без единой полосы
+        let deep = if fits_within(
+            area,
+            stall.at,
+            across,
+            along,
+            stall.depth,
+            (0.0, EDGE_MARGIN),
+        ) {
+            EDGE_MARGIN
+        } else {
+            0.0
+        };
         let mut bar = |edge: Vec2, outward: Vec2| {
             let beyond = edge + outward * (STALL_WIDTH / 2.0);
-            if !fits_with(area, beyond, across, along, stall.depth, EDGE_MARGIN) {
+            if !fits_within(
+                area,
+                beyond,
+                across,
+                along,
+                stall.depth,
+                (EDGE_MARGIN, deep),
+            ) {
                 return;
             }
             builder.push_quad(
@@ -1386,5 +1854,159 @@ mod tests {
         for stall in stalls(&ell, &[]) {
             assert!(point_in_area(stall.at, &ell), "{:?}", stall.at);
         }
+    }
+
+    /// Дорога сквозь стоянку режет ряды: ни одно место не задевает ни её
+    /// полотна, ни бордюра, а по обе стороны от неё места остаются.
+    #[test]
+    fn a_road_through_the_lot_cuts_the_rows() {
+        let lot = lot(rect(80.0, 120.0));
+        let through = RoadLine {
+            oneway: true,
+            ..fixture::street(vec![Vec2::new(-10.0, 40.0), Vec2::new(130.0, 40.0)], 5.0)
+        };
+        assert!(is_through(&through));
+        let stalls = stalls_beside(&lot, &[], &[&through], &[]);
+        let clear = through.width / 2.0 + kerb_width(&through);
+        assert!(stalls.iter().any(|stall| stall.at.y < 40.0 - clear));
+        assert!(stalls.iter().any(|stall| stall.at.y > 40.0 + clear));
+        for stall in &stalls {
+            let reach =
+                (stall.along.y.abs() * stall.depth + stall.along.x.abs() * STALL_WIDTH) / 2.0;
+            assert!(
+                (stall.at.y - 40.0).abs() - reach >= clear,
+                "место на дороге: {stall:?}"
+            );
+        }
+    }
+
+    /// Парковочный карман — полоса в один ряд: с отступами место в неё не
+    /// встаёт, и размечается она от кромки до кромки, носом к улице.
+    #[test]
+    fn a_pocket_along_a_street_gets_one_row_facing_it() {
+        let pocket = lot(rect(5.7, 60.0));
+        let street = fixture::street(vec![Vec2::new(-20.0, -4.0), Vec2::new(80.0, -4.0)], 8.0);
+        let stalls = stalls_beside(&pocket, &[], &[], &[&street]);
+        assert!(stalls.len() >= 20, "{}", stalls.len());
+        for stall in &stalls {
+            assert!((stall.at.y - 2.85).abs() < 0.3, "{stall:?}");
+            assert!(stall.along.y < -0.99, "носом не к улице: {stall:?}");
+        }
+        // и полосы между местами у него есть, хотя запаса до кромки нет
+        let mut builder = MeshBuilder::default();
+        push_markings(&mut builder, &pocket, &stalls);
+        assert!(!builder.is_empty());
+    }
+
+    /// Асфальт перед носом — это и полотно улицы у кромки: двор в два ряда, у
+    /// которого второй ряд выезжает прямо на проезд вдоль площадки.
+    #[test]
+    fn a_stall_facing_a_street_beside_the_lot_is_reachable() {
+        let outline = lot(rect(20.0, 40.0));
+        let outline = Outline::of(&outline);
+        let at = Vec2::new(20.0, 16.0);
+        let nose = Vec2::Y;
+        assert!(!reachable(
+            &outline,
+            &Surroundings::default(),
+            at,
+            nose,
+            STALL_DEPTH
+        ));
+        let street = fixture::street(vec![Vec2::new(-20.0, 22.5), Vec2::new(60.0, 22.5)], 5.0);
+        let roads = Surroundings::near(outline.area, &[], &[&street]);
+        assert!(reachable(&outline, &roads, at, nose, STALL_DEPTH));
+    }
+
+    /// Две площадки, дотянутые до одного проезда, перекрываются, а места на
+    /// общей земле ставит одна — иначе машины двух раскладок стоят друг на друге.
+    #[test]
+    fn overlapping_lots_do_not_share_stalls() {
+        let big = lot(rect(40.0, 60.0));
+        let small = lot(vec![
+            Vec2::new(30.0, 10.0),
+            Vec2::new(80.0, 25.0),
+            Vec2::new(75.0, 45.0),
+            Vec2::new(25.0, 30.0),
+        ]);
+        let layout = ParkingLayout::new(&[small, big], &[]);
+        assert!(!layout.0[0].is_empty() && !layout.0[1].is_empty());
+        for ours in &layout.0[0] {
+            for theirs in &layout.0[1] {
+                assert!(!overlaps(ours, theirs), "{ours:?} / {theirs:?}");
+            }
+        }
+    }
+
+    /// Индекс рёбер отвечает то же, что обход всего кольца, — и у дырки тоже.
+    #[test]
+    fn the_outline_index_agrees_with_the_full_ring() {
+        let area = PolyArea {
+            holes: vec![vec![
+                Vec2::new(4.0, 14.0),
+                Vec2::new(12.0, 14.0),
+                Vec2::new(12.0, 22.0),
+                Vec2::new(4.0, 22.0),
+            ]],
+            ..lot(vec![
+                Vec2::ZERO,
+                Vec2::new(40.0, 0.0),
+                Vec2::new(40.0, 12.0),
+                Vec2::new(18.0, 12.0),
+                Vec2::new(30.0, 33.0),
+                Vec2::new(0.0, 26.0),
+            ])
+        };
+        let outline = Outline::of(&area);
+        for x in -4..90 {
+            for y in -4..74 {
+                let point = Vec2::new(x as f32 * 0.5 + 0.13, y as f32 * 0.5 + 0.07);
+                assert_eq!(
+                    outline.contains(point),
+                    point_in_area(point, &area),
+                    "{point:?}"
+                );
+            }
+        }
+    }
+
+    /// Проезд между рядами — не дорога сквозь стоянку, и двусторонний
+    /// служебный проезд тоже: так у больших площадок нарисованы те же ряды.
+    #[test]
+    fn an_aisle_is_not_a_road_through_the_lot() {
+        let points = vec![Vec2::ZERO, Vec2::new(50.0, 0.0)];
+        assert!(!is_through(&fixture::parking_aisle(points.clone())));
+        assert!(!is_through(&fixture::street(points, 5.0)));
+    }
+
+    /// У площадки два поля проездов под разными углами, и каждое размечается
+    /// по своим: места рядом с проездами второго поля стоят поперёк **них**, а
+    /// не поперёк проездов главного.
+    #[test]
+    fn a_second_field_of_aisles_is_striped_along_its_own_aisles() {
+        let lot = lot(rect(100.0, 300.0));
+        let mut aisles: Vec<RoadLine> = (0..6)
+            .map(|index| {
+                let y = 10.0 + 16.0 * index as f32;
+                fixture::parking_aisle(vec![Vec2::new(5.0, y), Vec2::new(180.0, y)])
+            })
+            .collect();
+        aisles.extend((0..4).map(|index| {
+            let x = 215.0 + 17.0 * index as f32;
+            fixture::parking_aisle(vec![Vec2::new(x, 5.0), Vec2::new(x, 95.0)])
+        }));
+        let aisles: Vec<&RoadLine> = aisles.iter().collect();
+        let stalls = stalls(&lot, &aisles);
+        let (mut west, mut east) = (0, 0);
+        for stall in &stalls {
+            if stall.at.x < 170.0 {
+                assert!(stall.along.y.abs() > 0.99, "{stall:?}");
+                west += 1;
+            } else if stall.at.x > 225.0 {
+                assert!(stall.along.x.abs() > 0.99, "{stall:?}");
+                east += 1;
+            }
+        }
+        assert!(west > 100 && east > 40, "{west} / {east}");
     }
 }

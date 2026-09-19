@@ -603,14 +603,16 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Девять дорожных слоёв снизу вверх, ровно в том порядке, в каком они уходят
-/// в мир.
-const LAYERS: [&str; 9] = [
+/// Одиннадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир.
+const LAYERS: [&str; 11] = [
     "alley_casings",
     "alleys",
     "sidewalks",
     "road_casings",
     "roads",
+    "lot_sidewalks",
+    "lot_roads",
     "bridge_shadows",
     "bridge_casings",
     "bridges",
@@ -634,7 +636,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_nine_layers_bottom_up() {
+fn a_street_builds_eleven_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -659,9 +661,9 @@ fn only_the_bridge_shadow_is_blended() {
     for layer in &layers {
         let expected = match layer.name {
             "bridge_shadows" => MaterialSpec::Blend,
-            "sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
+            "sidewalks" | "lot_sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
-            "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
+            "roads" | "lot_roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
             _ => MaterialSpec::Flat,
         };
         assert_eq!(layer.material, expected, "{}", layer.name);
@@ -778,4 +780,78 @@ fn an_empty_map_still_describes_every_layer() {
     assert_eq!(layers.len(), LAYERS.len());
     assert!(layers.iter().all(|layer| layer.builder.is_empty()));
     assert_eq!(report.vertices, 0);
+}
+
+/// Большая стоянка с дорогой сквозь неё: `through` — односторонняя, уходит за
+/// оба края площадки; проезд ряда лежит внутри целиком.
+fn ground_with_roads(lot_side: f32) -> MapData {
+    let mut map = MapData::default();
+    map.parking.push(fixture::area(
+        AreaKind::Parking,
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(100.0 + lot_side, 100.0),
+            Vec2::new(100.0 + lot_side, 100.0 + lot_side),
+            Vec2::new(100.0, 100.0 + lot_side),
+        ],
+    ));
+    let middle = 100.0 + lot_side / 2.0;
+    map.roads.push(RoadLine {
+        oneway: true,
+        ..fixture::street(
+            vec![Vec2::new(0.0, middle), Vec2::new(200.0 + lot_side, middle)],
+            5.0,
+        )
+    });
+    map.roads.push(fixture::parking_aisle(vec![
+        Vec2::new(middle, 110.0),
+        Vec2::new(middle, 90.0 + lot_side),
+    ]));
+    map
+}
+
+fn extent_x(builder: &MeshBuilder) -> (f32, f32) {
+    builder
+        .positions_for_test()
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), at| {
+            (low.min(at[0]), high.max(at[0]))
+        })
+}
+
+#[test]
+fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
+    let (layers, _) = mesh_roads(&ground_with_roads(100.0), RoadStyle::default());
+
+    // бордюр — только у сквозной дороги и только в пределах площадки: у её
+    // кромки он обрезан встык, а не вылезает скруглённым торцом
+    let (low, high) = extent_x(&layer(&layers, "lot_sidewalks").builder);
+    assert!(
+        (low - 100.0).abs() < 0.1 && (high - 200.0).abs() < 0.1,
+        "{low}..{high}"
+    );
+    // асфальт поверх — и дороги, и проезда, который прорезает в бордюре устье
+    assert!(!layer(&layers, "lot_roads").builder.is_empty());
+    // сама улица в своём слое осталась целой: за площадкой её рисует он
+    let (low, high) = extent_x(&layer(&layers, "roads").builder);
+    assert!(low < 1.0 && high > 299.0, "{low}..{high}");
+}
+
+#[test]
+fn a_small_lot_still_hides_every_road_on_it() {
+    // 60 × 60 — двор: его асфальт и есть проезд, поверх него ничего не кладётся
+    let (layers, _) = mesh_roads(&ground_with_roads(60.0), RoadStyle::default());
+    assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
+    assert!(layer(&layers, "lot_roads").builder.is_empty());
+}
+
+#[test]
+fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
+    let style = RoadStyle {
+        sidewalks: false,
+        ..RoadStyle::default()
+    };
+    let (layers, _) = mesh_roads(&ground_with_roads(100.0), style);
+    assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
+    assert!(!layer(&layers, "lot_roads").builder.is_empty());
 }

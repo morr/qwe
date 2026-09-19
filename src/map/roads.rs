@@ -68,8 +68,8 @@ use crate::map::surface::{
 use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_ROAD,
-    Z_ROAD_CASING, Z_SIDEWALK,
+    Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_LOT_ROAD,
+    Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_CASING, Z_SIDEWALK,
 };
 
 /// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
@@ -835,6 +835,9 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // мост — цепочка ways, и тень считается по всей цепочке
     let bridges = Bridges::new(map);
     let mut wall_ribbons = MeshBuilder::default();
+    // куски улиц на больших стоянках — поверх их асфальта (`roads/lots.rs`)
+    let grounds = lots::Grounds::of(map);
+    let mut lot_layers = lots::LotLayers::new();
 
     let nodes = RoadNodes::new(roads);
     // Дороги так, как они рисуются: переезд через тротуар — асфальтом
@@ -968,6 +971,11 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             style.join,
             breaks,
         );
+        if road.class == RoadClass::Street && !road.passage {
+            for run in grounds.runs(&points) {
+                lot_layers.push(road, &run, &style);
+            }
+        }
     }
 
     push_bridge_shadows(&mut bridge_shadows, &shadow_bands);
@@ -1017,6 +1025,18 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             streets,
             Z_ROAD,
             "roads",
+            MaterialSpec::Surface(SurfaceKind::Street),
+        ),
+        (
+            lot_layers.sidewalks,
+            Z_LOT_SIDEWALK,
+            "lot_sidewalks",
+            MaterialSpec::Surface(SurfaceKind::Sidewalk),
+        ),
+        (
+            lot_layers.roads,
+            Z_LOT_ROAD,
+            "lot_roads",
             MaterialSpec::Surface(SurfaceKind::Street),
         ),
         (
@@ -1411,6 +1431,7 @@ fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -
 pub(super) mod junctions;
 
 mod corners;
+mod lots;
 /// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде
 /// у брошенного торца — тот же вопрос «висячий ли он», что у стежка, и второго
 /// ответа на него быть не должно.
