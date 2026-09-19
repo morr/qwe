@@ -1522,7 +1522,9 @@ impl<'a> Untouched<'a> {
             .collect();
         let mut lines = Grid::new(SIDEWALK_CELL);
         for (index, (from, to)) in links.iter().enumerate() {
-            lines.insert_segment(*from, *to, KEEP_ON_FENCE, index);
+            // запрос идёт по клетке начала сдвига, а сам сдвиг тянется на
+            // весь предел, поэтому забор виден из клеток на таком же удалении
+            lines.insert_segment(*from, *to, PARKING_GAP_MAX, index);
         }
         Self {
             areas,
@@ -1548,17 +1550,40 @@ impl<'a> Untouched<'a> {
         through_area || self.leaves_a_fence(from, to)
     }
 
-    /// Стояла ли вершина на заборе и сходит ли она с него. Про «пересечь
-    /// забор» спрашивать бесполезно: контур обнесённой стоянки лежит по
-    /// забору, и сдвиг наружу начинается **на** нём, то есть формально его не
-    /// пересекает.
+    /// Уходит ли сдвиг за забор — двумя вопросами, потому что одного мало.
+    ///
+    /// **Вершина, стоящая на заборе, с него не сходит.** Про «пересечь» её
+    /// спрашивать бесполезно: контур обнесённой стоянки лежит по забору, и
+    /// сдвиг наружу начинается **на** нём, то есть формально его не пересекает.
+    ///
+    /// **Всякая другая вершина забор не пересекает.** Этого правила сперва не
+    /// было, и оно и есть дыра, которую автор нашёл на больничной стоянке:
+    /// вершина в паре метров от ограды тянется к дороге на десяток и
+    /// перешагивает её, хотя сама на заборе не стояла, — контур выходит за
+    /// ограду, а по нему размечаются места.
     fn leaves_a_fence(&self, from: Vec2, to: Vec2) -> bool {
         self.lines.at(from).iter().any(|index| {
             let (start, end) = self.fences[*index];
-            distance_to_segment(from, start, end) < KEEP_ON_FENCE
-                && distance_to_segment(to, start, end) >= KEEP_ON_FENCE
+            if distance_to_segment(from, start, end) < KEEP_ON_FENCE {
+                return distance_to_segment(to, start, end) >= KEEP_ON_FENCE;
+            }
+            segments_cross(from, to, start, end)
         })
     }
+}
+
+/// Пересекаются ли отрезки `a→b` и `c→d`, концы включительно. Параллельные и
+/// совпадающие пересечения не имеют — для забора это то, что нужно: сдвиг
+/// вдоль ограды ею не остановлен.
+fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+    let (r, s) = (b - a, d - c);
+    let denominator = r.perp_dot(s);
+    if denominator.abs() <= f32::EPSILON * r.length() * s.length() {
+        return false;
+    }
+    let t = (c - a).perp_dot(s) / denominator;
+    let u = (c - a).perp_dot(r) / denominator;
+    (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
 }
 
 /// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего

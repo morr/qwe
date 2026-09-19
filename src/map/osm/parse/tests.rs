@@ -2818,6 +2818,44 @@ fn a_fenced_lot_stays_behind_its_fence() {
     }
 }
 
+/// Вершина, стоящая **в стороне** от забора, тоже за него не уходит: она
+/// тянется к улице на десяток метров и перешагивает ограду по дороге.
+#[test]
+fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
+    let fence_y = CENTER.y - 16.0;
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, -20.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            8.0,
+        )],
+        parking: vec![lot],
+        // забор в четырёх метрах от края стоянки, между ней и улицей
+        fences: vec![fence(vec![
+            Vec2::new(CENTER.x - 60.0, fence_y),
+            Vec2::new(CENTER.x + 60.0, fence_y),
+        ])],
+        ..MapData::default()
+    };
+
+    assert_eq!(pull_landuse_to_roads(&mut map).lots, 0);
+    for vertex in &map.parking[0].outer {
+        assert!(vertex.y <= fence_y + 0.01, "вершина за забором: {vertex:?}");
+    }
+}
+
 /// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт
 /// его веру и его посев, а одинокая церковь без разметки — веру большинства
 /// города, и она же одна и попадает в счётчик угаданных.
