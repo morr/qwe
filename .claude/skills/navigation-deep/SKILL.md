@@ -109,6 +109,10 @@ world's knobs but the scale everything navigational is built in, and it has one 
   nominal 8–16 m ribbon covers the fence end to end — an overlap rule would have removed
   every fence along every street and kept only those deep inside the blocks
   (`a_street_along_the_fence_leaves_it_whole`). Bridges cut nothing: the span passes over.
+  **On the picture the same span does cut** — the fence layer lies above the bridges, so
+  `map::fences` drops what a deck covers (`footprint::BridgeDecks`, the osm-map skill).
+  That is the one deliberate difference between the drawn fence and the blocking one: the
+  fence under the bridge is still there for a pawn, it is simply hidden by the deck.
   Roads are found through a 32 m cell index of their segments (8.7 ms on Tula, of which
   ~1.4 is the loose-end pass and its `RoadNodes`).
   **The gap is cut out of the fence mask, never carved into the grid** — the bridge-curb

@@ -2120,6 +2120,47 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     pawn walks. A leftover under `MIN_FENCE_PIECE` 0.5 m at a gap edge is not drawn. The
     gaps are recomputed on every rebuild (`fence_gaps`, 8.7 ms on Tula) rather than
     cached: the layer rebuilds on a zoom crossing or a settled sun, not per frame.
+  - **And the stretch under a bridge is not drawn at all** (`footprint::BridgeDecks`,
+    the third argument of `fence_pieces`), which is the one place the drawn fence and the
+    blocking one part on purpose. `Z_FENCE` 2.75 lies above `Z_BRIDGE` 2.2, so a fence
+    crossing under a span was drawn **over** the deck — a dark thread with its own shadow
+    across the bridge, reported from a screenshot. The cut is the same idiom by which the
+    car layer keeps off a deck (`cars::BridgeDeck` — everything the z ladder puts above
+    the bridges yields to them), but the shape differs: a car is dropped whole, a fence is
+    cut at the edge the way a gap cuts it.
+    - **What covers is the drawn ribbon, not a crossing of centrelines.** `fence_gaps`
+      measures a road's opening as a disc at the crossing precisely so that a street
+      *along* a fence does not erase it; a deck is the opposite case — it hides exactly
+      what lies beneath, along or across. Hence a **capsule**: the polyline inflated by
+      `RoadLine::curb_reach` (deck + curb, the whole drawn width of a bridge), with round
+      ends. `segment_in_capsule` unions the band and the two end discs, which is a single
+      interval because a capsule is convex.
+    - **The shadow is cut by a boolean, not by the piece**, and cutting only the pieces is
+      what the first version did — reported again from the same bridge, with the line gone
+      and the grey band still running onto the deck. A shadow is an **area**: the sweep of
+      the piece that ends at the curb flows out from under its round cap **sideways**, the
+      whole length of the shadow (7.4 m at a 15° sun), and no interval on the fence's own
+      axis takes it away. So `push_shadows` subtracts `BridgeDecks::outlines` — the same
+      capsules as polygons — from the sweeps before the union (`i_overlay`, Difference /
+      NonZero). The polygon is **circumscribed** about the cap circle (`radius / cos(π/2n)`,
+      `CAP_SIDES` 8 per end): an inscribed one leaves a crescent of shadow at each end.
+    - **The cut is wider than the deck by a reserve** (`BridgeDecks::build`'s second
+      argument, `(width / 2).max(SHADOW_BLUR)`). What is cut is geometry — an axis, a
+      contour — while what is drawn is wider than it: the ribbon's round cap by half its
+      width, the shadow's soft band by `SHADOW_BLUR`. Cut flush with the curb and both land
+      on the deck. One number for the two, so the line and its shadow break off on the same
+      line — the drawn edge of the bridge.
+    - **Navigation is untouched**: `fence_gaps` still skips bridges (a span runs over the
+      fence, not through it), so the pawn's fence and the polygonal mesh's fence are the
+      same as before — only the picture is shorter. Pinned by
+      `a_bridge_hides_the_stretch_of_fence_it_covers` (no gap, and the pieces end on the
+      curb edge), `a_fence_running_under_a_deck_is_hidden_along_its_whole_length`, and —
+      the one that states the whole rule — `fences/tests.rs::
+      nothing_of_a_fence_is_drawn_on_a_bridge_deck`: **no vertex of the layer**, line,
+      shadow or penumbra, lies within `curb_reach` of a bridge centreline.
+    - Cost: a grid of bridge segments (`GAP_CELL` 32 m, hundreds of segments per city)
+      built once per rebuild beside the 8.7 ms `fence_gaps` already paid there, and one
+      cell lookup per fence link.
   - **The drawn width grows with the zoom** (`FENCE_LODS`: 0.25 → 0.5 → 1.3 m, then
     nothing past 0.9 m/px). A true 25 cm line is under a pixel from 0.3 m/px, which is
     exactly the scale a fence has to be visible at; aiming for ~1.5 screen px is the

@@ -21,11 +21,18 @@
 //! `Navmesh::open_sealed_fences`). Здесь в тех же проёмах нет ни линии, ни
 //! тени (`footprint::fence_pieces`): сплошной забор поперёк тропинки, по
 //! которой идут пешки, врал бы о проходимости.
+//!
+//! Единственное расхождение — **мост**: под пролётом ограда стоит и блокирует,
+//! но не рисуется (`footprint::BridgeDecks`). Слой заборов лежит выше слоя
+//! мостов, и нарисованная там нитка шла бы поверх настила.
 
 use bevy::prelude::*;
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::float::single::SingleFloatOverlay;
 
 use crate::map::SunOnMap;
-use crate::map::footprint::{fence_gaps, fence_pieces};
+use crate::map::footprint::{BridgeDecks, fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::shadow;
@@ -174,6 +181,8 @@ impl std::fmt::Display for FenceReport {
 /// калитка по умолчанию, нет ни линии, ни тени — это те же проёмы, через
 /// которые ходят пешки (`footprint::fence_gaps` / `fence_pieces`), и
 /// нарисованный сплошной забор поперёк тропинки врал бы о проходимости.
+/// И **без того, что накрыто мостом** (`footprint::BridgeDecks`): этот вырез
+/// только отрисовочный, проходимость под пролётом остаётся как была.
 ///
 /// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
 /// её зовёт и игра (через [`rebuild_fences`]), и тест. Ступень зума
@@ -198,17 +207,22 @@ pub fn mesh_fences(
         );
     }
     let gaps = fence_gaps(fences, roads);
+    // вырез под настилом шире самого настила ровно на то, на сколько
+    // нарисованное вылезает за вырезанную геометрию: круглый торец ленты — на
+    // полуширину, мягкая кайма тени — на [`SHADOW_BLUR`]. Одно число на оба,
+    // чтобы линия и её тень обрывались на одной черте
+    let decks = BridgeDecks::build(roads, (width / 2.0).max(SHADOW_BLUR));
     let pieces: Vec<(FenceKind, Vec<Vec2>)> = fences
         .iter()
         .zip(&gaps)
         .flat_map(|(fence, gaps)| {
-            fence_pieces(fence, gaps)
+            fence_pieces(fence, gaps, &decks)
                 .into_iter()
                 .map(|piece| (fence.kind, piece))
         })
         .collect();
     let mut builder = MeshBuilder::default();
-    push_shadows(&mut builder, &pieces, width);
+    push_shadows(&mut builder, &pieces, width, &decks);
     for (kind, points) in &pieces {
         let color = match kind {
             FenceKind::Fence => FENCE_COLOR,
@@ -262,7 +276,18 @@ const JOINT_SIDES: usize = 8;
 ///
 /// Кайма сужается к забору по правилу зданий и машин: доля ширины на вершине
 /// — проекция её направления на свет, у основания ноль.
-fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], width: f32) {
+///
+/// **Из свипов вычитаются настилы мостов** (`BridgeDecks::outlines`), и это не
+/// то же самое, что вырезанные из ограды куски. Кусок — это точки на осевой, а
+/// тень приходит на мост **сбоку**: свип забора, кончившегося у самой кромки,
+/// вытекает из-под его торца на полотно на всю длину тени (при солнце 15° —
+/// семь метров). Обрезать надо площадь, поэтому разность, а не интервал.
+fn push_shadows(
+    builder: &mut MeshBuilder,
+    pieces: &[(FenceKind, Vec<Vec2>)],
+    width: f32,
+    decks: &BridgeDecks,
+) {
     let half = width / 2.0;
     let joint: Vec<Vec2> = (0..JOINT_SIDES)
         .map(|side| {
@@ -300,6 +325,19 @@ fn push_shadows(builder: &mut MeshBuilder, pieces: &[(FenceKind, Vec<Vec2>)], wi
         }
     }
 
+    let contours = if decks.is_empty() {
+        contours
+    } else {
+        contours
+            .overlay(
+                &decks.outlines(),
+                OverlayRule::Difference,
+                FillRule::NonZero,
+            )
+            .into_iter()
+            .flatten()
+            .collect()
+    };
     shadow::push_union(builder, &contours, SHADOW_BLUR);
 }
 

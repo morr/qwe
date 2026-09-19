@@ -936,7 +936,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   impassable end to end, a fence has gaps — roads through it and default gates (see
   **Fence gap** and **Default gate** under Navigation) — and **a gap is drawn as a gap**:
   the line and the shadow are laid from `footprint::fence_pieces`, the fence minus the
-  same gap discs the navmesh opens. The parse branch **falls through**
+  same gap discs the navmesh opens — **and minus what a bridge deck covers**
+  (`footprint::BridgeDecks`, the drawn deck with its curb as a capsule), which is the one
+  place the drawn fence and the blocking one part: the layer lies above the bridges, so a
+  fence running under a span was drawn on top of it. The **shadow** is cut there too, and by
+  a boolean difference rather than by the piece — a sweep reaches the deck sideways, from
+  under the cap of the piece that ended at the curb — and both cuts keep a reserve for what
+  is drawn wider than what is cut (the cap, the soft band). The parse branch **falls through**
   (a way tagged both a barrier and something else must become both). The drawn width
   **grows as you zoom out** (`FENCE_LODS`, the tram's trick, aiming at ~1.5 screen px) and
   the layer disappears entirely past 0.9 m/px, where the grid of plots turns to dirt. The
@@ -1281,6 +1287,9 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   mapping), and a **default gate**. Never mere band overlap — a street running along a
   fence covers it end to end with its nominal width. A gap is cut **out of the fence
   mask**, never carved into the grid, so it cannot open the house or water it touches.
+  A bridge opens nothing — a span runs over a fence, not through it — and the stretch it
+  hides on the picture (`footprint::BridgeDecks`, see **Fences** under the OSM map) is a
+  drawing cut only.
 - **Default gate** (`FenceLine::gates`, `Navmesh::open_sealed_fences`) — a 3.5 m gate the
   load thread opens between fill and prune where a fence cut off a pocket that holds a door
   or is at least 400 m², on the fence side **nearest a carriageway**: OSM rarely maps

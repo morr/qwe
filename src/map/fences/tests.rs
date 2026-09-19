@@ -8,6 +8,7 @@
 use super::*;
 use crate::camera::{MAX_ZOOM, MIN_ZOOM};
 use crate::map::osm::fixture;
+use crate::map::osm::model::distance_to_segment;
 
 fn fence_across(from: Vec2, to: Vec2) -> FenceLine {
     fixture::fence(vec![from, to])
@@ -87,6 +88,34 @@ fn a_road_along_a_fence_leaves_it_whole() {
         report.pieces, 1,
         "дорога вдоль ограды не проходит сквозь неё и резать её не должна"
     );
+}
+
+/// Мост над оградой: на настиле не остаётся **ничего** — ни линии, ни тени.
+///
+/// Тень тут и есть суть. Линию снимает вырезанный кусок, а свип вытекает на
+/// полотно **сбоку**, из-под торца соседнего куска, и его снимает только
+/// булева разность: вырез считается по кромке нарисованного моста
+/// (`curb_reach` — настил с бордюром), и ни одна вершина слоя внутрь неё не
+/// попадает.
+#[test]
+fn nothing_of_a_fence_is_drawn_on_a_bridge_deck() {
+    let _sun = crate::map::default_sun();
+    let fence = fence_across(Vec2::new(100.0, 100.0), Vec2::new(200.0, 100.0));
+    let bridge = fixture::bridge(vec![Vec2::new(150.0, 40.0), Vec2::new(150.0, 160.0)], 16.0);
+
+    let (layers, report) = mesh_fences(
+        near_bucket(),
+        std::slice::from_ref(&fence),
+        std::slice::from_ref(&bridge),
+    );
+
+    assert_eq!(report.pieces, 2, "настил обязан разрезать ограду: {report}");
+    let reach = bridge.curb_reach();
+    for point in layers[0].builder.positions_for_test() {
+        let at = Vec2::new(point[0], point[1]);
+        let off = distance_to_segment(at, bridge.points[0], bridge.points[1]);
+        assert!(off >= reach - 0.01, "на настиле: {at}, {off} м от осевой");
+    }
 }
 
 #[test]
