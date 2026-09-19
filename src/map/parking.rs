@@ -5,11 +5,20 @@
 //! До сих пор `amenity=parking` не запрашивался вовсе, и все эти площадки
 //! были просто землёй.
 //!
-//! Места раскладываются **рядами вдоль длинной оси** площадки: ряд мест,
-//! проезд, ряд мест — так их и размечают. Каждое место проверяется на
-//! попадание в контур, поэтому Г-образная стоянка не получает мест поверх
-//! газона, а площадка, в которую не встаёт ни одно место, — вовсе никаких.
-//! Маленький двор места получает, но не разметку: см. [`MIN_AREA`].
+//! Места раскладываются **рядами вдоль длинной оси** площадки, и держится
+//! раскладка одного правила: **к каждому месту машина должна доехать**.
+//! Поперёк это значит `ряд — проезд — пара рядов спинами — проезд — пара
+//! рядов` ([`row_bands`]): пристенный ряд выезжает в свой проезд, каждая пара —
+//! в проезды по обе стороны от себя. Вдоль — что ряд не тянется через всю
+//! площадку: каждые [`ROW_BLOCK`] метров его рвёт поперечный проезд
+//! ([`row_places`]), и разрывы всех рядов стоят на одной линии, так что
+//! площадка читается кварталами мест с проездами между ними, а не сплошной
+//! штриховкой.
+//!
+//! Каждое место проверяется на попадание в контур, поэтому Г-образная стоянка
+//! не получает мест поверх газона, а площадка, в которую не встаёт ни одно
+//! место, — вовсе никаких. Маленький двор места получает, но не разметку:
+//! см. [`MIN_AREA`].
 //!
 //! Разметка и машины делят **один** список мест: раскладка считается один раз
 //! на загрузку мира в [`ParkingLayout`] (`map::spawn::spawn_map`), а краска
@@ -25,8 +34,15 @@ use crate::map::osm::model::{point_in_area, signed_ring_area};
 /// Место, м: легковая машина плюс просвет по обе стороны.
 const STALL_WIDTH: f32 = 2.6;
 const STALL_DEPTH: f32 = 5.2;
-/// Проезд между спинами двух рядов, м.
+/// Проезд между рядами, м, — и продольный, и поперечный: это одна и та же
+/// полоса асфальта, по которой машина подъезжает к месту.
 const AISLE: f32 = 6.0;
+/// Длина ряда между поперечными проездами, м. Ряд длиннее читается сплошной
+/// штриховкой: у большой стоянки (Тула, ТРЦ «Макси», 671 × 255 м) ряд без
+/// разрывов тянулся на сотни метров, тогда как на снимке такая площадка
+/// разбита проездами на кварталы мест. Пятьдесят метров — это 19 мест подряд,
+/// обычный квартал между проездами.
+const ROW_BLOCK: f32 = 50.0;
 /// Отступ разметки от края площадки, м.
 const EDGE_MARGIN: f32 = 1.2;
 /// Ширина полосы разметки, м, и её цвет — та же белая краска, что на улице.
@@ -78,30 +94,83 @@ pub fn stalls(area: &PolyArea) -> Vec<Stall> {
     }
     let origin = rect[0] + (along + across) * EDGE_MARGIN;
 
-    // ряд мест, проезд, ряд мест: шаг поперёк — две глубины плюс проезд, и
-    // в каждом таком шаге два ряда, спинами друг к другу
     let mut stalls = Vec::new();
-    let pitch = 2.0 * STALL_DEPTH + AISLE;
-    let mut row = 0.0;
-    while row + STALL_DEPTH <= width {
-        for side in [0.0, STALL_DEPTH] {
-            if row + side + STALL_DEPTH > width {
-                continue;
-            }
-            let depth = row + side + STALL_DEPTH / 2.0;
-            let mut place = STALL_WIDTH / 2.0;
-            while place + STALL_WIDTH / 2.0 <= length {
-                let at = origin + along * place + across * depth;
-                // машина стоит поперёк ряда, носом в проезд
-                if fits(area, at, along, across) {
-                    stalls.push(Stall { at, along: across });
-                }
-                place += STALL_WIDTH;
+    let places = row_places(length);
+    for band in row_bands(width) {
+        let depth = band + STALL_DEPTH / 2.0;
+        for place in &places {
+            let at = origin + along * *place + across * depth;
+            // машина стоит поперёк ряда, носом в проезд
+            if fits(area, at, along, across) {
+                stalls.push(Stall { at, along: across });
             }
         }
-        row += pitch;
     }
     stalls
+}
+
+/// Начала рядов поперёк площадки шириной `width` (уже без отступов от краёв):
+/// `ряд — проезд — пара рядов — проезд — пара рядов`.
+///
+/// Пристенный ряд один, а не пара, и это и есть правило «к месту можно
+/// подъехать». Парами с самого края (как было) первый ряд упирается спиной в
+/// пару, а носом — в край площадки: заехать в него неоткуда. Сдвиг на один ряд
+/// даёт каждому ряду проезд с одной из сторон: одиночному — тот, что идёт
+/// следом, паре — проезды по обе стороны от неё.
+///
+/// Ряд кладётся, только если влезает целиком; хвост уже площадки ряда остаётся
+/// просто асфальтом. **Вторым рядом пары площадка не кончается**: спина такого
+/// ряда — в соседнем ряду, а перед носом метр-другой до края, и заехать в него
+/// неоткуда, — поэтому он снимается, а его полоса остаётся частью проезда.
+/// Одиночный ряд у края — другое дело: к нему подъезжают с улицы, и площадка
+/// в одну полосу так и размечается.
+fn row_bands(width: f32) -> Vec<f32> {
+    let mut bands = Vec::new();
+    let mut depth = 0.0;
+    // первая группа у края — один ряд, дальше пары спинами
+    let mut rows = 1;
+    while depth + STALL_DEPTH <= width {
+        for _ in 0..rows {
+            if depth + STALL_DEPTH > width {
+                break;
+            }
+            bands.push(depth);
+            depth += STALL_DEPTH;
+        }
+        depth += AISLE;
+        rows = 2;
+    }
+    let tail = bands.last().is_some_and(|band| {
+        let before = bands.len() > 1 && band - bands[bands.len() - 2] - STALL_DEPTH < AISLE;
+        before && width - band - STALL_DEPTH < AISLE
+    });
+    if tail {
+        bands.pop();
+    }
+    bands
+}
+
+/// Центры мест вдоль ряда длиной `length` (уже без отступов от краёв):
+/// [`ROW_BLOCK`] метров мест, поперечный проезд, снова места.
+///
+/// Считается один раз на площадку и одинаково для всех её рядов — разрывы
+/// обязаны стоять на одной линии, иначе вместо проезда через всю стоянку
+/// получится россыпь пустых мест.
+fn row_places(length: f32) -> Vec<f32> {
+    let mut places = Vec::new();
+    let mut place = STALL_WIDTH / 2.0;
+    // сколько метров ряда уже уложено от последнего поперечного проезда
+    let mut block = 0.0;
+    while place + STALL_WIDTH / 2.0 <= length {
+        places.push(place);
+        place += STALL_WIDTH;
+        block += STALL_WIDTH;
+        if block >= ROW_BLOCK {
+            place += AISLE;
+            block = 0.0;
+        }
+    }
+    places
 }
 
 /// Место целиком внутри контура — по четырём углам, как и коробки на кровле.
@@ -120,28 +189,41 @@ fn fits(area: &PolyArea, at: Vec2, along: Vec2, across: Vec2) -> bool {
 
 /// Разметка мест в меш: по полоске между соседними местами. Полоса, а не
 /// прямоугольник места: расчерчивают именно границы.
+///
+/// Полоса кладётся слева от каждого места (у соседей они совпадают — это
+/// дешевле, чем искать соседа) плюс **закрывающая** справа там, где кусок ряда
+/// начинается: у поперечного проезда и у края контура ряд обязан быть
+/// закрыт, иначе крайнее место квартала выглядит распахнутым в проезд.
 pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall]) {
     if signed_ring_area(&area.outer).abs() < MIN_AREA {
         return;
     }
     let color = LINE_COLOR.to_linear();
+    // места одного ряда идут по порядку, так что сосед справа — предыдущее
+    // место списка; у первого места куска его там нет
+    let mut previous: Option<Vec2> = None;
     for stall in stalls {
         let along = stall.along;
         let across = Vec2::new(-along.y, along.x);
         let half_depth = along * (STALL_DEPTH / 2.0);
         let half_line = across * (LINE_WIDTH / 2.0);
-        // граница слева от места: две соседние границы совпадут, и это
-        // дешевле, чем искать соседа
-        let edge = stall.at - across * (STALL_WIDTH / 2.0);
-        builder.push_quad(
-            [
-                edge - half_depth - half_line,
-                edge + half_depth - half_line,
-                edge + half_depth + half_line,
-                edge - half_depth + half_line,
-            ],
-            color,
-        );
+        let mut bar = |edge: Vec2| {
+            builder.push_quad(
+                [
+                    edge - half_depth - half_line,
+                    edge + half_depth - half_line,
+                    edge + half_depth + half_line,
+                    edge - half_depth + half_line,
+                ],
+                color,
+            );
+        };
+        bar(stall.at - across * (STALL_WIDTH / 2.0));
+        let neighbour = stall.at + across * STALL_WIDTH;
+        if previous.is_none_or(|at| at.distance(neighbour) > LINE_WIDTH) {
+            bar(stall.at + across * (STALL_WIDTH / 2.0));
+        }
+        previous = Some(stall.at);
     }
 }
 
@@ -175,27 +257,72 @@ mod tests {
         }
     }
 
-    /// Шаг поперёк — пара рядов, проезд, пара рядов; на 40 × 20 из теста выше
-    /// ветка с проездом не исполняется ни разу, поэтому площадка здесь шире.
+    /// Поперёк: пристенный ряд, проезд, пара рядов спинами — и на 40 × 20 из
+    /// теста выше пара не влезает целиком, поэтому площадка здесь шире.
     #[test]
-    fn rows_pair_up_with_an_aisle_between_the_pairs() {
+    fn a_single_row_at_the_edge_then_pairs_behind_an_aisle() {
         let lot = lot(rect(30.0, 40.0));
-        let stalls = stalls(&lot);
-        // полосы по глубине (проекция центра на `Stall::along`): их четыре,
-        // и шаги между ними — 5.2, 5.2 + 6.0, 5.2
+        // полосы по глубине (проекция центра на `Stall::along`)
         let mut bands: Vec<f32> = Vec::new();
-        for stall in &stalls {
+        for stall in stalls(&lot) {
             let depth = stall.at.dot(stall.along);
             if !bands.iter().any(|band| (band - depth).abs() < 0.01) {
                 bands.push(depth);
             }
         }
         bands.sort_by(f32::total_cmp);
-        assert_eq!(bands.len(), 4, "{bands:?}");
+        assert_eq!(bands.len(), 3, "{bands:?}");
         let gaps: Vec<f32> = bands.windows(2).map(|pair| pair[1] - pair[0]).collect();
-        assert!((gaps[0] - STALL_DEPTH).abs() < 0.01, "{gaps:?}");
-        assert!((gaps[1] - (STALL_DEPTH + AISLE)).abs() < 0.01, "{gaps:?}");
-        assert!((gaps[2] - STALL_DEPTH).abs() < 0.01, "{gaps:?}");
+        assert!((gaps[0] - (STALL_DEPTH + AISLE)).abs() < 0.01, "{gaps:?}");
+        assert!((gaps[1] - STALL_DEPTH).abs() < 0.01, "{gaps:?}");
+    }
+
+    /// Правило раскладки: у каждого ряда с одной из сторон есть проезд шириной
+    /// [`AISLE`]. Исключение одно — площадка в один ряд: подъезжают к нему с
+    /// улицы, своего проезда у такой полосы нет и быть не может.
+    #[test]
+    fn every_row_has_an_aisle_to_drive_in_from() {
+        for width in [5.0, 6.0, 12.0, 17.0, 22.0, 28.0, 40.0, 61.5, 120.0] {
+            let bands = row_bands(width);
+            if bands.len() < 2 {
+                continue;
+            }
+            for (index, band) in bands.iter().enumerate() {
+                let before = index
+                    .checked_sub(1)
+                    .map_or(*band, |previous| band - bands[previous] - STALL_DEPTH);
+                let after = bands
+                    .get(index + 1)
+                    .map_or(width - band - STALL_DEPTH, |next| next - band - STALL_DEPTH);
+                assert!(
+                    before >= AISLE - 0.01 || after >= AISLE - 0.01,
+                    "width {width}, band {index} of {bands:?}: {before} / {after}"
+                );
+            }
+        }
+    }
+
+    /// Вдоль ряда: [`ROW_BLOCK`] метров мест, поперечный проезд, снова места.
+    #[test]
+    fn a_long_row_is_broken_by_cross_aisles() {
+        let places = row_places(200.0);
+        let gaps: Vec<f32> = places
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .filter(|gap| *gap > STALL_WIDTH + 0.01)
+            .collect();
+        assert_eq!(gaps.len(), 3, "{places:?}");
+        for gap in gaps {
+            assert!((gap - (STALL_WIDTH + AISLE)).abs() < 0.01);
+        }
+        // а короткий ряд не рвётся вовсе
+        let short = row_places(40.0);
+        assert!(
+            short
+                .windows(2)
+                .all(|pair| (pair[1] - pair[0] - STALL_WIDTH).abs() < 0.01),
+            "{short:?}"
+        );
     }
 
     #[test]
