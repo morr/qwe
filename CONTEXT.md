@@ -186,7 +186,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
     `oneway`, `roundabout` (`junction=roundabout|circular`, implies one-way) and
     `lanes: Option<u8>` (the tag, 1–8; the width default lives in `map/roads.rs`) — read
-    by the markings only.
+    by the markings only; `parking_aisle` (`service=parking_aisle`) — read by the stall
+    layout only, see **Parking lots** below.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -277,7 +278,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the limit. Two guards make the wider limit safe: `Untouched` — the shift may not cross a
   building of `KEEP_BUILDING_AREA` 100 m² or more, nor greenery or water (a smaller
   building is a booth standing *in* the lot, and going round it leaves a patch of ground
-  with the booth in the middle), and `untangled` — the pulled ring goes through
+  with the booth in the middle), **and a vertex standing on a fence does not step off it**
+  (`KEEP_ON_FENCE` 0.5 m — a fenced lot shares its vertices with the `barrier`, so
+  "crossing" it is the wrong question; Tula: 144 lot vertices of 2200 on 27 lots),
+  and `untangled` — the pulled ring goes through
   `i_overlay` NonZero, since points pulled independently can cross the ring over itself and
   earcut leaves an unfilled slash where they do.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
@@ -857,9 +861,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Parking lots** (`map/parking.rs`) — an `AreaKind::Parking` area is asphalt
   (`Z_PARKING` 2.001, **over every road ribbon and sidewalk**, under pitches and water)
   with its **stalls drawn on it** (`Z_PARKING_LINES` 2.002, a flat
-  material, no procedural texture on top of paint). `stalls(area)` lays them out in rows
-  along the **long axis of the area's `min_area_rect`**, under one law: **a car has to be
-  able to drive to every stall.** Across (`row_bands`) that is `row — aisle — pair of rows
+  material, no procedural texture on top of paint). `stalls(area, aisles)` lays them out
+  under one law: **a car has to be able to drive to every stall.** Where the lot is
+  driven is drawn in OSM — **`service=parking_aisle`** (`RoadLine::parking_aisle`), the
+  only thing the layout reads out of the road network. Then `aisle_rows` puts a row on
+  **either side of every aisle**, nose to it, segments taken longest first so a cross
+  aisle never lays its row over the main one (`Placed`, a grid of already-placed stalls
+  and a separating-axis test); no `ROW_BLOCK` there, OSM has already cut the lot into
+  blocks. Tula's mall lot carries 50 aisles, 44 along the long axis and 6 across, spaced
+  16–19 m — exactly two `STALL_DEPTH` rows plus an `AISLE`.
+  A lot with no aisle in it gets an **invented** layout (`generated_rows`) — rows along
+  the **longest side of the outline** (not the long axis of `min_area_rect`: on a lot
+  pulled to the road that axis swings off the side the lot reads by).
+  Across (`row_bands`) that is `row — aisle — pair of rows
   back to back — aisle — pair`: the row at the edge takes its aisle from behind, each pair
   has one on either side, and a pair's second row is dropped where the lot ends right
   behind it — its back is in the neighbouring row and its nose in the kerb. Along
@@ -869,6 +883,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2, `AISLE` 6.0, `EDGE_MARGIN` 1.2. The paint is a bar
   to the left of each stall (neighbours coincide) plus a **closing** one where a run
   begins — at a cross aisle and at the outline, or the block's edge stall reads as open.
+  That "left" makes the **order of the list load-bearing**: a row has to be emitted along
+  `-perp(Stall::along)`, which is why the far side of an aisle is laid out back to front.
   Every stall is kept only if its **four corners** are
   inside the outline, so an L-shaped lot gets none in the notch; a lot under `MIN_AREA`
   (120 m²) gets no markings at all — a yard for four cars is not striped, though its
@@ -877,8 +893,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   car would stand across its own line.
   The lot lying over the roads is what hides the OSM aisles, entries and footways
   running into it: its own outline clips every ribbon exactly, and the lot's asphalt
-  *is* the aisle. The stall layout knows nothing of roads — a road hidden under the lot
-  leaves no gap in the rows. **The lot's asphalt is the road's** — `PARKING_COLOR` *is*
+  *is* the aisle. A road hidden under the lot still leaves no gap in the rows — the
+  layout reads an aisle as a **direction**, never as a ribbon to keep clear. **The lot's asphalt is the road's** — `PARKING_COLOR` *is*
   `roads::ROAD_COLOR`, on the same `SurfaceKind::Street` material, so a lot lying over
   its street reads as one surface; a tone of its own drew a patch at every lot. For the
   same reason the lot has **no rim**, unlike the greenery, sand and pitches: a kerb band along its

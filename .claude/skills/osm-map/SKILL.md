@@ -728,6 +728,15 @@ be called alone:
       The 100 m² floor is the other half of the same report: a ticket booth standing *in*
       the lot (way 1435094568, 6 × 7 m) has no yard behind it, and going round it leaves a
       patch of bare ground with the booth in the middle.
+    - **A fence is in the same guard, but asked a different question.** It is a line, not
+      a ring, so there is no "behind" it — and a fenced lot's outline lies *along* the
+      `barrier`, sharing its nodes, so the shift starts **on** the fence and formally
+      never crosses it. The rule is therefore *a vertex standing on a fence
+      (`KEEP_ON_FENCE` 0.5 m) does not step off it*. Without it the hospital lot (way
+      344589378, fences 344589394 / 344589354 on its own vertices) spilled into the
+      Больничный сквер next door — the author's third report. The price is measured: in
+      Tula 144 lot vertices of 2200 (6.5 %) sit on a fence, on 27 lots, and those are
+      exactly the lots that honestly end at a fence.
     - **`PARKING_STEP` 3 m** (the block's is 8): between two pulled points the edge runs
       as a chord while the road bends, so at a corner the chord leaves a wedge of ground —
       metres of it at 8 m spacing on the embankment bend, centimetres at 3.
@@ -1911,15 +1920,37 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     lot, reported from screenshots (`cam 4301 2270`): the lot lies over the roads, so its
     outline crosses the drive's asphalt, and anything laid along it is a seam.
   - **The layout is computed once per world load** into `ParkingLayout` (a resource,
-    filled by `spawn_map` from `stalls(area)` per lot), and the paint and the cars both
-    read it — two independent layouts would put a car across its own line, and recomputing
-    it on every rebuild of the car layer was work the sun slider paid for by the frame.
-    Rows run along the
-    **long axis of `min_area_rect`**, the axis a real lot is striped along: `STALL_WIDTH`
-    2.6 × `STALL_DEPTH` 5.2 m, `AISLE` 6 m, `EDGE_MARGIN` 1.2 m in from the edge.
-  - **One law decides the layout: a car has to be able to drive to every stall**, and both
-    directions of it answer the same report — a lot striped wall to wall reads as hatching,
-    not as a place cars are parked in.
+    filled by `spawn_map` from `stalls(area, aisles)` per lot), and the paint and the cars
+    both read it — two independent layouts would put a car across its own line, and
+    recomputing it on every rebuild of the car layer was work the sun slider paid for by
+    the frame. `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2 m, `AISLE` 6 m, `EDGE_MARGIN` 1.2 m
+    in from the edge.
+  - **Which way the rows run is read out of OSM, not guessed** — `service=parking_aisle`
+    (`RoadLine::parking_aisle`, `tags::is_parking_aisle`), the only thing the layout takes
+    from the road network. `aisle_rows` lays a row on **either side of every aisle**, nose
+    to it, at `AISLE/2 + STALL_DEPTH/2` off the centreline — which is exactly the spacing
+    OSM draws: Tula's ТРЦ «Макси» lot carries **50** aisles, 44 along the long axis at
+    102–105° and 6 across at 59–61°, neighbours 16–19 m apart, i.e. two rows plus an
+    aisle. Consequences of taking them literally:
+    - **Segments are laid longest first**, and a stall is dropped if it hits one already
+      placed (`Placed` — a grid at `OVERLAP_CELL` and a separating-axis test with
+      `OVERLAP_SLACK` 5 cm of give, or the fp error between two neighbours touching
+      exactly would drop every second stall). That is what keeps the six cross aisles from
+      striping their rows over the forty-four main ones.
+    - **No `ROW_BLOCK` along an aisle-driven row** — OSM has already cut the lot into
+      blocks, and the row ends where the outline or a neighbour's stall ends it.
+    - **The strictest tag, not any `service`.** `driveway`, `alley` and `drive-through`
+      lead *to* a lot, not along its rows; taking them would turn the rows 90°.
+      Tula's v14 cache: 2846 `highway=service`, of which 209 `parking_aisle`, 99
+      `driveway`, 15 `alley`.
+  - **A lot with no aisle in it gets an invented layout** (`generated_rows`) — the
+    majority of them: yard patches. Rows run along the **longest side of the outline**,
+    not the long axis of `min_area_rect`: on a lot pulled to the road the outline is
+    ragged and the minimal rectangle turns on whichever tooth happens to be longest in
+    projection, so the stripes end up at an angle to the side the lot reads by.
+  - **One law decides that invented layout: a car has to be able to drive to every
+    stall**, and both directions of it answer the same report — a lot striped wall to wall
+    reads as hatching, not as a place cars are parked in.
     - **Across, `row_bands`: `row — aisle — pair — aisle — pair`.** The field starts with a
       *single* row at the edge and only then pairs rows back to back; each pair has an
       aisle on either side of it, and the edge row takes the one behind it. It used to
@@ -1951,6 +1982,11 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     whether the *previous* stall in the list stands one stall width away, since the stalls
     of a row are generated in order. Without it every block ended in a stall open to the
     drive, which is exactly what the cross aisles were added to stop looking like.
+    **"In order" is a contract on the list, not an observation**: a row has to be emitted
+    along `-perp(Stall::along)`. The invented layout satisfies it by construction; along
+    an aisle only the near side does, so `aisle_rows` walks the far side **back to
+    front**. Emitting it forwards is not a crash — it silently doubles every bar, two
+    coincident quads per stall.
   - **The lot lies over every road ribbon and sidewalk** (`Z_PARKING` above `Z_ROAD`,
     under the pitch and water). OSM runs aisles, entries and footways into and through
     a lot, and a light ribbon over the lot's asphalt cut the stall rows — reported from
