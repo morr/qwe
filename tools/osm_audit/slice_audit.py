@@ -32,7 +32,7 @@ import urllib.parse
 import urllib.request
 
 # settings.rs::MAP_SIZE / METERS_PER_DEG_LAT
-MAP_SIZE = (5600.0, 3700.0)
+MAP_SIZE = (7600.0, 5700.0)
 METERS_PER_DEG_LAT = 111_320.0
 BANDS = 10
 
@@ -71,7 +71,7 @@ class Frame:
     def __init__(self, heart_lat, heart_lon, edge, depth):
         self.edge = edge
         self.lon_scale = METERS_PER_DEG_LAT * math.cos(math.radians(heart_lat))
-        # ось глубины: north/south — вдоль y (3700 м), east/west — вдоль x
+        # ось глубины: north/south — вдоль y (5700 м), east/west — вдоль x
         self.along_y = edge in ("north", "south")
         extent = MAP_SIZE[1] if self.along_y else MAP_SIZE[0]
         shift = (depth - 0.5) * extent
