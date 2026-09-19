@@ -26,7 +26,7 @@ use super::Lean;
 use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::{is_fortress_tower, point_in_area, signed_ring_area};
+use crate::map::osm::model::{is_big_box, is_fortress_tower, point_in_area, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::Lcg;
 use crate::map::shadow;
@@ -67,6 +67,47 @@ const UNIT_AREA_PER: f32 = 500.0;
 const UNIT_MAX: usize = 6;
 const UNIT_SIZE: Vec2 = Vec2::new(1.8, 1.0);
 const UNIT_HEIGHT: f32 = 0.9;
+
+/// Зенитные фонари гипермаркета — **решётка**, а не лента: торговый зал в
+/// девять тысяч квадратов освещается сверху, и на каждом аэрофото кровля
+/// коробки размечена правильной сеткой светлых квадратов. Это и есть то, по
+/// чему гипермаркет узнают сверху раньше вывески.
+///
+/// Шаг — по колоннам каркаса: фонарь на ячейку сетки. Предел нужен не ради
+/// вида, а ради вершин: у ТРЦ «Макси» (52 тыс. м²) без него вышло бы под три
+/// сотни коробок в одном меше.
+const GRID_SKYLIGHT_SIDE: f32 = 2.8;
+const GRID_SKYLIGHT_PITCH: f32 = 13.0;
+const GRID_SKYLIGHT_HEIGHT: f32 = 0.6;
+/// Предел стоит не ради вида, а ради вершин, и взят он замером: фонарь это
+/// шесть четырёхугольников с тенью, то есть около двух десятков вершин, так
+/// что три сотни на здание — порядка семи тысяч, доли процента слоя зданий
+/// (790 тыс. на Туле), и крупноформатных домов в городе полтора десятка.
+/// При ста двадцати шаг на ТРЦ «Макси» растягивался до тридцати пяти метров, и
+/// решётка выходила заметно реже, чем на аэрофото.
+const GRID_SKYLIGHT_MAX: usize = 300;
+/// Сколько раз растягивать шаг, подгоняя решётку под предел ([`grid_pitch`]), и
+/// на сколько как минимум за раз. Корень из превышения сходится за две-три
+/// итерации; пол на множителе нужен затем, чтобы превышение в доли процента не
+/// крутило цикл вхолостую.
+const GRID_PITCH_TRIES: usize = 6;
+const GRID_PITCH_MIN_STEP: f32 = 1.02;
+
+/// Блок приточной установки на кровле коробки: не бытовой кондиционер, а
+/// агрегат в человеческий рост. На фотографиях они стоят **группой** у одного
+/// края — там, где внизу зал, а не склад, — и группа эта читается сверху
+/// отдельным пятном.
+const PLANT_SIZE: Vec2 = Vec2::new(3.6, 2.2);
+const PLANT_HEIGHT: f32 = 1.8;
+const PLANT_GAP: f32 = 1.0;
+const PLANT_AREA_PER: f32 = 3000.0;
+const PLANT_MAX: usize = 5;
+
+/// Вентшахт на кровле гипермаркета больше, чем на любой другой: предел
+/// [`VENT_MAX`] в десять штук рассчитан на дом, а не на гектар кровли, и на
+/// «Магните» он давал десяток точек на поле, где их должно быть несколько
+/// десятков.
+const VENT_MAX_BIG_BOX: usize = 26;
 
 /// Зенитные фонари: ленты вдоль длинной оси большого корпуса под профлистом.
 const SKYLIGHT_MIN_AREA: f32 = 700.0;
@@ -145,6 +186,17 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
         RoofKind::Bitumen | RoofKind::Gravel | RoofKind::Membrane
     );
 
+    // Решётка зенитных фонарей — **первой из всего**, и это не вкусовщина.
+    // Она одна тут кладётся не броском, а по сетке, и подвинуться ей некуда:
+    // фонарь стоит по колоннам каркаса. Всё остальное оборудование ищет себе
+    // место восемью попытками ([`place`]) и обходит занятое само, так что
+    // ставить его первым значило бы дырявить решётку машинным помещением —
+    // а на фотографии наоборот, агрегаты стоят в промежутках между фонарями.
+    if is_big_box(building) {
+        push_skylight_grid(&mut items, &frame, building, lift);
+        push_plant(&mut items, &frame, building, &mut rng, lift);
+    }
+
     // машинное помещение — у мягкой кровли крупного дома
     if soft && area >= PENTHOUSE_MIN_AREA {
         let count = if area >= PENTHOUSE_SECOND_AREA { 2 } else { 1 };
@@ -196,7 +248,7 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
     // блоки кондиционеров — торговля и казённые здания
     if matches!(
         building.building_use,
-        BuildingUse::Commercial | BuildingUse::Public
+        BuildingUse::Commercial | BuildingUse::Retail | BuildingUse::Public
     ) {
         let count = ((area / UNIT_AREA_PER) as usize).clamp(1, UNIT_MAX);
         for _ in 0..count {
@@ -215,7 +267,11 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
     }
 
     // вентшахты — на любой плоской кровле
-    let vents = ((area / VENT_AREA_PER) as usize).clamp(1, VENT_MAX);
+    let cap = match is_big_box(building) {
+        true => VENT_MAX_BIG_BOX,
+        false => VENT_MAX,
+    };
+    let vents = ((area / VENT_AREA_PER) as usize).clamp(1, cap);
     for _ in 0..vents {
         place(
             &mut items,
@@ -230,6 +286,139 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
         );
     }
     items
+}
+
+/// Решётка зенитных фонарей по всей кровле гипермаркета: квадрат на каждую
+/// ячейку сетки, что попал в контур целиком.
+///
+/// **Это тот самый случай, когда сетка и есть вещь**, а не расстановщик вещи,
+/// — исключение из правила [`super::material`] «клеточная сетка ставит
+/// признак, но никогда им не является». Ряд гаражных ворот держится на том же
+/// основании: фонари на кровле торгового зала стоят по колоннам каркаса, то
+/// есть **правильной сеткой**, и дрожание шага здесь было бы не живостью, а
+/// ошибкой — на аэрофото они выстроены по линейке.
+///
+/// Сетка кладётся от середины рамы, чтобы по обоим краям кровли остался
+/// одинаковый отступ, а не полный шаг с одного конца и обрезок с другого.
+/// Шаг решётки и число узлов вдоль и поперёк — **подогнанный** под размер
+/// кровли, а не константа.
+///
+/// [`GRID_SKYLIGHT_PITCH`] это цель, как `PANEL_WIDTH` у стены и `BAY` у
+/// гаражной ленты: на ТРЦ «Макси» (493 × 298 м) тринадцатиметровый шаг даёт
+/// под восемьсот узлов, и упереться им в [`GRID_SKYLIGHT_MAX`] значило бы
+/// оборвать решётку на полпути — что и было видно на кадре как «квадратики
+/// размещены странно»: первые ряды забирали весь предел, дальняя половина
+/// кровли оставалась пустой, и правильной сетки не читалось вовсе. Шаг
+/// поэтому **растягивается**, пока вся решётка не уложится в предел: у
+/// гипермаркета она остаётся тринадцатиметровой, у гигантского ТЦ становится
+/// вдвое реже, но покрывает кровлю целиком — а целая решётка и есть то, по
+/// чему торговый зал узнаётся сверху.
+///
+/// `None` — кровля мельче одного шага: решётки на ней не бывает.
+fn grid_pitch(length: f32, width: f32) -> Option<(f32, usize, usize)> {
+    let mut pitch = GRID_SKYLIGHT_PITCH;
+    for _ in 0..GRID_PITCH_TRIES {
+        let along = (length / pitch).floor() as usize;
+        let across = (width / pitch).floor() as usize;
+        if along == 0 || across == 0 {
+            return None;
+        }
+        if along * across <= GRID_SKYLIGHT_MAX {
+            return Some((pitch, along, across));
+        }
+        // сколько раз решётка не влезла по площади, во столько же раз по
+        // стороне надо раздвинуть шаг — отсюда корень
+        let excess = (along * across) as f32 / GRID_SKYLIGHT_MAX as f32;
+        pitch *= excess.sqrt().max(GRID_PITCH_MIN_STEP);
+    }
+    None
+}
+
+fn push_skylight_grid(items: &mut Vec<RoofItem>, frame: &Frame, building: &PolyArea, lift: Vec2) {
+    let size = Vec2::splat(GRID_SKYLIGHT_SIDE);
+    let Some((pitch, along, across)) = grid_pitch(frame.length, frame.width) else {
+        return;
+    };
+    let start = |count: usize, extent: f32| (extent - (count - 1) as f32 * pitch) / 2.0;
+    let (first_u, first_v) = (start(along, frame.length), start(across, frame.width));
+    for row in 0..across {
+        for column in 0..along {
+            let center = frame.origin
+                + frame.axis * (first_u + column as f32 * pitch)
+                + frame.perp * (first_v + row as f32 * pitch);
+            // у Г-образной коробки часть узлов сетки приходится на двор или на
+            // воздух за контуром — такой фонарь просто не ставится, ровно как
+            // промахнувшаяся вентшахта
+            let Some(base) = fit(building, center, size, frame.axis, frame.perp, lift) else {
+                continue;
+            };
+            // «оборудование не садится на оборудование» — общий инвариант
+            // модуля, и держаться он обязан **постройкой, а не порядком
+            // вызовов**: сегодня решётка кладётся первой и упереться ей не во
+            // что, но переставленный вызов не должен молча начать втыкать
+            // фонарь в машинное помещение (ровно это и было в первой версии)
+            if !clear(items, &base, frame.axis, frame.perp) {
+                continue;
+            }
+            items.push(RoofItem {
+                base,
+                height: GRID_SKYLIGHT_HEIGHT,
+                top: SKYLIGHT_TOP,
+                wall: SKYLIGHT_WALL,
+                reach: shadow_reach(building, lift, &base),
+            });
+        }
+    }
+}
+
+/// Группа приточных установок: несколько агрегатов в ряд, вплотную друг к
+/// другу. Рядом, а не вразброс, — на фотографии они и стоят одним блоком у
+/// края зала, потому что подключены к одному коллектору; разбросанные по
+/// кровле поодиночке, они бы ничем не отличались от вентшахт.
+///
+/// Место у группы одно на всю ленту: ищется оно обычным броском
+/// ([`place`]-подобно), но проверяется сразу целым габаритом, иначе последний
+/// агрегат ряда мог бы повиснуть за контуром.
+fn push_plant(
+    items: &mut Vec<RoofItem>,
+    frame: &Frame,
+    building: &PolyArea,
+    rng: &mut Lcg,
+    lift: Vec2,
+) {
+    let count = ((frame.footprint / PLANT_AREA_PER) as usize).clamp(2, PLANT_MAX);
+    let step = PLANT_SIZE.y + PLANT_GAP;
+    let run = Vec2::new(PLANT_SIZE.x, count as f32 * step - PLANT_GAP);
+    for _ in 0..PLACE_TRIES {
+        let center = frame.origin
+            + frame.axis * rng.range(0.0, frame.length)
+            + frame.perp * rng.range(0.0, frame.width);
+        if fit(building, center, run, frame.axis, frame.perp, lift).is_none() {
+            continue;
+        }
+        let first = center - frame.perp * ((run.y - PLANT_SIZE.y) / 2.0);
+        let mut placed = Vec::new();
+        for slot in 0..count {
+            let at = first + frame.perp * (slot as f32 * step);
+            let Some(base) = fit(building, at, PLANT_SIZE, frame.axis, frame.perp, lift) else {
+                continue;
+            };
+            if !clear(items, &base, frame.axis, frame.perp)
+                || !clear(&placed, &base, frame.axis, frame.perp)
+            {
+                continue;
+            }
+            placed.push(RoofItem {
+                base,
+                height: PLANT_HEIGHT,
+                top: EQUIPMENT_TOP,
+                wall: EQUIPMENT_WALL,
+                reach: shadow_reach(building, lift, &base),
+            });
+        }
+        items.append(&mut placed);
+        return;
+    }
 }
 
 /// Храм и крепость: вентшахта на боевом ходу или печная труба на вальме храма
@@ -634,6 +823,113 @@ mod tests {
         assert!(clamped > 0, "nothing was clamped, the case is not covered");
     }
 
+    /// Гипермаркет от магазина у дома отличается кровлей, и это разница по
+    /// **размеру**, а не по тегу: решётка зенитных фонарей и группа приточных
+    /// установок появляются только на крупноформатном пятне, а один и тот же
+    /// `shop=supermarket` на 300 м² остаётся обычной мелкой коробкой.
+    #[test]
+    fn a_hypermarket_roof_is_a_grid_of_skylights_and_a_corner_shop_is_not() {
+        let _sun = crate::map::default_sun();
+        let hyper = building(block(90.0, 110.0), BuildingUse::Retail);
+        assert!(is_big_box(&hyper));
+        let look = super::super::material::roof_look(&hyper);
+        let items = flat_roof_items(&hyper, &look, Vec2::ZERO);
+        let skylights = items.iter().filter(|item| item.top == SKYLIGHT_TOP).count();
+        // 110 × 90 м с отступом от края — не меньше шести шагов по 13 м вдоль
+        // и не меньше пяти поперёк
+        assert!(skylights >= 30, "{skylights} skylights on a hypermarket");
+        assert!(skylights <= GRID_SKYLIGHT_MAX);
+        // группа приточных установок стоит одним рядом
+        let plant = items
+            .iter()
+            .filter(|item| (item.height - PLANT_HEIGHT).abs() < 1e-3)
+            .count();
+        assert!(plant >= 2, "{plant} plant units");
+
+        // тот же класс на мелком пятне: ни одного фонаря и ни одной установки
+        let shop = building(block(14.0, 20.0), BuildingUse::Retail);
+        assert!(!is_big_box(&shop));
+        let look = super::super::material::roof_look(&shop);
+        let items = flat_roof_items(&shop, &look, Vec2::ZERO);
+        assert!(items.iter().all(|item| item.top != SKYLIGHT_TOP));
+        assert!(
+            items
+                .iter()
+                .all(|item| (item.height - PLANT_HEIGHT).abs() > 1e-3)
+        );
+    }
+
+    /// Фонари решётки стоят **по линейке**: шаг между соседями в ряду —
+    /// ровно [`GRID_SKYLIGHT_PITCH`]. Это тот случай, когда сетка и есть
+    /// вещь, и дрожание шага тут было бы ошибкой, а не живостью.
+    #[test]
+    fn the_skylight_grid_keeps_its_pitch() {
+        let _sun = crate::map::default_sun();
+        let hyper = building(block(90.0, 110.0), BuildingUse::Retail);
+        let look = super::super::material::roof_look(&hyper);
+        let items = flat_roof_items(&hyper, &look, Vec2::ZERO);
+        let mut centres: Vec<Vec2> = items
+            .iter()
+            .filter(|item| item.top == SKYLIGHT_TOP)
+            .map(|item| item.base.iter().sum::<Vec2>() / 4.0)
+            .collect();
+        assert!(centres.len() > 2);
+        // контур осепараллелен, так что рама совпадает с мировыми осями:
+        // сортируем по строке, потом по столбцу
+        centres.sort_by(|a, b| (a.y, a.x).partial_cmp(&(b.y, b.x)).unwrap());
+        let mut checked = 0;
+        for pair in centres.windows(2) {
+            if (pair[1].y - pair[0].y).abs() > 1e-3 {
+                continue;
+            }
+            assert!(
+                (pair[1].x - pair[0].x - GRID_SKYLIGHT_PITCH).abs() < 1e-3,
+                "{:?} → {:?}",
+                pair[0],
+                pair[1]
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no two skylights shared a row");
+    }
+
+    /// На гиганте решётка **разрежается, а не обрывается**: шаг подгоняется
+    /// так, чтобы вся она уложилась в предел и накрыла кровлю целиком. Пока
+    /// шаг был константой, ТРЦ «Макси» (493 × 298 м) забирал предел первыми
+    /// рядами, и дальняя половина кровли оставалась пустой — сообщено по
+    /// кадру как «квадратики размещены странно».
+    #[test]
+    fn a_giant_roof_thins_the_grid_instead_of_cutting_it_off() {
+        let _sun = crate::map::default_sun();
+        let maxi = building(block(298.0, 493.0), BuildingUse::Retail);
+        let look = super::super::material::roof_look(&maxi);
+        let items = flat_roof_items(&maxi, &look, Vec2::ZERO);
+        let centres: Vec<Vec2> = items
+            .iter()
+            .filter(|item| item.top == SKYLIGHT_TOP)
+            .map(|item| item.base.iter().sum::<Vec2>() / 4.0)
+            .collect();
+        assert!(centres.len() > GRID_SKYLIGHT_MAX / 2, "{}", centres.len());
+        assert!(centres.len() <= GRID_SKYLIGHT_MAX);
+        // решётка дотягивается до обоих концов: контур осепараллелен, так что
+        // крайние узлы обязаны стоять у обоих краёв рамы, а не в одной трети
+        let (lo, hi) = centres.iter().fold((f32::MAX, f32::MIN), |(lo, hi), at| {
+            (lo.min(at.x), hi.max(at.x))
+        });
+        assert!(lo < 60.0 && hi > 433.0, "grid spans {lo}..{hi} of 0..493");
+        // и шаг остался единым — она реже, но по-прежнему решётка
+        let mut rows: Vec<f32> = centres.iter().map(|at| at.x).collect();
+        rows.sort_by(f32::total_cmp);
+        rows.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+        for pair in rows.windows(2) {
+            let step = pair[1] - pair[0];
+            assert!(
+                step >= GRID_SKYLIGHT_PITCH - 1e-3,
+                "{step} m between columns"
+            );
+        }
+    }
+
     #[test]
     fn a_block_gets_equipment_and_a_shed_does_not() {
         let _sun = crate::map::default_sun();
@@ -687,6 +983,14 @@ mod tests {
             (16.0, 60.0, BuildingUse::Apartments),
             (40.0, 60.0, BuildingUse::Commercial),
             (30.0, 90.0, BuildingUse::Industrial),
+            // гипермаркет — единственная кровля, где предмет кладётся **не
+            // броском, а по сетке**, и первая её версия ставила фонарь прямо
+            // на уже стоящее машинное помещение (сообщено по кадру). Правило
+            // общее, и проверяться оно обязано и на этой раскладке тоже
+            (90.0, 110.0, BuildingUse::Retail),
+            // узкая коробка: сетка почти упирается в отступ от края, а
+            // агрегатам приточной группы остаётся одна полоса
+            (26.0, 70.0, BuildingUse::Retail),
         ] {
             let mut laid = 0;
             for step in 0..100 {

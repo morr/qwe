@@ -54,7 +54,7 @@ REF-счётчики; KEPT-строки `cache_audit.py` по кешам v8 не
 
 ## Что рисуется сейчас
 
-Здания (+ высота, входы, назначение по `building=*` / `amenity=*` —
+Здания (+ высота, входы, назначение по `building=*` / `shop=*` / `amenity=*` —
 `parse/tags.rs::building_use`, палитра по классу), дороги и аллеи, ж/д пути и
 трамвай, вода площадная и линейная
 (`waterway=river|stream|brook|canal|ditch|drain|weir`), парки, леса, луга,
@@ -92,11 +92,31 @@ OSM почти не ставят, он живёт на границе стран
 OSM — это весь кооператив одним контуром, в Туле до 255 × 51 м, и рисуется он
 рядами боксов с проездами, а не одним ангаром. По кешу v8 множественных 43.
 
+**`shop=*` на контуре здания** (не нода — нода это топливо симуляции, таблица
+ниже) читается с той же правкой, что завела `BuildingUse::Retail`. Тег лежал в
+кеше с первой версии (`out geom` отдаёт все теги элемента), перекачки не
+потребовалось. По кешу Тулы v14 — **68 зданий**: `mall` 17, `supermarket` 7,
+`convenience` 7, `car_repair` 4, `department_store` / `florist` / `doityourself` /
+`kiosk` по 3, `greengrocer` / `furniture` / `clothes` по 2, и хвост из
+восемнадцати значений по одному. Белый список крупноформатной торговли
+(`tags.rs::is_big_format_shop`: `mall`, `supermarket`, `department_store`,
+`wholesale`, `doityourself`, `hardware`, `trade`, `garden_centre`, `furniture`,
+`car`) проходят **34** из них; остальные — булочная, цветы, табак, «продукты» —
+стоят на чужом доме, и назначение у него своё. Крупноформатный `shop` при этом
+**уточняет `building=commercial` и `yes`, но не спорит с `apartments`,
+`house`, `church`**: так «Магнит» (`commercial` + `supermarket`) и ТРЦ «Макси»
+(`yes` + `mall`) становятся торговыми коробками, а «Пятёрочка» на первом этаже
+панельной девятиэтажки — нет. Внутри класса **размер решает не меньше тега**
+(`model::is_big_box`, порог 1200 м²): 18 зданий крупноформатных (1363 м² «ДА!»…
+52 321 м² ТРЦ «Макси») против 50 мелких (крупнейшее 339 м²), провал между
+группами вчетверо шире порога.
+
 `roof:shape` есть у 283 (`flat` 165, `hipped` 84), `building:colour` /
 `roof:colour` у 95 (v14: 30 и 91, из них 51 `blue`) — читаются в
 `PolyArea::colours` (`tags.rs::area_colours`, hex как есть, имя CSS — краской
-карты), но **красят пока только храмы** (`temples::tagged_wall` / `tagged_roof` /
-`tagged_dome`: золото кремлёвских барабанов, бирюза Всехсвятского); из
+карты), но **красят пока только храмы и полосу вывески торговой коробки**
+(`temples::tagged_wall` / `tagged_roof` / `tagged_dome`: золото кремлёвских
+барабанов, бирюза Всехсвятского; `layers::brand_color`: оранжевый ТРЦ «Макси»); из
 `roof:shape` читаются только `onion|dome` у храма (`parse/tags.rs::sacred_form` → `SacredForm::Dome`, по кешу v14
 7 и 2). Храмы читают ещё `religion` / `denomination` (`tags.rs::faith`),
 `tower:type=bell_tower|minaret` и `min_height` / `building:min_level`

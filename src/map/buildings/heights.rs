@@ -22,7 +22,7 @@ use bevy::math::Vec2;
 use super::material::building_seed;
 use super::roofs::{SHED_FOOTPRINT_MAX, SMALL_FOOTPRINT_MAX};
 use crate::map::meshing::min_area_rect;
-use crate::map::osm::model::{is_fortress_tower, signed_ring_area};
+use crate::map::osm::model::{is_big_box, is_fortress_tower, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, Sacred, SacredForm};
 
 /// Высота этажа, м — то же число, которым парсер переводит
@@ -66,6 +66,16 @@ const FORTRESS_TOWER_HEIGHTS: [f32; 2] = [20.0, 26.0];
 const HALL_HEIGHTS: [f32; 4] = [7.0, 8.0, 10.0, 12.0];
 /// Торговый зал: один-два этажа под большой крышей.
 const STORE_HEIGHTS: [f32; 3] = [6.0, 7.0, 9.0];
+/// Гипермаркет и ТЦ — оболочка, а не этажи: один высокий торговый зал, над ним
+/// техэтаж и парапет. Те же восемь-одиннадцать метров, которые
+/// `parse::building_height` собирает из `building:levels`, — и это
+/// намеренно одна высота с двух сторон: у половины крупноформатной торговли
+/// тега нет вовсе (Тула: «Верный», ТЦ «Перспектива»), и коробка рядом с
+/// такой же коробкой не должна оказаться вдвое ниже из-за отсутствия тега.
+const BIG_BOX_HEIGHTS: [f32; 4] = [8.0, 8.0, 9.5, 11.0];
+/// Магазин у дома: отдельно стоящий павильон в один-два уровня. Выше жилого
+/// этажа — у торгового зала потолки, — но это не коробка в поле.
+const SHOP_HEIGHTS: [f32; 4] = [4.5, 5.0, 5.0, 6.5];
 
 /// Длина пятна, от которой оно читается как секция, и предельная ширина
 /// такой секции, м. Панельный дом — это лента 12–16 м в ширину и от сорока в
@@ -121,6 +131,10 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
         }) => pick(&BELL_TOWER_HEIGHTS, seed),
         BuildingUse::Church(_) => pick(&CHURCH_HEIGHTS, seed),
         BuildingUse::Industrial => pick(&HALL_HEIGHTS, seed),
+        // торговля меряется не этажами, а размером: гипермаркет — оболочка
+        // над одним высоким залом, магазин у дома — павильон
+        BuildingUse::Retail if is_big_box(building) => pick(&BIG_BOX_HEIGHTS, seed),
+        BuildingUse::Retail => pick(&SHOP_HEIGHTS, seed),
         BuildingUse::Commercial if area >= STORE_FOOTPRINT_MIN => pick(&STORE_HEIGHTS, seed),
         // казённое здание — школа, поликлиника, контора: та же таблица, что у
         // прочего крупного корпуса, но **в обход проверки формы**: школа в
@@ -274,6 +288,29 @@ mod tests {
             // цех мерится метрами пролёта, а не этажами, и в этажи не растёт
             let hall = building(oblong(40.0, 90.0, at), BuildingUse::Industrial);
             assert!(HALL_HEIGHTS.contains(&height_or_default(&hall)));
+        }
+    }
+
+    /// У торговли без тега высота тоже делится размером: гипермаркет — это
+    /// оболочка над одним высоким залом, магазин у дома — павильон. Половина
+    /// крупноформата в OSM без тега высоты («Верный», ТЦ «Перспектива»), и
+    /// выведенная коробка обязана встать вровень с размеченной соседкой.
+    #[test]
+    fn a_hypermarket_is_inferred_as_a_shell_and_a_corner_shop_as_a_pavilion() {
+        for offset in 0..8 {
+            let at = Vec2::new(offset as f32 * 220.0, 0.0);
+            let hyper = building(oblong(80.0, 110.0, at), BuildingUse::Retail);
+            assert!(is_big_box(&hyper));
+            let height = height_or_default(&hyper);
+            assert!(
+                BIG_BOX_HEIGHTS.contains(&height),
+                "{height} m is not a hypermarket shell"
+            );
+
+            let shop = building(oblong(14.0, 20.0, at), BuildingUse::Retail);
+            assert!(!is_big_box(&shop));
+            let height = height_or_default(&shop);
+            assert!(SHOP_HEIGHTS.contains(&height), "{height} m is not a shop");
         }
     }
 

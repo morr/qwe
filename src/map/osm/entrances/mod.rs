@@ -41,7 +41,7 @@ use bevy::math::Vec2;
 use self::cohorts::{cohort_of, entrance_count, equivalent_length, plan_sections};
 use self::index::{FootprintIndex, PassageIndex, RoadIndex, ring_is_ccw};
 use crate::grid::navtile_size;
-use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea};
+use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea, is_big_box};
 use crate::rng::lcg_seeded_by;
 
 /// Шаг расстановки входов вдоль одной грани, м — медиана зазора между
@@ -52,6 +52,43 @@ const ENTRANCE_SPACING: f32 = 25.0;
 /// навтайл здесь 2 м (по умолчанию): две двери ближе десятка метров ведут в
 /// одну и ту же клетку и как отдельные цели бессмысленны.
 const ENTRANCE_MIN_SPACING: f32 = 12.0;
+/// Шаг и минимальный зазор входов **торговой коробки**, м. У гипермаркета нет
+/// подъездов — у него входные группы, и стоят они редко: между тамбурами
+/// «Магнита» или «Ленты» полсотни метров, а не двадцать пять.
+///
+/// Без своего шага у коробки получалось ровно то, что видно на кадре ТРЦ
+/// «Макси»: грани перебираются по близости к дороге, у здания в полкилометра
+/// периметром соседние грани стоят к одной и той же дороге почти одинаково
+/// близко, и все двери садились кучей в том углу, что ближе всего к улице.
+/// Зазор впятеро больше обычного и разгоняет их по периметру — следующая
+/// дверь просто не встаёт рядом с уже поставленной.
+const BIG_BOX_ENTRANCE_SPACING: f32 = 55.0;
+const BIG_BOX_MIN_SPACING: f32 = 45.0;
+
+/// Как расставляются входы этого здания: шаг по грани и минимальный зазор
+/// между дверями. Одно значение на дом, потому что это **свойство здания**, а
+/// не модуля: жилой дом меряется подъездами каждые 25 м, торговая коробка —
+/// входными группами каждые 55.
+#[derive(Clone, Copy)]
+struct DoorPitch {
+    along: f32,
+    apart: f32,
+}
+
+impl DoorPitch {
+    fn of(building: &PolyArea) -> Self {
+        match is_big_box(building) {
+            true => Self {
+                along: BIG_BOX_ENTRANCE_SPACING,
+                apart: BIG_BOX_MIN_SPACING,
+            },
+            false => Self {
+                along: ENTRANCE_SPACING,
+                apart: ENTRANCE_MIN_SPACING,
+            },
+        }
+    }
+}
 /// Штраф за отворот грани от дороги, м на радиан. Замер: 95.6% входов смотрят
 /// на дорогу в пределах 45°, поэтому грань, отвёрнутая на прямой угол,
 /// обязана проигрывать вдвое более далёкой, но обращённой к улице (на 90°
@@ -187,10 +224,21 @@ fn fill_building(
         .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
         .sum();
     let length = equivalent_length(area, perimeter);
-    let cohort = cohort_of(area, length, building.height);
+    let cohort = cohort_of(area, length, building.height, is_big_box(building));
+    let pitch = DoorPitch::of(building);
     let mut random = lcg_seeded_by(ring[0]);
     let sections = plan_sections(area, length, building.height, building.building_use);
-    let wanted = entrance_count(&cohort, length, sections, &mut random);
+    // Закон шага меряет **длину** дома — и это верно для жилого корпуса, у
+    // которого подъезды идут вдоль одного фасада, а торец глухой. У торговой
+    // коробки глухих сторон нет: входные группы расставлены по всем сторонам,
+    // и мерить их «длиной» значит считать один фасад из четырёх. Отсюда
+    // периметр: у ТРЦ «Макси» 300 м «длины» давали пять дверей на километр
+    // стены — вход раз на две сотни метров, сообщено по кадру.
+    let reach = match is_big_box(building) {
+        true => perimeter,
+        false => length,
+    };
+    let wanted = entrance_count(&cohort, reach, pitch.along, sections, &mut random);
 
     let mut facades = score_facades(ring, roads);
     // лучшая грань — первой; NaN сюда попасть не может, длина и расстояние
@@ -215,6 +263,7 @@ fn fill_building(
     place_along(
         &facades,
         wanted,
+        pitch,
         Pass::Walls(index, footprints, passages),
         &mut doors,
     );
@@ -240,12 +289,12 @@ fn fill_building(
     // ни на соседей, ни на длину. Арку запасной проход всё же обходит:
     // перебрать есть что, а дверь в проёме не рисуется вовсе
     let mut forced = Vec::new();
-    place_along(&facades, 1, Pass::LastResort(passages), &mut forced);
+    place_along(&facades, 1, pitch, Pass::LastResort(passages), &mut forced);
     if forced.is_empty() {
         // и только если свободной от арки точки не нашлось ни одной — любая:
         // дом, пробитый проездом насквозь и зажатый соседями, всё равно должен
         // остаться целью блуждания
-        place_along(&facades, 1, Pass::Forced, &mut forced);
+        place_along(&facades, 1, pitch, Pass::Forced, &mut forced);
     }
     Some(FilledBuilding {
         entrances: forced.into_iter().map(|door| door.at).collect(),
@@ -367,12 +416,12 @@ const ENTRANCE_MIN_FACADE: f32 = 6.0;
 /// `stubs` — брать ли в счёт грани короче [`ENTRANCE_MIN_FACADE`]. В обычном
 /// проходе нет; в запасном, когда дому не досталось ни одной двери, да —
 /// у киоска три на три метра других граней и не бывает.
-fn facade_capacity(length: f32, stubs: bool) -> usize {
+fn facade_capacity(length: f32, stubs: bool, pitch: DoorPitch) -> usize {
     if !stubs && length < ENTRANCE_MIN_FACADE {
         return 0;
     }
-    let preferred = (length / ENTRANCE_SPACING).floor() as usize + 1;
-    let limit = ((length / ENTRANCE_MIN_SPACING).floor() as usize).saturating_sub(1);
+    let preferred = (length / pitch.along).floor() as usize + 1;
+    let limit = ((length / pitch.apart).floor() as usize).saturating_sub(1);
     preferred.min(limit).max(1)
 }
 
@@ -386,8 +435,14 @@ fn facade_capacity(length: f32, stubs: bool) -> usize {
 /// `wanted` — это сколько дверей у дома должно быть всего, а не сколько
 /// дописать, и размеченные занимают своё место в зазоре наравне с
 /// придуманными.
-fn place_along(facades: &[Facade], wanted: usize, pass: Pass<'_>, placed: &mut Vec<Door>) {
-    let minimum_squared = ENTRANCE_MIN_SPACING * ENTRANCE_MIN_SPACING;
+fn place_along(
+    facades: &[Facade],
+    wanted: usize,
+    pitch: DoorPitch,
+    pass: Pass<'_>,
+    placed: &mut Vec<Door>,
+) {
+    let minimum_squared = pitch.apart * pitch.apart;
     let stubs = !matches!(pass, Pass::Walls(..));
 
     for facade in facades {
@@ -398,7 +453,7 @@ fn place_along(facades: &[Facade], wanted: usize, pass: Pass<'_>, placed: &mut V
             continue;
         };
 
-        let take = facade_capacity(facade.length, stubs).min(wanted - placed.len());
+        let take = facade_capacity(facade.length, stubs, pitch).min(wanted - placed.len());
         let step = facade.length / (take + 1) as f32;
         for slot in 1..=take {
             let point = facade.from + direction * (step * slot as f32);

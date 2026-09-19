@@ -367,14 +367,15 @@ be called alone:
   `references/buildings.md`. Coverage is logged per city on load
   (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
-  Commercial | Industrial | Garage | GarageBlock | Church(Sacred) | Public | Other`, the class that
+  Commercial | Retail | Industrial | Garage | GarageBlock | Church(Sacred) | Public | Other`, the class that
   picks two material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and
   the **roofing material** (`::kind_of`); neither colour comes from the class itself, both
   come from the chosen material's own palette (**Roof material** in
   `references/buildings.md`, bullet
-  **The pick**). Two sources in order: `building=*` when the value says something
+  **The pick**). Three sources in order: `building=*` when the value says something
   (`house`, `apartments`, `garages`, `church`,
-  `school`, …), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
+  `school`, …), else a big-format **`shop=*`** (`is_big_format_shop`, **Retail box**
+  below), else `amenity=*` on the same outline (`school`, `hospital`, `police`,
   `place_of_worship`, …) — a school or a hospital in OSM is almost always `building=yes`
   + `amenity=…`. Anything outside the vocabulary is `Other`, and `Other` is read by shape
   rather than left flat: the wall takes the apartment-block table (height having spoken
@@ -394,6 +395,50 @@ be called alone:
   exception below. The class is
   also one of the two inputs of **Inferred storeys** (the other is the footprint's shape),
   which is what fills in the height OSM does not carry.
+- **Retail box** (`parse/tags.rs::is_big_format_shop`, `model::is_big_box`) —
+  `BuildingUse::Retail`, the building that **is** a shop, and the one class where the
+  **footprint decides as much as the tag**. Split off `Commercial` (which keeps the office,
+  the kiosk and the pavilion) because an office block and a hypermarket share nothing from
+  the air: the office has dwelling-height storeys and rows of windows, the box one tall
+  trading hall, a blind facade under a brand band and a roof of skylights and plant.
+  - **The tag.** `building=retail|supermarket|mall|department_store`, and — under
+    `building=yes`, which is where half of it lives — a **whitelist** of `shop=*`:
+    `mall`, `supermarket`, `department_store`, `wholesale`, `doityourself`, `hardware`,
+    `trade`, `garden_centre`, `furniture`, `car`. A whitelist for the reason every other
+    one here is: `shop` has a hundred values and nearly all of them are a **point inside
+    somebody else's house** — a bakery, a florist, «продукты» on the ground floor of a
+    nine-storey block. Tula v14: 68 buildings carry `shop=*`, 34 pass the list (17 `mall`,
+    7 `supermarket`, 3 `department_store`, 3 `doityourself`, 2 `furniture`, `hardware`,
+    `car`). **No `QUERY_VERSION` bump** — `out geom` returns every tag of the element, so
+    `shop` has been in every cache since v1.
+  - **The size** (`is_big_box`: `Retail` with a footprint ≥ `BIG_BOX_AREA_MIN` 1200 m²).
+    OSM never marks crowd-format, so it is read off the pattern, exactly as
+    `is_fortress_tower` reads a tower off its compactness. The threshold is measured, not
+    picked: Tula's 68 shop buildings fall into 18 big (1363 m² «ДА!» … 52 321 m² ТРЦ
+    «Макси») and 50 small (largest 339 m²), and the gap between the two groups is four
+    times the threshold's own width.
+  - **What it decides.** Four things, each with its own bullet elsewhere: the **height**
+    (below), the **roof material** (`BIG_BOX_ROOFS` — light membrane / bitumen / gravel —
+    against `SHOP_ROOFS`), the **roof clutter** (the skylight grid and the roof plant, in
+    `references/buildings.md`) and the **wall** (`WallKind::BigBox` with its brand band,
+    same place). A small shop gets none of it and keeps a shopfront over a house window.
+  - **The height** (`building_height`, and it is why that function takes the outline as
+    well as the tags). A trading level is `BIG_BOX_LEVEL_HEIGHT` 4.5 m, not the 3 m
+    dwelling storey, and over the top one sit `BIG_BOX_SHELL_EXTRA` 3.5 m of technical
+    floor and parapet — so `building:levels=1` on a hypermarket is 8 m, not 3. That single
+    number is the loudest half of the original report: a 122 × 103 m «Магнит»
+    (`building=commercial` + `shop=supermarket`, `levels=1`) was drawn three metres tall
+    and read as a giant one-storey house. Tula: «Магнит» 8 m, ТРЦ «Макси» (`levels=2`)
+    12.5, ТЦ «Сарафан» (3) 17.
+    **Only while levels ≤ `BIG_BOX_LEVELS_MAX` 3**, and that guard is load-bearing:
+    «Пятёрочка» is `building=retail` + `levels=9` mapped onto the whole panel block it
+    occupies the ground floor of, and a trading level there would have made a 45 m tower
+    of it. Above the cap the ordinary dwelling storey applies, which also happens to be
+    right for the multi-floor malls (Гостиный двор 6 → 18 m, Парадиз 5 → 15).
+  - **The untagged half is inferred to the same numbers** (`heights.rs`: `BIG_BOX_HEIGHTS`
+    8–11 m, `SHOP_HEIGHTS` 4.5–6.5), deliberately — «Верный» and ТЦ «Перспектива» carry no
+    `building:levels` at all, and a box standing next to an identical box must not come out
+    half as tall for want of a tag.
 - **Places of worship** (`parse/tags.rs::faith`, `sacred_form`; `parse.rs::resolve_faiths`)
   — `BuildingUse::Church(Sacred { faith, form })`. `building=bell_tower|campanile|minaret`
   and `tower:type=bell_tower|minaret` are churches too (`form: Tower`); a part with
@@ -406,9 +451,11 @@ be called alone:
   is a marker, not paint; an unknown name is `None`, never a guess. Tula: 30 `building:colour`
   and 91 `roof:colour` on 7.7 k buildings, 51 of them `blue`; on the churches — `#FFD700` on
   both kremlin-cathedral drums, `#5D948F` on the All Saints cathedral and its bell tower,
-  `blue` on Свято-Никольский, `red` / `green` on the arms museum annex. **Only the temples
-  read them so far** (`temples::tagged_wall` / `tagged_roof` / `tagged_dome`, below);
-  reading them on every house is a palette decision the private sector has not made.
+  `blue` on Свято-Никольский, `red` / `green` on the arms museum annex. **Two things read
+  them**: the temples (`temples::tagged_wall` / `tagged_roof` / `tagged_dome`, below) and
+  the retail box's **brand band** (`layers::brand_color` — ТРЦ «Макси» is tagged `orange`,
+  which is its real colour). Reading them on every house is a palette decision the private
+  sector has not made.
   Faith: `religion=christian` + an Orthodox-family `denomination` → `Orthodox`, any other
   denomination → `Western`, none → `Unknown`; `muslim|jewish|buddhist|hindu|shinto|…` by
   religion, else by `building=mosque|synagogue|temple`. Tula v14: 27 places of worship —

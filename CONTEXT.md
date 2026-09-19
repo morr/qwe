@@ -274,6 +274,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
   storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large
   squarish school never comes out a tower.
+  A **retail** building is measured by its own size instead (**Retail box** below): a big
+  box is a shell of 8–11 m, a corner shop a 4.5–6.5 m pavilion.
   The slot inside each group comes
   from the building's own seed — the one that already picks its **Roof material** — so it
   is stable across rebuilds and modes. The tag always wins. Before this the whole 69 %
@@ -282,9 +284,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   which is what most of the untagged 68 % turns out to be — and the mix is printed in the
   `building meshing:` log line.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
-  `BuildingUse: House | Apartments | Commercial | Industrial | Garage | GarageBlock |
+  `BuildingUse: House | Apartments | Commercial | Retail | Industrial | Garage | GarageBlock |
   Church(Sacred) | Public | Other`, from `building=*` and — whenever that value is outside the
-  vocabulary, `yes` above all — from `amenity=*` on the same outline.
+  vocabulary, `yes` above all — from `shop=*` (see **Retail box** below) and then from
+  `amenity=*` on the same outline.
   **`Sacred { faith, form }`** rides inside `Church`, the `Pitch(PitchKind)` pattern:
   **`Faith: Orthodox | Western | Muslim | Jewish | Eastern | Unknown`** from `religion` +
   `denomination` (or the building tag — `mosque`, `synagogue`), and **`SacredForm: Nave |
@@ -310,6 +313,34 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
   owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
   and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
+- **Retail box** (`BuildingUse::Retail`, `model::is_big_box`) — a building that **is** a
+  shop, split from `Commercial` (which keeps offices, kiosks and pavilions) because an
+  office and a hypermarket share nothing from the air. Read from
+  `building=retail|supermarket|mall|department_store` and, under `building=yes`, from a
+  **big-format `shop=*`** whitelist (`mall`, `supermarket`, `department_store`,
+  `wholesale`, `doityourself`, `hardware`, `trade`, `garden_centre`, `furniture`, `car`;
+  a bakery or a convenience store stands in somebody else's house and is not one). Half of
+  Tula's malls carry the class only there — ТРЦ «Макси» is `building=yes` + `shop=mall`,
+  52 321 m².
+  **Size decides as much as the class**, and `is_big_box` (footprint ≥
+  `BIG_BOX_AREA_MIN` 1200 m²) is the one predicate that says it — a giant box and a corner
+  shop look nothing alike, and OSM never marks the difference. Tula's 68 shop buildings
+  split 18 / 50 across that threshold with a fourfold gap around it. What the predicate
+  decides: the **height** (a trading level is `BIG_BOX_LEVEL_HEIGHT` 4.5 m rather than a
+  3 m dwelling storey, plus `BIG_BOX_SHELL_EXTRA` 3.5 m of technical floor and parapet, and
+  only while `building:levels` ≤ 3 — `shop=*` on a nine-storey block is a shop on its
+  ground floor); the **roof** (light membrane / bitumen / gravel, plus the **skylight
+  grid** and the **roof plant** below); and the **wall** — `WallKind::BigBox`, a blind
+  composite-cassette facade on a 7 m bay and a 5.5 m tier, with a **brand band**
+  (`layers::push_brand_band`) along the top of every drawn wall in the building's
+  `building:colour`, else a chain palette. A corner shop keeps a shopfront, a house window
+  and an ordinary flat roof.
+- **Skylight grid** and **roof plant** (`map/buildings/clutter.rs`) — what a big box's roof
+  carries and nothing else does: a **regular lattice** of 2.8 m skylights at a 13 m pitch
+  (capped at 90) plus a **row** of 2–5 air-handling units, and the vent cap raised from 10
+  to 26. This is the deliberate exception to "a cell grid places a feature, it never *is*
+  the feature" — real skylights stand on the frame's columns, by the ruler, exactly as a
+  garage run's bay seams do.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
   not read (`roof:shape` is rare). The private sector is **gabled**, so the **gable roof**
   (`GableRoof`, everything with a piece of wall above the eaves) comes in five
@@ -383,14 +414,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The shader therefore needs no metres, no storey height and no lean: it takes `fract` of
   what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
   **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
-  Shopfront | Shed`, picked exactly the way a roofing is (a ten-slot table per `BuildingUse`,
-  the slot by the building's seed), plus `GarageDoors`, which no table reaches: it is
-  picked by the **geometry of a garage run**, like that run's roofing — see **Garage
-  rows**, and `Sacred`, which a `Church` always gets (below). Otherwise **height is
+  Shopfront | Shed | BigBox`, picked exactly the way a roofing is (a ten-slot table per
+  `BuildingUse`, the slot by the building's seed), plus `GarageDoors`, which no table
+  reaches: it is picked by the **geometry of a garage run**, like that run's roofing — see
+  **Garage rows**, and `Sacred`, which a `Church` always gets (below). Otherwise **height is
   consulted first**: anything under
   `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`,
-  `Industrial` keep their own tables, `Church` its `Sacred`) drops into the low-rise table, because a low
-  building is neither a panel block nor a curtain wall. The cladding decides three things at
+  `Industrial` keep their own tables, `Retail` its size, `Church` its `Sacred`) drops into
+  the low-rise table, because a low
+  building is neither a panel block nor a curtain wall. `BigBox` is the one cladding whose
+  cell is neither the 3.2 m panel nor the 3 m storey — a 7 m cassette bay by a 5.5 m
+  trading tier — and the one that carries a **brand band** as geometry over it (**Retail
+  box**). The cladding decides three things at
   once — what lies *between* the openings (floor seams and panel joints, brick courses,
   bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
   two-sash window per panel, a narrower brick one, a small house window, a full-panel

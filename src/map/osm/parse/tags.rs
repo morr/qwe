@@ -11,8 +11,9 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Colours, Faith, FenceKind, PitchKind, RailKind, Rgb, RoadClass, Sacred,
-    SacredForm, ServiceTrack, StructureKind, WaterKind, polyline_length,
+    AreaKind, BIG_BOX_AREA_MIN, BuildingUse, Colours, Faith, FenceKind, PitchKind, RailKind, Rgb,
+    RoadClass, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, polyline_length,
+    ring_area,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -86,9 +87,9 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         Some("apartments" | "residential" | "dormitory" | "hotel" | "hostel") => {
             Some(BuildingUse::Apartments)
         }
-        Some("commercial" | "retail" | "office" | "supermarket" | "kiosk" | "shop" | "mall") => {
-            Some(BuildingUse::Commercial)
-        }
+        // само здание — магазин; контора и павильон остаются торговлей вообще
+        Some("retail" | "supermarket" | "mall" | "department_store") => Some(BuildingUse::Retail),
+        Some("commercial" | "office" | "kiosk" | "shop") => Some(BuildingUse::Commercial),
         Some(
             "industrial" | "warehouse" | "factory" | "hangar" | "manufacture" | "service"
             | "transportation" | "depot" | "storage_tank",
@@ -108,6 +109,19 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         ) => Some(BuildingUse::Public),
         _ => None,
     };
+    // Крупноформатный `shop=*` **уточняет общее значение `building`, но не
+    // спорит с конкретным**. В OSM торговая коробка приходит тремя способами:
+    // `building=retail` (сказано всё), `building=yes` + `shop=mall` (ТРЦ
+    // «Макси», 52 тысячи м²) и `building=commercial` + `shop=supermarket`
+    // («Магнит», 9 тысяч) — и в двух последних назначение здания знает
+    // **только** `shop`. При этом `commercial` значит «коммерческое здание
+    // вообще», а `house`, `apartments`, `church`, `industrial` называют совсем
+    // другой дом, и булочная или «Пятёрочка» на его первом этаже этого не
+    // отменяют: над такими значениями `shop` не властен.
+    let generic = matches!(by_building, None | Some(BuildingUse::Commercial));
+    if generic && is_big_format_shop(tags) {
+        return BuildingUse::Retail;
+    }
     if let Some(class) = by_building {
         return class;
     }
@@ -125,6 +139,36 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         ) => BuildingUse::Public,
         _ => BuildingUse::Other,
     }
+}
+
+/// Крупноформатная торговля по `shop=*` — белый список, как у путей, водотоков
+/// и оград, и по той же причине: `shop` в OSM это добрая сотня значений, и
+/// почти все они — **точка внутри чужого дома**. Булочная, цветы, табак и
+/// «продукты» на первом этаже девятиэтажки не делают её магазином; ТЦ,
+/// супермаркет, универмаг, строительный и мебельный — делают, там здание и
+/// есть магазин.
+///
+/// Тула на кэше v14: 68 зданий с `shop=*`, из них 34 проходят этот список (17
+/// `mall`, 7 `supermarket`, 3 `department_store`, 3 `doityourself`, 2
+/// `furniture`, `hardware`, `car`), остальные 34 — мелочь во встройке.
+/// Бампить `QUERY_VERSION` не надо: `out geom` отдаёт все теги элемента, и
+/// `shop` лежит в каждом кэше с первой версии.
+fn is_big_format_shop(tags: &HashMap<String, String>) -> bool {
+    matches!(
+        tags.get("shop").map(String::as_str),
+        Some(
+            "mall"
+                | "supermarket"
+                | "department_store"
+                | "wholesale"
+                | "doityourself"
+                | "hardware"
+                | "trade"
+                | "garden_centre"
+                | "furniture"
+                | "car"
+        )
+    )
 }
 
 /// Башня храма по `tower:type` — колокольня или минарет.
@@ -244,7 +288,7 @@ fn is_fortification(tags: &HashMap<String, String>) -> bool {
         return true;
     }
     tags.get("building").map(String::as_str) == Some("wall")
-        && building_height(tags).is_some_and(|height| height >= FORTRESS_WALL_MIN_HEIGHT)
+        && tagged_height(tags).is_some_and(|height| height >= FORTRESS_WALL_MIN_HEIGHT)
 }
 
 /// [`building_use`] только для зданий: у воды и парков назначения нет.
@@ -344,11 +388,41 @@ pub(super) fn parse_measure(value: &str) -> Option<f32> {
     cleaned[..end].parse().ok()
 }
 
+/// Высота торгового зала, м, — вместо жилого [`STOREY_HEIGHT`], и прибавка на
+/// техэтаж с парапетом над верхним залом. `building:levels=1` у гипермаркета
+/// значит «один торговый уровень», а не «дом в три метра»: на фотографии у
+/// одноуровневого «Магнита» до парапета все восемь, и именно поэтому
+/// стотридцатиметровая коробка читалась гигантским одноэтажным жилым домом.
+///
+/// Прибавка — не «запас», а вещь: над залом лежит техэтаж с вентиляцией, а по
+/// верху идёт парапет, за которым прячется оборудование, и на нём же висит
+/// вывеска. С этими числами: 1 уровень → 8 м («Магнит»), 2 → 12.5 (ТРЦ
+/// «Макси»), 3 → 17 (ТЦ «Сарафан»).
+const BIG_BOX_LEVEL_HEIGHT: f32 = 4.5;
+const BIG_BOX_SHELL_EXTRA: f32 = 3.5;
+
+/// Выше скольких уровней `shop=*` перестаёт описывать **здание**. Девять
+/// этажей с `shop=supermarket` — это «Пятёрочка» на первом этаже панельного
+/// дома, размеченная на весь дом (Тула, 1528 м²), и торговый метраж этажа
+/// вытянул бы её в сорокапятиметровую башню. Настоящий ТЦ — до трёх торговых
+/// уровней; выше этого дом меряется обычным жилым этажом, как и был.
+const BIG_BOX_LEVELS_MAX: f32 = 3.0;
+
 /// Высота здания в метрах: `height` как есть, иначе этажи
 /// (`building:levels` + `roof:levels`, второй по схеме S3DB в первый не входит)
 /// по [`STOREY_HEIGHT`]. Оба тега разом почти не встречаются, так что это не
 /// «уточнение», а две независимые ветки данных.
-pub(super) fn building_height(tags: &HashMap<String, String>) -> Option<f32> {
+///
+/// **Метраж этажа — не константа, а свойство здания**: у торговой коробки
+/// уровень выше жилого этажа ([`BIG_BOX_LEVEL_HEIGHT`]). Отсюда и контур в
+/// аргументах — крупноформатность в OSM не размечают, её видно только по
+/// пятну ([`is_big_box`]), и мерить торговым уровнем «Дикси» во встройке было
+/// бы такой же ложью, как мерить жилым этажом гипермаркет.
+pub(super) fn building_height(
+    tags: &HashMap<String, String>,
+    class: BuildingUse,
+    outer: &[Vec2],
+) -> Option<f32> {
     let plausible = |meters: f32| BUILDING_HEIGHT_RANGE.contains(&meters).then_some(meters);
 
     if let Some(meters) = tags
@@ -366,7 +440,17 @@ pub(super) fn building_height(tags: &HashMap<String, String>) -> Option<f32> {
         .get("roof:levels")
         .and_then(|value| parse_measure(value))
         .unwrap_or(0.0);
+    let big_box = class == BuildingUse::Retail && ring_area(outer) >= BIG_BOX_AREA_MIN;
+    if big_box && levels <= BIG_BOX_LEVELS_MAX {
+        return plausible((levels + roof_levels) * BIG_BOX_LEVEL_HEIGHT + BIG_BOX_SHELL_EXTRA);
+    }
     plausible((levels + roof_levels) * STOREY_HEIGHT)
+}
+
+/// Высота по одним тегам — для [`is_fortification`], где контура ещё нет и
+/// торговой коробки быть не может: `building=wall` в шесть метров.
+fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
+    building_height(tags, BuildingUse::Other, &[])
 }
 
 /// Ширина и класс по значению highway; `None` — дорогу не рисуем.
@@ -722,9 +806,17 @@ pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при
 /// случайно проставленном теге.
-pub(super) fn area_height(kind: AreaKind, tags: &HashMap<String, String>) -> Option<f32> {
+///
+/// Контур нужен затем же, зачем назначение: этаж считается в метрах
+/// по-разному, и у торговой коробки метраж этажа решает её размер
+/// ([`building_height`]).
+pub(super) fn area_height(
+    kind: AreaKind,
+    tags: &HashMap<String, String>,
+    outer: &[Vec2],
+) -> Option<f32> {
     matches!(kind, AreaKind::Building | AreaKind::Kremlin)
-        .then(|| building_height(tags))
+        .then(|| building_height(tags, area_use(kind, tags), outer))
         .flatten()
 }
 

@@ -327,13 +327,53 @@ fn the_pitch_between_doors_holds_across_building_sizes() {
     }
 }
 
+/// Входы торгового центра **разнесены по периметру**, а не собраны кучей в
+/// том углу, что ближе всего к улице. Грани перебираются по близости к дороге,
+/// и у коробки в полкилометра соседние грани стоят к одной и той же дороге
+/// почти одинаково близко — без своего зазора все двери садились рядом, что и
+/// было сообщено по кадру ТРЦ «Макси».
+#[test]
+fn a_shopping_centre_spreads_its_entrances_around_the_perimeter() {
+    let outline = rect(Vec2::new(100.0, 100.0), Vec2::new(400.0, 300.0));
+    let mut mall = building(outline, Some(12.5));
+    mall.building_use = BuildingUse::Retail;
+    assert!(is_big_box(&mall));
+    let mut map = MapData {
+        buildings: vec![mall],
+        roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
+        ..Default::default()
+    };
+    generate_entrances(&mut map);
+
+    let doors = &map.buildings[0].entrances;
+    // дюжина входных групп, а не четыре двери на шестисотметровый периметр
+    assert!(doors.len() >= 8, "{} doors on a mall", doors.len());
+    // и ни одна пара не стоит ближе своего зазора
+    for (index, door) in doors.iter().enumerate() {
+        for other in &doors[index + 1..] {
+            assert!(
+                door.distance(*other) >= BIG_BOX_MIN_SPACING - 0.01,
+                "{door} and {other} are {} m apart",
+                door.distance(*other)
+            );
+        }
+    }
+    // и они не все на южной грани: стена у дороги одна, а вход у ТЦ не один
+    let on_the_road_side = doors.iter().filter(|door| door.y < 101.0).count();
+    assert!(
+        on_the_road_side < doors.len(),
+        "all {} doors sit on the road side",
+        doors.len()
+    );
+}
+
 /// Длинный, но мелкий — это ряд гаражей, а не жилой корпус: площадь
 /// возвращает его в скромную когорту.
 #[test]
 fn a_long_but_tiny_building_stays_in_a_modest_cohort() {
     // 100 × 4 = 400 м² при длине ~100 м
-    let long_and_thin = cohort_of(400.0, 100.0, Some(4.0));
-    let proper_block = cohort_of(2000.0, 100.0, Some(4.0));
+    let long_and_thin = cohort_of(400.0, 100.0, Some(4.0), false);
+    let proper_block = cohort_of(2000.0, 100.0, Some(4.0), false);
     assert!(long_and_thin.mean < proper_block.mean);
     assert_eq!(long_and_thin.mean, COHORT_ROW_MEAN);
 }

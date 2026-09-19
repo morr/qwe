@@ -950,39 +950,96 @@ fn oneway_backward_reverses_the_way() {
     }
 }
 
+/// Высота по одним тегам: дом без назначения и без контура — та ветка,
+/// которая у [`building_height`] была единственной до торговой коробки.
+fn height(pairs: &[(&str, &str)]) -> Option<f32> {
+    building_height(&tags(pairs), BuildingUse::Other, &[])
+}
+
+/// Высота торгового здания с пятном: квадрат такой площади вокруг начала
+/// координат. Назначение берётся из самих тегов, как в разборе.
+fn retail_height(pairs: &[(&str, &str)], area: f32) -> Option<f32> {
+    let side = area.sqrt() / 2.0;
+    let ring = [
+        Vec2::new(-side, -side),
+        Vec2::new(side, -side),
+        Vec2::new(side, side),
+        Vec2::new(-side, side),
+    ];
+    let tags = tags(pairs);
+    building_height(
+        &tags,
+        super::tags::area_use(AreaKind::Building, &tags),
+        &ring,
+    )
+}
+
 #[test]
 fn height_prefers_the_metric_tag_then_falls_back_to_levels() {
     // ветка Нью-Йорка: метры из LiDAR-импорта
-    assert_eq!(building_height(&tags(&[("height", "31.4")])), Some(31.4));
+    assert_eq!(height(&[("height", "31.4")]), Some(31.4));
     // ветка Европы: этажи
-    assert_eq!(
-        building_height(&tags(&[("building:levels", "5")])),
-        Some(15.0)
-    );
+    assert_eq!(height(&[("building:levels", "5")]), Some(15.0));
     // roof:levels по схеме S3DB в building:levels не входит
     assert_eq!(
-        building_height(&tags(&[("building:levels", "5"), ("roof:levels", "1")])),
+        height(&[("building:levels", "5"), ("roof:levels", "1")]),
         Some(18.0)
     );
     // проставлены оба — верим метрам, а не пересчёту
     assert_eq!(
-        building_height(&tags(&[("height", "20"), ("building:levels", "5")])),
+        height(&[("height", "20"), ("building:levels", "5")]),
         Some(20.0)
     );
-    assert_eq!(building_height(&tags(&[("building", "yes")])), None);
+    assert_eq!(height(&[("building", "yes")]), None);
 }
 
 #[test]
 fn implausible_heights_are_treated_as_missing() {
-    assert_eq!(building_height(&tags(&[("height", "0")])), None);
-    assert_eq!(building_height(&tags(&[("height", "12000")])), None);
-    assert_eq!(building_height(&tags(&[("building:levels", "0")])), None);
-    assert_eq!(building_height(&tags(&[("building:levels", "-1")])), None);
+    assert_eq!(height(&[("height", "0")]), None);
+    assert_eq!(height(&[("height", "12000")]), None);
+    assert_eq!(height(&[("building:levels", "0")]), None);
+    assert_eq!(height(&[("building:levels", "-1")]), None);
     // мусор в метрах не должен глушить этажи
     assert_eq!(
-        building_height(&tags(&[("height", "9999"), ("building:levels", "4")])),
+        height(&[("height", "9999"), ("building:levels", "4")]),
         Some(12.0)
     );
+}
+
+/// Торговый уровень выше жилого этажа, и сверх него идёт техэтаж с парапетом:
+/// `building:levels=1` у гипермаркета — это не трёхметровый дом. Ровно из-за
+/// этого стодвадцатиметровый «Магнит» (`building=commercial`, `shop=supermarket`,
+/// 9055 м², один уровень) читался гигантским одноэтажным жилым домом.
+#[test]
+fn a_trading_level_is_taller_than_a_dwelling_storey() {
+    let magnit = &[
+        ("building", "commercial"),
+        ("shop", "supermarket"),
+        ("building:levels", "1"),
+    ];
+    assert_eq!(retail_height(magnit, 9055.0), Some(8.0));
+    // ТРЦ «Макси»: `building=yes` + `shop=mall`, два уровня
+    let maxi = &[
+        ("building", "yes"),
+        ("shop", "mall"),
+        ("building:levels", "2"),
+    ];
+    assert_eq!(retail_height(maxi, 52321.0), Some(12.5));
+    // та же разметка на мелком пятне — магазин во встройке, обычный этаж
+    assert_eq!(retail_height(maxi, 295.0), Some(6.0));
+}
+
+/// `shop=*` на девятиэтажке описывает не здание, а магазин на его первом
+/// этаже: тульская «Пятёрочка» размечена `building=retail` + `levels=9` на
+/// весь дом, и торговым уровнем это вышло бы сорокапятиметровой башней.
+#[test]
+fn a_shop_on_a_tall_block_is_measured_in_dwelling_storeys() {
+    let pyaterochka = &[
+        ("building", "retail"),
+        ("shop", "supermarket"),
+        ("building:levels", "9"),
+    ];
+    assert_eq!(retail_height(pyaterochka, 1528.0), Some(27.0));
 }
 
 /// Высота доезжает до `MapData` и из way, и из relation, а на воде её нет.
@@ -1173,6 +1230,70 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
         ]
     );
     assert_eq!(map.water[0].building_use, BuildingUse::Other);
+}
+
+/// Здание, которое **и есть магазин**, узнаётся по `building=*` и, когда там
+/// безликое `yes`, по крупноформатному `shop=*` того же контура. Мелкая
+/// торговля по белому списку не проходит: булочная и «продукты» в OSM стоят
+/// на чужом доме, и назначение у него своё.
+///
+/// Без ветки `shop` половина тульских ТЦ (ТРЦ «Макси» — `building=yes` +
+/// `shop=mall`, 52 тысячи м²) разбиралась как «полгорода без назначения».
+#[test]
+fn a_shop_building_is_read_from_the_shop_tag_too() {
+    let map = Overpass::new(CITY)
+        .area(&[("building", "retail")], square(CENTER, HALF))
+        .area(&[("building", "supermarket")], square(CENTER, HALF))
+        .area(
+            &[("building", "yes"), ("shop", "mall")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "yes"), ("shop", "doityourself")],
+            square(CENTER, HALF),
+        )
+        // `commercial` — «коммерческое здание вообще», и `shop` его уточняет:
+        // так размечен «Магнит»
+        .area(
+            &[("building", "commercial"), ("shop", "supermarket")],
+            square(CENTER, HALF),
+        )
+        // …а `apartments` называет другой дом, и супермаркет на его первом
+        // этаже этого не отменяет: так размечена тульская «Пятёрочка»
+        .area(
+            &[("building", "apartments"), ("shop", "supermarket")],
+            square(CENTER, HALF),
+        )
+        // булочная на чужом доме магазином его не делает
+        .area(
+            &[("building", "apartments"), ("shop", "bakery")],
+            square(CENTER, HALF),
+        )
+        .area(
+            &[("building", "yes"), ("shop", "convenience")],
+            square(CENTER, HALF),
+        )
+        // контора и павильон остаются торговлей вообще, а не магазином
+        .area(&[("building", "commercial")], square(CENTER, HALF))
+        .area(&[("building", "office")], square(CENTER, HALF))
+        .parse();
+
+    let uses: Vec<BuildingUse> = map.buildings.iter().map(|b| b.building_use).collect();
+    assert_eq!(
+        uses,
+        [
+            BuildingUse::Retail,
+            BuildingUse::Retail,
+            BuildingUse::Retail,
+            BuildingUse::Retail,
+            BuildingUse::Retail,
+            BuildingUse::Apartments,
+            BuildingUse::Apartments,
+            BuildingUse::Other,
+            BuildingUse::Commercial,
+            BuildingUse::Commercial,
+        ]
+    );
 }
 
 /// `natural=tree_row` доезжает до `MapData::tree_rows` и даёт деревья вдоль

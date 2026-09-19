@@ -44,6 +44,7 @@ use super::garages::GarageRun;
 use super::roofs::SMALL_FOOTPRINT_MAX;
 use super::{fortress, temples};
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect};
+use crate::map::osm::model::is_big_box;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
 use crate::map::{SunOnMap, sun_light};
@@ -164,8 +165,8 @@ impl RoofKind {
 /// этой стене балконы.
 ///
 /// Коды продолжают кровельные — один словарь в одном числе атрибута, — а
-/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `SACRED = 15u`,
-/// за ними `DOOR = 16u`).
+/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `SACRED = 16u`,
+/// за ними `DOOR = 17u`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WallKind {
     /// Панель: межэтажные швы, вертикальные швы плит, окно на панель и
@@ -185,6 +186,18 @@ pub enum WallKind {
     /// Профлист: вертикальные рёбра во всю стену, ленточное окно под
     /// карнизом да ворота внизу. Склад, промка, гаражный ряд.
     Shed,
+    /// Композитная кассета: **глухая** стена крупными кассетами со швом между
+    /// ними, ленточное остекление высоко под парапетом на части пролётов и
+    /// тёмный цоколь. Гипермаркет и ТЦ — [`is_big_box`].
+    ///
+    /// Отдельно от [`Shopfront`](Self::Shopfront) ровно потому, что это и есть
+    /// разница между конторой и коробкой: у витража остекление лентами через
+    /// этаж по всему фасаду, а у гипермаркета стекло — только у входа, всё
+    /// прочее глухое, и ячейка у него не жилая панель в 3.2 м, а кассетный
+    /// пролёт вчетверо шире ([`layers::cell_width`]). Пока торговая коробка
+    /// одевалась жилыми таблицами, стодвадцатиметровый «Магнит» носил ряды
+    /// квартирных окон.
+    BigBox,
     /// Ворота: створка в **каждой** ячейке и ничего больше — ни окна, ни
     /// балкона. Стена гаражного прогона, и выбирается она не по назначению
     /// дома, а по геометрии — как и кровля прогона ([`super::garages`]):
@@ -201,12 +214,13 @@ pub enum WallKind {
 
 impl WallKind {
     /// Исчерпывающий список — по нему идёт витрина `wall_gallery`.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Panel,
         Self::Brick,
         Self::Plaster,
         Self::Shopfront,
         Self::Shed,
+        Self::BigBox,
         Self::GarageDoors,
         Self::Sacred,
     ];
@@ -251,6 +265,7 @@ impl WallKind {
             Self::Plaster => "Штукатурка",
             Self::Shopfront => "Витраж",
             Self::Shed => "Профлист",
+            Self::BigBox => "Кассета",
             Self::GarageDoors => "Ворота",
             Self::Sacred => "Храм",
         }
@@ -265,6 +280,7 @@ impl WallKind {
             Self::Plaster => &PLASTER_WALL_COLORS,
             Self::Shopfront => &SHOPFRONT_WALL_COLORS,
             Self::Shed => &SHED_WALL_COLORS,
+            Self::BigBox => &BIG_BOX_WALL_COLORS,
             Self::GarageDoors => &GARAGE_WALL_COLORS,
             Self::Sacred => &temples::ORTHODOX_WALLS,
         }
@@ -325,6 +341,19 @@ const SHED_WALL_COLORS: [Color; 5] = [
     Color::srgb(0.52, 0.60, 0.52),
     Color::srgb(0.72, 0.66, 0.56),
     Color::srgb(0.62, 0.60, 0.58),
+];
+
+/// Композитная кассета гипермаркета: с фотографии — белый, светло-серый и
+/// песочный, и ровно один тёмный, «антрацит» новых ТЦ. Тон у самой стены
+/// сдержанный **намеренно**: цвет коробки на снимке задаёт не она, а полоса
+/// вывески поверх неё ([`layers::brand_band`]), и яркая кассета спорила бы с
+/// полосой вместо того, чтобы её держать.
+const BIG_BOX_WALL_COLORS: [Color; 5] = [
+    Color::srgb(0.86, 0.86, 0.85),
+    Color::srgb(0.80, 0.80, 0.79),
+    Color::srgb(0.82, 0.79, 0.73),
+    Color::srgb(0.74, 0.75, 0.76),
+    Color::srgb(0.42, 0.43, 0.45),
 ];
 
 /// Стена гаражного прогона: побелка, силикатный кирпич, крашеный простенок
@@ -450,6 +479,36 @@ const COMMERCIAL_ROOFS: [RoofKind; 10] = [
     RoofKind::Seam,
     RoofKind::Seam,
     RoofKind::Corrugated,
+];
+/// Кровля гипермаркета: мягкая и **светлая**. На каждом из аэрофото это
+/// мембрана или битум под гравийной присыпкой — почти белое поле, по которому
+/// разбросано оборудование; фальца и профлиста на таком пролёте не бывает,
+/// там мягкая кровля по профнастилу.
+const BIG_BOX_ROOFS: [RoofKind; 10] = [
+    RoofKind::Membrane,
+    RoofKind::Membrane,
+    RoofKind::Membrane,
+    RoofKind::Membrane,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Gravel,
+    RoofKind::Gravel,
+    RoofKind::Bitumen,
+];
+/// Магазин у дома — обычная мелкая коробка: чаще всего наплавляемый битум,
+/// у нового павильона фальц или профлист.
+const SHOP_ROOFS: [RoofKind; 10] = [
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Bitumen,
+    RoofKind::Seam,
+    RoofKind::Seam,
+    RoofKind::Corrugated,
+    RoofKind::Corrugated,
+    RoofKind::Membrane,
+    RoofKind::Gravel,
 ];
 const INDUSTRIAL_ROOFS: [RoofKind; 10] = [
     RoofKind::Corrugated,
@@ -581,6 +640,11 @@ fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
         BuildingUse::House => &HOUSE_ROOFS,
         BuildingUse::Apartments => &APARTMENTS_ROOFS,
         BuildingUse::Commercial => &COMMERCIAL_ROOFS,
+        // торговля делится размером, а не тегом: у гипермаркета мягкое светлое
+        // поле в фонарях и вентиляции, у магазина у дома — обычная мелкая
+        // кровля, и общая таблица стирала бы ровно эту разницу
+        BuildingUse::Retail if is_big_box(building) => &BIG_BOX_ROOFS,
+        BuildingUse::Retail => &SHOP_ROOFS,
         BuildingUse::Industrial => &INDUSTRIAL_ROOFS,
         BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_ROOFS,
         BuildingUse::Church(sacred) => return temples::roof_kind(sacred),
@@ -748,6 +812,13 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
         BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_WALLS,
         BuildingUse::Church(_) => return WallKind::Sacred,
         BuildingUse::Industrial => &INDUSTRIAL_WALLS,
+        // Торговая коробка — **до** порога малоэтажности, рядом с цехом и по
+        // той же причине: у неё один высокий зал, а не четыре жилых этажа, и
+        // низкая по этажам она из-за этого всегда. Оказавшись за порогом, весь
+        // крупноформат уходил бы в `LOW_RISE_WALLS`, то есть в штукатурку с
+        // кирпичом, — ровно то, из-за чего гипермаркет и читался жилым домом.
+        BuildingUse::Retail if is_big_box(building) => &BIG_BOX_WALLS,
+        BuildingUse::Retail => &SHOP_WALLS,
         // мелкая коробка без назначения — это частный дом (её и кроют как дом,
         // `kind_of`), и витражу в частном секторе взяться неоткуда
         BuildingUse::Other
@@ -809,6 +880,37 @@ const APARTMENTS_WALLS: [WallKind; 10] = [
     WallKind::Brick,
     WallKind::Brick,
     WallKind::Plaster,
+];
+/// Стена гипермаркета: композитная кассета почти всегда, изредка окрашенный
+/// профлист (строительный гипермаркет и оптовая база) и кирпич у старого
+/// универсама. Витража тут нет вовсе — сплошное остекление торгового центра
+/// это фасад ТРЦ в центре города, а не коробка у шоссе.
+const BIG_BOX_WALLS: [WallKind; 10] = [
+    WallKind::BigBox,
+    WallKind::BigBox,
+    WallKind::BigBox,
+    WallKind::BigBox,
+    WallKind::BigBox,
+    WallKind::BigBox,
+    WallKind::BigBox,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Brick,
+];
+/// Магазин у дома: витрина на весь первый этаж, у старого — штукатурка или
+/// кирпич. Ровно то, чем встроенный магазин отличается от коробки в поле, —
+/// и то, что тут было до появления [`WallKind::BigBox`], у всей торговли.
+const SHOP_WALLS: [WallKind; 10] = [
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Shopfront,
+    WallKind::Plaster,
+    WallKind::Plaster,
+    WallKind::Brick,
+    WallKind::Brick,
+    WallKind::Panel,
+    WallKind::Shed,
 ];
 const COMMERCIAL_WALLS: [WallKind; 10] = [
     WallKind::Shopfront,

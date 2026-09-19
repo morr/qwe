@@ -608,6 +608,14 @@ arches.
   - **Some uses are measured in metres, not storeys**: an industrial hall or a store has
     one tall span, a church has one storey to the cornice, a garage is one box and gets no
     spread at all (a row of garage boxes on a photo is all one height).
+  - **Retail is measured by its own size** — `BIG_BOX_HEIGHTS` 8–11 m for a big box
+    (`model::is_big_box`), `SHOP_HEIGHTS` 4.5–6.5 for a corner shop, and the branch stands
+    beside the industrial hall's rather than in the shape test, for the hall's reason: a
+    hypermarket is one tall trading floor whatever its plan looks like. The big-box numbers
+    are deliberately the same ones `parse::building_height` assembles out of
+    `building:levels` — half of Tula's crowd-format carries no level tag at all («Верный»,
+    ТЦ «Перспектива»), and a box next to an identical box must not come out half as tall
+    for want of a tag. The class and the threshold are in `SKILL.md`, **Retail box**.
   - **A public building is measured by its use, not its shape** — school, clinic, office
     (`BuildingUse::Public`) at 2–5 storeys, the same table as «everything else large»
     but reached before the footprint is consulted: a 900 m² school with a squarish plan
@@ -722,11 +730,11 @@ arches.
       `ALL` and would otherwise have been overwritten by the claddings — and `DOOR_CODE`
       derives from `WallKind::CODES` the same way, so a new roofing shifts the wall codes,
       a new cladding shifts the door, and the shader's mirror is edited whole).
-      Seven claddings —
-      `Panel | Brick | Plaster | Shopfront | Shed | GarageDoors | Sacred` — because panel seams with
+      Eight claddings —
+      `Panel | Brick | Plaster | Shopfront | Shed | BigBox | GarageDoors | Sacred` — because panel seams with
       balconies are
       exactly **one** kind of building, and while the wall was one, a garage and a church
-      wore them too. Five of them are chosen by the tables below; `Sacred` by the class
+      wore them too. Six of them are chosen by the tables below; `Sacred` by the class
       alone (every `Church`, before any table); **`GarageDoors` is chosen
       by geometry**, like the garage runs on the roof — `layers::wall_of_run` puts it on
       every box of a run and nothing else can reach it, which is why
@@ -928,6 +936,51 @@ arches.
     *base colour* of every wall in the city would drift at the city zoom, where the texture
     is supposed to be gone. A wall therefore has **no age** — `roof_age` is the roof's — and
     no grime layer of its own either.
+  - **The big box is the cladding whose cell is neither a panel nor a storey**
+    (`WallKind::BigBox`, code `14u`). A hypermarket facade is a curtain of composite
+    cassettes hung on the frame's columns, so its cell along the wall is
+    `layers::BIG_BOX_BAY` **7 m** (against `PANEL_WIDTH` 3.2) and its cell up the wall is
+    `BIG_BOX_TIER` **5.5 m** — one trading hall with its technical floor, the same trick
+    `SACRED_TIER` plays for a church and for the same reason. With the panel grid a 122 m
+    wall of «Магнит» came out as forty columns and a ribbon window in each read as forty
+    rows of flats; with the 3 m storey its 8 m shell came out as three floors of windows.
+    - What the shader draws between the openings is **two lines and nothing else**
+      (`CASSETTE_SEAM` on the bay edge, a horizontal joint every `CASSETTE_COURSE` quarter
+      of a tier): a cassette is a large flat panel, and everything else on that facade is
+      said by the band above it and the glazing below it.
+    - The opening is a **ribbon of curtain glazing high under the parapet**
+      (`BIG_BOX_WINDOW_LOW` 0.52 … `HIGH` 0.70, five panes), on
+      `BIG_BOX_WINDOW_SHARE` **34 %** of the bays by the column roll — the share the
+      shed's ribbon already uses, and low on purpose: a ribbon on every bay is a
+      `Shopfront`, i.e. a downtown mall, not a box by the highway. There is no dwelling
+      window on this cladding at all.
+    - The **plinth is taller** (`BIG_BOX_PLINTH` 0.22 of a tier against `PLINTH_HIGH`
+      0.14): under the glazing runs the dark band that hides the loading bays.
+    - The **door is the widest opening on the map** (`door_size` 4.2 × 3.4 m): a group of
+      glass leaves with a lobby, and you walk in with a trolley.
+  - **The brand band is geometry, not shader** (`layers::push_brand_band`,
+    `BRAND_BAND_SHARE` 0.26 of the drawn wall, top at `BRAND_BAND_TOP` 0.96) — one quad
+    across every drawn wall of a `BigBox`, with `set_roof(None)` so no texture touches it,
+    shaded by the wall's own outward normal through `shade_by_light` so the corner of the
+    box does not vanish. **It is what the eye reads a hypermarket by** on every one of the
+    reference photos — the coloured frieze running the whole perimeter — and it is the one
+    thing that separates a retail box from a warehouse of the same size and shape.
+    It cannot be a shader branch: a wall hands the fragment a **brightness and a glass
+    amount**, never a colour of its own, and a frieze is a colour. So it arrives the way
+    the **door** arrives, and for the same reason — a feature whose place or paint the data
+    knows cannot be rolled in the shader. The colour is `building:colour` when the mapper
+    set one (ТРЦ «Макси» is tagged `orange`, which is its real colour) and otherwise a
+    five-slot chain palette by the building's seed — red, yellow, green, blue, orange, i.e.
+    Магнит / Лента / Леруа / Метро / ОБИ; a sixth, magenta, was dropped on the first look
+    at the frame, since no chain here is that colour. **This is the first place
+    outside the temples that reads `building:colour`**; the note under **Tagged colours**
+    in `SKILL.md` that only temples read them is now half true, and the private sector
+    still does not.
+    Pushed **after** its own wall and **before** the door, so the frieze lies on the facade
+    and the entrance lies on the frieze.
+    Its wall palette is deliberately quiet (`BIG_BOX_WALL_COLORS`: three near-whites, a
+    cool grey and one anthracite) — the band is the colour of the building, and a bright
+    cassette under it would fight it.
   - **The garage row is the same mechanism keyed to *geometry*, codes `GarageRow` and
     `GarageBlock`** (`buildings/garages.rs`). Every other kind is chosen by `BuildingUse`
     and the building's own seed; these two are chosen by the shape of a **run** of
@@ -1275,6 +1328,34 @@ arches.
     ridge — `GableRoof::ridge`, an `Option` because a lean-to has no ridge and so no
     chimney (the ridge used to be read back out of the first slope, which stopped being
     `[eave, eave, ridge, ridge]` once half-hips and gambrels existed).
+  - **A big box's roof is a different roof** (`model::is_big_box`, the size half of
+    **Retail box** in `SKILL.md`), and this is the one place the size distinction is worth
+    the most: from directly above, the roof *is* the hypermarket. Three additions, none of
+    which a corner shop gets:
+    - **The skylight grid** (`push_skylight_grid`) — `GRID_SKYLIGHT_SIDE` 2.8 m squares on
+      a `GRID_SKYLIGHT_PITCH` 13 m lattice laid from the middle of the frame outward (so
+      both edges of the roof keep an equal margin rather than one full step and one
+      offcut), each tested by the usual `fit`, capped at `GRID_SKYLIGHT_MAX` 90. A nine
+      thousand square metre trading hall is lit from above, and on every reference photo
+      that regular field of pale squares is what the roof is made of.
+      **This is the deliberate exception to "a cell grid places a feature, it never *is*
+      the feature"** (the rule under `repair_patch` above). Real skylights sit on the
+      frame's columns, by the ruler; jitter here would be an error, not life — the same
+      argument that makes a garage run's bay seams a grid. `the_skylight_grid_keeps_its_pitch`
+      pins it.
+    - **The roof plant** (`push_plant`) — 2–5 air-handling units (`PLANT_SIZE` 3.6 × 2.2 m,
+      `PLANT_HEIGHT` 1.8) **in one row**, not scattered: on the photos they stand as a
+      single block, because they hang off one duct run, and spread over the roof they would
+      be indistinguishable from vents. The whole run's envelope is `fit`-tested first, so
+      the last unit of the row cannot hang off the outline.
+    - **The vent cap goes 10 → `VENT_MAX_BIG_BOX` 26.** `VENT_MAX` was sized for a house,
+      and on «Магнит» it put ten specks on a hectare of roof.
+    **What the three cost**, measured before and after on one machine, `dev` profile,
+    `examples/bench/map_meshing`, 2.5D+shadows+tint: **865 732 verts / 114.6 ms →
+    883 917 / 115.2**, i.e. **+18 k vertices (+2.1 %) and +0.6 ms** for all eighteen of
+    Tula's big boxes together. Load-time only, like the rest of the layer. The
+    clutter-off row moved by **185 vertices** in the same runs — that is the brand band,
+    a quad per drawn wall of a big box, and nothing else about the walls grew.
   - **Placement** is the shared Park–Miller LCG — `map/seed.rs::Lcg`, one copy for the
     whole of `map/*` (crowns, this clutter, the parked cars), the crown generator's
     original lifted out of `map/trees` — seeded from the roof material's building seed

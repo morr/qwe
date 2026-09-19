@@ -706,12 +706,10 @@ fn every_cladding_reaches_the_city() {
     let mut seen: Vec<WallKind> = Vec::new();
     for row in 0..12 {
         for column in 0..12 {
-            let at = Vec2::new(column as f32 * 31.0, row as f32 * 23.0);
-            let outer: Vec<Vec2> = oblong(14.0, 40.0).into_iter().map(|p| p + at).collect();
+            let at = Vec2::new(column as f32 * 140.0, row as f32 * 120.0);
             // назначения по кругу, высоты по кругу — так перебираются обе
             // развилки сразу
-            let mut area = building(outer, Some([6.0, 15.0, 27.0][row % 3]), AreaKind::Building);
-            area.building_use = [
+            let building_use = [
                 BuildingUse::House,
                 BuildingUse::Apartments,
                 BuildingUse::Commercial,
@@ -719,7 +717,18 @@ fn every_cladding_reaches_the_city() {
                 BuildingUse::Public,
                 BuildingUse::Other,
                 ORTHODOX,
-            ][column % 7];
+                BuildingUse::Retail,
+            ][column % 8];
+            // у торговли развилка не по высоте, а по пятну: кассету с фризом
+            // получает только крупноформат ([`is_big_box`]), и на ленте в
+            // 560 м² она не встретилась бы ни разу
+            let size = match (building_use, row % 2) {
+                (BuildingUse::Retail, 0) => (60.0, 60.0),
+                _ => (14.0, 40.0),
+            };
+            let outer: Vec<Vec2> = oblong(size.0, size.1).into_iter().map(|p| p + at).collect();
+            let mut area = building(outer, Some([6.0, 15.0, 27.0][row % 3]), AreaKind::Building);
+            area.building_use = building_use;
             let kind = wall_of(&area).kind;
             if !seen.contains(&kind) {
                 seen.push(kind);

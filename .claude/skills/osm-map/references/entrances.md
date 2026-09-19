@@ -100,6 +100,26 @@ whole algorithm:
   p10 is 4.5 m, but a navtile is 2 m, so doors closer than ~10 m resolve to the same
   tile and are not distinct targets. `facade_capacity` caps how many doors one edge
   absorbs so a long facade cannot hoard them.
+- **The pitch is a property of the building, not of the module** (`mod.rs::DoorPitch`).
+  A dwelling is measured in *подъезды* every 25 m; a **retail box**
+  (`model::is_big_box` — see **Retail box** in `SKILL.md`) has no подъезды at all, it
+  has **entrance groups**, and between the lobbies of a «Магнит» or a «Лента» there are
+  fifty-odd metres. So a big box carries `BIG_BOX_ENTRANCE_SPACING` 55 m and
+  `BIG_BOX_MIN_SPACING` 45 m, its own cohort (`mean` 2, `max` 12 — a mall has an
+  entrance group per anchor tenant, and the dwelling ceiling of 8 is half of what a
+  half-kilometre perimeter needs), and its count is taken off the **perimeter** instead
+  of the equivalent length.
+  Three separate defects, all reported from one frame of ТРЦ «Макси» (`building=yes` +
+  `shop=mall`, 52 321 m²), and each needed its own half of the fix:
+  - **too few**: the ceiling of 8 is one door per 125 m of wall;
+  - **too few again**: `equivalent_length` is 300 m on a 1000 m perimeter, because it
+    answers "how elongated", which is the right question for a slab whose ends are blind
+    and the wrong one for a box with entrances on every side. Hence the perimeter;
+  - **all in one place**: facades are walked by *proximity to a road*, and on a
+    half-kilometre outline the edges near the road are neighbours of each other, so every
+    door landed in the one corner closest to the street. The five-fold minimum gap is what
+    pushes the next door on round the building. Pinned by
+    `a_shopping_centre_spreads_its_entrances_around_the_perimeter`.
 - **A step in the outline is not a facade** (`ENTRANCE_MIN_FACADE` 6 m). OSM traces a
   block with two- to four-metre steps — a stair projection, a bay, the joint between two
   sections — and such an edge is often *nearer the street* than the wall it steps out of,

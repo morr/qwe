@@ -27,7 +27,7 @@ use super::{
     BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
 };
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
-use crate::map::osm::model::{distance_to_segment, signed_ring_area};
+use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
 use crate::map::seed::seed_from_point;
 use crate::settings::STOREY_HEIGHT;
@@ -97,9 +97,22 @@ fn cell_width(kind: WallKind) -> f32 {
     match kind {
         WallKind::GarageDoors => BAY,
         WallKind::Sacred => SACRED_BAY,
+        WallKind::BigBox => BIG_BOX_BAY,
         _ => PANEL_WIDTH,
     }
 }
+
+/// Кассетный пролёт стены гипермаркета, м — вместо жилой панели. Фасад
+/// коробки собран из крупных композитных кассет по колоннам каркаса, и шаг
+/// колонн у торгового зала это шесть-двенадцать метров, а не три. С
+/// панельной ячейкой стодвадцатиметровая стена «Магнита» делилась на сорок
+/// столбцов, и ленточное окно в каждом читалось рядом квартирных.
+const BIG_BOX_BAY: f32 = 7.0;
+/// Ярус стены гипермаркета, м, — вместо жилого этажа, по тому же правилу, по
+/// которому у храма ярус шесть метров: торговый зал с техэтажом над ним — это
+/// один ярус фасада, и делить восьмиметровую оболочку на три этажа окон
+/// значит нарисовать трёхэтажный дом.
+const BIG_BOX_TIER: f32 = 5.5;
 
 /// Ячейка храмовой стены, м: простенок с одним высоким окном шире жилой
 /// панели.
@@ -389,6 +402,9 @@ fn storeys_of(building: &PolyArea) -> f32 {
             ..
         }) => BELL_TOWER_TIER,
         BuildingUse::Church(_) => SACRED_TIER,
+        // у торговой коробки ярус фасада — торговый зал целиком; магазин у
+        // дома остаётся на жилом этаже, он и есть этаж дома
+        BuildingUse::Retail if is_big_box(building) => BIG_BOX_TIER,
         _ => STOREY_HEIGHT,
     };
     (height_or_default(building) / storey).round().max(1.0)
@@ -500,6 +516,9 @@ pub(super) fn door_size(kind: WallKind) -> Vec2 {
         WallKind::Plaster => Vec2::new(1.3, 2.4),
         WallKind::Shopfront => Vec2::new(2.4, 3.0),
         WallKind::Shed => Vec2::new(3.2, 2.9),
+        // вход в гипермаркет — группа стеклянных створок с тамбуром, и по
+        // ширине это самый большой проём на карте: в него идут с тележками
+        WallKind::BigBox => Vec2::new(4.2, 3.4),
         // ворота рисует сама облицовка, по створке на бокс; сюда эта стена не
         // доходит ([`push_doors`]), и размер тут только чтобы `match` остался
         // исчерпывающим
@@ -659,6 +678,73 @@ fn push_doors(
         builder.set_wall(WallFrame::opening(d0, d1, door_up, DOOR_CODE, seed));
         builder.push_quad([d0, d1, d1 + door_up, d0 + door_up], color);
     }
+}
+
+/// Фризовая полоса гипермаркета: доля нарисованной стены, которую она
+/// занимает, и её верх — обе в долях подъёма, а не в метрах, потому что
+/// полоса идёт по **верху фасада** независимо от того, восемь метров в нём
+/// или пятнадцать. С фотографии: у «Магнита» красный фриз занимает верхнюю
+/// четверть фасада и не доходит до самого парапета на его собственную
+/// толщину.
+const BRAND_BAND_SHARE: f32 = 0.26;
+const BRAND_BAND_TOP: f32 = 0.96;
+
+/// Фирменные цвета сетевой торговли — то, чем гипермаркет узнаётся на снимке
+/// раньше, чем читается вывеска: красный «Магнит», жёлтая «Лента», зелёный
+/// «Леруа», синий «Глобус», оранжевый «Макси». Палитра — запасная: если в OSM
+/// размечен `building:colour`, берётся он, и ТРЦ «Макси» (`orange`) красится
+/// собственным тегом.
+const BRAND_COLORS: [Srgba; 5] = [
+    Srgba::rgb(0.80, 0.16, 0.14),
+    Srgba::rgb(0.93, 0.72, 0.09),
+    Srgba::rgb(0.24, 0.56, 0.24),
+    Srgba::rgb(0.13, 0.33, 0.62),
+    Srgba::rgb(0.88, 0.45, 0.10),
+];
+
+/// Полоса вывески по верху стены гипермаркета — одним четырёхугольником во
+/// всю грань, без фактуры (`set_roof(None)`), как дверное полотно.
+///
+/// Это **самая узнаваемая примета** торговой коробки и единственное, что
+/// отличает её от склада того же размера: на каждом из аэрофото коробка
+/// читается цветным фризом по периметру, а не стеной и не кровлей. Рисовать
+/// её шейдером нечем — стена отдаёт фрагменту яркость и стекло, а не цвет, —
+/// поэтому полоса приходит геометрией, ровно тем же приёмом, каким приходит
+/// дверь: проём тоже нельзя было разыграть в шейдере, раз его место знают
+/// данные.
+///
+/// Кладётся **после** своей стены и до входа: фриз лежит на фасаде, а
+/// козырёк входа — поверх фриза.
+fn push_brand_band(
+    builder: &mut MeshBuilder,
+    building: &PolyArea,
+    wall: &WallLook,
+    span: &WallSpan,
+) {
+    if wall.kind != WallKind::BigBox {
+        return;
+    }
+    let color = brand_color(building);
+    let top = span.lift * BRAND_BAND_TOP;
+    let low = span.lift * (BRAND_BAND_TOP - BRAND_BAND_SHARE);
+    // фриз — та же поверхность, что и стена под ним, и свет на неё падает так
+    // же: без этого полоса на освещённой и затенённой гранях вышла бы одного
+    // тона и угол коробки пропал
+    let (a, b) = (span.a, span.b);
+    let edge = b - a;
+    let outward = Vec2::new(edge.y, -edge.x).normalize_or_zero();
+    let lit = shade_by_light(color, outward, WALL_LIT_MIX, WALL_SHADED_MIX);
+    builder.set_roof(None);
+    builder.push_quad([a + low, b + low, b + top, a + top], lit.into());
+}
+
+/// Цвет фриза: `building:colour` с контура, иначе фирменный по посеву дома.
+/// Тег сильнее палитры по общему правилу разметки — мапер подбирал его по
+/// фотографии, и у ТРЦ «Макси» это его настоящий оранжевый.
+fn brand_color(building: &PolyArea) -> Srgba {
+    building.colours.wall.map(srgba_of).unwrap_or_else(|| {
+        BRAND_COLORS[(building_seed(building) >> 24) as usize % BRAND_COLORS.len()]
+    })
 }
 
 /// Стекло слухового окна, линейный цвет: тёмная комната с отблеском неба.
@@ -1140,6 +1226,8 @@ fn push_house_with_arches(
         let cells = garage_cells(building, look, wall, &span)
             .unwrap_or_else(|| wall_cells(building, wall, &span));
         push_wall_with_openings(builder, &span, &cells, openings, bottom, top);
+        // фриз вывески — поверх своей стены и до входа
+        push_brand_band(builder, building, wall, &span);
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
         push_doors(builder, building, wall, &span, &cells, openings, bottom);

@@ -118,6 +118,9 @@ const BUILDING_GAP: f32 = 7.0;
 /// Длина дома в сетке назначений, м. Короче, чем в сетке материалов: там
 /// смотрят на рисунок, здесь — на то, какой он вообще выпал.
 const USE_LENGTH: f32 = 16.0;
+/// Длина гипермаркета в сетке назначений, м: 60 × 30 — это 1800 м², с запасом
+/// над `BIG_BOX_AREA_MIN`.
+const BIG_BOX_LENGTH: f32 = 60.0;
 
 /// Шаг рядов, м. У сетки материалов ряд обязан вместить шестнадцатиэтажку с её
 /// подъёмом (16 × 3 × 0.35 ≈ 17 м) плюс глубину дома и подписи; у сетки
@@ -244,6 +247,7 @@ fn note(kind: WallKind) -> &'static str {
         WallKind::Plaster => "гладкая, мелкие окна, балконов нет",
         WallKind::Shopfront => "лента остекления, витрина на первом этаже",
         WallKind::Shed => "рёбра профлиста, окно под карнизом, ворота внизу",
+        WallKind::BigBox => "глухая кассета, лента стекла под фризом, ярус 5.5 м",
         WallKind::GarageDoors => "створка в каждом боксе, окон нет вовсе",
         WallKind::Sacred => "ярус в 6 м, высокое арочное окно, тяга по ярусу",
     }
@@ -253,7 +257,8 @@ fn use_label(building_use: BuildingUse) -> &'static str {
     match building_use {
         BuildingUse::House => "Частный дом",
         BuildingUse::Apartments => "Многоквартирный",
-        BuildingUse::Commercial => "Торговля, офис",
+        BuildingUse::Commercial => "Контора, павильон",
+        BuildingUse::Retail => "Магазин / гипермаркет",
         BuildingUse::Industrial => "Промзона, склад",
         // кооператив целиком и одиночный бокс облицованы одинаково: рядами
         // боксов ГСК делает кровля, а не стена
@@ -267,11 +272,12 @@ fn use_label(building_use: BuildingUse) -> &'static str {
 /// Все назначения по порядку — тот же список, что у парсера, минус
 /// `GarageBlock`: облицовку он берёт ту же, что одиночный бокс, и отдельный
 /// ряд вышел бы копией соседнего.
-const USES: [BuildingUse; 8] = [
+const USES: [BuildingUse; 9] = [
     BuildingUse::House,
     BuildingUse::Apartments,
     BuildingUse::Other,
     BuildingUse::Commercial,
+    BuildingUse::Retail,
     BuildingUse::Public,
     BuildingUse::Industrial,
     BuildingUse::Garage,
@@ -332,24 +338,38 @@ fn kind_cells(tuning: &Tuning) -> Vec<Cell> {
     cells
 }
 
+/// Длина дома в сетке назначений, м. У всех назначений ряд показывает
+/// **этажность** — малоэтажный дом и высокий, — и длина у обоих одна; у
+/// торговли ось ряда другая, **размер**: гипермаркет от магазина у дома
+/// отличает не этаж, а пятно ([`is_big_box`]), и второй дом ряда сделан
+/// достаточно крупным, чтобы игра выбрала ему кассетную стену с фризом.
+/// Второй слот торговли — 60 × 30 м, то есть 1800 м² против порога в 1200.
+fn use_length(building_use: BuildingUse, slot: usize) -> f32 {
+    match (building_use, slot) {
+        (BuildingUse::Retail, 1) => BIG_BOX_LENGTH,
+        _ => USE_LENGTH,
+    }
+}
+
 /// Сетка назначений: строка на `BuildingUse`, в строке малоэтажный дом и
-/// высокий. Облицовку выбирает игра — витрина её не заказывает.
+/// высокий (у торговли — магазин у дома и гипермаркет, [`use_length`]).
+/// Облицовку выбирает игра — витрина её не заказывает.
 fn use_cells(tuning: &Tuning) -> Vec<Cell> {
-    let half = Vec2::new(USE_LENGTH, USE_LENGTH * DEPTH_RATIO) / 2.0;
     let origin_x = STOREY_LADDER.len() as f32 * kind_pitch_x(tuning) + GRID_GAP_X;
     let mut cells = Vec::new();
     for (row, building_use) in USES.into_iter().enumerate() {
+        let mut x = origin_x;
         for (slot, storeys) in USE_LADDER.into_iter().enumerate() {
+            let length = use_length(building_use, slot);
+            let half = Vec2::new(length, length * DEPTH_RATIO) / 2.0;
             cells.push(Cell {
-                centre: Vec2::new(
-                    origin_x + slot as f32 * (USE_LENGTH + BUILDING_GAP) + half.x,
-                    -(row as f32) * USE_PITCH_Y + half.y,
-                ),
+                centre: Vec2::new(x + half.x, -(row as f32) * USE_PITCH_Y + half.y),
                 half,
                 storeys,
                 wall: None,
                 building_use,
             });
+            x += length + BUILDING_GAP;
         }
     }
     cells

@@ -1847,6 +1847,9 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     let Some(outer) = as_ring(&points) else {
         return;
     };
+    // высота читается до того, как кольцо уедет в `PolyArea`: торговому этажу
+    // нужен контур, а не только теги
+    let height = area_height(kind, &element.tags, &outer);
     push_area(
         map,
         PolyArea {
@@ -1854,7 +1857,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             holes: Vec::new(),
             kind,
             building_use: area_use(kind, &element.tags),
-            height: area_height(kind, &element.tags),
+            height,
             entrances: Vec::new(),
             colours: area_colours(kind, &element.tags),
         },
@@ -1904,7 +1907,6 @@ fn parse_relation(
 
     let outers = assemble_rings(members, "outer", bounds, skipped_open_rings);
     let inners = assemble_rings(members, "inner", bounds, skipped_open_rings);
-    let height = area_height(kind, &element.tags);
     let building_use = area_use(kind, &element.tags);
     let colours = area_colours(kind, &element.tags);
 
@@ -1914,6 +1916,10 @@ fn parse_relation(
             .filter(|inner| point_in_polygon(inner[0], &outer))
             .cloned()
             .collect();
+        // высота — по каждому кольцу отдельно, а не одна на relation: этаж
+        // торговой коробки меряется её пятном, и у ТЦ одним мультиполигоном
+        // размечен и корпус, и пристройка под ним
+        let height = area_height(kind, &element.tags, &outer);
         push_area(
             map,
             PolyArea {
