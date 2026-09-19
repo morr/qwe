@@ -278,10 +278,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the limit. Two guards make the wider limit safe: `Untouched` — the shift may not cross a
   building of `KEEP_BUILDING_AREA` 100 m² or more, nor greenery or water (a smaller
   building is a booth standing *in* the lot, and going round it leaves a patch of ground
-  with the booth in the middle), **and a vertex standing on a fence does not step off it**
-  (`KEEP_ON_FENCE` 0.5 m — a fenced lot shares its vertices with the `barrier`, so
-  "crossing" it is the wrong question; Tula: 144 lot vertices of 2200 on 27 lots),
-  and `untangled` — the pulled ring goes through
+  with the booth in the middle), **and it does not get past a fence**, asked as two
+  questions because a `barrier` is a line, not a ring: a vertex standing on one
+  (`KEEP_ON_FENCE` 0.5 m — a fenced lot shares its vertices with the fence, so "crossing"
+  is the wrong question there; Tula: 144 lot vertices of 2200 on 27 lots) does not step
+  off it, and any other vertex does not cross one on its way. The second half was missing
+  at first, and that is how the hospital lot got out of its own railing: a vertex two
+  metres from the fence reached for a road ten metres off and stepped over it.
+  Fence links go into the index padded by the full pull limit, or a link further off than
+  the query cell is never a candidate.
+  And `untangled` — the pulled ring goes through
   `i_overlay` NonZero, since points pulled independently can cross the ring over itself and
   earcut leaves an unfilled slash where they do.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
@@ -890,11 +896,21 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   reads as blocks of stalls with drives between them instead of one field of hatching.
   `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2, `AISLE` 6.0, `EDGE_MARGIN` 1.2. The paint is a bar
   to the left of each stall (neighbours coincide) plus a **closing** one where a run
-  begins — at a cross aisle and at the outline, or the block's edge stall reads as open.
+  begins — at a cross aisle, or the block's edge stall reads as open.
   That "left" makes the **order of the list load-bearing**: a row has to be emitted along
   `-perp(Stall::along)`, which is why the far side of an aisle is laid out back to front.
-  Every stall is kept only if its **four corners** are
-  inside the outline, so an L-shaped lot gets none in the notch; a lot under `MIN_AREA`
+  **A bar is drawn only where a stall would fit on its other side** (`fits_with` at
+  `EDGE_MARGIN`): a bar divides two stalls, and at the end of a row it divided a stall
+  from the kerb — a line nobody paints, reading as a stroke into nothing. Asking merely
+  for asphalt half a stall past it was not enough, since the wedge beyond the last stall
+  of a skewed kerb is still asphalt.
+  Three rules decide **which stalls exist at all**, each answering the same picture: it
+  must clear the outline by `EDGE_MARGIN` rather than merely fall inside (four corners,
+  `fits_with`), it must sit in a run of at least `MIN_ROW_RUN` 2 stalls (the one stall a
+  row shrinks to at a wedge takes its bars with it), and it must have asphalt in front of
+  its nose to drive off (`reachable`, probed at both front corners — the continued lane
+  grid otherwise puts a row whose drive is already outside the lot).
+  So an L-shaped lot gets nothing in the notch; a lot under `MIN_AREA`
   (120 m²) gets no markings at all — a yard for four cars is not striped, though its
   stalls stay and cars stand on them. **The markings and the cars read the same
   `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a

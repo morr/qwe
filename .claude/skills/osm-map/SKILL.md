@@ -737,6 +737,14 @@ be called alone:
       Больничный сквер next door — the author's third report. The price is measured: in
       Tula 144 lot vertices of 2200 (6.5 %) sit on a fence, on 27 lots, and those are
       exactly the lots that honestly end at a fence.
+      **That rule alone was a hole**, and the author found it on the same lot: a vertex
+      two metres *beside* the fence is not standing on it, so nothing stopped it reaching
+      for a road ten metres off and crossing the railing on the way. Every other vertex
+      is therefore tested against the fence links with a plain segment intersection
+      (`segments_cross`; parallel counts as no crossing, so a shift along a fence is
+      free). Fence links also go into the index padded by `PARKING_GAP_MAX`, not by
+      `KEEP_ON_FENCE` — the query is by the cell of the shift's *start*, and at half a
+      metre of padding a link further away was never even a candidate.
     - **`PARKING_STEP` 3 m** (the block's is 8): between two pulled points the edge runs
       as a chord while the road bends, so at a corner the chord leaves a wedge of ground —
       metres of it at 8 m spacing on the embankment bend, centimetres at 3.
@@ -1982,9 +1990,18 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       stalls, an ordinary block between drives; without it Tula's ТРЦ «Макси» lot
       (671 × 255 m) ran unbroken rows of hundreds of metres, where the aerial photo (2GIS,
       the same lot, zones A–H) shows blocks with drives between them.
-  - **A stall survives only if all four of its corners are inside the outline**
-    (`fits`, the same test the roof clutter uses for its boxes) — an L-shaped lot gets
-    nothing in the notch, and the OBB rows do not have to match the outline.
+  - **A stall survives three tests**, and all three came out of one report: single bars
+    left along the edge of a lot with nothing between them.
+    - **All four corners inside the outline** (`fits`, the test the roof clutter uses for
+      its boxes) — an L-shaped lot gets nothing in the notch, and the rows do not have to
+      match the outline — **with `EDGE_MARGIN` of clearance** (`fits_with`), not merely
+      inside: a stall whose corner sits on a skewed kerb reads as a half stall.
+    - **A run of at least `MIN_ROW_RUN` 2 stalls.** At a wedge a row shrinks to one
+      stall, which is a bar, a gap and a bar on empty asphalt; the whole run is dropped.
+    - **Asphalt in front of the nose** (`reachable`, `PAIR_AISLE/2` ahead, probed at
+      *both* front corners because at a skewed corner the middle is still on asphalt when
+      half the exit is off it). The lane grid is continued past the outermost aisle, so
+      without this a row lands where its drive is already outside the lot.
   - **`MIN_AREA` 120 m²** — under that the lot gets no paint at all. A yard for four cars
     is not striped in reality, and stripes on a 6 × 10 m patch read as a texture bug.
     **The stalls themselves stay**: `MIN_AREA` gates `push_markings` only, `fill_lots`
@@ -1992,10 +2009,18 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour. Plus a **closing** bar
-    where a run of stalls begins — at a cross aisle and at the outline — found by asking
+    where a run of stalls begins — at a cross aisle — found by asking
     whether the *previous* stall in the list stands one stall width away, since the stalls
     of a row are generated in order. Without it every block ended in a stall open to the
     drive, which is exactly what the cross aisles were added to stop looking like.
+    **Any bar is drawn only where a stall would fit on its other side** (`fits_with` at
+    `EDGE_MARGIN`). A bar divides two stalls; at the end of a row it divided a stall from
+    the kerb, which is a line nobody paints and which read as a stroke into nothing —
+    the author's report, three of them left on the hospital lot. Probing merely for
+    asphalt half a stall past the bar did **not** settle it: the wedge beyond the last
+    stall of a skewed kerb is still asphalt, so the bar survived the test.
+    A bar also stops `LINE_GAP` 0.5 m short of a stall's back, or the two rows of a pair
+    read as one line straight through both of them.
     **"In order" is a contract on the list, not an observation**: a row has to be emitted
     along `-perp(Stall::along)`. The invented layout satisfies it by construction; along
     an aisle only the near side does, so `aisle_rows` walks the far side **back to
