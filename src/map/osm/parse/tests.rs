@@ -2601,7 +2601,8 @@ fn finishing_the_parse_reports_what_each_pass_did() {
         "дорог в сцене нет, отодвигать не от чего"
     );
     assert_eq!(report.pulled.left, 0);
-    assert_eq!(report.stretched, 0, "кварталов в сцене нет");
+    assert_eq!(report.stretched.blocks, 0, "кварталов в сцене нет");
+    assert_eq!(report.stretched.lots, 0, "и стоянок тоже");
     assert_eq!(report.planted.tree_nodes, 1);
     assert_eq!(report.planted.standalone, 1);
     assert_eq!(map.buildings.len(), 1, "остался только косой домик");
@@ -2700,7 +2701,7 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
         ..MapData::default()
     };
 
-    let stretched = pull_landuse_to_roads(&mut map);
+    let stretched = pull_landuse_to_roads(&mut map).blocks;
     assert!(stretched >= 2, "дотянуто вершин: {stretched}");
     let top = map.landuse[0]
         .outer
@@ -2719,6 +2720,57 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
             .all(|(a, b)| a.distance(*b) < 0.01),
         "квартал в стороне от улицы тронут"
     );
+}
+
+/// Тем же проходом дотягивается и стоянка — но по своему правилу: её край
+/// пересекает проезд ряда, и вершина, стоящая на его полотне, обязана уехать к
+/// улице вместе с соседями. По правилу квартала («лежишь под лентой — тянуть
+/// некуда») она осталась бы на месте, и вдоль улицы вышла бы пила.
+#[test]
+fn a_lot_reaches_the_road_across_its_own_aisle() {
+    let edge = 4.0 + sidewalk_width(8.0).unwrap();
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, -12.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![
+            street(
+                vec![
+                    CENTER - Vec2::new(400.0, 0.0),
+                    CENTER + Vec2::new(400.0, 0.0),
+                ],
+                8.0,
+            ),
+            // проезд ряда: упирается в улицу, пересекая верхний край стоянки
+            street(
+                vec![
+                    CENTER + Vec2::new(0.0, -30.0),
+                    CENTER + Vec2::new(0.0, -6.0),
+                ],
+                5.0,
+            ),
+        ],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+
+    let stretched = pull_landuse_to_roads(&mut map).lots;
+    assert!(stretched >= 2, "дотянуто вершин: {stretched}");
+    // весь верхний край — под полотном улицы, без зубцов у проезда
+    for vertex in &map.parking[0].outer {
+        let y = vertex.y - CENTER.y;
+        assert!(
+            y < -30.0 || (y + edge - LANDUSE_OVERLAP).abs() < 0.02,
+            "вершина верхнего края не дотянута: {y}"
+        );
+    }
 }
 
 /// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт

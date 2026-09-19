@@ -158,7 +158,7 @@ struct PassReport {
     squaring: std::time::Duration,
     pulled: PulledHouses,
     pulling: std::time::Duration,
-    stretched: usize,
+    stretched: StretchedAreas,
     stretching: std::time::Duration,
     generated: usize,
     generating: std::time::Duration,
@@ -221,9 +221,10 @@ impl std::fmt::Display for PassReport {
             f,
             "osm parse: {moved} buildings pulled off the sidewalks ({partly} of them only part of the way), {left} left standing on them, in {pulling:?}"
         )?;
+        let StretchedAreas { blocks, lots } = stretched;
         writeln!(
             f,
-            "osm parse: {stretched} block vertices pulled to the drawn road edge in {stretching:?}"
+            "osm parse: {blocks} block and {lots} parking vertices pulled to the drawn road edge in {stretching:?}"
         )?;
         let attached = entrances_found - entrances_orphaned;
         writeln!(
@@ -280,9 +281,12 @@ impl std::fmt::Display for PassReport {
 /// 5. **Отодвигание домов от тротуаров** — после выпрямления (косой дом
 ///    сначала становится прямым, потом отъезжает) и до всего, что читает
 ///    контур.
-/// 6. **Подтягивание кварталов к дорогам** — где угодно в хвосте: `landuse` не
-///    трогает ни навмеш, ни двери, ни посадку, ни машины. Стоит здесь, потому
-///    что дома к этому моменту уже на своих местах.
+/// 6. **Подтягивание кварталов и стоянок к дорогам** — где угодно в хвосте: ни
+///    `landuse`, ни `parking` не трогают ни навмеш, ни двери, ни посадку.
+///    Стоит здесь, потому что дома к этому моменту уже на своих местах, а
+///    контуры стоянок — **после** выпрямления домиков (шаг 4): `vertex_uses`
+///    считает общие вершины по сырым контурам стоянок, и дотянутый край не
+///    должен менять то, какие дома выпрямились.
 /// 7. **Генерация дверей** — по уже окончательным контурам: дверь ставится по
 ///    стене того дома, который останется на карте.
 /// 8. **Посадка деревьев** — тоже по окончательным контурам: дерево обходит
@@ -1145,6 +1149,18 @@ struct PulledHouses {
 /// 3 м, поднято по взгляду на кадр: на четвёртом и пятом метре полоска земли
 /// вдоль улицы всё ещё читается швом, а не обочиной.
 const LANDUSE_GAP_MAX: f32 = 5.0;
+/// То же для стоянки, м, и предел здесь другой не по вкусу, а по смыслу: у
+/// квартала за пределом начинается палисадник, у стоянки — пустырь между её
+/// краем и проездом, по которому в неё въезжают. Полоса шире ряда мест с
+/// проездом (5.2 + 6) — это уже не шов, а своя площадка; всё, что уже, —
+/// асфальт, которого на снимке не видно отдельно от стоянки, и на нём же
+/// встаёт крайний ряд мест (`map::parking`).
+///
+/// Замерено по кэшу Тулы: у 181 стоянки 30 км контура, 7 км из них уже под
+/// асфальтом, а из остального в предел попадает 19.4 км (в пять метров —
+/// 13.9 км). Газона в этих зазорах 492 м из 19.4 км, здания — 51 м, так что
+/// отдельного правила «не наступать на зелень» проход не просит.
+const PARKING_GAP_MAX: f32 = 12.0;
 /// На сколько метров дотянутый край квартала заводится **под** полотно, м.
 /// Лента рисуется по сглаженной оси (`roads::centerline`), а зазор меряется по
 /// сырым точкам OSM — без запаса на повороте осталась бы щель в сантиметр.
@@ -1153,6 +1169,8 @@ const LANDUSE_OVERLAP: f32 = 0.5;
 /// Между своими вершинами ребро прямое, а дорога гнётся, и на выпуклости
 /// поворота щель осталась бы посреди ребра, где двигать нечего.
 const LANDUSE_STEP: f32 = 8.0;
+/// То же для стоянки, м; почему мельче — [`Stretch::step`].
+const PARKING_STEP: f32 = 3.0;
 
 /// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
 /// **дотягивается под полотно**. Возвращает, сколько вершин сдвинуто.
@@ -1177,7 +1195,13 @@ const LANDUSE_STEP: f32 = 8.0;
 ///
 /// Мосты и арки пропущены: под мостом квартал и так рисуется, а проезд сквозь
 /// дом — это не край двора.
-fn pull_landuse_to_roads(map: &mut MapData) -> usize {
+///
+/// **Стоянки дотягиваются тем же проходом** и по тем же звеньям, но по своему
+/// правилу ([`LOT_STRETCH`]) и на свой предел ([`PARKING_GAP_MAX`]): пустырь
+/// между краем площадки и проездом вдоль неё — то же самое, что полоска земли
+/// между двором и тротуаром, только шире и виден он не швом, а прогалиной в
+/// асфальте. Индекс дорог у обоих один — это его единственная дорогая часть.
+fn pull_landuse_to_roads(map: &mut MapData) -> StretchedAreas {
     // `reach` — внешний край нарисованного полотна от оси
     let mut segments: Vec<Link> = Vec::new();
     for road in &map.roads {
@@ -1198,23 +1222,88 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
             });
         }
     }
-    // звено кладётся в ячейки с запасом на своё полотно и предельный зазор,
-    // так что спрашивающему хватает ячейки самой вершины
+    // звено кладётся в ячейки с запасом на своё полотно и наибольший из
+    // пределов, так что спрашивающему хватает ячейки самой вершины; запас
+    // больше нужного лишь добавляет кандидатов, которые отсеет сам предел
     let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, link) in segments.iter().enumerate() {
-        lines.insert_segment(link.from, link.to, link.reach + LANDUSE_GAP_MAX, index);
+        let pad = link.reach + LANDUSE_GAP_MAX.max(PARKING_GAP_MAX);
+        lines.insert_segment(link.from, link.to, pad, index);
     }
 
-    let mut pulled = 0;
-    for area in &mut map.landuse {
-        area.outer = pull_ring(&area.outer, false, &segments, &lines, &mut pulled);
-        area.holes = area
-            .holes
-            .iter()
-            .map(|hole| pull_ring(hole, true, &segments, &lines, &mut pulled))
-            .collect();
+    let keep = Untouched::new(
+        &map.buildings,
+        [&map.parks, &map.woods, &map.grass, &map.sand, &map.water],
+    );
+    let mut stretched = StretchedAreas::default();
+    for (areas, rule, pulled) in [
+        (&mut map.landuse, Stretch::Block, &mut stretched.blocks),
+        (&mut map.parking, Stretch::Lot, &mut stretched.lots),
+    ] {
+        for area in areas {
+            area.outer = pull_ring(&area.outer, false, rule, &segments, &lines, &keep, pulled);
+            area.holes = area
+                .holes
+                .iter()
+                .map(|hole| pull_ring(hole, true, rule, &segments, &lines, &keep, pulled))
+                .collect();
+        }
     }
-    pulled
+    stretched
+}
+
+/// Сколько вершин дотянул проход — по кварталам и по стоянкам отдельно.
+#[derive(Default)]
+struct StretchedAreas {
+    blocks: usize,
+    lots: usize,
+}
+
+/// Как площадь ищет дорогу, к которой тянуться. Правила два, и они разные не по
+/// вкусу, а по тому, что за краем лежит.
+#[derive(Clone, Copy, PartialEq)]
+enum Stretch {
+    /// Квартал: **ближайшая** дорога вообще, и лежит вершина под её полотном —
+    /// щели нет, тянуть некуда.
+    Block,
+    /// Стоянка: **самая дальняя** дорога снаружи в пределах
+    /// [`PARKING_GAP_MAX`], а дороги, под полотном которой вершина уже лежит,
+    /// для неё не существует.
+    ///
+    /// Обе половины правила — про одно и то же: край большой площадки
+    /// пересекают её собственные проезды рядов (Тула, ТРЦ «Макси»:
+    /// `service=parking_aisle` через каждые 17 м). По правилу квартала вершина
+    /// на таком проезде не двинулась бы вовсе, а вершина рядом дотянулась бы до
+    /// **торца** проезда, до которого ей ближе, чем до улицы, — и вдоль дороги
+    /// вышла бы пила с треугольником земли у каждого торца (так и вышло, снято
+    /// автором на `cam 5632 2166`). Самая дальняя дорога снимает оба случая
+    /// сразу: между вершиной и ею всё равно асфальт проездов или пустырь между
+    /// ними, а сама стоянка рисуется поверх лент.
+    Lot,
+}
+
+impl Stretch {
+    fn gap_max(self) -> f32 {
+        match self {
+            Self::Block => LANDUSE_GAP_MAX,
+            Self::Lot => PARKING_GAP_MAX,
+        }
+    }
+
+    /// Шаг, которым разбивается длинное ребро рядом с дорогой, м.
+    ///
+    /// У стоянки он мельче, и это то же самое требование, что и у квартала,
+    /// только предел втрое больше: между двумя дотянутыми точками край идёт
+    /// хордой, а дорога гнётся, так что на изломе остаётся треугольник земли
+    /// глубиной с хорду. При восьми метрах на повороте набережной у ТРЦ
+    /// «Макси» он выходил в пару метров и читался дырой в асфальте (снято
+    /// автором); при трёх — сантиметры.
+    fn step(self) -> f32 {
+        match self {
+            Self::Block => LANDUSE_STEP,
+            Self::Lot => PARKING_STEP,
+        }
+    }
 }
 
 /// Кольцо квартала с дотянутыми к дорогам вершинами. Ребро длиннее
@@ -1231,8 +1320,10 @@ fn pull_landuse_to_roads(map: &mut MapData) -> usize {
 fn pull_ring(
     ring: &[Vec2],
     hole: bool,
+    rule: Stretch,
     segments: &[Link],
     lines: &Grid<usize>,
+    keep: &Untouched,
     pulled: &mut usize,
 ) -> Vec<Vec2> {
     // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
@@ -1245,7 +1336,7 @@ fn pull_ring(
     let mut out: Vec<Vec2> = Vec::with_capacity(ring.len());
     for (index, &point) in ring.iter().enumerate() {
         let mut push = |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(
-            point, outward, segments, lines,
+            point, outward, rule, segments, lines, keep,
         ) {
             Some(shifted) => {
                 out.push(shifted);
@@ -1265,40 +1356,166 @@ fn pull_ring(
             false,
         );
         let length = point.distance(next);
-        if length <= LANDUSE_STEP || lines.near(point.min(next), point.max(next)).is_empty() {
+        let step = rule.step();
+        if length <= step || lines.near(point.min(next), point.max(next)).is_empty() {
             continue;
         }
-        let steps = (length / LANDUSE_STEP).ceil() as usize;
+        let steps = (length / step).ceil() as usize;
         for step in 1..steps {
             push(point.lerp(next, step as f32 / steps as f32), along, true);
         }
     }
-    out
+    match rule {
+        Stretch::Block => out,
+        Stretch::Lot => untangled(out),
+    }
 }
 
-/// Куда встаёт вершина квартала, которой до полотна ближайшей дороги остался
-/// зазор не больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда.
-/// `outward` — куда от этой вершины прибывает зелень (см. [`pull_ring`]).
-fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], lines: &Grid<usize>) -> Option<Vec2> {
-    // ближайшая по **зазору до края полотна**, а не по расстоянию до оси:
-    // узкий проезд рядом ближе широкой улицы, а щель оставляет улица
+/// Дотянутое кольцо без самопересечений (`i_overlay`, NonZero).
+///
+/// Точки дотягиваются независимо друг от друга, и там, где дорога гнётся или
+/// меняется на другую, соседние уезжают на разное расстояние: на шаге в три
+/// метра и сдвиге до двенадцати кольцо местами заходит само за себя. Такая
+/// «игла» триангулируется в незалитый клин — белый росчерк поперёк асфальта
+/// (снято автором на `cam 5632 2166`). Заливка NonZero эти петли снимает;
+/// остаётся самый большой из получившихся контуров, то есть сама площадка.
+///
+/// Кварталам не нужно: предел там впятеро меньше шага, на который они
+/// разбивают ребро, и зайти за себя кольцу нечем.
+fn untangled(ring: Vec<Vec2>) -> Vec<Vec2> {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::float::simplify::SimplifyShape;
+
+    let contour: Vec<[f32; 2]> = ring.iter().map(Vec2::to_array).collect();
+    vec![contour]
+        .simplify_shape(FillRule::NonZero)
+        .into_iter()
+        .filter_map(|shape| shape.into_iter().next())
+        .map(|outer| {
+            outer
+                .into_iter()
+                .map(Vec2::from_array)
+                .collect::<Vec<Vec2>>()
+        })
+        .max_by(|left, right| ring_area(left).total_cmp(&ring_area(right)))
+        .filter(|kept| kept.len() >= 3)
+        .unwrap_or(ring)
+}
+
+/// Куда встаёт вершина площади, которой до полотна дороги остался зазор не
+/// больше [`Stretch::gap_max`]; `None` — двигать нечего или некуда. `outward` —
+/// куда от этой вершины прибывает заливка (см. [`pull_ring`]).
+fn pull_vertex(
+    point: Vec2,
+    outward: Vec2,
+    rule: Stretch,
+    segments: &[Link],
+    lines: &Grid<usize>,
+    keep: &Untouched,
+) -> Option<Vec2> {
+    // зазор мерится **до края полотна**, а не до оси: узкий проезд рядом ближе
+    // широкой улицы, а щель оставляет улица
     let mut best: Option<(f32, Vec2)> = None;
     for index in lines.near(point, point) {
         let Link { from, to, reach } = segments[index];
         let axis = closest_on_segment(point, from, to);
         let gap = point.distance(axis) - reach;
-        if best.is_none_or(|(best_gap, _)| gap < best_gap) {
-            best = Some((gap, axis));
+        match rule {
+            // квартал берёт ближайшую дорогу вообще; лежит под её полотном —
+            // это ответ «тянуть некуда», и никакая другая дорога его не
+            // отменяет
+            Stretch::Block => {
+                if best.is_none_or(|(best_gap, _)| gap < best_gap) {
+                    best = Some((gap, axis));
+                }
+            }
+            // стоянка — самую дальнюю снаружи и в пределах, не переползая
+            // через дом или зелень ([`Untouched`])
+            Stretch::Lot => {
+                if gap <= 0.0 || gap > PARKING_GAP_MAX {
+                    continue;
+                }
+                let Some(direction) = (axis - point).try_normalize() else {
+                    continue;
+                };
+                if direction.dot(outward) <= 0.0 {
+                    continue;
+                }
+                let target = point + direction * (gap + LANDUSE_OVERLAP);
+                if best.is_none_or(|(best_gap, _)| gap > best_gap) && !keep.crossed(point, target) {
+                    best = Some((gap, axis));
+                }
+            }
         }
     }
     let (gap, axis) = best?;
-    if gap <= 0.0 || gap > LANDUSE_GAP_MAX {
+    if gap <= 0.0 || gap > rule.gap_max() {
         return None;
     }
     // зелень только прибывает: сдвиг к дороге, уводящий край внутрь заливки,
     // не делается вовсе — так улица, идущая внутри квартала, его не сжимает
     let direction = (axis - point).try_normalize()?;
     (direction.dot(outward) > 0.0).then(|| point + direction * (gap + LANDUSE_OVERLAP))
+}
+
+/// Шаг, которым проверяется сдвиг края стоянки, м: короче любого дома и любой
+/// полосы газона, через которые асфальт переползать не должен.
+const KEEP_PROBE: f32 = 1.0;
+/// Дом мельче этого пятна, м², стоянку не останавливает. Под самим зданием
+/// асфальта не видно (`Z_BUILDING` 5 против `Z_PARKING` 2.001), так что спор
+/// идёт не о нём, а о **чужом дворе за ним**: у магазина (Тула, 764017758,
+/// 36 × 51 м) двор есть, у будки кассы посреди площадки (1435094568, 6 × 7 м)
+/// его нет — она сама стоит на этом асфальте, и обойти её значит оставить
+/// вокруг неё пятно земли, что автор и снял вторым отчётом.
+const KEEP_BUILDING_AREA: f32 = 100.0;
+
+/// Через что край стоянки не переползает: дома и зелень с водой — всё, что
+/// стоянка, лежащая выше них (`Z_PARKING` против `Z_PARK`…`Z_SAND`), закрасила
+/// бы асфальтом.
+///
+/// Индекс нужен только правилу [`Stretch::Lot`]: у квартала предел пять метров
+/// и тянется он **под** дорогу, а стоянка дотягивается до самой дальней дороги
+/// в двенадцати метрах и по дороге может дойти до чужого двора. Первым же
+/// кадром это и вышло: контур ТРЦ «Макси» перешагнул через магазин
+/// (`building=yes` 764017758, «наезжает на здание» в отчёте автора).
+struct Untouched<'a> {
+    areas: Vec<&'a PolyArea>,
+    grid: Grid<usize>,
+}
+
+impl<'a> Untouched<'a> {
+    /// Слои приходят срезами, а не целой картой: в проходе `landuse` и
+    /// `parking` того же `MapData` уже взяты по `&mut`, и заимствование по
+    /// полям — единственное, что их разводит. Дома отдельным аргументом,
+    /// потому что мелкие из них в индекс не идут ([`KEEP_BUILDING_AREA`]).
+    fn new(buildings: &'a [PolyArea], green: [&'a [PolyArea]; 5]) -> Self {
+        let areas: Vec<&PolyArea> = buildings
+            .iter()
+            .filter(|area| ring_area(&area.outer) >= KEEP_BUILDING_AREA)
+            .chain(green.into_iter().flatten())
+            .collect();
+        let mut grid = Grid::new(SIDEWALK_CELL);
+        for (index, area) in areas.iter().enumerate() {
+            let (min, max) = ring_bounds(&area.outer);
+            grid.insert(min, max, index);
+        }
+        Self { areas, grid }
+    }
+
+    /// Пересекает ли сдвиг `from` → `to` хоть один такой контур. Шагами по
+    /// [`KEEP_PROBE`], включая конец: сдвиг короче тринадцати метров, так что
+    /// это десяток проверок на вершину, и только у стоянок.
+    fn crossed(&self, from: Vec2, to: Vec2) -> bool {
+        let length = from.distance(to);
+        let steps = (length / KEEP_PROBE).ceil().max(1.0) as usize;
+        (1..=steps).any(|step| {
+            let at = from.lerp(to, step as f32 / steps as f32);
+            self.grid
+                .at(at)
+                .iter()
+                .any(|index| point_in_area(at, self.areas[*index]))
+        })
+    }
 }
 
 /// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего
