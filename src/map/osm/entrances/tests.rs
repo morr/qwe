@@ -14,6 +14,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>) -> PolyArea {
         kind: AreaKind::Building,
         building_use: BuildingUse::Other,
         height,
+        storeys: None,
         entrances: Vec::new(),
         colours: Default::default(),
     }
@@ -346,8 +347,8 @@ fn a_shopping_centre_spreads_its_entrances_around_the_perimeter() {
     generate_entrances(&mut map);
 
     let doors = &map.buildings[0].entrances;
-    // дюжина входных групп, а не четыре двери на шестисотметровый периметр
-    assert!(doors.len() >= 8, "{} doors on a mall", doors.len());
+    // закон шага: 1000 м периметра при шаге 55 — восемнадцать входных групп
+    assert!(doors.len() >= 16, "{} doors on a mall", doors.len());
     // и ни одна пара не стоит ближе своего зазора
     for (index, door) in doors.iter().enumerate() {
         for other in &doors[index + 1..] {
@@ -365,6 +366,26 @@ fn a_shopping_centre_spreads_its_entrances_around_the_perimeter() {
         "all {} doors sit on the road side",
         doors.len()
     );
+}
+
+/// Потолок когорты коробки — страховка, и **перебивать закон шага он не
+/// должен ни на одном доме кэша**. Самый крупный из них — ТРЦ «Макси»:
+/// собранное из двух way-членов relation 7058239 кольцо это 64 257 м² и 1390 м
+/// периметра, и при шаге 55 м закон просит двадцать пять входных групп.
+/// Столько и должно выйти — потолок стоит ровно на этом числе, а не под ним.
+#[test]
+fn the_cohort_ceiling_does_not_cap_the_biggest_box_in_the_cache() {
+    let (area, perimeter) = (64_257.0f32, 1390.0f32);
+    let cohort = cohort_of(area, equivalent_length(area, perimeter), Some(12.5), true);
+    let mut random = || 0.0;
+    let wanted = entrance_count(&cohort, perimeter, BIG_BOX_ENTRANCE_SPACING, 0, &mut random);
+    assert_eq!(
+        wanted,
+        (perimeter / BIG_BOX_ENTRANCE_SPACING).floor() as usize,
+        "the ceiling of {} cut the pitch law on a {perimeter} m perimeter",
+        cohort.max
+    );
+    assert_eq!(wanted, 25, "the pitch law asks for 25 groups on «Макси»");
 }
 
 /// Длинный, но мелкий — это ряд гаражей, а не жилой корпус: площадь
