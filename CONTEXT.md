@@ -290,9 +290,6 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (`sandwiched`): stalls do not belong on the road a lot is entered from, while a drive
   inside the lot is its own asphalt. Lots are independent and are paved **across threads**
   — the cost is the half-dozen `i_overlay` calls per lot, not the geometry.
-  And `untangled` — the pulled ring goes through
-  `i_overlay` NonZero, since points pulled independently can cross the ring over itself and
-  earcut leaves an unfilled slash where they do.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12

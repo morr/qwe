@@ -1976,10 +1976,11 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fits_with` per bar), i.e. **+29 ms once per world load** on a load measured in
     seconds. The tenfold is mostly **not** the extra probes: `point_in_area` is an
     even-odd raycast over the whole ring with no AABB rejection, and pulling a lot to the
-    road densifies its outline to `PARKING_STEP` 3 m — the `parking` layer went 2 k → 10 k
-    vertices, so every probe walks about five times the ring it used to. Left as is (an
-    edge index per lot is the move if it ever matters); what must not happen is the next
-    probe being added without re-reading that row.
+    road densified its outline — the `parking` layer went 2 k → 10 k vertices, so every
+    probe walked about five times the ring it used to. **That edge index now exists**
+    (`Outline`, below — it came with the polygon paving, whose fillets took the mall lot
+    to 1220 vertices); what must not happen is the next probe being added without
+    re-reading that row.
   - **Which way the rows run is read out of OSM, not guessed** — `service=parking_aisle`
     (`RoadLine::parking_aisle`, `tags::is_parking_aisle`), the only thing the layout takes
     from the road network. Tula's ТРЦ «Макси» lot carries **50** aisles, 44 along the

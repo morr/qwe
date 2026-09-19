@@ -2901,8 +2901,8 @@ fn a_fenced_lot_stays_behind_its_fence() {
 
     let before = map.parking[0].outer.len();
     assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
-    // `untangled` может переставить начало кольца, но ни одна вершина не
-    // обязана оказаться за забором
+    // добавлять нечего — контур остался тем же кольцом, и ни одна вершина
+    // не оказалась за забором
     assert_eq!(map.parking[0].outer.len(), before);
     for vertex in &map.parking[0].outer {
         assert!(vertex.y <= top + 0.01, "вершина за забором: {vertex:?}");
