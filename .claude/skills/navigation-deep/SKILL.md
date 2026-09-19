@@ -31,7 +31,7 @@ inspection.
 threads (navmesh fill, entrance generation) have no ECS access. It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
-Grid size is derived as `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m). **A filled
+Grid size is derived as `MAP_SIZE / navtile_size()` (3800 × 2850 tiles at 2 m). **A filled
 `Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
 cancelled northstar build) never indexes against the switched atomic. The snapshot owns the
 conversions too: rasterisation (`set_area`/`row_spans`, `visit_polyline*`,

@@ -114,7 +114,7 @@ smoothed instead of stretching frames.
 ## Screenshots
 
 ```bash
-$b cam 2284 1969        # frame the portal first
+$b cam 3284 2969        # frame the portal first (`TULA_PORTAL_POS`, city.rs)
 $b shot                 # raise window, trigger TakeScreenshotEvent, wait for the png
 ```
 
@@ -226,8 +226,8 @@ $b cam                                          # read the resulting zoom back
 
   Negative `y` zooms out. Range is clamped to `0.05 … 4.5`.
 
-- Portal hint for Tula is `2284, 1969`; other cities put it at the map centre
-  (`2800, 1850`) unless `city.rs` says otherwise.
+- Portal hint for Tula is `3284, 2969`; other cities put it at the map centre
+  (`3800, 2850`) unless `city.rs` says otherwise.
 
 ## Registered types
 
