@@ -5,7 +5,7 @@ use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
-    StructureKind, WaterKind, distance_to_segment,
+    StructureKind, WaterKind, distance_to_segment, is_big_box,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -1004,6 +1004,17 @@ fn implausible_heights_are_treated_as_missing() {
         height(&[("height", "9999"), ("building:levels", "4")]),
         Some(12.0)
     );
+    // и у торговой коробки тоже: прибавка оболочки подняла бы ноль уровней до
+    // правдоподобных 3.5 м, то есть нарисовала бы гипермаркет плитой в один
+    // рост вместо того, чтобы отдать его выводу этажности
+    assert_eq!(
+        retail_height(&[("building", "retail"), ("building:levels", "0")], 9055.0),
+        None
+    );
+    assert_eq!(
+        retail_height(&[("building", "retail"), ("building:levels", "-1")], 9055.0),
+        None
+    );
 }
 
 /// Торговый уровень выше жилого этажа, и сверх него идёт техэтаж с парапетом:
@@ -1024,7 +1035,7 @@ fn a_trading_level_is_taller_than_a_dwelling_storey() {
         ("shop", "mall"),
         ("building:levels", "2"),
     ];
-    assert_eq!(retail_height(maxi, 52321.0), Some(12.5));
+    assert_eq!(retail_height(maxi, 64257.0), Some(12.5));
     // та же разметка на мелком пятне — магазин во встройке, обычный этаж
     assert_eq!(retail_height(maxi, 295.0), Some(6.0));
 }
@@ -1040,6 +1051,103 @@ fn a_shop_on_a_tall_block_is_measured_in_dwelling_storeys() {
         ("building:levels", "9"),
     ];
     assert_eq!(retail_height(pyaterochka, 1528.0), Some(27.0));
+}
+
+/// И этим дело не кончается: дом, которому разбор отказал в торговом уровне,
+/// не коробка и в отрисовке. Порог этажности стоял только в высоте, а всё
+/// остальное — глухая кассета с фризом, ярус 5.5 м, решётка зенитных фонарей и
+/// входные группы через 55 м — висело на одном пятне, и девятиэтажная
+/// «Пятёрочка» получала их все. Два ответа на один вопрос сходятся теперь по
+/// построению, и проверяются они вместе — через весь разбор, а не по тегам.
+#[test]
+fn a_shop_on_a_tall_block_is_not_a_big_box_either() {
+    let block = |levels: &str| {
+        Overpass::new(CITY)
+            .area(
+                &[
+                    ("building", "retail"),
+                    ("shop", "supermarket"),
+                    ("building:levels", levels),
+                ],
+                square(CENTER, HALF),
+            )
+            .parse()
+            .buildings
+            .remove(0)
+    };
+
+    let tall = block("9");
+    assert_eq!(tall.height, Some(27.0));
+    assert!(!is_big_box(&tall), "девятиэтажка с магазином — не коробка");
+
+    // тот же дом в два торговых уровня — коробка, и мерена она оболочкой
+    let shell = block("2");
+    assert_eq!(shell.height, Some(12.5));
+    assert!(is_big_box(&shell));
+}
+
+/// А высотой этого не решить, и потому этажность доезжает до модели отдельным
+/// полем. ТЦ «Империя» (`building=yes` + `shop=mall`, 1781 м², четыре этажа)
+/// меряется жилым этажом и стоит в двенадцати метрах; ТРЦ «Макси»
+/// (`building=yes` + `shop=mall`, 64 257 м², два торговых уровня) — в
+/// двенадцати с половиной. Любой потолок по `area.height` либо оставит
+/// коробкой четырёхэтажный ТЦ, либо отнимет коробку у настоящей: между ними
+/// полметра, и различает их только `building:levels`.
+#[test]
+fn four_storeys_of_mall_are_not_a_two_level_box() {
+    // 42 × 42 м — 1781 м² «Империи», пятно крупноформата с запасом над 1200
+    let mall = |levels: &str| {
+        Overpass::new(CITY)
+            .area(
+                &[
+                    ("building", "yes"),
+                    ("shop", "mall"),
+                    ("building:levels", levels),
+                ],
+                square(CENTER, 21.1),
+            )
+            .parse()
+            .buildings
+            .remove(0)
+    };
+
+    let imperia = mall("4");
+    assert_eq!(imperia.storeys, Some(4.0));
+    assert_eq!(imperia.height, Some(12.0));
+    assert!(!is_big_box(&imperia), "четырёхэтажный ТЦ — не коробка");
+
+    // «Макси»: те же двенадцать метров с небольшим, но это два торговых уровня
+    let maxi = mall("2");
+    assert_eq!(maxi.storeys, Some(2.0));
+    assert_eq!(maxi.height, Some(12.5));
+    assert!(is_big_box(&maxi), "двухуровневая коробка — коробка");
+
+    // этажей не разметили — ответ прежний, по потолку высоты («Верный»,
+    // ТЦ «Перспектива»: пятно есть, тегов высоты нет вовсе)
+    let untagged = Overpass::new(CITY)
+        .area(
+            &[("building", "retail"), ("shop", "supermarket")],
+            square(CENTER, 21.1),
+        )
+        .parse()
+        .buildings
+        .remove(0);
+    assert_eq!(untagged.storeys, None);
+    assert_eq!(untagged.height, None);
+    assert!(is_big_box(&untagged));
+}
+
+/// Высота по одним тегам приходит без контура (`tagged_height` для
+/// `is_fortification`), и пустое кольцо не должно ронять разбор: площадь
+/// кольца считает `len() - 1` по `usize`. Раньше срез спасал только порядок
+/// сомножителей в `&&`.
+#[test]
+fn an_empty_ring_is_not_a_big_box_and_does_not_panic() {
+    let retail = tags(&[("building", "retail"), ("building:levels", "2")]);
+    assert_eq!(
+        building_height(&retail, BuildingUse::Retail, &[]),
+        Some(6.0)
+    );
 }
 
 /// Высота доезжает до `MapData` и из way, и из relation, а на воде её нет.
@@ -1238,12 +1346,22 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
 /// на чужом доме, и назначение у него своё.
 ///
 /// Без ветки `shop` половина тульских ТЦ (ТРЦ «Макси» — `building=yes` +
-/// `shop=mall`, 52 тысячи м²) разбиралась как «полгорода без назначения».
+/// `shop=mall`, 64 тысячи м²) разбиралась как «полгорода без назначения».
+///
+/// `building=shop` стоит в торговой ветке, а не в конторской: в OSM это прямой
+/// синоним `building=retail`. Значение конкретное, поэтому мелкий `shop=*` на
+/// том же контуре его уже не перебивает — уточнять белому списку нечего.
 #[test]
 fn a_shop_building_is_read_from_the_shop_tag_too() {
     let map = Overpass::new(CITY)
         .area(&[("building", "retail")], square(CENTER, HALF))
         .area(&[("building", "supermarket")], square(CENTER, HALF))
+        // `building=shop` — то же самое здание-магазин, что и `retail`
+        .area(&[("building", "shop")], square(CENTER, HALF))
+        .area(
+            &[("building", "shop"), ("shop", "convenience")],
+            square(CENTER, HALF),
+        )
         .area(
             &[("building", "yes"), ("shop", "mall")],
             square(CENTER, HALF),
@@ -1282,6 +1400,8 @@ fn a_shop_building_is_read_from_the_shop_tag_too() {
     assert_eq!(
         uses,
         [
+            BuildingUse::Retail,
+            BuildingUse::Retail,
             BuildingUse::Retail,
             BuildingUse::Retail,
             BuildingUse::Retail,

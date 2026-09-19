@@ -11,9 +11,9 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use crate::map::osm::model::{
-    AreaKind, BIG_BOX_AREA_MIN, BuildingUse, Colours, Faith, FenceKind, PitchKind, RailKind, Rgb,
-    RoadClass, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, polyline_length,
-    ring_area,
+    AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
+    PitchKind, RailKind, Rgb, RoadClass, Sacred, SacredForm, ServiceTrack, StructureKind,
+    WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -87,9 +87,15 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
         Some("apartments" | "residential" | "dormitory" | "hotel" | "hostel") => {
             Some(BuildingUse::Apartments)
         }
-        // само здание — магазин; контора и павильон остаются торговлей вообще
-        Some("retail" | "supermarket" | "mall" | "department_store") => Some(BuildingUse::Retail),
-        Some("commercial" | "office" | "kiosk" | "shop") => Some(BuildingUse::Commercial),
+        // Само здание — магазин; контора и павильон остаются торговлей вообще.
+        // `shop` здесь не по недосмотру: в OSM `building=shop` — прямой синоним
+        // `building=retail` («здание магазина»), и белый список строкой ниже
+        // сам считает торговыми `shop=mall` и `shop=department_store`. Конторой
+        // такой контур рисовался бы витражом без кассеты, фриза и шага входов.
+        Some("retail" | "supermarket" | "mall" | "department_store" | "shop") => {
+            Some(BuildingUse::Retail)
+        }
+        Some("commercial" | "office" | "kiosk") => Some(BuildingUse::Commercial),
         Some(
             "industrial" | "warehouse" | "factory" | "hangar" | "manufacture" | "service"
             | "transportation" | "depot" | "storage_tank",
@@ -112,7 +118,7 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
     // Крупноформатный `shop=*` **уточняет общее значение `building`, но не
     // спорит с конкретным**. В OSM торговая коробка приходит тремя способами:
     // `building=retail` (сказано всё), `building=yes` + `shop=mall` (ТРЦ
-    // «Макси», 52 тысячи м²) и `building=commercial` + `shop=supermarket`
+    // «Макси», 64 тысячи м²) и `building=commercial` + `shop=supermarket`
     // («Магнит», 9 тысяч) — и в двух последних назначение здания знает
     // **только** `shop`. При этом `commercial` значит «коммерческое здание
     // вообще», а `house`, `apartments`, `church`, `industrial` называют совсем
@@ -148,8 +154,9 @@ pub(super) fn building_use(tags: &HashMap<String, String>) -> BuildingUse {
 /// супермаркет, универмаг, строительный и мебельный — делают, там здание и
 /// есть магазин.
 ///
-/// Тула на кэше v14: 68 зданий с `shop=*`, из них 34 проходят этот список (17
-/// `mall`, 7 `supermarket`, 3 `department_store`, 3 `doityourself`, 2
+/// Тула на кэше v14: 69 элементов с `shop=*` на контуре здания (67 way и 2
+/// relation — «Дом Лента» и ТРЦ «Макси»), из них 35 проходят этот список (17
+/// `mall`, 7 `supermarket`, 4 `doityourself`, 3 `department_store`, 2
 /// `furniture`, `hardware`, `car`), остальные 34 — мелочь во встройке.
 /// Бампить `QUERY_VERSION` не надо: `out geom` отдаёт все теги элемента, и
 /// `shop` лежит в каждом кэше с первой версии.
@@ -401,12 +408,20 @@ pub(super) fn parse_measure(value: &str) -> Option<f32> {
 const BIG_BOX_LEVEL_HEIGHT: f32 = 4.5;
 const BIG_BOX_SHELL_EXTRA: f32 = 3.5;
 
-/// Выше скольких уровней `shop=*` перестаёт описывать **здание**. Девять
-/// этажей с `shop=supermarket` — это «Пятёрочка» на первом этаже панельного
-/// дома, размеченная на весь дом (Тула, 1528 м²), и торговый метраж этажа
-/// вытянул бы её в сорокапятиметровую башню. Настоящий ТЦ — до трёх торговых
-/// уровней; выше этого дом меряется обычным жилым этажом, как и был.
-const BIG_BOX_LEVELS_MAX: f32 = 3.0;
+/// Ниже одного торгового уровня тега нет: `building:levels=0` — это брошенная
+/// разметка, а не коробка, и без нижней границы прибавка оболочки
+/// ([`BIG_BOX_SHELL_EXTRA`]) подняла бы этот ноль до правдоподобных 3.5 м и
+/// отобрала бы у дома выведенную высоту (`heights.rs`, `BIG_BOX_HEIGHTS`) —
+/// то есть нарисовала бы гипермаркет плитой в один рост.
+///
+/// **Верхней границы здесь нет, и это не пропуск.** Она одна на всю коробку и
+/// стоит там же, где пятно, — [`BIG_BOX_MAX_LEVELS`]: четвёртый этаж делает
+/// дом не коробкой, а многоэтажным ТЦ или жилым корпусом с магазином внизу, и
+/// мерить его торговым уровнем нельзя. До этого порог этажности стоял только
+/// тут, и девять этажей с `shop=supermarket` («Пятёрочка» на первом этаже
+/// панельного дома, размеченная на весь дом) мерились жилым этажом — но
+/// кассету, ярус и решётку фонарей всё равно получали.
+const BIG_BOX_MIN_LEVELS: f32 = 1.0;
 
 /// Высота здания в метрах: `height` как есть, иначе этажи
 /// (`building:levels` + `roof:levels`, второй по схеме S3DB в первый не входит)
@@ -416,8 +431,16 @@ const BIG_BOX_LEVELS_MAX: f32 = 3.0;
 /// **Метраж этажа — не константа, а свойство здания**: у торговой коробки
 /// уровень выше жилого этажа ([`BIG_BOX_LEVEL_HEIGHT`]). Отсюда и контур в
 /// аргументах — крупноформатность в OSM не размечают, её видно только по
-/// пятну ([`is_big_box`]), и мерить торговым уровнем «Дикси» во встройке было
-/// бы такой же ложью, как мерить жилым этажом гипермаркет.
+/// пятну ([`is_big_box_shape`] — половина правила
+/// [`crate::map::osm::model::is_big_box`], записанная один раз), и мерить
+/// торговым уровнем «Дикси» во встройке было бы такой же ложью, как мерить
+/// жилым этажом гипермаркет.
+///
+/// Вторая половина — этажность [`BIG_BOX_MAX_LEVELS`] и потолок
+/// [`BIG_BOX_MAX_HEIGHT`], и тут они **те же**, что у предиката: дом, у
+/// которого этажей больше трёх или оболочка вышла бы выше потолка, меряется
+/// жилым этажом. Так ответы разбора и предиката сходятся по построению — то,
+/// что посчитано торговым уровнем, и есть то, что рисуется коробкой.
 pub(super) fn building_height(
     tags: &HashMap<String, String>,
     class: BuildingUse,
@@ -440,15 +463,25 @@ pub(super) fn building_height(
         .get("roof:levels")
         .and_then(|value| parse_measure(value))
         .unwrap_or(0.0);
-    let big_box = class == BuildingUse::Retail && ring_area(outer) >= BIG_BOX_AREA_MIN;
-    if big_box && levels <= BIG_BOX_LEVELS_MAX {
-        return plausible((levels + roof_levels) * BIG_BOX_LEVEL_HEIGHT + BIG_BOX_SHELL_EXTRA);
+    // оболочка: столько вышло бы у коробки с этими уровнями. Этажей больше
+    // трёх или оболочка выше потолка — дом уже не коробка ([`is_big_box`]
+    // скажет то же самое про этажи и посчитанную высоту), и меряется он
+    // обычным жилым этажом. Потолок тут не лишний: он ловит `roof:levels`,
+    // которого этажный порог не считает
+    let shell = (levels + roof_levels) * BIG_BOX_LEVEL_HEIGHT + BIG_BOX_SHELL_EXTRA;
+    if is_big_box_shape(class, outer)
+        && (BIG_BOX_MIN_LEVELS..=BIG_BOX_MAX_LEVELS).contains(&levels)
+        && shell <= BIG_BOX_MAX_HEIGHT
+    {
+        return plausible(shell);
     }
     plausible((levels + roof_levels) * STOREY_HEIGHT)
 }
 
 /// Высота по одним тегам — для [`is_fortification`], где контура ещё нет и
-/// торговой коробки быть не может: `building=wall` в шесть метров.
+/// торговой коробки быть не может: `building=wall` в шесть метров. Пустой срез
+/// здесь безопасен не по порядку вычисления, а по устройству
+/// [`is_big_box_shape`], которая короткое кольцо отвергает сама.
 fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
     building_height(tags, BuildingUse::Other, &[])
 }
@@ -810,13 +843,47 @@ pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
 /// Контур нужен затем же, зачем назначение: этаж считается в метрах
 /// по-разному, и у торговой коробки метраж этажа решает её размер
 /// ([`building_height`]).
+///
+/// **Класс передаётся, а не выводится заново.** Вызывающий строит
+/// `PolyArea::building_use` тем же [`area_use`] в том же выражении, а у
+/// мультиполигона высота считается по каждому внешнему кольцу — так что
+/// собственный вывод был бы вторым прогоном цепочки `building`/`shop`/`amenity`
+/// на здание и третьим на кольцо. И, что важнее прогонов: класс, которым дом
+/// **рисуется**, и класс, которым меряется его **высота**, обязаны быть одним
+/// значением, а не двумя совпадающими.
 pub(super) fn area_height(
     kind: AreaKind,
     tags: &HashMap<String, String>,
+    building_use: BuildingUse,
     outer: &[Vec2],
 ) -> Option<f32> {
     matches!(kind, AreaKind::Building | AreaKind::Kremlin)
-        .then(|| building_height(tags, area_use(kind, tags), outer))
+        .then(|| building_height(tags, building_use, outer))
+        .flatten()
+}
+
+/// Этажи по разметке — `building:levels` как есть, только у зданий, как и
+/// высота. В `PolyArea::storeys` они едут отдельно от высоты, потому что
+/// высота их уже не помнит: и четырёхэтажный ТЦ, и двухуровневая коробка
+/// выходят в двенадцать с небольшим метров, а коробка из них только вторая
+/// (`model::is_big_box`).
+///
+/// `roof:levels` сюда **не** прибавляется: по схеме S3DB это этажи, спрятанные
+/// в кровлю, и на вопрос «сколько этажей насчитал маппер» отвечает
+/// `building:levels`. Высоте они нужны оба, и складывает их
+/// [`building_height`] у себя.
+///
+/// Правдоподобность не проверяется — в отличие от высоты, где диапазон
+/// отсекает `height=0` и опечатки на порядок. Здесь отсекать нечего: ноль
+/// этажей это брошенная разметка, которая и так не мешает (высоту такому дому
+/// выводит `buildings/heights.rs`), а нелепо большое число отвечает на вопрос
+/// предиката ровно тем, чем надо, — «не коробка».
+pub(super) fn area_storeys(kind: AreaKind, tags: &HashMap<String, String>) -> Option<f32> {
+    matches!(kind, AreaKind::Building | AreaKind::Kremlin)
+        .then(|| {
+            tags.get("building:levels")
+                .and_then(|value| parse_measure(value))
+        })
         .flatten()
 }
 

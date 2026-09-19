@@ -118,6 +118,7 @@ fn house(ring: Vec<Vec2>, height: f32) -> PolyArea {
         // (`roofs::is_pitched`), и сетка форм существует про него
         building_use: BuildingUse::House,
         height: Some(height),
+        storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
     }

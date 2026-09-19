@@ -718,6 +718,7 @@ mod tests {
             kind: AreaKind::Building,
             building_use: use_,
             height: None,
+            storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
         }
@@ -783,6 +784,7 @@ mod tests {
             kind: AreaKind::Building,
             building_use: BuildingUse::GarageBlock,
             height: None,
+            storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
         };
@@ -836,6 +838,7 @@ mod tests {
             kind: AreaKind::Building,
             building_use: BuildingUse::GarageBlock,
             height: None,
+            storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
         };
@@ -874,6 +877,7 @@ mod tests {
             kind: AreaKind::Building,
             building_use: BuildingUse::GarageBlock,
             height: None,
+            storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
         };
@@ -1044,6 +1048,7 @@ mod tests {
             kind: AreaKind::Building,
             building_use: BuildingUse::GarageBlock,
             height: None,
+            storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
         };

@@ -180,6 +180,7 @@ pub fn area(kind: AreaKind, outer: Vec<Vec2>) -> PolyArea {
         kind,
         building_use: BuildingUse::Other,
         height: None,
+        storeys: None,
         entrances: vec![],
         colours: Default::default(),
     }

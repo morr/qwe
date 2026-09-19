@@ -228,6 +228,7 @@ fn area(outer: Vec<Vec2>, height: f32, kind: AreaKind, building_use: BuildingUse
         kind,
         building_use,
         height: Some(height),
+        storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
     }

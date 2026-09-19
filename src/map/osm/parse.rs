@@ -1848,16 +1848,18 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         return;
     };
     // высота читается до того, как кольцо уедет в `PolyArea`: торговому этажу
-    // нужен контур, а не только теги
-    let height = area_height(kind, &element.tags, &outer);
+    // нужен контур, а не только теги — и тот же класс, которым дом рисуется
+    let building_use = area_use(kind, &element.tags);
+    let height = area_height(kind, &element.tags, building_use, &outer);
     push_area(
         map,
         PolyArea {
             outer,
             holes: Vec::new(),
             kind,
-            building_use: area_use(kind, &element.tags),
+            building_use,
             height,
+            storeys: area_storeys(kind, &element.tags),
             entrances: Vec::new(),
             colours: area_colours(kind, &element.tags),
         },
@@ -1909,6 +1911,9 @@ fn parse_relation(
     let inners = assemble_rings(members, "inner", bounds, skipped_open_rings);
     let building_use = area_use(kind, &element.tags);
     let colours = area_colours(kind, &element.tags);
+    // этажи — на relation, а не на кольцо: тег один на весь мультиполигон,
+    // в отличие от высоты, которую торговой коробке меряет её собственное пятно
+    let storeys = area_storeys(kind, &element.tags);
 
     for outer in outers {
         let holes = inners
@@ -1919,7 +1924,7 @@ fn parse_relation(
         // высота — по каждому кольцу отдельно, а не одна на relation: этаж
         // торговой коробки меряется её пятном, и у ТЦ одним мультиполигоном
         // размечен и корпус, и пристройка под ним
-        let height = area_height(kind, &element.tags, &outer);
+        let height = area_height(kind, &element.tags, building_use, &outer);
         push_area(
             map,
             PolyArea {
@@ -1928,6 +1933,7 @@ fn parse_relation(
                 kind,
                 building_use,
                 height,
+                storeys,
                 entrances: Vec::new(),
                 colours,
             },
@@ -1994,9 +2000,9 @@ mod tests;
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
-    NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_use, crown_radius,
-    fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_road_underground,
-    is_roundabout, is_underground, pipe_width, rail_class, road_class, row_spacing, service_track,
-    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes, water_class,
-    water_width,
+    NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
+    crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward,
+    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_class,
+    row_spacing, service_track, structure_height, structure_kind, structure_radius, structure_size,
+    tagged_lanes, water_class, water_width,
 };

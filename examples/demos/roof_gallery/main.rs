@@ -721,6 +721,7 @@ fn material_house(cell: &Cell, rotation: Rot2, tuning: &Tuning) -> PolyArea {
         kind: AreaKind::Building,
         building_use: BuildingUse::Other,
         height: Some(tuning.height),
+        storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
     }
