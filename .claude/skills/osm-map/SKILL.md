@@ -1927,18 +1927,32 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     in from the edge.
   - **Which way the rows run is read out of OSM, not guessed** — `service=parking_aisle`
     (`RoadLine::parking_aisle`, `tags::is_parking_aisle`), the only thing the layout takes
-    from the road network. `aisle_rows` lays a row on **either side of every aisle**, nose
-    to it, at `AISLE/2 + STALL_DEPTH/2` off the centreline — which is exactly the spacing
-    OSM draws: Tula's ТРЦ «Макси» lot carries **50** aisles, 44 along the long axis at
-    102–105° and 6 across at 59–61°, neighbours 16–19 m apart, i.e. two rows plus an
-    aisle. Consequences of taking them literally:
-    - **Segments are laid longest first**, and a stall is dropped if it hits one already
-      placed (`Placed` — a grid at `OVERLAP_CELL` and a separating-axis test with
-      `OVERLAP_SLACK` 5 cm of give, or the fp error between two neighbours touching
-      exactly would drop every second stall). That is what keeps the six cross aisles from
-      striping their rows over the forty-four main ones.
+    from the road network. Tula's ТРЦ «Макси» lot carries **50** aisles, 44 along the
+    long axis at 102–105° and 6 across at 59–61°, neighbours 16–19 m apart; the hospital
+    lot (way 344589378) carries 4, spaced **14.8**. How they are read:
+    - **Stalls go by the pocket between neighbouring aisles, not by an offset off each
+      centreline.** A pair of rows back to back down the pocket's middle, noses out, and
+      what is left is the drive to either side. The fixed offset (`AISLE/2 +
+      STALL_DEPTH/2`) needs 16.4 m between aisles — fine at the mall, and at the hospital
+      every second row came out overlapping and `Placed` dropped it, leaving one row per
+      aisle. **One row belongs at the edge of a lot and nowhere else**, which is exactly
+      what the author reported.
+    - **The stall's depth is a field of `Stall`, not a constant**, because the pocket
+      sets it: `(gap - AISLE)/2` clamped to `STALL_DEPTH_MIN` 4.8 … `STALL_DEPTH` 5.2, and
+      a pair is laid only while the drive keeps `PAIR_AISLE` 5 m. At the hospital's 14.8
+      that is 4.8 + 4.8 of stalls and 5.2 of drive. Below 4.8 a car (3.9–4.6 m; the
+      "Газель" is 5.3 and sticks out of any of them) would poke into the drive, and the
+      room won back would be lost to the car anyway.
+    - **The lane grid is continued by its own step out to the outline**, and a row spans
+      the lot rather than the aisle. Aisles stop short of the edge in OSM, so without it
+      the hospital lot had a broad band of bare asphalt along two sides and stalls to the
+      kerb along the other two — a lot is not laid out with margins like that.
+    - **`Placed` stays** — a grid at `OVERLAP_CELL` and a separating-axis test with
+      `OVERLAP_SLACK` 5 cm of give (without the give the fp error between two neighbours
+      touching exactly would drop every second stall). Pockets do not overlap by
+      construction, so it now only guards odd data.
     - **No `ROW_BLOCK` along an aisle-driven row** — OSM has already cut the lot into
-      blocks, and the row ends where the outline or a neighbour's stall ends it.
+      blocks, and the row ends where the outline ends it.
     - **The strictest tag, not any `service`.** `driveway`, `alley` and `drive-through`
       lead *to* a lot, not along its rows; taking them would turn the rows 90°.
       Tula's v14 cache: 2846 `highway=service`, of which 209 `parking_aisle`, 99

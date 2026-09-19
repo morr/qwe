@@ -864,12 +864,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   material, no procedural texture on top of paint). `stalls(area, aisles)` lays them out
   under one law: **a car has to be able to drive to every stall.** Where the lot is
   driven is drawn in OSM — **`service=parking_aisle`** (`RoadLine::parking_aisle`), the
-  only thing the layout reads out of the road network. Then `aisle_rows` puts a row on
-  **either side of every aisle**, nose to it, segments taken longest first so a cross
-  aisle never lays its row over the main one (`Placed`, a grid of already-placed stalls
-  and a separating-axis test); no `ROW_BLOCK` there, OSM has already cut the lot into
-  blocks. Tula's mall lot carries 50 aisles, 44 along the long axis and 6 across, spaced
-  16–19 m — exactly two `STALL_DEPTH` rows plus an `AISLE`.
+  only thing the layout reads out of the road network. `aisle_rows` then lays stalls
+  **by the pocket between neighbouring aisles**: a pair of rows back to back down its
+  middle, noses out, the remainder split between the two sides as the drive. The stall's
+  **depth is a field, not a constant** — the pocket sets it, clamped to
+  `STALL_DEPTH_MIN` 4.8 m, so the drive keeps at least `PAIR_AISLE` 5 m. Counting a
+  fixed offset off each centreline instead needs 16.4 m between aisles: the mall lot
+  spaces them 16–19 and was fine, the hospital lot spaces them 14.8 and lost every
+  second row, and a lot striped one row per aisle is not how anyone parks.
+  The lane grid is **continued by its own step out to the outline**, and a row spans the
+  lot, not the aisle: aisles stop short of the edge in OSM, so without it two sides of
+  the lot carried a broad band of bare asphalt while the other two were stalls to the
+  kerb. No `ROW_BLOCK` there — OSM has already cut the lot into blocks; `Placed` (a grid
+  of placed stalls and a separating-axis test) keeps a cross aisle from striping over
+  the main rows. Tula's mall lot carries 50 aisles, 44 along the long axis and 6 across.
   A lot with no aisle in it gets an **invented** layout (`generated_rows`) — rows along
   the **longest side of the outline** (not the long axis of `min_area_rect`: on a lot
   pulled to the road that axis swings off the side the lot reads by).
