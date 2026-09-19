@@ -11,7 +11,7 @@ use super::layers::*;
 use super::material::*;
 use super::roofs::*;
 use super::*;
-use crate::map::meshing::{min_area_rect, unpack_material};
+use crate::map::meshing::{MeshBuilder, min_area_rect, unpack_material};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::osm::{AreaKind, BuildingUse, Faith, Sacred, SacredForm};
 use crate::map::shadow_dir;
@@ -107,6 +107,97 @@ fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
     // обход ребра тон не меняет
     let (west_reversed, _) = wall_colors(facade, Vec2::ZERO, Vec2::new(0.0, 10.0), lift);
     assert_eq!(west, west_reversed);
+}
+
+/// Цвет фриза, размеченный тегом: `layers::brand_color` предпочитает
+/// `building:colour` палитре, так что полоса красная при любом посеве — а фасад
+/// коробки серый, и по красному каналу её геометрия отличается от всей прочей.
+const BRAND: [u8; 3] = [200, 30, 30];
+
+/// Торговая коробка: пятно больше `BIG_BOX_AREA_MIN`, назначение — торговля,
+/// цвет фриза размечен.
+fn big_box(outer: Vec<Vec2>, height: f32) -> PolyArea {
+    let mut retail = building(outer, Some(height), AreaKind::Building);
+    retail.building_use = BuildingUse::Retail;
+    retail.colours.wall = Some(BRAND);
+    retail
+}
+
+/// Вершины фриза в этом меше — точка и её цвет.
+fn brand_band(builder: &MeshBuilder) -> Vec<(Vec2, LinearRgba)> {
+    builder
+        .positions_for_test()
+        .iter()
+        .zip(builder.colors_for_test())
+        .filter(|(_, color)| color[0] - color[1] > 0.2)
+        .map(|(point, color)| {
+            (
+                Vec2::new(point[0], point[1]),
+                LinearRgba::rgb(color[0], color[1], color[2]),
+            )
+        })
+        .collect()
+}
+
+/// Фриз — та же поверхность, что стена под ним, и свет на него падает так же.
+/// Закрутку контура OSM не нормализует, и правило «нормаль видимой стены»
+/// поэтому держится одним хелпером ([`wall_normal`]): написанное дважды, оно
+/// разошлось, и на обратной закрутке освещённая грань несла тёмную полосу.
+#[test]
+fn the_brand_band_is_lit_like_the_wall_under_it_at_any_winding() {
+    let _sun = crate::map::default_sun();
+    let luminance = |color: LinearRgba| color.red + color.green + color.blue;
+    let base = luminance(crate::map::osm::model::srgba_of(BRAND).into());
+    let ccw = rect(Vec2::ZERO, Vec2::new(60.0, 40.0));
+    // обратная закрутка с той же первой вершиной: посев дома — от неё, и
+    // сменись он, коробка разыграла бы себе другую облицовку
+    let cw: Vec<Vec2> = std::iter::once(ccw[0])
+        .chain(ccw.iter().skip(1).rev().copied())
+        .collect();
+    for (winding, ring) in [("CCW", ccw.clone()), ("CW", cw)] {
+        let builder = extruded_mesh(&[big_box(ring, 9.5)], &[], detail(false));
+        let band = brand_band(&builder);
+        assert!(!band.is_empty(), "{winding}: фриз ложится на видимые стены");
+        // свет из верхнего левого угла: западная стена освещена, южная в тени
+        let west = band.iter().find(|(at, _)| at.y > 30.0).expect("западная");
+        let south = band.iter().find(|(at, _)| at.x > 40.0).expect("южная");
+        assert!(
+            luminance(west.1) > base,
+            "{winding}: полоса освещённой грани светлее своего цвета"
+        );
+        assert!(
+            luminance(south.1) < base,
+            "{winding}: полоса затенённой грани темнее своего цвета"
+        );
+    }
+}
+
+/// Фриз — непрозрачный квад поверх стены, и лечь он обязан **над** лентой
+/// витражного стекла, а лента стоит внутри своей ячейки
+/// (`roof.wgsl::BIG_BOX_WINDOW_HIGH`, 0.70 яруса). Мерился он долей всей стены,
+/// и у коробки выше одного яруса лента верхнего яруса уходила под него целиком.
+#[test]
+fn the_brand_band_stays_above_the_glass_ribbon_at_any_number_of_tiers() {
+    let _sun = crate::map::default_sun();
+    // верх ленты внутри ячейки — `roof.wgsl::BIG_BOX_WINDOW_HIGH`
+    let ribbon_top = 0.70;
+    // 5.5 м на ярус (`BIG_BOX_TIER`): 8 м — один, 9.5 — два, 17 — три
+    for (height, storeys) in [(8.0, 1.0), (9.5, 2.0), (17.0, 3.0)] {
+        let retail = big_box(rect(Vec2::ZERO, Vec2::new(60.0, 40.0)), height);
+        let lift = extrusion_lift(&retail, BuildingHeightMode::Extrusion);
+        let builder = extruded_mesh(&[retail], &[], detail(false));
+        // в ячейках стены: её верх — `storeys + PARAPET_CELLS`
+        let cells = |at: Vec2| at.y / lift.y * (storeys + crate::map::meshing::PARAPET_CELLS);
+        let band = brand_band(&builder);
+        let low = band
+            .iter()
+            .filter(|(at, _)| at.x > 40.0)
+            .fold(f32::MAX, |low, (at, _)| low.min(cells(*at)));
+        assert!(
+            low > storeys - 1.0 + ribbon_top,
+            "{height} м, {storeys} яруса: низ фриза {low} лёг на ленту верхнего яруса"
+        );
+    }
 }
 
 #[test]
@@ -683,6 +774,7 @@ fn the_cladding_follows_the_use_and_the_height() {
     for use_ in [
         BuildingUse::Apartments,
         BuildingUse::Commercial,
+        BuildingUse::Retail,
         BuildingUse::Public,
         BuildingUse::Other,
     ] {

@@ -122,9 +122,21 @@ const USE_LENGTH: f32 = 16.0;
 /// над `BIG_BOX_AREA_MIN`.
 const BIG_BOX_LENGTH: f32 = 60.0;
 
+/// Этажность гипермаркета в сетке назначений — вернее, **высота**: дом здесь
+/// собирается литералом, без тегов, так что `PolyArea::storeys` у него пусто и
+/// коробку игре решают пятно и потолок высоты (`model::BIG_BOX_MAX_HEIGHT`,
+/// три торговых уровня с техэтажом — 17 м). Не девять из [`USE_LADDER`]:
+/// девять этажей — это 27 м, и вместо кассеты с фризом ряд показывал бы
+/// витрину магазина, ровно то, что во втором слоте показывать не надо. Пять
+/// этажей по [`STOREY_HEIGHT`] — 15 м, три яруса `BIG_BOX_TIER`.
+const BIG_BOX_STOREYS: u32 = 5;
+
 /// Шаг рядов, м. У сетки материалов ряд обязан вместить шестнадцатиэтажку с её
 /// подъёмом (16 × 3 × 0.35 ≈ 17 м) плюс глубину дома и подписи; у сетки
 /// назначений домов меньше и ряд плотнее.
+///
+/// `USE_PITCH_Y` — шаг ряда **обычной** глубины; ряд, у которого дом глубже,
+/// отодвигается на разницу глубин ([`use_pitch_y`]).
 const KIND_PITCH_Y: f32 = 52.0;
 const USE_PITCH_Y: f32 = 30.0;
 /// Зазор между сеткой материалов и сеткой назначений, м.
@@ -351,21 +363,53 @@ fn use_length(building_use: BuildingUse, slot: usize) -> f32 {
     }
 }
 
+/// Этажность дома в сетке назначений. У всех назначений её задаёт
+/// [`USE_LADDER`] — в этом и смысл ряда; у торговли второй слот про размер, а
+/// не про этаж, и высоту ему ставит [`BIG_BOX_STOREYS`], чтобы игра признала
+/// его коробкой.
+fn use_storeys(building_use: BuildingUse, slot: usize) -> u32 {
+    match (building_use, slot) {
+        (BuildingUse::Retail, 1) => BIG_BOX_STOREYS,
+        _ => USE_LADDER[slot],
+    }
+}
+
+/// Глубина ряда сетки назначений, м — по самому крупному дому ряда.
+fn use_row_depth(building_use: BuildingUse) -> f32 {
+    (0..USE_LADDER.len())
+        .map(|slot| use_length(building_use, slot) * DEPTH_RATIO)
+        .fold(0.0f32, f32::max)
+}
+
+/// Насколько ряд опускается относительно предыдущего, м. `USE_PITCH_Y` рассчитан
+/// на ряд обычной глубины; у торговли гипермаркет 60 × 30 съедает весь шаг, и его
+/// коробка вместе с подъёмом крыши легла бы на ряд выше и на его подписи, — так
+/// что глубокий ряд отодвигается ровно на разницу глубин.
+fn use_pitch_y(building_use: BuildingUse) -> f32 {
+    USE_PITCH_Y + use_row_depth(building_use) - USE_LENGTH * DEPTH_RATIO
+}
+
 /// Сетка назначений: строка на `BuildingUse`, в строке малоэтажный дом и
 /// высокий (у торговли — магазин у дома и гипермаркет, [`use_length`]).
 /// Облицовку выбирает игра — витрина её не заказывает.
 fn use_cells(tuning: &Tuning) -> Vec<Cell> {
     let origin_x = STOREY_LADDER.len() as f32 * kind_pitch_x(tuning) + GRID_GAP_X;
     let mut cells = Vec::new();
+    let mut base_y = 0.0;
     for (row, building_use) in USES.into_iter().enumerate() {
+        // ряд опускается на свой собственный шаг: глубокий ряд отодвигает себя от
+        // предыдущего, а не предыдущий от себя
+        if row > 0 {
+            base_y -= use_pitch_y(building_use);
+        }
         let mut x = origin_x;
-        for (slot, storeys) in USE_LADDER.into_iter().enumerate() {
+        for slot in 0..USE_LADDER.len() {
             let length = use_length(building_use, slot);
             let half = Vec2::new(length, length * DEPTH_RATIO) / 2.0;
             cells.push(Cell {
-                centre: Vec2::new(x + half.x, -(row as f32) * USE_PITCH_Y + half.y),
+                centre: Vec2::new(x + half.x, base_y + half.y),
                 half,
-                storeys,
+                storeys: use_storeys(building_use, slot),
                 wall: None,
                 building_use,
             });
@@ -606,9 +650,11 @@ fn rebuild_walls(
             &font,
             &view,
             use_label(building_use).to_string(),
+            // над домами ряда, а не на постоянном подъёме над базовой линией: у
+            // торговли дом вчетверо глубже, и заголовок попал бы внутрь коробки
             Vec2::new(
                 first.centre.x - first.half.x,
-                first.centre.y - first.half.y + HEADER_RISE * 0.55,
+                first.centre.y - first.half.y + use_row_depth(building_use) + CAPTION_DROP,
             ),
             Anchor::CENTER_LEFT,
             CAPTION_FONT,
@@ -712,6 +758,7 @@ fn house(centre: Vec2, half: Vec2, rotation: Rot2, courtyard: f32) -> PolyArea {
         kind: AreaKind::Building,
         building_use: BuildingUse::Other,
         height: None,
+        storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
     }

@@ -680,14 +680,21 @@ fn push_doors(
     }
 }
 
-/// Фризовая полоса гипермаркета: доля нарисованной стены, которую она
-/// занимает, и её верх — обе в долях подъёма, а не в метрах, потому что
-/// полоса идёт по **верху фасада** независимо от того, восемь метров в нём
-/// или пятнадцать. С фотографии: у «Магнита» красный фриз занимает верхнюю
-/// четверть фасада и не доходит до самого парапета на его собственную
+/// Фризовая полоса гипермаркета: её высота и зазор от верха стены — обе в долях
+/// **яруса** ([`WallCells::storey`]), не в метрах и не в долях всей стены,
+/// потому что полоса идёт по **верху фасада** независимо от того, восемь метров
+/// в нём или пятнадцать. С фотографии: у «Магнита» красный фриз занимает
+/// верхнюю четверть фасада и не доходит до самого парапета на его собственную
 /// толщину.
-const BRAND_BAND_SHARE: f32 = 0.26;
-const BRAND_BAND_TOP: f32 = 0.96;
+///
+/// В долях яруса, а не стены, потому что лента витражного стекла под фризом
+/// живёт в координатах **ячейки** (`roof.wgsl::BIG_BOX_WINDOW_HIGH`, 0.70
+/// яруса): доля стены — это доля яруса только у одноярусной коробки, а у
+/// двухъярусной такой фриз накрыл бы ленту верхнего яруса целиком. Половина
+/// выводимых высот коробки (`heights::BIG_BOX_HEIGHTS`) и оба размеченных
+/// крупноформата Тулы («Макси» 12.5 м, «Сарафан» 17) — как раз выше яруса.
+const BRAND_BAND_SHARE: f32 = 0.30;
+const BRAND_BAND_GAP: f32 = 0.05;
 
 /// Фирменные цвета сетевой торговли — то, чем гипермаркет узнаётся на снимке
 /// раньше, чем читается вывеска: красный «Магнит», жёлтая «Лента», зелёный
@@ -715,24 +722,29 @@ const BRAND_COLORS: [Srgba; 5] = [
 ///
 /// Кладётся **после** своей стены и до входа: фриз лежит на фасаде, а
 /// козырёк входа — поверх фриза.
+///
+/// Меряется он клетками этой же стены, от её верха вниз: полоса обязана лечь
+/// **над** лентой стекла верхнего яруса, а лента стоит внутри своей ячейки
+/// ([`BRAND_BAND_SHARE`]).
 fn push_brand_band(
     builder: &mut MeshBuilder,
     building: &PolyArea,
     wall: &WallLook,
     span: &WallSpan,
+    cells: &WallCells,
+    lift_dir: Vec2,
 ) {
     if wall.kind != WallKind::BigBox {
         return;
     }
     let color = brand_color(building);
-    let top = span.lift * BRAND_BAND_TOP;
-    let low = span.lift * (BRAND_BAND_TOP - BRAND_BAND_SHARE);
+    let top = span.lift - cells.storey * BRAND_BAND_GAP;
+    let low = top - cells.storey * BRAND_BAND_SHARE;
     // фриз — та же поверхность, что и стена под ним, и свет на неё падает так
-    // же: без этого полоса на освещённой и затенённой гранях вышла бы одного
-    // тона и угол коробки пропал
+    // же, по той же нормали ([`wall_normal`]): без этого полоса на освещённой и
+    // затенённой гранях вышла бы одного тона и угол коробки пропал
     let (a, b) = (span.a, span.b);
-    let edge = b - a;
-    let outward = Vec2::new(edge.y, -edge.x).normalize_or_zero();
+    let outward = wall_normal(a, b, lift_dir);
     let lit = shade_by_light(color, outward, WALL_LIT_MIX, WALL_SHADED_MIX);
     builder.set_roof(None);
     builder.push_quad([a + low, b + low, b + top, a + top], lit.into());
@@ -897,20 +909,33 @@ fn garage_frame(rect: &GarageRect, seed: f32, lift: Vec2) -> Option<WallFrame> {
     )
 }
 
-/// Тон стены `a→b` по её повороту к свету: (низ, верх). Стена видима,
-/// значит её настоящая нормаль смотрит против подъёма — это и выбирает
-/// сторону перпендикуляра, обход кольца тут ни при чём.
+/// Наружная нормаль видимой стены `a→b`. Стена видима, значит её настоящая
+/// нормаль смотрит против подъёма — это и выбирает сторону перпендикуляра,
+/// обход кольца тут ни при чём: рёбра отбирает [`silhouette_edges`] по знаковой
+/// площади кольца, и на контуре обратной закрутки сырой перпендикуляр смотрит
+/// внутрь дома.
+///
+/// Одно правило на всех, кто красит эту стену, — и на её собственный тон
+/// ([`wall_colors`]), и на фриз вывески поверх неё ([`push_brand_band`]).
+/// Написанное дважды, оно и разошлось: фриз брал сырой перпендикуляр, и на
+/// обратной закрутке полоса выходила светлой там, где стена под ней тёмная.
+fn wall_normal(a: Vec2, b: Vec2, lift_dir: Vec2) -> Vec2 {
+    let edge = b - a;
+    let normal = Vec2::new(edge.y, -edge.x).normalize_or_zero();
+    match normal.dot(lift_dir) > 0.0 {
+        true => -normal,
+        false => normal,
+    }
+}
+
+/// Тон стены `a→b` по её повороту к свету: (низ, верх).
 pub(super) fn wall_colors(
     facade: Srgba,
     a: Vec2,
     b: Vec2,
     lift_dir: Vec2,
 ) -> (LinearRgba, LinearRgba) {
-    let edge = b - a;
-    let mut normal = Vec2::new(edge.y, -edge.x).normalize_or_zero();
-    if normal.dot(lift_dir) > 0.0 {
-        normal = -normal;
-    }
+    let normal = wall_normal(a, b, lift_dir);
     let bottom = shade_by_light(facade, normal, WALL_LIT_MIX, WALL_SHADED_MIX);
     let top = bottom.mix(&Srgba::WHITE, WALL_TOP_LIGHTEN);
     (bottom.into(), top.into())
@@ -1227,7 +1252,7 @@ fn push_house_with_arches(
             .unwrap_or_else(|| wall_cells(building, wall, &span));
         push_wall_with_openings(builder, &span, &cells, openings, bottom, top);
         // фриз вывески — поверх своей стены и до входа
-        push_brand_band(builder, building, wall, &span);
+        push_brand_band(builder, building, wall, &span, &cells, lift_dir);
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
         push_doors(builder, building, wall, &span, &cells, openings, bottom);
