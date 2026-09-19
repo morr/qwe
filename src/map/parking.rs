@@ -672,7 +672,18 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall
         // чертой через оба ряда, а не границей мест
         let tail = along * (stall.depth / 2.0 - LINE_GAP);
         let half_line = across * (LINE_WIDTH / 2.0);
-        let mut bar = |edge: Vec2| {
+        // полоса рисуется, только если по ту её сторону **поместилось бы
+        // место**: у кромки площадки она иначе читается чёрточкой в никуда —
+        // отчёт автора. Так ряд и размечают: крайнее место открыто в бордюр, а
+        // у поперечного проезда полоса остаётся, потому что асфальт за ней
+        // есть. Мерить наличием асфальта в полуместе от грани было мало:
+        // место и так стоит с запасом [`EDGE_MARGIN`], и проба попадала на
+        // него же
+        let mut bar = |edge: Vec2, outward: Vec2| {
+            let beyond = edge + outward * (STALL_WIDTH / 2.0);
+            if !fits_with(area, beyond, across, along, stall.depth, EDGE_MARGIN) {
+                return;
+            }
             builder.push_quad(
                 [
                     edge - tail - half_line,
@@ -683,10 +694,10 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall
                 color,
             );
         };
-        bar(stall.at - across * (STALL_WIDTH / 2.0));
+        bar(stall.at - across * (STALL_WIDTH / 2.0), -across);
         let neighbour = stall.at + across * STALL_WIDTH;
         if previous.is_none_or(|at| at.distance(neighbour) > LINE_WIDTH) {
-            bar(stall.at + across * (STALL_WIDTH / 2.0));
+            bar(stall.at + across * (STALL_WIDTH / 2.0), across);
         }
         previous = Some(stall.at);
     }
