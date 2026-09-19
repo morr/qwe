@@ -80,6 +80,10 @@ const AISLE_SPREAD: f32 = 30.0;
 const JOIN_SLACK: f32 = 0.01;
 /// Два проезда ближе этого друг к другу — один и тот же, м.
 const LANE_MERGE: f32 = STALL_DEPTH;
+/// Сколько мест подряд обязано быть в куске ряда, чтобы его размечали. У
+/// скошенной кромки площадки ряд обрывается, и остаётся одно место: на
+/// картинке это полоска на пустом асфальте, к которой никто не подъедет.
+const MIN_ROW_RUN: usize = 2;
 /// Самая узкая полоса, по которой машина всё-таки протиснется к месту, м.
 /// Карман между проездами, где на пару рядов не хватило, размечается одним
 /// рядом, только если по обе стороны от него остаётся хотя бы столько.
@@ -295,6 +299,11 @@ impl Frame<'_> {
     fn push_row(&self, placed: &mut Placed, band: f32, nose: f32, depth: f32, span: (f32, f32)) {
         let along = self.across * nose;
         let mut row = Vec::new();
+        // кусок ряда — места подряд по сетке; обрыв считается здесь, потому
+        // что **обрывок короче [`MIN_ROW_RUN`] не размечается вовсе**: у
+        // скошенной кромки в ряду остаётся одно место, и на картинке это
+        // полоска на пустом асфальте, куда никто не встанет
+        let mut run: Vec<Stall> = Vec::new();
         let mut index = ((span.0 - self.origin) / STALL_WIDTH).ceil().max(0.0);
         loop {
             let place = self.origin + index * STALL_WIDTH + STALL_WIDTH / 2.0;
@@ -302,10 +311,20 @@ impl Frame<'_> {
                 break;
             }
             let at = self.main * place + self.across * band;
-            if fits(self.area, at, self.main, self.across, depth) {
-                row.push(Stall { at, along, depth });
+            if fits_with(self.area, at, self.main, self.across, depth, EDGE_MARGIN)
+                && reachable(self.area, at, along, depth)
+            {
+                run.push(Stall { at, along, depth });
+            } else {
+                if run.len() >= MIN_ROW_RUN {
+                    row.append(&mut run);
+                }
+                run.clear();
             }
             index += 1.0;
+        }
+        if run.len() >= MIN_ROW_RUN {
+            row.append(&mut run);
         }
         // порядок мест в списке — тот, в котором их ждёт разметка
         // (`push_markings`): вдоль `-perp(Stall::along)`
@@ -576,10 +595,44 @@ fn row_places(length: f32) -> Vec<f32> {
     places
 }
 
+/// Есть ли перед носом места асфальт, с которого на него заезжают.
+///
+/// Влезать в контур мало: сетка полос продолжается за крайние проезды
+/// ([`lanes_of`]), и у самой кромки ряд встаёт так, что его проезд остался
+/// снаружи площадки. Места там размечались, хотя заехать на них неоткуда —
+/// на снимке это одинокие полосы вдоль кромки, отчёт автора. Проба идёт по
+/// обеим передним кромкам, а не по одной осевой: у скошенного угла площадки
+/// середина ещё на асфальте, когда половина выезда уже за ним.
+fn reachable(area: &PolyArea, at: Vec2, along: Vec2, depth: f32) -> bool {
+    let across = Vec2::new(-along.y, along.x);
+    let ahead = at + along * (depth / 2.0 + PAIR_AISLE / 2.0);
+    [-1.0f32, 1.0]
+        .iter()
+        .all(|side| point_in_area(ahead + across * (side * STALL_WIDTH / 2.0), area))
+}
+
 /// Место целиком внутри контура — по четырём углам, как и коробки на кровле.
 fn fits(area: &PolyArea, at: Vec2, along: Vec2, across: Vec2, depth: f32) -> bool {
-    let half_width = along * (STALL_WIDTH / 2.0);
-    let half_depth = across * (depth / 2.0);
+    fits_with(area, at, along, across, depth, 0.0)
+}
+
+/// То же, но место раздуто на `margin` со всех сторон: так у площадки требуют
+/// **запаса до кромки**, а не попадания впритык.
+///
+/// Кромка стоянки идёт наискось к рядам, и место, чей угол лежит ровно на ней,
+/// на картинке читается половинкой: машины на нём не видно, а полосы по его
+/// краям торчат из ряда в никуда — отчёт автора. Запас в [`EDGE_MARGIN`]
+/// убирает ровно такой торец, оставляя ряд на метр короче.
+fn fits_with(
+    area: &PolyArea,
+    at: Vec2,
+    along: Vec2,
+    across: Vec2,
+    depth: f32,
+    margin: f32,
+) -> bool {
+    let half_width = along * (STALL_WIDTH / 2.0 + margin);
+    let half_depth = across * (depth / 2.0 + margin);
     [
         at - half_width - half_depth,
         at + half_width - half_depth,
@@ -881,6 +934,46 @@ mod tests {
             }
             let nose = stall.at + stall.along * (stall.depth / 2.0);
             assert!(to_lane(nose) < to_lane(stall.at), "{stall:?}");
+        }
+    }
+
+    /// Обрывок ряда в одно место не размечается: у скошенной кромки такое
+    /// место читается полоской на пустом асфальте.
+    #[test]
+    fn a_run_of_one_stall_is_not_striped() {
+        // треугольный клин: к острому углу ряды сходят на одно место
+        let wedge = lot(vec![
+            Vec2::ZERO,
+            Vec2::new(100.0, 0.0),
+            Vec2::new(100.0, 40.0),
+        ]);
+        let aisle = fixture::parking_aisle(vec![Vec2::new(10.0, 12.0), Vec2::new(95.0, 12.0)]);
+        let stalls = stalls(&wedge, &[&aisle]);
+        assert!(!stalls.is_empty());
+        let mut rows: Vec<(f32, usize)> = Vec::new();
+        for stall in &stalls {
+            let band = stall.at.dot(stall.along);
+            match rows.iter_mut().find(|row| (row.0 - band).abs() < 0.01) {
+                Some(row) => row.1 += 1,
+                None => rows.push((band, 1)),
+            }
+        }
+        for (band, count) in &rows {
+            assert!(*count >= MIN_ROW_RUN, "обрывок в {count} место на {band}");
+        }
+    }
+
+    /// Место у самой кромки не размечается, если заехать на него неоткуда:
+    /// продолженная сетка полос ставит ряд так, что его проезд остаётся за
+    /// пределами площадки.
+    #[test]
+    fn a_stall_with_no_asphalt_in_front_of_it_is_not_striped() {
+        // площадка ровно в ряд мест плюс проезд с одной стороны
+        let lot = lot(rect(14.0, 60.0));
+        let aisle = fixture::parking_aisle(vec![Vec2::new(2.0, 11.4), Vec2::new(58.0, 11.4)]);
+        for stall in &stalls(&lot, &[&aisle]) {
+            let ahead = stall.at + stall.along * (stall.depth / 2.0 + PAIR_AISLE / 2.0);
+            assert!(point_in_area(ahead, &lot), "заехать неоткуда: {stall:?}");
         }
     }
 
