@@ -390,18 +390,45 @@ fn push_gap(gaps: &mut Vec<FenceGap>, gap: FenceGap) {
     }
 }
 
-/// Точка пересечения отрезков `a→b` и `c→d`, концы включительно. Параллельные
-/// и совпадающие отрезки пересечения не имеют.
-fn segment_crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<Vec2> {
+/// Доли `t` и `u`, в которых прямые `a→b` и `c→d` пересекаются, — каждая вдоль
+/// своего отрезка. `None` — отрезки параллельны или совпадают: пересечения у
+/// них нет, и допуск на концах тут ничего не решает.
+///
+/// Где проходит граница «внутри отрезка», решает уже спрашивающий: у
+/// [`segment_crossing`] концы с допуском, у [`segments_cross`] — строгие
+/// `[0, 1]`.
+fn crossing_params(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<(f32, f32)> {
     let (r, s) = (b - a, d - c);
     let denominator = r.perp_dot(s);
     if denominator.abs() <= f32::EPSILON * r.length() * s.length() {
         return None;
     }
-    let t = (c - a).perp_dot(s) / denominator;
-    let u = (c - a).perp_dot(r) / denominator;
+    Some((
+        (c - a).perp_dot(s) / denominator,
+        (c - a).perp_dot(r) / denominator,
+    ))
+}
+
+/// Точка пересечения отрезков `a→b` и `c→d`, концы включительно. Параллельные
+/// и совпадающие отрезки пересечения не имеют.
+fn segment_crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<Vec2> {
     const SLACK: f32 = 1e-4;
-    ((-SLACK..=1.0 + SLACK).contains(&t) && (-SLACK..=1.0 + SLACK).contains(&u)).then(|| a + r * t)
+    let (t, u) = crossing_params(a, b, c, d)?;
+    ((-SLACK..=1.0 + SLACK).contains(&t) && (-SLACK..=1.0 + SLACK).contains(&u))
+        .then(|| a + (b - a) * t)
+}
+
+/// Пересекаются ли отрезки `a→b` и `c→d`, концы включительно. Параллельные и
+/// совпадающие пересечения не имеют — для забора это то, что нужно: сдвиг
+/// вдоль ограды ею не остановлен.
+///
+/// Концы строгие, без допуска [`segment_crossing`]: там точку ищут у ломаной,
+/// собранной из общих узлов, и вопрос «а не прошло ли ровно через узел» стоит
+/// в полный рост; здесь спрашивают, упёрся ли сдвиг в забор, и касание концом
+/// на десятую долю миллиметра его не останавливает.
+pub fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+    crossing_params(a, b, c, d)
+        .is_some_and(|(t, u)| (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u))
 }
 
 /// Как далеко искать проезжую часть от кандидата в калитку, м. Дальше — «улицы

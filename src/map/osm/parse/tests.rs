@@ -2703,7 +2703,7 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
         ..MapData::default()
     };
 
-    let stretched = pull_landuse_to_roads(&mut map).blocks;
+    let stretched = pull_areas_to_roads(&mut map).blocks;
     assert!(stretched >= 2, "дотянуто вершин: {stretched}");
     let top = map.landuse[0]
         .outer
@@ -2763,7 +2763,7 @@ fn a_lot_reaches_the_road_across_its_own_aisle() {
         ..MapData::default()
     };
 
-    let stretched = pull_landuse_to_roads(&mut map).lots;
+    let stretched = pull_areas_to_roads(&mut map).lots;
     assert!(stretched >= 2, "дотянуто вершин: {stretched}");
     // весь верхний край — под полотном улицы, без зубцов у проезда
     for vertex in &map.parking[0].outer {
@@ -2809,7 +2809,7 @@ fn a_fenced_lot_stays_behind_its_fence() {
     };
 
     let before = map.parking[0].outer.len();
-    assert_eq!(pull_landuse_to_roads(&mut map).lots, 0);
+    assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
     // `untangled` может переставить начало кольца, но ни одна вершина не
     // обязана оказаться за забором
     assert_eq!(map.parking[0].outer.len(), before);
@@ -2850,7 +2850,7 @@ fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
         ..MapData::default()
     };
 
-    assert_eq!(pull_landuse_to_roads(&mut map).lots, 0);
+    assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
     for vertex in &map.parking[0].outer {
         assert!(vertex.y <= fence_y + 0.01, "вершина за забором: {vertex:?}");
     }
