@@ -700,10 +700,55 @@ be called alone:
   - Bridges and passages give no segments: a block is drawn under a bridge anyway, and an
     arch through a house is not the edge of a yard. Everything else that is drawn does,
     alleys included — a footpath with a seam of ground beside it reads the same way.
+  - **The parking lots go through the same pass**, on the same road index (its only
+    expensive part) but under their own rule, `LOT_STRETCH`:
+    - **`PARKING_GAP_MAX` is 12 m**, not the block's five, and the number is read off the
+      layout rather than off taste: a strip wider than a stall row with its aisle
+      (`STALL_DEPTH` 5.2 + `AISLE` 6) is a plot of its own, anything narrower is the
+      pustyr between the lot and the drive it is entered from — asphalt on a photo, and
+      wide enough at the top of the range for the layout to stripe a row on it.
+      Measured on the Tula cache: 181 lots, 30 km of outline, 7 km of it already under
+      asphalt, 19.4 km of the rest within the limit (13.9 km within five metres). Of that
+      19.4 km the strip is over greenery for 492 m and over a building for 51 m — 2.5 %,
+      which is why the pass asks nothing about what is in the strip.
+    - **`Stretch::outward_only` — the answer is looked for outside the edge only**, and a
+      road the vertex already stands on is skipped instead of ending the search. That is
+      the whole pass on a big lot: its own aisles (`service=parking_aisle`) cross the
+      outline every dozen metres — Tula's ТРЦ «Макси» lot, way 397005593, has one every
+      17 m — so the *nearest* road to a vertex is routinely the aisle under it. Under the
+      block's rule ("under a ribbon means nowhere to go") those vertices stay while the
+      stretches between them move, and the lot ends up with a sawtooth edge — a tooth of
+      unpaved ground beside every aisle, which is worse than the strip it replaced.
+    - **`Untouched` — what the asphalt does not crawl over**: a building of at least
+      `KEEP_BUILDING_AREA` 100 m² and any greenery or water, probed every `KEEP_PROBE`
+      1 m along the shift. Under the building itself nothing is visible anyway
+      (`Z_BUILDING` 5 against `Z_PARKING` 2.001) — what the guard is about is the **yard
+      behind it**: Tula's hardware shop (way 764017758, 36 × 51 m) is one, and the lot
+      stepped over it in the first build (the author's "parking runs onto the building").
+      The 100 m² floor is the other half of the same report: a ticket booth standing *in*
+      the lot (way 1435094568, 6 × 7 m) has no yard behind it, and going round it leaves a
+      patch of bare ground with the booth in the middle.
+    - **`PARKING_STEP` 3 m** (the block's is 8): between two pulled points the edge runs
+      as a chord while the road bends, so at a corner the chord leaves a wedge of ground —
+      metres of it at 8 m spacing on the embankment bend, centimetres at 3.
+    - **`untangled` — NonZero over the pulled ring** (`i_overlay`, the shoal's and the
+      shadows' tool). Points are pulled independently, so where the nearest road changes
+      the ring can cross itself; earcut turns such a needle into an unfilled wedge — a
+      white slash across the asphalt. The blocks need none of it: their limit is smaller
+      than the step they split an edge by.
+    - What it fixes is the report this came from: light pockets between the aisle stubs
+      along the lot's edge (the same lot, `cam 5560 2115`), which read as holes in the
+      asphalt rather than as ground. **What it does not reach**: a pocket deeper than the
+      limit — at the lot's north-west edge the perimeter drive stands 15–20 m off, and
+      those pockets stay ground. Filling them wants a different construction (a
+      morphological closing of the lot with its aisles), not a bigger limit: the limit is
+      what keeps the lot from swallowing the embankment footway on the other side.
   - Order: after the houses are pulled off the sidewalks, before door generation. It could
-    stand anywhere in the tail — `landuse` reaches neither the navmesh, nor the doors, nor
-    tree planting, nor the parked cars' districts — and it is the only pass here whose
-    effect is purely what is drawn.
+    stand anywhere in the tail — neither `landuse` nor `parking` reaches the navmesh, the
+    doors, tree planting or the parked cars' districts — and it is the only pass here whose
+    effect is purely what is drawn. **After the squaring** (step 4) it must stay, though:
+    `vertex_uses` counts a parking outline among the layers a house may share a vertex
+    with, so a pulled edge would change which houses get squared.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
@@ -1871,8 +1916,27 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     it on every rebuild of the car layer was work the sun slider paid for by the frame.
     Rows run along the
     **long axis of `min_area_rect`**, the axis a real lot is striped along: `STALL_WIDTH`
-    2.6 × `STALL_DEPTH` 5.2 m, two rows back to back, then an `AISLE` of 6 m, and
-    `EDGE_MARGIN` 1.2 m in from the edge.
+    2.6 × `STALL_DEPTH` 5.2 m, `AISLE` 6 m, `EDGE_MARGIN` 1.2 m in from the edge.
+  - **One law decides the layout: a car has to be able to drive to every stall**, and both
+    directions of it answer the same report — a lot striped wall to wall reads as hatching,
+    not as a place cars are parked in.
+    - **Across, `row_bands`: `row — aisle — pair — aisle — pair`.** The field starts with a
+      *single* row at the edge and only then pairs rows back to back; each pair has an
+      aisle on either side of it, and the edge row takes the one behind it. It used to
+      start with a pair (`row row aisle` repeating), and then the very first row had its
+      back in the second row and its nose in the lot's own edge: nothing could reach it.
+      The shift costs no stalls — the module is the same 2 × 5.2 + 6.
+    - **A pair's second row is dropped where the lot ends right behind it** (less than an
+      aisle of room left): its back is in its pair and its nose in the kerb. The strip
+      stays as asphalt. The one row that legitimately has no aisle at all is a lot **one
+      row wide** — a strip along a street, entered from the street, and that exception is
+      what `every_row_has_an_aisle_to_drive_in_from` skips.
+    - **Along, `row_places`: `ROW_BLOCK` 50 m of stalls, a cross aisle, 50 m more.** The
+      breaks are computed once per lot and shared by every row, so they line up into a
+      drive across the field rather than a scatter of empty stalls. Fifty metres is 19
+      stalls, an ordinary block between drives; without it Tula's ТРЦ «Макси» lot
+      (671 × 255 m) ran unbroken rows of hundreds of metres, where the aerial photo (2GIS,
+      the same lot, zones A–H) shows blocks with drives between them.
   - **A stall survives only if all four of its corners are inside the outline**
     (`fits`, the same test the roof clutter uses for its boxes) — an L-shaped lot gets
     nothing in the notch, and the OBB rows do not have to match the outline.
@@ -1882,7 +1946,11 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     reads `stalls()` unfiltered, so a small yard keeps its cars — on unmarked asphalt.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
-    like, and it is cheaper than finding each stall's neighbour.
+    like, and it is cheaper than finding each stall's neighbour. Plus a **closing** bar
+    where a run of stalls begins — at a cross aisle and at the outline — found by asking
+    whether the *previous* stall in the list stands one stall width away, since the stalls
+    of a row are generated in order. Without it every block ended in a stall open to the
+    drive, which is exactly what the cross aisles were added to stop looking like.
   - **The lot lies over every road ribbon and sidewalk** (`Z_PARKING` above `Z_ROAD`,
     under the pitch and water). OSM runs aisles, entries and footways into and through
     a lot, and a light ribbon over the lot's asphalt cut the stall rows — reported from
@@ -1901,7 +1969,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     through it); with the lot on top that road is hidden, and the dropped stalls read as
     an unexplained empty band across the rows — the author's call from a screenshot, and
     the rule came out together with the `RoadLine::parking_aisle` flag it needed. The
-    layout's own `AISLE` gaps stand in for the OSM aisles.
+    layout's own `AISLE` gaps — and, since the cross aisles, its own drives across the
+    field — stand in for the OSM aisles.
+  - **But the outline itself is moved to the road**, in the parse (**Blocks pulled to the
+    roads** above, `LOT_STRETCH`). That is not the layout reading roads: the lot grows to
+    the drive it is entered from, and everything below — the stalls, the paint, the cars —
+    reads the grown outline knowing nothing of why it grew.
   - Tula: **170 lots** (172 in the bbox, less the one that is a building and the one
     `parking=multi-storey`). Parking touches neither the navmesh nor tree planting, like the
     landuse blocks.

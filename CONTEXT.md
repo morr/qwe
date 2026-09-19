@@ -263,6 +263,19 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the fill, read locally off the ring's own signed area — so a street running through a
   block does not shrink it, while a street in a courtyard pulls the hole's edge in.
   Render-only in effect: `landuse` touches neither the navmesh nor planting.
+  **A parking lot is pulled by the same pass**, to `PARKING_GAP_MAX` 12 m — the width of a
+  stall row with its aisle, past which the strip is a plot of its own and not a seam — and
+  by its own rule (`Stretch::outward_only`): the answer is looked for **outside** the edge
+  only, skipping the road the vertex already stands on. A big lot's edge is crossed by its
+  own aisles every dozen metres (Tula, ТРЦ «Макси»), and the block's rule ("under a ribbon
+  means nowhere to go") would leave a sawtooth of pulled and unpulled stretches along the
+  road. Tula: 30 km of lot outline, 7 km already under asphalt, 19.4 km of the rest within
+  the limit. Two guards make the wider limit safe: `Untouched` — the shift may not cross a
+  building of `KEEP_BUILDING_AREA` 100 m² or more, nor greenery or water (a smaller
+  building is a booth standing *in* the lot, and going round it leaves a patch of ground
+  with the booth in the middle), and `untangled` — the pulled ring goes through
+  `i_overlay` NonZero, since points pulled independently can cross the ring over itself and
+  earcut leaves an unfilled slash where they do.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
@@ -841,9 +854,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (`Z_PARKING` 2.001, **over every road ribbon and sidewalk**, under pitches and water)
   with its **stalls drawn on it** (`Z_PARKING_LINES` 2.002, a flat
   material, no procedural texture on top of paint). `stalls(area)` lays them out in rows
-  along the **long axis of the area's `min_area_rect`** — a row of stalls, an aisle, a
-  row of stalls, the way a lot is actually striped: `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2,
-  `AISLE` 6.0, `EDGE_MARGIN` 1.2. Every stall is kept only if its **four corners** are
+  along the **long axis of the area's `min_area_rect`**, under one law: **a car has to be
+  able to drive to every stall.** Across (`row_bands`) that is `row — aisle — pair of rows
+  back to back — aisle — pair`: the row at the edge takes its aisle from behind, each pair
+  has one on either side, and a pair's second row is dropped where the lot ends right
+  behind it — its back is in the neighbouring row and its nose in the kerb. Along
+  (`row_places`) it is that a row does not run the length of the lot: every `ROW_BLOCK`
+  50 m a `AISLE`-wide cross drive breaks it, in line across all the rows, so a big lot
+  reads as blocks of stalls with drives between them instead of one field of hatching.
+  `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2, `AISLE` 6.0, `EDGE_MARGIN` 1.2. The paint is a bar
+  to the left of each stall (neighbours coincide) plus a **closing** one where a run
+  begins — at a cross aisle and at the outline, or the block's edge stall reads as open.
+  Every stall is kept only if its **four corners** are
   inside the outline, so an L-shaped lot gets none in the notch; a lot under `MIN_AREA`
   (120 m²) gets no markings at all — a yard for four cars is not striped, though its
   stalls stay and cars stand on them. **The markings and the cars read the same
@@ -857,6 +879,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   its street reads as one surface; a tone of its own drew a patch at every lot. For the
   same reason the lot has **no rim**, unlike the greenery, sand and pitches: a kerb band along its
   outline was a gradient across each drive running into it.
+  **And the outline reaches the road it is entered from** — the parse pulls it there
+  (**Block pulled to the road** above), so the strip of ground between the lot and its
+  perimeter drive, which read as light pockets between the aisles crossing it, is asphalt
+  like the rest of the lot; where the pulled strip is wide enough the layout stripes it too.
   Render-only. Tula: 170 lots.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. **Wheel ruts** in the **ribbon frame**, so they follow the lane and not
