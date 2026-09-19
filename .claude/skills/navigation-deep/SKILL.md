@@ -373,7 +373,8 @@ inserts the resource instead.
   once from the final navmesh (after pruning; chunk sized to 50 world metres — see *Navtile
   size*), wrapped in `Arc`, called directly
   from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
-  flat A*. The build takes **~12 s** on the 5600 × 3700 map, so it runs as an
+  flat A*. The build took **~12 s** on the 5600 × 3700 map (the map is 7600 × 5700 since,
+  so expect about twice that), so it runs as an
   `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` **in the live branch
   only** (the deterministic branch starts it earlier — next bullet) and picked up by
   `poll_northstar_build`; until it lands, `NorthstarGrid::get()` is `None` and the

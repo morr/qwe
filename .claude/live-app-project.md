@@ -209,7 +209,9 @@ The loop body sleeps: `do :; done` spins a core, and this machine is usually com
 ## Camera
 
 - `brp cam <x> <y>` moves the camera and sticks — coordinates are map metres, the map is
-  `MAP_SIZE = 5600 × 3700` with the origin at the bottom-left corner.
+  `MAP_SIZE = 7600 × 5700` with the origin at the bottom-left corner. It was 5600 × 3700
+  until the map was pushed out by a kilometre on every side, so **any `cam x y` written
+  down before that points a kilometre south-west of what it meant** — add 1000 to both.
 - **The `zoom` argument does not stick.** `PanCamera` (upstream `bevy_camera_controller`)
   re-applies its own `zoom_factor` to the transform scale every frame, and it derives
   `Component` without `Reflect` — so it is invisible to BRP and cannot be written. To

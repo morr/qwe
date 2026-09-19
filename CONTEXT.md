@@ -29,7 +29,11 @@ in `main.rs`.
 ## Coordinates & units
 
 - World units are **meters**. Origin — **south-west corner** of the map, y grows north.
-  All world coordinates are positive. `MAP_SIZE = 5600 × 3700` m.
+  All world coordinates are positive. `MAP_SIZE = 7600 × 5700` m — it was 5600 × 3700 until
+  the map was pushed out by a kilometre on every side, and since the bbox keeps its geo
+  centre, **that move shifted every absolute map coordinate by +1000 on both axes**: the
+  portal hints moved with it, and a `cam x y` written down before it points a kilometre
+  south-west of what it meant.
 - **Navtile** — navigation grid cell, **2 m by default, runtime-switchable to 1 m** via the
   `navtile:` cycler in the Debug tab. Grid size is derived as `MAP_SIZE / navtile_size()`
   (2800 × 1850 tiles at 2 m); the live value is a process-global atomic
