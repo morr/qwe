@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 
 # settings.rs::MAP_SIZE / METERS_PER_DEG_LAT
-MAP_SIZE = (5600.0, 3700.0)
+MAP_SIZE = (7600.0, 5700.0)
 METERS_PER_DEG_LAT = 111_320.0
 
 # city.rs::geo_center

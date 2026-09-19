@@ -114,7 +114,7 @@ smoothed instead of stretching frames.
 ## Screenshots
 
 ```bash
-$b cam 2284 1969        # frame the portal first
+$b cam 3284 2969        # frame the portal first (`TULA_PORTAL_POS`, city.rs)
 $b shot                 # raise window, trigger TakeScreenshotEvent, wait for the png
 ```
 
@@ -209,7 +209,9 @@ The loop body sleeps: `do :; done` spins a core, and this machine is usually com
 ## Camera
 
 - `brp cam <x> <y>` moves the camera and sticks — coordinates are map metres, the map is
-  `MAP_SIZE = 5600 × 3700` with the origin at the bottom-left corner.
+  `MAP_SIZE = 7600 × 5700` with the origin at the bottom-left corner. It was 5600 × 3700
+  until the map was pushed out by a kilometre on every side, so **any `cam x y` written
+  down before that points a kilometre south-west of what it meant** — add 1000 to both.
 - **The `zoom` argument does not stick.** `PanCamera` (upstream `bevy_camera_controller`)
   re-applies its own `zoom_factor` to the transform scale every frame, and it derives
   `Component` without `Reflect` — so it is invisible to BRP and cannot be written. To
@@ -224,8 +226,8 @@ $b cam                                          # read the resulting zoom back
 
   Negative `y` zooms out. Range is clamped to `0.05 … 4.5`.
 
-- Portal hint for Tula is `2284, 1969`; other cities put it at the map centre
-  (`2800, 1850`) unless `city.rs` says otherwise.
+- Portal hint for Tula is `3284, 2969`; other cities put it at the map centre
+  (`3800, 2850`) unless `city.rs` says otherwise.
 
 ## Registered types
 

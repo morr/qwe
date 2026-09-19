@@ -31,7 +31,7 @@ inspection.
 threads (navmesh fill, entrance generation) have no ECS access. It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
-Grid size is derived as `MAP_SIZE / navtile_size()` (2800 × 1850 tiles at 2 m). **A filled
+Grid size is derived as `MAP_SIZE / navtile_size()` (3800 × 2850 tiles at 2 m). **A filled
 `Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
 cancelled northstar build) never indexes against the switched atomic. The snapshot owns the
 conversions too: rasterisation (`set_area`/`row_spans`, `visit_polyline*`,
@@ -377,7 +377,8 @@ inserts the resource instead.
   once from the final navmesh (after pruning; chunk sized to 50 world metres — see *Navtile
   size*), wrapped in `Arc`, called directly
   from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
-  flat A*. The build takes **~12 s** on the 5600 × 3700 map, so it runs as an
+  flat A*. The build took **~12 s** on the 5600 × 3700 map (the map is 7600 × 5700 since,
+  so expect about twice that), so it runs as an
   `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` **in the live branch
   only** (the deterministic branch starts it earlier — next bullet) and picked up by
   `poll_northstar_build`; until it lands, `NorthstarGrid::get()` is `None` and the

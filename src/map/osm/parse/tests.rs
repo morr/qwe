@@ -2,7 +2,9 @@ use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, colour, parse_measure};
-use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
+use crate::map::osm::fixture::{
+    Overpass, building, closed, fence, rect, square, street, water_area,
+};
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
     StructureKind, WaterKind, distance_to_segment, is_big_box,
@@ -2601,7 +2603,8 @@ fn finishing_the_parse_reports_what_each_pass_did() {
         "дорог в сцене нет, отодвигать не от чего"
     );
     assert_eq!(report.pulled.left, 0);
-    assert_eq!(report.stretched, 0, "кварталов в сцене нет");
+    assert_eq!(report.stretched.blocks, 0, "кварталов в сцене нет");
+    assert_eq!(report.stretched.lots, 0, "и стоянок тоже");
     assert_eq!(report.planted.tree_nodes, 1);
     assert_eq!(report.planted.standalone, 1);
     assert_eq!(map.buildings.len(), 1, "остался только косой домик");
@@ -2700,7 +2703,7 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
         ..MapData::default()
     };
 
-    let stretched = pull_landuse_to_roads(&mut map);
+    let stretched = pull_areas_to_roads(&mut map).blocks;
     assert!(stretched >= 2, "дотянуто вершин: {stretched}");
     let top = map.landuse[0]
         .outer
@@ -2719,6 +2722,138 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
             .all(|(a, b)| a.distance(*b) < 0.01),
         "квартал в стороне от улицы тронут"
     );
+}
+
+/// Тем же проходом дотягивается и стоянка — но по своему правилу: её край
+/// пересекает проезд ряда, и вершина, стоящая на его полотне, обязана уехать к
+/// улице вместе с соседями. По правилу квартала («лежишь под лентой — тянуть
+/// некуда») она осталась бы на месте, и вдоль улицы вышла бы пила.
+#[test]
+fn a_lot_reaches_the_road_across_its_own_aisle() {
+    let edge = 4.0 + sidewalk_width(8.0).unwrap();
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, -12.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![
+            street(
+                vec![
+                    CENTER - Vec2::new(400.0, 0.0),
+                    CENTER + Vec2::new(400.0, 0.0),
+                ],
+                8.0,
+            ),
+            // проезд ряда: упирается в улицу, пересекая верхний край стоянки
+            street(
+                vec![
+                    CENTER + Vec2::new(0.0, -30.0),
+                    CENTER + Vec2::new(0.0, -6.0),
+                ],
+                5.0,
+            ),
+        ],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+
+    let stretched = pull_areas_to_roads(&mut map).lots;
+    assert!(stretched >= 2, "дотянуто вершин: {stretched}");
+    // весь верхний край — под полотном улицы, без зубцов у проезда
+    for vertex in &map.parking[0].outer {
+        let y = vertex.y - CENTER.y;
+        assert!(
+            y < -30.0 || (y + edge - LANDUSE_OVERLAP).abs() < 0.02,
+            "вершина верхнего края не дотянута: {y}"
+        );
+    }
+}
+
+/// Обнесённая забором стоянка за него не выходит: в OSM её контур лежит **по**
+/// забору, и вершина, стоящая на нём, с него не сходит — иначе асфальт
+/// вылезает в соседний сквер.
+#[test]
+fn a_fenced_lot_stays_behind_its_fence() {
+    let top = CENTER.y - 12.0;
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, -12.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            8.0,
+        )],
+        parking: vec![lot],
+        // забор по верхнему краю стоянки, между ней и улицей
+        fences: vec![fence(vec![
+            Vec2::new(CENTER.x - 60.0, top),
+            Vec2::new(CENTER.x + 60.0, top),
+        ])],
+        ..MapData::default()
+    };
+
+    let before = map.parking[0].outer.len();
+    assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
+    // `untangled` может переставить начало кольца, но ни одна вершина не
+    // обязана оказаться за забором
+    assert_eq!(map.parking[0].outer.len(), before);
+    for vertex in &map.parking[0].outer {
+        assert!(vertex.y <= top + 0.01, "вершина за забором: {vertex:?}");
+    }
+}
+
+/// Вершина, стоящая **в стороне** от забора, тоже за него не уходит: она
+/// тянется к улице на десяток метров и перешагивает ограду по дороге.
+#[test]
+fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
+    let fence_y = CENTER.y - 16.0;
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, -20.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            8.0,
+        )],
+        parking: vec![lot],
+        // забор в четырёх метрах от края стоянки, между ней и улицей
+        fences: vec![fence(vec![
+            Vec2::new(CENTER.x - 60.0, fence_y),
+            Vec2::new(CENTER.x + 60.0, fence_y),
+        ])],
+        ..MapData::default()
+    };
+
+    assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
+    for vertex in &map.parking[0].outer {
+        assert!(vertex.y <= fence_y + 0.01, "вершина за забором: {vertex:?}");
+    }
 }
 
 /// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт

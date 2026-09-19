@@ -659,6 +659,14 @@ pub(super) fn is_roundabout(tags: &HashMap<String, String>) -> bool {
     )
 }
 
+/// Проезд стоянки: `highway=service` + `service=parking_aisle`. Ровно этот
+/// тег, а не любой `service` — `driveway`, `alley` и `drive-through` ведут
+/// **к** стоянке, а не вдоль её рядов, и раскладка мест (`map::parking`)
+/// развернула бы по ним ряды поперёк.
+pub(super) fn is_parking_aisle(tags: &HashMap<String, String>) -> bool {
+    tags.get("service").map(String::as_str) == Some("parking_aisle")
+}
+
 /// Число полос из `lanes`, если оно правдоподобно. В OSM это сумма по обоим
 /// направлениям; `2;3` и `2.5` попадаются и читаются как `2`. Только тег:
 /// дефолт по ширине и правило кольца — у рендера (`roads::lane_count`).

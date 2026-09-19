@@ -223,6 +223,16 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         oneway: false,
         roundabout: false,
         lanes: None,
+        parking_aisle: false,
+    }
+}
+
+/// Проезд стоянки — служебная дорога 5 м с флагом `parking_aisle`: по нему
+/// [`crate::map::parking`] разворачивает ряды мест.
+pub fn parking_aisle(points: Vec<Vec2>) -> RoadLine {
+    RoadLine {
+        parking_aisle: true,
+        ..street(points, 5.0)
     }
 }
 
