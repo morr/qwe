@@ -2,7 +2,9 @@ use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::tags::{building_height, colour, parse_measure};
-use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
+use crate::map::osm::fixture::{
+    Overpass, building, closed, fence, rect, square, street, water_area,
+};
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
     StructureKind, WaterKind, distance_to_segment, is_big_box,
@@ -2770,6 +2772,49 @@ fn a_lot_reaches_the_road_across_its_own_aisle() {
             y < -30.0 || (y + edge - LANDUSE_OVERLAP).abs() < 0.02,
             "вершина верхнего края не дотянута: {y}"
         );
+    }
+}
+
+/// Обнесённая забором стоянка за него не выходит: в OSM её контур лежит **по**
+/// забору, и вершина, стоящая на нём, с него не сходит — иначе асфальт
+/// вылезает в соседний сквер.
+#[test]
+fn a_fenced_lot_stays_behind_its_fence() {
+    let top = CENTER.y - 12.0;
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, -12.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            8.0,
+        )],
+        parking: vec![lot],
+        // забор по верхнему краю стоянки, между ней и улицей
+        fences: vec![fence(vec![
+            Vec2::new(CENTER.x - 60.0, top),
+            Vec2::new(CENTER.x + 60.0, top),
+        ])],
+        ..MapData::default()
+    };
+
+    let before = map.parking[0].outer.len();
+    assert_eq!(pull_landuse_to_roads(&mut map).lots, 0);
+    // `untangled` может переставить начало кольца, но ни одна вершина не
+    // обязана оказаться за забором
+    assert_eq!(map.parking[0].outer.len(), before);
+    for vertex in &map.parking[0].outer {
+        assert!(vertex.y <= top + 0.01, "вершина за забором: {vertex:?}");
     }
 }
 

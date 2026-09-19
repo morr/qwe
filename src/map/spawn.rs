@@ -135,7 +135,7 @@ pub fn spawn_map(
     // Раскладка стоянок — вход сборки, а не её выход: по ней рисуется и
     // разметка мест, и ряды машин (`map/cars`), так что живёт она ресурсом и
     // считается один раз на загрузку мира.
-    *parking_layout = parking::ParkingLayout::new(&map.parking);
+    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads);
     let (surfaces, surface_report) = mesh_surfaces(&map, &parking_layout);
     info!("{surface_report}");
     if surface_report.skipped > 0 {
@@ -354,7 +354,7 @@ pub fn mesh_surfaces(
 /// машин. Своей сборки у него нет: он зовёт тот же [`mesh_surfaces`], что и
 /// игра, — ради этого шов и делался.
 pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
-    let layout = parking::ParkingLayout::new(&map.parking);
+    let layout = parking::ParkingLayout::new(&map.parking, &map.roads);
     let (layers, report) = mesh_surfaces(map, &layout);
     surface::layer_costs(&layers, report.elapsed)
 }

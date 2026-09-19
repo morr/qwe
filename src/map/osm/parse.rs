@@ -13,8 +13,8 @@ use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
     Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon, ring_area,
-    ring_bounds, ring_vertex_mean, signed_ring_area,
+    WallLine, WaterLine, closest_on_segment, distance_to_segment, point_in_area, point_in_polygon,
+    ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
@@ -1234,6 +1234,7 @@ fn pull_landuse_to_roads(map: &mut MapData) -> StretchedAreas {
     let keep = Untouched::new(
         &map.buildings,
         [&map.parks, &map.woods, &map.grass, &map.sand, &map.water],
+        &map.fences,
     );
     let mut stretched = StretchedAreas::default();
     for (areas, rule, pulled) in [
@@ -1468,10 +1469,22 @@ const KEEP_PROBE: f32 = 1.0;
 /// его нет — она сама стоит на этом асфальте, и обойти её значит оставить
 /// вокруг неё пятно земли, что автор и снял вторым отчётом.
 const KEEP_BUILDING_AREA: f32 = 100.0;
+/// Насколько близко к забору вершина считается **стоящей на нём**, м. Полметра
+/// — это зазор разбора и округления координат, а не проектная щель: контур
+/// стоянки и забор в OSM обычно делят одни и те же ноды.
+const KEEP_ON_FENCE: f32 = 0.5;
 
-/// Через что край стоянки не переползает: дома и зелень с водой — всё, что
+/// Через что край стоянки не переползает: дома, зелень с водой — всё, что
 /// стоянка, лежащая выше них (`Z_PARKING` против `Z_PARK`…`Z_SAND`), закрасила
-/// бы асфальтом.
+/// бы асфальтом, — **и заборы**.
+///
+/// Забор здесь особняком: он линия, а не контур, и «за ним» стороны нет. Зато
+/// у стоянки, обнесённой забором, контур ложится **ровно по нему** — у
+/// больничной (way 344589378) забор делит с ней вершины, — так что правило
+/// формулируется от этого: вершина, стоящая на заборе, с него не сходит.
+/// Иначе асфальт вылезает в соседний сквер, что автор и снял третьим отчётом.
+/// Цена правила померена: в Туле на заборах 144 вершины стоянок из 2200
+/// (6.5 %) на 27 площадках — ровно те, где стоянка честно кончается оградой.
 ///
 /// Индекс нужен только правилу [`Stretch::Lot`]: у квартала предел пять метров
 /// и тянется он **под** дорогу, а стоянка дотягивается до самой дальней дороги
@@ -1481,6 +1494,10 @@ const KEEP_BUILDING_AREA: f32 = 100.0;
 struct Untouched<'a> {
     areas: Vec<&'a PolyArea>,
     grid: Grid<usize>,
+    /// Звенья заборов и свой индекс по ним: контура у забора нет, точечная
+    /// проба его не поймает.
+    fences: Vec<(Vec2, Vec2)>,
+    lines: Grid<usize>,
 }
 
 impl<'a> Untouched<'a> {
@@ -1488,7 +1505,7 @@ impl<'a> Untouched<'a> {
     /// `parking` того же `MapData` уже взяты по `&mut`, и заимствование по
     /// полям — единственное, что их разводит. Дома отдельным аргументом,
     /// потому что мелкие из них в индекс не идут ([`KEEP_BUILDING_AREA`]).
-    fn new(buildings: &'a [PolyArea], green: [&'a [PolyArea]; 5]) -> Self {
+    fn new(buildings: &'a [PolyArea], green: [&'a [PolyArea]; 5], fences: &[FenceLine]) -> Self {
         let areas: Vec<&PolyArea> = buildings
             .iter()
             .filter(|area| ring_area(&area.outer) >= KEEP_BUILDING_AREA)
@@ -1499,7 +1516,20 @@ impl<'a> Untouched<'a> {
             let (min, max) = ring_bounds(&area.outer);
             grid.insert(min, max, index);
         }
-        Self { areas, grid }
+        let links: Vec<(Vec2, Vec2)> = fences
+            .iter()
+            .flat_map(|fence| fence.points.windows(2).map(|pair| (pair[0], pair[1])))
+            .collect();
+        let mut lines = Grid::new(SIDEWALK_CELL);
+        for (index, (from, to)) in links.iter().enumerate() {
+            lines.insert_segment(*from, *to, KEEP_ON_FENCE, index);
+        }
+        Self {
+            areas,
+            grid,
+            fences: links,
+            lines,
+        }
     }
 
     /// Пересекает ли сдвиг `from` → `to` хоть один такой контур. Шагами по
@@ -1508,12 +1538,25 @@ impl<'a> Untouched<'a> {
     fn crossed(&self, from: Vec2, to: Vec2) -> bool {
         let length = from.distance(to);
         let steps = (length / KEEP_PROBE).ceil().max(1.0) as usize;
-        (1..=steps).any(|step| {
+        let through_area = (1..=steps).any(|step| {
             let at = from.lerp(to, step as f32 / steps as f32);
             self.grid
                 .at(at)
                 .iter()
                 .any(|index| point_in_area(at, self.areas[*index]))
+        });
+        through_area || self.leaves_a_fence(from, to)
+    }
+
+    /// Стояла ли вершина на заборе и сходит ли она с него. Про «пересечь
+    /// забор» спрашивать бесполезно: контур обнесённой стоянки лежит по
+    /// забору, и сдвиг наружу начинается **на** нём, то есть формально его не
+    /// пересекает.
+    fn leaves_a_fence(&self, from: Vec2, to: Vec2) -> bool {
+        self.lines.at(from).iter().any(|index| {
+            let (start, end) = self.fences[*index];
+            distance_to_segment(from, start, end) < KEEP_ON_FENCE
+                && distance_to_segment(to, start, end) >= KEEP_ON_FENCE
         })
     }
 }
@@ -2035,6 +2078,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
             lanes: tagged_lanes(&element.tags),
+            parking_aisle: is_parking_aisle(&element.tags),
         });
         return;
     }
@@ -2218,7 +2262,7 @@ mod tests;
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
-    crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward,
+    crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_parking_aisle,
     is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_class,
     row_spacing, service_track, structure_height, structure_kind, structure_radius, structure_size,
     tagged_lanes, water_class, water_width,
