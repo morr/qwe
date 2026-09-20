@@ -1768,6 +1768,21 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   (`push_quad_gradient`, opaque on the rail, alpha 0 at the outer lip), and a segment
   whose rise is zero at both ends emits none.
 
+  - **The miter is taken on the deck's centerline, before the offset** — it is computed
+    in `bridge_shadow_path` and travels on `ShadowPoint::normal`, and `shadow_edges` only
+    stretches it by the local half width. A plate's shadow is its silhouette *translated*,
+    so the band's cross-section stands across the **deck**; mitering the already-offset
+    path instead makes it stand across the curve the band bends into, and the two differ
+    exactly at the abutment, where the offset starts from zero: the displaced centerline
+    leaves the deck end sideways, its joint normal is tilted, the butt edge comes out
+    skewed, and one of its corners runs past the abutment by `half width × sin` of that
+    tilt. On the map that is a dark tongue poking out from under the end of the curb, on
+    the side the sun throws to — 0.75 m on the service bridge over the Упа
+    (way 160142247, 22.1 m, `cam 6164 3393` at zoom 0.05), with the other corner cut the
+    same amount *into* the deck, where the curb hides it. Reported from a screenshot;
+    pinned by `the_shadow_never_runs_past_the_abutment`, which asserts that no vertex of
+    the layer — core, penumbra or all — lies past either end of the deck.
+
   **The cores of all bridges are unioned** (`i_overlay`, NonZero — the buildings' and the
   fences' construction), and that is measured, not precautionary: OSM maps a road bridge's
   pavement as a **parallel way of its own** carrying the same `bridge=yes`, and on Tula

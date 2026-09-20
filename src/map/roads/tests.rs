@@ -194,6 +194,33 @@ fn a_bridge_along_the_sun_is_still_outlined() {
     );
 }
 
+/// Тень кончается там же, где кончается настил: за створом торца её быть не
+/// должно. Бордюр режется `RibbonCap::Butt` ровно по последней точке, а лента
+/// у торца лежит точь-в-точь под ним — значит ни одна вершина слоя не имеет
+/// права уехать за торец. Язычок тени, торчащий из-под конца бортика, —
+/// репорт с карты.
+#[test]
+fn the_shadow_never_runs_past_the_abutment() {
+    let deck = [Vec2::ZERO, Vec2::new(22.107, 0.0)];
+    let reach = 3.3;
+    let mut builder = MeshBuilder::default();
+    push_bridge_shadows(&mut builder, &[band(&deck, reach)]);
+
+    let (mut behind, mut ahead) = (0.0_f32, 0.0_f32);
+    for position in builder.positions_for_test() {
+        behind = behind.max(-position[0]);
+        ahead = ahead.max(position[0] - deck[1].x);
+    }
+    assert!(
+        behind < 1e-3,
+        "the band runs {behind} m past the near abutment"
+    );
+    assert!(
+        ahead < 1e-3,
+        "the band runs {ahead} m past the far abutment"
+    );
+}
+
 /// Край тени у всех, кто её отбрасывает, мягкий — у домов, машин и оград, — а
 /// у настила был жёстким. И кайма ему нужна своя: мост из них самый высокий,
 /// а правило карты (`cars/body.rs::SHADOW_BLUR`) — «кайма тем шире, чем

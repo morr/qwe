@@ -119,6 +119,8 @@ fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
     let offset = shadow::offset(bridge_height(deck.span));
     let ramp = (deck.span * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
     let last = dense.len() - 1;
+    // нормали стыка — по осевой **настила**, до сдвига: см. [`ShadowPoint`]
+    let normals = miter_offsets(&dense, false, 1.0);
     (0..dense.len())
         .map(|index| {
             let (point, at) = (dense[index], along[index]);
@@ -142,6 +144,7 @@ fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
             ShadowPoint {
                 at: point + offset * rise,
                 rise,
+                normal: normals[index],
             }
         })
         .collect()
@@ -422,9 +425,20 @@ impl<'a> Underneath<'a> {
 /// Точка теневой ленты: куда съехал настил и насколько он в этом месте поднят
 /// (0 у береговой опоры, 1 на полной высоте). Подъём нужен и после сдвига —
 /// им же сходит на нет и уширение, и полутень ([`push_bridge_shadows`]).
+///
+/// `normal` — нормаль стыка **осевой настила**, а не съехавшей ленты, и
+/// считается она здесь же, до сдвига. Тень плиты это её силуэт, сдвинутый по
+/// свету: поперечник ленты обязан стоять поперёк моста, а не поперёк той
+/// кривой, в которую лента складывается. Разница видна ровно у торца, где
+/// сдвиг только начинается: съехавшая осевая уходит вбок прямо от устоя, её
+/// нормаль наклонена, торцевое ребро ленты получается косым — и один его угол
+/// уезжает за торец на `полуширину × sin` этого наклона. На карте это тёмный
+/// язычок из-под конца бортика (у мостика через Упу — 0.75 м), с той стороны,
+/// куда светит солнце; с другой стороны торец на столько же подрезан.
 struct ShadowPoint {
     at: Vec2,
     rise: f32,
+    normal: Vec2,
 }
 
 /// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
@@ -1286,22 +1300,22 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
 
 /// Края ленты: рельсы, нормаль стыка и ширина полутени в каждой точке пути.
 /// Общие у контура и у каймы, чтобы кайма садилась ровно на край ядра.
+///
+/// Нормаль берётся готовой из [`ShadowPoint`] — она поперёк **настила**, а не
+/// поперёк съехавшей ленты; почему это не одно и то же, написано там же.
 fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
     if band.path.len() < 2 {
         return Vec::new();
     }
-    let centers: Vec<Vec2> = band.path.iter().map(|point| point.at).collect();
-    // единичные нормали стыка: длину каждой задаёт своя полуширина
-    let normals = miter_offsets(&centers, false, 1.0);
     band.path
         .iter()
-        .zip(&normals)
-        .map(|(point, normal)| {
+        .map(|point| {
+            // единичную нормаль стыка растягивает своя полуширина
             let half = band.reach + SHADOW_SPREAD * point.rise;
             ShadowEdge {
-                left: point.at + *normal * half,
-                right: point.at - *normal * half,
-                normal: *normal,
+                left: point.at + point.normal * half,
+                right: point.at - point.normal * half,
+                normal: point.normal,
                 blur: band.penumbra * point.rise,
             }
         })

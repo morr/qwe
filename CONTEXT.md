@@ -1056,6 +1056,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `RAMP_MAX` 25 m) and stays up at an internal joint, and **is clamped by the span left
   ahead**, so the shadow never reaches past the deck's end; the centerline is densified
   to `SHADOW_STEP` (2 m) first, since the ramp lives in the vertices;
+  **the band's cross-section stands across the deck, not across the offset path**
+  (`ShadowPoint::normal`, mitered before the offset) — mitering the displaced path skews
+  the butt end and pokes a tongue of shadow past the abutment;
   the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on each side, tapering with
   the same rise; **the edge is soft** — `PENUMBRA_SHARE` (0.3) of the shadow's own length
   clamped between the car's 0.35 m and the house's 1 m, tapering with the rise;
