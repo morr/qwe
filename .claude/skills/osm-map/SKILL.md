@@ -781,7 +781,11 @@ be called alone:
       threads (`std::thread::scope`, results applied in order — the output does not
       depend on the split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
       profile), +38 ms per world load — and **137 ms** with the road-only growth and the
-      apron (one more boolean each, same run of the bench). Two things that were measured on the way: subtract
+      apron (one more boolean each, same run of the bench). **Release buys nothing here**
+      — 119–133 ms, the same number inside the bench's swing — because the time is
+      `i_overlay`'s and a dependency is optimised in `dev` too; see the same point under
+      **A big lot shows the road through it → Cost**.
+      Two things that were measured on the way: subtract
       obstacles from the *kept* pieces, not from everything added, and filter them by the
       pieces' bounds (the river's outline otherwise goes into a boolean for every lot on
       the embankment); glue road pieces into one stroke per road, not per link.
@@ -1833,7 +1837,15 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   contours with no `rise` on them. Dropping the taper instead is the option that costs
   more (see the previous bullet). Two neighbours' bands may therefore overlap each other —
   the price the building shadows already state and accept, since both fade to zero. A penumbra
-  buried in a neighbour's core is not laid.
+  buried in a neighbour's core is not laid — **and that probe is filtered by the cores'
+  bounding boxes**, which is not a micro-optimisation but the difference between 2.5 ms
+  and 26 ms on Tula, i.e. between a fifth of the road layer and nothing. The probe runs
+  per quad of the band (the path is densified to `SHADOW_STEP` 2 m, so the Упа bridge
+  alone is ~70 of them, twice over for the two sides), and unfiltered it walked the ring
+  of **every** bridge in the city, each ring twice the band's own length. Only neighbours
+  on one deck ever overlap — 28 pairs of 56 bridges — so all but two of those rings are
+  answered by their box. Same reject as `probe_underneath`'s `Underneath` a few bullets
+  up.
 
   About the deck itself: a light concrete **curb** (`BRIDGE_CURB_COLOR` 0.80, 12% of the width
   clamped 0.8–2 m) under the fill in the class color — a parapet over the asphalt-grey
@@ -2298,15 +2310,28 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
         `measure_roads` now prints too. Tula: **7** — three at the mall's big ring, three
         at the boulevard's mini-roundabouts, one elsewhere.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
-    - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula went
-      **84 → 145 ms** (`map_meshing`, `dev`, same machine; one run, and the bench swings
-      by ±10 ms): the mall lot alone is ~90 round-joined strokes through the booleans
-      and an opening (≈ 13 ms), medians ≈ 5 ms (every sample against every other
-      carriageway; bounds-filtered), the `enters` probes ≈ 2 ms, the rest the gores'
-      closing over the rings and arms of the whole city. It is paid
-      at world load and whenever `roads::rebuilds_on` fires (`RoadStyle`, the settled
-      sun). Not optimised: the kerb depends on the map and two style knobs only, so
-      caching it per world load is the obvious cut if the hitch on a sun change shows.
+    - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula is
+      **92 ms** (`map_meshing`, **release**, one machine; the bench swings by ±10 %), of
+      which the two big-lot layers and the gores are about **40**: `Gores::of` 18 (1.9 of
+      strokes, 16 the closing over the rings and arms of the whole city), the kerb
+      polygon 17 (the mall lot alone is ~90 round-joined strokes through the booleans
+      and an opening), the medians 2 (every sample against every other carriageway;
+      bounds-filtered), the `enters` probes and `GoreRoad::new` together 2.4, the gores'
+      asphalt and hatching 0.7. The other ~50 are older work the lots did not add —
+      the stitches 17, the ribbons 16, the kerb returns 7, the bridge shadows 5, the
+      nodes and centrelines 4. It is paid at world load and whenever
+      `roads::rebuilds_on` fires (`RoadStyle`, the settled sun).
+      **`dev` is only ~1.3× slower than `release` here, and that is the measurement to
+      know before optimising**: what these steps spend is `i_overlay`, a dependency, and
+      a dependency is built optimised in `dev` too (`opt-level = 1` applies to our code
+      alone). `pave_lots` says it plainest — 119–133 ms release against 129–137 dev,
+      i.e. nothing. So a `dev` bench number here is a real number, not one to be
+      discounted by an imagined release factor.
+      Not optimised: the kerb and the gores depend on the map and three style knobs only
+      (`smoothing`, `sidewalks`, `markings`) and on the sun not at all, so caching them
+      per world load is the obvious cut — but the hitch on a sun change is **not** theirs
+      to fix: the building layer rebuilds on the same `SunOnMap` and costs 145–190 ms,
+      against these 92.
     - **No stall under a through road or its kerb** (`Surroundings::cover`, the band
       `width / 2 + kerb + THROUGH_CLEARANCE` 0.5 m, four corners and the centre; a cheap
       centre-distance reject first). 250 stalls on the mall lot.
@@ -2396,12 +2421,21 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `ParkingLayout.0[i]` is still `MapData::parking[i]`.
   - **`Outline`** — every point test of the layout and the markings goes through an index
     of the ring's edges by horizontal bands of `OUTLINE_BAND` 4 m (same even-odd answer
-    as `point_in_area`, pinned by `the_outline_index_agrees_with_the_full_ring`). A paved
+    as `point_in_area`, pinned by `the_outline_index_agrees_with_the_full_ring`, which
+    checks it against the full walk on the three shapes the paving makes: a concave
+    outline with a hole, a lot with a hole out to the edge of its bounding box, and a
+    thin part cut off by the apron). A paved
     outline carries its fillets: the mall lot is 1220 vertices, and walking the ring for
     each of tens of thousands of probes cost **87 ms on that lot alone**. With the index
-    the whole city's layout is **38 ms** in the app's `parking layout:` line (21 ms
-    before this work, 2 ms before the pocket rule) — two fields, the through-road test
-    and the shared `Placed` are the rest.
+    the whole city's layout is **29–30 ms** (`map_meshing`'s `parking layout` row,
+    release; 38 before the aisle blocks, 21 before the paving, 2 before the pocket rule)
+    — two fields, the through-road test and the shared `Placed` are the rest.
+    **Every** point test means it: `aisle_rows` asked `point_in_area` for its three
+    probes per aisle link long after the index was built and handed to it, and that is
+    now the index too. It bought nothing measurable — 30 → 29 ms, inside the bench's
+    swing, because fifty aisles against 1220 vertices is a fraction of the tens of
+    thousands of probes the stalls make — and it is here so that there is one way to
+    ask the outline a question rather than two.
   - Tula, cache v14: **349 lots** (355 in the bbox, less the five that carry `building`
     and the one `parking=multi-storey`). Parking touches neither the navmesh nor tree
     planting, like the landuse blocks.
