@@ -904,6 +904,57 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
     }
 }
 
+/// Треугольник тротуара между въездом, съездом и кольцом кроет **асфальт**
+/// островка, а не его штриховка: он идёт в слой улиц (выше тротуаров) и выпущен
+/// на `ASPHALT_PAD` под кромки полотен, чтобы между ним и лентой дороги не
+/// оставалось волоска земли. Ни одной ручки `RoadStyle` у этой фигуры нет —
+/// держит её только тест.
+#[test]
+fn the_gore_is_paved_under_the_edges_of_both_arms() {
+    let map = roundabout_with_an_approach(true, true);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.gores, 1, "островок у кольца один");
+
+    // клин целиком: от кромки кольца (радиус 16 м) до острия, где полотна
+    // сходятся (x ≈ 45, и асфальт выпущен ещё дальше); подходы — дороги 1 и 2
+    // сцены. Своих вершин у лент подходов тут нет — они прямые, и вершины у них
+    // только на торцах
+    let arms = [
+        map.roads[1].points.as_slice(),
+        map.roads[2].points.as_slice(),
+    ];
+    let wedged = |at: &[f32; 3]| (14.0..50.0).contains(&at[0]) && at[1].abs() < 5.0;
+    // кромка полотна — в 2.5 м от его оси, так что ближе неё лежит только то,
+    // что зашло **под** ленту; обводка штриховки вылезает из клина лишь на свою
+    // полуширину, 0.1 м
+    let depth = |at: &[f32; 3]| {
+        let at = Vec2::new(at[0], at[1]);
+        arms.iter()
+            .map(|arm| distance_to_path(at, arm))
+            .fold(f32::INFINITY, f32::min)
+    };
+    let deepest = |name: &str| {
+        layer(&layers, name)
+            .builder
+            .positions_for_test()
+            .iter()
+            .filter(|at| wedged(at))
+            .map(&depth)
+            .fold(f32::INFINITY, f32::min)
+    };
+    const UNDER: f32 = 2.3;
+    let (asphalt, hatching) = (deepest("roads"), deepest("lot_lines"));
+    assert!(
+        asphalt < UNDER,
+        "асфальт островка не зашёл под кромки полотен: {asphalt}"
+    );
+    // ...а штриховка у́же его ровно на этот заход и на полотно не лезет
+    assert!(
+        hatching.is_finite() && hatching > UNDER,
+        "штриховка островка вылезла на полотно: {hatching}"
+    );
+}
+
 #[test]
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);
