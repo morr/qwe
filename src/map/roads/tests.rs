@@ -823,12 +823,12 @@ fn extent_x(builder: &MeshBuilder) -> (f32, f32) {
 fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
     let (layers, _) = mesh_roads(&ground_with_roads(100.0), RoadStyle::default());
 
-    // бордюр — только у сквозной дороги и только в пределах площадки: он
-    // обрезан её контуром (углы скруглены размыканием)
+    // бордюр — только у сквозной дороги и только у площадки: за её контур он
+    // выпущен на два метра, до тротуара улицы, и не дальше
     let kerb = &layer(&layers, "lot_sidewalks").builder;
     let (low, high) = extent_x(kerb);
     assert!(
-        (100.0..100.5).contains(&low) && (199.5..=200.0).contains(&high),
+        (97.9..98.5).contains(&low) && (201.5..=202.1).contains(&high),
         "{low}..{high}"
     );
     // проезд ряда прорезал в бордюре устье, асфальт самой дороги — полосу
@@ -852,6 +852,72 @@ fn a_small_lot_still_hides_every_road_on_it() {
     // 60 × 60 — двор: его асфальт и есть проезд, поверх него ничего не кладётся
     let (layers, _) = mesh_roads(&ground_with_roads(60.0), RoadStyle::default());
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
+    assert!(layer(&layers, "lot_lines").builder.is_empty());
+}
+
+/// Кольцо радиусом 12 м в начале координат и два односторонних подхода к нему,
+/// сходящиеся в одну дорогу в полусотне метров, — въезд и съезд одной улицы.
+///
+/// `tagged` — несёт ли кольцо `junction=roundabout`, `oneway` — одностороннее ли
+/// оно: кольцо без тега в OSM обычное дело.
+fn roundabout_with_an_approach(tagged: bool, oneway: bool) -> MapData {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 12.0)
+        .collect();
+    let arm = |turn: f32, side: f32| RoadLine {
+        oneway: true,
+        ..fixture::street(
+            vec![circle[(24.0 + turn) as usize % 24], Vec2::new(55.0, side)],
+            5.0,
+        )
+    };
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway,
+        roundabout: tagged,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    map.roads.push(arm(2.0, 1.5));
+    map.roads.push(arm(-2.0, -1.5));
+    map
+}
+
+/// Клин между въездом, съездом и кольцом — направляющий островок: асфальт со
+/// штриховкой, как рисует Яндекс, — и стоянка для этого не нужна.
+#[test]
+fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
+    // с тегом — и **без него**: большое кольцо у ТРЦ «Макси» в OSM просто
+    // замкнутое одностороннее полотно, и по одному тегу его островки не
+    // находились вовсе
+    for tagged in [true, false] {
+        let map = roundabout_with_an_approach(tagged, true);
+        let (layers, _) = mesh_roads(&map, RoadStyle::default());
+        // клин — правее кольца, между подходами, у оси x
+        let wedged = |at: &&[f32; 3]| (17.0..40.0).contains(&at[0]) && at[1].abs() < 2.5;
+        let lines = layer(&layers, "lot_lines").builder.positions_for_test();
+        assert!(
+            lines.iter().any(|at| wedged(&at)),
+            "клин не заштрихован ({tagged})"
+        );
+        // и ничего не заштриховано с внешней стороны подходов
+        assert!(lines.iter().all(|at| at[0] > 10.0 && at[1].abs() < 9.0));
+    }
+}
+
+#[test]
+fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
+    let map = roundabout_with_an_approach(false, false);
+    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    assert!(layer(&layers, "lot_lines").builder.is_empty());
+}
+
+#[test]
+fn the_markings_knob_takes_the_hatching_off() {
+    let style = RoadStyle {
+        markings: false,
+        ..RoadStyle::default()
+    };
+    let (layers, _) = mesh_roads(&roundabout_with_an_approach(true, true), style);
     assert!(layer(&layers, "lot_lines").builder.is_empty());
 }
 

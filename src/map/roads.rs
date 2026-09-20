@@ -774,6 +774,8 @@ pub struct RoadReport {
     pub sidewalk_returns: usize,
     pub stitches: usize,
     pub crossings: usize,
+    /// Направляющие островки у колец (`roads/gores.rs`).
+    pub gores: usize,
     pub vertices: usize,
     pub network: std::time::Duration,
     pub elapsed: std::time::Duration,
@@ -788,6 +790,7 @@ impl std::fmt::Display for RoadReport {
             sidewalk_returns,
             stitches,
             crossings,
+            gores,
             vertices,
             network,
             elapsed,
@@ -797,7 +800,7 @@ impl std::fmt::Display for RoadReport {
             "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
              sidewalks {}, markings {}, junctions {junctions}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
-             {crossings}; {network:?} of it before the ribbons)",
+             {crossings}, gores {gores}; {network:?} of it before the ribbons)",
             style.join, style.smoothing, style.casing, style.sidewalks, style.markings,
         )
     }
@@ -838,6 +841,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // улицы на больших стоянках — бордюром и разметкой поверх их асфальта
     // (`roads/lots.rs`)
     let mut grounds = lots::Grounds::of(map);
+    let mut gore_roads: Vec<gores::GoreRoad> = Vec::new();
 
     let nodes = RoadNodes::new(roads);
     // Дороги так, как они рисуются: переезд через тротуар — асфальтом
@@ -973,9 +977,17 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         );
         if road.class == RoadClass::Street && !road.passage {
             grounds.push(road, &points);
+            gore_roads.push(gores::GoreRoad::new(road, &points));
         }
     }
-    let lot_layers = grounds.layers(&style);
+    // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
+    // разметка — выше асфальта стоянок (`roads/gores.rs`)
+    let gores = gores::Gores::of(&gore_roads);
+    gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
+    let mut lot_layers = grounds.layers(&style, &gores);
+    if style.markings {
+        gores.push_markings(&mut lot_layers.lines);
+    }
 
     push_bridge_shadows(&mut bridge_shadows, &shadow_bands);
 
@@ -1069,6 +1081,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         sidewalk_returns: kerb_returns.sidewalks.len(),
         stitches: stitches.count,
         crossings: crossings.len(),
+        gores: gores.count(),
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
         network: network_time,
         elapsed: started.elapsed(),
@@ -1083,6 +1096,9 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
 /// то есть ровно тем способом, который на macOS врёт (App Nap).
 pub fn measure_roads(map: &MapData) -> Vec<LayerCost> {
     let (layers, report) = mesh_roads(map, RoadStyle::default());
+    // счётчики сети (стыки, скругления, островки) в строках слоёв не видны —
+    // та же строка, что пишет в лог игра
+    eprintln!("{report}");
     surface::layer_costs(&layers, report.elapsed)
 }
 
@@ -1430,6 +1446,7 @@ fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -
 pub(super) mod junctions;
 
 mod corners;
+mod gores;
 mod lots;
 /// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде
 /// у брошенного торца — тот же вопрос «висячий ли он», что у стежка, и второго
