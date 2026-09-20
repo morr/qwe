@@ -2298,6 +2298,17 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
         and arms meet a ring at a shallow angle, so that fillet is not small: what tells
         them apart is the neighbours, not the area — a gore **touches two arms**
         (`ARM_TOUCH`), a fillet one. `GORE_MIN_AREA` 12 m² on top.
+      - **The subtraction is one wedge's business.** The closing has already broken the
+        city into separate shapes, and asphalt from the other end of town touches none of
+        them, so the difference runs per closed shape against the clip contours whose
+        bounds overlap it, and is skipped outright where the bounds say fewer than two
+        arms can reach (the same question the exact test asks below, asked of a rectangle
+        first). One boolean for all of them cost two to three times as much — half the
+        work went on the road bands intersecting each other where there is no wedge at
+        all. **A street reaches a wedge by its kerb, not by its axis** — eight metres on
+        an avenue — so the bounds it is tested against are grown by its half width;
+        by the axis alone one bit of asphalt was missed, and a gore kept a 3-vertex
+        sliver of road under it.
       - **Two shapes, not one.** The whole wedge, grown `ASPHALT_PAD` 0.5 m under the
         road edges, is **asphalt** (pushed into the `roads` layer — above the sidewalks,
         so it covers their triangle); the wedge **opened** by `GORE_OPENING` 0.3 m —
@@ -2311,11 +2322,13 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
         at the boulevard's mini-roundabouts, one elsewhere.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
     - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula is
-      **92 ms** (`map_meshing`, **release**, one machine; the bench swings by ±10 %), of
-      which the two big-lot layers and the gores are about **40**: `Gores::of` 18 (1.9 of
-      strokes, 16 the closing over the rings and arms of the whole city), the kerb
-      polygon 17 (the mall lot alone is ~90 round-joined strokes through the booleans
-      and an opening), the medians 2 (every sample against every other carriageway;
+      **88 ms** (`map_meshing`, **release**, one machine; the bench swings by ±10 %), of
+      which the two big-lot layers and the gores are about **36**: `Gores::of` 13.6 (2.2
+      of strokes, 10.5 the closing and the subtraction — 0.65 the simplify, 3.4 the grow,
+      3.3 the shrink, 3.1 the differences; the grow and the shrink are what is left to
+      cut, and splitting *them* per cluster made them slower, the offset having a fixed
+      cost per call), the kerb polygon 17 (the mall lot alone is ~90 round-joined
+      strokes through the booleans and an opening), the medians 2 (every sample against every other carriageway;
       bounds-filtered), the `enters` probes and `GoreRoad::new` together 2.4, the gores'
       asphalt and hatching 0.7. The other ~50 are older work the lots did not add —
       the stitches 17, the ribbons 16, the kerb returns 7, the bridge shadows 5, the
@@ -2331,7 +2344,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       (`smoothing`, `sidewalks`, `markings`) and on the sun not at all, so caching them
       per world load is the obvious cut — but the hitch on a sun change is **not** theirs
       to fix: the building layer rebuilds on the same `SunOnMap` and costs 145–190 ms,
-      against these 92.
+      against these 88.
     - **No stall under a through road or its kerb** (`Surroundings::cover`, the band
       `width / 2 + kerb + THROUGH_CLEARANCE` 0.5 m, four corners and the centre; a cheap
       centre-distance reject first). 250 stalls on the mall lot.
