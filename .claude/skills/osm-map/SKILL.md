@@ -746,6 +746,12 @@ be called alone:
       of `MIN_LOT_PART` 30 m² and up all stay lots (the first in place, the rest appended
       to `MapData::parking` — Tula 349 → 355). `comes_near` keeps the boolean off lots no
       house reaches. Pinned by `a_lot_steps_back_from_the_houses_on_it`.
+      **And it is counted apart from the growth, because it happens apart from it**
+      (`PavedLots { grown, trimmed }`, printed as two numbers in the `osm parse:` line —
+      «N parking lots paved up to their roads, K only stepped back from the houses on
+      them»). A lot with no road within reach still meets the apron, so one counter for
+      both events printed a number the sentence beside it did not describe; the pinning
+      test is exactly such a scene, with no road in it at all.
     - **`CLOSING_RADIUS` 7 m** — a gap under 14 m closes: a stall row with its aisle
       (`STALL_DEPTH` 5.2 + `AISLE` 6) and a little, the same reading the 12 m limit had;
       the pockets between the mall's aisle stubs are 12 m between bands.
@@ -972,6 +978,30 @@ would say so.
 - **`spatial.rs` is not this grid and does not move here.** The pawn grid is a dense `Vec`
   over the whole map with a reverse entity→cell index and a per-tick move of one entity at
   a time; it shares nothing with a `HashMap` of boxes built once per load but the word.
+
+## The shape vocabulary — `map/shapes.rs`
+
+Everything the map says to `i_overlay` it says in one vocabulary, and it lives in one
+module the way the walk lives in `map/along.rs` and the RNG in `map/seed.rs`: `Contour`
+(`Vec<[f32; 2]>`) and `Shape` (outer ring, then holes), the offset rounding `ARC` 0.3,
+the ring tolerance `RING_EPSILON` 0.01 with `is_ring`, `oriented` / `area_contours` (the
+CCW-outer, CW-hole winding NonZero needs), `contour_area` / `shape_area` /
+`contour_bounds`, `ring_of` and `point_in_shape`, `stroke` and `push_shape`.
+
+Three modules speak it — the parse's lot paving (`osm/parse/lots.rs`), the big lot's kerb
+(`roads/lots.rs`) and the gores (`roads/gores.rs`) — and **each of the last two arrived
+with its own copy of the set**, `oriented` byte for byte identical and the two `stroke`s
+already parted in their return type. That is the defect `map/seed.rs`, `map/grid.rs` and
+`shadow::push_union` exist against, stated once more for polygons. It also unknots
+`roads/`: eight of these names were `pub(super)` in `lots.rs` for the sole benefit of
+`gores.rs`, so the two modules imported each other in a circle although not one of the
+names is about a parking lot. The one direction left is `lots → gores` (the kerb subtracts
+the islands), which is what both modules' doc comments already claim.
+
+**`stroke` takes `ring` as an argument rather than asking `is_ring` itself**, and that is
+the one place the two callers genuinely differ: a road ring is stroked closed, without
+caps, while the parse strokes a run of road pieces open even when the run happens to come
+back on itself.
 
 ## Footprint bands
 
@@ -2026,7 +2056,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     lot, reported from screenshots (`cam 5301 3270`): the lot lies over the roads, so its
     outline crosses the drive's asphalt, and anything laid along it is a seam.
   - **The layout is computed once per world load** into `ParkingLayout` (a resource,
-    filled by `spawn_map` from `stalls(area, aisles)` per lot), and the paint and the cars
+    filled by `spawn_map` from `ParkingLayout::new(&map.parking, &map.roads)`, which lays
+    the lots out largest first through `stalls_beside(lot, aisles, through, drives)` — the
+    production door; the arity-two `stalls` beside it is `#[cfg(test)]`), and the paint and
+    the cars
     both read it — two independent layouts would put a car across its own line, and
     recomputing it on every rebuild of the car layer was work the sun slider paid for by
     the frame. `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2 m, `AISLE` 6 m, `EDGE_MARGIN` 1.2 m
@@ -2184,7 +2217,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   - **`MIN_AREA` 120 m²** — under that the lot gets no paint at all. A yard for four cars
     is not striped in reality, and stripes on a 6 × 10 m patch read as a texture bug.
     **The stalls themselves stay**: `MIN_AREA` gates `push_markings` only, `fill_lots`
-    reads `stalls()` unfiltered, so a small yard keeps its cars — on unmarked asphalt.
+    reads the `ParkingLayout` unfiltered, so a small yard keeps its cars — on unmarked
+    asphalt.
   - The paint is drawn as the **border between stalls** (one bar to the left of each
     stall, neighbours coinciding), not as a rectangle per stall: that is what a lot looks
     like, and it is cheaper than finding each stall's neighbour. Plus a **closing** bar

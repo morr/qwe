@@ -300,7 +300,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   back `BUILDING_APRON` 1 m from **every** house, of any size: outlines are drawn
   overlapping a house or flush with it, and stalls stood in the wall; a booth in the
   middle of a lot gets its island, and a house across a lot cuts it into several lots
-  (parts under `MIN_LOT_PART` 30 m² go). Lots are independent and are paved **across
+  (parts under `MIN_LOT_PART` 30 m² go). **The pass reports the two events apart**
+  (`PavedLots { grown, trimmed }`): the apron meets a lot with no road within reach too,
+  so «paved up to its roads» and «merely stepped back from the houses on it» are two
+  different things and are counted as two. Lots are independent and are paved **across
   threads** — the cost is the `i_overlay` calls per lot, not the geometry.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
@@ -802,6 +805,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and a refusal there would drop the last object of a row. A repeated vertex does not eat a
   place either — coinciding vertices are one point, and the direction comes from the nearest
   link that has length; `None` is left only for a polyline with no length at all.
+- **Shape vocabulary** (`map/shapes.rs`) — the one dialect of `i_overlay` on the map, shared
+  by the parse's lot paving, the big lot's kerb and the gores the way `map/seed.rs` shares
+  the RNG: `Contour` / `Shape`, the offset rounding `ARC`, the ring tolerance `RING_EPSILON`
+  with `is_ring`, `oriented` / `area_contours` (the CCW-outer, CW-hole winding NonZero
+  needs), `contour_area` / `shape_area` / `contour_bounds`, `ring_of`, `point_in_shape`,
+  `stroke` and `push_shape`. The defect it exists against is a second copy of the set,
+  which is also what tied `roads/lots.rs` and `roads/gores.rs` into a circle of imports.
+  `stroke` takes «closed ring» as an **argument**: the roads stroke a ring without caps,
+  the parse strokes its road pieces open whatever shape they come out.
 - **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
   lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
   ~98 % of buildings without one. Doors face the street, and **how a building is doored is
