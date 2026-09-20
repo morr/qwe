@@ -2866,6 +2866,58 @@ fn a_notch_in_the_lot_is_not_paved() {
     assert!(!point_in_area(base + Vec2::new(0.0, 30.0), &map.parking[0]));
 }
 
+/// Асфальт стоянки под дом не лезет, какой бы тот ни был: контур, нарисованный
+/// внахлёст с домом, отступает от стены на отмостку, а будка посреди площадки
+/// получает свой остров. Дороги для этого не нужно — проход отступает и там,
+/// где дотягивать нечего.
+#[test]
+fn a_lot_steps_back_from_the_houses_on_it() {
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-40.0, -40.0),
+                CENTER + Vec2::new(40.0, 40.0),
+            ),
+            Vec::new(),
+        )
+    };
+    // корпус заходит на площадку с запада на десять метров, будка — посреди
+    let block = building(
+        rect(
+            CENTER + Vec2::new(-70.0, -10.0),
+            CENTER + Vec2::new(-30.0, 10.0),
+        ),
+        Vec::new(),
+    );
+    let booth = building(
+        rect(
+            CENTER + Vec2::new(10.0, 10.0),
+            CENTER + Vec2::new(16.0, 17.0),
+        ),
+        Vec::new(),
+    );
+    let mut map = MapData {
+        buildings: vec![block, booth],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+
+    let stretched = pull_areas_to_roads(&mut map);
+    assert_eq!(stretched.lots, 1);
+    let lot = &map.parking[0];
+    // под корпусом и в полуметре от его стены асфальта нет, в трёх метрах — есть
+    assert!(!point_in_area(CENTER + Vec2::new(-35.0, 0.0), lot));
+    assert!(!point_in_area(CENTER + Vec2::new(-29.5, 0.0), lot));
+    assert!(point_in_area(CENTER + Vec2::new(-27.0, 0.0), lot));
+    // будка — дырка в площадке, с той же отмосткой
+    assert!(!point_in_area(CENTER + Vec2::new(13.0, 13.0), lot));
+    assert!(!point_in_area(CENTER + Vec2::new(9.5, 13.0), lot));
+    assert!(point_in_area(CENTER + Vec2::new(7.0, 13.0), lot));
+    // дальний от домов край остался где был
+    assert!(point_in_area(CENTER + Vec2::new(39.5, -39.5), lot));
+}
+
 /// Обнесённая забором стоянка за него не выходит: в OSM её контур лежит **по**
 /// забору, и вершина, стоящая на нём, с него не сходит — иначе асфальт
 /// вылезает в соседний сквер.
