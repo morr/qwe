@@ -6,9 +6,8 @@
 //! Та же идиома, что у `entrances/index.rs`; политику посадки (сколько сажать,
 //! какие зазоры держать) задаёт [`super`].
 
-use std::collections::HashMap;
-
 use bevy::math::{IVec2, Vec2};
+use bevy::platform::collections::HashMap;
 
 use super::{
     TREE_CROWN_REACH, TREE_KERB_CLEARANCE, TREE_MAX_RADIUS, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE,

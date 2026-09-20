@@ -58,8 +58,7 @@
 //! здесь и машины (`map::cars::fill_lots`) её только читают. Две независимые
 //! раскладки поставили бы машину мимо её полосы.
 
-use std::collections::HashMap;
-
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;

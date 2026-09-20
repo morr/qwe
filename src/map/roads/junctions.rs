@@ -10,8 +10,7 @@
 //! мост от улицы под ним: общей ноды у них нет, и разметка на обоих идёт
 //! насквозь — там, где поиск пересечений отрезков порвал бы обе.
 
-use std::collections::HashMap;
-
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::map::meshing::Break;

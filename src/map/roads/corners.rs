@@ -26,9 +26,9 @@
 //! дуги вложен в круг бордюрной, пока радиус не больше [`SIDEWALK_COVER`]
 //! ширин тротуара, а он там и ограничен.
 
-use std::collections::HashMap;
 use std::f32::consts::PI;
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::junctions::node_key;

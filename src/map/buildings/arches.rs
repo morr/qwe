@@ -27,9 +27,8 @@
 //! дома и стен касается только концами. Пересечения там нет вовсе, зато
 //! каждый конец — и есть выход арки наружу.
 
-use std::collections::HashMap;
-
 use bevy::color::Mix;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::height_or_default;

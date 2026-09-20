@@ -18,8 +18,7 @@
 //! Только картинка: навмеш, двери, деревья и машины по-прежнему видят данные
 //! OSM как есть (`RoadLine::points` не трогается, как и при сглаживании).
 
-use std::collections::HashMap;
-
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::junctions::node_key;

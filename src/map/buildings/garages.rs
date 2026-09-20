@@ -31,8 +31,7 @@
 //! шейдеру достаточно их дробной части. Ни одной новой вершины — только другие
 //! значения в том же `ATTRIBUTE_ROOF`.
 
-use std::collections::HashMap;
-
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::material::building_seed;
