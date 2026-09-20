@@ -65,7 +65,7 @@ use bevy::prelude::*;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::PolyArea;
 use crate::map::osm::model::{
-    RoadClass, RoadLine, distance_to_segment, point_in_area, ring_bounds, signed_ring_area,
+    RoadClass, RoadLine, distance_to_segment, ring_bounds, signed_ring_area,
 };
 use crate::map::roads::{is_carriageway, sidewalk_width};
 
@@ -299,11 +299,19 @@ const OUTLINE_BAND: f32 = 4.0;
 /// вопрос «внутри ли точка» не обходил всё кольцо.
 ///
 /// Раскладка задаёт его десятки тысяч раз на площадку (четыре угла и две пробы
-/// перед носом на каждое место-кандидат), а контур стоянки, дотянутой до дорог,
-/// — сотни вершин на скруглениях: у ТРЦ «Макси» 1220, и обход всего кольца на
-/// каждую пробу стоил 87 мс на одну эту площадку. Ответ тот же, что у
-/// `point_in_area`: чётность пересечений луча по всем кольцам разом (дырка
-/// лежит внутри внешнего кольца, и её пересечения чётность гасят).
+/// перед носом на каждое место-кандидат, плюс три на звено проезда в
+/// [`aisle_rows`]), а контур стоянки, дотянутой до дорог, — сотни вершин на
+/// скруглениях: у ТРЦ «Макси» 1220, и обход всего кольца на каждую пробу стоил
+/// 87 мс на одну эту площадку. Ответ тот же, что у `point_in_area`: чётность
+/// пересечений луча по всем кольцам разом (дырка лежит внутри внешнего кольца,
+/// и её пересечения чётность гасят).
+///
+/// **Полосы разложены по габариту внешнего кольца, и этого хватает на всё, что
+/// делает мощение.** Ребро попадает в каждую полосу, которую задевает по `y`,
+/// так что в полосе точки лежат все рёбра, способные пересечь её луч; дырка же
+/// целиком внутри внешнего кольца, а часть, отрезанная отмосткой, — сама себе
+/// площадка со своим габаритом. Сверено перебором на трёх таких контурах
+/// (`the_outline_index_agrees_with_the_full_ring`).
 struct Outline<'a> {
     area: &'a PolyArea,
     low: f32,
@@ -474,9 +482,9 @@ fn aisle_rows(outline: &Outline, aisles: &[&RoadLine], through: &Surroundings) -
         for pair in aisle.points.windows(2) {
             // проезд может выходить за контур — на площадке он тем куском, что
             // внутри; остальное отсеет `fits_with` при раскладке
-            if point_in_area(pair[0].midpoint(pair[1]), area)
-                || point_in_area(pair[0], area)
-                || point_in_area(pair[1], area)
+            if outline.contains(pair[0].midpoint(pair[1]))
+                || outline.contains(pair[0])
+                || outline.contains(pair[1])
             {
                 segments.push((pair[0], pair[1]));
             }
@@ -1562,6 +1570,9 @@ pub fn push_markings(builder: &mut MeshBuilder, area: &PolyArea, stalls: &[Stall
 #[cfg(test)]
 mod tests {
     use super::*;
+    // полный обход кольца — то, с чем тесты сверяют ответ `Outline`; в самой
+    // раскладке его больше нет
+    use crate::map::osm::model::point_in_area;
     use crate::map::osm::{AreaKind, fixture};
 
     fn lot(outer: Vec<Vec2>) -> PolyArea {
@@ -2217,9 +2228,16 @@ mod tests {
     }
 
     /// Индекс рёбер отвечает то же, что обход всего кольца, — и у дырки тоже.
+    ///
+    /// Площадки перечислены те, какие делает мощение (`parse/lots.rs`), а не
+    /// одно опрятное кольцо: отмостка режет лот на **части** и оставляет в нём
+    /// **дырки** (будка кассы у ТРЦ «Макси»), а полосы индекса разложены по
+    /// габариту **внешнего** кольца. Дырка лежит внутри него, так что полоса
+    /// для неё найдётся всегда; случай, где это не очевидно, — дырка, дошедшая
+    /// до самого края габарита, и он тут отдельной площадкой.
     #[test]
     fn the_outline_index_agrees_with_the_full_ring() {
-        let area = PolyArea {
+        let concave = PolyArea {
             holes: vec![vec![
                 Vec2::new(4.0, 14.0),
                 Vec2::new(12.0, 14.0),
@@ -2235,15 +2253,45 @@ mod tests {
                 Vec2::new(0.0, 26.0),
             ])
         };
-        let outline = Outline::of(&area);
-        for x in -4..90 {
-            for y in -4..74 {
-                let point = Vec2::new(x as f32 * 0.5 + 0.13, y as f32 * 0.5 + 0.07);
-                assert_eq!(
-                    outline.contains(point),
-                    point_in_area(point, &area),
-                    "{point:?}"
-                );
+        // дырка до края габарита плюс вторая, мелкая: так режет отмостка
+        let notched = PolyArea {
+            holes: vec![
+                vec![
+                    Vec2::new(6.0, 0.0),
+                    Vec2::new(14.0, 0.0),
+                    Vec2::new(14.0, 9.0),
+                    Vec2::new(6.0, 9.0),
+                ],
+                vec![
+                    Vec2::new(22.0, 13.0),
+                    Vec2::new(24.5, 13.0),
+                    Vec2::new(24.5, 15.5),
+                    Vec2::new(22.0, 15.5),
+                ],
+            ],
+            ..lot(rect(30.0, 40.0))
+        };
+        // кусок, отрезанный отмосткой: тонкий и стоящий не в начале координат
+        let sliver = lot(vec![
+            Vec2::new(-17.0, 41.0),
+            Vec2::new(13.0, 44.5),
+            Vec2::new(12.0, 49.0),
+            Vec2::new(-17.5, 45.5),
+        ]);
+        for area in [concave, notched, sliver] {
+            let (low, high) = ring_bounds(&area.outer);
+            let outline = Outline::of(&area);
+            for x in 0..96 {
+                for y in 0..96 {
+                    let point = low - 2.0
+                        + (high - low + 4.0) * Vec2::new(x as f32, y as f32) / 95.0
+                        + Vec2::new(0.013, 0.007);
+                    assert_eq!(
+                        outline.contains(point),
+                        point_in_area(point, &area),
+                        "{point:?}"
+                    );
+                }
             }
         }
     }
