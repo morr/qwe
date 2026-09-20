@@ -782,7 +782,8 @@ be called alone:
       depend on the split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
       profile), +38 ms per world load — and **137 ms** with the road-only growth and the
       apron (one more boolean each, same run of the bench). **Release buys nothing here**
-      — 119–133 ms, the same number inside the bench's swing — because the time is
+      — 119–133 ms then, 98–103 once the grids went off SipHash (**The uniform grid**),
+      the same number as `dev` within the bench's swing either way — because the time is
       `i_overlay`'s and a dependency is optimised in `dev` too; see the same point under
       **A big lot shows the road through it → Cost**.
       Two things that were measured on the way: subtract
@@ -948,6 +949,19 @@ would say so.
   several times, and without the sort the `HashMap` iteration order leaks into the
   geometry. `near_each` is the escape hatch for values that are not `Ord` (`water.rs`
   indexes `(Vec2, Vec2)` edges) and for callers that already tolerate duplicates.
+- **The map is `bevy::platform::collections::HashMap`, not `std`'s** — the same
+  `hashbrown`, with `foldhash` in place of SipHash. A city-wide index is tens of thousands
+  of inserts (the stitches alone index 14 642 buildings and water bodies), so at that
+  traffic the hash *is* the price of the index, and an `IVec2` key has no use for a
+  DoS-resistant one. It cost one line and about **100 ms of a world load**: trees 286 →
+  246 ms, entrances 62 → 40, `pave_lots` 116 → 98, the sidewalk pull 64 → 52, `mesh_roads`
+  89 → 80 — fifteen indexes ride on this type. The map's own keyed maps followed
+  (the shared road nodes, the junction and corner nodes, the parking grid, `Occupied`,
+  the arches and the garage runs): trees to 206, `mesh_roads` to 76, the parking layout
+  29 → 24. **The swap also removes a nondeterminism rather than adding one**: std seeds
+  SipHash per process, so a map iterated for its values handed out a different order every
+  run, while bevy's `FixedHasher` has a fixed seed. Still on `std`: the tag maps of the
+  parse and the Overpass reader, which serde deserializes into.
 - **`cell_of` is public for one caller**, `entrances::RoadIndex`, which walks cells in
   **rings** outward from the point and stops as soon as what it found beats anything the
   next ring could hold. That strategy belongs to it, not to the grid.
@@ -2322,7 +2336,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
         at the boulevard's mini-roundabouts, one elsewhere.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
     - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula is
-      **88 ms** (`map_meshing`, **release**, one machine; the bench swings by ±10 %), of
+      **76 ms** (`map_meshing`, **release**, one machine; the bench swings by ±10 %), of
       which the two big-lot layers and the gores are about **36**: `Gores::of` 13.6 (2.2
       of strokes, 10.5 the closing and the subtraction — 0.65 the simplify, 3.4 the grow,
       3.3 the shrink, 3.1 the differences; the grow and the shrink are what is left to
@@ -2330,21 +2344,23 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       cost per call), the kerb polygon 17 (the mall lot alone is ~90 round-joined
       strokes through the booleans and an opening), the medians 2 (every sample against every other carriageway;
       bounds-filtered), the `enters` probes and `GoreRoad::new` together 2.4, the gores'
-      asphalt and hatching 0.7. The other ~50 are older work the lots did not add —
-      the stitches 17, the ribbons 16, the kerb returns 7, the bridge shadows 5, the
+      asphalt and hatching 0.7. The other ~40 are older work the lots did not add —
+      the ribbons 16, `network::stitches` 10 (of which the *search* is 1: the rest is
+      building the two grids it asks, and both got cheaper with the hasher — see **The
+      uniform grid**), the kerb returns 7, the bridge shadows 5, the
       nodes and centrelines 4. It is paid at world load and whenever
       `roads::rebuilds_on` fires (`RoadStyle`, the settled sun).
       **`dev` is only ~1.3× slower than `release` here, and that is the measurement to
       know before optimising**: what these steps spend is `i_overlay`, a dependency, and
       a dependency is built optimised in `dev` too (`opt-level = 1` applies to our code
-      alone). `pave_lots` says it plainest — 119–133 ms release against 129–137 dev,
+      alone). `pave_lots` said it plainest — 119–133 ms release against 129–137 dev,
       i.e. nothing. So a `dev` bench number here is a real number, not one to be
       discounted by an imagined release factor.
       Not optimised: the kerb and the gores depend on the map and three style knobs only
       (`smoothing`, `sidewalks`, `markings`) and on the sun not at all, so caching them
       per world load is the obvious cut — but the hitch on a sun change is **not** theirs
       to fix: the building layer rebuilds on the same `SunOnMap` and costs 145–190 ms,
-      against these 88.
+      against these 76.
     - **No stall under a through road or its kerb** (`Surroundings::cover`, the band
       `width / 2 + kerb + THROUGH_CLEARANCE` 0.5 m, four corners and the centre; a cheap
       centre-distance reject first). 250 stalls on the mall lot.
@@ -2440,8 +2456,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     thin part cut off by the apron). A paved
     outline carries its fillets: the mall lot is 1220 vertices, and walking the ring for
     each of tens of thousands of probes cost **87 ms on that lot alone**. With the index
-    the whole city's layout is **29–30 ms** (`map_meshing`'s `parking layout` row,
-    release; 38 before the aisle blocks, 21 before the paving, 2 before the pocket rule)
+    the whole city's layout is **24 ms** (`map_meshing`'s `parking layout` row,
+    release; 29–30 before its grid went off SipHash, 38 before the aisle blocks, 21
+    before the paving, 2 before the pocket rule)
     — two fields, the through-road test and the shared `Placed` are the rest.
     **Every** point test means it: `aisle_rows` asked `point_in_area` for its three
     probes per aisle link long after the index was built and handed to it, and that is
