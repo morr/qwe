@@ -134,25 +134,31 @@ impl Gores {
         }
 
         let mut network: Vec<Contour> = Vec::new();
+        // Куда дотягивается замыкание: габарит ленты, выпущенный на её
+        // полуширину и на само замыкание. Дальше этого прямоугольника клина
+        // нет — ни искать его там, ни вычитать из него нечего.
         let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
         for (path, width) in &arms {
             network.extend(stroke(path, *width, LineCap::Round(ARC)));
-            reach.push(ring_bounds(path));
+            reach.push(closing_span(path, *width));
         }
         let mut solid: Vec<Contour> = Vec::new();
         for road in roads.iter().filter(|road| road.is_roundabout()) {
             network.extend(stroke(&road.path, road.width, LineCap::Round(ARC)));
+            reach.push(closing_span(&road.path, road.width));
             // остров маленького кольца замыкание затянуло бы тоже
             if is_ring(&road.path) {
                 solid.push(oriented(&road.path[1..], true));
             }
         }
-        let pad = 2.0 * GORE_CLOSING;
+        // Доходит до клина улица **кромкой**, а не осью: у проспекта это
+        // восемь метров, и по оси он в замыкание не попадал.
         for road in roads {
+            let pad = road.width / 2.0;
             let (low, high) = ring_bounds(&road.path);
-            let near = reach.iter().any(|(arm_low, arm_high)| {
-                low.cmple(*arm_high + pad).all() && high.cmpge(*arm_low - pad).all()
-            });
+            let near = reach
+                .iter()
+                .any(|(from, to)| (low - pad).cmple(*to).all() && (high + pad).cmpge(*from).all());
             if near {
                 solid.extend(stroke(&road.path, road.width, LineCap::Round(ARC)));
             }
@@ -160,11 +166,45 @@ impl Gores {
 
         let round = LineJoin::Round(ARC);
         // клин целиком — всё, что замыкание затянуло между двумя подходами
-        let bodies: Vec<Shape> = network
+        let closed = network
             .simplify_shape(FillRule::NonZero)
             .outline(&OutlineStyle::new(GORE_CLOSING).line_join(round.clone()))
-            .outline(&OutlineStyle::new(-GORE_CLOSING).line_join(round.clone()))
-            .overlay(&solid, OverlayRule::Difference, FillRule::NonZero)
+            .outline(&OutlineStyle::new(-GORE_CLOSING).line_join(round.clone()));
+        // Разность — дело **одного** клина: замыкание уже разложило город на
+        // отдельные фигуры, и асфальт из дальнего конца города ни одной из них
+        // не касается. Одной булевой на все стоило вдвое-втрое дороже
+        // (замеры — в `osm-map`): половина работы уходила на пересечения лент
+        // между собой там, где клина и нет.
+        let mut wedges: Vec<Shape> = Vec::new();
+        for shape in closed {
+            let Some((low, high)) = shape.first().map(contour_bounds) else {
+                continue;
+            };
+            // Островок лежит между двумя подходами, скругление с внешней
+            // стороны подхода — у одного; то же спрашивается ниже у самой
+            // фигуры, но там ответ точный, а платить за него разностью незачем
+            let between = arms
+                .iter()
+                .filter(|(path, width)| {
+                    let (from, to) = ring_bounds(path);
+                    let reach = width / 2.0 + ARM_TOUCH;
+                    low.cmple(to + reach).all() && high.cmpge(from - reach).all()
+                })
+                .count();
+            if between < 2 {
+                continue;
+            }
+            let clip: Vec<Contour> = solid
+                .iter()
+                .filter(|contour| {
+                    let (from, to) = contour_bounds(contour);
+                    from.cmple(high).all() && to.cmpge(low).all()
+                })
+                .cloned()
+                .collect();
+            wedges.extend(vec![shape].overlay(&clip, OverlayRule::Difference, FillRule::NonZero));
+        }
+        let bodies: Vec<Shape> = wedges
             .into_iter()
             .filter(|shape| {
                 let Some(outer) = shape.first() else {
@@ -292,6 +332,25 @@ impl Gores {
             push_shape(builder, shape, color);
         }
     }
+}
+
+/// Куда дотягивается замыкание ленты: её габарит, выпущенный на полуширину
+/// полотна и на [`GORE_CLOSING`].
+fn closing_span(path: &[Vec2], width: f32) -> (Vec2, Vec2) {
+    let (low, high) = ring_bounds(path);
+    let pad = width / 2.0 + GORE_CLOSING;
+    (low - pad, high + pad)
+}
+
+/// Габарит контура — то же, что `ring_bounds`, но по точкам `i_overlay`.
+fn contour_bounds(contour: &Contour) -> (Vec2, Vec2) {
+    contour.iter().fold(
+        (Vec2::INFINITY, Vec2::NEG_INFINITY),
+        |(low, high), point| {
+            let point = Vec2::from_array(*point);
+            (low.min(point), high.max(point))
+        },
+    )
 }
 
 /// Начало ломаной — первые [`ARM_REACH`] метров.
