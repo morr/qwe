@@ -4,9 +4,9 @@
 //! Растеризацией сюда занимается [`super::raster`], достижимостью —
 //! [`super::reach`]; здесь только правила предметной области.
 
-use std::collections::HashMap;
 use std::f32::consts::SQRT_2;
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::Navmesh;

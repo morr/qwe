@@ -209,7 +209,19 @@ world's knobs but the scale everything navigational is built in, and it has one 
   grow with the number of bridges, so the scan was the quadratic part of the fill
   (London carries 499 bridge ways against Tula's 61). The index is exact, not
   approximate — a segment goes into every cell of its AABB grown by its own
-  `curb_reach`, so a single cell lookup can never miss a covering ribbon. A **joining** non-bridge
+  `curb_reach`, so a single cell lookup can never miss a covering ribbon.
+  **The curb tiles live in `bevy::platform::collections::HashMap`, not `std`'s**, like
+  the map's indexes (the `bevy` skill says why in general, the osm-map skill what it
+  bought there). Here it bought **nothing measurable** and is kept only for one
+  vocabulary: Tula's fill+prune is 394–416 ms across runs of the *same* binary, and the
+  swap sits inside that spread (`fence_prune_audit -- tula`, `dev`; 108 gates, prune
+  14 616 → 15 501, 73 doorless, 230 pockets — identical before and after). The reason is
+  in the numbers above: Tula's 61 bridge ways leave few curb tiles, and a city with 499
+  of them is where this map is hot. **The swap cannot move the mesh**, which is what had
+  to be checked before making it in a replay-bearing fill: the blocking decision is taken
+  per tile from its own owners, and the seal pass collects into a `Vec` and applies
+  after the walk, so neither reads a neighbour the same round — the iteration order is
+  not an input to either. A **joining** non-bridge
   road opens the curb its panel covers — joining means sharing a node with a
   bridge way (`JOIN_EPSILON`); a riverbank path passing a few metres *under*
   the span shares no node and opens nothing. The rule only refrains from
