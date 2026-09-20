@@ -407,6 +407,16 @@ impl Surroundings {
             .any(|(from, to, reach)| distance_to_segment(point, *from, *to) <= *reach)
     }
 
+    /// Проходит ли между двумя точками дорога сквозь площадку.
+    fn crossed(&self, from: Vec2, to: Vec2) -> bool {
+        (0..=4).any(|step| {
+            let at = from.lerp(to, step as f32 / 4.0);
+            self.through
+                .iter()
+                .any(|(start, end, reach)| distance_to_segment(at, *start, *end) < *reach)
+        })
+    }
+
     /// Задевает ли место полотно или бордюр. Углов и центра хватает: полоса
     /// запрета (от 3.7 м в сторону от оси) шире полудиагонали места (2.9 м),
     /// так что ось, прошедшая сквозь место, ловится его центром.
@@ -472,7 +482,7 @@ fn aisle_rows(outline: &Outline, aisles: &[&RoadLine], through: &Surroundings) -
             }
         }
     }
-    let fields = fields_of(segments);
+    let fields = fields_of(segments, through);
     let runs: Vec<(Vec2, Vec2, usize)> = fields
         .iter()
         .enumerate()
@@ -493,11 +503,28 @@ fn aisle_rows(outline: &Outline, aisles: &[&RoadLine], through: &Surroundings) -
         // она **от контура, а не от проездов**: проезд в OSM обрывается, не
         // доходя до края площадки, и ряд, обрезанный по нему, оставлял бы вдоль
         // одной стороны полосу голого асфальта, а вдоль другой ничего
+        // квартал размечается у своих проездов, а не во всю площадку: чужую
+        // землю у него всё равно отберёт `Frame::territory`, и незачем её
+        // перебирать
+        let reach = rows
+            .iter()
+            .flat_map(|(from, to)| [main.dot(*from), main.dot(*to)])
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(least, most), at| {
+                (least.min(at), most.max(at))
+            });
+        let span = if fields.len() > 1 {
+            (
+                low.x.max(reach.0 - BLOCK_REACH),
+                high.x.min(reach.1 + BLOCK_REACH),
+            )
+        } else {
+            (low.x, high.x)
+        };
         let frame = Frame {
             area: outline,
             main,
             across,
-            span: (low.x, high.x),
+            span,
             drives: cross_drives_of(rows, main, across),
             through,
             // у единственного поля спрашивать не у кого: вся площадка его
@@ -544,7 +571,7 @@ struct Field {
 /// штриховка под углом к тому, как стоят машины. Поле отбирается тем же
 /// правилом, что и главное направление ([`main_of`] по ещё не разобранным
 /// звеньям), а **чья земля** — решает ближайший ход ([`Frame::territory`]).
-fn fields_of(mut segments: Vec<(Vec2, Vec2)>) -> Vec<Field> {
+fn fields_of(mut segments: Vec<(Vec2, Vec2)>, through: &Surroundings) -> Vec<Field> {
     let spread = AISLE_SPREAD.to_radians().cos();
     let mut fields: Vec<Field> = Vec::new();
     while let Some(main) = main_of(&segments) {
@@ -554,7 +581,11 @@ fn fields_of(mut segments: Vec<(Vec2, Vec2)>) -> Vec<Field> {
         }
         let across = Vec2::new(-main.y, main.x);
         if fields.is_empty() || distinct_lanes(&rows, across).len() >= FIELD_MIN_LANES {
-            fields.push(Field { main, rows });
+            fields.extend(
+                blocks_of(rows, main, across, through)
+                    .into_iter()
+                    .map(|rows| Field { main, rows }),
+            );
         }
         segments.retain(|(from, to)| {
             (*to - *from)
@@ -563,6 +594,99 @@ fn fields_of(mut segments: Vec<(Vec2, Vec2)>) -> Vec<Field> {
         });
     }
     fields
+}
+
+/// Соседние полосы одного квартала стоят не дальше этого поперёк, м: два шага
+/// сетки с запасом — через карман, где вместо проезда идёт дорожка.
+const BLOCK_LANE_REACH: f32 = 40.0;
+/// Какой долей короткого хода соседи обязаны перекрываться вдоль, чтобы стоять
+/// в одном квартале.
+const BLOCK_OVERLAP_SHARE: f32 = 0.5;
+/// Насколько соосны два куска одной полосы, разрезанной поперечным проездом, м.
+const BLOCK_COLLINEAR: f32 = 1.0;
+/// На сколько квартал размечается дальше концов своих проездов, м: проезд в
+/// OSM обрывается, не доходя до кромки, а замощённая площадка ушла ещё и за
+/// неё — до объездной.
+const BLOCK_REACH: f32 = 30.0;
+
+/// Ходы одного направления, разобранные по **кварталам**: у каждого квартала
+/// своя сетка полос.
+///
+/// Сетка — одно число на полосу, смещение поперёк площадки, и на всё поле она
+/// была одна. У ТРЦ «Макси» проезды к северу и к югу от бульвара — разные ways,
+/// и друг против друга они не стоят: у кольца северная полоса приходится между
+/// двумя южными. В общем списке такие полосы делили нормальный карман в 17 м
+/// на 6 и 11, в одиннадцать вставал **один** ряд, в шесть — ничего, и посреди
+/// площадки шли одиночные ряды с двойным проездом (отчёт автора).
+///
+/// В один квартал ходы сводятся двумя правилами. Соседи — стоят рядом поперёк
+/// ([`BLOCK_LANE_REACH`]) и перекрываются вдоль хотя бы на
+/// [`BLOCK_OVERLAP_SHARE`] короткого: бульвар идёт к проездам наискось, и
+/// концы северного и южного хода заходят друг за друга на пару метров — это не
+/// соседство. Куски одной полосы — соосны ([`BLOCK_COLLINEAR`]) и разделены
+/// поперечным проездом, **а не дорогой сквозь площадку**: разрыв на бульваре
+/// той же ширины, что и на поперечном проезде, и отличает их только она.
+fn blocks_of(
+    rows: Vec<(Vec2, Vec2)>,
+    main: Vec2,
+    across: Vec2,
+    through: &Surroundings,
+) -> Vec<Vec<(Vec2, Vec2)>> {
+    // ход в осях поля: смещение поперёк и отрезок вдоль
+    let frames: Vec<(f32, f32, f32)> = rows
+        .iter()
+        .map(|(from, to)| {
+            let (start, end) = (main.dot(*from), main.dot(*to));
+            (
+                across.dot(*from).midpoint(across.dot(*to)),
+                start.min(end),
+                start.max(end),
+            )
+        })
+        .collect();
+    let mut block: Vec<usize> = (0..rows.len()).collect();
+    fn root(block: &mut [usize], mut index: usize) -> usize {
+        while block[index] != index {
+            block[index] = block[block[index]];
+            index = block[index];
+        }
+        index
+    }
+    for left in 0..rows.len() {
+        for right in left + 1..rows.len() {
+            let (a, b) = (frames[left], frames[right]);
+            let lateral = (a.0 - b.0).abs();
+            let overlap = a.2.min(b.2) - a.1.max(b.1);
+            let shorter = (a.2 - a.1).min(b.2 - b.1);
+            let neighbours =
+                lateral <= BLOCK_LANE_REACH && overlap >= BLOCK_OVERLAP_SHARE * shorter;
+            let pieces = lateral <= BLOCK_COLLINEAR && -overlap <= 2.0 * AISLE && {
+                // разрыв — между ближними концами двух кусков
+                let ends = [rows[left].0, rows[left].1];
+                let others = [rows[right].0, rows[right].1];
+                let (from, to) = ends
+                    .iter()
+                    .flat_map(|end| others.iter().map(move |other| (*end, *other)))
+                    .min_by(|x, y| x.0.distance(x.1).total_cmp(&y.0.distance(y.1)))
+                    .unwrap_or((ends[0], others[0]));
+                !through.crossed(from, to)
+            };
+            if neighbours || pieces {
+                let (left_root, right_root) = (root(&mut block, left), root(&mut block, right));
+                block[right_root.max(left_root)] = right_root.min(left_root);
+            }
+        }
+    }
+    // порядок кварталов — по первому ходу, порядок ходов внутри — как пришли
+    let mut blocks: Vec<(usize, Vec<(Vec2, Vec2)>)> = Vec::new();
+    for (index, row) in rows.into_iter().enumerate() {
+        let root = root(&mut block, index);
+        match blocks.iter_mut().find(|(key, _)| *key == root) {
+            Some((_, rows)) => rows.push(row),
+            None => blocks.push((root, vec![row])),
+        }
+    }
+    blocks.into_iter().map(|(_, rows)| rows).collect()
 }
 
 /// Проезды как смещения поперёк площадки, по порядку и **продолженные до её
@@ -681,10 +805,11 @@ impl Frame<'_> {
                 .drives
                 .iter()
                 .any(|drive| (place - drive).abs() < (AISLE + STALL_WIDTH) / 2.0);
+            // `owns` перебирает все ходы площадки — спрашивается после контура
             if clear
+                && fits_with(self.area, at, self.main, self.across, depth, EDGE_MARGIN)
                 && self.owns(at)
                 && !self.through.cover(at, along, depth)
-                && fits_with(self.area, at, self.main, self.across, depth, EDGE_MARGIN)
                 && reachable(self.area, self.through, at, along, depth)
             {
                 run.push(Stall { at, along, depth });
@@ -1891,6 +2016,46 @@ mod tests {
                 (stall.at.y - 40.0).abs() - reach >= clear,
                 "место на дороге: {stall:?}"
             );
+        }
+    }
+
+    /// Проезды по две стороны дороги сквозь площадку друг против друга не
+    /// стоят — и размечаются каждый своей сеткой: в общей сетке южная полоса
+    /// делила северный карман, и в нём вставал один ряд вместо пары.
+    #[test]
+    fn aisles_across_a_through_road_keep_their_own_lane_grids() {
+        let lot = lot(rect(100.0, 102.0));
+        let through = RoadLine {
+            oneway: true,
+            ..fixture::street(vec![Vec2::new(-10.0, 50.0), Vec2::new(112.0, 50.0)], 5.0)
+        };
+        let step = 17.0;
+        let north: Vec<RoadLine> = (1..=5)
+            .map(|lane| {
+                let x = lane as f32 * step;
+                fixture::parking_aisle(vec![Vec2::new(x, 50.0), Vec2::new(x, 96.0)])
+            })
+            .collect();
+        let south: Vec<RoadLine> = (1..=4)
+            .map(|lane| {
+                let x = (lane as f32 + 0.5) * step;
+                fixture::parking_aisle(vec![Vec2::new(x, 4.0), Vec2::new(x, 50.0)])
+            })
+            .collect();
+        let aisles: Vec<&RoadLine> = north.iter().chain(&south).collect();
+        let stalls = stalls_beside(&lot, &aisles, &[&through], &[]);
+        assert!(stalls.iter().any(|stall| stall.at.y > 60.0));
+        assert!(stalls.iter().any(|stall| stall.at.y < 40.0));
+        // пара рядов спинами посреди кармана в 17 м: ряд в 5.9 м от полосы.
+        // За крайними проездами сетка продолжена до кромки — там свой счёт
+        for stall in &stalls {
+            let shift = if stall.at.y > 50.0 { 0.0 } else { step / 2.0 };
+            if stall.at.x < step + shift || stall.at.x > 5.0 * step - shift {
+                continue;
+            }
+            let offset = (stall.at.x - shift).rem_euclid(step);
+            let to_lane = offset.min(step - offset);
+            assert!((to_lane - 5.9).abs() < 0.2, "{to_lane}: {stall:?}");
         }
     }
 
