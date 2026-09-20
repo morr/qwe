@@ -563,6 +563,11 @@ const _: () = {
     assert!(Z_ROAD < Z_PARKING);
     assert!(Z_PARKING < Z_PARKING_LINES);
     assert!(Z_PARKING_LINES < Z_PITCH);
+    // дорога сквозь большую стоянку: бордюр поверх её асфальта, двойная
+    // сплошная поверх бордюра, разметка мест — поверх всего нарисованного
+    assert!(Z_PARKING < Z_LOT_SIDEWALK);
+    assert!(Z_LOT_SIDEWALK < Z_LOT_LINES);
+    assert!(Z_LOT_LINES < Z_PARKING_LINES);
     // вода — над всеми дорогами, но под тенью моста и мостом: дорога поверх
     // воды только мостом; русло — волосок над полигоном
     assert!(Z_ROAD < Z_POND);

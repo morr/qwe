@@ -266,7 +266,7 @@ impl ParkingLayout {
 /// [`aisle_rows`] — это и «полос меньше двух», и «ни одно место не прошло
 /// проверок», — и тогда ряды идут по стороне контура, а не по проездам.
 #[cfg(test)]
-pub fn stalls(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
+fn stalls(area: &PolyArea, aisles: &[&RoadLine]) -> Vec<Stall> {
     stalls_beside(area, aisles, &[], &[])
 }
 
