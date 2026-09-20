@@ -26,17 +26,20 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::simplify::SimplifyShape;
 use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
-use i_overlay::mesh::stroke::offset::StrokeOffset;
-use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
+use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::{LANDUSE_OVERLAP, SIDEWALK_CELL};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
     MapData, PolyArea, RoadClass, distance_to_segment, point_in_area, point_in_polygon, ring_area,
-    ring_bounds, signed_ring_area,
+    ring_bounds,
 };
 use crate::map::parking::is_ground;
 use crate::map::roads::{is_carriageway, sidewalk_width};
+use crate::map::shapes::{
+    ARC, Contour, Shape, area_contours, contour_area, contour_bounds, point_in_shape, ring_of,
+    shape_area, stroke,
+};
 
 /// Радиус замыкания, м: зазор между площадкой и полотном **уже двух радиусов**
 /// заливается. Четырнадцать метров — это ряд мест с проездом (5.2 + 6) и
@@ -50,8 +53,6 @@ const GROUND_CLOSING_RADIUS: f32 = 12.0;
 /// только если он рядом с площадкой, и длинная улица не тянет за собой асфальт
 /// на весь свой way.
 const ROAD_PIECE: f32 = 3.0;
-/// Скругление офсетов: длина хорды в долях радиуса (`LineJoin::Round`).
-const ARC: f32 = 0.3;
 /// Насколько близко вершина добавленного куска к контуру площадки или к
 /// полотну дороги, чтобы считаться **касающейся** его, м.
 const TOUCH: f32 = 0.25;
@@ -77,8 +78,6 @@ const BUILDING_APRON: f32 = 1.0;
 /// не стоянка.
 const MIN_LOT_PART: f32 = 30.0;
 
-type Contour = Vec<[f32; 2]>;
-type Shape = Vec<Contour>;
 type Rings = (Vec<Vec2>, Vec<Vec<Vec2>>);
 
 /// Звено полотна: отрезок оси и расстояние от неё до внешнего края
@@ -113,18 +112,40 @@ struct Around<'a> {
     fence_grid: Grid<usize>,
 }
 
-/// Дотянуть все стоянки карты до дорог. Возвращает, сколько площадок выросло.
+/// Что проход сделал со стоянками карты — два разных события, и счёт им
+/// раздельный: [`PavedLots::grown`] — площадка дотянулась до дороги
+/// ([`Around::grown`]), [`PavedLots::trimmed`] — дотягиваться было не до чего, и
+/// площадку тронула одна отмостка ([`BUILDING_APRON`]): отступила от стены, а то
+/// и распалась надвое об дом поперёк себя.
+/// `Debug` и `PartialEq` — ради тестов прохода: они сверяют **оба** числа разом,
+/// а не одно из двух, иначе разделение счёта нечем было бы удержать.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub(super) struct PavedLots {
+    pub grown: usize,
+    pub trimmed: usize,
+}
+
+/// Площадка, какой её пересчитал проход, и от чего она изменилась.
+struct Paved {
+    /// Дотянулась ли она до дороги. `false` — тронула только отмостка.
+    grown: bool,
+    /// Части: одна, если дом её не разрезал.
+    parts: Vec<Rings>,
+}
+
+/// Дотянуть все стоянки карты до дорог. Возвращает, скольких площадок это
+/// коснулось, по событиям ([`PavedLots`]).
 ///
 /// Площадки друг от друга не зависят и считаются **по потокам**: на каждую
 /// уходит с полдюжины булевых операций `i_overlay`, у которых цена — не
 /// геометрия, а сам вызов (≈ 0.3 мс на площадке в четыре вершины), и на 349
 /// площадках Тулы это полсекунды в один поток.
-pub(super) fn pave_lots(map: &mut MapData) -> usize {
+pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
     let around = Around::of(map);
     let lots = &map.parking;
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let chunk = lots.len().div_ceil(workers).max(1);
-    let results: Vec<Option<Vec<Rings>>> = std::thread::scope(|scope| {
+    let results: Vec<Option<Paved>> = std::thread::scope(|scope| {
         let handles: Vec<_> = lots
             .chunks(chunk)
             .map(|lots| {
@@ -139,15 +160,23 @@ pub(super) fn pave_lots(map: &mut MapData) -> usize {
     });
     drop(around);
 
-    let mut grown = 0;
+    let mut paved = PavedLots::default();
     // дом поперёк площадки режет её надвое: первая часть остаётся на месте
     // площадки, остальные встают в конец списка такими же стоянками
     let mut parts: Vec<PolyArea> = Vec::new();
     for (lot, result) in map.parking.iter_mut().zip(results) {
-        let Some(rings) = result else {
+        let Some(Paved {
+            grown,
+            parts: rings,
+        }) = result
+        else {
             continue;
         };
-        grown += 1;
+        if grown {
+            paved.grown += 1;
+        } else {
+            paved.trimmed += 1;
+        }
         let mut rings = rings.into_iter();
         let Some((outer, holes)) = rings.next() else {
             continue;
@@ -161,7 +190,7 @@ pub(super) fn pave_lots(map: &mut MapData) -> usize {
         }));
     }
     map.parking.extend(parts);
-    grown
+    paved
 }
 
 impl<'a> Around<'a> {
@@ -238,12 +267,16 @@ impl<'a> Around<'a> {
     /// Площадка, какой она рисуется: дотянутая до дорог ([`Around::grown`]) и
     /// отступившая от домов на [`BUILDING_APRON`]. Частей бывает несколько —
     /// дом поперёк площадки режет её; `None` — ничего не изменилось.
-    fn paved(&self, lot: &PolyArea) -> Option<Vec<Rings>> {
+    ///
+    /// Оба события считаются порознь ([`PavedLots`]), и второе бывает без
+    /// первого: дотягиваться не до чего, а отмостка всё равно отрезала от
+    /// площадки кусок.
+    fn paved(&self, lot: &PolyArea) -> Option<Paved> {
         let grown = self.grown(lot);
         let shape: Shape = grown.clone().unwrap_or_else(|| area_contours(lot));
         let walls = self.walls(&shape);
         if walls.is_empty() {
-            return grown.map(|shape| vec![rings_of(shape)]);
+            return grown.map(only_grown);
         }
         let before = shape_area(&shape) - holes_area(&shape);
         let mut parts: Vec<Shape> = vec![shape]
@@ -257,10 +290,13 @@ impl<'a> Around<'a> {
             .map(|part| shape_area(part) - holes_area(part))
             .sum();
         if parts.is_empty() || (grown.is_none() && (before - after).abs() < MIN_PIECE_AREA) {
-            return grown.map(|shape| vec![rings_of(shape)]);
+            return grown.map(only_grown);
         }
         parts.sort_by(|left, right| shape_area(right).total_cmp(&shape_area(left)));
-        Some(parts.into_iter().map(rings_of).collect())
+        Some(Paved {
+            grown: grown.is_some(),
+            parts: parts.into_iter().map(rings_of).collect(),
+        })
     }
 
     /// Дома у площадки, раздутые на отмостку, — одной фигурой на вычитание.
@@ -269,10 +305,7 @@ impl<'a> Around<'a> {
         let Some((low, high)) = shape.first().map(contour_bounds) else {
             return Vec::new();
         };
-        let rings: Vec<Vec<Vec2>> = shape
-            .iter()
-            .map(|contour| contour.iter().copied().map(Vec2::from_array).collect())
-            .collect();
+        let rings: Vec<Vec<Vec2>> = shape.iter().map(ring_of).collect();
         let contours: Vec<Contour> = self
             .building_grid
             .near(low, high)
@@ -316,8 +349,7 @@ impl<'a> Around<'a> {
         let lot_contours = area_contours(lot);
         let bands: Vec<Contour> = pieces
             .iter()
-            .flat_map(|piece| stroke(&piece.path, piece.width))
-            .flatten()
+            .flat_map(|piece| stroke(&piece.path, piece.width, LineCap::Round(ARC), false))
             .collect();
         let mut base: Vec<Contour> = lot_contours.clone();
         base.extend(bands.iter().cloned());
@@ -339,7 +371,7 @@ impl<'a> Around<'a> {
             let Some(outer) = shape.first() else {
                 return false;
             };
-            let ring: Vec<Vec2> = outer.iter().copied().map(Vec2::from_array).collect();
+            let ring = ring_of(outer);
             let on_road = |point: &Vec2, drive: bool| {
                 links.iter().any(|link| {
                     (link.drive || !drive)
@@ -380,9 +412,7 @@ impl<'a> Around<'a> {
             // торец срезан: отрезок кончается там, где кончился асфальт по
             // сторонам, и скруглённый торец вылез бы за него — на тротуар улицы
             for run in sandwiched(piece, lot, &kept) {
-                let path: Contour = run.iter().map(Vec2::to_array).collect();
-                let style = StrokeStyle::new(piece.width).line_join(LineJoin::Round(ARC));
-                whole.extend(path.stroke(style, false).into_iter().flatten());
+                whole.extend(stroke(&run, piece.width, LineCap::Butt, false));
             }
         }
         // край заводится под полотно: лента рисуется по сглаженной оси, а зазор
@@ -425,9 +455,8 @@ impl<'a> Around<'a> {
                     .into_iter()
                     .flat_map(|index| {
                         let (from, to) = self.fences[index];
-                        stroke(&[from, to], 2.0 * FENCE_HALF)
-                    })
-                    .flatten(),
+                        stroke(&[from, to], 2.0 * FENCE_HALF, LineCap::Round(ARC), false)
+                    }),
             )
             .collect()
     }
@@ -491,20 +520,7 @@ fn road_pieces(lot: &PolyArea, links: &[&RoadLink], gap: f32) -> Vec<RoadPiece> 
 /// кусок — лежит **по обе стороны** полотна.
 fn sandwiched(piece: &RoadPiece, lot: &PolyArea, kept: &[Shape]) -> Vec<Vec<Vec2>> {
     let asphalt = |point: Vec2| {
-        point_in_area(point, lot)
-            || kept.iter().any(|shape| {
-                let mut rings = shape.iter().map(|contour| {
-                    contour
-                        .iter()
-                        .copied()
-                        .map(Vec2::from_array)
-                        .collect::<Vec<Vec2>>()
-                });
-                rings
-                    .next()
-                    .is_some_and(|outer| point_in_polygon(point, &outer))
-                    && !rings.any(|hole| point_in_polygon(point, &hole))
-            })
+        point_in_area(point, lot) || kept.iter().any(|shape| point_in_shape(point, shape))
     };
     let beside = piece.width / 2.0 + BESIDE;
     let mut runs: Vec<Vec<Vec2>> = Vec::new();
@@ -556,42 +572,6 @@ fn touches_lot(point: Vec2, lot: &PolyArea) -> bool {
     distance_to_rings(point, lot) <= TOUCH
 }
 
-/// Кольца площади в закрутке, которой ждёт `i_overlay`: внешнее против часовой,
-/// дырки по ней — в OSM порядок точек какой придётся.
-fn area_contours(area: &PolyArea) -> Vec<Contour> {
-    std::iter::once(oriented(&area.outer, true))
-        .chain(area.holes.iter().map(|hole| oriented(hole, false)))
-        .collect()
-}
-
-fn oriented(ring: &[Vec2], counterclockwise: bool) -> Contour {
-    let mut points: Contour = ring.iter().map(Vec2::to_array).collect();
-    if (signed_ring_area(ring) > 0.0) != counterclockwise {
-        points.reverse();
-    }
-    points
-}
-
-/// Полоса вокруг ломаной — со скруглёнными стыками и торцами.
-fn stroke(path: &[Vec2], width: f32) -> Vec<Shape> {
-    let path: Contour = path.iter().map(Vec2::to_array).collect();
-    let style = StrokeStyle::new(width)
-        .line_join(LineJoin::Round(ARC))
-        .start_cap(LineCap::Round(ARC))
-        .end_cap(LineCap::Round(ARC));
-    path.stroke(style, false)
-}
-
-fn contour_bounds(contour: &Contour) -> (Vec2, Vec2) {
-    contour.iter().fold(
-        (Vec2::INFINITY, Vec2::NEG_INFINITY),
-        |(low, high), point| {
-            let point = Vec2::from_array(*point);
-            (low.min(point), high.max(point))
-        },
-    )
-}
-
 /// Габарит фигур по их внешним кольцам; `None` — фигур нет.
 fn shapes_bounds(shapes: &[Shape]) -> Option<(Vec2, Vec2)> {
     shapes
@@ -601,14 +581,18 @@ fn shapes_bounds(shapes: &[Shape]) -> Option<(Vec2, Vec2)> {
         .reduce(|(low, high), (next_low, next_high)| (low.min(next_low), high.max(next_high)))
 }
 
+/// Площадка, которую дотянуло до дороги и которой дома не коснулись: одна
+/// часть, событие — рост.
+fn only_grown(shape: Shape) -> Paved {
+    Paved {
+        grown: true,
+        parts: vec![rings_of(shape)],
+    }
+}
+
 /// Кольца фигуры: внешнее и дырки, без шума офсета.
 fn rings_of(shape: Shape) -> Rings {
-    let mut rings = shape.into_iter().map(|contour| {
-        contour
-            .into_iter()
-            .map(Vec2::from_array)
-            .collect::<Vec<Vec2>>()
-    });
+    let mut rings = shape.iter().map(ring_of);
     let outer = rings.next().unwrap_or_default();
     let holes = rings
         .filter(|ring| ring.len() >= 3 && ring_area(ring) >= MIN_PIECE_AREA)
@@ -654,20 +638,7 @@ fn comes_near(rings: &[Vec<Vec2>], building: &PolyArea) -> bool {
             .any(|(point, _)| point_in_area(*point, building) || close(*point, &wall_edges))
 }
 
+/// Площадь дырок фигуры — то, что из её внешнего кольца вырезано.
 fn holes_area(shape: &Shape) -> f32 {
-    shape
-        .iter()
-        .skip(1)
-        .map(|hole| {
-            let ring: Vec<Vec2> = hole.iter().copied().map(Vec2::from_array).collect();
-            ring_area(&ring)
-        })
-        .sum()
-}
-
-fn shape_area(shape: &Shape) -> f32 {
-    shape.first().map_or(0.0, |outer| {
-        let ring: Vec<Vec2> = outer.iter().copied().map(Vec2::from_array).collect();
-        ring_area(&ring)
-    })
+    shape.iter().skip(1).map(contour_area).sum()
 }

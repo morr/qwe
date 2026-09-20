@@ -1,6 +1,7 @@
 use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
+use super::lots::PavedLots;
 use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{
     Overpass, building, closed, fence, rect, square, street, water_area,
@@ -2604,7 +2605,11 @@ fn finishing_the_parse_reports_what_each_pass_did() {
     );
     assert_eq!(report.pulled.left, 0);
     assert_eq!(report.stretched.blocks, 0, "кварталов в сцене нет");
-    assert_eq!(report.stretched.lots, 0, "и стоянок тоже");
+    assert_eq!(
+        report.stretched.lots,
+        PavedLots::default(),
+        "и стоянок тоже — ни выросших, ни обрезанных отмосткой"
+    );
     assert_eq!(report.planted.tree_nodes, 1);
     assert_eq!(report.planted.standalone, 1);
     assert_eq!(map.buildings.len(), 1, "остался только косой домик");
@@ -2763,7 +2768,15 @@ fn a_lot_reaches_the_road_across_its_own_aisle() {
         ..MapData::default()
     };
 
-    assert_eq!(pull_areas_to_roads(&mut map).lots, 1);
+    // именно рост: площадка дотянулась до улицы, а домов, от которых можно
+    // было бы отступить, в сцене нет
+    assert_eq!(
+        pull_areas_to_roads(&mut map).lots,
+        PavedLots {
+            grown: 1,
+            trimmed: 0
+        }
+    );
     let lot = &map.parking[0];
     // вся полоса между стоянкой и улицей — асфальт, без зубцов у проезда (под
     // самим проездом асфальт его собственный: полотно в контур не входит)…
@@ -2819,7 +2832,14 @@ fn the_pocket_between_two_aisle_stubs_is_paved() {
         ..MapData::default()
     };
 
-    assert_eq!(pull_areas_to_roads(&mut map).lots, 1);
+    // карман затянут ростом к дорогам, отмостке тут резать нечего
+    assert_eq!(
+        pull_areas_to_roads(&mut map).lots,
+        PavedLots {
+            grown: 1,
+            trimmed: 0
+        }
+    );
     for y in [-18.0, -12.0, -6.0] {
         let at = CENTER + Vec2::new(0.0, y);
         assert!(
@@ -2904,7 +2924,15 @@ fn a_lot_steps_back_from_the_houses_on_it() {
     };
 
     let stretched = pull_areas_to_roads(&mut map);
-    assert_eq!(stretched.lots, 1);
+    // счётчик разделён по событиям: дорог в сцене нет, так что расти площадке
+    // некуда — её тронула одна отмостка, и попасть она обязана в `trimmed`
+    assert_eq!(
+        stretched.lots,
+        PavedLots {
+            grown: 0,
+            trimmed: 1
+        }
+    );
     let lot = &map.parking[0];
     // под корпусом и в полуметре от его стены асфальта нет, в трёх метрах — есть
     assert!(!point_in_area(CENTER + Vec2::new(-35.0, 0.0), lot));
@@ -2952,7 +2980,11 @@ fn a_fenced_lot_stays_behind_its_fence() {
     };
 
     let before = map.parking[0].outer.len();
-    assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
+    assert_eq!(
+        pull_areas_to_roads(&mut map).lots,
+        PavedLots::default(),
+        "забор отрезал добавленное: ни роста, ни отмостки — прохода не было"
+    );
     // добавлять нечего — контур остался тем же кольцом, и ни одна вершина
     // не оказалась за забором
     assert_eq!(map.parking[0].outer.len(), before);
@@ -2993,7 +3025,11 @@ fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
         ..MapData::default()
     };
 
-    assert_eq!(pull_areas_to_roads(&mut map).lots, 0);
+    assert_eq!(
+        pull_areas_to_roads(&mut map).lots,
+        PavedLots::default(),
+        "забор отрезал добавленное: ни роста, ни отмостки — прохода не было"
+    );
     for vertex in &map.parking[0].outer {
         assert!(vertex.y <= fence_y + 0.01, "вершина за забором: {vertex:?}");
     }

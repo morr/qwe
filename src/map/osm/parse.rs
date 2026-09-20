@@ -221,10 +221,13 @@ impl std::fmt::Display for PassReport {
             f,
             "osm parse: {moved} buildings pulled off the sidewalks ({partly} of them only part of the way), {left} left standing on them, in {pulling:?}"
         )?;
-        let StretchedAreas { blocks, lots } = stretched;
+        let StretchedAreas {
+            blocks,
+            lots: lots::PavedLots { grown, trimmed },
+        } = stretched;
         writeln!(
             f,
-            "osm parse: {blocks} block vertices pulled to the drawn road edge, {lots} parking lots paved up to their roads, in {stretching:?}"
+            "osm parse: {blocks} block vertices pulled to the drawn road edge, {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
         )?;
         let attached = entrances_found - entrances_orphaned;
         writeln!(
@@ -1160,7 +1163,8 @@ const LANDUSE_OVERLAP: f32 = 0.5;
 const LANDUSE_STEP: f32 = 8.0;
 
 /// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
-/// **дотягивается под полотно**. Возвращает, сколько вершин сдвинуто.
+/// **дотягивается под полотно**. Возвращает [`StretchedAreas`] — сдвинутые
+/// вершины кварталов и замощённые стоянки.
 ///
 /// Ширина улицы в модели — константа класса, тротуар добавляет рендер, а
 /// границу квартала в OSM рисуют по красным линиям или по заборам участков,
@@ -1234,17 +1238,22 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
 
 /// Что дотянул проход: вершин у кварталов и **площадок** у стоянок — стоянка
 /// растёт полигоном ([`lots::pave_lots`]), и вершины у неё считать нечего.
+///
+/// У стоянок это **два числа, а не одно** ([`lots::PavedLots`]): проход и
+/// дотягивает площадку до дороги, и отодвигает её от домов, — а второе бывает
+/// без первого, и площадка, которую всего лишь обрезала отмостка, «доросшей до
+/// своих дорог» не была.
 #[derive(Default)]
 struct StretchedAreas {
     blocks: usize,
-    lots: usize,
+    lots: lots::PavedLots,
 }
 
 /// Кольцо квартала с дотянутыми к дорогам вершинами.
+///
 /// Ребро длиннее [`LANDUSE_STEP`] рядом с дорогой разбивается, и вставленная
-/// точка остаётся
-/// в кольце, только если ей нашлось куда сдвинуться, — иначе кольцо копило бы
-/// лишние вершины на каждой перестройке геометрии.
+/// точка остаётся в кольце, только если ей нашлось куда сдвинуться, — иначе
+/// кольцо копило бы лишние вершины на каждой перестройке геометрии.
 ///
 /// «Наружу от зелени» считается **локально**, по самому кольцу: для внешнего
 /// контура это прочь из квартала, для дырки — внутрь неё (зелень лежит снаружи
