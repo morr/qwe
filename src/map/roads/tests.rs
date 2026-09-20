@@ -612,7 +612,7 @@ const LAYERS: [&str; 11] = [
     "road_casings",
     "roads",
     "lot_sidewalks",
-    "lot_roads",
+    "lot_lines",
     "bridge_shadows",
     "bridge_casings",
     "bridges",
@@ -663,7 +663,7 @@ fn only_the_bridge_shadow_is_blended() {
             "bridge_shadows" => MaterialSpec::Blend,
             "sidewalks" | "lot_sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
-            "roads" | "lot_roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
+            "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
             _ => MaterialSpec::Flat,
         };
         assert_eq!(layer.material, expected, "{}", layer.name);
@@ -823,15 +823,25 @@ fn extent_x(builder: &MeshBuilder) -> (f32, f32) {
 fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
     let (layers, _) = mesh_roads(&ground_with_roads(100.0), RoadStyle::default());
 
-    // бордюр — только у сквозной дороги и только в пределах площадки: у её
-    // кромки он обрезан встык, а не вылезает скруглённым торцом
-    let (low, high) = extent_x(&layer(&layers, "lot_sidewalks").builder);
+    // бордюр — только у сквозной дороги и только в пределах площадки: он
+    // обрезан её контуром (углы скруглены размыканием)
+    let kerb = &layer(&layers, "lot_sidewalks").builder;
+    let (low, high) = extent_x(kerb);
     assert!(
-        (low - 100.0).abs() < 0.1 && (high - 200.0).abs() < 0.1,
+        (100.0..100.5).contains(&low) && (199.5..=200.0).contains(&high),
         "{low}..{high}"
     );
-    // асфальт поверх — и дороги, и проезда, который прорезает в бордюре устье
-    assert!(!layer(&layers, "lot_roads").builder.is_empty());
+    // проезд ряда прорезал в бордюре устье, асфальт самой дороги — полосу
+    let middle = 150.0;
+    for at in kerb.positions_for_test() {
+        assert!(
+            (at[0] - middle).abs() > 1.5,
+            "бордюр в устье проезда: {at:?}"
+        );
+        assert!((at[1] - middle).abs() > 2.0, "бордюр на полотне: {at:?}");
+    }
+    // дорога одна — разделительной нет
+    assert!(layer(&layers, "lot_lines").builder.is_empty());
     // сама улица в своём слое осталась целой: за площадкой её рисует он
     let (low, high) = extent_x(&layer(&layers, "roads").builder);
     assert!(low < 1.0 && high > 299.0, "{low}..{high}");
@@ -842,7 +852,46 @@ fn a_small_lot_still_hides_every_road_on_it() {
     // 60 × 60 — двор: его асфальт и есть проезд, поверх него ничего не кладётся
     let (layers, _) = mesh_roads(&ground_with_roads(60.0), RoadStyle::default());
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
-    assert!(layer(&layers, "lot_roads").builder.is_empty());
+    assert!(layer(&layers, "lot_lines").builder.is_empty());
+}
+
+/// Два встречных полотна бок о бок — бульвар: между ними не бордюр, а двойная
+/// сплошная.
+#[test]
+fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
+    let mut map = ground_with_roads(100.0);
+    let middle = 150.0;
+    map.roads.push(RoadLine {
+        oneway: true,
+        ..fixture::street(
+            vec![Vec2::new(300.0, middle + 5.5), Vec2::new(0.0, middle + 5.5)],
+            5.0,
+        )
+    });
+    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+
+    let lines = &layer(&layers, "lot_lines").builder;
+    assert!(!lines.is_empty());
+    for at in lines.positions_for_test() {
+        assert!(
+            (at[1] - (middle + 2.75)).abs() < 0.5,
+            "линия не по оси: {at:?}"
+        );
+        assert!(
+            (100.0..=200.0).contains(&at[0]),
+            "линия за площадкой: {at:?}"
+        );
+    }
+    // между осями полотен бордюра нет, снаружи от них он есть
+    let kerb = layer(&layers, "lot_sidewalks").builder.positions_for_test();
+    assert!(kerb.iter().any(|at| at[1] < middle - 2.5));
+    assert!(kerb.iter().any(|at| at[1] > middle + 8.0));
+    for at in kerb {
+        assert!(
+            at[1] < middle + 0.1 || at[1] > middle + 5.4,
+            "бордюр на разделительной: {at:?}"
+        );
+    }
 }
 
 #[test]
@@ -853,5 +902,4 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
     };
     let (layers, _) = mesh_roads(&ground_with_roads(100.0), style);
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
-    assert!(!layer(&layers, "lot_roads").builder.is_empty());
 }
