@@ -963,15 +963,28 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The kerb (`lot_sidewalks`, `Z_LOT_SIDEWALK` 2.002, `parking::kerb_width`) is a
   **polygon, not ribbons**: the through roads' bands with their kerbs and the islands of
   the roundabouts, minus the asphalt of every street on the lot (an aisle cuts its
-  **mouth**, so along the boulevard the kerb comes out as islands at the row ends),
-  within the outline, small holes filled (a splitter island), opened by `KERB_OPENING`.
+  **mouth**, so along the boulevard the kerb comes out as islands at the row ends) and
+  the **gores**, within the outline grown by `KERB_OVERHANG` 2 m (so it meets the
+  sidewalk of the street it is entered from without a jog), opened by `KERB_OPENING`.
   As ribbons, each road's asphalt lay over every other road's kerb and chopped it to
   ragged scraps at the roundabouts. **Median** — two one-way carriageways side by side
   (within `MEDIAN_GAP` 3 m of asphalt) get no kerb between them but a **double solid
   line** (`lot_lines`, `Z_LOT_LINES` 2.003, flat paint), as Yandex and 2GIS draw a
-  boulevard. No stall stands under a through road or its kerb (`Surroundings::cover`). A
-  small lot hides its roads as before.
-  Five more rules of the layout: **aisle fields** (`fields_of`) — aisles of a second
+  boulevard; it is computed by one carriageway of the pair, and at a gore it stops
+  `MEDIAN_GORE_GAP` 0.6 m short of the hatching. **Gore** (`roads/gores.rs`) — the
+  splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
+  ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
+  property of the network at a ring, not of a lot: computed for every roundabout (by the
+  tag **or by shape** — a closed one-way way; the mall's big ring carries no
+  `junction` tag), a wedge counting only if it touches **two arms**. The whole wedge is
+  asphalt, the wedge without its thin tips is what gets hatched. **Closedness of a way is
+  read off the raw OSM points, never off the drawn path** — smoothing cuts the corner at
+  a closed way's seam and the drawn ring's ends stand metres apart. No stall stands under
+  a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as
+  before.
+  Six more rules of the layout: **a pair of rows is a rectangle** (`Frame::push_pair`) —
+  whose ground it is is asked once, at the pair's centre, and an overhang of up to
+  `PAIR_OVERHANG` 2 stalls with no partner behind is trimmed; **aisle fields** (`fields_of`) — aisles of a second
   direction (`FIELD_MIN_LANES` 3 lanes or more; the mall's east wing, 40° off the main
   grid) are striped along themselves, and the ground belongs to the field whose aisle run
   is nearest (`Frame::territory`); **aisle blocks** (`blocks_of`) — within one direction,

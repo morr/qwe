@@ -2223,16 +2223,20 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       `LOT_KERB` 1.2 m on a drive) plus the **island of every roundabout** (the ring's
       own polygon), **minus the asphalt of every street on the lot** — an aisle cuts its
       **mouth**, so along the boulevard the kerb comes out as the islands at the row
-      ends. Then the kerb is **closed** by `ISLAND_CLOSING` 4 m and the asphalt subtracted
-      **again**: a splitter island between two diverging slip lanes is walled by kerbs on
-      three sides with the lot's asphalt left inside — a hollow triangle, and open at its
-      tip, so filling a shape's holes (tried first) never saw it. What the closing pulls
-      shut over a carriageway — the aisle mouths, the road between its own two kerbs —
-      goes back out with the second subtraction; what stays is lot asphalt between kerbs
-      under 8 m apart, and a block of stalls between roads is many times wider. The
-      result is intersected with the lot's outline, **opened** by `KERB_OPENING` 0.3 m
+      ends — **and minus the gores** at the roundabouts (next bullet but two), where
+      there is no kerb between the carriageways at all. The result is cut to the lot's
+      outline **grown by `KERB_OVERHANG` 2 m**, **opened** by `KERB_OPENING` 0.3 m
       (slivers under 0.6 m go, corners round) and scraps under `MIN_KERB_AREA` 6 m² are
-      dropped.
+      dropped. The overhang is what joins the kerb to the sidewalk of the street the road
+      enters the lot from: cut exactly on the outline it met that sidewalk with a jog —
+      the outline is rounded there by the paving's closing and the sidewalk is not.
+    - **Closedness comes from the raw OSM points, never from the drawn path**
+      (`Grounds::push`, `GoreRoad::new`). `centerline` smooths a closed way as an open
+      one and cuts the corner at its **seam**, so the two ends of a drawn ring stand
+      metres apart (8.6 m on a 12 m test ring) and `is_ring` on it is false — unless the
+      seam node happens to be shared and therefore pinned. Both modules close the drawn
+      path back when `road.points` is a ring. This was found the hard way: the unit test
+      passed on a tagged ring, the city showed nothing.
     - **Ribbons were here first and were removed** (a `lot_roads` layer of every
       street's asphalt over the kerb layer, runs clipped to the outline by bisection).
       Each road's asphalt lay over every *other* road's kerb, so where slip lanes fan
@@ -2251,14 +2255,55 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       median. The midline gets `push_rails` (`DOUBLE_LINE_WIDTH` 0.2 m at
       `DOUBLE_LINE_GAUGE` 0.5 m — wider than the real 0.15 / 0.3, which fuse into a hair
       at lot zoom), and a strip as wide as the axes are apart is subtracted from the
-      kerb. Computed from **both** sides of a pair: the two lines coincide, and the
-      midline does not break where one side is split into two ways.
+      kerb. Computed by **one** carriageway of a pair — the one its neighbour lies
+      toward `MEDIAN_SIDE` from. From both sides at once (tried first) two double lines
+      lay on each other a few centimetres off: a fat double line that thinned where one
+      carriageway ended sooner — the author's report. The side is a direction in the
+      world, not a way index, so the midline does not break where one side is split into
+      two ways. **At a gore** (`reach_gore`) the ends of the midline lying inside the
+      hatching are trimmed — the median exists while the gap is under 3 m, the gore from
+      0.6 m up, so they overlap — and the line is then carried on along its heading up to
+      `MEDIAN_REACH` 8 m, stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush,
+      its end fused with the island's outline.
+    - **Gores — the splitter islands at a roundabout** (`roads/gores.rs`, the author's
+      ask: «как у Яндекса»). An approach in OSM is two one-way ways, entry and exit,
+      fanning out to two nodes of the ring; the wedge between them and the ring is flat
+      asphalt with diagonal hatching, nobody drives or walks on it. We drew a triangle of
+      **sidewalk** there (the two arms' bands overlapping), and on the big lot a kerb
+      triangle — outlined, then filled, with a crescent of asphalt left in it. It is a
+      property of the **network at a ring, not of a lot**, so it is computed for every
+      roundabout in the city and the lot only subtracts it from its kerb.
+      - **A roundabout is the tag or the shape**: `junction=roundabout|circular`, or a
+        closed one-way way. The big ring at ТРЦ «Макси» (way 397005605) is plain
+        `oneway=yes` closed on itself; by the tag alone none of its three islands was
+        found.
+      - **An arm** is a one-way, non-ring street with an end within `ARM_SNAP` 1 m of a
+        ring vertex, taken for `ARM_REACH` 40 m from the ring — an avenue's carriageway
+        runs for hundreds of metres and would hatch the whole median with its opposite.
+      - **The wedge** is what a closing by `GORE_CLOSING` 6 m of the rings' and arms'
+        asphalt pulls shut, minus the asphalt of every street nearby and the island of a
+        small ring. The same closing fills the fillet on the **outer** side of an arm,
+        and arms meet a ring at a shallow angle, so that fillet is not small: what tells
+        them apart is the neighbours, not the area — a gore **touches two arms**
+        (`ARM_TOUCH`), a fillet one. `GORE_MIN_AREA` 12 m² on top.
+      - **Two shapes, not one.** The whole wedge, grown `ASPHALT_PAD` 0.5 m under the
+        road edges, is **asphalt** (pushed into the `roads` layer — above the sidewalks,
+        so it covers their triangle); the wedge **opened** by `GORE_OPENING` 0.3 m —
+        without tips and necks too thin for a stripe — is what gets the outline
+        (`LINE_WIDTH` 0.2 m) and the hatching (`HATCH_WIDTH` 0.35 m every `HATCH_STEP`
+        1.6 m, at 45° to the wedge's long axis, clipped by one boolean for the city).
+        One shape for both (tried first) showed ground wherever the opening had cut.
+      - The paint rides in `lot_lines` (it must lie above a lot's asphalt), gated on
+        `RoadStyle::markings`; the count is `gores N` in the `road meshing:` line, which
+        `measure_roads` now prints too. Tula: **7** — three at the mall's big ring, three
+        at the boulevard's mini-roundabouts, one elsewhere.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
     - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula went
-      **84 → 133 ms** (`map_meshing`, `dev`, same machine): the mall lot alone is ~90
-      round-joined strokes through three booleans, a closing and an opening (kerbs
-      ≈ 13 ms before the closing, which added ~20), medians ≈ 5 ms (every sample against
-      every other carriageway; bounds-filtered), the `enters` probes ≈ 2 ms. It is paid
+      **84 → 145 ms** (`map_meshing`, `dev`, same machine; one run, and the bench swings
+      by ±10 ms): the mall lot alone is ~90 round-joined strokes through the booleans
+      and an opening (≈ 13 ms), medians ≈ 5 ms (every sample against every other
+      carriageway; bounds-filtered), the `enters` probes ≈ 2 ms, the rest the gores'
+      closing over the rings and arms of the whole city. It is paid
       at world load and whenever `roads::rebuilds_on` fires (`RoadStyle`, the settled
       sun). Not optimised: the kerb depends on the map and two style knobs only, so
       caching it per world load is the obvious cut if the hitch on a sun change shows.
@@ -2314,6 +2359,22 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     the rest is another block's by `Frame::territory` anyway — and `push_row` asks the
     outline before `owns`, which walks every run of the lot. Layout 38 → **30 ms** on
     Tula. Pinned by `aisles_across_a_through_road_keep_their_own_lane_grids`.
+  - **A pair of rows is laid as a rectangle** (`Frame::push_pair`). The two rows of a
+    back-to-back pair were tested apart, and in a skewed block — between two roads
+    crossing the aisles at an angle — each was cut its own way: three stalls on the
+    left, five on the right and shifted. It read as «a row and a scrap of a second one
+    beside it» (the author's report), not as a pair. Two rules:
+    - **whose ground it is is asked once per pair**, at the pair's centre (`cells`'s
+      `anchor`), not per stall: on the seam of two blocks the left row went to one and
+      the right to the other, each from its own grid;
+    - **a short overhang is trimmed**: stalls of one row with no partner behind them, up
+      to `PAIR_OVERHANG` 2 in a run, go. A longer run stays — that is a row along a
+      skewed edge where the second one has nowhere to stand, and a single row at the
+      edge is legitimate.
+
+    `push_row` is now `lay(cells(..))`: `cells` answers per slot of the lane's grid,
+    `lay` applies `MIN_ROW_RUN` and the list order `push_markings` expects. Pinned by
+    `a_pair_of_rows_cut_askew_is_trimmed_to_a_rectangle`.
   - **Pockets** (`pocket_depth`, `pocket_rows`) — a one-row strip along a street (way
     702257069, 354 × 5.7 m). With `EDGE_MARGIN` either side no stall fits it, and it was
     a dark band by the pavement; before the polygon paving it was striped only because
