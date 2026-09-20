@@ -78,6 +78,58 @@ if [ -z "$reason" ] && [ "$is_cargo" = true ] && [ "$background" != "true" ]; th
   reason="Run cargo build / run / test / clippy / check / bench / doc / nextest (and tools/check.sh) with run_in_background: true — a cold build here takes minutes and a foreground call blocks the session with nothing on screen (CLAUDE.md, Running cargo so progress stays visible). Repeat this exact command with run_in_background: true."
 fi
 
+# --- a build directory nobody seeded: 7m29s of bevy instead of 1m30s of qwe.
+#
+# seed-worktree-target.sh fires on the EnterWorktree *tool*, so two ways around
+# it cost the same 400 crates, and one measured session took both at once: it
+# made its second checkout with `git worktree add` from Bash — no tool event, no
+# hook — and then pointed CARGO_TARGET_DIR at `<worktree>/target-perf`, a name
+# the seed would not have filled anyway. This check watches the build instead of
+# the checkout, so it sees both: whatever directory the command will actually
+# compile into, if it holds no fingerprints while the main checkout's target does,
+# the clone is owed first.
+#
+# A genuinely cold build — timing the build itself — is the one case the empty
+# directory is the point, and it is spelled rather than guessed: put the literal
+# `# cold-build` in the command.
+if [ -z "$reason" ] && [ "$is_cargo" = true ] &&
+   ! printf '%s' "$cmd" | grep -qF '# cold-build'; then
+  # Where the command builds: a `cd` inside it wins over the tool's cwd, and an
+  # explicit target directory wins over the checkout's own.
+  build_cwd=$(printf '%s' "$cmd" |
+    grep -oE '(^|[;&|(])[[:space:]]*cd[[:space:]]+[^[:space:];&|)]+' | tail -1 |
+    sed -E 's/.*cd[[:space:]]+//')
+  [ -z "$build_cwd" ] && build_cwd="$cwd"
+  case "$build_cwd" in /*) ;; *) build_cwd="$cwd/$build_cwd" ;; esac
+
+  target_dir=$(printf '%s' "$cmd" |
+    grep -oE 'CARGO_TARGET_DIR=[^[:space:]]+' | tail -1 |
+    sed -E 's/^CARGO_TARGET_DIR=//; s/^["'"'"']//; s/["'"'"']$//')
+  if [ -z "$target_dir" ]; then
+    target_dir=$(printf '%s' "$cmd" |
+      grep -oE -- '--target-dir[[:space:]=]+[^[:space:]]+' | tail -1 |
+      sed -E 's/^--target-dir[[:space:]=]+//; s/^["'"'"']//; s/["'"'"']$//')
+  fi
+
+  top=$(git -C "$build_cwd" rev-parse --show-toplevel 2>/dev/null)
+  [ -z "$target_dir" ] && [ -n "$top" ] && target_dir="$top/target"
+  case "$target_dir" in ""|/*) ;; *) target_dir="$build_cwd/$target_dir" ;; esac
+  target_dir="${target_dir%/}"
+
+  # The main checkout owns the target/ a seed copies from: --git-common-dir
+  # resolves to <main>/.git from a worktree too.
+  common=$(git -C "$build_cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  main_root=""
+  [ -n "$common" ] && main_root=$(dirname "$common")
+  [ -z "$main_root" ] && main_root="${CLAUDE_PROJECT_DIR:-}"
+
+  if [ -n "$target_dir" ] && [ -n "$main_root" ] &&
+     [ "$target_dir" != "$main_root/target" ] && [ -d "$main_root/target" ] &&
+     [ ! -d "$target_dir/debug/.fingerprint" ] && [ ! -d "$target_dir/release/.fingerprint" ]; then
+    reason="\`$target_dir\` holds no build artifacts, so this command compiles bevy and ~400 registry crates from scratch — measured at 7m29s here, against 1m30s for a seeded directory. Seed it first: \`tools/seed-worktree-target.sh $target_dir\` clones the main checkout's target/ copy-on-write (~20s, zero disk), after which cargo rebuilds only qwe and vendor/polyanya. Nothing is shared at build time, so this does not clobber the main checkout's libqwe. If you made this worktree with \`git worktree add\` from Bash, that is why no seed happened — the EnterWorktree hook never saw it. And unless you have a reason for a separate build directory, drop the custom CARGO_TARGET_DIR/--target-dir and let the checkout use its own \`target/\`, which is what the seed fills by default. If an empty directory is the actual point — you are timing a cold build — say so with the literal \`# cold-build\` in the command."
+  fi
+fi
+
 # --- the live app: `cargo run` of the app itself and the `brp` CLI need the
 # `live-app` skill (ready markers, SimSpeed vs Time<Virtual>, screenshots,
 # shutdown). `cargo run --example …` is a headless yard, not the app — but the
