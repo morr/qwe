@@ -1254,18 +1254,26 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
     };
     let edges: Vec<Vec<ShadowEdge>> = bands.iter().map(shadow_edges).collect();
 
-    // ядра лент для проверки погружения каймы
-    let cores: Vec<Vec<Vec2>> = edges
+    // Ядра лент для проверки погружения каймы — с габаритом на каждое.
+    // Проба идёт на каждый квад каймы (лента уплотнена до `SHADOW_STEP`, так
+    // что у моста через Упу их под сотню) и без габарита обходила бы кольца
+    // **всех** мостов города: пересекаются же считанные пары, соседи по
+    // одному настилу. Отсечка — та же, что у `Underneath` в `probe_underneath`
+    // и у `Fortresses`. Пустое ядро даёт `(INFINITY, NEG_INFINITY)`, то есть
+    // габарит, в который не попадает ничто, — как и надо.
+    let cores: Vec<(Vec2, Vec2, Vec<Vec2>)> = edges
         .iter()
         .map(|band| {
-            if band.len() < 2 {
+            let ring: Vec<Vec2> = if band.len() < 2 {
                 Vec::new()
             } else {
                 band.iter()
                     .map(|edge| edge.left)
                     .chain(band.iter().rev().map(|edge| edge.right))
                     .collect()
-            }
+            };
+            let (low, high) = ring_bounds(&ring);
+            (low, high, ring)
         })
         .collect();
 
@@ -1312,10 +1320,12 @@ fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
                         / 2.0;
                 // кайма, чья внешняя кромка лежит в ядре соседа, легла бы
                 // поверх уже закрашенного союза двойной темнотой
-                let buried = cores
-                    .iter()
-                    .enumerate()
-                    .any(|(other, ring)| other != own && point_in_polygon(lip, ring));
+                let buried = cores.iter().enumerate().any(|(other, (low, high, ring))| {
+                    other != own
+                        && lip.cmpge(*low).all()
+                        && lip.cmple(*high).all()
+                        && point_in_polygon(lip, ring)
+                });
                 if buried {
                     continue;
                 }
