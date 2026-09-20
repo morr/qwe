@@ -729,9 +729,23 @@ be called alone:
       vertex on some road band). A notch in the outline (the lawn in the corner of an
       L-shaped lot) touches no road; a wedge between two streets touches no lot. Kept
       pieces grow by `LANDUSE_OVERLAP` 0.5 m (bevel join) so the edge goes under the
-      ribbon drawn from the smoothed centreline, and the largest shape of lot ∪ pieces is
+      ribbon drawn from the smoothed centreline — **and only there**: the grown ring is
+      intersected with the road bands. Grown on every side, a piece also stepped out
+      half a metre along its *free* edge (the closing's arc, a house wall, a lawn), and
+      wherever that edge met the lot's own there was a half-metre jog — the «jerks» on
+      the mall lot's border, the author's report. The largest shape of lot ∪ pieces is
       the new outline, **holes included** — the island of a roundabout at the lot's edge
       stays ground.
+    - **The apron** (`Around::walls`, `BUILDING_APRON` 1 m) — last, and on every lot
+      whether it grew or not: **every** house near it, of any size, swollen by the apron
+      and subtracted. OSM draws a lot overlapping a house or flush with its wall, and the
+      closing pulls asphalt into the slit between them, so stalls stood in the wall (the
+      green block and the ticket booth on the mall lot). `KEEP_BUILDING_AREA` above is a
+      different question — what the *added* asphalt may not crawl over — and stays. A
+      booth in the lot gets its island; a house across a lot cuts it, and then the parts
+      of `MIN_LOT_PART` 30 m² and up all stay lots (the first in place, the rest appended
+      to `MapData::parking` — Tula 349 → 355). `comes_near` keeps the boolean off lots no
+      house reaches. Pinned by `a_lot_steps_back_from_the_houses_on_it`.
     - **`CLOSING_RADIUS` 7 m** — a gap under 14 m closes: a stall row with its aisle
       (`STALL_DEPTH` 5.2 + `AISLE` 6) and a little, the same reading the 12 m limit had;
       the pockets between the mall's aisle stubs are 12 m between bands.
@@ -766,7 +780,8 @@ be called alone:
       Lots are independent, so `pave_lots` splits them across `available_parallelism`
       threads (`std::thread::scope`, results applied in order — the output does not
       depend on the split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
-      profile), +38 ms per world load. Two things that were measured on the way: subtract
+      profile), +38 ms per world load — and **137 ms** with the road-only growth and the
+      apron (one more boolean each, same run of the bench). Two things that were measured on the way: subtract
       obstacles from the *kept* pieces, not from everything added, and filter them by the
       pieces' bounds (the river's outline otherwise goes into a boolean for every lot on
       the embankment); glue road pieces into one stroke per road, not per link.
@@ -2172,30 +2187,66 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       all of it at the mall). Showing every `service` way would have cut those lots' rows
       along every aisle.
     - **Drawn by `roads/lots.rs`, inside `mesh_roads`** (so it follows `RoadStyle` and
-      the very centreline the ribbon underneath is drawn from): `Grounds::runs` clips a
-      street's drawn path to the big lots (probes every `PROBE_STEP` 2 m, the crossing
-      found by bisection) and the stretch inside goes a second time into **`lot_roads`**
-      (`Z_LOT_ROAD` 2.003, `SurfaceKind::Street`); a through road also into
-      **`lot_sidewalks`** (`Z_LOT_SIDEWALK` 2.002) at `width + 2 · parking::kerb_width`
-      (its sidewalk, or `LOT_KERB` 1.2 m on a drive), **butt-cut at the lot's outline** —
-      a round cap there is a light bracket around the road leaving the lot.
-      `RoadStyle::sidewalks` off takes the kerb off here too.
-    - **The aisles ride in `lot_roads` for their mouths, not for themselves**: their
-      asphalt is the lot's own tone and invisible on it, but lying over the kerb layer an
-      aisle cuts its entry in the kerb, so along the boulevard the kerb comes out as the
-      islands at the row ends. That is also why `Z_PARKING_LINES` went **above** both
-      layers — an aisle ribbon over the paint would have erased the stall lines it runs
-      across.
+      the very centreline the ribbon underneath is drawn from): `Grounds::push` hands
+      every street's drawn path to the big lots it reaches, `Grounds::layers` builds two
+      layers from them. **The road's asphalt is not laid a second time** — it is the
+      lot's own tone; what shows the road is its **kerb**, `lot_sidewalks`
+      (`Z_LOT_SIDEWALK` 2.002, `SurfaceKind::Sidewalk`, `SIDEWALK_COLOR` — measured
+      pixel for pixel the same as a street's sidewalk, 210/208/204; a thin light strip
+      on dark asphalt only *looks* whiter). `RoadStyle::sidewalks` off takes it off.
+    - **The kerb is a polygon** (`kerbs`, `i_overlay`): the bands of the through roads
+      whose axis enters the lot (`width + 2 · parking::kerb_width` — its sidewalk, or
+      `LOT_KERB` 1.2 m on a drive) plus the **island of every roundabout** (the ring's
+      own polygon), **minus the asphalt of every street on the lot** — an aisle cuts its
+      **mouth**, so along the boulevard the kerb comes out as the islands at the row
+      ends. Then the kerb is **closed** by `ISLAND_CLOSING` 4 m and the asphalt subtracted
+      **again**: a splitter island between two diverging slip lanes is walled by kerbs on
+      three sides with the lot's asphalt left inside — a hollow triangle, and open at its
+      tip, so filling a shape's holes (tried first) never saw it. What the closing pulls
+      shut over a carriageway — the aisle mouths, the road between its own two kerbs —
+      goes back out with the second subtraction; what stays is lot asphalt between kerbs
+      under 8 m apart, and a block of stalls between roads is many times wider. The
+      result is intersected with the lot's outline, **opened** by `KERB_OPENING` 0.3 m
+      (slivers under 0.6 m go, corners round) and scraps under `MIN_KERB_AREA` 6 m² are
+      dropped.
+    - **Ribbons were here first and were removed** (a `lot_roads` layer of every
+      street's asphalt over the kerb layer, runs clipped to the outline by bisection).
+      Each road's asphalt lay over every *other* road's kerb, so where slip lanes fan
+      out at a roundabout the kerbs were chopped into ragged scraps, the island stayed a
+      ring, and the two kerbs of the boulevard's halves fused into a light thread
+      between them — the author's report. Do not bring the ribbons back.
+    - **The median is a double solid line, not a kerb** (`medians`, layer `lot_lines`,
+      `Z_LOT_LINES` 2.003, flat paint, gated on `RoadStyle::markings`). A boulevard in
+      OSM is two one-way ways side by side with half a metre of asphalt between them.
+      From every `PROBE_STEP` 2 m of a one-way, non-ring through road the nearest other
+      such road is looked up: it counts when it runs **beside** (`MEDIAN_PARALLEL` 0.9
+      of heading, and shifted along the axis by under `MEDIAN_SKEW` 0.35 of the distance
+      — the same road continuing end to end is not a neighbour) with `-MEDIAN_OVERLAP`
+      1 m … `MEDIAN_GAP` 3 m of asphalt between the edges; wider is a real island and
+      keeps its kerb. Runs under `MEDIAN_MIN` 8 m are two slip lanes meeting, not a
+      median. The midline gets `push_rails` (`DOUBLE_LINE_WIDTH` 0.2 m at
+      `DOUBLE_LINE_GAUGE` 0.5 m — wider than the real 0.15 / 0.3, which fuse into a hair
+      at lot zoom), and a strip as wide as the axes are apart is subtracted from the
+      kerb. Computed from **both** sides of a pair: the two lines coincide, and the
+      midline does not break where one side is split into two ways.
+    - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
+    - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula went
+      **84 → 133 ms** (`map_meshing`, `dev`, same machine): the mall lot alone is ~90
+      round-joined strokes through three booleans, a closing and an opening (kerbs
+      ≈ 13 ms before the closing, which added ~20), medians ≈ 5 ms (every sample against
+      every other carriageway; bounds-filtered), the `enters` probes ≈ 2 ms. It is paid
+      at world load and whenever `roads::rebuilds_on` fires (`RoadStyle`, the settled
+      sun). Not optimised: the kerb depends on the map and two style knobs only, so
+      caching it per world load is the obvious cut if the hitch on a sun change shows.
     - **No stall under a through road or its kerb** (`Surroundings::cover`, the band
       `width / 2 + kerb + THROUGH_CLEARANCE` 0.5 m, four corners and the centre; a cheap
       centre-distance reject first). 250 stalls on the mall lot.
     - **The perimeter drive gets no kerb**, by construction rather than by a rule: a road
       band is not part of the paved outline (see **Blocks pulled to the roads**), so its
-      axis is outside the lot and nothing of it is clipped in. The lot's asphalt simply
-      runs into the drive's.
-    - A carriageway crossing a big lot loses its lane markings on it (the stretch is
-      pushed with no markings) — the stated price of one layer for everything; Tula has
-      no such road.
+      axis is outside the lot (`enters` is false) and it only cuts, never adds. The lot's
+      asphalt simply runs into the drive's.
+    - A carriageway crossing a big lot loses its lane markings on it (the lot's asphalt
+      covers its ribbon) — the stated price; Tula has no such road.
   - **But the outline itself reaches the road**, in the parse (**Blocks pulled to the
     roads** above, `pave_lots`). That is not the layout reading roads: the lot grows to
     the drive it is entered from, and everything below — the stalls, the paint, the cars —
@@ -2216,6 +2267,29 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     lane grid of each field still runs out to the outline, so **whose ground it is** is
     decided per stall: the nearest aisle run must be of the stall's own field
     (`Frame::territory`). A lot with one field is never asked.
+  - **Aisle blocks** (`blocks_of`) — a field is split once more, and each block is a
+    `Field` with its **own lane grid**. A lane is one number, an offset across the lot,
+    and the grid used to be one per direction. At the mall the aisles north and south of
+    the boulevard are separate ways that do not stand opposite each other — by the
+    roundabout a northern lane falls between two southern ones — so in the shared list
+    they cut an honest 17 m pocket into 6 and 11: **one** row stood in the eleven,
+    nothing in the six, and single rows with a double drive ran across the middle of the
+    lot (the author's report). Runs join a block by two rules:
+    - **neighbours** — within `BLOCK_LANE_REACH` 40 m across (two steps of the grid: a
+      pocket may carry a footway instead of an aisle) and overlapping along by
+      `BLOCK_OVERLAP_SHARE` 0.5 of the shorter. The share matters: the boulevard crosses
+      the aisles ~26° off square, so a northern run and the southern run one lane over
+      overlap by a couple of metres without being neighbours;
+    - **pieces of one lane** — collinear within `BLOCK_COLLINEAR` 1 m, up to two `AISLE`
+      apart, and **no through road between them** (`Surroundings::crossed`): the gap on
+      the boulevard is as wide as a cross drive's, and only the road tells them apart.
+      Without this rule the cross drive would split its block and `cross_drives_of` would
+      find nothing.
+
+    A block stripes `BLOCK_REACH` 30 m past the ends of its own runs, not the whole lot —
+    the rest is another block's by `Frame::territory` anyway — and `push_row` asks the
+    outline before `owns`, which walks every run of the lot. Layout 38 → **30 ms** on
+    Tula. Pinned by `aisles_across_a_through_road_keep_their_own_lane_grids`.
   - **Pockets** (`pocket_depth`, `pocket_rows`) — a one-row strip along a street (way
     702257069, 354 × 5.7 m). With `EDGE_MARGIN` either side no stall fits it, and it was
     a dark band by the pavement; before the polygon paving it was striped only because
